@@ -330,14 +330,23 @@ bool AOKPaintSprayer::InitializeCoating(FSurface& S)
  S.Overlay->ComponentTags.Add(TEXT("OKPaintOverlay"));S.Overlay->RegisterComponent();S.Overlay->AttachToComponent(C,FAttachmentTransformRules::SnapToTargetIncludingScale);S.Overlay->SetCollisionEnabled(ECollisionEnabled::NoCollision);S.Overlay->SetCastShadow(false);S.Overlay->SetMaterial(0,S.Material);S.Overlay->SetTranslucentSortPriority(C->TranslucencySortPriority+1);Overlays.Add(S.Overlay);
  return true;
 }
+static TAutoConsoleVariable<float> CVarPaintDiscoverListSeconds(TEXT("ok.Paint.DiscoverListSeconds"),1.f,
+ TEXT("How long the list of components that could take paint is kept before every actor is walked again (0: each discovery)."));
 void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool SourceCone)
 {
- for(TActorIterator<AActor> It(GetWorld());It;++It){if(*It==this||It->IsHidden())continue;
-  TInlineComponentArray<UPrimitiveComponent*> Components;It->GetComponents(Components);
-  for(auto* C:Components){if(!C->IsVisible()||C->ComponentHasTag(TEXT("OKPaintOverlay")))continue;
+ TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintDiscover);
+ const double Now=FPlatformTime::Seconds();
+ if(Now-DiscoverListTime>=CVarPaintDiscoverListSeconds.GetValueOnGameThread()){TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintDiscoverList);
+  DiscoverListTime=Now;DiscoverCandidates.Reset();
+  for(TActorIterator<AActor> It(GetWorld());It;++It){if(*It==this)continue;
+   const bool Preview=It->IsA<AKKPreviewActor>(),Paintable=Preview||It->ActorHasTag(TEXT("OKPaintable"));
+   TInlineComponentArray<UPrimitiveComponent*> Components;It->GetComponents(Components);
+   for(auto* C:Components)if(Cast<USkinnedMeshComponent>(C)||(Paintable&&Cast<UProceduralMeshComponent>(C)))DiscoverCandidates.Add(C);}}
+ for(const auto& Weak:DiscoverCandidates){auto* C=Weak.Get();if(!C||!C->IsRegistered())continue;AActor* CandidateOwner=C->GetOwner();if(!CandidateOwner||CandidateOwner->IsHidden())continue;
+  {if(!C->IsVisible()||C->ComponentHasTag(TEXT("OKPaintOverlay")))continue;
    if(!C->bRenderInMainPass)continue;
    // KKS palette carriers and outline passes are not displayed material surfaces.
-   if(auto* Preview=Cast<AKKPreviewActor>(*It)){
+   if(auto* Preview=Cast<AKKPreviewActor>(CandidateOwner)){
     const bool PartSurface=Preview->Parts.ContainsByPredicate([C](const auto& Part){return Part.Comp==C||(Part.SurfaceMat&&Part.SurfaceMat==C->GetMaterial(0));});
     // Body/face/clothing morphs replace the hidden poseable follower with a
     // skeletal display component carrying its own dynamic material instance.
@@ -345,7 +354,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
     if(!PartSurface&&!MorphSurface)continue;
     if(bSkipTongue&&Preview->MouthSlots.ContainsByPredicate([C](const auto& Slot){return (Slot.InsideBit&4)&&(Slot.Comp==C||Slot.CpuComp==C);}))continue;
    }
-   if(!Cast<USkinnedMeshComponent>(C)&&!(Cast<UProceduralMeshComponent>(C)&&(It->IsA<AKKPreviewActor>()||It->ActorHasTag(TEXT("OKPaintable")))))continue;
+   if(!Cast<USkinnedMeshComponent>(C)&&!(Cast<UProceduralMeshComponent>(C)&&(CandidateOwner->IsA<AKKPreviewActor>()||CandidateOwner->ActorHasTag(TEXT("OKPaintable")))))continue;
    auto* Procedural=Cast<UProceduralMeshComponent>(C);
    if(!Procedural&&Surfaces.ContainsByPredicate([C](const auto& S){return S->Component==C;}))continue;
    // Renderer bounds may describe the tiny bind mesh rather than the current
@@ -355,7 +364,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
     auto* Mesh=Cast<USkeletalMesh>(K->GetSkinnedAsset());if(!Mesh||!Mesh->GetResourceForRendering()||Mesh->GetResourceForRendering()->LODRenderData.IsEmpty())continue;
     const auto& Positions=Mesh->GetResourceForRendering()->LODRenderData[0].StaticVertexBuffers.PositionVertexBuffer;
     if(!Positions.GetAllowCPUAccess()||!Positions.GetVertexData())continue;
-    FSurface Probe;Probe.Component=C;Probe.Asset=Mesh;RefreshGeometry(Probe);CurrentPositions=MoveTemp(Probe.Positions);if(CurrentPositions.IsEmpty())continue;
+    FSurface Probe;Probe.Component=C;Probe.Asset=Mesh;{TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintDiscoverProbe);RefreshGeometry(Probe);}CurrentPositions=MoveTemp(Probe.Positions);if(CurrentPositions.IsEmpty())continue;
     SurfaceBounds.Init();for(const FVector& P:CurrentPositions)SurfaceBounds+=P;
    }
    auto Intersects=[&](const FVector& From,const FVector& To,bool Cone){const double Along=FMath::Max(0.,FVector::DotProduct(SurfaceBounds.GetCenter()-From,(To-From).GetSafeNormal())+SurfaceBounds.GetExtent().Length());
@@ -367,7 +376,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
    if(!Candidate)continue;
    // Native KKS PMC sections beyond zero are duplicated outline passes.
    // Other paintable PMCs may contain independent material regions.
-   if(Procedural){const int32 Count=It->IsA<AKKPreviewActor>()?FMath::Min(1,Procedural->GetNumSections()):Procedural->GetNumSections();for(int32 Section=0;Section<Count;++Section){const auto* Part=Procedural->GetProcMeshSection(Section);if(!Part||!Part->bSectionVisible||Part->ProcIndexBuffer.IsEmpty())continue;if(!Surfaces.ContainsByPredicate([C,Section](const auto& S){return S->Component==C&&S->Section==Section;}))MakeSurface(C,Section);}}
+   if(Procedural){const int32 Count=CandidateOwner->IsA<AKKPreviewActor>()?FMath::Min(1,Procedural->GetNumSections()):Procedural->GetNumSections();for(int32 Section=0;Section<Count;++Section){const auto* Part=Procedural->GetProcMeshSection(Section);if(!Part||!Part->bSectionVisible||Part->ProcIndexBuffer.IsEmpty())continue;if(!Surfaces.ContainsByPredicate([C,Section](const auto& S){return S->Component==C&&S->Section==Section;}))MakeSurface(C,Section);}}
    else MakeSurface(C,0,&CurrentPositions);
   }
  }
@@ -757,6 +766,7 @@ void AOKPaintSprayer::Tick(float Dt)
  const double Interval=SurfaceSeconds;
  const bool Flying=Spraying||!Packets.IsEmpty();const bool UpdateGeometry=GeometryTime>=Interval||(Flying&&bGeometryOnlyPainted);
  if(UpdateGeometry){GeometryTime=FMath::Fmod(GeometryTime,Interval);
+  {TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTopologyCheck);
   for(int32 Index=Surfaces.Num()-1;Index>=0;--Index){auto& S=*Surfaces[Index];auto* C=S.Component.Get();bool Changed=!C;
    if(auto* K=Cast<USkinnedMeshComponent>(C))Changed|=K->GetSkinnedAsset()!=S.Asset.Get();
    if(auto* P=Cast<UProceduralMeshComponent>(C)){const auto* Part=P->GetProcMeshSection(S.Section);Changed|=!Part||Part->ProcIndexBuffer.Num()!=S.Indices.Num()||Part->ProcVertexBuffer.Num()!=S.Positions.Num();if(!Changed)for(int32 I=0;I<S.Indices.Num();++I)if(Part->ProcIndexBuffer[I]!=uint32(S.Indices[I])){Changed=true;break;}}
@@ -764,7 +774,7 @@ void AOKPaintSprayer::Tick(float Dt)
    UE_LOG(LogTemp,Display,TEXT("Paint surface topology invalidated component=%s section=%d vertices=%d indices=%d"),*GetNameSafe(C),S.Section,S.Positions.Num(),S.Indices.Num());
    Escaped+=S.Film.Volume();if(S.Overlay){Overlays.Remove(S.Overlay);S.Overlay->DestroyComponent();}ReleaseSurfaceAtlas(S);Materials.Remove(S.Material);
    const int32 Last=Surfaces.Num()-1;for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(D.Target==Index){Escaped+=D.Volume;if(D.Visual.IsValid()){Overlays.Remove(D.Visual.Get());D.Visual->DestroyComponent();}Attached.RemoveAtSwap(I);}else if(D.Target==Last)D.Target=Index;}Surfaces.RemoveAtSwap(Index);
-  }
+  }}
   if(Spraying||!Packets.IsEmpty())DiscoverSurfaces(Nozzle,Nozzle+Direction*(5*FMath::Clamp(Settings.JetSpeed,10.f,10000.f)));
   bGeometryOnlyPainted=!Flying;RefreshGeometries(bGeometryOnlyPainted);}
  // Fixed 120Hz integrator, never a larger unstable step. A long frame used to run all its steps (2.3 ms each), which made

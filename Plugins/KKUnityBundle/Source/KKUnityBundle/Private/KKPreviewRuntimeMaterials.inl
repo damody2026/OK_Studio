@@ -1,7 +1,7 @@
 // The card's parts as instances of the shared parents (KKRuntimeSharedMaterial), in every build: a packaged game
 // loads the cooked parents and their shader library; the editor and -game load the same assets uncooked (their shaders
 // compile once per machine and stay in the DDC), so a new card compiles nothing. In the editor a part no parent covers
-// keeps its own transient graph (ApplyPartMaterial); a packaged game refuses such a card.
+// keeps its own transient graph (ApplyPartMaterial); a packaged game leaves such a part out (hidden) and loads the rest.
 // Both paths consume the complete native material metadata and textures.
 #if !WITH_EDITOR
 #include "ShaderCodeLibrary.h"
@@ -38,17 +38,14 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
     // The cooked parents' shaders live in their own library (Tools/rebuild_street_social_patch.ps1 cooks it as
     // RuntimeMaterialBake), which the engine does not open by itself: RuntimeMaterialLibrary= or manifest material_library.
 #if !WITH_EDITOR
-    static TSet<FString> OpenedLibraries;
     FString Library;
     if(!FParse::Value(FCommandLine::Get(),TEXT("RuntimeMaterialLibrary="),Library)){
         FString Json;TSharedPtr<FJsonObject> Object;
         if(FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("material_library"),Library);
     }
     if(Library.IsEmpty())Library=TEXT("RuntimeMaterialBake");
-    if(!OpenedLibraries.Contains(Library)){
-        if(!FShaderCodeLibrary::OpenLibrary(Library,FPaths::ProjectContentDir()))UE_LOG(LogTemp,Warning,TEXT("High model shader library %s not found; cooked parents may lack shaders"),*Library);
-        OpenedLibraries.Add(Library);
-    }
+    // Shared with the reader's startup preload (OKPreloadRuntimeSharedMaterialParents), which opens it first.
+    OKOpenRuntimeMaterialShaderLibrary(Library);
 #endif
     // Render style (ok.RenderStyle, OKHGShading): HG has its own cooked parents
     // next to the Koikatsu ones (HGMaterialRoot= or manifest hg_material_root).
@@ -84,7 +81,7 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_CookedRoleParts);
     auto BuildPart=[&](const FKKRuntimeMaterialPart& SourcePart)->int32{
         auto& Textures=Role.Textures;auto& Scene=Role.Scene;const FString& Root=Role.Root;const bool HG=Role.HG;int32& Uncovered=Role.Uncovered;
-        OkMeshView View{};if(!To.Source.PartAt(SourcePart.NativePart,View)||!View.render_visible||View.n_verts<=0)return 1;
+        OkMeshView View{};if(!To.Source.PartAt(SourcePart.NativePart,View)||(!View.render_visible&&OKTearLevel(View.name)==0)||View.n_verts<=0)return 1; // the tears are built hidden and shown live (ApplyTears): they need theirs
         // OK Studio item state (AKKPreviewActor::ItemColorOverrides, ItemShadowColorOverride: sRGB, the values the game
         // writes to _Color.._Color4 and _ShadowColor) reaches the shared parent as the part's own material values.
         FKKRuntimeMaterialPart Part=SourcePart;
@@ -123,7 +120,7 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
 #if WITH_EDITOR
         if(!Material){UE_LOG(LogTemp,Warning,TEXT("Shared material for part %d (%s): %s; its own graph instead"),Part.NativePart,*Name,*Error);Error.Reset();++Uncovered;return 1;}
 #endif
-        if(!Material){To.Materials.Reset();To.Outlines.Reset();return -1;}
+        if(!Material){UE_LOG(LogTemp,Warning,TEXT("Part %d (%s) left out: %s"),Part.NativePart,*Part.Name,*Error);Error.Reset();++Uncovered;return 1;}
         if(Actor->ToonRampTex){UTexture* Existing=nullptr;if(Material->GetTextureParameterValue(FMaterialParameterInfo(TEXT("_RampG")),Existing))Material->SetTextureParameterValue(TEXT("_RampG"),Actor->ToonRampTex);}
         // HG faces light from the character's front instead of their bumpy normals.
         if(HG&&Part.Role==TEXT("head")){float Face=0;if(Material->GetScalarParameterValue(FMaterialParameterInfo(TEXT("__OK_HG_Face")),Face))Material->SetScalarParameterValue(TEXT("__OK_HG_Face"),1);}
@@ -140,7 +137,7 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
 #if WITH_EDITOR
             if(!Outline){UE_LOG(LogTemp,Warning,TEXT("Shared outline for part %d (%s): %s"),Part.NativePart,*OutlineName,*Error);Error.Reset();}
 #else
-            if(!Outline){To.Materials.Reset();To.Outlines.Reset();return -1;}
+            if(!Outline){UE_LOG(LogTemp,Warning,TEXT("Outline of part %d (%s) left out: %s"),Part.NativePart,*Part.Name,*Error);Error.Reset();}
 #endif
             if(Outline&&Actor->ToonRampTex){UTexture* Existing=nullptr;if(Outline->GetTextureParameterValue(FMaterialParameterInfo(TEXT("_RampG")),Existing))Outline->SetTextureParameterValue(TEXT("_RampG"),Actor->ToonRampTex);}
             To.Outlines[Part.NativePart]=Outline;

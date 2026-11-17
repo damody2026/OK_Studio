@@ -1,0 +1,11 @@
+// A picture mirrored from the character controller (the card's preview).
+class /Game/UI/Reader/Controls/WBP_OKImage
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (300, 400)
+    + Overlay { }
+    Image Picture {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

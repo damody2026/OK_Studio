@@ -1,0 +1,306 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "UObject/GCObject.h"
+#include "Designer/DreamWidgetReference.h"
+#include "DreamGUIEditorSubsystem.h"
+
+class FDreamWidgetDesignerScene;
+class UDreamUserWidget;
+class UDreamWidget;
+class UDreamUIBehaviour;
+class UDreamWidgetBlueprint;
+class UDreamWidgetTree;
+class UWorld;
+class FEditPropertyChain;
+class UBlueprint;
+struct FPropertyChangedEvent;
+
+/**
+ * The live half of authoring one UDreamWidgetBlueprint: a world, a design canvas, an instance of the
+ * compiled class hanging under it, and the correspondence between that instance and the template.
+ *
+ * This exists apart from any editor toolkit on purpose. Everything here is about data -- what the
+ * preview is, when it is stale, which preview widget answers for which template -- and it is all
+ * testable without a window. The designer surface, the panels and the modes are built on top of it.
+ *
+ * ## Why a preview at all
+ *
+ * The designer had no such split: it opened a prefab by DESERIALIZING it into the editor world
+ * and then edited that live hierarchy, applying it back to the asset on demand. That is what made
+ * "Apply" a concept, and what made an editor holding an out-of-date copy a recurring failure. Under
+ * the class model the asset holds an ordinary object graph, and the graph is inert -- template
+ * widgets are outered to the Blueprint, have no world, are never registered, and cannot draw or lay
+ * out. So the drawn thing has to be a separate instance, and the two have to be kept in
+ * correspondence rather than being the same objects.
+ *
+ * ## Which half to edit
+ *
+ * Structure (create, delete, reparent, reorder) is edited on the TEMPLATE, and the preview is
+ * rebuilt from it -- see DreamWidgetTreeEditing. Values (properties, anchors, geometry) are edited
+ * on the PREVIEW, where layout actually runs, and mirrored back with MigratePropertyToTemplate.
+ * Both directions are UMG's, and for the same reasons.
+ *
+ * ## What ties them together
+ *
+ * Object FName. The preview's contents are instanced from the authoring tree itself, and
+ * FObjectInstancingGraph preserves the archetype's names, so a template widget and its preview
+ * counterpart share one. Display names cannot serve here: they are what a designer types, they are
+ * not unique, and they change while the correspondence has to hold.
+ *
+ * Must be held in a shared pointer -- it hands out references that point back at it.
+ */
+class DREAMGUIEDITOR_API FDreamWidgetPreviewHost
+	: public FGCObject
+	, public TSharedFromThis<FDreamWidgetPreviewHost>
+	, public IDreamRecompilePreview
+{
+public:
+	// IDreamRecompilePreview: a recompile of a class the preview uses takes the preview down first and
+	// builds it again after, instead of leaving the reinstancer to copy it.
+	virtual bool UsesClass(const UClass* InClass) const override;
+	virtual void ReleaseForRecompile() override;
+	virtual void RebuildAfterRecompile() override;
+
+	FDreamWidgetPreviewHost();
+	virtual ~FDreamWidgetPreviewHost() override;
+
+	/** Bind to an asset and build the first preview. Call once. */
+	void Initialize(UDreamWidgetBlueprint* InBlueprint);
+	/** Drop the preview and the world. Safe to call twice, and called for you on destruction. */
+	void Shutdown();
+
+	UDreamWidgetBlueprint* GetBlueprint() const { return Blueprint; }
+	UWorld* GetWorld() const;
+	FDreamWidgetDesignerScene* GetScene() const { return Scene.Get(); }
+
+	/** The design canvas everything hangs under. Not part of the hierarchy and never serialized. */
+	UDreamWidget* GetRootAgent() const;
+	/** The instance of the compiled class. Null before the first successful build. */
+	UDreamUserWidget* GetPreviewWidget() const { return PreviewWidget; }
+	/** Root of the previewed CONTENTS -- the counterpart of the template tree's root, not the user widget. */
+	UDreamWidget* GetPreviewRoot() const;
+
+	/**
+	 * Mark the preview stale. The rebuild happens on the next RebuildPreviewIfInvalidated, not here,
+	 * so a burst of edits inside one operation costs one rebuild rather than one each.
+	 */
+	void InvalidatePreview() { bPreviewInvalidated = true; }
+	bool IsPreviewInvalidated() const { return bPreviewInvalidated; }
+	/** Rebuild if stale. Cheap when it is not; call it from a tick. */
+	void RebuildPreviewIfInvalidated();
+	/** Destroy the current preview and build a fresh one from the class. */
+	void RebuildPreview();
+
+	/**
+	 * Replay DesignerData.HiddenWidgets onto the current preview.
+	 *
+	 * Part of every rebuild, and public only so a caller that has changed the set without rebuilding
+	 * can ask for it again. Hidden-in-designer is per-asset state applied to per-session objects, so
+	 * it has to be re-applied every time those objects are replaced -- which is what this host does.
+	 */
+	void ApplyHiddenInDesigner();
+
+	/**
+	 * InBlueprint's class instanced under InRootAgent the way every preview of it is: from the tree
+	 * FindArchetypeForPreview names, filling the agent and arranged inside it, then registered. Null when
+	 * the Blueprint has no class that makes UDreamUserWidgets, or there is no agent.
+	 *
+	 * The half of RebuildPreview that is not this host's own bookkeeping, shared with the Content
+	 * Browser thumbnail so that a tile shows the screen the designer shows. The caller still tells the
+	 * world there is something new to draw (UDreamUIManagerWorldSubsystem::RefreshAllUI) and replays
+	 * the hidden set.
+	 */
+	static UDreamUserWidget* InstancePreview(UDreamWidgetBlueprint* InBlueprint, UDreamWidget* InRootAgent);
+
+	/**
+	 * The tree a preview of InBlueprint is instanced from: the Blueprint's own authoring tree, or -- when
+	 * this asset authors none -- the nearest ancestor class that does.
+	 */
+	static UDreamWidgetTree* FindArchetypeForPreview(const UDreamWidgetBlueprint* InBlueprint);
+
+	/** InBlueprint's DesignerData.HiddenWidgets replayed onto a preview's contents, from InPreviewRoot down. */
+	static void ApplyHiddenInDesigner(const UDreamWidgetBlueprint* InBlueprint, UDreamWidget* InPreviewRoot);
+
+	/** Compile the Blueprint, which is what makes an authoring edit reach the class the preview is built from. */
+	void CompileBlueprint();
+
+	FDreamWidgetReference GetReferenceFromTemplate(UDreamWidget* InTemplateWidget);
+	/** The reference whose template answers for this preview widget; invalid when it has none. */
+	FDreamWidgetReference GetReferenceFromPreview(UDreamWidget* InPreviewWidget);
+
+	/** The preview counterpart of a template widget, or null when the preview does not have one. */
+	UDreamWidget* FindPreviewForTemplate(const UDreamWidget* InTemplateWidget) const;
+	/** The template counterpart of a preview widget, or null when it is not part of the authored tree. */
+	UDreamWidget* FindTemplateForPreview(const UDreamWidget* InPreviewWidget) const;
+	/** The authored behaviour captured when this preview was built; null for added, renamed or removed components. */
+	UDreamUIBehaviour* FindTemplateComponentForPreview(const UDreamUIBehaviour* InPreviewComponent) const;
+	/** The current preview instance captured for an authored behaviour, independent of array order. */
+	UDreamUIBehaviour* FindPreviewComponentForTemplate(const UDreamUIBehaviour* InTemplateComponent) const;
+
+	/**
+	 * Copy one edited value from a preview object onto its template counterpart.
+	 *
+	 * InChain is the details panel's property chain, which is what carries the path through instanced
+	 * sub-objects -- a PanelSlot padding, a Visual's colour -- rather than just the leaf. bIsModify is
+	 * the pre-change pass: it only snapshots the destination for undo and writes nothing.
+	 *
+	 * Returns false when the widget has no template counterpart, which is the normal answer for
+	 * anything in the preview world that is not part of the authored hierarchy (the design canvas).
+	 *
+	 * A successful write also marks the Blueprint modified, because the class archetype is a duplicate
+	 * of the template and every instance keeps the old value until the next full compile. Callers must
+	 * therefore NOT call this for EPropertyChangeType::Interactive -- a drag would pay for that on
+	 * every mouse move. UMG's details view skips the whole migration for interactive changes and
+	 * mirrors once at the end; do the same.
+	 */
+	/**
+	 * Copy one details-panel edit from a PREVIEW object onto its counterpart in the authoring tree.
+	 *
+	 * InPreviewObject is whatever the panel is showing -- the widget, its visual, or one of its
+	 * behaviours. Taking it as a widget was wrong twice over: the property does not belong to
+	 * UDreamWidget, so applying it asserts, and the edit never reached the asset either.
+	 */
+	bool MigratePropertyToTemplate(UObject* InPreviewObject, FEditPropertyChain& InChain, bool bIsModify);
+
+	/**
+	 * Copy named properties straight from a preview widget onto its template counterpart.
+	 *
+	 * The chain-walking migration above is what a details panel needs, because an edit there can be
+	 * buried inside an instanced sub-object. A designer gesture is not like that: it moves a widget,
+	 * and what it moved is a handful of known properties on the widget itself. This is that case,
+	 * and having it saves every gesture from having to fabricate an FEditPropertyChain.
+	 *
+	 * Returns how many were copied. Zero means the widget has no template -- the design canvas, or
+	 * anything else in the preview world that is not part of the authored hierarchy.
+	 */
+	int32 CopyPreviewValuesToTemplate(UDreamWidget* InPreviewWidget, TConstArrayView<FName> InPropertyNames);
+
+	/**
+	 * Fires before a rebuild takes the CURRENT preview down, while its widgets are still alive.
+	 *
+	 * For the narrow set of things that can only be done to an object that still exists. Anything
+	 * that wants to READ the result of the rebuild wants OnPreviewRebuilt instead.
+	 *
+	 * Sequencer is the caller this exists for. It keys animation entities on raw UObject pointers,
+	 * and a rebuild destroys those objects without any of the replacement notifications the editor
+	 * broadcasts for a recompile -- a rebuild is a destruction and a fresh construction, not a
+	 * replacement, so nobody is told. It finds out a tick later through its playback-context
+	 * attribute, and the teardown that discovery triggers runs against bookkeeping that has already
+	 * drifted. Here it restores pre-animated values and evacuates its entities while their objects
+	 * are addressable; OnPreviewRebuilt is where it re-resolves against the new tree.
+	 */
+	FSimpleMulticastDelegate OnPreviewAboutToRebuild;
+
+	/** Fires after every rebuild, once the new preview and the name map are both in place. */
+	FSimpleMulticastDelegate OnPreviewRebuilt;
+
+	/**
+	 * A value edit reached the authoring tree. Raised by the two write paths, cleared by a flush.
+	 *
+	 * This exists for the .dui write-back, whose job is to turn a designer edit into a line in a text
+	 * file, and it is a FLAG rather than a delegate fired per edit because the two paths disagree
+	 * about how often they run. The details panel already drops interactive ticks upstream -- see
+	 * SDreamWidgetDesignerDetails::NotifyPostChange -- but a viewport drag calls
+	 * CopyPreviewValuesToTemplate on EVERY MOUSE MOVE, deliberately, because rebuilding mid-gesture
+	 * would pull the widget out from under the handle moving it. Writing a file at that rate is not
+	 * an option, and putting the debounce in the caller would mean every future write path having to
+	 * remember it.
+	 *
+	 * So: mirror as often as it likes, mark here, and let a flush point decide when it is worth a
+	 * write. FlushTemplateChanges is called at gesture end, at a committed details-panel change, and
+	 * when the editor loses focus.
+	 */
+	bool IsTemplateDirty() const { return bTemplateDirty; }
+	/**
+	 * Broadcast OnTemplateChanged if anything is pending, and clear the flag. No-op when clean, so a
+	 * flush point that fires on every tick costs nothing.
+	 */
+	void FlushTemplateChanges();
+	/**
+	 * Fires from FlushTemplateChanges, never from the write paths themselves.
+	 *
+	 * Chosen over "one delegate per edit" for the reason above: a subscriber that wrote a file per
+	 * broadcast would write a few hundred times per drag.
+	 */
+	FSimpleMulticastDelegate OnTemplateChanged;
+
+	// FGCObject
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override { return TEXT("FDreamWidgetPreviewHost"); }
+	// End FGCObject
+
+private:
+	/** Set by the two template write paths, cleared by FlushTemplateChanges. See IsTemplateDirty. */
+	bool bTemplateDirty = false;
+
+	/**
+	 * FindTemplateForPreview's answers by widget guid, filled by one walk of the authoring tree and checked on the way out
+	 * (still that guid's, still held by its parent all the way up to the tree's root). One walk per lookup was a walk per
+	 * selected widget per commit, per undo and per nudge repeat: hitches, with a few thousand widgets and a few hundred
+	 * selected.
+	 */
+	mutable TMap<FGuid, TWeakObjectPtr<UDreamWidget>> TemplatesByGuid;
+	/** Capture by instanced name once, then keep identity across live component reordering. */
+	TMap<TWeakObjectPtr<const UDreamUIBehaviour>, TWeakObjectPtr<UDreamUIBehaviour>> TemplateComponentsByPreview;
+	/**
+	 * Guids looked up and not found this frame (TemplatesMissedFrame): asked again, answered without another walk -- the
+	 * canvas agent and the preview's wrapper are asked about for every pick. Forgotten whenever the tree may have gained a
+	 * widget (ForgetTemplateMisses): a frame can delete a widget, ask, undo and ask again.
+	 */
+	mutable TSet<FGuid> TemplatesMissed;
+	mutable uint64 TemplatesMissedFrame = 0;
+	void ForgetTemplateMisses() { TemplatesMissed.Reset(); }
+	/**
+	 * InValue, a reference an edit copied onto the template, as the template must hold it: a preview widget, or a widget's
+	 * own object (its visual, a behaviour), becomes its template counterpart; anything not the preview's stays as it is.
+	 * False when it is the preview's and has no counterpart.
+	 */
+	bool MapPreviewReferenceToTemplate(UObject* InValue, UObject*& OutMapped) const;
+
+	void DestroyPreview();
+	/**
+	 * Take RF_Transactional off the whole preview, sub-objects included.
+	 *
+	 * The preview is not undoable -- the authoring tree is the only half a transaction may hold, and
+	 * the preview is thrown away and projected again from it. Instancing honours that (the tree is
+	 * built with the host's own flags) and so do UDreamWidget's sub-object creators (they take the
+	 * flag from their owner). This is the backstop for the sites that still hard-code it and can
+	 * nonetheless build into a preview -- a native control's tree, a layout animation handler, a list
+	 * view's cells. Never touches the design canvas, which is deliberately transactional.
+	 */
+	void ClearTransactionalFlagsOnPreview();
+	/** Rebuild the id -> preview widget map from the current preview. */
+	void RebuildPreviewGuidMap();
+	/** Mint an id for any authored widget that has none, before the preview is instanced from it. */
+	void EnsureAuthoredGuids();
+	/** Repoint the handle pool after the editor replaced objects (a widget's own class recompiling). */
+	void OnObjectsReplaced(const TMap<UObject*, UObject*>& InReplacementMap);
+	/** The Blueprint changed shape (a structural edit, or an undo). The preview is a compile behind. */
+	void OnBlueprintChanged(UBlueprint* InBlueprint);
+	void OnBlueprintCompiled(UBlueprint* InBlueprint);
+
+	TObjectPtr<UDreamWidgetBlueprint> Blueprint = nullptr;
+	TObjectPtr<UDreamUserWidget> PreviewWidget = nullptr;
+	TUniquePtr<FDreamWidgetDesignerScene> Scene;
+
+	/**
+	 * Preview widgets by UDreamWidget::GetWidgetGuid. Rebuilt wholesale; never patched.
+	 *
+	 * Keyed on the id rather than the object FName, which is what this used to be. Object names are
+	 * generated per process and every loaded asset brings its own numbering back starting at zero, so
+	 * a nested widget blueprint's DreamWidget_0 collided with the host's own DreamWidget_0 -- and a
+	 * TMap resolves that by overwriting. Editing a value inside a nested Button wrote it onto an
+	 * unrelated host widget. See UDreamWidget::GetWidgetGuid.
+	 */
+	TMap<FGuid, TWeakObjectPtr<UDreamWidget>> PreviewWidgetsByGuid;
+
+	TArray<TWeakPtr<FDreamWidgetHandle>> HandlePool;
+
+	FDelegateHandle ObjectsReplacedHandle;
+	FDelegateHandle BlueprintChangedHandle;
+	FDelegateHandle BlueprintCompiledHandle;
+	bool bPreviewInvalidated = false;
+};

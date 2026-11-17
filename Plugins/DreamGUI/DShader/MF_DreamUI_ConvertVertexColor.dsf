@@ -1,0 +1,66 @@
+// DreamGUI material function, written by hand from the original LGUI graph.
+// Edit this file, then rebuild -- the .uasset is an output.
+//
+// Vertex colour arrives sRGB-encoded and the material works in linear, so it is converted -- in the
+// vertex shader where possible, because the conversion is per-vertex anyway. The Feature Level
+// Switch keeps ES3_1 on the pixel-shader path: the original author found the vertex interpolator
+// hands back swapped channels there (their comment: "VertexInterpolator with android ES3_1 get wrong
+// color (rgba/bgra)"). VertexColorUseGammaCorrection, default on, lets a project opt out entirely.
+//
+// sRGBToLinear lives in GammaCorrectionCommon.ush and is reached through a Function rather than a
+// bare Custom node: UE.Expression cannot carry IncludeFilePaths, so a Custom node written that way
+// compiles against a function nothing declares -- and only fails in the vertex-shader permutations.
+
+Function Inline float3 DreamUISRGBToLinear(in float3 Color)
+{
+	#include "/Engine/Private/GammaCorrectionCommon.ush"
+	return sRGBToLinear(Color);
+}
+
+ShaderFunction(Name="Materials/MF_DreamUI_ConvertVertexColor", Root="Plugin.DreamGUI")
+{
+	Inputs = {
+		float3 Color;
+	}
+
+	Outputs = {
+		float3 Result;
+	}
+
+	Graph = {
+		float3 GammaCorrection = DreamUISRGBToLinear(Color);
+
+		#Region "VertexInterpolator with android ES3_1 get wrong color (rgba/bgra)"
+		float3 VertexInterpolator = UE.Expression(Class="VertexInterpolator", OutputType="float3", VS=GammaCorrection);
+		float3 FeatureLevelSwitch =
+			UE.Expression(
+				Class="FeatureLevelSwitch",
+				OutputType="float3",
+				Default=VertexInterpolator,
+				ES3_1=GammaCorrection
+			);
+		#EndRegion
+
+		float3 StaticSwitchParameter =
+			UE.Expression(
+				Class="StaticSwitchParameter",
+				OutputType="float3",
+				True=FeatureLevelSwitch,
+				False=Color,
+				ParameterName="VertexColorUseGammaCorrection",
+				DefaultValue=true
+			);
+
+		Result = StaticSwitchParameter;
+	}
+
+	Layout = {
+		Comment(Name="VertexInterpolator with android ES3_1 get wrong color (rgba/bgra)", X=112, Y=112, W=480, H=320, Color=float4(1.0, 1.0, 1.0, 1.0));
+		Node(Var="Color", X=-272, Y=304);
+		Node(Var="GammaCorrection", X=-64, Y=208);
+		Node(Var="VertexInterpolator", X=128, Y=208);
+		Node(Var="FeatureLevelSwitch", X=336, Y=208);
+		Node(Var="StaticSwitchParameter", X=736, Y=288);
+		Node(Var="Result", X=1024, Y=272);
+	}
+}

@@ -1,0 +1,99 @@
+// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Core/DreamUIFontData_FreeTypeRender.h"
+#include "Core/Text/DreamGlyphSdf.h"
+#include "Core/Text/DreamGlyphCoverage.h"
+#include "Core/Text/DreamGlyphColor.h"
+
+struct FT_LibraryRec_;
+struct FT_FaceRec_;
+
+/** What a rasterizer job makes, and which payload of its result is filled. */
+enum class EDreamGlyphJobKind : uint8
+{
+	/** A multi-channel distance field (FDreamGlyphSdf::GenerateMTSDF): a distance-field font's glyph. */
+	Field,
+	/** A coverage glyph's four phases (FDreamGlyphCoverage::Rasterize): small text. */
+	Coverage,
+	/** A colour glyph (FDreamGlyphColor::Rasterize): an emoji. */
+	Color,
+};
+
+/**
+ * Off-thread glyph rasterization for one font. The worker owns its own FreeType library and
+ * faces, opened over shared copies of the font files, so the game thread's faces are never touched
+ * from another thread (a FreeType face is not thread-safe, and HarfBuzz reads tables through it).
+ * Jobs are drained by one task at a time; results wait in a list until the game thread collects
+ * them. The object is shared with the running task, so a font may drop it at any moment.
+ */
+class FDreamGlyphRasterizer : public TSharedFromThis<FDreamGlyphRasterizer, ESPMode::ThreadSafe>
+{
+public:
+	struct FJob
+	{
+		EDreamGlyphJobKind Kind = EDreamGlyphJobKind::Field;
+		FDreamUIGlyphKey Key;
+		float CharSize = 0.0f;
+		bool bBold = false;
+		/** Field: what the generator needs -- the atlas sample size, spread and synthetic bold, in pixels. */
+		float PixelsPerEm = 0.0f;
+		float SpreadPixels = 0.0f;
+		float BoldPixels = 0.0f;
+		/**
+		 * Coverage: the raster's parameters, and the flags the font's coverage cache keyed the request by. The cache's key takes
+		 * its hinting from Coverage.Hinting -- None for an Unhinted glyph, whatever the font's -- so a result finds its request.
+		 */
+		FDreamGlyphCoverageParams Coverage;
+		EDreamUICoverageGlyphFlags CoverageFlags = EDreamUICoverageGlyphFlags::None;
+		/** Color: the size bucket the font's colour cache keyed the request by, and the padding reach. */
+		FDreamGlyphColorParams Color;
+	};
+	struct FResult
+	{
+		FJob Job;
+		/** The payload of Job.Kind; the other two stay empty. */
+		FDreamGlyphSdfResult Sdf;
+		FDreamGlyphCoverageResult Coverage;
+		FDreamGlyphColorResult Color;
+		bool bSucceeded = false;
+	};
+
+	FDreamGlyphRasterizer();
+	~FDreamGlyphRasterizer();
+
+	/** Register the bytes behind a face index; the worker opens its own FT_Face over them on first use. */
+	void SetFaceSource(int32 FaceIndex, const TSharedRef<const TArray<uint8>, ESPMode::ThreadSafe>& Bytes, int32 FaceIndexInFile);
+	/** Whether a face has bytes registered. A face with none fails every job it is handed. */
+	bool HasFaceSource(int32 FaceIndex) const;
+
+	/** Queue a job and make sure a task is draining the queue. */
+	void Enqueue(const FJob& Job);
+	/** Collect finished results (game thread). */
+	void Drain(TArray<FResult>& OutResults);
+	/** Block until every queued job has been rasterized. For teardown and tests. */
+	void WaitForAll();
+	int32 NumQueued() const;
+	bool HasResults() const;
+
+private:
+	struct FFaceSource
+	{
+		TSharedPtr<const TArray<uint8>, ESPMode::ThreadSafe> Bytes;
+		int32 FaceIndexInFile = 0;
+	};
+	mutable FCriticalSection Lock;
+	TArray<FJob> Queue;
+	TArray<FResult> Results;
+	TMap<int32, FFaceSource> FaceSources;
+	bool bTaskRunning = false;
+
+	// Worker-only state (one task at a time touches it).
+	FT_LibraryRec_* Library = nullptr;
+	TMap<int32, FT_FaceRec_*> Faces;
+
+	void RunWorker();
+	FT_FaceRec_* GetWorkerFace(int32 FaceIndex);
+};

@@ -1,0 +1,341 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+
+#include "Interaction/UIScrollViewWithScrollbar.h"
+
+#include "Core/Components/DreamWidget.h"
+#include "Interaction/UIScrollbar.h"
+
+namespace DreamScrollViewWithScrollbarLocal
+{
+	/**
+	 * How much of the content the window shows, 0..1 -- and a FULL handle when there is no content
+	 * to divide by.
+	 *
+	 * Every visible-fraction division in this class goes through here. Unguarded they were 0/0 on the
+	 * first range calculation (nothing has been laid out yet, so both rects are zero) and on an empty
+	 * view. UUIScrollbar::SetValueAndSize clamps its argument, which rescues an infinity and does
+	 * nothing whatever for a NaN -- FMath::Clamp answers NaN with NaN, both comparisons being false --
+	 * so the NaN travelled on into GetEffectiveSize and the handle's rect, where nothing recovers.
+	 */
+	float VisibleFraction(float InWindow, float InContent)
+	{
+		return InContent > KINDA_SMALL_NUMBER ? InWindow / InContent : 1.0f;
+	}
+}
+
+UUIScrollViewWithScrollbar::UUIScrollViewWithScrollbar()
+{
+	
+}
+
+#if WITH_EDITOR
+void UUIScrollViewWithScrollbar::PreEditChange(FProperty* PropertyAboutToChange)
+{
+	Super::PreEditChange(PropertyAboutToChange);
+	if (PropertyAboutToChange)
+	{
+		auto PropertyName = PropertyAboutToChange->GetName();
+		if (PropertyName == GET_MEMBER_NAME_CHECKED(UUIScrollViewWithScrollbar, HorizontalScrollbar))
+		{
+			if (HorizontalScrollbar.IsValid() && HorizontalScrollbarDelegateHandle.IsValid())
+			{
+				HorizontalScrollbar->GetOnValueChangedEvent().Remove(HorizontalScrollbarDelegateHandle);
+				HorizontalScrollbarDelegateHandle.Reset();
+			}
+		}
+		else if (PropertyName == GET_MEMBER_NAME_CHECKED(UUIScrollViewWithScrollbar, VerticalScrollbar))
+		{
+			if (VerticalScrollbar.IsValid() && VerticalScrollbarDelegateHandle.IsValid())
+			{
+				VerticalScrollbar->GetOnValueChangedEvent().Remove(VerticalScrollbarDelegateHandle);
+				VerticalScrollbarDelegateHandle.Reset();
+			}
+		}
+	}
+}
+void UUIScrollViewWithScrollbar::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (PropertyChangedEvent.Property)
+	{
+		auto PropertyName = PropertyChangedEvent.Property->GetName();
+		if (PropertyName == GET_MEMBER_NAME_CHECKED(UUIScrollViewWithScrollbar, HorizontalScrollbar))
+		{
+			HorizontalScrollbarWidget.Reset();
+		}
+		else if (PropertyName == GET_MEMBER_NAME_CHECKED(UUIScrollViewWithScrollbar, VerticalScrollbar))
+		{
+			VerticalScrollbarWidget.Reset();
+		}
+	}
+}
+#endif
+
+void UUIScrollViewWithScrollbar::OnDimensionsChanged(bool PivotChanged, bool WidthChanged, bool HeightChanged)
+{
+	Super::OnDimensionsChanged(PivotChanged, WidthChanged, HeightChanged);
+	CheckScrollbarParameter();//Check and register scrollbar event
+}
+
+bool UUIScrollViewWithScrollbar::OnPointerDrag_Implementation(UDreamPointerEventData* EventData)
+{
+	return Super::OnPointerDrag_Implementation(EventData);
+}
+bool UUIScrollViewWithScrollbar::OnPointerScroll_Implementation(UDreamPointerEventData* EventData)
+{
+	return Super::OnPointerScroll_Implementation(EventData);
+}
+void UUIScrollViewWithScrollbar::UpdateProgress(bool InFireEvent)
+{
+	Super::UpdateProgress(InFireEvent);
+	if (CheckScrollbarParameter())
+	{
+		if (bAllowHorizontalScroll && HorizontalScrollbarWidget->GetWidgetActiveInHierarchy())
+		{
+			if (Progress.X > 1.0f)
+			{
+				HorizontalScrollbar->SetValueAndSize(1.0f, DreamScrollViewWithScrollbarLocal::VisibleFraction(
+					ContentParent->GetWidth(),
+					Content->GetWidth() + (HorizontalRange.Y - HorizontalRange.X) * (Progress.X - 1.0f)), false);
+			}
+			else if (Progress.X < 0.0f)
+			{
+				HorizontalScrollbar->SetValueAndSize(0.0f, DreamScrollViewWithScrollbarLocal::VisibleFraction(
+					ContentParent->GetWidth(),
+					Content->GetWidth() + (HorizontalRange.Y - HorizontalRange.X) * (0.0f - Progress.X)), false);
+			}
+			else
+			{
+				HorizontalScrollbar->SetValueWithoutNotify(Progress.X);
+			}
+		}
+		if (bAllowVerticalScroll && VerticalScrollbarWidget->GetWidgetActiveInHierarchy())
+		{
+			if (Progress.Y > 1.0f)
+			{
+				VerticalScrollbar->SetValueAndSize(1.0f, DreamScrollViewWithScrollbarLocal::VisibleFraction(
+					ContentParent->GetHeight(),
+					Content->GetHeight() + (VerticalRange.Y - VerticalRange.X) * (Progress.Y - 1.0f)), false);
+			}
+			else if (Progress.Y < 0.0f)
+			{
+				VerticalScrollbar->SetValueAndSize(0.0f, DreamScrollViewWithScrollbarLocal::VisibleFraction(
+					ContentParent->GetHeight(),
+					Content->GetHeight() + (VerticalRange.Y - VerticalRange.X) * (0.0f - Progress.Y)), false);
+			}
+			else
+			{
+				VerticalScrollbar->SetValueWithoutNotify(Progress.Y);
+			}
+		}
+	}
+}
+bool UUIScrollViewWithScrollbar::CheckScrollbarParameter()
+{
+	bool bHorizontalValid = false;
+	bool bVerticalValid = false;
+	if (Horizontal)
+	{
+		if (HorizontalScrollbarWidget.IsValid())
+		{
+			bHorizontalValid = true;
+		}
+		else
+		{
+			if (HorizontalScrollbar.IsValid())
+			{
+#if WITH_EDITOR
+				if (GetWorld() && GetWorld()->IsGameWorld())//register event only in game mode
+#endif
+				{
+					HorizontalScrollbarDelegateHandle = HorizontalScrollbar->GetOnValueChangedEvent().AddUObject(this, &UUIScrollViewWithScrollbar::OnHorizontalScrollbar);
+				}
+				HorizontalScrollbarWidget = HorizontalScrollbar->GetWidget();
+				bHorizontalValid = true;
+			}
+		}
+	}
+
+	if (Vertical)
+	{
+		if (VerticalScrollbarWidget.IsValid())
+		{
+			bVerticalValid = true;
+		}
+		else
+		{
+			if (VerticalScrollbar.IsValid())
+			{
+#if WITH_EDITOR
+				if (GetWorld() && GetWorld()->IsGameWorld())//register event only in game mode
+#endif
+				{
+					VerticalScrollbarDelegateHandle = VerticalScrollbar->GetOnValueChangedEvent().AddUObject(this, &UUIScrollViewWithScrollbar::OnVerticalScrollbar);
+				}
+				VerticalScrollbarWidget = VerticalScrollbar->GetWidget();
+				bVerticalValid = true;
+			}
+		}
+	}
+
+	if (Horizontal && Vertical)
+	{
+		if (bHorizontalValid && bVerticalValid)
+		{
+			return true;
+		}
+	}
+	else
+	{
+		if (Horizontal)
+		{
+			return bHorizontalValid;
+		}
+		if (Vertical)
+		{
+			return bVerticalValid;
+		}
+	}
+
+	return false;
+}
+bool UUIScrollViewWithScrollbar::CheckValidHit(UDreamWidget* InHitComp)
+{
+	bool bHitHorizontalScrollbar = HorizontalScrollbarWidget.IsValid() && (InHitComp->IsChildOf(HorizontalScrollbarWidget.Get()) || InHitComp == HorizontalScrollbarWidget);
+	bool bHitVerticalScrollbar = VerticalScrollbarWidget.IsValid() && (InHitComp->IsChildOf(VerticalScrollbarWidget.Get()) || InHitComp == VerticalScrollbarWidget);
+	return Super::CheckValidHit(InHitComp)
+		&& !bHitHorizontalScrollbar && !bHitVerticalScrollbar;//make sure hit component is not scrollbar
+}
+void UUIScrollViewWithScrollbar::CalculateHorizontalRange()
+{
+	Super::CalculateHorizontalRange();
+	if (CheckScrollbarParameter())
+	{
+		auto ParentWidth = ContentParent->GetWidth();
+		auto ContentWidth = Content->GetWidth();
+		bool ShouldScrollbarActive = true;
+		if (ParentWidth >= ContentWidth)
+		{
+			if (HorizontalScrollbarVisibility == EDreamUIScrollViewScrollbarVisibility::Permanent)
+			{
+				ShouldScrollbarActive = true;
+			}
+			else
+			{
+				ShouldScrollbarActive = false;
+			}
+		}
+		else
+		{
+			if (HorizontalScrollbarVisibility == EDreamUIScrollViewScrollbarVisibility::Permanent)
+			{
+				ShouldScrollbarActive = true;
+			}
+			else
+			{
+				ShouldScrollbarActive = true;
+			}
+		}
+		if (HorizontalScrollbarWidget.IsValid())
+		{
+			HorizontalScrollbarWidget->SetWidgetActive(ShouldScrollbarActive);
+		}
+		if (HorizontalScrollbar.IsValid())
+		{
+			HorizontalScrollbar->SetValueAndSize(Progress.X,
+				DreamScrollViewWithScrollbarLocal::VisibleFraction(ParentWidth, ContentWidth), false);
+		}
+	}
+}
+void UUIScrollViewWithScrollbar::CalculateVerticalRange()
+{
+	Super::CalculateVerticalRange();
+	if (CheckScrollbarParameter())
+	{
+		auto ParentHeight = ContentParent->GetHeight();
+		auto ContentHeight = Content->GetHeight();
+		bool ShouldScrollbarActive = true;
+		if (ParentHeight >= ContentHeight)
+		{
+			if (VerticalScrollbarVisibility == EDreamUIScrollViewScrollbarVisibility::Permanent)
+			{
+				ShouldScrollbarActive = true;
+			}
+			else
+			{
+				ShouldScrollbarActive = false;
+			}
+		}
+		else
+		{
+			if (VerticalScrollbarVisibility == EDreamUIScrollViewScrollbarVisibility::Permanent)
+			{
+				ShouldScrollbarActive = true;
+			}
+			else
+			{
+				ShouldScrollbarActive = true;
+			}
+		}
+		if (VerticalScrollbarWidget.IsValid())
+		{
+			VerticalScrollbarWidget->SetWidgetActive(ShouldScrollbarActive);
+		}
+		if (VerticalScrollbar.IsValid())
+		{
+			VerticalScrollbar->SetValueAndSize(Progress.Y,
+				DreamScrollViewWithScrollbarLocal::VisibleFraction(ParentHeight, ContentHeight), false);
+		}
+	}
+}
+
+void UUIScrollViewWithScrollbar::OnHorizontalScrollbar(float InScrollValue)
+{
+	if (!Content.IsValid())return;
+	// The bar has the content now: a glide still under way would take it back on its next frame.
+	StopGlide();
+	bCanUpdateAfterDrag = false;
+	bAllowHorizontalScroll = true;
+
+	InScrollValue = FMath::Clamp(InScrollValue, 0.0f, 1.0f);
+	// Through the coordinate-mode pair, the way every other writer of the content position goes.
+	// HorizontalRange is a content position in whichever mode is ACTIVE -- the ranges are measured
+	// from GetStartAlignedPosition -- so writing a value from it straight into the relative location
+	// displaced the content by the whole difference between the two modes the moment CoordinateMode
+	// was AnchoredPosition, on every scrollbar drag.
+	FVector2D Position = GetContentPosition();
+	Position.X = FMath::Lerp(HorizontalRange.X, HorizontalRange.Y, 1.0f - InScrollValue);
+	SetContentPosition(Position);
+	Super::UpdateProgress();//use parent's function, skip the set scrollbar code
+}
+void UUIScrollViewWithScrollbar::OnVerticalScrollbar(float InScrollValue)
+{
+	if (!Content.IsValid())return;
+	//and the same glide rule as OnHorizontalScrollbar
+	StopGlide();
+	bCanUpdateAfterDrag = false;
+	bAllowVerticalScroll = true;
+
+	InScrollValue = FMath::Clamp(InScrollValue, 0.0f, 1.0f);
+	//same as OnHorizontalScrollbar: VerticalRange speaks the active coordinate mode
+	FVector2D Position = GetContentPosition();
+	Position.Y = FMath::Lerp(VerticalRange.X, VerticalRange.Y, InScrollValue);
+	SetContentPosition(Position);
+	Super::UpdateProgress();//use parent's function, skip the set scrollbar code
+}
+void UUIScrollViewWithScrollbar::SetHorizontalScrollbarVisibility(EDreamUIScrollViewScrollbarVisibility value)
+{
+	if (HorizontalScrollbarVisibility != value)
+	{
+		HorizontalScrollbarVisibility = value;
+		CalculateHorizontalRange();
+	}
+}
+void UUIScrollViewWithScrollbar::SetVerticalScrollbarVisibility(EDreamUIScrollViewScrollbarVisibility value)
+{
+	if (VerticalScrollbarVisibility != value)
+	{
+		VerticalScrollbarVisibility = value;
+		CalculateVerticalRange();
+	}
+}

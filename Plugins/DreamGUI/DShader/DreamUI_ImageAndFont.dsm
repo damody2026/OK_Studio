@@ -1,0 +1,83 @@
+// DreamGUI's default UI material: the thin host.
+// Edit this file, then rebuild -- the .uasset is an output.
+//
+// DreamGUI's own renderer draws canvases with a built-in global shader and needs no material. This
+// material exists for the two places a UMaterial is unavoidable: world-space canvases rendered by
+// UE's own renderer (the translucent pass needs an FMaterial) and OverrideMaterial. It is a host,
+// not a shader: every pixel decision -- sprite / bitmap / SDF / MTSDF by the widget's FontMark
+// record, the text style record, the clip -- is MF_DreamUI_Shade, which runs DreamUI_ShadePixel
+// from DreamUIShade.ush, the same function the built-in shader runs. Change the look there and both
+// paths move together.
+//
+// What stays in the material: the one thing that depends on who renders. DreamGUI's renderer
+// premultiplies in its own shader, UE's does not, so EmissiveColor is lerped between rgb*opacity and
+// plain rgb on DreamUI_IsRenderByDreamUIRenderer, which the canvas sets per draw.
+//
+// Surface domain, Unlit, AlphaComposite, two-sided: what the DreamUI renderer's material shaders
+// compile for (FDreamUIScreenRenderPS::ShouldCompilePermutation wants Surface + Unlit, or UI domain)
+// and what the UE translucent pass expects. Not a Substrate shading model: with r.Substrate off the
+// engine reports it as Substrate rather than Unlit and the DreamUI renderer skips the material;
+// with r.Substrate on, an Unlit legacy material is converted to an Unlit slab automatically.
+
+VirtualFunction(Name="MF_DreamUI_Shade")
+{
+	Options = {
+		Asset = Path(Plugins.DreamGUI, "Materials/MF_DreamUI_Shade");
+	}
+	Inputs = {
+		opt float4 Tint = float4(1.0, 1.0, 1.0, 1.0);
+	}
+	Outputs = {
+		float4 Result;
+	}
+}
+
+Shader(Name="Materials/DreamUI_ImageAndFont", Root="Plugin.DreamGUI")
+{
+	Properties = {
+		ScalarParameter DreamUI_IsRenderByDreamUIRenderer = 0.0 [
+			Group="DreamUI";
+		];
+	}
+
+	Settings = {
+		// Graph, not the project default ThinCustom: ThinCustom emits a UDreamShaderMaterialInstance,
+		// which would make DreamGUI fail to load its own materials wherever DreamShader is absent.
+		Backend = "Graph";
+		Domain = "Surface";
+		ShadingModel = "Unlit";
+		BlendMode = "AlphaComposite";
+		TwoSided = true;
+	}
+
+	Outputs = {
+		float3 EmissiveColor;
+		float Opacity;
+
+		Base.EmissiveColor = EmissiveColor;
+		Base.Opacity = Opacity;
+	}
+
+	Graph = {
+		// rgb straight colour, a opacity with the clip applied.
+		float4 Shaded = MF_DreamUI_Shade();
+
+		#Region "DreamUIRenderer will do color.rgb * color.a for PremultiplyAlpha"
+		float3 Premultiplied = (Shaded.rgb * Shaded.a);
+		float3 Emissive = lerp(Premultiplied, Shaded.rgb, DreamUI_IsRenderByDreamUIRenderer);
+		#EndRegion
+
+		EmissiveColor = Emissive;
+		Opacity = Shaded.a;
+	}
+
+	Layout = {
+		Node(Var="Shaded", X=-640, Y=128);
+		Comment(Name="DreamUIRenderer will do color.rgb * color.a for PremultiplyAlpha", X=-352, Y=48, W=560, H=256, Color=float4(1.0, 1.0, 1.0, 1.0));
+		Node(Var="Premultiplied", X=-320, Y=112);
+		Node(Var="DreamUI_IsRenderByDreamUIRenderer", X=-320, Y=224);
+		Node(Var="Emissive", X=-80, Y=112);
+		Node(Var="EmissiveColor", X=256, Y=96);
+		Node(Var="Opacity", X=256, Y=224);
+	}
+}

@@ -1,0 +1,157 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+
+#include "Extensions/DreamUIRenderTargetInteraction.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Core/DreamUIWorldContext.h"
+#include "DreamGUI.h"
+#include "Extensions/DreamUIRenderTargetGeometrySource.h"
+#include "Event/DreamScreenSpaceRaycaster.h"
+#include "Event/DreamPointerPolicy.h"
+#include "Engine/World.h"
+
+#define LOCTEXT_NAMESPACE "DreamGUIRenderTargetInteraction"
+
+UDreamUIRenderTargetInteraction::UDreamUIRenderTargetInteraction()
+{
+	// Nothing to tick: the input pipeline asks this component where a ray lands when one does.
+	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
+}
+
+void UDreamUIRenderTargetInteraction::ActivateRaycaster()
+{
+	// Not enrolled with the manager as a raycaster of its own: it is reached through the world raycaster whose ray
+	// lands on its actor, as a nested surface.
+}
+void UDreamUIRenderTargetInteraction::DeactivateRaycaster()
+{
+
+}
+
+bool UDreamUIRenderTargetInteraction::ResolveSource()
+{
+	if (!IsValid(LineTraceSource))
+	{
+		AActor* Owner = GetOwner();
+		LineTraceSource = Owner != nullptr ? Owner->FindComponentByInterface(UDreamUIRenderTargetInteractionSourceInterface::StaticClass()) : nullptr;
+		if (!IsValid(LineTraceSource))
+		{
+			if (!bReportedMissingSource)
+			{
+				bReportedMissingSource = true;
+				UE_LOG(DreamGUI, Error, TEXT("[%s].%d InteractionSource is not valid! DreamGUIRenderTargetInteraction need a valid component which inherit %s on the same actor!")
+					, ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *(UDreamUIRenderTargetInteractionSourceInterface::StaticClass()->GetName()));
+			}
+			return false;
+		}
+	}
+	// Asked of the source every time rather than kept from the first answer: the source shows whichever canvas it
+	// was last given (SetCanvas), and one kept until it died sent every pointer to a canvas that was no longer on
+	// the surface -- clicks landing on widgets nobody could see. The source answers from its own cache, so asking
+	// is cheap.
+	TargetCanvas = IDreamUIRenderTargetInteractionSourceInterface::Execute_GetTargetCanvas(LineTraceSource);
+	if (!TargetCanvas.IsValid())
+	{
+		if (!bReportedMissingSource)
+		{
+			bReportedMissingSource = true;
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d TargetCanvas is not valid! DreamGUIRenderTargetInteraction need to get a vaild DreamGUICanvas from InteractionSource!")
+				, ANSI_TO_TCHAR(__FUNCTION__), __LINE__);
+		}
+		return false;
+	}
+	return true;
+}
+
+bool UDreamUIRenderTargetInteraction::ResolveNestedHit(const FDreamUIHitResultContainer& InOuterHit, UDreamPointerEventData* InPointer,
+	FDreamUIHitResultContainer& OutInnerHit)
+{
+	if (InPointer == nullptr || !ResolveSource())
+	{
+		return false;
+	}
+	// The WORLD ray, against the surface: where on the texture it lands.
+	const FVector WorldRayOrigin = InOuterHit.RayOrigin;
+	const FVector WorldRayEnd = InOuterHit.RayOrigin + InOuterHit.RayDirection * RayLength;
+	FVector2D HitUV;
+	if (!IDreamUIRenderTargetInteractionSourceInterface::Execute_PerformLineTrace(LineTraceSource,
+		InOuterHit.HitResult.FaceIndex, InOuterHit.HitResult.Location, WorldRayOrigin, WorldRayEnd, HitUV))
+	{
+		return false;
+	}
+
+	// The CANVAS ray, from the target canvas's own eye through that spot, with its own end: a canvas segment run
+	// toward the world ray's end would bend toward the world ray's direction, off by more the further from the middle
+	// of the surface the pointer is.
+	FVector CanvasRayOrigin, CanvasRayDirection;
+	UDreamScreenSpaceRaycaster::DeprojectViewPointToWorld(TargetCanvas->GetViewProjectionMatrix(), HitUV, CanvasRayOrigin, CanvasRayDirection);
+	FVector CanvasRayEnd = CanvasRayOrigin + CanvasRayDirection * RayLength;
+
+	TArray<FDreamUIHitResult> HitResultArray;
+	this->Raycast(InPointer, CanvasRayOrigin, CanvasRayDirection, CanvasRayEnd, HitResultArray);
+	OutInnerHit.Raycaster = this;
+	OutInnerHit.RayOrigin = CanvasRayOrigin;
+	OutInnerHit.RayDirection = CanvasRayDirection;
+	OutInnerHit.RayEnd = CanvasRayEnd;
+	// The rule a raycaster's own hits keep (UDreamUIInputUser::LineTrace): an uninteractable widget in front is cut out
+	// of the path, and the hit is the nearest widget above it that takes input -- Slate's FHittestGrid::GetBubblePath.
+	// It still hides what is behind it on this canvas. With nothing above it that takes input, the surface itself is
+	// what the pointer is over.
+	UDreamWidget* TopHitWidget = HitResultArray.Num() > 0 ? HitResultArray[0].Widget.Get() : nullptr;
+	UDreamWidget* TargetWidget = DreamPointerPolicy::ResolveEnabledHitTarget(TopHitWidget);
+	if (TargetWidget != nullptr)
+	{
+		const bool bCut = TargetWidget != TopHitWidget;
+		OutInnerHit.HitResult = HitResultArray[0];
+		OutInnerHit.HitResult.Widget = TargetWidget;
+		OutInnerHit.WidgetIgnoringEnabled = TopHitWidget;
+		for (const FDreamUIHitResult& HitItem : HitResultArray)
+		{
+			if (UDreamWidget* HoveredWidget = HitItem.Widget.Get(); HoveredWidget != nullptr
+				&& (!bCut || HoveredWidget->GetInteractableInHierarchy()))
+			{
+				OutInnerHit.HoverArray.Add(HoveredWidget);
+			}
+		}
+	}
+	return true;
+}
+
+void UDreamUIRenderTargetInteraction::Raycast(UDreamPointerEventData* InPointerEventData, FVector& OutRayOrigin, FVector& OutRayDirection, FVector& OutRayEnd, TArray<FDreamUIHitResult>& OutHitResultArray)
+{
+	if (!ResolveSource())
+	{
+		return;
+	}
+	Super::RaycastUI(InPointerEventData, TargetCanvas.Get(), OutRayOrigin, OutRayDirection, OutRayEnd, OutHitResultArray);
+}
+
+// Over a part of the surface with no widget, the actor is what the pointer is over; these only let its events
+// bubble, or not, as they always have. The UI on the texture is served by the pipeline itself.
+bool UDreamUIRenderTargetInteraction::OnPointerEnter_Implementation(UDreamPointerEventData* EventData)
+{
+	return bAllowEventBubbleUp;
+}
+bool UDreamUIRenderTargetInteraction::OnPointerExit_Implementation(UDreamPointerEventData* EventData)
+{
+	return bAllowEventBubbleUp;
+}
+bool UDreamUIRenderTargetInteraction::OnPointerDown_Implementation(UDreamPointerEventData* EventData)
+{
+	return bAllowEventBubbleUp;
+}
+bool UDreamUIRenderTargetInteraction::OnPointerDoubleClick_Implementation(UDreamPointerEventData* EventData)
+{
+	return bAllowEventBubbleUp;
+}
+bool UDreamUIRenderTargetInteraction::OnPointerUp_Implementation(UDreamPointerEventData* EventData)
+{
+	return bAllowEventBubbleUp;
+}
+bool UDreamUIRenderTargetInteraction::OnPointerScroll_Implementation(UDreamPointerEventData* EventData)
+{
+	return bAllowEventBubbleUp;
+}
+
+#undef LOCTEXT_NAMESPACE

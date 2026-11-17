@@ -22,6 +22,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "OpenKoikatsu")
 	static UKKGameRoot* Get();
 
+	// True with -NoGameRoot (a package: no original game on this machine; Root is then empty).
+	static bool NoGame();
+
 	UFUNCTION(BlueprintCallable, Category = "OpenKoikatsu")
 	FString Abdata() const;
 

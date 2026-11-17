@@ -17,20 +17,23 @@ struct FOKPaintPose {
   // Retain allocation, never retain pose/morph content. In particular Morph
   // must have count zero before SetNumZeroed or weights would accumulate.
   LOD=nullptr;Weights=nullptr;Matrices.Reset();Morph.Reset();Fallback.Reset();
-  // Not until it is on screen: a part just made or going (her outfit changed in H) has no mesh object, GetCPUSkinnedVertices
-  // asserts on it. The surface is left out this frame and asked again the next.
-  if(!C->IsRegistered()||!C->GetMeshObject())return false;
+  // Only GetCPUSkinnedVertices (the Unsupported path below) needs a mesh object: it asserts without one (a part just made
+  // or going, her outfit changed in H: left out this frame, asked again the next). The bone matrices do not: a packaged
+  // game draws the body through its GPU display and this follower has no mesh object at all, so requiring one there
+  // left the character MCP without any body geometry (2026-11-17, the Studio package).
+  if(!C->IsRegistered())return false;
   Component=C;LocalToWorld=C->GetComponentTransform();auto* Mesh=Cast<USkeletalMesh>(C->GetSkinnedAsset());if(!Mesh||!Mesh->GetResourceForRendering()||Mesh->GetResourceForRendering()->LODRenderData.IsEmpty())return false;
   LOD=&Mesh->GetResourceForRendering()->LODRenderData[0];Weights=C->GetSkinWeightBuffer(0);
   if(!Weights||!Weights->GetDataVertexBuffer()->GetWeightData()||Weights->GetNumVertices()!=LOD->GetNumVertices()||!LOD->StaticVertexBuffers.PositionVertexBuffer.GetVertexData())return false;
   // Her clothes' belly wrap (AKKPreviewActor::SetPartWrapDeltas, the one external set we make) is a morph like the others:
   // read here, not by GetCPUSkinnedVertices, which flushed the render thread every coating frame (2 ms, trace 2026-11-10).
-  const TArray<FMorphTargetDelta>* Wrap=AKKPreviewActor::WrapMorphDeltas(C);
-  bool Unsupported=C->HasMeshDeformer(0);for(const auto& Sets:C->GetExternalMorphSetsArray())Unsupported|=Sets.Num()>(Wrap?1:0);
+  // So are her thighs' jiggle and any other set we made (OwnMorphDeltas, by set id); a set made elsewhere is not known here.
+  const TMap<int32,TArray<FMorphTargetDelta>>* Own=AKKPreviewActor::OwnMorphDeltas(C);
+  bool Unsupported=C->HasMeshDeformer(0);for(const auto& Sets:C->GetExternalMorphSetsArray())for(const auto& Set:Sets)Unsupported|=!(Own&&Own->Contains(Set.Key));
   if(auto* Skeletal=Cast<USkeletalMeshComponent>(C))if(Skeletal->ClothBlendWeight>0)for(const auto& Section:LOD->RenderSections)Unsupported|=Section.HasClothingData();
   // Preserve the previous precise path for simulation/deformation systems which
   // ordinary bone matrices and built-in morphs cannot describe.
-  if(Unsupported){C->GetCPUSkinnedVertices(Fallback,0);return !Fallback.IsEmpty();}
+  if(Unsupported){if(!C->GetMeshObject())return false;C->GetCPUSkinnedVertices(Fallback,0);return !Fallback.IsEmpty();}
   C->GetCurrentRefToLocalMatrices(Matrices,0);
   const float Maximum=UE::SkeletalRender::Settings::GetMorphTargetMaxBlendWeight();
   for(const auto& Item:C->ActiveMorphTargets){if(!Item.Key||!C->MorphTargetWeights.IsValidIndex(Item.Value)||!Item.Key->HasDataForLOD(0))continue;
@@ -38,7 +41,7 @@ struct FOKPaintPose {
    if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());
    for(auto Delta=Item.Key->GetDeltaIteratorForLOD(0);!Delta.AtEnd();++Delta)if(Morph.IsValidIndex(Delta->SourceIdx))Morph[Delta->SourceIdx]+=Delta->PositionDelta*Weight;
   }
-  if(Wrap&&!Wrap->IsEmpty()){if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());for(const FMorphTargetDelta& Delta:*Wrap)if(Morph.IsValidIndex(Delta.SourceIdx))Morph[Delta.SourceIdx]+=Delta.PositionDelta;}
+  if(Own)for(const auto& Set:*Own)if(!Set.Value.IsEmpty()){if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());for(const FMorphTargetDelta& Delta:Set.Value)if(Morph.IsValidIndex(Delta.SourceIdx))Morph[Delta.SourceIdx]+=Delta.PositionDelta;}
   return !Matrices.IsEmpty();
  }
  FVector Position(int32 Vertex) const {

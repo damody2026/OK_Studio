@@ -832,6 +832,14 @@ fn is_unity(path: &Path, bytes: &[u8]) -> bool {
 }
 
 fn entry_bytes(entry: &Entry) -> Option<Vec<u8>> {
+    let out = entry_bytes_inner(entry);
+    if let Some(bytes) = out.as_ref() { crate::unity::note_read_bytes(bytes.len()); }
+    out
+}
+
+/// Every call copies the entry's bytes out of the library index's map or the mounted pack into an owned `Vec`
+/// (`note_read_bytes` counts how much an open does of this).
+fn entry_bytes_inner(entry: &Entry) -> Option<Vec<u8>> {
     match entry {
         Entry::Data(_) | Entry::Mapped(..) | Entry::Shared(_) => entry.data(),
         Entry::Model(id, _) => Some(crate::oklib::token(id)),
@@ -876,7 +884,18 @@ pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {let _spot=crate::pr
             result
         }
         Mode::Replay => {
-            if let Some(o) = replay_overlay() { if let Some(bytes) = o.index.lock().unwrap().files.get(&key).and_then(entry_bytes) { return Ok(bytes); } }
+            // On an OK card nearly every read is served right here from the card's own pack, on nine threads at once
+            // (the asking thread and eight entry-prefetch helpers), through this one mutex — and the copy out of the
+            // pack happens while it is held. **That is not a bottleneck**, measured: the SPOT below is 0.1–0.7 ms
+            // over 227–320 reads of a cold open. For a single mutex the sum over threads of the time inside the
+            // critical section **is** serialised wall time (nothing in it can overlap), so unlike other SPOT sums
+            // this one may be read directly — and it says there is nothing here to win. Copying outside the lock
+            // was tried on 2026-11-18 and put back; what the window is actually limited by is the first touch of the
+            // pack's pages (see `Docs/CARD_OPEN_PERF_20261117.md` 第二节).
+            if let Some(o) = replay_overlay() {
+                let _section = crate::profile::spot("overlay index section");
+                if let Some(bytes) = o.index.lock().unwrap().files.get(&key).and_then(entry_bytes) { return Ok(bytes); }
+            }
             // An OK card's open: a third-party mod's file only from its own pack (okstrict.rs).
             if crate::okstrict::active().is_some() && !crate::okstrict::library_path(&key) {
                 let entry = st.index.lock().unwrap().files.get(&key).map(portable);
@@ -1365,6 +1384,7 @@ impl Zip {
                 // as its token: the item catalog scan walks every zipmod's bundles, and only a query a session really
                 // makes on that model is a gap (it names the model, which `zips_with_model` turns into the zipmod).
                 let data = if use_real { None } else { recorded.and_then(entry_bytes).map(io::Cursor::new) };
+
                 let label = Label { key, name: entry_name };
                 if data.is_none() && !dir {
                     // Not converted (character-specific): the real archive's entry, read when the entry is read.
@@ -1510,11 +1530,15 @@ pub fn library_zip_memo<T: Clone + Send + Sync + 'static>(what: &str, zip: &Path
     // this checkout lacks the models of ~3900 recorded archives, which the three whole-tree walks of an open
     // (strip_all, override index, GUID index) then read again, ~11700 zip opens and ~1 s of every open, although the
     // same real file (or none at all) served them. The sealing case (`own`) keeps the generation.
-    // Only outside a strict open. Unlike `view_memo`, this memo has no gap guard: a value `build()` recorded an
-    // okstrict gap for is kept anyway, so sharing it between two strict opens would carry that gap's presence (or
-    // absence) into the other one, and the pack identity in the key is what kept them apart. A strict open is an OK
-    // card's or a conversion's (okstrict::active needs a mounted pack scope), so original cards — where the sharing
-    // pays — are unaffected.
+    // Only outside a strict open. The reason was that this memo had no gap guard; it has one now (below, 2026-11-16),
+    // so on 2026-11-17 this hold-out was removed and measured: **it buys nothing, so it was put back.** Five OK cards
+    // in one process took 1498 open_zip calls with the sharing, 1503 without (noise), and the 35 `--fresh-dump`
+    // dumps were identical either way. The switch was live — the same build on two original cards gives 38094 vs
+    // 52645 calls — so the zero is real, not a dead switch. The reason is by design: an OK card is self-contained,
+    // so nearly every archive it reads comes from its own pack, which is the `own` branch above and keeps the
+    // generation regardless. Only archives the library records could be shared, and an OK card's open barely reads
+    // any. **So do not retry this**: sharing values between two strict opens is what the pack identity in the key
+    // prevents (花火 2026-11-12, alice 2026-11-16), and there is no measured gain to pay for that risk.
     // OK_COARSE_ZIP_MEMO=1: the whole fallback generation in the key again (to compare with the per-archive one).
     let generation = if own || coarse_zip_memo() || crate::okstrict::active().is_some() { format!("{}|{}", FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::oklib::mounted_pack_identity()) }
         // The mounted pack only decides this archive when the overlay records it (open_zip completes the library's

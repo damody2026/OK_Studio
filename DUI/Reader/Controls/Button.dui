@@ -1,0 +1,14 @@
+// A button mirrored from the character controller; pressing it presses the controller's own button.
+class /Game/UI/Reader/Controls/WBP_OKButton
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (200, 44)
+    + Overlay { }
+    Native.Button Button : ui.ButtonSecondary {
+        Style.Height = 40
+        Style.ContentPadding = (12, 4, 12, 4)
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+        Text Label : ui.Label { Text = "" }
+    }
+}

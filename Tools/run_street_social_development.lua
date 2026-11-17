@@ -237,14 +237,8 @@ local function main()
     -- Only a stage's own game (…/X.stage/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe): -Editor runs the
     -- engine's UnrealEditor.exe, whose Content is the engine's.
     if build.executable:lower():match("%.stage/windows/openkoikatsu/binaries/win64/[^/]+%.exe$") then
-      local content = path.join(path.parent(path.parent(path.parent(build.executable))), "Content")
-      for _, name in ipairs({ "IndependentResources", "KKPreview" }) do
-        local link, target = path.join(content, name), path.join(root, "Content", name)
-        if path.is_dir(content) and not path.exists(link) and path.is_dir(target) then
-          local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
-          say((made.ok and "Linked " or "Could not link ") .. link .. " -> " .. target)
-        end
-      end
+      -- A junction into a folder the package was moved from is remade (street_stage.link_content).
+      street_stage.link_content(build.executable, root, { "IndependentResources", "KKPreview" }, say)
     end
     -- The runtime material shader library and audio settings ship as a patch beside the stage; rebuild it when gone.
     if not path.exists(build.patch) then

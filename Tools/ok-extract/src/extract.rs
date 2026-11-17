@@ -2205,6 +2205,33 @@ pub(crate) fn extract_session_from_info(
     profile_tick("load shape keys (session)", t_keys);
     clear_entry_prefetch();
     profile_tick("extract_card_outfit TOTAL", t_all);
+    if std::env::var_os("OK_PROFILE").is_some() {
+        let (total, repeats, rows) = crate::unity::take_work_counts();
+        eprintln!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)");
+        for (source, n) in rows.iter().filter(|(_, n)| *n > 1) { eprintln!("ok-extract: PROFILE   {n}x {source}"); }
+        // How many of the textures this session carries are **exactly** a decoded payload — nothing flipped,
+        // masked, tinted or composed. Only those could be handed to UE as the source's own BC blocks with no
+        // decode at all, so this share is the ceiling on that idea (CARD_OPEN_PERF 第四节 asks for it first).
+        let outs = crate::unity::take_payload_outs();
+        let (mut carried, mut untouched) = (0u32, 0u32);
+        let mut formats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        for part in &session_parts {
+            let own = [&part.png, &part.alpha_mask, &part.hair_gloss, &part.detail_mask, &part.line_mask,
+                &part.normal_map, &part.normal_detail, &part.normal_mask, &part.overtex_png, &part.overtex2_png];
+            for bytes in own.into_iter().flatten().chain(part.shader_textures.values()) {
+                carried += 1;
+                if let Some(format) = outs.get(&crate::unity::texture_hash(bytes)) {
+                    untouched += 1;
+                    *formats.entry(format.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        eprintln!("ok-extract: PROFILE passthrough {untouched}/{carried} session textures are an undecoded payload, by source format {formats:?}");
+        // What `gamefs::read` copied out of the library index and the card's pack: every read hands back an owned
+        // Vec, so this is memcpy on top of the work done with the bytes.
+        let (read_bytes, read_calls) = crate::unity::take_read_bytes();
+        eprintln!("ok-extract: PROFILE copied out of the sources {:.1} MiB in {read_calls} reads", read_bytes as f64 / (1 << 20) as f64);
+    }
     for (name, s) in stages.map(crate::appearance::timings::Capture::finish).unwrap_or_default() {
         eprintln!("ok-extract: STAGE {name:28} {:8.1}ms x{} max {:.1}ms", s.total_ms, s.calls, s.max_ms);
     }
@@ -2995,13 +3022,17 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
                 items.push((zip, entry.clone(), true));
             }
         }
+        let t_sub = Instant::now();
         prefetch_entries(game_root, items);
+        profile_tick("lists: prefetch spawn", t_sub);
     }
     if std::env::var("OK_DIAG").is_ok() {
         eprintln!("ok-extract: clothes requested={requested_states:?} resolved={resolved_states:?} types={state_types:?} refs={reference_flags:?} notBot={linked_not_bot} notShorts={linked_not_shorts}");
     }
+    let t_sub = Instant::now();
     let selected_hair_gloss = parsed_card.as_ref()
         .and_then(|card| selected_hair_gloss_texture(game_root, card, &vanilla, &mod_catalog, &guid_index));
+    profile_tick("lists: hair gloss", t_sub);
     Ok(ListsStage { vanilla, ramp_png, mods_dir, mod_catalog: mod_catalog_shared, guid_index, selected_clothes,
         selected_top_type, selected_top_subparts, state_types, linked_not_bot, linked_not_shorts, requested_states,
         reference_flags, resolved_states, selected_hair_gloss, clothes_scope: _clothes_scope,

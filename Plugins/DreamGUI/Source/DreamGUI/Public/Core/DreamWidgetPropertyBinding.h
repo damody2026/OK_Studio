@@ -1,0 +1,287 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "DreamWidgetPropertyBinding.generated.h"
+
+class UDreamWidget;
+
+/**
+ * Which object on the widget a binding drives.
+ *
+ * A widget's interesting properties are mostly not on the widget: Text and FontSize belong to a
+ * UDreamText, which is the widget's VISUAL, and a behaviour has its own. The widget is only the
+ * thing that has a name, so the name alone does not say what to write to.
+ */
+UENUM()
+enum class EDreamWidgetBindingTarget : uint8
+{
+	/** The widget itself. */
+	Widget,
+	/** Its visual -- where Text, FontSize, Sprite and most of what an author wants to bind live. */
+	Visual,
+	/** One of its behaviours, by position in the widget's component array. */
+	Behaviour,
+};
+
+/**
+ * One member path a binding reads, from the user widget on: {Player, Health} for `Player.Health`. Every segment but the
+ * last is an object member; the last is any member, or a no-argument function. See DreamUIBindingPath.
+ */
+USTRUCT()
+struct DREAMGUI_API FDreamWidgetBindingPath
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FName> Segments;
+
+	bool operator==(const FDreamWidgetBindingPath& Other) const { return Segments == Other.Segments; }
+};
+
+/**
+ * "Drive this property from this function", resolved at compile time.
+ *
+ * The counterpart of UMG's FDelegateRuntimeBinding, with one deliberate difference. UMG binds a
+ * companion delegate that the widget consults while it draws (FGetText next to Text), which needs
+ * every bindable property in the runtime library to carry a delegate twin. Nothing here does, and
+ * adding one per property to buy an editor feature is the wrong trade: this evaluates in the other
+ * direction instead -- call the function, hand the result to the object's own setter.
+ *
+ * Going through the SETTER rather than writing the property is what makes that sound. A reflected
+ * write lands in memory and nothing repaints; SetText marks what SetText knows to mark. It also
+ * settles what "bindable" means without a list to maintain: a property is bindable exactly when its
+ * object already exposes a setter for it, which is the same as it being ready to change at runtime.
+ *
+ * Every name here is resolved and checked by the compiler, so the runtime looks things up but never
+ * guesses -- a binding that cannot be honoured is a compile error, not a silent no-op.
+ */
+USTRUCT()
+struct DREAMGUI_API FDreamWidgetPropertyBinding
+{
+	GENERATED_BODY()
+
+	/** The widget, by the variable name the compiler gave it -- its display name. */
+	UPROPERTY()
+	FName WidgetName;
+
+	/** Which object on that widget carries the property. */
+	UPROPERTY()
+	EDreamWidgetBindingTarget Target = EDreamWidgetBindingTarget::Widget;
+
+	/**
+	 * Which behaviour, when Target is Behaviour: its index in the widget's component array.
+	 *
+	 * By position, because a behaviour is an instanced sub-object and the authored copy and the
+	 * instanced one share no name -- the same correspondence the designer's own component editing
+	 * runs on.
+	 */
+	UPROPERTY()
+	int32 BehaviourIndex = INDEX_NONE;
+
+	/** The property being driven. */
+	UPROPERTY()
+	FName PropertyName;
+
+	/**
+	 * Its setter, resolved by the compiler so the runtime does no name-guessing. None for the one property a binding
+	 * writes directly: a variable of a user widget (a component's `props` entry, a Blueprint variable with no SetX),
+	 * written into the instance and announced through its FieldNotify field, which is what the component's own
+	 * bindings on it listen to.
+	 */
+	UPROPERTY()
+	FName SetterName;
+
+	/** A no-argument function on the user widget whose return value feeds the setter. */
+	UPROPERTY()
+	FName FunctionName;
+
+	/**
+	 * Set for the forward half of a `<->`: the FieldNotify VARIABLE this binding really reads
+	 * (FunctionName is only its generated getter). The runtime subscribes to this field's
+	 * broadcasts instead of the getter's nonexistent one, and both the compiler and the builder
+	 * prefer the property's silent `...WithoutNotify` setter when it exists -- pushing a value
+	 * INTO a control must not fire the control's changed event back at the variable, and killing
+	 * the echo at the setter beats trusting every control to early-out on an equal value.
+	 */
+	UPROPERTY()
+	FName NotifyField;
+
+	/**
+	 * Every member path the source reads (FDreamUIProperty::BindingDependencies, recorded when the compiler lowered the
+	 * expression). With bDependenciesRecorded the run time watches these instead of looking FunctionName or NotifyField
+	 * up as a field of the widget:
+	 *  - complete, and every hop announceable (DreamUIBindingPath::CanNotifyAlong from the widget's class): subscribed
+	 *    through an FDreamUIBindingObserver, never polled;
+	 *  - otherwise: polled every frame, as every expression binding was before.
+	 * Either way the binding is not evaluated while an object along any path is unset -- the target keeps the value it
+	 * had (the authored one, or the last one) rather than being reset by a chain that broke.
+	 *
+	 * Not recorded (an older compile, the designer's Bind button, a bare `F()`): the run time does what it always did.
+	 */
+	UPROPERTY()
+	TArray<FDreamWidgetBindingPath> Dependencies;
+
+	/** The compiler recorded Dependencies. Empty Dependencies then mean a constant: evaluated once, never polled. */
+	UPROPERTY()
+	bool bDependenciesRecorded = false;
+
+	/** Nothing the source reads escapes Dependencies -- see FDreamUIProperty::bBindingDependenciesComplete. */
+	UPROPERTY()
+	bool bDependenciesComplete = false;
+
+#if WITH_EDITORONLY_DATA
+	/**
+	 * Where the `<-` that produced this was written: 1-based line and column, both 0 when it came
+	 * from anywhere but a .dui (the designer's Bind button, a test building the struct by hand).
+	 *
+	 * Carried on the BINDING rather than looked up later because there is nothing to look it up
+	 * from. The checks that need it -- DUI5004's two halves -- run inside the Blueprint compile,
+	 * which has the resolved binding list and no AST: the file was parsed in an earlier stage and
+	 * the tree it produced is gone. Without this the diagnostic reaches VSCode with a location of
+	 * (0,0), which the extension clamps to 1,1, and every binding mistake in a 300-line file
+	 * points at its first character.
+	 *
+	 * WITH_EDITORONLY_DATA because these ride into the generated class and so into a cooked build,
+	 * where a line number in a source file that was never shipped is dead weight. Two plain ints
+	 * rather than an FDreamUISourceLocation because that type is deliberately not a USTRUCT -- the
+	 * AST it belongs to must stay free of UObject so the parser can run off the game thread.
+	 *
+	 * NOT part of operator==: two bindings that differ only in where they were typed are the same
+	 * binding, and the equality here answers "is this the same route", never "is this the same
+	 * text".
+	 */
+	UPROPERTY()
+	int32 SourceLine = 0;
+
+	UPROPERTY()
+	int32 SourceColumn = 0;
+#endif // WITH_EDITORONLY_DATA
+
+	bool operator==(const FDreamWidgetPropertyBinding& Other) const
+	{
+		return WidgetName == Other.WidgetName
+			&& Target == Other.Target
+			&& BehaviourIndex == Other.BehaviourIndex
+			&& PropertyName == Other.PropertyName
+			&& SetterName == Other.SetterName
+			&& FunctionName == Other.FunctionName
+			&& NotifyField == Other.NotifyField
+			&& Dependencies == Other.Dependencies
+			&& bDependenciesRecorded == Other.bDependenciesRecorded
+			&& bDependenciesComplete == Other.bDependenciesComplete;
+	}
+};
+
+/**
+ * "Route this event to this handler", the `->` to the property binding's `<-`.
+ *
+ * The arrows point the way the data flows: `Text <- GetTitle()` pulls a value out of a function,
+ * `OnClicked -> Confirm` pushes an event into one. Everything else is deliberately the same shape
+ * as FDreamWidgetPropertyBinding -- same widget naming, same target enum, same resolve walk -- so
+ * the second kind of binding costs no second mental model.
+ *
+ * EventName is a DYNAMIC multicast delegate property on the target, because dynamic is the kind a
+ * UFUNCTION can be bound to by name and the kind that survives serialization; a plain multicast
+ * delegate has neither property. FunctionName is a UFUNCTION on the user widget -- the compiler has
+ * checked it exists and that its signature matches the delegate's, so the runtime binds without
+ * guessing.
+ */
+USTRUCT()
+struct DREAMGUI_API FDreamWidgetEventBinding
+{
+	GENERATED_BODY()
+
+	/** The widget, by the variable name the compiler gave it. */
+	UPROPERTY()
+	FName WidgetName;
+
+	UPROPERTY()
+	EDreamWidgetBindingTarget Target = EDreamWidgetBindingTarget::Widget;
+
+	UPROPERTY()
+	int32 BehaviourIndex = INDEX_NONE;
+
+	/** The dynamic multicast delegate property being listened to. */
+	UPROPERTY()
+	FName EventName;
+
+	/** The UFUNCTION on the user widget the event calls. */
+	UPROPERTY()
+	FName FunctionName;
+
+#if WITH_EDITORONLY_DATA
+	/**
+	 * Where the `->` that produced this was written, 1-based, 0 when it came from anywhere else --
+	 * the same field FDreamWidgetPropertyBinding carries and for the same reason, spelled out
+	 * there. This is the half DUI6004 and DUI6005 read: the handler's existence and its signature
+	 * can only be judged once the class exists, which is after the AST is gone.
+	 */
+	UPROPERTY()
+	int32 SourceLine = 0;
+
+	UPROPERTY()
+	int32 SourceColumn = 0;
+#endif // WITH_EDITORONLY_DATA
+
+	bool operator==(const FDreamWidgetEventBinding& Other) const
+	{
+		return WidgetName == Other.WidgetName
+			&& Target == Other.Target
+			&& BehaviourIndex == Other.BehaviourIndex
+			&& EventName == Other.EventName
+			&& FunctionName == Other.FunctionName;
+	}
+};
+
+/**
+ * The object a binding writes to, given the widget it names.
+ *
+ * Shared by the compiler and the runtime on purpose: they have to agree about what a binding points
+ * at, and two copies of this walk would be two chances to disagree.
+ */
+DREAMGUI_API UObject* ResolveDreamWidgetBindingTarget(const UDreamWidget* InWidget, EDreamWidgetBindingTarget InTarget, int32 InBehaviourIndex);
+
+/** The name a property's setter is spelled with: SetText for Text, SetUseKerning for bUseKerning. */
+DREAMGUI_API FName MakeDreamWidgetSetterName(const FProperty* InProperty);
+
+/**
+ * That setter, when it exists taking one in-parameter of the property's type -- and so also the
+ * answer to "is this property bindable".
+ *
+ * Shared rather than duplicated because the editor and the compiler have to agree: a panel that
+ * offers Bind on a property the compiler then refuses is worse than no panel entry at all.
+ */
+DREAMGUI_API UFunction* FindDreamWidgetSetterFor(const UClass* InClass, const FProperty* InProperty);
+
+/**
+ * Whether a bound function returning InReturn can drive a property of type InTarget.
+ *
+ * SameType, WIDENED BY ONE RULE: two plain numeric properties bind, whatever their width or
+ * signedness. Everything else -- structs, objects, enums, bools, text -- still has to match exactly.
+ *
+ * The widening is not a convenience. `<-` lowers into a generated Blueprint function, and K2's math
+ * library computes reals in DOUBLE while every bindable real UPROPERTY in this framework is a float;
+ * the thunk generator narrows its return pin to float for that reason alone. A project that declares
+ * its own behaviour with a `double`, an `int64` or a `uint8` property was then unbindable -- and the
+ * refusal read "this Blueprint has no such function" (DUI5004), which sends the author looking for a
+ * misspelling that is not there. Enums are deliberately outside the rule: an FByteProperty carrying
+ * a UEnum is a NAME written as a number, and letting an int32 flow into one would bind a value the
+ * enum does not declare.
+ *
+ * Paired with CopyDreamWidgetBoundValue, which is the only copy allowed to act on a true from here:
+ * a raw CopyCompleteValue between two different widths is a memcpy that reads the wrong bytes.
+ */
+DREAMGUI_API bool CanDreamWidgetBoundValueConvert(const FProperty* InReturn, const FProperty* InTarget);
+
+/**
+ * Move one bound value from a function's return slot into a setter's parameter slot.
+ *
+ * An exact type is copied whole, the numeric pair goes through double or int64, and anything
+ * CanDreamWidgetBoundValueConvert refuses is not copied at all (false). Shared by the runtime's
+ * evaluation and by any test that wants to prove the pairing, so the conversion rule and the copy
+ * rule can never be two different opinions.
+ */
+DREAMGUI_API bool CopyDreamWidgetBoundValue(const FProperty* InReturn, const void* InReturnValue,
+	const FProperty* InTarget, void* OutTargetValue);

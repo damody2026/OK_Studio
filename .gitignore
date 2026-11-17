@@ -192,3 +192,6 @@ deepseek.json
 /Content/UniversityCity/
 /Content/__ExternalActors__/
 /Content/__ExternalObjects__/
+
+# DreamGUI writes this symbol table for .dui authoring on every editor start (Docs/CARD_READER_DREAMGUI.md)
+/DUI/.dui-symbols.json

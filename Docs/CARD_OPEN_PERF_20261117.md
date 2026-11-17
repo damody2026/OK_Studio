@@ -54,17 +54,36 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `GridSampler` 的 point 快路径 | 以为同尺寸时权重为 0 可以少读三个 texel；`OK_GRID_DIAG` 印出来才知道真实情况是 64²／512² 升采样到 4096²，权重本来就不是 0 | 整个回退，只留诊断 |
 | ③`emit` 并行 | 整个 emit 阶段占三张卡总时间 2.2%（`memo_put` 19 ms＋`ctx.emit` 54 ms）。`memo_put` 搬不走（`view_memo` 是 thread-local）；`ctx.emit` 的每项工作是 `emit_part` 往 `session_parts` 后面 append，后面还有四处 `last_mut()` 改刚 append 的那一项 —— **顺序就是这个资料结构本身** | 不做，只留三个子计时 |
 | `BUNDLE_CACHE`（`parse_bundle_cached` 的 thread_local）改程序共用 | `ParsedBundle` 有 18 个 `RefCell` 栏位且 `external_files` 装 `Rc<ExternalFile>` → `!Send + !Sync`，**型别上就放不进跨执行绪的 static**；还骑着「OK 卡资源包只记录真的跑过的查询」这条不变式（F 组 11-16 alice 那个 bug 的同一类）；`TEXTURE_CACHE_BYTES` 已经是每 bundle 192 MiB、每执行绪各一份。`native_workers_broadcast` 也救不了，因为 `base: head textures` 是在开卡那条执行绪上同步跑的 | 不做 |
+| 拿掉 `library_zip_memo` 的 strict 闸门（让 OK 卡也共用按 archive 的新键）<br>`d352dcb90`，整合 #15 后做的 | gap guard（`0dbce369f`）进来之后这道闸门的理由就过期了，所以照计划拿掉并重验 —— **零收益**：同行程 5 张 OK 卡，共用 1498 次 `open_zip`、不共用 1503 次（噪声内），35 个 dump 两边逐位元相同。**开关是活的**（同一执行档两张原作卡 38094 对 52645 次），所以这个零是真的。原因是设计使然：**OK 卡自带资源包**，读的档案几乎都来自自己的包，走 `own` 分支本来就保留 generation；只有「library 记录的档案」能共用，而 OK 卡几乎不读那些 | **放回去**，只留注解写明不要再试（在两次严格开卡之间共用值正是 pack 身分要防的：花火 11-12、alice 11-16，没有收益去换这风险） |
+
+| 同一笔 hair gloss，**改在有代表性的路径上重测**（`--sequence` ＋ `OK_BENCH_PREWARM=concurrent`，也就是读卡器自己的冷路径：启动预热跟第一张卡并行）<br>11-18 做的 | 下面那一列是在**没有预热**的 plain 模式量的，而那条路上 `load_base_bundles` 还在付 160–600 ms、刚好吸收掉搬移的收益 —— 所以我先前的「零收益」其实是**在不代表使用者的路径上量的**（第二层错：数字是真的，代表的不是他的体验）。换到有代表性的路径上，`lists: hair gloss` 仍是 588 ms 而 `load_base_bundles` 只有 95 ms，看起来正是搬移该赚钱的条件。重测：中位数 **2.120 → 2.100 s（8 轮交错，−0.9%，噪声内）**，而 profile 显示 `load_base_bundles` 113 → 678 ms —— **那 600 ms 又一次原样换个地方付**，即使预热已经把它decode 掉了 | 还是回退。预热过的东西不该再花 600 ms，所以那不是 CPU 也不是解码，是**第一次触碰资源包页面的 I/O**；上面那一列把「会不会是那把 mutex」也量掉了。**教训有两层**：一是量测要用使用者真的会走的路径（`--sequence` ＋预热，不是 plain 模式），二是**换对了路径之后结论可能仍然不变** —— 代表性是必要条件，不是会自动给你收益的那种修正 |
+| 把 hair gloss 的贴图读取搬离主执行绪（`lists_stage` 结束时丢给自己的执行绪，到 accessory context 才等）<br>11-18 做的（先在 plain 模式量的） | `lists+mods+guids` 2379 ms 里有 2340 ms 没被任何子项盖住，拆开才看到是 `lists: hair gloss`（暖磁碟 588 ms、冷磁碟约 2.3 s）。搬走之后 `hair gloss wait` **0.0 ms**、容器 633 → 20 ms，**搬移本身完全成功**；但冷开中位数 1.174 → 1.21 s（没有收益），而 `load_base_bundles` 160–184 → 580–615 ms —— **那约 500 ms 原样换了个地方付**，主执行绪的阶段合计两边一样（1429/1402 对 1324/1410）。把 entry prefetch 关掉再量，**同一笔 gloss 只要约 5 ms** | 回退，只留 `lists: prefetch spawn`／`lists: hair gloss` 两个子计时。**一般结论**：那 500 ms 不是 gloss 自己贵，是它排在 8 个 prefetch helper 后面等基础库读取路径，所以**在 prefetch 那个窗口里「把工作搬到别的执行绪」买不到东西** —— 要拿的是那条路径的吞吐，不是工作的位置 |
+| 贴图 payload 的 memo 从「只收 block-compressed」放宽到「≥512² 的任何格式」，另加 single-flight（同键只算一次）<br>11-18 做的 | 从零解码的次数 C006 124 → 117、C001 124 → 118、C049 93 → 86，其中重复 12 → 5／21 → 15／17 → 10（确定性指标，真的降了：C006 的 `liquid01_t` RGB24 512² 本来一次开卡解 7 遍、`cf_body_00_t` RGBA32 2048²（16 MiB）解 2 遍）。**但冷开 wall 中位数 1.594 → 1.637 s（10 轮交错，更慢）**：这个 memo 的键要雜凑整个 texel，新放进来的约 40 张未命中各付一次雜凑，去换省下的 6–7 次解码，净值是负的。single-flight 单独量只去掉 12–23 次里的 0–2 次，时间无变化 | 两者都放回去。**作者原本只收 block-compressed 是对的** —— 它只在「解码＋编码比雜凑贵」的地方才划算；这一轮量到的次数与为什么不划算写在那个格式闸门旁边 |
+
+| 把卡片资源包的位元组复制搬出 `gamefs::read` 的 index mutex（OK 卡几乎每次读取都走那里，9 条执行绪共一把锁，而复制是持锁做的）<br>11-18 做的 | 先量到 C006 中位数 1.855 → 1.755 s（10 轮交错，−5.4%，最小值 −9%），**而且我有一个说得通的机制**，差点就信了。换 C001／C049 就不一致（＋1.9%／−10%）。于是改量那把锁本身：加一个 SPOT 把「等锁＋持锁」的时间跨执行绪加总 —— **对单一 mutex，那段时间不可能重叠，所以那个加总就是被串行化的墙钟**，可以直接读。结果 **0.1–0.7 ms／227–320 次读取**：这把锁根本不是瓶颈，那 −5.4% 是噪声 | 复制搬回锁内，只留那个 SPOT（一趟就能回答「这把 mutex 是不是问题」，它刚证明了自己的用处）。**真正的结论在这里**：`load_base_bundles` 在 gloss 并行时从 113 涨到 678 ms 不是锁，是那个窗口里**别的执行绪同时在搬几 GiB**：11-18 稍后量到一次开卡从来源复制 3.2–3.3 GiB／约 20 万次（第四节第一条），几 GiB 的 memcpy 会吃掉记忆体带宽，和「关掉 entry prefetch 後同一笔 gloss 只要 5 ms」完全一致。**所以那个窗口受限于带宽而不是执行绪的安排，重排一律没用**，上面两列的零不是巧合；该动的是那 3.2 GiB |
+| **压缩贴图直通**（没被动过的 BC 块直接交给 UE，省掉解码与编码）<br>11-18 量的上限，没开工 | 新增的 `PROFILE passthrough` 数出「session 真正带着的贴图里，有几张**恰好就是一张未经修改的解码 payload**」：**C006 39/165、C001 82/272、C049 20/99**，其中来源是 BC 格式（BC7／DXT1／DXT5，也就是唯一有解码成本的那些）的是 **33 张／125 次解码（26%）、44／126（35%）、15／93（16%）**。所以上限是 925 ms 的 16–35% 再加上对应那份 `encode_png`，约 **180–390 ms 的跨执行绪 CPU**；换成墙钟顶多几个 percent —— 和 `OK_RAW_TEXTURES` 那笔同一个量级（它把整条链的 encode 都拿掉也只有 −1.7%），**那笔是这条路的现成上界实测**。顺带量到：session 带着的贴图有 **70–80% 是被动过的**（翻转／遮罩／上色／合成），和第四节原本的次数粗估一致 | **不开工**。代价是 Rust 容器＋C header＋UE 三边（C／E／F 共用），换几个 percent 不值得。**但记忆体那一面没算在这里**：33–44 张贴图保持压缩，BC1 对 RGBA8 是 8:1，对 8 GB VRAM 的机器可能是另一回事 —— 要做就以 VRAM 为目标去评，不要拿开卡速度当理由 |
+| 打开已经做好但没人开的 `OK_RAW_TEXTURES=1`（阶段之间的贴图改用 raw LZ4 容器而非 PNG，UE 侧有 `ok_raw_texture.h`，持久化输出仍写 PNG）<br>11-18 量的 | 冷开中位数 1.950 → 1.917 s（8 轮交错，**−1.7%，区间完全重叠**），而 session 每张多 6.7%（43 523 827 → 46 449 563 bytes）。**开关是活的**（同一张卡的 dump：OKRAW 容器 0 → 172 个、PNG 签章 183 → 11），所以这个零是真的。还有机制上的上限佐证：`encode_png` 跨执行绪合计只有 208 ms／149 次，整条链的编解码顶多约 400 ms，对约 1.6 s 的冷开是约 3% —— 和量到的一致 | 继续关着。**不是功能有问题，是这条路上编解码本来就不是瓶颈**（贴图成本的大头是 payload 解码 1133 ms／148 次，那是真工作）；使用者的目标机是 16 GB，不值得为噪声级的时间多付每张 2.9 MB |
 
 ## 三、量测方法与陷阱
 
 **方法（这台机器上唯一可信的做法）**
 
 1. **只量冷开**：全新程序、无快取。磁碟快取永久关闭，所以没有「暖」这个基准。
+   **而且要用读卡器自己的冷路径**：`ok-card-open-bench --sequence <库> <卡>` 搭配
+   `OK_BENCH_PREWARM=concurrent`（启动预热跟第一张卡并行，就是 app 的样子）走 `open_card_like_reader`。
+   **不要用 plain 模式**（`ok-card-open-bench <库> <卡>`）：它不跑预热，于是 `load_base_bundles` 与 `lists`
+   会付 app 已经预热掉的成本，量出来的瓶颈位置是错的。11-18 的 hair gloss 那笔就是先在 plain 模式量了
+   「零收益」，换到有代表性的路径才看清真正的原因（第二节）。plain 模式仍适合看**次数**类的指标。
 2. **同一个执行档＋环境变数开关＋交错＋同时段＋取中位数**。不同次执行之间的差异不算 A/B。
 3. **正确性用 `--fresh-dump` 逐位元组比对** session bytes（不是整档雜湊，见 ERROR_LOG I-014）：
    OK 卡 28 个 dump（C001／C006／C049／klara／C050／megumin，含 override 与眼睛贴图）＋原作卡 21 个。
 4. 一切建置与量测**最多 8 执行绪**（`cargo -j 8`、`-MaxParallelActions=8`、`RAYON_NUM_THREADS=8`）。
 5. 会改变输出位元组的改动（例如缩小底图）**不适用**第 3 条，要改成目视＋平均 RGB 绝对差＋贴图记忆体。
+6. **机器吵的时候改用确定性指标**：其他 session 同时在跑时，同一设定的冷开 wall 落在 1.46–2.79 s，
+   100 ms 级的差异量不出来。`OK_PROFILE` 现在会印「这次开卡从零做了几件、其中几件是同一件做第二次」
+   （`unity::take_work_counts`），这个数与机器忙不忙无关，可以在吵的机器上判断一个改动有没有真的少做事。
+   **但它不能代替时间**：这一轮就有一笔「次数降了 6–7 次、时间反而慢 2.7%」（上一节最后一列）。
+   次数用来**定位**，时间用来**定案**；时间要等得到一段安静，或者多轮交错取中位数。
 
 **踩过的坑（都已写进 `Docs/ERROR_LOG.md`）**
 
@@ -73,7 +92,10 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   要用 Glob／grep 指定路径。另外**不要把 `cargo` 程序当成机器在忙** —— 那 18 个 idle 的
   `cargo run ok-game-mcp` 是常驻的 MCP server。
 - 凭 SPOT 的次数与总时间推估就报结论（「136 次 `flip_png_v` 是串行的」），其实它们早就在并行的
-  `PushCtx::transform` 里。**发现前提错了先把量测补上，再回头讲。**
+  `PushCtx::transform` 里。**发现前提错了先把量测补上，再回头讲。** SPOT 的 wall 是**跨执行绪加总又嵌套**
+  的，所以不能直接当墙钟做减法（「省掉它能快多少」）。**判断某个数字能不能减的现成检查**（f-sceneload）：
+  **把各子项加起来和包住它们的那一段比** —— 落在容器里面（例如三段共 26.0 s 在 `Sync` 的 63.4 s 内）、
+  互不嵌套、所在回圈里没有 `ParallelFor`／`par_iter`，才可以减；**加起来超过容器就是跨执行绪加总的**。
 - `ls -t Saved/Logs/CardReader/*.log | head -1` 拿到的是**上一次执行的日誌**，两种设定印出一样的数字，
   看起来像开关没生效。改成自己指定 `-abslog=`。
 - kill 回圈用 `head -1`，留下 3 个 UnrealEditor（各约 9.5 GB），把 `f-sceneload` 卡在排队、那一轮数字全废。
@@ -83,6 +105,14 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   空值也算设了，于是**两边都是关的**。A/B 看起来「优化没用」，而且**那 49 个 dump 的「IDENTICAL」
   什么都没证明** —— 正确性闸门整个空转。是数字自相矛盾（单独跑 537 ms vs A/B 1000 ms）才抓到的。
   **每次 A/B 前先印一行确认开关真的在切。**
+- **多行 `perl -0777 -pe 's/…\n…/…/'` 在这棵树上会静静地配不上**：档案是 CRLF，pattern 里的 `\n` 对不上
+  `\r\n`，于是**档案没变、`cargo build` 成功、A/B 两边当然一模一样**。11-18 一天就因此产出两个幻觉实验：
+  「prefetch helper 数 8／6／4／3 的扫描」其实是把同一个设定量了 12 次（难怪只有噪声没有形状），
+  「贴图 memo 放宽」第一次量到的「零效果」也是因为那笔改动从未进档案（改用 `Edit` 重做，立刻看到
+  重复 12 → 5）。**多行改动用 `Edit` 或指定行号的 `sed`，不要用 perl 的多行 pattern**；单行 pattern 没问题。
+  现成的防线还是同一条：**先证明开关是活的**。这次是加临时的分支计数器才看出改动不在那条路上
+  （`branch plain` 41 次、`branch transform` 41 次、`branch memo` **0 次** —— `memosnap::active(TEX)`
+  在这些开卡里一直是 false，所以我第一个 single-flight 放的位置是死码）。
 
 **这类坑的共同点（f-sceneload 整理成 F 树 `Docs/ERROR_LOG.md` 的一类，`2026ed16c`，三个实例）**：
 失效的是**量测本身**，不是被测的程式，所以**不会有任何红字**——关卡照样 PASS、数字照样印出来。
@@ -105,6 +135,10 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | 变数 | 作用 |
 |---|---|
 | `OK_PROFILE=1` | 阶段计时。本轮新增 `batch: slot colour`／`slot finish`／`keys+memo`／`transform`／`emit`，`emit/memo_put`、`emit/regroup`、`emit/ctx.emit`，`base: head textures`、`base: head shape keys+md`、`base: body dynamics+colliders`，`mask bake: decode`／`math`／`encode` |
+| `OK_PROFILE=1`（11-18 新增） | **「从零做了几件、其中几件是重复」**：每次开卡结束印 `from scratch <n> (<m> repeat)`，再把做了两次以上的逐项列出（例如 `7x payload liquid01_t RGB24 512x512`）。数的是 bundle 解析（`parse_bundle_uncached`）与贴图 payload 解码（`png_from_payload_uncached`）；**这个数与机器忙不忙无关**，是吵机器上唯一能用的指标。另外 `lists: prefetch spawn`／`lists: hair gloss`，把原本 2.4 s 却没有任何子项盖住的 `lists+mods+guids` 拆开 |
+| `OK_PROFILE=1`（11-18 新增） | **`PROFILE passthrough <k>/<n> ... by source format {...}`**：session 真正带着的贴图里，有几张恰好就是一张未经修改的解码 payload，按来源格式分。为了判断「压缩贴图直通」值不值得做而加的（答案是不值得，见第二节），留着是因为**它一句话量得出「这次开卡有多少贴图是原样送出的」**，下次有人想碰贴图路径可以先看它 |
+| `OK_PROFILE=1`（11-18 新增） | **`SPOT overlay index section`**：`gamefs::read` 那把 index mutex 的「等锁＋持锁」时间，跨执行绪加总。**对单一 mutex 这个加总就是被串行化的墙钟**（临界区内不可能重叠），所以它和其他 SPOT 不同，可以直接读。现况 0.1–0.7 ms／227–320 次读取 —— 一趟就能回答「这把锁是不是问题」，11-18 靠它把一个有机制、有 −5.4% 的假结论挡掉了 |
+| `OK_PROFILE=1`（11-18 新增） | **`PROFILE copied out of the sources <n> MiB in <m> reads`**：这次开卡从库索引与卡片资源包复制出来的总量与次数（`gamefs::entry_bytes`，每次都 `to_vec()` 一份自己的）。**是计数，不随机器负载变动**。现况 3.2–3.3 GiB／19–22 万次 —— 第四节第一条就是它 |
 | `OK_GRID_DIAG=1` | 一次烘焙的贴图与遮罩尺寸、filter |
 | `OK_TILE_DIAG=1` | 同值 texel 比例、`has_pat`，以及查表／逐 texel 两条路径各处理多少 texel |
 
@@ -118,6 +152,74 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （256 MiB），在 8 GB VRAM 的目标机上可疑；但**底图的细节不是遮罩给的**，缩的是底图自己那 4096² 的花纹、
   缝线、字样，不是只掉插值。会改变输出位元组，所以验证标准要换成目视（配件上色／头发上色／眼睛贴图／
   有 override 贴图的卡，正面＋近拍）＋改前后平均 RGB 绝对差＋贴图总量。
+- **目前最大的一个数字：一次开卡从来源复制了 3.2–3.3 GiB，分成约 19–22 万次**（11-18 新增的
+  `PROFILE copied out of the sources`；C006 3303.9 MiB／198 779 次、C049 3205.9 MiB／193 146 次）。
+  `gamefs::read` 与 `entry_bytes` 每次都把位元组 `to_vec()` 成一份**自己的** `Vec<u8>` 交给呼叫者，
+  所以这是在真正要做的事情**之上**多付的 memcpy。几 GiB 的 memcpy 在这台机器上是数百毫秒的量级，
+  而整个开卡只有 1.4–1.7 s —— **这是目前量到的、单一来源最大的一笔**。
+  **而且内容明显是多余的**：临时加标签数过，这约 20 万次绝大多数是走 zip entry 那条路（`gamefs.rs`
+  约 1390 行把 entry 复制进 `io::Cursor`），读的是 **Studio 缩图与 modpack 的 `abdata/...`**
+  （`thb_mods01/...png`、`kk_quickaccessbox_thumbs_*`、各 `sideloader modpack - .../*.zipmod`），
+  开一张卡用不到这些。**下一步先确定是谁在扫**：看起来像启动预热建分层 mods 目录那条（`lists: mods catalog`
+  本身只有 0.1 ms，所以不是开卡那条路），而 `OK_BENCH_PREWARM=concurrent` 会让它跟第一张卡并行 ——
+  **若真是它，那它也正是上面「那个窗口是 I/O-bound」的真凶**（并行的几 GiB memcpy 吃掉记忆体带宽，
+  难怪把工作搬到别的执行绪一律没用）。先用这个计数器确认，再决定是让那条扫描别复制资料（它多半只需要
+  名称与大小），还是让它不要走到 Studio 缩图这些项目。**这件事没做，留给下一轮。方法先定好
+  （11-18 写的，整合后照这个跑）：**
+
+  **第 0 步，先确定是谁在扫（一条命令，不要猜）。** 同一张卡量两次 `copied out of the sources`：
+  `OK_BENCH_PREWARM=concurrent` 与**完全不设**（plain 模式也量一次）。那 3.2 GiB 若随预热消失，就是启动
+  预热建分层 mods 目录那条；若不随之消失，就在开卡自己的路径上，再往 `gamefs.rs` 约 1390 行那条
+  zip entry 路的呼叫端追。**在知道是谁之前不要改任何东西** —— 11-18 有两笔就是先有机制才有量测，
+  一笔是噪声、一笔根本没进档案。
+
+  **第 1 步，证明「哪些真的用不到」—— 不是用路径名字说服自己，是用输出位元组。** 让那条扫描跳过要砍的
+  那类项目（带关闭开关），然后 `ok-card-open-bench --fresh-dump` **逐位元组**比对 session bytes
+  （不是整档雜湊，ERROR_LOG I-014）：OK 卡 28 个 dump（C001／C006／C049／klara／C050／megumin，含
+  override 与眼睛贴图）＋原作卡 21 个，两边必须**全部相同**。只有这样才算证明「开卡的输出不依赖那些
+  位元组」。**还要跑 `Tools\ok_convert_order_check.lua`**（四张卡、正反序，基准 digest 在下面）：
+  那条扫描喂的是 mods 目录，改了它可能改变 `absent=` 与项目可见性，而那些不一定出现在单张卡的
+  session bytes 里。
+
+  **第 2 步，阳性对照（没有它，「全部相同」什么都不证明）。** 在同一个开关里**故意多跳掉一个真的要用的
+  项目**（挑一张卡确实穿着的 mod 上衣，例如它的 `abdata/chara/co_top_*.unity3d`），重跑第 1 步，
+  **比对必须 FAIL**。若连这样都「全部相同」，就是闸门空转（11-17 的 `VAR=$v`、11-18 的 CRLF 都是这个
+  形状），先修闸门再谈收益。对照做完**立刻拿掉**，不要留在开关里。
+
+  **第 3 步，量收益，两个指标都要。**（a）确定性：`copied out of the sources` 的 GiB 与次数必须明显
+  下降 —— 这个数不随机器负载变动，吵机器上也能判断「真的少做事了」。（b）时间：`--sequence` ＋
+  `OK_BENCH_PREWARM=concurrent`（读卡器自己的冷路径，**不要用 plain 模式**），同一个执行档、环境变数
+  开关、交错、同时段、至少 10 轮取中位数。**（a）降了而（b）没降是会发生的**（11-18 的贴图 memo 那笔
+  就是），那时候以（b）为准，并照样把（a）记下来。
+
+  **底线**：不管怎么优化，**开卡磁碟快取永远不开**（使用者的决定），砍的是冷读取本身的成本。这件事正好
+  符合：少复制几 GiB 不是把结果存起来，是根本不做那些复制。
+- ~~**最大的剩余杠杆是「压缩贴图直通」**~~ **已量过，不开工（见第二节第一列）**：上限只有约 180–390 ms 的
+  跨执行绪 CPU（session 带着的贴图里，来源是 BC 又原样送出的只占解码次数的 16–35%），墙钟顶多几个 percent。
+  下面这段留着是因为它记了**现况与真的要做时该动哪三处**，以及为什么「925 ms 是 BC 解码」不等于能省 925 ms：
+  一张 OK 卡冷开，`png_from_payload` 跨执行绪合计 **1133 ms／148 次**，扣掉里面的 `encode_png`（208 ms）
+  约 **925 ms 是 GPU 格式解码**，做的人是纯 Rust 的纯量 `texture2ddecoder 0.1`（BC1／BC3／BC7）。
+  而 **DXT1／DXT5／BC7 正是 UE 原生的格式** —— 没被遮罩、上色、翻转或合成动过的贴图，压缩块可以原样
+  交给 UE，解码与编码一起省掉，**而且在 16 GB／8 GB VRAM 的目标机上还省记忆体**（压缩的就一直压缩着）。
+  现况：`teximg` 的 `OKRAW\0\x02\0` 容器只有宽高＋LZ4 的 RGBA8，FFI（`ok_part_texture` 一路）也只传
+  PNG／raw blob，**没有格式栏位**；内部倒是已经有 GPU 格式的路（`texture_gpu_named_unity` 产 71/72/77/78/98/99
+  给衣服的 GPU 烘焙），所以不是从零开始。要动的是：容器加一个带 format 的版本、UE 侧照那个 format 建贴图
+  （`ok_raw_texture.h` 已经在 UE 侧）、以及**判断哪些贴图真的没被动过**。
+  **那个便宜又决定性的量测（已做，`PROFILE passthrough`）**：把 `png_from_payload` 的输出雜凑记下来，和 session 里真正送出去的
+  贴图雜凑比，**原样送出的有几张**。148 张里若只有少数没被动过，整件事就不值得做；上限就是那个比例乘 925 ms。
+  （别用「反正 UE 支援 BC」当理由就开工 —— 这份文件里每条没量过的推估都踩过。）
+  **而且先别抱期望**：同一次开卡的 SPOT 次数加起来，「会改到贴图」的操作有约 141 次（`flip_png_v` 56、
+  `convert_runtime_normal_map_rows` 28、`flip_runtime_blit_v` 24、`apply_clothes_color_mask` 15、
+  `exact_texture_png` 9、`tint_png` 4、`over_layer_mask_png` 3、`compose_body/face_texture` 2）对 148 次解码。
+  **这只是比例粗估、不是量测**（同一张可能被动好几次，有些动的是合成后的结果），但它指向「原样送出的不多」，
+  所以上限可能远低于 925 ms。这正是为什么要先量再决定，而不是看到 925 ms 就开工。
+- **下一个该查的是 entry prefetch 那个窗口的吞吐，不是谁在哪条执行绪上**（11-18 量到的）：
+  一张 OK 卡的冷开，8 个 prefetch helper 各自读一个来源包，暖磁碟时每项 207–341 ms、**磁碟冷时 1.8–2.2 s**，
+  而主执行绪同时在走 `load_base_bundles` 与身体／脸／头。这段时间里那条基础库读取路径是饱和的，
+  证据有两笔：（a）把 hair gloss 搬离主执行绪，约 500 ms 原样出现在 `load_base_bundles`；
+  （b）把 prefetch 整个关掉，同一笔 gloss 从 588 ms 掉到约 5 ms。**所以在这个窗口里重排工作一律零收益**，
+  要动的是读取本身（一项为什么要 200 ms／冷时 2 s）。`hair slots` 只花 77 ms 说明 **helper 有余裕、
+  主执行绪没有**，但 helper 数该不该降目前**没有量过**（11-18 那次扫描因 CRLF 没生效，见第三节）。
 - **第一张卡 `base: head textures` 还有约 190–200 ms** 没搬走，原因见第二节 `BUNDLE_CACHE` 那一列
   （要搬得先重构 `ParsedBundle` 的内部可变性模型，代价远大于收益）。
 - **转卡的 view 身分已改由树的内容决定**（`baf5cec10`）。21 角色场景（`koikatu_cs0001521`）同行程依序转，
@@ -139,6 +241,26 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （`map_parts` 331）只差 5 个挂在角色骨头上的道具，id `[3, 276, 280, 292, 577]`；5 角色场景逐位元相同。
   那 5 个**在同一设定的两趟之间也会差**（道具座标随动画相位走），而且**换掉 view 身分的实作之后差的还是
   同一组 id** ——若是这笔造成的，差的该是别的物件或数量会变。两个独立证据都指向它与这笔无关。
+  **整合后在 `e7b34e6f2` 上还有更直接的一笔**（f-sceneload，`6824c7e30`）：转卡次序关卡 **PASS**，8 笔
+  （正序 4、反序 4）全部一致，而**这一关的基准本来就是一张卡一个行程**，正反序是同一行程依序转，比的是
+  开起来的 session 位元组——所以 PASS 就等于「**子行程转卡 == 行程内转卡，逐位元组相同**」，不必另外
+  设计实验。**它能一次覆盖两件事**（我的 view 身分在同行程多卡之间不串、子行程转卡与行程内转卡逐位元组
+  相同），是因为它的基准恰好是一张卡一个行程，不是谁设计出来的。在这之前跨行程只有 UE 侧的物件傾印验过，
+  Rust 侧没有。四张卡在 `e7b34e6f2` 的基准，可当以后的对照（全部 `absent=[]`、各 7 套服装）：
+
+  | 卡 | digest | parts |
+  |---|---|---:|
+  | klara | `23a1e5f8d7f904e273f6436840fd92be` | 37 |
+  | lan | `bdd342cf05503b17eeff3bad54e419ad` | 64 |
+  | keqing | `0f6c9f7663c1a22224b7e2daae6c24fa` | 34 |
+  | hu_tao | `734a2acc9c2ded583947b9e9aedd14b9` | 28 |
+
+  ```
+  OK_BASE_LIBRARY=<base_v1> Tools\lua\lua.exe Tools\ok_convert_order_check.lua D:/KoikatuSunshine ^
+    Content/IndependentResources/base_v1 <输出目录> <四张卡>
+  ```
+  同一基点上开卡退路那一关也 PASS（`failed_remake_leaves_the_card_openable`，17.57 s）——它现在的用处
+  不是把关而是**现况证据**：`e7b34e6f2` 上「OK 卡失败另存后仍可开」有一笔带条件的 PASS 可以对照。
 - **这项的收益和「子行程并行转卡」互相抵销**，定 worker 数之前要知道（实测 5 张场景卡）：
 
   | | wall | CPU 合计 |
@@ -161,16 +283,11 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   不是巧合，调 worker 数的人要知道往哪一边动都会让这项变差。
 - 转卡的次序迴归关卡：`Tools\ok_convert_order_check.lua`（小绯雪／Denia，2026-10-28 那个 bug）。动到
   `remake_ok_card` 的 view 身分、`with_zipmods_and`，或 `--oklib cards` 的 worker 配置，都要先跑它。
-- `library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门：整合保住 F 组的 gap guard
-  （`0dbce369f`）、两边验证都过之后，由我单独一步拿掉并重验（F 组的 repro
-  `failed_remake_leaves_the_card_openable` 把关，我的 dump 不涵盖「开卡 → `ok_okcard_make` → 再开卡」）。
-  **基线已经跑好**：f-sceneload 在 F 树 `339a526b4` 上 **12.2 s PASS**（`before: r=0` → save 如预期失败
-  并列出缺的 `hibari.unity3d`／`klee.unity3d` → `after: r=0`），所以动闸门之后有对照。动之前先通知它，
-  由它同一轮跑——它的「worker 失败回本行程再转」正踩这条路径，我自己只验得到 memo 不存缺口期间的值。
-  **跑之前一定要设 `OK_BASE_LIBRARY=<base_v1>`**，否则第一个 open 回 `r=1`、0.08 秒就在 `before` 那个
-  assert 挂掉，**看起来完全像回归其实是环境没设**（`configured_library()` 读那个变数）；这句也补进了
-  那条 `#[ignore]` 的字串与注解。另外 `0dbce369f` 虽是 F 树的提交，**但不是 f-sceneload 那一轮做的**
-  （11:42，F 树另一个 session），所以它保不保得住要问协调者，不能向 f-sceneload 要保证。
+- ~~`library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门~~ **已处理（`d352dcb90`）**：
+  整合 #15 后拿掉并重验，**量到零收益于是放回去**，见第二节最后一列。关卡
+  `failed_remake_leaves_the_card_openable` 在改动版与放回版都 PASS；**跑它之前一定要设
+  `OK_BASE_LIBRARY=<base_v1>`**，否则第一个 open 回 `r=1`、0.08 秒就在 `before` 那个 assert 挂掉，
+  **看起来完全像回归其实是环境没设**（`configured_library()` 读那个变数，这句也补进了那条 `#[ignore]`）。
 
 ## 五、执行绪预算
 
@@ -256,14 +373,22 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `d63b37a86` | 改 | `OK_THREADS`／`RAYON_NUM_THREADS` 可以调高，不只调低；预设仍是 8，上限是硬体执行绪 |
 | `db819ae81` | 文件 | view 身分按树在 21 角色场景的 A/B（74 → 67 s，−9.5%，digest 与 parts 全相同） |
 | `2a37bf974` | 文件 | view 身分按树的收益随每个 worker 分到的卡数增加，预设 worker=2 是最大点 |
+| `d6410b772` | 文件 | 开头写明使用者会感受到什么（打包版 vs 开原作卡） |
+| `d2bec3b7c` | 文件 | view 身分按树的跨行程那半由 f-sceneload 补齐（`339a526b4`） |
+| `513f86066` | 改 | 写明关卡要设 `OK_BASE_LIBRARY`，否则 0.08 秒假 FAILED |
+| `0dbdf222f` | 文件 | 量测失效的辨识法：形状可疑，不是数值可疑 |
+| `f61d7c8df` | 文件 | 想解释一个漂亮或难看的结果，这个冲动本身就是讯号 |
+| `d352dcb90` | 记 | 拿掉 `library_zip_memo` 的 strict 闸门：量到零收益，放回去（见第二节） |
+| `d63b37a86` | 改 | `OK_THREADS`／`RAYON_NUM_THREADS` 可以调高不只调低（预设仍是 8），17 支工具说明各加一行 |
+| `4787256d7` `23060e03c` `8a276cfb1` `ca69998e4` | 文件 | 闸门结案、跨行程证据换成整合后的次序关卡（`e7b34e6f2` 上 PASS，附完整 digest 与命令）、判断一个计时能不能当墙钟减的现成检查 |
+| `b7746d5b1` | 改 | 吵机器上也能用的指标（`from scratch <n> (<m> repeat)`）、`lists` 两个子计时；hair gloss 搬离主执行绪与贴图 memo 放宽都量到零／负收益并退回（见第二节） |
+| `203091e80` | 改 | `PROFILE passthrough`：量出「压缩贴图直通」的上限只有几个 percent，不开工 |
+| `fd5c465a5` | 改 | `SPOT overlay index section`：量掉「那把 mutex 是瓶颈」，真正的限制是第一次触碰资源包页面的 I/O |
+| `486c7653d` | 改 | `PROFILE copied out of the sources`：一次开卡从来源复制 3.2–3.3 GiB／约 20 万次，内容多半是用不到的 Studio 缩图与 modpack 项目（下一轮的第一件事） |
 
-**还没提交**：`cpu_threads()` 改成「环境变数明确给了就照给的、上限硬件执行绪；没给才用 8」，具名池的硬上限
-跟着它，17 支工具说明各加一行。程式码已写、两个 `cargo check` 都过，等安静机器窗口结束再跑
-`cargo test --lib` 与两个 UE 目标然后提交（2026-11-17 下午，f-sceneload 正在量 `ImportCardWorkers` 的峰值
-记忆体，8 执行绪的编译会污染它）。
-
-**整合注意**：`8fe9c24ab` 要连同上面那笔未提交的一起合，否则批次工具只会被限回 8 条、没有调高的办法
-（协调者 2026-11-17 的决定，并先跟 C 组打过招呼——百人房间的低模是 `ok-lowpoly` 产的）。
+`d63b37a86` 与 `8fe9c24ab`（17 支工具补 `limit_threads`）已由协调者的 `c0e242763` 一起整合进来，所以批次
+工具既被限回 8 条、也有调高的办法（协调者 2026-11-17 的决定，先跟 C 组打过招呼——百人房间的低模是
+`ok-lowpoly` 产的）。
 
 另外 `ec2953393` 是协调者合进 F 组 `18aee76f8`／`0dbce369f` 的合并提交。
 

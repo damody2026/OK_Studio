@@ -74,7 +74,8 @@ local function main()
     local from, to = path.join(project_root, "Plugins/" .. name), path.join(plugin_root, name)
     path.mkdir(to)
     path.copy(path.join(from, name .. ".uplugin"), path.join(to, name .. ".uplugin"))
-    for _, folder in ipairs({ "Source", "Shaders", "Resources", "Config" }) do
+    -- ThirdParty: sources a plugin compiles from its own folder (DreamGUI's msdfgen single-file pair).
+    for _, folder in ipairs({ "Source", "Shaders", "Resources", "Config", "ThirdParty" }) do
       if path.exists(path.join(from, folder)) then mirror(path.join(from, folder), path.join(to, folder)) end
     end
   end

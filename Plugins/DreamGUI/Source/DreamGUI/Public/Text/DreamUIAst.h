@@ -1,0 +1,782 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Text/DreamUIDiagnostics.h"
+
+/**
+ * The shape a .dui file parses into.
+ *
+ * Plain structs, not USTRUCTs, and deliberately free of UObject: the parser must run before any
+ * engine object exists (a headless syntax check, a CI gate, the VSCode extension's own copy of the
+ * grammar) and the builder is the only stage allowed to touch reflection. Keeping the AST inert is
+ * what lets the parser's whole test suite be strings in and data out.
+ *
+ * Every node carries its FDreamUISourceLocation. That is not for error messages alone -- the
+ * write-back patcher locates the line to edit from it, so a location that is merely approximate
+ * would produce edits landing on the wrong property.
+ *
+ * The AST records SHAPE, never meaning. `Left` is an identifier here, not an enum value; `(400,
+ * 240)` is a two-element tuple, not an FVector2D. Which of those it becomes is decided by the
+ * FProperty it is written onto, which only the builder knows. A parser that guessed types would
+ * have to be taught every struct in the runtime, and would disagree with reflection the first time
+ * one changed.
+ */
+
+namespace DreamUIAst
+{
+	/**
+	 * How deep a .dui may nest -- blocks, and parenthesised sub-expressions -- before the front end
+	 * refuses instead of recursing.
+	 *
+	 * Both the parser and every walk over the finished tree are recursive descent, so the alternative
+	 * to a limit is not "deep files work", it is a stack overflow: the editor vanishes and the
+	 * author's unsaved work with it, with nothing written down about which file did it. 256 is far
+	 * past anything a hand-written or generated hierarchy reaches -- a UI ten levels deep is already
+	 * unusual -- so reaching it means a file that is malformed or hostile, and saying so with a line
+	 * number is strictly better than any depth this could support.
+	 */
+	inline constexpr int32 MaxNestingDepth = 256;
+}
+
+enum class EDreamUIValueKind : uint8
+{
+	/** A bare word: an enum value, true/false, or an unquoted name. */
+	Identifier,
+	/** 24, 0.95, -3. Kept as text; the builder parses it against the destination's numeric type. */
+	Number,
+	/** "确定" -- quotes stripped, escapes resolved. */
+	String,
+	/** (400, 240) or (8, 8, 8, 8). Elements are raw text, each parsed by the builder. */
+	Tuple,
+	/** #1E1E1E or #1E1E1EFF. Raw excludes the '#'. */
+	HexColor,
+	/** /Game/UI/F_Body -- an unquoted object path. */
+	AssetPath,
+	/** @Accent -- a reference into the file's `resources` block. Raw is the name, no '@'. */
+	ResourceRef,
+	/** ["A", "B"] -- an array's or a set's elements, each a value of its own in Items. Raw is the whole slice. */
+	List,
+	/** { Hover: #FFCC00, Pressed: #AA8800 } -- a map's entries: Keys[i] is the key of Items[i]. Raw is the whole slice. */
+	Map,
+};
+
+struct DREAMGUI_API FDreamUIValue
+{
+	EDreamUIValueKind Kind = EDreamUIValueKind::Identifier;
+
+	/**
+	 * The literal as written, minus its delimiters (no quotes on a String, no '#' on a HexColor).
+	 *
+	 * Kept verbatim so the write-back patcher can leave untouched values byte-identical: a round
+	 * trip that renormalises "0.50" to "0.5" would rewrite lines nobody edited, and every one of
+	 * those shows up in the author's diff.
+	 */
+	FString Raw;
+
+	/** Tuple only: the elements, each already trimmed. */
+	TArray<FString> Elements;
+
+	/**
+	 * List and Map only: the elements (a list's) or the values (a map's), each parsed as a value of its own -- so an
+	 * element takes every spelling a property of its type takes, a tuple, a colour, an `@Resource` included.
+	 */
+	TArray<FDreamUIValue> Items;
+
+	/**
+	 * Map only: the keys, Keys[i] being the key of Items[i].
+	 *
+	 * The FIRST entry may have been written without one -- `{ "Lamp", Tag: Lamp }`, a struct's primary field -- and its key
+	 * is then an Identifier with an empty Raw (IsPositionalKey). A map literal on a struct names its fields; only a struct
+	 * that declares a primary field (USTRUCT meta DreamGUI_PrimaryField) takes the keyless one.
+	 */
+	TArray<FDreamUIValue> Keys;
+
+	/** Map only: Keys[InIndex] is the keyless first entry's stand-in. */
+	bool IsPositionalKey(int32 InIndex) const
+	{
+		return Keys.IsValidIndex(InIndex) && Keys[InIndex].Kind == EDreamUIValueKind::Identifier && Keys[InIndex].Raw.IsEmpty();
+	}
+
+	/** String only: the key written in `@key("…")`, empty when the author did not override it. */
+	FString LocalizationKeyOverride;
+
+	/** String only: `@note("…")`, what the text is for, said to its translator. Empty when there is none. */
+	FString LocalizationNote;
+
+	/** String only: `@max(n)`, the longest a translation may be, in display width (a full-width character counts 2); -1 for none. */
+	int32 LocalizationMax = -1;
+
+	/** String only: `@noloc`, a text that is the same in every language (a version number, a name): never translated. */
+	bool bNoLocalize = false;
+
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * One node of a binding expression -- the parsed shape of everything to the right of `<-`.
+ *
+ * A tree of value structs, exactly like nodes hold their children: Operands nests by value, and the
+ * whole thing carries no UObject anywhere, so an AST stays as parseable-off-thread as it was.
+ */
+struct DREAMGUI_API FDreamUIExpression
+{
+	enum class EKind : uint8
+	{
+		/**
+		 * `Func(a, b)` -- Symbol is the function name, Operands the arguments (often none).
+		 *
+		 * `Player.Format(a)` is a Call too, with a DOTTED Symbol: every segment but the last is the receiver path (a
+		 * member path as VariableRef reads it), the last is the function called on the object that path reaches.
+		 */
+		Call,
+		/**
+		 * A bare identifier -- a variable on the user widget. Symbol is the name.
+		 *
+		 * Dotted (`Player.Stats.Title`), it is a MEMBER PATH: the first segment names a variable of the user widget (a
+		 * `viewmodels` entry, a prop, any object variable), each later one a member of the object the segment before it
+		 * holds. Inside a loop body, a path that starts with the loop variable is an item read instead (`Item.Name`).
+		 */
+		VariableRef,
+		/** A literal: LiteralKind + LiteralRaw carry it exactly as FDreamUIValue would. */
+		Literal,
+		/** `!x` or unary `-x` -- Symbol is the operator spelling, Operands has one entry. */
+		Unary,
+		/** `a op b` -- Symbol is the operator spelling, Operands has two entries. */
+		Binary,
+	};
+
+	EKind Kind = EKind::Call;
+	/** Function name, variable name, or operator spelling ("!", "==", "&&", …). */
+	FString Symbol;
+	/** Literal only: the value kind and its raw spelling, matching FDreamUIValue's fields. */
+	EDreamUIValueKind LiteralKind = EDreamUIValueKind::Identifier;
+	FString LiteralRaw;
+
+	TArray<FDreamUIExpression> Operands;
+	FDreamUISourceLocation Location;
+
+	/**
+	 * True for exactly the shape the plain binding path always handled: `Name()` with no arguments, a function of the
+	 * class. A dotted call (`Player.GetName()`) is not one -- it calls a function of another object, which only a
+	 * generated function can reach.
+	 */
+	bool IsBareCall() const { return Kind == EKind::Call && Operands.Num() == 0 && !Symbol.Contains(TEXT(".")); }
+};
+
+/**
+ * How an event line attaches its handler -- the operator between the event and the handler.
+ *
+ * The spelling says what happens to the event's OTHER listeners, and the builder holds the author to it: `+=` only
+ * where more than one listener can exist, `=` only where exactly one can.
+ */
+enum class EDreamUIRouteOperator : uint8
+{
+	/** `Event -> Handler` -- the original spelling, kept: appends on a multicast event, takes a single-cast delegate's one slot. */
+	Arrow,
+	/** `Event += Handler` -- appends. A multicast event or an FDreamUIEventDelegate; on a single-cast delegate it is RouteOperatorMismatch. */
+	Append,
+	/**
+	 * `Event = Handler` -- the one listener of a single-cast delegate (FDelegateProperty), replacing whatever it held. On a
+	 * multicast event it is RouteOperatorMismatch: it would have to throw away listeners the control itself and the
+	 * Blueprint graph added, so it is refused rather than done.
+	 */
+	Assign,
+};
+
+/**
+ * One `Name = Value` or `Name <- Func()` line.
+ *
+ * A binding and an assignment share this struct because they share a destination: the difference is
+ * only where the value comes from, and treating them as two node types would double every walk
+ * that resolves a property path.
+ */
+struct DREAMGUI_API FDreamUIProperty
+{
+	/** "FontSize", or a dotted path: "AnchorData.SizeDelta", "Brush.TintColor". */
+	FString Name;
+
+	/** Set when this is `=`. Empty and unused when BindingFunction is set. */
+	FDreamUIValue Value;
+
+	/**
+	 * Set when this is `<-` with a bare `Func()`: the no-argument UFUNCTION on the user widget that
+	 * drives the property. For anything richer the parser fills BindingExpression instead, and the
+	 * COMPILER lowers it into a generated pure function whose name it writes back into this field
+	 * before the builder runs -- so downstream of that pass, this is always the one name
+	 * FDreamWidgetPropertyBinding can hold.
+	 */
+	FString BindingFunction;
+
+	/**
+	 * Set when the right side of `<-` is more than a bare call. Lowered by the compiler's thunk
+	 * pass; a consumer that builds an un-lowered AST (the write-back's reference tree) sees a
+	 * binding whose function name is still empty and must treat it as a binding, not a literal.
+	 */
+	TOptional<FDreamUIExpression> BindingExpression;
+
+	/** Set when this is `->`: the UFUNCTION on the user widget the event calls. */
+	FString EventHandler;
+
+	/**
+	 * Set when this is `Event -> emit Name(args)`: the event declared in this file's `events` block that the route
+	 * raises, with its arguments as expressions over the user widget (`OnClicked -> emit Picked(Index)`). Lowered by
+	 * the compiler's thunk pass into a generated handler that broadcasts the dispatcher; the pass writes that
+	 * handler's name into EventHandler, so downstream of it an emit route is an ordinary route.
+	 */
+	FString EmitEvent;
+	TArray<FDreamUIExpression> EmitArguments;
+
+	/**
+	 * Made by the front end rather than written on a line of its own: the `Shown <- Cond` an `if` block puts on each
+	 * widget of its branches, and the slot properties a shorthand (`@fill`, `@fill 2`) stands for. Location is the
+	 * line that produced it. The write-back never edits one in place -- there is no line that spells it -- and says
+	 * so (PatchSyntaxNotWritable) when a designer edit would have to.
+	 */
+	bool bSynthesized = false;
+
+	/**
+	 * A value a `rows` line gave its widget: Name is the column, and Location and Value.Location are both the cell, the
+	 * one place the text spells it. The write-back replaces such a value where it stands and adds no line beside it.
+	 */
+	bool bRowCell = false;
+
+	/**
+	 * Set when this is `<->`: the FieldNotify variable on the user widget the property mirrors,
+	 * both ways. The compiler's thunk pass desugars it -- a generated getter lands in
+	 * BindingFunction (this field then rides into the binding's NotifyField), and a synthesized
+	 * `OnValueChangedBP -> generated-setter` event property joins the node.
+	 *
+	 * May be a dotted member path (`Value <-> Settings.Volume`): the getter reads the path, and the generated setter
+	 * writes the last member on the object the rest of the path reaches -- through that object's `Set<Member>` function
+	 * when it has a BlueprintCallable one taking the value, otherwise by writing the property and broadcasting the
+	 * field on THAT object (the Kismet compiler's own FieldNotify broadcast after a Set node is wired to Self).
+	 */
+	FString TwoWayProperty;
+
+	/**
+	 * Set when this is `Event -> Some.Path.Func` or `Event -> Some.Path.Func(args)`: the dotted path of the function the
+	 * event calls, receiver path first (`Settings.Apply`, `Item.Use`). A plain `-> Handler` (no dot) stays in
+	 * EventHandler, as it always was.
+	 *
+	 * Outside a loop body the compiler's thunk pass lowers it like an emit route -- a generated handler on the user
+	 * widget, taking exactly what the source event sends, whose body reads the receiver, checks it is set and calls the
+	 * function -- and writes that handler's name into EventHandler; from there the builder records an ordinary route.
+	 * Inside a loop body the thunk pass does not look (it never does); the builder records a path that starts with the
+	 * loop variable as a per-item route (FDreamWidgetEntryRoute) and refuses any other.
+	 */
+	FString RouteTarget;
+	/** `-> Path.Func(…)`: the arguments, expressions over the user widget with the source event's parameters in scope by name. */
+	TArray<FDreamUIExpression> RouteArguments;
+	/** Parentheses were written after RouteTarget, even empty ones: `-> Settings.Apply()` calls with no arguments, `-> Settings.SetVolume` forwards the event's. */
+	bool bRouteHasArgumentList = false;
+
+	/**
+	 * Which operator attached the route (EventHandler, RouteTarget or EmitEvent): `->`, `+=` or `=`.
+	 *
+	 * `+=` is its own token and always a route. `=` is also how every value is assigned, so the parser can only tell a
+	 * route by its shape: `= Path.Func(…)` / `= Path.Func` (a dotted name, or a call) is a route and is recorded here as
+	 * Assign with RouteTarget set; `= Handler` (one bare identifier) is indistinguishable from an enum value
+	 * (`HorizontalAlignment = Fill`) and arrives as an Identifier value -- the BUILDER, which knows the destination is a
+	 * delegate, turns it into an Assign route with EventHandler = the identifier.
+	 */
+	EDreamUIRouteOperator RouteOperator = EDreamUIRouteOperator::Arrow;
+
+	/**
+	 * What the `<-` (or the forward half of the `<->`) on this line reads, as member paths from the user widget:
+	 * `Player.Health > 0 && !Busy` reads {Player}, {Player, Health} and {Busy}. Each inner array is one path, segment by
+	 * segment; a no-argument function may be a path's last segment (`Count()` reads {Count}). Recorded by the compiler's
+	 * thunk pass when it lowers the line, and copied by the builder onto FDreamWidgetPropertyBinding::Dependencies.
+	 */
+	TArray<TArray<FString>> BindingDependencies;
+	/** The thunk pass recorded BindingDependencies for this line. Empty dependencies then mean "reads nothing" (a constant), not "unknown". */
+	bool bBindingDependenciesRecorded = false;
+	/**
+	 * Nothing the expression reads escapes BindingDependencies: every leaf is a member or a no-argument function. A call
+	 * WITH arguments (`Format(Gold)`, `Player.FormatGold(Player.Gold)`) may read state its arguments do not show, so an
+	 * expression holding one is never complete, and its binding keeps the per-frame poll.
+	 */
+	bool bBindingDependenciesComplete = false;
+
+	bool IsBinding() const { return !BindingFunction.IsEmpty() || BindingExpression.IsSet() || !TwoWayProperty.IsEmpty(); }
+	bool IsEventBinding() const { return !EventHandler.IsEmpty() || !EmitEvent.IsEmpty() || !RouteTarget.IsEmpty(); }
+
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * One name of a style clause: `: Card`, or each of `: Card : Loud`. Location is the name's first word, where a
+ * diagnostic about that one name belongs.
+ */
+struct DREAMGUI_API FDreamUIStyleRef
+{
+	FString Name;
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * One name of an `@tag` line: `@tag Trim, Glow` is two. Location is the name; LineLocation is the line's '@', where the
+ * statement begins.
+ */
+struct DREAMGUI_API FDreamUITag
+{
+	FString Name;
+	FDreamUISourceLocation Location;
+	FDreamUISourceLocation LineLocation;
+};
+
+/** `+ UIButton { … }` -- a UDreamUIBehaviour attached to the enclosing node. */
+struct DREAMGUI_API FDreamUIComponent
+{
+	/** As written: an alias, a reflected class name, or a full /Script/ path. */
+	FString ClassName;
+	TArray<FDreamUIProperty> Properties;
+	FDreamUISourceLocation Location;
+};
+
+enum class EDreamUINodeKind : uint8
+{
+	/** `Type Id { … }` -- the ordinary case. */
+	Widget,
+	/**
+	 * `slot Name` -- declares a UDreamNamedSlot the host fills. With a block it may carry components, properties and
+	 * `@slot` lines (`slot Rows default { + VerticalBox { Spacing = 15 } }`), never children: a declaration is a hole.
+	 *
+	 * Written INSIDE a component instance with children (`ListPage Page2 { slot Detail { Text Note {} } }`) it is the
+	 * host FILLING that component's slot Detail instead -- the builder tells the two apart by whether the node has
+	 * children (bFillsSlot).
+	 */
+	NamedSlot,
+	/**
+	 * `for Var in Source { … }` -- one copy of the body per item, made at run time inside the enclosing panel itself
+	 * (no list view, no virtualization: a settings page's options, a tab bar). Built like an `each`: one template
+	 * widget, `Prop <- Var.Member` lines per copy, a FieldNotify variable source refreshing it.
+	 */
+	ForLoop,
+	/** `each Var in Func() { … }` -- bound at run time to a list view's cells, virtualized. */
+	EachLoop,
+};
+
+struct DREAMGUI_API FDreamUINode
+{
+	EDreamUINodeKind Kind = EDreamUINodeKind::Widget;
+
+	/**
+	 * Widget, as written: a built-in tag ("Widget", "Image", "Text", …); a layout container's name ("VerticalBox",
+	 * "Overlay", … -- a plain widget carrying that container, whose properties the node's lines set); a component
+	 * alias from `use … as` ("Row", "nier.Row"); a registry tag ("Native.Button"); an asset path to a
+	 * UDreamUserWidget subclass; or `@Name`, an Asset resource. Which is decided by the builder. NamedSlot and
+	 * loops: unused.
+	 */
+	FString TypeName;
+
+	/** Loops only: whether the source is `Func()` (true) or a variable read (false). */
+	bool bLoopSourceIsFunction = true;
+
+	/**
+	 * The node's identity. Always set on Widget and NamedSlot -- by the author, or by the parser for an anonymous
+	 * widget (bAnonymous) -- and empty on loops.
+	 *
+	 * This one string is the guid source, the class member variable name, the binding key and the
+	 * localization key. Unique across the whole tree -- see DuplicateNodeId for why that is an
+	 * error rather than something to fix up.
+	 */
+	FString Id;
+
+	/** `(was: OldId)` -- the previous id, so a rename can carry graph, binding and animation across. */
+	FString WasId;
+
+	/**
+	 * The author wrote no id (`HorizontalBox { … }`, `Text { Text = "Status" }`), and Id was made by the parser:
+	 * `<parent id>__<type><n>` -- the parent's id (or `Root`), two underscores, the type with every character an id
+	 * cannot hold turned into '_', and the count of earlier anonymous siblings of that type. Made in the same pass on
+	 * every parse of the same text, so it is as stable as an authored id while the file's shape is; bumped with a
+	 * further `_<n>` should it collide with an id the author did write.
+	 *
+	 * An anonymous widget still gets a class member variable -- the run time finds the widget of every binding by
+	 * one -- but a hidden one: not visible to graphs, not editable, not in the variable list.
+	 */
+	bool bAnonymous = false;
+
+	/** NamedSlot only: `slot Rows default` -- the slot that content a host nests without naming a slot goes to. */
+	bool bDefaultSlot = false;
+
+	/** NamedSlot only: this is a host filling a component's slot (it has children), not a declaration. */
+	bool bFillsSlot = false;
+
+	/**
+	 * Non-empty on a widget a `rows` block made, one per line: the line's first value, as its key. The widget is
+	 * anonymous, and its id is made from the key -- `<scope id>__<type>_<key>` -- rather than from a count, so inserting
+	 * or reordering rows moves no other row's id, nor the localization keys made from it. Location is the line's first
+	 * value; the write-back reads this to know that the node's header is a row, not a type and an id.
+	 */
+	FString RowKey;
+
+	/**
+	 * `: Card` or `: Card : Loud` -- the styles this node wears, as written. Their properties apply first (see
+	 * FDreamUIAst::CollectStyleChain for the order), then the node's own override them. Empty when it wears none.
+	 */
+	TArray<FDreamUIStyleRef> StyleRefs;
+
+	/** `@tag Trim, Glow` lines, in order, every name as written (duplicates included). */
+	TArray<FDreamUITag> Tags;
+
+	/** The first style the node wears, or empty: what a caller that only ever met one style reads. */
+	const FString& GetFirstStyleName() const;
+
+	/**
+	 * Loops only: the loop variable, and the source of the sequence -- a no-argument UFUNCTION (`in GetItems()`) or a
+	 * variable (`in Items`), per bLoopSourceIsFunction.
+	 *
+	 * The source may be a dotted member path (`in Inventory.Items`, `in Inventory.Filtered()`): every segment but the
+	 * last is read as an object member from the user widget on, and the last is the array or function on the object
+	 * reached, bLoopSourceIsFunction describing that last segment. The builder splits it into
+	 * FDreamWidgetEachBinding::SourcePath.
+	 */
+	FString LoopVariable;
+	FString LoopSourceFunction;
+
+	/** Bare-name properties. Destination is the widget, or its visual when the widget has none. */
+	TArray<FDreamUIProperty> Properties;
+
+	/** `@slot Name = Value` -- destination is this node's UDreamPanelSlot. */
+	TArray<FDreamUIProperty> SlotProperties;
+
+	TArray<FDreamUIComponent> Components;
+
+	TArray<FDreamUINode> Children;
+
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * `style Card { … }` -- a named bag of properties, applied by name; `style Danger : Card` takes Card's first.
+ *
+ * A style may also carry components and slot lines (`style RowColumn { + VerticalBox { Spacing = 15 }  @fill }`): a
+ * kind of column is then one name. Applied before the node's own: a component the node also adds is the same
+ * component (the style's properties on it first, the node's after), and the node's own `@slot` lines win.
+ */
+struct DREAMGUI_API FDreamUIStyle
+{
+	FString Name;
+	/**
+	 * `style Danger : Button` or `style Danger : Button : Loud` -- the bases, as written. Their properties apply first
+	 * (FDreamUIAst::CollectStyleChain), then these override. Empty = none.
+	 */
+	TArray<FDreamUIStyleRef> BaseRefs;
+	TArray<FDreamUIProperty> Properties;
+	/** `+ Component { … }` lines inside the style. */
+	TArray<FDreamUIComponent> Components;
+	/** `@slot …` lines (and their shorthands) inside the style. */
+	TArray<FDreamUIProperty> SlotProperties;
+	FDreamUISourceLocation Location;
+
+	/**
+	 * The file this declaration was READ from, which is not always the file being compiled.
+	 *
+	 * A `use` merges another file's styles into this AST wholesale, so Location then counts lines in
+	 * a file the importer has never opened -- and a diagnostic stamped with the importer's name sends
+	 * the reader to line 12 of the wrong file, which is worse than no position at all. Empty for an
+	 * AST built by hand; FDreamUIDiagnosticBag::Add then falls back to the bag's own name, exactly as
+	 * it did before this field existed.
+	 */
+	FString SourceName;
+};
+
+/**
+ * One `resources { Color Accent = #FF6600 }` entry: a named constant with a declared type.
+ *
+ * TYPED, unlike everything else in the language, because an entry is authored without a
+ * destination: `8` on a property knows what it is from the FProperty it lands on, but `8` in a
+ * resources block has nothing to land on until somebody writes `@CornerRadius` -- and by then a
+ * type error would point at the use site instead of the mistake. The type names are the builder's
+ * to validate (Color, Number, Vector2, String, Asset); the parser records shape, as always.
+ */
+struct DREAMGUI_API FDreamUIResource
+{
+	FString TypeName;
+	FString Name;
+	FDreamUIValue Value;
+	FDreamUISourceLocation Location;
+
+	/** The file this entry was read from; see FDreamUIStyle::SourceName. Empty for a hand-built AST. */
+	FString SourceName;
+};
+
+/**
+ * `use "Components/Row.dui" as Row` or `use /Game/UI/WBP_Row as Row` -- a widget class by a short name, written
+ * as a node type afterwards (`Row Row1 { … }`). The Vue `import Row from`: the name is the importer's choice.
+ *
+ * From a file, the class is the one the file says it compiles into (its `class` line), else the Blueprint whose
+ * Source File is that file (FDreamUITextBuilder::SourceClassResolver, the editor's answer). From a path, the path.
+ *
+ * `use "Lib.dui" as nier` on a file with no root is not this: it is a namespace (FDreamUIAst::Namespaces), and the
+ * library's styles, resources and aliases are entered under `nier.` -- `nier.Row`, `: nier.Label`, `@nier.Ink`.
+ * Aliases a library declares come along with it whichever way it is used, which is what lets one library name a
+ * family of components for every screen that uses it.
+ */
+struct DREAMGUI_API FDreamUIComponentAlias
+{
+	/** The name a node type writes: `Row`, or `nier.Row` for one that came in under a namespace. */
+	FString Alias;
+	/** The class's asset or script path, when known: `/Game/UI/WBP_Row`. Empty while only SourcePath is. */
+	FString ClassPath;
+	/** The imported .dui, resolved (what the watcher keys on), when the alias came from a file. */
+	FString SourcePath;
+	FDreamUISourceLocation Location;
+	/** The file this declaration was read from; see FDreamUIStyle::SourceName. */
+	FString SourceName;
+};
+
+/**
+ * One line of a `props { … }` block: a property this file's class declares for its hosts to set and itself to bind
+ * (`Text Label`, `Number ValueIndex = 0`, `Enum /Script/DevProject.ENieRRowKind Kind = Cycle`). Compiled into a
+ * Blueprint variable, editable on instances; a C++ parent's UPROPERTY of the same name is used instead of declaring
+ * one. Types: Text, String, Number, Integer, Bool, Color, Vector2, Asset, Class, and `Enum <path>`.
+ */
+struct DREAMGUI_API FDreamUIPropDecl
+{
+	/** As written: `Text`, `Number`, …, or `Enum` (with EnumPath set). */
+	FString TypeName;
+	/** `Enum` only: the enum's path. */
+	FString EnumPath;
+	FString Name;
+	/** `= value`, when written. */
+	TOptional<FDreamUIValue> DefaultValue;
+	FDreamUISourceLocation Location;
+};
+
+/** One parameter of an `events` entry: `Number Index`. Types as FDreamUIPropDecl's. */
+struct DREAMGUI_API FDreamUIEventParam
+{
+	FString TypeName;
+	FString EnumPath;
+	FString Name;
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * One entry of an `events { Picked(Number Index) }` block: an event this file's class raises, compiled into a
+ * Blueprint event dispatcher. A host routes it like any event (`Picked -> HandlePicked`), and this file raises it
+ * with `SomeEvent -> emit Picked(Index)`.
+ */
+struct DREAMGUI_API FDreamUIEventDecl
+{
+	FString Name;
+	TArray<FDreamUIEventParam> Params;
+	FDreamUISourceLocation Location;
+};
+
+/** Where a `viewmodels` entry's object comes from -- the spelling after `=`. Mirrors EDreamViewModelSource. */
+enum class EDreamUIViewModelSource : uint8
+{
+	/** Nothing after the name: the host gives it. */
+	Host,
+	/** `= new` */
+	New,
+	/** `= global`, `= global "Name"` */
+	Global,
+	/** `= parent`, `= parent "Name"` */
+	Parent,
+};
+
+/**
+ * One line of a `viewmodels { … }` block: a view model this file's class holds, by type and name, and where it comes
+ * from (`SettingsVM Settings = new`, `InventoryVM Stash = global "Stash"`). Compiled into an object variable of that
+ * class -- FieldNotify, Expose on Spawn -- plus an FDreamWidgetViewModelSlot on the generated class, which the run time
+ * fills at Initialize.
+ *
+ * TypeName is resolved by the compiler, the same way a `use … as` alias, a /Script/ path or a reflected class name is
+ * anywhere else; the parser records the spelling.
+ */
+struct DREAMGUI_API FDreamUIViewModelDecl
+{
+	/** As written: an alias from `use … as`, a reflected class name (`PlayerVM`), or a full path. */
+	FString TypeName;
+	FString Name;
+	EDreamUIViewModelSource Source = EDreamUIViewModelSource::Host;
+	/** Global and Parent: the quoted name after the keyword; empty when none was written. */
+	FString SourceName;
+	FDreamUISourceLocation Location;
+	/** Where TypeName was written, for a class that does not resolve. */
+	FDreamUISourceLocation TypeLocation;
+};
+
+/**
+ * One key on a `timeline` track line: `0.3 = (1.25, 1.25) ease InOutQuad`.
+ *
+ * Time is SECONDS, as written, and stays a double all the way to the builder -- the frame number a
+ * MovieScene channel wants is derived there from the sequence's tick resolution, and an AST that
+ * carried frames would have to know a resolution the file never mentions.
+ */
+struct DREAMGUI_API FDreamUITimelineKey
+{
+	double Time = 0.0;
+	/** The value at this time, in the same spellings every other value uses. Unused on an event key. */
+	FDreamUIValue Value;
+	/**
+	 * The named curve from this key to the NEXT one -- Linear when the author wrote no `ease`.
+	 *
+	 * A NAME and never a tangent quadruple, which is the whole reason a timeline is writable: the
+	 * proposal's first load-bearing fact is that FRichCurve tangents are stored data, so expressing
+	 * them in text means either four numbers nobody can hand-write or a lossy round trip. A name
+	 * re-derives the same tangents on every compile from one word.
+	 */
+	FString EaseName;
+	/** Event key only: the name broadcast when playback crosses this time. */
+	FString EventName;
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * One line of a `timeline` block: a property track, or the block's event track.
+ *
+ * `Icon.RenderScale : 0.0 = (1, 1), 0.3 = (1.25, 1.25) ease InOutQuad`
+ * `@0.3 -> Landed`
+ */
+struct DREAMGUI_API FDreamUITimelineTrack
+{
+	/**
+	 * `Row/Title` -- the chain of node ids from the animated widget down to the bound one, '/'
+	 * separated, empty when the track drives the animation's own host. Identical in shape to
+	 * FDreamWidgetAnimationObjectReference's path, deliberately: a node id IS its display name, so
+	 * the language needed no path model of its own.
+	 */
+	FString NodePath;
+	/** The property that path's node drives, dotted paths included. Empty on the event track. */
+	FString PropertyName;
+	/** True for `@time -> Name` lines, which bind to nothing and broadcast a name. */
+	bool bIsEvent = false;
+	TArray<FDreamUITimelineKey> Keys;
+	FDreamUISourceLocation Location;
+};
+
+/**
+ * `timeline Pulse { … }` -- an animation the language owns, or `timeline Celebrate external`.
+ *
+ * The two forms are the proposal's two layers. A language-owned timeline is rebuilt from this text
+ * on every compile, exactly like the tree; an `external` one names an animation that lives in the
+ * asset and is edited in Sequencer, so the language records only that it EXISTS -- which is what
+ * makes "what animations does this class have" answerable from the file alone.
+ */
+struct DREAMGUI_API FDreamUITimeline
+{
+	FString Name;
+	/** `timeline X external`: Sequencer's, not the language's. No block, no tracks. */
+	bool bExternal = false;
+	/** Seconds. Zero means "as long as the last key", resolved by the builder. */
+	double Duration = 0.0;
+	/** `Once` | `Loop` | `PingPong`, as written. Empty means Once. */
+	FString LoopMode;
+	TArray<FDreamUITimelineTrack> Tracks;
+	FDreamUISourceLocation Location;
+	/** The file this was read from; see FDreamUIStyle::SourceName. */
+	FString SourceName;
+};
+
+/** Something CollectStyleChain met on the way. Which ones a caller reports, and where, is the caller's to say. */
+struct DREAMGUI_API FDreamUIStyleChainProblem
+{
+	enum class EKind : uint8
+	{
+		/** Ref names no style this AST can see. */
+		Unknown,
+		/** Following Ref's bases comes back to a style still being expanded. Nothing of the clause applies. */
+		Cycle,
+		/** Ref's style was already applied by an earlier name of the same clause (Through), so naming it again does nothing. */
+		AlreadyApplied,
+	};
+	EKind Kind = EKind::Unknown;
+	/** The name the problem is about, where it was written. */
+	FDreamUIStyleRef Ref;
+	/** The style whose clause holds Ref; null when Ref is in the clause the walk started from (a node's). */
+	const FDreamUIStyle* Owner = nullptr;
+	/** AlreadyApplied: the earlier name of the clause whose expansion applied it. Cycle: the style the walk came back to. */
+	FString Through;
+};
+
+struct DREAMGUI_API FDreamUIAst
+{
+	/** `class /Game/UI/WBP_SavePanel` -- which blueprint this tree compiles into. */
+	FString ClassPath;
+	FDreamUISourceLocation ClassPathLocation;
+
+	TArray<FDreamUIStyle> Styles;
+	/**
+	 * What `use "…"` pulled in, kept apart from the file's own declarations, so that FindStyle and
+	 * FindResource can chain -- own first, so a local name shadows an imported one.
+	 *
+	 * Imported RESOURCES do become class variables, now: an entry is a constant, `@Accent` already
+	 * resolved through this chain on every line that wrote it, and declaring nothing for it meant a
+	 * file could spell an imported resource everywhere except where a graph or a designer could see
+	 * it. Two importers each declare their own, which is not a conflict -- they are two classes.
+	 * Imported STYLES stay what they were: a bag of values applied by name, never an identity.
+	 */
+	TArray<FDreamUIStyle> ImportedStyles;
+
+	TArray<FDreamUIResource> Resources;
+	TArray<FDreamUIResource> ImportedResources;
+	/** Every `use` path, RESOLVED, in encounter order -- what the watcher's dependency table eats. */
+	TArray<FString> Imports;
+
+	/** `use … as Name` lines of this file, and the aliases its libraries brought (already `ns.`-prefixed when used under a namespace). */
+	TArray<FDreamUIComponentAlias> ComponentAliases;
+	TArray<FDreamUIComponentAlias> ImportedComponentAliases;
+	/** The alias a node type names, or null. Own first, then imported; first declaration wins. */
+	const FDreamUIComponentAlias* FindComponentAlias(const FString& InName) const;
+
+	/** `use "Lib.dui" as nier` prefixes, in declaration order: `nier`. Their entries sit in the Imported* arrays as `nier.X`. */
+	TArray<FString> Namespaces;
+
+	/** `props { … }` -- the properties this file's class declares. */
+	TArray<FDreamUIPropDecl> Props;
+	/** `events { … }` -- the event dispatchers this file's class declares. */
+	TArray<FDreamUIEventDecl> Events;
+	const FDreamUIEventDecl* FindEvent(const FString& InName) const;
+
+	/** `viewmodels { … }` -- the view models this file's class holds. This file's own only: never merged across a `use`. */
+	TArray<FDreamUIViewModelDecl> ViewModels;
+	/** The entry of that name, or null. First declaration wins (a second is DuplicateViewModel). */
+	const FDreamUIViewModelDecl* FindViewModel(const FString& InName) const;
+
+	/**
+	 * `timeline` blocks, in declaration order.
+	 *
+	 * NOT merged across a `use`, unlike styles and resources, and the difference is not an oversight:
+	 * a timeline compiles into an object on THIS class's widget tree and into a class member variable
+	 * named after it, so importing one would mean two classes owning one animation. A style is a bag
+	 * of values and copies harmlessly; an animation is an identity.
+	 */
+	TArray<FDreamUITimeline> Timelines;
+
+	/** The timeline of this name, or null. First declaration wins, like styles. */
+	const FDreamUITimeline* FindTimeline(const FString& InName) const;
+
+	/** Exactly one root. bHasRoot is false when parsing failed before one was produced. */
+	FDreamUINode Root;
+	bool bHasRoot = false;
+
+	const FDreamUIStyle* FindStyle(const FString& InName) const;
+
+	/**
+	 * The styles a clause applies, in the order they apply -- the one rule every reader of a style clause shares.
+	 *
+	 * Left to right; each name brings its own bases first (recursively, by the same rule), and a style applies once, at
+	 * its FIRST appearance: `style A : Base`, `style B : Base` and `: A : B` apply Base, A, B. What comes later
+	 * overrides what came before, and the node's own lines come after all of it.
+	 *
+	 * A name nothing declares is skipped (its bases with it) and the rest still applies. A cycle empties OutBaseFirst --
+	 * nothing of a clause that inherits itself applies -- and returns false. Problems go to OutProblems when given, in
+	 * the order met; a name repeated within one clause, or already applied by an earlier name of the same clause, is an
+	 * AlreadyApplied problem and is otherwise harmless.
+	 */
+	bool CollectStyleChain(TConstArrayView<FDreamUIStyleRef> InClause, TArray<const FDreamUIStyle*>& OutBaseFirst,
+		TArray<FDreamUIStyleChainProblem>* OutProblems = nullptr) const;
+
+	/** The entry `@InName` refers to, or null. First declaration wins, like styles. */
+	const FDreamUIResource* FindResource(const FString& InName) const;
+
+	/** Every node in the tree, root first, parents before children. Loop bodies included. */
+	void ForEachNode(TFunctionRef<void(const FDreamUINode&)> InPredicate) const;
+};

@@ -1,0 +1,304 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "DreamUISequenceTrackEditor.h"
+#include "Animation/DreamUISequence.h"
+#include "Animation/DreamUISequenceTrack.h"
+#include "Animation/DreamWidgetAnimation.h"
+#include "Animation/DreamWidgetAnimationComponent.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamWidgetPresenterComponentBase.h"
+#include "Designer/DreamWidgetHierarchyPickerView.h"
+#include "MovieScene.h"
+#include "MovieScenePossessable.h"
+#include "ScopedTransaction.h"
+#include "TrackEditors/SubTrackEditorBase.h"
+#include "SequencerUtilities.h"
+#include "GameFramework/Actor.h"
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
+#include "Modules/ModuleManager.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/Layout/SBox.h"
+
+#define LOCTEXT_NAMESPACE "DreamUISequenceTrackEditor"
+
+TSharedRef<ISequencerTrackEditor> FDreamUISequenceTrackEditor::CreateTrackEditor(TSharedRef<ISequencer> InSequencer)
+{
+	return MakeShared<FDreamUISequenceTrackEditor>(InSequencer);
+}
+
+FDreamUISequenceTrackEditor::FDreamUISequenceTrackEditor(TSharedRef<ISequencer> InSequencer)
+	: FMovieSceneTrackEditor(InSequencer)
+{
+}
+
+bool FDreamUISequenceTrackEditor::SupportsType(TSubclassOf<UMovieSceneTrack> Type) const
+{
+	return Type == UDreamUISequenceTrack::StaticClass();
+}
+
+void FDreamUISequenceTrackEditor::BuildObjectBindingTrackMenu(FMenuBuilder& MenuBuilder, const TArray<FGuid>& ObjectBindings, const UClass* ObjectClass)
+{
+	if (ObjectClass == nullptr)
+	{
+		return;
+	}
+	bool bRelevant = ObjectClass->IsChildOf(UDreamWidget::StaticClass()) || ObjectClass->IsChildOf(UDreamWidgetPresenterComponentBase::StaticClass());
+	// An actor binding is relevant only when the actor actually carries a presenter; resolving the
+	// instance here keeps the menu off every other actor in the sequence.
+	if (!bRelevant && ObjectClass->IsChildOf(AActor::StaticClass()) && !ObjectBindings.IsEmpty())
+	{
+		if (const TSharedPtr<ISequencer> SequencerPtr = GetSequencer())
+		{
+			for (TWeakObjectPtr<> WeakObject : SequencerPtr->FindObjectsInCurrentSequence(ObjectBindings[0]))
+			{
+				const AActor* Actor = Cast<AActor>(WeakObject.Get());
+				if (Actor != nullptr && Actor->FindComponentByClass<UDreamWidgetPresenterComponentBase>() != nullptr)
+				{
+					bRelevant = true;
+					break;
+				}
+			}
+		}
+	}
+	if (!bRelevant)
+	{
+		return;
+	}
+	MenuBuilder.AddSubMenu(
+		LOCTEXT("BindNestedWidget", "Bind Nested Widget"),
+		LOCTEXT("BindNestedWidgetTooltip", "Possess a widget inside the nested widget this binding presents; property tracks can then key it directly."),
+		FNewMenuDelegate::CreateRaw(this, &FDreamUISequenceTrackEditor::AddWidgetPickerSubMenu, TArray<FGuid>(ObjectBindings)));
+	MenuBuilder.AddSubMenu(
+		LOCTEXT("AddDreamUISequence", "DreamUI Animation"),
+		LOCTEXT("AddDreamUISequenceTooltip", "Play a DreamUI animation asset on this widget: the asset's root binding resolves as this binding's object."),
+		FNewMenuDelegate::CreateRaw(this, &FDreamUISequenceTrackEditor::AddAssetSubMenu, TArray<FGuid>(ObjectBindings)));
+	MenuBuilder.AddSubMenu(
+		LOCTEXT("AddEmbeddedAnimation", "Embedded Animation"),
+		LOCTEXT("AddEmbeddedAnimationTooltip", "Play another animation of this component as a section of this one. It animates its own widgets, at the time this section sits at -- a long animation assembled out of short ones."),
+		FNewMenuDelegate::CreateRaw(this, &FDreamUISequenceTrackEditor::AddEmbeddedSubMenu, TArray<FGuid>(ObjectBindings)));
+}
+
+TSharedRef<ISequencerSection> FDreamUISequenceTrackEditor::MakeSectionInterface(UMovieSceneSection& SectionObject, UMovieSceneTrack& Track, FGuid ObjectBinding)
+{
+	return MakeShared<TSubSectionMixin<>>(GetSequencer(), *CastChecked<UDreamUISequenceSection>(&SectionObject));
+}
+
+void FDreamUISequenceTrackEditor::AddWidgetPickerSubMenu(FMenuBuilder& MenuBuilder, TArray<FGuid> ObjectBindings)
+{
+	const TSharedPtr<ISequencer> SequencerPtr = GetSequencer();
+	if (!SequencerPtr.IsValid() || ObjectBindings.IsEmpty())
+	{
+		return;
+	}
+	// The bound object leads to the loaded tree: a presenter directly, an actor through its
+	// presenter component, a widget through its root.
+	UDreamWidget* Root = nullptr;
+	for (TWeakObjectPtr<> WeakObject : SequencerPtr->FindObjectsInCurrentSequence(ObjectBindings[0]))
+	{
+		UObject* Object = WeakObject.Get();
+		if (const UDreamWidgetPresenterComponentBase* Presenter = Cast<UDreamWidgetPresenterComponentBase>(Object))
+		{
+			Root = Presenter->GetLoadedWidget();
+		}
+		else if (const AActor* Actor = Cast<AActor>(Object))
+		{
+			if (const UDreamWidgetPresenterComponentBase* ActorPresenter = Actor->FindComponentByClass<UDreamWidgetPresenterComponentBase>())
+			{
+				Root = ActorPresenter->GetLoadedWidget();
+			}
+		}
+		else if (UDreamWidget* Widget = Cast<UDreamWidget>(Object))
+		{
+			Root = Widget;
+			while (Root->GetParent() != nullptr)
+			{
+				Root = Root->GetParent();
+			}
+		}
+		if (Root != nullptr)
+		{
+			break;
+		}
+	}
+	if (Root == nullptr)
+	{
+		MenuBuilder.AddMenuEntry(LOCTEXT("NoLoadedWidgetTree", "No loaded widget tree"), FText::GetEmpty(), FSlateIcon(), FUIAction());
+		return;
+	}
+
+	// The hierarchy picker the Animations panel's own "add a widget" menu uses: a tree with a search box, as
+	// long and as deep as the hierarchy is. This was a flat list of menu entries that stopped at sixty-four,
+	// so in a screen of any size the widgets after those could not be bound from here at all.
+	MenuBuilder.AddWidget(
+		SNew(SBox)
+		.Padding(4, 0)
+		.MaxDesiredHeight(480.0f)
+		[
+			SNew(SDreamWidgetHierarchyPickerView, Root->GetWorld(), UDreamWidget::StaticClass(), Root)
+			.OnSelectItem_Lambda([this](UObject* InItem)
+			{
+				UDreamWidget* Picked = Cast<UDreamWidget>(InItem);
+				if (Picked == nullptr && IsValid(InItem))
+				{
+					Picked = InItem->GetTypedOuter<UDreamWidget>();
+				}
+				if (Picked != nullptr)
+				{
+					FSlateApplication::Get().DismissAllMenus();
+					HandleWidgetPicked(MakeWeakObjectPtr(Picked));
+				}
+			})
+		],
+		FText::GetEmpty(), /*bNoIndent*/ true);
+}
+
+void FDreamUISequenceTrackEditor::HandleWidgetPicked(TWeakObjectPtr<UDreamWidget> InWidget)
+{
+	UDreamWidget* Widget = InWidget.Get();
+	const TSharedPtr<ISequencer> SequencerPtr = GetSequencer();
+	if (Widget == nullptr || !SequencerPtr.IsValid())
+	{
+		return;
+	}
+	UDreamUISequence* Asset = Cast<UDreamUISequence>(SequencerPtr->GetFocusedMovieSceneSequence());
+
+	// Picking the tree root inside an animation asset means the root binding, which already exists.
+	if (Asset != nullptr && Widget->GetParent() == nullptr && Asset->GetRootBindingGuid().IsValid())
+	{
+		SequencerPtr->SelectObject(Asset->GetRootBindingGuid());
+		return;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BindNestedWidget_Transaction", "Bind Nested Widget"));
+	// The custom-binding machinery picks UDreamUIWidgetBinding by itself: it is the only binding
+	// type that supports creation from a widget, and it derives the presenter and path from it.
+	const FGuid NewGuid = FSequencerUtilities::CreateBinding(SequencerPtr.ToSharedRef(), *Widget);
+	if (NewGuid.IsValid())
+	{
+		if (Asset != nullptr)
+		{
+			// The whole re-rooting scheme -- one override on the root retargets the tree -- rests
+			// on children being parented under the root binding; the engine's create path leaves
+			// the parent unset.
+			UMovieScene* MovieScene = Asset->GetMovieScene();
+			const FGuid RootGuid = Asset->EnsureRootBinding();
+			if (NewGuid != RootGuid)
+			{
+				if (FMovieScenePossessable* Possessable = MovieScene->FindPossessable(NewGuid))
+				{
+					Possessable->SetParent(RootGuid, MovieScene);
+				}
+			}
+		}
+		SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
+	}
+}
+
+void FDreamUISequenceTrackEditor::AddAssetSubMenu(FMenuBuilder& MenuBuilder, TArray<FGuid> ObjectBindings)
+{
+	FAssetPickerConfig AssetPickerConfig;
+	AssetPickerConfig.Filter.ClassPaths.Add(UDreamUISequence::StaticClass()->GetClassPathName());
+	AssetPickerConfig.SelectionMode = ESelectionMode::Single;
+	AssetPickerConfig.InitialAssetViewType = EAssetViewType::List;
+	AssetPickerConfig.OnAssetSelected = FOnAssetSelected::CreateRaw(this, &FDreamUISequenceTrackEditor::HandleAssetSelected, ObjectBindings);
+
+	FContentBrowserModule& ContentBrowserModule = FModuleManager::Get().LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+	MenuBuilder.AddWidget(
+		SNew(SBox)
+		.WidthOverride(320.0f)
+		.HeightOverride(320.0f)
+		[
+			ContentBrowserModule.Get().CreateAssetPicker(AssetPickerConfig)
+		],
+		FText::GetEmpty(), true, false);
+}
+
+void FDreamUISequenceTrackEditor::HandleAssetSelected(const FAssetData& AssetData, TArray<FGuid> ObjectBindings)
+{
+	FSlateApplication::Get().DismissAllMenus();
+	AddSequenceToBindings(Cast<UDreamUISequence>(AssetData.GetAsset()), ObjectBindings);
+}
+
+void FDreamUISequenceTrackEditor::AddEmbeddedSubMenu(FMenuBuilder& MenuBuilder, TArray<FGuid> ObjectBindings)
+{
+	const TSharedPtr<ISequencer> SequencerPtr = GetSequencer();
+	UDreamWidgetAnimation* OuterAnimation = SequencerPtr.IsValid()
+		? Cast<UDreamWidgetAnimation>(SequencerPtr->GetFocusedMovieSceneSequence()) : nullptr;
+	UDreamWidgetAnimationComponent* Component = OuterAnimation != nullptr
+		? OuterAnimation->GetTypedOuter<UDreamWidgetAnimationComponent>() : nullptr;
+
+	int32 Offered = 0;
+	if (Component != nullptr)
+	{
+		for (UDreamWidgetAnimation* Animation : Component->GetSequenceArray())
+		{
+			// Not itself: a sequence that contains itself has no length and no end, and the engine
+			// would be the one to find that out.
+			if (!IsValid(Animation) || Animation == OuterAnimation)
+			{
+				continue;
+			}
+			++Offered;
+			MenuBuilder.AddMenuEntry(
+				FText::FromString(Animation->GetDisplayNameString()),
+				LOCTEXT("AddEmbeddedEntryTooltip", "Play this animation as a section of the one being edited."),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateRaw(this, &FDreamUISequenceTrackEditor::HandleEmbeddedSelected,
+					TWeakObjectPtr<UDreamWidgetAnimation>(Animation), TArray<FGuid>(ObjectBindings))));
+		}
+	}
+	if (Offered == 0)
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("NoEmbeddedAnimations", "No other animations on this component"),
+			LOCTEXT("NoEmbeddedAnimationsTooltip", "Only the embedded animations of the component this one belongs to can be nested; a standalone asset is offered under DreamUI Animation instead."),
+			FSlateIcon(), FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([] { return false; })));
+	}
+}
+
+void FDreamUISequenceTrackEditor::HandleEmbeddedSelected(TWeakObjectPtr<UDreamWidgetAnimation> InAnimation, TArray<FGuid> ObjectBindings)
+{
+	FSlateApplication::Get().DismissAllMenus();
+	AddSequenceToBindings(InAnimation.Get(), ObjectBindings);
+}
+
+void FDreamUISequenceTrackEditor::AddSequenceToBindings(UMovieSceneSequence* InSequence, const TArray<FGuid>& ObjectBindings)
+{
+	UMovieScene* MovieScene = GetFocusedMovieScene();
+	if (InSequence == nullptr || InSequence->GetMovieScene() == nullptr || MovieScene == nullptr || MovieScene->IsReadOnly())
+	{
+		return;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("AddDreamUISequence_Transaction", "Add DreamUI Animation"));
+	MovieScene->Modify();
+
+	// The inner sequence's own range, expressed in the outer sequence's resolution.
+	const TRange<FFrameNumber> InnerRange = InSequence->GetMovieScene()->GetPlaybackRange();
+	const FFrameTime InnerDuration = FFrameRate::TransformTime(
+		UE::MovieScene::DiscreteSize(InnerRange),
+		InSequence->GetMovieScene()->GetTickResolution(), MovieScene->GetTickResolution());
+
+	for (const FGuid& ObjectBinding : ObjectBindings)
+	{
+		UDreamUISequenceTrack* Track = MovieScene->FindTrack<UDreamUISequenceTrack>(ObjectBinding);
+		if (Track == nullptr)
+		{
+			Track = Cast<UDreamUISequenceTrack>(MovieScene->AddTrack(UDreamUISequenceTrack::StaticClass(), ObjectBinding));
+		}
+		if (Track != nullptr)
+		{
+			const FFrameNumber StartTime = GetSequencer().IsValid() ? GetSequencer()->GetLocalTime().Time.FrameNumber : FFrameNumber(0);
+			Track->AddSequence(InSequence, StartTime, FMath::Max(1, InnerDuration.CeilToFrame().Value));
+		}
+	}
+	if (const TSharedPtr<ISequencer> SequencerPtr = GetSequencer())
+	{
+		SequencerPtr->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
+	}
+}
+
+#undef LOCTEXT_NAMESPACE

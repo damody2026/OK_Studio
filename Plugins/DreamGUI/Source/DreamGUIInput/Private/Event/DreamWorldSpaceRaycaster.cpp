@@ -1,0 +1,333 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+
+#include "Event/DreamWorldSpaceRaycaster.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamUIManager.h"
+#include "Core/DreamUISettings.h"
+#include "Core/DreamUIWorldContext.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/World.h"
+#include "Event/DreamEventSystem.h"
+#include "GameFramework/PlayerController.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "Async/ParallelFor.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/App.h"
+
+static TAutoConsoleVariable<int32> CVarDreamUIParallelRaycastMinCanvases(
+	TEXT("r.DreamUI.ParallelRaycastMinCanvases"),
+	32,
+	TEXT("When a world-space raycaster traces at least this many root canvases, the cheap tests of their visuals -- the ")
+	TEXT("rect bounds each ray is held against -- run on the task graph's workers as well as the game thread; the exact ")
+	TEXT("tests stay on the game thread. 0: all on the game thread."),
+	ECVF_Default);
+#include "SceneView.h"
+
+UDreamWorldSpaceRaycaster::UDreamWorldSpaceRaycaster()
+{
+	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
+	TraceChannel = TraceTypeQuery1;
+	DragThresholdSquare = DragThreshold * DragThreshold;
+}
+
+void UDreamWorldSpaceRaycaster::BeginPlay()
+{
+	Super::BeginPlay();
+	DragThresholdSquare = DragThreshold * DragThreshold;
+}
+
+#if WITH_EDITOR
+void UDreamWorldSpaceRaycaster::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	// Recomputed unconditionally rather than only when DragThreshold is the property that changed:
+	// the multiply is free next to everything else an editor property change triggers, and a
+	// name-matched branch is one rename away from silently going dead again.
+	DragThresholdSquare = DragThreshold * DragThreshold;
+}
+#endif
+
+bool UDreamWorldSpaceRaycaster::GetAffectByGamePause()const
+{
+	return GetDefault<UDreamUISettings>()->bWorldSpaceUIAffectByGamePause;
+}
+
+FVector2D UDreamWorldSpaceRaycaster::GetViewCentrePixel(const FIntRect& InViewRect)
+{
+	// FSceneView::DeprojectScreenToWorld measures a screen position against the view rectangle it is handed -- the
+	// player's own part of the viewport, on a split screen -- so the middle of the view is the middle of that rectangle.
+	// The middle of the whole viewport put one player's reticle on the bottom edge of their view and the other's on the
+	// top edge of theirs.
+	return FVector2D(InViewRect.Min + InViewRect.Max) * 0.5;
+}
+
+bool UDreamWorldSpaceRaycaster::GenerateRay(UDreamPointerEventData* InPointerEventData, FVector& OutRayOrigin, FVector& OutRayDirection, FVector& OutRayEnd, float& OutRayLength)
+{
+	OutRayLength = RayLength;
+	const UWorld* World = DreamUI::GetWorldSafe(this);
+	if (World == nullptr)return false;
+
+	// The pointer says whose it is, and deprojection has to happen through THAT player's view: on a
+	// split screen the first controller's viewport is the wrong rectangle and the wrong camera. With
+	// no pointer to ask, this raycaster's own player is the answer -- it only ever speaks for one.
+	const int32 PointerUserIndex = InPointerEventData != nullptr ? InPointerEventData->UserIndex : GetUserIndex();
+	APlayerController* PlayerController = UDreamEventSystem::GetPlayerControllerForUser(this, PointerUserIndex);
+	if (PlayerController == nullptr)return false;
+	ULocalPlayer* const LocalPlayer = PlayerController->GetLocalPlayer();
+	if (LocalPlayer == nullptr || LocalPlayer->ViewportClient == nullptr)return false;
+
+	FSceneViewProjectionData ProjectionData;
+	if (!LocalPlayer->GetProjectionData(LocalPlayer->ViewportClient->Viewport, ProjectionData))return false;
+
+	FVector2D ScreenPosition = FVector2D::ZeroVector;
+	switch (PointerSource)
+	{
+	case EDreamWorldPointerSource::ScreenCenter:
+		ScreenPosition = GetViewCentrePixel(ProjectionData.GetConstrainedViewRect());
+		break;
+	case EDreamWorldPointerSource::Mouse:
+	default:
+		if (InPointerEventData == nullptr)return false;//a mouse ray is a position, and there is none
+		ScreenPosition = FVector2D(InPointerEventData->PointerPosition);
+		break;
+	}
+
+	auto ViewProMatrix = ProjectionData.ViewRotationMatrix * ProjectionData.ProjectionMatrix;//ViewProjectionMatrix without position
+	FMatrix const InvViewProjMatrix = ViewProMatrix.InverseFast();
+	FSceneView::DeprojectScreenToWorld(ScreenPosition, ProjectionData.GetConstrainedViewRect(), InvViewProjMatrix, /*out*/ OutRayOrigin, /*out*/ OutRayDirection);
+	OutRayOrigin += ProjectionData.ViewOrigin;//take position out from ViewProjectionMatrix, after de-project calculation, add position to result, this can avoid float precision issue. otherwise result ray will have some obvious bias
+	OutRayEnd = OutRayOrigin + OutRayDirection * RayLength;
+	return true;
+}
+
+void UDreamWorldSpaceRaycaster::Raycast(UDreamPointerEventData* InPointerEventData, FVector& OutRayOrigin, FVector& OutRayDirection, FVector& OutRayEnd, TArray<FDreamUIHitResult>& OutHitResultArray)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(DreamUI_WorldSpaceRaycast);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(GetWorld());
+	if (Manager == nullptr)return;
+
+	// Collected per canvas and appended, because RaycastUI both APPENDS to and SORTS the array it is
+	// given: handing it the accumulating array would re-sort everything found so far by the hit order
+	// of whichever canvas happened to be visited last. Its sort is a within-canvas answer -- canvas
+	// sort order, then hierarchy index -- and it has nothing to say about two separate panels, which
+	// is what the distance sort below is for.
+	//
+	// One ray for every canvas: making it asks the player's view for its projection, which cost more than testing a
+	// small panel against it, once per world panel.
+	/**
+	 * Which canvases the ray is put to: each a root in world space, on this raycaster's channel. With many canvases that is
+	 * asked on as many threads as there are -- it reads each canvas, and a world of panels is thousands of them, a few reads
+	 * from memory each -- and the answer says too whether the canvas's widget stands alone at the top of its tree, so that
+	 * the thread gathering from it prepares it: nothing above it is another tree's (PrepareRaycastTree).
+	 */
+	enum class ETraced : uint8 { No, Alone, UnderAnother };
+	const TArray<UDreamCanvas*>& AllCanvases = Manager->GetAllCanvasesResolved();
+	const int32 MinCanvases = CVarDreamUIParallelRaycastMinCanvases.GetValueOnGameThread();
+	const bool bParallel = MinCanvases > 0 && AllCanvases.Num() >= MinCanvases && FApp::ShouldUseThreadingForPerformance();
+	const ETraceTypeQuery Channel = TraceChannel.GetValue();
+	TArray<UDreamCanvas*> TracedCanvases;
+	TArray<ETraced> TracedHow;
+	if (bParallel)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(DreamUI_ParallelTracedCanvases);
+		TArray<UDreamCanvas*> Resolved;
+		Resolved.SetNumZeroed(AllCanvases.Num());
+		TArray<ETraced> How;
+		How.SetNumZeroed(AllCanvases.Num());
+		ParallelFor(TEXT("DreamUI_TracedCanvases"), AllCanvases.Num(), 64, [&AllCanvases, &Resolved, &How, Channel](int32 Index)
+		{
+			// Resolved already, a canvas that is garbage left out (GetAllCanvasesResolved). Nothing asked here writes anything
+			// once a canvas knows its root and widget, which it does from its first update.
+			UDreamCanvas* const Canvas = AllCanvases[Index];
+			if (Canvas == nullptr || !Canvas->IsRootCanvas() || !Canvas->IsRenderToWorldSpace() || Canvas->GetTraceChannel() != Channel)
+			{
+				return;
+			}
+			const UDreamWidget* Widget = Canvas->GetWidget();
+			Resolved[Index] = Canvas;
+			How[Index] = Widget != nullptr && Widget->GetParent() == nullptr ? ETraced::Alone : ETraced::UnderAnother;
+		});
+		for (int32 Index = 0; Index < AllCanvases.Num(); ++Index)
+		{
+			if (How[Index] != ETraced::No)
+			{
+				TracedCanvases.Add(Resolved[Index]);
+				TracedHow.Add(How[Index]);
+			}
+		}
+	}
+	else
+	{
+		for (UDreamCanvas* Canvas : AllCanvases)
+		{
+			// Resolved already, a canvas that is garbage left out.
+			if (Canvas == nullptr)continue;
+			if (!Canvas->IsRootCanvas())continue;
+			if (!Canvas->IsRenderToWorldSpace())continue;
+			if (Canvas->GetTraceChannel() != Channel)continue;
+			TracedCanvases.Add(Canvas);
+			TracedHow.Add(ETraced::UnderAnother);
+		}
+	}
+	if (TracedCanvases.Num() > 0 && GenerateRay(InPointerEventData, OutRayOrigin, OutRayDirection, OutRayEnd, CurrentRayLength))
+	{
+		CurrentRayOrigin = OutRayOrigin;
+		CurrentRayDirection = OutRayDirection;
+		// Each tree's cheap tests on its own, on as many threads as there are when there are many: with a thousand world
+		// panels they are most of a trace, and nearly every visual fails them. Then the exact tests of what is left, one
+		// canvas after another as before, on the game thread, where a custom raycast may run a Blueprint.
+		TArray<TArray<UDreamVisual*>> Candidates;
+		Candidates.SetNum(TracedCanvases.Num());
+		if (bParallel && TracedCanvases.Num() >= MinCanvases)
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(DreamUI_ParallelRaycastCandidates);
+			// A canvas under widgets another tree may share is prepared here; one standing alone, by the thread that gathers
+			// from it.
+			for (int32 Index = 0; Index < TracedCanvases.Num(); ++Index)
+			{
+				if (TracedHow[Index] == ETraced::UnderAnother)
+				{
+					PrepareRaycastTree(TracedCanvases[Index]);
+				}
+			}
+			constexpr int32 MinBatchSize = 16;
+			ParallelFor(TEXT("DreamUI_GatherRaycastCandidates"), TracedCanvases.Num(), MinBatchSize,
+				[&TracedCanvases, &TracedHow, &Candidates, &OutRayOrigin, &OutRayEnd](int32 Index)
+				{
+					if (TracedHow[Index] == ETraced::Alone)
+					{
+						PrepareRaycastTree(TracedCanvases[Index]);
+					}
+					GatherRaycastCandidates(TracedCanvases[Index], OutRayOrigin, OutRayEnd, Candidates[Index]);
+				});
+		}
+		else
+		{
+			for (int32 Index = 0; Index < TracedCanvases.Num(); ++Index)
+			{
+				GatherRaycastCandidates(TracedCanvases[Index], OutRayOrigin, OutRayEnd, Candidates[Index]);
+			}
+		}
+		TArray<FDreamUIHitResult> CanvasHitResultArray;
+		for (int32 Index = 0; Index < TracedCanvases.Num(); ++Index)
+		{
+			if (Candidates[Index].Num() == 0)
+			{
+				continue;
+			}
+			CanvasHitResultArray.Reset();
+			RaycastCandidates(Candidates[Index], OutRayOrigin, OutRayEnd, CanvasHitResultArray);
+			OutHitResultArray.Append(CanvasHitResultArray);
+		}
+	}
+
+	if (bOccludeByWorld)
+	{
+		// Its own array as well, for a blunter reason: RaycastWorld resets whatever it is handed
+		// before tracing, so passing the collected hits in would throw every one of them away.
+		TRACE_CPUPROFILER_EVENT_SCOPE(DreamUI_RaycastWorld);
+		TArray<FDreamUIHitResult> WorldHitResultArray;
+		RaycastWorld(InPointerEventData, false, TraceChannel, OutRayOrigin, OutRayDirection, OutRayEnd, WorldHitResultArray);
+		OutHitResultArray.Append(WorldHitResultArray);
+	}
+
+	// Nearest first: the input module reads element 0 as the hit and treats the rest as hover, so
+	// this ordering is what decides which of two overlapping panels answers a click, and what lets a
+	// world occluder in front of a panel take the pointer away from it.
+	//
+	// STABLE, and that is not a nicety. Everything on one flat panel is at one distance -- a button
+	// face and the panel background it sits on are coplanar, so their distances are the same float --
+	// and for those the only right answer is the one RaycastUI already gave: canvas sort order, then
+	// hierarchy, i.e. what is drawn on top. TArray::Sort is not stable; on the handful of elements a
+	// pointer hits it is a selection sort that moves the first of two equal elements behind the
+	// second, so the background came out ahead of the button and took its clicks. A stable sort only
+	// moves hits whose distances differ, which is exactly the question it is here for: one panel in
+	// front of another, a wall in front of a panel. Equal distances keep the order they were
+	// collected in, which also puts a panel's own hits ahead of a world occluder at the same depth --
+	// the world trace is appended last.
+	if (OutHitResultArray.Num() > 1)
+	{
+		OutHitResultArray.StableSort([](const FDreamUIHitResult& A, const FDreamUIHitResult& B)
+		{
+			return A.Distance < B.Distance;
+		});
+	}
+}
+
+bool UDreamWorldSpaceRaycaster::ShouldStartDrag(UDreamPointerEventData* InPointerEventData)
+{
+	if (InPointerEventData == nullptr)return false;
+	if (bHoldToDrag)
+	{
+		// No world means no clock to measure the hold against, so the hold cannot have elapsed and
+		// the question falls through to distance -- which needs nothing but the event data. Measured on
+		// the pointer clock PressTime was stamped with, not the game clock a pause would stop.
+		const UWorld* World = DreamUI::GetWorldSafe(this);
+		if (World != nullptr && UDreamEventSystem::GetPointerClockSeconds(World) - InPointerEventData->PressTime > HoldToDragTime)
+		{
+			return true;
+		}
+	}
+	if (PointerSource == EDreamWorldPointerSource::ScreenCenter)
+	{
+		// Measured where this pointer actually moves. A centre-screen ray IS the middle of the
+		// screen, so its screen position and its press position are the same point forever and no
+		// aim, however wide, could ever start a drag. What does move when the player turns is where
+		// the ray lands, so the threshold is held against that, in world units.
+		const double DragDistanceSquared = (InPointerEventData->GetWorldPointSpherical() - InPointerEventData->PressWorldPoint).SizeSquared();
+		return DragDistanceSquared > (double)DragThresholdSquare;
+	}
+	const FVector2D PointerPos = FVector2D(InPointerEventData->PointerPosition);
+	const FVector2D PressPointerPos = FVector2D(InPointerEventData->PressPointerPosition);
+	return FVector2D::DistSquared(PressPointerPos, PointerPos) > DragThresholdSquare;
+}
+
+bool UDreamWorldSpaceRaycaster::IsWithinDoubleClickDistance(const UDreamPointerEventData* InPointerEventData) const
+{
+	if (InPointerEventData == nullptr)
+	{
+		return true;
+	}
+	// ShouldStartDrag's two measures, applied to the last click's press and this one.
+	if (PointerSource == EDreamWorldPointerSource::ScreenCenter)
+	{
+		const double PressDistanceSquared = (InPointerEventData->PressWorldPoint - InPointerEventData->LastClickPressWorldPoint).SizeSquared();
+		return PressDistanceSquared <= (double)DragThresholdSquare;
+	}
+	const FVector2D LastClickPress = FVector2D(InPointerEventData->LastClickPressPointerPosition);
+	const FVector2D ThisPress = FVector2D(InPointerEventData->PressPointerPosition);
+	return FVector2D::DistSquared(LastClickPress, ThisPress) <= DragThresholdSquare;
+}
+
+void UDreamWorldSpaceRaycaster::SetPointerSource(EDreamWorldPointerSource Value)
+{
+	PointerSource = Value;
+}
+void UDreamWorldSpaceRaycaster::SetOccludeByWorld(bool Value)
+{
+	bOccludeByWorld = Value;
+}
+void UDreamWorldSpaceRaycaster::SetTraceChannel(TEnumAsByte<ETraceTypeQuery> Value)
+{
+	TraceChannel = Value;
+}
+void UDreamWorldSpaceRaycaster::SetRayLength(float Value)
+{
+	RayLength = Value;
+}
+void UDreamWorldSpaceRaycaster::SetDragThreshold(float Value)
+{
+	DragThreshold = Value;
+	DragThresholdSquare = DragThreshold * DragThreshold;
+}
+void UDreamWorldSpaceRaycaster::SetHoldToDrag(bool Value)
+{
+	bHoldToDrag = Value;
+}
+void UDreamWorldSpaceRaycaster::SetHoldToDragTime(float Value)
+{
+	HoldToDragTime = Value;
+}

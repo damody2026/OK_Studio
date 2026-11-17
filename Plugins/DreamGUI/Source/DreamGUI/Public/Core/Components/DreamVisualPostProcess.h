@@ -1,0 +1,209 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+
+#include "DreamVisual.h"
+#include "DreamUIRender/DreamUIPostProcessVertex.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "DreamVisualPostProcess.generated.h"
+
+class FDreamVisualPostProcessRenderProxy;
+struct FDreamUIPostProcessVertex;
+
+/**
+ * Shared ownership of a post-process render proxy -- see IDreamUIRendererPrimitive.h for why.
+ *
+ * Repeated here rather than included: that header drags the renderer's SceneManagement/MeshBatch
+ * includes in, and this one is a UObject header every visual and the editor module see. An alias
+ * redeclared to the same type is legal, so the two agree by construction.
+ */
+using FDreamVisualPostProcessRenderProxyPtr = TSharedPtr<FDreamVisualPostProcessRenderProxy, ESPMode::ThreadSafe>;
+
+UENUM(BlueprintType)
+enum class EDreamBackgroundBlurRenderType:uint8
+{
+	/** Render direct to screen */
+	Screen,
+	/** Output to a RenderTarget */
+	RenderTarget,
+};
+
+/** How a post-process visual's Color is combined with the background it captured. */
+UENUM(BlueprintType)
+enum class EDreamPostProcessTintMode :uint8
+{
+	/** result = background * Color. Can only darken or colourise; white leaves it untouched. */
+	Multiply,
+	/** result = lerp(background, Color, Strength). Washes the background towards Color, and can lighten it. */
+	Blend,
+	/** result = background + Color * Strength. Glow-like brightening. */
+	Additive,
+};
+
+/**
+ * UI element that can do post-processing effect on screen space.
+ * Only valid on DreamUIRenderer (ScreenSpaceUI or WorldSpace-DreamUIRenderer).
+ */
+UCLASS(Abstract, NotBlueprintable)
+class DREAMGUI_API UDreamVisualPostProcess : public UDreamVisual
+{
+	GENERATED_BODY()
+
+public:
+	DECLARE_EVENT_OneParam(UDreamVisualPostProcess, FRenderTargetChangedEvent, UTextureRenderTarget2D*);
+	UDreamVisualPostProcess(const FObjectInitializer& ObjectInitializer);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool IsEnabled()const { return bEnabled; }
+	/** Off, the effect draws nothing and what it covers shows as if it were not there; every setting is kept. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetEnabled(bool Value);
+
+protected:
+	/** A subclass that draws its widget's children through its effect stops and starts doing so here. */
+	virtual void OnEnabledChanged();
+	/** Off, the effect draws nothing: to compare with and without it. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (DreamGUI_LayerToggle))
+	bool bEnabled = true;
+
+	virtual void BeginPlay() override;
+	virtual void BeginDestroy() override;
+	virtual void OnUnregister() override;
+	virtual void PostLoad() override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+#endif
+	TSharedPtr<FDreamUIGeometry> Geometry = nullptr;
+	virtual void UpdateGeometry()override final;
+
+	virtual void OnDimensionChanged(bool InPivotChange, bool InWidthChange, bool InHeightChange)override;
+	virtual void OnTransformChanged(bool InPositionChanged, bool InScaleChanged) override;
+	virtual void MarkAllDirty()override;
+
+protected:
+	friend class FDreamVisualPostProcessCustomization;
+	/** Use maskTexture's red channel to mask out effect result. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (DisplayThumbnail = "false"))
+	TObjectPtr<UTexture2D> MaskTexture;
+	/** MaskTexture UV offset and scale info. Only get good result when MaskTextureType is Simple */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI")
+	FVector4 MaskTextureUVRect = FVector4(0, 0, 1, 1);
+	/**
+	 * Use root canvas size instead of just this UI element rect area.
+	 * For screen-space-overlay UI, this will act as full screen size.
+	 * For world-space-DreamUI, this will use root canvas size.
+	 */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI")
+	bool bUseFullSize = false;
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (EditCondition = "!bUseFullSize"))
+	EDreamBackgroundBlurRenderType RenderType = EDreamBackgroundBlurRenderType::Screen;
+	/**
+	 * Blur result will output to this RenderTarget.
+	 * Will create one if not specified.
+	 */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta=(EditCondition="RenderType==EDreamBackgroundBlurRenderType::RenderTarget&&!bUseFullSize"))
+	TObjectPtr<UTextureRenderTarget2D> OutputRenderTarget = nullptr;
+	/**
+	 * The output render target this visual made because none was assigned. Held apart from
+	 * OutputRenderTarget, which is the author's: never saved, duplicated or copied.
+	 */
+	UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+	TObjectPtr<UTextureRenderTarget2D> AutoOutputRenderTarget = nullptr;
+	/**
+	 * How this visual's Color tints the captured background.
+	 * Only the RGB of Color is used — its alpha keeps whatever meaning the effect gives it (background blur
+	 * reads alpha as blur strength), so TintStrength controls how strongly the tint applies.
+	 */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI|Tint")
+	EDreamPostProcessTintMode TintMode = EDreamPostProcessTintMode::Multiply;
+	/** 0 leaves the background untouched in every mode; 1 applies the tint fully. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI|Tint", meta = (ClampMin = 0.0, ClampMax = 1.0))
+	float TintStrength = 1.0f;
+	FRenderTargetChangedEvent OnRenderTargetChanged;
+public:
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamPostProcessTintMode GetTintMode()const { return TintMode; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	float GetTintStrength()const { return TintStrength; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetTintMode(EDreamPostProcessTintMode Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetTintStrength(float Value);
+
+	FRenderTargetChangedEvent& GetRenderTargetChangedEvent(){return OnRenderTargetChanged;}
+	
+	FDreamUIGeometry* GetGeometry()const { return Geometry.Get(); }
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UTexture2D* GetMaskTexture()const { return MaskTexture; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	const FVector4& GetMaskTextureUVRect()const { return MaskTextureUVRect; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamBackgroundBlurRenderType GetRenderType()const { return RenderType; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UTextureRenderTarget2D* GetOutputRenderTarget()const { return OutputRenderTarget != nullptr ? OutputRenderTarget.Get() : AutoOutputRenderTarget.Get(); }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetUseFullSize()const{return bUseFullSize;}
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetMaskTexture(UTexture2D* Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetMaskTextureUVRect(const FVector4& Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetRenderType(EDreamBackgroundBlurRenderType Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetUseFullSize(bool Value);
+public:
+	void MarkVertexPositionDirty();
+	void MarkUVDirty();
+public:
+	/**
+	 * The render-thread agent for this visual, created on first use.
+	 *
+	 * Hands out a reference rather than a pointer: whoever asks (the mesh section, a render command)
+	 * keeps it alive on its own schedule, and this visual dropping its own reference in BeginDestroy
+	 * is not the end of the proxy.
+	 */
+	virtual FDreamVisualPostProcessRenderProxyPtr GetRenderProxy()PURE_VIRTUAL(UUIPostProcessRenderable::GetRenderProxy, return nullptr;);
+	virtual bool HaveValidData()const;
+
+	virtual bool LineTraceUI(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const override;
+
+	/**
+	 * bUseFullSize draws the quad at the ROOT CANVAS's rect while keeping this widget's transform
+	 * (see OnUpdateGeometry), so the bounds must be built from that same rect. Inheriting the base
+	 * version -- which answers with this widget's own rect -- is what let a full-screen blur be
+	 * batched and culled as if it only covered the handful of pixels its own widget occupies.
+	 */
+	virtual void GetGeometryBoundsInLocalSpace(FVector2D& OutMinPoint, FVector2D& OutMaxPoint)const override;
+	virtual void GetGeometryBounds3DInLocalSpace(FVector& OutMinPoint, FVector& OutMaxPoint)const override;
+
+	/**
+	 * The widget whose rect this effect is drawn at: the root canvas's widget when bUseFullSize,
+	 * this visual's own widget otherwise (and as a fallback whenever there is no root canvas to ask,
+	 * which is the case in the moments before this visual is attached to one).
+	 */
+	UDreamWidget* GetSizeSourceWidget()const;
+private:
+	/** local vertex position changed */
+	uint8 bLocalVertexPositionChanged : 1;
+	/** vertex's uv change */
+	uint8 bUVChanged : 1;
+protected:
+	FDreamVisualPostProcessRenderProxyPtr RenderProxy;
+	/** update ui geometry */
+	virtual void OnUpdateGeometry(bool InTriangleChanged, bool InVertexPositionChanged, bool InVertexUVChanged, bool InVertexColorChanged);
+	/** update region vertex data */
+	virtual void UpdateRegionVertex();
+	void UpdateGeometryClipData(FDreamUIGeometry& InMesh, int InDataStartPosition);
+	TArray<FDreamUIPostProcessCopyMeshRegionVertex> RenderScreenToMeshRegionVertexArray;
+	TArray<FDreamUIPostProcessVertex> RenderMeshRegionToScreenVertexArray;
+
+	virtual void SendRegionVertexDataToRenderProxy();
+	void SendMaskTextureToRenderProxy();
+	void SendRenderTargetToRenderProxy();
+
+	void UpdateRenderTarget();
+};

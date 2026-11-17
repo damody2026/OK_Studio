@@ -1,0 +1,693 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "PreviewScene.h"
+#include "EditorViewportClient.h"
+#include "Animation/AnimInstance.h"
+#include "LevelEditorViewport.h"
+#include "Designer/DreamDesignerHandles.h"
+
+class UDreamVisual;
+class UDreamWidget;
+class FDreamWidgetBlueprintEditor;
+class UDreamWidgetBlueprint;
+struct FDreamLayoutControlAnchorData;
+struct FDreamUIAnchorData;
+
+/** Viewport client for editor viewports. Contains common functionality for camera movement, rendering debug information, etc. */
+class DREAMGUIEDITOR_API FDreamWidgetDesignerViewportClient : public FEditorViewportClient
+{
+public:
+	FDreamWidgetDesignerViewportClient(TWeakPtr<FDreamWidgetBlueprintEditor> InDesignerPtr, const TSharedRef<class SDreamWidgetDesignerViewport>& InEditorViewportPtr);
+
+	virtual ~FDreamWidgetDesignerViewportClient()override;
+
+	// FViewElementDrawer interface
+	virtual void Draw(const FSceneView* View, FPrimitiveDrawInterface* PDI) override;
+	// End of FViewElementDrawer interface
+
+	// FEditorViewportClient interface
+	virtual void DrawCanvas(FViewport& InViewport, FSceneView& View, FCanvas& Canvas)override;
+	virtual void ReceivedFocus(FViewport* InViewport) override;
+	virtual void LostFocus(FViewport* InViewport) override;
+	virtual void ProcessClick(FSceneView& View, HHitProxy* HitProxy, FKey Key, EInputEvent Event, uint32 HitX, uint32 HitY) override;
+	virtual bool InputKey(const FInputKeyEventArgs& EventArgs) override;
+	virtual void TrackingStarted(const struct FInputEventState& InInputState, bool bIsDragging, bool bNudge) override;
+	virtual void TrackingStopped() override;
+	virtual void AbortTracking() override;
+
+	virtual void CapturedMouseMove(FViewport* InViewport, int32 InMouseX, int32 InMouseY) override;
+	/** The engine's cursor, except over the rotate handle and while it is held. */
+	virtual EMouseCursor::Type GetCursor(FViewport* InViewport, int32 X, int32 Y) override;
+	virtual void MouseEnter(FViewport* Viewport, int32 x, int32 y) override;
+	virtual void MouseMove(FViewport* InViewport, int32 x, int32 y) override;
+	virtual void MouseLeave(FViewport* Viewport) override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool InputWidgetDelta(FViewport* InViewport, EAxisList::Type InCurrentAxis, FVector& Drag, FRotator& Rot, FVector& Scale) override;
+	/** The selection the transform gizmo acts on: selected, not locked, not hidden in the designer. */
+	void GetGizmoWidgets(TArray<UDreamWidget*>& OutWidgets) const;
+	/** Apply one frame of the engine widget's delta to that selection. */
+	void ApplyDeltaToSelectedWidgets(const FVector& Drag, const FRotator& Rot, const FVector& Scale);
+
+	virtual UE::Widget::EWidgetMode GetWidgetMode() const override;
+	virtual FVector GetWidgetLocation() const override;
+	virtual FMatrix GetWidgetCoordSystem() const override;
+ 
+	virtual void SetViewportType(ELevelViewportType InViewportType) override;
+	virtual FSceneView* CalcSceneView(FSceneViewFamily* ViewFamily, const int32 StereoViewIndex = INDEX_NONE) override;
+	// End of FEditorViewportClient interface
+
+	/**
+	 * Whether the 2D view should project through the canvas's own virtual camera instead of its
+	 * orthographic one. False for the 3D view (which has a real camera the author is steering), for
+	 * canvases with no virtual camera to borrow, and for canvases that cannot see their own plane.
+	 */
+	bool ShouldUseCanvasView()const;
+
+	/**
+	 * Stand the editor camera exactly where the canvas's own virtual camera stands, with its lens.
+	 * Perspective bakes geometry for that eye, so this is the only pose from which the editor shows
+	 * the foreshortening play shows. Switches to the 3D view first -- an ortho view has no eye.
+	 */
+	void FrameFromCanvasEye();
+	bool CanFrameFromCanvasEye()const;
+	/** The preview's root canvas, or null if it or its widget is not in a state safe to ask. */
+	class UDreamCanvas* GetPreviewRootCanvas()const;
+	/** Keep the editor lens equal to the canvas lens, so the 3D view is at least calibrated. */
+	void SyncViewFOVToCanvas();
+
+	/**
+	 * Announce a hover that happened in another panel -- the hierarchy row under the cursor -- so
+	 * the design surface outlines the same widget. The viewport's own cursor-driven hover wins
+	 * whenever the cursor is actually in the viewport.
+	 */
+	void SetExternalHoverWidget(UDreamWidget* InWidget);
+	/**
+	 * Withdraw an announcement, but only while it is still the standing one: a cursor sliding down
+	 * the list can fire the next row's enter before this row's exit, and an unconditional clear
+	 * would wipe the newer announcement.
+	 */
+	void ClearExternalHoverWidget(UDreamWidget* InOnlyIfThisOne);
+
+	/**
+	 * Get the elements (from the current selection set) that this viewport can manipulate (eg, via the transform gizmo).
+	 */
+	FTypedElementListConstRef GetElementsToManipulate(const bool bForceRefresh = false);
+	/** Cache the list of elements to manipulate based on the current selection set. */
+	void CacheElementsToManipulate(const bool bForceRefresh = false);
+	/** Reset the list of elements to manipulate */
+	void ResetElementsToManipulate(const bool bClearList = true);
+
+	/** Reset the list of elements to manipulate, because the selection set they were cached from has changed */
+	void ResetElementsToManipulateFromSelectionChange(const UTypedElementSelectionSet* InSelectionSet);
+
+	/** Reset the list of elements to manipulate, because the typed element registry is about to process deferred deletion */
+	void ResetElementsToManipulateFromProcessingDeferredElementsToDestroy();
+
+	/** Get the selection set that associated with our level editor. */
+	const UTypedElementSelectionSet* GetSelectionSet() const;
+	UTypedElementSelectionSet* GetMutableSelectionSet() const;
+
+	/**
+	 * Returns the horizontal axis for this viewport.
+	 */
+	EAxisList::Type GetHorizAxis() const;
+
+	/**
+	 * Returns the vertical axis for this viewport.
+	 */
+	EAxisList::Type GetVertAxis() const;
+
+	virtual void NudgeSelectedObjects(const struct FInputEventState& InputState) override;
+
+	void ApplyDeltaToActors(const FVector& InDrag, const FRotator& InRot, const FVector& InScale);
+	void ApplyDeltaToActor(AActor* InActor, const FVector& InDeltaDrag, const FRotator& InDeltaRot, const FVector& InDeltaScale);
+	void ApplyDeltaToComponent(USceneComponent* InComponent, const FVector& InDeltaDrag, const FRotator& InDeltaRot, const FVector& InDeltaScale);
+
+	void ApplyDeltaToSelectedElements(const FTransform& InDeltaTransform);
+	void ApplyDeltaToElement(const FTypedElementHandle& InElementHandle, const FTransform& InDeltaTransform);
+
+	void TickWorld(float DeltaSeconds);
+
+	bool FocusViewportToTargets();
+	/**
+	 * Frame InBox: the camera brought round to it as FocusViewportOnBox brings it, and in the flat view the zoom at which
+	 * the box, with a margin round it, fills as much of the view as it can -- UMG's zoom to fit (SDesignSurface::ZoomToFit).
+	 * F and the toolbar's Zoom to Fit both come here.
+	 */
+	void FrameBox(const FBox& InBox);
+	TSharedPtr<FDreamWidgetBlueprintEditor> GetDesigner() const { return DesignerPtr.Pin(); }
+	/**
+	 * Which of a widget's own axes something else is deciding: its parent's container, plus its own
+	 * layout-self. Free of any viewport state so the handle policy can be tested directly.
+	 */
+	static FDreamLayoutControlAnchorData GetEffectiveLayoutControl(const UDreamWidget* InWidget);
+	/**
+	 * Whether the author may still set this widget's anchors, per axis. An anchor only says where in
+	 * the parent a rect is measured from, so on an axis whose position or size is already being
+	 * decided for the child there is nothing left for one to say.
+	 */
+	static void GetAnchorEditableAxes(const UDreamWidget* InWidget, bool& bOutHorizontal, bool& bOutVertical);
+	/**
+	 * Whether a Move gesture over this selection can write anything the next arrange will keep. A
+	 * position an arranger owns is re-decided immediately -- SetAnchoredPosition re-dirties the
+	 * parent -- so a gesture that can only touch owned axes buys an undo step, a dirty asset and
+	 * possibly an animation key for a move that never appears on screen.
+	 */
+	static bool CanMoveSelection(TConstArrayView<UDreamWidget*> InWidgets);
+	/** The part of a move that survives the next arrange: zeroed on every axis an arranger decides. */
+	static FVector2D FilterMoveDelta(const FVector2D& InDelta, const FDreamLayoutControlAnchorData& InControl);
+
+	/** One widget under a Move drag, with the pointer ray already intersected against its own plane. */
+	struct FMoveDragTarget
+	{
+		FTransform PlaneTransform = FTransform::Identity;
+		FVector StartPlanePoint = FVector::ZeroVector;
+		FVector CurrentPlanePoint = FVector::ZeroVector;
+		FVector2D StartPosition = FVector2D::ZeroVector;
+		/** The dragged rect, for edge snapping. Zero size means "a point", which snaps by its centre. */
+		FVector2D Size = FVector2D::ZeroVector;
+		FVector2D Pivot = FVector2D(0.5, 0.5);
+		bool bHorizontalFree = true;
+		bool bVerticalFree = true;
+		/**
+		 * How far one screen pixel reaches in the parent's frame: the pointer's own precision. An axis the pointer
+		 * travelled less than half of it along did not move, and keeps its number exactly; on one it did travel, the
+		 * travel is spelled to within half of it. Zero for no such precision: any travel moves, and is taken exactly.
+		 */
+		double UnitsPerPixel = 0.0;
+	};
+	struct FMoveDragResult
+	{
+		FVector2D Position = FVector2D::ZeroVector;
+		/** The grid or a sibling moved this axis, which is the only thing a guide line has to say. */
+		bool bSnappedHorizontal = false;
+		bool bSnappedVertical = false;
+	};
+	/**
+	 * What a dragged rect may snap onto besides the grid: the edges and centres of its siblings.
+	 *
+	 * Positions along each axis in the LEADER's parent frame, which is the frame the drag is measured
+	 * in. Empty, or a tolerance of zero, means no edge snapping and the grid decides alone -- which is
+	 * what every caller that does not gather siblings gets, and what keeps this an addition rather
+	 * than a change to the arithmetic that was already there.
+	 */
+	struct FSiblingSnapLines
+	{
+		TArray<double> Horizontal;
+		TArray<double> Vertical;
+		double Tolerance = 0.0;
+	};
+	struct FEdgeSnapResult
+	{
+		bool bSnapped = false;
+		/** Added to the dragged rect's position to land it on the line. */
+		double Delta = 0.0;
+		/** Where the guide belongs, in the same frame as the lines. */
+		double Line = 0.0;
+	};
+	/**
+	 * Snap one axis of a dragged rect onto the nearest of InLines.
+	 *
+	 * Three things on the rect can meet a line -- its low edge, its centre, its high edge -- and the
+	 * nearest pairing within InTolerance wins. Ties go to the earlier candidate in that order, so a
+	 * rect the same size as its neighbour lands edge-on-edge rather than jittering between two equally
+	 * good answers on consecutive mouse moves.
+	 *
+	 * Pure, and static, because this is the whole alignment rule: it is worth being able to state what
+	 * it does without a viewport, a drag, or a hierarchy to state it against.
+	 */
+	static FEdgeSnapResult SolveEdgeSnap(double InMin, double InMax, TConstArrayView<double> InLines, double InTolerance);
+	/**
+	 * Where a Move drag puts each target. Every target is MEASURED in its own parent's space, because
+	 * the same numbers are a different distance in parents of differing scale or rotation; the grid's
+	 * correction is SNAPPED once per axis, off the first target free to be written on that axis,
+	 * because a selection is dragged as one shape. A target an arranger owns on an axis never
+	 * receives that axis, so a correction read off it would bend the rest of the selection towards a
+	 * number nothing was ever going to land on. InGridSize <= 0 means no snapping.
+	 *
+	 * InSnapLines adds the siblings' edges and centres, and they OUTRANK the grid per axis: a
+	 * designer snapping to a gridline a few units away from the edge it is visibly trying to meet is
+	 * the grid getting in the way of the alignment the author can see. Defaulted to nothing, so a
+	 * caller that does not gather siblings behaves exactly as before.
+	 *
+	 * Only an axis the pointer travelled along is written, snapped or not (see FMoveDragTarget::
+	 * UnitsPerPixel). A row dragged sideways keeps its height in its group to the digit, off the grid
+	 * or beside a sibling's edge as it was: neither the grid nor an edge was asked about that axis, and
+	 * pulling it to one moved the row the author was not moving.
+	 */
+	static void ResolveMoveDrag(TConstArrayView<FMoveDragTarget> InTargets, float InGridSize, TArray<FMoveDragResult>& OutResults,
+		const FSiblingSnapLines& InSnapLines = FSiblingSnapLines());
+
+	/**
+	 * The modifiers of a resize handle, applied to the edges the drag produced (InOut*, in the widget's
+	 * own space) given the edges it started from (In*).
+	 *
+	 * bFromCentre (Alt): the edge opposite each dragged one moves by as much the other way, so the
+	 * widget grows about its centre. bKeepAspect (Shift): the proportions it had when the handle was
+	 * grabbed are kept -- a corner follows whichever side the pointer took further, an edge handle grows
+	 * the other axis evenly both ways -- with each axis held at the edge opposite the dragged one, or at
+	 * the centre under bFromCentre. Never narrower or shorter than one unit. Pure, for the same reason
+	 * as ResolveMoveDrag.
+	 */
+	static void ApplyResizeModifiers(bool bFromCentre, bool bKeepAspect,
+		bool bChangeLeft, bool bChangeRight, bool bChangeBottom, bool bChangeTop,
+		float InLeft, float InRight, float InBottom, float InTop,
+		float& InOutLeft, float& InOutRight, float& InOutBottom, float& InOutTop);
+
+	/**
+	 * A Move drag with Shift held keeps to one axis: whichever the pointer has travelled further along,
+	 * measured on the first target's plane, as Figma and Photoshop constrain a shifted drag. Rewrites
+	 * each target's CurrentPlanePoint so its travel lies along that axis of its own plane.
+	 */
+	static void ConstrainMoveDragToDominantAxis(TArrayView<FMoveDragTarget> InOutTargets);
+
+	/**
+	 * Whether dropping this selection into InNewParent is a reparent the hierarchy would accept. The
+	 * refusals are the tree's: a widget onto itself, onto its own descendant, or into a parent with
+	 * no room. A widget already sitting in InNewParent is not a reparent at all, so it refuses that
+	 * too and the drag stays the plain move it has always been.
+	 */
+	static bool CanReparentSelectionUnder(TConstArrayView<UDreamWidget*> InWidgets, const UDreamWidget* InNewParent);
+
+	/**
+	 * Where a drag hovering over InHit would drop InDragged, or null when nothing there would take
+	 * it. The resolve walks up from the hit to the nearest ancestor holding a container, so the lock
+	 * is asked of that ancestor as well as of the hit -- otherwise a locked panel is reachable
+	 * through any unlocked child it happens to hold. A lock refuses the drop where it is rather than
+	 * sending the selection somewhere else; only a chain with no container at all falls back to
+	 * InRoot, which is the container-less prefab's answer and the one the palette drop already gives.
+	 */
+	static UDreamWidget* ResolveDragDropContainer(UDreamWidget* InHit, UDreamWidget* InRoot, TConstArrayView<UDreamWidget*> InDragged, TFunctionRef<bool(const UDreamWidget*)> InIsLocked);
+
+	/**
+	 * The cycle index a click at this pixel should walk from. Click-through only means anything while
+	 * the pick ray stays put, so a click anywhere else starts its own stack at the top. The
+	 * mouse-move reset cannot stand alone: it fires on moves, and a click can land on a pixel no move
+	 * event was delivered for.
+	 */
+	static int32 ResolveClickCycleIndex(const FIntPoint& InLastClickPixel, const FIntPoint& InClickPixel, int32 InCurrentIndex);
+
+	/**
+	 * The rect a device's title-safe area leaves inside a canvas this size, in the canvas's own local
+	 * space (origin at its pivot, X right, Y up). InSafePadding is (Left, Top, Right, Bottom) in
+	 * design units -- the order FMargin and FDisplayMetrics::TitleSafePaddingSize both use.
+	 */
+	static FBox2D GetSafeZoneLocalRect(const FVector2D& InCanvasSize, const FVector2D& InCanvasPivot, const FVector4& InSafePadding);
+	/** An anchor fraction pulled onto the quarter gridline it is within InTolerance of. */
+	static double SnapAnchorFraction(double InFraction, double InTolerance);
+	/**
+	 * How far the pointer has turned about a pivot, in degrees, from where a rotate drag was grabbed to where it is now.
+	 *
+	 * Both points are in the plane the turn happens in, as (right, up) offsets from the pivot. Positive is clockwise as
+	 * that plane is seen from in front -- the sense a positive roll turns a widget in -- and the answer is the one of its
+	 * whole-turn equivalents nearest InPreviousTurn, so a drag carried past half a turn goes on counting rather than
+	 * jumping back by 360. A pointer standing on the pivot points nowhere and answers InPreviousTurn.
+	 */
+	static double ResolveRotateTurn(const FVector2D& InGrabbed, const FVector2D& InCurrent, double InPreviousTurn);
+	/** An angle in degrees pulled onto the nearest whole multiple of InStep; InStep <= 0 leaves it alone. */
+	static double SnapRotationDegrees(double InDegrees, double InStep);
+	/**
+	 * Write new anchors while the widget's rect stays exactly where it is. Anchors and the offsets
+	 * describe that one rect between them, so moving an anchor line without re-measuring the offsets
+	 * against it drags the rect along by however far the line travelled.
+	 */
+	static void SetAnchorsPreservingRect(UDreamWidget* InWidget, const FVector2D& InAnchorMin, const FVector2D& InAnchorMax);
+
+	/** What a finished marquee does to the selection it was dragged over. */
+	enum class EMarqueeMode : uint8
+	{
+		Replace,
+		Add,
+		Remove,
+	};
+	/** Does a widget's projected rect meet the marquee box? InQuad is the four corners, in ring order. */
+	static bool DoesMarqueeMeetQuad(const FBox2D& InMarquee, TConstArrayView<FVector2D> InQuad);
+	/**
+	 * Does a widget's projected rect hold the whole marquee box? Then the box was drawn ON it -- the root, a panel the drag
+	 * started inside -- and not around it. InQuad as for DoesMarqueeMeetQuad.
+	 */
+	static bool DoesQuadHoldMarquee(const FBox2D& InMarquee, TConstArrayView<FVector2D> InQuad);
+	/** Does the marquee box hold the whole of a widget's projected rect? InQuad as for DoesMarqueeMeetQuad. */
+	static bool DoesMarqueeHoldQuad(const FBox2D& InMarquee, TConstArrayView<FVector2D> InQuad);
+	/**
+	 * What a marquee selects of what it caught (InOutCaught: every widget it met; InWhole: those it went all the way round).
+	 * A widget held whole takes what is inside it along -- the children go with it. One the box only cuts across gives way
+	 * to what it caught inside it: the box was drawn around those, and the panel or the root it started on is in the way.
+	 * Not for a marquee that removes: that takes away everything it met.
+	 */
+	static void ReduceMarqueeCatch(TArray<UDreamWidget*>& InOutCaught, const TSet<const UDreamWidget*>& InWhole);
+	/** Fold what a marquee caught into what was already selected. */
+	static void CombineMarqueeSelection(EMarqueeMode InMode, TConstArrayView<UDreamWidget*> InCurrent, TConstArrayView<UDreamWidget*> InCaught, TSet<UDreamWidget*>& OutSelection);
+	/**
+	 * InOutWidgets without those a selected ancestor carries: a move applied to a parent has moved its children already,
+	 * and moved by their own delta too they went twice as far. With bInByLayoutAxes, for a move that its layout may refuse
+	 * (a drag, a nudge, the gizmo's translation): an ancestor carries a widget only if it moves on every axis the widget
+	 * would -- one its layout holds in place moves nothing, and a free child of it moves by itself.
+	 */
+	static void KeepTopmostWidgets(TArray<UDreamWidget*>& InOutWidgets, bool bInByLayoutAxes);
+
+	/** World-space pick ray through a viewport pixel. */
+	bool ComputePickRay(int32 PixelX, int32 PixelY, FVector& OutLineStart, FVector& OutLineEnd);
+	UDreamWidget* GetWidgetUnderCursor(int32 PixelX, int32 PixelY, bool bRespectDesignerLock = true);
+	/** Where a drop at this pixel should be parented: nearest container under it, else the prefab root. */
+	UDreamWidget* GetDropContainerUnderCursor(int32 PixelX, int32 PixelY);
+	/**
+	 * The anchored position that stands a widget dropped at this pixel into InPreviewParent with its pivot under the
+	 * pointer, given its anchors and pivot (InAnchors): measured in the PREVIEW parent's rect, which is laid out, and
+	 * landed on the grid when snapping is on -- else spelled to half a pixel, the pointer's precision.
+	 *
+	 * The answer is written onto the new widget's TEMPLATE, which nothing lays out: its world transform is whatever it
+	 * was last told, so a world position set on it is read against a frame nobody can see. That is how a Text dropped
+	 * on a panel came out at its parent's centre-relative point, spelled (-100.99998474121094, -21.9999942779541).
+	 */
+	bool GetDropAnchoredPosition(int32 PixelX, int32 PixelY, const UDreamWidget* InPreviewParent, const FDreamUIAnchorData& InAnchors,
+		FVector2D& OutAnchoredPosition) const;
+	void SetPaletteDropPreview(UDreamWidget* Widget);
+	void ClearPaletteDropPreview();
+	/**
+	 * Open this viewport's context menu, reporting whether one actually opened.
+	 *
+	 * The single way for the click handlers to summon a menu. They were copied from the level
+	 * editor, which reaches its menu through a parent ILevelEditor; a designer viewport has none, so
+	 * every menu call in that file was a commented-out body that returned nothing.
+	 */
+	bool SummonDesignerContextMenu();
+
+	// Begin override because PreviewScene is nullptr
+	virtual UWorld* GetWorld()const override;
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual void DrawPreviewLightVisualization(const FSceneView* View, FPrimitiveDrawInterface* PDI)override;
+	virtual FLinearColor GetBackgroundColor() const override;
+	virtual bool Internal_InputAxis(FViewport* InViewport, FInputDeviceId DeviceID, FKey Key, float Delta, float DeltaTime, int32 NumSamples, bool bGamepad) override;
+	// End
+private:
+	enum class EDesignerHandle : uint8
+	{
+		None,
+		Move,
+		Left,
+		Right,
+		Top,
+		Bottom,
+		TopLeft,
+		TopRight,
+		BottomLeft,
+		BottomRight,
+		Pivot,
+		/** The disc above a single selection's top edge, which turns it in its own plane about its pivot. */
+		Rotate,
+		AnchorBottomLeft,
+		AnchorBottomRight,
+		AnchorTopRight,
+		AnchorTopLeft,
+	};
+	struct FDesignerWidgetSnapshot
+	{
+		TWeakObjectPtr<UDreamWidget> Widget;
+		FVector2D AnchoredPosition = FVector2D::ZeroVector;
+		FVector2D AnchorMin = FVector2D(0.5f);
+		FVector2D AnchorMax = FVector2D(0.5f);
+		FVector2D SizeDelta = FVector2D::ZeroVector;
+		FVector2D Pivot = FVector2D(0.5f);
+		float Width = 0.0f;
+		float Height = 0.0f;
+		/** Both faces of the rotation, so a cancelled turn puts back exactly the pair it found. */
+		FQuat RelativeRotation = FQuat::Identity;
+		FRotator RelativeRotationEuler = FRotator::ZeroRotator;
+		FTransform WorldTransform = FTransform::Identity;
+		FTransform PlaneTransform = FTransform::Identity;
+		FVector StartPlanePoint = FVector::ZeroVector;
+		/** Read once at press: what arranges a widget cannot change while the pointer is down. */
+		bool bHorizontalPositionFree = true;
+		bool bVerticalPositionFree = true;
+	};
+	bool HandleDesignerInputKey(const FInputKeyEventArgs& EventArgs);
+	void TrackRightMouseMovement(int32 MouseX, int32 MouseY);
+	/** Would this handle drag anything? Checked at press time so a dead press is not swallowed. */
+	bool CanBeginDesignerDrag(EDesignerHandle InHandle) const;
+	/** Snapshot the selection and enter the drag, anchored at the pixel the button went down on. */
+	void BeginDesignerDrag(EDesignerHandle InHandle, const FVector2D& InPressPixel);
+	/** A held press becomes a drag only once it has travelled; until then it is still a click. */
+	void TryPromoteDesignerDrag();
+	/** Pick and select whatever is at this pixel, the way ProcessClick would have. */
+	void SelectWidgetAtPixel(const FVector2D& InPixel, bool bIsControlDown);
+	/**
+	 * The edges and centres of the dragged widgets' siblings, in the leader's parent frame.
+	 *
+	 * Siblings only, and only of the FIRST moving widget: a multi-widget drag across two parents has
+	 * no single frame to measure in, and lines from a second parent would be numbers that mean
+	 * nothing where they are applied. Anything being dragged is skipped -- a widget does not align to
+	 * itself, or to the rest of the shape it is travelling with. Empty when the designer's guides are
+	 * switched off, which is what makes that toggle switch this off too.
+	 */
+	void GatherSiblingSnapLines(TConstArrayView<UDreamWidget*> InMovingWidgets, FSiblingSnapLines& OutLines) const;
+	void UpdateDesignerDrag();
+	/**
+	 * Where a Move drag is currently hovering, when dropping there would move the selection: the
+	 * container under the cursor, or the prefab root when nothing above the cursor holds one. Held as
+	 * pending state and shown as the drop preview, because a reparent that happened mid-drag would
+	 * fight the arrange the new parent runs on every pointer move.
+	 */
+	void UpdateDesignerReparentTarget(const FVector2D& InPixel);
+	/** Carry out the pending reparent, inside the transaction the move already opened. */
+	bool ApplyPendingReparent();
+	/** Every widget the running drag snapshotted, arranged axes included: a reparent moves them all. */
+	void GetDraggedWidgets(TArray<UDreamWidget*>& OutWidgets) const;
+	void FinishDesignerDrag(bool bCancel);
+	void DrawDesignerOverlay(FViewport& InViewport, FSceneView& View, FCanvas& Canvas);
+	void DrawLayoutDebugOverlay(FViewport& InViewport, FCanvas& Canvas) const;
+	bool UpdateDesignerScreenGeometry(FSceneView& View);
+	/** An anchor handle rides the parent's rect rather than the selection's, and writes anchors. */
+	static bool IsAnchorHandle(EDesignerHandle InHandle);
+	/** Project the anchor space -- the parent's rect -- and place the four anchor markers on it. */
+	void UpdateAnchorScreenGeometry(FSceneView& View, UDreamWidget* InWidget);
+	void DrawAnchorMedallion(FCanvas& Canvas) const;
+	/** A press on empty space is still the backdrop click until it travels; then it is a marquee. */
+	void TryPromoteDesignerMarquee();
+	void FinishDesignerMarquee();
+	void DrawDesignerMarquee(FCanvas& Canvas) const;
+	FBox2D GetDesignerMarqueeBox() const;
+	EDesignerHandle HitTestDesignerHandle(const FVector2D& PixelPosition) const;
+	bool IntersectDesignerPlane(const FVector2D& PixelPosition, const FTransform& PlaneTransform, FVector& OutPoint) const;
+	/** How far one viewport pixel at InPixel reaches in the plane's own frame -- the pointer's precision there. Zero when unmeasurable. */
+	double MeasureUnitsPerPixel(const FVector2D& InPixel, const FTransform& InPlaneTransform) const;
+	void DrawWidgetScreenOutline(UDreamWidget* InWidget, FSceneView& View, FCanvas& Canvas, const FLinearColor& Color, float Thickness = 1.0f) const;
+	/** Outline + name of whatever the cursor is over, so a click's target is knowable before it happens. */
+	void DrawHoverOutline(FSceneView& View, FCanvas& Canvas) const;
+	/** Resolve the hovered widget from the last mouse pixel. Once per frame, not once per move event. */
+	void UpdateHoveredWidget();
+	void DrawDesignerCanvasBoundary(FViewport& InViewport, FSceneView& View, FCanvas& Canvas) const;
+	/**
+	 * Draw where the selection actually lands in the shipped image, computed with the canvas's own
+	 * view-projection, without moving the camera or leaving the layout surface. Silent for anything
+	 * that ships where it was laid out, which is most things.
+	 */
+	void DrawShippedImageOutline(UDreamWidget* InWidget, FSceneView& View, FCanvas& Canvas) const;
+	/** InWidget's own clip mask and the layer below it, outlined where they cut (UDreamUIDesignerSettings::bShowClipMasks). */
+	void DrawClipMaskOutline(UDreamWidget* InWidget, FSceneView& View, FCanvas& Canvas) const;
+
+	/*
+	 * The viewport handles of the selection (Designer/DreamDesignerHandles.h; DreamWidgetDesignerHandles.cpp): the points
+	 * one registered provider gives the single selected widget -- a warp's lattice, a path, a gradient, a mask, a shadow --
+	 * drawn, grabbed, dragged as one undo step and written to the .dui when the button comes up; Tab shows the next.
+	 */
+	/** One provider's handles and guide lines for the selection, as collected this frame. */
+	struct FDesignerHandleSet
+	{
+		TSharedPtr<class IDreamDesignerHandleProvider> Provider;
+		FDreamDesignerHandleSet Set;
+	};
+	/** A handle under the pointer, and whose it is. */
+	struct FDesignerHandleHit
+	{
+		TSharedPtr<class IDreamDesignerHandleProvider> Provider;
+		FDreamDesignerHandle Handle;
+	};
+	/** A held handle: what it writes, the preview's values before (Esc), the drag as it stands, and its transaction. */
+	struct FDesignerHandleGesture;
+	/** The single selected widget the providers are asked about: the preview's, unlocked, the asset's own; else null. */
+	UDreamWidget* GetHandleWidget() const;
+	/** The shown provider's handles for InWidget (none or one set), and every provider that has some, in registration order. */
+	void CollectDesignerHandles(UDreamWidget* InWidget, const FSceneView& InView, TArray<FDesignerHandleSet>& OutSets,
+		TArray<TSharedRef<class IDreamDesignerHandleProvider>>* OutAvailable = nullptr) const;
+	/** Tab: the next provider's handles shown, or none after the last. False when the selection has no handles to switch. */
+	bool CycleDesignerHandles();
+	bool HitTestDesignerHandles(const FVector2D& InPixel, FDesignerHandleHit& OutHit) const;
+	bool BeginDesignerHandleDrag(const FDesignerHandleHit& InHit, const FVector2D& InPixel);
+	void UpdateDesignerHandleDrag();
+	void FinishDesignerHandleDrag(bool bCancel);
+	/** A double click handed to the providers; true when one of them took it. */
+	bool HandleDesignerDoubleClick(const FVector2D& InPixel);
+	void DrawDesignerHandles(FSceneView& View, FCanvas& Canvas) const;
+	/** Under the selection: whose handles are shown, and what Tab shows next. */
+	void DrawDesignerHandleCaption(UDreamWidget* InWidget, const FSceneView& View, FCanvas& Canvas,
+		const TSharedPtr<class IDreamDesignerHandleProvider>& InShown, TConstArrayView<TSharedRef<class IDreamDesignerHandleProvider>> InAvailable) const;
+	/** Where a viewport pixel lands on InWidget's plane, in its local space. */
+	bool PixelToWidgetLocal(const FVector2D& InPixel, const UDreamWidget* InWidget, FVector2D& OutLocal) const;
+	/** Screen pixels per unit of InWidget's local space, as InView draws it. */
+	double MeasurePixelsPerUnit(const FSceneView& InView, const UDreamWidget* InWidget) const;
+	bool IsDraggingDesignerHandle() const { return HandleGesture.IsValid(); }
+	TSharedPtr<FDesignerHandleGesture> HandleGesture;
+	/** A double click a provider took: the release that follows it is the click's, not the designer's. */
+	bool bSwallowNextLeftRelease = false;
+	/** Overlay common device resolutions anchored at the design canvas top-left, like UMG's designer. */
+	void DrawResolutionGuides(FViewport& InViewport, FSceneView& View, FCanvas& Canvas) const;
+	/** The title-safe rect of the design canvas. Silent on platforms that declare no safe area. */
+	void DrawSafeZoneGuide(FSceneView& View, FCanvas& Canvas) const;
+	/** The cursor's place on the design canvas, in the units the details panel is written in. */
+	void DrawCursorReadout(FViewport& InViewport, FSceneView& View, FCanvas& Canvas) const;
+	/** Rulers along the top and left edges, measured in the design canvas's own units. */
+	void DrawDesignerRulers(FViewport& InViewport, FSceneView& View, FCanvas& Canvas) const;
+	void DrawAnimationModeIndicator(FViewport& InViewport, FCanvas& Canvas) const;
+	/** Where the animation chip's close button was last drawn, in raw viewport pixels; invalid outside animation mode. */
+	mutable FBox2D AnimationChipCloseRect = FBox2D(ForceInit);
+	/** Key the given widgets' transform into the animation being edited, if there is one. */
+	void AutoKeyAnimatedTransform(const TArray<UDreamWidget*>& InWidgets, bool bLocation, bool bRotation, bool bScale) const;
+	TArray<FVector2D> DesignerScreenCorners;
+	TMap<EDesignerHandle, FVector2D> DesignerHandlePositions;
+	/** Kept apart from the selection's own handles so a resize handle still wins an overlapping pixel. */
+	TArray<FVector2D> DesignerAnchorSpaceCorners;
+	TMap<EDesignerHandle, FVector2D> DesignerAnchorHandlePositions;
+	FBox2D DesignerScreenBounds = FBox2D(EForceInit::ForceInit);
+	/** Refreshed with the handle positions, because it is an answer about the same selection. */
+	bool bDesignerMoveAvailable = false;
+	EDesignerHandle ActiveDesignerHandle = EDesignerHandle::None;
+	bool bDesignerDragging = false;
+	bool bDesignerChanged = false;
+	/** A left press that landed on a handle but has not travelled far enough to be a drag yet. */
+	bool bDesignerDragPending = false;
+	EDesignerHandle PendingDesignerHandle = EDesignerHandle::None;
+	FVector2D DesignerPressPixel = FVector2D::ZeroVector;
+	FVector2D DesignerDragStartPixel = FVector2D::ZeroVector;
+	/** A left press that landed on empty space; a marquee only once it has travelled. */
+	bool bDesignerMarqueePending = false;
+	bool bDesignerMarqueeActive = false;
+	FVector2D DesignerMarqueePressPixel = FVector2D::ZeroVector;
+	FVector2D DesignerMarqueeCurrentPixel = FVector2D::ZeroVector;
+	TArray<FDesignerWidgetSnapshot> DesignerSnapshots;
+	/** Where a Move drag would drop the selection, when that is somewhere other than where it is. */
+	TWeakObjectPtr<UDreamWidget> PendingReparentTarget;
+	TUniquePtr<class FScopedTransaction> DesignerTransaction;
+	/**
+	 * The asset's save state as the handle was grabbed, so a cancelled drag can put it back.
+	 *
+	 * FScopedTransaction::Cancel restores the transacted PROPERTIES; it knows nothing about the
+	 * package's dirty flag or the Blueprint's compile status, and the drag marks both before the
+	 * first mouse move (BeginDesignerDrag commits the geometry so that the undo entry carries the
+	 * pre-drag values). A drag abandoned with Esc therefore left a saved asset asking to be saved
+	 * again for an edit it no longer had.
+	 */
+	bool bBlueprintPackageWasDirtyBeforeDrag = false;
+	uint8 BlueprintStatusBeforeDrag = 0;
+	TOptional<float> DesignerGuideX;
+	TOptional<float> DesignerGuideY;
+	/**
+	 * How far a rotate drag has turned the pointer so far, in degrees, counted past a whole turn. Kept from one update to
+	 * the next because an angle read off the pointer alone cannot tell 190 degrees from -170.
+	 */
+	double DesignerRotateTurn = 0.0;
+	/** The rotate handle, its stem and, while it is held, the angle it has reached. */
+	void DrawRotateHandle(FCanvas& Canvas) const;
+	/** Ask for the next frame's redraw while a press, a drag or a marquee is live, so its tick comes while Slate throttles. */
+	void KeepTickingThroughGesture();
+
+	/**
+	 * Whether the arrow-key nudge has a transaction of its own open. The editor's transaction stack
+	 * is global, so a release that ends one it never began finalises whatever else is running -- the
+	 * designer drag's own transaction, which can then no longer be cancelled.
+	 */
+	bool bNudgeTransactionOpen = false;
+	/**
+	 * The arrow keys the nudge gesture holds down. The transaction opens with the first and closes with the release of the
+	 * last: one per press, closed by one release, left a level open whenever two arrows overlapped -- and an open
+	 * transaction refuses every undo in the editor, and takes in every edit made anywhere after it.
+	 */
+	TSet<FKey> NudgeKeysHeld;
+	/** Closes the nudge gesture's transaction, its edits written to the .dui inside it first, and forgets the keys held. */
+	void EndNudgeTransaction();
+
+	/** A widget the gizmo drags, as it was when the drag began: what Esc puts back (AbortTracking). */
+	struct FGizmoTrackingSnapshot
+	{
+		TWeakObjectPtr<UDreamWidget> Widget;
+		FVector RelativeLocation = FVector::ZeroVector;
+		FQuat RelativeRotation = FQuat::Identity;
+		FVector RelativeScale = FVector::OneVector;
+	};
+	TArray<FGizmoTrackingSnapshot> GizmoTrackingSnapshots;
+	/** Set by AbortTracking: the drag TrackingStopped is ending was cancelled, so it commits and keys none of it. */
+	bool bGizmoTrackingAborted = false;
+
+	/** Writes what the preview host has mirrored onto the template to the .dui now, inside whatever transaction is open. */
+	void FlushTemplateChangesNow();
+	/**
+	 * Whether InWidget is one of the asset's own widgets in the preview -- one with a template. The design canvas's agent
+	 * and the preview's wrapper have none: selected, every command acted on nothing and every move moved what no asset
+	 * holds.
+	 */
+	bool IsAuthoredPreviewWidget(const UDreamWidget* InWidget) const;
+
+	int PrevMouseX = 0, PrevMouseY = 0;
+	int IndexOfClickSelectUI = INDEX_NONE;
+	FIntPoint LastClickPixel = FIntPoint(-1, -1);
+	TWeakObjectPtr<UDreamWidget> PaletteDropPreviewWidget;
+	TWeakObjectPtr<UDreamWidget> HoveredWidget;
+	/**
+	 * A hover announced from outside the viewport -- today the hierarchy panel's rows. Kept apart
+	 * from HoveredWidget because the cursor is in ANOTHER panel while this is set, so the
+	 * cursor-driven update (and MouseLeave) must not fight it. DrawHoverOutline prefers the
+	 * cursor's answer when both exist.
+	 */
+	TWeakObjectPtr<UDreamWidget> ExternalHoverWidget;
+	FIntPoint HoverPixel = FIntPoint::ZeroValue;
+	bool bHoverPixelDirty = false;
+	/** The cursor readout has to go quiet when the cursor is not over this viewport at all. */
+	bool bCursorInViewport = false;
+	/** When Tick last asked a non-realtime viewport to redraw. */
+	double LastIdleRedrawSeconds = 0.0;
+	FDelegateHandle OnSelectionChangedDelegateHandle;
+
+	TWeakPtr<FDreamWidgetBlueprintEditor> DesignerPtr;
+	TWeakPtr<class SDreamWidgetDesignerViewport> EditorViewportPtr;
+	FIntPoint RightMouseDownPosition = FIntPoint::ZeroValue;
+	bool bRightMouseButtonDown = false;
+	bool bRightMouseMoved = false;
+	// Are we currently manipulating something?
+	bool bManipulating = false;
+	FTrackingTransaction TrackingTransaction;
+	/**
+	 * true when a brush is being transformed by its Widget
+	 */
+	bool					bIsTrackingBrushModification;
+	/** true if gizmo manipulation was started from a tracking event */
+	bool					bHasBegunGizmoManipulation;
+	/** Whether this viewport recently received focus. Used to determine whether component selection is permissible. */
+	bool bReceivedFocusRecently;
+
+	/** The elements (from the current selection set) that this viewport can manipulate (eg, via the transform gizmo) */
+	bool bHasCachedElementsToManipulate = false;
+	FTypedElementListRef CachedElementsToManipulate;
+
+	UDreamWidgetBlueprint* GetWidgetBlueprint()const;
+	/**
+	 * Collects the set of components and actors on which to apply move operations during or after drag operations.
+	 */
+	void GetSelectedActorsAndComponentsForMove(TArray<AActor*>& OutActorsToMove, TArray<USceneComponent*>& OutComponentsToMove) const;
+	/**
+	 * Determines if it is valid to move an actor in this viewport.
+	 *
+	 * @param InActor - the actor that the viewport may be interested in moving.
+	 * @returns true if it is valid for this viewport to update the given actor's transform.
+	 */
+	bool CanMoveActorInViewport(const AActor* InActor) const;
+
+	/** @return	Returns true if the delta tracker was used to modify any selected actors or BSP.  Must be called before EndTracking(). */
+	bool HaveSelectedObjectsBeenChanged() const;
+
+	/** Handle to a timer event raised in ::ReceivedFocus*/
+	FTimerHandle			FocusTimerHandle;
+};

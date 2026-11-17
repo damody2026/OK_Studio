@@ -1,0 +1,14 @@
+// A line of text mirrored from the character controller (a title, a status line, a value read-out).
+class /Game/UI/Reader/Controls/WBP_OKLabel
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (400, 30)
+    + Overlay { }
+    Text Label : ui.Body {
+        Text = ""
+        FontSize = @ui.SizeCaption
+        bAutoWrapText = true
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Center }
+    }
+}

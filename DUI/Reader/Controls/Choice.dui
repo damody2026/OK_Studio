@@ -1,0 +1,12 @@
+// A drop-down list mirrored from the character controller.
+class /Game/UI/Reader/Controls/WBP_OKChoice
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (300, 40)
+    + Overlay { }
+    Native.Dropdown Choice {
+        MaxVisibleItems = 14
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

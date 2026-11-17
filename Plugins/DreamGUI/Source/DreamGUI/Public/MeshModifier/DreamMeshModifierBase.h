@@ -1,0 +1,190 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+
+#pragma once
+
+#include "Core/DreamUIGeometry.h"
+#include "Core/Components/DreamVisualBatchMesh.h"
+#include "Core/DreamUIBehaviour.h"
+#include "DreamMeshModifierBase.generated.h"
+
+class UDreamVisualBatchMesh;
+class UDreamText;
+
+/**
+ * When a modifier runs among the others on the same visual. Modifiers run stage by stage, and within a stage in the order
+ * their components sit on the widget.
+ */
+UENUM(BlueprintType)
+enum class EDreamMeshModifierStage : uint8
+{
+	/** Works on the vertices as the visual made them, a text's characters by their vertex ranges: animations, colours, UVs. */
+	Characters,
+	/** Places whole characters anew (text on a path). It still reads the characters' vertex ranges. */
+	Layout,
+	/**
+	 * Reshapes the mesh by where each vertex is, cutting it finer first (warp, jelly). New vertices go after the old ones,
+	 * which keep their indices, so a character's range still names its corners -- but no longer every vertex it draws.
+	 */
+	Deform,
+	/** Appends whole copies of the mesh as the stages before left it (shadow, outline, long shadow): see GetDuplicatesMesh. */
+	Copies,
+};
+
+UENUM(BlueprintType)
+enum class EDreamUIMeshModifierHelper_TextPositionType:uint8
+{
+	//Relative to character's origin position
+	Relative,
+	//Direct set character's position, relative to UIText's pivot position
+	Absolute,
+};
+/**
+ * a helper class for UIGeometryModifierBase to easily modify ui geometry
+ *
+ * The UITextHelperFunction_* calls address a text's characters by index, one glyph each. A text joins letters into
+ * ligatures ("fi") by default, which would draw two such characters as one glyph, so a modifier that moves, turns,
+ * scales or colours characters one by one calls UDreamText::RegisterPerCharacterAnimation(Self) when it starts and
+ * UnregisterPerCharacterAnimation when it stops (TextAnimation does this for itself).
+ */
+UCLASS(BlueprintType)
+class DREAMGUI_API UDreamVisualBatchMeshModifierHelper : public UDreamUIGeometryHelper
+{
+	GENERATED_BODY()
+public:
+	/** Get character's center position in UIText's rect range, and convert to 0-1 range (left is 0 and right is 1) */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		float UITextHelperFunction_GetCharHorizontalPositionRatio01(UDreamText* InUIText, int InCharIndex)const;
+	/**
+	 * Modify character's position & rotation & scale
+	 * @param	InPositionType		Set position type, relative to origin position or absolute position
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_ModifyCharGeometry_Transform(UDreamText* InUIText, int InCharIndex
+			, EDreamUIMeshModifierHelper_TextPositionType InPositionType
+			, const FVector& InPosition
+			, const FRotator& InRotator = FRotator::ZeroRotator
+			, const FVector& InScale = FVector(1,1,1)
+		);
+	/**
+	 * Get character's pivot position relative to UIText's pivot position
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_GetCharGeometry_AbsolutePosition(UDreamText* InUIText, int InCharIndex, FVector& OutPosition)const;
+	/**
+	 * Modify character's position
+	 * @param	InPositionType		Set position type, relative to origin position or absolute position
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_ModifyCharGeometry_Position(UDreamText* InUIText, int InCharIndex
+			, const FVector& InPosition, EDreamUIMeshModifierHelper_TextPositionType InPositionType
+		);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_ModifyCharGeometry_Rotate(UDreamText* InUIText, int InCharIndex, const FRotator& InRotator = FRotator::ZeroRotator);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_ModifyCharGeometry_Scale(UDreamText* InUIText, int InCharIndex, const FVector& InScale = FVector(1, 1, 1));
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_ModifyCharGeometry_Color(UDreamText* InUIText, int InCharIndex, const FColor& InColor);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void UITextHelperFunction_ModifyCharGeometry_Alpha(UDreamText* InUIText, int InCharIndex, const float& InAlpha);
+};
+
+/** 
+ * For modify ui mesh, like a filter.
+ */
+UCLASS(Abstract, Blueprintable, meta = (BlueprintSpawnableComponent))
+class DREAMGUI_API UDreamMeshModifierBase : public UDreamUIBehaviour
+{
+	GENERATED_BODY()
+
+public:	
+	UDreamMeshModifierBase();
+
+protected:
+	friend class UDreamVisualBatchMesh;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
+	FDelegateHandle ComponentsChangedDelegateHandle;
+
+	/** Enable this mesh modifier */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (DreamGUI_LayerToggle))
+		bool bEnable = true;
+
+private:
+	mutable TWeakObjectPtr<UDreamVisualBatchMesh> CacheVisualBatchMesh;
+	/**
+	 * Whether this modifier currently occupies a slot in some visual's modifier list. The cached mesh
+	 * pointer cannot stand in for this, because it is re-resolved on every access -- including before
+	 * the component is ever registered and after the widget has let it go -- and re-adding the
+	 * modifier in either of those states would resurrect a registration that no longer exists.
+	 */
+	uint8 bRegisteredWithVisual : 1 = false;
+public:
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		UDreamVisualBatchMesh* GetVisualBatchMesh()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		bool GetEnable()const { return bEnable; }
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		void SetEnable(bool Value);
+	/**
+	 * Modify UI mesh's vertex and triangle.
+	 * @param	InTriangleChanged		triangle changed
+	 * @param	InUVChanged			vertex uv changed
+	 * @param	InColorChanged			vertex color changed
+	 * @param	InVertexPositionChanged			vertex position changed
+	 */
+	virtual void ModifyUIGeometry(
+		FDreamUIGeometry& InGeometry
+		, bool InTriangleChanged, bool InUVChanged, bool InColorChanged, bool InVertexPositionChanged
+	);
+	/**
+	 * Will this modifier affect these geometry data? Save some calculation if not affect.
+	 * For blueprint just make all to true, for easier use.
+	 *
+	 * Also how a modifier declares that it moves or re-maps vertices: a text whose enabled modifiers answer
+	 * OutVertexPosition or OutUV stays on its font's distance field instead of small-text coverage glyphs, which are
+	 * placed on the device pixel grid and sampled 1:1. Answer exactly; true where unsure.
+	 */
+	virtual void ModifierWillChangeVertexData(bool& OutTriangleIndices, bool& OutVertexPosition, bool& OutUV, bool& OutColor)
+	{
+		OutTriangleIndices = true;
+		OutVertexPosition = true;
+		OutUV = true;
+		OutColor = true;
+	}
+	/**
+	 * Does this modifier append whole copies of the mesh (outline, shadow, long shadow)?
+	 *
+	 * A copy is a photograph: it freezes whatever the modifiers before it produced, and the vertices
+	 * it appends are outside every char vertex range a text animation addresses. So one that answers
+	 * true is run after every one that answers false, whatever order the components sit in on the
+	 * widget -- otherwise whether an outline follows an animated character comes down to which
+	 * component happened to be added first, with nothing on screen to say so.
+	 */
+	virtual bool GetDuplicatesMesh()const { return false; }
+	/**
+	 * The stage this modifier runs in (EDreamMeshModifierStage): Copies for one that duplicates the mesh, Characters for
+	 * every other unless it says otherwise.
+	 */
+	virtual EDreamMeshModifierStage GetStage()const { return GetDuplicatesMesh() ? EDreamMeshModifierStage::Copies : EDreamMeshModifierStage::Characters; }
+	/**
+	 * What a modifier that appends copies of a mesh (GetDuplicatesMesh) does to them once it has given them their colours
+	 * and positions: the vertices from InFirstCopy to the end of InGeometry. A copy paints nothing -- a shadow is never a
+	 * gradient -- so its UV4 is (0, 0), and on a text (InGeometry.bIsFont) its quad code loses its paint slot
+	 * (DreamTextQuadCode::StripSlot). A colour glyph's face becomes its silhouette (DreamTextQuadCode::ColorSilhouette),
+	 * drawn in the copy's colour at the glyph's alpha, where it was the glyph's own colours drawn again. A colour glyph's
+	 * effects copy keeps its code: it draws in the style's underlay colour already, as a field glyph's effects copy draws its
+	 * effects. Copies of copies are left as they are.
+	 */
+	static void PrepareMeshCopies(FDreamUIGeometry& InGeometry, int32 InFirstCopy);
+protected:
+	UPROPERTY(Transient) TObjectPtr<UDreamVisualBatchMeshModifierHelper> GeometryModifierHelper = nullptr;
+	/**
+	 * Modify UI geometry's vertex and triangle.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "DreamGUI", meta = (DisplayName = "ModifyUIGeometry"))
+		void ReceiveModifyUIGeometry(UDreamVisualBatchMeshModifierHelper* InGeometryModifierHelper);
+};

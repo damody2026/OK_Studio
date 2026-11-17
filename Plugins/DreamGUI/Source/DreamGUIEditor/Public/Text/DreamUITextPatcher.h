@@ -1,0 +1,320 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Text/DreamUIAst.h"
+#include "Text/DreamUIDiagnostics.h"
+
+/**
+ * Which object inside a node's block an edit is aimed at.
+ *
+ * The three cases are the language's three property notations, and they exist here for the same
+ * reason they exist in the grammar: the destination object is decided by the notation, not guessed
+ * from the name. A bare `Padding` and an `@slot Padding` are two different properties on two
+ * different objects, and a patcher that resolved by name alone would have to pick one.
+ */
+enum class EDreamUIPatchTarget : uint8
+{
+	/** A bare `Name = Value` line -- the widget, or its visual when the widget has none. */
+	Node,
+	/** An `@slot Name = Value` line -- the node's UDreamPanelSlot. */
+	Slot,
+	/**
+	 * A `resources` block entry, addressed by PropertyName = the entry's name; NodeId is unused.
+	 * Replace-only: an entry the file does not declare has no variable on the class either, so
+	 * there is never a value with no line to hold it.
+	 */
+	Resource,
+	/**
+	 * A property inside the ComponentIndex'th `+ Class { }` block of the node.
+	 *
+	 * Addressed by position rather than by class name because two `+` blocks of the same class on
+	 * one node are legal, and a name would then be ambiguous exactly when it mattered. The index is
+	 * the index into FDreamUINode::Components, which is author order, so a caller that got its
+	 * component from the same AST it is patching against always has the right number.
+	 */
+	Component,
+	/**
+	 * A property inside a `style Name { }` block, addressed by NodeId = the style's name.
+	 *
+	 * Replace-or-insert like a node's, and deliberately NOT what the designer's flush uses: a style
+	 * is worn by every node that names it, so one drag writing into the block would move all of them.
+	 * The write-back turns a styled property into an override on the NODE for that reason. This
+	 * target exists for a caller whose subject genuinely is the style -- a style editor, a rename, a
+	 * tool retargeting a palette -- and because the patcher takes a TEXT rather than a document, it
+	 * is also how a caller that has opened an imported library's file writes into that library.
+	 */
+	Style,
+};
+
+/** What ApplyStructuralEdits can do to the shape of a file. One kind per act, never a guess. */
+enum class EDreamUIStructuralEditKind : uint8
+{
+	/** A new `Type Id { }` under ParentId, at ChildIndex among that parent's authored children. */
+	InsertNode,
+	/** NodeId and everything under it, taken out with its line. */
+	RemoveNode,
+	/** NodeId moved to ChildIndex under ParentId -- its text lifted whole and put back elsewhere. */
+	MoveNode,
+	/** NodeId renamed to NewId, carrying `(was: <old id>)` so the compile migrates what it owned. */
+	RenameNode,
+	/** A new `+ ComponentClassName { }` inside NodeId's block, after the ones already there. */
+	InsertComponent,
+	/** The ComponentIndex'th `+` block of NodeId, taken out with its line. */
+	RemoveComponent,
+	/**
+	 * The ComponentIndex'th `+` block of NodeId, lifted whole and put back so that it is the ChildIndex'th of the
+	 * node's `+` blocks once the move is done (INDEX_NONE: the last).
+	 */
+	MoveComponent,
+	/** NodeId's type, the word its header starts with, rewritten as TypeName. Its id, style and block are untouched. */
+	RetypeNode,
+	/**
+	 * NodeId's own `PropertyName = …` line (or binding, or route), taken out with its line -- what a retype does to a
+	 * value the new type has no property for, which the next compile would otherwise refuse. In the PropertyTarget the
+	 * edit names: a bare line, an `@slot` one, or a line of the ComponentIndex'th `+` block. With StatementMatch, the
+	 * line naming that handler or function (an event can be routed more than once). A statement that shares its line
+	 * inside a one-line block (`+ UIButton { OnClick -> Play }`) is taken out of the line, and the rest stays.
+	 */
+	RemoveProperty,
+	/**
+	 * A copy of the `rows` line of NodeId -- a row -- written on the line after it: what duplicating a row is. The copy
+	 * has the same key, so the builder names it `<id>_1` (DUI3023, a warning), which is the name a duplicate is given.
+	 */
+	InsertRow,
+	/**
+	 * NodeId's PropertyName written as `PropertyName <Statement>` -- a binding (`<- GetTitle()`), a route
+	 * (`-> HandlePlay`), a two-way binding (`<-> Volume`) or a value (`= 12`). On a bare line or in the ComponentIndex'th
+	 * `+` block (PropertyTarget Node or Component). The property's own line is rewritten whole when it has one -- a value
+	 * becomes a binding, a binding becomes a value, one handler becomes another (the line naming StatementMatch, when
+	 * given) -- and a new line is written where SetProperty would put one when it has none.
+	 */
+	SetStatement,
+};
+
+/**
+ * One change to the SHAPE of a `.dui`. See FDreamUITextPatcher::ApplyStructuralEdits.
+ *
+ * Every field is read by some kinds and ignored by the rest, which is the usual shape of a command
+ * struct and is stated per field rather than split into six structs -- the caller builds these in
+ * one array and the reader wants one table to look at.
+ */
+struct FDreamUIStructuralEdit
+{
+	EDreamUIStructuralEditKind Kind = EDreamUIStructuralEditKind::InsertNode;
+
+	/** The node being acted on. Unused by InsertNode, which is creating one. */
+	FString NodeId;
+
+	/** InsertNode / MoveNode: the node whose block receives it. Empty means the root. */
+	FString ParentId;
+
+	/** InsertNode / MoveNode: position among the parent's authored children. INDEX_NONE means last. */
+	int32 ChildIndex = INDEX_NONE;
+
+	/**
+	 * InsertNode / MoveNode: the authored child of the destination the node goes in front of, by id. When set it wins
+	 * over ChildIndex, and an id the destination does not hold means last.
+	 *
+	 * A position by NEIGHBOUR rather than by number, because the number is a fact about the text and the caller usually
+	 * only knows the tree: a widget's index among its live siblings counts what the text does not write (the copies a
+	 * `for` makes, the widget a loop stands for), and for a reorder it depends on whether the node is still counted
+	 * where it came from. The sibling it now stands before is the same fact on both sides.
+	 */
+	FString BeforeId;
+
+	/**
+	 * InsertNode only: the named slot of ParentId -- a component instance -- that the new node fills. Empty means the
+	 * instance's own block, which is its DEFAULT slot: nesting is how a .dui fills that one, and how the designer does.
+	 *
+	 * Written into the instance's `slot Name { … }` fill when the file has one, and as a new fill holding the node when
+	 * it has not. Nested as an ordinary child instead, the node would land in the default slot on the next compile --
+	 * a different hole from the one it was dropped into.
+	 */
+	FString FillSlotName;
+
+	/** InsertNode, RetypeNode: the type exactly as a .dui writes it -- "Text", "VerticalBox", "Row", "nier.Row", "/Game/UI/WBP_X". */
+	FString TypeName;
+
+	/** RemoveProperty, SetStatement: the property's name as the line writes it, dotted path included (`AnchorData.SizeDelta`). */
+	FString PropertyName;
+
+	/**
+	 * RemoveProperty: a bare line (Node), an `@slot` one (Slot) -- the slot lines a new panel's slot class lacks -- or a
+	 * line of the ComponentIndex'th `+` block (Component). SetStatement: Node or Component.
+	 */
+	EDreamUIPatchTarget PropertyTarget = EDreamUIPatchTarget::Node;
+
+	/** SetStatement: the operator and its right side as the line writes them -- `<- GetTitle()`, `-> HandlePlay`, `<-> Volume`, `= 12`. */
+	FString Statement;
+
+	/**
+	 * RemoveProperty, SetStatement: which of the property's lines, by the handler or function it names (`HandlePlay`,
+	 * `GetTitle`, `Volume`, an emitted event's name). Empty: the property's first line. When no line names it -- a route
+	 * the compiler generated a handler for -- the property's line is taken if it has only one.
+	 */
+	FString StatementMatch;
+
+	/** InsertNode: the id of the new node. RenameNode: the id it becomes. */
+	FString NewId;
+
+	/** RemoveComponent, MoveComponent, and RemoveProperty / SetStatement on a Component target: which `+` block, 0-based in author order. */
+	int32 ComponentIndex = INDEX_NONE;
+
+	/** InsertComponent: the behaviour's spelling -- "UIButton", "VerticalBox". */
+	FString ComponentClassName;
+};
+
+/** One property write. See FDreamUITextPatcher::SetProperties for what a batch of these means. */
+struct FDreamUIPropertyEdit
+{
+	/** The id of the node to edit, matched case insensitively -- ids are FNames downstream. */
+	FString NodeId;
+
+	EDreamUIPatchTarget Target = EDreamUIPatchTarget::Node;
+
+	/** Component target only: 0-based index into the node's `+` blocks, in the order they are written. */
+	int32 ComponentIndex = INDEX_NONE;
+
+	/** The UPROPERTY name, or a dotted path exactly as the language writes it: `AnchorData.SizeDelta`. */
+	FString PropertyName;
+
+	/** The value as .dui text -- `24`, `(160, 48)`, `#1E1E1E`, `"OK"`, `/Game/UI/F_Body`. */
+	FString NewValueText;
+};
+
+/**
+ * Writes a property value back into the .dui text it came from, and does nothing else to it.
+ *
+ * This is the component of the text pipeline that will be maintained for years, so its job is
+ * deliberately the smallest one that makes the designer work: `.dui` is the single source of truth
+ * and the designer is a graphical front end for it, which means a designer edit is a TEXT edit.
+ * Its first job is the smallest one: replace the text of one value, or insert one line. Its second,
+ * ApplyStructuralEdits, changes the shape of the file -- nodes, `+` blocks, rows, statements -- one
+ * whole statement at a time; see that function. Neither ever reformats.
+ *
+ * WHY IT EDITS TEXT INSTEAD OF PRINTING THE AST. A printer would be a hundred lines shorter and it
+ * would rewrite the author's whole file on every save: their alignment, their blank lines, their
+ * comments, `(400,240)` renormalised to `(400, 240)`. Every one of those is a hunk in a diff nobody
+ * made, and after a week of that nobody can review a .dui change. The AST carries a source location
+ * on every node, every property and every value precisely so that this file can go the other way.
+ *
+ * WHY ONE EDIT PER CALL. Every FDreamUISourceLocation in the AST describes the text as it was
+ * PARSED. The moment one edit changes the text, every location after the edit point is off by the
+ * length that was inserted or removed -- silently, because a line and a column are still perfectly
+ * valid numbers pointing at the wrong place, and the wrong place is somebody else's property. So a
+ * caller that wants two edits either re-parses in between, or hands both to SetProperties at once,
+ * which plans them all against the ONE state they were all measured in and then applies them from
+ * the end of the file backwards so an earlier edit never moves a later one's target.
+ *
+ * WHAT IT REFUSES rather than guesses (all DUI7xxx, and all worth reading before adding a caller):
+ *
+ *   - A node id the file does not declare, or a component index it does not have. PatchTargetNotFound.
+ *   - A property currently written as a binding (`Text <- GetTitle()`). Overwriting it with a
+ *     literal would delete authored behaviour to store a value the binding was about to overwrite
+ *     anyway, and the details panel showing the bound value makes that one drag away.
+ *   - A `slot Name` written without a block, and a `slot Name { … }` that FILLS a component's slot.
+ *     A bare declaration is a hole and is left the hole its author wrote (a declaration WITH a
+ *     block takes properties like any node); a fill's block holds content and nothing else.
+ *   - A property the front end made rather than read (FDreamUIProperty::bSynthesized): the
+ *     `Shown <- Cond` an `if` gives the nodes of its branches, and the slot properties `@fill`
+ *     stands for. DUI7004, naming the line that made it -- with one exception, the shorthand
+ *     rewritten where that plainly means the same thing: a new weight replaces the number in
+ *     `@fill 2`, and a bare `@fill` given another SizeRule becomes `@slot SizeRule = …`.
+ *   - Visibility on a node whose `Shown` is bound, by an `if` (DUI7004) or by the author: the
+ *     binding decides it, and a literal beside it would be undone on the next tick.
+ *   - A value text that cannot be read back as the value it was written as -- trailing junk, an
+ *     embedded comment, an unterminated string, or a non-finite float. See the .cpp; that last one
+ *     is the write-back half of the trap the implementation plan flagged before P5 started.
+ *   - An AST whose locations do not describe the text it was handed. SourceFileChangedUnderEdit.
+ *     Cheap to check (the text under a location has to start with the name the AST says is there)
+ *     and it converts the one catastrophic failure mode -- a stale AST silently corrupting a file
+ *     the author has open -- into a diagnostic.
+ */
+struct DREAMGUIEDITOR_API FDreamUITextPatcher
+{
+	/**
+	 * Set one property to a new value, inserting the line when the file does not have it yet.
+	 *
+	 * InAst must be the AST of InOutText exactly as it is now -- the result of parsing this string,
+	 * with nothing patched into it since. On success InOutText contains the edit and true is
+	 * returned; on refusal InOutText is left untouched and OutDiagnostics gains one DUI7xxx entry
+	 * (see the struct comment for the list). Writing a value that is already there byte for byte
+	 * succeeds and changes nothing, which is what makes a repeated save produce an empty diff.
+	 *
+	 * InComponentIndex is read only when InTarget is Component; pass INDEX_NONE otherwise.
+	 */
+	static bool SetProperty(FString& InOutText, const FDreamUIAst& InAst,
+		const FString& InNodeId,
+		EDreamUIPatchTarget InTarget, int32 InComponentIndex,
+		const FString& InPropertyName, const FString& InNewValueText,
+		FDreamUIDiagnosticBag& OutDiagnostics);
+
+	/**
+	 * Apply several edits to one text, all measured against one AST.
+	 *
+	 * This is the shape the designer's flush actually has: a gesture ends and a handful of
+	 * properties on one or two nodes are dirty at once. Doing them one at a time would mean
+	 * re-parsing the file between each, and re-parsing is not merely slower -- it is a second place
+	 * for the two states to disagree.
+	 *
+	 * The whole trick is in the order: every edit is RESOLVED against the unmodified text, and the
+	 * resulting splices are then APPLIED from the highest offset down. An edit near the end of the
+	 * file cannot move the target of one nearer the start, so no location is ever consulted after
+	 * the text beneath it moved. Applying forwards instead would need every later offset shifted by
+	 * the running delta, which works right up until one edit inserts a line and the accounting is
+	 * off by an end-of-line's worth for the rest of the file.
+	 *
+	 * Two edits naming the same property are refused as a pair, because both would be planned
+	 * against a text in which it appears once and the file would end up saying it twice. Edits that
+	 * resolve are applied even when another one in the batch does not: a caller flushing nine good
+	 * property values and one bad one is better off with the nine, and the tenth is reported. The
+	 * return value is false if anything was refused.
+	 */
+	static bool SetProperties(FString& InOutText, const FDreamUIAst& InAst,
+		TArrayView<const FDreamUIPropertyEdit> InEdits,
+		FDreamUIDiagnosticBag& OutDiagnostics);
+
+	/**
+	 * Change the SHAPE of the file: add, remove, move or rename a node; add or remove a `+` block.
+	 *
+	 * THIS IS THE CAPABILITY THE CLASS COMMENT ABOVE USED TO DISCLAIM, and the disclaimer was not
+	 * wrong when it was written -- it was the reason the designer refused every structural gesture.
+	 * What changed is that the refusal had no expiry: "the designer cannot create a widget" is not a
+	 * property of text authoring, it is a missing function. This is the function.
+	 *
+	 * The ONE RULE is unchanged and is what every line below is shaped by: this may not produce a
+	 * .dui that no longer parses. So each edit is composed of whole STATEMENTS -- a node's text runs
+	 * from the start of its header line to the end of its closing brace's line, a `+` block likewise
+	 * -- and an edit whose anchor the text does not confirm is refused (DUI7002) rather than
+	 * attempted. Nothing is reflowed, nothing is re-indented, and a node moved keeps its own text
+	 * byte for byte except for the indentation of its lines.
+	 *
+	 * The batching rule is SetProperties': every edit is resolved against InOutText as it arrives and
+	 * the splices are applied from the end backwards, so no edit ever moves another's anchor. Two
+	 * edits that overlap are refused as a pair, because the second would be planned against text the
+	 * first is removing. A caller doing structure AND values re-parses in between -- structure moves
+	 * every location after it, and the AST for the values has to describe the file they will land in.
+	 *
+	 * A RENAME writes `(was: OldId)` onto the header, which is not decoration: the id is the class
+	 * member variable, the animation binding path and the localization key, and the clause is how the
+	 * next compile carries all three across. A node that already has one keeps the ORIGINAL old id --
+	 * two renames in a row are one migration from where it started, and rewriting the clause to the
+	 * intermediate name would strand everything that still points at the first. An ANONYMOUS node
+	 * (`HorizontalBox { … }`) has its new id written after its type and no clause: its made-up id was
+	 * a hidden member nothing references, and the next anonymous sibling of its type inherits it.
+	 *
+	 * The newer syntax shapes where things land. A type may be an alias, a namespaced alias, a layout
+	 * container or `@Resource`, and the anchor check reads each the way the lexer does. A node placed
+	 * "after" a child that stands in an `if` branch goes after the whole `if … else …`, at the level
+	 * of the parent's block, never into the branch. The one template of a `for` or an `each` is not
+	 * removed or moved away (a loop with nothing to repeat does not build); a slot DECLARATION takes
+	 * no children, while a slot FILL takes them like any block.
+	 *
+	 * @return false when anything was refused; the rest still applied, as SetProperties does.
+	 */
+	static bool ApplyStructuralEdits(FString& InOutText, const FDreamUIAst& InAst,
+		TArrayView<const FDreamUIStructuralEdit> InEdits,
+		FDreamUIDiagnosticBag& OutDiagnostics);
+};

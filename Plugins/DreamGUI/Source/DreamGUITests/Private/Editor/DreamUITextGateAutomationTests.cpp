@@ -1,0 +1,1033 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
+
+#include "Misc/AutomationTest.h"
+
+#include "Text/DreamUITimelineWriteBack.h"
+
+#include "DreamTestCulture.h"
+#include "DreamWidgetBehaviourTestTypes.h"
+
+#include "DreamWidgetBlueprint.h"
+#include "DreamWidgetBlueprintTestTypes.h"
+#include "Animation/DreamWidgetAnimation.h"
+#include "Animation/DreamWidgetAnimationComponent.h"
+#include "Animation/SDreamWidgetAnimationEditor.h"
+#include "ISequencer.h"
+#include "Designer/DreamUITextAuthoringGate.h"
+#include "Designer/DreamWidgetBlueprintEditor.h"
+#include "Designer/DreamWidgetPreviewHost.h"
+#include "Designer/DreamWidgetTreeEditing.h"
+
+#include "Core/DreamTextUserWidget.h"
+#include "Core/DreamUserWidget.h"
+#include "Core/DreamUIBehaviour.h"
+#include "Core/DreamWidgetGeneratedClass.h"
+#include "Core/DreamWidgetTree.h"
+#include "Core/Components/DreamPanelLayouts.h"
+#include "Core/Components/DreamPanelSlot.h"
+#include "Core/Components/DreamVisual.h"
+#include "Core/Components/DreamWidget.h"
+
+#include "Editor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/FileManager.h"
+#include "Kismet2/CompilerResultsLog.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "UObject/Package.h"
+#include "UObject/UnrealType.h"
+
+/*
+ * The gate: what the designer stops being able to do once a hierarchy comes from a `.dui`.
+ *
+ * Two claims, and the second is the one worth the most.
+ *
+ * THE FIRST is that every structural entry point refuses, AND SAYS SO. Those are two facts, not one.
+ * A silent refusal is a menu item that does nothing when clicked -- indistinguishable, from where the
+ * author is sitting, from a bug in the drag -- and a test that only asserts "returned false" passes
+ * on the silent version. So each refusal is declared through AddExpectedError, which fails the test
+ * when the message does NOT appear (an expected message with zero occurrences is an error, see
+ * FAutomationTestBase), and the declared pattern includes the .dui's file name, because a refusal
+ * that does not name the file leaves the author with nowhere to go.
+ *
+ * THE SECOND is the negative control: an ordinary widget blueprint, one that names no .dui, still
+ * takes all six edits AND is untouched by all five property refusals -- outside the writable set, no
+ * `.dui` spelling for the value, written as a binding, expanded from a loop, and binding authoring.
+ * Every gate is one bad predicate away from locking the editor for assets that have nothing to do
+ * with it, and that failure would be invisible to a suite that only ever tested the locked case. The
+ * control test declares no expected errors at all, which means any refusal it provokes fails it --
+ * silence there is the assertion.
+ *
+ * The file goes through the file system for the same reason DreamUITextCompileAutomationTests does:
+ * the criterion is a path on a class default object, and a fixture that set the property without a
+ * file behind it would pass whether or not the compile could ever have read one.
+ */
+
+namespace DreamUITextGateTestLocal
+{
+	/** A .dui that has really been to disk, and is gone again when the test returns. */
+	struct FScopedDuiFile
+	{
+		explicit FScopedDuiFile(const TCHAR* InFileName)
+		{
+			FilePath = FPaths::ConvertRelativePathToFull(
+				FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("DreamGUITests"), InFileName));
+			FPaths::NormalizeFilename(FilePath);
+			FileName = FPaths::GetCleanFilename(FilePath);
+		}
+
+		~FScopedDuiFile()
+		{
+			// EvenReadOnly, and quiet: a leftover file is read by the NEXT run of this test, which
+			// turns a failure here into a failure over there with nothing connecting them.
+			IFileManager::Get().Delete(*FilePath, /*RequireExists*/false, /*EvenReadOnly*/true, /*Quiet*/true);
+		}
+
+		FScopedDuiFile(const FScopedDuiFile&) = delete;
+		FScopedDuiFile& operator=(const FScopedDuiFile&) = delete;
+
+		bool Write(const TArray<FString>& InLines) const
+		{
+			return FFileHelper::SaveStringToFile(FString::Join(InLines, TEXT("\n")), *FilePath);
+		}
+
+		FString FilePath;
+		FString FileName;
+	};
+
+	/**
+	 * A widget blueprint with a designer open on it, of either kind.
+	 *
+	 * One fixture for both the gated case and the control, deliberately: the two tests below have to
+	 * differ in exactly ONE thing -- whether the class names a .dui -- and two fixtures is how a
+	 * control quietly stops being a control.
+	 *
+	 * InDuiFilePath empty means a hand-authored hierarchy, and then the root is given a canvas panel
+	 * and a child the way DreamDesignerEditingAutomationTests does, so the control has something to
+	 * delete, move and duplicate.
+	 */
+	struct FScopedGatedDesigner
+	{
+		UPackage* Package = nullptr;
+		UDreamWidgetBlueprint* Blueprint = nullptr;
+		FDreamWidgetBlueprintEditor* Designer = nullptr;
+
+		FScopedGatedDesigner(const TCHAR* InName, UClass* InParentClass, const FString& InDuiFilePath)
+		{
+			Package = CreatePackage(*FString::Printf(TEXT("/Temp/DreamGUITests/%s"), InName));
+			Package->AddToRoot();
+			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
+				InParentClass, Package, FName(InName), BPTYPE_Normal,
+				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
+			if (Blueprint == nullptr)
+			{
+				return;
+			}
+
+			if (InDuiFilePath.IsEmpty())
+			{
+				UDreamWidgetTree* Tree = Blueprint->GetOrCreateWidgetTree();
+				Tree->RootWidget->SetDisplayName(TEXT("Root"));
+				// A panel on the root, so it can accept children at all.
+				Tree->RootWidget->CreateNewLayoutContainer(UDreamLayoutContainerCanvasPanel::StaticClass());
+				FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+				DreamWidgetTreeEditing::CreateWidget(Blueprint, UDreamWidget::StaticClass(), nullptr, -1, TEXT("Child"));
+			}
+			else
+			{
+				// On the CDO, because SourceFile is EditDefaultsOnly and a class default is what a
+				// CDO IS. CreateBlueprint has already compiled once, so there is one to write to.
+				if (UDreamTextUserWidget* Defaults = Blueprint->GeneratedClass != nullptr
+					? Cast<UDreamTextUserWidget>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr)
+				{
+					Defaults->SourceFile.FilePath = InDuiFilePath;
+				}
+			}
+
+			FCompilerResultsLog Results;
+			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+			CompileErrors = Results.NumErrors;
+
+			GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Blueprint);
+			Designer = static_cast<FDreamWidgetBlueprintEditor*>(
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(Blueprint, false));
+		}
+
+		~FScopedGatedDesigner()
+		{
+			if (GEditor != nullptr && Blueprint != nullptr)
+			{
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Blueprint);
+				// The close is deferred, and a toolkit that is still alive still ticks. Letting the
+				// package leave the root set first put a rebuild on a half-collected asset.
+				FSlateApplication::Get().Tick();
+			}
+			if (Package != nullptr)
+			{
+				Package->RemoveFromRoot();
+			}
+		}
+
+		FScopedGatedDesigner(const FScopedGatedDesigner&) = delete;
+		FScopedGatedDesigner& operator=(const FScopedGatedDesigner&) = delete;
+
+		int32 CompileErrors = 0;
+
+		UDreamWidget* TemplateRoot() const
+		{
+			return Blueprint != nullptr && IsValid(Blueprint->WidgetTree) ? Blueprint->WidgetTree->RootWidget.Get() : nullptr;
+		}
+
+		int32 TemplateCount() const
+		{
+			return Blueprint != nullptr && IsValid(Blueprint->WidgetTree) ? Blueprint->WidgetTree->CountWidgets() : 0;
+		}
+
+		UDreamWidget* FindTemplate(const FString& InDisplayName) const
+		{
+			UDreamWidget* Found = nullptr;
+			if (Blueprint != nullptr && IsValid(Blueprint->WidgetTree))
+			{
+				Blueprint->WidgetTree->ForEachWidget([&Found, &InDisplayName](UDreamWidget* Widget)
+				{
+					if (Found == nullptr && Widget->GetDisplayName() == InDisplayName)
+					{
+						Found = Widget;
+					}
+				});
+			}
+			return Found;
+		}
+
+		UDreamWidget* FindPreview(const FString& InDisplayName) const
+		{
+			UDreamWidget* Template = FindTemplate(InDisplayName);
+			return Designer != nullptr && Designer->GetPreviewHost().IsValid() && Template != nullptr
+				? Designer->GetPreviewHost()->FindPreviewForTemplate(Template) : nullptr;
+		}
+	};
+
+	/** The gate's own answer, so a test asserts against the verdict rather than against a bool. */
+	using EVerdict = DreamUITextAuthoring::EPropertyEditVerdict;
+
+	/**
+	 * A spelling probe for the duration of one test, with the one it replaced put back on the way out.
+	 *
+	 * The probe is process-wide -- it is installed once by whoever owns the write-back -- so a test
+	 * that left one behind would decide the verdicts of every test that ran after it, in whatever
+	 * order the runner happened to pick. That is the shape of failure that gets diagnosed as
+	 * flakiness for a week.
+	 *
+	 * Put BACK, not cleared: the editor module installs the real judge at startup, and clearing it
+	 * here left every later test in the process with no probe at all -- which is how a test that
+	 * needs the real one passed in the full suite and failed run on its own.
+	 */
+	struct FScopedSpellingProbe
+	{
+		explicit FScopedSpellingProbe(DreamUITextAuthoring::FLiteralSpellingProbe InProbe)
+			: Previous(DreamUITextAuthoring::SetLiteralSpellingProbe(MoveTemp(InProbe)))
+		{
+		}
+
+		~FScopedSpellingProbe()
+		{
+			DreamUITextAuthoring::SetLiteralSpellingProbe(MoveTemp(Previous));
+		}
+
+		FScopedSpellingProbe(const FScopedSpellingProbe&) = delete;
+		FScopedSpellingProbe& operator=(const FScopedSpellingProbe&) = delete;
+
+	private:
+		DreamUITextAuthoring::FLiteralSpellingProbe Previous;
+	};
+
+	const FProperty* FindProperty(const UClass* InClass, const TCHAR* InName)
+	{
+		return InClass != nullptr ? InClass->FindPropertyByName(FName(InName)) : nullptr;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUIDuiBackedTreeRefusesStructuralEditsTest,
+	"DreamGUI.Designer.ADuiBackedTreeKeepsItsBindingsInTheFile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamUIDuiBackedTreeRefusesStructuralEditsTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	FScopedDuiFile Source(TEXT("GateStructural.dui"));
+	if (!TestTrue(TEXT("the fixture wrote a .dui"), Source.Write({
+		TEXT("Widget Root {"),
+		TEXT("    + CanvasPanel"),
+		TEXT("    Widget Child {"),
+		TEXT("    }"),
+		TEXT("}")
+	})))
+	{
+		return false;
+	}
+
+	// Every structural edit -- creating, deleting, duplicating, pasting, moving, renaming, the behaviours and the panel
+	// -- is written into the file now, and DreamUITextStructureAutomationTests, DreamUITextMoveRenameAutomationTests
+	// and DreamUITextComponentsAutomationTests hold each to it. So is a binding: the Bind control writes its `<-` line
+	// (DreamUITextStatementAutomationTests).
+
+	FScopedGatedDesigner Scoped(TEXT("BP_GateStructural"), UDreamTextUserWidget::StaticClass(), Source.FilePath);
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
+	if (!TestTrue(TEXT("the gate sees this as text-authored"), DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint))) return false;
+
+	UDreamWidget* Root = Scoped.TemplateRoot();
+	UDreamWidget* Child = Scoped.FindTemplate(TEXT("Child"));
+	if (!TestNotNull(TEXT("the file's root is in the asset"), Root)) return false;
+	if (!TestNotNull(TEXT("and so is its child"), Child)) return false;
+	const int32 CountBefore = Scoped.TemplateCount();
+
+	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
+	UDreamWidget* PreviewChild = Scoped.FindPreview(TEXT("Child"));
+	if (!TestNotNull(TEXT("the child has a preview to work on"), PreviewChild)) return false;
+	TestTrue(TEXT("a binding is authored from the panel, as its line in the file"), DreamUITextAuthoring::CanAuthorBindingsOn(PreviewChild));
+
+	// Copy is deliberately NOT gated: it writes nothing to the asset, and refusing it would stop an
+	// author lifting a subtree out of a .dui-backed screen to paste into a hand-authored one.
+	const TArray<UDreamWidget*> ToCopy{ PreviewChild };
+	Scoped.Designer->DesignerCopyWidgets(ToCopy);
+	TestTrue(TEXT("copying a widget out of a .dui-backed tree still works"),
+		FDreamWidgetBlueprintEditor::DesignerHasClipboardContent());
+
+	// And nothing moved: copying writes nothing to the asset.
+	TestEqual(TEXT("the hierarchy is exactly what the file says"), Scoped.TemplateCount(), CountBefore);
+	TestNotNull(TEXT("the child is still there"), Scoped.FindTemplate(TEXT("Child")));
+
+	// The refusal sentence the remaining structural refusals are built with, once: this is where the claim "the
+	// message tells the author where to go" is actually checked rather than pattern-matched. Read as written, since a
+	// translated editor says it in its own language.
+	const FString Refusal = DreamUITextAuthoring::DescribeStructuralRefusal(Scoped.Blueprint, TEXT("delete 'Child'")).BuildSourceString();
+	TestTrue(TEXT("the refusal names the file"), Refusal.Contains(Source.FileName));
+	TestTrue(TEXT("and says where the structure lives"), Refusal.Contains(TEXT("text")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUIHandAuthoredTreeIsUnaffectedByTheGateTest,
+	"DreamGUI.Designer.AHandAuthoredTreeStillTakesEveryStructuralEdit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamUIHandAuthoredTreeIsUnaffectedByTheGateTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	// THE CONTROL, and the most important test in this file. It declares no expected errors on
+	// purpose: the gate logs at Error, so a predicate that answered "text-authored" for an ordinary
+	// widget blueprint would fail this test on the log alone, before any assertion below ran.
+	FScopedGatedDesigner Scoped(TEXT("BP_GateControl"), UDreamUserWidget::StaticClass(), FString());
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestFalse(TEXT("it names no .dui"), DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint))) return false;
+
+	UDreamWidget* Root = Scoped.TemplateRoot();
+	if (!TestNotNull(TEXT("it has a root"), Root)) return false;
+	UDreamWidget* Child = Scoped.FindTemplate(TEXT("Child"));
+	if (!TestNotNull(TEXT("and the fixture's child"), Child)) return false;
+
+	// ---- all five still work
+	UDreamWidget* Created = DreamWidgetTreeEditing::CreateWidget(
+		Scoped.Blueprint, UDreamWidget::StaticClass(), Root, -1, TEXT("Added"));
+	if (!TestNotNull(TEXT("Creating a widget still works"), Created)) return false;
+	TestEqual(TEXT("Renaming still works"),
+		DreamWidgetTreeEditing::RenameWidget(Scoped.Blueprint, Created, TEXT("Renamed")), FString(TEXT("Renamed")));
+	TestTrue(TEXT("Moving still works"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint, Created, Child, -1));
+	TestNotNull(TEXT("Duplicating still works"),
+		DreamWidgetTreeEditing::DuplicateWidget(Scoped.Blueprint, Created, Root, -1));
+	TestTrue(TEXT("Deleting still works"), DreamWidgetTreeEditing::DeleteWidget(Scoped.Blueprint, Created));
+
+	// ---- and so does the sixth
+	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
+	UDreamWidget* PreviewChild = Scoped.FindPreview(TEXT("Child"));
+	if (!TestNotNull(TEXT("the child has a preview"), PreviewChild)) return false;
+	const TArray<UDreamWidget*> ToCopy{ PreviewChild };
+	Scoped.Designer->DesignerCopyWidgets(ToCopy);
+	const int32 CountBeforePaste = Scoped.TemplateCount();
+	TestTrue(TEXT("Pasting still works"),
+		Scoped.Designer->DesignerPasteWidgets(Scoped.FindPreview(TEXT("Root"))).Num() > 0);
+	TestTrue(TEXT("and the paste reached the asset"), Scoped.TemplateCount() > CountBeforePaste);
+
+	// The property half of the gate has to be inert here too, or every details panel in the project
+	// goes grey. The properties chosen are the ones a text-authored widget refuses for four different
+	// reasons -- outside the writable set (Visibility, Children), no `.dui` spelling for the value
+	// (the probe below), and the transform the write-back cannot carry (RelativeRotation /
+	// RelativeScale) -- so a predicate that leaked would show up on at least one of them.
+	{
+		// A probe that refuses EVERYTHING, so the control also proves the newest of the refusals
+		// cannot reach a hand-authored asset. A gate that asked the probe before asking whether the
+		// hierarchy is text-authored would fail exactly here and nowhere else.
+		const FScopedSpellingProbe Probe([](const FProperty*, const void*) { return false; });
+
+		for (const TCHAR* PropertyName : { TEXT("Visibility"), TEXT("RelativeRotation"), TEXT("RelativeScale"), TEXT("Children") })
+		{
+			if (const FProperty* Found = FindProperty(UDreamWidget::StaticClass(), PropertyName))
+			{
+				TestFalse(FString::Printf(TEXT("%s is editable on a hand-authored widget"), PropertyName),
+					DreamUITextAuthoring::IsPropertyReadOnly(Child, Found, {}));
+			}
+		}
+		TestFalse(TEXT("Custom rows stay live too, in a category a .dui would have locked"),
+			DreamUITextAuthoring::IsCustomRowReadOnly(Child, NAME_None, FName(TEXT("Visual"))));
+	}
+	TestTrue(TEXT("Bindings can still be authored here"), DreamUITextAuthoring::CanAuthorBindingsOn(Child));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUINonWritablePropertyIsShownReadOnlyTest,
+	"DreamGUI.Designer.ANonWritablePropertyIsShownReadOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamUINonWritablePropertyIsShownReadOnlyTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	// A vertical box rather than a canvas: `@slot` needs a parent that hands out panel slots at all,
+	// and a slot property on a parent that does not is NoPanelSlotForProperty -- a compile error that
+	// would make this test fail for a reason that has nothing to do with the gate.
+	FScopedDuiFile Source(TEXT("GateProperties.dui"));
+	if (!TestTrue(TEXT("the fixture wrote a .dui"), Source.Write({
+		TEXT("Widget Root {"),
+		TEXT("    + VerticalBox"),
+		TEXT("    Text Title {"),
+		TEXT("        FontSize = 24"),
+		TEXT("        @slot Padding = (8, 8, 8, 8)"),
+		TEXT("    }"),
+		TEXT("}")
+	})))
+	{
+		return false;
+	}
+
+	// No designer: the criterion is read off the class default object and the owning Blueprint is
+	// found through the widget's outer chain, both of which a template answers on its own. Opening one
+	// would add a preview world and a toolkit to a test that is about a predicate.
+	FScopedGatedDesigner Scoped(TEXT("BP_GateProperties"), UDreamTextUserWidget::StaticClass(), Source.FilePath);
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
+
+	UDreamWidget* Title = Scoped.FindTemplate(TEXT("Title"));
+	if (!TestNotNull(TEXT("the file's text node is in the asset"), Title)) return false;
+
+	// ---- the writable set: the anchor block, whole and by dotted path
+	const FProperty* AnchorData = FindProperty(UDreamWidget::StaticClass(), TEXT("AnchorData"));
+	if (!TestNotNull(TEXT("UDreamWidget declares AnchorData"), AnchorData)) return false;
+	TestFalse(TEXT("The anchor block stays editable"),
+		DreamUITextAuthoring::IsPropertyReadOnly(Title, AnchorData, {}));
+	if (const FStructProperty* AsStruct = CastField<FStructProperty>(AnchorData))
+	{
+		// The shape the details panel actually hands over for `AnchorData.SizeDelta`: the leaf is
+		// SizeDelta and only the parent chain says whose. A gate that matched on the leaf alone would
+		// have locked this, and locking the size field is locking the designer.
+		if (const FProperty* SizeDelta = AsStruct->Struct->FindPropertyByName(FName(TEXT("SizeDelta"))))
+		{
+			const TArray<const FProperty*> Chain{ AnchorData };
+			TestFalse(TEXT("and so does a field inside it, reached by its chain"),
+				DreamUITextAuthoring::IsPropertyReadOnly(Title, SizeDelta, Chain));
+		}
+	}
+
+	// ---- the transform, split the way the writable set splits it
+	// Rotation and scale became writable when FRotator and FVector got spellings: the write-back
+	// prints RelativeRotationEuler and RelativeScale, so the gate lets the panel edit them.
+	// LOCATION stays read-only as a plain row, and not because it cannot be spelled -- its setter
+	// recomputes the anchors and the anchors are what the file carries, so a spelling of its own
+	// would put the same position in the file twice.
+	for (const TCHAR* TransformProperty : { TEXT("RelativeRotationEuler"), TEXT("RelativeScale") })
+	{
+		if (const FProperty* Found = FindProperty(UDreamWidget::StaticClass(), TransformProperty))
+		{
+			TestFalse(FString::Printf(TEXT("%s is writable now that the file can hold it"), TransformProperty),
+				DreamUITextAuthoring::IsPropertyReadOnly(Title, Found, {}));
+		}
+		else
+		{
+			AddError(FString::Printf(TEXT("UDreamWidget no longer declares %s"), TransformProperty));
+		}
+	}
+	// The QUAT itself stays grey: DuiHidden, because the euler is its authored face and the file has
+	// no quaternion spelling. The transform section still edits it -- that is a custom row gated by
+	// category, and the mirror accepts its chains -- so nothing an author can actually touch is lost.
+	if (const FProperty* Quat = FindProperty(UDreamWidget::StaticClass(), TEXT("RelativeRotation")))
+	{
+		TestTrue(TEXT("the quaternion, whose authored face is the euler, stays read-only as a plain row"),
+			DreamUITextAuthoring::IsPropertyReadOnly(Title, Quat, {}));
+	}
+	if (const FProperty* Location = FindProperty(UDreamWidget::StaticClass(), TEXT("RelativeLocation")))
+	{
+		TestTrue(TEXT("RelativeLocation stays read-only; the anchors carry the position"),
+			DreamUITextAuthoring::IsPropertyReadOnly(Title, Location, {}));
+	}
+	else
+	{
+		AddError(TEXT("UDreamWidget no longer declares RelativeLocation"));
+	}
+
+	// ---- an ordinary widget property, which the old allowlist wrongly greyed
+	// Visibility spent the list era read-only on every text-authored widget: it was not AnchorData,
+	// so the panel refused an edit the language could spell perfectly well. Under the reflective
+	// policy "in the writable set" and "the sweep will sync it" are the same fact.
+	const FProperty* Visibility = FindProperty(UDreamWidget::StaticClass(), TEXT("Visibility"));
+	if (TestNotNull(TEXT("UDreamWidget declares Visibility"), Visibility))
+	{
+		TestEqual(TEXT("an ordinary editable property is writable, not grey"),
+			(uint8)DreamUITextAuthoring::GetPropertyEditVerdict(Title, Visibility, {}),
+			(uint8)EVerdict::Writable);
+	}
+	const FProperty* Children = FindProperty(UDreamWidget::StaticClass(), TEXT("Children"));
+	if (TestNotNull(TEXT("UDreamWidget declares Children"), Children))
+	{
+		// The hierarchy itself, which is the thing this whole gate exists to keep in the file.
+		TestTrue(TEXT("and so is the child list"), DreamUITextAuthoring::IsPropertyReadOnly(Title, Children, {}));
+	}
+
+	// ---- the objects the language addresses in full stay live
+	UDreamVisual* Visual = Title->GetVisual();
+	if (TestNotNull(TEXT("the text node has a visual"), Visual))
+	{
+		const FProperty* FontSize = FindProperty(Visual->GetClass(), TEXT("FontSize"));
+		if (TestNotNull(TEXT("whose class declares FontSize"), FontSize))
+		{
+			TestFalse(TEXT("A visual's style property is editable -- a bare line in the file writes it"),
+				DreamUITextAuthoring::IsPropertyReadOnly(Visual, FontSize, {}));
+		}
+	}
+	UDreamPanelSlot* Slot = Title->GetPanelSlot();
+	if (TestNotNull(TEXT("the child of a panel has a panel slot"), Slot))
+	{
+		const FProperty* Padding = FindProperty(Slot->GetClass(), TEXT("Padding"));
+		if (TestNotNull(TEXT("whose class declares Padding"), Padding))
+		{
+			TestFalse(TEXT("A slot parameter is editable -- an @slot line writes it"),
+				DreamUITextAuthoring::IsPropertyReadOnly(Slot, Padding, {}));
+		}
+	}
+
+	// ---- and the value that cannot be written down even though its object and its property both can
+	//
+	// The Font next to the FontSize. Both live on the visual, both are in the writable set, and the
+	// only difference is that one of them has a `.dui` literal and the other is an object reference
+	// the write-back skips rather than guessing at -- so without this, picking a new font changes the
+	// preview, changes nothing in the file, and is gone at the next compile.
+	//
+	// The probe stands in for FDreamUITextWriteBack's PrintLiteral, which is the real judge and is
+	// file-local to the write-back today. What is asserted here is the WIRING: that a probe which
+	// refuses a property turns into a read-only row, and that the verdict names the reason. When the
+	// real one is exported and installed, this test keeps checking the same seam.
+	const bool bHadProbeBefore = DreamUITextAuthoring::HasLiteralSpellingProbe();
+	{
+		const FScopedSpellingProbe Probe(
+			[](const FProperty* InLeaf, const void*) { return CastField<FObjectPropertyBase>(InLeaf) == nullptr; });
+		if (!TestTrue(TEXT("the probe is installed"), DreamUITextAuthoring::HasLiteralSpellingProbe()))
+		{
+			return false;
+		}
+		if (Visual != nullptr)
+		{
+			const FProperty* Font = FindProperty(Visual->GetClass(), TEXT("Font"));
+			if (TestNotNull(TEXT("the visual declares Font"), Font))
+			{
+				TestEqual(TEXT("A value with no .dui literal is read-only"),
+					(uint8)DreamUITextAuthoring::GetPropertyEditVerdict(Visual, Font, {}),
+					(uint8)EVerdict::HasNoTextSpelling);
+			}
+			// The neighbour is untouched: this has to be per property, not per object, or greying the
+			// font would grey the whole text style with it.
+			if (const FProperty* FontSize = FindProperty(Visual->GetClass(), TEXT("FontSize")))
+			{
+				TestFalse(TEXT("while the spellable neighbour stays editable"),
+					DreamUITextAuthoring::IsPropertyReadOnly(Visual, FontSize, {}));
+			}
+		}
+		const FString Reason = DreamUITextAuthoring::DescribePropertyVerdict(
+			EVerdict::HasNoTextSpelling, Source.FileName).ToString();
+		TestTrue(TEXT("and the reason names the file"), Reason.Contains(Source.FileName));
+	}
+	TestEqual(TEXT("the probe is gone again once the test's scope ends"),
+		DreamUITextAuthoring::HasLiteralSpellingProbe(), bHadProbeBefore);
+
+	// ---- and the custom-row half, which is the one a property-only gate misses
+	TestTrue(TEXT("A custom row on the widget is read-only by default"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Title, NAME_None, FName(TEXT("Behavior"))));
+	TestFalse(TEXT("except in the categories the write-back covers"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Title, NAME_None, FName(TEXT("DreamLayout"))));
+	// The class pickers of the visual, the panel and the self layout: a new one is written as the node's type or its
+	// `+` line, so they stay live.
+	TestFalse(TEXT("the visual's class picker is live"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Title, NAME_None, FName(TEXT("Visual"))));
+	TestFalse(TEXT("and the panel's"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Title, NAME_None, FName(TEXT("LayoutContainer"))));
+	TestFalse(TEXT("and the self layout's"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Title, NAME_None, FName(TEXT("LayoutSelf"))));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUIBoundPropertyIsShownReadOnlyTest,
+	"DreamGUI.Designer.ABoundPropertyIsShownReadOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamUIBoundPropertyIsShownReadOnlyTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	FScopedDuiFile Source(TEXT("GateBinding.dui"));
+	if (!TestTrue(TEXT("the fixture wrote a .dui"), Source.Write({
+		TEXT("Widget Root {"),
+		TEXT("    Text Title {"),
+		TEXT("        Text <- GetTitleText()"),
+		TEXT("        FontSize = 24"),
+		TEXT("    }"),
+		TEXT("}")
+	})))
+	{
+		return false;
+	}
+
+	// The parent declares GetTitleText natively, so the `<-` line resolves and reaches
+	// UDreamWidgetBlueprint::PropertyBindings -- which is the list this half of the gate reads.
+	FScopedGatedDesigner Scoped(TEXT("BP_GateBinding"), UDreamTextUserWidgetBindingBase::StaticClass(), Source.FilePath);
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
+	if (!TestEqual(TEXT("the file's binding reached the asset"), Scoped.Blueprint->PropertyBindings.Num(), 1)) return false;
+
+	UDreamWidget* Title = Scoped.FindTemplate(TEXT("Title"));
+	if (!TestNotNull(TEXT("the text node is in the asset"), Title)) return false;
+	UDreamVisual* Visual = Title->GetVisual();
+	if (!TestNotNull(TEXT("with a visual"), Visual)) return false;
+
+	// Text is on the VISUAL, and it is inside the writable set -- a bare `Text = "OK"` line would be
+	// perfectly writable. What makes it read-only is the binding, which is why this cannot be answered
+	// by the writable set alone and why the binding is tested first.
+	const FProperty* Text = FindProperty(Visual->GetClass(), TEXT("Text"));
+	if (TestNotNull(TEXT("the visual declares Text"), Text))
+	{
+		TestEqual(TEXT("A property the file drives with <- is read-only"),
+			(uint8)DreamUITextAuthoring::GetPropertyEditVerdict(Visual, Text, {}),
+			(uint8)EVerdict::WrittenAsABinding);
+		TestTrue(TEXT("and the gate says so as a binding, not as an unwritable value"),
+			DreamUITextAuthoring::IsPropertyWrittenAsABinding(Visual, Text));
+		// The reason has to be visible, not merely true: a row that is grey for a reason nobody can
+		// read is the same failure as a row that is grey for no reason.
+		const FString Reason = DreamUITextAuthoring::DescribePropertyVerdict(
+			EVerdict::WrittenAsABinding, Source.FileName).ToString();
+		TestTrue(TEXT("the reason names the file"), Reason.Contains(Source.FileName));
+	}
+
+	// Its neighbour on the same object is not bound, and must stay editable -- a gate that locked the
+	// whole object once one property was bound would be indistinguishable, from the outside, from one
+	// that worked.
+	const FProperty* FontSize = FindProperty(Visual->GetClass(), TEXT("FontSize"));
+	if (TestNotNull(TEXT("the visual declares FontSize"), FontSize))
+	{
+		TestFalse(TEXT("An unbound property on the same visual stays editable"),
+			DreamUITextAuthoring::IsPropertyReadOnly(Visual, FontSize, {}));
+	}
+
+	// The third block: authoring a NEW binding here. The compiler replaces the whole binding list from the file, so the
+	// panel writes the `<-` line rather than the list, and the compile reads it back.
+	TestTrue(TEXT("The details panel authors bindings on a text-authored class, as lines of its file"),
+		DreamUITextAuthoring::CanAuthorBindingsOn(Visual));
+	TestTrue(TEXT("on the widget itself too"), DreamUITextAuthoring::CanAuthorBindingsOn(Title));
+
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUIEventRowsAreLiveTest,
+	"DreamGUI.Designer.TheEventRowsAreLiveOnATextAuthoredClass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * The Events rows of a text-authored class, asked the way the details panel asks them.
+ *
+ * A custom row is not a property: the view hands FIsCustomRowReadOnly two names -- the row and its category --
+ * so the gate can only answer per object and category. The events are the one category whose edits the file
+ * DOES take (a route is a line of the .dui), which is why the row asks this namespace at the click instead,
+ * and why judging them by the value rule left every event row of every .dui-backed class grey: an author
+ * meets a panel of buttons that do nothing and nothing that says why.
+ */
+bool FDreamUIEventRowsAreLiveTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	FScopedDuiFile Source(TEXT("GateEventRows.dui"));
+	if (!TestTrue(TEXT("the fixture wrote a .dui"), Source.Write({
+		TEXT("Widget Root {"),
+		TEXT("    + CanvasPanel { }"),
+		TEXT("    Widget Button { }"),
+		TEXT("}")
+	})))
+	{
+		return false;
+	}
+
+	FScopedGatedDesigner Scoped(TEXT("BP_GateEventRows"), UDreamTextUserWidget::StaticClass(), Source.FilePath);
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
+
+	UDreamWidget* Button = Scoped.FindTemplate(TEXT("Button"));
+	if (!TestNotNull(TEXT("the button node is in the asset"), Button)) return false;
+
+	TestFalse(TEXT("the Events rows are live on a text-authored class"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Button, NAME_None, DreamUITextAuthoring::EventRowsCategoryName));
+
+	// The neighbours, whose values the write-back would lose on the next compile, stay grey: a gate that
+	// unlocked everything once it let the events through would read the same from the outside as one that
+	// worked.
+	TestTrue(TEXT("a row whose value the file would lose stays grey"),
+		DreamUITextAuthoring::IsCustomRowReadOnly(Button, NAME_None, FName(TEXT("Interaction"))));
+
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUITextSetSourceFileTest,
+	"DreamGUI.WidgetBlueprint.TheSourceFileCanBeSetFromTheEditor",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * The empty state, and the way out of it.
+ *
+ * A Blueprint parented to UDreamTextUserWidget with no path set is where every text-backed widget
+ * starts, and for a while it was a dead end: the designer showed a blank hierarchy, the gate did not
+ * lock (correctly -- there is no text to be the truth yet), and the one property that would fix it
+ * was three clicks away in another mode. The two claims here are what make the toolbar entry work:
+ * that a class with no path is still recognised as text-capable, and that setting a path recompiles
+ * rather than merely storing a string.
+ */
+bool FDreamUITextSetSourceFileTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	FScopedDuiFile File(TEXT("GateSetSource.dui"));
+	if (!TestTrue(TEXT("the .dui was written"), File.Write({
+		TEXT("Widget Root {"),
+		TEXT("  + CanvasPanel { }"),
+		TEXT("  Text Title { }"),
+		TEXT("}"),
+	})))
+	{
+		return false;
+	}
+
+	// Created with NO path, which is the state the toolbar entry exists for.
+	FScopedGatedDesigner Scoped(TEXT("GateSetSource"), UDreamTextUserWidget::StaticClass(), FString());
+	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("a text class with no path is still text-CAPABLE"),
+		DreamUITextAuthoring::CanAuthorFromText(Scoped.Blueprint));
+	TestFalse(TEXT("but is not yet text-AUTHORED, so the structural gate stays open"),
+		DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint));
+
+	TestTrue(TEXT("the path was accepted"),
+		DreamUITextAuthoring::SetAuthoredSourcePath(Scoped.Blueprint, File.FilePath));
+	TestTrue(TEXT("and the class now reads as text-authored"),
+		DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint));
+	// And the designer that was open writes its edits to that file from now on. It bound its write-back when it opened,
+	// to no file, and kept writing nowhere.
+	{
+		FString Bound = FPaths::ConvertRelativePathToFull(Scoped.Designer->GetTextWriteBackFilePath());
+		FString Expected = FPaths::ConvertRelativePathToFull(File.FilePath);
+		FPaths::NormalizeFilename(Bound);
+		FPaths::NormalizeFilename(Expected);
+		TestTrue(*FString::Printf(TEXT("the open designer writes to the file now named (%s)"), *Bound),
+			Bound.Equals(Expected, ESearchCase::IgnoreCase));
+	}
+
+	// The claim that matters: SetAuthoredSourcePath compiles. Storing the string and stopping is the
+	// shape that produces "I set the file and nothing happened".
+	TestNotNull(TEXT("and the compile it ran built the file's hierarchy"),
+		Scoped.FindTemplate(TEXT("Title")));
+
+	// Setting the same path again is a no-op that still reports success: the caller asked for a
+	// state and got it. Asserted because the alternative -- returning false -- would read as an
+	// error at the call site and put a failure notification on an idempotent click.
+	TestTrue(TEXT("setting the same path again is accepted and changes nothing"),
+		DreamUITextAuthoring::SetAuthoredSourcePath(Scoped.Blueprint, File.FilePath));
+
+	// A hand-authored class cannot hold one, and must say so rather than writing to its parent's CDO
+	// -- which would set the source file of every Blueprint deriving from UDreamUserWidget.
+	FScopedGatedDesigner Plain(TEXT("GateSetSourcePlain"), UDreamUserWidget::StaticClass(), FString());
+	if (TestNotNull(TEXT("the control designer opened"), Plain.Designer))
+	{
+		TestFalse(TEXT("a hand-authored class is not text-capable"),
+			DreamUITextAuthoring::CanAuthorFromText(Plain.Blueprint));
+		TestFalse(TEXT("and refuses the path rather than writing it somewhere shared"),
+			DreamUITextAuthoring::SetAuthoredSourcePath(Plain.Blueprint, File.FilePath));
+		TestTrue(TEXT("leaving UDreamTextUserWidget's own default untouched"),
+			GetDefault<UDreamTextUserWidget>()->SourceFile.FilePath.IsEmpty());
+	}
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUITextEventRouteTest,
+	"DreamGUI.WidgetBlueprint.AnEventRoutesToItsHandlerEndToEnd",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * `OnPoked -> HandlePoked`, the whole way: parsed, recorded, compiled onto the class with the
+ * handler and signature checked, bound on a LIVE instance, and fired. The firing is the assertion
+ * that matters -- every earlier stage can be green while the runtime never actually listened, which
+ * is precisely how the property bindings' own history went.
+ *
+ * The live instance is the designer's preview, because that is an instance built exactly the way
+ * the game builds one, standing already in a world this fixture pays for anyway.
+ */
+bool FDreamUITextEventRouteTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	// The class is asked for its own reflected path rather than having one written out here. The
+	// behaviour is declared by whichever module holds this test, so the path moved the day the test
+	// did, and a .dui naming the old module compiles to "not a behaviour this widget can carry".
+	const FString EventBehaviourPath = UDreamUIEventTestBehaviour::StaticClass()->GetPathName();
+
+	FScopedDuiFile File(TEXT("EventRoute.dui"));
+	if (!TestTrue(TEXT("the .dui was written"), File.Write({
+		TEXT("Widget Root {"),
+		TEXT("  + CanvasPanel { }"),
+		TEXT("  Widget Button {"),
+		FString::Printf(TEXT("    + %s {"), *EventBehaviourPath),
+		TEXT("      OnPoked -> HandlePoked"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}"),
+	})))
+	{
+		return false;
+	}
+
+	FScopedGatedDesigner Scoped(TEXT("EventRoute"), UDreamUIEventTestUserWidget::StaticClass(), File.FilePath);
+	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
+	TestEqual(TEXT("the file compiled clean"), Scoped.CompileErrors, 0);
+
+	UDreamUIEventTestUserWidget* Preview = Cast<UDreamUIEventTestUserWidget>(
+		Scoped.Designer->GetPreviewHost()->GetPreviewWidget());
+	if (!TestNotNull(TEXT("the preview is an instance of the test parent"), Preview))
+	{
+		return false;
+	}
+
+	// Find the behaviour on the live hierarchy and fire it.
+	UDreamUIEventTestBehaviour* Poker = nullptr;
+	TArray<UDreamWidget*> Pending;
+	if (UDreamWidget* Content = Preview->GetContentRoot())
+	{
+		Pending.Add(Content);
+	}
+	while (Pending.Num() > 0 && Poker == nullptr)
+	{
+		UDreamWidget* Widget = Pending.Pop();
+		for (UDreamUIBehaviour* Behaviour : Widget->GetAllComponents())
+		{
+			if (UDreamUIEventTestBehaviour* AsPoker = Cast<UDreamUIEventTestBehaviour>(Behaviour))
+			{
+				Poker = AsPoker;
+			}
+		}
+		Pending.Append(Widget->GetChildren());
+	}
+	if (!TestNotNull(TEXT("the behaviour is on the live hierarchy"), Poker))
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("nothing has fired yet"), Preview->PokeCount, 0);
+	Poker->Poke();
+	TestEqual(TEXT("the event reached the handler"), Preview->PokeCount, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUITextEventRouteRefusalsTest,
+	"DreamGUI.WidgetBlueprint.AnEventRouteMistakeIsACompileError",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamUITextEventRouteRefusalsTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	// A delegate that is not assignable: refused by the builder, where the AST can already tell.
+	{
+		FScopedDuiFile File(TEXT("EventRouteNotAssignable.dui"));
+		if (!File.Write({
+			TEXT("Widget Root {"),
+			FString::Printf(TEXT("  + %s { NotAssignable -> HandlePoked }"),
+				*UDreamUIEventTestBehaviour::StaticClass()->GetPathName()),
+			TEXT("}") }))
+		{
+			return false;
+		}
+		// The refused route empties the whole build; the cause code is the one message, with no outcome code after it.
+		AddExpectedError(TEXT("DUI5010"), EAutomationExpectedErrorFlags::Contains, 0);
+		FScopedGatedDesigner Scoped(TEXT("EventRouteNA"), UDreamUIEventTestUserWidget::StaticClass(), File.FilePath);
+		TestTrue(TEXT("a non-assignable delegate fails the compile"), Scoped.CompileErrors > 0);
+	}
+
+	// A handler the class does not declare: refused by the compiler, the only stage that can see it.
+	{
+		FScopedDuiFile File(TEXT("EventRouteNoHandler.dui"));
+		if (!File.Write({
+			TEXT("Widget Root {"),
+			FString::Printf(TEXT("  + %s { OnPoked -> NoSuchHandler }"),
+				*UDreamUIEventTestBehaviour::StaticClass()->GetPathName()),
+			TEXT("}") }))
+		{
+			return false;
+		}
+		// Its message has no code to match by, so it is matched in the English it is written in.
+		const DreamTests::FScopedEnglish English;
+		AddExpectedError(TEXT("no such function"), EAutomationExpectedErrorFlags::Contains, 0);
+		FScopedGatedDesigner Scoped(TEXT("EventRouteNH"), UDreamUIEventTestUserWidget::StaticClass(), File.FilePath);
+		TestTrue(TEXT("a missing handler fails the compile"), Scoped.CompileErrors > 0);
+	}
+	return true;
+}
+
+namespace DreamUITextGateTestLocal
+{
+	/** A .dui with one `timeline` block, which gives the root an animation component the file owns. */
+	bool WriteOneTimeline(const FScopedDuiFile& InFile)
+	{
+		return InFile.Write({
+			TEXT("timeline Pulse {"),
+			TEXT("    duration = 0.5"),
+			TEXT("    RenderScale : 0.0 = (1, 1, 1), 0.5 = (1.2, 1.2, 1)"),
+			TEXT("}"),
+			TEXT("Widget Root {"),
+			TEXT("}")
+		});
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUITextCompileMovesTheAnimationPanelTest,
+	"DreamGUI.Designer.ATextAuthoredCompileHandsTheAnimationsPanelTheNewTreesHost",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * Compiling a text-authored asset left the Animations panel on animations the compile had just replaced.
+ *
+ * Every compile of a .dui builds a new tree with a new copy of every animation, and nothing told the panel: it went on
+ * showing and editing the copies on the tree the compile dropped, while the next compile carried the animations from
+ * the tree the asset actually holds -- so the edits were gone. This compiles with an animation open and checks the panel
+ * moved to the new tree's host and kept the animation by its name.
+ */
+bool FDreamUITextCompileMovesTheAnimationPanelTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	FScopedDuiFile Source(TEXT("AnimationPanelAfterCompile.dui"));
+	if (!TestTrue(TEXT("the fixture wrote a .dui"), WriteOneTimeline(Source)))
+	{
+		return false;
+	}
+	FScopedGatedDesigner Scoped(TEXT("BP_AnimationPanelAfterCompile"), UDreamTextUserWidget::StaticClass(), Source.FilePath);
+	if (!TestNotNull(TEXT("The designer opened"), Scoped.Designer) || !TestEqual(TEXT("on a .dui that compiles"), Scoped.CompileErrors, 0))
+	{
+		return false;
+	}
+	const TSharedPtr<SDreamWidgetAnimationEditor> Panel = Scoped.Designer->GetSequencerEditor();
+	UDreamWidgetAnimationComponent* HostBefore = Scoped.TemplateRoot() != nullptr
+		? Scoped.TemplateRoot()->GetComponent<UDreamWidgetAnimationComponent>() : nullptr;
+	if (!TestTrue(TEXT("The designer has an Animations panel"), Panel.IsValid())
+		|| !TestNotNull(TEXT("and the timeline gave the root a host"), HostBefore))
+	{
+		return false;
+	}
+	TestTrue(TEXT("which the panel found when it opened"), Panel->GetSequenceComponent() == HostBefore);
+	Panel->SelectAnimation(HostBefore->GetSequenceByDisplayName(TEXT("Pulse")));
+
+	FKismetEditorUtilities::CompileBlueprint(Scoped.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+
+	UDreamWidgetAnimationComponent* HostAfter = Scoped.TemplateRoot() != nullptr
+		? Scoped.TemplateRoot()->GetComponent<UDreamWidgetAnimationComponent>() : nullptr;
+	if (!TestNotNull(TEXT("the recompiled tree has a host as well"), HostAfter))
+	{
+		return false;
+	}
+	TestTrue(TEXT("a new one, on the tree the compile built"), HostAfter != HostBefore);
+	TestTrue(TEXT("and the panel moved to it"), Panel->GetSequenceComponent() == HostAfter);
+	const UDreamWidgetAnimation* PulseAfter = HostAfter->GetSequenceByDisplayName(TEXT("Pulse"));
+	TestTrue(TEXT("with the open animation found again by its name"), PulseAfter != nullptr && Panel->GetAnimation() == PulseAfter);
+
+	Panel->ClearAnimationSelection();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamUITimelineReadOnlyFollowsTheAnimationTest,
+	"DreamGUI.Designer.ATimelineOpensEditableBesideAnAnimationTheEditorMade",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * A `timeline` block's animation opens editable when the editor can write its edits back into the block
+ * (FDreamUITimelineWriteBack), like one made in the animation editor -- alternated on one host, because Sequencer reads
+ * read-only once, when it is made, and the panel makes a new one whenever the answer changes.
+ */
+bool FDreamUITimelineReadOnlyFollowsTheAnimationTest::RunTest(const FString&)
+{
+	using namespace DreamUITextGateTestLocal;
+
+	FScopedDuiFile Source(TEXT("TimelineReadOnlySwitch.dui"));
+	if (!TestTrue(TEXT("the fixture wrote a .dui"), WriteOneTimeline(Source)))
+	{
+		return false;
+	}
+	FScopedGatedDesigner Scoped(TEXT("BP_TimelineReadOnlySwitch"), UDreamTextUserWidget::StaticClass(), Source.FilePath);
+	if (!TestNotNull(TEXT("The designer opened"), Scoped.Designer) || !TestEqual(TEXT("on a .dui that compiles"), Scoped.CompileErrors, 0))
+	{
+		return false;
+	}
+	const TSharedPtr<SDreamWidgetAnimationEditor> Panel = Scoped.Designer->GetSequencerEditor();
+	UDreamWidgetAnimationComponent* Host = Scoped.TemplateRoot() != nullptr
+		? Scoped.TemplateRoot()->GetComponent<UDreamWidgetAnimationComponent>() : nullptr;
+	UDreamWidgetAnimation* Timeline = Host != nullptr ? Host->GetSequenceByDisplayName(TEXT("Pulse")) : nullptr;
+	// One made in the animation editor, beside the file's.
+	UDreamWidgetAnimation* Editable = Host != nullptr ? Host->AddNewAnimation() : nullptr;
+	if (!TestTrue(TEXT("The designer has an Animations panel"), Panel.IsValid())
+		|| !TestTrue(TEXT("and a host holding a timeline and an editable animation"),
+			Timeline != nullptr && Editable != nullptr && Timeline->IsLanguageOwned() && Editable->IsEditable()))
+	{
+		return false;
+	}
+	Panel->RefreshAnimationList();
+
+	Panel->SelectAnimation(Editable);
+	TSharedPtr<ISequencer> Sequencer = Panel->GetSequencer();
+	TestTrue(TEXT("an editable animation opens an editable Sequencer"), Sequencer.IsValid() && !Sequencer->IsReadOnly());
+
+	Panel->SelectAnimation(Timeline);
+	Sequencer = Panel->GetSequencer();
+	TestTrue(TEXT("the file can take a timeline's edits"), FDreamUITimelineWriteBack::CanWriteBack(Timeline));
+	TestTrue(TEXT("so a timeline after it opens editable too"), Sequencer.IsValid() && !Sequencer->IsReadOnly());
+
+	Panel->SelectAnimation(Editable);
+	Sequencer = Panel->GetSequencer();
+	TestTrue(TEXT("and the editor's own one after that is editable as well"), Sequencer.IsValid() && !Sequencer->IsReadOnly());
+
+	Panel->ClearAnimationSelection();
+	return true;
+}
+
+#endif

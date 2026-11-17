@@ -1,0 +1,1154 @@
+// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "ClassViewerFilter.h"
+#include "ClassViewerModule.h"
+#include "Modules/ModuleManager.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Commands/GenericCommands.h"
+#include "Framework/Commands/UICommandList.h"
+#include "DetailLayoutBuilder.h"
+#include "ScopedTransaction.h"
+#include "SPositiveActionButton.h"
+#include "SourceCodeNavigation.h"
+#include "AssetSelection.h"
+#include "AssetRegistry/AssetData.h"
+#include "DragAndDrop/AssetDragDropOp.h"
+#include "DragAndDrop/DecoratedDragDropOp.h"
+#include "Engine/Blueprint.h"
+#include "Styling/SlateIconFinder.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/SCompoundWidget.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SComboButton.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Notifications/SNotificationList.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Views/SListView.h"
+#include "Widgets/Views/STableRow.h"
+#include "UObject/StrongObjectPtr.h"
+#include "Core/DreamUIBehaviour.h"
+#include "Core/Components/DreamWidget.h"
+#include "DreamUIComponentSupport.h"
+#include "DreamUIEditorTools.h"
+#include "DreamWidgetBlueprintEditor.h"
+#include "Designer/DreamWidgetPreviewHost.h"
+#include "Utils/DreamUIUtils.h"
+
+/**
+ * The component list of the designer's details panel: the behaviours on the selected widget,
+ * with add / remove / reorder / copy / paste and asset drops. Used by SDreamWidgetDesignerDetails
+ * in the designer and by the Widget Inspector window.
+ *
+ * The class body is written inline here, as it was when it lived inside the details panel's .cpp;
+ * the free functions below it are out-of-line in SDreamWidgetComponentEditor.cpp so headless tests
+ * can link against them (DreamPanelsAuditAutomationTests declares the prototypes itself).
+ */
+
+/** Whether a component of this class may be put on a widget at all. */
+DREAMGUIEDITOR_API bool DreamUIWidgetComponentClipboard_CanPasteClass(const UClass* InComponentClass);
+/** Whether this component can be cut or copied. */
+DREAMGUIEDITOR_API bool DreamUIWidgetComponentClipboard_CanTakeComponent(const UDreamUIBehaviour* InComponent);
+/** A stand-alone copy of the component, outered to the transient package, for the clipboard to hold. */
+DREAMGUIEDITOR_API UDreamUIBehaviour* DreamUIWidgetComponentClipboard_Snapshot(UDreamUIBehaviour* InSource);
+/** A new component on InTargetWidget with InSource's properties; null when the class is refused. */
+DREAMGUIEDITOR_API UDreamUIBehaviour* DreamUIWidgetComponentClipboard_PasteOnto(UDreamWidget* InTargetWidget, UDreamUIBehaviour* InSource);
+/** The one clipboard every panel shares. */
+DREAMGUIEDITOR_API TStrongObjectPtr<UDreamUIBehaviour>& DreamUIWidgetComponentClipboard();
+/** Drop the clipboard while the editor is still up. Called from module shutdown. */
+void DreamUIWidgetComponentClipboard_Reset();
+
+#define LOCTEXT_NAMESPACE "DreamWidgetDesignerDetails"
+
+class FDreamWidgetComponentClassFilter : public IClassViewerFilter
+{
+public:
+	FDreamWidgetComponentClassFilter() = default;
+	/** Lists only what InWidget supports (FDreamUIComponentSupport): the Add Component picker for one widget. */
+	explicit FDreamWidgetComponentClassFilter(const UDreamWidget* InWidget)
+		: Widget(InWidget)
+	{
+	}
+
+	virtual bool IsClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const UClass* InClass, TSharedRef<FClassViewerFilterFuncs> InFilterFuncs) override
+	{
+		return IsComponentClassAllowed(InClass) && FDreamUIComponentSupport::Get().IsSupported(InClass, Widget.Get());
+	}
+
+	virtual bool IsUnloadedClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const TSharedRef<const IUnloadedBlueprintData> InUnloadedClassData, TSharedRef<FClassViewerFilterFuncs> InFilterFuncs) override
+	{
+		return InUnloadedClassData->IsChildOf(UDreamUIBehaviour::StaticClass())
+			&& !InUnloadedClassData->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists | CLASS_Hidden)
+			&& FDreamUIComponentSupport::Get().IsSupported(
+				[&InUnloadedClassData](const UClass* InBase) { return InUnloadedClassData->IsChildOf(InBase); }, Widget.Get());
+	}
+
+	static bool IsComponentClassAllowed(const UClass* InClass)
+	{
+		if (InClass == nullptr)return false;
+		if (!InClass->IsChildOf(UDreamUIBehaviour::StaticClass()))return false;
+		if (InClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists | CLASS_Hidden | CLASS_Transient))return false;
+		if (InClass->HasAnyClassFlags(CLASS_CompiledFromBlueprint) || !InClass->HasAnyClassFlags(CLASS_Native))//blueprint class
+		{
+			return true;
+		}
+		if (!InClass->HasMetaData("BlueprintSpawnableComponent"))return false;
+		return true;
+	}
+
+private:
+	/** Null lists every component class there is, as the clipboard and asset checks ask. */
+	TWeakObjectPtr<const UDreamWidget> Widget;
+};
+
+using FDreamWidgetComponentItem = TWeakObjectPtr<UDreamUIBehaviour>;
+
+class FDreamWidgetComponentDragDropOp : public FDecoratedDragDropOp
+{
+public:
+	DRAG_DROP_OPERATOR_TYPE(FDreamWidgetComponentDragDropOp, FDecoratedDragDropOp)
+
+	static TSharedRef<FDreamWidgetComponentDragDropOp> New(const FDreamWidgetComponentItem& InDraggedItem)
+	{
+		TSharedRef<FDreamWidgetComponentDragDropOp> Operation = MakeShared<FDreamWidgetComponentDragDropOp>();
+		Operation->DraggedItem = InDraggedItem;
+		Operation->SetToolTip(LOCTEXT("ReorderComponent", "Reorder component"), nullptr);
+		Operation->SetupDefaults();
+		Operation->Construct();
+		return Operation;
+	}
+
+	FDreamWidgetComponentItem DraggedItem;
+};
+
+class SDreamWidgetComponentEditor : public SCompoundWidget
+{
+public:
+	DECLARE_DELEGATE_RetVal(UDreamWidget*, FOnGetWidgetContext);
+	DECLARE_DELEGATE_RetVal(bool, FOnCanEdit);
+	DECLARE_DELEGATE_OneParam(FOnComponentsSelectionChanged, const TArray<FDreamWidgetComponentItem>&);
+
+	SLATE_BEGIN_ARGS(SDreamWidgetComponentEditor)
+	{
+	}
+		SLATE_EVENT(FOnGetWidgetContext, GetWidgetContext)
+		SLATE_EVENT(FOnCanEdit, CanEdit)
+		SLATE_EVENT(FOnComponentsSelectionChanged, OnSelectionChanged)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs)
+	{
+		CommandList = MakeShareable(new FUICommandList);
+		CommandList->MapAction(
+			FGenericCommands::Get().Delete,
+			FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandleRemoveSelectedComponents),
+			FCanExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::CanRemoveSelectedComponents)
+		);
+		CommandList->MapAction(
+			FGenericCommands::Get().Copy,
+			FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandleCopySelectedComponent),
+			FCanExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::CanCopySelectedComponent)
+		);
+		CommandList->MapAction(
+			FGenericCommands::Get().Cut,
+			FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandleCutSelectedComponent),
+			FCanExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::CanCutOrDuplicateSelectedComponent)
+		);
+		CommandList->MapAction(
+			FGenericCommands::Get().Paste,
+			FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandlePasteComponent),
+			FCanExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::CanPasteComponent)
+		);
+		CommandList->MapAction(
+			FGenericCommands::Get().Duplicate,
+			FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandleDuplicateSelectedComponent),
+			FCanExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::CanDuplicateSelectedComponent)
+		);
+
+		GetWidgetContext = InArgs._GetWidgetContext;
+		CanEdit = InArgs._CanEdit;
+		OnSelectionChanged = InArgs._OnSelectionChanged;
+
+		ToolbarWidget =
+		SNew(SBox)
+		.Padding(FMargin(4, 2, 4, 2))
+		[
+			SNew(SPositiveActionButton)
+			.IsEnabled(this, &SDreamWidgetComponentEditor::CanAddOrRemoveComponent)
+			.Icon(FAppStyle::Get().GetBrush("Icons.Plus"))
+			.Text(LOCTEXT("AddWidgetComponent", "Add Component"))
+			.ToolTipText(LOCTEXT("AddWidgetComponentTooltip", "Add a DreamUI component to the selected widget"))
+			.OnGetMenuContent(this, &SDreamWidgetComponentEditor::GenerateAddComponentMenu)
+		]
+		;
+
+		ChildSlot
+		[
+			SNew(SOverlay)
+			+ SOverlay::Slot()
+			[
+				SNew(SBorder)
+				.Padding(FMargin(2))
+				[
+					SAssignNew(ComponentListView, SListView<FDreamWidgetComponentItem>)
+					.ListItemsSource(&ComponentItems)
+					.SelectionMode(ESelectionMode::Single)
+					.OnGenerateRow(this, &SDreamWidgetComponentEditor::HandleGenerateRow)
+					.OnSelectionChanged(this, &SDreamWidgetComponentEditor::HandleSelectionChanged)
+					.OnContextMenuOpening(this, &SDreamWidgetComponentEditor::OnContextMenuOpening)
+				]
+			]
+			+ SOverlay::Slot()
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Visibility(this, &SDreamWidgetComponentEditor::GetEmptyStateVisibility)
+				.Text(this, &SDreamWidgetComponentEditor::GetEmptyStateText)
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+			]
+		];
+
+		RefreshComponents();
+	}
+
+	virtual bool SupportsKeyboardFocus() const override
+	{
+		return true;
+	}
+
+	virtual FReply OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& InFocusEvent) override
+	{
+		if (ComponentListView.IsValid())
+		{
+			FSlateApplication::Get().SetKeyboardFocus(ComponentListView, EFocusCause::SetDirectly);
+			return FReply::Handled();
+		}
+
+		return SCompoundWidget::OnFocusReceived(MyGeometry, InFocusEvent);
+	}
+
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override
+	{
+		if (CommandList.IsValid() && CommandList->ProcessCommandBindings(InKeyEvent))
+		{
+			return FReply::Handled();
+		}
+
+		return SCompoundWidget::OnKeyDown(MyGeometry, InKeyEvent);
+	}
+
+	virtual void OnDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override
+	{
+		SCompoundWidget::OnDragEnter(MyGeometry, DragDropEvent);
+	}
+
+	virtual FReply OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override
+	{
+		if (CanHandleAssetDrop(DragDropEvent))
+		{
+			if (TSharedPtr<FAssetDragDropOp> AssetDragOp = DragDropEvent.GetOperationAs<FAssetDragDropOp>())
+			{
+				AssetDragOp->SetToolTip(LOCTEXT("DropToAddComponent", "Drop to add component"), AssetDragOp->CurrentIconBrush);
+			}
+			return FReply::Handled();
+		}
+		if (TSharedPtr<FAssetDragDropOp> AssetDragOp = DragDropEvent.GetOperationAs<FAssetDragDropOp>())
+		{
+			AssetDragOp->ResetToDefaultToolTip();
+		}
+		return SCompoundWidget::OnDragOver(MyGeometry, DragDropEvent);
+	}
+
+	virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override
+	{
+		if (HandleAddComponentsFromAssetDrop(DragDropEvent))
+		{
+			return FReply::Handled();
+		}
+		return SCompoundWidget::OnDrop(MyGeometry, DragDropEvent);
+	}
+
+	TSharedRef<SWidget> GetToolbarWidget() const
+	{
+		return ToolbarWidget.ToSharedRef();
+	}
+	virtual ~SDreamWidgetComponentEditor() override
+	{
+		BindComponentsChangedEvent(nullptr);
+	}
+
+	void RefreshComponents()
+	{
+		ComponentItems.Reset();
+
+		UDreamWidget* CurrentWidget = GetCurrentWidget();
+		BindComponentsChangedEvent(CurrentWidget);
+		if (const UDreamWidget* Widget = CurrentWidget)
+		{
+			for (UDreamUIBehaviour* Component : Widget->GetAllComponents())
+			{
+				if (IsValid(Component))
+				{
+					ComponentItems.Add(Component);
+				}
+			}
+		}
+
+		if (ComponentListView.IsValid())
+		{
+			ComponentListView->RequestListRefresh();
+		}
+	}
+
+	void ClearSelection()
+	{
+		if (ComponentListView.IsValid())
+		{
+			ComponentListView->ClearSelection();
+		}
+	}
+
+	void SelectComponent(UDreamUIBehaviour* InComponent)
+	{
+		if (!ComponentListView.IsValid() || !IsValid(InComponent))
+		{
+			return;
+		}
+
+		const FDreamWidgetComponentItem Item = InComponent;
+		ComponentListView->SetSelection(Item, ESelectInfo::Direct);
+		ComponentListView->RequestScrollIntoView(Item);
+	}
+
+private:
+	UDreamWidget* GetCurrentWidget() const
+	{
+		return GetWidgetContext.IsBound() ? GetWidgetContext.Execute() : nullptr;
+	}
+
+	/** Follow the widget's own component list so additions made outside this panel (the panel-type
+	 *  dropdown adding a ContentWidget, for one) show up without a re-select. */
+	void BindComponentsChangedEvent(UDreamWidget* Widget)
+	{
+		if (BoundWidget.Get() == Widget)
+		{
+			return;
+		}
+		if (UDreamWidget* Previous = BoundWidget.Get())
+		{
+			Previous->GetComponentsChangedEvent().Remove(ComponentsChangedHandle);
+		}
+		ComponentsChangedHandle.Reset();
+		BoundWidget = Widget;
+		if (IsValid(Widget))
+		{
+			ComponentsChangedHandle = Widget->GetComponentsChangedEvent().AddSP(this, &SDreamWidgetComponentEditor::HandleComponentsChanged);
+		}
+	}
+
+	void HandleComponentsChanged(EDreamWidgetComponentsChangedType)
+	{
+		RefreshComponents();
+	}
+
+	bool CanAddOrRemoveComponent() const
+	{
+		return IsValid(GetCurrentWidget()) && (!CanEdit.IsBound() || CanEdit.Execute());
+	}
+
+	bool CanRemoveSelectedComponents() const
+	{
+		if (!CanAddOrRemoveComponent() || !ComponentListView.IsValid())
+		{
+			return false;
+		}
+
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		ComponentListView->GetSelectedItems(SelectedItems);
+		return SelectedItems.Num() > 0;
+	}
+
+	UDreamUIBehaviour* GetSelectedComponent() const
+	{
+		if (!ComponentListView.IsValid())
+		{
+			return nullptr;
+		}
+
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		ComponentListView->GetSelectedItems(SelectedItems);
+		return (SelectedItems.Num() > 0 && SelectedItems[0].IsValid()) ? SelectedItems[0].Get() : nullptr;
+	}
+
+	/**
+	 * The designer whose TEMPLATE answers for this widget, or null when the edit happens in place.
+	 *
+	 * The one predicate every operation here branches on: inside a designer a component edit is made
+	 * on the authoring tree and the preview is rebuilt from it, outside one the widget shown IS the
+	 * widget being edited.
+	 */
+	static FDreamWidgetBlueprintEditor* FindTemplateOwningDesigner(UDreamWidget* Widget)
+	{
+		if (!IsValid(Widget))
+		{
+			return nullptr;
+		}
+		TSharedPtr<FDreamWidgetBlueprintEditor> Designer = FDreamWidgetBlueprintEditor::GetEditorByWorld(Widget->GetWorld()).Pin();
+		return (Designer.IsValid() && Designer->GetTemplateWidget(Widget) != nullptr) ? Designer.Get() : nullptr;
+	}
+
+	/** The widget and whatever holds it both change when its component list does, so both are recorded. */
+	void ModifyWidgetForComponentEdit(UDreamWidget* Widget)
+	{
+		// Nothing to record on a PREVIEW. The designer paths below write onto the template and record
+		// it there, and the preview is thrown away and rebuilt from it -- so a Modify here files an
+		// object that is about to stop existing into the undo buffer, which pins the whole outgoing
+		// tree and lets an undo restore widgets the rebuild already destroyed. See RebuildPreview:
+		// "values written onto a preview must never enter the transaction buffer".
+		if (FindTemplateOwningDesigner(Widget) != nullptr)
+		{
+			return;
+		}
+		if (UObject* WidgetOuter = Widget->GetOuter())
+		{
+			WidgetOuter->SetFlags(RF_Transactional);
+			WidgetOuter->Modify();
+		}
+		Widget->SetFlags(RF_Transactional);
+		Widget->Modify();
+	}
+
+	/**
+	 * Create a component on the widget the edit has to REACH: the template when a designer owns this
+	 * widget, because one built on a preview goes away with the next rebuild. What comes back is
+	 * always the preview's, which is what the panel goes on to show.
+	 */
+	UDreamUIBehaviour* AddComponentToWidget(UDreamWidget* Widget, TFunctionRef<UDreamUIBehaviour*(UDreamWidget*)> InAdd)
+	{
+		if (FDreamWidgetBlueprintEditor* Designer = FindTemplateOwningDesigner(Widget))
+		{
+			return Designer->DesignerAddComponentBy(Widget, InAdd);
+		}
+		return InAdd(Widget);
+	}
+
+	/** Record and announce a newly added component. Call inside the caller's transaction, not after it. */
+	void FinishComponentAdd(UDreamUIBehaviour* NewComponent)
+	{
+		// The owner is read off the component rather than passed in: a designer add republishes the
+		// preview, so the widget the caller was holding when it started is not the one to announce on.
+		UDreamWidget* Owner = NewComponent->GetWidget();
+		// Only the in-place path records the component. A designer add already recorded the TEMPLATE
+		// inside DesignerAddComponentBy, and what came back here is the REBUILT PREVIEW's copy --
+		// recording that is what puts doomed preview objects in the undo history. See
+		// ModifyWidgetForComponentEdit.
+		if (FindTemplateOwningDesigner(Owner) == nullptr)
+		{
+			NewComponent->SetFlags(RF_Transactional);
+			NewComponent->Modify();
+		}
+		if (IsValid(Owner))
+		{
+			FDreamUIUtils::NotifyPropertyChanged(Owner, UDreamWidget::GetPropertyName_Components());
+		}
+
+		RefreshComponents();
+		SelectComponent(NewComponent);
+	}
+
+	bool CanCopySelectedComponent() const
+	{
+		return DreamUIWidgetComponentClipboard_CanTakeComponent(GetSelectedComponent());
+	}
+
+	bool CanModifySelectedComponent() const
+	{
+		return CanAddOrRemoveComponent() && IsValid(GetSelectedComponent());
+	}
+
+	/** Both recreate the selected component through the paste, so both answer for its class as well. */
+	bool CanCutOrDuplicateSelectedComponent() const
+	{
+		return CanModifySelectedComponent() && DreamUIWidgetComponentClipboard_CanTakeComponent(GetSelectedComponent());
+	}
+
+	bool CanPasteComponent() const
+	{
+		if (!CanAddOrRemoveComponent() || !DreamUIWidgetComponentClipboard().IsValid())
+		{
+			return false;
+		}
+		return DreamUIWidgetComponentClipboard_CanPasteClass(DreamUIWidgetComponentClipboard()->GetClass())
+			&& FDreamUIComponentSupport::Get().IsSupported(DreamUIWidgetComponentClipboard()->GetClass(), GetCurrentWidget());
+	}
+
+	/** A duplicate is a second copy on the same widget, which a one-per-widget component refuses. */
+	bool CanDuplicateSelectedComponent() const
+	{
+		const UDreamUIBehaviour* Component = GetSelectedComponent();
+		return CanCutOrDuplicateSelectedComponent()
+			&& FDreamUIComponentSupport::Get().IsSupported(Component->GetClass(), GetCurrentWidget());
+	}
+
+	void HandleCopySelectedComponent()
+	{
+		if (!CanCopySelectedComponent())
+		{
+			return;
+		}
+		if (UDreamUIBehaviour* Snapshot = DreamUIWidgetComponentClipboard_Snapshot(GetSelectedComponent()))
+		{
+			DreamUIWidgetComponentClipboard().Reset(Snapshot);
+		}
+	}
+
+	void HandleCutSelectedComponent()
+	{
+		UDreamWidget* Widget = GetCurrentWidget();
+		UDreamUIBehaviour* Component = GetSelectedComponent();
+		if (!CanCutOrDuplicateSelectedComponent() || !IsValid(Widget) || Component->GetWidget() != Widget)
+		{
+			return;
+		}
+
+		// A preview may have runtime-only components or a different ordering from its template.
+		// If none can be copied safely, keep both the current clipboard and the component intact.
+		TStrongObjectPtr<UDreamUIBehaviour> Snapshot(DreamUIWidgetComponentClipboard_Snapshot(Component));
+		if (!Snapshot.IsValid())return;
+		const FScopedTransaction Transaction(LOCTEXT("CutDreamWidgetComponent_Transaction", "Cut DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+
+		DreamUIWidgetComponentClipboard().Reset(Snapshot.Get());
+		// On the template when a designer owns this widget; the preview's copy goes with the rebuild.
+		if (FDreamWidgetBlueprintEditor* Designer = FindTemplateOwningDesigner(Widget))
+		{
+			// No Modify on the preview's component, and no notify afterwards: the removal republishes
+			// the preview, so by the time it returns both Widget and Component name objects that have
+			// been destroyed. DesignerRemoveComponent records the template, which is the half that
+			// undo has to be able to put back.
+			Designer->DesignerRemoveComponent(Widget, Component);
+		}
+		else
+		{
+			Component->SetFlags(RF_Transactional);
+			Component->Modify();
+			Widget->RemoveComponent(Component);
+			FDreamUIUtils::NotifyPropertyChanged(Widget, UDreamWidget::GetPropertyName_Components());
+		}
+
+		RefreshComponents();
+		ClearSelection();
+	}
+
+	void HandlePasteComponent()
+	{
+		UDreamWidget* Widget = GetCurrentWidget();
+		if (!CanPasteComponent() || !IsValid(Widget))
+		{
+			return;
+		}
+
+		//ModifyWidgetForComponentEdit has already recorded the widget, so a transaction left to commit
+		//on the failure branch is an undo step that undoes nothing
+		FScopedTransaction Transaction(LOCTEXT("PasteDreamWidgetComponent_Transaction", "Paste DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+
+		UDreamUIBehaviour* const Source = DreamUIWidgetComponentClipboard().Get();
+		UDreamUIBehaviour* NewComponent = AddComponentToWidget(Widget,
+			[Source](UDreamWidget* Target) { return DreamUIWidgetComponentClipboard_PasteOnto(Target, Source); });
+		if (!IsValid(NewComponent))
+		{
+			Transaction.Cancel();
+			return;
+		}
+		FinishComponentAdd(NewComponent);
+	}
+
+	void HandleDuplicateSelectedComponent()
+	{
+		UDreamWidget* Widget = GetCurrentWidget();
+		UDreamUIBehaviour* Component = GetSelectedComponent();
+		if (!CanDuplicateSelectedComponent() || !IsValid(Widget) || Component->GetWidget() != Widget)
+		{
+			return;
+		}
+
+		UDreamUIBehaviour* Source = Component;
+		if (FDreamWidgetBlueprintEditor* Designer = FindTemplateOwningDesigner(Widget))
+		{
+			Source = Designer->GetPreviewHost()->FindTemplateComponentForPreview(Component);
+			if (!IsValid(Source))return;
+		}
+		FScopedTransaction Transaction(LOCTEXT("DuplicateDreamWidgetComponent_Transaction", "Duplicate DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+
+		UDreamUIBehaviour* NewComponent = AddComponentToWidget(Widget,
+			[Source](UDreamWidget* Target) { return DreamUIWidgetComponentClipboard_PasteOnto(Target, Source); });
+		if (!IsValid(NewComponent))
+		{
+			Transaction.Cancel();
+			return;
+		}
+		FinishComponentAdd(NewComponent);
+	}
+
+	FReply HandleDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent, FDreamWidgetComponentItem InItem)
+	{
+		if (!InItem.IsValid() || !CanAddOrRemoveComponent())
+		{
+			return FReply::Unhandled();
+		}
+
+		return FReply::Handled().BeginDragDrop(FDreamWidgetComponentDragDropOp::New(InItem));
+	}
+
+	TOptional<EItemDropZone> HandleCanAcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone, FDreamWidgetComponentItem TargetItem) const
+	{
+		if (!CanAddOrRemoveComponent() || !TargetItem.IsValid())
+		{
+			return TOptional<EItemDropZone>();
+		}
+
+		if (TSharedPtr<FDreamWidgetComponentDragDropOp> DragOp = DragDropEvent.GetOperationAs<FDreamWidgetComponentDragDropOp>())
+		{
+			if (!DragOp->DraggedItem.IsValid() || DragOp->DraggedItem == TargetItem)
+			{
+				return TOptional<EItemDropZone>();
+			}
+			return DropZone;
+		}
+
+		return TOptional<EItemDropZone>();
+	}
+
+	FReply HandleAcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone, FDreamWidgetComponentItem TargetItem)
+	{
+		UDreamWidget* Widget = GetCurrentWidget();
+		if (!CanAddOrRemoveComponent() || !IsValid(Widget) || !TargetItem.IsValid())
+		{
+			return FReply::Unhandled();
+		}
+
+		TSharedPtr<FDreamWidgetComponentDragDropOp> DragOp = DragDropEvent.GetOperationAs<FDreamWidgetComponentDragDropOp>();
+		if (!DragOp.IsValid() || !DragOp->DraggedItem.IsValid() || DragOp->DraggedItem == TargetItem)
+		{
+			return FReply::Unhandled();
+		}
+
+		const int32 TargetIndex = ComponentItems.IndexOfByKey(TargetItem);
+		if (TargetIndex == INDEX_NONE)
+		{
+			return FReply::Unhandled();
+		}
+
+		const int32 DesiredIndex = (DropZone == EItemDropZone::BelowItem) ? (TargetIndex + 1) : TargetIndex;
+		if (MoveComponentToIndex(DragOp->DraggedItem.Get(), DesiredIndex))
+		{
+			return FReply::Handled();
+		}
+
+		return FReply::Unhandled();
+	}
+
+	bool CanHandleAssetDrop(const FDragDropEvent& DragDropEvent) const
+	{
+		if (!CanAddOrRemoveComponent())
+		{
+			return false;
+		}
+
+		TSharedPtr<FDragDropOperation> Operation = DragDropEvent.GetOperation();
+		return Operation.IsValid() && Operation->IsOfType<FAssetDragDropOp>();
+	}
+
+	bool HandleAddComponentsFromAssetDrop(const FDragDropEvent& DragDropEvent)
+	{
+		if (!CanHandleAssetDrop(DragDropEvent))
+		{
+			return false;
+		}
+
+		UDreamWidget* Widget = GetCurrentWidget();
+		if (!IsValid(Widget))
+		{
+			return false;
+		}
+
+		TArray<FAssetData> DroppedAssetData = AssetUtil::ExtractAssetDataFromDrag(DragDropEvent.GetOperation());
+		if (DroppedAssetData.Num() == 0)
+		{
+			return false;
+		}
+
+		TArray<UClass*> ComponentClassesToAdd;
+		for (const FAssetData& AssetData : DroppedAssetData)
+		{
+			if (UClass* ComponentClass = ResolveComponentClassFromAsset(AssetData))
+			{
+				// What the picker would not have offered for this widget is not added by a drop either, and the
+				// author hears why: a drop that silently does nothing reads as a drop that did not land.
+				FText Reason;
+				if (!FDreamUIComponentSupport::Get().IsSupported(ComponentClass, Widget, &Reason))
+				{
+					FNotificationInfo Info(FText::Format(LOCTEXT("ComponentNotSupported", "{0} was not added: {1}"),
+						ComponentClass->GetDisplayNameText(), Reason));
+					Info.ExpireDuration = 5.0f;
+					FSlateNotificationManager::Get().AddNotification(Info);
+					continue;
+				}
+				ComponentClassesToAdd.Add(ComponentClass);
+			}
+		}
+
+		if (ComponentClassesToAdd.Num() == 0)
+		{
+			return false;
+		}
+
+		FScopedTransaction Transaction(LOCTEXT("AddDreamWidgetComponentByDragDrop_Transaction", "Add DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+		if (auto DesignerEditor = FDreamWidgetBlueprintEditor::GetEditorByWorld(Widget->GetWorld()); DesignerEditor.IsValid())
+		{
+			DesignerEditor.Pin()->MarkDesignChanged();
+		}
+
+		UDreamUIBehaviour* LastAddedComponent = AddComponentToWidget(Widget,
+			[&ComponentClassesToAdd](UDreamWidget* Target) -> UDreamUIBehaviour*
+			{
+				UDreamUIBehaviour* Last = nullptr;
+				for (UClass* ComponentClass : ComponentClassesToAdd)
+				{
+					if (UDreamUIBehaviour* NewComponent = Target->AddComponent(ComponentClass))
+					{
+						// Target is the TEMPLATE under a designer and the widget itself outside one,
+						// so this is always the object the edit has to reach -- never a preview.
+						NewComponent->SetFlags(RF_Transactional);
+						NewComponent->Modify();
+						Last = NewComponent;
+					}
+				}
+				return Last;
+			});
+
+		if (!IsValid(LastAddedComponent))
+		{
+			// Otherwise the refusal leaves a committed transaction that undoes nothing, which is an
+			// undo step the author has to press through. Paste and duplicate already cancel theirs.
+			Transaction.Cancel();
+			return false;
+		}
+
+		// Only the in-place path has to cycle the widget for the new component to take: a designer add
+		// rebuilt the preview, and that registers the hierarchy as it goes. The owner being a DIFFERENT
+		// widget than the one this started on is exactly what says which path ran.
+		if (UDreamWidget* Owner = LastAddedComponent->GetWidget(); Owner == Widget)
+		{
+			Owner->OnUnregister();
+			Owner->OnRegister();
+		}
+		FinishComponentAdd(LastAddedComponent);
+		return true;
+	}
+
+	UClass* ResolveComponentClassFromAsset(const FAssetData& AssetData) const
+	{
+		UObject* Asset = AssetData.GetAsset();
+		if (!IsValid(Asset))
+		{
+			return nullptr;
+		}
+
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(Asset))
+		{
+			UClass* GeneratedClass = Blueprint->GeneratedClass;
+			return FDreamWidgetComponentClassFilter::IsComponentClassAllowed(GeneratedClass) ? GeneratedClass : nullptr;
+		}
+
+		if (UClass* ComponentClass = Cast<UClass>(Asset))
+		{
+			return FDreamWidgetComponentClassFilter::IsComponentClassAllowed(ComponentClass) ? ComponentClass : nullptr;
+		}
+
+		return nullptr;
+	}
+
+	bool MoveComponentToIndex(UDreamUIBehaviour* Component, int32 NewIndex)
+	{
+		UDreamWidget* Widget = GetCurrentWidget();
+		if (!CanAddOrRemoveComponent() || !IsValid(Widget) || !IsValid(Component) || Component->GetWidget() != Widget)
+		{
+			return false;
+		}
+
+		const int32 CurrentIndex = ComponentItems.IndexOfByKey(Component);
+		if (CurrentIndex == INDEX_NONE)
+		{
+			return false;
+		}
+
+		// The drop names a gap in the displayed list. Removing the source shifts later gaps left.
+		const int32 DropIndex = FMath::Clamp(NewIndex, 0, ComponentItems.Num());
+		const int32 ClampedIndex = DropIndex - (CurrentIndex < DropIndex ? 1 : 0);
+		if (CurrentIndex == ClampedIndex)
+		{
+			return false;
+		}
+
+		FScopedTransaction Transaction(LOCTEXT("ReorderDreamWidgetComponent_Transaction", "Reorder DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+
+		// On the TEMPLATE when a designer owns this widget. Reordering the preview's array moved the
+		// rows in the list and nothing else: the next rebuild instanced the authoring tree's order
+		// straight back over it, so the drag looked like it worked until anything republished.
+		if (FDreamWidgetBlueprintEditor* Designer = FindTemplateOwningDesigner(Widget))
+		{
+			UDreamUIBehaviour* Authored = Designer->GetPreviewHost()->FindTemplateComponentForPreview(Component);
+			if (!Designer->DesignerMoveComponent(Widget, Component, ClampedIndex))
+			{
+				Transaction.Cancel();
+				return false;
+			}
+			// Initialization may reorder the rebuilt preview again; keep the same authored selection.
+			RefreshComponents();
+			SelectComponent(Designer->GetPreviewHost()->FindPreviewComponentForTemplate(Authored));
+			return true;
+		}
+
+		Widget->MoveComponentToIndex(Component, ClampedIndex);
+		FDreamUIUtils::NotifyPropertyChanged(Widget, UDreamWidget::GetPropertyName_Components());
+
+		RefreshComponents();
+		SelectComponent(Component);
+		return true;
+	}
+
+	EVisibility GetEmptyStateVisibility() const
+	{
+		return ComponentItems.Num() == 0 ? EVisibility::Visible : EVisibility::Collapsed;
+	}
+
+	FText GetEmptyStateText() const
+	{
+		return IsValid(GetCurrentWidget())
+			? LOCTEXT("NoWidgetComponents", "No components on this widget")
+			: LOCTEXT("SelectWidgetForComponents", "Select a widget to edit components");
+	}
+
+	TSharedRef<ITableRow> HandleGenerateRow(FDreamWidgetComponentItem InItem, const TSharedRef<STableViewBase>& OwnerTable)
+	{
+		return
+		SNew(STableRow<FDreamWidgetComponentItem>, OwnerTable)
+		.Style(&FAppStyle::Get().GetWidgetStyle<FTableRowStyle>("SceneOutliner.TableViewRow"))
+		.Padding(FMargin(0, 4, 0, 4))
+		.ShowSelection(true)
+		.OnDragDetected(this, &SDreamWidgetComponentEditor::HandleDragDetected, InItem)
+		.OnCanAcceptDrop(this, &SDreamWidgetComponentEditor::HandleCanAcceptDrop)
+		.OnAcceptDrop(this, &SDreamWidgetComponentEditor::HandleAcceptDrop)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(2, 0)
+			[
+				SNew(SImage)
+				.ColorAndOpacity(FSlateColor::UseForeground())
+				.Image_Lambda([=, this]()
+				{
+					if (InItem.IsValid())
+					{
+						return FSlateIconFinder::FindIconBrushForClass(InItem->GetClass());
+					}
+					return (const FSlateBrush*)nullptr;
+				})
+			]
+			+SHorizontalBox::Slot()
+			[
+				SNew(STextBlock)
+				.Text(GetComponentText(InItem.Get()))
+				.ToolTipText(GetComponentTooltipText(InItem.Get()))
+			]
+		];
+	}
+
+	void HandleSelectionChanged(FDreamWidgetComponentItem InItem, ESelectInfo::Type SelectInfo)
+	{
+		if (SelectInfo != ESelectInfo::Direct && ComponentListView.IsValid())
+		{
+			FSlateApplication::Get().SetKeyboardFocus(ComponentListView, EFocusCause::SetDirectly);
+		}
+
+		BroadcastSelectionChanged();
+	}
+
+	TSharedPtr<SWidget> OnContextMenuOpening()
+	{
+		FMenuBuilder MenuBuilder(true, nullptr);
+		
+		MenuBuilder.BeginSection(NAME_None, LOCTEXT("EditComponent", "EDIT"));
+		MenuBuilder.PushCommandList(CommandList.ToSharedRef());
+		{
+			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Copy);
+			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Paste);
+			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Cut);
+			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Duplicate);
+			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Delete);
+		}
+		MenuBuilder.PopCommandList();
+		MenuBuilder.EndSection();
+
+		MenuBuilder.BeginSection(NAME_None, LOCTEXT("ComponentAsset", "ASSET"));
+		{
+			TArray<FDreamWidgetComponentItem> SelectedItems;
+			if (ComponentListView.IsValid())
+			{
+				ComponentListView->GetSelectedItems(SelectedItems);
+			}
+			UDreamUIBehaviour* SelectedComp = (SelectedItems.Num() > 0 && SelectedItems[0].IsValid()) ? SelectedItems[0].Get() : nullptr;
+			UClass* ComponentClass = IsValid(SelectedComp) ? SelectedComp->GetClass() : nullptr;
+			bool bHasSelection = ComponentClass != nullptr;
+
+			FText EditLabel = bHasSelection
+				? FText::Format(LOCTEXT("EditComponentClass_Label", "Edit {0}"), FText::FromString(ComponentClass->GetName()))
+				: LOCTEXT("EditComponentClass_LabelNoSel", "Edit");
+
+			MenuBuilder.AddMenuEntry(
+				EditLabel,
+				LOCTEXT("EditComponentClass_Tooltip", "Open Blueprint editor or C++ source for this component class"),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandleEditComponentClass),
+					FCanExecuteAction::CreateLambda([bHasSelection]() { return bHasSelection; })
+				)
+			);
+
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("FindInContentBrowser_Label", "Find Class in Content Browser"),
+				LOCTEXT("FindInContentBrowser_Tooltip", "Locate the Blueprint class in the Content Browser"),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::HandleFindClassInContentBrowser),
+					FCanExecuteAction::CreateSP(this, &SDreamWidgetComponentEditor::CanFindClassInContentBrowser)
+				)
+			);
+		}
+		MenuBuilder.EndSection();
+		
+		return MenuBuilder.MakeWidget();
+	}
+
+	void BroadcastSelectionChanged()
+	{
+		if (!OnSelectionChanged.IsBound())
+		{
+			return;
+		}
+
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		if (ComponentListView.IsValid())
+		{
+			ComponentListView->GetSelectedItems(SelectedItems);
+		}
+		OnSelectionChanged.Execute(SelectedItems);
+	}
+
+	TSharedRef<SWidget> GenerateAddComponentMenu()
+	{
+		FClassViewerInitializationOptions Options;
+		Options.Mode = EClassViewerMode::ClassPicker;
+		Options.DisplayMode = EClassViewerDisplayMode::TreeView;
+		Options.NameTypeToDisplay = EClassViewerNameTypeToDisplay::Dynamic;
+		Options.bShowObjectRootClass = false;
+		Options.bShowNoneOption = false;
+		Options.bExpandAllNodes = true;
+		Options.bShowUnloadedBlueprints = true;
+
+		// Only what the selected widget supports (FDreamUIComponentSupport): a sprite player needs a sprite, a mesh
+		// modifier a mesh, a canvas is one per widget. The rest used to be listed too, and was inert once added.
+		Options.ClassFilters.Add(MakeShared<FDreamWidgetComponentClassFilter>(GetCurrentWidget()));
+
+		FClassViewerModule& ClassViewerModule = FModuleManager::LoadModuleChecked<FClassViewerModule>("ClassViewer");
+		return SNew(SBox)
+			.WidthOverride(320.0f)
+			.HeightOverride(400.0f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(6.0f, 4.0f)
+				[
+					SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+					.AutoWrapText(true)
+					.Text(LOCTEXT("AddComponentSupportedOnly", "Components this widget supports. Others need a different visual, or are one per widget."))
+				]
+				+ SVerticalBox::Slot()
+				.FillHeight(1.0f)
+				[
+					ClassViewerModule.CreateClassViewer(Options, FOnClassPicked::CreateSP(this, &SDreamWidgetComponentEditor::HandleComponentClassPicked))
+				]
+			];
+	}
+
+	void HandleComponentClassPicked(UClass* InClass)
+	{
+		FSlateApplication::Get().DismissAllMenus();
+
+		UDreamWidget* Widget = GetCurrentWidget();
+		if (!CanAddOrRemoveComponent() || !IsValid(Widget) || InClass == nullptr
+			|| !FDreamUIComponentSupport::Get().IsSupported(InClass, Widget))
+		{
+			return;
+		}
+
+		FScopedTransaction Transaction(LOCTEXT("AddDreamWidgetComponent_Transaction", "Add DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+
+		UDreamUIBehaviour* NewComponent = AddComponentToWidget(Widget,
+			[InClass](UDreamWidget* Target) { return Target->AddComponent(InClass); });
+		if (!IsValid(NewComponent))
+		{
+			// A refused add leaves an empty undo step otherwise -- the same cancel paste and
+			// duplicate make on their own failure branch.
+			Transaction.Cancel();
+			return;
+		}
+		FinishComponentAdd(NewComponent);
+	}
+
+	void HandleEditComponentClass()
+	{
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		if (ComponentListView.IsValid())
+		{
+			ComponentListView->GetSelectedItems(SelectedItems);
+		}
+		if (SelectedItems.Num() == 0 || !SelectedItems[0].IsValid())
+		{
+			return;
+		}
+		UClass* ComponentClass = SelectedItems[0]->GetClass();
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(ComponentClass->ClassGeneratedBy))
+		{
+			GEditor->EditObject(Blueprint);
+		}
+		else
+		{
+			FSourceCodeNavigation::NavigateToClass(ComponentClass);
+		}
+	}
+
+	void HandleFindClassInContentBrowser()
+	{
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		if (ComponentListView.IsValid())
+		{
+			ComponentListView->GetSelectedItems(SelectedItems);
+		}
+		if (SelectedItems.Num() == 0 || !SelectedItems[0].IsValid())
+		{
+			return;
+		}
+		UClass* ComponentClass = SelectedItems[0]->GetClass();
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(ComponentClass->ClassGeneratedBy))
+		{
+			TArray<UObject*> Objects;
+			Objects.Add(Blueprint);
+			GEditor->SyncBrowserToObjects(Objects);
+		}
+	}
+
+	bool CanFindClassInContentBrowser() const
+	{
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		if (ComponentListView.IsValid())
+		{
+			ComponentListView->GetSelectedItems(SelectedItems);
+		}
+		if (SelectedItems.Num() == 0 || !SelectedItems[0].IsValid())
+		{
+			return false;
+		}
+		UClass* ComponentClass = SelectedItems[0]->GetClass();
+		return Cast<UBlueprint>(ComponentClass->ClassGeneratedBy) != nullptr;
+	}
+
+	void HandleRemoveSelectedComponents()
+	{
+		UDreamWidget* Widget = GetCurrentWidget();
+		if (!CanRemoveSelectedComponents() || !IsValid(Widget) || !ComponentListView.IsValid())
+		{
+			return;
+		}
+
+		TArray<FDreamWidgetComponentItem> SelectedItems;
+		ComponentListView->GetSelectedItems(SelectedItems);
+
+		const FScopedTransaction Transaction(LOCTEXT("RemoveDreamWidgetComponent_Transaction", "Remove DreamUI Component"));
+		ModifyWidgetForComponentEdit(Widget);
+
+		for (const FDreamWidgetComponentItem& Item : SelectedItems)
+		{
+			UDreamUIBehaviour* Component = Item.Get();
+			if (!IsValid(Component) || Component->GetWidget() != Widget)
+			{
+				continue;
+			}
+
+			// See the cut path: a designer's widget keeps its behaviours on the template, and the
+			// republish that follows leaves both Widget and Component naming destroyed objects.
+			if (FDreamWidgetBlueprintEditor* Designer = FindTemplateOwningDesigner(Widget))
+			{
+				Designer->DesignerRemoveComponent(Widget, Component);
+				// Widget and every remaining item name destroyed preview objects from here on, and
+				// removing by a position read off a dead list would take the wrong component out of
+				// the template. The list is single-select, so this ends the loop it was already
+				// ending by accident, and does it before anything can be got wrong.
+				break;
+			}
+			Component->SetFlags(RF_Transactional);
+			Component->Modify();
+			Widget->RemoveComponent(Component);
+			FDreamUIUtils::NotifyPropertyChanged(Widget, UDreamWidget::GetPropertyName_Components());
+		}
+
+		RefreshComponents();
+		ClearSelection();
+	}
+
+	static FText GetComponentText(const UDreamUIBehaviour* InComponent)
+	{
+		if (!IsValid(InComponent))
+		{
+			return LOCTEXT("InvalidDreamWidgetComponent", "Invalid Component");
+		}
+		return InComponent->GetClass()->GetDisplayNameText();
+	}
+	static FText GetComponentTooltipText(const UDreamUIBehaviour* InComponent)
+	{
+		if (!IsValid(InComponent))
+		{
+			return LOCTEXT("InvalidDreamWidgetComponent", "Invalid Component");
+		}
+
+		return FText::FromString(InComponent->GetName());
+	}
+
+	FOnGetWidgetContext GetWidgetContext;
+	FOnCanEdit CanEdit;
+	FOnComponentsSelectionChanged OnSelectionChanged;
+	TArray<FDreamWidgetComponentItem> ComponentItems;
+	TSharedPtr<SWidget> ToolbarWidget;
+	TSharedPtr<SListView<FDreamWidgetComponentItem>> ComponentListView;
+	TSharedPtr<FUICommandList> CommandList;
+	TWeakObjectPtr<UDreamWidget> BoundWidget;
+	FDelegateHandle ComponentsChangedHandle;
+};
+
+#undef LOCTEXT_NAMESPACE

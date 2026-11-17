@@ -3936,6 +3936,10 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
      if(IsValid(Him)&&ClipPart!=INDEX_NONE&&(D.Num()||bClipShown)){bClipShown=D.Num()>0;ClipVerts=D.Num();Him->RunLate([Him,Part=ClipPart,Idx=MoveTemp(Idx),D=MoveTemp(D)]{Him->SetPartWrapDeltas(Part,Idx,D);});}else ClipVerts=D.Num();}
     // His glans alone read out for the panel (bulge_at, belly_out): each reading skins all her swells' skin again, and
     // with the fine grid that for every point of him took the game from 100 FPS to 25.
+    // Only read out (belly_out, bulge_at): nothing drives a swell from it now (the wrap does), and each reading took 1.1 ms of
+    // the game thread (2026-11-18, Lan in all her clothes). Read while he is in her (6 cm, as the wrap), every fourth frame.
+    if(TipInside<6.f){BulgeTarget=NAME_None;return;}
+    if(BellyPastFrames++%4)return;
     bool bAny=false;float Most=0.f;TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBellyPast);
     for(const FVector& At:TArrayView<const FVector>(Points.GetData(),FMath::Min(1,Points.Num()))){float Past=0.f,Near=0.f,Moves=0.f;FName Target;
         const FVector Here=AKKPreviewActor::ActorLocalToUnity(Body.InverseTransformPosition(At))-AKKPreviewActor::ActorLocalToUnity(Body.InverseTransformPosition(Kokan));

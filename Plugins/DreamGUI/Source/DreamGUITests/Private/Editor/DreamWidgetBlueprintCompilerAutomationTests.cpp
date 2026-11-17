@@ -1,0 +1,1005 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
+
+#include "Misc/AutomationTest.h"
+
+#include "DreamTestCulture.h"
+#include "DreamWidgetBlueprint.h"
+#include "DreamWidgetBlueprintCompiler.h"
+#include "DataFactory/DreamWidgetBlueprintFactory.h"
+#include "DreamWidgetBlueprintTestTypes.h"
+#include "Core/DreamUserWidget.h"
+#include "Core/DreamWidgetGeneratedClass.h"
+#include "Core/DreamWidgetTree.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/Components/DreamText.h"
+#include "Core/DreamWidgetPropertyBinding.h"
+#include "Animation/DreamWidgetAnimationComponent.h"
+#include "Animation/DreamWidgetAnimation.h"
+#include "MovieScene.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/CompilerResultsLog.h"
+#include "Engine/World.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/Guid.h"
+#include "UObject/Package.h"
+
+/*
+ * Compiling a hierarchy into a class.
+ *
+ * These drive a real UDreamWidgetBlueprint through FKismetEditorUtilities::CompileBlueprint rather
+ * than calling the compiler's pieces directly, because most of what is being claimed is about the
+ * compiler being wired into Kismet AT ALL -- registered for this Blueprint type, hooked at the right
+ * override, producing a class Kismet accepts. Every one of those fails silently when tested from the
+ * inside: the first attempt here put the variable declarations in CreateClassVariablesFromBlueprint,
+ * where the base resets the list immediately beforehand, and the only visible symptom would have
+ * been variables that quietly did not exist.
+ *
+ * A Blueprint needs a real package, so these build one in /Temp and tear it down.
+ */
+
+namespace DreamWidgetBlueprintCompilerTestLocal
+{
+	struct FScopedBlueprint
+	{
+		UPackage* Package = nullptr;
+		UDreamWidgetBlueprint* Blueprint = nullptr;
+
+		explicit FScopedBlueprint(const TCHAR* InName, UClass* InParentClass = UDreamUserWidget::StaticClass())
+		{
+			const FString PackageName = FString::Printf(TEXT("/Temp/DreamGUITests/%s"), InName);
+			Package = CreatePackage(*PackageName);
+			Package->AddToRoot();
+			// The real creation path, not a hand-built object: it makes the ubergraph and the
+			// generated class a compile actually needs, and asking it for our Blueprint and generated
+			// class types is what a factory would do.
+			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
+				InParentClass, Package, FName(InName), BPTYPE_Normal,
+				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
+		}
+
+		~FScopedBlueprint()
+		{
+			if (Package != nullptr)
+			{
+				Package->RemoveFromRoot();
+			}
+		}
+
+		/** Add a widget of InDisplayName under InParent (or the root when null) and return it. */
+		UDreamWidget* AddWidget(const TCHAR* InDisplayName, UDreamWidget* InParent = nullptr)
+		{
+			UDreamWidgetTree* Tree = Blueprint->GetOrCreateWidgetTree();
+			UDreamWidget* Widget = Tree->ConstructWidget<UDreamWidget>();
+			Widget->SetDisplayName(InDisplayName);
+			Widget->SetParentBeforeRegister(InParent != nullptr ? InParent : Tree->RootWidget.Get());
+			return Widget;
+		}
+	};
+
+	/** Compile and hand back the results log, so a test can assert on errors as well as on the class. */
+	void Compile(UDreamWidgetBlueprint* InBlueprint, FCompilerResultsLog& OutResults)
+	{
+		FKismetEditorUtilities::CompileBlueprint(InBlueprint, EBlueprintCompileOptions::SkipGarbageCollection, &OutResults);
+	}
+
+	/**
+	 * Put an animation on the fixture's root and bind one track to InTarget, the way the sequencer
+	 * does: a possessable in the movie scene, then BindPossessableObject with the ROOT as context,
+	 * which is what makes the recorded path relative to the animation's owner rather than to the
+	 * widget being animated.
+	 */
+	FGuid BindAnimationToWidget(FScopedBlueprint& InFixture, UDreamWidget* InTarget, UDreamWidgetAnimation*& OutSequence)
+	{
+		OutSequence = nullptr;
+		UDreamWidget* Root = InFixture.Blueprint->GetOrCreateWidgetTree()->RootWidget.Get();
+		if (Root == nullptr || InTarget == nullptr)
+		{
+			return FGuid();
+		}
+		UDreamWidgetAnimationComponent* Animator =
+			Cast<UDreamWidgetAnimationComponent>(Root->AddComponent(UDreamWidgetAnimationComponent::StaticClass()));
+		if (Animator == nullptr)
+		{
+			return FGuid();
+		}
+		OutSequence = Animator->AddNewAnimation();
+		if (OutSequence == nullptr || OutSequence->GetMovieScene() == nullptr)
+		{
+			return FGuid();
+		}
+		const FGuid BindingId = OutSequence->GetMovieScene()->AddPossessable(InTarget->GetDisplayName(), InTarget->GetClass());
+		OutSequence->BindPossessableObject(BindingId, *InTarget, Root);
+		return BindingId;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintCompilesToAClassTest,
+	"DreamGUI.WidgetBlueprint.CompilingProducesAClassThatBuildsTheHierarchy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintCompilesToAClassTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	FScopedBlueprint Fixture(TEXT("BP_CompilesToAClass"));
+	UDreamWidget* Header = Fixture.AddWidget(TEXT("Header"));
+	Fixture.AddWidget(TEXT("Caption"), Header);
+
+	FCompilerResultsLog Results;
+	Compile(Fixture.Blueprint, Results);
+	TestEqual(TEXT("the hierarchy compiles clean"), Results.NumErrors, 0);
+
+	// The compiler has to produce a class of the DreamUI kind, or nothing downstream applies.
+	UDreamWidgetGeneratedClass* GeneratedClass = Cast<UDreamWidgetGeneratedClass>(Fixture.Blueprint->GeneratedClass);
+	if (!TestNotNull(TEXT("compiling produced a DreamUI generated class"), GeneratedClass))
+	{
+		return false;
+	}
+
+	// The authored hierarchy is on the class, and is a COPY -- the archetype is instanced from on
+	// every construction, so handing over the object the designer edits would let an edit mutate the
+	// template every live instance came from.
+	UDreamWidgetTree* Archetype = GeneratedClass->GetWidgetTreeArchetype();
+	if (!TestNotNull(TEXT("the class carries the hierarchy"), Archetype))
+	{
+		return false;
+	}
+	TestNotEqual(TEXT("and it is not the Blueprint's own authoring copy"),
+		(const UDreamWidgetTree*)Archetype, (const UDreamWidgetTree*)Fixture.Blueprint->WidgetTree);
+	TestEqual(TEXT("the whole hierarchy came across"), Archetype->CountWidgets(), 3);
+
+	// One variable per authored widget, under the shared naming rule.
+	TestNotNull(TEXT("a variable exists for the first widget"), GeneratedClass->FindPropertyByName(FName(TEXT("Header"))));
+	TestNotNull(TEXT("and for one nested deeper"), GeneratedClass->FindPropertyByName(FName(TEXT("Caption"))));
+	TestNull(TEXT("and not for a name nothing carries"), GeneratedClass->FindPropertyByName(FName(TEXT("Absent"))));
+
+	// End to end: the class builds a live hierarchy and the generated variables point into it.
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	UDreamUserWidget* Instance = CreateDreamWidget(World, GeneratedClass);
+	if (TestNotNull(TEXT("the class instantiates"), Instance))
+	{
+		TestNotNull(TEXT("and builds its contents"), Instance->GetContentRoot());
+
+		// Built is not the same as alive, and every other assertion in this file would pass against a
+		// hierarchy that is structurally perfect and completely dead: unregistered means no layout, no
+		// rendering, no behaviour lifecycle. Registration is the last thing the prefab loader does, and
+		// the class path has to do it too or replacing prefabs with classes ships UI that does nothing.
+		TestTrue(TEXT("the instance is registered, not merely constructed"), Instance->HasRegistered());
+		int32 Unregistered = 0;
+		if (Instance->GetWidgetTree() != nullptr)
+		{
+			Instance->GetWidgetTree()->ForEachWidget([&Unregistered](UDreamWidget* Widget)
+			{
+				if (!Widget->HasRegistered()) { Unregistered++; }
+			});
+		}
+		TestEqual(TEXT("and so is every widget it built"), Unregistered, 0);
+		FObjectPropertyBase* HeaderProperty = CastField<FObjectPropertyBase>(GeneratedClass->FindPropertyByName(FName(TEXT("Header"))));
+		if (HeaderProperty != nullptr)
+		{
+			UObject* Bound = HeaderProperty->GetObjectPropertyValue_InContainer(Instance);
+			if (TestNotNull(TEXT("the generated variable is bound on the instance"), Bound))
+			{
+				TestTrue(TEXT("to a widget from the instance's own tree, not the archetype"),
+					Bound->IsIn(Instance->GetWidgetTree()));
+			}
+		}
+	}
+	World->DestroyWorld(false);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintDuplicateNameTest,
+	"DreamGUI.WidgetBlueprint.TwoWidgetsSharingANameAreReportedNotMerged",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintDuplicateNameTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	FScopedBlueprint Fixture(TEXT("BP_DuplicateName"));
+	Fixture.AddWidget(TEXT("Panel"));
+	Fixture.AddWidget(TEXT("Panel"));
+
+	// Silently collapsing them into one variable would bind it to whichever the tree walk reached
+	// first -- which is to say, to nothing anyone chose.
+	FCompilerResultsLog Results;
+	Compile(Fixture.Blueprint, Results);
+
+	TestEqual(TEXT("a name collision is not an error"), Results.NumErrors, 0);
+	TestTrue(TEXT("but it is reported"), Results.NumWarnings > 0);
+	TestNotNull(TEXT("and one variable is still declared"),
+		Fixture.Blueprint->GeneratedClass ? Fixture.Blueprint->GeneratedClass->FindPropertyByName(FName(TEXT("Panel"))) : nullptr);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintMissingBindingIsACompileErrorTest,
+	"DreamGUI.WidgetBlueprint.AMissingWidgetBindingFailsTheCompile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintMissingBindingIsACompileErrorTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	// This is the single largest thing the class model buys, so it gets tested from both sides.
+	// Under prefabs the same mistake surfaced at run time as a null, long after a save had silently
+	// dropped the binding.
+	{
+		// The compiler's messages, in the English they are matched in below.
+		const DreamTests::FScopedEnglish English;
+		FScopedBlueprint Fixture(TEXT("BP_MissingBinding"), UDreamWidgetBlueprintBindingBase::StaticClass());
+		Fixture.AddWidget(TEXT("SomethingElse"));
+
+		// The failure is the point, so its log output has to be declared: the compiler logs through
+		// LogBlueprint and automation counts any logged error as a failed test. Occurrences 0 because
+		// the message is emitted once by the compiler and replayed once by the results log, and the
+		// test is about the error existing, not about how many times it is printed.
+		AddExpectedError(TEXT("must contain a widget of that name"), EAutomationExpectedErrorFlags::Contains, 0);
+
+		FCompilerResultsLog Results;
+		Compile(Fixture.Blueprint, Results);
+		TestTrue(TEXT("a declared binding with no widget of that name fails the compile"), Results.NumErrors > 0);
+
+		// WHICH property was reported, not merely that something was. The base class declares three
+		// widget-typed members: one marked meta=(BindDreamWidget), one unmarked, and one marked with
+		// UMG's spelling. None of the three has a widget in this hierarchy, so if the compiler were
+		// reading the wrong key -- or both -- this is where it shows.
+		FString AllMessages;
+		for (const TSharedRef<FTokenizedMessage>& Message : Results.Messages)
+		{
+			AllMessages += Message->ToText().ToString() + TEXT(" | ");
+		}
+		TestTrue(*FString::Printf(TEXT("the BindDreamWidget one is named, saw [%s]"), *AllMessages),
+			AllMessages.Contains(TEXT("RequiredHeader")));
+		TestFalse(*FString::Printf(TEXT("and the UMG-spelled one is not, saw [%s]"), *AllMessages),
+			AllMessages.Contains(TEXT("UMGSpelledBinding")));
+		TestFalse(*FString::Printf(TEXT("nor the unmarked one, saw [%s]"), *AllMessages),
+			AllMessages.Contains(TEXT("UnmarkedReference")));
+	}
+
+	// And the other side: the check must not fire on a hierarchy that answers the binding, or it is
+	// just noise nobody can act on. The unmarked widget-typed member on the same base class is the
+	// control -- it has the shape of a binding and claims nothing, and must stay quiet.
+	{
+		FScopedBlueprint Fixture(TEXT("BP_SatisfiedBinding"), UDreamWidgetBlueprintBindingBase::StaticClass());
+		Fixture.AddWidget(TEXT("RequiredHeader"));
+
+		FCompilerResultsLog Results;
+		Compile(Fixture.Blueprint, Results);
+		TestEqual(TEXT("a satisfied binding compiles clean"), Results.NumErrors, 0);
+
+		// And it is actually wired up at run time, not merely tolerated at compile time.
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		UDreamUserWidget* Instance = CreateDreamWidget(World, Fixture.Blueprint->GeneratedClass.Get());
+		if (UDreamWidgetBlueprintBindingBase* Typed = Cast<UDreamWidgetBlueprintBindingBase>(Instance))
+		{
+			TestNotNull(TEXT("the declared binding resolves on the instance"), Typed->RequiredHeader.Get());
+			// This says less than it looks like it says, so it is worth being explicit: there is no
+			// widget called UnmarkedReference in this hierarchy, so the only thing being checked is
+			// that a property with no widget of its name stays null. Whether the MARK matters is a
+			// different question, and AnUnmarkedWidgetMemberIsBoundAnyway is where it is asked.
+			TestNull(TEXT("and a member with no widget of its name stays null"), Typed->UnmarkedReference.Get());
+		}
+		World->DestroyWorld(false);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintRecompileTest,
+	"DreamGUI.WidgetBlueprint.RecompilingReplacesTheArchetypeRatherThanAccumulating",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintRecompileTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	FScopedBlueprint Fixture(TEXT("BP_Recompile"));
+	Fixture.AddWidget(TEXT("Header"));
+
+	FCompilerResultsLog FirstResults;
+	Compile(Fixture.Blueprint, FirstResults);
+	UDreamWidgetGeneratedClass* FirstClass = Cast<UDreamWidgetGeneratedClass>(Fixture.Blueprint->GeneratedClass);
+	if (!TestNotNull(TEXT("the first compile produced a class"), FirstClass))
+	{
+		return false;
+	}
+	const UDreamWidgetTree* FirstArchetype = FirstClass->GetWidgetTreeArchetype();
+
+	// Recompiling is the common case, not the exotic one -- every save does it. The sanitize pass
+	// clears the old archetype and FinishCompilingClass installs a new one; an archetype that survived
+	// or accumulated would show up here as a stale or oversized tree.
+	Fixture.AddWidget(TEXT("Footer"));
+	FCompilerResultsLog SecondResults;
+	Compile(Fixture.Blueprint, SecondResults);
+	TestEqual(TEXT("recompiling stays clean"), SecondResults.NumErrors, 0);
+
+	UDreamWidgetGeneratedClass* SecondClass = Cast<UDreamWidgetGeneratedClass>(Fixture.Blueprint->GeneratedClass);
+	if (!TestNotNull(TEXT("the second compile produced a class"), SecondClass))
+	{
+		return false;
+	}
+	UDreamWidgetTree* SecondArchetype = SecondClass->GetWidgetTreeArchetype();
+	if (!TestNotNull(TEXT("with an archetype"), SecondArchetype))
+	{
+		return false;
+	}
+	TestNotEqual(TEXT("the archetype was replaced, not reused"), (const UDreamWidgetTree*)SecondArchetype, FirstArchetype);
+	TestEqual(TEXT("and holds the new hierarchy exactly once"), SecondArchetype->CountWidgets(), 3);
+	TestNotNull(TEXT("the new widget got a variable"), SecondClass->FindPropertyByName(FName(TEXT("Footer"))));
+	TestNotNull(TEXT("and the old one kept its"), SecondClass->FindPropertyByName(FName(TEXT("Header"))));
+
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetPropertyBindingDrivesTheWidgetTest,
+	"DreamGUI.WidgetBlueprint.APropertyBindingDrivesTheWidgetThroughItsSetter",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetPropertyBindingDrivesTheWidgetTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	FScopedBlueprint Fixture(TEXT("BP_PropertyBinding"));
+	UDreamWidget* Label = Fixture.AddWidget(TEXT("Label"));
+	UDreamText* Text = Cast<UDreamText>(Label->CreateNewVisual(UDreamText::StaticClass()));
+	if (!TestNotNull(TEXT("the widget has a text visual"), Text))
+	{
+		return false;
+	}
+	// The authored value, so "it changed" is distinguishable from "it was always this".
+	Text->SetUseKerning(false);
+
+	// The property lives on the VISUAL, which is the case worth testing: Text, FontSize and the rest
+	// of what an author reaches for are not on the widget that carries the name.
+	FDreamWidgetPropertyBinding& Binding = Fixture.Blueprint->PropertyBindings.AddDefaulted_GetRef();
+	Binding.WidgetName = FName(TEXT("Label"));
+	Binding.Target = EDreamWidgetBindingTarget::Visual;
+	Binding.PropertyName = FName(TEXT("bUseKerning"));
+	// A no-argument function on the user widget returning the property's type. IsInitialized is a
+	// native one, so this needs no hand-built graph to have something real to call.
+	Binding.FunctionName = FName(TEXT("IsInitialized"));
+
+	FCompilerResultsLog Results;
+	Compile(Fixture.Blueprint, Results);
+	TestEqual(TEXT("the binding compiles clean"), Results.NumErrors, 0);
+
+	UDreamWidgetGeneratedClass* GeneratedClass = Cast<UDreamWidgetGeneratedClass>(Fixture.Blueprint->GeneratedClass.Get());
+	if (!TestNotNull(TEXT("a class came out"), GeneratedClass))
+	{
+		return false;
+	}
+	const TArray<FDreamWidgetPropertyBinding>& Compiled = GeneratedClass->GetPropertyBindings();
+	if (!TestEqual(TEXT("the class carries the binding"), Compiled.Num(), 1))
+	{
+		return false;
+	}
+	// The compiler resolved the setter, so the runtime never has to guess at a name.
+	TestEqual(TEXT("and the setter it resolved"), Compiled[0].SetterName, FName(TEXT("SetUseKerning")));
+
+	// End to end. IsInitialized is true by the time bindings run, so a binding that took shows true
+	// on a visual whose authored value was false.
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	UDreamUserWidget* Instance = CreateDreamWidget(World, GeneratedClass);
+	if (TestNotNull(TEXT("the class instantiates"), Instance))
+	{
+		UDreamWidget* LiveLabel = Instance->GetWidgetTree() != nullptr
+			? Instance->GetWidgetTree()->FindWidgetByVariableName(FName(TEXT("Label"))) : nullptr;
+		if (TestNotNull(TEXT("the live hierarchy has the widget"), LiveLabel))
+		{
+			UDreamText* LiveText = Cast<UDreamText>(LiveLabel->GetVisual());
+			if (TestNotNull(TEXT("and its visual"), LiveText))
+			{
+				TestTrue(TEXT("the binding drove the property"), LiveText->GetUseKerning());
+			}
+		}
+	}
+	World->DestroyWorld(false);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetPropertyBindingWithoutASetterIsRefusedTest,
+	"DreamGUI.WidgetBlueprint.APropertyWithNoSetterCannotBeBound",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetPropertyBindingWithoutASetterIsRefusedTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	// The compiler error IS the assertion here, so it has to be declared expected -- the framework
+	// counts anything logged at Error against the test otherwise. In English, which is what it is matched in.
+	const DreamTests::FScopedEnglish English;
+	AddExpectedError(TEXT("has no property named"), EAutomationExpectedErrorFlags::Contains, 0);
+
+	FScopedBlueprint Fixture(TEXT("BP_PropertyBindingNoSetter"));
+	Fixture.AddWidget(TEXT("Label"));
+
+	// A property nothing exposes a setter for. Writing it would land in memory and never repaint,
+	// which is precisely the silent failure the setter rule exists to refuse.
+	FDreamWidgetPropertyBinding& Binding = Fixture.Blueprint->PropertyBindings.AddDefaulted_GetRef();
+	Binding.WidgetName = FName(TEXT("Label"));
+	Binding.Target = EDreamWidgetBindingTarget::Widget;
+	Binding.PropertyName = FName(TEXT("NoSuchPropertyAnywhere"));
+	Binding.FunctionName = FName(TEXT("IsInitialized"));
+
+	FCompilerResultsLog Results;
+	Compile(Fixture.Blueprint, Results);
+	TestTrue(TEXT("the compile reports it rather than dropping it"), Results.NumErrors > 0);
+
+	UDreamWidgetGeneratedClass* GeneratedClass = Cast<UDreamWidgetGeneratedClass>(Fixture.Blueprint->GeneratedClass.Get());
+	if (TestNotNull(TEXT("a class still came out"), GeneratedClass))
+	{
+		TestEqual(TEXT("and carries no binding it could not honour"), GeneratedClass->GetPropertyBindings().Num(), 0);
+	}
+
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetSetterRuleTest,
+	"DreamGUI.WidgetBlueprint.TheSetterRuleFindsByValueAndByConstReferenceSetters",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetSetterRuleTest::RunTest(const FString& Parameters)
+{
+	UClass* TextClass = UDreamText::StaticClass();
+
+	auto SetterFor = [TextClass](const TCHAR* InPropertyName) -> FName
+	{
+		const FProperty* Property = TextClass->FindPropertyByName(FName(InPropertyName));
+		UFunction* Setter = FindDreamWidgetSetterFor(TextClass, Property);
+		return Setter != nullptr ? Setter->GetFName() : NAME_None;
+	};
+
+	// By value.
+	TestEqual(TEXT("A float setter is found"), SetterFor(TEXT("FontSize")), FName(TEXT("SetFontSize")));
+	// The bool prefix is not part of the setter's name.
+	TestEqual(TEXT("A bool setter drops the b"), SetterFor(TEXT("bUseKerning")), FName(TEXT("SetUseKerning")));
+
+	// By CONST REFERENCE, which is how every FText, FString and struct setter in the library is
+	// written. UHT flags such a parameter CPF_OutParm as well as CPF_ConstParm, so a rule that
+	// rejects OutParm alone refuses all of them -- and refuses them silently, as a property that
+	// simply offers no Bind entry. Text is the one anybody would try to bind first.
+	TestEqual(TEXT("A const-reference setter is found too"), SetterFor(TEXT("Text")), FName(TEXT("SetText")));
+
+	// And the negative still holds, or every property would look bindable.
+	TestEqual(TEXT("A property with no setter has none"),
+		SetterFor(TEXT("WidgetPropertyDataStartPosition")), FName(NAME_None));
+
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetAnimationBindingSurvivesTheClassTest,
+	"DreamGUI.WidgetBlueprint.AnEmbeddedAnimationBindsToTheInstanceNotTheTemplate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetAnimationBindingSurvivesTheClassTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	FScopedBlueprint Fixture(TEXT("BP_AnimationBinding"));
+	UDreamWidgetTree* Tree = Fixture.Blueprint->GetOrCreateWidgetTree();
+	UDreamWidget* Root = Tree->RootWidget.Get();
+	UDreamWidget* Target = Fixture.AddWidget(TEXT("Target"));
+	if (!TestNotNull(TEXT("A root"), Root) || !TestNotNull(TEXT("And a widget to animate"), Target))
+	{
+		return false;
+	}
+
+	// The animation lives on a BEHAVIOUR, so it already rides the authoring tree onto the class. What
+	// is in question is the binding inside it, which names a widget.
+	UDreamWidgetAnimationComponent* Animator =
+		Cast<UDreamWidgetAnimationComponent>(Root->AddComponent(UDreamWidgetAnimationComponent::StaticClass()));
+	if (!TestNotNull(TEXT("The animation component was added"), Animator))
+	{
+		return false;
+	}
+	UDreamWidgetAnimation* Sequence = Animator->AddNewAnimation();
+	if (!TestNotNull(TEXT("An animation was created"), Sequence))
+	{
+		return false;
+	}
+	UMovieScene* MovieScene = Sequence->GetMovieScene();
+	if (!TestNotNull(TEXT("The animation has a movie scene"), MovieScene))
+	{
+		return false;
+	}
+	TestTrue(TEXT("The widget can be possessed"), Sequence->CanPossessObject(*Target, Root));
+	const FGuid BindingId = MovieScene->AddPossessable(TEXT("Target"), Target->GetClass());
+	Sequence->BindPossessableObject(BindingId, *Target, Root);
+
+	// Before anything else: it resolves to the TEMPLATE's widget in the asset, which is what an
+	// author sees while editing.
+	{
+		TArray<UObject*, TInlineAllocator<1>> Bound;
+		Sequence->LocateBoundObjects(BindingId, UE::UniversalObjectLocator::FResolveParams(Root), nullptr, Bound);
+		TestEqual(TEXT("It resolves to exactly one object in the asset"), Bound.Num(), 1);
+		if (Bound.Num() == 1)
+		{
+			TestEqual(TEXT("And that object is the authored widget"), Bound[0], (UObject*)Target);
+		}
+	}
+
+	FCompilerResultsLog Results;
+	Compile(Fixture.Blueprint, Results);
+	UDreamWidgetGeneratedClass* GeneratedClass = Cast<UDreamWidgetGeneratedClass>(Fixture.Blueprint->GeneratedClass.Get());
+	if (!TestNotNull(TEXT("A class came out"), GeneratedClass))
+	{
+		return false;
+	}
+
+	// The claim under test. Every instance instances the tree again, so each one needs its own
+	// animation bound to its OWN widgets. A binding that still points at the authoring widget would
+	// have every instance in the game animating the same off-screen object, and nothing would say so.
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	UDreamUserWidget* Instance = CreateDreamWidget(World, GeneratedClass);
+	if (TestNotNull(TEXT("The class instantiates"), Instance))
+	{
+		UDreamWidget* LiveRoot = Instance->GetContentRoot();
+		UDreamWidget* LiveTarget = Instance->GetWidgetTree() != nullptr
+			? Instance->GetWidgetTree()->FindWidgetByVariableName(FName(TEXT("Target"))) : nullptr;
+		if (TestNotNull(TEXT("The instance has a root"), LiveRoot)
+			&& TestNotNull(TEXT("And its own Target"), LiveTarget))
+		{
+			TestNotEqual(TEXT("Which is NOT the authored one"), LiveTarget, Target);
+
+			UDreamWidgetAnimationComponent* LiveAnimator = nullptr;
+			for (UDreamUIBehaviour* Component : LiveRoot->GetAllComponents())
+			{
+				if (UDreamWidgetAnimationComponent* Candidate = Cast<UDreamWidgetAnimationComponent>(Component))
+				{
+					LiveAnimator = Candidate;
+					break;
+				}
+			}
+			if (TestNotNull(TEXT("The instance carries the animation component"), LiveAnimator))
+			{
+				UDreamWidgetAnimation* LiveSequence = LiveAnimator->GetSequenceByIndex(0);
+				if (TestNotNull(TEXT("And the animation"), LiveSequence))
+				{
+					TArray<UObject*, TInlineAllocator<1>> Bound;
+					LiveSequence->LocateBoundObjects(BindingId, UE::UniversalObjectLocator::FResolveParams(LiveRoot), nullptr, Bound);
+					if (TestEqual(TEXT("The binding resolves in the instance"), Bound.Num(), 1))
+					{
+						TestEqual(TEXT("To the INSTANCE's widget, not the template's"), Bound[0], (UObject*)LiveTarget);
+					}
+				}
+			}
+		}
+	}
+	World->DestroyWorld(false);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetUnmarkedPropertyProbeTest,
+	"DreamGUI.WidgetBlueprint.AnUnmarkedWidgetMemberIsBoundAnyway",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetUnmarkedPropertyProbeTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	// The existing pair of tests above never asks this. Their fixture adds a widget called
+	// RequiredHeader and nothing called UnmarkedReference, so "the unmarked member is left alone"
+	// holds for the boring reason that no widget of that name exists -- it would pass whether or not
+	// an unmarked property is bindable. This one puts a widget of that name in the hierarchy and
+	// looks, which is the only way to find out.
+	//
+	// It matters because it is the difference from UMG that a C++ author will trip over: there,
+	// BindWidget and BindWidgetOptional are what make a property a binding and an unmarked UWidget*
+	// member is nobody's business but its owner's.
+	FScopedBlueprint Fixture(TEXT("BP_UnmarkedProbe"), UDreamWidgetBlueprintBindingBase::StaticClass());
+	Fixture.AddWidget(TEXT("RequiredHeader"));
+	Fixture.AddWidget(TEXT("UnmarkedReference"));
+
+	FCompilerResultsLog Results;
+	Compile(Fixture.Blueprint, Results);
+	TestEqual(TEXT("the hierarchy answers the declared binding, so it compiles clean"), Results.NumErrors, 0);
+
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	UDreamUserWidget* Instance = CreateDreamWidget(World, Fixture.Blueprint->GeneratedClass.Get());
+	if (UDreamWidgetBlueprintBindingBase* Typed = Cast<UDreamWidgetBlueprintBindingBase>(Instance))
+	{
+		TestNotNull(TEXT("the marked binding resolves"), Typed->RequiredHeader.Get());
+
+		// AND SO DOES THE UNMARKED ONE. This is the behaviour, not the intent I would have guessed:
+		// InitializeWidgetStatic collects every FObjectPropertyBase declared below UDreamUserWidget and
+		// binds by variable name, without ever asking whether the property claimed to be a binding.
+		// meta=(BindDreamWidget) therefore does not make a property bindable -- it only makes a MISSING
+		// widget a compile error. In UMG the tag is what makes a property a binding at all, and an
+		// unmarked UWidget* member belongs to whoever declared it.
+		//
+		// Pinned rather than fixed: changing it is a semantic decision, not a defect fix, and any
+		// existing C++ subclass that leans on implicit binding would stop working. If the rule ever
+		// does move to UMG's, this assertion is the one that flips and says so.
+		TestNotNull(TEXT("an unmarked widget-typed member is bound too, by name alone"),
+			Typed->UnmarkedReference.Get());
+	}
+	World->DestroyWorld(false);
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetRenamedWidgetBreaksAnimationBindingTest,
+	"DreamGUI.WidgetBlueprint.ARenamedWidgetBreaksItsAnimationBindingLoudly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetRenamedWidgetBreaksAnimationBindingTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	// The control comes first on purpose. A check that fires on every animation would pass the
+	// interesting half of this test and be worse than no check at all, and reading the two halves in
+	// this order is the only way that shows up as a failure rather than as a green run.
+	{
+		FScopedBlueprint Fixture(TEXT("BP_AnimationBindingIntact"));
+		UDreamWidget* Target = Fixture.AddWidget(TEXT("Target"));
+		UDreamWidgetAnimation* Sequence = nullptr;
+		if (!TestTrue(TEXT("the control's animation binding was authored"),
+			BindAnimationToWidget(Fixture, Target, Sequence).IsValid()))
+		{
+			return false;
+		}
+
+		FCompilerResultsLog Results;
+		Compile(Fixture.Blueprint, Results);
+		TestEqual(TEXT("an animation bound to a widget still called that compiles clean"), Results.NumErrors, 0);
+	}
+
+	// And the rename. Nothing else about the hierarchy changes -- no property binding names the
+	// widget, no member declares it -- so the only thing that can fail the compile is the animation.
+	{
+		// The compiler error IS the assertion, so it has to be declared or automation counts it
+		// against the test. Occurrences 0 because the compiler logs it and the results log replays
+		// it, and what is being claimed is that it exists. In English, which is what it is matched in.
+		const DreamTests::FScopedEnglish English;
+		AddExpectedError(TEXT("through the path"), EAutomationExpectedErrorFlags::Contains, 0);
+
+		FScopedBlueprint Fixture(TEXT("BP_AnimationBindingRenamed"));
+		UDreamWidget* Target = Fixture.AddWidget(TEXT("Target"));
+		UDreamWidgetAnimation* Sequence = nullptr;
+		if (!TestTrue(TEXT("the animation binding was authored"),
+			BindAnimationToWidget(Fixture, Target, Sequence).IsValid()))
+		{
+			return false;
+		}
+
+		// The rename, which is the entire mutation. It leaves the binding's stored POINTER pointing
+		// at this same object -- so every pointer-based validity check still answers "fine" -- and
+		// only invalidates the recorded path, which is what an instance resolves through.
+		Target->SetDisplayName(TEXT("Renamed"));
+
+		FCompilerResultsLog Results;
+		Compile(Fixture.Blueprint, Results);
+		TestTrue(TEXT("a rename that orphans an animation binding fails the compile"), Results.NumErrors > 0);
+
+		FString AllMessages;
+		for (const TSharedRef<FTokenizedMessage>& Message : Results.Messages)
+		{
+			AllMessages += Message->ToText().ToString() + TEXT(" | ");
+		}
+		// WHICH binding, not merely that something broke. The old name is the actionable half of the
+		// message: it is the only thing that tells an author what the animation is still looking for.
+		// Deliberately not printed into these descriptions -- the expected-error entry above matches
+		// by substring, and a description carrying the same text gets swallowed with it.
+		TestTrue(TEXT("and names the path it can no longer walk"), AllMessages.Contains(TEXT("\"Target\"")));
+		TestTrue(TEXT("and the animation that holds it"),
+			Sequence != nullptr && AllMessages.Contains(Sequence->GetDisplayNameString()));
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintFactoryRootTest,
+	"DreamGUI.Blueprint.Factory.ANewWidgetBlueprintsRootFillsItsParent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintFactoryRootTest::RunTest(const FString& Parameters)
+{
+	// The OTHER way a widget blueprint comes into existence, and the one nothing tested. The factory
+	// stretches the fresh root to the design canvas -- or means to: it used to say so through
+	// SetHorizontalAndVerticalAnchorMinMax, whose whole body sits inside `if (Parent.IsValid())`, and
+	// a tree's root has no parent. The call was a warning in the log and nothing else, while the
+	// SizeDelta line beside it applied regardless, so every new asset opened with a 0x0 root -- which
+	// arranges every descendant into a 0x0 rect. The symptom is "every control in this widget has
+	// size zero", reported against the controls.
+	UPackage* Package = CreatePackage(TEXT("/Temp/DreamGUITests/FactoryRoot"));
+	Package->AddToRoot();
+	ON_SCOPE_EXIT{ Package->RemoveFromRoot(); };
+
+	UDreamWidgetBlueprintFactory* Factory = NewObject<UDreamWidgetBlueprintFactory>();
+	UDreamWidgetBlueprint* Blueprint = Cast<UDreamWidgetBlueprint>(Factory->FactoryCreateNew(
+		UDreamWidgetBlueprint::StaticClass(), Package, TEXT("FactoryRoot"),
+		RF_Public | RF_Standalone, nullptr, GWarn));
+	if (!TestNotNull(TEXT("the factory made a blueprint"), Blueprint))
+	{
+		return false;
+	}
+	UDreamWidget* Root = Blueprint->GetOrCreateWidgetTree()->RootWidget.Get();
+	if (!TestNotNull(TEXT("with a root widget in its tree"), Root))
+	{
+		return false;
+	}
+
+	const FDreamUIAnchorData& Anchors = Root->GetAnchorData();
+	TestTrue(TEXT("the root is anchored to its parent's top-left"), Anchors.AnchorMin.IsNearlyZero());
+	TestTrue(TEXT("and to its bottom-right"), Anchors.AnchorMax.Equals(FVector2D(1.0, 1.0)));
+	// Both halves matter: stretched anchors with a non-zero SizeDelta is an inset, and a zero
+	// SizeDelta on POINT anchors -- which is what the no-op left behind -- is the collapsed root.
+	TestTrue(TEXT("with no inset, so it fills exactly"), Anchors.SizeDelta.IsNearlyZero());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintFactoryOrphanClassTest,
+	"DreamGUI.Blueprint.Factory.CreatingOverTheClassOfABlueprintThatFailedToLoadIsRefused",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintFactoryOrphanClassTest::RunTest(const FString& Parameters)
+{
+	// What a package holds after its Blueprint failed to load: the generated class, generated by
+	// nothing. A script that then finds no asset creates one under the same name, and compiling that
+	// new Blueprint reinstanced the orphan -- the engine's fatal error on a null ClassGeneratedBy,
+	// which took the editor down mid-script.
+	UPackage* Package = CreatePackage(*FString::Printf(TEXT("/Temp/DreamGUITests/FactoryOrphan_%s"), *FGuid::NewGuid().ToString()));
+	Package->AddToRoot();
+	ON_SCOPE_EXIT{ Package->RemoveFromRoot(); };
+
+	UDreamWidgetBlueprintFactory* Factory = NewObject<UDreamWidgetBlueprintFactory>();
+	UDreamWidgetBlueprint* Lost = Cast<UDreamWidgetBlueprint>(Factory->FactoryCreateNew(
+		UDreamWidgetBlueprint::StaticClass(), Package, TEXT("Panel"), RF_Public | RF_Standalone, nullptr, GWarn));
+	if (!TestNotNull(TEXT("the factory made a blueprint"), Lost)
+		|| !TestNotNull(TEXT("compiled to a class"), Lost->GeneratedClass.Get()))
+	{
+		return false;
+	}
+	UClass* Orphan = Lost->GeneratedClass;
+	// The Blueprint leaves the package and its class stays. UObject's own Rename, because
+	// UBlueprint's takes the generated classes along -- the one thing a failed load does not do.
+	Lost->UObject::Rename(*MakeUniqueObjectName(GetTransientPackage(), Lost->GetClass(), TEXT("FailedToLoad")).ToString(),
+		GetTransientPackage(), REN_DontCreateRedirectors | REN_DoNotDirty | REN_NonTransactional);
+	Orphan->ClassGeneratedBy = nullptr;
+	// Whole again before anything else walks the class list and asks the class for its Blueprint.
+	ON_SCOPE_EXIT{ Orphan->ClassGeneratedBy = Lost; };
+
+	AddExpectedError(TEXT("already holds the class of a Blueprint that failed to load"), EAutomationExpectedErrorFlags::Contains, 1);
+	UObject* Created = Factory->FactoryCreateNew(
+		UDreamWidgetBlueprint::StaticClass(), Package, TEXT("Panel"), RF_Public | RF_Standalone, nullptr, GWarn);
+	TestNull(TEXT("the create is refused instead of compiled into the orphan"), Created);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamAssetClassModulesLoadBeforeGameModulesTest,
+	"DreamGUI.Blueprint.TheModulesDefiningSavedClassesLoadBeforeTheProjectsModules",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamAssetClassModulesLoadBeforeGameModulesTest::RunTest(const FString& Parameters)
+{
+	// A project's own modules load before any plugin's in the same phase. At Default, a game module
+	// whose constructor finds a widget Blueprint class -- ConstructorHelpers, as one does with a UMG
+	// widget -- loaded the package before UDreamWidgetBlueprint existed, so the Blueprint failed to
+	// load for the whole session ("its class (DreamWidgetBlueprint) does not exist") and only its
+	// class came back. PreDefault is ahead of every project Default module.
+	TestEqual(TEXT("the widget Blueprint class lives in DreamGUIEditor"),
+		UDreamWidgetBlueprint::StaticClass()->GetOutermost()->GetName(), FString(TEXT("/Script/DreamGUIEditor")));
+
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("DreamGUI"));
+	if (!TestNotNull(TEXT("the plugin is found"), Plugin.Get()))
+	{
+		return false;
+	}
+	// DreamGUIEditor holds the asset class; DreamGUIK2Nodes the nodes any Blueprint graph can hold,
+	// which a too-early load drops from the graph -- and a resave then loses for good.
+	for (const TCHAR* ModuleName : { TEXT("DreamGUIEditor"), TEXT("DreamGUIK2Nodes") })
+	{
+		const FModuleDescriptor* Module = Plugin->GetDescriptor().Modules.FindByPredicate(
+			[ModuleName](const FModuleDescriptor& Item) { return Item.Name == FName(ModuleName); });
+		if (!TestNotNull(*FString::Printf(TEXT("%s is in the descriptor"), ModuleName), Module))
+		{
+			continue;
+		}
+		TestTrue(*FString::Printf(TEXT("%s loads at PreDefault or earlier"), ModuleName),
+			Module->LoadingPhase <= ELoadingPhase::PreDefault);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintSubclassInheritsHierarchyTest,
+	"DreamGUI.WidgetBlueprint.ASubclassThatAuthorsNothingStillInheritsItsParentsHierarchy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintSubclassInheritsHierarchyTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	// The workflow the runtime always claimed to support and the editor made unreachable: author a
+	// BaseDialog, derive ConfirmDialog, change only logic. Opening the derived asset's designer calls
+	// GetOrCreateWidgetTree(bEnsureRootWidget = true), which leaves it owning a tree that holds one
+	// bare "Root" -- and that used to become the class's archetype, so the subclass instantiated as
+	// an empty screen. The existing coverage used a hand-built subclass whose tree was null, which
+	// is the one state this path never produces.
+	FScopedBlueprint Base(TEXT("BP_BaseDialog"));
+	Base.AddWidget(TEXT("Header"));
+	FCompilerResultsLog BaseResults;
+	Compile(Base.Blueprint, BaseResults);
+	UDreamWidgetGeneratedClass* BaseClass = Cast<UDreamWidgetGeneratedClass>(Base.Blueprint->GeneratedClass);
+	if (!TestNotNull(TEXT("the base compiled to a class"), BaseClass)
+		|| !TestNotNull(TEXT("which declares a hierarchy"), BaseClass->GetWidgetTreeArchetype()))
+	{
+		return false;
+	}
+
+	FScopedBlueprint Derived(TEXT("BP_ConfirmDialog"), BaseClass);
+	// Exactly what opening the designer on it does, and nothing else.
+	Derived.Blueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/true);
+	TestNotNull(TEXT("the derived asset does hold a placeholder tree"), Derived.Blueprint->WidgetTree.Get());
+
+	FCompilerResultsLog DerivedResults;
+	Compile(Derived.Blueprint, DerivedResults);
+	UDreamWidgetGeneratedClass* DerivedClass = Cast<UDreamWidgetGeneratedClass>(Derived.Blueprint->GeneratedClass);
+	if (!TestNotNull(TEXT("the subclass compiled to a class"), DerivedClass))
+	{
+		return false;
+	}
+	TestEqual(TEXT("compiling the subclass raised no errors"), DerivedResults.NumErrors, 0);
+	TestNull(TEXT("an unauthored placeholder does not become the subclass's own archetype"),
+		DerivedClass->GetWidgetTreeArchetype());
+	TestEqual(TEXT("so the subclass resolves to its parent's hierarchy"),
+		(const UDreamWidgetTree*)UDreamWidgetGeneratedClass::FindWidgetTreeArchetype(DerivedClass),
+		(const UDreamWidgetTree*)BaseClass->GetWidgetTreeArchetype());
+
+	// And authoring ANYTHING into the subclass's tree takes the hierarchy over, whole -- the other
+	// half of the rule, and the one that keeps the placeholder test from being a trapdoor.
+	Derived.AddWidget(TEXT("Footer"));
+	FCompilerResultsLog OverrideResults;
+	Compile(Derived.Blueprint, OverrideResults);
+	DerivedClass = Cast<UDreamWidgetGeneratedClass>(Derived.Blueprint->GeneratedClass);
+	if (TestNotNull(TEXT("it still compiles"), DerivedClass))
+	{
+		TestNotNull(TEXT("a subclass that authored something owns its hierarchy"),
+			DerivedClass->GetWidgetTreeArchetype());
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintAnimationBindingTest,
+	"DreamGUI.WidgetBlueprint.AClaimedAnimationThatIsNotThereFailsTheCompile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWidgetBlueprintAnimationBindingTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	// The animation half of the binding contract. A parent class that plays "RequiredIntro" has no
+	// other way of finding out that the hierarchy under it has no such animation: the variable it
+	// declares is simply never filled, and the class runs with a null.
+	{
+		// Declared BEFORE the fixture exists, not merely before the explicit compile: creating a
+		// Blueprint compiles it, and an expected error only covers what is logged after it is
+		// registered. The failure is the point either way -- the compiler logs through LogBlueprint
+		// and automation counts any logged error as a failed test. Occurrences 0 because the message
+		// is emitted once by the compiler and replayed once by the results log. In English, which is
+		// what it is matched in.
+		const DreamTests::FScopedEnglish English;
+		AddExpectedError(TEXT("must contain an animation named"), EAutomationExpectedErrorFlags::Contains, 0);
+
+		FScopedBlueprint Fixture(TEXT("BP_MissingAnimBinding"), UDreamWidgetBlueprintAnimBindingBase::StaticClass());
+		UDreamWidget* Target = Fixture.AddWidget(TEXT("Header"));
+		UDreamWidgetAnimation* Sequence = nullptr;
+		BindAnimationToWidget(Fixture, Target, Sequence);
+		if (TestNotNull(TEXT("the fixture has an animation to rename"), Sequence))
+		{
+			Sequence->SetDisplayNameString(TEXT("SomethingElse"));
+		}
+
+		FCompilerResultsLog Results;
+		Compile(Fixture.Blueprint, Results);
+		TestTrue(TEXT("a claimed animation that is not there fails the compile"), Results.NumErrors > 0);
+
+		// WHICH property was reported: the base class declares three animation-typed members, one
+		// claimed, one claimed-but-optional, one unmarked, and none of the three is answered here.
+		FString AllMessages;
+		for (const TSharedRef<FTokenizedMessage>& Message : Results.Messages)
+		{
+			AllMessages += Message->ToText().ToString() + TEXT(" | ");
+		}
+		TestTrue(*FString::Printf(TEXT("the claimed one is named, saw [%s]"), *AllMessages),
+			AllMessages.Contains(TEXT("RequiredIntro")));
+		TestFalse(*FString::Printf(TEXT("the optional one is not, saw [%s]"), *AllMessages),
+			AllMessages.Contains(TEXT("OptionalOutro")));
+		TestFalse(*FString::Printf(TEXT("nor the unmarked one, saw [%s]"), *AllMessages),
+			AllMessages.Contains(TEXT("UnmarkedAnimation")));
+	}
+
+	// And naming it what the claim asks for settles it -- while the optional claim and the unmarked
+	// member, neither of which this hierarchy answers, stay quiet.
+	{
+		FScopedBlueprint Fixture(TEXT("BP_PresentAnimBinding"), UDreamWidgetBlueprintAnimBindingBase::StaticClass());
+		UDreamWidget* Target = Fixture.AddWidget(TEXT("Header"));
+		UDreamWidgetAnimation* Sequence = nullptr;
+		BindAnimationToWidget(Fixture, Target, Sequence);
+		if (TestNotNull(TEXT("the fixture has an animation to name"), Sequence))
+		{
+			Sequence->SetDisplayNameString(TEXT("RequiredIntro"));
+		}
+
+		FCompilerResultsLog Results;
+		Compile(Fixture.Blueprint, Results);
+		TestEqual(TEXT("an animation of that name satisfies the claim"), Results.NumErrors, 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWidgetBlueprintInheritedAnimationClaimTest,
+	"DreamGUI.WidgetBlueprint.AnAnimationClaimIsCheckedAgainstTheHierarchyTheClassActuallyGets",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * A subclass that only adds logic failed its compile over an animation its parent had authored.
+ *
+ * The meta=(BindDreamWidgetAnim) check counted the subclass's own tree as authored as soon as it held a widget -- and
+ * every designer open puts a placeholder root in it -- and then looked only at that tree's animations, while every
+ * instance of the class is built with the parent's hierarchy, the claimed animation included. A fresh child of the native
+ * base failed the same way the moment it was created, because the factory's root is a placeholder too. The check now
+ * asks the hierarchy the class actually gets, and asks nothing while no class in the chain has authored one.
+ */
+bool FDreamWidgetBlueprintInheritedAnimationClaimTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWidgetBlueprintCompilerTestLocal;
+
+	FScopedBlueprint Parent(TEXT("BP_AnimClaimParent"), UDreamWidgetBlueprintAnimBindingBase::StaticClass());
+	UDreamWidget* Target = Parent.AddWidget(TEXT("Header"));
+	UDreamWidgetAnimation* Sequence = nullptr;
+	BindAnimationToWidget(Parent, Target, Sequence);
+	if (!TestNotNull(TEXT("the parent has an animation to name"), Sequence))
+	{
+		return false;
+	}
+	Sequence->SetDisplayNameString(TEXT("RequiredIntro"));
+	FCompilerResultsLog ParentResults;
+	Compile(Parent.Blueprint, ParentResults);
+	if (!TestEqual(TEXT("a parent that authors the claimed animation compiles clean"), ParentResults.NumErrors, 0))
+	{
+		return false;
+	}
+
+	// Exactly what opening the designer on a logic-only subclass does to it, and nothing else.
+	FScopedBlueprint Child(TEXT("BP_AnimClaimLogicOnlyChild"), Parent.Blueprint->GeneratedClass);
+	Child.Blueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/true);
+	FCompilerResultsLog ChildResults;
+	Compile(Child.Blueprint, ChildResults);
+	TestEqual(TEXT("a subclass that only adds logic compiles clean"), ChildResults.NumErrors, 0);
+
+	// And a child of the native base with nothing authored in it yet.
+	FScopedBlueprint Fresh(TEXT("BP_AnimClaimFreshChild"), UDreamWidgetBlueprintAnimBindingBase::StaticClass());
+	Fresh.Blueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/true);
+	FCompilerResultsLog FreshResults;
+	Compile(Fresh.Blueprint, FreshResults);
+	TestEqual(TEXT("so does a fresh one, before anything has been authored"), FreshResults.NumErrors, 0);
+	return true;
+}
+
+#endif

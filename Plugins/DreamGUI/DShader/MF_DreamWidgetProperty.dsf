@@ -1,0 +1,71 @@
+// DreamGUI material function, written by hand from the original LGUI graph.
+// Edit this file, then rebuild -- the .uasset is an output.
+//
+// Reads the per-widget record the canvas packs into DreamUI_WidgetPropertyDataTexture: which kind of
+// surface this is (FontMark: 0 texture, 1 bitmap font, 2 SDF font), where its clip record lives, and
+// its size and centre. Every UI material starts here.
+//
+// The one thing the decompiler lost, and the reason text stopped rendering: CoordinateInDataTex's
+// default is not a number. The canvas writes each widget's record index into TexCoord[1], so the
+// original graph wires TexCoord[1] to this input's Preview pin and the material never connects the
+// input at all. Decompiled as `= 0.0`, every widget read record 0 -- wrong FontMark, wrong clip
+// coordinate, no glyphs. A graph expression as the default is what puts TexCoord[1] back on Preview.
+
+Function Inline DreamUIWidgetProperty(in float CoordinateInDataTex, in Texture2D DataTex,
+	out float FontMark, out float ClipDataCoordinate,
+	out float2 WidgetSize, out float2 WidgetCenterPosition)
+{
+	#include "/Plugin/DreamGUI/Private/DreamUIWidgetProperty.ush"
+	FontMark = 0;
+	ClipDataCoordinate = 0;
+	WidgetSize = float2(0, 0);
+	WidgetCenterPosition = float2(0, 0);
+	DreamUI_ReadWidgetProperty(CoordinateInDataTex, DataTex, FontMark, ClipDataCoordinate,
+		WidgetSize, WidgetCenterPosition);
+}
+
+ShaderFunction(Name="Materials/MF_DreamWidgetProperty", Root="Plugin.DreamGUI")
+{
+	Properties = {
+		TextureObjectParameter DreamUI_WidgetPropertyDataTexture = Path(Engine, "EngineResources/DefaultTexture") [
+			Group="DreamUI";
+			SamplerType="SAMPLERTYPE_Data";
+		];
+	}
+
+	Inputs = {
+		// Default is the record index the canvas wrote, not a constant. See the header comment.
+		opt float CoordinateInDataTex = UE.TexCoord(Index=1).r;
+	}
+
+	// Declaration order is the pin order callers see; it matches the original's SortPriority 0..3.
+	Outputs = {
+		float FontMark;
+		float ClipDataCoordinate;
+		float2 WidgetSize;
+		float2 WidgetCenterPosition;
+	}
+
+	Graph = {
+		float OutFontMark;
+		float OutClipDataCoordinate;
+		float2 OutWidgetSize;
+		float2 OutWidgetCenterPosition;
+		DreamUIWidgetProperty(CoordinateInDataTex, DreamUI_WidgetPropertyDataTexture,
+			OutFontMark, OutClipDataCoordinate, OutWidgetSize, OutWidgetCenterPosition);
+
+		FontMark = OutFontMark;
+		ClipDataCoordinate = OutClipDataCoordinate;
+		WidgetSize = OutWidgetSize;
+		WidgetCenterPosition = OutWidgetCenterPosition;
+	}
+
+	Layout = {
+		Node(Var="CoordinateInDataTex", X=-784, Y=304);
+		Node(Var="DreamUI_WidgetPropertyDataTexture", X=-784, Y=416);
+		Node(Var="FontMark", X=224, Y=304);
+		Node(Var="ClipDataCoordinate", X=224, Y=480);
+		Node(Var="WidgetSize", X=224, Y=656);
+		Node(Var="WidgetCenterPosition", X=224, Y=832);
+	}
+}

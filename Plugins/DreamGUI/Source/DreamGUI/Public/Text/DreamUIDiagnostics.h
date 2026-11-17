@@ -1,0 +1,630 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+
+/**
+ * One position in a .dui file. Line and column are 1-based, as every editor counts them.
+ *
+ * Carried on every AST node and every diagnostic because the whole point of the text pipeline is
+ * that a mistake points at a line: AI writes most .dui files, and "some property somewhere did not
+ * take" is the one failure mode that is genuinely hard to chase.
+ */
+struct DREAMGUI_API FDreamUISourceLocation
+{
+	int32 Line = 0;
+	int32 Column = 0;
+
+	FDreamUISourceLocation() = default;
+	FDreamUISourceLocation(int32 InLine, int32 InColumn) : Line(InLine), Column(InColumn) {}
+
+	bool IsValid() const { return Line > 0; }
+};
+
+enum class EDreamUISeverity : uint8
+{
+	Error,
+	Warning,
+};
+
+/**
+ * The DUInnnn code table.
+ *
+ * One code per cause, never per message: two situations that a reader would fix differently get
+ * two codes, and the same situation reached from two places keeps one. The number is the stable
+ * part -- tests assert the code, never the text, so wording stays free to improve and the docs site
+ * has one page per code.
+ *
+ * Ranges, so a code says which stage refused it before you look anything up:
+ *   1xxx  lexer      -- a character sequence that is not a token
+ *   2xxx  parser     -- tokens that do not form the grammar
+ *   3xxx  semantic   -- grammatical, but the tree does not hold together (duplicate id, unknown type)
+ *   4xxx  values     -- a value that does not fit the property it is written on
+ *   5xxx  builder    -- reflection refused the write, or the target object does not exist
+ *   6xxx  compile    -- the .dui could not be attached to its blueprint
+ *   7xxx  write-back -- the patcher could not put an edit into the text
+ *   8xxx  layout     -- a screen that compiled, laid out at a viewport size, shows a problem (the DreamMCP endpoint's
+ *                       `layout` and `preview`, never a compile; warnings and infos only)
+ *
+ * Gaps are deliberate; do not renumber to close them. A code that is retired stays retired.
+ */
+enum class EDreamUIDiagnosticCode : int32
+{
+	None = 0,
+
+	// --- 1xxx lexer ---
+	/** A character that cannot begin any token. */
+	UnexpectedCharacter = 1001,
+	/** A string literal that reaches end of line or end of file without its closing quote. */
+	UnterminatedString = 1002,
+	/** A block comment that reaches end of file without its closing marker. */
+	UnterminatedComment = 1003,
+	/** A number the lexer cannot read: two decimal points, a trailing dot, a lone minus. */
+	MalformedNumber = 1004,
+	/** A `#` colour literal whose digit count is not 3, 4, 6 or 8. */
+	MalformedHexColor = 1005,
+	/**
+	 * A name longer than an FName can hold (NAME_SIZE, see UnrealNames.h).
+	 *
+	 * Its own code, and a LEXICAL one, because the refusal has nothing to do with what the word
+	 * means: every name this language writes down -- a node id, a property, a handler, a loop
+	 * variable -- ends up as an FName somewhere downstream, and FName does not return an error for an
+	 * over-long string, it calls checkf(false) and takes the editor with it. Caught at the token so
+	 * one rule covers every position a word can appear in.
+	 */
+	IdentifierTooLong = 1006,
+	/**
+	 * An asset path longer than an FName can hold. A load splits the path into names -- the package's, the object's --
+	 * and FName stops the editor on one that is too long rather than return an error (see IdentifierTooLong). Caught at
+	 * the token for a path written bare, and by the builder for one written as a string.
+	 */
+	AssetPathTooLong = 1007,
+
+	// --- 2xxx parser ---
+	/** A token appeared where the grammar allows something else. Message names both. */
+	UnexpectedToken = 2001,
+	/** A `{` with no matching `}` before end of file. */
+	UnclosedBlock = 2002,
+	/** A `(` with no matching `)`. */
+	UnclosedTuple = 2003,
+	/** A node header with no identifier: every node must be named, since the id is how bindings and the write-back find it. */
+	MissingNodeId = 2004,
+	/** A property name with no `=` or `<-` after it, or one whose operator is followed by nothing. */
+	MissingPropertyValue = 2005,
+	/** The file has no root node, or has more than one. */
+	MalformedRoot = 2006,
+	/** `class` appeared more than once, or its path is empty. */
+	MalformedClassDeclaration = 2007,
+	/** `(was: …)` whose contents are not a single identifier. */
+	MalformedWasClause = 2008,
+	/** `@key(…)` whose contents are not a single string literal. */
+	MalformedKeyOverride = 2009,
+	/** A `for` / `each` header that is not `<keyword> <Var> in <Func>()`. */
+	MalformedLoopHeader = 2010,
+	/** The right side of `<-` did not parse as an expression: a stray token, an unclosed paren. */
+	MalformedBindingExpression = 2011,
+	/** A `use` that could not be honoured: no string, unresolvable path, unreadable file, a cycle. */
+	ImportFailed = 2012,
+	/**
+	 * Nodes, blocks or parenthesised sub-expressions nested deeper than the parser will descend.
+	 *
+	 * A recursive-descent parser answers a file that nests a thousand deep by exhausting the stack,
+	 * and a stack overflow is not a diagnostic -- it is the editor disappearing with the author's
+	 * unsaved work. The limit is far above anything a hand-written or generated .dui reaches, so
+	 * meeting it means a file that is malformed or hostile rather than merely deep.
+	 */
+	NestingTooDeep = 2013,
+	/**
+	 * A `timeline` block or one of its lines that is not the grammar.
+	 *
+	 * One code for the whole block rather than one per shape, because every one of them is the same
+	 * reader move -- look at the line and write it the way the docs show -- and the message names
+	 * which part was wrong. The shapes: a header without a name, `external` followed by a block,
+	 * `duration`/`loop` without a value, a track line with no `:`, a key without its `=`, an `ease`
+	 * with no name after it, an `@time` without its `->`.
+	 */
+	MalformedTimeline = 2014,
+	/** `use … as Name` without its name after `as`, or with something after it that is not a name. */
+	MalformedUseDeclaration = 2015,
+	/** A `props` block or one of its lines that is not `Type Name` or `Type Name = value` (or `Enum <path> Name …`). */
+	MalformedPropsBlock = 2016,
+	/** An `events` block or one of its entries that is not `Name` or `Name(Type Param, …)`. */
+	MalformedEventsBlock = 2017,
+	/** An `if` without its condition or block, or an `else` with no `if` before it. */
+	MalformedConditional = 2018,
+	/** A `slot` line the grammar does not take: `default` twice, a block holding both declaration lines and children. */
+	MalformedSlotDeclaration = 2019,
+	/**
+	 * A `rows` block that does not read: a column list that is not property names between parentheses, a column named
+	 * twice, a row with more or fewer values than there are columns. A row that does not read makes no widget.
+	 */
+	MalformedRows = 2020,
+	/**
+	 * A `viewmodels` line that is not `Type Name`, `Type Name = new`, `Type Name = global ["Name"]` or
+	 * `Type Name = parent ["Name"]`, or a `viewmodels` block written inside a node.
+	 */
+	MalformedViewModelsBlock = 2021,
+	/**
+	 * `@note(…)`, `@max(…)` or `@noloc` written wrong: not one string / one whole number, after a value that is not a
+	 * string, written twice, or `@noloc` together with what only a translated text has (`@key`, `@note`, `@max`).
+	 */
+	MalformedTextAnnotation = 2022,
+	/**
+	 * A list (`[a, b]`) or a map (`{ key: value }`) value that does not read: an opening bracket with no close, two elements
+	 * with no comma between them, or a map entry that is not `key: value`.
+	 */
+	MalformedContainer = 2023,
+	/**
+	 * An `@tag` line that is not one or more names separated by commas: nothing after `@tag`, a number or a string where
+	 * a name belongs, two names with no comma between them, or a comma with no name after it.
+	 */
+	MalformedTag = 2024,
+
+	// --- 3xxx semantic ---
+	/**
+	 * Two nodes share an id.
+	 *
+	 * An error rather than a warning, and never silently uniquified: the id is the node's identity
+	 * (it becomes the guid AND the class member variable name), so renaming one for the author
+	 * would silently change what their bindings point at.
+	 */
+	DuplicateNodeId = 3001,
+	/** An id that cannot be a C++ identifier, or that collides with a reserved word. */
+	InvalidNodeId = 3002,
+	/** A node type that is neither a built-in tag nor a resolvable asset path. */
+	UnknownNodeType = 3003,
+	/** `: StyleName` naming a style the file does not declare. */
+	UnknownStyle = 3004,
+	/** Two styles share a name. */
+	DuplicateStyle = 3005,
+	/** A `+ ClassName` that does not resolve to a concrete UDreamUIBehaviour subclass. */
+	UnknownBehaviourClass = 3006,
+	/**
+	 * RETIRED, never raised. Kept so the number is not reused; see the range comment above.
+	 *
+	 * It assumed slots had a namespace of their own. They do not: `slot Footer` produces a node
+	 * whose id becomes a class member variable exactly like a widget's, so two slots colliding and a
+	 * slot colliding with a widget are one cause with one fix. That is DuplicateNodeId, and giving
+	 * the same cause a second number would only mean docs to keep in sync and a code the reader has
+	 * to learn is a synonym.
+	 */
+	DuplicateSlotName_Retired = 3007,
+	/**
+	 * A loop variable that shadows an outer loop variable.
+	 *
+	 * A warning rather than an error, and deliberately: nothing in today's grammar can REFERENCE a
+	 * loop variable -- a loop body is repetition, not interpolation -- so shadowing one provably
+	 * cannot change the tree that gets built. Refusing a whole file over a name that has no effect
+	 * is the wrong trade. The day a value can say `{Slot.Name}`, this becomes an error.
+	 */
+	ShadowedLoopVariable = 3008,
+	/**
+	 * A parent that will not take this child.
+	 *
+	 * Distinct from "unknown type" because the node is fine and the parent is fine -- only the pair
+	 * is not. UDreamContentWidget caps itself at one child and a named slot at none, and the attach
+	 * path DROPS the extra silently, so without this the author gets a tree that is quietly missing
+	 * a subtree they can see in their own file.
+	 */
+	ParentRefusedChild = 3009,
+	/**
+	 * `(was: X)` where X is still a live id in this same file.
+	 *
+	 * The author renamed a node and then made a new one under the old name, so "move everything that
+	 * pointed at X" would move it away from a node that exists and wants it. Refused rather than
+	 * guessed, and refusing takes the WHOLE file's migration with it: a half-migrated file is worse
+	 * than an unmigrated one, because the next compile no longer starts from what the author wrote.
+	 */
+	RenameOldIdStillInUse = 3010,
+	/** Two nodes both claim `(was: X)`. Nothing can decide which one inherits X's references. */
+	DuplicateWasId = 3011,
+	/** `(was:)` naming the node itself. Nothing to migrate, and almost certainly a typo. */
+	SelfRename = 3012,
+	/**
+	 * The graph leg of a rename was refused because the old name is not unambiguously the widget's.
+	 *
+	 * Graph references resolve by NAME, so if the old name is also a variable this blueprint
+	 * declares, a member of its parent class, or a local inside some function, rewriting every
+	 * reference to it would silently repoint code that had nothing to do with the widget. A warning
+	 * rather than an error: the binding and animation legs are unambiguous and still run.
+	 */
+	RenameGraphReferenceAmbiguous = 3013,
+	/** Two `resources` entries share a name; the first one wins everywhere, so the second is refused. */
+	DuplicateResource = 3014,
+	/** `style A : B` where following the bases comes back to A. Nothing applies; the node errors. */
+	StyleCycle = 3015,
+	/**
+	 * Two `timeline` blocks share a name.
+	 *
+	 * The same cause as DuplicateStyle and refused the same way -- a timeline's name becomes the
+	 * animation's display name AND a class member variable (the compiler declares one per animation,
+	 * as UMG does for UWidgetAnimation), so two of them is a variable nobody can address.
+	 */
+	DuplicateTimeline = 3016,
+	/** Two `use … as` lines give the same name; the first one wins everywhere, so the second is refused. */
+	DuplicateComponentAlias = 3017,
+	/** A `use … as` name that is a built-in tag or a layout container's name, which it could never be written as. */
+	AliasShadowsBuiltIn = 3018,
+	/** Two `props` lines declare one name. */
+	DuplicateProp = 3019,
+	/** Two `events` entries declare one name, or one entry declares a parameter twice. */
+	DuplicateEvent = 3020,
+	/** A `ns.Name` (style, resource) whose `ns` no `use … as ns` declares. */
+	UnknownNamespace = 3021,
+	/** More than one `slot … default` in one file: content nested without a slot name has one place to go. */
+	MultipleDefaultSlots = 3022,
+	/**
+	 * A WARNING. Two rows of a `rows` block whose first values make the same id, or one an id the file already uses: the
+	 * later row gets a `_<n>` after it, and that number -- with its localization keys -- moves when rows are reordered,
+	 * which is the instability a key column exists to avoid. Give the rows distinct first values.
+	 */
+	DuplicateRowKey = 3023,
+	/** Two `viewmodels` entries of one name. The first is kept. */
+	DuplicateViewModel = 3024,
+	/**
+	 * A WARNING. A name in a style clause (`: A : B` on a node, a rows line or a style) that an earlier name of the same
+	 * clause has already applied -- `: Card : Base` where Card is `: Base`, or `: A : A`. A style applies once, at its first
+	 * appearance, so the later name changes nothing; most often it is a base the author did not know the other style had.
+	 */
+	StyleAlreadyApplied = 3025,
+
+	// --- 4xxx values ---
+	/** No property of that name on the target object. Message suggests the nearest match. */
+	UnknownProperty = 4001,
+	/** A dotted path whose head resolves but whose tail does not. */
+	UnknownPropertyPathSegment = 4002,
+	/** The literal's shape cannot produce the property's type. */
+	ValueTypeMismatch = 4003,
+	/** A tuple with the wrong number of elements for its destination struct. */
+	TupleArityMismatch = 4004,
+	/** An identifier written on an enum property that the enum does not declare. */
+	UnknownEnumValue = 4005,
+	/** A property that exists but is not writable from text (Transient, editor-only, no setter). */
+	PropertyNotWritable = 4006,
+	/** `@Name` names no entry in any `resources` block. */
+	UnknownResource = 4007,
+	/** A `resources` entry whose declared type does not match its own literal (`Color Accent = 8`). */
+	ResourceTypeMismatch = 4008,
+	/**
+	 * A list written to a property that is not an array or a set, a map to one that is not a map, a container to a
+	 * property that is not one, or a set or map of nodes -- whose elements a node id cannot be resolved into.
+	 */
+	ContainerTypeMismatch = 4009,
+
+	// --- 5xxx builder ---
+	/** The node names an asset that could not be loaded. */
+	AssetNotFound = 5001,
+	/** A property was written on a Visual the node's type does not create. */
+	NoVisualForProperty = 5002,
+	/** `@slot` on a node whose parent lays out no panel slot. */
+	NoPanelSlotForProperty = 5003,
+	/** A binding naming a function the class does not declare, or that takes parameters. */
+	BindingFunctionNotFound = 5004,
+	/** A binding whose destination property has no setter -- see FindDreamWidgetSetterFor. */
+	BindingTargetHasNoSetter = 5005,
+	/** A nested user widget class that is not a UDreamUserWidget subclass. */
+	NotAUserWidgetClass = 5006,
+	/**
+	 * A `for` / `each` body the builder cannot expand yet. Warning, not error.
+	 *
+	 * Its own code rather than a general "unsupported" because it is temporary and the docs page for
+	 * it says so: the grammar accepts loops from day one so files written today keep parsing, and
+	 * this is what tells an author the body did not make it into the tree. Retire it when loops land.
+	 */
+	LoopNotExpanded = 5007,
+	/**
+	 * A binding whose destination is a kind of object FDreamWidgetPropertyBinding cannot name.
+	 *
+	 * Not the same as having no setter, and worth separating precisely because the fix is different:
+	 * "no setter" is about the property, this is about the STRUCT -- EDreamWidgetBindingTarget knows
+	 * Widget, Visual and Behaviour, so a panel slot, a layout container and a dotted sub-property
+	 * have nowhere to be recorded no matter what setters they have. Reporting these as 5005 would
+	 * send the reader hunting for a setter that would not help them if they wrote it.
+	 */
+	BindingTargetNotSupported = 5008,
+	/** The AST carried no root node, so there was nothing to build. Parser already said why. */
+	NothingToBuild = 5009,
+	/** `X -> Handler` where X is not an assignable event on the destination, or is a path into one. */
+	EventNotFound = 5010,
+	/**
+	 * A binding expression the thunk generator could not lower into a Blueprint function: a name
+	 * neither a variable nor a function on this class, an operator with no overload for its operand
+	 * types, or a type the generator does not know how to convert. The message names the specific
+	 * refusal; the code is one because the reader's next move is the same for all of them -- fix the
+	 * expression, or move the logic into a real function and bind that.
+	 */
+	BindingExpressionUnsupported = 5011,
+	/**
+	 * An `each` somewhere it cannot work: nested in another, at the root, on a widget with no list
+	 * view to fill, or with a body that is not exactly one template widget. One code because the
+	 * reader's move is the same -- restructure the block; the message names which rule.
+	 */
+	EachMisplaced = 5012,
+	/**
+	 * A property pointed at a node id this file does not declare.
+	 *
+	 * The node-reference twin of AssetNotFound, and split from the type check for the same reason
+	 * the asset case is: "no node named CheckMark" and "CheckMark is not the kind of thing this
+	 * property holds" are different mistakes and only the first one is about the NAME. A node that
+	 * exists but creates no visual, or is the wrong widget class, is a ValueTypeMismatch -- the same
+	 * code an asset path raises when it loads something the property cannot take.
+	 */
+	NodeReferenceNotFound = 5013,
+	/**
+	 * A `<-` expression or a `<->` inside a `for` / `each` body.
+	 *
+	 * The thunk pass deliberately skips loop bodies -- a generated function would ask the CLASS for a
+	 * name only the iteration has -- so the only source shape an `each` supports today is the single
+	 * hop `Item.Member`, which is recorded per cell instead. Anything richer used to be dropped where
+	 * the builder found a binding with no function name: the file compiled green and the property was
+	 * simply never driven. Its own code rather than BindingExpressionUnsupported because the
+	 * expression is fine and the PLACE is not, which is a different fix and a temporary limit.
+	 */
+	LoopBodyBindingUnsupported = 5014,
+	/**
+	 * A `timeline` track line whose node path names nothing in this file's tree.
+	 *
+	 * The path is a chain of node ids -- the same display-name path an animation binding resolves
+	 * through -- so this is the animation twin of NodeReferenceNotFound, and split from it for the
+	 * same reason: "no node called Icon" and "Icon has no such property" are different mistakes.
+	 */
+	TimelineTargetNotFound = 5015,
+	/**
+	 * A `timeline` track line whose property cannot be animated by a MovieScene track.
+	 *
+	 * Either the property does not exist on the node (nor on its visual or a behaviour), or its TYPE
+	 * has no track: layer one animates floats, doubles, two- and three-component vectors, rotators
+	 * and colours, because those are the property tracks this sequence supports. A material parameter
+	 * is deliberately NOT one -- see the proposal's ruling: those stay `external`.
+	 */
+	TimelinePropertyNotAnimatable = 5016,
+	/**
+	 * An `ease` name the curve library does not declare.
+	 *
+	 * The set is EDreamTweenEase's, minus CurveFloat (which names an asset, and a timeline key has
+	 * nowhere to put one). One word list for the whole plugin was the point of borrowing it.
+	 */
+	UnknownEaseName = 5017,
+	/**
+	 * A component alias that names no class: its file has no `class` line and no Blueprint uses it as its Source File,
+	 * or the path loads nothing a node can be.
+	 */
+	ComponentAliasUnresolved = 5018,
+	/** `slot Name { children }` -- filling a slot -- under a node that is not a component instance. */
+	SlotFillOutsideComponent = 5019,
+	/** `slot Name { children }` naming a slot the component does not declare. */
+	UnknownSlotToFill = 5020,
+	/** A `for` that is the root, sits in another `for` or `each`, or has no single template widget in its body. */
+	ForMisplaced = 5021,
+	/**
+	 * A second layout container on one node: a `+ Container` on a node whose type is already one (`VerticalBox Column
+	 * { + HorizontalBox {} }`), or two containers from its own `+` lines and its style's. A widget arranges its children
+	 * one way, and the second container used to replace the first without a word, taking its values with it.
+	 */
+	SecondLayoutContainer = 5022,
+	/**
+	 * A member path (`Player.Helth`, `Settings.Apply()`) one of whose segments is not a member of the class the segment
+	 * before it holds -- or is one a graph cannot reach: a property that is not BlueprintVisible, a function that is not
+	 * BlueprintCallable or BlueprintPure. The message names the segment and the class. An UnrealSharp property is
+	 * BlueprintVisible only when its [UProperty] says BlueprintReadOnly or BlueprintReadWrite.
+	 */
+	MemberPathNotFound = 5023,
+	/** A member path that goes on past a value that is not an object (`Player.Health.Max`, Health a float). */
+	MemberPathThroughNonObject = 5024,
+	/**
+	 * A route operator the event cannot honour: `+=` on a single-cast delegate, which holds one listener and cannot take
+	 * a second; `=` on a multicast event (or an FDreamUIEventDelegate), which would have to drop the listeners others
+	 * added. `->` takes either kind and is never this.
+	 */
+	RouteOperatorMismatch = 5025,
+
+	// --- 6xxx compile ---
+	/** The class's Source File names a file that does not exist or cannot be read. */
+	SourceFileUnreadable = 6001,
+	/** The .dui parsed, but produced no tree to compile. */
+	EmptyTree = 6002,
+	/** The `class` line names a different asset than the Blueprint being compiled. A warning: the
+	 * line's job is a stable localization namespace, and being wrong drifts keys, not the build. */
+	ClassPathMismatch = 6003,
+	/**
+	 * `Event -> Handler` naming a function the compiled class does not declare.
+	 *
+	 * Split from EventNotFound because the two halves of a route fail for opposite reasons and only
+	 * the compiler can see this one: EventNotFound is about the EVENT, which the builder checks
+	 * against a class that already exists, while the handler lives on the class this compile is
+	 * building and cannot be looked up until it has been built.
+	 */
+	EventHandlerNotFound = 6004,
+	/** `Event -> Handler` where the handler's parameters are not the ones the event sends. */
+	EventHandlerSignatureMismatch = 6005,
+	/**
+	 * `each Item in Source` naming a source the compiled class does not declare -- neither a
+	 * no-argument function of that name nor a variable of it.
+	 *
+	 * In the 6xxx band and not the 5xxx one for exactly the reason EventHandlerNotFound is: the
+	 * source lives on the class this compile is BUILDING, so the builder could not have looked it
+	 * up. It had the `each` line and no class; this stage has the class and, until the binding
+	 * started carrying its position, no line.
+	 *
+	 * One code for the function spelling and the variable spelling because the reader's move is the
+	 * same either way -- declare the thing, or fix the name. `Source()` and `Source` differ in what
+	 * the language will accept, not in what the author has to go and do.
+	 */
+	EachSourceNotFound = 6006,
+	/**
+	 * `each Item in Source` whose source exists but does not supply an array of OBJECTS.
+	 *
+	 * Split from EachSourceNotFound, not folded into it, because the fix is a different act: the
+	 * name is right and the TYPE is wrong. The item bindings read `Item.Member` off each element by
+	 * reflection, which needs an element that has members to read -- so `TArray<FMyRow>` and
+	 * `TArray<int32>` are refused here while `TArray<UMyRow*>` is not, and an author told only
+	 * "not found" would go looking for a misspelling that is not there.
+	 */
+	EachSourceNotObjectArray = 6007,
+	/** A `props` or `events` type the compiler has no Blueprint pin for. */
+	PropTypeUnknown = 6008,
+	/** A `props` name another member of the class already has with a different type, or a widget's name. */
+	PropNameTaken = 6009,
+	/** `-> emit Name` naming no entry of this file's `events` block. */
+	EmitUnknownEvent = 6010,
+	/** `-> emit Name(args)` whose arguments are not the event's parameters, in count or type. */
+	EmitArgumentMismatch = 6011,
+	/**
+	 * `-> emit` where no generated handler can stand: inside a `for` or `each` body, whose copies are the loop's and
+	 * not the class's, or on an event whose parameter no Blueprint function can take (an FDreamUIEventDelegate of a
+	 * width Blueprints have no pin for). Said rather than dropped, so the route is never silently missing.
+	 */
+	EmitRouteUnsupported = 6012,
+	/** A `props` default its declared type cannot hold: `Integer Count = 1.5`, an enum value the enum lacks, an asset that is not there. */
+	PropDefaultInvalid = 6013,
+	/**
+	 * An `events` name another member of the class already answers to: a prop, a widget, a resource, the author's own
+	 * variable or function, or a parent's member that is not a dispatcher of the same parameters.
+	 */
+	EventNameTaken = 6014,
+	/** A `viewmodels` type that names no class, or names more than one (two classes of that short name: write the path). */
+	ViewModelClassUnknown = 6015,
+	/** A `viewmodels` name another member of the class already answers to: a widget, a prop, a resource, an event, a parent's member of another type. */
+	ViewModelNameTaken = 6016,
+	/** A `viewmodels` source that cannot be honoured: `= new` of an abstract class, `= global` / `= parent` with an empty name. */
+	ViewModelSourceInvalid = 6017,
+	/** `-> Path.Func` whose function is not on the class the receiver path reaches, or is not BlueprintCallable. */
+	RouteMemberFunctionNotFound = 6018,
+	/**
+	 * `-> Path.Func` whose arguments do not fit: without parentheses, Func takes neither nothing nor exactly what the
+	 * event sends; with them, the count or a type differs from Func's parameters.
+	 */
+	RouteArgumentMismatch = 6019,
+	/** `<-> Path.Member` whose last member cannot be written back: not BlueprintReadWrite, and its object has no BlueprintCallable `Set<Member>` taking the value. */
+	TwoWayTargetReadOnly = 6020,
+	/**
+	 * `Prop <- Item.Member` in a `for` or `each` whose source's element class is known (an array of a concrete UObject
+	 * class), and Member is not a member of it. With a TArray<UObject*> source the class is not known until run time,
+	 * and the line is checked then, silently, as it always was.
+	 */
+	LoopItemMemberNotFound = 6021,
+	/** `-> Item.Func` in a loop body whose element class is known, and Func is not on it, or takes neither nothing nor exactly what the event sends. */
+	LoopItemRouteMismatch = 6022,
+	/** A document still has edits that could not be written, so compiling the older file was refused. */
+	SourceFileWritePending = 6023,
+	/**
+	 * A language's translation of a text does not fit the text's box: cut by its overflow policy, or laid out past it.
+	 * A warning, from a compile in a project that has DreamLoc, which reads the translations.
+	 */
+	TranslationDoesNotFit = 6024,
+	/** A language's translation of a text has characters no face of the text's font has. A warning, as DUI6024. */
+	TranslationGlyphsMissing = 6025,
+
+	// --- 7xxx write-back ---
+	/** The patcher was asked to write a property it cannot locate a home for. */
+	PatchTargetNotFound = 7001,
+	/** The file on disk changed underneath a pending edit. */
+	SourceFileChangedUnderEdit = 7002,
+	/**
+	 * A live value that cannot be written as a literal this language can read back.
+	 *
+	 * Non-finite floats are the whole of it today: the printer spells them the way printf does, and
+	 * `inf` lexes as an identifier, so a file written with one parses but refuses on the next compile
+	 * -- a designer edit that breaks a line nobody touched. Refusing at write time keeps the damage
+	 * where the author can see it.
+	 *
+	 * Its own code rather than borrowing the lexer's MalformedNumber: nothing is wrong with the
+	 * FILE, and pointing an author at a line they did not write is worse than saying plainly that
+	 * the value has no spelling.
+	 */
+	PatchValueNotRepresentable = 7003,
+	/**
+	 * A designer edit that would have to change text the front end made rather than read: a property an `if` block
+	 * or a shorthand stands for, or the made-up id of an anonymous widget. Said instead of written, so the file is
+	 * never edited somewhere the author did not write.
+	 */
+	PatchSyntaxNotWritable = 7004,
+	/**
+	 * A designer edit to a value the node takes from a `+ Component { … }` line of its STYLE, on a node that writes no
+	 * `+` line of that class itself. The value has two homes and the write-back takes neither: the style is shared, so
+	 * writing there would move every node that wears it, and a `+` block of the node's own is a change to the file's
+	 * shape the value pass does not make. Its own code rather than 7004's, because nothing here was made up -- the
+	 * author wrote the line, and the fix is to write one more.
+	 */
+	PatchStyleComponentNotWritable = 7005,
+
+	// --- 8xxx layout ---
+	// Raised by the DreamMCP endpoint's `layout` and `preview` on a screen laid out at a viewport size, never by a compile.
+	// Their thresholds are in Docs/tools/dreammcp.md and Private/MCP/DreamGUIMCPLayout.h.
+	/** What can show of a node reaches past an edge of the viewport, or lies wholly outside it. */
+	LayoutOffScreen = 8001,
+	/** A text cut short by its overflow policy, or laid out past its box. */
+	LayoutTextOverflow = 8002,
+	/** A node that draws, holds children or takes the pointer, of zero size; or a pressable control under 24 px on a side. */
+	LayoutTooSmall = 8003,
+	/** Two pressable controls of one canvas on top of each other: a press reaches only the upper one. */
+	LayoutOverlappingControls = 8004,
+	/** Siblings whose edges, centres or gaps miss lining up by 1 to 3 px. An info. */
+	LayoutNearlyAligned = 8005,
+	/** One of the other layout problems at one of the further viewport sizes asked for, and not at the first. */
+	LayoutBreaksAtSize = 8006,
+	/** A text that stands out from the pixels behind it less than 3 to 1 (an info under 4.5 to 1 for small text). */
+	LayoutLowContrast = 8007,
+	/** A node drawn past the panel or card that frames it (unless tagged Bleed, or the frame clips). */
+	LayoutOutsideFrame = 8008,
+	/** A visual that takes no pointer drawn over a text that it is not the backplate of (unless tagged Bleed). */
+	LayoutCoversText = 8009,
+	/** A panel whose content sits to one side or leaves a wide empty band. An info, and a cautious one. */
+	LayoutUnbalanced = 8010,
+};
+
+/**
+ * One thing wrong with one .dui file, at one place in it.
+ *
+ * Severity is decided at the site that raises it, not by the code's range: the same cause can be
+ * fatal to a compile and merely worth mentioning to an editor preview.
+ */
+struct DREAMGUI_API FDreamUIDiagnostic
+{
+	EDreamUIDiagnosticCode Code = EDreamUIDiagnosticCode::None;
+	EDreamUISeverity Severity = EDreamUISeverity::Error;
+	FDreamUISourceLocation Location;
+	/** What went wrong, in one sentence, naming the offending text. No code prefix; ToString adds it. */
+	FString Message;
+	/** The file this came from, for messages. May be a display name rather than a path. */
+	FString SourceName;
+
+	FDreamUIDiagnostic() = default;
+	FDreamUIDiagnostic(EDreamUIDiagnosticCode InCode, const FDreamUISourceLocation& InLocation, FString InMessage,
+		EDreamUISeverity InSeverity = EDreamUISeverity::Error)
+		: Code(InCode), Severity(InSeverity), Location(InLocation), Message(MoveTemp(InMessage))
+	{
+	}
+
+	bool IsError() const { return Severity == EDreamUISeverity::Error; }
+
+	/** "Login.dui(42,9): error DUI3001: two nodes are named 'OkBtn'". */
+	FString ToString() const;
+
+	/** "DUI3001". */
+	static FString CodeToString(EDreamUIDiagnosticCode InCode);
+};
+
+/**
+ * A diagnostic sink that also remembers whether anything fatal landed in it.
+ *
+ * Passed by reference through the whole front end so a caller asks one object "did this work",
+ * rather than every stage inventing its own bool-plus-array convention.
+ */
+struct DREAMGUI_API FDreamUIDiagnosticBag
+{
+	TArray<FDreamUIDiagnostic> Diagnostics;
+	/** Prefixed onto every diagnostic added through this bag. */
+	FString SourceName;
+
+	void Add(FDreamUIDiagnostic InDiagnostic);
+	void AddError(EDreamUIDiagnosticCode InCode, const FDreamUISourceLocation& InLocation, FString InMessage);
+	void AddWarning(EDreamUIDiagnosticCode InCode, const FDreamUISourceLocation& InLocation, FString InMessage);
+
+	bool HasErrors() const;
+	int32 NumErrors() const;
+	/** Every diagnostic, one per line, in the order they were raised. */
+	FString ToString() const;
+	void Reset() { Diagnostics.Reset(); }
+};

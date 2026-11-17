@@ -1,0 +1,285 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+#include "CoreMinimal.h"
+#include "Curves/CurveFloat.h"
+#include "DreamLayoutFragment.h"
+#include "DreamWidget.h"
+#include "DreamWidgetSubObjectBehaviour.h"
+#include "DreamLayout.generated.h"
+
+
+struct FDreamLayoutControlAnchorData
+{
+	bool bCanControlHorizontalPosition = false;
+	bool bCanControlVerticalPosition = false;
+	bool bCanControlHorizontalSize = false;
+	bool bCanControlVerticalSize = false;
+
+	void Or(const FDreamLayoutControlAnchorData& Other)
+	{
+		bCanControlHorizontalPosition |= Other.bCanControlHorizontalPosition;
+		bCanControlVerticalPosition |= Other.bCanControlVerticalPosition;
+		bCanControlHorizontalSize |= Other.bCanControlHorizontalSize;
+		bCanControlVerticalSize |= Other.bCanControlVerticalSize;
+	}
+	bool AnyControl()const
+	{
+		return bCanControlHorizontalPosition || bCanControlVerticalPosition
+		|| bCanControlHorizontalSize || bCanControlVerticalSize;
+	}
+};
+
+/** Read-only snapshot used by editor layout diagnostics. */
+USTRUCT(BlueprintType)
+struct DREAMGUI_API FDreamLayoutDebugInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	TObjectPtr<UDreamWidget> Widget = nullptr;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FVector2D DesiredSize = FVector2D::ZeroVector;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FVector2D ArrangedPosition = FVector2D::ZeroVector;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FVector2D ArrangedSize = FVector2D::ZeroVector;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FVector2D AuthoredSize = FVector2D::ZeroVector;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FVector2D ContentBounds = FVector2D::ZeroVector;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FString Algorithm;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FString SlotRule;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FString PositionOwner;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FString SizeOwner;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Layout Debug")
+	FString Clipping;
+};
+
+/**
+ * Class label for the snapshot above. The diagnostics are editor-facing but the code that fills them
+ * lives in the runtime module, and UClass::GetDisplayNameText only exists with the editor, so outside
+ * it the raw class name stands in.
+ */
+DREAMGUI_API FString DreamLayoutDebugClassLabel(const UClass* InClass);
+
+UCLASS(Abstract, DefaultToInstanced, EditInlineNew)
+class DREAMGUI_API UDreamLayout : public UDreamWidgetSubObjectBehaviour
+{
+	GENERATED_BODY()
+protected:
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+public:
+	virtual void OnTransformChanged() {}
+	virtual void OnDimensionChanged(bool InPivotChange, bool InWidthChange, bool InHeightChange) {}
+	
+	virtual FDreamLayoutControlAnchorData GetLayoutControlAnchor(const UDreamWidget* Widget)const PURE_VIRTUAL(UDreamLayout::GetLayoutControlAnchor, return FDreamLayoutControlAnchorData(););
+
+	/** Zero means this layout does not contribute an intrinsic desired size. */
+	virtual FVector2f GetLayoutPreferredSize() const { return FVector2f::ZeroVector; }
+	/**
+	 * The same answer, asked inside a constraint. Only layouts whose size depends on the space they are
+	 * given need to override it; the default ignores the specs and answers the unconstrained question,
+	 * which is exactly right for a layout that has one fixed answer (a spacer, an authored surface).
+	 */
+	virtual FVector2f GetLayoutPreferredSize(const FDreamMeasureSpec& InWidthSpec, const FDreamMeasureSpec& InHeightSpec) const
+	{
+		return GetLayoutPreferredSize();
+	}
+	virtual void MarkLayoutDirty();
+protected:
+	bool bIsLayoutDirty = false;
+};
+
+USTRUCT(BlueprintType)
+struct FLayoutAnimationSnapshotData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	TObjectPtr<UDreamWidget> Widget = nullptr;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	FVector2D Position = FVector2D::ZeroVector;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	FVector2D Size = FVector2D::ZeroVector;
+};
+
+UCLASS(BlueprintType, Abstract, DefaultToInstanced, EditInlineNew)
+class DREAMGUI_API UDreamLayoutAnimation : public UObject
+{
+	GENERATED_BODY()
+public:
+	UDreamLayoutAnimation();
+
+	virtual void OnApplyLayoutResults(const TArray<FLayoutAnimationSnapshotData>& SnapshotDataArray, TArray<TWeakObjectPtr<UDreamTweener>>& ResultTweenerArray);
+
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+	UDreamLayoutContainer* GetLayoutContainer()const;
+private:
+	UPROPERTY(Transient, BlueprintReadOnly, Category = DreamGUI, Getter=GetLayoutContainer, meta = (AllowPrivateAccess = true), DisplayName=LayoutContainer)
+	mutable TObjectPtr<UDreamLayoutContainer> OwnerLayoutContainer;
+	bool bCanExecuteBlueprintEvent;
+protected:
+	UFUNCTION(BlueprintImplementableEvent, meta = (DisplayName = "OnApplyLayoutResults"), Category = "LayoutContainer")
+	void ReceiveOnApplyLayoutResults(const TArray<FLayoutAnimationSnapshotData>& SnapshotDataArray, TArray<UDreamTweener*>& ResultTweenerArray);
+};
+
+UCLASS(BlueprintType)
+class DREAMGUI_API UDreamLayoutAnimation_CommonTween : public UDreamLayoutAnimation
+{
+	GENERATED_BODY()
+private:
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	float Duration = 0.3f;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	EDreamTweenEase Ease = EDreamTweenEase::OutCubic;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer", meta = (EditCondition = "Ease==EDreamTweenEase::CurveFloat"))
+	FRuntimeFloatCurve EaseCurve;
+public:
+	virtual void OnApplyLayoutResults(const TArray<FLayoutAnimationSnapshotData>& SnapshotDataArray, TArray<TWeakObjectPtr<UDreamTweener>>& ResultTweenerArray) override;
+};
+
+UCLASS(BlueprintType)
+class DREAMGUI_API UDreamLayoutAnimation_SlideIn : public UDreamLayoutAnimation
+{
+	GENERATED_BODY()
+private:
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	float Duration = 0.3f;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	EDreamTweenEase Ease = EDreamTweenEase::OutCubic;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer", meta = (EditCondition = "Ease==EDreamTweenEase::CurveFloat"))
+	FRuntimeFloatCurve EaseCurve;
+
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	float OpacityOffset = 0;
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	FVector2D PositionOffset = FVector2D(100, 0);
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	FVector2D SizeOffset = FVector2D(0, 0);
+public:
+	virtual void OnApplyLayoutResults(const TArray<FLayoutAnimationSnapshotData>& SnapshotDataArray, TArray<TWeakObjectPtr<UDreamTweener>>& ResultTweenerArray) override;
+};
+
+/**
+ * LayoutContainer can handle children position
+ */
+UCLASS(BlueprintType, Abstract, DefaultToInstanced, EditInlineNew)
+class DREAMGUI_API UDreamLayoutContainer : public UDreamLayout
+{
+	GENERATED_BODY()
+public:
+	UDreamLayoutContainer();
+	virtual bool GetLayoutDebugInfo(const UDreamWidget* TargetWidget, FDreamLayoutDebugInfo& OutInfo) const;
+protected:
+	UPROPERTY(EditAnywhere, Category = "LayoutContainer")
+	bool bUseAnimation = false;
+	UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, BlueprintSetter = SetAnimationHandler, Category = "LayoutContainer", meta = (EditCondition = "bUseAnimation"))
+	TObjectPtr<UDreamLayoutAnimation> AnimationHandler;
+
+	//position and size snapshot before layout calculation
+	TArray<FLayoutAnimationSnapshotData> LayoutAnimSnapshotDataArray;
+	TArray<TWeakObjectPtr<UDreamTweener>> LayoutAnimTweenerArray;
+
+	/** Scratch list of participating children. Each container fills this itself, on its own filter rules. */
+	UPROPERTY(Transient)TArray<UDreamWidget*> Children;
+public:
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+	virtual void PostReinitProperties()override;
+
+	virtual void OnRegister() override;
+	/**
+	 * Ends the layout animation in flight: its tweens are killed where they stand. Nothing else ended them when
+	 * the container left its widget -- SnapshotLayout kills the previous run only when the next one starts.
+	 */
+	virtual void OnUnregister() override;
+	/** INDEX_NONE means this container does not impose a child-count limit. */
+	virtual int32 GetMaxChildren() const { return INDEX_NONE; }
+	/**
+	 * Behaviours the owning widget must carry for this container to match the UMG panel it mirrors
+	 * (a Size Box needs the ContentWidget, for example). UDreamWidget::SyncRequiredBehavioursForLayoutContainer
+	 * adds the missing ones whenever the container is assigned and removes the ones only the previous
+	 * container asked for, so this is the single place such a dependency is declared.
+	 */
+	virtual void GetRequiredBehaviourClasses(TArray<TSubclassOf<UDreamUIBehaviour>>& OutClasses) const {}
+
+	virtual void SnapshotLayout();
+	virtual void ApplyLayoutResult();
+
+	//called by DreamWidget during layout processing
+	virtual void CalculateLayout(){}
+
+	UFUNCTION(BlueprintCallable, Category = "LayoutContainer")
+	bool GetUseAnimation()const{return bUseAnimation;}
+	UFUNCTION(BlueprintCallable, Category = "LayoutContainer")
+	void SetUseAnimation(bool Value){bUseAnimation = Value;}
+
+	UFUNCTION(BlueprintCallable, Category = "LayoutContainer", meta=(DeterminesOutputType="LayoutClass"))
+	void SetLayoutAnimation(UDreamLayoutAnimation* Value);
+	/**
+	 * The property setter behind AnimationHandler, so writing it from Blueprint goes through the same
+	 * path an author gets from the details panel instead of dropping a handler in with nothing told
+	 * that it changed. SetLayoutAnimation is the older name and stays; this forwards to it.
+	 */
+	UFUNCTION(BlueprintSetter)
+	void SetAnimationHandler(UDreamLayoutAnimation* InAnimationHandler) { SetLayoutAnimation(InAnimationHandler); }
+	UFUNCTION(BlueprintCallable, Category = "LayoutContainer", meta=(DeterminesOutputType="LayoutClass"))
+	UDreamLayoutAnimation* CreateNewLayoutAnimation(TSubclassOf<UDreamLayoutAnimation> Class);
+	template<class T>
+	T* CreateNewLayoutAnimation()
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamLayoutAnimation>::Value, "'T' template parameter to CreateNewLayoutAnimation must be derived from UDreamLayoutAnimation");
+		return (T*)CreateNewLayoutAnimation(T::StaticClass());
+	}
+};
+
+/**
+ * LayoutSelf can handle self size.
+ * This base class just provide IgnoreLayout.
+ */
+UCLASS(BlueprintType, Abstract, DefaultToInstanced, EditInlineNew)
+class DREAMGUI_API UDreamLayoutSelf : public UDreamLayout
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+	virtual void PostReinitProperties()override;
+
+	//called by DreamWidget during layout processing
+	virtual void CalculateSize(){}
+
+	/**
+	 * The LayoutSelf half of UDreamPanelLayoutBase::BeginLayoutPass: answer whether this layout still
+	 * owes an apply, and consume the flag saying so.
+	 *
+	 * UDreamLayout::MarkLayoutDirty has always set bIsLayoutDirty on both halves, but only the container
+	 * half ever read it, so UpdateLayout ran CalculateSize() unconditionally -- once per layout pass per
+	 * widget carrying a LayoutSelf, whether or not anything it depends on had moved. That is a product,
+	 * not a sum: a tree with a thousand aspect-ratio nodes solved a thousand times on a pass nobody
+	 * needed. The writes were idempotent, so the cost was pure, which is why it never showed as a bug.
+	 *
+	 * The first call always answers true regardless of the flag. A layout deserialized with its widget
+	 * has no register-time dirtying of its own (CreateNewLayoutSelf marks, loading does not), and a
+	 * layout that never applied once would sit on the widget doing nothing at all.
+	 */
+	bool BeginLayoutPass();
+
+	virtual FDreamLayoutControlAnchorData GetLayoutControlAnchor(const UDreamWidget* Widget) const override{return FDreamLayoutControlAnchorData();}
+
+private:
+	/** See BeginLayoutPass: the very first apply is owed unconditionally. */
+	bool bHasAppliedOnce = false;
+};

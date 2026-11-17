@@ -5156,3 +5156,55 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正：遊戲執行緒只讀串流關卡數（UObject），取樣、寫 log、Flush 丟到 thread pool；上一輪還沒完成就跳過這輪。
 - 驗證：見提交訊息。另外 2 個 FTicker Self 卡頓（143、175 ms）不在 OKMem 的時間點，原因未查明，下一輪用 Insights trace 找。
 - 教訓：為了當機時留得住 log 而 Flush，不能放在遊戲執行緒的固定節奏裡；診斷程式本身也要量它的成本。
+## 2026-11-17 工作室包角色全黑、搬目錄後每張卡都說 game_root missing abdata
+
+- **全黑**：ef829dc3a 讓讀卡器一啟動就背景預載 194 個共用母材質，但放它們 shader 的 RuntimeMaterialBake 庫要到第一張卡才打開。打包版預載時找不到 shader（`Missing shader resource ... M_ForgeNose` 共 194 筆），母材質整個執行期都退回預設材質。編輯器與 -game 不 cook，所以只有包會黑。協調者原先懷疑是「新 stage 配 11-15 的舊 patch」，量過不是：材質 patch 自帶自己的 shader 庫，與 stage 主 pak 無關。修法：`OKOpenRuntimeMaterialShaderLibrary` 先開庫再預載，開卡也走同一個函式。
+- **搬目錄**：使用者把包從 `E:\Studio-20261117\Studio-20261117` 往上移一層，stage 裡的 junction 還指著舊位置。`packaged_launch` 只看連結「在不在」，失效的連結被當成存在，遊戲找不到 base_v1，退回 cook 進包的 Config `Root=D:/KoikatuSunshine`，不管卡有沒有 mod 都報 `game_root missing abdata`，ramps.json、MotionCatalogue.json 也讀不到。修法：`street_stage.link_content` 失效或指向別處就重建。
+- **包依賴開發機的遊戲**：同一個 Config 讓包裡的讀卡器去列、去開 `D:\KoikatuSunshine\UserData\chara\male`，語音也試寫死的 C:/D:/E: 路徑；使用者搬那個資料夾時被佔用。修法：包（有 PACKAGE.json）啟動時帶 `-NoGameRoot`，`UKKGameRoot` 的 Root 清空、語音不再試開發機路徑。
+- 教訓：打包產物一定要從包裡實際開一張卡再交出去；要測「沒有遊戲」得讓遊戲真的看不到開發機的遊戲目錄，日誌裡 grep 不到 KoikatuSunshine 才算。
+
+## 2026-11-17 打包版遇到一個不支援材質的部件，整張卡開不起來
+
+- 原作上衣的校徽 o_emblem_*（`Koikano/main_clothes_emblem`）沒有共用母材質，打包版讀卡器與工作室遇到穿這種上衣的原作卡就整張報 `Unsupported shared material family`，與 mod 無關。校徽改用 Studio 半透明道具母材質（ForgeStudioAlpha，已在共用資源裡）。
+- 通則：打包版某個部件拿不到共用材質時，只把那個部件拿掉（不畫、記一行 `Part N (...) left out`），角色其他部分照常載入；以前是整張卡失敗。
+- 順便：淚水部件建出來時是隱藏的，打包版以前沒給它材質，之後顯示會變引擎預設材質；現在一起做。
+
+## 2026-11-18 包在 16 GB 筆電上整個 3D 畫面全黑（低記憶體模式）
+
+- 現象：使用者在 RTX 4060 筆電（8 GB VRAM）解開工作室包，讀卡器開卡成功（ok=1、沒有缺 shader），但 3D 區整片黑；日誌只多一行 `LogSerialization: Error: Attempting to load a BulkData object that cannot be loaded from disk`。開發機（125 GB／32 GB）不會發生，我先前所有包內測試都沒碰到。
+- 根因：RAM < 48 GB 或 VRAM < 20 GB 自動開低記憶體模式（`OKRuntimeLowMemory`），執行期貼圖標 `BULKDATA_SingleUse`，第一次上傳後丟掉 CPU 那份。讀卡器與工作室的調色 LUT（`KKSDefaultSaturationLUT16.png`）先用 `TextureFromPngFile` 建好（已上傳），再改 `SRGB=false`、`LODGroup` 後 `UpdateResource()` 第二次上傳，這時像素已經沒了，LUT 全黑，整個畫面經過調色變黑。
+- 修法：`ColorLookupTextureFromPngFile` 在第一次上傳前就設好線性、LUT 群組與夾邊，只上傳一次，不丟 CPU 資料。
+- 教訓：包要在低記憶體模式下也跑一次（`CardReaderDevelopment.cmd <卡> -- -OKLowMemory`）；開發機不會自動進這個模式。
+
+## 2026-11-18 多行 perl 替换配不上 CRLF，一天做出两个「量过了」的幻觉实验
+
+- 现象：`perl -0777 -i -pe 's/…\n…/…/'` 改 `Tools/ok-extract/src/*.rs` 时，**pattern 里的 `\n` 配不上档案的
+  `\r\n`，所以什么都没替换**；接着 `cargo build` 成功（本来就能编），A/B 两边当然一模一样。没有任何红字。
+- 因此产出两个看起来量过、其实没量的结论：（a）「prefetch helper 数 8／6／4／3 的扫描」——
+  `OK_PREFETCH_HELPERS` 这个旋钮从未进档案，等于把同一个设定量了 12 次（1.46–2.79 s 只有噪声没有形状，
+  我当时归因于机器吵）；（b）「贴图 payload memo 放宽到 ≥512²」第一次量到「零效果」，改用 `Edit` 重做
+  之后立刻看到重复 12 → 5。要是没重做，就会留下一条「量过、没用」的错误纪录，比没查更糟。
+- 修法与通则：**这棵树的多行改动用 `Edit`，或用指定行号的 `sed`／`sed -n` 拼档；perl 只用单行 pattern。**
+  改完先 `git diff --stat` 确认行数变了再建置。
+- 更一般的防线还是同一条（和 `VAR=$v` 那次一样）：**先证明开关是活的**。这次是加临时的分支计数器才看出
+  改动不在那条路上（`branch plain` 41 次、`branch transform` 41 次、`branch memo` 0 次），顺带发现
+  `memosnap::active(TEX)` 在这些开卡里一直是 false，我第一个 single-flight 放的位置根本是死码。
+- 量测细节见 [Docs/CARD_OPEN_PERF_20261117.md](CARD_OPEN_PERF_20261117.md) 第二、三节。
+
+## 2026-11-18 有机制又有数字，仍然是噪声：差点把「把复制搬出锁」当成 −5.4%
+
+- 现象链：`load_base_bundles` 在 hair gloss 并行时从 113 涨到 678 ms。我在 `gamefs::read` 找到
+  「index mutex 持锁期间做位元组复制」，OK 卡几乎每次读取都走那里、9 条执行绪共一把锁 —— **机制完全
+  说得通**。把复制搬到锁外，C006 中位数 1.855 → 1.755 s（10 轮交错，−5.4%，最小值 −9%）。
+- 差点就提交了。继续查是因为换 C001／C049 不一致（＋1.9%／−10%）。
+- 决定性的一步不是再多量几轮 wall，而是**直接量那个机制**：给临界区加一个 SPOT，把「等锁＋持锁」
+  跨执行绪加总。**对单一 mutex，那段时间不可能重叠，所以那个加总就是被串行化的墙钟**，可以直接读
+  （其他 SPOT 的加总不行）。结果 **0.1–0.7 ms／227–320 次读取** —— 这把锁完全不是瓶颈，那 −5.4% 是噪声。
+- 通则（补强 `8d5a476d6` 那条）：**「我有一个说得通的机制」不但不能代替量测，它还会让你停止怀疑一个
+  噪声级的数字。** 有了机制假设之后，要量的是**机制本身**（这里：临界区的时间），不是再量一次结果。
+  机制可量而且通常比结果便宜、也不受机器负载影响。
+- 真正的原因留在报告里：那个窗口是**第一次触碰资源包页面的 I/O**（关掉 entry prefetch 後，同一笔
+  gloss 从 588 ms 掉到约 5 ms），所以**在那个窗口里重排执行绪一律没有收益**。
+- 同一天同一类的另一笔：hair gloss 先在**没有预热的 plain 模式**量出「零收益」，换到读卡器自己的冷路径
+  （`--sequence` ＋ `OK_BENCH_PREWARM=concurrent`）才看清原因；代表性是必要条件，但换对路径之后结论
+  仍可能不变。两笔都在 [Docs/CARD_OPEN_PERF_20261117.md](CARD_OPEN_PERF_20261117.md) 第二、三节。

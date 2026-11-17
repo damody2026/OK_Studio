@@ -1,0 +1,240 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/Blueprint.h"
+#include "Engine/EngineTypes.h"
+// EViewModeIndex, for the saved viewport state below. EngineTypes.h does not carry it, and inside a
+// unity blob some neighbour always had. -SingleFile on any file that reaches this header said so.
+#include "Engine/EngineBaseTypes.h"
+#include "Core/DreamWidgetEachBinding.h"
+#include "Core/DreamWidgetPropertyBinding.h"
+#include "Core/DreamWidgetViewModelSlot.h"
+#include "DreamWidgetBlueprint.generated.h"
+
+class UDreamWidgetTree;
+class UDreamWidget;
+
+/**
+ * What the designer remembers about one authored hierarchy, as opposed to what the hierarchy IS.
+ *
+ * The prefab kept the same set in FDreamUIPrefabDataForPrefabEditor, keyed by the GUIDs its helper
+ * object handed out. There are no GUIDs here: a widget is identified by its object FName, which is
+ * what the class archetype and every instance preserve, and which is therefore already the key the
+ * template-to-preview correspondence runs on. Two keys for the same thing is how they drift.
+ *
+ * Grid snapping and the overlays are deliberately NOT here -- those are per-author preferences and
+ * live in UDreamUIDesignerSettings (EditorPerProjectUserSettings). What stays on the asset is what
+ * describes the hierarchy itself: how big its canvas is, and which of its widgets are put away.
+ */
+USTRUCT()
+struct FDreamWidgetDesignerData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FVector ViewLocation = FVector::ZeroVector;
+	UPROPERTY()
+	FRotator ViewRotation = FRotator::ZeroRotator;
+	UPROPERTY()
+	FVector ViewOrbitLocation = FVector::ZeroVector;
+
+	/** The design canvas the hierarchy is authored against. */
+	UPROPERTY()
+	FIntPoint CanvasSize = FIntPoint(1920, 1080);
+	/**
+	 * Device resolution the designer picked. The hierarchy's own canvas-scaler rule turns it into
+	 * CanvasSize, which is why the two differ for anything but ConstantPixelSize. Zero means nobody
+	 * has picked one, in which case CanvasSize is the resolution.
+	 */
+	UPROPERTY()
+	FIntPoint DesignViewportSize = FIntPoint::ZeroValue;
+	/**
+	 * CanvasSize was taken from the size of the .dui root, nobody having picked one, and follows it: a root resized in
+	 * the file resizes the canvas on the next compile. Cleared by picking a resolution.
+	 */
+	UPROPERTY()
+	bool bCanvasFollowsRoot = false;
+	/** Preview render mode (an EDreamRenderMode). ScreenSpaceOverlay by default, as in the designer. */
+	UPROPERTY()
+	uint8 CanvasRenderMode = 0;
+
+	UPROPERTY()
+	TEnumAsByte<EViewModeIndex> ViewMode = EViewModeIndex::VMI_Lit;
+	/** ELevelViewportType; 2 is LVT_OrthoYZ, the plane DreamUI lays out in. */
+	UPROPERTY()
+	uint8 ViewportType = 2;
+
+	/** Hierarchy rows the author has collapsed. Keyed by template widget object FName. */
+	UPROPERTY()
+	TSet<FName> UnexpandedWidgets;
+	/** Widgets hidden in the designer only; runtime WidgetActive is untouched. */
+	UPROPERTY()
+	TSet<FName> HiddenWidgets;
+	/** Widgets protected from selection and manipulation in the designer. */
+	UPROPERTY()
+	TSet<FName> LockedWidgets;
+};
+
+/**
+ * One `events` entry as a compile declared it: the dispatcher's name and its parameters, as the variable descriptions
+ * (name and pin type) its signature graph is made from. Kept so a compile whose .dui does not build can declare the
+ * dispatcher again -- see UDreamWidgetBlueprint::LastGoodDispatchers.
+ */
+USTRUCT()
+struct FDreamWidgetTextDispatcher
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FName Name;
+
+	UPROPERTY()
+	TArray<FBPVariableDescription> Parameters;
+};
+
+/**
+ * The authoring asset for a DreamUI hierarchy that is a class -- UMG's UWidgetBlueprint, for DreamUI.
+ *
+ * It holds the hierarchy a designer edits; compiling duplicates that onto the generated class as the
+ * archetype instances are built from. The two copies are deliberate and match UMG: editing the
+ * archetype in place would mutate every live instance's template mid-session.
+ *
+ * Never cooked, like UWidgetBlueprint -- a cooked build has the generated class, bytecode included,
+ * and needs nothing else. Uncooked content is another matter: an editor build drops a Blueprint's
+ * saved bytecode on load and rebuilds it from the Blueprint, so any process running uncooked content
+ * -- a game started with -game or as Standalone Game included -- needs this class and its compiler,
+ * which is why their module is UncookedOnly rather than Editor (FDreamGUIEditorModule::StartupModule).
+ * The designer surface for it is out of scope here: a stock Blueprint editor opens this asset and
+ * can already author graphs and variables against it.
+ */
+UCLASS(BlueprintType, DisplayName = "DreamUI Widget Blueprint")
+class DREAMGUIEDITOR_API UDreamWidgetBlueprint : public UBlueprint
+{
+	GENERATED_BODY()
+
+public:
+	UDreamWidgetBlueprint();
+
+	/** The hierarchy being authored. Never handed to instances directly; the compiler duplicates it. */
+	UPROPERTY()
+	TObjectPtr<UDreamWidgetTree> WidgetTree = nullptr;
+
+	/** Designer session state for this asset. Not part of the hierarchy; see the struct. */
+	UPROPERTY()
+	FDreamWidgetDesignerData DesignerData;
+
+	/**
+	 * Property bindings as authored. The compiler resolves each into the class's copy, and reports
+	 * the ones it cannot -- so a binding that stops making sense (the widget renamed, the function
+	 * deleted, the setter's type changed) surfaces on the next compile rather than at runtime.
+	 */
+	UPROPERTY()
+	TArray<FDreamWidgetPropertyBinding> PropertyBindings;
+
+	/** `each` blocks, authored form; the compiler validates the source and hands them to the class. */
+	UPROPERTY()
+	TArray<FDreamWidgetEachBinding> EachBindings;
+
+	/** `Event -> Handler` lines, authored form; CompileEventBindings resolves them onto the class. */
+	UPROPERTY()
+	TArray<FDreamWidgetEventBinding> EventBindings;
+
+	/**
+	 * The `viewmodels` entries of this asset's .dui, as its last read declared them: variable, class and where the object
+	 * comes from. Rewritten by every compile that parses the file -- empty when it has no `viewmodels` block -- and left
+	 * alone by one that does not (the variables of the last good read are declared again with the hierarchy it kept),
+	 * and by an asset that names no .dui at all. The compiler hands it to the generated class
+	 * (UDreamWidgetGeneratedClass::SetViewModelSlots), which the run time fills at Initialize.
+	 */
+	UPROPERTY()
+	TArray<FDreamWidgetViewModelSlot> ViewModelSlots;
+
+	/**
+	 * The `resources` class variables of the last compile that read this asset's .dui into a hierarchy.
+	 *
+	 * A compile whose file does not parse -- or cannot be read, or builds nothing -- keeps the previous
+	 * hierarchy, and declares these again with it: the Blueprint compiler empties every generated variable
+	 * before a compile declares its own, so the class would otherwise lose every resource, and every graph
+	 * node reading one would fail with an error pointing away from the one mistake in the file. Saved, so
+	 * a file that stopped parsing while the editor was closed still compiles with them. Empty for an asset
+	 * that names no .dui.
+	 */
+	UPROPERTY()
+	TArray<FBPVariableDescription> LastGoodResourceVariables;
+
+	/**
+	 * The `props` variables, `events` dispatchers and hidden anonymous-widget variable names of the last compile that
+	 * read this asset's .dui into a hierarchy -- LastGoodResourceVariables' reason, for the class members the file
+	 * declares beside its resources. A file that stops parsing keeps the previous hierarchy, and that hierarchy's
+	 * bindings read these props, its emit handlers call these dispatchers and its unnamed widgets need their variables
+	 * hidden; without them every one of those fails with an error pointing away from the one mistake in the file.
+	 * Empty for an asset that names no .dui.
+	 */
+	UPROPERTY()
+	TArray<FBPVariableDescription> LastGoodPropVariables;
+
+	UPROPERTY()
+	TArray<FDreamWidgetTextDispatcher> LastGoodDispatchers;
+
+	UPROPERTY()
+	TArray<FName> LastGoodHiddenWidgetNames;
+
+	/**
+	 * Create the tree if this asset has none yet, so a fresh asset is editable.
+	 *
+	 * bEnsureRootWidget also puts a bare root in an empty tree, which is what makes a NEW asset
+	 * openable. It has to be opt-OUT rather than unconditional: the designer can delete the root now
+	 * (DreamWidgetTreeEditing::DeleteWidget, matching UMG), and an unconditional root here put one
+	 * straight back -- so the delete appeared to work, the hierarchy panel emptied, and the very next
+	 * caller resurrected a root the author had not asked for. The editing paths pass false and let
+	 * the empty state be real; asset creation and opening a designer pass true, because a hierarchy
+	 * nobody has authored yet still needs something to drop onto.
+	 */
+	UDreamWidgetTree* GetOrCreateWidgetTree(bool bEnsureRootWidget = true);
+
+	/** Every widget in the authored hierarchy, root first. Empty when nothing has been authored. */
+	void GetAllSourceWidgets(TArray<UDreamWidget*>& OutWidgets) const;
+
+	/**
+	 * Give a .dui-backed Blueprint whose designer size nobody has chosen the size of its own root, so a 560x236 card
+	 * opens on a 560x236 canvas instead of a speck in the middle of 1920x1080.
+	 *
+	 * Only while the size really is unchosen: no device resolution was ever picked (DesignViewportSize is zero) and the
+	 * canvas is still the struct's default. Only for a root that has a size of its own -- neither axis stretched -- so
+	 * a screen that fills its host keeps the default canvas it is laid out against. A root that still has a
+	 * freshly constructed widget's 100x100 is taken as having declared nothing, and is left alone too: that size is
+	 * what an unsized root comes out as, and a canvas of it would shrink every such screen to a postage stamp.
+	 * Not recorded in DesignViewportSize, so it stays a default and a later choice replaces it. Called by the
+	 * compile that builds the hierarchy from the file and by the designer as it opens, which together cover a class
+	 * made by a script and one compiled before this existed. Returns whether the canvas size changed.
+	 */
+	bool AdoptRootSizeAsDefaultCanvas();
+
+	/**
+	 * The design canvas the hierarchy is authored against, as stored on the asset. What the designer opens with.
+	 *
+	 * Exposed so a script can read it without exporting the designer data as property text.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamUI|Designer")
+	FIntPoint GetDesignerCanvasSize() const;
+
+	/**
+	 * Choose the design canvas, as picking a custom screen size in the designer does: the asset records it as the
+	 * resolution the author picked, an open designer is resized with it, and compiles no longer replace it with the
+	 * root's own size. The canvas is taken as the device resolution, so a hierarchy whose root canvas scales
+	 * (anything but Constant Pixel Size) may lay out on a different canvas than the one asked for.
+	 *
+	 * Returns false, and changes nothing, when either axis is below one.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamUI|Designer")
+	bool SetDesignerCanvasSize(FIntPoint InSize);
+
+	virtual UClass* GetBlueprintClass() const override;
+	virtual bool SupportedByDefaultBlueprintFactory() const override { return false; }
+	virtual bool AlwaysCompileOnLoad() const override { return true; }
+#if WITH_EDITOR
+	virtual void GetReparentingRules(TSet<const UClass*>& AllowedChildrenOfClasses, TSet<const UClass*>& DisallowedChildrenOfClasses) const override;
+#endif
+};

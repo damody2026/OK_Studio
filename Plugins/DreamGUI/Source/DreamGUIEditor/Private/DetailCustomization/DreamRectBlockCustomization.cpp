@@ -1,0 +1,736 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+
+#include "DetailCustomization/DreamRectBlockCustomization.h"
+#include "Core/DreamUIWorldContext.h"
+#include "DreamDetailsCopyPaste.h"
+#include "DreamDetailsMultiSelect.h"
+#include "DreamDetailsTemplateMirror.h"
+#include "DreamUIEditorUtils.h"
+#include "Core/Components/DreamRectBlock.h"
+#include "Utils/DreamUIUtils.h"
+#include "DreamGUIEditorModule.h"
+#include "DetailLayoutBuilder.h"
+#include "DetailCategoryBuilder.h"
+#include "IDetailGroup.h"
+#include "IPropertyUtilities.h"
+#include "Core/Components/DreamWidget.h"
+#include "Designer/DreamDesignerGradientHandles.h"
+#include "Designer/DreamDesignerHandles.h"
+#include "DetailWidgetRow.h"
+#include "Styling/AppStyle.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SNumericEntryBox.h"
+#include "Widgets/Text/STextBlock.h"
+
+#define LOCTEXT_NAMESPACE "DreamRectBlockCustomization"
+
+namespace DreamRectBlockCustomizationLocal
+{
+	/**
+	 * A toggle under one of the gradients that has the viewport show its handles (FDreamDesignerHandles::SetActive), as Tab
+	 * in the viewport would; turned off, the viewport picks again.
+	 */
+	void AddViewportHandlesRow(IDetailGroup& InGroup, EDreamRectBlockGradientSlot InSlot, const TAttribute<bool>& InEnabled)
+	{
+		const FName Provider = DreamDesignerGradientHandles::GetProviderName(InSlot);
+		InGroup.AddWidgetRow()
+		.FilterString(LOCTEXT("ViewportHandlesSearch", "Viewport Handles"))
+		.IsEnabled(InEnabled)
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+			.Text(LOCTEXT("ViewportHandles", "Viewport Handles"))
+		]
+		.ValueContent()
+		[
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.IsChecked_Lambda([Provider]()
+			{
+				return FDreamDesignerHandles::GetActive() == Provider ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([Provider](ECheckBoxState InState)
+			{
+				FDreamDesignerHandles::SetActive(InState == ECheckBoxState::Checked ? Provider : NAME_None);
+			})
+			.ToolTipText(LOCTEXT("ViewportHandles_ToolTip", "Drag this gradient's ends and stops in the designer's viewport. The viewport shows one kind of handles at a time; Tab there steps through the others."))
+			[
+				SNew(STextBlock)
+				.Margin(FMargin(6.0f, 1.0f))
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+				.Text(LOCTEXT("EditInViewport", "Edit in Viewport"))
+			]
+		];
+	}
+}
+FDreamRectBlockCustomization::FDreamRectBlockCustomization()
+{
+}
+
+FDreamRectBlockCustomization::~FDreamRectBlockCustomization()
+{
+	
+}
+
+TSharedRef<IDetailCustomization> FDreamRectBlockCustomization::MakeInstance()
+{
+	return MakeShareable(new FDreamRectBlockCustomization);
+}
+void FDreamRectBlockCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	TArray<TWeakObjectPtr<UObject>> targetObjects;
+	DetailBuilder.GetObjectsBeingCustomized(targetObjects);
+	TargetScriptArray.Empty();
+	for (auto item : targetObjects)
+	{
+		if (auto validItem = Cast<UDreamRectBlock>(item.Get()))
+		{
+			TargetScriptArray.Add(TWeakObjectPtr<UDreamRectBlock>(validItem));
+			if (DreamUI::IsEditingWorld(validItem))
+			{
+				validItem->GetWidget()->MarkCanvasUpdate(true);
+			}
+		}
+	}
+	if (TargetScriptArray.Num() == 0)
+	{
+		UE_LOG(DreamGUIEditor, Log, TEXT("[%s].%d Get TargetScript is null"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__);
+		return;
+	}
+
+	// The panel edits a visual, but "Snap Size" changes its WIDGET's geometry. Both of these are
+	// captured by the button lambdas below; see DreamDetailsTemplateMirror for why the hook is
+	// called by hand at all.
+	FNotifyHook* NotifyHook = DetailBuilder.GetPropertyUtilities()->GetNotifyHook();
+	FProperty* AnchorDataProperty = FindFProperty<FProperty>(UDreamWidget::StaticClass(), UDreamWidget::GetPropertyName_AnchorData());
+
+	const FMargin OuterPadding(2, 0);
+	const FMargin ContentPadding(2);
+	auto CreateUnitSelector = [=](TSharedRef<IPropertyHandle> PropertyHandle) {
+		return
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(EVerticalAlignment::VAlign_Center)
+		.Padding(OuterPadding)
+		[
+			SNew( SCheckBox )
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.ToolTipText(LOCTEXT("Value_Tooltip", "Use direct value"))
+			.Padding(ContentPadding)
+			.OnCheckStateChanged_Lambda([=](ECheckBoxState InCheckboxState){
+				PropertyHandle->SetValue((uint8)EDreamRectBlockUnitMode::Value);
+				})
+			.IsChecked_Lambda([=] {
+				return DreamDetailsMultiSelect::CheckedIfEqual<uint8>(PropertyHandle, (uint8)EDreamRectBlockUnitMode::Value);
+				})
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("Value", "V"))
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+			]
+		]
+
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(EVerticalAlignment::VAlign_Center)
+		.Padding(OuterPadding)
+		[
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.ToolTipText(LOCTEXT("Percentage_Tooltip", "Use percentage of rect width and height"))
+			.Padding(ContentPadding)
+			.OnCheckStateChanged_Lambda([=](ECheckBoxState InCheckboxState) {
+			PropertyHandle->SetValue((uint8)EDreamRectBlockUnitMode::Percentage);
+				})
+			.IsChecked_Lambda([=] {
+				return DreamDetailsMultiSelect::CheckedIfEqual<uint8>(PropertyHandle, (uint8)EDreamRectBlockUnitMode::Percentage);
+				})
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("Percentage", "%"))
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+			]
+		]
+		;
+	};
+
+	auto CreateNumericPropertyWithUnitMode = [](TSharedPtr<IPropertyHandle> PropertyHandle, TSharedPtr<IPropertyHandle> UnitModePropertyHandle, bool EnableMinMax)
+	{
+		auto GetUnitMode = [=]()
+		{
+			EDreamRectBlockUnitMode UnitMode = EDreamRectBlockUnitMode::Value;
+			UnitModePropertyHandle->GetValue(*(uint8*)&UnitMode);
+			return UnitMode;
+		};
+		// One undo entry per gesture, not per mouse tick.
+		//
+		// These rows spin, and a spin box fires OnValueChanged on every mouse move. A plain SetValue
+		// there is a full edit each time: its own transaction on the undo stack, its own mirror of the
+		// value onto the blueprint template, and its own write-back flush of the `.dui` -- dozens per
+		// drag, and Ctrl+Z afterwards undid one mouse move. Marked InteractiveChange while the slider
+		// is down instead, which is the flag the property system, the undo buffer and the designer's
+		// notify hook all read as "not finished yet"; the end of the drag writes it properly once.
+		TSharedRef<bool> bIsSliding = MakeShared<bool>(false);
+		return
+			SNew(SNumericEntryBox<float>)
+			.OnBeginSliderMovement_Lambda([bIsSliding]()
+			{
+				*bIsSliding = true;
+			})
+			.OnEndSliderMovement_Lambda([=](float Value)
+			{
+				*bIsSliding = false;
+				Value = GetUnitMode() == EDreamRectBlockUnitMode::Percentage ? Value * 0.01f : Value;
+				PropertyHandle->SetValue(Value);
+			})
+			.OnValueCommitted_Lambda([=](float Value, ETextCommit::Type)
+			{
+				Value = GetUnitMode() == EDreamRectBlockUnitMode::Percentage ? Value * 0.01f : Value;
+				PropertyHandle->SetValue(Value);
+			})
+			.MinValue(EnableMinMax ? 0 : TOptional<float>())
+			.MaxValue_Lambda([=]()
+			{
+				if (!EnableMinMax)return TOptional<float>();
+				return GetUnitMode() == EDreamRectBlockUnitMode::Percentage ? 100 : TOptional<float>();
+			})
+			.AllowSpin(true)
+			.MinSliderValue(EnableMinMax ? 0 : TOptional<float>())
+			.MaxSliderValue_Lambda([=]()
+			{
+				if (!EnableMinMax)return TOptional<float>();
+				return GetUnitMode() == EDreamRectBlockUnitMode::Percentage ? 100 : TOptional<float>();
+			})
+			.OnValueChanged_Lambda([=](float Value)
+			{
+				Value = GetUnitMode() == EDreamRectBlockUnitMode::Percentage ? Value * 0.01f : Value;
+				PropertyHandle->SetValue(Value, *bIsSliding
+					? EPropertyValueSetFlags::InteractiveChange : EPropertyValueSetFlags::DefaultFlags);
+			})
+			.Value_Lambda([=]()
+			{
+				float Value = 0;
+				if (PropertyHandle->GetValue(Value) == FPropertyAccess::Success)
+				{
+					Value = GetUnitMode() == EDreamRectBlockUnitMode::Percentage ? Value * 100 : Value;
+					return Value;
+				}
+				return Value;
+			});
+	};
+
+	auto CreateVectorPropertyWithUnitMode = [&](FName PropertyName, IDetailGroup& Group, FText PropertyDisplayName, const TAttribute<bool>& IsEnabledAttribute, bool EnableMinMax) {
+		auto PropertyHandle = DetailBuilder.GetProperty(PropertyName);
+		PropertyHandle->SetPropertyDisplayName(PropertyDisplayName);
+		auto PropertyUnitHandle = DetailBuilder.GetProperty(FName(*(PropertyName.ToString() + TEXT("UnitMode"))));
+		// Drawn on this row of its own, so out of the category's default rows.
+		DetailBuilder.HideProperty(PropertyHandle);
+		DetailBuilder.HideProperty(PropertyUnitHandle);
+		auto ValueHorizontalBox = SNew(SHorizontalBox);
+		uint32 NumChildren = 0;
+		PropertyHandle->GetNumChildren(NumChildren);
+		if (NumChildren == 0)
+		{
+			ValueHorizontalBox->AddSlot()
+			[
+				CreateNumericPropertyWithUnitMode(PropertyHandle, PropertyUnitHandle, EnableMinMax)
+			];
+		}
+		else
+		{
+			for (uint32 i = 0; i < NumChildren; i++)
+			{
+				ValueHorizontalBox->AddSlot()
+				[
+					CreateNumericPropertyWithUnitMode(PropertyHandle->GetChildHandle(i), PropertyUnitHandle, EnableMinMax)
+				];
+			}
+		}
+		FDetailWidgetRow& VectorRow = Group.AddWidgetRow();
+		// A hand-built row has no property node, so the search box matches only its FilterString.
+		VectorRow
+		.FilterString(PropertyDisplayName)
+		.PropertyHandleList({ PropertyHandle })
+		.IsEnabled(IsEnabledAttribute)
+		.NameContent()
+		[
+			SNew(SBox)
+			.MinDesiredWidth(1000)
+			[
+				SNew(SHorizontalBox)
+				+SHorizontalBox::Slot()
+				[
+					PropertyHandle->CreatePropertyNameWidget()
+				]
+				+SHorizontalBox::Slot()
+				.HAlign(HAlign_Right)
+				[
+					CreateUnitSelector(PropertyUnitHandle)
+				]
+			]
+		]
+		.ValueContent()
+		[
+			ValueHorizontalBox
+		]
+	;
+		DreamDetailsCopyPaste::BindToRow(VectorRow, PropertyHandle);
+	};
+
+#define TO_TEXT(x) #x
+
+#define AddPropertyRowToGroup(PropertyName, DisplayName, Group, IsEnabledAttribute)\
+auto PropertyName##Handle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, PropertyName));\
+PropertyName##Handle->SetPropertyDisplayName(LOCTEXT(TO_TEXT(PropertyName##_DisplayName), TO_TEXT(DisplayName)));\
+Group.AddPropertyRow(PropertyName##Handle).IsEnabled(IsEnabledAttribute);
+
+#define AddVectorPropertyRowToGroup(PropertyName, DisplayName, Group, IsEnabledAttribute, EnableMinMax)\
+CreateVectorPropertyWithUnitMode(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, PropertyName), Group, LOCTEXT(TO_TEXT(PropertyName##_DisplayName), TO_TEXT(DisplayName)), IsEnabledAttribute, EnableMinMax);
+	
+	using namespace DreamRectBlockCustomizationLocal;
+	IDetailCategoryBuilder& DreamGUICategory = DetailBuilder.EditCategory("DreamGUI");
+	
+	// The rows below lay the rect block's own category out; what they do not place stays in it, and what they edit on another
+	// property's row (the unit buttons, the lock, the texture switch) is tagged DreamGUI_Hidden.
+
+	auto UniformSetCornerRadiusHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bUniformSetCornerRadius));
+	auto CornerRadiusUnitModeHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, CornerRadiusUnitMode));
+	auto CornerRadiusHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, CornerRadius));
+	auto CornerRadiusXHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, CornerRadius.X));
+	auto CornerRadiusYHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, CornerRadius.Y));
+	auto CornerRadiusZHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, CornerRadius.Z));
+	auto CornerRadiusWHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, CornerRadius.W));
+	auto CornerRadiusPropertyIsEnabledFunction = [=] {
+		bool bUniformSetCornerRadius = false;
+		UniformSetCornerRadiusHandle->GetValue(bUniformSetCornerRadius);
+		return !bUniformSetCornerRadius;
+	};
+
+	CornerRadiusXHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([=] {
+		float CornerRadiusX = 0.0f;
+		if (DreamDetailsMultiSelect::AllEqual(UniformSetCornerRadiusHandle, true)
+			&& CornerRadiusXHandle->GetValue(CornerRadiusX) == FPropertyAccess::Success)
+		{
+			CornerRadiusYHandle->SetValue(CornerRadiusX);
+			CornerRadiusZHandle->SetValue(CornerRadiusX);
+			CornerRadiusWHandle->SetValue(CornerRadiusX);
+		}
+		}));
+
+	// Drawn on the row below, so out of the category's default rows.
+	DetailBuilder.HideProperty(CornerRadiusHandle);
+	DreamGUICategory.AddCustomRow(LOCTEXT("CornerRadius", "CornerRadius"), false)
+	.PropertyHandleList({ CornerRadiusHandle, UniformSetCornerRadiusHandle, CornerRadiusUnitModeHandle })
+	.OverrideResetToDefault(FResetToDefaultOverride::Create(TAttribute<bool>::CreateLambda([=]()
+	{
+		return UniformSetCornerRadiusHandle->CanResetToDefault() || CornerRadiusUnitModeHandle->CanResetToDefault() || CornerRadiusHandle->CanResetToDefault();
+	}), FSimpleDelegate::CreateLambda([=]()
+	{
+		UniformSetCornerRadiusHandle->ResetToDefault();
+		CornerRadiusUnitModeHandle->ResetToDefault();
+		CornerRadiusHandle->ResetToDefault();
+	})))
+	.NameContent()
+	[
+		SNew(SBox)
+		.MinDesiredWidth(1000)
+		[
+			SNew(SHorizontalBox)
+			+SHorizontalBox::Slot()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(CornerRadiusHandle->GetPropertyDisplayName())
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+			]
+			+SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(FMargin(4.0f, 0.0f, 0.0f, 0.0f))
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([=] {
+					bool bUniformSetCornerRadius = false;
+					UniformSetCornerRadiusHandle->GetValue(bUniformSetCornerRadius);
+					return bUniformSetCornerRadius ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+				.OnCheckStateChanged_Lambda([=](ECheckBoxState NewState){
+					bool bUniformSetCornerRadius = (NewState == ECheckBoxState::Checked) ? true : false;
+					UniformSetCornerRadiusHandle->SetValue(bUniformSetCornerRadius);
+					})
+				.Style(FAppStyle::Get(), "TransparentCheckBox")
+				.ToolTipText(LOCTEXT("UniformSetCornerRadiusToolTip", "When locked, corner radius will all set with x value"))
+				[
+					SNew(SImage)
+					.Image_Lambda([=] {
+						bool bUniformSetCornerRadius = false;
+						UniformSetCornerRadiusHandle->GetValue(bUniformSetCornerRadius);
+						return bUniformSetCornerRadius ? FAppStyle::GetBrush(TEXT("Icons.Lock")) : FAppStyle::GetBrush(TEXT("Icons.Unlock"));
+						})
+					.ColorAndOpacity(FSlateColor::UseForeground())
+				]
+			]
+			+SHorizontalBox::Slot()
+			.AutoWidth()
+			.HAlign(HAlign_Right)
+			.Padding(FMargin(4.0f, 0.0f, 0.0f, 0.0f))
+			[
+				CreateUnitSelector(CornerRadiusUnitModeHandle)
+			]
+		]
+	]
+	.ValueContent()
+	.MinDesiredWidth(500)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.VAlign(VAlign_Center)
+		.FillWidth(1)
+		[
+			CreateNumericPropertyWithUnitMode(CornerRadiusXHandle, CornerRadiusUnitModeHandle, true)
+		]
+		+ SHorizontalBox::Slot()
+		.VAlign(VAlign_Center)
+		.FillWidth(1)
+		[
+			SNew(SBox)
+			.IsEnabled_Lambda(CornerRadiusPropertyIsEnabledFunction)
+			[
+				CreateNumericPropertyWithUnitMode(CornerRadiusYHandle, CornerRadiusUnitModeHandle, true)
+			]
+		]
+		+ SHorizontalBox::Slot()
+		.VAlign(VAlign_Center)
+		.FillWidth(1)
+		[
+			SNew(SBox)
+			.IsEnabled_Lambda(CornerRadiusPropertyIsEnabledFunction)
+			[
+				CreateNumericPropertyWithUnitMode(CornerRadiusZHandle, CornerRadiusUnitModeHandle, true)
+			]
+		]
+		+ SHorizontalBox::Slot()
+		.VAlign(VAlign_Center)
+		.FillWidth(1)
+		[
+			SNew(SBox)
+			.IsEnabled_Lambda(CornerRadiusPropertyIsEnabledFunction)
+			[
+				CreateNumericPropertyWithUnitMode(CornerRadiusWHandle, CornerRadiusUnitModeHandle, true)
+			]
+		]
+	]
+	;
+	DreamGUICategory.AddProperty(DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bSoftEdge)));
+
+	//body
+	auto EnableBodyHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBody));
+	EnableBodyHandle->SetPropertyDisplayName(LOCTEXT("EnableBody_DisplayName", "Body"));
+	auto& BodyGroup = DreamGUICategory.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBody), EnableBodyHandle->GetPropertyDisplayName(), false, true);
+	BodyGroup.HeaderProperty(EnableBodyHandle);
+	{
+		auto EnableBodyAttribute = TAttribute<bool>::CreateLambda([=]()
+		{
+			bool bEnable = false;
+			EnableBodyHandle->GetValue(bEnable);
+			return bEnable;
+		});
+		AddPropertyRowToGroup(BodyColor, Color, BodyGroup, EnableBodyAttribute);
+
+		auto BodyTextureModeHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodyTextureMode));
+		// A disagreeing selection gets the first mode, which is the property's own default: the panel
+		// has to build one shape or the other, and picking it off the stack is not a choice.
+		const auto BodyTextureMode = (EDreamRectBlockTextureMode)DreamDetailsMultiSelect::ValueOr<uint8>(BodyTextureModeHandle, 0);
+		// Through the property utilities, not the layout builder: the refresh this asks for destroys the builder.
+		BodyTextureModeHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDreamRectBlockCustomization::ForceRefresh, TWeakPtr<IPropertyUtilities>(DetailBuilder.GetPropertyUtilities())));
+		auto BodyTextureHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodyTexture));
+		BodyTextureHandle->SetPropertyDisplayName(LOCTEXT("BodyTexture_DisplayName", "Texture"));
+		auto BodySpriteTextureHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodySpriteTexture));
+		BodySpriteTextureHandle->SetOnPropertyValuePreChange(FSimpleDelegate::CreateLambda([=, this] {
+			for (auto item : TargetScriptArray)
+			{
+				if (item.IsValid())
+				{
+					item->OnPreChangeSpriteProperty();
+				}
+			}
+			}));
+		BodySpriteTextureHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([=, this] {
+			for (auto item : TargetScriptArray)
+			{
+				if (item.IsValid())
+				{
+					item->OnPostChangeSpriteProperty();
+				}
+			}
+			}));
+		BodySpriteTextureHandle->SetPropertyDisplayName(LOCTEXT("BodySpriteTexture_DisplayName", "Sprite"));
+		auto& TextureGroup = BodyTextureMode == EDreamRectBlockTextureMode::Texture
+			? BodyGroup.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodyTexture), BodyTextureHandle->GetPropertyDisplayName(), true)
+			: BodyGroup.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodySpriteTexture), BodySpriteTextureHandle->GetPropertyDisplayName(), true)
+			;
+		auto TempBodyTextureHandle = BodyTextureMode == EDreamRectBlockTextureMode::Texture ? BodyTextureHandle : BodySpriteTextureHandle;
+		// The group's header row below draws the switch and whichever picker it selects.
+		DetailBuilder.HideProperty(BodySpriteTextureHandle);
+		TextureGroup.HeaderRow()
+			.FilterString(TempBodyTextureHandle->GetPropertyDisplayName())
+			.PropertyHandleList({ BodyTextureModeHandle, BodyTextureHandle, BodySpriteTextureHandle })
+			.OverrideResetToDefault(FResetToDefaultOverride::Create(TAttribute<bool>::CreateLambda([=]()
+			{
+				return BodyTextureModeHandle->CanResetToDefault() || BodyTextureHandle->CanResetToDefault() || BodySpriteTextureHandle->CanResetToDefault();
+			}), FSimpleDelegate::CreateLambda([=]()
+			{
+				BodyTextureModeHandle->ResetToDefault();
+				BodyTextureHandle->ResetToDefault();
+				BodySpriteTextureHandle->ResetToDefault();
+			})))
+			.NameContent()
+			[
+				SNew(SBox)
+				.MinDesiredWidth(1000)
+				[
+					SNew(SHorizontalBox)
+					+SHorizontalBox::Slot()
+					[
+						TempBodyTextureHandle->CreatePropertyNameWidget()
+					]
+					+SHorizontalBox::Slot()
+					.HAlign(HAlign_Right)
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(EVerticalAlignment::VAlign_Center)
+						.Padding(OuterPadding)
+						[
+							SNew( SCheckBox )
+							.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+							.ToolTipText(LOCTEXT("Texture_Tooltip", "Use texture"))
+							.Padding(ContentPadding)
+							.OnCheckStateChanged_Lambda([=](ECheckBoxState InCheckboxState){
+								BodyTextureModeHandle->SetValue((uint8)EDreamRectBlockTextureMode::Texture);
+								})
+							.IsChecked_Lambda([=] {
+								return DreamDetailsMultiSelect::CheckedIfEqual<uint8>(BodyTextureModeHandle, (uint8)EDreamRectBlockTextureMode::Texture);
+								})
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("Texture", "T"))
+								.Font(IDetailLayoutBuilder::GetDetailFont())
+							]
+						]
+
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(EVerticalAlignment::VAlign_Center)
+						.Padding(OuterPadding)
+						[
+							SNew(SCheckBox)
+							.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+							.ToolTipText(LOCTEXT("Sprite_Tooltip", "Use sprite"))
+							.Padding(ContentPadding)
+							.OnCheckStateChanged_Lambda([=](ECheckBoxState InCheckboxState) {
+								BodyTextureModeHandle->SetValue((uint8)EDreamRectBlockTextureMode::Sprite);
+								})
+							.IsChecked_Lambda([=] {
+								return DreamDetailsMultiSelect::CheckedIfEqual<uint8>(BodyTextureModeHandle, (uint8)EDreamRectBlockTextureMode::Sprite);
+								})
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("Sprite", "S"))
+								.Font(IDetailLayoutBuilder::GetDetailFont())
+							]
+						]
+					]
+				]
+			]
+			.ValueContent()
+			[
+				TempBodyTextureHandle->CreatePropertyValueWidget()
+			]
+			.IsEnabled(EnableBodyAttribute)
+		;
+		TextureGroup.AddWidgetRow()
+			.FilterString(LOCTEXT("SnapSize_Button", "Snap Size"))
+			.ValueContent()
+			[
+				SNew(SButton)
+				.HAlign(EHorizontalAlignment::HAlign_Center)
+				.VAlign(EVerticalAlignment::VAlign_Center)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("SnapSize_Button", "Snap Size"))
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+				]
+				.OnClicked_Lambda([=, this]()
+				{
+					GEditor->BeginTransaction(LOCTEXT("TextureSnapSize_Transaction", "UIProceduralRect texture snap size"));
+					// The size lands on the WIDGET's AnchorData, not on anything this panel owns, so
+					// that is the property the mirror has to be told about and the widget is the object.
+					TArray<UObject*> ResizedWidgets;
+					DreamDetailsTemplateMirror::NotifyPreChange(NotifyHook, AnchorDataProperty);
+					for (auto item : TargetScriptArray)
+					{
+						if (item.IsValid())
+						{
+							item->Modify();
+							item->SetSizeFromBodyTexture();
+							if (UDreamWidget* Widget = item->GetWidget())
+							{
+								Widget->Modify();
+								FDreamUIUtils::NotifyPropertyChanged(Widget, UDreamWidget::GetPropertyName_AnchorData());
+								Widget->MarkCanvasUpdate(true);
+								ResizedWidgets.Add(Widget);
+							}
+						}
+					}
+					// A widget setter, not a property handle, so the details view's FNotifyHook hears
+					// nothing on its own -- and that hook is the only thing that carries a value from the
+					// PREVIEW widget onto the blueprint's template. Without it the new size showed up,
+					// lasted until the next compile, and then snapped back.
+					DreamDetailsTemplateMirror::NotifyPostChange(NotifyHook, AnchorDataProperty, ResizedWidgets);
+					GEditor->EndTransaction();
+					return FReply::Handled();
+				})
+			]
+			.IsEnabled(EnableBodyAttribute)
+		;
+
+		auto BodyTextureScaleModeHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodyTextureScaleMode));
+		BodyTextureScaleModeHandle->SetPropertyDisplayName(LOCTEXT("BodyTextureScaleMode_DisplayName", "Scale Mode"));
+		const TAttribute<bool> HasBodyTexture = TAttribute<bool>::CreateLambda([=]()
+		{
+			UObject* BodyTexture = nullptr;
+			TempBodyTextureHandle->GetValue(BodyTexture);
+			return BodyTexture != nullptr && EnableBodyAttribute.Get();
+		});
+		TextureGroup.AddPropertyRow(BodyTextureScaleModeHandle).IsEnabled(HasBodyTexture);
+		// Nine-slicing: how the texture is drawn, and the margins it keeps at their own size.
+		TextureGroup.AddPropertyRow(DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodyTextureDrawMode))).IsEnabled(HasBodyTexture);
+		TextureGroup.AddPropertyRow(DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BodyTextureMargin))).IsEnabled(HasBodyTexture);
+
+		//gradient
+		auto EnableBodyGradientHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBodyGradient));
+		EnableBodyGradientHandle->SetPropertyDisplayName(LOCTEXT("EnableBodyGradient_DisplayName", "Gradient"));
+		auto& BodyGradientGroup = BodyGroup.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBodyGradient), EnableBodyGradientHandle->GetPropertyDisplayName(), true);
+		BodyGradientGroup.HeaderProperty(EnableBodyGradientHandle).IsEnabled(EnableBodyAttribute);
+		{
+			auto IsEnableGradientAttribute = TAttribute<bool>::CreateLambda([=]()
+			{
+				bool bEnable = false;
+				EnableBodyGradientHandle->GetValue(bEnable);
+				return bEnable && EnableBodyAttribute.Get();
+			});
+			// The gradient row (FDreamGradientCustomization): its strip, type and presets, its CSS, its stops and its fields.
+			AddPropertyRowToGroup(BodyGradient, Gradient, BodyGradientGroup, IsEnableGradientAttribute);
+			AddViewportHandlesRow(BodyGradientGroup, EDreamRectBlockGradientSlot::Body, IsEnableGradientAttribute);
+		}
+	}
+
+	//border
+	auto BorderHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBorder));
+	BorderHandle->SetPropertyDisplayName(LOCTEXT("bEnableBorder_DisplayName", "Border"));
+	auto& BorderGroup = DreamGUICategory.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBorder), BorderHandle->GetPropertyDisplayName(), false, true);
+	BorderGroup.HeaderProperty(BorderHandle);
+	{
+		auto IsEnableBorderAttribute = TAttribute<bool>::CreateLambda([=]()
+		{
+			bool bEnable = false;
+			BorderHandle->GetValue(bEnable);
+			return bEnable;
+		});
+		AddVectorPropertyRowToGroup(BorderWidth, Width, BorderGroup, IsEnableBorderAttribute, true);
+		AddPropertyRowToGroup(BorderColor, Color, BorderGroup, IsEnableBorderAttribute);
+
+		//gradient
+		auto BorderGradientHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBorderGradient));
+		BorderGradientHandle->SetPropertyDisplayName(LOCTEXT("bEnableBorderGradient_DisplayName", "Gradient"));
+		auto& BorderGradientGroup = BorderGroup.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableBorderGradient), BorderGradientHandle->GetPropertyDisplayName(), true);
+		BorderGradientGroup.HeaderProperty(BorderGradientHandle).IsEnabled(IsEnableBorderAttribute);
+		{
+			auto IsEnableGradientAttribute = TAttribute<bool>::CreateLambda([=]()
+			{
+				bool bEnableGradient = false;
+				BorderGradientHandle->GetValue(bEnableGradient);
+				return bEnableGradient && IsEnableBorderAttribute.Get();
+			});
+			auto BorderGradientValueHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, BorderGradient));
+			BorderGradientValueHandle->SetPropertyDisplayName(LOCTEXT("BorderGradient_DisplayName", "Gradient"));
+			BorderGradientGroup.AddPropertyRow(BorderGradientValueHandle).IsEnabled(IsEnableGradientAttribute);
+			AddViewportHandlesRow(BorderGradientGroup, EDreamRectBlockGradientSlot::Border, IsEnableGradientAttribute);
+		}
+	}
+
+	//inner shadow
+	auto InnerShadowHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableInnerShadow));
+	InnerShadowHandle->SetPropertyDisplayName(LOCTEXT("bEnableInnerShadow_DisplayName", "Inner Shadow"));
+	//its own name: a group is identified by it, so sharing Border's made the two share an expansion state
+	auto& InnerShadowGroup = DreamGUICategory.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableInnerShadow), InnerShadowHandle->GetPropertyDisplayName(), false, true);
+	InnerShadowGroup.HeaderProperty(InnerShadowHandle);
+	{
+		auto IsEnabledAttribute = TAttribute<bool>::CreateLambda([=]()
+		{
+			bool bEnable = false;
+			InnerShadowHandle->GetValue(bEnable);
+			return bEnable;
+		});
+		AddPropertyRowToGroup(InnerShadowColor, Color, InnerShadowGroup, IsEnabledAttribute);
+		AddVectorPropertyRowToGroup(InnerShadowSize, Size, InnerShadowGroup, IsEnabledAttribute, true);
+		AddVectorPropertyRowToGroup(InnerShadowBlur, Blur, InnerShadowGroup, IsEnabledAttribute, true);
+		AddPropertyRowToGroup(InnerShadowAngle, Angle, InnerShadowGroup, IsEnabledAttribute);
+		AddVectorPropertyRowToGroup(InnerShadowDistance, Distance, InnerShadowGroup, IsEnabledAttribute, true);
+	}
+
+	//outer shadow
+	auto OuterShadowHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableOuterShadow));
+	OuterShadowHandle->SetPropertyDisplayName(LOCTEXT("EnableOuterShadow_DisplayName", "Outer Shadow"));
+	auto& OuterShadowGroup = DreamGUICategory.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableOuterShadow), OuterShadowHandle->GetPropertyDisplayName(), false, true);
+	OuterShadowGroup.HeaderProperty(OuterShadowHandle);
+	{
+		auto IsEnabledAttribute = TAttribute<bool>::CreateLambda([=]()
+		{
+			bool bEnable = false;
+			OuterShadowHandle->GetValue(bEnable);
+			return bEnable;
+		});
+		AddPropertyRowToGroup(OuterShadowColor, Color, OuterShadowGroup, IsEnabledAttribute);
+		AddVectorPropertyRowToGroup(OuterShadowSize, Size, OuterShadowGroup, IsEnabledAttribute, true);
+		AddVectorPropertyRowToGroup(OuterShadowBlur, Blur, OuterShadowGroup, IsEnabledAttribute, true);
+		AddPropertyRowToGroup(OuterShadowAngle, Angle, OuterShadowGroup, IsEnabledAttribute);
+		AddVectorPropertyRowToGroup(OuterShadowDistance, Distance, OuterShadowGroup, IsEnabledAttribute, true);
+	}
+
+	//radial fill
+	auto RadialFillHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableRadialFill));
+	RadialFillHandle->SetPropertyDisplayName(LOCTEXT("EnableRadialFill_DisplayName", "Radial Fill"));
+	auto& RadialFillGroup = DreamGUICategory.AddGroup(GET_MEMBER_NAME_CHECKED(UDreamRectBlock, bEnableRadialFill), RadialFillHandle->GetPropertyDisplayName(), false, true);
+	RadialFillGroup.HeaderProperty(RadialFillHandle);
+	{
+		auto IsEnabledAttribute = TAttribute<bool>::CreateLambda([=]()
+		{
+			bool bEnable = false;
+			RadialFillHandle->GetValue(bEnable);
+			return bEnable;
+		});
+		AddVectorPropertyRowToGroup(RadialFillCenter, Center, RadialFillGroup, IsEnabledAttribute, false);
+		AddPropertyRowToGroup(RadialFillRotation, Rotation, RadialFillGroup, IsEnabledAttribute);
+		AddPropertyRowToGroup(RadialFillAngle, Angle, RadialFillGroup, IsEnabledAttribute);
+	}
+
+	auto TintColorHandle = DetailBuilder.GetProperty(UDreamRectBlock::GetPropertyName_Color(), UDreamVisual::StaticClass());
+	TintColorHandle->SetPropertyDisplayName(LOCTEXT("TintColor", "Tint Color"));
+	TintColorHandle->SetToolTipText(LOCTEXT("TintColorTooltip", "Known as \"Color\" property in other UI elements. This can tint all color of this UI element. Usually only set alpha value."));
+	DreamGUICategory.AddProperty(TintColorHandle);
+}
+void FDreamRectBlockCustomization::ForceRefresh(TWeakPtr<IPropertyUtilities> InPropertyUtilities)
+{
+	if (const TSharedPtr<IPropertyUtilities> PropertyUtilities = InPropertyUtilities.Pin())
+	{
+		// Requested, not forced: this runs inside the property's own value-changed broadcast, and the
+		// immediate variant tears the layout down while that broadcast is still on the stack.
+		PropertyUtilities->RequestForceRefresh();
+	}
+}
+#undef LOCTEXT_NAMESPACE

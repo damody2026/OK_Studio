@@ -1,0 +1,142 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Text/DreamUIAst.h"
+
+class FProperty;
+
+/**
+ * The short text forms, and the only place that knows them.
+ *
+ * Everything else in a .dui is written with the reflected name and the reflected value, so there
+ * is no table to keep in sync. A few struct types are the exception, because their ExportTextItem
+ * form is what an author would actually see every day:
+ *
+ *   FVector2D / FVector2f      (400, 240)
+ *   FVector                    (2, 3, 1)
+ *   FRotator                   (0, 0, 45)        Pitch, Yaw, Roll, in degrees
+ *   FLinearColor / FColor      #1E1E1E
+ *   FMargin                    (8, 8, 8, 8)
+ *   FDreamGradient             "linear-gradient(180deg, #FFF3B0, #E8B64A 55%, #9C6A12)"   a string: its CSS
+ *
+ * FDreamGradient is here for its stops, an array: the write-back skips an array inside a struct, so without one spelling
+ * for the whole gradient every edit to a text's paint (TextStyle.FacePaint.Gradient) was dropped at the next flush. The
+ * spelling is FDreamGradient::ToCss, read back by FDreamGradient::ParseCss. FDreamTextPaint itself has none: its preset
+ * is an asset and its switch a bool, both leaves of their own (TextStyle.FacePaint.bEnabled, .Preset).
+ *
+ * FDreamUIAnchorData is deliberately NOT here: nested structs are written with dotted paths
+ * (AnchorData.SizeDelta = (400, 240)), so it never appears as a whole value -- only its leaves do.
+ * That decision is what keeps this table this small instead of growing with every struct. FVector
+ * and FRotator earned their rows the same way the first three did: RelativeScale and
+ * RelativeRotationEuler are values a designer drags, and without a spelling every rotation and
+ * scale was silently dropped by the write-back -- edited, mirrored, and gone at the next compile.
+ *
+ * PRINTER AND PARSER MUST BE INVERSE. A short form that parses to a slightly different value than
+ * it was printed from makes the designer's write-back drift: drag an anchor, and the number in the
+ * file creeps a little further from the number in the editor every time, with nothing to notice it.
+ * The round-trip test over randomised values is not optional, and it is the reason both directions
+ * live in one file.
+ *
+ * What "inverse" means per type, written down because one of the three cannot be exact and that has
+ * to be a decision rather than a discovery:
+ *
+ *   FVector2D / FVector2f / FMargin   Exact. Parse(Print(v)) == v for every finite value.
+ *   FVector / FRotator                Exact, same rule. A rotator is NOT normalised: the text
+ *                                     carries the euler field as authored, so 370 stays 370 --
+ *                                     which is what lets an animation cross a full turn.
+ *   FColor                            Exact. The text IS the eight bits.
+ *   FDreamGradient                    Exact, field for field, for every gradient whose numbers are
+ *                                     finite: ParseCss(ToCss(g)) == g. One that is not finite has no
+ *                                     spelling, as a vector's does not.
+ *   FLinearColor                      Quantised once through sRGB, then stable. Parse(Print(v)) is
+ *                                     the colour that hex code point names, not v; what is exact is
+ *                                     Print(Parse(Print(v))) == Print(v), so a value survives the
+ *                                     first write-back and every one after it unchanged. The one
+ *                                     thing it cannot carry is a channel outside [0,1] -- an HDR
+ *                                     tint of 2.0 comes back clamped to 1.0. DreamUIValueFormat.cpp
+ *                                     explains why that is not solved by refusing the value.
+ */
+namespace DreamUIValueFormat
+{
+	/** Whether this property has a short form at all. False sends the caller to ExportTextItem. */
+	DREAMGUI_API bool HasShortForm(const FProperty* InProperty);
+
+	/**
+	 * The short form of a live value, e.g. "(400, 240)".
+	 *
+	 * Returns false and leaves OutText untouched when the property has no short form; the caller
+	 * then falls back to ExportTextItem, which is always correct and merely ugly.
+	 *
+	 * OutValueIsUnrepresentable, when given, is set to true for the OTHER false: a property that does
+	 * have a short form holding a value with no spelling in it -- a non-finite component. The two are
+	 * worth telling apart because only the second is something to report: "this type has no literal"
+	 * is true forever and belongs in nobody's Problems panel, while a NaN in a UI property is a state
+	 * somebody has to chase, and DUI7003 exists for exactly it. Never set to false by this function,
+	 * so a caller may reuse one flag across several calls.
+	 */
+	DREAMGUI_API bool Print(const FProperty* InProperty, const void* InValuePtr, FString& OutText,
+		bool* OutValueIsUnrepresentable = nullptr);
+
+	/**
+	 * Read a parsed literal into a live value.
+	 *
+	 * Returns false when the literal's shape cannot produce this property's type -- wrong arity,
+	 * a hex colour on a vector, a bare identifier where a tuple belongs. The caller raises
+	 * ValueTypeMismatch or TupleArityMismatch with the value's own source location.
+	 */
+	DREAMGUI_API bool Parse(const FProperty* InProperty, const FDreamUIValue& InValue, void* OutValuePtr);
+
+	/**
+	 * Number of tuple elements this property's short form expects, or INDEX_NONE when it has none.
+	 * Exposed so a caller can report arity before attempting the write.
+	 */
+	DREAMGUI_API int32 GetExpectedTupleArity(const FProperty* InProperty);
+
+	/**
+	 * The kind of literal this property's short form is written as: Tuple, HexColor, or String (a gradient's CSS).
+	 * Identifier when it has no short form. For a caller that describes the literal -- the symbol export's hover.
+	 */
+	DREAMGUI_API EDreamUIValueKind GetShortFormLiteralKind(const FProperty* InProperty);
+
+	/**
+	 * "#RRGGBB" or "#RRGGBBAA" (whichever is lossless) from a linear or 8-bit colour.
+	 * Exposed separately because the designer's colour picker writes colours far more often than
+	 * anything else, and its round trip is the one most likely to drift.
+	 *
+	 * The two sides are asymmetric about the '#' because their callers are: PrintColorHex writes the
+	 * text as it appears in the file, while FDreamUIValue::Raw arrives with the '#' already stripped
+	 * by the lexer. ParseColorHex therefore accepts the digits either way, so that the obvious
+	 * ParseColorHex(PrintColorHex(c)) is not a refusal. It reads 3, 4, 6 and 8 digits; the printer
+	 * only ever writes 6 or 8.
+	 */
+	/**
+	 * One number, spelled so that reading it back gives exactly the number that went in.
+	 *
+	 * Exported because the write-back layer needs the same spelling and had copied it: a designer
+	 * compares "what the tree holds, printed" against "what the file says", so two printers that
+	 * round differently would report a change on a value nobody touched -- every flush, forever, on
+	 * whichever properties the two disagreed about. Neither module's tests can see that; they each
+	 * round-trip through their own copy and pass.
+	 *
+	 * bSinglePrecision decides what "exactly" means: a float destination only has to survive a float
+	 * round trip, and demanding double precision of it would print nine digits where two will do.
+	 */
+	DREAMGUI_API FString PrintScalar(double InValue, bool bSinglePrecision);
+
+	/**
+	 * InValue to the fewest decimals -- at least InMinDecimals -- that keep it within InTolerance of itself: the text, with
+	 * as many decimals as were needed (trailing zeros included), and in OutRounded the number that text reads as.
+	 *
+	 * For a number a hand placed, whose precision is the hand's rather than the arithmetic's: a pointer's pixel, a
+	 * sequencer's frame. A drag of sixty pixels measures 59.9999999 through a ray and a plane, and a key let go on frame
+	 * 28 of 60 sits at 0.4666666666666667 seconds; spelled exactly, each is a run of digits describing nothing the author
+	 * did, and spelled to half a pixel or half a frame they are 60 and 0.47 -- which a compile puts back where the hand
+	 * left them. A tolerance of zero or less is no such precision, and spells the number exactly (PrintScalar).
+	 */
+	DREAMGUI_API FString PrintWithin(double InValue, double InTolerance, int32 InMinDecimals = 0, double* OutRounded = nullptr);
+
+	DREAMGUI_API FString PrintColorHex(const FLinearColor& InColor);
+	DREAMGUI_API bool ParseColorHex(const FString& InHexDigits, FLinearColor& OutColor);
+}

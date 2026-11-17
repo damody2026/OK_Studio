@@ -139,6 +139,9 @@ private:
  double NextSplashAt=0;
  UPROPERTY() TObjectPtr<UProceduralMeshComponent> Gun;
  void DiscoverSurfaces(const FVector& A,const FVector& B,bool SourceCone=true);
+ // The components that could take paint (every actor walked, the filters that do not depend on the jet), kept a second:
+ // walking every actor of the city each frame while drops flew took most of 8 ms (2026-11-18).
+ TArray<TWeakObjectPtr<UPrimitiveComponent>> DiscoverCandidates;double DiscoverListTime=-1.e9;
  void RefreshGeometry(FSurface& Surface);
  bool PrepareGeometry(FSurface& Surface);
  void RefreshGeometries(bool OnlyPainted=false);bool bGeometryOnlyPainted=false;double SurfaceSeconds=.05;

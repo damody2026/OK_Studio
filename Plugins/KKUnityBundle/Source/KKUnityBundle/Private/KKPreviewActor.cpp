@@ -474,6 +474,36 @@ static UTexture2D* TextureFromPngFile(const FString& Path, bool bClamp = false)
 	return TextureFromPngBuffer(Png, bClamp);
 }
 
+// The viewport's color-grading LUT (KKPreview/KKSDefaultSaturationLUT16.png): linear, the LUT group, one upload, and its
+// pixels kept. Made through TextureFromPngFile and then switched to linear with a second UpdateResource, a low-memory PC
+// (OKRuntimeLowMemory: runtime textures drop their CPU copy after the first upload) uploaded nothing the second time
+// ("Attempting to load a BulkData object that cannot be loaded from disk"): a black LUT, the whole view black
+// (2026-11-17, the Studio package on a 16 GB laptop).
+static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
+{
+	TArray<uint8> Png;
+	if (!FFileHelper::LoadFileToArray(Png, *Path) || Png.Num() < 16) return nullptr;
+	IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	TSharedPtr<IImageWrapper> Wrapper = Module.CreateImageWrapper(EImageFormat::PNG);
+	TArray<uint8> Raw;
+	if (!Wrapper.IsValid() || !Wrapper->SetCompressed(Png.GetData(), Png.Num()) || !Wrapper->GetRaw(ERGBFormat::BGRA, 8, Raw)) return nullptr;
+	const int32 W = Wrapper->GetWidth(), H = Wrapper->GetHeight();
+	if (W <= 0 || H <= 0 || Raw.Num() != W * H * 4) return nullptr;
+	UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
+	if (!Tex || !Tex->GetPlatformData() || Tex->GetPlatformData()->Mips.IsEmpty()) return nullptr;
+	FTexture2DMipMap& Mip = Tex->GetPlatformData()->Mips[0];
+	FMemory::Memcpy(Mip.BulkData.Lock(LOCK_READ_WRITE), Raw.GetData(), Raw.Num());
+	Mip.BulkData.Unlock();
+	Tex->SRGB = false;
+	Tex->LODGroup = TEXTUREGROUP_ColorLookupTable;
+	Tex->Filter = TF_Bilinear;
+	Tex->AddressX = TA_Clamp;
+	Tex->AddressY = TA_Clamp;
+	Tex->NeverStream = true;
+	Tex->UpdateResource();
+	return Tex;
+}
+
 static UTexture2D* LinearTextureFromPngBytes(const uint8* Data,int32 Length)
 {
 	// Configure the final sampler before its first upload. Changing SRGB after
@@ -3631,6 +3661,9 @@ static void ApplyPartMaterial(UMeshComponent* Comp, UTexture2D* Tex, const FStri
 {
 #if !WITH_EDITOR
     if(Comp&&Shadow&&Shadow->CookedMaterial){Comp->SetMaterial(0,Shadow->CookedMaterial);Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);Comp->SetCastShadow(true);}
+    // A part OKPrepareCookedRole left out (no shared parent for its shader): not drawn at all, rather than in the
+    // engine's default material. Visibility toggles (clothes states) do not bring it back: they leave these passes alone.
+    else if(Comp&&Shadow){Comp->SetRenderInMainPass(false);Comp->SetRenderInDepthPass(false);Comp->SetCastShadow(false);}
     return;
 #else
 	// A part on a shared parent (OKPrepareCookedRole) needs no graph of its own.
@@ -10684,8 +10717,8 @@ bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
 // Her body part's skin moved this frame by a set of per-vertex moves (belly_bulge::wrap_deltas: her belly wrapping his
 // penis), drawn as an external morph set on the part's renderers (the ML Deformer's way): one morph at weight 1,
 // rebuilt each call. The sets just replaced stay alive until the render thread is past them. Empty clears it.
-static TMap<TWeakObjectPtr<const USkinnedMeshComponent>,TArray<FMorphTargetDelta>> GOkWrapMorphDeltas; // game thread
-const TArray<FMorphTargetDelta>* AKKPreviewActor::WrapMorphDeltas(const USkinnedMeshComponent* Mesh)
+static TMap<TWeakObjectPtr<const USkinnedMeshComponent>,TMap<int32,TArray<FMorphTargetDelta>>> GOkWrapMorphDeltas; // game thread
+const TMap<int32,TArray<FMorphTargetDelta>>* AKKPreviewActor::OwnMorphDeltas(const USkinnedMeshComponent* Mesh)
 {
     check(IsInGameThread());
     for(auto It=GOkWrapMorphDeltas.CreateIterator();It;++It)if(!It.Key().IsValid())It.RemoveCurrent();
@@ -10709,9 +10742,10 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
     for(int32 P=WrapReleases.Num()-1;P>=0;--P){FOkWrapRelease& R=*WrapReleases[P];
         if(!R.bReleased){if(GFrameCounter>R.Frame+4){BeginReleaseResource(&R.Set->MorphBuffers);R.Fence.BeginFence();R.bReleased=true;}}
         else if(R.Fence.IsFenceComplete())WrapReleases.RemoveAtSwap(P);}
-    // Each set its own (the belly wrap 'OKWR', her thighs' jiggle 'OKTJ'): one does not replace another. Only the belly wrap's
-    // moves are kept for WrapMorphDeltas.
-    const int32 WrapSetId=SetId;const bool bKeep=SetId==0x4F4B5752;
+    // Each set its own (the belly wrap 'OKWR', her thighs' jiggle 'OKTJ'): one does not replace another. Every set's moves are
+    // kept for OwnMorphDeltas (the water gun reads the posed skin from them: with the jiggle's set left out it fell back to
+    // GetCPUSkinnedVertices, which flushed the render thread twice a frame, 4.5 ms, 2026-11-18).
+    const int32 WrapSetId=SetId;const bool bWrap=SetId==0x4F4B5752;
     bool bAny=false;
     for(USkinnedMeshComponent* Mesh:Meshes){
         if(!Mesh||!Mesh->GetSkinnedAsset()||!Mesh->IsValidExternalMorphSetLODIndex(0))continue;
@@ -10721,7 +10755,8 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         // The set it had, released once the render thread is done with it.
         if(Mesh->HasExternalMorphSet(0,WrapSetId)){
             TSharedPtr<FExternalMorphSet> Old=Mesh->GetExternalMorphSets(0).FindRef(WrapSetId);
-            Mesh->RemoveExternalMorphSet(0,WrapSetId);if(bKeep)GOkWrapMorphDeltas.Remove(Mesh);
+            Mesh->RemoveExternalMorphSet(0,WrapSetId);
+            if(auto* Own=GOkWrapMorphDeltas.Find(Mesh)){Own->Remove(WrapSetId);if(Own->IsEmpty())GOkWrapMorphDeltas.Remove(Mesh);}
             if(Old.IsValid()){auto Pending=MakeUnique<FOkWrapRelease>();Pending->Set=Old;Pending->Frame=GFrameCounter;WrapReleases.Add(MoveTemp(Pending));}
         }
         if(Indices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
@@ -10735,14 +10770,14 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         if(Model.Vertices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
         Model.NumVertices=Model.Vertices.Num();Model.NumBaseMeshVerts=NumVerts;
         for(int32 Section=0;Section<Render->LODRenderData[0].RenderSections.Num();++Section)Model.SectionIndices.Add(Section);
-        TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(bKeep?TEXT("OKBellyWrap"):TEXT("OKWrapSet"));
+        TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(bWrap?TEXT("OKBellyWrap"):TEXT("OKWrapSet"));
         const FMorphTargetLODModel* Models[1]={&Model};
         Set->MorphBuffers.InitMorphResourcesStreaming(GMaxRHIShaderPlatform,Render->LODRenderData[0].RenderSections,MakeArrayView(Models,1),NumVerts,20.f); // error tolerance in micrometres (0.0001 clamped every move to 2.7 cm)
         // Every move under the error tolerance (her thighs' jiggle settling) compresses to no batches, which the render
         // thread's InitRHI asserts on (NumTotalBatches > 0): nothing to draw then.
         if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1||Set->MorphBuffers.GetNumBatches()==0){Mesh->RefreshExternalMorphTargetWeights();continue;}
         BeginInitResource(&Set->MorphBuffers);
-        Mesh->AddExternalMorphSet(0,WrapSetId,Set);if(bKeep)GOkWrapMorphDeltas.Add(Mesh,MoveTemp(Model.Vertices));
+        Mesh->AddExternalMorphSet(0,WrapSetId,Set);GOkWrapMorphDeltas.FindOrAdd(Mesh).Add(WrapSetId,MoveTemp(Model.Vertices));
         Mesh->RefreshExternalMorphTargetWeights(false);
         FExternalMorphWeightData& Weights=Mesh->GetExternalMorphWeights(0);
         if(FExternalMorphSetWeights* W=Weights.MorphSets.Find(WrapSetId)){W->Weights.SetNumZeroed(1);W->Weights[0]=1.f;W->UpdateNumActiveMorphTargets();}
@@ -12546,8 +12581,8 @@ void AKKPreviewActor::SetupStudioView(bool PreserveWorld)
             // the fixed exposure, and the world's bloom spread them over half the screen and her in white whenever one came
             // into the frame (1-on-1 on the street background, 11-14).
             Settings.bOverride_BloomIntensity=true;Settings.BloomIntensity=0.f;
-            UTexture2D* Lut=TextureFromPngFile(FPaths::ProjectContentDir()/TEXT("KKPreview/KKSDefaultSaturationLUT16.png"),true);
-            if(Lut){Lut->SRGB=false;Lut->LODGroup=TEXTUREGROUP_ColorLookupTable;Lut->UpdateResource();Settings.bOverride_ColorGradingLUT=true;Settings.ColorGradingLUT=Lut;Settings.bOverride_ColorGradingIntensity=true;Settings.ColorGradingIntensity=1.f;}
+            UTexture2D* Lut=ColorLookupTextureFromPngFile(FPaths::ProjectContentDir()/TEXT("KKPreview/KKSDefaultSaturationLUT16.png"));
+            if(Lut){Settings.bOverride_ColorGradingLUT=true;Settings.ColorGradingLUT=Lut;Settings.bOverride_ColorGradingIntensity=true;Settings.ColorGradingIntensity=1.f;}
             if(auto* PC=World->GetFirstPlayerController())PC->SetViewTarget(StudioCam);
         }
         return;
@@ -12625,12 +12660,9 @@ void AKKPreviewActor::SetupStudioView(bool PreserveWorld)
 		// UE's own color-grading LUT runs at the tonemapper's color stage. The
 		// table is generated from KKS BetterColorPicker's inverse filter, so it
 		// affects every card and the live viewport without per-material tuning.
-		UTexture2D* Lut = TextureFromPngFile(FPaths::ProjectContentDir() / TEXT("KKPreview/KKSDefaultSaturationLUT16.png"), true);
+		UTexture2D* Lut = ColorLookupTextureFromPngFile(FPaths::ProjectContentDir() / TEXT("KKPreview/KKSDefaultSaturationLUT16.png"));
 		if (Lut && FPlatformMisc::GetEnvironmentVariable(TEXT("OK_NO_LUT")) != TEXT("1"))
 		{
-			Lut->SRGB = false;
-			Lut->LODGroup = TEXTUREGROUP_ColorLookupTable;
-			Lut->UpdateResource();
 			StudioPP->Settings.bOverride_ColorGradingLUT = true;
 			StudioPP->Settings.ColorGradingLUT = Lut;
 			StudioPP->Settings.bOverride_ColorGradingIntensity = true;

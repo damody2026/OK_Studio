@@ -1,0 +1,152 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Core/Components/DreamWidget.h"
+#include "Widgets/Views/STreeView.h"
+#include "Widgets/Views/STableRow.h"
+#include "DragAndDrop/DecoratedDragDropOp.h"
+#include "Designer/DreamUILayerEffects.h"
+#include "Engine/TimerHandle.h"
+
+class SDreamWidgetEditorHierarchyView;
+class UDreamWidget;
+class FDreamWidgetBlueprintEditor;
+class FScopedTransaction;
+
+/**
+ * A widget (or several) being dragged to a new parent.
+ *
+ * Declared here rather than in the .cpp because the design surface accepts the same drag: a
+ * hierarchy drag dropped onto the canvas has to mean what it means in the tree, and reusing the op
+ * and the validator below is what keeps the two surfaces from drifting into two sets of rules.
+ */
+class DREAMGUIEDITOR_API FHierarchyDreamWidgetDragDropOp : public FDecoratedDragDropOp
+{
+public:
+	DRAG_DROP_OPERATOR_TYPE(FHierarchyDreamWidgetDragDropOp, FDecoratedDragDropOp)
+
+		virtual ~FHierarchyDreamWidgetDragDropOp();
+
+	virtual void OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent) override;
+
+	/**
+	 * What is being dragged, weakly. A drag lasts as long as the mouse is held, and the preview it drags
+	 * from can be rebuilt under it in the meantime -- a compile, a save of the .dui -- which destroys every
+	 * widget named here; a raw pointer then led the drop into freed memory.
+	 */
+	struct FItem
+	{
+		/** The widget being dragged and dropped */
+		TWeakObjectPtr<UDreamWidget> Widget;
+
+		/** The original parent of the widget. */
+		TWeakObjectPtr<UDreamWidget> WidgetParent;
+	};
+
+	TArray<FItem> DraggedWidgets;
+
+	/** The transaction the drop records into, cancelled if nothing is dropped. */
+	TUniquePtr<FScopedTransaction> Transaction;
+
+	/** Constructs a new drag/drop operation */
+	static TSharedRef<FHierarchyDreamWidgetDragDropOp> New(const TArray<UDreamWidget*>& InWidgets);
+};
+
+/**
+ * Validate (bIsDrop false) or perform (bIsDrop true) a drop of any of the editor's drag operations
+ * onto TargetItem: a hierarchy move, a palette element, or a Content-Browser asset. Unset return
+ * means refused, and the op's hover text and icon carry the reason.
+ */
+TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone,
+	bool bIsDrop, TSharedPtr<FDreamWidgetBlueprintEditor> Manager, UDreamWidget* TargetItem,
+	TOptional<int32> Index = TOptional<int32>());
+
+namespace DreamWidgetHierarchyDrop
+{
+	/**
+	 * Whose designer lock has a say over a drop in this zone, or null if no widget does.
+	 *
+	 * A lock protects what is inside a widget, and Above/Below never go inside it: those two zones are
+	 * rewritten into an insert in the PARENT's child list, so it is the parent that must consent.
+	 * Asking the hovered row instead is what made a locked widget un-neighbourable -- no sibling could
+	 * be placed next to it at all -- while still letting an insert land in a locked parent whose
+	 * children happened to be unlocked.
+	 *
+	 * The exception is a row with no parent: there is no sibling list, so the drop path rewrites the
+	 * zone into a drop inside that row, and it is the row itself that has the say.
+	 */
+	DREAMGUIEDITOR_API const UDreamWidget* GetLockOwnerForDropZone(const UDreamWidget* TargetItem, EItemDropZone DropZone);
+}
+
+class DREAMGUIEDITOR_API SDreamWidgetEditorHierarchyViewItem : public STableRow<TWeakObjectPtr<UDreamWidget>>
+{
+public:
+	SLATE_BEGIN_ARGS(SDreamWidgetEditorHierarchyViewItem) {}
+		SLATE_EVENT(FSimpleDelegate, MouseEnter)
+		SLATE_EVENT(FSimpleDelegate, MouseExit)
+		/** The tree's live search text, so the row can show which part of the name matched. */
+		SLATE_ATTRIBUTE(FText, HighlightText)
+	SLATE_END_ARGS()
+	void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView, TWeakObjectPtr<UDreamWidget> InModel
+		, TSharedPtr<SDreamWidgetEditorHierarchyView> InHierarchyView, TSharedPtr<FDreamWidgetBlueprintEditor> InManager);
+
+	// Begin SWidget
+	virtual void OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual void OnMouseLeave(const FPointerEvent& MouseEvent) override;
+	// End SWidget
+	void RequestEditName();
+	bool CanRename() const;
+private:
+	TOptional<EItemDropZone> HandleCanAcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone, TWeakObjectPtr<UDreamWidget> TargetItem);
+	FReply HandleAcceptDrop(FDragDropEvent const& DragDropEvent, EItemDropZone DropZone, TWeakObjectPtr<UDreamWidget> TargetItem);
+	FReply HandleDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
+	void HandleDragEnter(FDragDropEvent const& DragDropEvent);
+	void HandleDragLeave(const FDragDropEvent& DragDropEvent);
+	FText GetItemText() const;
+	FText GetItemTypeText() const;
+	FText GetItemTooltipText() const;
+	FSlateColor GetNameTextColorAndOpacity() const;
+	FSlateColor GetVisibilityIconColorAndOpacity() const;
+	bool IsReadOnly() const;
+	void OnBeginNameTextEdit();
+	void OnEndNameTextEdit();
+	bool OnVerifyNameTextChanged(const FText& InText, FText& OutErrorMessage);
+	void OnNameTextCommited(const FText& InText, ETextCommit::Type CommitInfo);
+	FReply OnToggleVisibility();
+	FText GetVisibilityBrushForWidget() const;
+	FReply OnToggleLockedInDesigner();
+	FText GetLockBrushForWidget() const;
+	FSlateColor GetLockIconColorAndOpacity() const;
+
+	bool SupportDrop(UDreamWidget* Dragging, UDreamWidget* Current, EItemDropZone DropZone);
+
+	/** The marks after the name: one per kind of layer effect the widget has. */
+	TSharedRef<SWidget> MakeLayerMarks();
+	/** The widget's layer effects, gathered once per frame however many marks ask. */
+	const TArray<struct FDreamUILayerEffect>& GetLayerEffects() const;
+	EVisibility GetLayerMarkVisibility(uint8 InKind) const;
+	FSlateColor GetLayerMarkColor(uint8 InKind) const;
+	FText GetLayerMarkToolTip(uint8 InKind) const;
+	FReply OnLayerMarkClicked(uint8 InKind);
+	/** A double-click on the layer style's mark opens the Layer Style dialog, and the click before it switches nothing. */
+	FReply OnLayerMarkDoubleClicked(uint8 InKind);
+
+private:
+	mutable TArray<struct FDreamUILayerEffect> CachedLayerEffects;
+	mutable uint64 CachedLayerEffectsFrame = MAX_uint64;
+	/** A click on the layer style's mark, switching its effects once no double-click has followed it. */
+	FTimerHandle PendingStyleSwitch;
+	TWeakPtr<SDreamWidgetEditorHierarchyView> HierarchyView;
+	TWeakPtr<FDreamWidgetBlueprintEditor> Manager;
+	FSimpleDelegate MouseEnter;
+	FSimpleDelegate MouseExit;
+	/** Edit box for the name. */
+	TSharedPtr<SInlineEditableTextBlock> EditBox;
+	/* The model that this tree item represents */
+	TWeakObjectPtr<UDreamWidget> Widget;
+	/** Text when we start editing. */
+	FText InitialText;
+};
