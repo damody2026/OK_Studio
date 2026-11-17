@@ -74,7 +74,10 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   要用 Glob／grep 指定路径。另外**不要把 `cargo` 程序当成机器在忙** —— 那 18 个 idle 的
   `cargo run ok-game-mcp` 是常驻的 MCP server。
 - 凭 SPOT 的次数与总时间推估就报结论（「136 次 `flip_png_v` 是串行的」），其实它们早就在并行的
-  `PushCtx::transform` 里。**发现前提错了先把量测补上，再回头讲。**
+  `PushCtx::transform` 里。**发现前提错了先把量测补上，再回头讲。** SPOT 的 wall 是**跨执行绪加总又嵌套**
+  的，所以不能直接当墙钟做减法（「省掉它能快多少」）。**判断某个数字能不能减的现成检查**（f-sceneload）：
+  **把各子项加起来和包住它们的那一段比** —— 落在容器里面（例如三段共 26.0 s 在 `Sync` 的 63.4 s 内）、
+  互不嵌套、所在回圈里没有 `ParallelFor`／`par_iter`，才可以减；**加起来超过容器就是跨执行绪加总的**。
 - `ls -t Saved/Logs/CardReader/*.log | head -1` 拿到的是**上一次执行的日誌**，两种设定印出一样的数字，
   看起来像开关没生效。改成自己指定 `-abslog=`。
 - kill 回圈用 `head -1`，留下 3 个 UnrealEditor（各约 9.5 GB），把 `f-sceneload` 卡在排队、那一轮数字全废。
