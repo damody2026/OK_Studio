@@ -336,6 +336,10 @@ do local f = io.open('output/street-social-city-production/places-v1/seats-fit.j
 end
 local function void_seat(r)
   local q = r.pos; if not (q and r.seat_pos) then return nil end
+  -- the same fall seen from the row itself: the seat 1.5 m or more over where she stands (a seat is 45 cm up). It catches
+  -- what the seats-fit match misses: the S-row 3F places' sofa0_0 stands at the sofa's middle, not at a seat (46 rows),
+  -- and two public chairs pulled down to 1F and 2F (11-17)
+  if r.seat_pos[3] - q[3] >= 150 then return ('its seat %.0f cm over its stand point'):format(r.seat_pos[3] - q[3]) end
   for _, z in ipairs(VOID_SEATS[('%.0f,%.0f'):format(q[1], q[2])] or {}) do
     if z - q[3] > 60 and z - q[3] < 300 then return ('a nominal seat at z %.0f, its stand point pulled down to %.0f'):format(z, q[3]) end end
 end
