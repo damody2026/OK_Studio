@@ -876,7 +876,18 @@ pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {let _spot=crate::pr
             result
         }
         Mode::Replay => {
-            if let Some(o) = replay_overlay() { if let Some(bytes) = o.index.lock().unwrap().files.get(&key).and_then(entry_bytes) { return Ok(bytes); } }
+            // On an OK card nearly every read is served right here from the card's own pack, on nine threads at once
+            // (the asking thread and eight entry-prefetch helpers), through this one mutex — and the copy out of the
+            // pack happens while it is held. **That is not a bottleneck**, measured: the SPOT below is 0.1–0.7 ms
+            // over 227–320 reads of a cold open. For a single mutex the sum over threads of the time inside the
+            // critical section **is** serialised wall time (nothing in it can overlap), so unlike other SPOT sums
+            // this one may be read directly — and it says there is nothing here to win. Copying outside the lock
+            // was tried on 2026-11-18 and put back; what the window is actually limited by is the first touch of the
+            // pack's pages (see `Docs/CARD_OPEN_PERF_20261117.md` 第二节).
+            if let Some(o) = replay_overlay() {
+                let _section = crate::profile::spot("overlay index section");
+                if let Some(bytes) = o.index.lock().unwrap().files.get(&key).and_then(entry_bytes) { return Ok(bytes); }
+            }
             // An OK card's open: a third-party mod's file only from its own pack (okstrict.rs).
             if crate::okstrict::active().is_some() && !crate::okstrict::library_path(&key) {
                 let entry = st.index.lock().unwrap().files.get(&key).map(portable);
