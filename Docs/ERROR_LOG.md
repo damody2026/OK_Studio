@@ -4890,3 +4890,11 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - **處置**：整合照常進行，三個樹的 paired 都是用同一份遊戲安裝與同一個 commit 重新轉出來的；manifest 的 base-paired 雜湊只能對產出它的那台機器成立，不能當成跨 checkout 的完整性檢查。
 - **再試前檢查**：要讓 manifest 的 paired 雜湊跨機器有意義，得先讓 `ok-paired-library` 的 pack 寫出順序固定（排序鍵再寫檔），並另外做一次逐項解包比對確認三邊等價。
 
+
+## 2026-11-17 讀卡「另存」OK 卡失敗後，同一程序再開原卡缺 hibari／klee（F 組讀卡器，測試者 log）
+- 現象：測試者包（Pack1115）讀卡開 `StreetHeroines/alice.png`，按「另存」後再開 alice 服裝 1（outfit 0），回「the OK card lacks 2 thing(s)…: okLt override abdata/chara/hibari/hibari.unity3d; okLt override abdata/chara/klee/klee.unity3d」；重開程序就正常。
+- 經過：另存走 `FinishOkCardSave` → `ok_okcard_make` → `remake_ok_card`：去掉 OK chunk（含卡內資源包 okLc）從基礎庫重轉。測試者沒有 `[nep] hibari stuff`／`klee stuff` zipmod，轉換在 strict 下記缺口並失敗。
+- 原因：`mods.rs` 的 `ZIP_AB_CACHE` 以「zipmod 路徑＋bundle」當鍵、整個程序共用，轉換時讀不到的結果（None）也存進去。之後正常開 alice，卡內資源包明明有同路徑的 bundle，`zipmod_one_unity3d_source` 卻拿到快取的 None，退去問 override，卡的 okLt 沒有這題（本來不必問）→ 缺口。
+- 修正：讀 bundle 期間這條執行緒記到 strict 缺口（`okstrict::gaps_on_thread` 有變）時不寫進 `ZIP_AB_CACHE`（`zipmod_one_unity3d_arc`、`zipmod_bundle_named`），和 `entries::pack_memo` 的規則一致。測試 `session::jump_probe_tests::failed_remake_leaves_the_card_openable`（ignored，需本機 alice 與基礎庫，`OK_GAME_ROOT=X:/NoGame`）修正前「after: r=1」同一訊息，修正後通過。
+- 未修：另存已編輯的 OK 卡會丟掉原卡的 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。
+- 防範：程序共用的快取，鍵不含「哪張卡／哪個資源包」時，不能存 strict 缺口期間得到的結果，尤其是「沒有」。

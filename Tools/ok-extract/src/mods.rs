@@ -1715,14 +1715,21 @@ fn zipmod_one_unity3d_arc(path: &Path, main_ab: &str) -> Option<Arc<(String, cra
     let _one = loading.lock().unwrap_or_else(|e| e.into_inner());
     let found = match cached() {
         Some(hit) => hit,
-        None => { let found = zipmod_one_unity3d_uncached(path, &want).map(Arc::new); zip_ab_cache_put(key.clone(), found) }
+        None => {
+            let gaps = crate::okstrict::gaps_on_thread();
+            let found = zipmod_one_unity3d_uncached(path, &want).map(Arc::new);
+            if crate::okstrict::gaps_on_thread() == gaps { zip_ab_cache_put(key.clone(), found) } else { found }
+        }
     };
     let mut loads = ZIP_AB_LOADING.lock().unwrap_or_else(|e| e.into_inner());
     if loads.get(&key).is_some_and(|l| Arc::ptr_eq(l, &loading)) && Arc::strong_count(&loading) <= 2 { loads.remove(&key); }
     found
 }
 
-/// Stores a zipmod bundle read for `key` unless another thread stored one meanwhile (that one is kept).
+/// Stores a zipmod bundle read for `key` unless another thread stored one meanwhile (that one is kept). The callers keep
+/// nothing read while a strict open met a gap (okstrict::gaps_on_thread): the key is the archive path alone, and an edited
+/// OK card's failed remake (its pack stripped, the zipmod absent) left "no such bundle" for the card's own next open, which
+/// then lacked `okLt override abdata/chara/hibari/hibari.unity3d` (tester's alice, 2026-11-16).
 fn zip_ab_cache_put(key: (PathBuf, String), found: Option<Arc<(String, crate::unity::SourceBytes)>>) -> Option<Arc<(String, crate::unity::SourceBytes)>> {
     let mut cache = ZIP_AB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let (m, owned) = cache.get_or_insert_with(Default::default);
@@ -1836,7 +1843,10 @@ pub fn zipmod_bundle_named(path: &Path, main_ab: &str) -> Option<crate::unity::S
     if let Some(hit) = ZIP_AB_CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.0.get(&key).cloned()) {
         return hit.map(|h| h.1.clone());
     }
+    let gaps = crate::okstrict::gaps_on_thread();
     let found = collect_zipmod_bundle(path, &want, &file_name).map(|b| Arc::new((String::new(), b)));
+    // (as zipmod_one_unity3d_arc: a read that met a strict gap is not kept)
+    if crate::okstrict::gaps_on_thread() != gaps { return found.map(|h| h.1.clone()); }
     zip_ab_cache_put(key, found).map(|h| h.1.clone())
 }
 
