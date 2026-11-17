@@ -38,6 +38,25 @@ M.list = {
   -- and the cart stood in the one gap from the sales floor to the back passage (x 34194-34282, y 50961-51013).
   { prefix = 'LoverSpot_R2_supermarket_cart1_', main = 'Basket', from = { 34237.857, 50987.117 }, delta = { -18, -627, 0 },
     anchors = { { place = 'supermarket', name = 'cart', from = { 34167.857, 50987.117 } } } },
+  -- restaurant (S04): the private room (440 x 340 cm, walls, door, table) stood with its front wall (east face x 48195)
+  -- against the shell's inner wall (x 48240-48280): its doorway (y 25350-25460) opened onto no free cell, the room's 56
+  -- cells were sealed (reach grid 11-17). 40 cm west leaves the x 48200 column (about 85 cm clear) from the doorway north
+  -- to the open floor at y 25520; the aisle west of it (by the shell's gap at x 47720-47760) keeps its two 40 cm cells.
+  { prefix = 'LoverSpot_R8_private_room_', main = 'WallBack', from = { 47860, 25240 }, delta = { -40, 0, 0 },
+    anchors = { { place = 'restaurant', name = 'private_room', from = { 47920.0, 25215.0 } },
+      { place = 'restaurant', name = 'private_room2', from = { 48100.0, 25215.0 } },
+      { place = 'restaurant', name = 'private_door', from = { 48265.0, 25405.0 } } } },
+  -- clinic_beauty (S82): the waiting bench (200 x 50 cm, seat 45 cm high, a back) stood in the one-cell passage at
+  -- y 33880 between the refit's walls (x 30125-30325), the only way from the stairs' corridor to the back: consult
+  -- room, recovery bed, the toilets (rest, seat2, toilet3 sealed, 322 cells; reach grid 11-17). It goes to the front
+  -- hall (x 30120-30320, y 34415-34466), on the door's floor, 60 cm clear of the place's anchors; the door's region
+  -- loses only the cells it covers. seat6 and seat7 (the builder's seats on the same bench) and wait go with it.
+  { prefix = 'LoverSpot_Beauty_Bench_', main = 'Seat', from = { 30225.192, 33876.415 }, delta = { -5, 564, 0 },
+    anchors = { { place = 'clinic_beauty', name = 'seat', from = { 30275.19, 33886.42 } },
+      { place = 'clinic_beauty', name = 'seat2', from = { 30175.19, 33886.42 } },
+      { place = 'clinic_beauty', name = 'wait', from = { 30225.19, 33956.42 } },
+      { place = 'clinic_beauty', name = 'seat6', from = { 30291.9, 33916.4 } },
+      { place = 'clinic_beauty', name = 'seat7', from = { 30225.2, 33916.4 } } } },
 }
 -- the anchor's position after the move, or nil when the row is not one of these (or already moved)
 function M.shift(place, name, pos)

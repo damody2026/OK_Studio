@@ -11,6 +11,14 @@ local GONE = {
   -- bike_shop was two shops 116 m apart (S35, S81; street_city_lover_spots_payload.lua joins them) with the door only at S35:
   -- a girl sent to S81's racks was walked to S35's door first. S81 is left out (11-16, coordinator), its room below.
   bike_shop = { bike_rental3 = 'S81 left out of bike_shop', bike_rental4 = 'S81 left out of bike_shop' },
+  -- the pool suite's 'pool' (h_pool, motel_203_imore-cda5d5e2dcb9) is 195 cm over the 2F floor (z 1901), over a corridor
+  -- and lounge with no pool or water (seen in the game 11-17, c3b1117a): a floor of its own no lift or stair reaches
+  -- (the reach check's B3). Not brought down: on the floor it would be a pool activity in a corridor.
+  hotel = { pool = 'no pool under it: 195 cm over the 2F corridor' },
+  -- school became one T1 ground-floor classroom (19ab3abcf); its 'music' (music_piano, 69961,41953,2020) stayed where the
+  -- old school was, in the SC building's 3F (cafeteria's room there), 80 m from T1: tagged T1, a floor of the school no
+  -- stair or lift of T1 reaches (the reach check's last floor without an entry, 11-17). 42 other music_piano anchors.
+  school = { music = 'left from the old school, in the SC building 3F, not T1' },
 }
 -- Rooms dropped from a place: place id -> { { at = {x, y}, why } }, the room whose box holds `at` (xy) goes.
 local ROOMS = {

@@ -1,6 +1,10 @@
 -- Read-only native job: outdoor anchors that need the ground measured (doc section 10.1), nothing is saved to the map.
 --   lua Tools/street_city_motel_job.lua world_anchor_fit Tools/street_city_anchor_fit_payload.lua
 -- Every candidate snaps to the walkable ground nearby (top surface, a 35 cm sphere fits above it) or is dropped.
+-- BEFORE RE-RUNNING: ground() takes any upward face, a prop's top too: the festival's fireworks went onto the goldfish
+-- stall's top (z 1430, 2.3 m over the ground; the reach check, 11-17), and the game does not bring a spot down to the
+-- ground. Limit the face to the candidate's own height (about z + 60) first; the rows fitted so far are mended in
+-- Tools/export_street_city_game_places.lua (anchors at a door's old spot move with the door).
 --   stroll      ordered route points: riverbank, bridge, coast, shop street, campus lamps, park
 --   riverbank, bridge, coast, rooftops, behind the school buildings: the views, confessions and quiet corners
 -- Output: places-v1/anchor-fit.json with rows Tools/street_city_new_anchors.lua turns into anchors.

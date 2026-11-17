@@ -94,6 +94,11 @@ local function open_ground(x, y)
   return 9
 end
 local moved_doors = 0
+-- The anchors standing at a door's old spot move with it (DOOR_MOVES below): the playground's 'field' was its landmark's
+-- middle like its door, in the swing set's collision box, 2 m from any open cell (out of the 80/140 cm rings the game
+-- tries); the festival's 'fireworks' was fitted onto the ground at its door (Tools/street_city_anchor_fit_payload.lua)
+-- and the trace down found the goldfish stall's top, 2.3 m up (the reach check, C4, 11-17).
+local DOOR_MOVES = {}
 for _, p in ipairs(places) do
   local d = p.door
   local hit = d and #d == 3 and solid_at(d[1], d[2], d[3], 0)
@@ -119,11 +124,23 @@ for _, p in ipairs(places) do
     end
     if best then
       print(('door: %s moved out of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, hit.label, d[1], d[2], best[1], best[2]))
+      DOOR_MOVES[p.id] = { from = d, to = best }
       p.door = best; moved_doors = moved_doors + 1
     else problem(p.id .. ': door inside ' .. hit.label .. ' and no open ground round it') end
   end
 end
 if moved_doors > 0 then print(('%d doors moved out of props'):format(moved_doors)) end
+-- the row (a place anchor or a rules-table row) to the door's new spot when it stood at the old one (x y within 5 cm, any
+-- height); its seat and pair slots by the same offset. true when it moved.
+local function with_door(place, r)
+  local m = DOOR_MOVES[place]; local q = r.pos
+  if not (m and q and math.abs(q[1] - m.from[1]) < 5 and math.abs(q[2] - m.from[2]) < 5) then return false end
+  local to = { m.to[1], m.to[2], m.to[3] }
+  print(('anchor: %s %s moved with its door, %.0f,%.0f,%.0f -> %.0f,%.0f,%.0f'):format(place, r.name, q[1], q[2], q[3], to[1], to[2], to[3]))
+  dofile('Tools/street_city_moved_props.lua').carry(r, q, to); r.pos = to
+  return true
+end
+for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do with_door(p.id, an) end end
 -- A spot taken from a room's middle (its source is the room id, 'M1-0901 ...') can land in the furniture: the department
 -- store's 'food' was in the ramen shop's counter seats, and a walk there from the 9F lift found no way (R6-197, 11-10). Such an
 -- anchor moves to the nearest spot clear of the props round it, on its own floor.
@@ -280,7 +297,19 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   -- The nail salon's 2F chairs: each stand spot was 16 cm off its chair's collision (S59_F02, the editor walk probe from
   -- stair2 stopped 40 cm short of seat6, 11-16); 40 cm further from the chair, the seat stays 80 cm off
   ['nail seat6'] = { 33470, 34510, 1580 }, ['nail seat8'] = { 33470, 34890, 1580 },
-  ['nail seat10'] = { 33890, 34510, 1580 }, ['nail seat12'] = { 33890, 34890, 1580 } }
+  ['nail seat10'] = { 33890, 34510, 1580 }, ['nail seat12'] = { 33890, 34890, 1580 },
+  -- The sports hall's stair landings (campus_sports stair1-5, Tools/build_street_city_places.lua: the stair core's
+  -- middle) stood at 77600,21300, on the stair's handrails (Immersion_Continuous_StairHandrails): no cell there on the
+  -- 2F-5F (blocked or no floor), and from the 3F, 4F and the gym's door the game found no way down to the ground
+  -- ("on another floor, no way there", c3b1117a, 11-17). The cell beside the flights' top, 77360,21320, is open on every
+  -- floor and joined to that floor's lift landing (reach grid); the gym's stair4 / stair5 are there too. The rules'
+  -- landing rows (stair_landing, kiss, wall_pin) stood on the same handrails and go with them.
+  ['campus_sports stair1'] = { 77360, 21320, 1200 }, ['campus_sports stair2'] = { 77360, 21320, 2120 },
+  ['campus_sports stair3'] = { 77360, 21320, 3140 }, ['campus_sports stair4'] = { 77360, 21320, 4160 },
+  ['campus_sports stair5'] = { 77360, 21320, 4780 },
+  ['campus_sports landing'] = { 77360, 21320, 1200 }, ['campus_sports landing2'] = { 77360, 21320, 2120 },
+  ['campus_sports landing3'] = { 77360, 21320, 3140 }, ['campus_sports landing4'] = { 77360, 21320, 4160 },
+  ['campus_sports landing5'] = { 77360, 21320, 4780 } }
 for _, p in ipairs(places) do
   for _, an in ipairs(p.anchors or {}) do
     local s = SPOTS[p.id .. ' ' .. an.name]
@@ -304,6 +333,28 @@ end
 -- Anchors of furniture taken off the source map (the karaoke's KTV_2, 11-15): dropped here and from city_anchors.json
 -- below (Tools/street_city_removed_anchors.lua, shared with Tools/build_street_city_places.lua)
 local REMOVED = dofile('Tools/street_city_removed_anchors.lua')
+-- Seats over no floor of their own: the S-row shops' third floor has a sofa and a chair planned over the stairwell
+-- (places-v1/seats-fit.json, fit 'nominal', never measured; z 1960 where that floor has a hole). The build's floor
+-- measurement (Tools/build_street_city_places.lua, 'at most one storey down') put their stand points on the stair's
+-- landing (z 1770) and on its flight (1849, 1865), the seats staying up at 2002 / 1897: 188 rows, 14 floors of 7 shops
+-- with no way up, girls sent to sit on a stair (the reach check's B1, S82 seen in the game 11-17). A row whose nominal
+-- seats-fit source stood 60 to 300 cm above where it stands now is dropped; a measured one is never touched.
+local VOID_SEATS = {}
+do local f = io.open('output/street-social-city-production/places-v1/seats-fit.json', 'rb')
+  if f then for _, r in ipairs(json.decode(f:read('a')).rows) do
+    if r.fit == 'nominal' then local k = ('%.0f,%.0f'):format(r.pos[1], r.pos[2]); VOID_SEATS[k] = VOID_SEATS[k] or {}; table.insert(VOID_SEATS[k], r.pos[3]) end end
+    f:close()
+  else problem('no places-v1/seats-fit.json: seats over the stairwells not dropped') end
+end
+local function void_seat(r)
+  local q = r.pos; if not (q and r.seat_pos) then return nil end
+  -- the same fall seen from the row itself: the seat 1.5 m or more over where she stands (a seat is 45 cm up). It catches
+  -- what the seats-fit match misses: the S-row 3F places' sofa0_0 stands at the sofa's middle, not at a seat (46 rows),
+  -- and two public chairs pulled down to 1F and 2F (11-17)
+  if r.seat_pos[3] - q[3] >= 150 then return ('its seat %.0f cm over its stand point'):format(r.seat_pos[3] - q[3]) end
+  for _, z in ipairs(VOID_SEATS[('%.0f,%.0f'):format(q[1], q[2])] or {}) do
+    if z - q[3] > 60 and z - q[3] < 300 then return ('a nominal seat at z %.0f, its stand point pulled down to %.0f'):format(z, q[3]) end end
+end
 -- anchors of props moved on the source map after the install (Tools/street_city_moved_props.lua) move with them
 do local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do local q = PROPS.shift(p.id, an.name, an.pos)
@@ -311,9 +362,37 @@ do local PROPS = dofile('Tools/street_city_moved_props.lua')
 for _, p in ipairs(places) do
   if p.anchors then local kept = {}
     for _, an in ipairs(p.anchors) do
-      if REMOVED.gone(p.id, an.name) then print(('anchor: %s %s dropped, %s'):format(p.id, an.name, REMOVED.gone(p.id, an.name))) else kept[#kept + 1] = an end
+      local why = REMOVED.gone(p.id, an.name) or void_seat(an)
+      if why then print(('anchor: %s %s dropped, %s'):format(p.id, an.name, why)) else kept[#kept + 1] = an end
     end
     p.anchors = kept end
+end
+-- One room for a whole building of floors: campus_sports' was the sports hall's box from z 960 to 5900, floor 1, so the
+-- game (OKStreetUpstairs: the rooms' floor numbers) took its 3F and 4F lift landings and the gym's door for the ground
+-- floor and never planned the ride down: "on another floor, no way there" from every upper floor (c3b1117a, 11-17). A
+-- room spanning more than 8 m in z, over the heights of the place's lift landings (three or more), is cut at them: one
+-- room a floor, each from 30 cm under its landing up to 30 cm under the next (the first from the room's foot, the last
+-- to its top).
+do local cut = 0
+  for _, p in ipairs(places) do
+    local zs, have = {}, {}
+    for _, an in ipairs(p.anchors or {}) do if an.name:match('^lift%d') and an.pos then
+      local z = math.floor(an.pos[3] + .5); if not have[z] then have[z] = true; zs[#zs + 1] = z end end end
+    table.sort(zs)
+    if #zs >= 3 and p.rooms then local out = {}
+      for _, room in ipairs(p.rooms) do
+        if room.min and room.max and room.max[3] - room.min[3] > 800 and room.min[3] <= zs[1] + 50 and room.max[3] >= zs[#zs] then
+          for k, z in ipairs(zs) do
+            out[#out + 1] = { min = { room.min[1], room.min[2], k == 1 and room.min[3] or z - 30 },
+              max = { room.max[1], room.max[2], k == #zs and room.max[3] or zs[k + 1] - 30 }, floor = k }
+          end
+          cut = cut + 1; print(('room: %s cut into %d floors at its lift landings'):format(p.id, #zs))
+        else out[#out + 1] = room end
+      end
+      p.rooms = out
+    end
+  end
+  if cut > 0 then print(('%d rooms cut into floors'):format(cut)) end
 end
 -- Rooms left out of a place (REMOVED.rooms), then the check that a place is one building with its door: an indoor place's
 -- rooms grouped by being within REMOVED.apart_cm of each other (xy, any floor); a group without the door is a part a girl
@@ -556,6 +635,30 @@ do
   local spotted = 0
   for _, r in ipairs(T.anchors) do if spot_row(r) then r.moved = true; spotted = spotted + 1 end end
   print(('city_anchors.json: %d rows moved to their spots by hand'):format(spotted))
+  for _, r in ipairs(T.anchors) do if with_door(r.place, r) then r.moved = true end end
+  -- A vanity is its mirror's spot (Tools/street_city_new_anchors.lua), and the mirror hangs on the wall: the hotel's took
+  -- their mirrors' heights, 366-396 cm over their floor (2F 2093, 3F 2556, 5F 3426; added after the round 6 floor
+  -- measurement, so never brought down), and the reach check found three floors no stair or lift reaches (B2, 11-17).
+  -- One standing more than 30 cm off every floor of its place (the door's, the lifts' and stairs') goes down to the
+  -- floor under it, up to 5 m; one on a floor already (the 4F's, z 2606 by the floor at 2610) stays. 30, not 60: the
+  -- 3F's mirrors at 2556 are 54 cm under the 4F's floor; the vanities on a floor are within a few cm of it.
+  do local floors = {}
+    for _, p in ipairs(places) do local fl = { p.door and p.door[3] or nil }
+      for _, an in ipairs(p.anchors or {}) do if an.name:match('^lift') or an.name:match('^stair') then fl[#fl + 1] = an.pos[3] end end
+      floors[p.id] = fl end
+    local down = 0
+    for _, r in ipairs(T.anchors) do local fl = floors[r.place]
+      if fl and r.pos and r.kinds and #r.kinds == 1 and r.kinds[1] == 'vanity' then
+        local on, under = false, nil
+        for _, z in ipairs(fl) do if math.abs(r.pos[3] - z) <= 30 then on = true end
+          if z < r.pos[3] - 60 and r.pos[3] - z <= 500 and (not under or z > under) then under = z end end
+        if not on and under then
+          print(('anchor: %s %s down to its floor, z %.0f -> %.0f'):format(r.place, r.name, r.pos[3], under))
+          r.pos = { r.pos[1], r.pos[2], under }; r.moved = true; down = down + 1 end
+      end
+    end
+    print(('city_anchors.json: %d vanities brought down to their floors'):format(down))
+  end
   local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, r in ipairs(T.anchors) do local q = PROPS.shift(r.place, r.name, r.pos)
     if q then print(('anchor: %s %s moved with its prop, %.0f,%.0f -> %.0f,%.0f'):format(r.place, r.name, r.pos[1], r.pos[2], q[1], q[2]))
@@ -569,10 +672,14 @@ do
       if r.pos and r.pos[1] >= box.min[1] and r.pos[1] <= box.max[1] and r.pos[2] >= box.min[2] and r.pos[2] <= box.max[2] then return true end
     end
   end
-  for _, r in ipairs(T.anchors) do if REMOVED.gone(r.place, r.name) or in_gone_room(r) then dropped = dropped + 1 else kept[#kept + 1] = r end end
+  local voids = 0
+  for _, r in ipairs(T.anchors) do
+    if REMOVED.gone(r.place, r.name) or in_gone_room(r) then dropped = dropped + 1
+    elseif void_seat(r) then voids = voids + 1 else kept[#kept + 1] = r end end
+  print(('city_anchors.json: %d seat rows over a stairwell dropped'):format(voids))
   T.anchors = kept
   table.sort(T.anchors, function(a, b) return a.id < b.id end)
-  if n > 0 or dropped > 0 or back > 0 or moved > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
+  if n > 0 or dropped > 0 or voids > 0 or back > 0 or moved > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
   print(('city_anchors.json: %d rows marked off now, %d rows of removed furniture dropped'):format(n, dropped))
 end
 do

@@ -1,4 +1,4 @@
-﻿# 試錯與回退紀錄
+# 試錯與回退紀錄
 
 這份紀錄供 `HANDOFF2.md` 的實作與驗證使用。每次出現錯誤、視覺退步或錯誤推論，當次增列一筆：寫明變更、可重現的症狀、已證實與仍待查的原因、回退／修正、下一次試驗前的檢查。未證實的原因不得寫成結論；保留診斷圖片與 log 路徑。正式截圖只放在 `Saved/Screenshots` 根目錄，失敗圖放 `Saved/DebugShots`。
 
@@ -5170,3 +5170,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 根因：RAM < 48 GB 或 VRAM < 20 GB 自動開低記憶體模式（`OKRuntimeLowMemory`），執行期貼圖標 `BULKDATA_SingleUse`，第一次上傳後丟掉 CPU 那份。讀卡器與工作室的調色 LUT（`KKSDefaultSaturationLUT16.png`）先用 `TextureFromPngFile` 建好（已上傳），再改 `SRGB=false`、`LODGroup` 後 `UpdateResource()` 第二次上傳，這時像素已經沒了，LUT 全黑，整個畫面經過調色變黑。
 - 修法：`ColorLookupTextureFromPngFile` 在第一次上傳前就設好線性、LUT 群組與夾邊，只上傳一次，不丟 CPU 資料。
 - 教訓：包要在低記憶體模式下也跑一次（`CardReaderDevelopment.cmd <卡> -- -OKLowMemory`）；開發機不會自動進這個模式。
+
+## 2026-11-17 讀卡器：兩台同時啟動會共用同一個信箱，請求被別台執行（C 組 c-lowspec 修）
+
+- 錯誤：讀卡器用「看別台登錄檔有沒有登記 Saved/CharacterMCP」決定要不要改用 instances/<pid>。兩台同時啟動（例如都被同一個建置卡住、同時放行）時雙方都還沒寫出登錄檔，兩台都拿到共用目錄；reader_call 不管指定哪台，請求都由先讀到的那台執行（2026-11-16 f-yvonne 的讀卡器被外部 load 打到）。同一批還有：Saved/OKControl 裡當機留下的登錄檔 pid 被 conhost.exe 等沿用，ok-game-mcp 仍當成在跑的遊戲（e3dbee227 修）。
+- 修正（C `5ad889ded`）：第一台把自己的暫存檔 rename 成 Saved/CharacterMCP/owner.lock（MoveFileW 不覆蓋，兩台不可能都成功），其餘用 instances/<pid>；鎖的主人已不在就接管，正常結束時刪鎖。第一版把 GetApplicationName 的完整路徑拿去比對程式名，存活判斷永遠不成立、後到的刪掉對方的鎖，測試時抓到改成比對檔名。
+- 驗證：OpenKoikatsuEditor 與 OpenKoikatsu（Development, D:/PhysX/UE5.8）建置連結成功；只改 C++（OKCharacterMCP.cpp），沒動 Rust，所以沒跑 cargo check。兩台同時啟動各拿到自己的信箱、各自設值互不干擾、沒指定時 ambiguous_target 拒絕；強制結束鎖的主人後新開的接管共用目錄；正常關閉（ui_exec quit）後 owner.lock 消失，下一台直接拿到 Saved/CharacterMCP（2026-11-17 補測，兩次都是）。
+- 教訓：「先查再佔」在兩個行程同時啟動時一定有競態，佔用要用一個原子動作（不覆蓋的 rename、獨佔建立）；判斷行程是否還在時，先確認 API 回的是檔名還是完整路徑。

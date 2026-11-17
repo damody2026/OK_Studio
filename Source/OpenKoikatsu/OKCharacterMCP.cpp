@@ -21,6 +21,7 @@
 #include "HAL/FileManager.h"
 #include "ImageUtils.h"
 #include "Misc/CommandLine.h"
+#include "Misc/CoreDelegates.h"
 #include "Misc/Crc.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -55,11 +56,43 @@ struct FOKCharacterMCPBox
   for(const FString& File:Files){const FString Id=FPaths::GetBaseFilename(File);FGuid Guid;if(Id.Len()!=32||!FGuid::ParseExact(Id,EGuidFormats::Digits,Guid))continue;const FString Path=Root/TEXT("requests")/File,Claim=Path+TEXT(".claimed");if(!IFileManager::Get().Move(*Claim,*Path,false))continue;FString Text;if(IFileManager::Get().FileSize(*Claim)>1048576||!FFileHelper::LoadFileToString(Text,*Claim))Text.Empty();IFileManager::Get().Delete(*Claim);Incoming.Enqueue({Id,Text});}
  }
 };
+// The checkout's mailbox (Saved/CharacterMCP) goes to one game at a time: the first takes it with owner.lock, made by
+// renaming a file of its own onto that name (a rename onto an existing name fails, so two games cannot both win); every
+// other game gets Saved/CharacterMCP/instances/<pid>. Each publishes its folder as "mailbox" (Saved/OKControl). Checking
+// the other games' published folders instead raced: two card readers that started together (both held up by a build)
+// each saw no one there and both took the shared folder, so a request for one was done by whichever read it first
+// (2026-11-16: a load meant for another card reader opened C001 in f-yvonne's). A lock of a game that is gone is taken
+// over; the owner removes it when it quits.
+static bool OKClaimSharedMailbox(const FString& Shared)
+{
+ IFileManager& Files=IFileManager::Get();Files.MakeDirectory(*Shared,true);
+ const uint32 Self=FPlatformProcess::GetCurrentProcessId();
+ const FString Lock=Shared/TEXT("owner.lock"),Mine=Shared/FString::Printf(TEXT("owner.%u.tmp"),Self);
+ for(int32 Try=0;Try<2;++Try)
+ {
+  if(!FFileHelper::SaveStringToFile(FString::FromInt(Self),*Mine))return false;
+  if(Files.Move(*Lock,*Mine,false,false,false,true))
+  {
+   FCoreDelegates::OnEnginePreExit.AddLambda([Lock,Self]{FString Owner;if(FFileHelper::LoadFileToString(Owner,*Lock)&&uint32(FCString::Atoi64(*Owner))==Self)IFileManager::Get().Delete(*Lock,false,true,true);});
+   return true;
+  }
+  Files.Delete(*Mine,false,true,true);
+  // Taken: by a running game, or left behind by one that crashed (its pid may now belong to another program).
+  FString Owner;FFileHelper::LoadFileToString(Owner,*Lock);
+  const uint32 Pid=uint32(FCString::Atoi64(*Owner));
+  // GetApplicationName is the full path of the program on Windows.
+  const FString Name=Pid?FPaths::GetCleanFilename(FPlatformProcess::GetApplicationName(Pid)):FString();
+  const bool bGame=Pid&&FPlatformProcess::IsApplicationRunning(Pid)&&(Name.StartsWith(TEXT("UnrealEditor"))||Name.StartsWith(TEXT("OpenKoikatsu"))||Name.StartsWith(TEXT("StreetSocialCity")));
+  if(bGame)return false;
+  Files.Delete(*Lock,false,true,true);
+ }
+ return false;
+}
 static TSharedRef<FOKCharacterMCPBox> OKCharacterMCPBox()
 {
  static TSharedPtr<FOKCharacterMCPBox> Box;
  if(!Box){Box=MakeShared<FOKCharacterMCPBox>();FString Root;
-  if(!FParse::Value(FCommandLine::Get(),TEXT("CharacterMCPDir="),Root)){Root=OKControl::Checkout()/TEXT("Saved/CharacterMCP");if(OKControl::TakenByOther(TEXT("mailbox"),Root))Root/=FString::Printf(TEXT("instances/%u"),FPlatformProcess::GetCurrentProcessId());}
+  if(!FParse::Value(FCommandLine::Get(),TEXT("CharacterMCPDir="),Root)){Root=OKControl::Checkout()/TEXT("Saved/CharacterMCP");if(!OKClaimSharedMailbox(Root))Root/=FString::Printf(TEXT("instances/%u"),FPlatformProcess::GetCurrentProcessId());}
   Box->Root=FPaths::ConvertRelativePathToFull(Root);for(const TCHAR* D:{TEXT("requests"),TEXT("responses"),TEXT("images"),TEXT("cards")})IFileManager::Get().MakeDirectory(*(Box->Root/D),true);
   OKControl::Publish(TEXT("mailbox"),Box->Root);OKControl::Every(.02,[Worker=Box]{Worker->Work();});UE_LOG(LogTemp,Display,TEXT("Character MCP mailbox: %s"),*Box->Root);}
  return Box.ToSharedRef();

@@ -36,10 +36,20 @@ pub fn may_stop(root: &Path) -> bool {
     SELECTED.load(Ordering::Relaxed) != 0 || own_ready(root)
 }
 
-/// The pids alive now.
+/// The pids of game processes alive now (editor -game, packaged game, city build). Only these: Windows gives a dead
+/// game's pid out again, and a registry file left by a crashed game then named conhost.exe or ShellExperienceHost.exe
+/// as a running game (2026-11-17: two such entries made every change with nothing picked be refused).
 fn live_pids() -> Vec<u32> {
     let Ok(out) = Command::new("tasklist").args(["/NH", "/FO", "CSV"]).output() else { return Vec::new() };
-    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.split("\",\"").nth(1)?.parse().ok()).collect()
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.trim_start_matches('"').split("\",\"");
+            let image = f.next()?.to_ascii_lowercase();
+            let game = image.starts_with("unrealeditor") || image.starts_with("openkoikatsu") || image.starts_with("streetsocialcity");
+            if game { f.next()?.parse().ok() } else { None }
+        })
+        .collect()
 }
 
 /// The running games of this checkout, oldest first.

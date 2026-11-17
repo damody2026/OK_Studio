@@ -29,6 +29,7 @@ local OPEN_CELLS = 150   -- outdoors: a region of at least this many cells (24 m
 local K = {
   door_blocked = '門被擋：門口 2.4 m 內沒有可走格',
   no_entry = '樓層沒有入口：這層沒有門、電梯平台或樓梯錨點',
+  via_building = '樓層入口由同棟其他地點提供（地點自己沒有這層的門、電梯或樓梯；不算問題）',
   door_street = '門到不了街上：門口那一片走不出地點的房間',
   unscanned = '沒掃到：錨點不在掃描範圍',
   no_floor = '錨點下沒有地板：高度不對或懸空',
@@ -69,8 +70,8 @@ local function load_points()
   for _, p in ipairs(P) do
     local pts, seen = {}, {}
     pts[#pts + 1] = { name = 'door', pos = p.door, door = true }
-    for _, r in ipairs(rows[p.id] or {}) do seen[r.name] = true; pts[#pts + 1] = { name = r.name, pos = r.pos, kinds = r.kinds } end
-    for _, a in ipairs(p.anchors or {}) do if not seen[a.name] then pts[#pts + 1] = { name = a.name, pos = a.pos, place_only = true } end end
+    for _, r in ipairs(rows[p.id] or {}) do seen[r.name] = true; pts[#pts + 1] = { name = r.name, pos = r.pos, kinds = r.kinds, outdoor = r.outdoor } end
+    for _, a in ipairs(p.anchors or {}) do if not seen[a.name] then pts[#pts + 1] = { name = a.name, pos = a.pos, place_only = true, outdoor = a.outdoor } end end
     -- Floors: the door's and the lift landings' and stairs' heights (a lecture room's tiers, a stage, sit up to 1.5 m over
     -- them: the cell test finds that ground from the floor's height). Points over none of them make floors of their own.
     local function z10(z) return round(z / 10) * 10 end
@@ -88,7 +89,11 @@ local function load_points()
     local function floorof(z) local e = entryof(z); if e then return e end
       local best = extra[1]; for _, f in ipairs(extra) do if z >= f - 30 then best = f end end; return best end
     for _, q in ipairs(pts) do q.z = floorof(z10(q.pos[3])); q.ix, q.iy = cellof(q.pos[1]), cellof(q.pos[2]) end
-    out[#out + 1] = { id = p.id, outdoor = p.outdoor, door = p.door, rooms = p.rooms or {}, floors = floors, points = pts }
+    -- the building it is in: its rules-table rows' (the most of them)
+    local nb, building = {}, nil
+    for _, r in ipairs(rows[p.id] or {}) do if r.building then nb[r.building] = (nb[r.building] or 0) + 1
+      if not building or nb[r.building] > nb[building] then building = r.building end end end
+    out[#out + 1] = { id = p.id, outdoor = p.outdoor, door = p.door, rooms = p.rooms or {}, floors = floors, points = pts, building = building }
   end
   return out
 end
@@ -295,6 +300,20 @@ local function report()
           elseif q.door then add(K.door_blocked, ('%s 門 %s'):format(p.id, xy(q))) end
         end
       end
+      -- none of its own: a lift landing, stair or door of another place in the same building on this floor (the lifts
+      -- serve the building: clothing's 3F by the department store's, lodge's 1F by the hotel's; walked in the game 11-17).
+      -- Named in the report, so a building with none at all is still a floor without an entry.
+      if not p.outdoor and not has_seed_point and p.building then
+        local via = {}
+        for _, o in ipairs(places) do if o ~= p and o.building == p.building then
+          for _, q in ipairs(o.points) do
+            if (q.door or q.name:match('^lift') or q.name:match('^stair')) and math.abs(round(q.pos[3] / 10) * 10 - z) <= 60 then
+              local x, y = nearest(z, q.ix, q.iy, up)
+              if x then seeds[rid(x, y)] = true; has_seed_point = true; via[#via + 1] = o.id .. '.' .. q.name end
+            end end end end
+        if #via > 0 then table.sort(via)
+          add(K.via_building, ('%s 第 %d 層（z %d），%s 棟：%s'):format(p.id, fi, z, p.building, table.concat(via, '、', 1, math.min(#via, 3)) .. (#via > 3 and ('…（共 %d 個）'):format(#via) or ''))) end
+      end
       if not p.outdoor and not has_seed_point then
         local n = 0; for _, q in ipairs(p.points) do if q.z == z then n = n + 1 end end
         add(K.no_entry, ('%s 第 %d 層（z %d），%d 個錨點'):format(p.id, fi, z, n))
@@ -322,7 +341,9 @@ local function report()
             -- The game's spot choice (OKStreetSocialSchedule.inl): a spot in furniture is replaced by one round it, 80
             -- and 140 cm out, that a grid route from inside the door (upstairs: the floor's stair landing) reaches. So
             -- the anchor is reached when any passable cell within NEAR_RINGS is in a region its floor is entered by.
-            local function good(reg) if p.outdoor then return R.edge[reg] or R.size[reg] >= OPEN_CELLS or seeds[reg] end; return seeds[reg] end
+            -- An outdoor row of an indoor place (campus_sports' tennis and volleyball nets, 100 m from its building, on
+            -- open courts) is reached from the street like an outdoor place's: the open-region rule, not the door's.
+            local function good(reg) if p.outdoor or (q.outdoor and not up) then return R.edge[reg] or R.size[reg] >= OPEN_CELLS or seeds[reg] end; return seeds[reg] end
             local reached, best = false, nil
             for rr = 0, NEAR_RINGS do for dx = -rr, rr do for dy = -rr, rr do
               if not reached and math.max(math.abs(dx), math.abs(dy)) == rr and pass(z, q.ix + dx, q.iy + dy, up) then
