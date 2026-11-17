@@ -247,6 +247,10 @@ EKKRuntimeMaterialRecipe OKRuntimeSharedMaterialRecipe(const FKKRuntimeMaterialP
   // "translucent" for the shader's blend state), except one the host fades (_OKItemAlpha < 1: OK Studio's item alpha),
   // which keeps the blending parent.
   if(AdditionalShader==TEXT("Shader Forge/main_item_studio")){const auto* Faded=P.Values.Find(TEXT("_OKItemAlpha"));return Faded&&Faded->X<1.f?EKKRuntimeMaterialRecipe::ForgeStudio:EKKRuntimeMaterialRecipe::ForgeStudioOpaque;}
+  // The school tops' emblem (o_emblem_*, catalog_textures.rs apply_clothes_emblems gives it its picture): no parent
+  // of its own, so a cooked game refused every card wearing one (2026-11-17, the Studio package). The picture with its
+  // alpha over the garment, like a translucent studio item.
+  if(AdditionalShader==TEXT("Koikano/main_clothes_emblem"))return EKKRuntimeMaterialRecipe::ForgeStudioAlpha;
   if(AdditionalShader==TEXT("Goo"))return EKKRuntimeMaterialRecipe::Goo;
   if(AdditionalShader==TEXT("Shader Forge/main_item_ditherd"))return EKKRuntimeMaterialRecipe::ForgeDither;
   if(AdditionalShader==TEXT("Shader Forge/main_item_emission"))return EKKRuntimeMaterialRecipe::ForgeEmission;
@@ -294,7 +298,7 @@ EKKRuntimeMaterialRecipe OKRuntimeSharedMaterialRecipe(const FKKRuntimeMaterialP
 }
 FString OKRuntimeForgeOpaqueProgram(){return GForgeOpaqueForwardProgram;}
 bool OKPrepareRuntimeSharedMaterialBinding(const FKKRuntimeMaterialPart& P,const FKKRuntimeMaterialScene& Scene,FKKRuntimeMaterialBinding& Out,FString& Error,bool Outline){
- auto Fail=[&](const TCHAR* Why){Error=Why;return false;};const auto Recipe=OKRuntimeSharedMaterialRecipe(P);const auto* Layout=Outline?OKRuntimeOutlineLayout(Recipe):OKRuntimeSharedMaterialLayout(Recipe);if(!Layout)return Fail(TEXT("Unsupported shared material family"));
+ auto Fail=[&](const TCHAR* Why){Error=Why;return false;};const auto Recipe=OKRuntimeSharedMaterialRecipe(P);const auto* Layout=Outline?OKRuntimeOutlineLayout(Recipe):OKRuntimeSharedMaterialLayout(Recipe);if(!Layout){FString Shader;TSharedPtr<FJsonObject> Meta;const TSharedPtr<FJsonObject>* MetaMat=nullptr;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(P.SourceMetadataJson),Meta)&&Meta&&Meta->TryGetObjectField(TEXT("material"),MetaMat))(*MetaMat)->TryGetStringField(TEXT("shader"),Shader);Error=FString::Printf(TEXT("Unsupported shared material family: part %s (%s%s, shader %s)"),*P.Name,*P.Role,Outline?TEXT(", outline"):TEXT(""),Shader.IsEmpty()?TEXT("?"):*Shader);return false;}
  TSharedPtr<FJsonObject> Root;double Schema=0;if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(P.SourceMetadataJson),Root)||!Root||!Root->TryGetNumberField(TEXT("schema"),Schema)||Schema!=1)return Fail(TEXT("Shared material source metadata invalid"));
  // Unity property names are case sensitive: hair prefabs carry a stale
  // `_shadowcolor` that main_hair never reads, and FString's default

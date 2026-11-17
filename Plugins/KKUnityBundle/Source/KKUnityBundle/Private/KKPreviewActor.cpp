@@ -3629,6 +3629,9 @@ static void ApplyPartMaterial(UMeshComponent* Comp, UTexture2D* Tex, const FStri
 {
 #if !WITH_EDITOR
     if(Comp&&Shadow&&Shadow->CookedMaterial){Comp->SetMaterial(0,Shadow->CookedMaterial);Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);Comp->SetCastShadow(true);}
+    // A part OKPrepareCookedRole left out (no shared parent for its shader): not drawn at all, rather than in the
+    // engine's default material. Visibility toggles (clothes states) do not bring it back: they leave these passes alone.
+    else if(Comp&&Shadow){Comp->SetRenderInMainPass(false);Comp->SetRenderInDepthPass(false);Comp->SetCastShadow(false);}
     return;
 #else
 	// A part on a shared parent (OKPrepareCookedRole) needs no graph of its own.

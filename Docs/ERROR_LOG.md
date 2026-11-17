@@ -5142,3 +5142,9 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **搬目錄**：使用者把包從 `E:\Studio-20261117\Studio-20261117` 往上移一層，stage 裡的 junction 還指著舊位置。`packaged_launch` 只看連結「在不在」，失效的連結被當成存在，遊戲找不到 base_v1，退回 cook 進包的 Config `Root=D:/KoikatuSunshine`，不管卡有沒有 mod 都報 `game_root missing abdata`，ramps.json、MotionCatalogue.json 也讀不到。修法：`street_stage.link_content` 失效或指向別處就重建。
 - **包依賴開發機的遊戲**：同一個 Config 讓包裡的讀卡器去列、去開 `D:\KoikatuSunshine\UserData\chara\male`，語音也試寫死的 C:/D:/E: 路徑；使用者搬那個資料夾時被佔用。修法：包（有 PACKAGE.json）啟動時帶 `-NoGameRoot`，`UKKGameRoot` 的 Root 清空、語音不再試開發機路徑。
 - 教訓：打包產物一定要從包裡實際開一張卡再交出去；要測「沒有遊戲」得讓遊戲真的看不到開發機的遊戲目錄，日誌裡 grep 不到 KoikatuSunshine 才算。
+
+## 2026-11-17 打包版遇到一個不支援材質的部件，整張卡開不起來
+
+- 原作上衣的校徽 o_emblem_*（`Koikano/main_clothes_emblem`）沒有共用母材質，打包版讀卡器與工作室遇到穿這種上衣的原作卡就整張報 `Unsupported shared material family`，與 mod 無關。校徽改用 Studio 半透明道具母材質（ForgeStudioAlpha，已在共用資源裡）。
+- 通則：打包版某個部件拿不到共用材質時，只把那個部件拿掉（不畫、記一行 `Part N (...) left out`），角色其他部分照常載入；以前是整張卡失敗。
+- 順便：淚水部件建出來時是隱藏的，打包版以前沒給它材質，之後顯示會變引擎預設材質；現在一起做。
