@@ -385,3 +385,35 @@ CPU 蒙皮加晃動跟隨約 1.8 ms。每幀大約是解算時間再加 3 ms 顯
 - 診斷 cvar：`ok.ClothGpuSkip`（每個步驟一個位元，只用來找成本，結果會錯）。
 - 打包注意：global shader 改了，要自己的 runtime patch（`rebuild_street_social_patch.lua --output`），並以 `-PatchDir` 啟動；共用 patch 的 `RuntimeGlobalShaderPatch-*_P.pak` 會蓋過新 base 的 shader（見 `Docs/ERROR_LOG.md`）。
 - 預設改 2 後的建置（EGalCloth12，不下任何指令）：idle 137.3、loop 129.9、fast 128.7、after 128.0；雷電將軍正常位、騎乘位各兩個角度 A 都小於 B。
+
+## 2026-11-18 水槍（體外射精後）獨佔量測
+
+改動：`d3b94305d`（大腿晃動 morph 留在 CPU、可上色元件名單每秒重建）、`bbe276ac8`（搬運前的複製移到 worker）、`5dfb34bcb`（插入時面板讀數每 4 幀算一次）。之前在吵機器上量的數字（同時有別的 Unreal 在編譯、壓包）只拿來看方向，不拿來算省多少。
+
+條件：獨佔整台機器（`unreal_slot.lua claim --need-gb 60`，07:16～07:50 機器上沒有別的 Unreal、自動化測試或 Insights）；**背景有使用者的 MuMu 模擬器，整機 CPU 約 16%**，和別台機器比時要記得。1920×1080，貞德·Alter（girl 1），全身衣服 3100，正常位 1046，`/hscene` 2005 體外射精；stage 加 `-PatchDir Saved/StreetSocial/Build/NH1115.patch`。順序 a→c→a→c→b，每段 8 次 `/fps` 取平均；trace 在射精後（after 段之後）錄約 6 秒。
+
+| 版本 | idle | loop | fast | after |
+|---|---|---|---|---|
+| 1118a（改動前，e7b34e6f2） | 187.6 | 76.7 | 74.8 | 90.2 |
+| 1118c（bbe276ac8） | 193.4 | 124.0 | 126.2 | 134.6 |
+| 1118a | 187.1 | 76.2 | 80.3 | 96.1 |
+| 1118c | 194.3 | 124.7 | 121.6 | 129.9 |
+| 1118b（d3b94305d） | 194.6 | 123.7 | 121.6 | 126.5 |
+
+插入後的遊戲執行緒每幀 11.9～14.7 ms → 6.8～10.1 ms。
+
+射精後 trace 的幀時間分佈（GameThread 的 FEngineLoop::Tick）：
+
+| 版本 | 幀數 | p50 | p90 | p95 | p99 | 最差 | > 8.33 ms |
+|---|---|---|---|---|---|---|---|
+| 1118a | 806 | 9.42 | 14.54 | 15.14 | 19.49 | 26.16 | 92% |
+| 1118c | 1210 | 6.56 | 9.57 | 10.19 | 11.24 | 24.72 | 22% |
+| 1118a | 847 | 10.11 | 11.59 | 11.84 | 12.62 | 25.73 | 96% |
+| 1118c | 1154 | 6.95 | 10.34 | 11.17 | 13.65 | 22.96 | 26% |
+| 1118b | 1153 | 6.78 | 10.56 | 11.21 | 12.35 | 24.86 | 31% |
+
+- p50 降約 3 ms，p99 第一對 19.5 → 11.2、第二對 12.6 → 13.7（第二對 p99 沒有改善；那趟 1118a 錄到的 6 秒裡 p90～p99 都很集中，原因沒查）。
+- **最差幀沒降**（23～26 ms 兩邊都有）：改動後的最差兩幀都是 GC（`ConditionalCollectGarbage` 約 18 ms，其中 `NotifyUnreachableObjects` 約 11.5 ms），水槍只佔 1 ms 左右。改動前的最差幀才是水槍（`OK_PaintTick` 14～18 ms，`RefreshGeometries`／`PrepareGeometry`）。下一步若要壓最差幀，要看 GC，不是水槍。
+- 改動後仍有偶發的水槍高峰：可上色元件名單重建那一幀（`OK_PaintDiscoverList` 3.4 ms，每秒一次）、一次 `OK_PaintStep` 11 ms。
+- 1118d（FOKPaintPose 的 morph 累加依權重快取）沒跑：吵機器上量到只省 0.04 ms/幀，改動已撤回，不在任何提交裡。
+- 剩下的平均大項：`KK_PairAdvance` 約 2～3 ms（其中 `KK_PairRoleDisplay` 1.4～2 ms）、`OK_PaintTick` 約 1～3 ms。
