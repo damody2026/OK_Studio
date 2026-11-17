@@ -689,6 +689,21 @@ fn compose_body_texture_uncached(
     let Some(mut png) = tex.take() else {
         return;
     };
+    // The chain below (overlay flip, composite, create colours, Blit flip) handed PNG bytes from step to step: a
+    // 2048 body was decoded and re-encoded four times, ~350 ms of an open, and each intermediate is unique to this
+    // card so `png_transform_cache` only paid for hashing it. Decode once, chain on the image, encode once; the
+    // per-texel arithmetic is the same code (the `_rgba` cores the PNG wrappers call).
+    // Not while texture memos are recorded or replayed (ok-card-bake --memo tex, OK_CARD_MEMO=tex): those record the
+    // per-transform cache entries this path does not go through.
+    // OK_NO_CHAINED_BODY=1: every composite goes step by step through PNG (to compare with the chained path).
+    if !crate::memosnap::active(crate::memosnap::TEX) && !chained_body_off() {
+        if let Some(out) = compose_body_texture_chained(&png, card, skin, sub, body_texs, outfit) {
+            mesh.texture_png = Some(out);
+            mark_runtime_main_texture(mesh);
+            mesh.texture_name = "cf_body_00_t".into();
+            return;
+        }
+    }
     let mut body_source_srgb=false;
     // KSOX Hooks.OverlayBlitImpl paints BodyUnder on the Blit source before
     // Koikano/create_skinbody runs; the shader colors that composite together.
@@ -715,6 +730,44 @@ fn compose_body_texture_uncached(
     mesh.texture_png = Some(flip_runtime_blit_v(png));
     mark_runtime_main_texture(mesh);
     mesh.texture_name = "cf_body_00_t".into();
+}
+
+fn chained_body_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("OK_NO_CHAINED_BODY").is_some())
+}
+
+/// The steps of `compose_body_texture_uncached` on one decoded image: the same order, the same arithmetic and the
+/// same PNG encoder as the step-by-step path, with no PNG between the steps. None where that path would have kept
+/// the bytes it was given (a step that reports nothing), so the caller falls back to it.
+fn compose_body_texture_chained(
+    png: &[u8],
+    card: Option<&CardInfo>,
+    skin: [f32; 4],
+    sub: [f32; 4],
+    body_texs: &[(String, Vec<u8>)],
+    outfit: i32,
+) -> Option<Vec<u8>> {
+    let _spot = crate::profile::spot("compose_body_texture chained");
+    let mut img = crate::teximg::load_from_memory(png).ok()?.into_rgba8();
+    let mut body_source_srgb = false;
+    if let Some(ov) = card.and_then(|c| ksox_overlay_png(c, outfit, 3)) {
+        let mut over = crate::teximg::load_from_memory(&ov).ok()?.into_rgba8();
+        // flip_runtime_blit_v on the overlay, in place.
+        image::imageops::flip_vertical_in_place(&mut over);
+        crate::clothes_texture::composite_overlay_rgba(&mut img, &over, false, true)?;
+        body_source_srgb = true;
+    }
+    let mask_name = if card.is_some_and(|c| c.sex == 0) { "cm_body_00_mc" } else { "cf_body_00_mc" };
+    if let Some((_, mask)) = pick_named_png(body_texs, &[mask_name]) {
+        let nail = card.map(|c| c.nail_color).unwrap_or([1.0; 4]);
+        let mask = crate::teximg::load_from_memory(&mask).ok()?.into_rgba8();
+        crate::unity::apply_body_create_colors_rgba(&mut img, &mask, skin, sub, nail, body_source_srgb)?;
+    } else {
+        crate::unity::overlay_skin_rgba(&mut img, skin);
+    }
+    image::imageops::flip_vertical_in_place(&mut img);
+    encode_png(&img)
 }
 
 pub(crate) fn is_head_detail(name: &str) -> bool {

@@ -5,6 +5,8 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Json.h"
 #include "Misc/PackageName.h"
+#include "Engine/StreamableManager.h"
+#include "Engine/AssetManager.h"
 #include "HAL/IConsoleManager.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 struct FOKForgeOpaqueUniform {const TCHAR* Name;int32 CB,Offset,Dim,Type,Rows;};
@@ -479,6 +481,32 @@ UMaterialInterface* OKLoadRuntimeSharedMaterialParent(const FString& Root,EKKRun
  }
  return nullptr;
 }
+void OKPreloadRuntimeSharedMaterialParents(const FString& Root){
+ if(Root.IsEmpty())return;
+ // OK_NO_MATERIAL_PRELOAD=1: the first card loads each parent itself again (to compare with the preload).
+ static const bool bOff=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_NO_MATERIAL_PRELOAD"))==TEXT("1");
+ if(bOff)return;
+ if(!UAssetManager::IsInitialized())return;
+ // One request per root; the handles are kept for the process so the parents stay resident.
+ static TMap<FString,TSharedPtr<FStreamableHandle>> Requested;
+ if(Requested.Contains(Root))return;
+ TArray<FSoftObjectPath> Paths;
+ for(const EKKRuntimeMaterialRecipe R:OKRuntimeSharedMaterialRecipes()){
+  const FString Base=OKRuntimeSharedMaterialParentName(R);if(Base.IsEmpty())continue;
+  // The outline variant as well (a part with an outline loads it through the same call), and the `_Flat` ones the
+  // head's parts load through OKRuntimeFlatFaceParent — the reader asks for those live, and they are timed into the
+  // same parent_load_ms.
+  for(const bool Outline:{false,true})for(const bool Flat:{false,true}){
+   const FString Name=Base+(Outline?TEXT("_Outline"):TEXT(""))+(Flat?TEXT("_Flat"):TEXT(""));
+   if(!FPackageName::DoesPackageExist(Root/Name))continue;
+   Paths.AddUnique(FSoftObjectPath(Root/Name+TEXT(".")+Name));
+  }
+ }
+ if(Paths.IsEmpty()){Requested.Add(Root,nullptr);return;}
+ Requested.Add(Root,UAssetManager::GetStreamableManager().RequestAsyncLoad(Paths,FStreamableDelegate(),FStreamableManager::DefaultAsyncLoadPriority,/*bManageActiveHandle*/false,/*bStartStalled*/false,TEXT("OKRuntimeSharedMaterialParents")));
+ UE_LOG(LogTemp,Display,TEXT("OKCARD_PROFILE preload shared parents root=%s asked=%d"),*Root,Paths.Num());
+}
+
 FString OKRuntimeSharedMaterialParentName(EKKRuntimeMaterialRecipe R){
  if(int32(R)>=13){static const TCHAR* Names[]={TEXT("M_KoikanoSkin"),TEXT("M_ForgeSkin"),TEXT("M_KoikanoNose"),TEXT("M_KoikanoBrow"),TEXT("M_KoikanoClothesOpaque"),TEXT("M_KoikanoClothesColor"),TEXT("M_KoikanoClothesItem"),TEXT("M_KoikanoClothesItemAlpha"),TEXT("M_KoikanoClothesAlphaCull"),TEXT("M_KoikanoClothesAlpha"),TEXT("M_IBLAlpha"),TEXT("M_KoikanoClothesItemTranslucent"),TEXT("M_KoikanoClothesItemAlphaTranslucent"),TEXT("M_IBLDepth"),TEXT("M_KoikanoHairSun0"),TEXT("M_KoikanoHairSun1"),TEXT("M_KoikanoHairSun2"),TEXT("M_KoikanoHairSun3"),TEXT("M_KoikanoHairSun4"),TEXT("M_KoikanoHairSun5"),TEXT("M_KoikanoHairSun6"),TEXT("M_KoikanoHairSun7"),TEXT("M_KoikanoGlasses0"),TEXT("M_KoikanoGlasses1"),TEXT("M_KoikanoGlasses2"),TEXT("M_KoikanoGlasses3"),TEXT("M_KoikanoGlasses4"),TEXT("M_KoikanoGlasses5"),TEXT("M_KoikanoGlasses6"),TEXT("M_KoikanoGlasses7"),TEXT("M_KoikanoGlasses8"),TEXT("M_KoikanoGlasses9"),TEXT("M_KoikanoGlasses10"),TEXT("M_KoikanoGlasses11"),TEXT("M_IBLOpaque"),TEXT("M_KKUSSItem"),TEXT("M_XukmiItem"),TEXT("M_ForgeGlasses"),TEXT("M_ForgeMDK"),TEXT("M_Goo"),TEXT("M_ForgeDither"),TEXT("M_ForgeEmission"),TEXT("M_KKUSS"),TEXT("M_ForgeEyeWhiteLod"),TEXT("M_OilPainting"),TEXT("M_BetterMatcap"),TEXT("M_KoikanoLowAlphaCull"),TEXT("M_KoikanoLowAlpha"),TEXT("M_ForgeStudio"),TEXT("M_ForgeStudioOpaque"),TEXT("M_KKUTS"),TEXT("M_KKUTSItem"),TEXT("M_KKUTSAlpha"),TEXT("M_KKUTSHair"),TEXT("M_KKUTSEye"),TEXT("M_KKUTSEyeWhite"),TEXT("M_KKUSSAlpha"),TEXT("M_KKUSSHair")};return int32(R)<=70?FString(Names[int32(R)-13]):FString();}
  switch(R){case EKKRuntimeMaterialRecipe::ForgeOpaque:return TEXT("M_ForgeOpaque");case EKKRuntimeMaterialRecipe::ForgeAlphaMasked:return TEXT("M_ForgeAlphaMasked");case EKKRuntimeMaterialRecipe::ForgeAlphaTranslucent:return TEXT("M_ForgeAlphaTranslucent");case EKKRuntimeMaterialRecipe::ForgeItem:return TEXT("M_ForgeItem");case EKKRuntimeMaterialRecipe::ForgeHair:return TEXT("M_ForgeHair");case EKKRuntimeMaterialRecipe::ForgeHairFront:return TEXT("M_ForgeHairFront");case EKKRuntimeMaterialRecipe::ForgeStudioAlpha:return TEXT("M_ForgeStudioAlpha");case EKKRuntimeMaterialRecipe::ForgeEyeWhite:return TEXT("M_ForgeEyeWhite");case EKKRuntimeMaterialRecipe::ForgeEye:return TEXT("M_ForgeEye");case EKKRuntimeMaterialRecipe::KoikanoEyeWhite:return TEXT("M_KoikanoEyeWhite");case EKKRuntimeMaterialRecipe::KoikanoEye:return TEXT("M_KoikanoEye");case EKKRuntimeMaterialRecipe::ForgeNose:return TEXT("M_ForgeNose");default:return FString();}

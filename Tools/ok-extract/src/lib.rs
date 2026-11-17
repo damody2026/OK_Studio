@@ -575,7 +575,7 @@ pub fn prewarm(game_root: &Path) -> Result<(), String> {
     let mods_dir = game_root.join("mods");
     static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
     let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new()
-        .num_threads(cpu_threads().clamp(2, 16)).thread_name(|i| format!("OKPrewarm{i}"))
+        .num_threads(cpu_threads().max(2)).thread_name(|i| format!("OKPrewarm{i}"))
         .start_handler(|_| { crate::oklib::mark_outside_opens(); below_normal_priority(); }).build().ok());
     let work = || rayon::scope(|scope| {
         scope.spawn(|_| { let vanilla = load_characustom_dir(&game_root.join("abdata/list/characustom")); let _ = configured_ramp_png(game_root, &vanilla); });
@@ -585,6 +585,21 @@ pub fn prewarm(game_root: &Path) -> Result<(), String> {
         scope.spawn(|_| { let _ = crate::mods::uncensor_sources(game_root); });
         scope.spawn(|_| { let _ = me_manifest_sections(game_root); });
         scope.spawn(|_| { let _ = crate::h_playback::pairs(game_root); });
+        // The base body and vanilla head bundles: the same for every card, and only the first card of a process pays
+        // for them. OK_PROFILE on a fresh process: "load_base_bundle body" ~50 ms and "base: head textures" ~220 ms
+        // for the first card, 1–45 ms for the next ones, which found them in this process's content caches. Decoded
+        // here they are there for the first card too. Not a disk cache (that stays off, 70d8a21c7): the shared
+        // library's own bundles, decoded in memory on a background thread that is outside every open.
+        // OK_NO_BASE_BUNDLE_PREWARM=1: the first card decodes them itself again (to compare).
+        if std::env::var_os("OK_NO_BASE_BUNDLE_PREWARM").is_none() {
+            scope.spawn(|_| { let _ = crate::unity::load_base_bundle(&game_root.join("abdata/chara/oo_base.unity3d")); });
+            scope.spawn(|_| {
+                if let Ok(bytes) = crate::gamefs::read_source(game_root.join("abdata/chara/bo_head_00.unity3d")) {
+                    let _ = crate::unity::parse_bundle_cached(bytes).textures_keep_base();
+                }
+            });
+            scope.spawn(|_| { let _ = crate::gamefs::read_source(game_root.join("abdata/chara/mm_base.unity3d")).map(crate::unity::parse_bundle_cached); });
+        }
         // Original KKS cards open from the library plus the installation's zipmods they name (OK_GAME_ROOT).
         if let Some(game) = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.join("mods").is_dir()) {
             scope.spawn(move |_| crate::mods::prewarm_guid_index(&game.join("mods")));
@@ -1197,8 +1212,12 @@ pub fn export_session_posed_objs(game_root: &Path, card_path: &Path, outfit: i32
     Ok(session.parts.len())
 }
 
-/// Threads one process's pools may use: OK_THREADS (set by `--oklib cards` for its workers, which share the machine),
-/// else the hardware threads.
+/// Threads one process's pools may use.
+///
+/// OK_THREADS or RAYON_NUM_THREADS given: that many, at most the hardware threads. It raises as well as lowers:
+/// `--oklib cards` lowers it for its workers, which share the machine, while an offline batch the user started and is
+/// waiting for (ok-crowd-pack or ok-lowpoly over dozens of cards) may ask for the machine it is being given.
+/// Neither given: the hardware threads, at most MAX_THREADS, so nothing fills the machine by default.
 /// This thread below normal priority (background work beside the opens a user waits for).
 fn below_normal_priority() {
     #[cfg(windows)]
@@ -1210,15 +1229,30 @@ fn below_normal_priority() {
         unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); }
     }
 }
-/// The most threads an ok tool may use (the user's machine-wide rule, 2026-11-03: ok-extract once filled every core).
+/// The threads an ok tool takes when it is not told otherwise (the user's machine-wide rule, 2026-11-03: ok-extract
+/// once filled every core). It is the default, not a ceiling: the rule is about not taking over a machine the user is
+/// working on, so `cpu_threads` lets OK_THREADS/RAYON_NUM_THREADS raise it for a batch the user started on purpose.
 pub const MAX_THREADS: usize = 8;
 pub fn cpu_threads() -> usize {
-    std::env::var("OK_THREADS").ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get())).min(MAX_THREADS)
+    let hardware = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // RAYON_NUM_THREADS too: it is what the project's own instructions tell a caller to set, and rayon reads it only
+    // for a pool built without a thread count, which `limit_threads` is not.
+    let asked = |name: &str| std::env::var(name).ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0);
+    match asked("OK_THREADS").or_else(|| asked("RAYON_NUM_THREADS")) {
+        // Asked for explicitly, so taken as meant, up to what the machine has.
+        Some(asked) => asked.min(hardware),
+        None => hardware.min(MAX_THREADS),
+    }
 }
-/// rayon's global pool (every bare par_iter) at MAX_THREADS; once, at the entry points. Already built: left as it is.
+/// rayon's global pool (every bare par_iter) at `cpu_threads()`; once, at the entry points. Already built: left as it is.
+///
+/// Not MAX_THREADS: `--oklib cards` runs its workers as processes of their own and gives each one its share of the
+/// machine in OK_THREADS, but a count passed here overrides what rayon would read from the environment, so every
+/// worker's bare `par_iter` used to get the full 8 whatever its share was (8 workers = 64 threads, past the rule this
+/// constant is here to keep). With no OK_THREADS/RAYON_NUM_THREADS this is the hardware threads clamped to
+/// MAX_THREADS, which is what it was before, so a single process is unchanged.
 pub fn limit_threads() {
-    let _ = rayon::ThreadPoolBuilder::new().num_threads(MAX_THREADS).build_global();
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(cpu_threads()).build_global();
 }
 
 /// `f` with these garment states requested for the opens it makes (tools: ok-card-open-bench).

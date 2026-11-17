@@ -44,12 +44,21 @@ CardReaderDevelopment.cmd -DryRun
 - 讀卡器選卡時只同步解第一幀，其餘幀在工作執行緒解碼，回到遊戲執行緒時以世代號確認仍是同一張卡才建貼圖（`AnimatedPreviewGeneration`）；測試用 `DecodeRemainingPreviewFramesNow` 同步補完。
 - 未採用：改存 RGB（再省約 7%，需自寫編碼器）、只存差異區域的 delta 幀（讀取端要合成）。
 
-## 載入速度與開卡快取（OK 卡）
+## 載入速度（OK 卡）
 
-目標：OK 卡載入 3 秒內、原作 KKS 卡 5 秒內，換服裝同樣。做法是「點到之前就已經建好」，再加上原生端每次開卡的固定成本壓低：
+**前提：開卡不用磁碟快取，而且不會再開。** 每次開卡都是冷讀取，效能目標就是冷讀取時間本身。
+`oklib::session_cache_location()` 只在設了 `OK_LIBRARY_CACHE` 時才回傳目錄；2026-10-28 的 `70d8a21c7`
+關掉了預設值，理由是**多程序正確性**（轉卡時多個工作程序平行跑，磁碟上的衍生貼圖與同名暫存檔會互相覆寫；
+而嚴格開卡要能證明卡片自己帶的資料夠用，不能被舊快取蒙混過關），不是效能。使用者 2026-11-17 的決定是
+永遠不要開這個快取、改去優化冷讀取。衍生貼圖與程式庫掃描的磁碟快取同樣只在設了 `OK_LIBRARY_CACHE` 時才有。
 
-- **開卡快取**：每張卡 × 每套服裝的原生結果存在 `%LOCALAPPDATA%/OpenKoikatsu/oklib-cache`（上限 `OK_LIBRARY_CACHE_GB`，預設 64）。命中時原生 0.1–0.4 秒，讀卡器整體約 1.6 秒（UE 建網格／材質約 1.4 秒）。
-- **背景預熱（已停用，2026-10-19）**：`Tools/run_card_reader_development.lua` 不再開 `ok-card-warm` 行程，也不設 `OK_WARM_PRIORITY`；讀卡器開卡時自己建，結果照樣存進開卡快取。`ok-card-warm` 仍可手動執行（用法見其檔頭）。以下兩條只在手動設定 `OK_WARM_PRIORITY` 並自行啟動預熱行程時才有作用。
+目標：OK 卡載入 3 秒內、原作 KKS 卡 5 秒內，換服裝同樣。做法是把原生端每次開卡的固定成本壓低：
+
+- **冷開卡的實測分佈**（2026-11-17，`Saved/Reports/card-open-perf-20261117/`）：全新程序、無任何快取，
+  OK 卡原生約 1.0–1.4 秒，原作 KKS 卡第一張約 6–8 秒、之後每張新卡約 2–4 秒。
+  UE 側（`OK_LOAD_PROFILE=1` 的 `OKCARD_PROFILE`）第一張卡約 520 毫秒，幾乎全是一次性的材質 parent 載入
+  （`cooked_role`）；**第二張之後只剩約 50–60 毫秒**。所以開卡時間基本上全在原生端，不在 game thread。
+- **背景預熱（已停用，2026-10-19）**：`Tools/run_card_reader_development.lua` 不再開 `ok-card-warm` 行程，也不設 `OK_WARM_PRIORITY`；讀卡器開卡時自己建。`ok-card-warm` 仍可手動執行（用法見其檔頭），但它填的是磁碟開卡快取，而那個快取預設沒有（見本節開頭的前提），所以只有自己設了 `OK_LIBRARY_CACHE` 才有意義。以下兩條同理，只在手動設定 `OK_WARM_PRIORITY` 並自行啟動預熱行程時才有作用。
 - **優先請求**：讀卡器在清單選卡、按載入時，把卡片路徑追加到 `OK_WARM_PRIORITY`。預熱行程每建完一筆就重讀，先以一般優先權建最新請求卡片的所有服裝。
 - **不重複建置**：讀卡器開一筆未快取的卡時也會認領；若預熱行程正在建同一筆，就等它完成（最多 30 秒）再讀快取。本行程自己的認領不會等待。
 - **行程內預熱**：讀卡器開啟時背景呼叫 `ok_prewarm`（`FOkSession::Prewarm`），先建好清單、mods 目錄、GUID 索引、StripAll、UncensorSelector／MaterialEditor manifest、H 配對表等記憶化，第一張卡不必再付這些成本。

@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Fills the game's open-card cache (oklib-cache) for a folder of OK cards, so the card reader opens them and switches
 // their outfits from the cache (~0.1 s) instead of building each one (~4-10 s):
 //   ok-card-warm LIBRARY CARD_DIR [--shard I/N] [--outfits all|first] [--priority FILE] [--until-pid PID] [--also DIR]...
@@ -212,4 +213,7 @@ fn set_priority(normal: bool) {
 #[cfg(not(windows))]
 fn set_priority(_normal: bool) {}
 
-fn main() { set_priority(false); if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }
+fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads(); set_priority(false); if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }

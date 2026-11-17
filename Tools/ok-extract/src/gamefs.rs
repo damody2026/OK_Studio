@@ -549,6 +549,33 @@ pub fn resolve_mod_archive(root: &Path, key: &str) -> Option<PathBuf> {
     entries.iter().find(|(l, _)| same_archive_name(l, &want_lower)).map(|(_, p)| p.clone())
 }
 
+/// What a fallback root holds, read once per root and fallback generation: whether it has a `mods` folder at all and,
+/// for a loose-archive root (a card's own directory), the names it lists (lower case; None when it could not be
+/// listed, so nothing is skipped). Every name is kept whatever its type: a link's `file_type` is not a file, while
+/// the `metadata` that looks for the archive follows it.
+struct RootProbe { has_mods_dir: bool, loose: Option<std::collections::HashSet<String>> }
+/// OK_NO_ROOT_PROBE=1: every candidate is listed and stated again (to compare with the probe).
+pub(crate) fn root_probe_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("OK_NO_ROOT_PROBE").is_some())
+}
+fn root_probe(root: &Path, loose_mods: bool) -> Arc<RootProbe> {
+    static MEMO: std::sync::OnceLock<Mutex<(u64, std::collections::HashMap<PathBuf, Arc<RootProbe>>)>> = std::sync::OnceLock::new();
+    let generation = FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    let memo = MEMO.get_or_init(|| Mutex::new((generation, Default::default())));
+    {
+        let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+        if memo.0 != generation { *memo = (generation, Default::default()); }
+        if let Some(hit) = memo.1.get(root) { return hit.clone(); }
+    }
+    let loose = loose_mods.then(|| std::fs::read_dir(root).ok().map(|rd| rd.flatten()
+        .map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()).collect())).flatten();
+    let probe = Arc::new(RootProbe { has_mods_dir: root.join("mods").is_dir(), loose });
+    let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+    if memo.0 == generation { memo.1.insert(root.to_owned(), probe.clone()); }
+    probe
+}
+
 /// Real paths that may serve `key`, each with whether it is the installation's (see `Fallback::installation`).
 /// While a card is recorded the installation serves nothing: what the card needs from it is found through gaps.
 fn fallback_candidates(key: &str) -> Vec<(PathBuf, bool)> {
@@ -560,12 +587,24 @@ fn fallback_candidates(key: &str) -> Vec<(PathBuf, bool)> {
     for f in roots.iter() {
         if f.installation && recording { continue; }
         if !f.root.as_os_str().is_empty() {
-            if let Some(resolved) = resolve_mod_archive(&f.root, key) {
-                out.push((resolved, f.installation));
-            } else {
-                out.push((f.root.join(key), f.installation));
+            let probe = if root_probe_off() { Arc::new(RootProbe { has_mods_dir: true, loose: None }) } else { root_probe(&f.root, f.loose_mods) };
+            // Candidates under a `mods` folder this root does not have, and loose archives it does not hold, cannot
+            // exist: skipping them leaves the first existing candidate the same and saves the stat. A card's own
+            // directory (loose_mods) rarely has either, and every archive of the tree was stated against it: the
+            // ~7000 of a library's recorded tree cost ~1 s of the first open of a process.
+            let under_mods = key.len() > "mods/".len() && key.starts_with("mods/");
+            if !(under_mods && !probe.has_mods_dir) {
+                if let Some(resolved) = resolve_mod_archive(&f.root, key) {
+                    out.push((resolved, f.installation));
+                } else {
+                    out.push((f.root.join(key), f.installation));
+                }
             }
-            if let (true, Some(name)) = (f.loose_mods, file_name) { out.push((f.root.join(name), false)); }
+            if let (true, Some(name)) = (f.loose_mods, file_name) {
+                if probe.loose.as_ref().is_none_or(|held| held.contains(&name.to_ascii_lowercase())) {
+                    out.push((f.root.join(name), false));
+                }
+            }
         }
         if let Some(name) = file_name {
             let mut matched = false;
@@ -592,6 +631,37 @@ fn fallback_candidates(key: &str) -> Vec<(PathBuf, bool)> {
 /// First real file or directory for `key` in the fallback directories.
 fn fallback_path(key: &str, want_dir: Option<bool>) -> Option<(PathBuf, std::fs::Metadata)> {
     fallback_source(key, want_dir).map(|(p, m, _)| (p, m))
+}
+fn coarse_zip_memo() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("OK_COARSE_ZIP_MEMO").is_some())
+}
+
+/// Which real file the fallback would serve `key` from, as (path, size, time), or "none". Unlike `fallback_source`
+/// it marks nothing as used: it only names what a `library_zip_memo` value was read from.
+fn fallback_serving_id(key: &str) -> Arc<String> {
+    // The three whole-tree walks of an open ask for the same archive, so it is worked out once per fallback
+    // generation (the generation changes with the fallback, which is what the candidates are read from).
+    static MEMO: std::sync::OnceLock<Mutex<(u64, std::collections::HashMap<String, Arc<String>>)>> = std::sync::OnceLock::new();
+    let generation = FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    let memo = MEMO.get_or_init(|| Mutex::new((generation, Default::default())));
+    {
+        let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+        if memo.0 != generation { *memo = (generation, Default::default()); }
+        if let Some(hit) = memo.1.get(key) { return hit.clone(); }
+    }
+    let mut id = Arc::new(String::from("none"));
+    for (path, _) in fallback_candidates(key) {
+        if let Ok(m) = std::fs::metadata(&path) {
+            if !m.is_dir() {
+                id = Arc::new(format!("{}|{}|{:?}", normalize(&path), m.len(), m.modified().ok()));
+                break;
+            }
+        }
+    }
+    let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+    if memo.0 == generation { memo.1.insert(key.to_owned(), id.clone()); }
+    id
 }
 /// `fallback_path` plus whether the path is the installation's.
 fn fallback_source(key: &str, want_dir: Option<bool>) -> Option<(PathBuf, std::fs::Metadata, bool)> {
@@ -1434,11 +1504,35 @@ pub fn library_zip_memo<T: Clone + Send + Sync + 'static>(what: &str, zip: &Path
     // card being sealed reads it again, so what it reads is copied into the card.
     let own = crate::okstrict::active().is_some() && !crate::okstrict::library_zip(&key);
     if own && crate::okstrict::complete(|_| {}) { return build(); }
-    let generation = if own || zip_lacks_models(&st, &key) { format!("{}|{}", FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::oklib::mounted_pack_identity()) } else { String::new() };
+    // Every `what` above is a function of the archive alone (its names, manifests, GUIDs, StripAll list, catalogue,
+    // ramps), so an archive whose models this checkout lacks only needs the file the fallback serves it from in its
+    // key, not the whole fallback generation. With the generation, each new original card invalidated all of them:
+    // this checkout lacks the models of ~3900 recorded archives, which the three whole-tree walks of an open
+    // (strip_all, override index, GUID index) then read again, ~11700 zip opens and ~1 s of every open, although the
+    // same real file (or none at all) served them. The sealing case (`own`) keeps the generation.
+    // Only outside a strict open. Unlike `view_memo`, this memo has no gap guard: a value `build()` recorded an
+    // okstrict gap for is kept anyway, so sharing it between two strict opens would carry that gap's presence (or
+    // absence) into the other one, and the pack identity in the key is what kept them apart. A strict open is an OK
+    // card's or a conversion's (okstrict::active needs a mounted pack scope), so original cards — where the sharing
+    // pays — are unaffected.
+    // OK_COARSE_ZIP_MEMO=1: the whole fallback generation in the key again (to compare with the per-archive one).
+    let generation = if own || coarse_zip_memo() || crate::okstrict::active().is_some() { format!("{}|{}", FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::oklib::mounted_pack_identity()) }
+        // The mounted pack only decides this archive when the overlay records it (open_zip completes the library's
+        // entries with the overlay's); for an original card, whose "pack" identity is just its zipmod fallback, it
+        // changed with every card and shared nothing.
+        else if zip_lacks_models(&st, &key) {
+            let overlaid = replay_overlay().is_some_and(|o| o.index.lock().unwrap().zips.contains_key(&key));
+            format!("{}|{}", fallback_serving_id(&key), if overlaid { crate::oklib::mounted_pack_identity() } else { String::new() })
+        }
+        else { String::new() };
     let key = format!("{what}\n{}\n{key}\n{generation}", st.root);
     let memo = MEMO.get_or_init(Default::default);
     if let Some(hit) = memo.lock().unwrap().get(&key).and_then(|v| v.downcast_ref::<T>().cloned()) { return hit; }
+    let gaps = crate::okstrict::gaps_on_thread();
     let value = build();
+    // A value built while a strict open met a gap is a stand-in (as entries::pack_memo, mods ZIP_AB_CACHE): kept, the
+    // next open of a card reused what a failed remake could not read (alice's hibari/klee, 2026-11-16).
+    if crate::okstrict::gaps_on_thread() != gaps { return value; }
     memo.lock().unwrap().insert(key, Arc::new(value.clone()));
     value
 }

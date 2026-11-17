@@ -709,6 +709,41 @@ fn collect_zipmods(root: &Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 fn collect_zipmods_checked(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
+    // The OK base library's recorded tree is not a real directory, so `watched_tree_zips` can never cache it and
+    // every consumer of an open walked it again (the StripAll list, the override index, the GUID index, the list
+    // signature): ~7000 synthesized entries, several times per open. It only changes with the zipmod fallback and the
+    // mounted pack, which is exactly what the fallback generation counts, so one walk per generation serves them all.
+    // A real directory keeps the unmemoized walk: it can change under us without a generation of its own.
+    // OK_NO_TREE_WALK_MEMO=1: every consumer walks it again (to compare with the memo).
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if root.canonicalize().is_err() && !*OFF.get_or_init(|| std::env::var_os("OK_NO_TREE_WALK_MEMO").is_some()) {
+        use std::sync::Mutex;
+        type Walk = std::io::Result<(Vec<PathBuf>, bool)>;
+        static MEMO: std::sync::OnceLock<Mutex<(u64, Vec<(PathBuf, std::sync::Arc<(Vec<PathBuf>, bool)>)>)>> = std::sync::OnceLock::new();
+        let generation = crate::gamefs::fallback_generation();
+        let memo = MEMO.get_or_init(|| Mutex::new((generation, Vec::new())));
+        {
+            let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+            if memo.0 != generation { *memo = (generation, Vec::new()); }
+            if let Some((_, hit)) = memo.1.iter().find(|(r, _)| r == root) { return Ok((**hit).clone()); }
+        }
+        let walked: Walk = collect_zipmods_walk(root);
+        if let Ok(value) = walked {
+            let value = std::sync::Arc::new(value);
+            let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+            if memo.0 == generation {
+                memo.1.retain(|(r, _)| r != root);
+                if memo.1.len() >= 8 { memo.1.remove(0); }
+                memo.1.push((root.to_path_buf(), value.clone()));
+            }
+            return Ok((*value).clone());
+        }
+        return walked;
+    }
+    collect_zipmods_walk(root)
+}
+
+fn collect_zipmods_walk(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
     let mut out = Vec::new();
     let mut trackable=true;
     fn rec(dir: &Path, out: &mut Vec<PathBuf>,trackable:&mut bool) -> std::io::Result<()> {
@@ -1715,14 +1750,21 @@ fn zipmod_one_unity3d_arc(path: &Path, main_ab: &str) -> Option<Arc<(String, cra
     let _one = loading.lock().unwrap_or_else(|e| e.into_inner());
     let found = match cached() {
         Some(hit) => hit,
-        None => { let found = zipmod_one_unity3d_uncached(path, &want).map(Arc::new); zip_ab_cache_put(key.clone(), found) }
+        None => {
+            let gaps = crate::okstrict::gaps_on_thread();
+            let found = zipmod_one_unity3d_uncached(path, &want).map(Arc::new);
+            if crate::okstrict::gaps_on_thread() == gaps { zip_ab_cache_put(key.clone(), found) } else { found }
+        }
     };
     let mut loads = ZIP_AB_LOADING.lock().unwrap_or_else(|e| e.into_inner());
     if loads.get(&key).is_some_and(|l| Arc::ptr_eq(l, &loading)) && Arc::strong_count(&loading) <= 2 { loads.remove(&key); }
     found
 }
 
-/// Stores a zipmod bundle read for `key` unless another thread stored one meanwhile (that one is kept).
+/// Stores a zipmod bundle read for `key` unless another thread stored one meanwhile (that one is kept). The callers keep
+/// nothing read while a strict open met a gap (okstrict::gaps_on_thread): the key is the archive path alone, and an edited
+/// OK card's failed remake (its pack stripped, the zipmod absent) left "no such bundle" for the card's own next open, which
+/// then lacked `okLt override abdata/chara/hibari/hibari.unity3d` (tester's alice, 2026-11-16).
 fn zip_ab_cache_put(key: (PathBuf, String), found: Option<Arc<(String, crate::unity::SourceBytes)>>) -> Option<Arc<(String, crate::unity::SourceBytes)>> {
     let mut cache = ZIP_AB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let (m, owned) = cache.get_or_insert_with(Default::default);
@@ -1836,7 +1878,10 @@ pub fn zipmod_bundle_named(path: &Path, main_ab: &str) -> Option<crate::unity::S
     if let Some(hit) = ZIP_AB_CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.0.get(&key).cloned()) {
         return hit.map(|h| h.1.clone());
     }
+    let gaps = crate::okstrict::gaps_on_thread();
     let found = collect_zipmod_bundle(path, &want, &file_name).map(|b| Arc::new((String::new(), b)));
+    // (as zipmod_one_unity3d_arc: a read that met a strict gap is not kept)
+    if crate::okstrict::gaps_on_thread() != gaps { return found.map(|h| h.1.clone()); }
     zip_ab_cache_put(key, found).map(|h| h.1.clone())
 }
 

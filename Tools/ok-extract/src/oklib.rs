@@ -1103,18 +1103,18 @@ pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
         // go to a pool that belongs to no pack either but reads the fallback.
         if !is_outside_opens() && crate::gamefs::fallback_active() {
             static WITH_FALLBACK: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-            let pool = WITH_FALLBACK.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+            let pool = WITH_FALLBACK.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().max(2))
                 .thread_name(|i| format!("OKFallbackScan{i}")).start_handler(|_| { mark_outside_opens(); SEES_FALLBACK.with(|o| o.set(true)); }).build().ok());
             return match pool { Some(pool) => pool.install(work), None => work() };
         }
         static OUTSIDE: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-        let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+        let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().max(2))
             .thread_name(|i| format!("OKOutsideOpens{i}")).start_handler(|_| mark_outside_opens()).build().ok());
         return match pool { Some(pool) => pool.install(work), None => work() };
     };
     let pool = scope.pool.get_or_init(|| {
         let weak = Arc::downgrade(&scope);
-        let workers = crate::cpu_threads().clamp(2, 8);
+        let workers = crate::cpu_threads().max(2);
         rayon::ThreadPoolBuilder::new().num_threads(workers).thread_name(|i| format!("OKCardPack{i}"))
             .start_handler(move |_| POOL_SCOPE.with(|c| *c.borrow_mut() = weak.clone())).build().ok()
     });
@@ -1854,8 +1854,26 @@ fn make_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i32) ->
         // Every conversion is a view of its own (the card's zipmods join the library's tree): memos keyed by the view
         // (the tree's zip list and GUID index among them) must not answer the next card of the same worker with this
         // one's tree (小绯雪 converted after Denia lost its own zipmod's GUID, and with it its clothes).
+        //
+        // The name is what the tree holds, not a counter: `fallback_identity` is every archive's path, size and time
+        // plus each card directory's listing, which is what "the tree" means here, so two cards with the same tree
+        // share those memos while a card that brings a zipmod of its own gets a different tree and a different view.
+        // A scene's cards are the first case (they bring no zipmods), and each was paying the tree's own warm-up
+        // again: ~0.5 s of reading the ramp zipmod (material_editor.rs) and ~0.5 s of the mods catalog (list.rs),
+        // neither of which has anything to do with the card. The counter kept the correctness fix and threw that
+        // away; the content keeps both. OK_CONVERT_VIEW_COUNTER=1 goes back to the counter.
+        // Regression gate for this (the bug above is not something a strict open reports): Tools/ok_convert_order_check.lua.
         static CONVERSIONS: AtomicU64 = AtomicU64::new(0);
-        let view = format!("converting-{}-{}", std::process::id(), CONVERSIONS.fetch_add(1, Ordering::Relaxed));
+        let counter = || format!("converting-{}-{}", std::process::id(), CONVERSIONS.fetch_add(1, Ordering::Relaxed));
+        let tree = crate::gamefs::fallback_identity();
+        // An empty identity describes nothing (it is given up on outside an open), and every card sharing one name
+        // is exactly the bug above, so that case keeps the counter.
+        let view = if tree.is_empty() || std::env::var_os("OK_CONVERT_VIEW_COUNTER").is_some() { counter() } else {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            tree.hash(&mut hasher);
+            format!("converting-tree-{:016x}", hasher.finish())
+        };
         let scope = PackScope { overlay: crate::gamefs::process_overlay().ok_or("no recording overlay")?,
             store: store.pack.read().unwrap().clone(), identity: view.clone(), mods_identity: view,
             fallback_used: AtomicBool::new(false), pool: std::sync::OnceLock::new(), tree: None, strict: Some(strict.clone()) };

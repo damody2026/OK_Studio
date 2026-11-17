@@ -2,6 +2,7 @@
 //! save runs. Inputs are card PNGs or a crowd selection.json (`cards`).
 //!
 //! ok-lowpoly [--budget N] [--outfit N] [--report FILE] INPUT...
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -69,6 +70,9 @@ fn run() -> Result<bool, String> {
 }
 
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     match run() {
         Ok(true) => {}
         Ok(false) => std::process::exit(2),
