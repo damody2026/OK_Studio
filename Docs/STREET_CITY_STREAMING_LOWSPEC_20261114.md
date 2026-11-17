@@ -482,6 +482,8 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 ### 试过、不采用
 
 - `gc.TimeBetweenPurgingPendingKillObjects 20`（gcQ-int20，Play-20261118T071102）：瞬移后的卸载是一次性的，20 秒一次仍然一次收 58,002 个，那一帧 52 ms（原 58 ms）。其余 GC 为 0–2.5 万个、3–20 ms，次数变成约 3 倍。峰值 commit 10.6 GB（对照 11.4 GB），在噪声范围内。效果太小，不采用。
+  - **这一趟不是在安静机器上量的**：07:11–07:15 f-sceneload 的 UnrealEditor-Cmd（slot 已还）还满载占一颗核心。上面的毫秒数、内存只供参考；不采用的依据是物件**数量**（瞬移后仍要一次收 58,002 个），数量不受 CPU 干扰影响。
+  - **不重跑**：为一组不会改变结论的计时去占一次独占 slot 不划算（协调者 2026-11-18 决定）。之后 unreal_slot.lua 的独占 claim 会先检查有没有 Unreal／Insights 的 CPU 时间在动（74ee33a6f），类似的污染会在开始前被挡下。
 - 增量 Gather（`gc.AllowIncrementalGather`）：这版引擎的 `FGCFlags::IsIncrementalGatherUnreachableSupported()` 写死回传 false，cvar 无效。增量 purge 的 cvar 只影响之后的 BeginDestroy／FinishDestroy，那部分已经是每帧约 2 ms。
 
 ### 实际影响与后续
