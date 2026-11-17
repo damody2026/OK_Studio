@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::{path::Path,time::Instant};
 fn run()->Result<serde_json::Value,String>{
     let args:Vec<_>=std::env::args().collect();

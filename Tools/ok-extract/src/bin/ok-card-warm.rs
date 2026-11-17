@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Fills the game's open-card cache (oklib-cache) for a folder of OK cards, so the card reader opens them and switches
 // their outfits from the cache (~0.1 s) instead of building each one (~4-10 s):
 //   ok-card-warm LIBRARY CARD_DIR [--shard I/N] [--outfits all|first] [--priority FILE] [--until-pid PID] [--also DIR]...

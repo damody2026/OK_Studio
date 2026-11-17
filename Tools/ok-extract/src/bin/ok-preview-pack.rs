@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::Path;
 fn batch_shared(game:&Path,list:&Path,resources:&Path,output:&Path)->Result<serde_json::Value,String>{
     batch_shared_range(game,list,resources,output,0,usize::MAX,None)

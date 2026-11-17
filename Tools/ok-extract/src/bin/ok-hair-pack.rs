@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::Path;
 fn main() {
     // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global

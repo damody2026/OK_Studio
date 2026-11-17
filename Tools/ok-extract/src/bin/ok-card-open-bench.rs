@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Times opening OK cards from the base library the way the game does (session::open):
 //   ok-card-open-bench LIBRARY CARD [CARD ...]
 //   ok-card-open-bench --sequence LIBRARY CARD[@OUTFIT] ...   (one uncached open each, in order: card / outfit switches)

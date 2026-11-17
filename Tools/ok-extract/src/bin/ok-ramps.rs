@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Exports every shadow ramp of a Koikatsu Sunshine install (the graphics
 // settings' list) for the render-style picker:
 //   ok-ramps GAME_ROOT OUTPUT_DIR

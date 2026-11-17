@@ -575,7 +575,7 @@ pub fn prewarm(game_root: &Path) -> Result<(), String> {
     let mods_dir = game_root.join("mods");
     static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
     let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new()
-        .num_threads(cpu_threads().clamp(2, 16)).thread_name(|i| format!("OKPrewarm{i}"))
+        .num_threads(cpu_threads().max(2)).thread_name(|i| format!("OKPrewarm{i}"))
         .start_handler(|_| { crate::oklib::mark_outside_opens(); below_normal_priority(); }).build().ok());
     let work = || rayon::scope(|scope| {
         scope.spawn(|_| { let vanilla = load_characustom_dir(&game_root.join("abdata/list/characustom")); let _ = configured_ramp_png(game_root, &vanilla); });
@@ -1212,8 +1212,12 @@ pub fn export_session_posed_objs(game_root: &Path, card_path: &Path, outfit: i32
     Ok(session.parts.len())
 }
 
-/// Threads one process's pools may use: OK_THREADS (set by `--oklib cards` for its workers, which share the machine),
-/// else RAYON_NUM_THREADS, else the hardware threads; never more than MAX_THREADS.
+/// Threads one process's pools may use.
+///
+/// OK_THREADS or RAYON_NUM_THREADS given: that many, at most the hardware threads. It raises as well as lowers:
+/// `--oklib cards` lowers it for its workers, which share the machine, while an offline batch the user started and is
+/// waiting for (ok-crowd-pack or ok-lowpoly over dozens of cards) may ask for the machine it is being given.
+/// Neither given: the hardware threads, at most MAX_THREADS, so nothing fills the machine by default.
 /// This thread below normal priority (background work beside the opens a user waits for).
 fn below_normal_priority() {
     #[cfg(windows)]
@@ -1225,14 +1229,20 @@ fn below_normal_priority() {
         unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); }
     }
 }
-/// The most threads an ok tool may use (the user's machine-wide rule, 2026-11-03: ok-extract once filled every core).
+/// The threads an ok tool takes when it is not told otherwise (the user's machine-wide rule, 2026-11-03: ok-extract
+/// once filled every core). It is the default, not a ceiling: the rule is about not taking over a machine the user is
+/// working on, so `cpu_threads` lets OK_THREADS/RAYON_NUM_THREADS raise it for a batch the user started on purpose.
 pub const MAX_THREADS: usize = 8;
 pub fn cpu_threads() -> usize {
-    let asked = |name: &str| std::env::var(name).ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0);
+    let hardware = std::thread::available_parallelism().map_or(4, |n| n.get());
     // RAYON_NUM_THREADS too: it is what the project's own instructions tell a caller to set, and rayon reads it only
     // for a pool built without a thread count, which `limit_threads` is not.
-    asked("OK_THREADS").or_else(|| asked("RAYON_NUM_THREADS"))
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get())).min(MAX_THREADS)
+    let asked = |name: &str| std::env::var(name).ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0);
+    match asked("OK_THREADS").or_else(|| asked("RAYON_NUM_THREADS")) {
+        // Asked for explicitly, so taken as meant, up to what the machine has.
+        Some(asked) => asked.min(hardware),
+        None => hardware.min(MAX_THREADS),
+    }
 }
 /// rayon's global pool (every bare par_iter) at `cpu_threads()`; once, at the entry points. Already built: left as it is.
 ///

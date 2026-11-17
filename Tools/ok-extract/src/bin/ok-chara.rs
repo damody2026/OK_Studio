@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::Path;
 const USAGE: &str = "usage: ok-chara skeleton LIB BASE_CARD OUT.json OUT.obj\n       ok-chara build LIB BASE_CARD RIGGED.glb OPTIONS.json OUT.png [PREVIEW.obj]";
 fn main() {

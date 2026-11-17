@@ -1103,18 +1103,18 @@ pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
         // go to a pool that belongs to no pack either but reads the fallback.
         if !is_outside_opens() && crate::gamefs::fallback_active() {
             static WITH_FALLBACK: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-            let pool = WITH_FALLBACK.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+            let pool = WITH_FALLBACK.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().max(2))
                 .thread_name(|i| format!("OKFallbackScan{i}")).start_handler(|_| { mark_outside_opens(); SEES_FALLBACK.with(|o| o.set(true)); }).build().ok());
             return match pool { Some(pool) => pool.install(work), None => work() };
         }
         static OUTSIDE: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-        let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+        let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().max(2))
             .thread_name(|i| format!("OKOutsideOpens{i}")).start_handler(|_| mark_outside_opens()).build().ok());
         return match pool { Some(pool) => pool.install(work), None => work() };
     };
     let pool = scope.pool.get_or_init(|| {
         let weak = Arc::downgrade(&scope);
-        let workers = crate::cpu_threads().clamp(2, 8);
+        let workers = crate::cpu_threads().max(2);
         rayon::ThreadPoolBuilder::new().num_threads(workers).thread_name(|i| format!("OKCardPack{i}"))
             .start_handler(move |_| POOL_SCOPE.with(|c| *c.borrow_mut() = weak.clone())).build().ok()
     });

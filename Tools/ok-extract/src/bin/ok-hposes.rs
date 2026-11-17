@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Writes the original H scene's pose metadata (mode, service kind, anal, experience gates) as JSON:
 //   ok-hposes GAME_ROOT OUTPUT.json
 fn main() {
