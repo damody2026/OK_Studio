@@ -9,6 +9,13 @@ bool AOKStreetSocialScene::BusyWithPlayer(int32 I) const{
   ||S.OnaniGirl==I; // touching herself on the street (OKStreetSocialOnani.inl): her schedule waits
 }
 
+// Test switch: every spot taken as in furniture and no try reachable, so each ask runs SpotFor's whole search to its
+// budget (the worst case, measured: "Street spot search" lines).
+static TAutoConsoleVariable<int32> CVarOKStreetSpotForceSearch(TEXT("ok.street.SpotForceSearch"),0,
+ TEXT("Test: heroines' spots all taken as in furniture with no try reachable, so SpotFor runs its search to the budget and logs its time."));
+static TAutoConsoleVariable<float> CVarOKStreetSpotSearchMs(TEXT("ok.street.SpotSearchMs"),25.f,
+ TEXT("Street: the game-thread time (ms) one SpotFor search may spend routing its tries before it stands her at the first clear one and asks again in 2 s."));
+
 // Where she stands in a place: an anchor that suits what she is doing, spread out so heroines do not overlap.
 FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FString& Kind,float& Yaw) const{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SpotFor);
  const auto* P=OKStreetFindPlace(PlaceId);Yaw=0;if(!P)return State->Agents[I-1].Position;
@@ -65,9 +72,10 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
   // Only a spot he can walk to from inside the door: 雷电将军's was moved into the cafe's corner behind a row of chairs
   // and a stub of wall, and he walked into that wall 30 times (round 12, 2026-11-15). Chosen once per heroine, place
   // and spot (asked every 2 s); none reachable: the first clear one, as before.
-  if(!Clear(RowSpot)){
+  const bool Forced=CVarOKStreetSpotForceSearch.GetValueOnGameThread()!=0;
+  if(Forced||!Clear(RowSpot)){
    static TMap<FString,FVector> Chosen;const FString Key=FString::Printf(TEXT("%d %s %.0f %.0f"),I,*PlaceId,RowSpot.X,RowSpot.Y);
-   if(const FVector* Was=Chosen.Find(Key))return *Was;
+   if(const FVector* Was=Chosen.Find(Key);Was&&!Forced)return *Was;
    // None reachable: the first clear one, kept 30 s and then asked again (the world there may not have been loaded;
    // asked every 2 s it searched the grid and logged 30 times a minute for two heroines in the cafe, round 13).
    static TMap<FString,TPair<FVector,double>> Retry;
@@ -78,12 +86,14 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
    // One budget for all the tries, not 25 ms each (GridRoute's cap inside a place): up to 19 tries, and a heroine's new
    // place took the game thread 86 ms in one frame on a low-memory walk (department, 10731 cells tested, 2026-11-18).
    // Out of time: the first clear one for now, asked again in 2 s; the cells tested stay known, so it gets further.
-   const double SearchUntil=FPlatformTime::Seconds()+.025;bool OutOfTime=false;
+   const double SearchStart=FPlatformTime::Seconds(),SearchUntil=SearchStart+FMath::Max(0.f,CVarOKStreetSpotSearchMs.GetValueOnGameThread())/1000.0;bool OutOfTime=false;int32 Routed=0;
+   auto Measured=[&]{if(Forced)UE_LOG(LogTemp,Display,TEXT("Street spot search: actor %d at %s %.1f ms, %d of %d tries routed, out of time %d"),I,*PlaceId,(FPlatformTime::Seconds()-SearchStart)*1000.0,Routed,Tries.Num(),int32(OutOfTime));};
    for(const FVector& Try:Tries)if(Clear(Try)){if(!First)First=&Try;
     if(FPlatformTime::Seconds()>SearchUntil){OutOfTime=true;break;}
-    const TArray<FVector> Way=GridRoute(Inside,Try,0.f);if(Way.Num()<2||FVector::Dist2D(Way.Last(),Try)>60.f)continue;
+    const TArray<FVector> Way=GridRoute(Inside,Try,0.f);++Routed;if(Forced||Way.Num()<2||FVector::Dist2D(Way.Last(),Try)>60.f)continue;
     UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());
     Chosen.Add(Key,Try);return Try;}
+   Measured();
    if(First&&OutOfTime){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+2.0));return *First;}
    if(First){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+30.0));UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead (none walkable from the door; asked again in 30 s)"),I,*PlaceId,*RowSpot.ToCompactString(),*First->ToCompactString());return *First;}}}
  return RowSpot;

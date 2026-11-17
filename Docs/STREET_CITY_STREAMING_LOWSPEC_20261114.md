@@ -413,3 +413,30 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 8. 半径：在 C++ 于 `UWorldPartitionSubsystem::OnWorldPartitionSubsystemInitialized` 套用（`-StreetCityLoadingRange=N`），每次开图都生效；控制台指令在地图重开时会被引擎清掉。等第 1–3 项做完才看得出效果。
 
 分发：E 组的包要用新启动器（6c2fcfd8d）重新打包。
+
+## 8. 整合 #16 前后的走路卡顿回归（2026-11-18，c-lowspec）
+
+同一条走路（`street_city_memory_probe.lua --no-tour --walk --route church,department -- -LowMemory -Stage <tag> -Exec "t.HitchFrameTimeThreshold 60,stat dumphitches"`，5 名女角，96 m），对照 11-16 基准（走路 commit 11.1–11.3／工作集 8.0／显存 3.9–4.1 GB，走路期 >60 ms 卡顿 1–2 个，66–85 ms）。
+
+| stage | 改动 | 走路峰值 commit／工作集／显存 GB | 走路期 >60 ms 卡顿 | 说明 |
+|---|---|---|---|---|
+| conq1117d | 整合前 | 10.9 / 7.8 / 4.0 | 4 个，110–250 ms | 3 个紧接 OKMem 记录：游戏执行绪上 GLog->Flush 等写盘 |
+| lowspec1118a | 7a2501895 OKMem 移到工作执行绪 | 11.3 / 7.9 / 4.3 | 最大 92 ms | OKMem 之后不再卡；剩下 FTicker 里 70–85 ms 无子事件 |
+| lowspec1118b | 49d39966c 控制通道请求加 trace 名称 | 11.2 / 7.7 / 4.3 | 走到百货后 97 ms | STAT_Street_SpotFor 86 ms：10731 次 NavCellTest |
+| lowspec1118c | ab069c3af SpotFor 整趟共用预算 | 11.2 / 8.0 / 4.1 | 1 个，75 ms（渲染端） | 这一趟没有站位被挡，预算逻辑**没被走到** |
+
+- 载入时间：探针的 `load_seconds` 包含等 slot 的时间（conq1117d 记成 804 s，游戏本身约 16 s 就开好）。看 CSV 第一笔的 `t` 扣掉。
+- 整合 #16 之后，沿用旧 base 只重编执行档的 stage 一启动就 Fatal（缺 global shader `FDreamUIBackdropCompositePS`）：先跑 `Tools\lua\lua.exe Tools\rebuild_street_social_patch.lua` 重建 patch（`Docs/ERROR_LOG.md` 2026-11-18 那条）。
+- 还在的渲染端卡顿：游戏执行绪等渲染执行绪 49–267 ms（串流进来的资源初始化），不在这几笔改动的范围。
+
+### SpotFor 的预算实测（强制走到退路）
+
+`SpotFor` 在女角的排位被家具挡住时，依序替最多 19 个候选跑 `GridRoute`。原本每个候选各有 25 ms，一帧最坏约 475 ms；ab069c3af 改成整趟共用 `ok.street.SpotSearchMs`（预设 25 ms），用完就先站第一个没被挡的位置，2 秒后再找。测试开关 `ok.street.SpotForceSearch 1` 把每个排位都当成被挡、每个候选都当成走不到，每次都会跑满并记录 `Street spot search: ... ms`。
+
+| stage | 设定 | 搜寻次数 | 最长 | 平均 | 预算用完 |
+|---|---|---:|---:|---:|---:|
+| lowspec1118e | Force 1，预算 25 ms | 10（女生宿舍） | 15.1 ms | 10.7 ms | 0（19 个候选都在预算内跑完） |
+| lowspec1118f | Force 1，预算 2 ms，`-Clock 10:00` | 211（宿舍 132、图书馆 69、咖啡厅 10） | 2.9 ms | 2.2 ms | 198 |
+
+- 预算用完时会停：超出预算的部分就是最后一个候选的那一次 `GridRoute`（这里不到 1 ms）。预算 25 ms 时最坏约 25 ms 加一次室内 `GridRoute`（它自己的上限也是 25 ms），也就是约 50 ms；没有实测到 50 ms 的情况。
+- 没设 `-Clock` 的那一趟 0 次搜寻：游戏时间在夜里，女角都睡在床上，不经过这段。测排位要给白天的时钟。

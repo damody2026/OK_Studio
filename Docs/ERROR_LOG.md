@@ -5245,3 +5245,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **原因（已证实）**：启动器会在 stage 里建三个 junction 指回包自己的 `Content`（`CharacterCards`、`IndependentResources`、`KKPreview`），让打包版读得到资源。压缩工具预设会跟着 reparse point 走，于是 6 GB 的共用资源被重复压进去一次。写不进 `.raw` 则是我「验完就压」，工作室行程其实还活着（`studio_stop` 回了 ok，行程没真的结束）锁着档案。
 - **处置**：杀掉残留行程，逐个 `[System.IO.Directory]::Delete($p,$false)` 移除那三个 junction（启动时会自动重建），再压一次。
 - **再试前检查**：**压缩或复制一个启动过的包之前，先列出里面的 reparse point 并移除**（`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`）；压出来比来源大就是跟着连结走了。另外「停掉游戏」要用行程清单确认，不要只信 `studio_stop`／`game_stop` 的回传值。
+
+## 2026-11-18 整合後只重編執行檔的 stage 一啟動就 Fatal：新的 global shader 不在舊 base（C 組 c-lowspec 遇到）
+
+- 錯誤：整合 #16 帶進 DreamGUI 外掛（574b01b7c），多了 global shader FDreamUIBackdropCompositePS。之後用 rebuild_street_social_runtime --skip-cook --skip-base 沿用 BaseC2r1117A 打的 stage（lowspec1118c，同時段的 conq1118a、c4w1118a 也是）開城一啟動就 Fatal：Missing global shader FDreamUIBackdropCompositePS's permutation 0, Please make sure cooking was successful.（ShaderCompiler.cpp:4973）。外掛模組有載入就會要它，沒開 -OKDreamReader 也一樣。
+- 修正：不必重新 cook base。編輯器建置是最新的前提下跑 Tools\lua\lua.exe Tools\rebuild_street_social_patch.lua，從目前源碼重新 cook 專案的 global shader map 與 ShaderArchive-Global，產出 RuntimeGlobalShaderPatch-<tag>_P.pak 放進 Saved/StreetSocial/Build/<patch>（這次是 NH1115.patch）。舊的 _P 修補包優先權高於新 cook 的 shader 庫，所以這個 patch 必須跟著源碼一起更新，即使跑了完整 cook 也一樣（協調者在 E 樹踩到）。
+- 驗證：重建 patch（2026-11-18 04:20）後 lowspec1118c 正常啟動，低配走路教堂→百貨 116 s 到達，無 Fatal。
+- 教訓：整合後只要有人動過 global shader（新外掛、Shaders/ 目錄），沿用舊 base 的 stage 都要先重建 patch；動 global shader 的提交應在訊息裡說一聲。
