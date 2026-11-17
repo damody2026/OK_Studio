@@ -38,6 +38,12 @@ KKRUNTIMEPOSE_API FString OKRuntimeSharedMaterialParentName(EKKRuntimeMaterialRe
 KKRUNTIMEPOSE_API EKKRuntimeMaterialRecipe OKRuntimeSharedMaterialFallback(EKKRuntimeMaterialRecipe);
 // Root/<parent>, or the fallback recipe's parent when the root lacks it; null when neither is there.
 KKRUNTIMEPOSE_API UMaterialInterface* OKLoadRuntimeSharedMaterialParent(const FString& Root,EKKRuntimeMaterialRecipe,bool Outline=false);
+// Asks for every shared parent of `Root` in the background and keeps them loaded, so the first card does not pay the
+// synchronous `LoadObject` of each one on the game thread (measured with OK_LOAD_PROFILE: the reader's first card
+// spent ~164 ms in cooked_role parent_load_ms, later cards ~1 ms). Call it once, on the game thread, as early as
+// there is a root; it does nothing on a second call for the same root, with no root, or with OK_NO_MATERIAL_PRELOAD=1.
+// These are engine assets, not card data: nothing an open reads or produces changes.
+KKRUNTIMEPOSE_API void OKPreloadRuntimeSharedMaterialParents(const FString& Root);
 // The face pressed flat along the view (Wuthering Waves' toon faces; Tools/GpuPoseAudit PrepareFlatFaceMaterial.cpp):
 // a parent's <Name>_Flat variant beside it (null when the root has none, or ok.FaceFlatten was 0 when the scene started:
 // then the head draws with the plain parent). The head parts (Role "head") draw with it. Live (the card reader, whose

@@ -54,10 +54,14 @@ impl<'a> PushBatch<'a> {
     pub(crate) fn flush(&mut self, parts: &mut Vec<ManifestPart>, session_parts: &mut Vec<crate::session::SessionPart>,
         seen: &mut std::collections::HashSet<String>) -> Result<(), String> {
         use rayon::prelude::*;
+        // OK_PROFILE: which phase of the batch the time goes to (the parallel ones and the serial ones between them).
+        let t_phase = std::time::Instant::now();
         // The kept accessory slots: their colour bakes at once, then their pushes in their places, in call order.
         let mut slots = std::mem::take(&mut self.slots);
         if !slots.is_empty() {
             crate::session::native_parallel_work(|| slots.par_iter_mut().for_each(|(_, slot)| slot.color()));
+            crate::profile_tick("batch: slot colour (par)", t_phase);
+            let t_phase = std::time::Instant::now();
             let kept = std::mem::take(&mut self.groups);
             let mut kept = kept.into_iter();
             let mut taken = 0;
@@ -66,7 +70,9 @@ impl<'a> PushBatch<'a> {
                 slot.finish(parts, session_parts, seen, self)?;
             }
             self.groups.extend(kept);
+            crate::profile_tick("batch: slot finish (serial)", t_phase);
         }
+        let t_phase = std::time::Instant::now();
         let groups = std::mem::take(&mut self.groups);
         let (ctxs, works): (Vec<PushCtx<'a, 'static>>, Vec<Vec<PushWork>>) = groups.into_iter().unzip();
         let items: Vec<(usize, PushWork)> = works.into_iter().enumerate().flat_map(|(g, w)| w.into_iter().map(move |item| (g, item))).collect();
@@ -94,9 +100,13 @@ impl<'a> PushBatch<'a> {
                 None => { done.push(None); todo.push((n, g, item, key)); }
             }
         }
+        crate::profile_tick("batch: keys+memo (par+serial)", t_phase);
+        let t_phase = std::time::Instant::now();
         if profile_enabled() { eprintln!("ok-extract: PUSHMEMO hits={} misses={} keyed_misses={}", done.iter().filter(|d| d.is_some()).count(), todo.len(), todo.iter().filter(|t| t.3.is_some()).count()); }
         let ran: Vec<(usize, usize, Option<String>, PushDone)> = crate::session::native_parallel_work(||
             todo.into_par_iter().map(|(n, g, item, key)| (n, g, key, ctxs[g].run_on_worker(item))).collect());
+        crate::profile_tick("batch: transform (par)", t_phase);
+        let t_phase = std::time::Instant::now();
         for (n, g, key, d) in ran {
             if let Some(key) = key { crate::view_memo_put(key, (d.1.clone(), d.2.clone())); }
             done[n] = Some((g, d));
@@ -104,6 +114,7 @@ impl<'a> PushBatch<'a> {
         let mut by_group: Vec<Vec<PushDone>> = (0..ctxs.len()).map(|_| Vec::new()).collect();
         for (g, d) in done.into_iter().flatten() { by_group[g].push(d); }
         for (ctx, done) in ctxs.iter().zip(by_group) { ctx.emit(done, parts, session_parts)?; }
+        crate::profile_tick("batch: emit (serial)", t_phase);
         Ok(())
     }
 }

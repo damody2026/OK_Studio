@@ -4928,3 +4928,23 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 
 三个都与开卡优化无关：把四个开关全关（`OK_COARSE_ZIP_MEMO=1 OK_NO_CHAINED_BODY=1 OK_NO_ROOT_PROBE=1
 OK_NO_TREE_WALK_MEMO=1`）一样以同样的行号失败。没有修（不在这轮范围内）。
+
+## 2026-11-17 开卡性能第二轮：两个推论错误与两个量测坑
+
+**推论错误 1：以为 `emit` 里的 136 次 `flip_png_v` 是串行的。** 我据此跟协调者说「195 ms 可以整批并行」。
+实际上那 136 次全在 `PushCtx::transform`（push.rs 379–520），而 `transform` 是经 `run_on_worker` →
+`todo.into_par_iter()` 跑的，本来就并行；`emit` 里根本没有 flip。加阶段计时进 `PushBatch::flush` 才看清
+（C001，deferred meshes 582.8 ms）：slot colour 并行 316.0、transform 并行 191.3、emit 串行 61.4、
+slot finish 5.4、keys+memo 6.9。教训：说「某段是串行的」之前先量，不要从 SPOT 的次数与总时间推。
+
+**推论错误 2：以为预载 parent 就够，忘了 `_Flat` 变体。** 第一版只要 `<Name>` 与 `<Name>_Outline`
+（97 个 package），`parent_load_ms` 只从 247.4 降到 159.5。头部的 parent 是 `OKRuntimeFlatFaceParent` 载的
+`<Name>_Flat`，读卡器会 live 要它，也算进同一个 `parent_load_ms`。补上 `_Flat`（194 个）之后才降到 60.0。
+
+**量测坑 1：用 `ls -t <日志目录>/*.log | head -1` 找「这次的日志」会拿到上一次的。** mtime 排序在并发写入下
+不可靠，结果两组配置印出完全相同的数字，我一度以为开关没生效。解法：自己给 `-abslog=<路径>`（我直接驱动
+UnrealEditor.exe 而不经 Lua 启动器），或等到「最新档名和启动前不同」才开始读。
+
+**量测坑 2：kill 回圈用 `head -1` 只杀一个 PID。** 三轮跑完留下 3 个 UnrealEditor 在背景。解法：按命令列
+筛出自己的（用 `-abslog` 路径里的标记字串）全部杀掉，并确认剩余数为 0 —— 绝对不要按进程名一律杀，
+别组的编辑器也叫 UnrealEditor.exe。
