@@ -1,0 +1,46 @@
+{
+	"version": 1,
+	"files":
+	{
+		"E:/OpenKoikatsu/DUI/Reader/ReaderScreen.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:10.940Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Drawer.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:12.976Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Button.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:12.982Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Choice.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:12.987Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Label.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:13.067Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Slider.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:13.072Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Input.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:13.076Z",
+			"diagnostics": []
+		},
+		"E:/OpenKoikatsu/DUI/Reader/Controls/Toggle.dui":
+		{
+			"compiledAt": "2026-11-17T21:59:13.082Z",
+			"diagnostics": []
+		}
+	}
+}

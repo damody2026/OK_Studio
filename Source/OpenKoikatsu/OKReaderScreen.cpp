@@ -7,6 +7,8 @@
 #include "KKPreviewActor.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Core/Components/DreamWidget.h"
+#include "Core/DreamUIBehaviour.h"
+#include "Core/DreamWidgetTree.h"
 #include "Core/Components/DreamText.h"
 #include "Core/Components/DreamImage.h"
 #include "Core/Components/DreamCanvas.h"
@@ -263,6 +265,13 @@ UOKDreamControl* UOKReaderScreen::MakeControl(const TCHAR* Kind,UDreamWidget* In
 	if(!Class){UE_LOG(LogTemp,Warning,TEXT("Reader control WBP_OK%s missing"),Kind);return nullptr;}
 	auto* C=Cast<UOKDreamControl>(UDreamUIBPLibrary::CreateDreamWidgetOfClass(this,Class));
 	if(!C)return nullptr;
+	// The .dui gives its root the control's natural size: the control takes that size and its root fills it, so a panel that
+	// stretches the control stretches what is drawn.
+	if(UDreamWidget* Root=C->GetWidgetTree()?C->GetWidgetTree()->GetRootWidget():nullptr)
+	{
+		const FVector2D Natural=Root->GetSizeDelta();C->SetSizeDelta(Natural);
+		Root->SetAnchorMin(FVector2D(0,0));Root->SetAnchorMax(FVector2D(1,1));Root->SetAnchoredPosition(FVector2D::ZeroVector);Root->SetSizeDelta(FVector2D::ZeroVector);
+	}
 	if(Into)AddToHost(Into,C,false);
 	Controls.Add(C);return C;
 }
@@ -279,8 +288,9 @@ UDreamWidget* UOKReaderScreen::MakePanel(UDreamWidget* Into,bool bHorizontal,flo
 {
 	UDreamWidget* W=UDreamUIBPLibrary::ConstructWidget(this,bHorizontal?TEXT("Row"):TEXT("Column"),nullptr);
 	if(!W)return nullptr;
-	if(bHorizontal){if(auto* L=Cast<UDreamLayoutContainerHorizontalBox>(W->AddComponent(UDreamLayoutContainerHorizontalBox::StaticClass())))L->SetSpacing(Spacing);}
-	else if(auto* L=Cast<UDreamLayoutContainerVerticalBox>(W->AddComponent(UDreamLayoutContainerVerticalBox::StaticClass())))L->SetSpacing(Spacing);
+	// A panel is a widget with a layout container (CreateNewLayoutContainer, not AddComponent: a container is no behaviour).
+	if(bHorizontal){if(auto* L=W->CreateNewLayoutContainer<UDreamLayoutContainerHorizontalBox>())L->SetSpacing(Spacing);}
+	else if(auto* L=W->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>())L->SetSpacing(Spacing);
 	if(Into)AddToHost(Into,W,false);
 	return W;
 }
@@ -421,7 +431,7 @@ void UOKReaderScreen::BuildDrawers()
 	// The editor's own buttons, as listed in the 2026-11-18 sketch, first.
 	if(UOKDreamControl* Main=MakeControl(TEXT("Drawer"),RightScroll))
 	{
-		Main->FixedText=TEXT("人物編輯");Main->SetText(Main->FixedText);Main->SetOpen(true);Drawers.Add(Main);
+		Main->FixedText=TEXT("人物編輯");Main->SetText(Main->FixedText);Main->Body=MakePanel(RightScroll,false,6.f);Main->SetOpen(true);Drawers.Add(Main);
 		UDreamWidget* Grid=MakePanel(Main->Body,false,6.f);
 		auto Row=[&](std::initializer_list<const TCHAR*> Names)
 		{
@@ -441,6 +451,7 @@ void UOKReaderScreen::BuildDrawers()
 	{
 		if(!D||D->Key==TEXT("Clothes")||D->Key==TEXT("Lighting"))continue;	// those are left-panel categories
 		UOKDreamControl* Drawer=MakeControl(TEXT("Drawer"),RightScroll);if(!Drawer)continue;
+		Drawer->Body=MakePanel(RightScroll,false,6.f);
 		Drawer->Source=D;Drawer->SetOpen(D->bOpen);Drawers.Add(Drawer);
 		if(D->Body)Mirror(D->Body,Drawer->Body,false);
 		Drawer->Sync();
@@ -665,5 +676,20 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		else if(Verb==TEXT("category"))Done=S->SelectCategory(Value);
 		else if(Verb==TEXT("sub"))Done=S->SelectSub(Value);
 		else if(Verb==TEXT("width")){Done=Value.IsNumeric();if(Done)S->SetLeftWidth(FCString::Atof(*Value));}
+		else if(Verb==TEXT("dump"))
+		{
+			// The DreamGUI tree as laid out: name, class, visual, position, size, shown, layout container.
+			TFunction<void(UDreamWidget*,int32)> Walk=[&](UDreamWidget* W,int32 Depth)
+			{
+				if(!W||Depth>14)return;
+				FString Layout;for(UDreamUIBehaviour* C:W->GetAllComponents())if(C&&C->GetClass()->GetName().Contains(TEXT("Layout")))Layout=C->GetClass()->GetName();
+				const FVector2D P=W->GetAnchoredPosition(),Z=W->GetSizeDelta();
+				Out.Logf(TEXT("%s%s [%s%s%s] pos=(%.0f,%.0f) size=(%.0f,%.0f)%s"),*FString::ChrN(Depth*2,TEXT(' ')),*W->GetDisplayName(),*W->GetClass()->GetName(),W->GetVisual()?TEXT(" "):TEXT(""),W->GetVisual()?*W->GetVisual()->GetClass()->GetName():TEXT(""),P.X,P.Y,Z.X,Z.Y,W->GetShown()?*(Layout.IsEmpty()?FString():TEXT(" ")+Layout):TEXT(" HIDDEN"));
+				if(!W->GetShown())return;
+				if(auto* U=Cast<UDreamUserWidget>(W))if(U->GetWidgetTree()&&U->GetWidgetTree()->GetRootWidget()&&!U->GetChildren().Contains(U->GetWidgetTree()->GetRootWidget()))Walk(U->GetWidgetTree()->GetRootWidget(),Depth+1);
+				for(UDreamWidget* C:W->GetChildren())Walk(C,Depth+1);
+			};
+			Walk(S,0);
+		}
 		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth());
 	}));
