@@ -1995,7 +1995,15 @@ fn make_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i32) ->
     };
     LAST_UNNAMED_ZIPMOD_BYTES.store(extra.iter().filter_map(|p| std::fs::metadata(p).ok()).map(|m| m.len()).sum(), Ordering::Relaxed);
     let (first, failed, gaps, adds, answers, pack, models) = made;
+    // What only zipmods this machine does not have could serve becomes a part the card goes without (the open read
+    // nothing there and built the character without it: the body and everything else still show), recorded in the
+    // card (okAb) so its strict open accepts exactly those. Any other gap still fails the conversion.
+    let (absent_gaps, gaps): (Vec<String>, Vec<String>) = gaps.into_iter().partition(|g| absent_zipmod_gap(g, &root, card));
     if !gaps.is_empty() { return Err(crate::okstrict::failure(card, &gaps)); }
+    if !absent_gaps.is_empty() {
+        eprintln!("ok-extract: {}: converted without {} part(s) whose zipmods this machine lacks: {}", card.display(), absent_gaps.len(),
+            absent_gaps.iter().take(8).map(String::as_str).collect::<Vec<_>>().join("; "));
+    }
     if !failed.is_empty() { return Err(failed.join(" | ")); }
     let (digest, parts, _) = first.ok_or("outfit 0 did not open")?;
     // The pack is put together once (recorded, then what the library supplied) and encoded once.
@@ -2008,8 +2016,27 @@ fn make_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i32) ->
     let payload = serde_json::to_vec(&serde_json::json!({"format":"oklib-card","version":1,"digest":digest,"models":models})).unwrap();
     let bytes = library_card_with_pack(&original, &payload, pack.as_deref())?;
     let bytes = crate::tree_answers::with_answers(&bytes, &answers?)?;
+    let bytes = if absent_gaps.is_empty() { bytes } else { crate::tree_answers::with_chunk(&bytes, ABSENT_CHUNK, absent_gaps.join("\n").as_bytes())? };
     lap("card");
     Ok((digest, parts, bytes, pack.map_or(0, |p| p.len())))
+}
+
+/// The parts an OK card was converted without (`okAb`: its strict open's gaps, one a line, that only zipmods the
+/// converting machine lacked could have served). Its strict open accepts these and no others.
+pub const ABSENT_CHUNK: &[u8; 4] = b"okAb";
+
+/// The gaps an OK card was converted without (its `okAb` chunk).
+pub fn absent_parts(card_bytes: &[u8]) -> std::collections::HashSet<String> {
+    png_chunk(card_bytes, ABSENT_CHUNK).map(|b| String::from_utf8_lossy(b).lines().map(str::to_owned).collect()).unwrap_or_default()
+}
+
+/// A conversion gap only zipmods this machine does not have could fill: every zipmod it names is neither under the mods
+/// root nor beside the card. OK_STRICT_CONVERT=1: none is (a card lacking any zipmod fails to convert, as before).
+fn absent_zipmod_gap(gap: &str, root: &Path, card: &Path) -> bool {
+    if std::env::var_os("OK_STRICT_CONVERT").is_some() { return false; }
+    let keys = gap_zipmods(&[gap.to_owned()]);
+    !keys.is_empty() && keys.iter().all(|k| crate::gamefs::resolve_mod_archive(root, k).is_none()
+        && !card.parent().is_some_and(|d| k.rsplit('/').next().is_some_and(|n| d.join(n).is_file())))
 }
 
 /// The OK card made to open from its own data and the shared resources only (okstrict.rs): its answers (`okLt`)
