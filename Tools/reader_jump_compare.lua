@@ -1,10 +1,10 @@
 -- Two reader_jump_check runs of the same cards, view by view: "something that should be there is gone".
 --
 --   Tools\lua\lua.exe Tools\reader_jump_compare.lua --a REPORT[,REPORT..] --a-images DIR[,DIR..]
---       --b REPORT[,REPORT..] --b-images DIR[,DIR..] --out DIR [--top N] [--block N] [--mcp EXE]
+--       --b REPORT[,REPORT..] --b-images DIR[,DIR..] --out DIR [--top N] [--block N] [--steps light|all] [--mcp EXE]
 --
--- Pairs the standing views of both runs (LIGHT lit/flat, and O<n> a: before the jump; the b views are mid-jump and move
--- between runs) by card, step and view index, and runs ok-game-mcp image_diff on each: the luma difference in block x
+-- Pairs the still views of both runs (LIGHT lit/flat: the card loaded, before any motion) by card, step and view index,
+-- and runs ok-game-mcp image_diff on each: the luma difference in block x
 -- block tiles, the worst tile and where it is. A vanished pupil, eye or part is a small tile changing a lot while the
 -- whole image barely moves; whole-image checks (black, white, no character) pass it (2026-11-18: with the highlight taken
 -- off on a low-memory PC the iris was uploaded empty, the eye went white, and the eye audit said pass).
@@ -28,6 +28,9 @@ for _, k in ipairs({ "a", "a-images", "b", "b-images", "out" }) do
 end
 local mcp = (args.mcp or "Tools/ok-game-mcp/target/release/ok-game-mcp.exe"):gsub("/", "\\") -- (cmd: backslashes)
 local top, block = tonumber(args.top or "40"), tonumber(args.block or "24")
+-- --steps all also pairs O<n> a. Those are taken while the jump plays and land on another frame each run (11-18: the
+-- worst 40 pairs of a low-memory run against 11-16 were all a different pose, tile 200+), so by default only LIGHT.
+local all_steps = args.steps == "all"
 local out = args.out:gsub("\\", "/")
 os.execute(('mkdir "%s" 2>nul'):format(out:gsub("/", "\\")))
 
@@ -40,7 +43,7 @@ local function views(reports, dirs)
   for i = 1, #r do
     for line in io.lines(r[i]) do
       local card, step, rest = line:match("^(%S+) (%S+) (.*)$")
-      if card and (step == "LIGHT" or step:match("^O%d$")) then
+      if card and (step == "LIGHT" or all_steps and step:match("^O%d$")) then
         for key, list in rest:gmatch("(%a+)=([^%s]+)") do
           if key == "lit" or key == "flat" or key == "a" then
             local k = 0
