@@ -4876,10 +4876,10 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 原因一（錯誤訊息誤導）：`Source/OpenKoikatsu/OKCharacterMCP.cpp` 的 `load` 把「讀卡器忙碌（Busy）」和「路徑不存在／不是絕對路徑／不是 PNG」合成同一個訊息，忙碌時也回「Provide an existing absolute PNG card path」。
 - 原因二（讀卡器當時在忙）：這次啟動的讀卡器（log `Saved/Logs/CardReader/20261116-231803-6ed94d6a.log`，用共用信箱，代表當時只有它一個讀卡器）啟動後立刻開了 C001.png，而我的腳本沒有要它開 C001。比較可能是別的 session 在沒指定 `OK_GAME_PID` 的情況下送了 `reader_call load` 到共用信箱，打到這個讀卡器；我的 `load C025` 隨後送到，遇上忙碌被拒。
 - 腳本的問題：`seg4.sh` 以「新出現的讀卡器」認自己的行程、以「最新的 log」認自己的 log，別的 session 同時開讀卡器時會認錯（C024 那列的 log 欄指到 q2 開 C065 的讀卡器）。改成 `seg5.sh`：啟動時在命令列加 `-OKLane=<通道>-<卡>-<pid>` 標記，用標記找自己的 PID 與 `-abslog`，另寫 `reader_map.txt`。
-- 未修：`OKCharacterMCP.cpp` 的訊息要分開（忙碌另回「Busy」），等全跑結束能重建時再改。證據在 `Saved/Reports/reader-jump-20261116/qfix/c025-loadfail/`。C025 排在 q1 之後重跑。
+- 已修（2026-11-17）：`OKCharacterMCP.cpp` 的拒絕回覆另帶 `code`（busy／bad_request／stale／expired／wrong_screen），忙碌一律先回 `busy`，也排在「請先進人物編輯」之前（切服裝時人物正被替換，原本回的是 wrong_screen）；`ok-game-mcp` 把錯誤寫成 `<code>: <訊息>`，自己找讀卡器時回 `not_ready:`（指定的那台還在啟動）、`no_reader:`、`ambiguous_target:`。證據在 `Saved/Reports/reader-jump-20261116/qfix/c025-loadfail/`。C025 排在 q1 之後重跑。
 - 預防：多個 session 共用同一台機器時，`reader_call` 一律帶 `OK_GAME_PID`；腳本用自己加的命令列標記認行程，不用「最新的那個」。
 - 補查（同日）：`reader_call` 的實例選擇（`Tools/ok-game-mcp/src/control.rs` 的 `target`）和 `ui_*`／`pair_call` 共用同一套規則，會跟著 `game_select` 與 `OK_GAME_PID` 走：有指定 pid 就只找那一台（那台的 OKControl 記錄還沒寫出 `mailbox` 時直接回「no running game has a card reader mailbox」，不會改打別台，c-lowspec 第一次 `state` 失敗就是這個）。**沒指定時預設是「最新啟動、有信箱的那一台」**，`OWN` 只認 `game_launch` 開的遊戲，用 `CardReaderDevelopment.cmd` 開的讀卡器不算。所以同一個 checkout 有好幾台讀卡器時，任何沒有 `game_select`／`OK_GAME_PID` 的 session 送 `reader_call`（包括 `load`），都會打到剛啟動的那一台，通常是別人的。c-lowspec 每次都先 `game_select`，排除；23:18 是誰送的 load 無法再證。
-- `ok-game-mcp` 缺陷（待修，共用工具，未改）：沒指定實例、又有超過一台在跑時，應該拒絕並列出 `game_instances`，而不是默默選最新的；至少 `load`、`control_set` 這類會改狀態的動作要拒絕。
+- `ok-game-mcp` 缺陷（7f8f974eb 已修，c-lowspec）：沒指定實例、又有超過一台在跑時，應該拒絕並列出 `game_instances`，而不是默默選最新的；至少 `load`、`control_set` 這類會改狀態的動作要拒絕。
 
 ## I-014　paired 轉換輸出不是逐位元決定性，restore 後 verify 必然報 differs（2026-11-17）
 

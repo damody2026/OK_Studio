@@ -66,6 +66,18 @@ Tools/lua/lua.exe Tools/character_mcp/build.lua --test
 {"name":"character_state","arguments":{}}
 ```
 
+讀卡信箱（`reader_call`）的拒絕回覆除了 `error` 另帶 `code`，`ok-game-mcp` 把它放在錯誤文字最前面（`<code>: <error>`），程式可直接判斷：
+
+| code | 意思 | 呼叫方怎麼做 |
+|---|---|---|
+| `busy` | 讀卡器正在開卡、準備動作或存檔；請求本身沒問題 | 等 `state` 的 `busy` 變 `false` 再送同一個請求 |
+| `bad_request` | 請求錯了（卡片路徑不存在／不是絕對路徑／不是 PNG、卡片索引不存在） | 修正請求 |
+| `stale` | session 或 revision 過期、操作中人物被換掉 | 重新查 `state` |
+| `expired` | 請求在讀卡器處理前就過了期限 | 重新查 `state` 再送 |
+| `wrong_screen` | 畫面不對（在一對一場景、還沒進人物編輯） | 先切到對的畫面 |
+
+`ok-game-mcp` 自己找讀卡器時也用同樣格式：`not_ready:`（選定的那台還在啟動、信箱還沒出現，稍後重試）、`no_reader:`（沒有任何讀卡器在跑）、`ambiguous_target:`（好幾台在跑又沒指定，會改狀態的動作一律拒絕，先 `game_select` 或設 `OK_GAME_PID`）。
+
 工具結果的 `content` 包含文字 JSON，截圖／遮罩另含 `type=image` 的 PNG。先檢查 `isError`；不要把錯誤文字當作成功資料。一般 MCP 客戶端會直接顯示圖片，不必自行解析 base64。
 
 ## 3. 查詢與調整所有編輯參數
