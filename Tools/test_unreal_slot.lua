@@ -143,6 +143,26 @@ T:case("test_queued_ordinary_higher_still_blocks", function(t)
   P.rmtree(root)
 end)
 
+T:case("test_exclusive_refused_while_leftover_unreal_uses_cpu", function(t)
+  local root = scratch()
+  local fs = require "okfs"
+  local function claim(agent, need, fake)
+    local saved = { os.getenv("OK_UNREAL_SLOTS"), os.getenv("OK_UNREAL_SLOTS_FAKE") }
+    fs.setenv("OK_UNREAL_SLOTS", root); fs.setenv("OK_UNREAL_SLOTS_FAKE", fake)
+    local p = proc.popen({ ok.lua_exe, script, "claim", agent, "test", "--need-gb", tostring(need) }, { stderr = "stdout", hide = true })
+    fs.setenv("OK_UNREAL_SLOTS", saved[1]); fs.setenv("OK_UNREAL_SLOTS_FAKE", saved[2])
+    return finish(p)
+  end
+  local code, out = claim("t-exclusive", 60, "free=200 busy=59072")
+  t:eq(code, 2, out)
+  t:contains(out, "not quiet")
+  t:contains(out, "59072")
+  t:eq((claim("t-normal", 35, "free=200 busy=59072")), 0, "an ordinary claim does not need a quiet machine")
+  P.write_text(P.join(root, "slot1", "owner.txt"), "")
+  t:eq((claim("t-exclusive", 60, "free=200")), 0, "quiet machine: exclusive goes ahead")
+  P.rmtree(root)
+end)
+
 T:case("test_two_normal_both_win", function(t)
   local root = scratch()
   local a = start(root, "t-one", 35)

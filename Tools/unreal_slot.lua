@@ -81,6 +81,21 @@ local function unreal_starts()
   return list
 end
 
+-- Unreal (and Unreal Insights) processes whose CPU time moves over two seconds: "pid exe (+N ms CPU)". Whether a
+-- process is alive is judged by its CPU time, not by HasExited, tasklist or memory (2026-11-18: an UnrealEditor-Cmd whose
+-- slot was released kept one core busy through an exclusive measurement; an Insights analysis did the same to the next).
+local function busy_unreal()
+  local out = proc.output({ "powershell", "-NoProfile", "-Command",
+    "$f = { Get-CimInstance Win32_Process | ?{$_.Name -match '^(UnrealEditor(-Cmd)?|OpenKoikatsu|StreetSocialCity(-Cmd)?|UnrealInsights)\\.exe$'} }; " ..
+    "$a = @{}; & $f | %{ $a[$_.ProcessId] = $_.KernelModeTime + $_.UserModeTime }; Start-Sleep -Seconds 2; " ..
+    "& $f | %{ $d = ($_.KernelModeTime + $_.UserModeTime) - $a[$_.ProcessId]; " ..
+    "if ($a.ContainsKey($_.ProcessId) -and $d -gt 0 -and -not ($_.ExecutablePath -match '\\\\Windows\\\\[^\\\\]+\\.exe$')) { '' + $_.ProcessId + ' ' + [int]($d / 10000) + ' ' + $_.ExecutablePath } }" },
+    { check = false }) or ""
+  local list = {}
+  for pid, ms, exe in out:gmatch("(%d+) (%d+) ([^\r\n]+)") do list[#list + 1] = pid .. " " .. exe .. " (+" .. ms .. " ms CPU in 2 s)" end
+  return list
+end
+
 -- Free commit (RAM + page file) in GB. An editor with the university city WP map commits about 97 GB and the game
 -- about 27 GB, so two of them can exhaust the machine even under the process cap (2026-11-08 05:17).
 local function free_commit_gb()
@@ -255,8 +270,10 @@ end
 local FAKE = os.getenv("OK_UNREAL_SLOTS") and os.getenv("OK_UNREAL_SLOTS_FAKE") or nil
 if FAKE then
   local free, pause = tonumber(FAKE:match("free=(%d+)")) or 200, tonumber(FAKE:match("pause=([%d.]+)")) or 0
+  local busy = FAKE:match("busy=(%d+)")
   unreal_starts = function() return {} end
   free_commit_gb = function() return free end
+  busy_unreal = function() return busy and { busy .. " X:/Fake/UnrealEditor-Cmd.exe (+500 ms CPU in 2 s)" } or {} end
   FAKE = { pause = pause }
 end
 
@@ -320,6 +337,12 @@ local function try_claim_locked(agent, note, need_gb)
   if free < need_gb then return nil, "only " .. free .. " GB commit free, need " .. need_gb end
   if need_gb < EXCLUSIVE_GB and free - need_gb < RESERVE_GB then
     return nil, "only " .. free .. " GB commit free, need " .. need_gb .. " + " .. RESERVE_GB .. " left over"
+  end
+  -- An exclusive claim is for measuring on a quiet machine: nobody else's Unreal or Insights may still be running,
+  -- even one whose slot was released (no slot holders can exist here, so every busy one is a leftover or the user's).
+  if need_gb >= EXCLUSIVE_GB then
+    local busy = busy_unreal()
+    if #busy > 0 then return nil, "the machine is not quiet; still running: " .. table.concat(busy, "; ") end
   end
   if FAKE and FAKE.pause > 0 then ok.time.sleep(FAKE.pause) end
   for i = 1, SLOTS do
@@ -386,6 +409,8 @@ local function status()
   io.write("queue: ", table.concat(queued(true), ", "), "\n")
   local held, other = unreal_counts()
   io.write("unreal processes: ", held + other, " (slot holders ", held, ", others ", other, ")\n")
+  local busy = busy_unreal()
+  io.write("using CPU (Unreal / Insights): ", #busy > 0 and table.concat(busy, "; ") or "none", "\n")
   io.write("free commit: ", free_commit_gb(), " GB\n")
   return 0
 end
