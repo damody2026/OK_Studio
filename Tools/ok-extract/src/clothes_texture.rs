@@ -137,8 +137,12 @@ impl<'a> GridSampler<'a> {
         })];
         // OK_GRID_DIAG: the texture and mask sizes a bake samples between. An accessory bake is nearly all per-texel
         // work (OK_PROFILE's "mask bake:" spots: ~940 ms of maths against ~90 ms of decode and ~40 ms of encode for
-        // one card), and these sizes are why — a card's heavy bakes upsample a 64² or 512² mask onto a 4096² texture,
+        // one card), and these sizes are why — a card's heavy bakes sample a 64² or 512² mask over a 4096² texture,
         // ~67M texels. So the bilinear weights are not 0 and reading one texel instead of four is not available here.
+        // That 4096 is the albedo's own size (the mod's or the original's Texture2D), not ours: nothing here resizes,
+        // and the mask is read per output texel, never widened into a buffer of its own. So there is no upsampling
+        // step to remove (asked 2026-11-17) — the per-texel work is the cost of producing a 4096² albedo, and the only
+        // way to cut it is a smaller output, which trades picture for VRAM and is the user's call, not this code's.
         if std::env::var_os("OK_GRID_DIAG").is_some() { eprintln!("ok-extract: GRID tex={w}x{h} mask={iw}x{ih} filter={}", sampling.filter); }
         GridSampler { image, cols: axis(w, iw, sampling.wrap_u), rows: axis(h, ih, sampling.wrap_v), nearest, lut }
     }
