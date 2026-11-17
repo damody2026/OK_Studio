@@ -1,6 +1,7 @@
 //! ok-vertex-color-card convert INPUT.png OUTPUT.png BAKE_ROOT [--ratio R] [--edge-texels T] [--color-weight W] [--detail-fraction F]
 //!   BAKE_ROOT/outfitN/bake.json comes from ok.BakeCardAlbedo; outfits without one stay textured.
 //! ok-vertex-color-card --probe CARD.png [OUTFIT]
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::{Path, PathBuf};
 
 fn usage()->!{
@@ -10,6 +11,9 @@ fn usage()->!{
 }
 
 fn main(){
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     let args:Vec<String>=std::env::args().collect();
     let result=match args.get(1).map(String::as_str) {
         Some("--probe") if args.len()==3||args.len()==4 => ok_extract::vertcolor::probe(Path::new(&args[2]),

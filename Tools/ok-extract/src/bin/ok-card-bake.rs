@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Bakes cards' opens into the cards, so the reader opens them faster the first time:
 //   ok-card-bake LIBRARY OUT_DIR [--outfits first|all] [--codec lz4|zstd:LEVEL] [--memo KINDS] [--no-open] CARD...
 // `okBk` (default, read with OK_CARD_BAKED=1): the whole open result, opened like a cache hit (cardbake.rs).
@@ -10,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     if let Err(e) = run() { eprintln!("ok-card-bake: {e}"); std::process::exit(1); }
 }
 

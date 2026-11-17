@@ -1,8 +1,12 @@
 //! `ok-paired-library convert <PairedAnimations> <base library>/paired` converts the shared paired / common animation
 //! resources into the OK base library; `ok-paired-library verify <PairedAnimations> <base library>/paired` checks
 //! that the library answers everything the original did, without a Unity bundle.
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     let args: Vec<String> = std::env::args().collect();
     let (Some(command), Some(source), Some(library)) = (args.get(1), args.get(2), args.get(3)) else {
         eprintln!("usage: ok-paired-library convert|verify <PairedAnimations root> <base library>/paired");

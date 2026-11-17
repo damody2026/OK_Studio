@@ -1,3 +1,4 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 // Times opening a card the way the one-on-one's wardrobe does (OKOpenWardrobeItem): an original KKS card (a coordinate card
 // worn on her card) from the OK base library plus the installation's zipmods it names, every clothes state, live GPU env.
 //   ok-wardrobe-bench LIBRARY GAME CARD OUTFIT [ROUNDS]
@@ -30,4 +31,7 @@ fn run() -> Result<serde_json::Value, String> {
     }
     Ok(serde_json::json!({"card": args[3], "outfit": outfit, "rounds": rows}))
 }
-fn main() { match run() { Ok(r) => println!("{}", serde_json::to_string_pretty(&r).unwrap()), Err(e) => { eprintln!("{e}"); std::process::exit(1); } } }
+fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads(); match run() { Ok(r) => println!("{}", serde_json::to_string_pretty(&r).unwrap()), Err(e) => { eprintln!("{e}"); std::process::exit(1); } } }

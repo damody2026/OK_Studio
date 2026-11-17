@@ -1,6 +1,10 @@
 //! Reproduce the same appearance request used by the editor, without a UI.
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::Path;
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     let args: Vec<String> = std::env::args().collect();
     if args.len()==3&&args[1]=="inspect"{
         let s=ok_extract::portable::load(Path::new(&args[2])).expect("load portable card");

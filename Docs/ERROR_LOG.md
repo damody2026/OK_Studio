@@ -5091,3 +5091,20 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
     都是空的，而且因为预设值刚好相同而永远不会被发现。
   - rayon 的 `build_global()` 只在**没有**给 `num_threads` 时才读 `RAYON_NUM_THREADS`；要兼顾环境变数就得自己读。
   - 父行程给子行程分执行绪时，要确认子行程那边真的有人去读，不要只看父行程设了。
+- **補記（同日）**：修好 `limit_threads()` 之後，有個數字說不通 —— 同一張卡不設環境變數 1172 ms、設
+  `RAYON_NUM_THREADS=8` 是 1298 ms，交錯四輪每輪都是這個方向。原因是 **`ok-card-open-bench` 從來沒有叫
+  `limit_threads()`**（只有 `main.rs` 與 `ffi.rs` 叫），沒叫的話 rayon 會自己建全域池，而它**會**讀
+  `RAYON_NUM_THREADS`：不設就是機器全部核心（這台 32 條）。一查之下 **17 支 bin 沒有一支叫**，
+  `ok-card-bake`／`ok-crowd-pack`／`ok-lowpoly`／`ok-ramps` 這些重批次工具一直吃滿 32 條。已全部補上
+  （`8fe9c24ab`）。我這兩天的 A/B 都設了 `RAYON_NUM_THREADS=8`，所以一直是 8 條，報告數字不受影響；
+  但**沒設那個變數量出來的 bench 數字都偏快**。
+  防範：規矩靠「每個入口都記得呼叫」來生效時，要有一個地方能一次看出哪些入口漏了
+  （`grep -c limit_threads src/bin/*.rs` 就夠），不要靠人記得。
+- **補記二（同日）**：把工具限回 8 條之後我警告別組「批次工具可能接近 4 倍慢」，那是從「32 → 8 條」推的
+  機制上限，**沒有量，而且我自己的數據就反駁它**：同一個 bench 沒有 `limit_threads()` 時拿滿 32 條是
+  1172 ms、補上之後 8 條是 1298 ms，只差約 10%，而那段裡本來就有一塊寬 rayon 的逐 texel 工作。這類工作
+  離線性擴展很遠。`ok-lowpoly` 本身量不了（要 PNG 裡有 `okPv`，手上的 CrowdAPNG 卡報
+  "PNG has no portable snapshot"），已更正給 f-sceneload，由有輸入的 C 組實測。
+  防範：**警告別組「會慢幾倍」之前先量，或明說是未量的機制上限** —— 一個隨口的倍數會被原樣轉給第三組，
+  而我手邊其實就有反駁它的數字。
+

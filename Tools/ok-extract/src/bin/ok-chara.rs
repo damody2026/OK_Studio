@@ -1,6 +1,10 @@
+//! Threads: 8 by default; a large batch may ask for more with OK_THREADS=<n> (at most the hardware threads).
 use std::path::Path;
 const USAGE: &str = "usage: ok-chara skeleton LIB BASE_CARD OUT.json OUT.obj\n       ok-chara build LIB BASE_CARD RIGGED.glb OPTIONS.json OUT.png [PREVIEW.obj]";
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     let a: Vec<String> = std::env::args().collect();
     let p = |i: usize| Path::new(&a[i]);
     let result = match a.get(1).map(String::as_str) {
