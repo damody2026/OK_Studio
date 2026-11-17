@@ -5036,3 +5036,23 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
   - shell 里不要用 `VAR=$v` 搭配空值表示「不设」；要么两条命令分开写，要么用 `env` 只在需要时传。
   - 两种设定量到「几乎一样」时，先怀疑开关没生效，再怀疑优化没用 —— 这次正好两个症状长得一样。
   - 这和 11-17 早先那次「把精确名字查表放在关闭开关前面」是同一类错：**开关必须真的还原成旧路径，而且要验证**。
+
+## 2026-11-17 `RAYON_NUM_THREADS` 从来没有生效过；子行程各拿满 8 条，破掉「最多 8 执行绪」那条规矩
+- 谁发现的：f-sceneload（它要在 UE 侧每个角色开一个子行程转卡，上限 8 个 worker，先来问执行绪怎么分）。
+- 事实：`lib.rs` 的 `limit_threads()` 写死 `ThreadPoolBuilder::new().num_threads(MAX_THREADS)`，而
+  **明确给了 thread count 的池不会再去读环境变数**。所以：
+  - `--oklib cards` 给每个 worker 设的 `OK_THREADS` 只对走 `cpu_threads()` 的具名池有效
+    （`WITH_FALLBACK`／`OUTSIDE`／`prewarm`／tree scan），worker 行程里任何裸 `par_iter` 照样拿满 8 条。
+    8 个 worker 就是 64 条，正好破掉 `MAX_THREADS` 这个常数本来要守的那条机器层规则（使用者 2026-11-03 定的）。
+  - 它同时也设了 `RAYON_NUM_THREADS`，一样被盖掉。
+- **AGENTS.md 一直叫大家设 `RAYON_NUM_THREADS=8`，而它从来没有作用** —— 因为设 8 刚好等于写死的 8，
+  所以没有人发现。我这一整轮开卡效能的量测都在设它，也等于白设（值一样，数字没受影响，但那是运气）。
+- 修正（`1a3a55dc2`）：`limit_threads()` 改用 `cpu_threads()`；`cpu_threads()` 除了 `OK_THREADS` 也读
+  `RAYON_NUM_THREADS`。没设那两个变数时 `cpu_threads()` 就是「硬体执行绪 clamp 到 8」，和原本一样，
+  所以单一行程（CLI 与 UE 的 `ffi.rs` 入口）行为不变。验证：同一张卡转换 `RAYON_NUM_THREADS=8` 是 5.84 s、
+  `=2` 是 7.01 s（改之前这个变数对转换毫无影响）。
+- 防范：
+  - **写了「请设这个环境变数」的规矩，要有一个会因为它改变的可观察数字** —— 不然像这次一样，规矩写了三个月
+    都是空的，而且因为预设值刚好相同而永远不会被发现。
+  - rayon 的 `build_global()` 只在**没有**给 `num_threads` 时才读 `RAYON_NUM_THREADS`；要兼顾环境变数就得自己读。
+  - 父行程给子行程分执行绪时，要确认子行程那边真的有人去读，不要只看父行程设了。
