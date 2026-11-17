@@ -5030,3 +5030,21 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 处置：这条路径无事可改。把结论写进 `clothes_texture.rs` 的同一段注解，免得下一个人再追一次；「把底图缩掉」
   是换画质换 VRAM 的另一件事，属于使用者的决定。
 - 防范：注解里描述取样关系时不要用「upsample」这种像是「我们主动放大」的词；要写清楚尺寸是谁决定的。
+
+## 2026-11-17 以为 Sync 每帧重写 transform 是成本，量出来是 2 s／63 s，真正的 23.5 s 在算那个 transform
+- 前提错在哪：`AOKSceneActor::Sync()` 对已经建好的物件每帧仍然无条件 `SetActorTransform`／
+  `SetWorldTransform`，而写入会 dirty transform 与 render state。我（和协调 session）都据此推断那是
+  5867 道具场景「`Sync` 62 s、只有 23 s 在 `Build()`」里的大头，于是做了 `ok.Studio.SkipUnchangedPlacement`
+  （物件已经站在要放的位置就不写）。
+- 事实（8806 物件场景 `koikatu_cs0003420_2.okscene`，冷开，新加的计时）：`Sync` 63 406 ms 里
+  **写 transform／visibility 只有 1 979 ms**；`SameContent` 深比较只有 516 ms（协调 session 原本提的
+  revision 优化上限就是这 0.5 s）；真正的大块是 **`Document->WorldTransform(Id)` 与 `IsShown(Id)`
+  共 23 526 ms**，占 `Sync` 的 37%、整趟 88 s 载入的 27% —— 两者都为每个物件走一遍父链，每帧都走。
+- A/B 也直接否定了那个修正：开 88 003 ms、关 87 573 ms（关的还快 0.5%，在噪声内），而且跳过只命中
+  1 231 243 次摆放里的 19 992 次（1.6%）—— 因为 `SetActorTransform` 存回去的值和下一帧重算的
+  `Compose(RenderCorrection, World)` 不是逐位元相同，用零容差比就几乎永远不等。
+- 处置：**回退 `ok.Studio.SkipUnchangedPlacement`**（包含那两个计数器），只保留三个计时
+  `SyncSameMs`／`SyncWorldMs`／`SyncPlaceMs` —— 它们是这次唯一有价值的产出，指出了下一步该改哪里。
+- 教训：这次是先加计时再改，所以只花一个窗口就否定了两个方向（我的 transform 跳过、协调 session 的
+  revision），没有把时间花在实作它们上面。「写入会 dirty render state」是真的，但「每帧写入」在这条路径上
+  一帧只有几微秒；会 dirty 不等于是瓶颈，要先量。

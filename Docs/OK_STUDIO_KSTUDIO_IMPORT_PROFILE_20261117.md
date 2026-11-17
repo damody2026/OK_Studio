@@ -121,3 +121,47 @@ OK_NOCACHE=1 OK_PROFILE=1 OK_TIMING=1 ok-extract.exe D:/KoikatuSunshine --oklib 
 OK_NOCACHE=1 OK_CARDS_IN_PROCESS=1 ok-extract.exe D:/KoikatuSunshine --oklib cards <库> <清单> <输出目录>
 OK_NOCACHE=1 OK_CARDS_WORKERS=5  ok-extract.exe D:/KoikatuSunshine --oklib cards <库> <清单> <输出目录>
 ```
+
+---
+
+## 2026-11-17 下午：B 路落地的数字
+
+`ok.Studio.ImportCardWorkers`（预设 -1＝硬体执行绪一半、上限 8；0＝原本的同行程依序）。
+同一支 `UnrealEditor-Cmd` 启动器、`OK_NOCACHE=1`、同一张场景 PNG（`ill_ss_sample_03.png`，5 角色）：
+
+| 设定 | 导入毫秒 |
+|---|---:|
+| `ImportCardWorkers 0`（旧路径） | 16 542；16 024 |
+| 预设（8 个子行程） | **8 023**（worker 段 7.39 s；另一趟 7.05 s） |
+
+**−51%**，五张卡全部成功。比 CLI 量到的 −36% 更多，因为父行程完全不必自己付一次转卡暖机。
+
+**正确性**：`ImportCardWorkers 0` 与预设各导一次、各用 `OKStudio.ProfileSceneLoad` 傾印，
+两份 `imp-w0_ill_ss_sample_03_2_pass0.json` 与 `imp-wN_..._pass0.json` **逐位元相同**
+（16 个物件、`map`、`map_parts`、`map_error` 全等）。另外同一批 5 张卡「同行程依序」与
+「每张卡一个行程」的 digest 与 parts 也完全相同（但 digest 不区分 outfit，所以那条证据不够，
+傾印才是）。
+
+**打包版没有这个加速**：`ok-extract.exe` 只在开发 checkout 的 `Tools/ok-extract/target/release/`
+（或 `Tools/ok-extract/`）下；找不到就整个不启用，自动回到同行程依序。使用者给测试者的是打包版，
+所以那边的导入时间仍然是 16 s 那一档。
+
+## `Sync()` 的 39 s 在哪（量完了，和原先的推断不一样）
+
+`koikatu_cs0003420_2.okscene`（8806 个物件，1 角色），冷开：
+
+| | 毫秒 | 占 `Sync` |
+|---|---:|---:|
+| `ready_ms` 整趟 | 88 003 | |
+| `Sync` 合计 | 63 406 | 100% |
+| ↳ `Build()`（道具） | 22 564 | 36% |
+| ↳ **`WorldTransform(Id)` ＋ `IsShown(Id)`** | **23 526** | **37%** |
+| ↳ 写 transform／visibility | 1 979 | 3% |
+| ↳ `SameContent` 深比较 | 516 | 0.8% |
+| ↳ `WireRenderTextures` | 77 | 0.1% |
+| ↳ 其余（`SyncMap`、各 kind 的 morph／材质比较、`Present` 集合、迴圈本身） | ~14 700 | 23% |
+
+所以下一步该动的是 `WorldTransform`／`IsShown` —— 两者都为每个物件走一遍父链，每帧都走；
+一个由上而下算一次全部世界变换的走法（或按 `PlaceGeneration` 记住）可以把那 23.5 s 大部分拿掉。
+**深比较换 revision 的上限只有 0.5 s，不值得做**；我自己试的「不重写未变的 transform」也已回退
+（见 `Docs/ERROR_LOG.md` 同日那笔：开 88 003 ms、关 87 573 ms，跳过只命中 1.6%）。
