@@ -76,6 +76,8 @@ Tools/lua/lua.exe Tools/character_mcp/build.lua --test
 | `expired` | 請求在讀卡器處理前就過了期限 | 重新查 `state` 再送 |
 | `wrong_screen` | 畫面不對（在一對一場景、還沒進人物編輯） | 先切到對的畫面 |
 
+信箱一次只處理一個請求，後到的在信箱裡排隊：同一台讀卡器連送兩個 `load`，第二個不會回 `busy`，而是等第一個做完才執行（結果是第二張卡）。`busy` 只擋讀卡器被畫面操作或自己的載入、存檔占住的時候，不能拿來防止重複載入；要避免重複，呼叫方自己等前一個請求回覆。
+
 `ok-game-mcp` 自己找讀卡器時也用同樣格式：`not_ready:`（選定的那台還在啟動、信箱還沒出現，稍後重試）、`no_reader:`（沒有任何讀卡器在跑）、`ambiguous_target:`（好幾台在跑又沒指定，會改狀態的動作一律拒絕，先 `game_select` 或設 `OK_GAME_PID`）。
 
 工具結果的 `content` 包含文字 JSON，截圖／遮罩另含 `type=image` 的 PNG。先檢查 `isError`；不要把錯誤文字當作成功資料。一般 MCP 客戶端會直接顯示圖片，不必自行解析 base64。
