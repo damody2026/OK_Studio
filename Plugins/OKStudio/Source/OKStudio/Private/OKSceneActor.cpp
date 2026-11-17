@@ -671,6 +671,11 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 	{
 		const double Start = FPlatformTime::Seconds();
 		P->bOpened = P->Session.OpenOkModelFk(Library, Model, Prefab, Json, P->Error);
+		// The material bytes as well, as a character's open does. The frame that builds the item would otherwise call
+		// PrepareRuntimeMaterials itself from OKPrepareCookedRole: 7.8 of the 10.1 seconds the 634 items of a scene
+		// cost the game thread were that one call (F-sceneload, 2026-11-17).
+		FString MaterialError;
+		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: item materials not prepared: %s"), *MaterialError);
 		P->OpenSeconds = FPlatformTime::Seconds() - Start;
 		P->bDone = true;
 	}, 4 * 1024 * 1024);

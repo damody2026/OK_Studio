@@ -59,6 +59,7 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 都在场景层（`AOKSceneActor`），没有动 `Tools/ok-extract` 与单卡开卡的共用路径。
 
 1. **道具 session 在 worker 上并行开启**（`ok.Studio.ItemOpensAhead`，预设 8）。以前每个道具在建它的那一帧里自己呼叫 `OpenOkModelFk`；现在 `PrepareItem` 先在 worker 上开，帧里只做 Unreal 这一段。同时在开的数量与「开好但还没建」的数量都有上限（后者是 `Ahead * 3`），否则几千个道具的场景会一次握着几千个 session。
+   **worker 上同时也做 `PrepareRuntimeMaterials`**，和角色的开启一样。这是道具最大的一块：见下面「道具在 UE 端花在哪」。
 2. **角色 session 同时开好几个**（`ok.Studio.CharacterOpensAhead`，预设 3）。以前是「一次只开一个 worker」。
 3. **开场景时每帧的 session 切片 30 ms → 120 ms**（`ok.Studio.OpenSliceMs`）。一帧本身就要 20 ms 以上（算绘与引擎 tick），切成 30 ms 等于大半时间花在帧开销上；250 ms 再长就没有好处了。
 4. **每帧建的物件 24 → 96，另加 250 ms 上限**（`ok.Studio.BuildsPerFrame`／`ok.Studio.BuildSliceMs`）。道具的 session 已经先开好了，一个道具只剩几毫秒，24 个一帧让几千道具的场景卡在帧数上。`Sync()` 每帧会走过全部物件，帧数少一半，这个 O(物件 × 帧) 的成本也少一半。
@@ -74,10 +75,12 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 | 0 角色 / 48 道具 | 4 247 → **3 636** | −14% |
 | 1 角色 / 地图 73 | 7 553 → **6 939** | −8% |
 | 5 角色 / 地图 70 | 12 286 → **9 409** | −23% |
-| 21 角色 / 634 道具 / 地图 20 | 46 709 → **30 736** | −34% |
+| 21 角色 / 634 道具 / 地图 20 | 42 352 → **28 534** | −33% |
 | 原作 KStudio PNG（5 角色） | 24 882 → **23 105** | −7% |
 
-峰值记忆体没有变差：21 角色场景 16.2 → 16.3 GB。
+峰值记忆体 21 角色场景 16.2 → 16.6 GB（第二轮之后：worker 上先备好的道具 session 带着解码好的材质贴图，数量以 `ItemOpensAhead * 3` 为上限）。
+
+21 角色那一列是最后一轮（道具材质也搬到 worker）同一个 session 背靠背的数字；前三列与 KStudio PNG 那列是上一轮，道具材质还在 game thread 上。
 
 参考用的热开数字（同一行程第二、三趟，档案快取与 sqlite 都暖）：
 
@@ -89,6 +92,24 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 | 21 角色 / 634 道具 / 地图 20 | 42 194 → 28 179 | 38 594 → 25 624 |
 | 1 角色 / 5867 道具 | 209 601 → 86 315 | 180 387 → 84 956 |
 | 原作 KStudio PNG（5 角色） | 25 184 → 22 689 | 18 304 → 16 640 |
+
+### 道具在 UE 端花在哪（21 角色场景，634 个道具，`OK_LOAD_PROFILE=1`）
+
+一开始以为重复的是 mesh 与材质（634 个道具只有 67 种型号），量完发现不是：整场只建了 23 张贴图、49 个材质，`OKFindEqualMaterial` 的去重早就在做了。实际分布是：
+
+| 分段 | 改之前 | 改之后 |
+|---|---:|---:|
+| UE 端合计 | 10 136 ms | 4 594 ms |
+| 其中 `OKPrepareCookedRole` | 7 770 ms | 840 ms |
+| ├ 它的贴图 | 116 ms | 172 ms |
+| ├ 它载入的 shared parent | 26 ms | 41 ms |
+| └ 它建的 part 实例（MID） | 339 ms | 372 ms |
+| 建 parts | 2 222 ms | 2 133 ms |
+| 显示 ramp 贴图 | 0 ms | 0 ms |
+
+`OKPrepareCookedRole` 的 7.8 s 里，它自己的三个子计时只占 0.5 s；剩下的全在它 `Setup()` 的第一行 `To.Source.PrepareRuntimeMaterials(Error)` ——**角色的开启早就把这一步放到 worker 上了**（`StartCharacterOpen` 的注解：「on the game thread this was the 1 to 6 s frame left」），道具没有。把它搬进 `PrepareItem` 的 worker 之后，道具在 game thread 上从 22.4 s（全旧）降到 4.6 s。
+
+> 回退的一项：原本怀疑每个 preview 各建一张显示 ramp 贴图（`OKCharacterDisplayRampPath` → `TextureFromPngBytes`），做了全行程共用。实测 `ramp_ms` 是 0——Studio 的道具根本没走到那条路（`ToonRampTex` 已由场景的 RampG 给定），整场只建一次。共用 ramp 的行为已拿掉，只留下把 ramp 与 `cooked_role` 纳入 `OK_LOAD_PROFILE` 的计时，`KKUnityBundle` 因此没有行为变更。
 
 ### 冷载入时，角色那一段花在哪
 
@@ -117,6 +138,6 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 1. **原作 KStudio PNG 的汇入**：5 角色的场景里，`load_call_ms` 是 11.3 s（总共 16.6 s）。那是 `FOKStudioImport::Import` 对每个角色依序呼叫 `FOkSession::MakeOkCardForOutfit` 把原作卡转成 OK 卡，而且**每次开同一个场景 PNG 都重转一次**。
    - 试过先走一遍 JSON 收集角色、用 `ParallelFor` 一次转 4 张再建文件：**没有变快**（5 张卡依序 11.0 s，4 个并行 11.7 s），所以回退了，没有留在版控里。`MakeOkCardForOutfit` 在 Rust 那边看来被某个全域锁序列化了，这段要从单卡转换那边查起。
    - 另一条路是快取：OK 卡已经存在、而且比原作卡与 ok-extract 的建置都新的时候就不重转。要先想好版本戳记，否则 2026-10-28 以前那种缺 okLt 的旧卡会被重复使用。
-2. **道具的 Unreal spawn**：21 角色场景里 10.5 s，必须在 game thread。但那 634 个道具只有 67 种型号 —— 同型号共用 mesh／material 是下一个大块，不过那要动 `Plugins/KKUnityBundle` 的共用程式码（C／E／F 三组共用），动之前要先讲好。
+2. **道具的 Unreal spawn**：搬走 `PrepareRuntimeMaterials` 之后剩 4.6 s，其中 2.1 s 是建 parts、0.84 s 是 `OKPrepareCookedRole` 剩下的部分（建每个实例自己的 MID，不能共用：颜色与 Material Editor 覆写是逐实例写进去的）。要再往下砍得共用同型号的 static mesh，那要动 `Plugins/KKUnityBundle`（三组共用）。
 3. **`Sync()` 每帧走过全部物件**：5867 道具场景里，`Sync` 总共 62 s，其中只有 23 s 是 `Build()`；其余约 39 s 是 8806 个物件 × 291 次 Sync 的回圈本身（世界变换、可见性、材质覆写比对）。只对「这一帧真的会变」的物件做事，是最后一块。
 4. `ready_ms` 是「物件都建完」，不是「材质都编译完」。拍照比对一定要等 shader 编译结束，否则比到的是编译进度（见 `Docs/ERROR_LOG.md` 的记录）。
