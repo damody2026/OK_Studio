@@ -457,6 +457,9 @@ struct AOKSceneActor::FPreparedCharacter
 	std::atomic<bool> bDone{ false };
 	TFuture<void> Opening;
 	TWeakObjectPtr<AKKPreviewActor> Actor;
+	/** Worker seconds spent opening it, and whether LoadStats has them already. */
+	double OpenSeconds = 0.;
+	bool bAccounted = false;
 };
 
 namespace
@@ -495,6 +498,37 @@ struct AOKSceneActor::FPreparedMap
 	TFuture<void> Opening;
 	int32 Next = 0;
 };
+
+/** A frame's share of taking the map's roots and the characters' sessions a step further while a scene opens. It used
+ *  to be 30 ms, which kept each frame short but made the load wait for hundreds of them: a frame of the opening scene
+ *  costs 20 ms or more on its own (the renderer, the engine's tick), so most of a map-heavy scene's load was that
+ *  overhead, not the work. Nothing can be worked on until the scene is up, so the slices are longer now. */
+static TAutoConsoleVariable<int32> CVarOkStudioOpenSliceMs(TEXT("ok.Studio.OpenSliceMs"), 120,
+	TEXT("Milliseconds a frame may spend loading a character's or the map's session while a scene opens (30 was the old behaviour)."));
+
+double AOKSceneActor::OpenSliceSeconds()
+{
+	return FMath::Clamp(CVarOkStudioOpenSliceMs.GetValueOnGameThread(), 5, 2000) / 1000.;
+}
+
+/** Objects built per Sync, and the time one Sync may spend building. 24 objects a frame was right when every item
+ *  opened its own session in the frame; with the sessions opened on workers an item costs a few milliseconds, so a
+ *  scene of thousands waited on hundreds of frames whose own cost (the renderer, and the Sync loop over every object)
+ *  was most of the load. 0 keeps the actor's BuildsPerFrame. */
+static TAutoConsoleVariable<int32> CVarOkStudioBuildsPerFrame(TEXT("ok.Studio.BuildsPerFrame"), 96,
+	TEXT("Objects built per Sync while a scene opens (0: the scene actor's own BuildsPerFrame, 24)."));
+static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.BuildSliceMs"), 250,
+	TEXT("Milliseconds one Sync may spend building objects before the rest wait for the next frame."));
+
+int32 AOKSceneActor::ObjectBuildBudget()
+{
+	return FMath::Clamp(CVarOkStudioBuildsPerFrame.GetValueOnGameThread(), 0, 4096);
+}
+
+double AOKSceneActor::BuildSliceSeconds()
+{
+	return FMath::Clamp(CVarOkStudioBuildSliceMs.GetValueOnGameThread(), 10, 5000) / 1000.;
+}
 
 int32 AOKSceneActor::PreparingMap() const { return PreparedMap ? PreparedMap->No : -1; }
 
@@ -535,6 +569,8 @@ bool AOKSceneActor::ContinueMapPrepare()
 	if (!PreparedMap) return false;
 	FPreparedMap& M = *PreparedMap;
 	const double Start = FPlatformTime::Seconds();
+	// However this returns, the slice's game-thread time is the map's share of the load (OKStudio.ProfileSceneLoad).
+	struct FAccount { double* Out; double Start; ~FAccount() { *Out += (FPlatformTime::Seconds() - Start) * 1000.; } } Account{ &LoadStats.MapContinueMs, Start };
 	while (M.Next < M.Opened.load())
 	{
 		FPreparedMap::FRoot& R = M.Roots[M.Next];
@@ -549,13 +585,97 @@ bool AOKSceneActor::ContinueMapPrepare()
 		AKKPreviewActor* Actor = R.Actor.Get();
 		while (Actor && !Actor->IsSessionLoadComplete())
 		{
-			if (FPlatformTime::Seconds() - Start >= .03) return false;
+			if (FPlatformTime::Seconds() - Start >= OpenSliceSeconds()) return false;
 			if (!Actor->ContinueSessionLoad(Error)) { Actor->Destroy(); R.Actor = nullptr; Actor = nullptr; R.bOpened = false; }
 		}
 		++M.Next;
-		if (FPlatformTime::Seconds() - Start >= .03) break;
+		if (FPlatformTime::Seconds() - Start >= OpenSliceSeconds()) break;
 	}
 	return M.bDone && M.Next == M.Roots.Num();
+}
+
+/** Characters opening at once while a scene is built. One at a time left the game thread waiting on a single worker
+ *  (a scene of 21 characters spent 10 of its 42 seconds there); more than a few hold more sessions in memory at once. */
+static TAutoConsoleVariable<int32> CVarOkStudioCharacterOpensAhead(TEXT("ok.Studio.CharacterOpensAhead"), 3,
+	TEXT("Character sessions opened on the workers at once while a scene is built (1 is one after another)."));
+
+int32 AOKSceneActor::CharacterOpensAhead()
+{
+	return FMath::Clamp(CVarOkStudioCharacterOpensAhead.GetValueOnGameThread(), 1, 8);
+}
+
+int32 AOKSceneActor::OpeningCharacters() const
+{
+	int32 Opening = 0;
+	for (const auto& Pair : Prepared) if (!Pair.Value->bDone) ++Opening;
+	return Opening;
+}
+
+struct AOKSceneActor::FPreparedItem
+{
+	/** What it was opened for: an item changed meanwhile starts over. */
+	FString Key;
+	FOkSession Session;
+	FString Error;
+	bool bOpened = false;
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	double OpenSeconds = 0.;
+};
+
+/** Item sessions opening at once while a scene is built. The game thread used to call OpenOkModelFk itself for every
+ *  item in the frame that showed it; the workers open them ahead instead, and the frame only makes the Unreal meshes. */
+static TAutoConsoleVariable<int32> CVarOkStudioItemOpensAhead(TEXT("ok.Studio.ItemOpensAhead"), 8,
+	TEXT("Item sessions opened on the workers at once while a scene is built (0: opened in the frame that builds them)."));
+
+int32 AOKSceneActor::ItemOpensAhead()
+{
+	return FMath::Clamp(CVarOkStudioItemOpensAhead.GetValueOnGameThread(), 0, 32);
+}
+
+FString AOKSceneActor::ItemPrepareKey(const FOKSceneItem& Item, const FString& Model, const FString& Prefab) const
+{
+	return Model + TEXT("|") + Prefab + TEXT("|") + ItemBuildJson(Item);
+}
+
+void AOKSceneActor::DropPreparedItem(int32 Id)
+{
+	TSharedPtr<FPreparedItem> P;
+	if (!PreparedItems.RemoveAndCopyValue(Id, P)) return;
+	if (P->Opening.IsValid()) P->Opening.Wait();
+}
+
+bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
+{
+	const int32 Ahead = ItemOpensAhead();
+	if (Ahead <= 0) return true;
+	TSharedPtr<FPreparedItem> P = PreparedItems.FindRef(Object.Id);
+	if (!P)
+	{
+		// No room: told before the item's model and build options are worked out, because a Sync of a scene with
+		// thousands of items asks for every one of them. The caps are the opens in flight and the sessions opened but
+		// not built yet (the frames build far fewer than the workers can open).
+		int32 Opening = 0;
+		for (const auto& Pair : PreparedItems) if (!Pair.Value->bDone) ++Opening;
+		if (Opening >= Ahead || PreparedItems.Num() >= Ahead * 3) return false;
+	}
+	FString Model, Prefab, ModelError;
+	// Not a model this build can find: Build says why, in the frame, as it did before.
+	if (!ItemModel(Object.Item, Model, Prefab, ModelError)) return true;
+	const FString Key = ItemPrepareKey(Object.Item, Model, Prefab);
+	if (P && P->Key != Key) { DropPreparedItem(Object.Id); P.Reset(); }
+	if (P) return P->bDone;
+	P = MakeShared<FPreparedItem>();
+	P->Key = Key;
+	P->Opening = AsyncThread([P, Library = LibraryDirectory(), Model, Prefab, Json = ItemBuildJson(Object.Item)]
+	{
+		const double Start = FPlatformTime::Seconds();
+		P->bOpened = P->Session.OpenOkModelFk(Library, Model, Prefab, Json, P->Error);
+		P->OpenSeconds = FPlatformTime::Seconds() - Start;
+		P->bDone = true;
+	}, 4 * 1024 * 1024);
+	PreparedItems.Add(Object.Id, P);
+	return false;
 }
 
 void AOKSceneActor::StartCharacterOpen(const FOKSceneObject& Object)
@@ -567,10 +687,12 @@ void AOKSceneActor::StartCharacterOpen(const FOKSceneObject& Object)
 	States.SetNumZeroed(9);
 	P->Opening = AsyncThread([P, Card = CardPath(C.Card), Outfit = C.Outfit, States = MoveTemp(States), Status = StatusJson(C)]
 	{
+		const double OpenStart = FPlatformTime::Seconds();
 		P->bOpened = P->Session.Open(FString(), Card, Outfit, P->Error, States.GetData(), Status);
 		// The material bytes as well, as the one-to-one scene does: on the game thread this was the 1 to 6 s frame left.
 		FString MaterialError;
 		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: materials not prepared: %s"), *MaterialError);
+		P->OpenSeconds = FPlatformTime::Seconds() - OpenStart;
 		P->bDone = true;
 	}, 16 * 1024 * 1024);
 	Prepared.Add(Object.Id, P);
@@ -590,12 +712,13 @@ bool AOKSceneActor::PrepareCharacter(const FOKSceneObject& Object)
 	if (P && P->Key != PrepareKey(Object.Character)) { DropPrepared(Object.Id); P.Reset(); }
 	if (!P)
 	{
-		// One at a time on the worker; the one waiting for it comes next.
-		for (const auto& Pair : Prepared) if (!Pair.Value->bDone) return false;
+		// Room on the workers (ok.Studio.CharacterOpensAhead); otherwise the ones already opening come first.
+		if (OpeningCharacters() >= CharacterOpensAhead()) return false;
 		StartCharacterOpen(Object);
 		return false;
 	}
 	if (!P->bDone) return false;
+	if (!P->bAccounted) { P->bAccounted = true; LoadStats.CharacterOpenMs += P->OpenSeconds * 1000.; }
 	FString Error;
 	AKKPreviewActor* Actor = P->Actor.Get();
 	if (P->bOpened && !Actor)
@@ -608,8 +731,9 @@ bool AOKSceneActor::PrepareCharacter(const FOKSceneObject& Object)
 	// It did not open or start: Build tries by itself and says why.
 	if (!Actor) { DropPrepared(Object.Id); return true; }
 	const double Start = FPlatformTime::Seconds();
-	while (!Actor->IsSessionLoadComplete() && FPlatformTime::Seconds() - Start < .03)
-		if (!Actor->ContinueSessionLoad(Error)) { DropPrepared(Object.Id); return true; }
+	while (!Actor->IsSessionLoadComplete() && FPlatformTime::Seconds() - Start < OpenSliceSeconds())
+		if (!Actor->ContinueSessionLoad(Error)) { LoadStats.CharacterContinueMs += (FPlatformTime::Seconds() - Start) * 1000.; DropPrepared(Object.Id); return true; }
+	LoadStats.CharacterContinueMs += (FPlatformTime::Seconds() - Start) * 1000.;
 	return Actor->IsSessionLoadComplete();
 }
 
@@ -750,16 +874,44 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 	case EOKSceneObjectKind::Item:
 	{
 		FString Model, Prefab;
+		const double ModelStart = FPlatformTime::Seconds();
 		if (!ItemModel(Object.Item, Model, Prefab, OutError)) return false;
+		const double OpenStart = FPlatformTime::Seconds();
+		LoadStats.ItemModelMs += (OpenStart - ModelStart) * 1000.;
 		// Item FK turns the item's bones before its meshes are baked; Material Editor shader and renderer edits apply then too.
 		FOkSession Session;
-		if (!Session.OpenOkModelFk(LibraryDirectory(), Model, Prefab, ItemBuildJson(Object.Item), OutError))
+		bool bOpened = false;
+		// Opened ahead on a worker (PrepareItem) while earlier frames built the items before it.
+		const TSharedPtr<FPreparedItem> ReadyItem = PreparedItems.FindRef(Object.Id);
+		if (ReadyItem && ReadyItem->bDone && ReadyItem->Key == ItemPrepareKey(Object.Item, Model, Prefab))
 		{
+			Session = MoveTemp(ReadyItem->Session);
+			bOpened = ReadyItem->bOpened;
+			OutError = ReadyItem->Error;
+			LoadStats.ItemOpenWorkerMs += ReadyItem->OpenSeconds * 1000.;
+			PreparedItems.Remove(Object.Id);
+		}
+		else
+		{
+			DropPreparedItem(Object.Id);
+			bOpened = Session.OpenOkModelFk(LibraryDirectory(), Model, Prefab, ItemBuildJson(Object.Item), OutError);
+		}
+		if (!bOpened)
+		{
+			LoadStats.ItemOpenMs += (FPlatformTime::Seconds() - OpenStart) * 1000.;
 			// Studio's helper items draw nothing in the game either (a turning pivot "obj無し", a 3D sound emitter): only a
 			// place for their children, which the document already keeps. Not an error.
-			if (OutError.Contains(TEXT("has no meshes"))) { OutError.Reset(); AddRenderCamera(Model, Prefab, Out); return true; }
+			if (OutError.Contains(TEXT("has no meshes")))
+			{
+				OutError.Reset();
+				const double CamerasStart = FPlatformTime::Seconds();
+				AddRenderCamera(Model, Prefab, Out);
+				LoadStats.ItemCamerasMs += (FPlatformTime::Seconds() - CamerasStart) * 1000.;
+				return true;
+			}
 			return false;
 		}
+		LoadStats.ItemOpenMs += (FPlatformTime::Seconds() - OpenStart) * 1000.;
 		// A mod item made entirely with Unity's Standard shader (buildings, ground pieces) is lit as Standard is: the
 		// item program's toon shading ignores its _Color, _Metallic and the light's angle (83283571_p1's concrete ground
 		// under the water drew 1.8 times the native brightness). It draws with the map materials' Standard graph instead,
@@ -767,19 +919,26 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 		bool bStandardItem = Session.PartCount() > 0;
 		for (int32 Part = 0; Part < Session.PartCount() && bStandardItem; ++Part)
 			bStandardItem = Session.MaterialShaderName(Part).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase);
+		const double SpawnStart = FPlatformTime::Seconds();
 		AKKPreviewActor* Actor = SpawnPreview(World, MoveTemp(Session), OutError, Object.Item.Colors, PatternOverrides(Object.Item), &Object.Item, bStandardItem,
 			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
+		LoadStats.ItemSpawnMs += (FPlatformTime::Seconds() - SpawnStart) * 1000.;
 		if (!Actor) return false;
 		Out.Preview = Actor;
 		FVector RootPosition, RootScale;
 		FQuat RootRotation;
-		if (FOkSession::OkModelNodeWorld(LibraryDirectory(), Model, Prefab, Prefab, RootPosition, RootRotation, RootScale))
+		const double NodeStart = FPlatformTime::Seconds();
+		const bool bNodeWorld = FOkSession::OkModelNodeWorld(LibraryDirectory(), Model, Prefab, Prefab, RootPosition, RootRotation, RootScale);
+		LoadStats.ItemNodeWorldMs += (FPlatformTime::Seconds() - NodeStart) * 1000.;
+		if (bNodeWorld)
 		{
 			const FTransform Root(FQuat(-RootRotation.X, RootRotation.Z, RootRotation.Y, RootRotation.W).GetNormalized(),
 				FVector(-RootPosition.X, RootPosition.Z, RootPosition.Y) * 100.0, FVector(RootScale.X, RootScale.Z, RootScale.Y));
 			Out.RenderCorrection = Root.Inverse();
 		}
+		const double CamerasStart = FPlatformTime::Seconds();
 		AddRenderCamera(Model, Prefab, Out);
+		LoadStats.ItemCamerasMs += (FPlatformTime::Seconds() - CamerasStart) * 1000.;
 		return true;
 	}
 	case EOKSceneObjectKind::Light:
@@ -1231,6 +1390,8 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 
 void AOKSceneActor::Sync()
 {
+	const double SyncStart = FPlatformTime::Seconds();
+	struct FAccount { double* Out; double Start; ~FAccount() { *Out += (FPlatformTime::Seconds() - Start) * 1000.; } } SyncAccount{ &LoadStats.SyncMs, SyncStart };
 	bSkyDomesDirty = true;
 	++PlaceGeneration;
 	if (!Document) { for (auto& Pair : Shown) Release(Pair.Value); Shown.Reset(); return; }
@@ -1248,7 +1409,11 @@ void AOKSceneActor::Sync()
 	// Objects are built a batch per frame: a scene of thousands built in one frame never lets the renderer upload and
 	// free what it queued (memory ran past 28 GB). The rest waits for the next Tick (bBuildsPending).
 	int32 Built = 0;
+	// Objects this Sync may build: the field unless ok.Studio.BuildsPerFrame overrides it.
+	const int32 Budget = FMath::Max(1, ObjectBuildBudget() > 0 ? ObjectBuildBudget() : BuildsPerFrame);
 	bool bPrepareBusy = false;
+	++LoadStats.Syncs;
+	const int32 BuiltBefore = LoadStats.Characters + LoadStats.Items + LoadStats.Others;
 	bBuildsPending = false;
 	BuildsLeft = 0;
 	TSet<int32> Present;
@@ -1269,17 +1434,23 @@ void AOKSceneActor::Sync()
 		{
 			if (bPrepareBusy)
 			{
-				bool bOpening = Prepared.Contains(Object.Id) || Prepared.Num() >= 2;
-				for (const auto& Pair : Prepared) bOpening = bOpening || !Pair.Value->bDone;
-				if (!bOpening) StartCharacterOpen(Object);
+				// Several characters open at once (F-sceneload): a scene of 21 opened them one after another, and the
+				// game thread waited on the worker for most of the load. The cap bounds the sessions held at once.
+				const int32 Ahead = CharacterOpensAhead();
+				if (!Prepared.Contains(Object.Id) && Prepared.Num() < Ahead + 1 && OpeningCharacters() < Ahead) StartCharacterOpen(Object);
 			}
 			else if (!PrepareCharacter(Object))
 			{
 				bPrepareBusy = true;
-				Built = FMath::Max(Built, BuildsPerFrame);
+				Built = FMath::Max(Built, Budget);
 			}
 		}
-		if (!bSame && Built >= BuildsPerFrame)
+		// An item's session opens on a worker; it is built in the frame it is ready in, not the one that asked for it.
+		const bool bItemWaiting = !bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Item && !PrepareItem(Object);
+		// Also not past this Sync's share of the frame: an item is a few milliseconds now that its session is opened on a
+		// worker, so the count alone would let one Sync build for a second.
+		const bool bOverSlice = Built > 0 && FPlatformTime::Seconds() - SyncStart >= BuildSliceSeconds();
+		if (!bSame && (bItemWaiting || bOverSlice || Built >= Budget))
 		{
 			// Over this frame's budget: an object already shown keeps its old look until its turn, a new one waits.
 			bBuildsPending = true;
@@ -1289,7 +1460,7 @@ void AOKSceneActor::Sync()
 		else if (!bSame)
 		{
 			// A character takes seconds: one a frame, so the status line can say how far the scene is (U251).
-			Built += Object.Kind == EOKSceneObjectKind::Character ? BuildsPerFrame : 1;
+			Built += Object.Kind == EOKSceneObjectKind::Character ? Budget : 1;
 			if (Item) Release(*Item);
 			FShown Fresh;
 			FString Error;
@@ -1302,7 +1473,11 @@ void AOKSceneActor::Sync()
 				Errors.Add(Object.Id, Error);
 				UE_LOG(LogTemp, Warning, TEXT("OK studio: %s (%d) not shown: %s"), *Object.Name, Object.Id, *Error);
 			}
-			UE_LOG(LogTemp, Display, TEXT("OK studio: %s (%d) built in %.2f s"), *Object.Name, Object.Id, FPlatformTime::Seconds() - BuildStart);
+			const double BuildMs = (FPlatformTime::Seconds() - BuildStart) * 1000.;
+			if (Object.Kind == EOKSceneObjectKind::Character) { LoadStats.CharacterBuildMs += BuildMs; ++LoadStats.Characters; }
+			else if (Object.Kind == EOKSceneObjectKind::Item) { LoadStats.ItemBuildMs += BuildMs; ++LoadStats.Items; }
+			else { LoadStats.OtherBuildMs += BuildMs; ++LoadStats.Others; }
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s (%d) built in %.2f s"), *Object.Name, Object.Id, BuildMs / 1000.);
 			Item = &Shown.Add(Object.Id, Fresh);
 			if (Object.Kind == EOKSceneObjectKind::Character) { ApplyCharacterState(Object, *Item); SetAnimationTime(Object.Id, 0.f); }
 		}
@@ -1431,9 +1606,15 @@ void AOKSceneActor::Sync()
 	TArray<int32> PreparedIds;
 	Prepared.GetKeys(PreparedIds);
 	for (int32 Id : PreparedIds) if (!bBuildsPending || !Present.Contains(Id)) DropPrepared(Id);
+	TArray<int32> PreparedItemIds;
+	PreparedItems.GetKeys(PreparedItemIds);
+	for (int32 Id : PreparedItemIds) if (!bBuildsPending || !Present.Contains(Id)) DropPreparedItem(Id);
 	bBuildsPending |= bMapPending;
+	if (bBuildsPending && BuiltBefore == LoadStats.Characters + LoadStats.Items + LoadStats.Others) ++LoadStats.StarvedSyncs;
 	if (!bBuildsPending) bProgressiveBuild = false;
+	const double WireStart = FPlatformTime::Seconds();
 	WireRenderTextures();
+	LoadStats.WireMs += (FPlatformTime::Seconds() - WireStart) * 1000.;
 	// A destroyed preview's meshes, textures and materials are freed by garbage collection, which the engine runs only
 	// now and then: after another scene is loaded (or many objects go) collect now, or scenes opened one after another
 	// pile up gigabytes.
@@ -3235,6 +3416,9 @@ void AOKSceneActor::ReleaseScene()
 	TArray<int32> PreparedIds;
 	Prepared.GetKeys(PreparedIds);
 	for (int32 Id : PreparedIds) DropPrepared(Id);
+	TArray<int32> PreparedItemIds;
+	PreparedItems.GetKeys(PreparedItemIds);
+	for (int32 Id : PreparedItemIds) DropPreparedItem(Id);
 	StopMapPrepare();
 	bMapPending = false;
 	bProgressiveBuild = false;

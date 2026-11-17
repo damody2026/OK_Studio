@@ -4898,3 +4898,8 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：讀 bundle 期間這條執行緒記到 strict 缺口（`okstrict::gaps_on_thread` 有變）時不寫進 `ZIP_AB_CACHE`（`zipmod_one_unity3d_arc`、`zipmod_bundle_named`），和 `entries::pack_memo` 的規則一致。測試 `session::jump_probe_tests::failed_remake_leaves_the_card_openable`（ignored，需本機 alice 與基礎庫，`OK_GAME_ROOT=X:/NoGame`）修正前「after: r=1」同一訊息，修正後通過。
 - 未修：另存已編輯的 OK 卡會丟掉原卡的 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。
 - 防範：程序共用的快取，鍵不含「哪張卡／哪個資源包」時，不能存 strict 缺口期間得到的結果，尤其是「沒有」。
+
+## 2026-11-17 開場景效能：兩個做錯的推論（F 組 f-sceneload）
+- **拿「物件建完」當下的截圖比畫面，比到的是材質編譯進度**：`OKStudio.ProfileSceneLoad` 原本在場景建完的那一幀就要截圖。新舊設定比對時，0 角色／48 道具那個場景的逐像素平均差是 31.8/255，畫面裡背景一亮一暗、一個道具一黑一粉，看起來像嚴重回退。實際上兩邊的物件傾印（物件數、座標、parts、元件數）完全相同；差別是新設定比較快到達「建完」，那時 runtime material 還在編譯。改成等 240 幀而且 `GShaderCompilingManager->IsCompiling()` 為假再截圖後，同一組比對是 0.146/255，和同設定重跑的雜訊（0.14）一樣。**往後比畫面一定要等 shader 編譯結束，否則比的是誰跑得快。**
+- **先開好的 session 沒有上限會吃掉記憶體**：道具 session 改成在 worker 上先開（`ok.Studio.ItemOpensAhead`）時，只限制「同時在開幾個」，沒限制「開好但還沒建的有幾個」。`Sync()` 每一幀會走過全部物件，所以幾千個道具的場景會一直補開，開好的排在那裡等，一個場景可能同時握著幾千個 session。已加上 `PreparedItems.Num() >= Ahead * 3` 的上限，並且在算出型號與 build 選項**之前**就回報「沒位子」（否則光是每幀對幾千個道具算一次 `ItemBuildJson` 就是白工）。
+- **同機競爭會汙染數字**：量 5867 道具那個場景時，E 組同時有 4 個 UnrealEditor 在跑，我的兩個測量行程都在載入中途被殺（沒有 crash dump，像是記憶體壓力）。所有前後對比一律改成同一段時間內背靠背跑兩個行程，跨時段的數字差得到 15%。
