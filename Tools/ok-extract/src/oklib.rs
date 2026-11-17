@@ -46,8 +46,30 @@ struct Model {
     chunks: HashMap<u64, (u64, u32)>,
     len: u64,
 }
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum Loc { Packed(u64, u32), Chunks(Vec<(u64, u32)>) }
+
+/// A model's record index, kept in the library's own work area so opening a model does not have to walk the whole
+/// file: the walk reads a length prefix per record, and those are spread through the file, so a card that needs a few
+/// records out of a 185 MiB model still touches a page per record across all of it (one card at outfit 0 walks ~1 GiB
+/// over 64 models). What this holds is a restatement of the library's own files, **not a memo of a card open**: it
+/// answers nothing a card open computed, so every card — including one never opened before — gets the same answer
+/// from it, and the disk cache for card opens stays off. Same category as the decompressed index copy
+/// `mapped_index` keeps in `work/index-cache`; `work/` is not version controlled and not in the manifest.
+/// Keyed by the model file's length and write time, so a replaced model file is never answered from an old index.
+/// Its proper home is the library build step; until then the first open that needs a model writes it.
+/// Off switch: `OK_NO_MODEL_INDEX=1` (then every open walks the records, which is also the fallback when the index
+/// cannot be read or written).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModelIndex { entries: Vec<((String, Vec<u8>), Loc)>, chunks: Vec<(u64, (u64, u32))>, len: u64 }
+
+fn model_index_path(path: &Path) -> Option<PathBuf> {
+    if std::env::var_os("OK_NO_MODEL_INDEX").is_some() { return None; }
+    let dir = active_dir()?.join("work").join("model-index");
+    let meta = std::fs::metadata(path).ok()?;
+    let stamp = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(dir.join(format!("{}-{}-{stamp}.idx", path.file_stem()?.to_string_lossy(), meta.len())))
+}
 const CHUNK_QUERY: &str = "#chunk";
 const CHUNK_MIN: usize = 4 * 1024;
 const CHUNK_MAX: usize = 64 * 1024;
@@ -248,6 +270,17 @@ fn unchanged_model(path: &Path) -> Arc<Mutex<Model>> {
 
 /// Scan a model's record headers (values are not read).
 fn load_model(path: &Path, hashes: bool) -> Model {
+    let _section = crate::profile::spot("load_model scan");
+    // The index beside the library answers the same thing the walk below builds (value hashes are not in it, so a
+    // `hashes` scan always walks).
+    let side = (!hashes).then(|| model_index_path(path)).flatten();
+    if let Some(saved) = side.as_ref().and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| lz4_flex::block::decompress_size_prepended(&b).ok())
+        .and_then(|b| bincode::deserialize::<ModelIndex>(&b).ok())
+    {
+        let _hit = crate::profile::spot("load_model index hit");
+        return Model { entries: saved.entries.into_iter().collect(), values: HashMap::new(), chunks: saved.chunks.into_iter().collect(), len: saved.len };
+    }
     let mut model = Model::default();
     // Mapped: the record index is read in place (a model file can be hundreds of MB).
     let Ok(file) = File::open(path) else { return model; };
@@ -287,6 +320,32 @@ fn load_model(path: &Path, hashes: bool) -> Model {
         at = start + total;
     }
     model.len = at as u64;
+    if let Some(p) = side {
+        let index = ModelIndex {
+            entries: model.entries.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            chunks: model.chunks.iter().map(|(k, v)| (*k, *v)).collect(),
+            len: model.len,
+        };
+        if let (Some(dir), Ok(bytes)) = (p.parent(), bincode::serialize(&index).map(|b| lz4_flex::block::compress_prepend_size(&b))) {
+            let _ = std::fs::create_dir_all(dir);
+            let tmp = p.with_extension(format!("{}.tmp", std::process::id()));
+            if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &p).is_err() { let _ = std::fs::remove_file(&tmp); }
+            // Indexes of an earlier version of this model file (its length or write time changed) are dead.
+            if let (Some(stem), Ok(read)) = (path.file_stem().map(|s| s.to_string_lossy().into_owned()), std::fs::read_dir(dir)) {
+                for old in read.flatten().map(|e| e.path()).filter(|q| *q != p) {
+                    let name = old.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    if name.starts_with(&format!("{stem}-")) && name.ends_with(".idx") { let _ = std::fs::remove_file(old); }
+                }
+            }
+        }
+    }
+    if std::env::var_os("OK_PROFILE").is_some() {
+        eprintln!(
+            "ok-extract: PROFILE load_model scanned {:.1} MiB of {:.1} MiB, {} records: {}",
+            at as f64 / 1048576.0, bytes.len() as f64 / 1048576.0, model.entries.len() + model.chunks.len(),
+            path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        );
+    }
     model
 }
 /// Hash of a stored (compressed) value, for whole-value deduplication.
