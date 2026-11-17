@@ -474,6 +474,36 @@ static UTexture2D* TextureFromPngFile(const FString& Path, bool bClamp = false)
 	return TextureFromPngBuffer(Png, bClamp);
 }
 
+// The viewport's color-grading LUT (KKPreview/KKSDefaultSaturationLUT16.png): linear, the LUT group, one upload, and its
+// pixels kept. Made through TextureFromPngFile and then switched to linear with a second UpdateResource, a low-memory PC
+// (OKRuntimeLowMemory: runtime textures drop their CPU copy after the first upload) uploaded nothing the second time
+// ("Attempting to load a BulkData object that cannot be loaded from disk"): a black LUT, the whole view black
+// (2026-11-17, the Studio package on a 16 GB laptop).
+static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
+{
+	TArray<uint8> Png;
+	if (!FFileHelper::LoadFileToArray(Png, *Path) || Png.Num() < 16) return nullptr;
+	IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	TSharedPtr<IImageWrapper> Wrapper = Module.CreateImageWrapper(EImageFormat::PNG);
+	TArray<uint8> Raw;
+	if (!Wrapper.IsValid() || !Wrapper->SetCompressed(Png.GetData(), Png.Num()) || !Wrapper->GetRaw(ERGBFormat::BGRA, 8, Raw)) return nullptr;
+	const int32 W = Wrapper->GetWidth(), H = Wrapper->GetHeight();
+	if (W <= 0 || H <= 0 || Raw.Num() != W * H * 4) return nullptr;
+	UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
+	if (!Tex || !Tex->GetPlatformData() || Tex->GetPlatformData()->Mips.IsEmpty()) return nullptr;
+	FTexture2DMipMap& Mip = Tex->GetPlatformData()->Mips[0];
+	FMemory::Memcpy(Mip.BulkData.Lock(LOCK_READ_WRITE), Raw.GetData(), Raw.Num());
+	Mip.BulkData.Unlock();
+	Tex->SRGB = false;
+	Tex->LODGroup = TEXTUREGROUP_ColorLookupTable;
+	Tex->Filter = TF_Bilinear;
+	Tex->AddressX = TA_Clamp;
+	Tex->AddressY = TA_Clamp;
+	Tex->NeverStream = true;
+	Tex->UpdateResource();
+	return Tex;
+}
+
 static UTexture2D* LinearTextureFromPngBytes(const uint8* Data,int32 Length)
 {
 	// Configure the final sampler before its first upload. Changing SRGB after
@@ -3629,6 +3659,9 @@ static void ApplyPartMaterial(UMeshComponent* Comp, UTexture2D* Tex, const FStri
 {
 #if !WITH_EDITOR
     if(Comp&&Shadow&&Shadow->CookedMaterial){Comp->SetMaterial(0,Shadow->CookedMaterial);Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);Comp->SetCastShadow(true);}
+    // A part OKPrepareCookedRole left out (no shared parent for its shader): not drawn at all, rather than in the
+    // engine's default material. Visibility toggles (clothes states) do not bring it back: they leave these passes alone.
+    else if(Comp&&Shadow){Comp->SetRenderInMainPass(false);Comp->SetRenderInDepthPass(false);Comp->SetCastShadow(false);}
     return;
 #else
 	// A part on a shared parent (OKPrepareCookedRole) needs no graph of its own.
@@ -12543,8 +12576,8 @@ void AKKPreviewActor::SetupStudioView(bool PreserveWorld)
             // the fixed exposure, and the world's bloom spread them over half the screen and her in white whenever one came
             // into the frame (1-on-1 on the street background, 11-14).
             Settings.bOverride_BloomIntensity=true;Settings.BloomIntensity=0.f;
-            UTexture2D* Lut=TextureFromPngFile(FPaths::ProjectContentDir()/TEXT("KKPreview/KKSDefaultSaturationLUT16.png"),true);
-            if(Lut){Lut->SRGB=false;Lut->LODGroup=TEXTUREGROUP_ColorLookupTable;Lut->UpdateResource();Settings.bOverride_ColorGradingLUT=true;Settings.ColorGradingLUT=Lut;Settings.bOverride_ColorGradingIntensity=true;Settings.ColorGradingIntensity=1.f;}
+            UTexture2D* Lut=ColorLookupTextureFromPngFile(FPaths::ProjectContentDir()/TEXT("KKPreview/KKSDefaultSaturationLUT16.png"));
+            if(Lut){Settings.bOverride_ColorGradingLUT=true;Settings.ColorGradingLUT=Lut;Settings.bOverride_ColorGradingIntensity=true;Settings.ColorGradingIntensity=1.f;}
             if(auto* PC=World->GetFirstPlayerController())PC->SetViewTarget(StudioCam);
         }
         return;
@@ -12622,12 +12655,9 @@ void AKKPreviewActor::SetupStudioView(bool PreserveWorld)
 		// UE's own color-grading LUT runs at the tonemapper's color stage. The
 		// table is generated from KKS BetterColorPicker's inverse filter, so it
 		// affects every card and the live viewport without per-material tuning.
-		UTexture2D* Lut = TextureFromPngFile(FPaths::ProjectContentDir() / TEXT("KKPreview/KKSDefaultSaturationLUT16.png"), true);
+		UTexture2D* Lut = ColorLookupTextureFromPngFile(FPaths::ProjectContentDir() / TEXT("KKPreview/KKSDefaultSaturationLUT16.png"));
 		if (Lut && FPlatformMisc::GetEnvironmentVariable(TEXT("OK_NO_LUT")) != TEXT("1"))
 		{
-			Lut->SRGB = false;
-			Lut->LODGroup = TEXTUREGROUP_ColorLookupTable;
-			Lut->UpdateResource();
 			StudioPP->Settings.bOverride_ColorGradingLUT = true;
 			StudioPP->Settings.ColorGradingLUT = Lut;
 			StudioPP->Settings.bOverride_ColorGradingIntensity = true;

@@ -24,7 +24,14 @@ TSharedPtr<FJsonObject> OKCharacterMCPGeometry(AKKPreviewActor* Actor,FString& E
   };
   bool Skinned=false;const FName Tag=*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex);
   if(!Part.PrivateGpuDisplay)for(auto Skin:Actor->SkelFollowers)if(Skin&&Skin->GetName()==FString::Printf(TEXT("Skel_%d"),Part.SessionIndex)&&Skin->ComponentTags.Contains(Tag)){
-   FOKPaintPose Pose;if(!Pose.Prepare(Skin)){Error=TEXT("Current skin geometry has no readable CPU data");return nullptr;}TArray<FVector> Vertices;for(uint32 I=0;I<Pose.LOD->GetNumVertices();++I)Vertices.Add(Pose.Position(I));
+   FOKPaintPose Pose;if(!Pose.Prepare(Skin)){
+    // Which of FOKPaintPose::Prepare's requirements is missing (a packaged game differs from the editor here).
+    const auto* Mesh=Cast<USkeletalMesh>(Skin->GetSkinnedAsset());const auto* Render=Mesh?Mesh->GetResourceForRendering():nullptr;
+    const auto* Lod=Render&&!Render->LODRenderData.IsEmpty()?&Render->LODRenderData[0]:nullptr;const auto* W=Skin->GetSkinWeightBuffer(0);
+    Error=FString::Printf(TEXT("Current skin geometry has no readable CPU data (part %d: registered=%d meshobject=%d render=%d weights=%d weightdata=%d verts=%d/%d positions=%d)"),
+     Part.SessionIndex,int32(Skin->IsRegistered()),int32(Skin->GetMeshObject()!=nullptr),int32(Lod!=nullptr),int32(W!=nullptr),int32(W&&W->GetDataVertexBuffer()->GetWeightData()!=nullptr),
+     W?int32(W->GetNumVertices()):-1,Lod?int32(Lod->GetNumVertices()):-1,int32(Lod&&Lod->StaticVertexBuffers.PositionVertexBuffer.GetVertexData()!=nullptr));
+    return nullptr;}TArray<FVector> Vertices;for(uint32 I=0;I<Pose.LOD->GetNumVertices();++I)Vertices.Add(Pose.Position(I));
    TArray<uint32> Indices;const auto* Buffer=Pose.LOD->MultiSizeIndexContainer.GetIndexBuffer();for(const auto& Section:Pose.LOD->RenderSections)if(!Section.bDisabled)for(uint32 I=0;I<Section.NumTriangles*3;++I)Indices.Add(Buffer->Get(Section.BaseIndex+I));Add(Vertices,Indices);Skinned=true;
   }
   // Section zero is the physical surface. Additional procedural sections are

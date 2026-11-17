@@ -17,9 +17,11 @@ struct FOKPaintPose {
   // Retain allocation, never retain pose/morph content. In particular Morph
   // must have count zero before SetNumZeroed or weights would accumulate.
   LOD=nullptr;Weights=nullptr;Matrices.Reset();Morph.Reset();Fallback.Reset();
-  // Not until it is on screen: a part just made or going (her outfit changed in H) has no mesh object, GetCPUSkinnedVertices
-  // asserts on it. The surface is left out this frame and asked again the next.
-  if(!C->IsRegistered()||!C->GetMeshObject())return false;
+  // Only GetCPUSkinnedVertices (the Unsupported path below) needs a mesh object: it asserts without one (a part just made
+  // or going, her outfit changed in H: left out this frame, asked again the next). The bone matrices do not: a packaged
+  // game draws the body through its GPU display and this follower has no mesh object at all, so requiring one there
+  // left the character MCP without any body geometry (2026-11-17, the Studio package).
+  if(!C->IsRegistered())return false;
   Component=C;LocalToWorld=C->GetComponentTransform();auto* Mesh=Cast<USkeletalMesh>(C->GetSkinnedAsset());if(!Mesh||!Mesh->GetResourceForRendering()||Mesh->GetResourceForRendering()->LODRenderData.IsEmpty())return false;
   LOD=&Mesh->GetResourceForRendering()->LODRenderData[0];Weights=C->GetSkinWeightBuffer(0);
   if(!Weights||!Weights->GetDataVertexBuffer()->GetWeightData()||Weights->GetNumVertices()!=LOD->GetNumVertices()||!LOD->StaticVertexBuffers.PositionVertexBuffer.GetVertexData())return false;
@@ -30,7 +32,7 @@ struct FOKPaintPose {
   if(auto* Skeletal=Cast<USkeletalMeshComponent>(C))if(Skeletal->ClothBlendWeight>0)for(const auto& Section:LOD->RenderSections)Unsupported|=Section.HasClothingData();
   // Preserve the previous precise path for simulation/deformation systems which
   // ordinary bone matrices and built-in morphs cannot describe.
-  if(Unsupported){C->GetCPUSkinnedVertices(Fallback,0);return !Fallback.IsEmpty();}
+  if(Unsupported){if(!C->GetMeshObject())return false;C->GetCPUSkinnedVertices(Fallback,0);return !Fallback.IsEmpty();}
   C->GetCurrentRefToLocalMatrices(Matrices,0);
   const float Maximum=UE::SkeletalRender::Settings::GetMorphTargetMaxBlendWeight();
   for(const auto& Item:C->ActiveMorphTargets){if(!Item.Key||!C->MorphTargetWeights.IsValidIndex(Item.Value)||!Item.Key->HasDataForLOD(0))continue;

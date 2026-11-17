@@ -1510,11 +1510,15 @@ pub fn library_zip_memo<T: Clone + Send + Sync + 'static>(what: &str, zip: &Path
     // this checkout lacks the models of ~3900 recorded archives, which the three whole-tree walks of an open
     // (strip_all, override index, GUID index) then read again, ~11700 zip opens and ~1 s of every open, although the
     // same real file (or none at all) served them. The sealing case (`own`) keeps the generation.
-    // Only outside a strict open. Unlike `view_memo`, this memo has no gap guard: a value `build()` recorded an
-    // okstrict gap for is kept anyway, so sharing it between two strict opens would carry that gap's presence (or
-    // absence) into the other one, and the pack identity in the key is what kept them apart. A strict open is an OK
-    // card's or a conversion's (okstrict::active needs a mounted pack scope), so original cards — where the sharing
-    // pays — are unaffected.
+    // Only outside a strict open. The reason was that this memo had no gap guard; it has one now (below, 2026-11-16),
+    // so on 2026-11-17 this hold-out was removed and measured: **it buys nothing, so it was put back.** Five OK cards
+    // in one process took 1498 open_zip calls with the sharing, 1503 without (noise), and the 35 `--fresh-dump`
+    // dumps were identical either way. The switch was live — the same build on two original cards gives 38094 vs
+    // 52645 calls — so the zero is real, not a dead switch. The reason is by design: an OK card is self-contained,
+    // so nearly every archive it reads comes from its own pack, which is the `own` branch above and keeps the
+    // generation regardless. Only archives the library records could be shared, and an OK card's open barely reads
+    // any. **So do not retry this**: sharing values between two strict opens is what the pack identity in the key
+    // prevents (花火 2026-11-12, alice 2026-11-16), and there is no measured gain to pay for that risk.
     // OK_COARSE_ZIP_MEMO=1: the whole fallback generation in the key again (to compare with the per-archive one).
     let generation = if own || coarse_zip_memo() || crate::okstrict::active().is_some() { format!("{}|{}", FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::oklib::mounted_pack_identity()) }
         // The mounted pack only decides this archive when the overlay records it (open_zip completes the library's

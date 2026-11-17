@@ -43,7 +43,12 @@ KKRUNTIMEPOSE_API UMaterialInterface* OKLoadRuntimeSharedMaterialParent(const FS
 // spent ~164 ms in cooked_role parent_load_ms, later cards ~1 ms). Call it once, on the game thread, as early as
 // there is a root; it does nothing on a second call for the same root, with no root, or with OK_NO_MATERIAL_PRELOAD=1.
 // These are engine assets, not card data: nothing an open reads or produces changes.
-KKRUNTIMEPOSE_API void OKPreloadRuntimeSharedMaterialParents(const FString& Root);
+// A cooked game first opens Library, the shader library holding the parents' shaders (RuntimeMaterialBake, cooked by
+// Tools/rebuild_street_social_patch.lua): parents loaded before it is open keep the default material for good.
+KKRUNTIMEPOSE_API void OKPreloadRuntimeSharedMaterialParents(const FString& Root,const FString& Library);
+// Opens the cooked parents' shader library once per process (later calls return the first result); true in the
+// editor, whose parents compile their own shaders.
+KKRUNTIMEPOSE_API bool OKOpenRuntimeMaterialShaderLibrary(const FString& Library);
 // The face pressed flat along the view (Wuthering Waves' toon faces; Tools/GpuPoseAudit PrepareFlatFaceMaterial.cpp):
 // a parent's <Name>_Flat variant beside it (null when the root has none, or ok.FaceFlatten was 0 when the scene started:
 // then the head draws with the plain parent). The head parts (Role "head") draw with it. Live (the card reader, whose

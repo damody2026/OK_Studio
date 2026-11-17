@@ -1016,7 +1016,10 @@ void UOKGalleryWidget::NativeConstruct()
 			FString MaterialRoot;
 			if(!FParse::Value(FCommandLine::Get(),TEXT("RuntimeMaterialRoot="),MaterialRoot))
 				MaterialRoot=TEXT("/Game/IndependentResources/RuntimeMaterials/StreetDisplay27");
-			OKPreloadRuntimeSharedMaterialParents(MaterialRoot);
+			// The library the card's own load opens (KKPreviewRuntimeMaterials.inl; the reader has no manifest).
+			FString MaterialLibrary;
+			if(!FParse::Value(FCommandLine::Get(),TEXT("RuntimeMaterialLibrary="),MaterialLibrary))MaterialLibrary=TEXT("RuntimeMaterialBake");
+			OKPreloadRuntimeSharedMaterialParents(MaterialRoot,MaterialLibrary);
 		}
 	}
 	if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_AUTO_3D")) == TEXT("1"))

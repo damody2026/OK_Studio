@@ -54,6 +54,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `GridSampler` 的 point 快路径 | 以为同尺寸时权重为 0 可以少读三个 texel；`OK_GRID_DIAG` 印出来才知道真实情况是 64²／512² 升采样到 4096²，权重本来就不是 0 | 整个回退，只留诊断 |
 | ③`emit` 并行 | 整个 emit 阶段占三张卡总时间 2.2%（`memo_put` 19 ms＋`ctx.emit` 54 ms）。`memo_put` 搬不走（`view_memo` 是 thread-local）；`ctx.emit` 的每项工作是 `emit_part` 往 `session_parts` 后面 append，后面还有四处 `last_mut()` 改刚 append 的那一项 —— **顺序就是这个资料结构本身** | 不做，只留三个子计时 |
 | `BUNDLE_CACHE`（`parse_bundle_cached` 的 thread_local）改程序共用 | `ParsedBundle` 有 18 个 `RefCell` 栏位且 `external_files` 装 `Rc<ExternalFile>` → `!Send + !Sync`，**型别上就放不进跨执行绪的 static**；还骑着「OK 卡资源包只记录真的跑过的查询」这条不变式（F 组 11-16 alice 那个 bug 的同一类）；`TEXTURE_CACHE_BYTES` 已经是每 bundle 192 MiB、每执行绪各一份。`native_workers_broadcast` 也救不了，因为 `base: head textures` 是在开卡那条执行绪上同步跑的 | 不做 |
+| 拿掉 `library_zip_memo` 的 strict 闸门（让 OK 卡也共用按 archive 的新键）<br>`d352dcb90`，整合 #15 后做的 | gap guard（`0dbce369f`）进来之后这道闸门的理由就过期了，所以照计划拿掉并重验 —— **零收益**：同行程 5 张 OK 卡，共用 1498 次 `open_zip`、不共用 1503 次（噪声内），35 个 dump 两边逐位元相同。**开关是活的**（同一执行档两张原作卡 38094 对 52645 次），所以这个零是真的。原因是设计使然：**OK 卡自带资源包**，读的档案几乎都来自自己的包，走 `own` 分支本来就保留 generation；只有「library 记录的档案」能共用，而 OK 卡几乎不读那些 | **放回去**，只留注解写明不要再试（在两次严格开卡之间共用值正是 pack 身分要防的：花火 11-12、alice 11-16，没有收益去换这风险） |
 
 ## 三、量测方法与陷阱
 
@@ -73,7 +74,10 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   要用 Glob／grep 指定路径。另外**不要把 `cargo` 程序当成机器在忙** —— 那 18 个 idle 的
   `cargo run ok-game-mcp` 是常驻的 MCP server。
 - 凭 SPOT 的次数与总时间推估就报结论（「136 次 `flip_png_v` 是串行的」），其实它们早就在并行的
-  `PushCtx::transform` 里。**发现前提错了先把量测补上，再回头讲。**
+  `PushCtx::transform` 里。**发现前提错了先把量测补上，再回头讲。** SPOT 的 wall 是**跨执行绪加总又嵌套**
+  的，所以不能直接当墙钟做减法（「省掉它能快多少」）。**判断某个数字能不能减的现成检查**（f-sceneload）：
+  **把各子项加起来和包住它们的那一段比** —— 落在容器里面（例如三段共 26.0 s 在 `Sync` 的 63.4 s 内）、
+  互不嵌套、所在回圈里没有 `ParallelFor`／`par_iter`，才可以减；**加起来超过容器就是跨执行绪加总的**。
 - `ls -t Saved/Logs/CardReader/*.log | head -1` 拿到的是**上一次执行的日誌**，两种设定印出一样的数字，
   看起来像开关没生效。改成自己指定 `-abslog=`。
 - kill 回圈用 `head -1`，留下 3 个 UnrealEditor（各约 9.5 GB），把 `f-sceneload` 卡在排队、那一轮数字全废。
@@ -139,6 +143,26 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （`map_parts` 331）只差 5 个挂在角色骨头上的道具，id `[3, 276, 280, 292, 577]`；5 角色场景逐位元相同。
   那 5 个**在同一设定的两趟之间也会差**（道具座标随动画相位走），而且**换掉 view 身分的实作之后差的还是
   同一组 id** ——若是这笔造成的，差的该是别的物件或数量会变。两个独立证据都指向它与这笔无关。
+  **整合后在 `e7b34e6f2` 上还有更直接的一笔**（f-sceneload，`6824c7e30`）：转卡次序关卡 **PASS**，8 笔
+  （正序 4、反序 4）全部一致，而**这一关的基准本来就是一张卡一个行程**，正反序是同一行程依序转，比的是
+  开起来的 session 位元组——所以 PASS 就等于「**子行程转卡 == 行程内转卡，逐位元组相同**」，不必另外
+  设计实验。**它能一次覆盖两件事**（我的 view 身分在同行程多卡之间不串、子行程转卡与行程内转卡逐位元组
+  相同），是因为它的基准恰好是一张卡一个行程，不是谁设计出来的。在这之前跨行程只有 UE 侧的物件傾印验过，
+  Rust 侧没有。四张卡在 `e7b34e6f2` 的基准，可当以后的对照（全部 `absent=[]`、各 7 套服装）：
+
+  | 卡 | digest | parts |
+  |---|---|---:|
+  | klara | `23a1e5f8d7f904e273f6436840fd92be` | 37 |
+  | lan | `bdd342cf05503b17eeff3bad54e419ad` | 64 |
+  | keqing | `0f6c9f7663c1a22224b7e2daae6c24fa` | 34 |
+  | hu_tao | `734a2acc9c2ded583947b9e9aedd14b9` | 28 |
+
+  ```
+  OK_BASE_LIBRARY=<base_v1> Tools\lua\lua.exe Tools\ok_convert_order_check.lua D:/KoikatuSunshine ^
+    Content/IndependentResources/base_v1 <输出目录> <四张卡>
+  ```
+  同一基点上开卡退路那一关也 PASS（`failed_remake_leaves_the_card_openable`，17.57 s）——它现在的用处
+  不是把关而是**现况证据**：`e7b34e6f2` 上「OK 卡失败另存后仍可开」有一笔带条件的 PASS 可以对照。
 - **这项的收益和「子行程并行转卡」互相抵销**，定 worker 数之前要知道（实测 5 张场景卡）：
 
   | | wall | CPU 合计 |
@@ -161,16 +185,11 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   不是巧合，调 worker 数的人要知道往哪一边动都会让这项变差。
 - 转卡的次序迴归关卡：`Tools\ok_convert_order_check.lua`（小绯雪／Denia，2026-10-28 那个 bug）。动到
   `remake_ok_card` 的 view 身分、`with_zipmods_and`，或 `--oklib cards` 的 worker 配置，都要先跑它。
-- `library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门：整合保住 F 组的 gap guard
-  （`0dbce369f`）、两边验证都过之后，由我单独一步拿掉并重验（F 组的 repro
-  `failed_remake_leaves_the_card_openable` 把关，我的 dump 不涵盖「开卡 → `ok_okcard_make` → 再开卡」）。
-  **基线已经跑好**：f-sceneload 在 F 树 `339a526b4` 上 **12.2 s PASS**（`before: r=0` → save 如预期失败
-  并列出缺的 `hibari.unity3d`／`klee.unity3d` → `after: r=0`），所以动闸门之后有对照。动之前先通知它，
-  由它同一轮跑——它的「worker 失败回本行程再转」正踩这条路径，我自己只验得到 memo 不存缺口期间的值。
-  **跑之前一定要设 `OK_BASE_LIBRARY=<base_v1>`**，否则第一个 open 回 `r=1`、0.08 秒就在 `before` 那个
-  assert 挂掉，**看起来完全像回归其实是环境没设**（`configured_library()` 读那个变数）；这句也补进了
-  那条 `#[ignore]` 的字串与注解。另外 `0dbce369f` 虽是 F 树的提交，**但不是 f-sceneload 那一轮做的**
-  （11:42，F 树另一个 session），所以它保不保得住要问协调者，不能向 f-sceneload 要保证。
+- ~~`library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门~~ **已处理（`d352dcb90`）**：
+  整合 #15 后拿掉并重验，**量到零收益于是放回去**，见第二节最后一列。关卡
+  `failed_remake_leaves_the_card_openable` 在改动版与放回版都 PASS；**跑它之前一定要设
+  `OK_BASE_LIBRARY=<base_v1>`**，否则第一个 open 回 `r=1`、0.08 秒就在 `before` 那个 assert 挂掉，
+  **看起来完全像回归其实是环境没设**（`configured_library()` 读那个变数，这句也补进了那条 `#[ignore]`）。
 
 ## 五、执行绪预算
 
@@ -256,6 +275,12 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `d63b37a86` | 改 | `OK_THREADS`／`RAYON_NUM_THREADS` 可以调高，不只调低；预设仍是 8，上限是硬体执行绪 |
 | `db819ae81` | 文件 | view 身分按树在 21 角色场景的 A/B（74 → 67 s，−9.5%，digest 与 parts 全相同） |
 | `2a37bf974` | 文件 | view 身分按树的收益随每个 worker 分到的卡数增加，预设 worker=2 是最大点 |
+| `d6410b772` | 文件 | 开头写明使用者会感受到什么（打包版 vs 开原作卡） |
+| `d2bec3b7c` | 文件 | view 身分按树的跨行程那半由 f-sceneload 补齐（`339a526b4`） |
+| `513f86066` | 改 | 写明关卡要设 `OK_BASE_LIBRARY`，否则 0.08 秒假 FAILED |
+| `0dbdf222f` | 文件 | 量测失效的辨识法：形状可疑，不是数值可疑 |
+| `f61d7c8df` | 文件 | 想解释一个漂亮或难看的结果，这个冲动本身就是讯号 |
+| `d352dcb90` | 记 | 拿掉 `library_zip_memo` 的 strict 闸门：量到零收益，放回去（见第二节） |
 
 **还没提交**：`cpu_threads()` 改成「环境变数明确给了就照给的、上限硬件执行绪；没给才用 8」，具名池的硬上限
 跟着它，17 支工具说明各加一行。程式码已写、两个 `cargo check` 都过，等安静机器窗口结束再跑
