@@ -112,6 +112,22 @@ pub(crate) struct GridSampler<'a> {
 }
 
 impl<'a> GridSampler<'a> {
+    /// Diagnostic (OK_TILE_DIAG): the share of target texels whose four mask texels are byte-identical. Their
+    /// bilinear result is exactly that texel (`a + (b - a) * t` with `b - a == 0`), so a run of them could be worked
+    /// out once instead of per texel.
+    fn uniform_share(&self) -> f64 {
+        let total = (self.cols.len() * self.rows.len()).max(1);
+        let mut same = 0usize;
+        for &(y0, y1, _) in &self.rows {
+            for &(x0, x1, _) in &self.cols {
+                let a = self.image.get_pixel(x0, y0);
+                if a == self.image.get_pixel(x1, y0) && a == self.image.get_pixel(x0, y1) && a == self.image.get_pixel(x1, y1) {
+                    same += 1;
+                }
+            }
+        }
+        same as f64 / total as f64
+    }
     fn new(image: &'a image::RgbaImage, w: u32, h: u32, sampling: crate::unity::TextureSampling) -> Self {
         let (iw, ih) = image.dimensions();
         let address = |i: i32, n: u32, mode: i32| -> u32 {
@@ -194,6 +210,51 @@ pub(crate) fn apply_clothes_color_mask(
     made
 }
 
+fn mask_runs_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("OK_NO_MASK_RUNS").is_some())
+}
+
+/// The cascading RGB mask of the clothes bake: the per-channel colours and one sampled mask value to a tint.
+/// Used by both the per-texel path and the table a uniform run is baked with, so they cannot drift apart.
+fn tint_from(ch: &[[f32; 3]; 3], m: [f32; 4], mask_mode: &str) -> [f32; 3] {
+    let wr = m[0].clamp(0.0, 1.0);
+    let wg = m[1].clamp(0.0, 1.0);
+    let wb = m[2].clamp(0.0, 1.0);
+    let mut tint = [1.0f32; 3];
+    if mask_mode == "norm" {
+        let weight = wr + wg + wb;
+        let inv = 1.0 / weight.max(0.0001);
+        let t = weight.clamp(0.0, 1.0);
+        for k in 0..3 {
+            let mixed = (ch[0][k] * wr + ch[1][k] * wg + ch[2][k] * wb) * inv;
+            tint[k] = 1.0 * (1.0 - t) + mixed * t;
+        }
+    } else if mask_mode == "add" {
+        for k in 0..3 {
+            tint[k] = (ch[0][k] * wr + ch[1][k] * wg + ch[2][k] * wb).clamp(0.0, 1.0);
+        }
+    } else {
+        for k in 0..3 {
+            let mut t = 1.0f32;
+            t += (ch[0][k] - t) * wr;
+            t += (ch[1][k] - t) * wg;
+            t += (ch[2][k] - t) * wb;
+            tint[k] = t;
+        }
+    }
+    tint
+}
+
+/// One channel of one texel: the source byte tinted, in the albedo's colour space. There are 256 source bytes, so a
+/// run with one tint can be tabulated from this and come out byte for byte the same.
+fn out_byte(source: u8, tint: f32, main_srgb: Option<bool>) -> u8 {
+    let mut source = source as f32 / 255.0;
+    if main_srgb == Some(true) { source = srgb_channel_to_linear(source); }
+    let value = source * tint;
+    to_unorm8(if main_srgb.is_some() { linear_channel_to_srgb(value) } else { value })
+}
+
 pub(crate) fn apply_clothes_color_mask_sampled(
     main:&[u8],mask:&[u8],colors:[[f32;4];4],patterns:&[ClothesPatternSrc],sampling:crate::unity::TextureSampling,main_srgb:Option<bool>,
 ) -> Option<Vec<u8>> {let _spot=crate::profile::spot("apply_clothes_color_mask");
@@ -231,76 +292,107 @@ pub(crate) fn apply_clothes_color_mask_sampled(
     let t_math = crate::profile::spot("mask bake: math");
     let mut out = src;
     let grid = GridSampler::new(&mask, w, h, sampling);
+    if std::env::var_os("OK_TILE_DIAG").is_some() {
+        eprintln!("ok-extract: TILE tex={w}x{h} mask={mw}x{mh} has_pat={has_pat:?} uniform={:.1}%", grid.uniform_share() * 100.0);
+    }
     let rotations: Vec<(f32, f32)> = patterns.iter().map(|p| ((p.rotate - 0.5) * std::f32::consts::TAU).sin_cos()).collect();
     // Each pixel depends only on its own inputs: rows are baked in parallel (the same bytes as one by one; a heavy
     // accessory's bakes took seconds of an open on one thread).
     use rayon::prelude::*;
     let pixels: &mut [u8] = &mut out;
+    // A mask smaller than the texture gives long runs of target texels that sample the same four mask texels (a 64²
+    // mask over a 4096² albedo: 64 of them per row). When those four are byte-identical the bilinear result is
+    // exactly that texel -- `lerp_f` is `a + (b - a) * t`, so `b - a == 0` makes it `a + 0.0 * t`, not an
+    // approximation of it -- and with no pattern (`ch[c]` is then `base[c]`) the tint is the same for the whole run.
+    // The channel map `source byte -> output byte` then has only 256 inputs, so one table per channel replaces the
+    // per-texel mask sampling, the tint cascade and the two `powf` of the sRGB round trip. Measured 2026-11-17:
+    // 94-100% of the texels of a card's heavy bakes are in such a run (OK_TILE_DIAG), and the bakes seen so far
+    // carry no pattern. Runs that are not uniform, and any bake with a pattern, take the per-texel path below.
+    // OK_NO_MASK_RUNS=1 bakes every texel the long way.
+    let runs = !has_pat.iter().any(|&p| p) && !mask_runs_off();
+    let (fast, slow) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     pixels.par_chunks_mut(w as usize * 4).enumerate().for_each(|(y, row)| {
         let y = y as u32;
-        for x in 0..w {
-            let m = grid.sample(x, y);
-            let wr = m[0].clamp(0.0, 1.0);
-            let wg = m[1].clamp(0.0, 1.0);
-            let wb = m[2].clamp(0.0, 1.0);
-            let mut ch = [[0f32; 3]; 3];
-            for c in 0..3 {
-                ch[c] = base[c];
-                if has_pat[c] {
-                    let pattern = &patterns[c];
-                    if let Some(p) = pattern.png.as_ref() {
-                        let u=(x as f32+0.5)/w as f32;
-                        let v=(y as f32+0.5)/h as f32;
-                        let qx=(u+2.0*pattern.offset[0]-1.0)*pat_scale[c][0]-0.5;
-                        let qy=(v+2.0*pattern.offset[1]-1.0)*pat_scale[c][1]-0.5;
-                        let (sn,cs)=rotations[c];
-                        let ps=sample_clothes_mask(p,cs*qx+sn*qy+0.5,
-                            -sn*qx+cs*qy+0.5,pattern.sampling);
-                        let alpha=pattern.color[3];
-                        let avg=((ps[0]+ps[1]+ps[2])/3.0).max(1.0-alpha);
-                        let low=if ps[3]>=0.0 && ps[3]<=0.25 {1.0_f32}else{0.0};
-                        let mix=(ps[3]*3.0-2.0).clamp(0.0,1.0).max(low).max(1.0-alpha);
-                        let original=low.min(alpha);
-                        for k in 0..3 {
-                            let target=pat_col[c][k]+avg*(base[c][k]-pat_col[c][k])-ps[k]*pat_col[c][k];
-                            let tinted=ps[k]*pat_col[c][k]+mix*target;
-                            ch[c][k]=tinted+original*(ps[k]-tinted);
-                        }
+        let (y0, y1, _) = grid.rows[y as usize];
+        // Tables of this row's runs, by the mask texel they came from (a mask holds few distinct colours).
+        let mut tables: Vec<(u32, [[u8; 256]; 3])> = Vec::new();
+        let mut x = 0u32;
+        while x < w {
+            let (x0, x1, _) = grid.cols[x as usize];
+            let mut end = x + 1;
+            while end < w && grid.cols[end as usize].0 == x0 && grid.cols[end as usize].1 == x1 { end += 1; }
+            let corner = grid.image.get_pixel(x0, y0);
+            let uniform = runs
+                && corner == grid.image.get_pixel(x1, y0)
+                && corner == grid.image.get_pixel(x0, y1)
+                && corner == grid.image.get_pixel(x1, y1);
+            // A mask holds few distinct colours, so a handful of tables serve a whole row. The cap is there for a
+            // mask that is not like that: past it a run takes the per-texel path, which costs what it always did,
+            // rather than letting the table list grow and its scan become the expensive part.
+            const MAX_TABLES: usize = 32;
+            let key = u32::from_le_bytes(corner.0);
+            let table = if !uniform { None } else {
+                match tables.iter().position(|(k, _)| *k == key) {
+                    Some(i) => Some(i),
+                    None if tables.len() < MAX_TABLES => {
+                        // `grid.sample` returns this corner exactly, so this is the tint every texel of the run
+                        // would have been given one by one.
+                        let tint = tint_from(&base, grid.sample(x, y), &mask_mode);
+                        tables.push((key, std::array::from_fn(|k| std::array::from_fn(|v| out_byte(v as u8, tint[k], main_srgb)))));
+                        Some(tables.len() - 1)
                     }
+                    None => None,
                 }
-            }
-            let mut tint = [1.0f32; 3];
-            if mask_mode == "norm" {
-                let weight = wr + wg + wb;
-                let inv = 1.0 / weight.max(0.0001);
-                let t = weight.clamp(0.0, 1.0);
-                for k in 0..3 {
-                    let mixed = (ch[0][k] * wr + ch[1][k] * wg + ch[2][k] * wb) * inv;
-                    tint[k] = 1.0 * (1.0 - t) + mixed * t;
-                }
-            } else if mask_mode == "add" {
-                for k in 0..3 {
-                    tint[k] = (ch[0][k] * wr + ch[1][k] * wg + ch[2][k] * wb)
-                        .clamp(0.0, 1.0);
+            };
+            if let Some(i) = table {
+                let table = &tables[i].1;
+                fast.fetch_add((end - x) as usize, std::sync::atomic::Ordering::Relaxed);
+                for xi in x..end {
+                    let p = &mut row[xi as usize * 4..xi as usize * 4 + 4];
+                    for k in 0..3 { p[k] = table[k][p[k] as usize]; }
                 }
             } else {
-                for k in 0..3 {
-                    let mut t = 1.0f32;
-                    t += (ch[0][k] - t) * wr;
-                    t += (ch[1][k] - t) * wg;
-                    t += (ch[2][k] - t) * wb;
-                    tint[k] = t;
+                slow.fetch_add((end - x) as usize, std::sync::atomic::Ordering::Relaxed);
+                for xi in x..end {
+                    let m = grid.sample(xi, y);
+                    let mut ch = [[0f32; 3]; 3];
+                    for c in 0..3 {
+                        ch[c] = base[c];
+                        if has_pat[c] {
+                            let pattern = &patterns[c];
+                            if let Some(p) = pattern.png.as_ref() {
+                                let u=(xi as f32+0.5)/w as f32;
+                                let v=(y as f32+0.5)/h as f32;
+                                let qx=(u+2.0*pattern.offset[0]-1.0)*pat_scale[c][0]-0.5;
+                                let qy=(v+2.0*pattern.offset[1]-1.0)*pat_scale[c][1]-0.5;
+                                let (sn,cs)=rotations[c];
+                                let ps=sample_clothes_mask(p,cs*qx+sn*qy+0.5,
+                                    -sn*qx+cs*qy+0.5,pattern.sampling);
+                                let alpha=pattern.color[3];
+                                let avg=((ps[0]+ps[1]+ps[2])/3.0).max(1.0-alpha);
+                                let low=if ps[3]>=0.0 && ps[3]<=0.25 {1.0_f32}else{0.0};
+                                let mix=(ps[3]*3.0-2.0).clamp(0.0,1.0).max(low).max(1.0-alpha);
+                                let original=low.min(alpha);
+                                for k in 0..3 {
+                                    let target=pat_col[c][k]+avg*(base[c][k]-pat_col[c][k])-ps[k]*pat_col[c][k];
+                                    let tinted=ps[k]*pat_col[c][k]+mix*target;
+                                    ch[c][k]=tinted+original*(ps[k]-tinted);
+                                }
+                            }
+                        }
+                    }
+                    let tint = tint_from(&ch, m, &mask_mode);
+                    let p = &mut row[xi as usize * 4..xi as usize * 4 + 4];
+                    for k in 0..3 { p[k] = out_byte(p[k], tint[k], main_srgb); }
                 }
             }
-            let p = &mut row[x as usize * 4..x as usize * 4 + 4];
-            for k in 0..3 {
-                let mut source=p[k] as f32/255.0;
-                if main_srgb==Some(true){source=srgb_channel_to_linear(source);}
-                let value=source*tint[k];
-                p[k]=to_unorm8(if main_srgb.is_some(){linear_channel_to_srgb(value)}else{value});
-            }
+            x = end;
         }
     });
+    if std::env::var_os("OK_TILE_DIAG").is_some() {
+        use std::sync::atomic::Ordering::Relaxed;
+        eprintln!("ok-extract: RUNS runs={runs} fast={} slow={}", fast.load(Relaxed), slow.load(Relaxed));
+    }
     drop(t_math);
     let _t_encode = crate::profile::spot("mask bake: encode");
     encode_png(&out)
