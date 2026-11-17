@@ -764,9 +764,10 @@ public:
 	void ClearThighJiggle();
 	void UpdateThighJiggleCloth();
 	int32 ThighJigglePart=INDEX_NONE;
-	// The wrap morph a renderer draws now (SetPartWrapDeltas, weight 1, mesh-local), for code that skins it on the CPU
+	// The external morph sets a renderer draws now (SetPartWrapDeltas, by set id: the belly wrap, the thighs' jiggle; each
+	// at weight 1, mesh-local), for code that skins it on the CPU
 	// (the water gun's coating) instead of reading the vertices back (GetCPUSkinnedVertices waits for the render thread).
-	static const TArray<struct FMorphTargetDelta>* WrapMorphDeltas(const class USkinnedMeshComponent* Mesh);
+	static const TMap<int32,TArray<struct FMorphTargetDelta>>* OwnMorphDeltas(const class USkinnedMeshComponent* Mesh);
 	// External morph sets replaced, kept until the render thread is past them.
 	struct FOkWrapRelease { TSharedPtr<struct FExternalMorphSet> Set; FRenderCommandFence Fence; uint64 Frame=0; bool bReleased=false; };
 	TArray<TUniquePtr<FOkWrapRelease>> WrapReleases;

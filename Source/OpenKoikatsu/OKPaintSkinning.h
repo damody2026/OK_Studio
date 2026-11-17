@@ -27,8 +27,9 @@ struct FOKPaintPose {
   if(!Weights||!Weights->GetDataVertexBuffer()->GetWeightData()||Weights->GetNumVertices()!=LOD->GetNumVertices()||!LOD->StaticVertexBuffers.PositionVertexBuffer.GetVertexData())return false;
   // Her clothes' belly wrap (AKKPreviewActor::SetPartWrapDeltas, the one external set we make) is a morph like the others:
   // read here, not by GetCPUSkinnedVertices, which flushed the render thread every coating frame (2 ms, trace 2026-11-10).
-  const TArray<FMorphTargetDelta>* Wrap=AKKPreviewActor::WrapMorphDeltas(C);
-  bool Unsupported=C->HasMeshDeformer(0);for(const auto& Sets:C->GetExternalMorphSetsArray())Unsupported|=Sets.Num()>(Wrap?1:0);
+  // So are her thighs' jiggle and any other set we made (OwnMorphDeltas, by set id); a set made elsewhere is not known here.
+  const TMap<int32,TArray<FMorphTargetDelta>>* Own=AKKPreviewActor::OwnMorphDeltas(C);
+  bool Unsupported=C->HasMeshDeformer(0);for(const auto& Sets:C->GetExternalMorphSetsArray())for(const auto& Set:Sets)Unsupported|=!(Own&&Own->Contains(Set.Key));
   if(auto* Skeletal=Cast<USkeletalMeshComponent>(C))if(Skeletal->ClothBlendWeight>0)for(const auto& Section:LOD->RenderSections)Unsupported|=Section.HasClothingData();
   // Preserve the previous precise path for simulation/deformation systems which
   // ordinary bone matrices and built-in morphs cannot describe.
@@ -40,7 +41,7 @@ struct FOKPaintPose {
    if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());
    for(auto Delta=Item.Key->GetDeltaIteratorForLOD(0);!Delta.AtEnd();++Delta)if(Morph.IsValidIndex(Delta->SourceIdx))Morph[Delta->SourceIdx]+=Delta->PositionDelta*Weight;
   }
-  if(Wrap&&!Wrap->IsEmpty()){if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());for(const FMorphTargetDelta& Delta:*Wrap)if(Morph.IsValidIndex(Delta.SourceIdx))Morph[Delta.SourceIdx]+=Delta.PositionDelta;}
+  if(Own)for(const auto& Set:*Own)if(!Set.Value.IsEmpty()){if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());for(const FMorphTargetDelta& Delta:Set.Value)if(Morph.IsValidIndex(Delta.SourceIdx))Morph[Delta.SourceIdx]+=Delta.PositionDelta;}
   return !Matrices.IsEmpty();
  }
  FVector Position(int32 Vertex) const {
