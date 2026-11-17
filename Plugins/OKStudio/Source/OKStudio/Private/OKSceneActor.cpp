@@ -624,9 +624,14 @@ struct AOKSceneActor::FPreparedItem
 };
 
 /** Item sessions opening at once while a scene is built. The game thread used to call OpenOkModelFk itself for every
- *  item in the frame that showed it; the workers open them ahead instead, and the frame only makes the Unreal meshes. */
+ *  item in the frame that showed it; the workers open them ahead instead, and the frame only makes the Unreal meshes.
+ *  Memory: an opened item session carries its decoded material textures until its frame builds it, and up to
+ *  `Ahead * 3` of them wait at once (that cap does not grow with the scene). Measured on a 634-item scene: 8 peaked at
+ *  16.5 GB and loaded in 27.4 s, 4 peaked at 16.4 GB and took 40.7 s, and the same scene with none of this pipelining
+ *  peaked at 16.1 GB. Lowering it buys almost nothing and costs a third of the load, so it is a way out for a machine
+ *  that actually runs out, not a setting to turn down by default (Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md). */
 static TAutoConsoleVariable<int32> CVarOkStudioItemOpensAhead(TEXT("ok.Studio.ItemOpensAhead"), 8,
-	TEXT("Item sessions opened on the workers at once while a scene is built (0: opened in the frame that builds them)."));
+	TEXT("Item sessions opened on the workers at once while a scene is built (lower only to save memory: 4 costs a third of the load for 0.1 GB; 0: opened in the frame that builds them)."));
 
 int32 AOKSceneActor::ItemOpensAhead()
 {
