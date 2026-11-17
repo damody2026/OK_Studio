@@ -41,25 +41,6 @@
 - shrine.charm (39956,37551,1198)（queue），擋住的是 LoverSpot_Shrine_LanternCap-150，1 格外走得到
 - supermarket.checkout (34300,50580,1200)（queue），擋住的是 ShopV1_S72_Refit，1 格外走得到
 
-## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（16）
-
-- campus_sports.tennis_net (68380,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net2 (68620,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net3 (68380,129400,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net4 (68620,129400,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net5 (72580,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net6 (72820,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net7 (72580,129400,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net8 (72820,129400,1203)，附近最大的區域 1522 格
-- campus_sports.volleyball_net (79580,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net2 (79820,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net3 (79580,131600,1202)，附近最大的區域 1550 格
-- campus_sports.volleyball_net4 (79820,131600,1202)，附近最大的區域 1550 格
-- campus_sports.volleyball_net5 (84180,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net6 (84420,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
-- campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
-
 ## 樓層入口由同棟其他地點提供（地點自己沒有這層的門、電梯或樓梯；不算問題）（4）
 
 - clothing 第 2 層（z 2040），M1 棟：department.lift3:3F、department.stair3

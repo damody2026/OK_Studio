@@ -70,8 +70,8 @@ local function load_points()
   for _, p in ipairs(P) do
     local pts, seen = {}, {}
     pts[#pts + 1] = { name = 'door', pos = p.door, door = true }
-    for _, r in ipairs(rows[p.id] or {}) do seen[r.name] = true; pts[#pts + 1] = { name = r.name, pos = r.pos, kinds = r.kinds } end
-    for _, a in ipairs(p.anchors or {}) do if not seen[a.name] then pts[#pts + 1] = { name = a.name, pos = a.pos, place_only = true } end end
+    for _, r in ipairs(rows[p.id] or {}) do seen[r.name] = true; pts[#pts + 1] = { name = r.name, pos = r.pos, kinds = r.kinds, outdoor = r.outdoor } end
+    for _, a in ipairs(p.anchors or {}) do if not seen[a.name] then pts[#pts + 1] = { name = a.name, pos = a.pos, place_only = true, outdoor = a.outdoor } end end
     -- Floors: the door's and the lift landings' and stairs' heights (a lecture room's tiers, a stage, sit up to 1.5 m over
     -- them: the cell test finds that ground from the floor's height). Points over none of them make floors of their own.
     local function z10(z) return round(z / 10) * 10 end
@@ -341,7 +341,9 @@ local function report()
             -- The game's spot choice (OKStreetSocialSchedule.inl): a spot in furniture is replaced by one round it, 80
             -- and 140 cm out, that a grid route from inside the door (upstairs: the floor's stair landing) reaches. So
             -- the anchor is reached when any passable cell within NEAR_RINGS is in a region its floor is entered by.
-            local function good(reg) if p.outdoor then return R.edge[reg] or R.size[reg] >= OPEN_CELLS or seeds[reg] end; return seeds[reg] end
+            -- An outdoor row of an indoor place (campus_sports' tennis and volleyball nets, 100 m from its building, on
+            -- open courts) is reached from the street like an outdoor place's: the open-region rule, not the door's.
+            local function good(reg) if p.outdoor or (q.outdoor and not up) then return R.edge[reg] or R.size[reg] >= OPEN_CELLS or seeds[reg] end; return seeds[reg] end
             local reached, best = false, nil
             for rr = 0, NEAR_RINGS do for dx = -rr, rr do for dy = -rr, rr do
               if not reached and math.max(math.abs(dx), math.abs(dy)) == rr and pass(z, q.ix + dx, q.iy + dy, up) then
