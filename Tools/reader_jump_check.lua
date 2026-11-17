@@ -2,15 +2,21 @@
 -- (原作預設, 無陰影) and, for outfits 1..7, two sets of views a moment apart while the jump plays.
 --
 --   Tools\lua\lua.exe Tools\reader_jump_check.lua --out FILE (--cards C025,C026 | --list FILE --from N --to M)
---       [--lane NAME] [--dir CARD_DIR] [--images DIR] [--polite] [--mcp EXE] [--segment N]
+--       [--lane NAME] [--dir CARD_DIR] [--images DIR] [--polite] [--mcp EXE] [--minutes N] [--extra "-OKLowMemory"]
 --
 --   --cards     card names (C025 -> <dir>/C025.png), or --list (one name per line) with --from/--to (0-based, to exclusive)
 --   --dir       default Content/CharacterCards/CrowdAPNG
 --   --lane      slot name suffix and reader marker (f-yvonne-<lane>, -OKLane=<lane>-<card>-<pid>); default a
 --   --images    copy the view images there (default: left where the reader wrote them)
 --   --polite    before each segment wait while another group (not f-yvonne*) holds or waits for an Unreal slot
---   --segment   cards per slot claim (default 3; a claim is held at most ~20 minutes)
+--   --minutes   one slot claim runs cards while the next one still fits in N minutes, from the average card so far
+--               (default 20, the slot rule's cap); then the slot is given back and claimed again (queueing behind others)
 --   --mcp       ok-game-mcp.exe (default Tools/ok-game-mcp/target/release/ok-game-mcp.exe)
+--   --extra     more reader arguments, space separated (e.g. -OKLowMemory: the 16 GB laptop path, where textures drop
+--               their CPU pixels after upload; RESULT says lowmem=on|off as the reader's log decided it)
+--   With --images every view is also checked (all black, all white, or no character: a PNG of the bare background),
+--   and the log is counted for "Attempting to load a BulkData object that cannot be loaded from disk" (bulk=):
+--   either one makes the card a card_fail.
 --
 -- Readers start with -LiveCoding=false (UE5.8 LiveCodingModule.cpp reads `-LiveCoding=`, not -NoLiveCoding): no
 -- LiveCodingConsole, so another group's editor build is not refused by the Live Coding mutex. That is all it solves: a
@@ -52,7 +58,7 @@ if not args.out then usage("--out is required") end
 local lane = args.lane or "a"
 local dir = (args.dir or "Content/CharacterCards/CrowdAPNG"):gsub("\\", "/")
 local mcp = args.mcp or "Tools/ok-game-mcp/target/release/ok-game-mcp.exe"
-local segment = tonumber(args.segment or "3")
+local minutes = tonumber(args.minutes or "20")
 local root = (io.popen("cd"):read("l") or "."):gsub("\\", "/")
 if not dir:match("^%a:") then dir = root .. "/" .. dir end
 
@@ -133,6 +139,22 @@ local function set(key, value)
 end
 
 local images
+-- A view image that shows no character (the low-memory black LUT, 2026-11-17, covered the whole 3D view): a view all
+-- black or all white by image_stats (whole image), or a PNG so small it can only be the bare grey background (a view
+-- with a character is hundreds of KB; the background alone compresses to a few KB). nil when the image looks fine.
+local imgbad = {}
+local function image_bad(path)
+  local f = io.open(path, "rb"); if not f then return "missing" end
+  local size = f:seek("end"); f:close()
+  if size < 150000 then return ("tiny%dB"):format(size) end
+  local text = call_once("image_stats", ('{"file":"%s","region":[0,0,1,1]}'):format(path))
+  local black, white = tonumber(text:match('"black"%s*:%s*([%d.]+)')), tonumber(text:match('"white"%s*:%s*([%d.]+)'))
+  local mean = tonumber(text:match('"mean"%s*:%s*([%d.]+)'))
+  if not mean then return nil end
+  if black > 0.5 or mean < 25 then return ("black%.2f"):format(black) end
+  if white > 0.5 or mean > 235 then return ("white%.2f"):format(white) end
+  return nil
+end
 local function views()
   call("reader_call", '{"action":"camera","focus":[0,-14.6,88],"distance":330,"yaw":0,"pitch":0}')
   local text = call("reader_call", '{"action":"views","timeout_s":120}')
@@ -144,6 +166,10 @@ local function views()
     for _, n in ipairs(names) do
       local f = io.open(from .. n, "rb")
       if f then local b = f:read("a"); f:close(); local g = io.open(args.images .. "/" .. n, "wb"); if g then g:write(b); g:close() end end
+    end
+    for _, n in ipairs(names) do
+      local bad = image_bad(args.images .. "/" .. n)
+      if bad then imgbad[#imgbad + 1] = bad .. "@" .. n end
     end
   end
   return table.concat(names, ",")
@@ -193,7 +219,10 @@ local function check_card(c)
   local tag = ("-OKLane=%s-%s-%d"):format(lane, c, math.random(10000, 99999))
   -- -LiveCoding=false: no LiveCodingConsole (LiveCodingModule.cpp reads `-LiveCoding=`), whose mutex made every other
   -- group's editor build fail ("Unable to build while Live Coding is active") while a full run was going.
-  ps(("Start-Process -FilePath '%s\\CardReaderDevelopment.cmd' -ArgumentList '-NoBuild','--','-NoCloud','-LiveCoding=false','%s' -WorkingDirectory '%s'"):format(root:gsub("/", "\\"), tag, root:gsub("/", "\\")))
+  imgbad = {}
+  local extra = ""
+  for a in (args.extra or ""):gmatch("%S+") do extra = extra .. ",'" .. a .. "'" end
+  ps(("Start-Process -FilePath '%s\\CardReaderDevelopment.cmd' -ArgumentList '-NoBuild','--','-NoCloud','-LiveCoding=false','%s'%s -WorkingDirectory '%s'"):format(root:gsub("/", "\\"), tag, extra, root:gsub("/", "\\")))
   local log
   pid = nil
   for _ = 1, 90 do
@@ -232,26 +261,41 @@ local function check_card(c)
   end
   local asserts = count(log, "Assertion failed")
   local loadfails = count(log, "load3d result ok=0")
-  if asserts ~= 0 or loadfails ~= 0 then fail = "card_fail" end
+  -- a texture whose CPU pixels were dropped after upload (low-memory mode) and then asked for again
+  local bulk = count(log, "Attempting to load a BulkData object that cannot be loaded from disk")
+  local _, logtext = count(log, "x")
+  local lowmem = (logtext or ""):match("Runtime low%-memory mode (%a+)") or "?"
+  if asserts ~= 0 or loadfails ~= 0 or bulk ~= 0 or #imgbad > 0 then fail = "card_fail" end
   local result = fail or (#note > 0 and "check" or "pass")
-  emit(("%s RESULT %s retries=%d assert=%s loadfail=%s %slog=%s pid=%s"):format(c, result, retries, asserts, loadfails,
+  emit(("%s RESULT %s retries=%d assert=%s loadfail=%s bulk=%s lowmem=%s %s%slog=%s pid=%s"):format(c, result, retries,
+    asserts, loadfails, bulk, lowmem, #imgbad > 0 and ("img=" .. table.concat(imgbad, ";") .. " ") or "",
     #note > 0 and (table.concat(note, ";") .. " ") or "", log or "unknown", pid))
   kill(pid); pid = nil
 end
 
 math.randomseed(os.time())
 local status = 0
-for i = 1, #cards, segment do
+local i, per_card, done = 1, 0, 0
+while i <= #cards do
   if args.polite then while others_waiting() do sleep(30) end end
-  slot("claim", ("jump check %s..%s"):format(cards[i], cards[math.min(i + segment - 1, #cards)]))
-  local ok, err = pcall(function() for k = i, math.min(i + segment - 1, #cards) do check_card(cards[k]) end end)
+  slot("claim", ("jump check from %s (%d cards left)"):format(cards[i], #cards - i + 1))
+  local start = os.time()
+  local ok, err = pcall(function()
+    repeat
+      local t = os.time()
+      local c = cards[i]; i = i + 1 -- (a card that aborts is not retried: the run stops there)
+      check_card(c)
+      done = done + 1; per_card = per_card + (os.time() - t)
+      -- another card only if it still ends inside the claim (the average so far, plus a minute)
+    until i > #cards or os.time() - start + per_card / done + 60 > minutes * 60
+  end)
   if not ok then
     kill(pid)
     slot("release")
     if type(err) == "table" and err[1] == EnvAbort then
-      emit(("RUN env_abort at segment from %s: %s (not a card failure; fix the environment and rerun from here)"):format(cards[i], err[2]))
+      emit(("RUN env_abort at %s: %s (not a card failure; fix the environment and rerun from it)"):format(cards[i - 1], err[2]))
       status = 2
-    else emit(("RUN error at segment from %s: %s"):format(cards[i], tostring(err))); status = 1 end
+    else emit(("RUN error at %s: %s"):format(cards[i - 1], tostring(err))); status = 1 end
     break
   end
   slot("release")

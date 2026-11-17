@@ -63,6 +63,8 @@ fn street_tools() -> Value {
         t("game_trace_stop", "Stop the trace being recorded (Trace.Stop); returns the file.", json!({}), &[]),
         t("image_stats", "How bright a screenshot is (a lighting check: blown-out white, crushed black): mean luma 0..255 and the shares of pixels at 250+ and at 10 or under, over region [x0, y0, x1, y1] in fractions of the image (default [0.19, 0, 0.77, 0.72]: the 3D view between the minimap, the side panel and the dialogue box).",
           json!({"file": {"type": "string"}, "region": {"type": "array", "items": {"type": "number"}}}), &["file"]),
+        t("image_diff", "Where two screenshots of the same view differ most (\"something that should be there is gone\": a pupil, an eye, a part — a small area changing a lot while the whole picture barely moves, which whole-image brightness checks miss): the luma difference in block x block tiles (default 24), the worst tile's mean |diff| and its corner, the pixels that changed by more than 80, and the whole image's mean |diff|. crop: also write a side-by-side PNG (a | b, 240x240 around the worst tile, scaled 2x, tile outlined) there.",
+          json!({"a": {"type": "string"}, "b": {"type": "string"}, "block": {"type": "integer"}, "crop": {"type": "string"}}), &["a", "b"]),
         t("game_call", "Any other control endpoint, POST with a JSON body (GET when body is omitted): /saves {op: open|save|load|new, slot}, /rules {action: status|reload|eval, request}, /mind {action}, /song {action, girl}, /money {amount}, /cursor {on}, /summon {slots}, /locale {lang, region}, /menu, /camera {actor, bone, yaw, pitch, distance}, /mic {ignore}, /navigate {stop: true}, /bluff {do, cards}.",
           json!({"path": {"type": "string"}, "body": {"type": "object"}}), &["path"]),
     ])
@@ -328,6 +330,8 @@ fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
         "game_phone" => json_text(game.call("/phone", Some(&json!({"text": a["text"]})))?),
         "game_screenshot" => screenshot(game, arg_f(a, "scale", 1.0))?,
         "image_stats" => json_text(image_stats(a["file"].as_str().context("file is required")?, &a["region"])?),
+        "image_diff" => json_text(image_diff(a["a"].as_str().context("a is required")?, a["b"].as_str().context("b is required")?,
+            a["block"].as_u64().unwrap_or(24).clamp(4, 256) as u32, a["crop"].as_str())?),
         "game_inspect" => {
             if a["off"] == true {
                 return Ok(json_text(game.call("/inspect", Some(&json!({"off": true})))?));
@@ -401,6 +405,56 @@ fn image_stats(file: &str, region: &Value) -> Result<Value> {
     }
     let n = n.max(1) as f64;
     Ok(json!({"file": file, "mean": (sum / n * 10.0).round() / 10.0, "white": (white as f64 / n * 1000.0).round() / 1000.0, "black": (black as f64 / n * 1000.0).round() / 1000.0}))
+}
+
+/// Two shots of one view, tile by tile (see the image_diff tool): the worst block's mean luma difference and corner,
+/// pixels changed by more than 80, the whole image's mean difference; optionally a side-by-side crop around that block.
+fn image_diff(a: &str, b: &str, block: u32, crop: Option<&str>) -> Result<Value> {
+    let (ia, ib) = (image::open(a)?.to_rgb8(), image::open(b)?.to_rgb8());
+    if ia.dimensions() != ib.dimensions() {
+        bail!("sizes differ: {:?} and {:?}", ia.dimensions(), ib.dimensions());
+    }
+    let (w, h) = ia.dimensions();
+    let luma = |p: &image::Rgb<u8>| (p[0] as i32 * 77 + p[1] as i32 * 150 + p[2] as i32 * 29) >> 8;
+    let (bw, bh) = (w.div_ceil(block), h.div_ceil(block));
+    let (mut sum, mut cnt) = (vec![0u64; (bw * bh) as usize], vec![0u32; (bw * bh) as usize]);
+    let (mut big, mut all) = (0u64, 0u64);
+    for y in 0..h {
+        for x in 0..w {
+            let d = (luma(ia.get_pixel(x, y)) - luma(ib.get_pixel(x, y))).unsigned_abs() as u64;
+            let t = ((y / block) * bw + x / block) as usize;
+            sum[t] += d;
+            cnt[t] += 1;
+            all += d;
+            if d > 80 { big += 1; }
+        }
+    }
+    let (mut worst, mut wi) = (0.0f64, 0usize);
+    for t in 0..sum.len() {
+        let m = sum[t] as f64 / cnt[t].max(1) as f64;
+        if m > worst { worst = m; wi = t; }
+    }
+    let (tx, ty) = ((wi as u32 % bw) * block, (wi as u32 / bw) * block);
+    if let Some(out) = crop {
+        let side = 240u32.min(w).min(h);
+        let cx = (tx + block / 2).saturating_sub(side / 2).min(w - side);
+        let cy = (ty + block / 2).saturating_sub(side / 2).min(h - side);
+        let mut sheet = image::RgbImage::new(side * 4, side * 2);
+        for (k, img) in [&ia, &ib].into_iter().enumerate() {
+            for y in 0..side * 2 {
+                for x in 0..side * 2 {
+                    let (sx, sy) = (cx + x / 2, cy + y / 2);
+                    let edge = (sx == tx || sx == tx + block - 1) && sy >= ty && sy < ty + block
+                        || (sy == ty || sy == ty + block - 1) && sx >= tx && sx < tx + block;
+                    let p = if edge { image::Rgb([255, 0, 0]) } else { *img.get_pixel(sx, sy) };
+                    sheet.put_pixel(k as u32 * side * 2 + x, y, p);
+                }
+            }
+        }
+        sheet.save(out)?;
+    }
+    Ok(json!({"tile": (worst * 10.0).round() / 10.0, "x": tx, "y": ty, "block": block, "changed_px": big,
+        "mean": ((all as f64 / (w as f64 * h as f64)) * 100.0).round() / 100.0, "crop": crop}))
 }
 
 /// An image file as MCP image content (JPEG, at most 1600 wide). It is written a frame or two after the request: waits

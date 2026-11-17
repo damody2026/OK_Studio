@@ -4903,7 +4903,13 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
         let made = crate::extract_session(game, card, outfit, None);
         // An OK card's strict open (okstrict.rs) that needed what neither the card nor the shared resources hold fails.
         if let (Some(strict), Some(c)) = (_pack.as_ref().and_then(crate::oklib::PackMount::strict), card) {
-            let gaps = strict.gaps();
+            let mut gaps = strict.gaps();
+            // The parts the card was converted without (okAb: their zipmods were not on the converting machine) are
+            // not gaps: the open reads nothing there, as the conversion did, and the character shows without them.
+            if !gaps.is_empty() {
+                let absent = crate::card::card_file_bytes(c).map(|b| crate::oklib::absent_parts(&b)).unwrap_or_default();
+                gaps.retain(|g| !absent.contains(g));
+            }
             if !gaps.is_empty() { return Err(crate::okstrict::failure(c, &gaps)); }
         }
         let mut sess = made?;

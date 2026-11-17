@@ -237,7 +237,8 @@ namespace
 	 * process said (empty for a card whose process could not be started), and leaves every OK card it made on disk;
 	 * what is missing afterwards the import converts in process itself.
 	 */
-	TMap<FString, FString> ConvertCardsInWorkers(const TArray<FImportCardJob>& Jobs, int32 Workers, TArray<FString>& OutFailures)
+	TMap<FString, FString> ConvertCardsInWorkers(const TArray<FImportCardJob>& Jobs, int32 Workers, TArray<FString>& OutFailures,
+		TMap<FString, FString>& OutUnconvertible)
 	{
 		TMap<FString, FString> Made;
 		const FString& Exe = OkExtractExe();
@@ -311,7 +312,24 @@ namespace
 				// a scene of twenty characters says how far it is.
 				UE_LOG(LogTemp, Display, TEXT("OK studio: import converted card %d/%d (character %d) %s"),
 					++Done, Jobs.Num(), Run.Job->Key, bOk ? TEXT("ok") : TEXT("FAILED"));
+				// "The OK card lacks ..." is the conversion's own verdict on this card with this library and this mods
+				// tree: converting it again in this process gives the same answer after as long again (a four character
+				// scene whose cards name zipmods this machine lacks: 11.5 s in the workers, then 19 s in process for
+				// nothing). The in-process walk takes that verdict instead; any other failure (a crash, a killed
+				// process) is still converted in process.
+				// OK_NO_UNCONVERTIBLE_SKIP=1: convert those again in process too (the old way, for A/B and as a way back).
+				static const bool bReconvert = !FPlatformMisc::GetEnvironmentVariable(TEXT("OK_NO_UNCONVERTIBLE_SKIP")).IsEmpty();
+				const int32 Lacks = bOk || Code != 1 || bReconvert ? INDEX_NONE : Run.Output.Find(TEXT("the OK card lacks"));
 				if (bOk) Made.Add(Run.Job->Ok, Run.Output.TrimStartAndEnd());
+				else if (Lacks != INDEX_NONE)
+				{
+					int32 LineStart = Run.Output.Left(Lacks).Find(TEXT("\n"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+					FString Verdict = Run.Output.Mid(LineStart + 1);
+					int32 LineEnd = INDEX_NONE;
+					if (Verdict.FindChar(TEXT('\n'), LineEnd)) Verdict.LeftInline(LineEnd);
+					Verdict.RemoveFromStart(TEXT("oklib: "));
+					OutUnconvertible.Add(Run.Job->Ok, Verdict.TrimStartAndEnd());
+				}
 				else OutFailures.Add(FString::Printf(TEXT("character %d: card worker exit %d (%s); converted in process instead"),
 					Run.Job->Key, Code, *Run.Output.TrimStartAndEnd().Right(300)));
 				Running.RemoveAt(i);
@@ -330,6 +348,8 @@ namespace
 		FOKStudioImport::FReport* Report = nullptr;
 		/** OK cards the workers already made (by output path), so the walk does not convert them again. */
 		TSet<FString> CardsMadeAhead;
+		/** OK cards a worker found this library and mods tree cannot complete (by output path): its verdict. */
+		TMap<FString, FString> CardsUnconvertible;
 		TMap<FString, int32> Notes;
 		/** Material Editor's scene data: material edits by object key. */
 		TMap<int32, TArray<FOKSceneMaterialEdit>> MaterialEdits;
@@ -667,7 +687,10 @@ namespace
 				// A child process already converted this card ahead of the walk (ConvertCardsInWorkers): the same
 				// call with the same card and outfit, so there is nothing left to do for it here.
 				bool bCard = CardsMadeAhead.Contains(OkCard);
-				if (!bCard) bCard = !KksCard.IsEmpty() && FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, Summary);
+				// A worker already found this card cannot be completed from this library and mods tree: the same
+				// conversion here would say so again. Only the retry with a mods folder beside the scene is left.
+				if (const FString* Verdict = CardsUnconvertible.Find(OkCard)) Summary = *Verdict;
+				else if (!bCard) bCard = !KksCard.IsEmpty() && FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, Summary);
 				if (!bCard && !KksCard.IsEmpty() && !Report->Source.IsEmpty())
 				{
 					FString Dir = FPaths::ConvertRelativePathToFull(FPaths::GetPath(Report->Source));
@@ -1009,6 +1032,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 {
 	if (!Document) { OutError = TEXT("no document"); return false; }
 	IFileManager::Get().MakeDirectory(*CardDirectory, true);
+	const double ImportStart = FPlatformTime::Seconds();
 	TArray<ANSICHAR> Buffer;
 	Buffer.SetNumZeroed(64 << 20);
 	int32 ExportRc = ok_studio_scene_export(TCHAR_TO_UTF8(*ScenePng), TCHAR_TO_UTF8(*CardDirectory), Buffer.GetData(), Buffer.Num());
@@ -1022,8 +1046,11 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 		}
 	}
 	if (ExportRc != 0) { OutError = UTF8_TO_TCHAR(Buffer.GetData()); return false; }
+	const double ExportDone = FPlatformTime::Seconds();
 	TSharedPtr<FJsonObject> Scene;
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UTF8_TO_TCHAR(Buffer.GetData())), Scene) || !Scene) { OutError = TEXT("bad scene JSON"); return false; }
+	UE_LOG(LogTemp, Display, TEXT("OK studio: import scene export %.2f s, JSON %.1f MB parsed in %.2f s"),
+		ExportDone - ImportStart, FCStringAnsi::Strlen(Buffer.GetData()) / 1048576., FPlatformTime::Seconds() - ExportDone);
 	Report = FReport();
 	Report.Source = ScenePng;
 	Report.Version = Scene->GetStringField(TEXT("version"));
@@ -1088,7 +1115,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 		TArray<FImportCardJob> Jobs;
 		for (const TSharedPtr<FJsonValue>& O : *Objects) CollectCardJobs(O->AsObject(), CardDirectory, Jobs);
 		TArray<FString> Failures;
-		for (const TPair<FString, FString>& Pair : ConvertCardsInWorkers(Jobs, ImportCardWorkers(), Failures)) Importer.CardsMadeAhead.Add(Pair.Key);
+		for (const TPair<FString, FString>& Pair : ConvertCardsInWorkers(Jobs, ImportCardWorkers(), Failures, Importer.CardsUnconvertible)) Importer.CardsMadeAhead.Add(Pair.Key);
 		for (const FString& Failure : Failures) Report.Notes.Add(Failure);
 	}
 	if (Objects) for (const TSharedPtr<FJsonValue>& O : *Objects) Importer.Object(O->AsObject(), -1);

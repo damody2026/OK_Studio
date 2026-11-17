@@ -519,6 +519,11 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildsPerFrame(TEXT("ok.Studio.Bu
 	TEXT("Objects built per Sync while a scene opens (0: the scene actor's own BuildsPerFrame, 24)."));
 static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.BuildSliceMs"), 250,
 	TEXT("Milliseconds one Sync may spend building objects before the rest wait for the next frame."));
+/** Tick opens the id index (FFindScope) for the passes below Sync, but Sync itself runs above that scope and so looked
+ *  every object and every one of its parents up with a linear scan of Objects. In a scene of thousands that is
+ *  quadratic, and Sync runs once per frame for as many frames as the build budget needs. 0 goes back to the scan. */
+static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 1,
+	TEXT("Sync looks objects up through the id index instead of scanning (1 by default). 0: scan, as before."));
 int32 AOKSceneActor::ObjectBuildBudget()
 {
 	return FMath::Clamp(CVarOkStudioBuildsPerFrame.GetValueOnGameThread(), 0, 4096);
@@ -1404,6 +1409,15 @@ void AOKSceneActor::Sync()
 	bSkyDomesDirty = true;
 	++PlaceGeneration;
 	if (!Document) { for (auto& Pair : Shown) Release(Pair.Value); Shown.Reset(); return; }
+	// Every WorldTransform and IsShown below walks an object's parent chain, and each step looks an id up: with no
+	// scope open that is a linear scan of Objects, so the walk over every object is quadratic in the scene's size.
+	// Nothing under here adds to or removes from Objects: Sync reads it, and the loop below holds a reference into the
+	// array, so mutating it inside Sync would already be undefined. Objects change through the document's own
+	// Add/Remove/Duplicate and the load paths, all outside Sync. Should that ever stop being true, the index notices:
+	// FindIndexed builds it again when the array's storage or size changed, or when an entry's object no longer
+	// carries the id it was indexed under.
+	// A null document is what the scope takes to mean "off", so the switch needs no second code path.
+	const UOKSceneDocument::FFindScope FindScope(CVarOkStudioSyncFindIndex.GetValueOnGameThread() != 0 ? Document : nullptr);
 	SyncMap();
 	if (!Document->BoneFrame)
 		Document->BoneFrame = [Self = TWeakObjectPtr<AOKSceneActor>(this)](int32 Character, const FString& Bone, FTransform& Out)

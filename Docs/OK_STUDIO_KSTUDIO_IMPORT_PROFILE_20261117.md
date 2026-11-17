@@ -317,3 +317,21 @@ tree-identity）上重跑了一次，`ImportCardWorkers 0` 对预设：
 
 这一轮预设在这台机器（125 GB）选了 4 个 worker，log 是 `import converted 5 of 5 cards in 4 processes`，
 分级逻辑按预期走。
+
+## 整合 #15 之后的补验（基点 `e7b34e6f2`）
+
+A（按树内容算 view 身分）与 B（子行程转卡）合并进同一棵树之后，在**合并后的基点**上重跑两道闸门，
+两道都 PASS：
+
+| 闸门 | 命令 | 结果 |
+|---|---|---|
+| 次序关卡 | `ok_convert_order_check.lua D:/KoikatuSunshine base_v1 <工作目录> klara lan keqing hu_tao` | **PASS**，8 笔（正序 4、反序 4）全部一致 |
+| 开卡退路 | `failed_remake_leaves_the_card_openable`（`--ignored`，带 `OK_BASE_LIBRARY`） | **PASS**，17.57 s |
+
+次序关卡顺便补掉了先前缺的那一半。它的基准是**一张卡一个行程**，正／反序两趟是**同一个行程依序转**，
+比对的是开起来的 session 位元组；所以 PASS 等于「子行程转卡与行程内转卡逐位元组相同」——
+B 的跨行程那一半在这之前只验过 UE 侧的物件傾印，Rust 侧没验过。四张卡的基准摘要与 parts
+（`klara` 37、`lan` 64、`keqing` 34、`hu_tao` 28，`absent=[]`，各 7 套服装）一并记在这里当下次的对照。
+
+基线故意立在 `e7b34e6f2` 而不是整合前的 `339a526b4`：拿整合前的基点当对照，万一 FAIL 分不出是
+被测的那一行、还是整合本身带进来的。这是 `Docs/ERROR_LOG.md` 第 2 层那条的直接应用。
