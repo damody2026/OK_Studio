@@ -16,6 +16,9 @@
 #include "RHIGlobals.h"
 #include "HAL/IConsoleManager.h"
 #include "Async/TaskGraphInterfaces.h"
+#include "Misc/CoreDelegates.h"
+#include "RenderingThread.h"
+#include "TextureResource.h"
 #include <atomic>
 
 namespace {
@@ -262,6 +265,42 @@ bool OKRuntimeLowMemory(){
   UE_LOG(LogTemp,Display,TEXT("Runtime low-memory mode %s (%s; RAM %.1f GB, VRAM %.1f GB)"),L?TEXT("on"):TEXT("off"),Why,FPlatformMemory::GetConstants().TotalPhysical/1073741824.0,GRHIGlobals.GpuInfo.DedicatedVideoMemory/1073741824.0);
  return L;
 }
+namespace {
+TArray<TWeakObjectPtr<UTexture2D>> GDropPixelsQueue;
+// The texture's render resource took its own copy of the mips when it was made (FTexture2DResource's constructor, on
+// the game thread), so the CPU pixels can go once this frame's code is done with the texture.
+void DropQueuedRuntimeTexturePixels(){
+ TArray<TWeakObjectPtr<UTexture2D>> Queue=MoveTemp(GDropPixelsQueue);GDropPixelsQueue.Reset();
+ for(const auto& Weak:Queue)if(UTexture2D* T=Weak.Get()){
+  if(!T->GetResource()){GDropPixelsQueue.Add(Weak);continue;}
+  if(FTexturePlatformData* Data=T->GetPlatformData())for(FTexture2DMipMap& Mip:Data->Mips)Mip.BulkData.RemoveBulkData();
+ }
+}
+}
+void OKDropRuntimeTexturePixelsAfterFrame(UTexture2D* Texture){
+ check(IsInGameThread());if(!Texture||!OKRuntimeLowMemory())return;
+ static const FDelegateHandle Hook=FCoreDelegates::OnEndFrame.AddStatic(&DropQueuedRuntimeTexturePixels);(void)Hook;
+ GDropPixelsQueue.AddUnique(Texture);
+}
+bool OKRestoreRuntimeTexturePixels(UTexture2D* Texture){
+ check(IsInGameThread());FTexturePlatformData* Data=Texture?Texture->GetPlatformData():nullptr;
+ if(!Data||Data->Mips.IsEmpty())return false;
+ if(Data->Mips[0].BulkData.GetBulkDataSize()>0)return true;
+ FTextureResource* Resource=Texture->GetResource();if(!Resource){UE_LOG(LogTemp,Warning,TEXT("Runtime texture %s has neither pixels nor a GPU copy"),*Texture->GetName());return false;}
+ TArray<FIntPoint> Sizes;for(const FTexture2DMipMap& Mip:Data->Mips)Sizes.Add(FIntPoint(Mip.SizeX,Mip.SizeY));
+ TArray<TArray<FColor>> Read;Read.SetNum(Sizes.Num());
+ FlushRenderingCommands();
+ ENQUEUE_RENDER_COMMAND(OKRestoreRuntimeTexturePixels)([Resource,Sizes,&Read](FRHICommandListImmediate& Commands){
+  if(FRHITexture* RHI=Resource->GetTexture2DRHI())for(int32 L=0;L<Sizes.Num();++L){
+   FReadSurfaceDataFlags Flags(RCM_UNorm);Flags.SetMip(L);Commands.ReadSurfaceData(RHI,FIntRect(0,0,Sizes[L].X,Sizes[L].Y),Read[L],Flags);}});
+ FlushRenderingCommands();
+ for(int32 L=0;L<Sizes.Num();++L)if(Read[L].Num()!=Sizes[L].X*Sizes[L].Y){
+  UE_LOG(LogTemp,Warning,TEXT("Runtime texture %s: mip %d read back %d of %d texels"),*Texture->GetName(),L,Read[L].Num(),Sizes[L].X*Sizes[L].Y);return false;}
+ for(int32 L=0;L<Sizes.Num();++L){FByteBulkData& Bulk=Data->Mips[L].BulkData;const int64 Bytes=int64(Read[L].Num())*sizeof(FColor);
+  Bulk.Lock(LOCK_READ_WRITE);FMemory::Memcpy(Bulk.Realloc(Bytes),Read[L].GetData(),Bytes);Bulk.Unlock();}
+ UE_LOG(LogTemp,Display,TEXT("Low-memory mode: %s's pixels read back from the GPU for a settings change (%dx%d, %d mips)"),*Texture->GetName(),Sizes[0].X,Sizes[0].Y,Sizes.Num());
+ OKDropRuntimeTexturePixelsAfterFrame(Texture);return true;
+}
 UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture& T,FString& Error){
  check(IsInGameThread());if(T.Settings.Filter<0||T.Settings.Filter>2||T.Settings.WrapU<0||T.Settings.WrapU>2||T.Settings.WrapV<0||T.Settings.WrapV>2){Error=TEXT("Runtime texture sampler invalid");return nullptr;}if(T.Mips.IsEmpty()){Error=TEXT("Runtime texture mips absent");return nullptr;}
  int32 Width=T.Mips[0].Width,Height=T.Mips[0].Height;
@@ -279,8 +318,8 @@ UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture& T,FS
  if(Low){const int32 Cap=FMath::Max(16,CVarOKRuntimeTextureLowMemoryMaxSize.GetValueOnGameThread());while(First+1<T.Mips.Num()&&FMath::Max(T.Mips[First].Width,T.Mips[First].Height)>Cap)++First;}
  auto* Tex=UTexture2D::CreateTransient(T.Mips[First].Width,T.Mips[First].Height,PF_B8G8R8A8);if(!Tex){Error=TEXT("Runtime texture allocation failed");return nullptr;}
  for(int32 I=First;I<T.Mips.Num();++I){auto* M=I>First?new FTexture2DMipMap():&Tex->GetPlatformData()->Mips[0];if(I>First)Tex->GetPlatformData()->Mips.Add(M);M->SizeX=T.Mips[I].Width;M->SizeY=T.Mips[I].Height;M->SizeZ=1;M->BulkData.Lock(LOCK_READ_WRITE);void* Bytes=M->BulkData.Realloc(T.Mips[I].BGRA.Num());FMemory::Memcpy(Bytes,T.Mips[I].BGRA.GetData(),T.Mips[I].BGRA.Num());M->BulkData.Unlock();
-  if(Low)M->BulkData.SetBulkDataFlags(BULKDATA_SingleUse);}
+ }
  auto Wrap=[](int32 V){return V==1?TA_Clamp:V==2?TA_Mirror:TA_Wrap;};Tex->SRGB=T.Settings.SRGB;Tex->Filter=T.Settings.Filter==0?TF_Nearest:T.Settings.Filter==2?TF_Trilinear:TF_Bilinear;Tex->AddressX=Wrap(T.Settings.WrapU);Tex->AddressY=Wrap(T.Settings.WrapV);
  // Transient textures own their complete small mip chain; this is not cooked streaming.
- Tex->NeverStream=true;Tex->UpdateResource();RuntimeTextureCache.Add(Identity,Tex);KeepRecentRuntimeTexture(Tex);++RuntimeTextureStats.Created;Error.Reset();return Tex;
+ Tex->NeverStream=true;Tex->UpdateResource();if(Low)OKDropRuntimeTexturePixelsAfterFrame(Tex);RuntimeTextureCache.Add(Identity,Tex);KeepRecentRuntimeTexture(Tex);++RuntimeTextureStats.Created;Error.Reset();return Tex;
 }

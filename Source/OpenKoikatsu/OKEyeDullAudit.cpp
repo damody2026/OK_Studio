@@ -4,7 +4,8 @@
 //   The size, from the pixels: the iris texture is swapped for a white one, then one with a black dot at its middle, at each
 // scale; the dot is what differs. Its width against the one at scale 1 is to be the scale, its middle is to stay across (a
 // narrow eye's lids cut off its top, so not its area or height).
-//   The highlight: shots of her own iris with it on and off must differ, and on again must match the first.
+//   The highlight: shots of her own iris with it on and off must differ, and on again must match the first; with it off the
+// iris must still be there (it differs from the white test iris over more than the highlight's change).
 //   A yandere card must come out of the load already at 1.1 with no highlight.
 //   Saved/Tests/EyeDull/<run>/: result.json (after each card), sheet_NN.png (a row per card: as on the card, 1.1, 1.3).
 //   -ExecCmds="ok.VerifyEyeDull [first count]"   OK_EYE_AUDIT_EXIT=1 quits after.
@@ -144,9 +145,14 @@ static void Judge(FState& S,UOKCharacterController* G,AKKPreviewActor* A)
         const int32 A1=Differ(S,S.Shots[Dot1],W,Eye,200,&W1,&M1);Differ(S,S.Shots[Dot11],W,Eye,200,&W11,&M11);Differ(S,S.Shots[Dot13],W,Eye,200,&W13,&M13);
         const float R11=W1?W11/W1:0,R13=W1?W13/W1:0,Moved=FMath::Max(FMath::Abs(M1-M11),FMath::Abs(M1-M13)),Allowed=FMath::Max(1.5f,.1f*W1);
         const int32 Off=Differ(S,S.Shots[PlainShot],S.Shots[DarkShot],Eye,36),Back=Differ(S,S.Shots[PlainShot],S.Shots[BackShot],Eye,36);
-        const bool Size=A1>=40&&FMath::Abs(R11-1.1f)<=.06f&&FMath::Abs(R13-1.3f)<=.08f&&Moved<=Allowed,Light=(Off>=4||CardHighlight<=0.f)&&Back<=FMath::Max(6,Off/10);Good&=Size&&Light;
-        auto Q=MakeShared<FJsonObject>();Q->SetNumberField(TEXT("dot"),A1);Q->SetNumberField(TEXT("r11"),R11);Q->SetNumberField(TEXT("r13"),R13);Q->SetNumberField(TEXT("moved"),Moved);Q->SetNumberField(TEXT("highlight_px"),Off);Q->SetNumberField(TEXT("back_px"),Back);Q->SetBoolField(TEXT("size_ok"),Size);Q->SetBoolField(TEXT("light_ok"),Light);Eyes.Add(MakeShared<FJsonValueObject>(Q));
-        Said+=FString::Printf(TEXT(" eye%d dot=%d r=%.3f/%.3f moved=%.1f hi=%d back=%d"),Eye,A1,R11,R13,Moved,Off,Back);}
+        // The iris is still there with the highlight off: her own iris differs from the white test iris over about its
+        // whole area, and taking the highlight away changes only part of it. A low-memory PC once uploaded the iris made
+        // without highlights empty (2026-11-18): the iris was gone, the eye white, and "highlight off" looked like a pass.
+        const int32 Kept=Differ(S,S.Shots[DarkShot],W,Eye,36);
+        const bool Iris=Kept>=FMath::Max(40,A1/2)&&Off<Kept*.6f;
+        const bool Size=A1>=40&&FMath::Abs(R11-1.1f)<=.06f&&FMath::Abs(R13-1.3f)<=.08f&&Moved<=Allowed,Light=(Off>=4||CardHighlight<=0.f)&&Back<=FMath::Max(6,Off/10)&&Iris;Good&=Size&&Light;
+        auto Q=MakeShared<FJsonObject>();Q->SetNumberField(TEXT("dot"),A1);Q->SetNumberField(TEXT("r11"),R11);Q->SetNumberField(TEXT("r13"),R13);Q->SetNumberField(TEXT("moved"),Moved);Q->SetNumberField(TEXT("highlight_px"),Off);Q->SetNumberField(TEXT("back_px"),Back);Q->SetNumberField(TEXT("iris_px"),Kept);Q->SetBoolField(TEXT("iris_ok"),Iris);Q->SetBoolField(TEXT("size_ok"),Size);Q->SetBoolField(TEXT("light_ok"),Light);Eyes.Add(MakeShared<FJsonValueObject>(Q));
+        Said+=FString::Printf(TEXT(" eye%d dot=%d r=%.3f/%.3f moved=%.1f hi=%d back=%d iris=%d"),Eye,A1,R11,R13,Moved,Off,Back,Kept);}
     O->SetArrayField(TEXT("eyes"),Eyes);O->SetStringField(TEXT("status"),Good?TEXT("pass"):TEXT("fail"));S.Results.Add(MakeShared<FJsonValueObject>(O));++(Good?S.Passed:S.Failed);
     AddRow(S,Good?FColor(0,160,0):FColor::Red);if(S.SheetRows>=SheetCards)FlushSheet(S);WriteResult(S);
     UE_LOG(LogTemp,Display,TEXT("Eye dull audit card=%d %s %s yandere=%d%s"),S.Card,*Name,Good?TEXT("pass"):TEXT("fail"),S.bYandere,*Said);

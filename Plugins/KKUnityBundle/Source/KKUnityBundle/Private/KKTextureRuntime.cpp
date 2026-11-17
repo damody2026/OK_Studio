@@ -77,7 +77,8 @@ static void OKApplyRuntimeTextureSettings(UTexture2D* Tex,const OkTextureSetting
 }
 
 // Low-memory PC (OKRuntimeLowMemory, KKRuntimeMaterial.h): the first mip within kk.RuntimeTextureLowMemoryMaxSize, and
-// the CPU copy of the pixels dropped once the GPU has them (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md: ten
+// the CPU copy of the pixels dropped at the end of the frame it was uploaded in (OKDropRuntimeTexturePixelsAfterFrame;
+// a caller that changes the texture's settings later calls OKRestoreRuntimeTexturePixels first) (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md: ten
 // heroines held 1.9 GB of uncompressed 1024x1024 textures in VRAM and the same again in RAM).
 template<typename TMipArray,typename TSize>
 static int32 OKLowMemoryFirstMip(const TMipArray& Mips,TSize Size){
@@ -101,9 +102,8 @@ static UTexture2D* CreatePreparedTexture(const TArray<FOKEncodedMip>& Mips,
         Mip->BulkData.Lock(LOCK_READ_WRITE);
         void* Data=Mip->BulkData.Realloc(Mips[I].Bytes.Num());
         FMemory::Memcpy(Data,Mips[I].Bytes.GetData(),Mips[I].Bytes.Num());Mip->BulkData.Unlock();
-        if(OKRuntimeLowMemory())Mip->BulkData.SetBulkDataFlags(BULKDATA_SingleUse);
     }
-    OKApplyRuntimeTextureSettings(Tex,Settings,bFallbackClamp);return Tex;
+    OKApplyRuntimeTextureSettings(Tex,Settings,bFallbackClamp);OKDropRuntimeTexturePixelsAfterFrame(Tex);return Tex;
 }
 
 // The pixels come back from the GPU: a runtime texture keeps none here, on the street nothing else holds them either.
@@ -247,10 +247,8 @@ UTexture2D* CreatePackedTexture(const FPreparedPng& Entry,const OkTextureSetting
    Mip->BulkData.Lock(LOCK_READ_WRITE);
    FMemory::Memcpy(Mip->BulkData.Realloc(Entry.Mips[I].Payload.Num()),Entry.Mips[I].Payload.GetData(),Entry.Mips[I].Payload.Num());
    Mip->BulkData.Unlock();
-   if(OKRuntimeLowMemory())Mip->BulkData.SetBulkDataFlags(BULKDATA_SingleUse);
   }
-  if(bDirect&&OKRuntimeLowMemory())Tex->GetPlatformData()->Mips[0].BulkData.SetBulkDataFlags(BULKDATA_SingleUse);
-  OKApplyRuntimeTextureSettings(Tex,Settings,Clamp);
+  OKApplyRuntimeTextureSettings(Tex,Settings,Clamp);OKDropRuntimeTexturePixelsAfterFrame(Tex);
   return Tex;
  }
  TArray<FOKEncodedMip> Mips;

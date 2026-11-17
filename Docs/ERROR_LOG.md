@@ -5142,3 +5142,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正（C `5ad889ded`）：第一台把自己的暫存檔 rename 成 Saved/CharacterMCP/owner.lock（MoveFileW 不覆蓋，兩台不可能都成功），其餘用 instances/<pid>；鎖的主人已不在就接管，正常結束時刪鎖。第一版把 GetApplicationName 的完整路徑拿去比對程式名，存活判斷永遠不成立、後到的刪掉對方的鎖，測試時抓到改成比對檔名。
 - 驗證：OpenKoikatsuEditor 與 OpenKoikatsu（Development, D:/PhysX/UE5.8）建置連結成功；只改 C++（OKCharacterMCP.cpp），沒動 Rust，所以沒跑 cargo check。兩台同時啟動各拿到自己的信箱、各自設值互不干擾、沒指定時 ambiguous_target 拒絕；強制結束鎖的主人後新開的接管共用目錄；正常關閉（ui_exec quit）後 owner.lock 消失，下一台直接拿到 Saved/CharacterMCP（2026-11-17 補測，兩次都是）。
 - 教訓：「先查再佔」在兩個行程同時啟動時一定有競態，佔用要用一個原子動作（不覆蓋的 rename、獨佔建立）；判斷行程是否還在時，先確認 API 回的是檔名還是完整路徑。
+## 2026-11-18 低記憶體模式：執行期貼圖上傳後又改設定再上傳，第二次是空的（C 組 c-lowspec 修）
+
+- 錯誤：低記憶體模式（OKRuntimeLowMemory）在執行期貼圖第一次上傳時就丟掉 CPU 像素（BULKDATA_SingleUse）。建好後又改 SRGB／Clamp／LOD 群組再 UpdateResource 的地方，第二次上傳沒有像素（LogSerialization: Attempting to load a BulkData object that cannot be loaded from disk）。讀卡器的調色 LUT 變黑，整個畫面全黑（同一個 bug E `4e9a7ebe3` 已就 LUT 逐處修過）；LUT 修好後，眼睛去高光（`OKIrisWithoutHighlights`，病嬌卡載入、1 對 1 眼神暗淡、人群）的瞳孔仍上傳兩次，報 10 筆 BulkData 錯誤，瞳孔整個不見、眼睛全白。逐處列舉會漏：overtex／眼睛 Clamp、`_AnotherRamp`、ColorMask、`_Reflection` 都是同一類寫法。
+- 審核漏判：`ok.VerifyEyeDull` 只看「去高光前後有差」與「還原後一樣」，瞳孔整個消失也算有差，判通過。
+- 修正：像素改在上傳那一幀結束時才丟（`OKDropRuntimeTexturePixelsAfterFrame`，FCoreDelegates::OnEndFrame；FTexture2DResource 的建構子已在遊戲執行緒拷走初始 mip），同一幀內改設定再上傳都有資料；之後幾幀才改設定的地方（眼睛 Clamp、overtex、MakeOvertexMaterial）先呼叫 `OKRestoreRuntimeTexturePixels`，從 GPU 讀回各 mip 再改，並在那一幀結束後再丟一次。審核加「去高光後瞳孔還在」：去高光的畫面要和白色測試瞳孔有足夠差異（≥ 黑點像素的一半），且去高光造成的變化要少於那個差異的六成，json 多 iris_px／iris_ok。
+- 驗證：見提交訊息。
+- 教訓：「上傳後就丟資料」這類省記憶體的做法，必須讓之後的重新上傳也成立，否則每個「建好再改設定」的呼叫端都是地雷；審核除了「該變的有變」，也要檢查「該在的還在」。

@@ -44,6 +44,15 @@ KKRUNTIMEPOSE_API UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePre
 // 20 GB of VRAM (the city took 12-13 GB of VRAM at full quality, so a 16 GB card counts too), or with -OKLowMemory; -OKNoLowMemory turns it off. Runtime character textures are then capped to
 // kk.RuntimeTextureLowMemoryMaxSize (512) and their CPU copy is dropped once uploaded.
 KKRUNTIMEPOSE_API bool OKRuntimeLowMemory();
+// Low-memory PC: a runtime texture's CPU pixels go at the end of the frame it was uploaded in, not at the upload itself
+// (BULKDATA_SingleUse): its maker often changes SRGB / clamp / LOD group and uploads it again right after, and with the
+// pixels already gone that second upload was empty, so the card reader's colour-grading LUT turned the whole view black
+// (2026-11-18). No-op otherwise.
+KKRUNTIMEPOSE_API void OKDropRuntimeTexturePixelsAfterFrame(UTexture2D* Texture);
+// Before changing a runtime texture's settings and calling UpdateResource in a later frame (a texture made earlier, from
+// a cache): reads its pixels back from the GPU when the low-memory mode dropped them, and drops them again after this
+// frame. True when the texture has its pixels.
+KKRUNTIMEPOSE_API bool OKRestoreRuntimeTexturePixels(UTexture2D* Texture);
 struct FKKRuntimeTextureCacheStats {uint64 Requests=0,Hits=0,Created=0,AvoidedPixelBytes=0,PreparedCacheHits=0,PreparedDecodeJobs=0,PreparedJoinedJobs=0;uint32 Entries=0;};
 KKRUNTIMEPOSE_API FKKRuntimeTextureCacheStats OKRuntimeTextureCacheStats();
 

@@ -1204,6 +1204,7 @@ static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blen
 
 	if (bEye && Tex && (Tex->AddressX != TA_Clamp || Tex->AddressY != TA_Clamp))
 	{
+		OKRestoreRuntimeTexturePixels(Tex);
 		Tex->AddressX = TA_Clamp;
 		Tex->AddressY = TA_Clamp;
 		// TextureFromPngBuffer created the resource with TA_Wrap; re-upload so
@@ -1630,6 +1631,7 @@ return lerp(c, ThirdRGB * ThirdColor.rgb, ThirdAlpha * ThirdColor.a);
 		else if (OverTex && OverColor.A > 0.001f)
 		{
 			Mat->NumCustomizedUVs = 2;
+			OKRestoreRuntimeTexturePixels(OverTex);
 			OverTex->AddressX = TA_Clamp;
 			OverTex->AddressY = TA_Clamp;
 			OverTex->UpdateResource();
@@ -4699,6 +4701,7 @@ static UMaterial* MakeOvertexMaterial(UTexture2D* Tex, FLinearColor Color)
 	{
 		return nullptr;
 	}
+	OKRestoreRuntimeTexturePixels(Tex);
 	Tex->AddressX = TA_Clamp;
 	Tex->AddressY = TA_Clamp;
 	Tex->UpdateResource();
