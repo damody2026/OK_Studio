@@ -355,6 +355,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `b7746d5b1` | 改 | 吵机器上也能用的指标（`from scratch <n> (<m> repeat)`）、`lists` 两个子计时；hair gloss 搬离主执行绪与贴图 memo 放宽都量到零／负收益并退回（见第二节） |
 | `203091e80` | 改 | `PROFILE passthrough`：量出「压缩贴图直通」的上限只有几个 percent，不开工 |
 | `fd5c465a5` | 改 | `SPOT overlay index section`：量掉「那把 mutex 是瓶颈」，真正的限制是第一次触碰资源包页面的 I/O |
+| `486c7653d` | 改 | `PROFILE copied out of the sources`：一次开卡从来源复制 3.2–3.3 GiB／约 20 万次，内容多半是用不到的 Studio 缩图与 modpack 项目（下一轮的第一件事） |
 
 `d63b37a86` 与 `8fe9c24ab`（17 支工具补 `limit_threads`）已由协调者的 `c0e242763` 一起整合进来，所以批次
 工具既被限回 8 条、也有调高的办法（协调者 2026-11-17 的决定，先跟 C 组打过招呼——百人房间的低模是
