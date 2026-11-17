@@ -23,7 +23,7 @@
 | 2 | 颜色遮罩烘焙按同值区段查表（256 项通道表取代逐 texel 的遮罩取样、tint 级联与 6 次 `powf`） | `9acc7e0e8` | **OK 卡第一张 1523.5 → 1267.3 ms（−16.8%）**；`mask bake: math` 1508.7 → 537.0 ms（−64%） |
 | 3 | UE 侧启动时背景预载共用材质 parent（194 个 package，含 `_Outline`／`_Flat` 变体） | `ef829dc3a` | 第一张卡 `parent_load_ms` **151.7 → 60.0 ms（−92 ms）** |
 | 4 | 基础 bundle 的解码搬进启动预热（`oo_base`／`bo_head_00`／`mm_base`） | `42716c068` | `load_base_bundles` 288.8 → 232.2 ms（−20%）；第一张卡 `extract_card_outfit TOTAL` −4.5% |
-| 6 | **库自己持有的 zip entry 改成第一次读才复制**（`ZipSource::Recorded`；旁边真档那条 `ZipSource::Pending` 本来就是惰性的，注解写的理由一字不差，只是库这条没跟着改）。`mods.rs` 有两处走遍每个 entry 只为读名字（`zipmod_one_unity3d_uncached` 建 names 清单、`guid_from_zipmod_uncached` 找 `manifest.xml`，后者对每个 zipmod 都跑），而开 entry 当时就复制 | （待提交，2026-11-18） | **确定性指标：一次开卡从来源复制 3141.6 MiB／192 151 次 → 24.1 MiB／42 941 次（C049 3646.1 MiB／230 449 次 → 24.1 MiB／42 857 次）—— 99.2% 的复制从来没人读。** 这个数不随机器负载变动。wall：两张卡交错各 n=16，中位数 1.920 → 1.815 s（−5.5%）、平均 −7.6%、最小 −11.5%，但**那是 7-Zip 与四个 session 的建置占满 CPU 时量的下界**，安静机器重量后再定稿 |
+| 6 | **库自己持有的 zip entry 改成第一次读才复制**（`ZipSource::Recorded`；旁边真档那条 `ZipSource::Pending` 本来就是惰性的，注解写的理由一字不差，只是库这条没跟着改）。`mods.rs` 有两处走遍每个 entry 只为读名字（`zipmod_one_unity3d_uncached` 建 names 清单、`guid_from_zipmod_uncached` 找 `manifest.xml`，后者对每个 zipmod 都跑），而开 entry 当时就复制 | `43efd74c7` | **确定性指标：一次开卡从来源复制 3141.6 MiB／192 151 次 → 24.1 MiB／42 941 次（C049 3646.1 MiB／230 449 次 → 24.1 MiB／42 857 次）—— 99.2% 的复制从来没人读。** 这个数不随机器负载变动。wall：两张卡交错各 n=16，中位数 1.920 → 1.815 s（−5.5%）、平均 −7.6%、最小 −11.5%，但**那是 7-Zip 与四个 session 的建置占满 CPU 时量的下界**，安静机器重量后再定稿 |
 | 5 | 身体贴图合成链单次解码／编码，不再每步 PNG 往返 | `ac498d042` | `compose_body_texture` C001 214.4 → 181.5 ms（−15%）、klara 91.3 → 69.3 ms（−24%） |
 
 **端到端**（同一执行档、全部开关开 vs 全部关、交错 3 轮取中位数，`OK_BENCH_PREWARM=1`）
@@ -433,6 +433,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `203091e80` | 改 | `PROFILE passthrough`：量出「压缩贴图直通」的上限只有几个 percent，不开工 |
 | `fd5c465a5` | 改 | `SPOT overlay index section`：量掉「那把 mutex 是瓶颈」，真正的限制是第一次触碰资源包页面的 I/O |
 | `486c7653d` | 改 | `PROFILE copied out of the sources`：一次开卡从来源复制 3.2–3.3 GiB／约 20 万次，内容多半是用不到的 Studio 缩图与 modpack 项目（下一轮的第一件事） |
+| `43efd74c7` | 改 | 库自己的 zip entry 改成第一次读才复制：一次开卡少复制 3.1 GiB（99.2% 从来没人读），输出逐位元组不变 |
 
 `d63b37a86` 与 `8fe9c24ab`（17 支工具补 `limit_threads`）已由协调者的 `c0e242763` 一起整合进来，所以批次
 工具既被限回 8 条、也有调高的办法（协调者 2026-11-17 的决定，先跟 C 组打过招呼——百人房间的低模是
