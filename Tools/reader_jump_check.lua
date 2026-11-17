@@ -36,10 +36,12 @@
 --                           the environment is wrong (the reader died, or a call went to no picked game): the run stops
 --                           at once, says so, and exits 2;
 --   anything else           a real refusal of that step.
--- Each card ends with one line `<card> RESULT <pass|card_fail|check|env_abort> retries=N ...`: card_fail is the card
+-- Each card ends with one line `<card> RESULT <pass|card_fail|check|env|env_abort> retries=N ...`: card_fail is the card
 -- itself (load refused or failed, an assertion or a failed load in its log, an outfit that cannot be chosen); check is
--- a step that did not take (the jump did not start, a control did not set) with no failure of the card; env_abort is
--- not the card. The old full runs wrote a busy reader as LOADFAIL (C025, a misjudgement).
+-- a step that did not take (the jump did not start, a control did not set) with no failure of the card; env is a reader
+-- that never got ready for the load (still busy / not ready after every retry; C046 11-18 hung at "Waiting for
+-- ZenServer to be ready"), and the card is tried once more in a fresh reader; env_abort is not the card and stops the run.
+-- The old full runs wrote a busy reader as LOADFAIL (C025, a misjudgement).
 
 local function sleep(s) os.execute(("ping -n %d 127.0.0.1 >nul"):format(math.max(1, math.floor(s + 0.5)) + 1)) end
 
@@ -236,7 +238,9 @@ local function check_card(c)
   local text, code = call("reader_call", ('{"action":"load","path":"%s/%s.png","timeout_s":240}'):format(dir, c))
   if code or not text:find(c .. ".png", 1, true) then
     emit(("%s LOAD %s"):format(c, (text:gsub("%s+", " "):sub(1, 150))))
-    fail = "card_fail"
+    -- still busy / not ready after every retry: the reader never got ready (C046 11-18: it hung at "Waiting for
+    -- ZenServer to be ready" during start-up), not the card. Written as env; the run tries the card once more.
+    fail = (code == "busy" or code == "not_ready") and "env" or "card_fail"
   else
     idle()
     set("control.LightingPresetCombo", '"原作預設"'); sleep(2); local lit = views()
@@ -271,6 +275,7 @@ local function check_card(c)
     asserts, loadfails, bulk, lowmem, #imgbad > 0 and ("img=" .. table.concat(imgbad, ";") .. " ") or "",
     #note > 0 and (table.concat(note, ";") .. " ") or "", log or "unknown", pid))
   kill(pid); pid = nil
+  return result
 end
 
 math.randomseed(os.time())
@@ -284,7 +289,8 @@ while i <= #cards do
     repeat
       local t = os.time()
       local c = cards[i]; i = i + 1 -- (a card that aborts is not retried: the run stops there)
-      check_card(c)
+      -- a reader that never got ready (env): the same card once more in a fresh reader
+      if check_card(c) == "env" then emit(("%s RETRY (the reader never got ready)"):format(c)); check_card(c) end
       done = done + 1; per_card = per_card + (os.time() - t)
       -- another card only if it still ends inside the claim (the average so far, plus a minute)
     until i > #cards or os.time() - start + per_card / done + 60 > minutes * 60
