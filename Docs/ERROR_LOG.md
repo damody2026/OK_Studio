@@ -4974,3 +4974,34 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正：讀 bundle 期間這條執行緒記到 strict 缺口（`okstrict::gaps_on_thread` 有變）時不寫進 `ZIP_AB_CACHE`（`zipmod_one_unity3d_arc`、`zipmod_bundle_named`），和 `entries::pack_memo` 的規則一致。測試 `session::jump_probe_tests::failed_remake_leaves_the_card_openable`（ignored，需本機 alice 與基礎庫，`OK_GAME_ROOT=X:/NoGame`）修正前「after: r=1」同一訊息，修正後通過。
 - 未修：另存已編輯的 OK 卡會丟掉原卡的 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。
 - 防範：程序共用的快取，鍵不含「哪張卡／哪個資源包」時，不能存 strict 缺口期間得到的結果，尤其是「沒有」。
+
+## 2026-11-17 `read_strip_all_guids` 的 430 ms 其实是冷的 Windows 目录元数据，三种优化全部回退
+- 原估：原作卡「第一张之后的每一张新卡」在 `read_strip_all_guids` 上花 430–590 ms，做法是「StripAll 是併集、
+  可以快取，键含 serving id」。量测后这个前提整个站不住，三种做法 A/B 都拿不到，已全部回退（工作树只剩别人的
+  `OKExtractBuildStamp.h`）。
+- 先补量测：`OK_STRIP_DIAG=1` 把这一阶段拆成 walk／逐档读／併集三段。走树已经被我上一轮的 memo 收掉
+  （0.3 ms），併集本身是 0.3 ms，**全部成本都在 7300 次 `gamefs::zip_memo` 的派发上**（1461／378／246 ms，
+  三张卡）。再往里拆：其中约 97% 是 `fallback_serving_id`（card 2：436 ms／451 ms），每张卡 5816 次 miss。
+- 做法一「把 serving 的 memo 从 fallback generation 改成 `fallback_identity` 的 token」：没用。每张卡仍然 5816
+  次 miss —— `fallback_identity` 本来就含「卡自己指名的 zipmod 与卡目录」，**不同卡的 identity 本来就不同**，
+  跨卡不可能共用。我以为「同一个游戏目录、同一个卡目录就该一样」，错在没看 `set_fallback` 每张卡带的是卡自己
+  的 `files`。
+- 做法二「`resolve_mod_archive` 的两次 7000 元素线性扫描换成 by_name／by_stem 两张表」：A/B 没有差别
+  （strip 读取中位数 1626/390/266 → 1615/457/282）。我推的 O(n²) 不成立，因为 `direct.is_file()` 对多数键直接
+  命中就回传了，线性扫描根本不是热路径。中途还一度把「精确名字查表」放在关闭开关的**前面**，关掉也享受到新
+  路径，差点拿这个假 A/B 当结果 —— 开关必须还原成一模一样的旧路径。
+- 做法三「整个 whole-tree pass 用 rayon 并行」（併集与顺序无关，安全）：也没有差别。
+- 真正的原因：把 `fallback_serving_id` 用环境变量短路掉之后，这一阶段两张新卡都只剩 **18 ms**，而且开关开与
+  关都是 18 ms —— 也就是说，前面那 390/266 ms 是**冷的 Windows 目录元数据**，被我连续跑十来次之后暖起来了。
+  一次开卡自己要读几百 MB 的 bundle，会把目录元数据挤出快取，所以下一张卡的全树 stat 又要回磁碟。暖的时候
+  18 ms，被挤掉的时候 250–400 ms，第一张卡 1.3–1.6 s（含第一次读每个 manifest）。并行拿不到就是因为暖的时候
+  本来就没成本、冷的时候 MFT 读取自己会排队。
+- serving id 不能拿掉：`open_zip` 的 replay 分支对「library 记录了但本机没有模型」的档案本来就会
+  `fallback_source` 去 stat，而且 `real_zip_matches_recorded` 不符时会 `open_real` 直接读真档 —— manifest 真的
+  可能来自真档，键不含 serving id 就会重现 2026-11-12 花火那个 bug。
+- 唯一还剩的方向（没做）：`fallback_identity_now` 每个 generation 已经走过一次整棵 mods 树，`read_dir` 的
+  entry 本来就带 metadata；若 `fallback_serving_id` 能吃那趟走树的结果，就能把 5816 次单档 stat 换成一次走树。
+  但**我没有办法按需清掉 Windows 的档案快取，冷成本无法重现**，也就没法照规格做交错 A/B 取中位数，所以没有
+  改 —— 要做的人先准备一个能清快取的办法。
+- 教训：量到的「每张卡 430 ms」如果在连续跑十几次之后自己掉到 18 ms，那它不是程式的成本，是 OS 快取状态；
+  基准要先确认同一个数字在冷／暖两种状态下各是多少，再决定值不值得改。
