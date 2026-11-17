@@ -212,4 +212,7 @@ fn set_priority(normal: bool) {
 #[cfg(not(windows))]
 fn set_priority(_normal: bool) {}
 
-fn main() { set_priority(false); if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }
+fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads(); set_priority(false); if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }

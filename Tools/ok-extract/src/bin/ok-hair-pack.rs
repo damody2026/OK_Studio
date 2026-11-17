@@ -1,5 +1,8 @@
 use std::path::Path;
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     let a:Vec<String>=std::env::args().collect();
     let result=match a.get(1).map(String::as_str) {
         Some("inspect") if a.len()==4 => ok_extract::portable::inspect_hair_base(Path::new(&a[2]),Path::new(&a[3])),

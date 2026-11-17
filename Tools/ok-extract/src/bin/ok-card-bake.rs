@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     if let Err(e) = run() { eprintln!("ok-card-bake: {e}"); std::process::exit(1); }
 }
 

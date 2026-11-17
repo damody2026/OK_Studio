@@ -10,6 +10,9 @@ fn usage()->!{
 }
 
 fn main(){
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     let args:Vec<String>=std::env::args().collect();
     let result=match args.get(1).map(String::as_str) {
         Some("--probe") if args.len()==3||args.len()==4 => ok_extract::vertcolor::probe(Path::new(&args[2]),

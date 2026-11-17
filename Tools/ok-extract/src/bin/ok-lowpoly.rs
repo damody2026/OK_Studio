@@ -69,6 +69,9 @@ fn run() -> Result<bool, String> {
 }
 
 fn main() {
+    // The machine-wide rule for ok tools (lib.rs MAX_THREADS): without this, rayon sizes its global
+    // pool itself and every bare par_iter here takes all of the machine's cores.
+    ok_extract::limit_threads();
     match run() {
         Ok(true) => {}
         Ok(false) => std::process::exit(2),
