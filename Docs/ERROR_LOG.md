@@ -4911,3 +4911,20 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 （`Content/IndependentResources/base_v1` 有 45 GB），要用 glob 或限定目录。
 
 报告与原始数据：`Saved/Reports/card-open-perf-20261117/`。
+
+## 2026-11-17 三个既有测试失败的真正原因（不是档案被锁，也不是开卡优化造成）
+
+`cargo test --release --lib` 有 3 个失败，一开始以为是别的 session 锁住 C 树的目录（「存取被拒」），不是：
+
+- `appearance::properties::tests::every_heroine_takes_the_dye_even_with_hair_painted_into_its_texture`
+  （properties.rs:259）与 `dress_takes_off_what_she_wears_as_accessories`（properties.rs:266）：两个都是
+  `for e in fs::read_dir(dir).unwrap()` 之后对**每一个** entry 直接 `crate::gamefs::read(path)`，没有过滤档案／
+  副档名。`C:\portable\OpenKoikatsu\Content\CharacterCards\StreetHeroines` 里 2026-11-09 多了一个 `KKS\`
+  **子目录**，而 Windows 上 `std::fs::read` 读目录会回 `PermissionDenied` / raw os error 5 /「存取被拒。」——
+  和测试的 panic 讯息逐字相同（已单独写一个小程式确认）。测试该只取 `*.png` 档案。
+- `appearance::tests::head_texture_commit_preserves_live_state_and_rejects_geometry`（appearance.rs:489）：
+  不是档案问题，是 `live.head_texture_changes(&source).unwrap()` 回了 None。C001 本身有 `cf_O_mayuge`
+  这个 part（486 行的 position 过得了），所以是 `head_texture_changes` 自己的问题。
+
+三个都与开卡优化无关：把四个开关全关（`OK_COARSE_ZIP_MEMO=1 OK_NO_CHAINED_BODY=1 OK_NO_ROOT_PROBE=1
+OK_NO_TREE_WALK_MEMO=1`）一样以同样的行号失败。没有修（不在这轮范围内）。

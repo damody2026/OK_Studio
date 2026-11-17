@@ -1510,8 +1510,13 @@ pub fn library_zip_memo<T: Clone + Send + Sync + 'static>(what: &str, zip: &Path
     // this checkout lacks the models of ~3900 recorded archives, which the three whole-tree walks of an open
     // (strip_all, override index, GUID index) then read again, ~11700 zip opens and ~1 s of every open, although the
     // same real file (or none at all) served them. The sealing case (`own`) keeps the generation.
+    // Only outside a strict open. Unlike `view_memo`, this memo has no gap guard: a value `build()` recorded an
+    // okstrict gap for is kept anyway, so sharing it between two strict opens would carry that gap's presence (or
+    // absence) into the other one, and the pack identity in the key is what kept them apart. A strict open is an OK
+    // card's or a conversion's (okstrict::active needs a mounted pack scope), so original cards — where the sharing
+    // pays — are unaffected.
     // OK_COARSE_ZIP_MEMO=1: the whole fallback generation in the key again (to compare with the per-archive one).
-    let generation = if own || coarse_zip_memo() { format!("{}|{}", FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::oklib::mounted_pack_identity()) }
+    let generation = if own || coarse_zip_memo() || crate::okstrict::active().is_some() { format!("{}|{}", FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed), crate::oklib::mounted_pack_identity()) }
         // The mounted pack only decides this archive when the overlay records it (open_zip completes the library's
         // entries with the overlay's); for an original card, whose "pack" identity is just its zipmod fallback, it
         // changed with every card and shared nothing.
