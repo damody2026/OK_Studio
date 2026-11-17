@@ -9,7 +9,8 @@
 -- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes of
 -- slot holders run (those started since the earliest current claim; an older one, e.g. the user's own game, does not
 -- count here), fewer than three run in all, and enough commit is free (default 35 GB, --need-gb N, plus 25 GB left
--- over); --need-gb 60 or more also needs every other slot free and keeps the others closed while held. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
+-- over); --need-gb 60 or more also needs every other slot free and keeps the others closed while held. Checks and the
+-- write run under a machine-wide lock (ROOT\claim.lock) so two claims never both pass. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
 -- same step, so a stale queue file never makes a lower-priority agent wait for someone who already runs.
 -- A queue entry stops counting once its claim --wait process has ended (pid + start time in the entry) or it was not
 -- refreshed for 15 minutes (claim --wait refreshes it every poll; a one-shot claim on every call). Ranks match the
@@ -197,19 +198,57 @@ local function enqueue(agent, note, me)
   path.write_text(queue_file(agent), agent .. " " .. note .. " " .. now() .. "\n" .. (me and ("pid " .. me .. "\n") or ""))
 end
 
+-- Test hook, honoured only with OK_UNREAL_SLOTS set (a scratch slot folder): OK_UNREAL_SLOTS_FAKE="free=<GB> pause=<s>"
+-- skips the machine probes (no Unreal processes, that much commit free) and sleeps before writing owner.txt, so a test
+-- can line two claims up inside the check-then-write window.
+local FAKE = os.getenv("OK_UNREAL_SLOTS") and os.getenv("OK_UNREAL_SLOTS_FAKE") or nil
+if FAKE then
+  local free, pause = tonumber(FAKE:match("free=(%d+)")) or 200, tonumber(FAKE:match("pause=([%d.]+)")) or 0
+  unreal_starts = function() return {} end
+  free_commit_gb = function() return free end
+  FAKE = { pause = pause }
+end
+
+-- Every claim checks and writes under one machine-wide lock (a folder: mkdir either creates it or fails), so two claims
+-- cannot both pass the checks and then both write (2026-11-18 05:52: c-lowspec's [need 60] claim took slot1 and
+-- f-yvonne-low took slot2 one second later). A lock older than LOCK_STALE_S is from a claim that died and is broken.
+local LOCK_STALE_S = 120
+local function with_lock(fn)
+  local lfs = require "lfs"
+  local dir = path.join(ROOT, "claim.lock")
+  path.mkdir(ROOT, true)
+  local deadline = os.time() + LOCK_STALE_S + 30
+  while not lfs.mkdir(dir) do
+    local m = lfs.attributes(dir, "modification")
+    if m and os.difftime(os.time(), m) > LOCK_STALE_S then lfs.rmdir(dir)
+    elseif os.time() > deadline then return nil, "claim lock " .. dir .. " stays taken"
+    else ok.time.sleep(0.2) end
+  end
+  local res = table.pack(pcall(fn))
+  lfs.rmdir(dir)
+  if not res[1] then error(res[2], 0) end
+  return table.unpack(res, 2, res.n)
+end
+
+-- Another holder conflicts with this claim: one of the two takes the whole machine.
+local function exclusive_conflict(agent, need_gb, skip)
+  for i = 1, SLOTS do
+    local who, text = owner(i)
+    if i ~= skip and who and who ~= agent then
+      local held = tonumber((text or ""):match("%[need (%d+)%]")) or 0
+      if held >= EXCLUSIVE_GB then return who .. " holds the whole machine (" .. held .. " GB)" end
+      if need_gb >= EXCLUSIVE_GB then return who .. " holds slot" .. i .. "; " .. need_gb .. " GB needs every slot free" end
+    end
+  end
+end
+
 -- One attempt: the slot index taken (or already held), or nil and why not.
-local function try_claim(agent, note, need_gb)
+local function try_claim_locked(agent, note, need_gb)
   for i = 1, SLOTS do if owner(i) == agent then return i end end
   local blocker = waiting_above(agent)
   if blocker then return nil, blocker .. " has higher priority and is waiting" end
-  for i = 1, SLOTS do
-    local who, text = owner(i)
-    if who and who ~= agent then
-      local held = tonumber((text or ""):match("%[need (%d+)%]")) or 0
-      if held >= EXCLUSIVE_GB then return nil, who .. " holds the whole machine (" .. held .. " GB)" end
-      if need_gb >= EXCLUSIVE_GB then return nil, who .. " holds slot" .. i .. "; " .. need_gb .. " GB needs every slot free" end
-    end
-  end
+  local conflict = exclusive_conflict(agent, need_gb)
+  if conflict then return nil, conflict end
   local held, other = unreal_counts()
   if held >= SLOTS then return nil, held .. " Unreal processes of slot holders already run" end
   if held + other >= MAX_UNREAL then
@@ -220,14 +259,26 @@ local function try_claim(agent, note, need_gb)
   if need_gb < EXCLUSIVE_GB and free - need_gb < RESERVE_GB then
     return nil, "only " .. free .. " GB commit free, need " .. need_gb .. " + " .. RESERVE_GB .. " left over"
   end
+  if FAKE and FAKE.pause > 0 then ok.time.sleep(FAKE.pause) end
   for i = 1, SLOTS do
     if not owner(i) then
       path.mkdir(path.parent(owner_file(i)), true)
       path.write_text(owner_file(i), agent .. " " .. note .. " " .. now() .. (need_gb >= EXCLUSIVE_GB and (" [need " .. need_gb .. "]") or "") .. "\n")
-      if owner(i) == agent then return i end
+      if owner(i) == agent then
+        -- A claim made by an older copy of this script (another checkout) does not take the lock: if one landed
+        -- meanwhile and the two conflict, give the slot back and try again later.
+        local late = exclusive_conflict(agent, need_gb, i)
+        if not late then return i end
+        path.write_text(owner_file(i), "")
+        return nil, late
+      end
     end
   end
   return nil, "no free slot"
+end
+
+local function try_claim(agent, note, need_gb)
+  return with_lock(function() return try_claim_locked(agent, note, need_gb) end)
 end
 
 local function claim(agent, note, wait, need_gb)
