@@ -440,3 +440,17 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 
 - 预算用完时会停：超出预算的部分就是最后一个候选的那一次 `GridRoute`（这里不到 1 ms）。预算 25 ms 时最坏约 25 ms 加一次室内 `GridRoute`（它自己的上限也是 25 ms），也就是约 50 ms；没有实测到 50 ms 的情况。
 - 没设 `-Clock` 的那一趟 0 次搜寻：游戏时间在夜里，女角都睡在床上，不经过这段。测排位要给白天的时钟。
+
+## 9. 安静机器上的瞬移巡游 A/B 与渲染端卡顿（2026-11-18 06:04–06:12，c-lowspec）
+
+先前的渲染端数字（UpdateAllPrimitiveSceneInfos 157 ms、ParallelDraw 93 ms、PSO miss）都是机器上同时跑别的 Unreal 时量的。这次独占整机（claim --need-gb 60，两个 slot 只有我），lowspec1118f、-LowMemory、-Clock 10:00、5 名女角，trace 频道 cpu,frame,bookmark,rendercommands,rhicommands，跑同一条瞬移巡游（教堂、男生宿舍、百货、体育馆、溜冰场）。
+
+| 趟 | 设定 | 峰值 commit／工作集／显存 | 加载后 >30 ms 的帧 | 原因 |
+|---|---|---|---|---|
+| warpQ-base（Play-20261118T060415） | 预设 | 11.9／8.1／4.2 GB | 2 帧：61.8、61.4 ms | 都是 GC（GatherUnreachableObjects 26–52 ms） |
+| warpQ-throttle（Play-20261118T060814） | s.LevelStreamingComponentsRegistrationGranularity 2、s.LevelStreamingActorsUpdateTimeLimit 2、s.AdaptiveAddToWorld.Enabled 1 | 11.3／7.9／4.0 GB | 1 帧：62.2 ms | GC（GatherUnreachableObjects 52 ms） |
+
+- 两趟的 UpdateAllPrimitiveSceneInfos、ParallelDraw、UpdatePrimitive 在加载后没有任何一次超过 30 ms（Insights 导出所有执行绪）。先前的 157／93 ms 是抢 CPU 的结果，不是城市本身的问题。
+- 节流 cvar 没有可见效果（GC 卡顿次数 2 对 1，都在 60 ms 上下，属于噪声），不采用。
+- PSO precache miss：lowspec1118f 那趟的 99 个 miss 全在前 600 帧——开机、第一个女角上屏（runtime mesh／材质）、前景头发遮挡 capture 建立时；游玩期间 0 个。走路／巡游的卡顿与 PSO 无关，不需要 D3D12 PSO 磁碟快取。要列出 miss 的材质与 pass，需在启动时设 r.PSOPrecache.Validation=2（ReadOnly cvar，用 -GameArgs "-ini:Engine:[ConsoleVariables]:r.PSOPrecache.Validation=2"）。
+- 剩下的巡游卡顿只有串流卸载后的完整 GC（约 60 ms）。
