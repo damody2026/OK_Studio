@@ -165,3 +165,26 @@ OK_NOCACHE=1 OK_CARDS_WORKERS=5  ok-extract.exe D:/KoikatuSunshine --oklib cards
 一个由上而下算一次全部世界变换的走法（或按 `PlaceGeneration` 记住）可以把那 23.5 s 大部分拿掉。
 **深比较换 revision 的上限只有 0.5 s，不值得做**；我自己试的「不重写未变的 transform」也已回退
 （见 `Docs/ERROR_LOG.md` 同日那笔：开 88 003 ms、关 87 573 ms，跳过只命中 1.6%）。
+
+## 共用路径没被弄坏（在 `02888030e` ＋ 回退 `7ed584bd1` 上）
+
+| | 结果 |
+|---|---|
+| 街区 `run_street_social_development.lua -Editor -SelfTest` | 10 位女角全部载入，`RequestExitWithStatus(0)`，只有既有那条 CommonUI routing error |
+| 百人房间 `run_crowd_room100.lua --editor --count 20 --benchmark 5` | frame 2.48 ms、p95 3.10、p99 3.77、`frames_over_8_33_ms: 0`、`target_120_met: true` |
+| `Tools/ok_convert_order_check.lua`（e-cardload 的次序关卡） | PASS：两张卡在同程序正序与反序下，开起来都和各自单独转的基准逐位元组相同 |
+
+## `ImportCardWorkers` 的预设还没定，而且上限要压到 4
+
+量 worker 数要等 e-cardload 的 `1a3a55dc2`（全域池吃 `OK_THREADS`／`RAYON_NUM_THREADS`）合进 F 树：
+在那之前 `lib.rs` 的 `limit_threads()` 写死 `MAX_THREADS`，每个 worker 的裸 `par_iter` 都是 8 条
+（8 个 worker ≈ 80 条），量到的 wall 是用「把机器吃光」换的。
+
+另外**现在传的 `[threads] = max(2, 8/workers)` 本身守不住规矩**：8 个 worker 时 `8/8 = 1` 被抬成 2，
+总共 16 条；而且抬不掉——`oklib.rs` 那三个具名池都是 `cpu_threads().clamp(2, 8)`，每个行程至少 2 条。
+所以守住「最多 8 执行绪」的唯一办法是**把 worker 上限压到 4**（`4 × max(2, 8/4) = 8`，刚好）。
+这和 e-cardload 的 CPU 论点（2–3 个 worker、每人依序转几张，两项收益才叠加）方向一致，但理由更硬：
+不是比较省，是超过 4 个 worker 在现在的池结构下不可能守住。
+
+最终预设＝量完 `2／3／4` 的 wall 与**导入期间峰值记忆体**（5 角色与 21 角色两个场景）之后定；
+峰值若接近 16 GB 就往下压，即使 wall 慢一点。
