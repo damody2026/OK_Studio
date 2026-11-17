@@ -86,7 +86,9 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 
 ## 还剩下什么
 
-1. **原作 KStudio PNG 的汇入**：5 角色的场景里，`load_call_ms` 是 11.3 s（总共 16.6 s）。那是 `FOKStudioImport::Import` 对每个角色依序呼叫 `FOkSession::MakeOkCardForOutfit` 把原作卡转成 OK 卡，而且**每次开同一个场景 PNG 都重转一次**。先走一遍 JSON 收集角色、并行转完再建文件，应该能把这段砍到四分之一。
+1. **原作 KStudio PNG 的汇入**：5 角色的场景里，`load_call_ms` 是 11.3 s（总共 16.6 s）。那是 `FOKStudioImport::Import` 对每个角色依序呼叫 `FOkSession::MakeOkCardForOutfit` 把原作卡转成 OK 卡，而且**每次开同一个场景 PNG 都重转一次**。
+   - 试过先走一遍 JSON 收集角色、用 `ParallelFor` 一次转 4 张再建文件：**没有变快**（5 张卡依序 11.0 s，4 个并行 11.7 s），所以回退了，没有留在版控里。`MakeOkCardForOutfit` 在 Rust 那边看来被某个全域锁序列化了，这段要从单卡转换那边查起。
+   - 另一条路是快取：OK 卡已经存在、而且比原作卡与 ok-extract 的建置都新的时候就不重转。要先想好版本戳记，否则 2026-10-28 以前那种缺 okLt 的旧卡会被重复使用。
 2. **道具的 Unreal spawn**：21 角色场景里 10.5 s，必须在 game thread。但那 634 个道具只有 67 种型号 —— 同型号共用 mesh／material 是下一个大块，不过那要动 `Plugins/KKUnityBundle` 的共用程式码（C／E／F 三组共用），动之前要先讲好。
 3. **`Sync()` 每帧走过全部物件**：5867 道具场景里，`Sync` 总共 62 s，其中只有 23 s 是 `Build()`；其余约 39 s 是 8806 个物件 × 291 次 Sync 的回圈本身（世界变换、可见性、材质覆写比对）。只对「这一帧真的会变」的物件做事，是最后一块。
 4. `ready_ms` 是「物件都建完」，不是「材质都编译完」。拍照比对一定要等 shader 编译结束，否则比到的是编译进度（见 `Docs/ERROR_LOG.md` 的记录）。
