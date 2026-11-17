@@ -5237,3 +5237,11 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **原因（已证实）**：是 MSYS 把 POSIX 路径转成 Windows 路径时，遇到方括号没转对，不是 `ok-extract`。同一张卡同一条命令改用 PowerShell、或在 Git Bash 里用 `cygpath -w` 给 Windows 路径并设 `MSYS2_ARG_CONV_EXCL='*'`，8 张全部转成。OK Studio 用 `CreateProc` 传 Windows 路径，不受影响。
 - **处置**：没有改任何程式码；批次脚本改给 Windows 路径重跑。
 - **再试前检查**：在 Git Bash 里传路径给 Windows 程式，档名可能含方括号（mod 作者名常这样写）时，一律 `cygpath -w` 加 `MSYS2_ARG_CONV_EXCL='*'`；看到「只在某些档名失败」先换 PowerShell 跑一次，排除壳层再去查程式。
+
+## 2026-11-18 整合 #16：启动过的包直接压缩，体积比原始资料夹还大（协调 session 的错）
+
+- **变更**：整合 #16 打包出 `E:\OKPackage\Studio-20261118`（资料夹 10.84 GB），先启动读卡器与工作室实测材质，验过之后直接 `Compress-Archive`／`7z a` 压成 zip。
+- **症状**：zip 长到 12.38 GB 还在写，比原始资料夹大；中途还出现 `PermissionDenied` 写不进 `work\index-cache\*.raw`。
+- **原因（已证实）**：启动器会在 stage 里建三个 junction 指回包自己的 `Content`（`CharacterCards`、`IndependentResources`、`KKPreview`），让打包版读得到资源。压缩工具预设会跟着 reparse point 走，于是 6 GB 的共用资源被重复压进去一次。写不进 `.raw` 则是我「验完就压」，工作室行程其实还活着（`studio_stop` 回了 ok，行程没真的结束）锁着档案。
+- **处置**：杀掉残留行程，逐个 `[System.IO.Directory]::Delete($p,$false)` 移除那三个 junction（启动时会自动重建），再压一次。
+- **再试前检查**：**压缩或复制一个启动过的包之前，先列出里面的 reparse point 并移除**（`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`）；压出来比来源大就是跟着连结走了。另外「停掉游戏」要用行程清单确认，不要只信 `studio_stop`／`game_stop` 的回传值。
