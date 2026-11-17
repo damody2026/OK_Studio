@@ -593,6 +593,29 @@ do
   for _, r in ipairs(T.anchors) do if spot_row(r) then r.moved = true; spotted = spotted + 1 end end
   print(('city_anchors.json: %d rows moved to their spots by hand'):format(spotted))
   for _, r in ipairs(T.anchors) do if with_door(r.place, r) then r.moved = true end end
+  -- A vanity is its mirror's spot (Tools/street_city_new_anchors.lua), and the mirror hangs on the wall: the hotel's took
+  -- their mirrors' heights, 366-396 cm over their floor (2F 2093, 3F 2556, 5F 3426; added after the round 6 floor
+  -- measurement, so never brought down), and the reach check found three floors no stair or lift reaches (B2, 11-17).
+  -- One standing more than 30 cm off every floor of its place (the door's, the lifts' and stairs') goes down to the
+  -- floor under it, up to 5 m; one on a floor already (the 4F's, z 2606 by the floor at 2610) stays. 30, not 60: the
+  -- 3F's mirrors at 2556 are 54 cm under the 4F's floor; the vanities on a floor are within a few cm of it.
+  do local floors = {}
+    for _, p in ipairs(places) do local fl = { p.door and p.door[3] or nil }
+      for _, an in ipairs(p.anchors or {}) do if an.name:match('^lift') or an.name:match('^stair') then fl[#fl + 1] = an.pos[3] end end
+      floors[p.id] = fl end
+    local down = 0
+    for _, r in ipairs(T.anchors) do local fl = floors[r.place]
+      if fl and r.pos and r.kinds and #r.kinds == 1 and r.kinds[1] == 'vanity' then
+        local on, under = false, nil
+        for _, z in ipairs(fl) do if math.abs(r.pos[3] - z) <= 30 then on = true end
+          if z < r.pos[3] - 60 and r.pos[3] - z <= 500 and (not under or z > under) then under = z end end
+        if not on and under then
+          print(('anchor: %s %s down to its floor, z %.0f -> %.0f'):format(r.place, r.name, r.pos[3], under))
+          r.pos = { r.pos[1], r.pos[2], under }; r.moved = true; down = down + 1 end
+      end
+    end
+    print(('city_anchors.json: %d vanities brought down to their floors'):format(down))
+  end
   local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, r in ipairs(T.anchors) do local q = PROPS.shift(r.place, r.name, r.pos)
     if q then print(('anchor: %s %s moved with its prop, %.0f,%.0f -> %.0f,%.0f'):format(r.place, r.name, r.pos[1], r.pos[2], q[1], q[2]))
