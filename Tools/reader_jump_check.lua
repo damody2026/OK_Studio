@@ -117,10 +117,11 @@ local function set(key, value)
   for _ = 1, 4 do
     local text, code = call("reader_call", ('{"action":"control_set","key":"%s","value":%s}'):format(key, value))
     if not code and text:find('"revision"', 1, true) then return nil end
-    if code ~= "stale" and code ~= "refused" then return (text:gsub("%s+", " "):sub(1, 100)) end
+    -- (only a stale session/revision is worth another try; a refused value says why, e.g. "Value absent from choices")
+    if code ~= "stale" then return (text:gsub("%s+", " "):sub(1, 100)) end
     sleep(1.5)
   end
-  return "did not set " .. key
+  return "did not set " .. key .. " (stale 4 times)"
 end
 
 local images
@@ -210,6 +211,8 @@ local function check_card(c)
     emit(("%s LIGHT scaled=%d lit=%s flat=%s"):format(c, scaled, lit, flat))
     for o = 1, 7 do
       local e = set("control.OutfitCombo", ('"服裝 %d"'):format(o))
+      -- (a card saves fewer than 7 outfits: the combo has no "服裝 o"; the old runs wrote C033 O5 as a failure)
+      if e and o > 1 and e:find("Value absent from choices", 1, true) then emit(("%s O%d none (the card has %d outfits)"):format(c, o, o - 1)); break end
       if e then emit(("%s O%d NOOUTFIT %s"):format(c, o, e)); fail = fail or "card_fail"; break end
       sleep(1); idle()
       local cf = clip(); if cf ~= "" then note[#note + 1] = ("O%d %s"):format(o, cf) end
