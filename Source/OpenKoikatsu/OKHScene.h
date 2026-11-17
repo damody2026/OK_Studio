@@ -508,7 +508,7 @@ private:
     void UpdateMotion(float Delta);void ApplyMotion(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
     float HMotion=0.f,MotionFrom=0.f,MotionTo=0.f,MotionCalc=0.f,MotionFor=0.f,AutoMotionCalc=0.f,AutoMotionFor=0.f;bool bMotionEasing=false,bMotionUp=true;
     float MotionApplied=-1.f,MotionAppliedElapsed=0.f,MotionReadHer=-1.f,MotionReadHim=-1.f;FString MotionAppliedState;TWeakObjectPtr<class AKKPreviewActor> MotionAppliedHer;
-    TMap<FName,float> Bulge;int32 BulgePart=INDEX_NONE;FName BulgeOpen;float OpenEased=0.f;FName BulgeTarget;float BulgePast=0.f,BulgeMoves=0.f;bool bBulgeLogged=false;TWeakObjectPtr<class AKKPreviewActor> BulgedHer;
+    TMap<FName,float> Bulge;int32 BulgePart=INDEX_NONE;FName BulgeOpen;float OpenEased=0.f;FName BulgeTarget;float BulgePast=0.f,BulgeMoves=0.f;uint32 BellyPastFrames=0;bool bBulgeLogged=false;TWeakObjectPtr<class AKKPreviewActor> BulgedHer;
     // Her clothes kept over her skin (CoverClothes): her skin's wrap moves this frame, the garments moved, the time it took.
     void CoverClothes(class AKKPreviewActor* Girl);TArray<uint32> WrapIdxShown;TArray<FVector3f> WrapDShown,WrapNShown;TWeakObjectPtr<class AKKPreviewActor> ClothGirl;TSet<int32> ClothShown;TMap<int32,double> ClothCpuUntil;int32 ClothVerts=0;float ClothMs=0.f;
     // His penis out through her back folded under her skin (ReadBulge, penis.clip): his part with that morph, whether it is moved now.
