@@ -1,6 +1,7 @@
 // Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #include "DreamUIRender/DreamUILayerStyleComposite.h"
+#include "DreamUIRender/DreamUIShaderGate.h"
 #include "CommonRenderResources.h"
 #include "Engine/Texture.h"
 #include "GlobalShader.h"
@@ -32,7 +33,7 @@ public:
 		SHADER_PARAMETER(FVector4f, DreamUI_FloodParams)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return DreamUILayerStyleCompositeLocal::ShouldCompile(Parameters); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return DreamUILayerStyleCompositeLocal::ShouldCompile(Parameters); }
 };
 IMPLEMENT_GLOBAL_SHADER(FDreamUIJumpFloodInitPS, "/Plugin/DreamGUI/Private/DreamUIJumpFlood.usf", "InitPS", SF_Pixel);
 
@@ -46,7 +47,7 @@ public:
 		SHADER_PARAMETER(FVector4f, DreamUI_FloodParams)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return DreamUILayerStyleCompositeLocal::ShouldCompile(Parameters); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return DreamUILayerStyleCompositeLocal::ShouldCompile(Parameters); }
 };
 IMPLEMENT_GLOBAL_SHADER(FDreamUIJumpFloodStepPS, "/Plugin/DreamGUI/Private/DreamUIJumpFlood.usf", "StepPS", SF_Pixel);
 
@@ -70,7 +71,7 @@ public:
 		SHADER_PARAMETER(FVector4f, DreamUI_StyleParams)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return DreamUILayerStyleCompositeLocal::ShouldCompile(Parameters); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return DreamUILayerStyleCompositeLocal::ShouldCompile(Parameters); }
 };
 IMPLEMENT_GLOBAL_SHADER(FDreamUILayerStyleCompositePS, "/Plugin/DreamGUI/Private/DreamUILayerStyleComposite.usf", "MainPS", SF_Pixel);
 

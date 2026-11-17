@@ -2,6 +2,7 @@
 // Modified by TypeDreamMoon.
 
 #pragma once
+#include "DreamUIRender/DreamUIShaderGate.h"
 
 #include "CoreMinimal.h"
 #include "GlobalShader.h"
@@ -23,7 +24,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FDreamUISimplePostProcessVS, FGlobalShader);
 	using FParameters = FEmptyShaderParameters;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /**
@@ -47,7 +48,7 @@ public:
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
+	{ if (!DreamGUIGlobalShadersWanted()) { return false; }
 		// No copy both linearizes and blends.
 		const FPermutationDomain PermutationVector(Parameters.PermutationId);
 		return !(PermutationVector.Get<FColorCorrect>() && PermutationVector.Get<FBlendAlpha>());
@@ -67,7 +68,7 @@ public:
 		SHADER_PARAMETER(FVector2f, BlurStrength)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /**
@@ -96,7 +97,7 @@ public:
 		SHADER_PARAMETER(FVector4f, IntervalParams)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /** Pass 2: inverts pass 1's "where I am going" into "who comes here", which is all a PS can do. */
@@ -117,7 +118,7 @@ public:
 		SHADER_PARAMETER(float, SearchRadius)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /** Vertex shader of a copy of the screen under a mesh: each vertex where it is on the target, and its local position. */
@@ -128,7 +129,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FDreamUICopyMeshRegionVS, FGlobalShader);
 	using FParameters = FEmptyShaderParameters;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /**
@@ -153,7 +154,7 @@ public:
 		SHADER_PARAMETER(float, IsRenderTarget)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /** Vertex shader of a mesh drawn with a post-process result. Permutation: its clip position passed on, for the depth blend. */
@@ -171,7 +172,7 @@ public:
 		SHADER_PARAMETER(FMatrix44f, LocalToWorld)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 /**
@@ -215,7 +216,7 @@ public:
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
+	{ if (!DreamGUIGlobalShadersWanted()) { return false; }
 		// The fade only means something with the blend.
 		const FPermutationDomain PermutationVector(Parameters.PermutationId);
 		return !PermutationVector.Get<FDepthFade>() || PermutationVector.Get<FBlendDepth>();

@@ -1,6 +1,7 @@
 // Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #include "DreamUIRender/DreamUIBackdropEffects.h"
+#include "DreamUIRender/DreamUIShaderGate.h"
 
 #include "CommonRenderResources.h"
 #include "Engine/Texture.h"
@@ -41,7 +42,7 @@ public:
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 class FDreamUIStylizePS : public FGlobalShader
@@ -61,7 +62,7 @@ public:
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 class FDreamUIEffectMixPS : public FGlobalShader
@@ -78,7 +79,7 @@ public:
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 class FDreamUIPyramidDownPS : public FGlobalShader
@@ -95,7 +96,7 @@ public:
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 class FDreamUIPyramidUpPS : public FGlobalShader
@@ -105,7 +106,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FDreamUIPyramidUpPS, FGlobalShader);
 	using FParameters = FDreamUIPyramidDownPS::FParameters;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 IMPLEMENT_GLOBAL_SHADER(FDreamUIAdjustPS, "/Plugin/DreamGUI/Private/DreamUIImageEffect.usf", "AdjustPS", SF_Pixel);
@@ -126,7 +127,7 @@ public:
 		SHADER_PARAMETER(FMatrix44f, LocalToClip)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
 };
 
 class FDreamUIBackdropCompositePS : public FGlobalShader
@@ -181,7 +182,7 @@ public:
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
+	{ if (!DreamGUIGlobalShadersWanted()) { return false; }
 		// Only glass takes a melted shape.
 		const FPermutationDomain Permutation(Parameters.PermutationId);
 		return !Permutation.Get<FGlassShape>() || Permutation.Get<FEffect>() == 2;
