@@ -4890,3 +4890,24 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - **處置**：整合照常進行，三個樹的 paired 都是用同一份遊戲安裝與同一個 commit 重新轉出來的；manifest 的 base-paired 雜湊只能對產出它的那台機器成立，不能當成跨 checkout 的完整性檢查。
 - **再試前檢查**：要讓 manifest 的 paired 雜湊跨機器有意義，得先讓 `ok-paired-library` 的 pack 寫出順序固定（排序鍵再寫檔），並另外做一次逐項解包比對確認三邊等價。
 
+
+## 2026-11-17 开卡性能：把两次先后跑的结果当成 A/B
+
+做完 `compose_body_texture` 的「解码一次、串起来、编码一次」之后，我用 `Tools/card_open_bench.lua` 跑了一次
+（3 轮中位数合计 4.130 s），和改动前存下的基准（5.010 s）相减，得出 **−17.6%** 并据此回报协调者。
+
+后来给每个改动都加了关掉的开关，用**同一个执行档、同一时段、交替**跑 9 轮，结果是：优化前合计 5.020 s
+（和原基准 5.010 吻合，基准本身没问题）、优化后 4.910 s，真实只有 **−2.2%**。直接量 `compose_body_texture`
+这个阶段也只省约 20–35 ms（C001 214→182 ms、klara 91→69 ms），不是 250 ms。那次 4.130 s 是机器状态漂移。
+
+修正：这台机器（常驻模拟器、Defender、还有别组的建置）上，前后两次独立跑分不能相减；只有「同一执行档用环境
+变量开关切换、交替跑、取中位数」的 A/B 可信。所以四个改动都留了开关：`OK_NO_CHAINED_BODY`、
+`OK_COARSE_ZIP_MEMO`、`OK_NO_ROOT_PROBE`、`OK_NO_TREE_WALK_MEMO`。
+
+同一轮还有一个自己造成的干扰：我放进背景的 `find Tools/ok-extract/src -name ...` 卡住后以 92% CPU 跑了很久，
+期间同一条命令从 1.4 s 跳到 31.9 s，量到的数字全部不可信。量测前要用
+`Get-Counter '\Process(*)\% Processor Time'` 看谁在吃 CPU；不要只数 `cargo` 进程，这台机器常驻 18 个
+`cargo run ... ok-game-mcp`（别的 session 的 MCP 服务器），它们是闲着的。另外 `find` 在这个工作树上非常慢
+（`Content/IndependentResources/base_v1` 有 45 GB），要用 glob 或限定目录。
+
+报告与原始数据：`Saved/Reports/card-open-perf-20261117/`。

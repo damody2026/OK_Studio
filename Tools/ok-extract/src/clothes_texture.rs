@@ -910,15 +910,30 @@ pub(crate) fn composite_overlay_space(base:&[u8],overlay:&[u8],base_srgb:bool,ou
 }
 pub(crate) fn composite_overlay_space_uncached(base:&[u8],overlay:&[u8],base_srgb:bool,output_srgb:bool)->Option<Vec<u8>> {
     let mut dst=crate::teximg::load_from_memory(base).ok()?.into_rgba8();let over=crate::teximg::load_from_memory(overlay).ok()?.into_rgba8();
+    composite_overlay_rgba(&mut dst,&over,base_srgb,output_srgb)?;
+    encode_png(&dst)
+}
+
+/// `composite_overlay_space` on images already decoded: the body composite chains its steps without a PNG between
+/// them (head_body::compose_body_texture_uncached), so the arithmetic lives here and the PNG wrapper calls it.
+/// None: an empty image, which the wrapper reports as before.
+pub(crate) fn composite_overlay_rgba(dst:&mut image::RgbaImage,over:&image::RgbaImage,base_srgb:bool,output_srgb:bool)->Option<()> {
     let (w,h)=dst.dimensions();if w==0||h==0||over.width()==0||over.height()==0{return None;}
-    for y in 0..h {for x in 0..w {
-        let p=sample_rgba_linear(&over,(x as f32+0.5)/w as f32,(y as f32+0.5)/h as f32);
-        let d=dst.get_pixel_mut(x,y);let alpha=d[3] as f32/255.0;let source_alpha=alpha.max(p[3]);
-        for c in 0..3 {
-            let base=d[c] as f32/255.;let base=if base_srgb {srgb_channel_to_linear(base)}else{base};
-            let value=lerp_f(base,p[c],p[3]*source_alpha);
-            d[c]=to_unorm8(if output_srgb {linear_channel_to_srgb(value)}else{value});
+    // Each texel reads only the overlay and its own base texel: the rows go in parallel (a 2048 body took ~90 ms on
+    // one thread). The bytes are the ones the texel-by-texel loop produced.
+    use rayon::prelude::*;
+    let row=w as usize*4;
+    dst.as_mut().par_chunks_mut(row).enumerate().for_each(|(y,line)|{
+        for x in 0..w {
+            let p=sample_rgba_linear(over,(x as f32+0.5)/w as f32,(y as f32+0.5)/h as f32);
+            let d=&mut line[x as usize*4..x as usize*4+4];let alpha=d[3] as f32/255.0;let source_alpha=alpha.max(p[3]);
+            for c in 0..3 {
+                let base=d[c] as f32/255.;let base=if base_srgb {srgb_channel_to_linear(base)}else{base};
+                let value=lerp_f(base,p[c],p[3]*source_alpha);
+                d[c]=to_unorm8(if output_srgb {linear_channel_to_srgb(value)}else{value});
+            }
+            d[3]=to_unorm8(lerp_f(alpha,source_alpha,source_alpha));
         }
-        d[3]=to_unorm8(lerp_f(alpha,source_alpha,source_alpha));
-    }}encode_png(&dst)
+    });
+    Some(())
 }

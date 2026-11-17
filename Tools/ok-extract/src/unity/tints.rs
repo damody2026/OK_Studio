@@ -67,8 +67,14 @@ pub fn tint_hair_png(png: &[u8], color: [f32; 4]) -> Option<Vec<u8>> {
 }
 
 pub fn overlay_skin_png(png: &[u8], skin: [f32; 4]) -> Option<Vec<u8>> {
-    use std::io::Cursor;
     let mut img = crate::teximg::load_from_memory(png).ok()?.into_rgba8();
+    overlay_skin_rgba(&mut img, skin);
+    crate::teximg::encode_rgba_owned(img)
+}
+
+/// `overlay_skin_png` on an image already decoded: the body composite chains these steps without a PNG between them
+/// (head_body::compose_body_texture_uncached), so the arithmetic lives here and the PNG wrapper above calls it.
+pub fn overlay_skin_rgba(img: &mut image::RgbaImage, skin: [f32; 4]) {
     let (sr, sg, sb) = (
         skin[0].clamp(0.0, 1.0),
         skin[1].clamp(0.0, 1.0),
@@ -83,7 +89,6 @@ pub fn overlay_skin_png(png: &[u8], skin: [f32; 4]) -> Option<Vec<u8>> {
         p[1] = ((p[1] as f32) * sg).clamp(0.0, 255.0) as u8;
         p[2] = ((p[2] as f32) * sb).clamp(0.0, 255.0) as u8;
     }
-    crate::teximg::encode_rgba_owned(img)
 }
 
 /// Koikano/create_skinbody fragment, without optional sunburn/paint textures:
@@ -99,15 +104,22 @@ pub fn apply_body_create_colors(
 pub fn apply_body_create_colors_sampled(
     main:&[u8],mask:&[u8],skin:[f32;4],sub:[f32;4],nail:[f32;4],main_srgb:bool,
 )->Option<Vec<u8>> {
-    use std::io::Cursor;
-    let src = crate::teximg::load_from_memory(main).ok()?.into_rgba8();
+    let mut out = crate::teximg::load_from_memory(main).ok()?.into_rgba8();
     let mask = crate::teximg::load_from_memory(mask).ok()?.into_rgba8();
-    let (w, h) = src.dimensions();
+    apply_body_create_colors_rgba(&mut out,&mask,skin,sub,nail,main_srgb)?;
+    crate::teximg::encode_rgba_owned(out)
+}
+
+/// `apply_body_create_colors_sampled` on images already decoded (see `overlay_skin_rgba`). None: an empty image,
+/// which the PNG wrapper reports as before.
+pub fn apply_body_create_colors_rgba(
+    out:&mut image::RgbaImage,mask:&image::RgbaImage,skin:[f32;4],sub:[f32;4],nail:[f32;4],main_srgb:bool,
+)->Option<()> {
+    let (w, h) = out.dimensions();
     let (mw, mh) = mask.dimensions();
     if w == 0 || h == 0 || mw == 0 || mh == 0 {
         return None;
     }
-    let mut out = src;
     // Same arithmetic per texel as before, without recomputing the card colours' and the u8 texels' transfer
     // functions for every channel of every texel, and with the rows in parallel (~0.3 s for a 2048 body).
     let linear=|v:f32,c:usize| if c<3 {crate::srgb_channel_to_linear(v)} else {v};
@@ -134,7 +146,7 @@ pub fn apply_body_create_colors_sampled(
             }
         });
     }
-    crate::teximg::encode_rgba_owned(out)
+    Some(())
 }
 
 /// `Koikano/main_skin` `_LINETEXON_ON`: multiply `_DetailMask` (black lines on white).
