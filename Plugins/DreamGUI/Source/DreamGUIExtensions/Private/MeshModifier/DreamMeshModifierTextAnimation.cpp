@@ -1,0 +1,350 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+
+#include "MeshModifier/DreamMeshModifierTextAnimation.h"
+#include "DreamGUI.h"
+#include "Core/Components/DreamText.h"
+#include "MeshModifier/TextAnimation/DreamMeshModifierTextAnimation_PropertyWithEase.h"
+
+namespace DreamMeshModifierTextAnimationLocal
+{
+	/**
+	 * Whether a property moves, turns or scales the glyphs -- or might. The built-in alpha and colour properties only
+	 * recolour the vertices they are given; any other class is taken to move them, a project's own included, since
+	 * nothing says what its ApplyProperty does.
+	 */
+	bool MovesVertices(const UDreamMeshModifierTextAnimation_Property* InProperty)
+	{
+		const UClass* PropertyClass = InProperty->GetClass();
+		return PropertyClass != UDreamMeshModifierTextAnimation_AlphaProperty::StaticClass()
+			&& PropertyClass != UDreamMeshModifierTextAnimation_ColorProperty::StaticClass()
+			&& PropertyClass != UDreamMeshModifierTextAnimation_ColorRandomProperty::StaticClass();
+	}
+}
+
+
+UDreamMeshModifierTextAnimation::UDreamMeshModifierTextAnimation()
+{
+	// A modifier works when the geometry is built, never each frame or when its widget moves.
+	DeclareTickUnused(StaticClass());
+	DeclareTransformChangedUnused(StaticClass());
+}
+bool UDreamMeshModifierTextAnimation::CheckDreamText()
+{
+	// Re-derived every time instead of trusting the cache. The mesh accessor now follows a visual
+	// that was swapped under the widget, and a text left behind by such a swap is still a perfectly
+	// valid object -- so a cache-first check would go on animating the label nobody draws.
+	TextObject = Cast<UDreamText>(GetVisualBatchMesh());
+	return IsValid(TextObject);
+}
+void UDreamMeshModifierTextAnimation::SyncRegisteredText()
+{
+	UDreamText* Current = CheckDreamText() ? TextObject.Get() : nullptr;
+	UDreamText* Previous = RegisteredText.Get();
+	if (Current == Previous)
+	{
+		return;
+	}
+	if (Previous != nullptr)
+	{
+		Previous->UnregisterPerCharacterAnimation(this);
+	}
+	RegisteredText = Current;
+	if (Current != nullptr)
+	{
+		Current->RegisterPerCharacterAnimation(this);
+	}
+}
+void UDreamMeshModifierTextAnimation::OnRegister()
+{
+	Super::OnRegister();
+	for (auto propertyItem : Properties)
+	{
+		if (IsValid(propertyItem))
+		{
+			propertyItem->Init();
+		}
+	}
+	// Every property addresses glyphs by character index, which a ligature would merge.
+	SyncRegisteredText();
+}
+void UDreamMeshModifierTextAnimation::OnUnregister()
+{
+	if (UDreamText* Registered = RegisteredText.Get())
+	{
+		Registered->UnregisterPerCharacterAnimation(this);
+	}
+	RegisteredText.Reset();
+	Super::OnUnregister();
+	for (auto propertyItem : Properties)
+	{
+		if (IsValid(propertyItem))
+		{
+			propertyItem->Deinit();
+		}
+	}
+}
+
+#if WITH_EDITOR
+void UDreamMeshModifierTextAnimation::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (PropertyChangedEvent.Property != nullptr)
+	{
+		auto PropertyName = PropertyChangedEvent.Property->GetFName();
+		if (PropertyName == GET_MEMBER_NAME_CHECKED(UDreamMeshModifierTextAnimation, SelectorOffset))
+		{
+			if (IsValid(Selector))
+			{
+				Selector->SetOffset(SelectorOffset);
+			}
+		}
+	}
+}
+#endif
+
+void UDreamMeshModifierTextAnimation::ModifierWillChangeVertexData(bool& OutTriangleIndices, bool& OutVertexPosition, bool& OutUV, bool& OutColor)
+{
+	Super::ModifierWillChangeVertexData(OutTriangleIndices, OutVertexPosition, OutUV, OutColor);
+	// Whether any glyph is moved is the installed properties' business: alpha and colour ones -- a typewriter, a fade -- leave
+	// every vertex where the text put it, which is what lets a small text keep drawing from coverage glyphs under them.
+	bool bMovesVertices = false;
+	for (const UDreamMeshModifierTextAnimation_Property* PropertyItem : Properties)
+	{
+		if (IsValid(PropertyItem) && DreamMeshModifierTextAnimationLocal::MovesVertices(PropertyItem))
+		{
+			bMovesVertices = true;
+			break;
+		}
+	}
+	OutVertexPosition = bMovesVertices;
+	OutUV = bMovesVertices;
+	// Asked right before the text paints: the last moment a text this modifier has not registered with yet (its visual
+	// was swapped, or there was none when the modifier registered) can still be told to lay out a glyph per character
+	// for the geometry about to be built. Registering after the paint leaves that geometry with ligatures the
+	// properties would index past, and the repaint the registration asks for is cleared with this update's flags.
+	SyncRegisteredText();
+}
+void UDreamMeshModifierTextAnimation::ModifyUIGeometry(
+	FDreamUIGeometry& InGeometry, bool InTriangleChanged, bool InUVChanged, bool InColorChanged, bool InVertexPositionChanged
+)
+{
+	if (!CheckDreamText())return;
+	if (RegisteredText.Get() != TextObject)
+	{
+		// Painted for a text this modifier has not told it animates the characters of, so possibly with ligatures the
+		// properties cannot address by character index. ModifierWillChangeVertexData registers before every paint, so
+		// this is only a guard: leave the geometry as it is rather than index past its characters.
+		return;
+	}
+	if (InGeometry.Vertices.Num() <= 0)return;
+	if (InTriangleChanged || InUVChanged || InColorChanged || InVertexPositionChanged)
+	{
+		if (IsValid(Selector))
+		{
+			if (Selector->Select(TextObject, Selection))
+			{
+				if (InGeometry.Vertices.Num() <= 0)return;
+				// Every property reads GetCharPropertyArray()[i] for the selected range unchecked. A selector counts
+				// characters from the text's tags and visible count, which the painted characters bound; keep the
+				// range inside them so a count that ran ahead of the paint never reads past the array.
+				const int32 PaintedCharCount = TextObject->GetCharPropertyArray().Num();
+				Selection.EndCharCount = FMath::Min(Selection.EndCharCount, PaintedCharCount);
+				Selection.EndCharCount = FMath::Min(Selection.EndCharCount, Selection.StartCharIndex + Selection.LerpValueArray.Num());
+				if (Selection.StartCharIndex < 0 || Selection.StartCharIndex >= Selection.EndCharCount)return;
+				for (auto propertyItem : Properties)
+				{
+					if (IsValid(propertyItem))
+					{
+						propertyItem->ApplyProperty(TextObject, Selection, &InGeometry);
+					}
+				}
+			}
+		}
+	}
+}
+UDreamText* UDreamMeshModifierTextAnimation::GetDreamText()
+{
+	CheckDreamText();
+	return TextObject;
+}
+UDreamMeshModifierTextAnimation_Property* UDreamMeshModifierTextAnimation::GetProperty(int Index)const
+{
+	// Both ends of the range, because the index arrives from Blueprint: an int pin defaults to 0 but
+	// carries whatever arithmetic produced it, and a negative one indexes backwards out of the
+	// allocation instead of tripping the guard.
+	if (Index < 0 || Index >= Properties.Num())
+	{
+		UE_LOG(DreamGUI, Error, TEXT("[UUIEffectTextAnimation::GetProperty]index:%d out of range:%d"), Index, Properties.Num());
+		return nullptr;
+	}
+	return Properties[Index];
+}
+void UDreamMeshModifierTextAnimation::SetSelector(UDreamMeshModifierTextAnimation_Selector* Value)
+{
+	if (Selector != Value)
+	{
+		Selector = Value;
+		if (CheckDreamText())
+		{
+			TextObject->MarkVerticesDirty(true, true, true, true);
+		}
+	}
+}
+void UDreamMeshModifierTextAnimation::SetProperties(const TArray<UDreamMeshModifierTextAnimation_Property*>& Value)
+{
+	// What OnUnregister and OnRegister do for the whole list, done for the part of it that changes. A property
+	// assigned at run time never had Init, so a wave never got the tween that drives it and never moved; one
+	// replaced never had Deinit, so its tween ran on -- holding the property alive and marking the text dirty
+	// every frame -- for the rest of the run.
+	if (bIsRegisteredWithWidget)
+	{
+		// Each once per property, however often it is listed.
+		for (int32 OutgoingIndex = 0; OutgoingIndex < Properties.Num(); ++OutgoingIndex)
+		{
+			UDreamMeshModifierTextAnimation_Property* Outgoing = Properties[OutgoingIndex];
+			if (IsValid(Outgoing) && !Value.Contains(Outgoing) && Properties.IndexOfByKey(Outgoing) == OutgoingIndex)
+			{
+				Outgoing->Deinit();
+			}
+		}
+		for (int32 IncomingIndex = 0; IncomingIndex < Value.Num(); ++IncomingIndex)
+		{
+			UDreamMeshModifierTextAnimation_Property* Incoming = Value[IncomingIndex];
+			if (IsValid(Incoming) && !Properties.Contains(Incoming) && Value.IndexOfByKey(Incoming) == IncomingIndex)
+			{
+				Incoming->Init();
+			}
+		}
+	}
+	Properties = Value;
+	if (CheckDreamText())
+	{
+		TextObject->MarkVerticesDirty(true, true, true, true);
+	}
+}
+void UDreamMeshModifierTextAnimation::SetProperty(int Index, UDreamMeshModifierTextAnimation_Property* Value)
+{
+	if (Index < 0 || Index >= Properties.Num())
+	{
+		UE_LOG(DreamGUI, Error, TEXT("[UUIEffectTextAnimation::SetProperty]index:%d out of range:%d"), Index, Properties.Num());
+		return;
+	}
+	if (Properties[Index] != Value)
+	{
+		UDreamMeshModifierTextAnimation_Property* Outgoing = Properties[Index];
+		const bool bIncomingAlreadyListed = Properties.Contains(Value);
+		Properties[Index] = Value;
+		// As in SetProperties: the property leaving is wound down unless it is still listed elsewhere, and the one
+		// arriving is started unless it already was.
+		if (bIsRegisteredWithWidget)
+		{
+			if (IsValid(Outgoing) && !Properties.Contains(Outgoing))
+			{
+				Outgoing->Deinit();
+			}
+			if (IsValid(Value) && !bIncomingAlreadyListed)
+			{
+				Value->Init();
+			}
+		}
+		if (CheckDreamText())
+		{
+			TextObject->MarkVerticesDirty(true, true, true, true);
+		}
+	}
+}
+
+void UDreamMeshModifierTextAnimation_Property::ApplyProperty(UDreamText* InUIText, const FDreamMeshModifierTextAnimation_SelectResult& InSelection, FDreamUIGeometry* InGeometry)
+{
+	if (InUIText != nullptr && InGeometry != nullptr)
+	{
+		ApplyPropertyToCharacters(InUIText->GetCharPropertyArray(), InSelection, InGeometry);
+	}
+}
+
+bool UDreamMeshModifierTextAnimation_Property::CanReadCharVertices(const FDreamUITextCharProperty& InChar, int32 InVertexCount)
+{
+	return InChar.VertCount > 0 && InChar.StartVertIndex >= 0 && InChar.StartVertIndex + InChar.VertCount <= InVertexCount;
+}
+
+UDreamText* UDreamMeshModifierTextAnimation_Selector::GetDreamText()const
+{
+	GetUIEffectTextAnimation();
+	return UIEffectTextAnimation.IsValid() ? UIEffectTextAnimation->GetDreamText() : nullptr;
+}
+
+UDreamMeshModifierTextAnimation* UDreamMeshModifierTextAnimation_Selector::GetUIEffectTextAnimation()const
+{
+	if (!UIEffectTextAnimation.IsValid())
+	{
+		if (auto outter = this->GetOuter())
+		{
+			UIEffectTextAnimation = Cast<UDreamMeshModifierTextAnimation>(outter);
+		}
+	}
+	return UIEffectTextAnimation.Get();
+}
+
+#if WITH_EDITOR
+void UDreamMeshModifierTextAnimation_Selector::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+}
+#endif
+
+void UDreamMeshModifierTextAnimation_Selector::SetOffset(float Value)
+{
+	if (Offset != Value)
+	{
+		Offset = Value;
+		if (auto DreamText = GetDreamText())
+		{
+			DreamText->MarkVertexPositionDirty();
+		}
+	}
+}
+
+float UDreamMeshModifierTextAnimation::GetSelectorOffset()const
+{
+	if (IsValid(Selector))
+	{
+		SelectorOffset = Selector->GetOffset();
+	}
+	else
+	{
+		UE_LOG(DreamGUI, Warning, TEXT("[UUIEffectTextAnimation::GetSelectorOffset]selector is null!"));
+	}
+	return SelectorOffset;
+}
+
+void UDreamMeshModifierTextAnimation::SetSelectorOffset(float Value)
+{
+	if (IsValid(Selector))
+	{
+		Selector->SetOffset(Value);
+		SelectorOffset = Value;
+	}
+	else
+	{
+		UE_LOG(DreamGUI, Warning, TEXT("[UUIEffectTextAnimation::SetSelectorOffset]selector is null!"));
+	}
+}
+
+UDreamText* UDreamMeshModifierTextAnimation_Property::GetDreamText()
+{
+	if (auto outter = this->GetOuter())
+	{
+		if (auto uiTextAnimation = Cast<UDreamMeshModifierTextAnimation>(outter))
+		{
+			return uiTextAnimation->GetDreamText();
+		}
+	}
+	return nullptr;
+}
+void UDreamMeshModifierTextAnimation_Property::MarkUITextPositionDirty()
+{
+	if (auto DreamText = GetDreamText())
+	{
+		DreamText->MarkVertexPositionDirty();
+	}
+}

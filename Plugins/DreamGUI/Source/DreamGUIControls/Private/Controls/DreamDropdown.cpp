@@ -1,0 +1,802 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#include "Controls/DreamDropdown.h"
+
+#include "Core/DreamUIWidgetRegistry.h"
+
+#include "Core/DreamUIBuilder.h"
+#include "Core/DreamWidgetTree.h"
+#include "Core/Components/DreamImage.h"
+#include "Core/Components/DreamPanelLayouts.h"
+#include "Core/Components/DreamPanelSlot.h"
+#include "Core/Components/DreamRectBlock.h"
+#include "Core/Components/DreamText.h"
+#include "Core/Components/DreamWidget.h"
+#include "Event/DreamBaseEventData.h"
+#include "Interaction/DreamUIPopupLayer.h"
+#include "Interaction/UIDropdown.h"
+#include "Interaction/UIScrollView.h"
+#include "Interaction/UIToggle.h"
+
+void UDreamDropdown::CollectParts(TArray<FDreamControlPart>& OutParts)
+{
+	OutParts.Emplace(TEXT("Face"), FaceNode);
+	OutParts.Emplace(TEXT("Caption"), CaptionNode);
+	OutParts.Emplace(TEXT("ListRoot"), ListNode);
+	OutParts.Emplace(TEXT("ItemTemplate"), ItemTemplateNode);
+	// The glyph is scenery: a template that draws its own arrow, or none, is still a dropdown.
+	OutParts.Emplace(TEXT("Arrow"), ArrowNode, /*bRequired*/false);
+}
+
+void UDreamDropdown::RealizeBuiltIn()
+{
+	using namespace DreamUI;
+
+	// The shape UUIDropdown reads, and nothing else. CreateListItems duplicates the template under
+	// the template's PARENT and derives the list's height from that column, so the column carries
+	// the vertical box and the template is its only authored child -- inactive, never drawn, purely
+	// the thing rows are copied from. Show() takes care of placing and animating ListRoot; here it
+	// only has to exist, sized, and asleep.
+	Realize(this,
+		Node<UDreamRectBlock>("Face")
+			.Stretch()
+			.With<UDreamLayoutContainerOverlay>()
+			.Children(
+				DreamUI::Text("Caption")
+					.Visual([](UDreamText& InText)
+					{
+						InText.SetParagraphHorizontalAlignment(EDreamUITextParagraphHorizontalAlign::Left);
+						InText.SetParagraphVerticalAlignment(EDreamUITextParagraphVerticalAlign::Middle);
+					})
+					.Slot([](UDreamPanelSlot& InSlot)
+					{
+						InSlot.SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Fill);
+						InSlot.SetVerticalAlignment(EDreamPanelVerticalAlignment::Fill);
+						InSlot.SetPadding(FMargin(10.0f, 0.0f, 24.0f, 0.0f));
+					}),
+				DreamUI::Text("Arrow")
+					.Visual([](UDreamText& InText)
+					{
+						InText.SetText(FText::AsCultureInvariant(TEXT("▼")));
+						InText.SetParagraphHorizontalAlignment(EDreamUITextParagraphHorizontalAlign::Center);
+						InText.SetParagraphVerticalAlignment(EDreamUITextParagraphVerticalAlign::Middle);
+					})
+					.Slot([](UDreamPanelSlot& InSlot)
+					{
+						InSlot.SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Right);
+						InSlot.SetVerticalAlignment(EDreamPanelVerticalAlignment::Fill);
+						InSlot.SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+					}),
+				Node<UDreamRectBlock>("ListRoot")
+					// POINT anchors, deliberately: the list is inactive between opens, and an
+					// inactive widget's stretched axis never re-arranges -- its cached width is
+					// stale (zero, after an elevation round-trip), and Elevate pins whatever it
+					// finds. Absolute sizes have no cache to go stale; the open handler writes
+					// the face's live width in.
+					.Anchors(FVector2D(0.5, 0.0), FVector2D(0.5, 0.0))
+					// A popup, the way UMG's combo list is: it stays in the tree so Show() can
+					// position it against the face, but layout must not see it -- an Auto-sized row
+					// otherwise grows by the list's height the moment it opens and shoves the rest
+					// of the screen down.
+					.Self([](UDreamWidget& InList)
+					{
+						InList.SetIgnoreLayout(true);
+						// The viewport of the scroll below; without the clip, rows past the visible
+						// count draw over whatever is under the list.
+						InList.SetClipping(EDreamWidgetClipping::ClipToBounds);
+					})
+					// Vertical only, explicitly: the behaviour ships with BOTH axes on, and a
+					// zero-config scroll view drifts horizontally the first time a drag lands.
+					.With<UUIScrollView>([](UUIScrollView& InScroll)
+					{
+						InScroll.SetHorizontal(false);
+						InScroll.SetVertical(true);
+					})
+					.Children(
+						Widget("Column")
+							// Top-anchored, stretch-X, its HEIGHT authored per open: the column is
+							// the scrolled content, so it must be as tall as ALL rows while the
+							// list shows only the visible count. Stretch would pin it to the list.
+							.Anchors(FVector2D(0.0, 1.0), FVector2D(1.0, 1.0))
+							.Self([](UDreamWidget& InColumn)
+							{
+								InColumn.SetPivot(FVector2D(0.5, 1.0));
+								// The DELTA, not the width: SetWidth(0) on a stretched axis
+								// computes a delta against the parent's span AT THIS MOMENT --
+								// still the default 100 here -- and bakes -100 in forever (the
+								// measured symptom: a 300-wide column in a 400-wide list). A
+								// zero delta says "exactly the span", whenever it is decided.
+								InColumn.SetAnchoredPositionAndSizeDelta(FVector2D::ZeroVector, FVector2D::ZeroVector);
+							})
+							.With<UDreamLayoutContainerVerticalBox>()
+							.Children(
+								Node<UDreamRectBlock>("ItemTemplate")
+									.With<UDreamLayoutContainerOverlay>()
+									.With<UUIToggle>()
+									.With<UUIDropdownItemComponent>()
+									.Children(
+										DreamUI::Text("ItemLabel")
+											.Visual([](UDreamText& InText)
+											{
+												InText.SetParagraphHorizontalAlignment(EDreamUITextParagraphHorizontalAlign::Left);
+												InText.SetParagraphVerticalAlignment(EDreamUITextParagraphVerticalAlign::Middle);
+											})
+											.Slot([](UDreamPanelSlot& InSlot)
+											{
+												InSlot.SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Fill);
+												InSlot.SetVerticalAlignment(EDreamPanelVerticalAlignment::Fill);
+												InSlot.SetPadding(FMargin(10.0f, 0.0f, 24.0f, 0.0f));
+											}),
+										// The per-option picture. Asleep unless OptionIcons names one for
+										// this row, which is why it can sit in every row's template
+										// and cost a dropdown that has no icons nothing but a node.
+										Node<UDreamRectBlock>("ItemIcon")
+											.Self([](UDreamWidget& InIcon) { InIcon.SetWidgetActive(false); })
+											.Slot([](UDreamPanelSlot& InSlot)
+											{
+												InSlot.SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Left);
+												InSlot.SetVerticalAlignment(EDreamPanelVerticalAlignment::Center);
+												InSlot.SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+											}),
+										DreamUI::Text("ItemCheck")
+											.Visual([](UDreamText& InText)
+											{
+												InText.SetText(FText::AsCultureInvariant(TEXT("✓")));
+											})
+											.Slot([](UDreamPanelSlot& InSlot)
+											{
+												InSlot.SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Right);
+												InSlot.SetVerticalAlignment(EDreamPanelVerticalAlignment::Center);
+												InSlot.SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+											}))))));
+}
+
+void UDreamDropdown::WireParts()
+{
+	DropdownBehaviour = EnsureComponent<UUIDropdown>(FaceNode);
+	if (DropdownBehaviour == nullptr || FaceNode == nullptr)
+	{
+		return;
+	}
+	DropdownBehaviour->SetTransitionTarget(FaceNode->GetVisual());
+	// The left mouse button alone opens it, as it alone opens UMG's combo box: SComboButton is an
+	// SButton, which answers no other. The behaviour answers every button unless told; a touch and a
+	// gamepad's accept are not mouse buttons and always count.
+	DropdownBehaviour->SetAcceptedMouseButtons(1 << static_cast<int32>(EDreamUIMouseButtonType::Left));
+	// The face draws one picture per state from here on, and the CAPTION is its foreground -- the
+	// one label in this family a control actually owns, so a style that wants the text to change
+	// with the pointer has somewhere to say so. The list and its rows are not part of this: they are
+	// a separate surface with a separate style, and the face's state says nothing about them.
+	UseStateFaces(DropdownBehaviour, FaceNode, CaptionNode);
+	DropdownBehaviour->SetListRoot(ListNode);
+	DropdownBehaviour->SetTabCommitsHighlightedRow(bTabCommitsHighlightedRow);
+	if (UUIScrollView* Scroll = ListNode != nullptr ? ListNode->GetComponent<UUIScrollView>() : nullptr)
+	{
+		Scroll->SetContent(FindPart(TEXT("Column")));
+	}
+	DropdownBehaviour->SetCaptionText(CaptionNode != nullptr ? Cast<UDreamText>(CaptionNode->GetVisual()) : nullptr);
+
+	if (ItemTemplateNode != nullptr)
+	{
+		// The row template's own parts, named as everything else is. FindPart stops at nested
+		// instances but descends plain nodes, so these resolve wherever inside the template a
+		// tree's author put them.
+		UUIDropdownItemComponent* Item = EnsureComponent<UUIDropdownItemComponent>(ItemTemplateNode);
+		UUIToggle* ItemToggle = EnsureComponent<UUIToggle>(ItemTemplateNode);
+		UDreamWidget* Check = FindPart(TEXT("ItemCheck"));
+		if (UDreamWidget* ItemLabel = FindPart(TEXT("ItemLabel")))
+		{
+			if (Item != nullptr)
+			{
+				Item->SetText(Cast<UDreamText>(ItemLabel->GetVisual()));
+			}
+		}
+		if (Item != nullptr)
+		{
+			Item->SetToggle(ItemToggle);
+		}
+		if (ItemToggle != nullptr && Check != nullptr)
+		{
+			// The row's own pair of the library's recurring arrangement: hover tints the row, the
+			// selection mark is its own visual.
+			ItemToggle->SetTransitionTarget(ItemTemplateNode->GetVisual());
+			ItemToggle->SetToggleTransitionTarget(Check->GetVisual());
+		}
+		DropdownBehaviour->SetItemTemplate(Item);
+		// The template is the thing rows are copied from, not a row.
+		ItemTemplateNode->SetWidgetActive(false);
+	}
+	// Asleep until Show(); Show() wakes it, positions it and fades it in.
+	if (ListNode != nullptr)
+	{
+		ListNode->SetWidgetActive(false);
+	}
+	// The behaviour makes the rows (it owns the list's lifetime), and this is the seam it leaves for
+	// whoever placed it: one call per created row, with the row widget. Everything this control adds
+	// on top of a row -- an authored template inside it, and the consumer's event -- hangs here.
+	DropdownBehaviour->SetItemCustomDataFunction(
+		[this](int InIndex, UUIDropdownItemComponent*, UDreamWidget* InItem)
+		{
+			if (!IsValid(InItem))
+			{
+				return;
+			}
+			if (ItemTemplateClass != nullptr && GetWorld() != nullptr)
+			{
+				bool bHasAuthoredContent = false;
+				if (UDreamUserWidget* Content = CreateDreamWidget(GetWorld(), ItemTemplateClass, InItem))
+				{
+					bHasAuthoredContent = true;
+					Content->SetDisplayName(TEXT("ItemContent"));
+					if (UDreamPanelSlot* ContentSlot = Content->GetPanelSlot())
+					{
+						ContentSlot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Fill);
+						ContentSlot->SetVerticalAlignment(EDreamPanelVerticalAlignment::Fill);
+					}
+				}
+				// The stock label and the supplied content are two answers to what is on this row --
+				// the same rule the content slots follow, and the same one the list's rows follow.
+				// Gated on the content EXISTING rather than on having meant to make it: instancing
+				// can fail (an abstract class, a class that would be its own template), and a row that
+				// answered "a template drew this one" while holding nothing is a blank line in the
+				// list. UDreamListViewBase::BindRow decides the same question the same way.
+				if (bHasAuthoredContent)
+				{
+					if (UDreamWidget* ItemLabel = InItem->FindChildByDisplayName(TEXT("ItemLabel"), true))
+					{
+						ItemLabel->SetWidgetActive(false);
+					}
+				}
+			}
+			// The per-option picture, before the consumer's hook: a handler that wants to overrule it
+			// should see it already placed rather than have it written over the top afterwards.
+			if (UDreamWidget* IconNode = InItem->FindChildByDisplayName(TEXT("ItemIcon"), true))
+			{
+				UObject* Icon = OptionIcons.IsValidIndex(InIndex) ? OptionIcons[InIndex].Get() : nullptr;
+				IconNode->SetWidgetActive(Icon != nullptr);
+				if (Icon != nullptr)
+				{
+					// Through the family's own brush road, so an icon is a sprite or a texture by
+					// exactly the rule every other face in this library follows -- and so an icon
+					// inherits the item's corner radius rather than needing one of its own.
+					FDreamUIFaceBrush IconBrush;
+					IconBrush.Image = Icon;
+					SkinFace(IconNode, IconBrush);
+					const FDreamDropdownStyle& IconStyle = ResolveStyle(Style, &UDreamUIStyleSheet::DropdownStyle);
+					SizeFace(IconNode, FVector2D(IconStyle.ItemHeight * 0.6, IconStyle.ItemHeight * 0.6));
+				}
+			}
+			OnItemGeneratedNative.Broadcast(InIndex, InItem);
+			OnItemGenerated.Broadcast(InIndex, InItem);
+		});
+	DropdownBehaviour->GetOnValueChangedEvent().AddUObject(this, &UDreamDropdown::HandleValueChanged);
+	// The list is a child of the face for positioning and a citizen of the popup layer for
+	// everything else: Show anchors it against the face, this control sizes it there, then the
+	// behaviour pushes it on the layer, which lifts it to the screen root with its world position
+	// kept -- the UMG menu-stack arrangement -- so an ancestor's clip cannot cut it and an ancestor's
+	// layout never counts it. The placement below keeps it under the face while it is up; it fades
+	// out where it is when it closes, and comes home once it is out of sight.
+	DropdownBehaviour->GetOnListVisibilityChangedEvent().AddUObject(this, &UDreamDropdown::HandleListVisibilityChanged);
+	DropdownBehaviour->GetOnListPutAwayEvent().AddUObject(this, &UDreamDropdown::HandleListPutAway);
+	DropdownBehaviour->SetListPlacement(FDreamPopupPlaceDelegate::CreateUObject(this, &UDreamDropdown::PlaceOpenList));
+}
+
+void UDreamDropdown::OnPartsReady()
+{
+	// The options and the selection are DATA, and live outside ApplyStyle -- which is why
+	// PostEditChangeProperty has to call this alongside the style push rather than relying on it.
+	// Either order works against the caption: the style push only tints that text, never writes it.
+	PushOptions();
+}
+
+void UDreamDropdown::ApplyStyle()
+{
+	const FDreamDropdownStyle& Active = ResolveStyle(Style, &UDreamUIStyleSheet::DropdownStyle);
+	ShapeFace(FaceNode, Active.CornerRadius);
+	ShapeFace(ListNode, Active.CornerRadius);
+	SkinFace(ListNode, Active.ListBrush);
+
+	auto TintText = [&Active](UDreamWidget* InNode, const FColor& InColor)
+	{
+		if (UDreamText* TextVisual = InNode != nullptr ? Cast<UDreamText>(InNode->GetVisual()) : nullptr)
+		{
+			TextVisual->SetColor(InColor);
+			TextVisual->SetFontSize(Active.FontSize);
+		}
+	};
+	TintText(CaptionNode, Active.TextColor);
+	TintText(ArrowNode, Active.ArrowColor);
+	if (UDreamPanelSlot* CaptionSlot = CaptionNode != nullptr ? CaptionNode->GetPanelSlot() : nullptr)
+	{
+		// UMG's ContentPadding, and the same number the realize call used to hard-code: what holds
+		// the caption off the face's edges is a style decision the moment a project has a face that
+		// is a different width, or no arrow to clear.
+		CaptionSlot->SetPadding(Active.ContentPadding);
+	}
+	// AFTER the caption's own colour, and that order is the whole rule: TextColor is what a caption
+	// wears while the style says nothing about states, and the per-state foreground -- when a style
+	// ticks it on -- is what writes over it, here and again on every state the face enters. Pushed
+	// last so the two never disagree about which of them landed most recently.
+	//
+	// One picture per state where there used to be one picture tinted five ways, falling back to
+	// FaceBrush for every state that states none -- which is every state in every style that exists.
+	PushStateFaces(Active.StateFaces, Active.FaceBrush);
+	if (ArrowNode != nullptr)
+	{
+		// UMG's HasDownArrow: a combo box drawn without its glyph, for a face that says "open me"
+		// some other way. The node stays in the tree either way, so turning it back on costs nothing
+		// and a template that drew its own arrow is unaffected (it has no node of this name).
+		ArrowNode->SetWidgetActive(bHasDownArrow);
+	}
+
+	if (UDreamVisual* ListVisual = ListNode != nullptr ? ListNode->GetVisual() : nullptr)
+	{
+		ListVisual->SetColor(Active.ListBackground);
+	}
+	if (!bListElevated)
+	{
+		ApplyListRestingGeometry(Active);
+	}
+
+	// The template AND every row already built from it. Re-styling only the template was correct
+	// exactly once -- at initialize, before any row existed -- because rows are rebuilt from it on
+	// every options push; but a RUNTIME restyle does not push options, so an open list (or a closed
+	// one holding last open's rows) kept the old colours until the next SetOptions. The rows are
+	// duplicates, so the same push has to reach each of them.
+	PushItemStyle(ItemTemplateNode, Active);
+	for (UDreamWidget* Row : GetItemRows())
+	{
+		PushItemStyle(Row, Active);
+	}
+
+	if (DropdownBehaviour != nullptr)
+	{
+		PushSelectableState(DropdownBehaviour, Active.FaceNormal, Active.FaceHovered, Active.FacePressed,
+			Active.FaceDisabled, Active.FaceFocused, Active.TransitionDuration);
+		DropdownBehaviour->SetMaxHeight(MaxVisibleItems * Active.ItemHeight);
+	}
+	SizeControlHeight(Active.Height);
+}
+
+TArray<UDreamWidget*> UDreamDropdown::GetItemRows() const
+{
+	TArray<UDreamWidget*> Rows;
+	if (ListNode == nullptr)
+	{
+		return Rows;
+	}
+	// The rows the behaviour duplicated, which live beside the template in the scrolled column. Found
+	// by walking rather than asked of UUIDropdown: the behaviour keeps its copies as item COMPONENTS
+	// and the control's business here is with the widgets.
+	for (UDreamWidget* Child : ListNode->GetChildren())
+	{
+		if (Child == nullptr || Child->GetDisplayName() != TEXT("Column"))
+		{
+			continue;
+		}
+		for (UDreamWidget* Row : Child->GetChildren())
+		{
+			if (IsValid(Row) && Row != ItemTemplateNode)
+			{
+				Rows.Add(Row);
+			}
+		}
+	}
+	return Rows;
+}
+
+void UDreamDropdown::PushItemStyle(UDreamWidget* InItem, const FDreamDropdownStyle& InActive)
+{
+	if (!IsValid(InItem))
+	{
+		return;
+	}
+	SkinFace(InItem, InActive.ItemBrush);
+	// A rect block states no size of its own; the authored height feeds the column's desired-size
+	// fallback, and the duplicated rows inherit the slot snapshot.
+	InItem->SetHeight(InActive.ItemHeight);
+	for (UDreamWidget* Child : InItem->GetChildren())
+	{
+		if (Child == nullptr)
+		{
+			continue;
+		}
+		if (Child->GetDisplayName() == TEXT("ItemLabel"))
+		{
+			if (UDreamText* LabelText = Cast<UDreamText>(Child->GetVisual()))
+			{
+				LabelText->SetColor(InActive.TextColor);
+				LabelText->SetFontSize(InActive.FontSize);
+			}
+		}
+		else if (Child->GetDisplayName() == TEXT("ItemCheck"))
+		{
+			if (UDreamText* CheckText = Cast<UDreamText>(Child->GetVisual()))
+			{
+				// Colour comes from the toggle's checked transition; only the glyph size is style.
+				CheckText->SetFontSize(InActive.FontSize);
+			}
+		}
+	}
+	if (UUIToggle* ItemToggle = InItem->GetComponent<UUIToggle>())
+	{
+		// All five states and the speed, rather than the three pointer colours the rows used to get:
+		// the two left out were a flat grey belonging to no theme and focus visuals that ship OFF, so
+		// navigating an open list with a pad or the arrow keys lit nothing up at all. The check mark's
+		// own pair (On/Off) is a different transition and stays beside it.
+		PushSelectableState(ItemToggle, InActive.ListBackground, InActive.ItemHovered, InActive.FacePressed,
+			InActive.ItemDisabled, InActive.ItemFocused, InActive.TransitionDuration);
+		ItemToggle->SetOnColor(InActive.CheckColor);
+		ItemToggle->SetOffColor(FColor(InActive.CheckColor.R, InActive.CheckColor.G, InActive.CheckColor.B, 0));
+	}
+}
+
+int32 UDreamDropdown::GetSelectedIndex() const
+{
+	return DropdownBehaviour != nullptr ? DropdownBehaviour->GetValue() : SelectedIndex;
+}
+
+void UDreamDropdown::SetSelectedIndex(int32 InIndex)
+{
+	SelectedIndex = InIndex;
+	if (DropdownBehaviour != nullptr)
+	{
+		DropdownBehaviour->SetValue(InIndex);
+	}
+}
+
+void UDreamDropdown::SetOptions(const TArray<FText>& InOptions)
+{
+	Options = InOptions;
+	PushOptions();
+}
+
+void UDreamDropdown::SetStyle(const FDreamDropdownStyle& InStyle)
+{
+	Style = InStyle;
+	ApplyStyle();
+}
+
+void UDreamDropdown::SetItemTemplateClass(TSubclassOf<UDreamUserWidget> InItemTemplateClass)
+{
+	if (ItemTemplateClass == InItemTemplateClass)
+	{
+		return;
+	}
+	ItemTemplateClass = InItemTemplateClass;
+	// The rows are built from the template, so a new one is a rebuild rather than a restyle -- and
+	// the push is what re-decorates whatever the rebuild produced.
+	PushOptions();
+	ApplyStyle();
+}
+
+void UDreamDropdown::AddOption(const FText& InOption)
+{
+	Options.Add(InOption);
+	PushOptions();
+}
+
+bool UDreamDropdown::RemoveOption(const FText& InOption)
+{
+	const int32 Index = FindOptionIndex(InOption);
+	if (Index == INDEX_NONE)
+	{
+		return false;
+	}
+	Options.RemoveAt(Index);
+	// The icons are index-matched to the options, so removing one without removing its picture would
+	// slide every later option's icon one place up.
+	if (OptionIcons.IsValidIndex(Index))
+	{
+		OptionIcons.RemoveAt(Index);
+	}
+	PushOptions();
+	return true;
+}
+
+void UDreamDropdown::ClearOptions()
+{
+	Options.Reset();
+	OptionIcons.Reset();
+	// Not ClearSelection: an empty list has nothing to be selected IN, and the push below writes the
+	// selection through to a behaviour that now holds no options. What a caller wanting "no options
+	// and no selection" says is this followed by ClearSelection, which is what UMG's pair does too.
+	PushOptions();
+}
+
+int32 UDreamDropdown::FindOptionIndex(const FText& InOption) const
+{
+	for (int32 Index = 0; Index < Options.Num(); ++Index)
+	{
+		// EqualTo, not a string compare: two FTexts are the same option when they mean the same
+		// thing, and a localized option's string depends on the culture the game is running in.
+		if (Options[Index].EqualTo(InOption))
+		{
+			return Index;
+		}
+	}
+	return INDEX_NONE;
+}
+
+FText UDreamDropdown::GetOptionAtIndex(int32 InIndex) const
+{
+	return Options.IsValidIndex(InIndex) ? Options[InIndex] : FText::GetEmpty();
+}
+
+FText UDreamDropdown::GetSelectedOption() const
+{
+	return GetOptionAtIndex(GetSelectedIndex());
+}
+
+void UDreamDropdown::SetSelectedOption(const FText& InOption)
+{
+	const int32 Index = FindOptionIndex(InOption);
+	if (Index != INDEX_NONE)
+	{
+		// An option nobody offers is not a selection to make, and writing INDEX_NONE here would turn
+		// a typo into "clear the selection" -- which is a different call, right below.
+		SetSelectedIndex(Index);
+	}
+}
+
+void UDreamDropdown::ClearSelection()
+{
+	SetSelectedIndex(INDEX_NONE);
+}
+
+void UDreamDropdown::RefreshOptions()
+{
+	// The rows are rebuilt from Options, so this is the call for a caller who edited the array in
+	// place (the designer's road, and a .dui author's) rather than through SetOptions.
+	PushOptions();
+}
+
+void UDreamDropdown::SetHasDownArrow(bool bInHasDownArrow)
+{
+	if (bHasDownArrow == bInHasDownArrow)
+	{
+		return;
+	}
+	bHasDownArrow = bInHasDownArrow;
+	if (ArrowNode != nullptr)
+	{
+		// The one thing it decides, and nothing else: whether that node is awake.
+		ArrowNode->SetWidgetActive(bHasDownArrow);
+	}
+}
+
+void UDreamDropdown::SetTabCommitsHighlightedRow(bool bInTabCommitsHighlightedRow)
+{
+	bTabCommitsHighlightedRow = bInTabCommitsHighlightedRow;
+	if (DropdownBehaviour != nullptr)
+	{
+		DropdownBehaviour->SetTabCommitsHighlightedRow(bTabCommitsHighlightedRow);
+	}
+}
+
+void UDreamDropdown::SetOptionIcons(const TArray<UObject*>& InIcons)
+{
+	OptionIcons.Reset(InIcons.Num());
+	for (UObject* Icon : InIcons)
+	{
+		OptionIcons.Add(Icon);
+	}
+	// The rows are built from the options and decorated from these together, so a new picture list is
+	// a re-push of the list rather than a restyle.
+	PushOptions();
+}
+
+void UDreamDropdown::SetMaxVisibleItems(int32 InMaxVisibleItems)
+{
+	const int32 Clamped = FMath::Max(1, InMaxVisibleItems);
+	if (MaxVisibleItems == Clamped)
+	{
+		return;
+	}
+	MaxVisibleItems = Clamped;
+	// The cap is spent in the style push, where a row COUNT becomes the open list's pixel height --
+	// so writing the number without re-pushing left a list that still opened at the old height.
+	ApplyStyle();
+}
+
+void UDreamDropdown::PushOptions()
+{
+	if (DropdownBehaviour == nullptr)
+	{
+		return;
+	}
+	TArray<FUIDropdownOptionData> Data;
+	Data.Reserve(Options.Num());
+	for (const FText& Option : Options)
+	{
+		FUIDropdownOptionData& Entry = Data.AddDefaulted_GetRef();
+		Entry.Text = Option;
+	}
+	// An open list has its rows rebuilt inside this call, so it never offers a row for an option that
+	// is gone.
+	DropdownBehaviour->SetOptions(Data);
+	DropdownBehaviour->SetValueWithoutNotify(SelectedIndex);
+	const UDreamUIPopupLayer* Popup = bIsListOpen && ListNode != nullptr ? UDreamUIPopupLayer::Get(this) : nullptr;
+	if (Popup != nullptr && Popup->IsOpen(ListNode))
+	{
+		// And the list holding them is still the size it was given for the rows it had: re-placed now,
+		// where it hangs, rather than at the next frame's placement. Not while the list is still opening
+		// -- that open has yet to place it, against these same rows, and is not up on the layer yet.
+		PlaceOpenList(ListNode);
+	}
+}
+
+#if WITH_EDITOR
+void UDreamDropdown::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	// The base re-applies the style; the options and the selection live OUTSIDE ApplyStyle, so
+	// without this re-push a details-panel edit of either is silently nothing until the next
+	// initialize. Re-pushing unconditionally is fine: rows rebuild from the template either way.
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	PushOptions();
+	// The behaviour's switch too, for the same reason: it is read by the behaviour, not by a style push.
+	SetTabCommitsHighlightedRow(bTabCommitsHighlightedRow);
+}
+#endif
+
+void UDreamDropdown::HandleListVisibilityChanged(bool bInVisible)
+{
+	// The control's mirror of "is the list up". The behaviour keeps its own flag with no reader, and
+	// this seam is the one moment either side moves -- so mirroring here cannot go stale the way a
+	// flag written by the opener would.
+	bIsListOpen = bInVisible;
+	// Broadcast FIRST and unconditionally -- before the sizing below, and before the behaviour lifts
+	// the list to the popup layer, whether or not there is one to lift it to. This seam fires from the
+	// behaviour's Show and Hide, which is the moment the list opens and closes; a consumer refreshing
+	// its options from OnOpening (the reason UMG's combo box has the event) must be heard before the
+	// rows are placed.
+	if (bInVisible)
+	{
+		OnOpeningNative.Broadcast();
+		OnOpening.Broadcast();
+	}
+	else
+	{
+		OnClosedNative.Broadcast();
+		OnClosed.Broadcast();
+	}
+
+	if (bInVisible && bIsListOpen)
+	{
+		// Sized where it hangs, before the behaviour lifts it -- which pins the size it finds.
+		PrepareOpenList();
+	}
+	// A close leaves the list where it is: it fades out there, still lifted, and HandleListPutAway
+	// puts the resting scheme back once the behaviour has brought it home.
+}
+
+void UDreamDropdown::PrepareOpenList()
+{
+	if (ListNode == nullptr)
+	{
+		return;
+	}
+	// The control owns every height in the open list, because nothing else can. The list is
+	// exactly visible-rows tall (past MaxVisibleItems the rest scroll -- the scroll view only
+	// engages when the column outgrows it); the column is all-rows tall, the scrolled content.
+	const FDreamDropdownStyle& Active = ResolveStyle(Style, &UDreamUIStyleSheet::DropdownStyle);
+	const int32 RowCount = FMath::Max(1, Options.Num());
+	const int32 VisibleRows = FMath::Min(RowCount, FMath::Max(1, MaxVisibleItems));
+	// The SCHEME first: Show()'s automatic placement thinks in the preset Blueprint's terms and
+	// rewrites the pivot (measured: top-pivot 0.5,1) -- under which our centre-pivot position
+	// maths hangs the list a full height below the face. Re-assert anchors and pivot, then
+	// write this open's numbers over the resting ones.
+	ApplyListRestingGeometry(Active);
+	// Width explicitly, each open: the face is the one measurement that is always live.
+	const float OpenHeight = VisibleRows * Active.ItemHeight;
+	const float OpenWidth = FaceNode != nullptr ? static_cast<float>(FaceNode->GetWidth()) : static_cast<float>(ListNode->GetWidth());
+	ListNode->SetAnchoredPositionAndSizeDelta(
+		FVector2D(0.0, -OpenHeight * 0.5), FVector2D(OpenWidth, OpenHeight));
+	SizeOpenColumn(Active);
+}
+
+void UDreamDropdown::SizeOpenColumn(const FDreamDropdownStyle& InActive)
+{
+	// The rows go through their SLOTS, not through authored heights: a row is an overlay whose
+	// Auto measure is its TEXT's line height -- 19.7 for the default font, the measured symptom,
+	// and no authored number ever wins against a content measure. Fill does: the column is
+	// exactly rows*ItemHeight tall, so equal fill weights hand every row exactly ItemHeight.
+	// Every setter here changes nothing when handed what is already there, so a placement run
+	// on every frame costs no layout.
+	const int32 RowCount = FMath::Max(1, Options.Num());
+	for (UDreamWidget* Child : ListNode->GetChildren())
+	{
+		if (Child == nullptr || Child->GetDisplayName() != TEXT("Column"))
+		{
+			continue;
+		}
+		Child->SetHeight(RowCount * InActive.ItemHeight);
+		for (UDreamWidget* Row : Child->GetChildren())
+		{
+			if (Row == nullptr || Row == ItemTemplateNode)
+			{
+				continue;
+			}
+			if (UDreamPanelSlot* RowSlot = Row->GetPanelSlot())
+			{
+				RowSlot->SetSizeRule(EDreamPanelSizeRule::Fill);
+				RowSlot->SetFillWeight(1.0f);
+			}
+		}
+	}
+}
+
+void UDreamDropdown::PlaceOpenList(UDreamWidget* InList)
+{
+	if (InList == nullptr || InList != ListNode || FaceNode == nullptr)
+	{
+		return;
+	}
+	const UDreamWidget* Plane = InList->GetParent();
+	if (!IsValid(Plane))
+	{
+		return;
+	}
+	bListElevated = true;
+	const FDreamDropdownStyle& Active = ResolveStyle(Style, &UDreamUIStyleSheet::DropdownStyle);
+	const int32 RowCount = FMath::Max(1, Options.Num());
+	const int32 VisibleRows = FMath::Min(RowCount, FMath::Max(1, MaxVisibleItems));
+	const float OpenHeight = VisibleRows * Active.ItemHeight;
+	// The lift pinned the list to a point of the screen root with a centre pivot (the resting scheme's), so its
+	// size is its width and height, and its anchored position is where its centre sits in the root's plane.
+	InList->SetWidth(static_cast<float>(FaceNode->GetWidth()));
+	InList->SetHeight(OpenHeight);
+	SizeOpenColumn(Active);
+	// Centred under the face's bottom edge, as the resting scheme hangs it: the face's own bottom-centre, half the
+	// list's height lower, carried into the plane the list was lifted to -- Y across, Z up, as the lift itself maps.
+	const FVector UnderFace(0.0,
+		(FaceNode->GetLocalSpaceLeft() + FaceNode->GetLocalSpaceRight()) * 0.5,
+		FaceNode->GetLocalSpaceBottom() - OpenHeight * 0.5);
+	const FVector InPlane = Plane->GetLayoutWorldTransform().InverseTransformPosition(
+		FaceNode->GetLayoutWorldTransform().TransformPosition(UnderFace));
+	const FVector2D Anchored(InPlane.Y, InPlane.Z);
+	// Only for a real move: the transforms round a little differently from frame to frame, and an exact compare
+	// would lay the list out again on every one of them.
+	if (!InList->GetAnchoredPosition().Equals(Anchored, 0.01))
+	{
+		InList->SetAnchoredPosition(Anchored);
+	}
+}
+
+void UDreamDropdown::HandleListPutAway()
+{
+	bListElevated = false;
+	// The whole resting scheme, not just the numbers: the lift re-anchored the list to a POINT for
+	// the screen root and the trip home reparents plainly, so without this any ApplyStyle before the
+	// next open works against point anchors -- where a zero width delta is a zero WIDTH. The measured
+	// symptom: a 0-wide list on the second open.
+	ApplyListRestingGeometry(ResolveStyle(Style, &UDreamUIStyleSheet::DropdownStyle));
+}
+
+void UDreamDropdown::ApplyListRestingGeometry(const FDreamDropdownStyle& InActive)
+{
+	if (ListNode == nullptr)
+	{
+		return;
+	}
+	// Hanging centred under the face's bottom edge, POINT-anchored on both axes: absolute numbers
+	// only, because the list is inactive between opens and a stretched axis's cached width goes
+	// stale there (see the tree comment). Width is nominal at rest -- the open handler writes the
+	// face's live width; height is a sane resting value the behaviour reads as MaxHeight.
+	const float RestingHeight = MaxVisibleItems * InActive.ItemHeight;
+	ListNode->SetHorizontalAndVerticalAnchorMinMax(FVector2D(0.5, 0.0), FVector2D(0.5, 0.0), false, false);
+	ListNode->SetPivot(FVector2D(0.5, 0.5));
+	ListNode->SetAnchoredPositionAndSizeDelta(
+		FVector2D(0.0, -RestingHeight * 0.5), FVector2D(0.0, RestingHeight));
+}
+
+void UDreamDropdown::HandleValueChanged(int32 InIndex)
+{
+	SelectedIndex = InIndex;
+	OnSelectionChangedNative.Broadcast(InIndex);
+	OnSelectionChanged.Broadcast(InIndex);
+	OnValueChangedBP.Broadcast(InIndex);
+}
+
+// The tag this class answers to in .dui.
+DECLARE_DREAM_GUI_WIDGET("Native", "Dropdown", UDreamDropdown)

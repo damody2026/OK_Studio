@@ -1,0 +1,125 @@
+﻿{
+	"FileVersion": 3,
+	"Version": 100,
+	"VersionName": "1.0.0",
+	"FriendlyName": "DreamGUI",
+	"Description": "DreamGUI - 3D UI System, Event Framework, Widget Blueprints and Designer, Tween Animation. A fork of LGUI/LexUI by Lex Liu (MIT). Platforms: only Win64 is built and run -- the editor and the automation suite, and a packaged Development game once the release gate (BuildPlugin and the packaged text smoke test) has run for this version. Mac, Linux, iOS and Android are listed but have never been compiled; consoles are not in any module's allow list; no dedicated-server target has been built, and the UI manager does not start on a dedicated server. See the Platforms section of README.md.",
+	"Category": "UI",
+	"CreatedBy": "TypeDreamMoon",
+	"CreatedByURL": "https://github.com/TypeDreamMoon",
+	"DocsURL": "https://github.com/TypeDreamMoon/DreamGUI",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/TypeDreamMoon/DreamGUI/issues",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": true,
+	"SupportedTargetPlatforms": [ "Win64", "Mac", "Linux", "IOS", "Android" ],
+	"Installed": false,
+	"Plugins": [
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		},
+		{
+			"Name": "Niagara",
+			"Enabled": true
+		},
+		{
+			"Name": "DreamLoc",
+			"Enabled": true,
+			"Optional": true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "DreamGUIRenderer",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUI",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUIInput",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUIControls",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUIExtensions",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUISamples",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUIEditor",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PreDefault",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ]
+		},
+		{
+			"Name": "DreamGUIK2Nodes",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PreDefault",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ]
+		},
+		{
+			"Name": "DreamGUIPsd",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ]
+		},
+		{
+			"Name": "DreamTween",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUINiagara",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux", "IOS", "Android" ]
+		},
+		{
+			"Name": "DreamGUINiagaraEditor",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ]
+		},
+		{
+			"Name": "DreamGUITests",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	],
+	"LocalizationTargets": [
+		{
+			"Name": "DreamGUI",
+			"LoadingPolicy": "Editor"
+		},
+		{
+			"Name": "DreamGUIPropertyNames",
+			"LoadingPolicy": "PropertyNames"
+		},
+		{
+			"Name": "DreamGUIToolTips",
+			"LoadingPolicy": "ToolTips"
+		}
+	]
+}

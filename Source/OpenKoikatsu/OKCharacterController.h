@@ -803,6 +803,8 @@ public:
 	TObjectPtr<USizeBox> PreviewSpace;
 	/** FPS / ms at the preview's top right; the engine's stat fps sat on top of the right column's sliders. */
 	UPROPERTY() TObjectPtr<UTextBlock> FpsText;
+	// The DreamGUI screen that shows these UMG controls (OKReaderScreen.h); null keeps the UMG controls on screen.
+	UPROPERTY() TObjectPtr<class UOKReaderScreen> ReaderScreen;
 	double FpsShownAt = 0.;
 	void TickFpsText();
 	bool bModelLayout = false;

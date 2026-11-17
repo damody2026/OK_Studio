@@ -1,0 +1,147 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Core/DreamWidgetEachBinding.h"
+#include "Core/DreamWidgetPropertyBinding.h"
+#include "Text/DreamUIAst.h"
+#include "Text/DreamUIDiagnostics.h"
+
+class UDreamWidgetTree;
+
+/** One localizable text a build produced: what a localization tool lists for translators. */
+struct FDreamUILocalizableText
+{
+	/** The FText key: `<node id>.<property>` (behaviours and slots with their discriminator), or the `@key("...")`. */
+	FString Key;
+	/** The source text, as the FText got it. */
+	FString Source;
+	/** The node's ids from below the root down, joined with '/'; the root's own text has the root's id. */
+	FString NodePath;
+	/** The node's type as written: `Text`, `Button`, an alias. */
+	FString NodeType;
+	/** The key this text had before the node's `(was: OldId)` rename; empty when there is none or `@key` names it. */
+	FString RenamedFrom;
+	/** `@note("…")`: what the text is for, for its translator. */
+	FString Note;
+	/** `@max(n)`: the longest a translation may be, in display width; -1 for no limit. */
+	int32 Max = -1;
+	/** Where the string is written in the .dui. */
+	FDreamUISourceLocation Location;
+};
+
+/** Every localizable text of one build, under the namespace they share. */
+struct FDreamUILocalization
+{
+	/** The `class` line's path, or the source name for a file without one. */
+	FString Namespace;
+	/** In the order the build met them; one per key -- a later write of the same key (a node over its style) replaces the earlier. */
+	TArray<FDreamUILocalizableText> Texts;
+};
+
+/**
+ * AST in, widget hierarchy out -- the first stage that touches reflection, and the only one that
+ * decides what a value MEANS.
+ *
+ * The parser deliberately records shape and nothing else (see DreamUIAst.h), so `Left` is still an
+ * identifier and `(400, 240)` is still a two-element tuple when they arrive here. Which of those is
+ * an EDreamWidgetVisibility and which is an FVector2D is answered by the FProperty they land on, and
+ * that answer only exists at this point in the pipeline. Everything upstream stays free of the
+ * runtime's type list, which is what lets the parser's tests be strings in and data out.
+ *
+ * The tree that comes back is an AUTHORING tree, not a live hierarchy: nothing is registered, no
+ * behaviour has been given Awake, and no widget has a world. That is what the compiler wants -- it
+ * hands the result to UDreamWidgetGeneratedClass as a class template, from which every instance is
+ * made. A caller that wants a living hierarchy instances the class; it does not register this.
+ *
+ * The bindings come out ALONGSIDE the tree rather than on it, because they do not live on a tree:
+ * FDreamWidgetPropertyBinding names its widget by variable name and its destination by setter, and
+ * both belong to the generated class. Returning them separately is what keeps the compiler from
+ * having to walk the tree a second time inventing the same names this pass already computed.
+ */
+struct DREAMGUI_API FDreamUITextBuilder
+{
+	/**
+	 * Build InAst into a tree owned by InOuter, reporting into OutDiagnostics and appending every
+	 * `<-` binding to OutBindings.
+	 *
+	 * Returns null when this call raised an error, and only then: a bag that already carried the
+	 * parser's errors does not, by itself, make the build a failure. Warnings never fail a build --
+	 * an unexpanded `for` is a warning, and the rest of the file is still worth having.
+	 *
+	 * OutBindings is appended to, not reset, so a caller assembling several sources into one class
+	 * does not have to keep its own accumulator.
+	 */
+	/* OutEachBindings: null skips `each` collection and those blocks degrade to the old warning. */
+	/* OutLocalization: when given, reset and filled with every localizable text the build wrote. */
+	static UDreamWidgetTree* Build(const FDreamUIAst& InAst, UObject* InOuter,
+		FDreamUIDiagnosticBag& OutDiagnostics, TArray<FDreamWidgetPropertyBinding>& OutBindings,
+		TArray<FDreamWidgetEventBinding>* OutEventBindings = nullptr,
+		TArray<FDreamWidgetEachBinding>* OutEachBindings = nullptr,
+		FDreamUILocalization* OutLocalization = nullptr);
+
+	/**
+	 * The UDreamVisual class a built-in tag creates, and whether the tag is one at all.
+	 *
+	 * Two answers rather than one because `Widget` is a known tag whose visual class is null -- a
+	 * plain widget with no visual is the ordinary container, not a failure to resolve. Exposed so the
+	 * editor's completion and the write-back patcher read the table rather than each keeping a copy;
+	 * a second copy is how "the editor offered RectBlock and the compiler rejected it" happens.
+	 */
+	static UClass* FindVisualClassForTag(const FString& InTag, bool& bOutIsKnownTag);
+
+	/**
+	 * Every built-in tag and the visual class it creates (null for the plain `Widget`).
+	 *
+	 * Exported for the symbol dump the VSCode extension eats: completion has to offer exactly the
+	 * tags the compiler accepts, and the only way two lists agree forever is for there to be one.
+	 */
+	static void GetVisualTags(TArray<TPair<FString, UClass*>>& OutTags);
+
+	/**
+	 * The class `+ Xxx` names: an alias, a reflected name, or a full object path.
+	 *
+	 * Null when nothing resolves or when what resolved is abstract, deprecated, or not something a
+	 * widget can carry. The caller raises UnknownBehaviourClass; this reports no diagnostics of its
+	 * own so the editor can use it as a plain "is this spelling valid" probe.
+	 */
+	static UClass* ResolveComponentClass(const FString& InClassName);
+
+	/**
+	 * Whether a property can be given a value from text at all, and why not when it cannot.
+	 *
+	 * Exported because three places have to agree about it and only one of them can be right: the
+	 * builder refuses the write, the designer greys the row, and the write-back skips the property
+	 * when it walks the tree. Two of those had copied it. A copy that drifts does not fail loudly --
+	 * it produces a panel that offers an edit the compiler will drop, which is the exact silent
+	 * failure this pipeline exists to remove.
+	 *
+	 * OutReason is a sentence fragment meant to follow "because", so a caller can put it in a
+	 * compile error, a tooltip, or a log line without rewording it.
+	 */
+	static bool IsWritableFromText(const FProperty* InProperty, FString& OutReason);
+
+	/**
+	 * Whether this object property names a node (the widget, its visual, or a behaviour) rather
+	 * than an asset. Exported for the write-back: a node reference's only .dui spelling is a bare
+	 * node id, which a value printer without the tree cannot produce -- so it must refuse, with
+	 * this exact judge, or it prints the object PATH and poisons the file.
+	 */
+	static bool IsNodeReferenceProperty(const FObjectPropertyBase* InProperty);
+
+	/**
+	 * The class a .dui compiles into when the file itself does not say (`use "Row.dui" as Row` on a file with no
+	 * `class` line): the editor installs the answer -- the Blueprint whose Source File is that file -- since only it
+	 * knows which assets read which sources. Given the RESOLVED path a `use` recorded. Unset (a commandlet with no
+	 * editor module, a test), such an alias reports ComponentAliasUnresolved.
+	 */
+	static TFunction<UClass*(const FString& InResolvedSourcePath)>& SourceClassResolver();
+
+	/**
+	 * The layout container class a node type names (`VerticalBox`, `Overlay`, `SizeBox`, …), or null. Such a node is a
+	 * plain widget carrying that container, and its lines set the container's properties as well as the widget's.
+	 * Exported for completion and the write-back, which must agree with the builder about what is a type.
+	 */
+	static UClass* FindContainerClassForType(const FString& InTypeName);
+};

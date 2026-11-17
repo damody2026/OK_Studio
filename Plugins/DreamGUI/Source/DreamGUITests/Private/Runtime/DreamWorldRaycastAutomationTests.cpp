@@ -1,0 +1,681 @@
+// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
+
+#include "Misc/AutomationTest.h"
+
+#include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Core/Components/DreamVisualEmpty.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamUIManager.h"
+#include "Event/DreamUIInputSubsystem.h"
+#include "DreamUIBPLibrary.h"
+#include "Engine/World.h"
+#include "Event/DreamEventSystem.h"
+#include "Event/DreamPointerEventData.h"
+#include "Event/DreamScreenSpaceRaycaster.h"
+#include "Event/DreamWorldSpaceRaycaster.h"
+#include "GameFramework/Actor.h"
+
+#include "Driver/DreamDriver.h"
+#include "Driver/DreamDriverRig.h"
+#include "Driver/DreamDriverSequence.h"
+#include "Driver/DreamDriverWorldSpace.h"
+#include "DreamWorldRaycastTestTypes.h"
+#include "DreamScopedWorld.h"
+#include "Lifecycle/DreamLifecycleFixtures.h"
+
+/*
+ * What a world-space raycaster answers with, and what a world object does to a pointer.
+ *
+ * The raycaster serves a PLAYER, not a panel: it asks the manager for every world-space root canvas
+ * on its trace channel and hit-tests all of them, so which panels exist is never something it has to
+ * be told. That makes ordering the whole of its answer -- the input module reads element 0 as the
+ * hit -- and ordering across separate canvases can only be distance.
+ *
+ * The other half is what a hit on a wall MEANS, when a wall has no UDreamWidget to dispatch to. For
+ * the panels behind it the answer is occlusion: a world hit carries a distance and no widget, so a wall
+ * in front of a world-space panel takes the pointer off the panel and the click never lands. That is a
+ * complete behaviour rather than a stub, and it is what a trigger volume in front of a UI is actually
+ * for. The wall itself is not left out: the actor that owns the hit primitive, and its components
+ * that implement the pointer interfaces, are handed the pointer's events (UDreamEventSystem::
+ * CallOnWorldTarget*) -- which is how a render-target surface on a mesh is reached at all.
+ */
+
+namespace DreamWorldRaycastTestLocal
+{
+	using DreamTests::FScopedGameWorld;
+
+	USceneComponent* MakeHost(UWorld* World, const FVector& Location)
+	{
+		AActor* Actor = World->SpawnActor<AActor>();
+		if (!Actor)return nullptr;
+		USceneComponent* Root = NewObject<USceneComponent>(Actor, TEXT("Host"));
+		Actor->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Root->SetWorldLocation(Location);
+		return Root;
+	}
+
+	/** A solid box in the world, the thing a pointer is supposed to be stopped by. */
+	UBoxComponent* MakeBlocker(UWorld* World, const FVector& Location, float Extent = 50.0f)
+	{
+		AActor* BlockerActor = World->SpawnActor<AActor>();
+		if (BlockerActor == nullptr)return nullptr;
+		UBoxComponent* Box = NewObject<UBoxComponent>(BlockerActor);
+		Box->SetBoxExtent(FVector(Extent));
+		Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		Box->SetCollisionObjectType(ECC_WorldStatic);
+		Box->SetCollisionResponseToAllChannels(ECR_Block);
+		BlockerActor->SetRootComponent(Box);
+		Box->RegisterComponent();
+		Box->SetWorldLocation(Location);
+		return Box;
+	}
+
+	/**
+	 * A square world-space panel standing at Location, hit-testable and facing the +X ray.
+	 *
+	 * "Facing" is a widget's own local +X: UDreamVisual::LineTraceUIRect brings the ray into widget
+	 * space and requires it to cross the local X=0 plane, then checks the crossing against the rect
+	 * in local Y (left/right) and Z (bottom/top). An unrotated host therefore puts the panel's plane
+	 * across a ray travelling down world +X, which is all a hit needs -- the test is two-sided, so
+	 * which way the panel faces decides what it looks like, not whether it can be clicked.
+	 *
+	 * Order matters here: the canvas has to exist before the visual, because CreateNewVisual only
+	 * enrols the visual with the widget's render canvas if there is one, and a visual that is not
+	 * enrolled is one Raycast never walks over.
+	 */
+	UDreamWidget* MakeWorldPanel(UWorld* World, const FString& Name, const FVector& Location, float Size, UDreamCanvas*& OutCanvas)
+	{
+		OutCanvas = nullptr;
+		USceneComponent* Host = MakeHost(World, Location);
+		if (Host == nullptr)return nullptr;
+		UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(World, Name, nullptr);
+		if (Root == nullptr)return nullptr;
+		Root->SetWidth(Size);
+		Root->SetHeight(Size);
+		OutCanvas = Root->AddComponent<UDreamCanvas>();
+		if (OutCanvas == nullptr)return nullptr;
+		OutCanvas->SetRenderMode(EDreamRenderMode::WorldSpace);
+		UDreamUIBPLibrary::AttachWidgetToSceneComponent(Root, Host);
+		Root->CreateNewVisual<UDreamVisualEmpty>();
+		return Root;
+	}
+
+	/** A raycaster with a known ray, on its own actor so it never traces into the panels' hosts. */
+	UDreamWorldSpaceRaycasterFixedRay* MakeFixedRayRaycaster(UWorld* World)
+	{
+		AActor* Host = World->SpawnActor<AActor>();
+		if (Host == nullptr)return nullptr;
+		UDreamWorldSpaceRaycasterFixedRay* Raycaster = NewObject<UDreamWorldSpaceRaycasterFixedRay>(Host);
+		Raycaster->RegisterComponent();
+		return Raycaster;
+	}
+
+	/**
+	 * An event system this player already has, so EnsureInteractionForPlayer has nothing to spawn.
+	 *
+	 * A bare test world has no player controller and the event system in project settings is a
+	 * content blueprint; letting that path run would make the test depend on content and on a load
+	 * that may log. The raycaster half, which is what these tests are about, is unaffected.
+	 */
+	UDreamEventSystem* PlaceEventSystem(UWorld* World, int32 UserIndex)
+	{
+		AActor* Host = World->SpawnActor<AActor>();
+		if (Host == nullptr)return nullptr;
+		UDreamEventSystem* EventSystem = NewObject<UDreamEventSystem>(Host);
+		EventSystem->SetUserIndex(UserIndex);
+		Host->AddInstanceComponent(EventSystem);
+		EventSystem->RegisterComponent();
+		return EventSystem;
+	}
+
+	int32 CountComponentsOfClass(const AActor* InActor, const UClass* InClass)
+	{
+		if (InActor == nullptr)return 0;
+		int32 Count = 0;
+		for (UActorComponent* Component : InActor->GetComponents())
+		{
+			if (Component != nullptr && Component->IsA(InClass))
+			{
+				++Count;
+			}
+		}
+		return Count;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastHitsWorldCanvasesTest,
+	"DreamGUI.WorldRaycast.HitsWorldCanvasesSortedByDistance",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWorldRaycastHitsWorldCanvasesTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	{
+		return false;
+	}
+	UDreamCanvas* NearCanvas = nullptr;
+	UDreamCanvas* FarCanvas = nullptr;
+	UDreamWidget* Near = MakeWorldPanel(Scope.World, TEXT("Near"), FVector(300.0, 0.0, 0.0), 200.0f, NearCanvas);
+	UDreamWidget* Far = MakeWorldPanel(Scope.World, TEXT("Far"), FVector(800.0, 0.0, 0.0), 200.0f, FarCanvas);
+	if (!TestNotNull(TEXT("The near panel"), Near) || !TestNotNull(TEXT("The far panel"), Far))
+	{
+		return false;
+	}
+	// The fixture's own claim, asserted rather than assumed: a panel whose visual never reached the
+	// canvas is invisible to the hit test for a reason that has nothing to do with the raycaster.
+	if (!TestEqual(TEXT("The near panel's visual is on its canvas"), NearCanvas->GetVisualArray().Num(), 1) ||
+		!TestEqual(TEXT("The far panel's visual is on its canvas"), FarCanvas->GetVisualArray().Num(), 1))
+	{
+		return false;
+	}
+
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
+	if (!TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
+	{
+		return false;
+	}
+
+	FVector RayOrigin = FVector::ZeroVector, RayDirection = FVector::ZeroVector, RayEnd = FVector::ZeroVector;
+	TArray<FDreamUIHitResult> HitArray;
+	Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, HitArray);
+
+	// Two panels, neither of which the raycaster was ever pointed at: it found them by asking the
+	// manager which world-space roots share its trace channel. This is the whole change of shape --
+	// the old raycaster answered for the one canvas on its own actor and nothing else.
+	if (!TestEqual(TEXT("Both panels are hit"), HitArray.Num(), 2))
+	{
+		return false;
+	}
+	TestEqual(TEXT("The nearer one is first"), HitArray[0].Widget.Get(), Near);
+	TestEqual(TEXT("...and the farther one second"), HitArray[1].Widget.Get(), Far);
+	TestTrue(TEXT("The near distance is the panel's own"), FMath::IsNearlyEqual(HitArray[0].Distance, 300.0f, 1.0f));
+	TestTrue(TEXT("...and so is the far one's"), FMath::IsNearlyEqual(HitArray[1].Distance, 800.0f, 1.0f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastTraceChannelFiltersTest,
+	"DreamGUI.WorldRaycast.TraceChannelFilters",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWorldRaycastTraceChannelFiltersTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	{
+		return false;
+	}
+	UDreamCanvas* NearCanvas = nullptr;
+	UDreamCanvas* FarCanvas = nullptr;
+	UDreamWidget* Near = MakeWorldPanel(Scope.World, TEXT("Near"), FVector(300.0, 0.0, 0.0), 200.0f, NearCanvas);
+	UDreamWidget* Far = MakeWorldPanel(Scope.World, TEXT("Far"), FVector(800.0, 0.0, 0.0), 200.0f, FarCanvas);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
+	if (!TestNotNull(TEXT("The near panel"), Near) || !TestNotNull(TEXT("The far panel"), Far)
+		|| !TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
+	{
+		return false;
+	}
+
+	// The trace channel is what divides one pointer's world-space UI from another's -- a motion
+	// controller answering for one set of panels while the mouse answers for a different set. Moving
+	// a panel off the raycaster's channel has to take it out of that raycaster's reach entirely,
+	// rather than merely changing what the engine collision trace would have said about it.
+	FarCanvas->SetTraceChannel(TraceTypeQuery2);
+
+	FVector RayOrigin = FVector::ZeroVector, RayDirection = FVector::ZeroVector, RayEnd = FVector::ZeroVector;
+	TArray<FDreamUIHitResult> HitArray;
+	Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, HitArray);
+	if (!TestEqual(TEXT("Only the panel on the raycaster's channel is hit"), HitArray.Num(), 1))
+	{
+		return false;
+	}
+	TestEqual(TEXT("...and it is the near one"), HitArray[0].Widget.Get(), Near);
+
+	// Follow the raycaster over to the other channel and the answer swaps, which is what makes this
+	// a filter rather than "the far panel stopped working".
+	Raycaster->SetTraceChannel(TraceTypeQuery2);
+	HitArray.Reset();
+	Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, HitArray);
+	if (TestEqual(TEXT("On the other channel, the other panel"), HitArray.Num(), 1))
+	{
+		TestEqual(TEXT("...which is the far one"), HitArray[0].Widget.Get(), Far);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastWorldBlockerOccludesTest,
+	"DreamGUI.WorldRaycast.WorldBlockerOccludesWhenEnabled",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWorldRaycastWorldBlockerOccludesTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	{
+		return false;
+	}
+	UDreamCanvas* PanelCanvas = nullptr;
+	UDreamWidget* Panel = MakeWorldPanel(Scope.World, TEXT("Panel"), FVector(300.0, 0.0, 0.0), 200.0f, PanelCanvas);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
+	if (!TestNotNull(TEXT("A panel"), Panel) || !TestNotNull(TEXT("A raycaster"), Raycaster)
+		|| !TestNotNull(TEXT("A pointer"), EventData))
+	{
+		return false;
+	}
+	// A box 150 units down the ray, half a hundred across: its near face is at 100, in front of the
+	// panel at 300.
+	if (!TestNotNull(TEXT("A blocker between the pointer and the panel"),
+		MakeBlocker(Scope.World, FVector(150.0, 0.0, 0.0))))
+	{
+		return false;
+	}
+
+	FVector RayOrigin = FVector::ZeroVector, RayDirection = FVector::ZeroVector, RayEnd = FVector::ZeroVector;
+	TArray<FDreamUIHitResult> HitArray;
+	// Turned off explicitly, because occlusion is on by default (a world pointer that clicked through
+	// walls reached panels nobody could see, and it is the only road to a render-target surface; the
+	// default is proven in DreamDriverWorldOcclusionAutomationTests). Off, the wall is not consulted.
+	Raycaster->SetOccludeByWorld(false);
+	Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, HitArray);
+	if (TestEqual(TEXT("With occlusion off the wall is not consulted"), HitArray.Num(), 1))
+	{
+		TestEqual(TEXT("...and the panel answers"), HitArray[0].Widget.Get(), Panel);
+	}
+
+	Raycaster->SetOccludeByWorld(true);
+	HitArray.Reset();
+	Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, HitArray);
+	if (!TestEqual(TEXT("With it on, the wall joins the answer"), HitArray.Num(), 2))
+	{
+		return false;
+	}
+	// The contract in one assertion: it is a hit, it is nearer, and it is not a widget. The input
+	// module reads element 0, finds nothing to dispatch to, and the click does not reach the panel.
+	TestNull(TEXT("The nearest hit carries no widget"), HitArray[0].Widget.Get());
+	TestTrue(TEXT("...and its distance is the wall's near face"),
+		FMath::IsNearlyEqual(HitArray[0].Distance, 100.0f, 1.0f));
+	TestEqual(TEXT("The panel is still found, behind it"), HitArray[1].Widget.Get(), Panel);
+
+	// An overlap-only volume is not a wall. A multi trace would have reported it as one, which is how
+	// a trigger meant to detect a player walking through it would have started eating clicks.
+	UBoxComponent* Overlapper = MakeBlocker(Scope.World, FVector(50.0, 0.0, 0.0), 10.0f);
+	if (TestNotNull(TEXT("An overlap-only volume in front of everything"), Overlapper))
+	{
+		Overlapper->SetCollisionResponseToAllChannels(ECR_Overlap);
+		HitArray.Reset();
+		Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, HitArray);
+		if (TestEqual(TEXT("It is not an occluder"), HitArray.Num(), 2))
+		{
+			TestTrue(TEXT("...and the wall behind it still is"),
+				FMath::IsNearlyEqual(HitArray[0].Distance, 100.0f, 1.0f));
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastEnsureInteractionIsIdempotentTest,
+	"DreamGUI.WorldRaycast.EnsureInteractionForPlayerIsIdempotent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWorldRaycastEnsureInteractionIsIdempotentTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world"), Scope.World))
+	{
+		return false;
+	}
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
+	if (!TestNotNull(TEXT("An input subsystem for it"), InputSubsystem))
+	{
+		return false;
+	}
+	if (!TestNotNull(TEXT("An event system this player already has"), PlaceEventSystem(Scope.World, 0)))
+	{
+		return false;
+	}
+
+	// Called on every world-space host's BeginPlay, so "twice" is the ordinary case rather than a
+	// pathological one: two panels in a level means two calls before the first frame is drawn.
+	InputSubsystem->EnsureInteractionForPlayer(0, EDreamInteractionKind::World);
+	InputSubsystem->EnsureInteractionForPlayer(0, EDreamInteractionKind::World);
+
+	AActor* Host = InputSubsystem->GetInteractionHost(0);
+	if (!TestNotNull(TEXT("A host actor was made for player 0"), Host))
+	{
+		return false;
+	}
+	TestTrue(TEXT("...named after the player it speaks for"),
+		Host->GetName().StartsWith(TEXT("DreamInteractionHost_P0")));
+	TestEqual(TEXT("Two calls leave one world raycaster, not two"),
+		CountComponentsOfClass(Host, UDreamWorldSpaceRaycaster::StaticClass()), 1);
+
+	// The other kind shares the host. A player pointing at both a screen UI and a world panel is one
+	// player, so two actors that mean the same thing would be one too many.
+	InputSubsystem->EnsureInteractionForPlayer(0, EDreamInteractionKind::Screen);
+	TestEqual(TEXT("The screen raycaster joins the same host"), InputSubsystem->GetInteractionHost(0), Host);
+	TestEqual(TEXT("...and the host now carries one of each"),
+		CountComponentsOfClass(Host, UDreamScreenSpaceRaycaster::StaticClass()), 1);
+	TestEqual(TEXT("...without a second world one appearing"),
+		CountComponentsOfClass(Host, UDreamWorldSpaceRaycaster::StaticClass()), 1);
+
+	// A second player gets a host of their own, because a raycaster carries exactly one UserIndex.
+	// Their event system is placed by hand for the same reason as the first player's, and because a
+	// non-first player never gets one spawned for them in any case -- two copies of the default actor
+	// would carry the same index and make each player read the other's input.
+	PlaceEventSystem(Scope.World, 1);
+	InputSubsystem->EnsureInteractionForPlayer(1, EDreamInteractionKind::World);
+	AActor* SecondHost = InputSubsystem->GetInteractionHost(1);
+	if (TestNotNull(TEXT("A host actor for player 1"), SecondHost))
+	{
+		TestNotEqual(TEXT("...which is not player 0's"), SecondHost, Host);
+		TestEqual(TEXT("...carrying its own world raycaster"),
+			CountComponentsOfClass(SecondHost, UDreamWorldSpaceRaycaster::StaticClass()), 1);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastAuthoredRaycasterWinsTest,
+	"DreamGUI.WorldRaycast.AnAuthoredRaycasterIsNotDuplicated",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWorldRaycastAuthoredRaycasterWinsTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world"), Scope.World))
+	{
+		return false;
+	}
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
+	if (!TestNotNull(TEXT("An input subsystem for it"), InputSubsystem))
+	{
+		return false;
+	}
+	if (!TestNotNull(TEXT("An event system this player already has"), PlaceEventSystem(Scope.World, 0)))
+	{
+		return false;
+	}
+
+	// Somebody put a world-space raycaster on their own actor -- a pawn, a motion controller -- and
+	// tuned it. Adding a default one beside it would give that player two rays into the same UI, so
+	// the placed one has to be recognised as the answer.
+	AActor* PlacedOn = Scope.World->SpawnActor<AActor>();
+	if (!TestNotNull(TEXT("An actor to place it on"), PlacedOn))
+	{
+		return false;
+	}
+	UDreamWorldSpaceRaycaster* Placed = NewObject<UDreamWorldSpaceRaycaster>(PlacedOn);
+	Placed->SetUserIndex(0);
+	PlacedOn->AddInstanceComponent(Placed);
+	Placed->RegisterComponent();
+	// Enrolled by hand, because registering does not do it here. In a game world a component only
+	// auto-activates on register once its owner is initialized; until then activation waits for
+	// AActor::InitializeComponents. A bare test world never runs InitializeActorsForPlay, so the placed
+	// raycaster would never activate and never reach AllRaycasterArray. In a real level
+	// InitializeComponents activates it before any BeginPlay, which is the state this stands in for.
+	Placed->ActivateRaycaster();
+
+	InputSubsystem->EnsureInteractionForPlayer(0, EDreamInteractionKind::World);
+	TestNull(TEXT("No host is made when the player already has a world raycaster"),
+		InputSubsystem->GetInteractionHost(0));
+
+	// It is the KIND that is matched, not "any raycaster": the same player still needs a screen one.
+	InputSubsystem->EnsureInteractionForPlayer(0, EDreamInteractionKind::Screen);
+	AActor* Host = InputSubsystem->GetInteractionHost(0);
+	if (TestNotNull(TEXT("A host is made for the kind that is missing"), Host))
+	{
+		TestEqual(TEXT("...carrying the screen raycaster"),
+			CountComponentsOfClass(Host, UDreamScreenSpaceRaycaster::StaticClass()), 1);
+		TestEqual(TEXT("...and no world one, which was already answered"),
+			CountComponentsOfClass(Host, UDreamWorldSpaceRaycaster::StaticClass()), 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastParallelTest,
+	"DreamGUI.WorldRaycast.ManyPanelsTracedTogetherOnWorkersHitWhatTheyHitTracedOneAfterAnother",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamWorldRaycastParallelTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	{
+		return false;
+	}
+	// Forty panels: every other one across the ray, and the rest beside it, where their bounds turn the ray away.
+	constexpr int32 PanelCount = 40;
+	for (int32 Index = 0; Index < PanelCount; ++Index)
+	{
+		UDreamCanvas* Canvas = nullptr;
+		const FVector Location(300.0 + 20.0 * Index, Index % 2 == 0 ? 0.0 : 5000.0, 0.0);
+		if (!TestNotNull(TEXT("A panel"), MakeWorldPanel(Scope.World, FString::Printf(TEXT("Panel%d"), Index), Location, 200.0f, Canvas)))
+		{
+			return false;
+		}
+	}
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
+	if (!TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
+	{
+		return false;
+	}
+	const auto Trace = [Raycaster, EventData](int32 InParallelMinCanvases)
+	{
+		const DreamTests::Lifecycle::FScopedConsoleVariable Parallel(TEXT("r.DreamUI.ParallelRaycastMinCanvases"), InParallelMinCanvases);
+		FVector RayOrigin = FVector::ZeroVector, RayDirection = FVector::ZeroVector, RayEnd = FVector::ZeroVector;
+		TArray<FDreamUIHitResult> Hits;
+		Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, Hits);
+		return Hits;
+	};
+	const TArray<FDreamUIHitResult> OneAfterAnother = Trace(0);
+	const TArray<FDreamUIHitResult> Together = Trace(1);
+	if (!TestEqual(TEXT("Traced one after another, every panel across the ray is hit"), OneAfterAnother.Num(), PanelCount / 2)
+		|| !TestEqual(TEXT("...and traced together, as many"), Together.Num(), OneAfterAnother.Num()))
+	{
+		return false;
+	}
+	for (int32 Index = 0; Index < Together.Num(); ++Index)
+	{
+		TestTrue(FString::Printf(TEXT("Hit %d is the same panel at the same distance"), Index),
+			Together[Index].Widget.Get() == OneAfterAnother[Index].Widget.Get()
+			&& FMath::IsNearlyEqual(Together[Index].Distance, OneAfterAnother[Index].Distance));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamRaycastParallelVisualsTest,
+	"DreamGUI.WorldRaycast.ACanvasOfManyVisualsLookedAtOnWorkersHitsWhatItHitsLookedAtOneAfterAnother",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamRaycastParallelVisualsTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+	FScopedGameWorld Scope;
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	{
+		return false;
+	}
+	UDreamCanvas* Canvas = nullptr;
+	UDreamWidget* Panel = MakeWorldPanel(Scope.World, TEXT("Panel"), FVector(300.0, 0.0, 0.0), 400.0f, Canvas);
+	if (!TestNotNull(TEXT("A panel"), Panel))
+	{
+		return false;
+	}
+	// Twenty-five cards in a five by five grid across the panel, the ray through the middle one, each card with a face on
+	// it: a face's parent is a card, whose transform and size the workers read while it composes its own.
+	TArray<UDreamWidget*> Cards;
+	for (int32 Index = 0; Index < 25; ++Index)
+	{
+		UDreamWidget* Card = UDreamUIBPLibrary::ConstructWidget(Scope.World, FString::Printf(TEXT("Card%d"), Index), UDreamVisualEmpty::StaticClass());
+		UDreamWidget* Face = UDreamUIBPLibrary::ConstructWidget(Scope.World, FString::Printf(TEXT("Face%d"), Index), UDreamVisualEmpty::StaticClass());
+		if (!TestTrue(TEXT("A card and its face"), Card != nullptr && Face != nullptr))
+		{
+			return false;
+		}
+		Card->SetWidth(60.0f);
+		Card->SetHeight(60.0f);
+		Card->TrySetParent(Panel, false);
+		Card->SetAnchoredPosition(FVector2D(70.0 * (Index % 5 - 2), 70.0 * (Index / 5 - 2)));
+		Face->SetWidth(20.0f);
+		Face->SetHeight(20.0f);
+		Face->TrySetParent(Card, false);
+		Cards.Add(Card);
+	}
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
+	if (!TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
+	{
+		return false;
+	}
+	const auto Trace = [Raycaster, EventData, &Cards](int32 InParallelMinVisuals)
+	{
+		// Turned, then turned again to where both traces find them: every card and face is stale when the ray looks.
+		for (int32 Index = 0; Index < Cards.Num(); ++Index)
+		{
+			Cards[Index]->SetRenderRotation(FRotator::ZeroRotator);
+			Cards[Index]->SetRenderRotation(FRotator(0.0, 3.0 * (Index % 5), 7.0 * (Index % 3)));
+		}
+		const DreamTests::Lifecycle::FScopedConsoleVariable Parallel(TEXT("r.DreamUI.ParallelRaycastMinVisuals"), InParallelMinVisuals);
+		FVector RayOrigin = FVector::ZeroVector, RayDirection = FVector::ZeroVector, RayEnd = FVector::ZeroVector;
+		TArray<FDreamUIHitResult> Hits;
+		Raycaster->Raycast(EventData, RayOrigin, RayDirection, RayEnd, Hits);
+		return Hits;
+	};
+	const TArray<FDreamUIHitResult> OneAfterAnother = Trace(0);
+	const TArray<FDreamUIHitResult> Together = Trace(1);
+	if (!TestTrue(TEXT("Looked at one after another, the ray hits the panel and what is on it in the middle"), OneAfterAnother.Num() >= 2)
+		|| !TestEqual(TEXT("...and looked at together, as many"), Together.Num(), OneAfterAnother.Num()))
+	{
+		return false;
+	}
+	for (int32 Index = 0; Index < Together.Num(); ++Index)
+	{
+		TestTrue(FString::Printf(TEXT("Hit %d is the same widget at the same distance"), Index),
+			Together[Index].Widget.Get() == OneAfterAnother[Index].Widget.Get()
+			&& FMath::IsNearlyEqual(Together[Index].Distance, OneAfterAnother[Index].Distance));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldRaycastScreenCentreSplitScreenTest,
+	"DreamGUI.WorldRaycast.AScreenCentrePointerAimsThroughTheMiddleOfItsPlayersOwnView",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * A ScreenCenter pointer -- a first-person reticle -- aimed through the middle of the whole viewport, which on a split
+ * screen is a corner or an edge of each player's own view: every player's ray went somewhere other than their reticle.
+ * It now aims through the middle of the player's own part of the viewport, the view rectangle the engine deprojects that
+ * player's pixels against. A headless test has no split viewport to deproject through, so what is checked is the pixel
+ * the ray is aimed through, for a whole view and for the halves and quarters of a split one.
+ */
+bool FDreamWorldRaycastScreenCentreSplitScreenTest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("A whole view is aimed through the viewport's middle"),
+		UDreamWorldSpaceRaycaster::GetViewCentrePixel(FIntRect(0, 0, 1280, 720)), FVector2D(640.0, 360.0));
+	TestEqual(TEXT("The left half's player through the middle of the left half"),
+		UDreamWorldSpaceRaycaster::GetViewCentrePixel(FIntRect(0, 0, 640, 720)), FVector2D(320.0, 360.0));
+	TestEqual(TEXT("The right half's player through the middle of the right half"),
+		UDreamWorldSpaceRaycaster::GetViewCentrePixel(FIntRect(640, 0, 1280, 720)), FVector2D(960.0, 360.0));
+	TestEqual(TEXT("The top half's player through the middle of the top half"),
+		UDreamWorldSpaceRaycaster::GetViewCentrePixel(FIntRect(0, 0, 1280, 360)), FVector2D(640.0, 180.0));
+	TestEqual(TEXT("The bottom-right quarter's player through the middle of that quarter"),
+		UDreamWorldSpaceRaycaster::GetViewCentrePixel(FIntRect(640, 360, 1280, 720)), FVector2D(960.0, 540.0));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamWorldTargetReleaseAwayTest,
+	"DreamGUI.WorldRaycast.APressOnAnActorLetGoOfAwayFromItIsReleasedThereAndClicksNothing",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/*
+ * A press on an actor was let go of with a click wherever the pointer had gone by then: moved off the actor, over nothing,
+ * or -- releases being delivered while the game is paused, with its raycasters tracing nothing -- anywhere at all during a
+ * pause, the actor pressed before it was clicked. An actor's click follows a widget's rule now: the press is released to
+ * the actor wherever the pointer is, and clicks it only when let go of over it. Checked with the driver's world pointer
+ * and a solid box ahead of it: pressed and let go of on the box, and pressed on it and let go of past it.
+ */
+bool FDreamWorldTargetReleaseAwayTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamWorldRaycastTestLocal;
+	const FIntPoint ViewportSize(1280, 720);
+	FDreamDriverRig Rig = FDreamDriverRig::Headless(ViewportSize);
+	Rig.BindTest(this);
+	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
+	{
+		return false;
+	}
+	// The eye at the origin looking down +X, ninety degrees across: the middle of the viewport looks straight at a box a
+	// metre and a half ahead, its near face a metre out, and a corner of the viewport looks well past it.
+	UDreamDriverWorldSpaceRaycaster* Pointer = DreamDriverWorld::AttachWorldPointer(Rig,
+		DreamDriverWorld::MakeView(FVector::ZeroVector, FRotator::ZeroRotator, 90.0f, ViewportSize), EDreamWorldPointerSource::Mouse);
+	UBoxComponent* Box = MakeBlocker(Rig.GetWorld(), FVector(150.0, 0.0, 0.0));
+	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(Rig.GetWorld());
+	if (!TestNotNull(TEXT("A world pointer"), Pointer) || !TestNotNull(TEXT("A box ahead of it"), Box)
+		|| !TestNotNull(TEXT("An input subsystem to listen to"), Input))
+	{
+		return false;
+	}
+	Rig.PumpFrames(2);
+	const FVector2D OnTheBox(640.0, 360.0);
+	const FVector2D PastTheBox(40.0, 40.0);
+
+	int32 Ups = 0;
+	int32 Clicks = 0;
+	const FDelegateHandle Listening = Input->GetOnInputEvent().AddLambda([&Ups, &Clicks](UDreamBaseEventData* InEventData)
+	{
+		if (const UDreamPointerEventData* PointerEvent = Cast<UDreamPointerEventData>(InEventData))
+		{
+			Ups += PointerEvent->EventType == EDreamUIPointerEventType::Up ? 1 : 0;
+			Clicks += PointerEvent->EventType == EDreamUIPointerEventType::Click ? 1 : 0;
+		}
+	});
+	const bool bLetGoOnIt = Rig.Driver()->Sequence().MoveToPixel(OnTheBox).Press().Release().WaitFrames(1).Perform();
+	const AActor* HoveredOnIt = Rig.EventSystem()->GetHoveredWorldTarget(0);
+	const int32 UpsOnIt = Ups;
+	const int32 ClicksOnIt = Clicks;
+	// Past the double-click time at the pump's 1/60 s frames, so the next press is one of its own.
+	Rig.PumpFrames(30);
+	const bool bLetGoPastIt = Rig.Driver()->Sequence().MoveToPixel(OnTheBox).Press().MoveToPixel(PastTheBox).Release().WaitFrames(1).Perform();
+	const AActor* HoveredPastIt = Rig.EventSystem()->GetHoveredWorldTarget(0);
+	Input->GetOnInputEvent().Remove(Listening);
+
+	TestTrue(TEXT("A press and a release on the box complete"), bLetGoOnIt);
+	TestTrue(FString::Printf(TEXT("The pointer was over the box (it was over %s)"), *GetNameSafe(HoveredOnIt)), HoveredOnIt == Box->GetOwner());
+	TestEqual(TEXT("Let go of on the box, the press is released"), UpsOnIt, 1);
+	TestEqual(TEXT("...and clicks it"), ClicksOnIt, 1);
+	TestTrue(TEXT("A press on the box let go of past it completes"), bLetGoPastIt);
+	TestNull(TEXT("Past the box, the pointer is over nothing in the world"), HoveredPastIt);
+	TestEqual(TEXT("Let go of past the box, the press is released all the same"), Ups, UpsOnIt + 1);
+	TestEqual(TEXT("...and clicks nothing"), Clicks, ClicksOnIt);
+	return true;
+}
+
+#endif

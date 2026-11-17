@@ -1,0 +1,220 @@
+﻿// Copyright 2019-present LexLiu. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Core/DreamUIFontData_FreeTypeRender.h"
+#include "DreamUIFontData_DistanceField.generated.h"
+
+struct FDreamUIDistanceFieldCharKey
+{
+public:
+	FDreamUIDistanceFieldCharKey() {}
+	FDreamUIDistanceFieldCharKey(const FDreamUIGlyphKey& InGlyph, bool InBold)
+	{
+		this->Glyph = InGlyph;
+		this->bBold = InBold;
+	}
+	FDreamUIGlyphKey Glyph;
+	bool bBold = false;
+	bool operator==(const FDreamUIDistanceFieldCharKey& other)const
+	{
+		return this->Glyph == other.Glyph && this->bBold == other.bBold;
+	}
+	friend FORCEINLINE uint32 GetTypeHash(const FDreamUIDistanceFieldCharKey& other)
+	{
+		return HashCombine(GetTypeHash(other.Glyph), GetTypeHash(other.bBold));
+	}
+};
+struct FDreamUIDistanceFieldFontKerningPair
+{
+public:
+	FDreamUIDistanceFieldFontKerningPair() {}
+	FDreamUIDistanceFieldFontKerningPair(const uint32& InLeftCharCode, const uint32& InRightCharCode)
+	{
+		this->LeftCharCode = InLeftCharCode;
+		this->RightCharCode = InRightCharCode;
+	}
+	uint32 LeftCharCode = 0;
+	uint32 RightCharCode = 0;
+	bool operator==(const FDreamUIDistanceFieldFontKerningPair& other)const
+	{
+		return this->LeftCharCode == other.LeftCharCode && this->RightCharCode == other.RightCharCode;
+	}
+	friend FORCEINLINE uint32 GetTypeHash(const FDreamUIDistanceFieldFontKerningPair& other)
+	{
+		return HashCombine(GetTypeHash(other.LeftCharCode), GetTypeHash(other.RightCharCode));
+	}
+};
+
+/** How the distance field is produced. */
+UENUM(BlueprintType)
+enum class EDreamUISdfSource : uint8
+{
+	/**
+	 * Multi-channel field from the glyph outline (msdfgen): sharp corners from the median of three
+	 * channels, and a true distance in alpha that effects -- blur, glow, shadows, outlines -- widen into.
+	 */
+	OutlineMultiChannel,
+	/** Single-channel field derived from a rasterized bitmap (the original method). Corners round off. */
+	BitmapSingleChannel,
+};
+
+/** Whether a distance-field font draws small sizes from hinted coverage glyphs instead of its field. */
+UENUM(BlueprintType)
+enum class EDreamUISmallTextCoverage : uint8
+{
+	/** As the project says: UDreamGUISettings::bSmallTextCoverage, unless the console variable DreamGUI.Text.SmallTextCoverage is 0 or 1. */
+	Inherit,
+	/** On, unless the console variable DreamGUI.Text.SmallTextCoverage is 0. */
+	On,
+	Off,
+};
+
+/** Which hinter shapes a font's coverage glyphs. Value for value the rasterizer's EDreamGlyphHinting. */
+UENUM(BlueprintType)
+enum class EDreamUICoverageHinting : uint8
+{
+	/**
+	 * FreeType's light target: the face's own hints (vertical only) when it has them, the autohinter when it has none; the
+	 * autohinter too at a fractional size on a face that would round its ppem, so the glyph keeps its size.
+	 */
+	Auto,
+	/** The autohinter (light target) for every face. */
+	Autohint,
+	/** No hinting: the outline at its exact size, in four subpixel phases. */
+	None,
+};
+
+/** SDF(Signed Distance Field) Font asset for render smooth scaled sdf text. */
+UCLASS(BlueprintType)
+class DREAMGUI_API UDreamUIFontData_DistanceField : public UDreamUIFontData_FreeTypeRender
+{
+	GENERATED_BODY()
+public:
+	UDreamUIFontData_DistanceField();
+private:
+	/** Outline multi-channel is the default, for assets saved before this property existed too. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI")
+	EDreamUISdfSource SdfSource = EDreamUISdfSource::OutlineMultiChannel;
+	/** Font size when render glyph. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (UIMin = "16", UIMax = "100"))
+		int SampleFontSize = 64;
+	/**
+	 * The radius of the distance field in pixels at SampleFontSize. Normally 1/4 to 1/3 of SampleFontSize.
+	 * It is also as far as any text effect can reach: outline, glow and underlay are clamped to
+	 * SDFRadius / SampleFontSize em outside the glyph, and the atlas cells grow with it.
+	 */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (UIMin = "1"))
+		int SDFRadius = 16;
+	/** Angle of italic style in degree */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI")
+		float ItalicAngle = 15.0f;
+	/**
+	 * How much bolder a bold glyph is, in em of total stroke growth (half on each side). Applied as a
+	 * dilation of the distance field, so it is continuous and costs no atlas space; the advance grows
+	 * by the same amount. 0.04 is FreeType's own synthetic bold (1/24 em); the old 0.08 closed the
+	 * counters of CJK glyphs. A text can shift its weight on top of this with FDreamTextStyle::FaceDilate.
+	 */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (UIMin = "0.0", UIMax = "0.2"))
+		float BoldRatio = 0.04f;
+	/** -1 means not set yet. Transient, so widening it costs no serialized data. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "DreamGUI", Transient)
+		float LineHeight = -1;
+	/** -1 means not set yet. Transient, so widening it costs no serialized data. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "DreamGUI", Transient)
+		float VerticalOffset = -1;
+	/** Ascent and descent at SampleFontSize; negative means not cached yet. */
+	UPROPERTY(EditAnywhere, Transient, Category = "DreamGUI", Transient)
+	float AdditionalVerticalOffset = 0.0f;
+	/**
+	 * Draw text this small on screen from hinted coverage glyphs -- crisp stems and four subpixel positions, as Chrome and
+	 * Slate draw it -- rather than from the field, which reads soft below about 20 px. Needs the outline field (BGRA atlas).
+	 * Decided per glyph item at paint time; a text can still opt out (UDreamText::SmallTextRaster).
+	 */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI")
+	EDreamUISmallTextCoverage SmallTextCoverage = EDreamUISmallTextCoverage::Inherit;
+	/** Device pixels per em up to which coverage glyphs are used; 0 or less takes the project's UDreamGUISettings::SmallTextMaxPixelSize. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (ClampMin = "0.0", UIMax = "48.0"))
+	float SmallTextMaxPixelSize = 0.0f;
+	/** Which hinter shapes the coverage glyphs. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI")
+	EDreamUICoverageHinting CoverageHinting = EDreamUICoverageHinting::Auto;
+
+public:
+	//Begin UDreamUIFontData_BaseObject interface
+	virtual UMaterialInterface* GetFontMaterial()override;
+	virtual void PrepareForLayout(float InExpandMeshSize)override;
+	virtual FDreamTextGlyphPaintStyle GetGlyphPaintStyle(const FVector2f& InWorldScale, float InExpandMeshSize) const override;
+	virtual float GetKerning(uint32 leftCharIndex, uint32 rightCharIndex, float charSize) override;
+	virtual float GetLineHeight(float fontSize) override;
+	virtual float GetVerticalOffset(float fontSize) override;
+	virtual bool GetFaceMetrics(int32 FaceIndex, float FontSize, float& OutAscent, float& OutDescent, float& OutLineHeight) override;
+	virtual float GetAscent(float fontSize) override;
+	virtual float GetDescent(float fontSize) override;
+	virtual bool GetShouldAffectByPixelPerfect() override{ return false; }
+	virtual EDreamUIFontTextureMark GetFontTextureMark() override{ return SdfSource == EDreamUISdfSource::OutlineMultiChannel ? EDreamUIFontTextureMark::Mtsdf : EDreamUIFontTextureMark::DistanceField; }
+	EDreamUISdfSource GetSdfSource() const { return SdfSource; }
+	/** The distance range on each side of the edge, in pixels at SampleFontSize. */
+	int32 GetSdfRadius() const { return SDFRadius; }
+	virtual float GetAtlasFieldRangeTexels() const override { return 2.0f * SDFRadius; }
+	/** SampleFontSize, negated when the project turns the shader's small-text correction off (UDreamGUISettings::bSmallTextCorrection). */
+	virtual float GetAtlasEmTexels() const override;
+	virtual bool GetAsyncRasterParams(float CharSize, bool IsBold, float& OutPixelsPerEm, float& OutSpreadPixels, float& OutBoldPixels) const override
+	{
+		if (SdfSource != EDreamUISdfSource::OutlineMultiChannel)return false;
+		OutPixelsPerEm = (float)SampleFontSize;
+		OutSpreadPixels = (float)SDFRadius;
+		OutBoldPixels = IsBold ? SampleFontSize * BoldRatio : 0.0f;
+		return true;
+	}
+	virtual bool IsGlyphCacheSizeIndependent() const override { return true; }
+	/**
+	 * No cap. The 200 the rasterizing base class imposes exists because a large size means a large
+	 * bitmap; a field is rasterized once at SampleFontSize and scaled linearly from there, so the cap
+	 * bought nothing and cost a silently smaller glyph for every size above it.
+	 */
+	virtual float GetFontSizeLimit() override { return MAX_FLT; }
+	/** Both fields render bold as a dilation; the atlas holds one glyph per face. */
+	virtual bool IsBoldSynthesizedInShader() const override { return true; }
+	/** How far the layout's glyph quads sit inside the field's spread, in texels at SampleFontSize (see GetCharDataFromCache). */
+	float GetQuadShrinkTexels(float InExpandMeshSize) const;
+	virtual float GetBoldRatio() override{ return BoldRatio; }
+	/**
+	 * The outline (multi-channel, BGRA) field, and SmallTextCoverage On -- or Inherit with the project's answer,
+	 * UDreamGUISettings::IsSmallTextCoverageEnabled. The console variable DreamGUI.Text.SmallTextCoverage at 0 turns a font set
+	 * On off too.
+	 */
+	virtual bool SupportsCoverageGlyphs() const override;
+	/** SmallTextMaxPixelSize when it is set (above 0), else the project's, UDreamGUISettings::GetSmallTextMaxPixelSize. */
+	virtual float GetCoverageMaxPixelSize() const override;
+	//End UDreamUIFontData_BaseObject interface
+	float GetSampleFontSize()const{return SampleFontSize;}
+protected:
+	/** Only the outline field's atlas is BGRA; the single-channel field's is R8 and draws no colour glyph. */
+	virtual bool CanHoldColorGlyphs() const override { return SdfSource == EDreamUISdfSource::OutlineMultiChannel; }
+	/** As far as the text effects reach (SDFRadius / SampleFontSize em): an underlay is drawn from a colour glyph's alpha too. */
+	virtual float GetColorGlyphReachEm() const override;
+	virtual void GetCoverageRasterStyle(uint8& OutHinting, float& OutBoldEm, float& OutItalicSlope) const override;
+	float OneDivideFontSize = 1.0f; float ExpandMeshSize = 0;
+	TMap<FDreamUIDistanceFieldCharKey, FDreamUICharData> CharDataMap;
+	// Kerning is a fraction of a pixel at SampleFontSize as often as not; int16 rounded every one of
+	// those to zero, and the first (uncached) call disagreed with every later one. Not serialized.
+	TMap<FDreamUIDistanceFieldFontKerningPair, float> KerningPairsMap;
+	virtual UTexture2DArray* CreateFontTexture(int InTextureSize, int InSliceCount)override;
+
+	virtual bool GetCharDataFromCache(const FDreamUIGlyphKey& Glyph, float CharSize, bool IsBold, FDreamUICharData& OutResult)override;
+	virtual void AddCharDataToCache(const FDreamUIGlyphKey& Glyph, float CharSize, bool IsBold, FDreamUICharData& CharData)override;
+	virtual bool RenderGlyph(const FDreamUIGlyphKey& Glyph, float CharSize, bool IsBold, FGlyphBitmap& OutResult)override;
+	virtual void ClearCharDataCache()override;
+	virtual int32 GetCharDataCacheCount() const override;
+
+	//SDF font already have space between glyphs
+	virtual int32 Get_SPACE_NEED_EXPEND()const override { return 0; };
+	virtual int32 Get_SPACE_BETWEEN_GLYPH()const override { return 0; };
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)override;
+#endif
+	virtual void PostInitProperties()override;
+	virtual void Serialize(FArchive& Ar)override;
+};

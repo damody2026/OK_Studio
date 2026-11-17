@@ -29,9 +29,14 @@ AKKPreviewActor* AOpenKoikatsuPlayerController::GetPreviewCameraOwner() const
  return nullptr;
 }
 
+bool OKReaderScreenUnderCursor();	// OKReaderScreen.cpp: the DreamGUI panels of the card reader
 // Sliders and buttons should keep the click. The 3D view is the viewport itself.
 static bool CursorOverInteractiveUI()
 {
+	if (OKReaderScreenUnderCursor())
+	{
+		return true;
+	}
 	if (!FSlateApplication::IsInitialized())
 	{
 		return false;

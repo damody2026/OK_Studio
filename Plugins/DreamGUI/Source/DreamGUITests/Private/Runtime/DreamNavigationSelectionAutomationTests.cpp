@@ -1,0 +1,429 @@
+// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
+
+#include "Misc/AutomationTest.h"
+
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamWidgetTree.h"
+#include "Engine/World.h"
+#include "Interaction/UINavigationInputSelectionHandler.h"
+#include "UObject/Package.h"
+#include "UObject/UnrealType.h"
+
+/*
+ * The gamepad selection cursor -- the highlight that flies between the widget navigation has focused
+ * and the next one -- tested from the side that used to be untestable.
+ *
+ * Its guards are pinned next door in DreamInteractionExtensionAutomationTests: a handler with no
+ * widget, a deselect with nothing selected, a select of nothing from nothing. What is asserted HERE
+ * is everything past those guards, which until recently could not be reached from a test at all.
+ * Each of the three branches asks UDreamWidget::RenderOpacityTo for a fade, and RenderOpacityTo
+ * hands back null whenever UDreamTweenManager cannot reach the game instance subsystem that drives
+ * tweens. SelectNone then chained ->OnComplete straight off that null, so walking into the branch
+ * headless was a crash rather than a failure.
+ *
+ * That null is not a test artefact, which is the reason this suite is worth having. It is the answer
+ * for a widget with no world -- a Blueprint's authoring tree, a dedicated server, this fixture --
+ * and equally for a widget in an editor world, which HAS a world and still has no game instance. So
+ * "no tween was available" is a production state on the designer's screen, and what the handler does
+ * about it is a contract rather than a degradation.
+ *
+ * The contract these tests pin: an animation that cannot be started is skipped, but its DESTINATION
+ * is not. The fade is how the cursor arrives or leaves politely; being at the right opacity, on the
+ * right widget, or gone entirely is the actual outcome, and deferring an outcome to an OnComplete
+ * that can never fire is how a cursor gets stranded fully opaque over the last thing it marked.
+ *
+ * What is deliberately NOT asserted here: anything about a fade that actually runs. Every assertion
+ * below is on the no-tween path, because a fixture that could produce a real tweener would need a
+ * game instance, and a tweener only advances when something ticks the manager. The branch that has
+ * a tween is the branch that was already working.
+ */
+
+namespace DreamNavigationSelectionTestLocal
+{
+	/**
+	 * Reach a protected UPROPERTY, and say so loudly if a rename has moved it.
+	 *
+	 * The handler's selection record is VisibleAnywhere and protected -- readable in a Details panel
+	 * and settable from nowhere -- so reflection is the only way for a test to put the handler into
+	 * the state where its interesting branches are reachable. A rename that turned an assertion into
+	 * a silent no-op would be worse than having no test.
+	 */
+	template<typename T>
+	T* FieldPtr(FAutomationTestBase& Test, UObject* Object, const TCHAR* PropertyName)
+	{
+		FProperty* Property = Object->GetClass()->FindPropertyByName(FName(PropertyName));
+		if (Property == nullptr)
+		{
+			Test.AddError(FString::Printf(
+				TEXT("%s no longer has a property named '%s', so this test is asserting against nothing."),
+				*Object->GetClass()->GetName(), PropertyName));
+			return nullptr;
+		}
+		return Property->ContainerPtrToValuePtr<T>(Object);
+	}
+
+	/** How many entries the handler is holding, which is the only way to see that it recorded one. */
+	int32 ArrayNum(FAutomationTestBase& Test, UObject* Object, const TCHAR* PropertyName)
+	{
+		const FArrayProperty* Property = CastField<FArrayProperty>(
+			Object->GetClass()->FindPropertyByName(FName(PropertyName)));
+		if (Property == nullptr)
+		{
+			Test.AddError(FString::Printf(
+				TEXT("%s no longer has an array property named '%s'."),
+				*Object->GetClass()->GetName(), PropertyName));
+			return INDEX_NONE;
+		}
+		FScriptArrayHelper Helper(Property, Property->ContainerPtrToValuePtr<void>(Object));
+		return Helper.Num();
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamNavigationSelectNoneWithoutTweenTest,
+	"DreamGUI.Navigation.Selection.RetiringTheCursorWithNoTweenAvailableStillRetiresIt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamNavigationSelectNoneWithoutTweenTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamNavigationSelectionTestLocal;
+
+	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(GetTransientPackage());
+	UDreamWidget* Target = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Target"));
+	UDreamWidget* CursorWidget = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Cursor"));
+	if (!TestNotNull(TEXT("a widget for the cursor to mark"), Target)
+		|| !TestNotNull(TEXT("a widget to be the cursor"), CursorWidget))
+	{
+		return false;
+	}
+	Tree->RootWidget = Target;
+	Target->SetWidth(200.0f);
+	Target->SetHeight(100.0f);
+
+	UUINavigationInputSelectionHandler* Cursor =
+		CursorWidget->AddComponent<UUINavigationInputSelectionHandler>();
+	if (!TestNotNull(TEXT("the cursor widget carries a selection handler"), Cursor))
+	{
+		return false;
+	}
+
+	// The precondition, asserted rather than assumed. Everything below is about what happens when no
+	// tween can be made, so a fixture that could quietly start making them would turn this whole
+	// test into a description of the path it is not aiming at.
+	TestNull(TEXT("a widget under the transient package has no world"), CursorWidget->GetWorld());
+	TestTrue(TEXT("...so the tween manager will not issue it a tweener"),
+		CursorWidget->RenderOpacityTo(0.5f) == nullptr);
+
+	TWeakObjectPtr<UDreamWidget>* CurrentSelected =
+		FieldPtr<TWeakObjectPtr<UDreamWidget>>(*this, Cursor, TEXT("CurrentSelected"));
+	if (CurrentSelected == nullptr)
+	{
+		return false;
+	}
+
+	// Put the handler into the one state SelectNone acts on. A cursor that is marking something is
+	// parented to it and drawn at full opacity, which is what makes the two assertions after the
+	// call mean anything: both values have somewhere to move FROM.
+	*CurrentSelected = Target;
+	CursorWidget->TrySetParent(Target, false);
+	CursorWidget->SetRenderOpacity(1.0f);
+	TestTrue(TEXT("the cursor starts out parented to the widget it marks"),
+		CursorWidget->GetParent() == Target);
+
+	// The old code read `RenderOpacityTo(...)->OnComplete(...)` as one expression, so reaching the
+	// next line at all is the first assertion this test makes.
+	Cursor->SelectNone();
+
+	TestFalse(TEXT("the handler is no longer marking anything"), CurrentSelected->IsValid());
+	TestEqual(TEXT("nothing was recorded as animating, because nothing was animating"),
+		ArrayNum(*this, Cursor, TEXT("TweenerCollection")), 0);
+
+	// The two halves of "the animation was skipped, its destination was not". Both matter on their
+	// own: an opacity left at 1 is a cursor that vanishes without fading, and a widget left alive is
+	// a cursor that never leaves -- and the second one is the failure the old OnComplete produced
+	// even when it did not crash, because the callback it hung the destruction off was attached to
+	// a tweener that did not exist.
+	TestEqual(TEXT("the cursor was taken to the opacity the fade would have ended at"),
+		CursorWidget->GetRenderOpacity(), 0.0f);
+	TestNull(TEXT("...and torn down rather than left parked on the widget it was marking"),
+		CursorWidget->GetParent());
+
+	// Deselecting again is ordinary input -- a second Back press, a screen closing on top of one
+	// that already closed -- and must find nothing left to do.
+	Cursor->SelectNone();
+	TestFalse(TEXT("a second deselect still leaves nothing selected"), CurrentSelected->IsValid());
+	TestEqual(TEXT("...and still starts nothing"),
+		ArrayNum(*this, Cursor, TEXT("TweenerCollection")), 0);
+
+	CursorWidget->DestroyWidget();
+	Target->DestroyWidget();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamNavigationSelectWidgetWithoutTweenTest,
+	"DreamGUI.Navigation.Selection.ASelectionChangeRecordsOnlyTheAnimationsItActuallyStarted",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamNavigationSelectWidgetWithoutTweenTest::RunTest(const FString& Parameters)
+{
+	using namespace DreamNavigationSelectionTestLocal;
+
+	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(GetTransientPackage());
+	UDreamWidget* Target = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Target"));
+	UDreamWidget* CursorWidget = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Cursor"));
+	if (!TestNotNull(TEXT("a widget for the cursor to mark"), Target)
+		|| !TestNotNull(TEXT("a widget to be the cursor"), CursorWidget))
+	{
+		return false;
+	}
+	Tree->RootWidget = Target;
+	Target->SetWidth(200.0f);
+	Target->SetHeight(100.0f);
+
+	UUINavigationInputSelectionHandler* Cursor =
+		CursorWidget->AddComponent<UUINavigationInputSelectionHandler>();
+	if (!TestNotNull(TEXT("the cursor widget carries a selection handler"), Cursor))
+	{
+		return false;
+	}
+	TWeakObjectPtr<UDreamWidget>* CurrentSelected =
+		FieldPtr<TWeakObjectPtr<UDreamWidget>>(*this, Cursor, TEXT("CurrentSelected"));
+	if (CurrentSelected == nullptr)
+	{
+		return false;
+	}
+
+	// A cursor that has never marked anything is invisible, which is the state the fade-in exists to
+	// bring it out of.
+	CursorWidget->SetRenderOpacity(0.0f);
+
+	// Appearing: something selected, nothing selected before. The fade-in cannot be started, so the
+	// cursor is put at its destination instead -- an invisible highlight sitting exactly on top of
+	// the focused widget is indistinguishable, to a player, from navigation being broken.
+	Cursor->SelectWidget(Target);
+	TestTrue(TEXT("the handler records what it is marking"), CurrentSelected->Get() == Target);
+	TestEqual(TEXT("the cursor is at the opacity the fade-in would have ended at"),
+		CursorWidget->GetRenderOpacity(), 1.0f);
+	TestTrue(TEXT("...and has been moved onto the widget it marks"),
+		CursorWidget->GetParent() == Target);
+
+	// The collection is a list of animations in flight, and a null is not one. Storing the tween
+	// manager's refusal would make the list unanswerable by counting and would hand a null to the
+	// kill loop at the top of the next selection change.
+	TestEqual(TEXT("no animation was recorded, because none was started"),
+		ArrayNum(*this, Cursor, TEXT("TweenerCollection")), 0);
+
+	// Leaving: nothing selected, something selected before. Unlike SelectNone this branch only
+	// fades -- the cursor stays alive and stays where it was, ready to be brought back -- so the
+	// assertion that it is still parented is as much the point as the opacity.
+	Cursor->SelectWidget(nullptr);
+	TestFalse(TEXT("the handler is no longer marking anything"), CurrentSelected->IsValid());
+	TestEqual(TEXT("the cursor is at the opacity the fade-out would have ended at"),
+		CursorWidget->GetRenderOpacity(), 0.0f);
+	TestTrue(TEXT("...but is still alive, because a fade-out is not a retirement"),
+		CursorWidget->GetParent() == Target);
+	TestEqual(TEXT("and still nothing was recorded as animating"),
+		ArrayNum(*this, Cursor, TEXT("TweenerCollection")), 0);
+
+	CursorWidget->DestroyWidget();
+	Target->DestroyWidget();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamNavigationSelectionMovesTheCursorTest,
+	"DreamGUI.Navigation.Selection.MovingToANewWidgetTakesTheCursorsPositionAndSizeWithIt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamNavigationSelectionMovesTheCursorTest::RunTest(const FString& Parameters)
+{
+	/*
+	 * The branch every navigation step after the first goes through.
+	 *
+	 * Appearing from nothing set the cursor's position, size and rotation outright and always worked.
+	 * MOVING -- one selected widget to the next, which is what holding a direction does -- had all
+	 * three of those commented out, so the step did nothing but reparent: the cursor kept the offset
+	 * and the size it had under its previous parent and marked the wrong rectangle from then on. The
+	 * position it should have gone to was still being computed and then dropped as an unused local,
+	 * which is what the dead variable in that function was the fossil of.
+	 */
+	using namespace DreamNavigationSelectionTestLocal;
+
+	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(GetTransientPackage());
+	UDreamWidget* First = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("First"));
+	UDreamWidget* Second = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Second"));
+	UDreamWidget* CursorWidget = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Cursor"));
+	if (!TestNotNull(TEXT("a widget to select first"), First)
+		|| !TestNotNull(TEXT("a widget to move to"), Second)
+		|| !TestNotNull(TEXT("a widget to be the cursor"), CursorWidget))
+	{
+		return false;
+	}
+	Tree->RootWidget = First;
+
+	// Deliberately different in every way the cursor is supposed to copy, and the second one is given
+	// an off-centre pivot so its local centre is a number rather than the origin -- with both at the
+	// default pivot the position assertion would pass on a cursor that never moved.
+	First->SetWidth(200.0f);
+	First->SetHeight(100.0f);
+	Second->SetWidth(64.0f);
+	Second->SetHeight(32.0f);
+	Second->SetPivot(FVector2D::ZeroVector);
+
+	UUINavigationInputSelectionHandler* Cursor =
+		CursorWidget->AddComponent<UUINavigationInputSelectionHandler>();
+	if (!TestNotNull(TEXT("the cursor widget carries a selection handler"), Cursor))
+	{
+		return false;
+	}
+	TestTrue(TEXT("no tween can be made here, so destinations are applied outright"),
+		CursorWidget->RenderOpacityTo(0.5f) == nullptr);
+
+	// Appearing. This half was never broken; it is here to establish the state the move starts from,
+	// and to make the "kept the OLD size" failure legible when the move regresses.
+	Cursor->SelectWidget(First);
+	TestTrue(TEXT("the cursor is on the first widget"), CursorWidget->GetParent() == First);
+	TestEqual(TEXT("...at the first widget's size"), CursorWidget->GetSizeDelta(), First->GetSize());
+
+	// The move.
+	Cursor->SelectWidget(Second);
+	TestTrue(TEXT("the cursor is reparented onto the new widget"), CursorWidget->GetParent() == Second);
+	TestEqual(TEXT("...and resized to it, rather than keeping the size of the one it left"),
+		CursorWidget->GetSizeDelta(), Second->GetSize());
+
+	const FVector2D Centre = Second->GetLocalSpaceCenter();
+	const FVector Expected(0.0f, Centre.X, Centre.Y);
+	TestTrue(TEXT("...and placed on the new widget's centre, rather than at the offset it had under the old parent"),
+		CursorWidget->GetRelativeLocation().Equals(Expected, 0.01f));
+
+	// Still nothing recorded: the collection is a list of animations in flight, and none could start.
+	TestEqual(TEXT("no animation was recorded, because none could be started"),
+		ArrayNum(*this, Cursor, TEXT("TweenerCollection")), 0);
+
+	CursorWidget->DestroyWidget();
+	Second->DestroyWidget();
+	First->DestroyWidget();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamNavigationRingLookupTest,
+	"DreamGUI.Navigation.Selection.ARingIsOnlyForAScreenAndOnlyDraws",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamNavigationRingLookupTest::RunTest(const FString& Parameters)
+{
+	/*
+	 * The ring used to exist only where a presenter component made one; every other screen now gets one per root canvas
+	 * (UUINavigationInputSelectionHandler::FindOrCreateFor). A widget no canvas draws has no screen to ring, and a ring is
+	 * made inert: it lies over the control it marks, so a pointer must pass through it and that control's layout must not
+	 * place it, whatever its class authored.
+	 */
+	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(GetTransientPackage());
+	UDreamWidget* Loose = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Loose"));
+	UDreamWidget* RingWidget = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Ring"));
+	if (!TestNotNull(TEXT("a widget"), Loose) || !TestNotNull(TEXT("a widget to be a ring"), RingWidget))
+	{
+		return false;
+	}
+	TestNull(TEXT("a widget no canvas draws gets no ring"), UUINavigationInputSelectionHandler::FindOrCreateFor(Loose));
+	TestNull(TEXT("and has none to find"), UUINavigationInputSelectionHandler::FindFor(Loose));
+
+	UUINavigationInputSelectionHandler::MakeRingInert(RingWidget);
+	TestEqual(TEXT("a ring is never hit"), RingWidget->GetRaycastable(), EDreamWidgetRaycastableType::Disabled);
+	TestTrue(TEXT("never laid out by the control it marks"), RingWidget->GetIgnoreLayout());
+	TestFalse(TEXT("and never a Tab stop"), RingWidget->GetIsTabStop());
+
+	RingWidget->DestroyWidget();
+	Loose->DestroyWidget();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FDreamNavigationRingPictureFitsTest,
+	"DreamGUI.Navigation.Selection.ARingsPictureCoversWhateverSizeItMarks",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDreamNavigationRingPictureFitsTest::RunTest(const FString& Parameters)
+{
+	/*
+	 * The handler sizes a ring's root to the control it marks. The plugin's own ring draws its frame on a child placed on
+	 * that root's centre at a fixed 100x100, so the frame stayed 100x100 over a full-width row and a small icon alike.
+	 * MakeRing anchors a child that covers the root to stretch with it, its margin kept; a child smaller than the root, or
+	 * anchored elsewhere, places itself by the root's size already and keeps what it was authored with.
+	 */
+	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(GetTransientPackage());
+	UDreamWidget* Wide = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Wide"));
+	UDreamWidget* Small = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Small"));
+	UDreamWidget* RingWidget = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Ring"));
+	UDreamWidget* Frame = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Frame"));
+	UDreamWidget* Dot = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Dot"));
+	UDreamWidget* Corner = Tree->ConstructWidget(UDreamWidget::StaticClass(), TEXT("Corner"));
+	if (!TestNotNull(TEXT("a wide widget to mark"), Wide) || !TestNotNull(TEXT("a small widget to mark"), Small)
+		|| !TestNotNull(TEXT("a ring root"), RingWidget) || !TestNotNull(TEXT("a frame"), Frame)
+		|| !TestNotNull(TEXT("a dot"), Dot) || !TestNotNull(TEXT("a corner bracket"), Corner))
+	{
+		return false;
+	}
+	Tree->RootWidget = Wide;
+	Small->SetParent(Wide, false);
+	Wide->SetWidth(300.0f);
+	Wide->SetHeight(60.0f);
+	Small->SetWidth(64.0f);
+	Small->SetHeight(32.0f);
+
+	// The ring as a picture-only class authors it: a 100x100 root, a frame drawn 4 px outside it on every side, a dot on
+	// its centre and a bracket on its top-left corner.
+	const FVector2D Centre(0.5, 0.5);
+	const FVector2D TopLeft(0.0, 1.0);
+	RingWidget->SetWidth(100.0f);
+	RingWidget->SetHeight(100.0f);
+	Frame->SetParent(RingWidget, false);
+	Frame->SetAnchorMin(Centre);
+	Frame->SetAnchorMax(Centre);
+	Frame->SetWidth(108.0f);
+	Frame->SetHeight(108.0f);
+	Dot->SetParent(RingWidget, false);
+	Dot->SetAnchorMin(Centre);
+	Dot->SetAnchorMax(Centre);
+	Dot->SetWidth(10.0f);
+	Dot->SetHeight(10.0f);
+	Corner->SetParent(RingWidget, false);
+	Corner->SetAnchorMin(TopLeft);
+	Corner->SetAnchorMax(TopLeft);
+	Corner->SetWidth(12.0f);
+	Corner->SetHeight(12.0f);
+
+	UUINavigationInputSelectionHandler* Ring = UUINavigationInputSelectionHandler::MakeRing(RingWidget);
+	if (!TestNotNull(TEXT("a picture-only ring gets the handler that moves and sizes it"), Ring))
+	{
+		return false;
+	}
+	TestTrue(TEXT("no tween can be made here, so the ring is sized outright"), RingWidget->RenderOpacityTo(0.5f) == nullptr);
+
+	Ring->SelectWidget(Wide);
+	TestEqual(TEXT("the ring's root takes the wide widget's size"), RingWidget->GetSizeDelta(), Wide->GetSize());
+	TestEqual(TEXT("the frame spans the wide widget, its 4 px margin kept (width)"), Frame->GetWidth(), 308.0f, 0.01f);
+	TestEqual(TEXT("the frame spans the wide widget, its 4 px margin kept (height)"), Frame->GetHeight(), 68.0f, 0.01f);
+	TestEqual(TEXT("the dot keeps its own width"), Dot->GetWidth(), 10.0f, 0.01f);
+	TestEqual(TEXT("the dot keeps its own height"), Dot->GetHeight(), 10.0f, 0.01f);
+	TestEqual(TEXT("the bracket keeps its own width"), Corner->GetWidth(), 12.0f, 0.01f);
+	TestEqual(TEXT("the bracket keeps its own height"), Corner->GetHeight(), 12.0f, 0.01f);
+	TestTrue(TEXT("and stays on its corner"), Corner->GetAnchorMin().Equals(TopLeft) && Corner->GetAnchorMax().Equals(TopLeft));
+
+	// Moving on to a smaller widget: the frame follows that size too.
+	Ring->SelectWidget(Small);
+	TestEqual(TEXT("the frame spans the small widget (width)"), Frame->GetWidth(), 72.0f, 0.01f);
+	TestEqual(TEXT("the frame spans the small widget (height)"), Frame->GetHeight(), 40.0f, 0.01f);
+	TestEqual(TEXT("the dot still keeps its size"), Dot->GetWidth(), 10.0f, 0.01f);
+
+	RingWidget->DestroyWidget();
+	Small->DestroyWidget();
+	Wide->DestroyWidget();
+	return true;
+}
+
+#endif

@@ -1,0 +1,1666 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "Interaction/UIScrollView.h"
+#include "DreamGUI.h"
+#include "DreamTweenManager.h"
+#include "Core/DreamUIWorldContext.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Core/Components/DreamWidget.h"
+#include "Engine/TextureRenderTarget2D.h"
+// For the touch-scrolling gate: what the player's hands are on is the event system's answer, not
+// something the pointer event carries -- touch id zero and mouse id zero are the same number.
+#include "Event/DreamEventSystem.h"
+#include "Event/DreamUIInputTypes.h"
+#include "HAL/IConsoleManager.h"
+
+namespace DreamScrollViewLocal
+{
+	/** See UUIScrollView::SetContentPosition. Off until measured: whole-pixel scrolling changes what a slow glide looks like. */
+	static TAutoConsoleVariable<int32> CVarScrollSnapToDevicePixels(
+		TEXT("DreamGUI.Scroll.SnapToDevicePixels"),
+		0,
+		TEXT("1: a scroll view drawn on a 2D canvas (screen space in a game, or a render target) moves its content in whole device pixels, ")
+		TEXT("so small text drawn from coverage glyphs keeps its pixels while it scrolls instead of being repainted at every fraction. ")
+		TEXT("0 (the default): the content goes exactly where the offset puts it."),
+		ECVF_Default);
+
+	static bool IsSnappingToDevicePixels()
+	{
+		return CVarScrollSnapToDevicePixels.GetValueOnGameThread() != 0;
+	}
+
+	/** Within this, the position a content widget hands back is the one it was given: it stores what it is told. */
+	static constexpr double SnapReadBackTolerance = 1.0e-4;
+	/** How far, in device pixels, a unit step along one axis may stray onto the other before there is no grid to snap to. */
+	static constexpr double DeviceGridSkewTolerance = 1.0e-3;
+
+	/**
+	 * Under this many LOCAL UNITS per notch, a wheel cannot visibly move anything, so a value here is
+	 * almost certainly a MULTIPLIER left over from what this property used to mean (it shipped at 1,
+	 * multiplying the raw axis). Generous on purpose: nobody authors "three units a notch" on
+	 * purpose, and the whole point is to tell somebody whose wheel stopped working why.
+	 */
+	static constexpr float LegacyMultiplierCeiling = 5.0f;
+	/** Below this, an offset is at the boundary and a velocity is stopped. Local units, and units/s. */
+	static constexpr float SettleThreshold = 0.01f;
+	/** How hard the boundary pushes back against a fling that is already past it. Per unit of overshoot. */
+	static constexpr float BoundaryForce = 50.0f;
+	/** e-folds per second of the pull back into range once the fling has given up. */
+	static constexpr float ReturnRate = 10.0f;
+	/** Converts DecelerateRate into e-folds per second, so 0.135 keeps the feel it always had. */
+	static constexpr float DecelerationScale = 50.0f;
+	/**
+	 * How long a drag's last move still counts towards the fling a release starts, in seconds on the
+	 * pointer clock: FInertialScrollManager's sample timeout. A pointer held still for longer than this
+	 * before letting go has stopped, and lets go of nothing.
+	 */
+	static constexpr double FlingSampleWindow = 0.1;
+
+	/** Exponential decay: the frame-rate independent spelling of Lerp(Value, 0, Rate * Dt). */
+	static double Decay(double InValue, double InRatePerSecond, double InDeltaTime)
+	{
+		return InValue * FMath::Exp(-FMath::Max(0.0, InRatePerSecond) * InDeltaTime);
+	}
+}
+
+void UUIScrollViewHelper::Awake()
+{
+    Super::Awake();
+    this->SetCanExecuteTick(false);
+}
+void UUIScrollViewHelper::OnDimensionsChanged(bool PivotChanged, bool WidthChanged, bool HeightChanged)
+{
+    Super::OnDimensionsChanged(PivotChanged, WidthChanged, HeightChanged);
+    if (!TargetComp.IsValid())
+    {
+        this->DestroyComponent();
+    }
+    else
+    {
+        TargetComp->RectRangeChanged();
+    }
+}
+void UUIScrollViewHelper::OnChildDimensionsChanged(UDreamWidget *Child, bool PivotChanged, bool WidthChanged, bool HeightChanged)
+{
+    Super::OnChildDimensionsChanged(Child, PivotChanged, WidthChanged, HeightChanged);
+    if (!TargetComp.IsValid())
+    {
+        this->DestroyComponent();
+    }
+    else if (WidthChanged || HeightChanged)
+    {
+        TargetComp->RectRangeChanged();
+    }
+}
+
+void UUIScrollView::PostLoad()
+{
+    Super::PostLoad();
+    // Said once, when the asset carrying the number arrives, and never for a value nobody serialized:
+    // an asset that left ScrollSensitivity at the OLD default was saved with no delta at all and
+    // picks the new default up by itself. What reaches here is a number somebody wrote -- back when
+    // writing 1 meant "one times the axis" and now means "one unit a notch".
+    if (ScrollSensitivity > 0.0f && ScrollSensitivity < DreamScrollViewLocal::LegacyMultiplierCeiling)
+    {
+        UE_LOG(DreamGUI, Warning,
+            TEXT("[%s].%d '%s' has ScrollSensitivity %.3f. That is LOCAL UNITS travelled per wheel notch now (it used to be a multiplier on the raw axis), so this is a wheel that barely moves. The library default is 40."),
+            ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetPathName(), ScrollSensitivity);
+    }
+}
+
+void UUIScrollView::Awake()
+{
+    Super::Awake();
+    // A scroll view IS a window onto content larger than itself: content that keeps drawing outside
+    // the view is not a scroll view, it is a pile. The framework already draws this conclusion for
+    // UDreamLayoutContainerScrollBox (DreamWidget.cpp, where the layout container is registered), but
+    // that path only sees layout containers, and a scroll view is a behaviour -- so scrolling here
+    // dragged the rows straight out of the box and went on painting them.
+    //
+    // An override rather than an assignment: GetClipping only consults it while the author left
+    // Clipping at Inherit, so anyone who deliberately wrote No Clip still gets no clip.
+    if (UDreamWidget* Widget = GetWidget())
+    {
+        Widget->SetLayoutClippingOverride(EDreamWidgetClipping::ClipToBounds);
+    }
+    bGestureHorizontal = bGestureVertical = false;
+    bDragAccepted = false;
+    RectRangeChanged();
+    this->SetCanExecuteTick(true);
+}
+
+void UUIScrollView::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+    // The UI clock: a list flung in a slowed-down game glides as it would at full speed.
+    if (bCanUpdateAfterDrag)
+        UpdateAfterDrag(DreamUIInputClock::GetUIDeltaSeconds(this, DeltaTime));
+}
+
+void UUIScrollView::OnUnregister()
+{
+	ReleaseRangeHelper();
+	Super::OnUnregister();
+}
+
+void UUIScrollView::OnDestroy()
+{
+	// Removing the behaviour removes what it asserted about its host; the widget outlives it.
+	if (UDreamWidget* Widget = GetWidget())
+	{
+		Widget->ClearLayoutClippingOverride();
+	}
+	ReleaseRangeHelper();
+	Super::OnDestroy();
+}
+
+#if WITH_EDITOR
+void UUIScrollView::PostEditChangeProperty(FPropertyChangedEvent &PropertyChangedEvent)
+{
+    Super::PostEditChangeProperty(PropertyChangedEvent);
+    RectRangeChanged();
+    if (auto Property = PropertyChangedEvent.MemberProperty)
+    {
+        if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(UUIScrollView, Progress))
+        {
+            ApplyContentPositionWithProgress();
+        }
+    }
+}
+#endif
+
+/**
+ * Both ranges, the two capability bits, and whatever has to move because of them.
+ *
+ * The capability bits are written on EVERY pass rather than only when scrolling is on, which is the
+ * half of this function that used to be missing: they are the answer to "does this view scroll
+ * sideways", and a past drag has no business being the last word on it.
+ */
+void UUIScrollView::RecalculateRange()
+{
+    if (bRangeCalculated)return;
+    if (!CheckParameters())return;
+
+    bRangeCalculated = true;
+    bAllowHorizontalScroll = Horizontal;
+    bAllowVerticalScroll = Vertical;
+    if (Horizontal)
+    {
+        this->CalculateHorizontalRange();
+    }
+    if (Vertical)
+    {
+        this->CalculateVerticalRange();
+    }
+
+    if (KeepProgress)
+    {
+        // The author asked for the progress to be the thing that survives, so the content moves to
+        // wherever the new range puts that progress. This is the branch the recycler leans on: its
+        // content grows by whole cells and the view must not appear to jump.
+        ApplyContentPositionWithProgress();
+        return;
+    }
+    // Otherwise the OFFSET is what survives, and the progress follows from it. A content that grew
+    // while the view sat at the top stays at the top; one that shrank out from under the current
+    // offset is out of range, and the settle pass walks it back in.
+    const FVector2D Position = GetContentPosition();
+    const bool bOutOfRange =
+        (bAllowHorizontalScroll && (Position.X < HorizontalRange.X - DreamScrollViewLocal::SettleThreshold
+            || Position.X > HorizontalRange.Y + DreamScrollViewLocal::SettleThreshold))
+        || (bAllowVerticalScroll && (Position.Y < VerticalRange.X - DreamScrollViewLocal::SettleThreshold
+            || Position.Y > VerticalRange.Y + DreamScrollViewLocal::SettleThreshold));
+    if (bOutOfRange && RestrictRectArea)
+    {
+        bCanUpdateAfterDrag = true;
+    }
+    UpdateProgress(false);
+}
+
+void UUIScrollView::OnEnable()
+{
+    Super::OnEnable();
+    RectRangeChanged();
+}
+
+void UUIScrollView::OnTransformChanged()
+{
+    Super::OnTransformChanged();
+    RectRangeChanged();
+}
+
+void UUIScrollView::OnDimensionsChanged(bool PivotChanged, bool WidthChanged, bool HeightChanged)
+{
+    Super::OnDimensionsChanged(PivotChanged, WidthChanged, HeightChanged);
+    RectRangeChanged();
+}
+
+bool UUIScrollView::CheckParameters()
+{
+    auto Widget = GetWidget();
+    if (!Widget)return false;
+    if (!Content.IsValid())return false;
+	UDreamWidget* CurrentParent = Content->GetParent();
+	if (ContentParent.Get() != CurrentParent)
+	{
+		ReleaseRangeHelper();
+		ContentParent = CurrentParent;
+		bRangeCalculated = false;
+	}
+    if (!ContentParent.IsValid())return false;
+	if (!RangeHelper.IsValid())
+	{
+		RangeHelper = ContentParent->AddComponent<UUIScrollViewHelper>();
+		if (RangeHelper.IsValid())
+		{
+			RangeHelper->TargetComp = this;
+		}
+	}
+    return true;
+}
+
+bool UUIScrollView::CheckValidHit(UDreamWidget *InHitComp)
+{
+    auto Widget = GetWidget();
+	return IsValid(Widget) && IsValid(InHitComp)
+		&& (InHitComp->IsChildOf(Widget) || InHitComp == Widget);
+}
+
+FVector2D UUIScrollView::GetAppliedContentPosition() const
+{
+	if (!Content.IsValid())
+	{
+		return FVector2D::ZeroVector;
+	}
+	if (CoordinateMode == EDreamScrollCoordinateMode::AnchoredPosition)
+	{
+		return Content->GetAnchoredPosition();
+	}
+	const FVector RelativeLocation = Content->GetRelativeLocation();
+	return FVector2D(RelativeLocation.Y, RelativeLocation.Z);
+}
+
+FVector2D UUIScrollView::GetContentPosition() const
+{
+	const FVector2D Applied = GetAppliedContentPosition();
+	// The position the view asked for, while the content stands where that request was snapped to: the snap is the
+	// drawing's, and the offset, the progress and the physics go on in the fractions they were asked in -- else a slow
+	// fling, rounded back to the same pixel every frame, would never move again. Moved by anything else, the content
+	// is where it is.
+	if (bHasSnappedContentPosition && DreamScrollViewLocal::IsSnappingToDevicePixels()
+		&& Applied.Equals(SnappedContentPosition, DreamScrollViewLocal::SnapReadBackTolerance))
+	{
+		return UnsnappedContentPosition;
+	}
+	return Applied;
+}
+
+void UUIScrollView::SetContentPosition(const FVector2D& Value) const
+{
+	if (!Content.IsValid())
+	{
+		return;
+	}
+	FVector2D Applied = Value;
+	bHasSnappedContentPosition = false;
+	if (DreamScrollViewLocal::IsSnappingToDevicePixels() && SnapContentPositionToDevicePixels(Value, Applied))
+	{
+		bHasSnappedContentPosition = true;
+		UnsnappedContentPosition = Value;
+		SnappedContentPosition = Applied;
+	}
+	if (CoordinateMode == EDreamScrollCoordinateMode::AnchoredPosition)
+	{
+		Content->SetAnchoredPosition(Applied);
+		return;
+	}
+	FVector RelativeLocation = Content->GetRelativeLocation();
+	RelativeLocation.Y = Applied.X;
+	RelativeLocation.Z = Applied.Y;
+	Content->SetRelativeLocation(RelativeLocation);
+}
+
+bool UUIScrollView::SnapContentPositionToDevicePixels(const FVector2D& InPosition, FVector2D& OutSnapped) const
+{
+	const UDreamWidget* ContentWidget = Content.Get();
+	const UDreamWidget* Viewport = ContentWidget != nullptr ? ContentWidget->GetParent() : nullptr;
+	UDreamCanvas* RenderCanvas = Viewport != nullptr ? Viewport->GetRenderCanvas() : nullptr;
+	UDreamCanvas* RootCanvas = RenderCanvas != nullptr ? RenderCanvas->GetRootCanvas() : nullptr;
+	if (RootCanvas == nullptr || RootCanvas->GetWidget() == nullptr)
+	{
+		return false;
+	}
+	// The 2D canvases, which draw straight onto the pixels of what they render into: screen space in a game (an
+	// editor world draws it in the level, through the editor's camera), and a render target. World space has no
+	// grid that holds still.
+	const EDreamRenderMode RenderMode = RootCanvas->GetRenderMode();
+	const bool bScreen = RenderMode == EDreamRenderMode::ScreenSpaceOverlay && DreamUI::IsGameWorld(RootCanvas);
+	const bool bTarget = RenderMode == EDreamRenderMode::RenderTarget;
+	if (!bScreen && !bTarget)
+	{
+		return false;
+	}
+	// Drawn through a matrix the world transform does not hold.
+	if (ContentWidget->HasPerspectiveApplied() || ContentWidget->HasShearApplied())
+	{
+		return false;
+	}
+
+	// What the canvas renders into, in pixels, read the way the small-text placement reads it (UDreamText): a render
+	// target the canvas follows is its own size, one that follows the canvas is the canvas's size times its resolution
+	// scale, and the screen is the viewport -- unless the UI is drawn at a fraction of it, whose grid the renderer
+	// settles on its own thread.
+	FIntPoint TargetPixels = FIntPoint::ZeroValue;
+	if (bTarget)
+	{
+		const UTextureRenderTarget2D* Target = RootCanvas->GetRenderTarget();
+		if (IsValid(Target) && RootCanvas->GetRenderTargetSizeMode() != EDreamCanvasRenderTargetSizeMode::RenderTargetFitToCanvas)
+		{
+			TargetPixels = FIntPoint((int32)Target->SizeX, (int32)Target->SizeY);
+		}
+		else
+		{
+			const float ResolutionScale = RootCanvas->GetRenderTargetResolutionScale();
+			TargetPixels = FIntPoint(FMath::TruncToInt32(RootCanvas->GetWidget()->GetWidth() * ResolutionScale),
+				FMath::TruncToInt32(RootCanvas->GetWidget()->GetHeight() * ResolutionScale));
+		}
+	}
+	else
+	{
+		if (RootCanvas->GetScreenSpaceRenderScale() < 1.0f)
+		{
+			return false;
+		}
+		TargetPixels = RootCanvas->GetViewportSize();
+	}
+	if (TargetPixels.X <= 0 || TargetPixels.Y <= 0)
+	{
+		return false;
+	}
+
+	// The viewport's own space through the matrices the renderer draws the canvas with, onto the target's pixels: u
+	// from its left edge rightward, v from its top edge upward.
+	const FMatrix ViewRotation = FInverseRotationMatrix(RootCanvas->GetViewRotator()) * FMatrix(
+		FPlane(0, 0, 1, 0),
+		FPlane(1, 0, 0, 0),
+		FPlane(0, 1, 0, 0),
+		FPlane(0, 0, 0, 1));
+	const FMatrix ViewportToClip = Viewport->GetWorldTransform().ToMatrixWithScale()
+		* FTranslationMatrix(-RootCanvas->GetViewLocation()) * ViewRotation * RootCanvas->GetProjectionMatrix();
+	const FVector2D TargetSize((double)TargetPixels.X, (double)TargetPixels.Y);
+	auto ToDevice = [&ViewportToClip, &TargetSize](double InX, double InY, FVector2D& OutDevice)
+	{
+		const FVector4 Clip = ViewportToClip.TransformFVector4(FVector4(0.0, InX, InY, 1.0));
+		if (!(Clip.W > UE_SMALL_NUMBER))
+		{
+			return false;
+		}
+		OutDevice = FVector2D((Clip.X / Clip.W + 1.0) * 0.5 * TargetSize.X, (Clip.Y / Clip.W - 1.0) * 0.5 * TargetSize.Y);
+		return true;
+	};
+
+	// Where InPosition would put the content's origin in the viewport's space: the content moves one for one with
+	// its position, in either coordinate mode, so it is where the content is now plus the difference.
+	const FVector Location = ContentWidget->GetRelativeLocation();
+	const FVector2D Applied = GetAppliedContentPosition();
+	const double OriginX = Location.Y + (InPosition.X - Applied.X);
+	const double OriginY = Location.Z + (InPosition.Y - Applied.Y);
+	FVector2D Origin = FVector2D::ZeroVector;
+	FVector2D AlongX = FVector2D::ZeroVector;
+	FVector2D AlongY = FVector2D::ZeroVector;
+	if (!ToDevice(OriginX, OriginY, Origin) || !ToDevice(OriginX + 1.0, OriginY, AlongX) || !ToDevice(OriginX, OriginY + 1.0, AlongY))
+	{
+		return false;
+	}
+	const FVector2D PerX = AlongX - Origin;
+	const FVector2D PerY = AlongY - Origin;
+	// A grid whose rows and columns are the viewport's: no turn, no mirror -- what a scroll moves along stays one
+	// device axis.
+	if (!(PerX.X > UE_KINDA_SMALL_NUMBER) || !(PerY.Y > UE_KINDA_SMALL_NUMBER)
+		|| FMath::Abs(PerX.Y) > DreamScrollViewLocal::DeviceGridSkewTolerance
+		|| FMath::Abs(PerY.X) > DreamScrollViewLocal::DeviceGridSkewTolerance)
+	{
+		return false;
+	}
+	// The least move that lands the origin on a pixel corner, along the axes this view scrolls; the other axis is
+	// the layout's, and stays where it put the content.
+	OutSnapped = InPosition;
+	if (Horizontal)
+	{
+		OutSnapped.X += (FMath::RoundToDouble(Origin.X) - Origin.X) / PerX.X;
+	}
+	if (Vertical)
+	{
+		OutSnapped.Y += (FMath::RoundToDouble(Origin.Y) - Origin.Y) / PerY.Y;
+	}
+	return true;
+}
+
+void UUIScrollView::ApplyContentPosition(const FVector2D& InPosition, bool bInFireEvent)
+{
+	SetContentPosition(InPosition);
+	UpdateProgress(bInFireEvent);
+}
+
+/**
+ * "How far must the content move for its start edges to meet the viewport's", added to where the
+ * content is now.
+ *
+ * The delta is measured in the parent's own space -- relative location plus the child's local edge,
+ * which is the same arithmetic CalculateRevealContentPosition already uses -- and then added to the
+ * position in whichever coordinate mode is active. That is legitimate because the two modes differ
+ * by a term that depends on the ANCHORS and the parent's size and not on where the content sits: a
+ * displacement of D in one is a displacement of D in the other. It is also the entire reason the
+ * CoordinateMode correction that used to be bolted onto the range maths is gone.
+ */
+FVector2D UUIScrollView::GetStartAlignedPosition() const
+{
+	if (!Content.IsValid() || !ContentParent.IsValid())
+	{
+		return GetAppliedContentPosition();
+	}
+	const UDreamWidget* Viewport = ContentParent.Get();
+	const FVector ContentLocation = Content->GetRelativeLocation();
+	// Left edges together on X, TOP edges together on Y: the start of the reading direction, which
+	// is where a scroll view rests before anybody has scrolled it.
+	const double ContentLeft = ContentLocation.Y + Content->GetLocalSpaceLeft();
+	const double ContentTop = ContentLocation.Z + Content->GetLocalSpaceTop();
+	FVector2D Delta(
+		Viewport->GetLocalSpaceLeft() - ContentLeft,
+		Viewport->GetLocalSpaceTop() - ContentTop);
+
+	// An axis whose content is SMALLER than the window has no travel, so where it rests is the whole
+	// of its behaviour -- and FlipDirectionInSmallSize is the author's word on which end that is.
+	if (FlipDirectionInSmallSize)
+	{
+		const FVector2D ViewportSize = GetViewportSize();
+		const FVector2D ContentSize = GetContentSize();
+		if (ContentSize.X < ViewportSize.X)
+		{
+			Delta.X += ViewportSize.X - ContentSize.X;
+		}
+		if (ContentSize.Y < ViewportSize.Y)
+		{
+			Delta.Y -= ViewportSize.Y - ContentSize.Y;
+		}
+	}
+	// The leading pad moves the resting place rather than adding a term to every caller: offset zero
+	// is "the content's start edge one window further in", and the sign is the offset's own -- X runs
+	// rightward so the content sits further RIGHT, Y runs downward so it sits further DOWN, which is
+	// a SMALLER content Y because the content's own Y runs up.
+	const FVector2D Leading = GetLeadingScrollPad();
+	Delta.X += Leading.X;
+	Delta.Y -= Leading.Y;
+	// From the position the content is drawn at, which is the one its rect was measured at -- not a snapped
+	// position's unsnapped request (GetContentPosition), which would put the start off by the snap.
+	return GetAppliedContentPosition() + Delta;
+}
+
+FVector2D UUIScrollView::GetLeadingScrollPad() const
+{
+	return bBackPadScrolling ? GetViewportSize() : FVector2D::ZeroVector;
+}
+
+FVector2D UUIScrollView::GetTrailingScrollPad() const
+{
+	return bFrontPadScrolling ? GetViewportSize() : FVector2D::ZeroVector;
+}
+
+FVector2D UUIScrollView::GetViewportSize() const
+{
+	const UDreamWidget* Viewport = ContentParent.Get();
+	return Viewport != nullptr ? FVector2D(Viewport->GetWidth(), Viewport->GetHeight()) : FVector2D::ZeroVector;
+}
+
+FVector2D UUIScrollView::GetContentSize() const
+{
+	const UDreamWidget* Widget = Content.Get();
+	return Widget != nullptr ? FVector2D(Widget->GetWidth(), Widget->GetHeight()) : FVector2D::ZeroVector;
+}
+
+FVector2D UUIScrollView::GetScrollableExtent() const
+{
+	const FVector2D ViewportSize = GetViewportSize();
+	const FVector2D ContentSize = GetContentSize();
+	// Both pads are travel that exists over nothing, which is exactly what they are for: the first
+	// item can be dragged to the far edge and the last one to the near edge. Slate spends a whole
+	// window per pad, not half of one, and this is the same arithmetic in the offset's terms.
+	const FVector2D Leading = GetLeadingScrollPad();
+	const FVector2D Trailing = GetTrailingScrollPad();
+	return FVector2D(
+		FMath::Max(0.0, ContentSize.X - ViewportSize.X) + Leading.X + Trailing.X,
+		FMath::Max(0.0, ContentSize.Y - ViewportSize.Y) + Leading.Y + Trailing.Y);
+}
+
+FVector2D UUIScrollView::GetOverscrollOffset() const
+{
+	if (!bAllowOverscroll)
+	{
+		return FVector2D::ZeroVector;
+	}
+	const FVector2D Offset = GetScrollOffset();
+	const FVector2D Extent = GetScrollableExtent();
+	// Signed, and in the reading direction: below the start is negative, past the end positive. The
+	// same three cases SScrollBox::GetOverscrollOffset answers with, per axis instead of per box.
+	auto AxisOverscroll = [](double InOffset, double InExtent)
+	{
+		if (InOffset < 0.0) return InOffset;
+		if (InOffset > InExtent) return InOffset - InExtent;
+		return 0.0;
+	};
+	return FVector2D(AxisOverscroll(Offset.X, Extent.X), AxisOverscroll(Offset.Y, Extent.Y));
+}
+
+FVector2D UUIScrollView::GetOverscrollPercentage() const
+{
+	const FVector2D ViewportSize = GetViewportSize();
+	const FVector2D Overscroll = GetOverscrollOffset();
+	// A window of zero has no percentage to give rather than an infinite one.
+	return FVector2D(
+		ViewportSize.X > UE_SMALL_NUMBER ? (Overscroll.X / ViewportSize.X) * 100.0 : 0.0,
+		ViewportSize.Y > UE_SMALL_NUMBER ? (Overscroll.Y / ViewportSize.Y) * 100.0 : 0.0);
+}
+
+bool UUIScrollView::IsScrolling() const
+{
+	// A glide moves the content as surely as a fling does. Leaving it out made a list that reports when scrolling
+	// finishes report it on every frame of an animated reveal.
+	return bCanUpdateAfterDrag || !Velocity.IsNearlyZero() || IsGliding();
+}
+
+void UUIScrollView::EndInertialScrolling()
+{
+	Velocity = FVector2D::ZeroVector;
+	// Whether anything is still due to happen is decided by where the content IS, not by the fact
+	// that the fling was cancelled: a band left open still has to close.
+	bCanUpdateAfterDrag = RestrictRectArea
+		&& !ClampToRange(GetContentPosition()).Equals(GetContentPosition(), DreamScrollViewLocal::SettleThreshold);
+}
+
+void UUIScrollView::SetWheelScrollMultiplier(float value)
+{
+	WheelScrollMultiplier = FMath::Max(0.0f, FMath::IsFinite(value) ? value : 1.0f);
+}
+
+void UUIScrollView::SetAllowOverscroll(bool value)
+{
+	if (bAllowOverscroll != value)
+	{
+		bAllowOverscroll = value;
+		// Switching it off leaves whatever band is currently open to be closed, which is the settle
+		// pass's job -- so arm it rather than teleporting the content back under the player's finger.
+		if (!bAllowOverscroll && RestrictRectArea)
+		{
+			bCanUpdateAfterDrag = true;
+		}
+	}
+}
+
+void UUIScrollView::SetBackPadScrolling(bool value)
+{
+	if (bBackPadScrolling != value)
+	{
+		bBackPadScrolling = value;
+		// The pad moves where offset zero is, so every range this view holds is now wrong.
+		RectRangeChanged();
+	}
+}
+
+void UUIScrollView::SetFrontPadScrolling(bool value)
+{
+	if (bFrontPadScrolling != value)
+	{
+		bFrontPadScrolling = value;
+		RectRangeChanged();
+	}
+}
+
+FVector2D UUIScrollView::GetScrollOffset() const
+{
+	// Distance from the resting position, expressed in the reading direction: scrolling right moves
+	// the content LEFT (X decreases), scrolling down moves it UP (Y increases). One sign flip on X
+	// is the whole of the difference between the two axes.
+	const FVector2D Start = GetStartAlignedPosition();
+	const FVector2D Position = GetContentPosition();
+	return FVector2D(Start.X - Position.X, Position.Y - Start.Y);
+}
+
+void UUIScrollView::SetScrollOffset(FVector2D InOffset)
+{
+	if (!CheckParameters())
+	{
+		return;
+	}
+	RecalculateRange();
+	const FVector2D Extent = GetScrollableExtent();
+	const FVector2D Start = GetStartAlignedPosition();
+	FVector2D Position = GetContentPosition();
+	if (Horizontal)
+	{
+		Position.X = Start.X - FMath::Clamp(InOffset.X, 0.0, Extent.X);
+	}
+	if (Vertical)
+	{
+		Position.Y = Start.Y + FMath::Clamp(InOffset.Y, 0.0, Extent.Y);
+	}
+	// A glide still under way would carry on from here on its next frame and undo this: an offset set by
+	// code or by a wheel notch is the newest word on where the content goes.
+	StopGlide();
+	Velocity = FVector2D::ZeroVector;
+	bCanUpdateAfterDrag = false;
+	ApplyContentPosition(Position);
+}
+
+void UUIScrollView::GlideToScrollOffset(FVector2D InOffset, float InDuration)
+{
+	if (!(InDuration > 0.0f) || !FMath::IsFinite(InDuration))
+	{
+		SetScrollOffset(InOffset);
+		return;
+	}
+	if (!CheckParameters())
+	{
+		return;
+	}
+	RecalculateRange();
+	// SetScrollOffset's own arithmetic, aimed at rather than written: clamped on every axis this view scrolls, the
+	// others left where they are.
+	const FVector2D Extent = GetScrollableExtent();
+	const FVector2D Start = GetStartAlignedPosition();
+	FVector2D Target = GetContentPosition();
+	if (Horizontal)
+	{
+		Target.X = Start.X - FMath::Clamp(InOffset.X, 0.0, Extent.X);
+	}
+	if (Vertical)
+	{
+		Target.Y = Start.Y + FMath::Clamp(InOffset.Y, 0.0, Extent.Y);
+	}
+	if (Target.Equals(GetContentPosition(), DreamScrollViewLocal::SettleThreshold))
+	{
+		// Already there: a glide that goes nowhere would still be "scrolling" for its whole duration, and a list
+		// would wait that long to say it had finished.
+		SetScrollOffset(InOffset);
+		return;
+	}
+	// The glide every ScrollTo takes, so anything that moves the content meanwhile stops it where it got to.
+	GlideContentTo(Target, true, InDuration);
+}
+
+void UUIScrollView::ScrollBy(FVector2D InDelta)
+{
+	SetScrollOffset(GetScrollOffset() + InDelta);
+}
+
+void UUIScrollView::ScrollToStart()
+{
+	SetScrollOffset(FVector2D::ZeroVector);
+}
+
+void UUIScrollView::ScrollToEnd()
+{
+	SetScrollOffset(GetScrollableExtent());
+}
+
+bool UUIScrollView::CanScrollOnAxis(bool bInHorizontalAxis) const
+{
+	if (bInHorizontalAxis ? !Horizontal : !Vertical)
+	{
+		return false;
+	}
+	const FVector2D Extent = GetScrollableExtent();
+	return (bInHorizontalAxis ? Extent.X : Extent.Y) > DreamScrollViewLocal::SettleThreshold;
+}
+
+void UUIScrollView::ReleaseRangeHelper()
+{
+	if (RangeHelper.IsValid())
+	{
+		RangeHelper->TargetComp.Reset();
+		RangeHelper->DestroyComponent();
+	}
+	RangeHelper.Reset();
+}
+
+float UUIScrollView::GetSafeDeltaTime() const
+{
+	const UWorld* World = GetWorld();
+	return FMath::Max(DreamUIInputClock::GetUIDeltaSeconds(this, World ? World->GetDeltaSeconds() : 0.0f), UE_SMALL_NUMBER);
+}
+
+/**
+ * Which axis a gesture drives, decided once from its first movement and then left alone.
+ *
+ * OnlyOneDirection is about the GESTURE, so a diagonal flick on a two-axis view commits to the axis
+ * it started along; without it every axis this view scrolls follows the pointer.
+ */
+void UUIScrollView::ResolveGestureAxes(const FVector2D& InFirstDelta)
+{
+	bGestureHorizontal = false;
+	bGestureVertical = false;
+	if (OnlyOneDirection && Horizontal && Vertical)
+	{
+		if (FMath::Abs(InFirstDelta.X) > FMath::Abs(InFirstDelta.Y))
+		{
+			bGestureHorizontal = true;
+		}
+		else
+		{
+			bGestureVertical = true;
+		}
+		return;
+	}
+	bGestureHorizontal = Horizontal;
+	bGestureVertical = Vertical;
+}
+
+/**
+ * Whether THIS gesture is one this view accepts at all -- the right button and the finger, which are
+ * the two UMG lets a project turn off separately.
+ *
+ * Asked once, at the start of the drag, and not again: a gesture that was refused must stay refused
+ * for its whole length, or letting go of the right button mid-drag would hand the rest of the motion
+ * to the content. The two gesture bits already carry that decision, so refusing here is enough.
+ */
+bool UUIScrollView::AcceptsDragGesture(UDreamPointerEventData* InEventData) const
+{
+    if (InEventData == nullptr)
+    {
+        return false;
+    }
+    // The master switch first: it is about whether ANY pointer gesture drives this view, where the
+    // two below are about which one.
+    if (!bIsPointerScrollingEnabled)
+    {
+        return false;
+    }
+    const bool bTouch = IsTouchInput(InEventData);
+    const bool bRightButton = !bTouch && InEventData->MouseButtonType == EDreamUIMouseButtonType::Right;
+    if (!bAllowRightClickDragScrolling && bRightButton)
+    {
+        return false;
+    }
+    if (!bEnableTouchScrolling && bTouch)
+    {
+        return false;
+    }
+    // Nothing to scroll on either axis. A right drag is then not a scroll at all (SScrollBox takes it only while its
+    // bar IsNeeded), and with CanScrollInSmallSize off neither is any other: the content cannot move, so holding the
+    // gesture here would only keep it from a scroll view around this one.
+    if ((bRightButton || !CanScrollInSmallSize) && !CanScrollOnAxis(true) && !CanScrollOnAxis(false))
+    {
+        return false;
+    }
+    return true;
+}
+
+bool UUIScrollView::IsTouchInput(UDreamPointerEventData* InEventData) const
+{
+    // The DEVICE, not the pointer id: under the legacy touch ids a finger and a mouse both arrive as
+    // pointer 0, and a virtual cursor is the mouse's pointer too, so the honest question is what the
+    // player last touched -- which is exactly what the player's input tracks for the key-prompt tables.
+    // One place, because three callers ask it now.
+    const UDreamEventSystem* Events = UDreamEventSystem::GetDreamEventSystemInstance(
+        const_cast<UUIScrollView*>(this), InEventData != nullptr ? InEventData->UserIndex : 0);
+    return Events != nullptr && Events->GetCurrentInputDevice() == EDreamUIInputDevice::Touch;
+}
+
+bool UUIScrollView::OnPointerBeginDrag_Implementation(UDreamPointerEventData *EventData)
+{
+	if (EventData && AcceptsDragGesture(EventData) && CheckParameters() && CheckValidHit(EventData->DragWidget))
+    {
+        PrevPointerPosition = EventData->PressWorldPoint;
+        const auto CurrentPointerPosition = EventData->GetWorldPointInPlane();
+        const auto localMoveDelta = EventData->PressWorldToLocalTransform.TransformVector(CurrentPointerPosition - PrevPointerPosition);
+        // A view that scrolls one way only does not claim a drag that runs mostly the OTHER way: there is
+        // nothing it could do with one, and taking it kept the gesture from the view around this one -- a
+        // vertical list inside a horizontal carousel swallowed every sideways swipe made over it. Handed on,
+        // like any gesture refused below. A tie stays with this view, as it always did.
+        const double AlongX = FMath::Abs(localMoveDelta.Y);
+        const double AlongY = FMath::Abs(localMoveDelta.Z);
+        if ((Horizontal && !Vertical && AlongY > AlongX) || (Vertical && !Horizontal && AlongX > AlongY))
+        {
+            bGestureHorizontal = bGestureVertical = false;
+            bDragAccepted = false;
+            return true;
+        }
+        // The RIGHT-button drag is UMG's drag-to-scroll, and there the travel that crossed the drag
+        // threshold scrolls too: SScrollBox::OnMouseMove adds every move to AmountScrolledWhileRightMouseDown
+        // and, once that passes the trigger distance, scrolls by the move that got it there as well as
+        // every one after -- so the content stays under the pointer that grabbed it. Leaving the previous
+        // point at the PRESS is what hands that first stretch to the move applied below. The left button
+        // and the finger keep dropping it, as they always have: a left drag is this library's own
+        // gesture, and SScrollBox's touch path spends the crossing move on capturing, not scrolling.
+        if (EventData->MouseButtonType != EDreamUIMouseButtonType::Right)
+        {
+            PrevPointerPosition = CurrentPointerPosition;
+        }
+        ResolveGestureAxes(FVector2D(localMoveDelta.Y, localMoveDelta.Z));
+        bDragAccepted = true;
+        // The pointer has the content now: a glide still under way would take it back on its next frame.
+        StopGlide();
+        Velocity = FVector2D::ZeroVector;
+        LastDragMoveTime = -1.0;
+        bCanUpdateAfterDrag = false;
+        // Before the first move is applied, so a consumer hears "began" ahead of the delta that
+        // began it rather than after -- the order a handler recording a gesture has to have.
+        OnDragGestureCPP.Broadcast(EDreamScrollDragPhase::Begin, IsTouchInput(EventData));
+        OnPointerDrag_Implementation(EventData);
+        return AllowEventBubbleUp;
+    }
+    // Refused -- a button or a finger switched off, or a press outside this view's own content -- and so
+    // handed on rather than consumed: a scroll view around this one may take the gesture, and swallowing
+    // one this view does nothing with left the player's drag moving nothing at all.
+    bGestureHorizontal = bGestureVertical = false;
+    bDragAccepted = false;
+    return true;
+}
+
+bool UUIScrollView::OnPointerDrag_Implementation(UDreamPointerEventData *EventData)
+{
+	if (!EventData || !Content.IsValid())
+        return AllowEventBubbleUp;
+	FVector2D Position = GetContentPosition();
+    const auto CurrentPointerPosition = EventData->GetWorldPointInPlane();
+    const auto localMoveDelta = EventData->PressWorldToLocalTransform.TransformVector(CurrentPointerPosition - PrevPointerPosition);
+    PrevPointerPosition = CurrentPointerPosition;
+    if (!bDragAccepted)
+    {
+        // Not this view's gesture -- it refused the drag when it began -- so the move goes on to whichever
+        // view took it. Consuming it here starved that view of every move after the first.
+        return true;
+    }
+    OnDragGestureCPP.Broadcast(EDreamScrollDragPhase::Move, IsTouchInput(EventData));
+    // A drag is delivered every frame the button is held, moved or not, so only a move that went
+    // somewhere says how fast the drag is going.
+    if (!FVector2D(localMoveDelta.Y, localMoveDelta.Z).IsNearlyZero())
+    {
+        LastDragMoveVelocity = FVector2D(localMoveDelta.Y, localMoveDelta.Z) / GetSafeDeltaTime();
+        LastDragMoveTime = UDreamEventSystem::GetPointerClockSeconds(this);
+    }
+    // The pointer's delta, damped on whichever axis is already past its boundary -- and past it
+    // BEFORE this move rather than after, so a drag heading back into range is at full weight the
+    // whole way home instead of crawling the last unit.
+    const float DragDamper = GetEffectiveOutOfRangeDamper();
+    if (bGestureHorizontal)
+    {
+        Position.X += localMoveDelta.Y * ((RestrictRectArea
+            && (Position.X < HorizontalRange.X || Position.X > HorizontalRange.Y)) ? DragDamper : 1.0f);
+    }
+    if (bGestureVertical)
+    {
+        Position.Y += localMoveDelta.Z * ((RestrictRectArea
+            && (Position.Y < VerticalRange.X || Position.Y > VerticalRange.Y)) ? DragDamper : 1.0f);
+    }
+    if (RestrictRectArea && !bAllowOverscroll)
+    {
+        // With overscroll off the content stops AT an end, on the move that reaches it too. The damper
+        // above only weighs a move that STARTS past an end, so the one that crossed it went all the way out.
+        if (bGestureHorizontal) Position.X = FMath::Clamp(Position.X, HorizontalRange.X, HorizontalRange.Y);
+        if (bGestureVertical) Position.Y = FMath::Clamp(Position.Y, VerticalRange.X, VerticalRange.Y);
+    }
+    if (!CanScrollInSmallSize)
+    {
+        // The author said content smaller than the window does not move at all, so it does not move
+        // at all -- not even out and back. Only the axes that actually fit are pinned.
+        const FVector2D Extent = GetScrollableExtent();
+        const FVector2D Start = GetStartAlignedPosition();
+        if (Extent.X <= DreamScrollViewLocal::SettleThreshold) Position.X = Start.X;
+        if (Extent.Y <= DreamScrollViewLocal::SettleThreshold) Position.Y = Start.Y;
+    }
+    bCanUpdateAfterDrag = false;
+    ApplyContentPosition(Position);
+    return AllowEventBubbleUp;
+}
+
+bool UUIScrollView::OnPointerEndDrag_Implementation(UDreamPointerEventData *EventData)
+{
+	if (!EventData || !Content.IsValid())
+	{
+		return AllowEventBubbleUp;
+	}
+    if (!bDragAccepted)
+    {
+        // The end of a gesture this view refused: no fling to start and no end to announce, since it never
+        // announced a beginning -- and the view that took the drag is the one that has to hear it end.
+        return true;
+    }
+    bDragAccepted = false;
+    const auto CurrentPointerPosition = EventData->GetWorldPointInPlane();
+    const auto localMoveDelta = EventData->PressWorldToLocalTransform.TransformVector(CurrentPointerPosition - PrevPointerPosition);
+    const float DeltaTime = GetSafeDeltaTime();
+    FVector2D ReleaseVelocity(localMoveDelta.Y / DeltaTime, localMoveDelta.Z / DeltaTime);
+    // Let go a frame after the last move -- the frame between them delivered a drag that went nowhere --
+    // and the release frame alone says the drag had stopped. It had not; it was moving a moment ago, and
+    // that is the speed to coast at. Only one frame's movement used to count, so a mouse released the
+    // frame after it moved flung nothing.
+    if (ReleaseVelocity.IsNearlyZero() && LastDragMoveTime >= 0.0
+        && UDreamEventSystem::GetPointerClockSeconds(this) - LastDragMoveTime <= DreamScrollViewLocal::FlingSampleWindow)
+    {
+        ReleaseVelocity = LastDragMoveVelocity;
+    }
+    if (!CanScrollInSmallSize)
+    {
+        // An axis with nothing to scroll was held still under the drag, and a fling along it would carry the content
+        // out of a range of nothing for the spring to bring back -- the overscroll the setting is off to prevent.
+        const FVector2D Extent = GetScrollableExtent();
+        if (Extent.X <= DreamScrollViewLocal::SettleThreshold) ReleaseVelocity.X = 0.0;
+        if (Extent.Y <= DreamScrollViewLocal::SettleThreshold) ReleaseVelocity.Y = 0.0;
+    }
+    if (bGestureHorizontal)
+    {
+        bCanUpdateAfterDrag = true;
+		Velocity.X = ReleaseVelocity.X;
+    }
+    if (bGestureVertical)
+    {
+        bCanUpdateAfterDrag = true;
+		Velocity.Y = ReleaseVelocity.Y;
+    }
+    const bool bTouch = IsTouchInput(EventData);
+    // A finger let go can EASE to its resting place instead of coasting on the momentum it built --
+    // UMG's touch animated scrolling. The glide is the WHEEL's, aimed at where the fling was going
+    // to end up, so the two roads share one tween rather than each carrying their own; the velocity
+    // is dropped so the physics does not keep pushing the thing the tween is already moving.
+    if (bAnimateTouchScrolling && bTouch && !Velocity.IsNearlyZero())
+    {
+        const FVector2D Projected = GetContentPosition() + Velocity * WheelScrollAnimationDuration;
+        Velocity = FVector2D::ZeroVector;
+        bCanUpdateAfterDrag = false;
+        GlideContentTo(ClampToRange(Projected), true, WheelScrollAnimationDuration);
+    }
+    OnDragGestureCPP.Broadcast(EDreamScrollDragPhase::End, bTouch);
+    return AllowEventBubbleUp;
+}
+
+/**
+ * The wheel, and the one place this component deliberately declines to consume an event.
+ *
+ * A view that cannot move on the axis the wheel just turned hands the event ON, which is what makes
+ * a list inside a scrolling page behave: reaching the end of the inner list continues the page,
+ * rather than the page freezing because something under the pointer is nominally scrollable. UMG's
+ * scroll box makes the same call.
+ */
+bool UUIScrollView::OnPointerScroll_Implementation(UDreamPointerEventData *EventData)
+{
+    if (!EventData || !CheckParameters() || !CheckValidHit(EventData->EnterWidget))
+    {
+        return AllowEventBubbleUp;
+    }
+    if (EventData->ScrollAxisValue.IsZero())
+    {
+        return AllowEventBubbleUp;
+    }
+    if (ConsumeMouseWheel == EDreamScrollBoxConsumeMouseWheel::Never || !bIsPointerScrollingEnabled)
+    {
+        // Not "scroll and pass it on" -- the wheel does not drive this view at all, so the event has
+        // to reach whatever is behind it untouched. The master pointer switch answers the same way
+        // as Never, because from the wheel's side they are the same refusal.
+        return true;
+    }
+    RecalculateRange();
+    ResolveGestureAxes(FVector2D(EventData->ScrollAxisValue.X, EventData->ScrollAxisValue.Y));
+
+    // The wheel reads in the SAME direction on both axes -- a notch away from the user advances the
+    // offset -- which is what the offset model buys: no per-axis sign to remember, because the
+    // offset itself already runs left-to-right and top-to-bottom.
+    const FVector2D Extent = GetScrollableExtent();
+    // From where the scroll in flight is GOING, not from where it has got to: a notch during a glide adds
+    // to that glide's destination, as UMG's wheel adds to its DesiredScrollOffset. Starting from the
+    // mid-glide position lost whatever of the glide was still to come -- two quick animated notches
+    // travelled less than two, and a notch during an animated reveal undid the rest of the reveal.
+    const bool bGliding = IsGliding();
+    const FVector2D Start = GetStartAlignedPosition();
+    const FVector2D BeforeOffset = bGliding
+        ? FVector2D(Start.X - ActiveGlideTarget.X, ActiveGlideTarget.Y - Start.Y)
+        : GetScrollOffset();
+    FVector2D AfterOffset = BeforeOffset;
+    // The multiplier scales whichever of the two distances is in force, so "twice as fast" means the
+    // same thing whether a notch is measured in local units or in a fraction of the range.
+    const float WheelScale = FMath::Max(0.0f, WheelScrollMultiplier);
+    if (WheelProgressStep > UE_SMALL_NUMBER)
+    {
+        const double Step = static_cast<double>(WheelProgressStep) * WheelScale;
+        if (bGestureHorizontal) AfterOffset.X -= FMath::Sign(EventData->ScrollAxisValue.X) * Step * Extent.X;
+        if (bGestureVertical) AfterOffset.Y -= FMath::Sign(EventData->ScrollAxisValue.Y) * Step * Extent.Y;
+    }
+    else
+    {
+        const double Distance = static_cast<double>(ScrollSensitivity) * WheelScale;
+        if (bGestureHorizontal) AfterOffset.X -= EventData->ScrollAxisValue.X * Distance;
+        if (bGestureVertical) AfterOffset.Y -= EventData->ScrollAxisValue.Y * Distance;
+    }
+    AfterOffset.X = FMath::Clamp(AfterOffset.X, 0.0, Extent.X);
+    AfterOffset.Y = FMath::Clamp(AfterOffset.Y, 0.0, Extent.Y);
+    if (AfterOffset.Equals(BeforeOffset, DreamScrollViewLocal::SettleThreshold))
+    {
+        // Nothing moved: already at that end, or this axis does not scroll. Hand it on -- unless the
+        // author said Always, which is the setting that exists precisely so an inner list at its end
+        // does not start driving the page behind it. Always answers the way a handled event does,
+        // which is AllowEventBubbleUp rather than a bare false.
+        return ConsumeMouseWheel == EDreamScrollBoxConsumeMouseWheel::Always ? AllowEventBubbleUp : true;
+    }
+    if (bAnimateWheelScrolling)
+    {
+        // UMG's AnimateWheelScrolling: the notch GLIDES rather than teleporting, which is what makes
+        // a long list readable while the wheel is turning. The same easing ScrollTo uses, so a wheel
+        // notch and a programmatic scroll move the content in exactly one way.
+        //
+        // Converted to a content POSITION here rather than going through SetScrollOffset, because
+        // that setter kills the velocity and applies the position at once -- which is precisely the
+        // teleport this branch exists to avoid. The conversion is the setter's own arithmetic: the
+        // start-aligned position, less the offset on X and plus it on Y (the offset runs rightward
+        // and DOWNWARD, while the content's Y runs up). An axis the notch does not drive keeps the
+        // destination it had, which is the glide's when one is under way.
+        FVector2D Target = bGliding ? ActiveGlideTarget : GetContentPosition();
+        if (bGestureHorizontal) Target.X = Start.X - AfterOffset.X;
+        if (bGestureVertical)   Target.Y = Start.Y + AfterOffset.Y;
+        GlideContentTo(ClampToRange(Target), true, WheelScrollAnimationDuration);
+        return AllowEventBubbleUp;
+    }
+    // SetScrollOffset stops a glide in flight before it moves anything, so the notch is not undone by the
+    // glide's next frame.
+    SetScrollOffset(AfterOffset);
+    return AllowEventBubbleUp;
+}
+
+void UUIScrollView::SetVelocity(const FVector2D& value)
+{
+    if (CheckParameters())
+    {
+        // A fling replaces a glide; the two would otherwise write the content on alternate frames.
+        StopGlide();
+        Velocity = value;
+		bCanUpdateAfterDrag = !Velocity.IsNearlyZero();
+        if (bCanUpdateAfterDrag)
+        {
+            // A velocity handed in from outside is a fling nobody made a gesture for, so it drives
+            // every axis this view scrolls.
+            bGestureHorizontal = Horizontal;
+            bGestureVertical = Vertical;
+        }
+    }
+}
+
+void UUIScrollView::SetContent(UDreamWidget* Value)
+{
+	if (Content.Get() != Value)
+	{
+		ReleaseRangeHelper();
+		Content = Value;
+		ContentParent = nullptr;
+		RectRangeChanged();
+	}
+}
+
+void UUIScrollView::SetDecelerateRate(float value)
+{
+    DecelerateRate = FMath::Max(0.0f, value);
+}
+
+void UUIScrollView::SetRestrictRectArea(bool value)
+{
+    if (RestrictRectArea != value)
+    {
+        RestrictRectArea = value;
+        if (RestrictRectArea)
+        {
+            bCanUpdateAfterDrag = true;
+        }
+    }
+}
+
+void UUIScrollView::SetOutOfRangeDamper(float value)
+{
+    OutOfRangeDamper = FMath::Clamp(value, 0.0f, 1.0f);
+}
+
+void UUIScrollView::SetScrollDelta(FVector2D value)
+{
+    if (!CheckParameters())
+    {
+        return;
+    }
+    RecalculateRange();
+    StopGlide();
+    FVector2D Position = GetContentPosition();
+    const float DeltaTime = GetSafeDeltaTime();
+    if (Horizontal)
+    {
+        const float Damper = (RestrictRectArea
+            && (Position.X < HorizontalRange.X || Position.X > HorizontalRange.Y)) ? GetEffectiveOutOfRangeDamper() : 1.0f;
+        Position.X += value.X * Damper;
+        Velocity.X = value.X * Damper / DeltaTime;
+        bGestureHorizontal = true;
+        bCanUpdateAfterDrag = true;
+    }
+    if (Vertical)
+    {
+        const float Damper = (RestrictRectArea
+            && (Position.Y < VerticalRange.X || Position.Y > VerticalRange.Y)) ? GetEffectiveOutOfRangeDamper() : 1.0f;
+        Position.Y += value.Y * Damper;
+        Velocity.Y = value.Y * Damper / DeltaTime;
+        bGestureVertical = true;
+        bCanUpdateAfterDrag = true;
+    }
+    if (RestrictRectArea && !bAllowOverscroll)
+    {
+        // The drag's rule: with overscroll off a step that crosses an end stops at it. The fling it starts
+        // is stopped there by the settle pass.
+        Position = ClampToRange(Position);
+    }
+    ApplyContentPosition(Position);
+}
+
+void UUIScrollView::SetScrollValue(FVector2D value)
+{
+    if (!CheckParameters())
+    {
+        return;
+    }
+    RecalculateRange();
+    // An absolute position written by somebody else ends a glide of this view's own -- the recycler's eased
+    // jump drives this setter frame by frame, and the newer motion is the one that wins.
+    StopGlide();
+    FVector2D Position = GetContentPosition();
+    if (Horizontal)
+    {
+        Position.X = value.X;
+        Velocity.X = 0;
+    }
+    if (Vertical)
+    {
+        Position.Y = value.Y;
+        Velocity.Y = 0;
+    }
+    // Whether the settle pass runs is decided by where this PUT the content, not by the fact that
+    // somebody called a setter: writing an in-range position used to arm the spring anyway, and the
+    // spring then fought every tween that drove this function frame by frame.
+    bCanUpdateAfterDrag = RestrictRectArea && !ClampToRange(Position).Equals(Position, DreamScrollViewLocal::SettleThreshold);
+    if (bCanUpdateAfterDrag)
+    {
+        bGestureHorizontal = Horizontal;
+        bGestureVertical = Vertical;
+    }
+    ApplyContentPosition(Position);
+}
+
+void UUIScrollView::SetScrollProgress(FVector2D value)
+{
+    if (!CheckParameters())
+    {
+        return;
+    }
+    RecalculateRange();
+    // A scroll bar's thumb, or code, putting the content somewhere: SetScrollOffset's rule.
+    StopGlide();
+    Progress.X = FMath::Clamp(value.X, 0.0, 1.0);
+    Progress.Y = FMath::Clamp(value.Y, 0.0, 1.0);
+    Velocity = FVector2D::ZeroVector;
+    bCanUpdateAfterDrag = false;
+    ApplyContentPositionWithProgress();
+    UpdateProgress();
+}
+
+FVector2D UUIScrollView::ClampToRange(const FVector2D& InPosition) const
+{
+    FVector2D Result = InPosition;
+    if (bAllowHorizontalScroll)
+    {
+        Result.X = FMath::Clamp(Result.X, HorizontalRange.X, HorizontalRange.Y);
+    }
+    if (bAllowVerticalScroll)
+    {
+        Result.Y = FMath::Clamp(Result.Y, VerticalRange.X, VerticalRange.Y);
+    }
+    return Result;
+}
+
+void UUIScrollView::GlideContentTo(const FVector2D& InTargetPosition, bool InEaseAnimation, float InAnimationDuration)
+{
+    // One glide at a time. The tween used to be created and forgotten, so a second one started while the
+    // first was under way left two tweens writing the same content, each towards its own end.
+    StopGlide();
+    if (!InEaseAnimation)
+    {
+        Velocity = FVector2D::ZeroVector;
+        bCanUpdateAfterDrag = false;
+        ApplyContentPosition(InTargetPosition);
+        return;
+    }
+    // The tween writes the position and nothing else: no velocity, no spring armed behind it. The
+    // old form drove SetScrollValue, which set bCanUpdateAfterDrag on every step, so the settle pass
+    // and the tween spent the whole animation writing the same widget.
+    Velocity = FVector2D::ZeroVector;
+    bCanUpdateAfterDrag = false;
+    auto Tweener = UDreamTweenManager::To(this
+        , FDreamTweenVector2DGetterFunction::CreateWeakLambda(this, [this]
+        {
+            return GetContentPosition();
+        })
+        , FDreamTweenVector2DSetterFunction::CreateWeakLambda(this, [this](FVector2D Value)
+        {
+            // The step that lands the glide is its last: the tween writes its end value while it is still in
+            // the manager's list, and leaves it only after this returns. Let go of it first, so the move this
+            // step announces is one with nothing left moving the content -- a list says it finished scrolling
+            // on exactly that (IsScrolling), and with the glide still counted it never said so at all.
+            if (const UDreamTweener* Glide = ActiveGlide.Get(); Glide != nullptr && Glide->GetElapsedTime() >= Glide->GetDuration())
+            {
+                ActiveGlide.Reset();
+            }
+            ApplyContentPosition(Value);
+        }), InTargetPosition, InAnimationDuration);
+    if (Tweener)
+    {
+        UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(GetWidget(), Tweener);
+        // Kept, so whatever moves the content next can stop it, and a wheel notch can add to where it goes.
+        ActiveGlide = Tweener;
+        ActiveGlideTarget = InTargetPosition;
+    }
+    else
+    {
+        // No tween manager to glide on: it is a game instance subsystem, and a world no game instance
+        // owns -- the designer's preview is one -- has none, so To answers null. The glide's end is
+        // where the content was going, so that is where it lands. Returning here instead accepted the
+        // scroll and moved nothing: an animated ScrollTo, an animated reveal and every gliding wheel
+        // notch silently did nothing at all in such a world.
+        ApplyContentPosition(InTargetPosition);
+    }
+}
+
+bool UUIScrollView::IsGliding() const
+{
+    // Asked of the manager, not remembered: a glide that landed was retired from its list, and a killed one
+    // is marked before it leaves.
+    UDreamTweener* Glide = ActiveGlide.Get();
+    return Glide != nullptr && !Glide->IsMarkedToKill()
+        && UDreamTweenManager::IsTweening(const_cast<UUIScrollView*>(this), Glide);
+}
+
+void UUIScrollView::StopGlide()
+{
+    if (IsGliding())
+    {
+        // Without the completion: the content stays wherever the glide had got it to.
+        ActiveGlide->Kill(false);
+    }
+    ActiveGlide.Reset();
+}
+
+void UUIScrollView::ScrollTo(UDreamWidget* InChild, bool InEaseAnimation, float InAnimationDuration)
+{
+    if (!IsValid(InChild))return;
+    if (!CheckParameters())return;
+    RecalculateRange();
+    const UDreamWidget* Viewport = ContentParent.Get();
+    if (!IsValid(Viewport))return;
+    const FVector2D ChildCenter = InChild->GetLocalSpaceCenter();
+    const FVector ChildCenterWorld = InChild->GetWorldTransform().TransformPosition(FVector(0, ChildCenter.X, ChildCenter.Y));
+    const FVector InContent = Content->GetWorldTransform().InverseTransformPosition(ChildCenterWorld);
+    // Where the child's centre sits in the VIEWPORT's space right now, and where it should sit. The
+    // answer is a DISPLACEMENT, which is what makes it independent of the coordinate mode: the two
+    // modes differ by a term that does not depend on where the content is, so a move of D in one is
+    // a move of D in the other. The old form computed an absolute relative-location and wrote it
+    // through a setter that, in AnchoredPosition mode, meant something else entirely -- and it also
+    // assumed the viewport's pivot was centred, which is why GetLocalSpaceCenter appears here.
+    const FVector ContentLocation = Content->GetRelativeLocation();
+    const FVector2D ChildCenterInViewport(ContentLocation.Y + InContent.Y, ContentLocation.Z + InContent.Z);
+    const FVector2D Displacement = Viewport->GetLocalSpaceCenter() - ChildCenterInViewport;
+    GlideContentTo(ClampToRange(GetContentPosition() + Displacement), InEaseAnimation, InAnimationDuration);
+}
+
+bool UUIScrollView::CalculateRevealContentPosition(UDreamWidget* InChild, FVector2D& OutPosition,
+    EDreamUIScrollDestination InDestination, float InPadding)
+{
+    OutPosition = GetContentPosition();
+    if (!IsValid(InChild))return false;
+    if (!CheckParameters())return false;
+    RecalculateRange();
+
+    auto Viewport = ContentParent.Get();
+    if (!IsValid(Viewport))return false;
+    if (InChild == Viewport || !InChild->IsChildOf(Viewport))return false;
+
+    // The child's box in the viewport's own space, which is also the space the content position lives
+    // in -- Content is a direct child of the viewport, so moving the content by D moves the child by D.
+    // All four corners are transformed rather than just two: a rotated item would otherwise report a
+    // box narrower than it draws, and the reveal would stop one edge short.
+    const FTransform ChildToViewport = InChild->GetWorldTransform() * Viewport->GetWorldTransform().Inverse();
+    const FVector2D ChildLeftBottom = InChild->GetLocalSpaceLeftBottomPoint();
+    const FVector2D ChildRightTop = InChild->GetLocalSpaceRightTopPoint();
+    const FVector2D LocalCorners[4] = {
+        ChildLeftBottom,
+        FVector2D(ChildRightTop.X, ChildLeftBottom.Y),
+        ChildRightTop,
+        FVector2D(ChildLeftBottom.X, ChildRightTop.Y),
+    };
+    float ChildLeft = MAX_flt, ChildRight = -MAX_flt, ChildBottom = MAX_flt, ChildTop = -MAX_flt;
+    for (const FVector2D& Corner : LocalCorners)
+    {
+        const FVector InViewport = ChildToViewport.TransformPosition(FVector(0, Corner.X, Corner.Y));
+        ChildLeft = FMath::Min(ChildLeft, (float)InViewport.Y);
+        ChildRight = FMath::Max(ChildRight, (float)InViewport.Y);
+        ChildBottom = FMath::Min(ChildBottom, (float)InViewport.Z);
+        ChildTop = FMath::Max(ChildTop, (float)InViewport.Z);
+    }
+
+    const float ViewLeft = Viewport->GetLocalSpaceLeft();
+    const float ViewRight = Viewport->GetLocalSpaceRight();
+    const float ViewBottom = Viewport->GetLocalSpaceBottom();
+    const float ViewTop = Viewport->GetLocalSpaceTop();
+
+    // An item larger than the viewport can never be framed, so show its leading edge -- the same
+    // answer the scroll box layout gives, and the only one that does not look like an arbitrary crop.
+    // WHERE the item is meant to end up -- UMG's NavigationDestination, and the padding that goes
+    // with it. IntoView moves the least distance that reveals it (this view's original answer and
+    // still the default); TopOrLeft always parks it against the leading edge, which is what a menu
+    // stepping through equal rows wants; Center always frames it, which is what a carousel wants.
+    // The padding shrinks the box the item must fit inside, so a row never lands flush against the
+    // edge of the window with its neighbour cut in half beside it.
+    // A negative padding and the Configured destination both mean "whatever this view was set up
+    // with", which is what every caller meant before either could be passed in.
+    const float Pad = FMath::Max(0.0f, InPadding < 0.0f ? NavigationScrollPadding : InPadding);
+    const EDreamUIScrollDestination Destination = InDestination == EDreamUIScrollDestination::Configured
+        ? NavigationDestination : InDestination;
+    auto DeltaAlongAxis = [Pad, Destination](float ItemMin, float ItemMax, float ViewMin, float ViewMax,
+        bool bLeadingIsMaxEdge)
+    {
+        const float PaddedMin = ViewMin + Pad;
+        const float PaddedMax = ViewMax - Pad;
+        if (Destination == EDreamUIScrollDestination::TopOrLeft)
+        {
+            // Which edge "leading" IS differs by axis, and the flag is the whole of that: X runs
+            // right, so a horizontal view leads at its MIN edge; Y runs UP, so a vertical view's top
+            // is its MAX edge. Spelled as a parameter rather than guessed from the numbers, because
+            // both callers hand their axis in as (min, max) and the pair looks identical here.
+            return bLeadingIsMaxEdge ? PaddedMax - ItemMax : PaddedMin - ItemMin;
+        }
+        if (Destination == EDreamUIScrollDestination::BottomOrRight)
+        {
+            // The mirror of TopOrLeft, and the flag flips the same way: the trailing edge is the MIN
+            // one on Y (a vertical view's bottom) and the MAX one on X.
+            return bLeadingIsMaxEdge ? PaddedMin - ItemMin : PaddedMax - ItemMax;
+        }
+        if (Destination == EDreamUIScrollDestination::Center)
+        {
+            return ((PaddedMin + PaddedMax) - (ItemMin + ItemMax)) * 0.5f;
+        }
+        if (ItemMin < PaddedMin)
+        {
+            return PaddedMin - ItemMin;
+        }
+        if (ItemMax > PaddedMax)
+        {
+            return (ItemMax - ItemMin) > (PaddedMax - PaddedMin) ? PaddedMin - ItemMin : PaddedMax - ItemMax;
+        }
+        return 0.0f;
+    };
+
+    // A move is measured from where the content is DRAWN, which is where the child's box was read: the same
+    // position, unless DreamGUI.Scroll.SnapToDevicePixels put the drawing on a whole pixel a fraction away.
+    const FVector2D Drawn = GetAppliedContentPosition();
+    FVector2D Position = OutPosition;
+    if (Horizontal)
+    {
+        const float Delta = DeltaAlongAxis(ChildLeft, ChildRight, ViewLeft, ViewRight, /*bLeadingIsMaxEdge*/false);
+        Position.X = FMath::Clamp((Delta != 0.0f ? Drawn.X : Position.X) + Delta, HorizontalRange.X, HorizontalRange.Y);
+    }
+    if (Vertical)
+    {
+        const float Delta = DeltaAlongAxis(ChildBottom, ChildTop, ViewBottom, ViewTop, /*bLeadingIsMaxEdge*/true);
+        Position.Y = FMath::Clamp((Delta != 0.0f ? Drawn.Y : Position.Y) + Delta, VerticalRange.X, VerticalRange.Y);
+    }
+    if (Position.Equals(OutPosition))
+    {
+        return false;
+    }
+    OutPosition = Position;
+    return true;
+}
+
+bool UUIScrollView::CanScrollWidgetIntoView(UDreamWidget* InChild)
+{
+    FVector2D Unused;
+    return CalculateRevealContentPosition(InChild, Unused);
+}
+
+bool UUIScrollView::ScrollWidgetIntoView(UDreamWidget* InChild, bool InEaseAnimation, float InAnimationDuration,
+    EDreamUIScrollDestination InDestination, float InPadding)
+{
+    FVector2D TargetContentPos;
+    if (!CalculateRevealContentPosition(InChild, TargetContentPos, InDestination, InPadding))
+    {
+        return false;
+    }
+    GlideContentTo(TargetContentPos, InEaseAnimation, InAnimationDuration);
+    return true;
+}
+
+/**
+ * Inertia, and the pull back into range. Both are exponential and both are per-second, so the feel
+ * does not change with the frame rate -- the old form multiplied by (rate * deltaTime) directly,
+ * which made a fling on a 30fps frame travel further than the same fling on a 120fps one.
+ *
+ * Per axis, and only on the axes the gesture drove: a vertical flick has no business settling the
+ * horizontal one, and the capability bits decide what "in range" even means.
+ */
+void UUIScrollView::UpdateAfterDrag(float deltaTime)
+{
+    if (!Content.IsValid() || deltaTime <= 0.0f)
+    {
+        bCanUpdateAfterDrag = false;
+        return;
+    }
+    FVector2D Position = GetContentPosition();
+    const FVector2D Clamped = ClampToRange(Position);
+    // Overscroll off means a fling ends AT the end it reaches. Without this the in-range step below carried
+    // the content past the end on the frame it got there, and the spring brought it back -- exactly the
+    // overshoot the switch is there to remove.
+    const bool bStopAtEnds = RestrictRectArea && !bAllowOverscroll;
+
+    bool bStillMoving = false;
+    auto SettleAxis = [&](double& InOutPosition, double InClamped, const FVector2D& InRange, double& InOutVelocity, bool bInActive)
+    {
+        if (!bInActive)
+        {
+            InOutVelocity = 0.0;
+            return;
+        }
+        const double Overshoot = InOutPosition - InClamped;
+        const bool bOutOfRange = RestrictRectArea && FMath::Abs(Overshoot) > DreamScrollViewLocal::SettleThreshold;
+        if (bOutOfRange)
+        {
+            // Past the edge, and still travelling further out: the boundary bleeds the fling off in
+            // proportion to how far past it already is, so a hard throw rebounds and a gentle one
+            // simply stops. Never with overscroll off, where nothing may travel further out at all: the
+            // band that is open closes, below.
+            if (!bStopAtEnds && InOutVelocity != 0.0 && FMath::Sign(InOutVelocity) == FMath::Sign(Overshoot))
+            {
+                InOutVelocity -= FMath::Sign(InOutVelocity)
+                    * FMath::Abs(Overshoot) * DreamScrollViewLocal::BoundaryForce * deltaTime;
+                InOutPosition += InOutVelocity * deltaTime;
+                bStillMoving = true;
+                return;
+            }
+            // Heading home, or out of momentum: ease onto the boundary and give the velocity up.
+            InOutVelocity = 0.0;
+            InOutPosition = InClamped + Overshoot * FMath::Exp(-DreamScrollViewLocal::ReturnRate * deltaTime);
+            if (FMath::Abs(InOutPosition - InClamped) < DreamScrollViewLocal::SettleThreshold)
+            {
+                InOutPosition = InClamped;
+            }
+            else
+            {
+                bStillMoving = true;
+            }
+            return;
+        }
+        if (FMath::Abs(InOutVelocity) <= DreamScrollViewLocal::SettleThreshold)
+        {
+            InOutVelocity = 0.0;
+            return;
+        }
+        InOutVelocity = DreamScrollViewLocal::Decay(InOutVelocity,
+            static_cast<double>(DecelerateRate) * DreamScrollViewLocal::DecelerationScale, deltaTime);
+        InOutPosition += InOutVelocity * deltaTime;
+        if (bStopAtEnds && (InOutPosition < InRange.X || InOutPosition > InRange.Y))
+        {
+            // The step that reaches an end stops there, with nothing left to carry it on.
+            InOutPosition = FMath::Clamp(InOutPosition, InRange.X, InRange.Y);
+            InOutVelocity = 0.0;
+            return;
+        }
+        bStillMoving = true;
+    };
+
+    SettleAxis(Position.X, Clamped.X, HorizontalRange, Velocity.X, bGestureHorizontal && bAllowHorizontalScroll);
+    SettleAxis(Position.Y, Clamped.Y, VerticalRange, Velocity.Y, bGestureVertical && bAllowVerticalScroll);
+
+    if (!Position.Equals(GetContentPosition(), DreamScrollViewLocal::SettleThreshold * 0.1))
+    {
+        ApplyContentPosition(Position);
+    }
+    bCanUpdateAfterDrag = bStillMoving;
+}
+
+void UUIScrollView::ApplyContentPositionWithProgress()
+{
+    if (!CheckParameters())
+    {
+        return;
+    }
+    // Progress in, position out -- through the offset, so this is the one function that has to
+    // agree with GetScrollOffset and it agrees by construction.
+    const FVector2D Extent = GetScrollableExtent();
+    const FVector2D Start = GetStartAlignedPosition();
+    FVector2D Position = GetContentPosition();
+    if (Horizontal)
+    {
+        Progress.X = FMath::Clamp(Progress.X, 0.0, 1.0);
+        Position.X = Start.X - Progress.X * Extent.X;
+    }
+    if (Vertical)
+    {
+        Progress.Y = FMath::Clamp(Progress.Y, 0.0, 1.0);
+        Position.Y = Start.Y + Progress.Y * Extent.Y;
+    }
+    SetContentPosition(Position);
+    bCanUpdateAfterDrag = false;
+}
+
+/**
+ * Position in, progress out, on every axis this view SCROLLS -- not on the axis some past gesture
+ * happened to drive. That distinction is the bug this pair of flags used to carry: after one
+ * vertical drag with OnlyOneDirection on, Progress.X stopped being maintained for good, and every
+ * horizontal scroll bar attached to this view quietly froze.
+ */
+void UUIScrollView::UpdateProgress(bool InFireEvent)
+{
+    if (!Content.IsValid())
+        return;
+    const FVector2D Extent = GetScrollableExtent();
+    const FVector2D Offset = GetScrollOffset();
+    if (bAllowHorizontalScroll)
+    {
+        // An axis with nowhere to go reads zero rather than dividing by it: the bar over a list that
+        // fits is at its start, and it covers the whole track.
+        Progress.X = Extent.X > DreamScrollViewLocal::SettleThreshold
+            ? FMath::Clamp(Offset.X / Extent.X, 0.0, 1.0) : 0.0;
+    }
+    if (bAllowVerticalScroll)
+    {
+        Progress.Y = Extent.Y > DreamScrollViewLocal::SettleThreshold
+            ? FMath::Clamp(Offset.Y / Extent.Y, 0.0, 1.0) : 0.0;
+    }
+    if (InFireEvent)
+    {
+        OnValueChangedCPP.Broadcast(Progress);
+        OnValueChangedBP.Broadcast(Progress);
+        OnValueChanged.FireEvent(Progress);
+    }
+}
+
+/**
+ * The content-position range on one axis: the resting position, and that position plus the extent.
+ *
+ * Four pivot-weighted terms and a coordinate correction became two lines because the resting
+ * position is now measured instead of derived. Kept as a virtual writing into HorizontalRange
+ * because UUIScrollViewWithScrollbar extends it and UUIRecyclableScrollView reads the result.
+ */
+void UUIScrollView::CalculateHorizontalRange()
+{
+    const double Start = GetStartAlignedPosition().X;
+    // Scrolling right moves the content LEFT, so the far end is the SMALLER coordinate: this pair
+    // stays (min, max) the way every reader of it expects.
+    HorizontalRange.Y = Start;
+    HorizontalRange.X = Start - GetScrollableExtent().X;
+}
+void UUIScrollView::CalculateVerticalRange()
+{
+    const double Start = GetStartAlignedPosition().Y;
+    // Scrolling down moves the content UP, so the far end is the LARGER coordinate.
+    VerticalRange.X = Start;
+    VerticalRange.Y = Start + GetScrollableExtent().Y;
+}
+void UUIScrollView::RectRangeChanged()
+{
+	bRangeCalculated = false;
+	RecalculateRange();
+}
+
+void UUIScrollView::SetHorizontal(bool value)
+{
+    if (Horizontal != value)
+    {
+        Horizontal = value;
+        RectRangeChanged();
+    }
+}
+void UUIScrollView::SetVertical(bool value)
+{
+	if (Vertical != value)
+	{
+        Vertical = value;
+        RectRangeChanged();
+	}
+}
+void UUIScrollView::SetOnlyOneDirection(bool value)
+{
+	OnlyOneDirection = value;
+}
+void UUIScrollView::SetScrollSensitivity(float value)
+{
+	ScrollSensitivity = FMath::IsFinite(value) ? value : 0.0f;
+}
+
+void UUIScrollView::SetWheelProgressStep(float value)
+{
+	WheelProgressStep = FMath::Clamp(FMath::IsFinite(value) ? value : 0.0f, 0.0f, 1.0f);
+}
+
+void UUIScrollView::SetCoordinateMode(EDreamScrollCoordinateMode value)
+{
+	if (CoordinateMode != value)
+	{
+		CoordinateMode = value;
+		RectRangeChanged();
+	}
+}
+
+void UUIScrollView::SetKeepProgress(bool value)
+{
+	if (KeepProgress != value)
+	{
+		KeepProgress = value;
+		RectRangeChanged();
+	}
+}
+void UUIScrollView::SetCanScrollInSmallSize(bool value)
+{
+    if (CanScrollInSmallSize != value)
+    {
+        CanScrollInSmallSize = value;
+        RectRangeChanged();
+    }
+}

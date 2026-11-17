@@ -1,0 +1,160 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "Preview/DreamWidgetDesignerScene.h"
+#include "DreamGUI.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamUIManager.h"
+#include "Engine/TextureCube.h"
+#include "GameFramework/Actor.h"
+#include "Materials/MaterialInstanceConstant.h"
+
+#if WITH_EDITOR
+
+#define LOCTEXT_NAMESPACE "DreamWidgetDesignerScene"
+
+const FString FDreamWidgetDesignerScene::RootAgentActorName = TEXT("[temporary_RootAgent]");
+const FIntPoint FDreamWidgetDesignerScene::DefaultCanvasSize = FIntPoint(1920, 1080);
+
+FDreamWidgetDesignerScene::FDreamWidgetDesignerScene(ConstructionValues CVS) :FDreamWidgetPreviewScene(CVS)
+{
+	// Shown the moment it exists, so its widgets are laid out and drawn from the start. Its world is an
+	// editor preview, which the manager does not tick in the editor unless told -- a Blueprint's actor
+	// preview has no DreamGUI in it to lay out -- so the scene that is nothing but DreamGUI tells it.
+	if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(GetWorld()))
+	{
+		Manager->bShouldTickInEditor = true;
+	}
+
+	//GetWorld()->GetWorldSettings()->NotifyBeginPlay();
+	//GetWorld()->GetWorldSettings()->NotifyMatchStarted();
+	//GetWorld()->GetWorldSettings()->SetActorHiddenInGame(false);
+	//GetWorld()->bBegunPlay = true;
+
+	// This is all from the AnimationEditorPreviewScene.cpp
+	// set light options
+	DirectionalLight->SetRelativeLocation(FVector(-1024.f, 1024.f, 2048.f));
+	DirectionalLight->SetRelativeScale3D(FVector(15.f));
+	DirectionalLight->Mobility = EComponentMobility::Movable;
+	DirectionalLight->DynamicShadowDistanceStationaryLight = 3000.f;
+
+	SetLightBrightness(4.f);
+
+	DirectionalLight->InvalidateLightingCache();
+	DirectionalLight->RecreateRenderState_Concurrent();
+
+	if (IsRunningCookCommandlet())
+		return;
+	// A background sky sphere
+	{
+		// Large scale to prevent sphere from clipping
+		const FTransform SphereTransform(FRotator(0, 0, 0), FVector(0, 0, 0), FVector(2000));
+		auto SkyComponent = NewObject<UStaticMeshComponent>(GetTransientPackage());
+
+		// Set up sky sphere showing the same cube map as used by the sky light
+		UStaticMesh* SkySphere = LoadObject<UStaticMesh>(NULL, TEXT("/Engine/EditorMeshes/AssetViewer/Sphere_inversenormals.Sphere_inversenormals"), NULL, LOAD_None, NULL);
+		UMaterial* SkyMaterial = LoadObject<UMaterial>(NULL, TEXT("/Engine/EditorMaterials/AssetViewer/M_SkyBox.M_SkyBox"), NULL, LOAD_None, NULL);
+		if (SkySphere == nullptr || SkyMaterial == nullptr)
+		{
+			// A decorative backdrop made of content that a trimmed engine install is allowed not to
+			// ship. This was two check()s, so opening a designer on such an install took the editor
+			// down over a sky sphere. Said out loud and skipped instead; SetSkyCubeVisibility copes
+			// with the component being absent.
+			UE_LOG(DreamGUI, Warning,
+				TEXT("[%s].%d Designer preview has no sky backdrop: %s could not be loaded from /Engine."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+				SkySphere == nullptr ? TEXT("Sphere_inversenormals") : TEXT("M_SkyBox"));
+			return;
+		}
+		SkyComponent->SetStaticMesh(SkySphere);
+		SkyComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		SkyComponent->CastShadow = false;
+		SkyComponent->bCastDynamicShadow = false;
+
+		auto InstancedSkyMaterial = NewObject<UMaterialInstanceConstant>(GetTransientPackage());
+		InstancedSkyMaterial->Parent = SkyMaterial;		
+
+		UTextureCube* DefaultTexture = LoadObject<UTextureCube>(NULL, TEXT("/Engine/EditorMaterials/AssetViewer/EpicQuadPanorama_CC+EV1.EpicQuadPanorama_CC+EV1"));
+    
+		InstancedSkyMaterial->SetTextureParameterValueEditorOnly(FName("SkyBox"), DefaultTexture );
+		InstancedSkyMaterial->SetScalarParameterValueEditorOnly(FName("CubemapRotation"), 0);
+		InstancedSkyMaterial->SetScalarParameterValueEditorOnly(FName("Intensity"), 1);
+		InstancedSkyMaterial->PostLoad();
+		SkyComponent->SetMaterial(0, InstancedSkyMaterial);
+		AddComponent(SkyComponent, SphereTransform);
+		SkySphereComponent = SkyComponent;
+	}
+}
+
+FDreamWidgetDesignerScene::~FDreamWidgetDesignerScene()
+{
+	if (RootAgentWidget != nullptr)
+	{
+		RootAgentWidget->DestroyWidget();
+		RootAgentWidget.Reset();
+	}
+}
+
+UDreamWidget* FDreamWidgetDesignerScene::EnsureRootAgent(FIntPoint InCanvasSize, EDreamRenderMode InRenderMode, FIntPoint InDesignViewportSize)
+{
+	if (RootAgentWidget != nullptr)
+	{
+		return RootAgentWidget.Get();
+	}
+	// A canvas with a zero axis is a canvas nothing can be seen on, and the agent is the ONE size
+	// every preview resolves against -- everything below it is arranged into whatever this says, so a
+	// zero here is a whole hierarchy that draws nothing and says nothing about why.
+	//
+	// UMG guards the same spot the same way, one fallback further along: "If the custom size is 0 in
+	// some dimension, use the desired size instead" (FWidgetBlueprintEditorUtils::
+	// GetWidgetPreviewAreaAndSize). The desired size is not available here -- the agent has to exist
+	// before there is a preview to measure -- so the fallback is the picked device resolution and
+	// then the class default, per axis, and it is loud: a stored zero is a bug upstream, not a
+	// preference, and silently substituting for it forever is how it stays one.
+	FIntPoint CanvasSize = InCanvasSize;
+	for (int32 Axis = 0; Axis < 2; ++Axis)
+	{
+		if (CanvasSize[Axis] > 0)
+		{
+			continue;
+		}
+		const int32 Fallback = InDesignViewportSize[Axis] > 0 ? InDesignViewportSize[Axis] : DefaultCanvasSize[Axis];
+		UE_LOG(DreamGUI, Warning,
+			TEXT("[%s].%d The design canvas is %d on %s; using %d instead. A stored canvas size of zero would make every widget in this preview measure zero."),
+			ANSI_TO_TCHAR(__FUNCTION__), __LINE__, CanvasSize[Axis], Axis == 0 ? TEXT("X") : TEXT("Y"), Fallback);
+		CanvasSize[Axis] = Fallback;
+	}
+	//create Canvas for UI
+	auto RootWidget = NewObject<UDreamWidget>(this->GetWorld(), FName("[RootAgent]"));
+	RootWidget->SetSizeDelta(CanvasSize);
+	RootWidget->SetDisplayName(RootAgentActorName);
+	RootWidget->OnRegister();
+	RootAgentWidget = TStrongObjectPtr(RootWidget);
+	auto Canvas = RootWidget->AddComponent<UDreamCanvas>();
+
+	Canvas->SetRenderMode(InRenderMode);
+	Canvas->bFixedSizeInEditMode = true;
+	// The edit-mode fixed size is the agent's own size: a screen-space agent sizes itself to it on its
+	// first editor tick, by the constant-pixel rule. Not the 1920x1080 class default, which resized the
+	// agent to the default; and not the device resolution either, which undid a canvas that the
+	// prefab's scaler or the DPI preview makes smaller than the device.
+	Canvas->SizeInEditMode = CanvasSize;
+	return RootWidget;
+}
+
+void FDreamWidgetDesignerScene::SetSkyCubeVisibility(bool bVisible)
+{
+	// Genuinely optional: the constructor returns before building the sky when running as a cook
+	// commandlet, and the editor-only meshes it loads are absent from a stripped install. The
+	// backdrop is decoration, so its absence must not take the toolbar's Show > Sky toggle down
+	// with it.
+	if (SkySphereComponent != nullptr)
+	{
+		SkySphereComponent->SetVisibility(bVisible);
+	}
+}
+
+#undef LOCTEXT_NAMESPACE
+
+#endif

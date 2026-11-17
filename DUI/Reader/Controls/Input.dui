@@ -1,0 +1,11 @@
+// A text or number field mirrored from the character controller.
+class /Game/UI/Reader/Controls/WBP_OKInput
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (200, 40)
+    + Overlay { }
+    Native.TextInput Input {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

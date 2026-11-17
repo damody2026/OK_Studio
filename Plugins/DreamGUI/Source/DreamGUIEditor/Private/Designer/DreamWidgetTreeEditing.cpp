@@ -1,0 +1,967 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#include "Designer/DreamWidgetTreeEditing.h"
+
+#include "Designer/DreamUITextAuthoringGate.h"
+#include "DreamWidgetBlueprint.h"
+#include "DreamWidgetBlueprintCompiler.h"
+#include "Core/DreamWidgetTree.h"
+#include "Core/DreamUserWidget.h"
+#include "Core/Components/DreamWidget.h"
+#include "DreamGUI.h"
+#include "Text/DreamUITextPatcher.h"
+#include "Text/DreamUITextWriteBack.h"
+
+#include "Kismet2/BlueprintEditorUtils.h"
+
+#define LOCTEXT_NAMESPACE "DreamWidgetTreeEditing"
+
+namespace DreamWidgetTreeEditing
+{
+	namespace Local
+	{
+		/** The tree InBlueprint authors, or null when it has none yet. Never creates one. */
+		UDreamWidgetTree* GetTree(const UDreamWidgetBlueprint* InBlueprint)
+		{
+			return IsValid(InBlueprint) && IsValid(InBlueprint->WidgetTree) ? InBlueprint->WidgetTree.Get() : nullptr;
+		}
+
+		/**
+		 * The name a refusal should quote: the one in the hierarchy panel, not the UObject's.
+		 *
+		 * GetNameSafe would print "DreamWidget_7", which is a name the author has never seen and cannot
+		 * search their .dui for -- and the whole point of naming the file in the message is that they
+		 * can go and find the line.
+		 */
+		FString DisplayNameOf(const UDreamWidget* InWidget)
+		{
+			return IsValid(InWidget) ? InWidget->GetDisplayName() : FString(TEXT("nothing"));
+		}
+
+		/** Whether InNested's class opens a hole called InSlotName -- from its archetype or from code. */
+		bool DeclaresSlot(const UDreamUserWidget* InNested, FName InSlotName)
+		{
+			if (!IsValid(InNested) || InSlotName.IsNone())
+			{
+				return false;
+			}
+			TArray<FName> Declared;
+			UDreamUserWidget::CollectDeclaredSlotNames(InNested->GetClass(), Declared);
+			return Declared.Contains(InSlotName);
+		}
+
+		/**
+		 * Carry a widget's authored bindings across a rename, or drop them with the widget.
+		 *
+		 * A binding names its widget by the VARIABLE name the compiler derives from the display name
+		 * (FDreamWidgetPropertyBinding::WidgetName), so renaming or deleting a widget silently breaks
+		 * every `<-`, `->` and `each` that mentioned it -- and the only thing that ever said so was an
+		 * error at the NEXT compile of anything, naming a widget that no longer exists, from a panel
+		 * with no control that could clear the record. A rename is the same binding on a new name; a
+		 * delete leaves no binding to keep.
+		 *
+		 * Pass NAME_None as InNewName to drop. The Blueprint is Modify'd only when something changes:
+		 * every caller here has already snapshotted it, and this must not dirty an asset it did not
+		 * touch.
+		 */
+		void RetargetAuthoredBindings(UDreamWidgetBlueprint* InBlueprint, FName InOldName, FName InNewName)
+		{
+			if (!IsValid(InBlueprint) || InOldName.IsNone() || InOldName == InNewName)
+			{
+				return;
+			}
+			// Asked first, and separately from the write: this runs on every rename and every delete,
+			// and the overwhelming majority of those touch a widget nothing was ever bound to. An
+			// unconditional Modify would dirty the asset for all of them.
+			const bool bMentioned =
+				InBlueprint->PropertyBindings.ContainsByPredicate([InOldName](const FDreamWidgetPropertyBinding& Candidate)
+					{ return Candidate.WidgetName == InOldName; })
+				|| InBlueprint->EventBindings.ContainsByPredicate([InOldName](const FDreamWidgetEventBinding& Candidate)
+					{ return Candidate.WidgetName == InOldName; })
+				|| InBlueprint->EachBindings.ContainsByPredicate([InOldName](const FDreamWidgetEachBinding& Candidate)
+					{
+						return Candidate.HostWidgetName == InOldName || Candidate.TemplateWidgetName == InOldName
+							|| Candidate.ContentWidgetName == InOldName;
+					});
+			if (!bMentioned)
+			{
+				return;
+			}
+			//before the write, so undo has the list as it was
+			InBlueprint->Modify();
+
+			if (InNewName.IsNone())
+			{
+				InBlueprint->PropertyBindings.RemoveAll([InOldName](const FDreamWidgetPropertyBinding& Candidate)
+					{ return Candidate.WidgetName == InOldName; });
+				InBlueprint->EventBindings.RemoveAll([InOldName](const FDreamWidgetEventBinding& Candidate)
+					{ return Candidate.WidgetName == InOldName; });
+				// An `each` block whose host or cell template is gone has nothing left to arrange. One
+				// that merely lost its synthesized content widget keeps its authored meaning; clearing
+				// the name is what lets the builder make a new one.
+				InBlueprint->EachBindings.RemoveAll([InOldName](const FDreamWidgetEachBinding& Candidate)
+					{ return Candidate.HostWidgetName == InOldName || Candidate.TemplateWidgetName == InOldName; });
+				for (FDreamWidgetEachBinding& Binding : InBlueprint->EachBindings)
+				{
+					if (Binding.ContentWidgetName == InOldName)
+					{
+						Binding.ContentWidgetName = NAME_None;
+					}
+				}
+				return;
+			}
+
+			for (FDreamWidgetPropertyBinding& Binding : InBlueprint->PropertyBindings)
+			{
+				if (Binding.WidgetName == InOldName)
+				{
+					Binding.WidgetName = InNewName;
+				}
+			}
+			for (FDreamWidgetEventBinding& Binding : InBlueprint->EventBindings)
+			{
+				if (Binding.WidgetName == InOldName)
+				{
+					Binding.WidgetName = InNewName;
+				}
+			}
+			for (FDreamWidgetEachBinding& Binding : InBlueprint->EachBindings)
+			{
+				for (FName* NamePtr : { &Binding.HostWidgetName, &Binding.TemplateWidgetName, &Binding.ContentWidgetName })
+				{
+					if (*NamePtr == InOldName)
+					{
+						*NamePtr = InNewName;
+					}
+				}
+			}
+		}
+	}
+
+	bool IsTemplateWidgetOf(const UDreamWidgetBlueprint* InBlueprint, const UDreamWidget* InWidget)
+	{
+		const UDreamWidgetTree* Tree = Local::GetTree(InBlueprint);
+		if (Tree == nullptr || !IsValid(InWidget))
+		{
+			return false;
+		}
+		bool bFound = false;
+		Tree->ForEachWidget([&bFound, InWidget](const UDreamWidget* Widget)
+		{
+			bFound |= (Widget == InWidget);
+		});
+		return bFound;
+	}
+
+	namespace Local
+	{
+		/** How many FScopedStructureChangeBatch are alive, and the Blueprints they are holding a notification for. */
+		int32 StructureBatchDepth = 0;
+		TArray<TWeakObjectPtr<UDreamWidgetBlueprint>> StructureBatchPending;
+	}
+
+	void NotifyStructureChanged(UDreamWidgetBlueprint* InBlueprint)
+	{
+		if (!IsValid(InBlueprint))
+		{
+			return;
+		}
+		if (Local::StructureBatchDepth > 0)
+		{
+			Local::StructureBatchPending.AddUnique(InBlueprint);
+			return;
+		}
+		// The text first, for a hierarchy that comes from a `.dui`: the compile below rebuilds the tree
+		// from the FILE, so a widget added to the template and not written there would be gone before
+		// this gesture returned. Inside the caller's transaction, so the text and the tree undo together.
+		// A no-op for a hand-authored Blueprint.
+		DreamUITextAuthoring::WriteStructureToText(InBlueprint);
+		// Structurally, not just modified: the compiler declares one variable per widget, so adding or
+		// removing one changes the class's members and every dependent has to be told.
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(InBlueprint);
+	}
+
+	FScopedStructureChangeBatch::FScopedStructureChangeBatch()
+	{
+		Local::StructureBatchDepth++;
+	}
+
+	FScopedStructureChangeBatch::~FScopedStructureChangeBatch()
+	{
+		check(Local::StructureBatchDepth > 0);
+		if (--Local::StructureBatchDepth > 0)
+		{
+			return;
+		}
+		// Moved out first: a notification compiles, and a compile can reach code that opens a batch of
+		// its own, which must start from an empty list rather than replay this one.
+		TArray<TWeakObjectPtr<UDreamWidgetBlueprint>> Pending = MoveTemp(Local::StructureBatchPending);
+		Local::StructureBatchPending.Reset();
+		for (const TWeakObjectPtr<UDreamWidgetBlueprint>& Blueprint : Pending)
+		{
+			if (UDreamWidgetBlueprint* Resolved = Blueprint.Get())
+			{
+				NotifyStructureChanged(Resolved);
+			}
+		}
+	}
+
+	FString MakeUniqueDisplayName(const UDreamWidgetTree* InTree, const FString& InDesired, const UDreamWidget* InIgnore,
+		const TSet<FString>* InReserved)
+	{
+		// Sanitised for the reason MakeUniqueName is: the display name becomes the compiler's
+		// variable name, so anything the rename box would refuse must not be mintable here either.
+		const FString Base = InDesired.IsEmpty() ? TEXT("Widget") : UDreamWidgetTree::SanitizeIdentifier(InDesired);
+		if (InTree == nullptr && InReserved == nullptr)
+		{
+			return Base;
+		}
+
+		TSet<FString> Taken;
+		if (InReserved != nullptr)
+		{
+			Taken.Append(*InReserved);
+		}
+		if (InTree != nullptr)
+		{
+			InTree->ForEachWidget([&Taken, InIgnore](const UDreamWidget* Widget)
+			{
+				if (Widget != InIgnore)
+				{
+					Taken.Add(Widget->GetDisplayName());
+				}
+			});
+		}
+		if (!Taken.Contains(Base))
+		{
+			return Base;
+		}
+		// UMG's shape: Name, Name_1, Name_2. Not a GUID -- this is the name a designer reads in the
+		// hierarchy and types into the graph, and the compiler derives the variable from it.
+		for (int32 Suffix = 1; ; Suffix++)
+		{
+			const FString Candidate = FString::Printf(TEXT("%s_%d"), *Base, Suffix);
+			if (!Taken.Contains(Candidate))
+			{
+				return Candidate;
+			}
+		}
+	}
+
+	void RemapBehaviourBindings(UDreamWidgetBlueprint* InBlueprint, const UDreamWidget* InWidget,
+		int32 InOldIndex, int32 InNewIndex)
+	{
+		if (!IsValid(InBlueprint) || !IsValid(InWidget) || InOldIndex == INDEX_NONE || InOldIndex == InNewIndex)
+		{
+			return;
+		}
+		const FName WidgetName = UDreamWidgetTree::MakeWidgetVariableName(InWidget);
+		const bool bRemoved = InNewIndex == INDEX_NONE;
+
+		// Where a binding that used to hold InIndex points now, or INDEX_NONE when its behaviour is
+		// gone. Both cases are the ordinary array arithmetic of RemoveAt and of RemoveAt+Insert, which
+		// is exactly what UDreamWidget::RemoveComponent and MoveComponentToIndex do.
+		auto Remap = [InOldIndex, InNewIndex, bRemoved](int32 InIndex) -> int32
+		{
+			if (InIndex == INDEX_NONE)
+			{
+				return INDEX_NONE;
+			}
+			if (bRemoved)
+			{
+				if (InIndex == InOldIndex)return INDEX_NONE;
+				return InIndex > InOldIndex ? InIndex - 1 : InIndex;
+			}
+			if (InIndex == InOldIndex)return InNewIndex;
+			if (InOldIndex < InNewIndex)
+			{
+				return (InIndex > InOldIndex && InIndex <= InNewIndex) ? InIndex - 1 : InIndex;
+			}
+			return (InIndex >= InNewIndex && InIndex < InOldIndex) ? InIndex + 1 : InIndex;
+		};
+
+		auto Names = [WidgetName](FName InBindingWidget, EDreamWidgetBindingTarget InTarget)
+		{
+			return InTarget == EDreamWidgetBindingTarget::Behaviour && InBindingWidget == WidgetName;
+		};
+		// Same shape as RetargetAuthoredBindings: asked before anything is written, so a widget whose
+		// behaviours nothing binds does not dirty the asset every time one is dragged.
+		const bool bMentioned =
+			InBlueprint->PropertyBindings.ContainsByPredicate([&Names](const FDreamWidgetPropertyBinding& Candidate)
+				{ return Names(Candidate.WidgetName, Candidate.Target); })
+			|| InBlueprint->EventBindings.ContainsByPredicate([&Names](const FDreamWidgetEventBinding& Candidate)
+				{ return Names(Candidate.WidgetName, Candidate.Target); });
+		if (!bMentioned)
+		{
+			return;
+		}
+		InBlueprint->Modify();
+
+		for (FDreamWidgetPropertyBinding& Binding : InBlueprint->PropertyBindings)
+		{
+			if (Names(Binding.WidgetName, Binding.Target))
+			{
+				Binding.BehaviourIndex = Remap(Binding.BehaviourIndex);
+			}
+		}
+		for (FDreamWidgetEventBinding& Binding : InBlueprint->EventBindings)
+		{
+			if (Names(Binding.WidgetName, Binding.Target))
+			{
+				Binding.BehaviourIndex = Remap(Binding.BehaviourIndex);
+			}
+		}
+		if (bRemoved)
+		{
+			//the behaviour they named no longer exists; a record the compiler can only report forever
+			InBlueprint->PropertyBindings.RemoveAll([&Names](const FDreamWidgetPropertyBinding& Candidate)
+				{ return Names(Candidate.WidgetName, Candidate.Target) && Candidate.BehaviourIndex == INDEX_NONE; });
+			InBlueprint->EventBindings.RemoveAll([&Names](const FDreamWidgetEventBinding& Candidate)
+				{ return Names(Candidate.WidgetName, Candidate.Target) && Candidate.BehaviourIndex == INDEX_NONE; });
+		}
+	}
+
+	void ForEachWidgetInSubtree(UDreamWidget* InRoot, TFunctionRef<void(UDreamWidget*)> InPredicate)
+	{
+		if (!IsValid(InRoot))
+		{
+			return;
+		}
+		InPredicate(InRoot);
+		// A copy of the array: the predicate is allowed to reparent or destroy what it is handed.
+		const TArray<UDreamWidget*> Children = InRoot->GetChildren();
+		for (UDreamWidget* Child : Children)
+		{
+			ForEachWidgetInSubtree(Child, InPredicate);
+		}
+	}
+
+	UDreamWidget* DuplicateWidget(UDreamWidgetBlueprint* InBlueprint, UDreamWidget* InSource,
+		UDreamWidget* InNewParent, int32 InSiblingIndex)
+	{
+		// Every refusal below says so. A duplicate that returns null without a word is a menu item that
+		// does nothing when clicked, which is what it looked like from the outside.
+		if (!IsTemplateWidgetOf(InBlueprint, InSource) || !IsTemplateWidgetOf(InBlueprint, InNewParent))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot duplicate '%s' under '%s': not part of '%s' authoring tree."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetNameSafe(InSource), *GetNameSafe(InNewParent), *GetNameSafe(InBlueprint));
+			return nullptr;
+		}
+		if (InNewParent == InSource || InNewParent->IsChildOf(InSource))
+		{
+			// Copying a subtree into itself: the copy would contain a copy of the place it is going.
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot duplicate '%s' into itself."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InSource->GetDisplayName());
+			return nullptr;
+		}
+		if (!InNewParent->CanAcceptAdditionalChildren(1))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' cannot take another child, so '%s' was not duplicated."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InNewParent->GetDisplayName(), *InSource->GetDisplayName());
+			return nullptr;
+		}
+
+		UDreamWidgetTree* Tree = Local::GetTree(InBlueprint);
+
+		// A hierarchy that comes from a `.dui`: checked against the file before anything is copied, and
+		// the copies named clear of every id the file holds. Only a subtree the file WRITES can be copied
+		// here -- one with widgets an `each` or a component builds in it would be copied as plain nodes,
+		// machinery and all, which is not what the file means; that copy belongs in the text.
+		TSet<FString> FileIds;
+		bool bCopyAsRow = false;
+		if (DreamUITextAuthoring::IsTextAuthored(InBlueprint))
+		{
+			const FString Operation = FString::Printf(TEXT("duplicate '%s'"), *Local::DisplayNameOf(InSource));
+			DreamUITextAuthoring::CollectAuthoredNodeIds(InBlueprint, FileIds);
+			FString Synthesised;
+			ForEachWidgetInSubtree(InSource, [&FileIds, &Synthesised](UDreamWidget* Widget)
+			{
+				if (Synthesised.IsEmpty() && IsValid(Widget) && !Widget->HasAnyFlags(RF_Transient)
+					&& !FileIds.Contains(Widget->GetDisplayName()))
+				{
+					Synthesised = Widget->GetDisplayName();
+				}
+			});
+			if (!Synthesised.IsEmpty())
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__, Operation,
+					FText::Format(LOCTEXT("DuplicateSynthesised",
+						"'{0}' inside it is built by the file rather than written in it; copy the block in the text instead"),
+						FText::FromString(Synthesised)));
+				return nullptr;
+			}
+			// A row of a `rows` table is copied as a row: its line, written again after it, in its own table. Anywhere
+			// else the copy would be a node beside the table, which a table's parent does not take from here.
+			bCopyAsRow = InNewParent == InSource->GetParent() && DreamUITextAuthoring::IsTableRow(InBlueprint, InSource->GetDisplayName());
+			FDreamUIStructuralEdit Planned;
+			Planned.Kind = bCopyAsRow ? EDreamUIStructuralEditKind::InsertRow : EDreamUIStructuralEditKind::InsertNode;
+			Planned.NodeId = InSource->GetDisplayName();
+			Planned.ParentId = InNewParent == Tree->RootWidget ? FString() : InNewParent->GetDisplayName();
+			Planned.ChildIndex = InSiblingIndex < 0 ? INDEX_NONE : InSiblingIndex;
+			Planned.NewId = MakeUniqueDisplayName(Tree, InSource->GetDisplayName(), nullptr, &FileIds);
+			FText Reason;
+			if (!DreamUITextAuthoring::CheckStructuralEdit(InBlueprint, Planned, /*bInVerifyBuild*/true, Reason, InSource))
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__, Operation, Reason);
+				return nullptr;
+			}
+		}
+
+		InBlueprint->Modify();
+		Tree->Modify();
+		InNewParent->Modify();
+
+		// NOT DuplicateObject. Every widget in a tree is outered flat to the UDreamWidgetTree, and
+		// duplication follows the OUTER chain: a widget's children are not its subobjects, so
+		// DuplicateObject copied the source alone and left the copy's Children array pointing at the
+		// ORIGINAL children -- which RestoreParentLinksRecursive then re-parented onto the copy,
+		// taking them out of the hierarchy they were in. Duplicating a leaf hides all of it.
+		UDreamWidget* Copy = UDreamWidget::DuplicateSubtree(Tree, InSource);
+		if (!IsValid(Copy))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Duplicating the subtree under '%s' produced nothing."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InSource->GetDisplayName());
+			return nullptr;
+		}
+
+		// Re-home flat, with fresh names. See the header for why this is not cosmetic.
+		TArray<UDreamWidget*> Copied;
+		ForEachWidgetInSubtree(Copy, [&Copied](UDreamWidget* Widget) { Copied.Add(Widget); });
+		for (UDreamWidget* Widget : Copied)
+		{
+			Widget->Rename(*MakeUniqueObjectName(Tree, Widget->GetClass()).ToString(), Tree, REN_DontCreateRedirectors);
+			Widget->SetDisplayName(MakeUniqueDisplayName(Tree, Widget->GetDisplayName(), Widget, FileIds.IsEmpty() ? nullptr : &FileIds));
+			// Taken as soon as it is given: the copies are not in the hierarchy yet, so the tree walk above
+			// cannot see the name one of their siblings was handed a moment ago.
+			if (!FileIds.IsEmpty())
+			{
+				FileIds.Add(Widget->GetDisplayName());
+			}
+		}
+
+		if (!Copy->TrySetParent(InNewParent, /*bKeepWorldPosition*/false, InSiblingIndex))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' refused the copy of '%s' as a child."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InNewParent->GetDisplayName(), *InSource->GetDisplayName());
+			Copy->DestroyWidget();
+			return nullptr;
+		}
+		if (bCopyAsRow)
+		{
+			// Written as the copied line, which the builder names `<id>_1` -- the name the copy was given above.
+			FDreamUIStructuralEdit CopiedRow;
+			CopiedRow.Kind = EDreamUIStructuralEditKind::InsertRow;
+			CopiedRow.NodeId = InSource->GetDisplayName();
+			FDreamUITextWriteBack::QueueStructuralEdit(Tree, CopiedRow);
+		}
+		NotifyStructureChanged(InBlueprint);
+		return Copy;
+	}
+
+	UDreamWidget* CreateWidget(UDreamWidgetBlueprint* InBlueprint, TSubclassOf<UDreamWidget> InWidgetClass,
+		UDreamWidget* InParent, int32 InSiblingIndex, const FString& InDesiredDisplayName, FName InSlotName)
+	{
+		// Same rule as the duplicate path below: every refusal says so. A command that returns null
+		// without a word is a palette drop that does nothing, and the user has no way to tell that
+		// from a bug in the drag.
+		if (!IsValid(InBlueprint))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot create a widget: there is no Blueprint to create it in."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__);
+			return nullptr;
+		}
+		if (!IsValid(InWidgetClass) || InWidgetClass->HasAnyClassFlags(CLASS_Abstract))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot create a widget of class '%s'."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetNameSafe(InWidgetClass));
+			return nullptr;
+		}
+
+		// Without a root, deliberately: an empty tree is the state DeleteWidget leaves behind, and
+		// asking for one to be conjured here would fill the hole this function exists to fill --
+		// with a bare UDreamWidget the author never chose, which the widget they DID choose would
+		// then land inside.
+		UDreamWidgetTree* Tree = InBlueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/false);
+		UDreamWidget* Parent = InParent != nullptr ? InParent : Tree->RootWidget.Get();
+		// Nothing to hang it on, because there is nothing at all: this widget IS the hierarchy now.
+		// The counterpart of DeleteWidget letting the root go -- an empty tree has to be fillable, or
+		// deleting the root would be a one-way door.
+		const bool bBecomesRoot = Parent == nullptr && !IsValid(Tree->RootWidget);
+		if (!bBecomesRoot && !IsTemplateWidgetOf(InBlueprint, Parent))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d The parent does not belong to '%s'."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InBlueprint->GetName());
+			return nullptr;
+		}
+		if (!bBecomesRoot && !Parent->CanAcceptAdditionalChildren(1))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' cannot take another child, so nothing was created under it."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *Parent->GetDisplayName());
+			return nullptr;
+		}
+		// A slot name is a promise about the parent: a placed control that opens a hole of that name.
+		// Checked before anything is written, so a refusal leaves no half-made widget behind.
+		UDreamUserWidget* SlotHost = InSlotName.IsNone() || bBecomesRoot ? nullptr : Cast<UDreamUserWidget>(Parent);
+		if (!InSlotName.IsNone() && (SlotHost == nullptr || !Local::DeclaresSlot(SlotHost, InSlotName)))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' opens no slot named '%s', so nothing was created in it."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *Local::DisplayNameOf(Parent), *InSlotName.ToString());
+			return nullptr;
+		}
+
+		// A hierarchy that comes from a `.dui` takes the widget only if the file can: checked against the
+		// text BEFORE anything is touched, so a refusal leaves nothing to undo. The name avoids the file's
+		// ids as well as the tree's -- see CollectAuthoredNodeIds.
+		const FString Desired = InDesiredDisplayName.IsEmpty() ? InWidgetClass->GetName() : InDesiredDisplayName;
+		TSet<FString> FileIds;
+		if (DreamUITextAuthoring::IsTextAuthored(InBlueprint))
+		{
+			const FString Operation = FString::Printf(TEXT("create a '%s'"), *DreamUITextAuthoring::DescribeClassForAuthor(InWidgetClass));
+			if (bBecomesRoot)
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__, Operation,
+					LOCTEXT("TextRootIsTheFiles", "a .dui holds exactly one root, and a new one would be a different file"));
+				return nullptr;
+			}
+			DreamUITextAuthoring::CollectAuthoredNodeIds(InBlueprint, FileIds);
+			FDreamUIStructuralEdit Planned;
+			Planned.Kind = EDreamUIStructuralEditKind::InsertNode;
+			Planned.ParentId = Parent == Tree->RootWidget ? FString() : Parent->GetDisplayName();
+			Planned.ChildIndex = InSiblingIndex < 0 ? INDEX_NONE : InSiblingIndex;
+			Planned.NewId = MakeUniqueDisplayName(Tree, Desired, nullptr, &FileIds);
+			Planned.FillSlotName = SlotHost != nullptr && !InSlotName.IsNone() && InSlotName != SlotHost->GetDefaultSlotName()
+				? InSlotName.ToString() : FString();
+			FText Reason;
+			if (!DreamUITextAuthoring::CheckStructuralEdit(InBlueprint, Planned, /*bInVerifyBuild*/true, Reason,
+				InWidgetClass->GetDefaultObject<UDreamWidget>()))
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__, Operation, Reason);
+				return nullptr;
+			}
+		}
+
+		// The tree as well as the parent: the widget is about to be outered to it, and undoing the
+		// creation has to be able to put the tree back the way it was.
+		InBlueprint->Modify();
+		Tree->Modify();
+		if (!bBecomesRoot)
+		{
+			Parent->Modify();
+		}
+
+		UDreamWidget* Widget = Tree->ConstructWidget(InWidgetClass);
+		if (!IsValid(Widget))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Constructing a '%s' produced nothing."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetNameSafe(InWidgetClass));
+			return nullptr;
+		}
+		Widget->SetDisplayName(MakeUniqueDisplayName(Tree, Desired, Widget, FileIds.IsEmpty() ? nullptr : &FileIds));
+
+		if (bBecomesRoot)
+		{
+			Tree->RootWidget = Widget;
+			// Stretched, for the same reason UDreamWidgetBlueprintFactory stretches the root it makes:
+			// a root left at the widget default is a fixed rect nothing sizes, and every full-screen
+			// hierarchy then has to fix it by hand. Written as anchor DATA because the setters resolve
+			// against a parent and a tree root has none -- the exact trap that made the factory's own
+			// stretch a silent no-op for as long as it existed.
+			FDreamUIAnchorData Anchors = Widget->GetAnchorData();
+			Anchors.AnchorMin = FVector2D::ZeroVector;
+			Anchors.AnchorMax = FVector2D(1.0, 1.0);
+			Anchors.AnchoredPosition = FVector2D::ZeroVector;
+			Anchors.SizeDelta = FVector2D::ZeroVector;
+			Widget->SetAnchorData(Anchors);
+			NotifyStructureChanged(InBlueprint);
+			return Widget;
+		}
+
+		if (!Widget->TrySetParent(Parent, /*bKeepWorldPosition*/false, InSiblingIndex))
+		{
+			// The capacity check above already passed, so this is a cycle or a refusal from the panel
+			// itself. Leaving a parentless widget outered to the tree would put it in no hierarchy and
+			// in every save.
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' refused the new '%s' as a child; it was not created."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *Parent->GetDisplayName(), *GetNameSafe(InWidgetClass));
+			Widget->DestroyWidget();
+			return nullptr;
+		}
+		if (SlotHost != nullptr)
+		{
+			BindWidgetIntoSlot(InBlueprint, SlotHost, InSlotName, Widget);
+		}
+
+		NotifyStructureChanged(InBlueprint);
+		return Widget;
+	}
+
+	bool DeleteWidget(UDreamWidgetBlueprint* InBlueprint, UDreamWidget* InWidget)
+	{
+		if (!IsTemplateWidgetOf(InBlueprint, InWidget))
+		{
+			// The one branch in this family W5 left silent, and it is the one that fires when a caller
+			// hands over a preview widget instead of a template -- the single easiest mistake to make
+			// against this API. Said out loud for the same reason as its four siblings.
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot delete '%s': not part of '%s' authoring tree."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetNameSafe(InWidget), *GetNameSafe(InBlueprint));
+			return false;
+		}
+		// Checked against the `.dui` before anything goes, and with a build of the result: the patcher
+		// refuses the root, a loop's template and a row by itself, and the build catches a reference to the
+		// node elsewhere in the file that its removal would leave pointing at nothing.
+		if (DreamUITextAuthoring::IsTextAuthored(InBlueprint))
+		{
+			FDreamUIStructuralEdit Planned;
+			Planned.Kind = EDreamUIStructuralEditKind::RemoveNode;
+			Planned.NodeId = InWidget->GetDisplayName();
+			FText Reason;
+			if (!DreamUITextAuthoring::CheckStructuralEdit(InBlueprint, Planned, /*bInVerifyBuild*/true, Reason))
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+					FString::Printf(TEXT("delete '%s'"), *Local::DisplayNameOf(InWidget)), Reason);
+				return false;
+			}
+		}
+
+		UDreamWidgetTree* Tree = Local::GetTree(InBlueprint);
+		// The root goes like anything else, and the tree is simply left empty -- UMG's
+		// UWidgetTree::RemoveWidget does exactly this ("If the widget being removed is the root, null
+		// it out"). This used to be refused, on the grounds that nothing downstream had an answer for
+		// an empty hierarchy. That stopped being true: the compiler says so itself
+		// (FDreamWidgetBlueprintCompilerContext::ValidateWidgetBindings -- "No hierarchy at all is a
+		// legitimate state (logic-only class, or nothing authored yet)"), the preview host and the
+		// generated class both guard the root before touching it, and CreateWidget below adopts the
+		// next widget as the new root. What was left was a refusal nobody still needed, and no way to
+		// replace a root you had outgrown short of deleting the asset.
+		const bool bWasRoot = Tree->RootWidget == InWidget;
+
+		// Everything that is about to stop existing, by the name a binding would have stored. Taken
+		// before the destroy, because afterwards there is no subtree left to walk.
+		TArray<FName> DoomedVariableNames;
+		ForEachWidgetInSubtree(InWidget, [&DoomedVariableNames](UDreamWidget* Widget)
+		{
+			DoomedVariableNames.AddUnique(UDreamWidgetTree::MakeWidgetVariableName(Widget));
+		});
+
+		InBlueprint->Modify();
+		Tree->Modify();
+		if (UDreamWidget* Parent = InWidget->GetParent())
+		{
+			Parent->Modify();
+		}
+		InWidget->Modify();
+
+		if (bWasRoot)
+		{
+			// Before the destroy, and through Modify above, so undo puts the pointer back with the
+			// subtree the transaction buffer is holding.
+			Tree->RootWidget = nullptr;
+		}
+
+		// The designer's per-widget bookkeeping is keyed by object FName, and these sets only ever
+		// grew: a deleted widget stayed "hidden" and "locked" in DesignerData for the life of the
+		// asset and was saved with it, while MakeUniqueObjectName hands a name back out once nothing
+		// holds it -- so a widget created later could be born invisible and unclickable with nothing
+		// in the UI to explain it. Walked before the destroy, while the subtree is still whole, and
+		// after the Modify above so an undo brings the entries back with the widgets.
+		{
+			FDreamWidgetDesignerData& DesignerData = InBlueprint->DesignerData;
+			ForEachWidgetInSubtree(InWidget, [&DesignerData](UDreamWidget* Doomed)
+			{
+				if (IsValid(Doomed))
+				{
+					const FName Key = Doomed->GetFName();
+					DesignerData.HiddenWidgets.Remove(Key);
+					DesignerData.LockedWidgets.Remove(Key);
+					DesignerData.UnexpandedWidgets.Remove(Key);
+				}
+			});
+		}
+
+		// DestroyWidget marks the subtree as garbage as well as detaching it, and undo still puts it
+		// back: it Modify()s each widget before the mark, so the transaction records the transition and
+		// FTransaction::Apply calls ClearGarbage() on the way out. (The premise that a garbage object
+		// cannot be restored was wrong -- what cannot be restored is one the transaction never saw.)
+		// The Modify calls above stay: they cover the blueprint, the tree, the parent's Children array
+		// and the DesignerData walked just above, none of which DestroyWidget touches.
+		// A slot binding on the parent is a second pointer at the doomed widget. Left behind it is an
+		// entry the tree walk skips and no panel shows, holding a slot for nothing. Dropped while the
+		// parent link still says which control holds it, and after that parent's Modify above.
+		if (UDreamUserWidget* SlotHost = Cast<UDreamUserWidget>(InWidget->GetParent()))
+		{
+			ForgetSlotBindings(SlotHost, InWidget);
+		}
+		InWidget->DestroyWidget();
+
+		// The bindings that named the deleted widgets go with them. Left behind they are records the
+		// compiler can only report as errors -- "expects a widget named X, and this hierarchy has
+		// none" -- on every compile from now on, and nothing in the designer could delete them.
+		for (const FName DoomedName : DoomedVariableNames)
+		{
+			Local::RetargetAuthoredBindings(InBlueprint, DoomedName, NAME_None);
+		}
+
+		NotifyStructureChanged(InBlueprint);
+		return true;
+	}
+
+	bool ReparentWidget(UDreamWidgetBlueprint* InBlueprint, UDreamWidget* InWidget, UDreamWidget* InNewParent, int32 InSiblingIndex, FName InSlotName)
+	{
+		// Reordering inside one parent comes through here too: sibling order in the file IS the order in the
+		// hierarchy, so on a `.dui`-backed class a reorder is a move of the node's block like any other.
+		if (!IsTemplateWidgetOf(InBlueprint, InWidget) || !IsTemplateWidgetOf(InBlueprint, InNewParent))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot move '%s' under '%s': not part of '%s' authoring tree."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetNameSafe(InWidget), *GetNameSafe(InNewParent), *GetNameSafe(InBlueprint));
+			return false;
+		}
+		UDreamWidgetTree* Tree = Local::GetTree(InBlueprint);
+		if (Tree->RootWidget == InWidget)
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Refusing to move the root of '%s'; a hierarchy has to have one."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InBlueprint->GetName());
+			return false;
+		}
+		if (InWidget == InNewParent || InNewParent->IsChildOf(InWidget))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot move '%s' into itself or into something it contains."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InWidget->GetDisplayName());
+			return false;
+		}
+		// Only when it is actually moving house: a reorder inside the same parent is not an arrival,
+		// and asking whether there is room for one more would refuse a full panel reordering itself.
+		if (InWidget->GetParent() != InNewParent && !InNewParent->CanAcceptChild(InWidget))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' cannot take '%s', so it was not moved."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InNewParent->GetDisplayName(), *InWidget->GetDisplayName());
+			return false;
+		}
+		// The same promise CreateWidget asks for: a slot name has to be one the new parent's class opens.
+		UDreamUserWidget* SlotHost = InSlotName.IsNone() ? nullptr : Cast<UDreamUserWidget>(InNewParent);
+		if (!InSlotName.IsNone() && (SlotHost == nullptr || !Local::DeclaresSlot(SlotHost, InSlotName)))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' opens no slot named '%s', so '%s' was not moved."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InNewParent->GetDisplayName(), *InSlotName.ToString(), *InWidget->GetDisplayName());
+			return false;
+		}
+
+		// A hierarchy that comes from a `.dui`: checked against the file before anything moves, at the place it is
+		// going -- the block, the named slot's fill, the sibling it will stand in front of. The move itself is queued
+		// for the write-back, which places it from the tree when it writes (see QueueStructuralEdit).
+		const bool bTextAuthored = DreamUITextAuthoring::IsTextAuthored(InBlueprint);
+		if (bTextAuthored)
+		{
+			FDreamUIStructuralEdit Planned;
+			Planned.Kind = EDreamUIStructuralEditKind::MoveNode;
+			Planned.NodeId = InWidget->GetDisplayName();
+			Planned.ParentId = InNewParent == Tree->RootWidget ? FString() : InNewParent->GetDisplayName();
+			Planned.FillSlotName = SlotHost != nullptr && InSlotName != SlotHost->GetDefaultSlotName() ? InSlotName.ToString() : FString();
+			TArray<UDreamWidget*> Siblings = InNewParent->GetChildren();
+			Siblings.Remove(InWidget);
+			const int32 Landing = InSiblingIndex < 0 ? Siblings.Num() : FMath::Min(InSiblingIndex, Siblings.Num());
+			Planned.BeforeId = Siblings.IsValidIndex(Landing) && IsValid(Siblings[Landing]) ? Siblings[Landing]->GetDisplayName() : FString();
+			// Into a widget this same gesture made and the file does not hold yet -- a wrap's new wrapper: its block
+			// is written before the queued move is applied, so only the moving node's side of the move can be asked
+			// about now, which a move to the root asks.
+			TSet<FString> FileIds;
+			DreamUITextAuthoring::CollectAuthoredNodeIds(InBlueprint, FileIds);
+			if (!Planned.ParentId.IsEmpty() && !FileIds.Contains(Planned.ParentId))
+			{
+				Planned.ParentId.Reset();
+				Planned.FillSlotName.Reset();
+				Planned.BeforeId.Reset();
+			}
+			FText Reason;
+			if (!DreamUITextAuthoring::CheckStructuralEdit(InBlueprint, Planned, /*bInVerifyBuild*/true, Reason))
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+					FString::Printf(TEXT("move '%s'"), *Local::DisplayNameOf(InWidget)), Reason);
+				return false;
+			}
+		}
+
+		InBlueprint->Modify();
+		Tree->Modify();
+		UDreamWidget* OldParent = InWidget->GetParent();
+		if (OldParent != nullptr)
+		{
+			OldParent->Modify();
+		}
+		InNewParent->Modify();
+		InWidget->Modify();
+
+		// Never keep world position on a template: a template is inert, so its drawn transform is
+		// whatever it was last told rather than where it is, and writing that back is how an authored
+		// position turns into a stale one.
+		if (!InWidget->TrySetParent(InNewParent, /*bKeepWorldPosition*/false, InSiblingIndex))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' refused '%s' as a child; it stayed where it was."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InNewParent->GetDisplayName(), *InWidget->GetDisplayName());
+			return false;
+		}
+
+		// The slot it was in, if any, lets go: a binding is a pointer the runtime follows before it
+		// looks at Children, so a widget moved out of a header slot and left bound to it would be
+		// pulled straight back into the header by the next instance built. Then the slot it is going
+		// to, which for a control's default slot is the nesting alone.
+		if (UDreamUserWidget* PreviousHost = Cast<UDreamUserWidget>(OldParent))
+		{
+			ForgetSlotBindings(PreviousHost, InWidget);
+		}
+		if (SlotHost != nullptr)
+		{
+			BindWidgetIntoSlot(InBlueprint, SlotHost, InSlotName, InWidget);
+		}
+
+		if (bTextAuthored)
+		{
+			FDreamUIStructuralEdit Moved;
+			Moved.Kind = EDreamUIStructuralEditKind::MoveNode;
+			Moved.NodeId = InWidget->GetDisplayName();
+			FDreamUITextWriteBack::QueueStructuralEdit(Tree, Moved);
+		}
+		NotifyStructureChanged(InBlueprint);
+		return true;
+	}
+
+	bool BindWidgetIntoSlot(UDreamWidgetBlueprint* InBlueprint, UDreamUserWidget* InNested, FName InSlotName, UDreamWidget* InWidget)
+	{
+		if (InSlotName.IsNone() || !IsValid(InNested) || !IsValid(InWidget))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Nothing to bind: a slot name, a control and a widget are all needed."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__);
+			return false;
+		}
+		if (!IsTemplateWidgetOf(InBlueprint, InNested) || !IsTemplateWidgetOf(InBlueprint, InWidget))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot bind '%s' into a slot of '%s': not part of '%s' authoring tree."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InWidget->GetDisplayName(), *InNested->GetDisplayName(), *GetNameSafe(InBlueprint));
+			return false;
+		}
+		if (InWidget->GetParent() != InNested)
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot bind '%s' into a slot of '%s': it is not that control's child."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InWidget->GetDisplayName(), *InNested->GetDisplayName());
+			return false;
+		}
+		if (!Local::DeclaresSlot(InNested, InSlotName))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d '%s' opens no slot named '%s'."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *InNested->GetDisplayName(), *InSlotName.ToString());
+			return false;
+		}
+		InNested->Modify();
+		ForgetSlotBindings(InNested, InWidget);
+		// Nesting already says "the default slot": the runtime adopts an unbound child into it, the
+		// .dui language writes exactly this shape, and a binding on top would be a second record of
+		// the same fact for the next class change to make disagree with the first.
+		if (InSlotName == InNested->GetDefaultSlotName())
+		{
+			return true;
+		}
+		return InNested->SetContentForNamedSlot(InSlotName, InWidget);
+	}
+
+	bool ForgetSlotBindings(UDreamUserWidget* InNested, const UDreamWidget* InWidget)
+	{
+		if (!IsValid(InNested) || InWidget == nullptr)
+		{
+			return false;
+		}
+		TArray<FName> Bound;
+		for (const TPair<FName, TObjectPtr<UDreamWidget>>& Binding : InNested->NamedSlotContent)
+		{
+			if (Binding.Value.Get() == InWidget)
+			{
+				Bound.Add(Binding.Key);
+			}
+		}
+		for (const FName& SlotName : Bound)
+		{
+			InNested->SetContentForNamedSlot(SlotName, nullptr);
+		}
+		return Bound.Num() > 0;
+	}
+
+	FString RenameWidget(UDreamWidgetBlueprint* InBlueprint, UDreamWidget* InWidget, const FString& InDesiredDisplayName)
+	{
+		// A rename is structural for a reason the other edits do not have: the display name is the node's `id`,
+		// which is its identity in the file, its compiler variable, its binding key and its animation path all at
+		// once. On a `.dui`-backed class it is written as the language writes one -- the new id, with `(was: OldId)`
+		// so the compile carries what the old name owned -- and queued, because read off the trees it would be a
+		// node deleted and another made.
+		if (!IsTemplateWidgetOf(InBlueprint, InWidget))
+		{
+			UE_LOG(DreamGUI, Error, TEXT("[%s].%d Cannot rename '%s': not part of '%s' authoring tree."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *GetNameSafe(InWidget), *GetNameSafe(InBlueprint));
+			return FString();
+		}
+		UDreamWidgetTree* Tree = Local::GetTree(InBlueprint);
+		const bool bTextAuthored = DreamUITextAuthoring::IsTextAuthored(InBlueprint);
+		TSet<FString> FileIds;
+		if (bTextAuthored)
+		{
+			// Clear of every id the file holds, not only the tree's -- but not of this node's own names.
+			DreamUITextAuthoring::CollectAuthoredNodeIds(InBlueprint, FileIds);
+			FileIds.Remove(InWidget->GetDisplayName());
+		}
+		const FString Applied = MakeUniqueDisplayName(Tree, InDesiredDisplayName, InWidget, bTextAuthored ? &FileIds : nullptr);
+		if (Applied == InWidget->GetDisplayName())
+		{
+			return Applied;
+		}
+		if (bTextAuthored)
+		{
+			FDreamUIStructuralEdit Planned;
+			Planned.Kind = EDreamUIStructuralEditKind::RenameNode;
+			Planned.NodeId = InWidget->GetDisplayName();
+			Planned.NewId = Applied;
+			FText Reason;
+			if (!DreamUITextAuthoring::CheckStructuralEdit(InBlueprint, Planned, /*bInVerifyBuild*/true, Reason))
+			{
+				DreamUITextAuthoring::ReportStructuralRefusal(InBlueprint, ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+					FString::Printf(TEXT("rename '%s'"), *Local::DisplayNameOf(InWidget)), Reason);
+				return FString();
+			}
+			FDreamUITextWriteBack::QueueStructuralEdit(Tree, Planned);
+		}
+
+		//the compiler's name for it, taken BEFORE the write, is the key every binding stored
+		const FName OldVariableName = UDreamWidgetTree::MakeWidgetVariableName(InWidget);
+		const FString OldDisplayName = InWidget->GetDisplayName();
+
+		InBlueprint->Modify();
+		InWidget->Modify();
+		InWidget->SetDisplayName(Applied);
+
+		// The bindings that named it, carried across. They key on the variable name, which is derived
+		// from the display name, so without this a rename left every `<-`, `->` and `each` that
+		// mentioned this widget pointing at a name the hierarchy no longer has -- and the only notice
+		// was a compile error, at the next compile of anything, from a panel with no way to fix it.
+		Local::RetargetAuthoredBindings(InBlueprint, OldVariableName, UDreamWidgetTree::MakeWidgetVariableName(InWidget));
+
+		// The animation paths before the structural change: it compiles the skeleton, which checks every path, and one
+		// still naming the old id was an error there -- logged for a rename the next lines were about to carry through.
+		FDreamWidgetBlueprintCompilerContext::FWidgetRenameMigration PathMigration;
+		FDreamWidgetBlueprintCompilerContext::MigrateWidgetRenamePaths(InBlueprint, OldDisplayName, Applied, PathMigration);
+
+		// Structural, not merely modified: the display name IS the variable name, so a rename removes
+		// one member from the class and adds another. Anything bound to the old one has to be told.
+		NotifyStructureChanged(InBlueprint);
+
+		// And the graph nodes reading its variable, whose guid is derived from the name, so nothing found the renamed
+		// variable again. The same move a `(was:)` clause makes for a .dui, through the same function (its path legs
+		// find nothing left to move). After the structural change, never before it: until the class declares the new
+		// name, the first look at a renamed node finds its old guid on the old variable and renames it back.
+		const FDreamWidgetBlueprintCompilerContext::FWidgetRenameMigration Migration =
+			FDreamWidgetBlueprintCompilerContext::MigrateWidgetRename(InBlueprint, OldDisplayName, Applied);
+		if (!Migration.GraphRefusal.IsEmpty())
+		{
+			UE_LOG(DreamGUI, Warning, TEXT("[%s].%d '%s' is now '%s', and the graph references to it stayed where they were: %s. Repoint them by hand, or rename the other one."),
+				ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *OldDisplayName, *Applied, *Migration.GraphRefusal);
+		}
+		return Applied;
+	}
+}
+
+#undef LOCTEXT_NAMESPACE

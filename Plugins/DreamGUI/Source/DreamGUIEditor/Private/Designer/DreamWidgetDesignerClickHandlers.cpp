@@ -1,0 +1,752 @@
+// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "DreamWidgetDesignerClickHandlers.h"
+#include "ViewportSelectionUtilities.h"
+#include "UObject/Class.h"
+#include "InputCoreTypes.h"
+#include "GameFramework/Actor.h"
+#include "Engine/Brush.h"
+#include "EngineUtils.h"
+#include "Materials/MaterialInterface.h"
+#include "LevelEditorViewport.h"
+#include "Components/PrimitiveComponent.h"
+#include "Model.h"
+#include "Components/PointLightComponent.h"
+#include "Engine/PointLight.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/TargetPoint.h"
+#include "Engine/Selection.h"
+#include "Editor.h"
+#include "EditorModeManager.h"
+#include "EditorModes.h"
+#include "Dialogs/Dialogs.h"
+#include "ScopedTransaction.h"
+#include "ILevelEditor.h"
+#include "SnappingUtils.h"
+#include "Logging/MessageLog.h"
+#include "ActorEditorUtils.h"
+#include "LightMap.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
+#include "AssetSelection.h"
+#include "DreamWidgetDesignerViewportClient.h"
+#include "DreamWidgetBlueprintEditor.h"
+#include "DreamGUIEditorModule.h"
+
+#define LOCTEXT_NAMESPACE "ClickHandlers"
+
+namespace DreamWidgetDesignerClickHandlers
+{
+	/*
+	 * The three selection-set helpers this file used to carry (PrivateGetElementSelectionSet,
+	 * PrivateGetMutableElementSelectionSet and the typed-element ClickElement that read them) are
+	 * gone. Each was a function whose body was commented out and which returned nullptr, so
+	 * ClickElement could not do anything but bail on its first line -- the whole typed-element
+	 * click path in the designer was unreachable code pretending to be a feature. They read the
+	 * LEVEL EDITOR's selection set, which is not this viewport's: the designer selects
+	 * UDreamWidgets through UDreamUISelection, and FDreamWidgetDesignerViewportClient::ProcessClick
+	 * does that directly.
+	 */
+
+	/** The designer's viewport menu. The level editor asks its parent ILevelEditor; there is none here. */
+	static void PrivateSummonContextMenu(FDreamWidgetDesignerViewportClient* ViewportClient, const FTypedElementHandle& HitProxyElement = FTypedElementHandle())
+	{
+		// The handle is ignored on purpose: the designer's menu is built around the widget selection,
+		// not around a typed element. This too used to be an empty body.
+		if (ViewportClient != nullptr)
+		{
+			ViewportClient->SummonDesignerContextMenu();
+		}
+	}
+
+	/*
+	 * The level editor's actor-placement shortcuts -- hold L/S/A/; and click to drop a point light,
+	 * a static mesh, the selected class or a target point -- came across with the rest of this file
+	 * and were never right here. FActorFactoryAssetProxy::AddActorForAsset spawns into the LEVEL
+	 * EDITOR's current level, not into the preview world, so the gesture put an actor in the map the
+	 * author happens to have open, from a viewport that shows a widget hierarchy. ClickBackdrop is
+	 * reached by every click that misses a widget and has no hit proxy, so a stray modifier key was
+	 * all it took. The PickColorAndAddLight variant then CastChecked the result, which asserts
+	 * outright when the factory refuses.
+	 *
+	 * There is nothing to place in a widget designer, so the whole family is gone rather than
+	 * retargeted at the preview world.
+	 */
+
+	bool ClickViewport(FDreamWidgetDesignerViewportClient* ViewportClient, const FViewportClick& Click)
+	{
+		if (Click.GetKey() == EKeys::MiddleMouseButton && Click.IsControlDown())
+		{
+			// Used to call a function whose body was commented out and then report "handled", so
+			// Ctrl+middle-click in the design viewport consumed the click and did nothing whatsoever.
+			// The level editor's answer here is its view-options menu, reached through a parent
+			// ILevelEditor that a designer viewport does not have; the menu this viewport does have
+			// is the designer's own, so the gesture opens that. Handled only if it really opened.
+			return ViewportClient != nullptr && ViewportClient->SummonDesignerContextMenu();
+		}
+		return false;
+	}
+
+	/*
+	 * ClickElement is gone with them. It began by asking PrivateGetMutableElementSelectionSet for
+	 * the level editor's selection set, got nullptr, and returned false -- every time, from the
+	 * first line. What followed was a verbatim copy of FLevelEditorViewportClient's element
+	 * selection, unreachable in a designer and describing a selection model this editor does not
+	 * use. Its one live idea, that a right-click on an already-selected thing keeps the selection
+	 * instead of collapsing it, now lives where the designer actually selects: ProcessClick in
+	 * FDreamWidgetDesignerViewportClient.
+	 */
+
+	bool ClickActor(FDreamWidgetDesignerViewportClient* ViewportClient,AActor* Actor,const FViewportClick& Click,bool bAllowSelectionChange)
+	{
+		// Anything clicked in THIS viewport lives in the designer's preview world, and GEditor's
+		// actor selection is the level editor's -- putting a transient preview actor in it shows it
+		// in the outliner, hands it to every level-editor gesture, and leaves it there after the
+		// designer's world is gone. The designer selects DreamWidgets, not actors.
+		if (Actor != nullptr && FDreamWidgetBlueprintEditor::WorldIsDesigner(Actor->GetWorld()))
+		{
+			return false;
+		}
+		// Pivot snapping
+		if( Click.GetKey() == EKeys::MiddleMouseButton && Click.IsAltDown() )
+		{
+			GEditor->SetPivot( GEditor->ClickLocation, true, false, true );
+
+			return true;
+		}
+		// Handle selection.
+		else if( Click.GetKey() == EKeys::RightMouseButton && !Click.IsControlDown() && !ViewportClient->Viewport->KeyState(EKeys::LeftMouseButton) )
+		{
+			bool bNeedViewportRefresh = false;
+			if( Actor )
+			{
+				const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ClickingOnActorsContextMenu", "Clicking on Actors (context menu)") );
+				UE_LOG(DreamGUIEditor, Log,  TEXT("Clicking on Actor (context menu): %s (%s)"), *Actor->GetClass()->GetName(), *Actor->GetActorLabel() );
+
+				GEditor->GetSelectedActors()->Modify();
+
+				if( bAllowSelectionChange && GEditor->CanSelectActor(Actor, true, true) )
+				{
+					// If the actor the user clicked on was already selected, then we won't bother clearing the selection
+					if(!Actor->IsActorOrSelectionParentSelected())
+					{
+						GEditor->SelectNone( false, true );
+						bNeedViewportRefresh = true;
+					}
+
+					// Select the actor the user clicked on
+					GEditor->SelectActor( Actor, true, true );
+				}
+			}
+
+			if( bNeedViewportRefresh )
+			{
+				// Redraw the viewport so the user can see which object was right clicked on
+				ViewportClient->Viewport->Draw();
+				FlushRenderingCommands();
+			}
+
+			PrivateSummonContextMenu(ViewportClient, Actor ? UEngineElementsLibrary::AcquireEditorActorElementHandle(Actor) : FTypedElementHandle());
+			return true;
+		}
+		else if( Click.GetEvent() == IE_DoubleClick && Click.GetKey() == EKeys::LeftMouseButton && !Click.IsControlDown() && !Click.IsShiftDown() )
+		{
+			if( Actor )
+			{
+				const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ClickingOnActorsDouble-Click", "Clicking on Actors (double-click)") );
+				UE_LOG(DreamGUIEditor, Log,  TEXT("Clicking on Actor (double click): %s (%s)"), *Actor->GetClass()->GetName(), *Actor->GetActorLabel());
+
+				GEditor->GetSelectedActors()->Modify();
+
+				if( bAllowSelectionChange && GEditor->CanSelectActor(Actor, true, true) )
+				{
+					// Clear the selection
+					GEditor->SelectNone( false, true );
+
+					// Select the actor the user clicked on
+					GEditor->SelectActor( Actor, true, true );
+				}
+			}
+
+			return true;
+		}
+		else if( Click.GetKey() != EKeys::RightMouseButton )
+		{
+			if ( Click.GetKey() == EKeys::LeftMouseButton && ViewportClient->Viewport->KeyState(EKeys::T) && Actor )
+			{
+				TArray<UActorComponent*> Components;
+				Actor->GetComponents(Components);
+				//SetDebugLightmapSample(&Components, NULL, 0, GEditor->ClickLocation);
+			}
+			// The L / S / A placement shortcuts used to be here. See the note at the top of the file.
+			else if ( Actor )
+			{
+				if( bAllowSelectionChange  && GEditor->CanSelectActor(Actor, true, true, true) )
+				{
+					const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ClickingOnActors", "Clicking on Actors") );
+					GEditor->GetSelectedActors()->Modify();
+
+					// Ctrl- or shift- clicking an actor is the same as regular clicking when components are selected
+					const bool bComponentSelected = GEditor->GetSelectedComponentCount() > 0;
+
+					if( Click.IsControlDown() && !bComponentSelected )
+					{
+						const bool bSelect = !Actor->IsSelected();
+						if( bSelect )
+						{
+							UE_LOG(DreamGUIEditor, Log,  TEXT("Clicking on Actor (CTRL LMB): %s (%s)"), *Actor->GetClass()->GetName(), *Actor->GetActorLabel());
+						}
+						GEditor->SelectActor( Actor, bSelect, true, true );
+					}
+					else if( Click.IsShiftDown() && !bComponentSelected )
+					{
+						if( !Actor->IsSelected() )
+						{
+							const bool bSelect = true;
+							GEditor->SelectActor( Actor, bSelect, true, true );
+						}
+					}
+					else
+					{
+						// check to see how many actors need deselecting first - and warn as appropriate
+						int32 NumSelectedActors = GEditor->GetSelectedActors()->Num();
+						if( NumSelectedActors >= EditorActorSelectionDefs::MaxActorsToSelectBeforeWarning )
+						{
+							const FText ConfirmText = FText::Format( NSLOCTEXT( "UnrealEd", "Warning_ManyActorsToSelectOne", "There are {0} selected actors. Selecting this actor will deselect them all. Are you sure?" ), FText::AsNumber(NumSelectedActors) );
+
+							FSuppressableWarningDialog::FSetupInfo Info( ConfirmText, NSLOCTEXT( "UnrealEd", "Warning_ManyActors", "Warning: Many Actors" ), "Warning_ManyActors" );
+							Info.ConfirmText = NSLOCTEXT("ModalDialogs", "ManyActorsToSelectOneConfirm", "Continue Selection");
+							Info.CancelText = NSLOCTEXT("ModalDialogs", "ManyActorsToSelectOneCancel", "Keep Current Selection");
+
+							FSuppressableWarningDialog ManyActorsWarning( Info );
+							if( ManyActorsWarning.ShowModal() == FSuppressableWarningDialog::Cancel )
+							{
+								return false;
+							}
+						}
+
+						GEditor->SelectNone( false, true, false );
+						UE_LOG(DreamGUIEditor, Log,  TEXT("Clicking on Actor (LMB): %s (%s)"), *Actor->GetClass()->GetName(), *Actor->GetActorLabel());
+						GEditor->SelectActor( Actor, true, true, true );
+					}
+				}
+
+				return false;
+			}
+		}
+
+		return false;
+	}
+
+	bool ClickComponent(FDreamWidgetDesignerViewportClient* ViewportClient, HActor* ActorHitProxy, const FViewportClick& Click)
+	{
+		//@todo hotkeys for component placement?
+		
+		bool bComponentClicked = false;
+
+		USceneComponent* Component = nullptr;
+
+		if (ActorHitProxy->Actor->IsChildActor())
+		{
+			AActor* TestActor = ActorHitProxy->Actor;
+			do
+			{
+				Component = TestActor->GetParentComponent();
+				TestActor = TestActor->GetParentActor();
+			} while (TestActor->IsChildActor());
+		}
+		else
+		{
+			UPrimitiveComponent* TestComponent = const_cast<UPrimitiveComponent*>(ActorHitProxy->PrimComponent.Get());
+			if (ActorHitProxy->Actor->GetComponents().Contains(TestComponent))
+			{
+				Component = TestComponent;
+			}
+		}
+
+		//If the component selected is a visualization component, we want to select the non-visualization component it's attached to
+		while (Component != nullptr && Component->IsVisualizationComponent())
+		{
+			Component = Component->GetAttachParent();
+		}
+		
+		if (Component == nullptr)
+		{
+			// It's possible to have a null component here if the primitive component contained in the hit proxy is not part of the actor contained in the hit proxy. In that case, component click is not possible
+			//  (but actor click can still be used as a fallback) :
+			return false;
+		}
+		// The same reason ClickActor refuses one: GEditor's component selection belongs to the level
+		// editor, and this component is in the preview world.
+		if (FDreamWidgetBlueprintEditor::WorldIsDesigner(Component->GetWorld()))
+		{
+			return false;
+		}
+
+		// Pivot snapping
+		if (Click.GetKey() == EKeys::MiddleMouseButton && Click.IsAltDown())
+		{
+			GEditor->SetPivot(GEditor->ClickLocation, true, false);
+
+			return true;
+		}
+		// Selection + context menu
+		else if (Click.GetKey() == EKeys::RightMouseButton && !Click.IsControlDown() && !ViewportClient->Viewport->KeyState(EKeys::LeftMouseButton))
+		{
+			const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "ClickingOnComponentContextMenu", "Clicking on Component (context menu)"));
+			UE_LOG(DreamGUIEditor, Log, TEXT("Clicking on Component (context menu): %s (%s)"), *Component->GetClass()->GetName(), *Component->GetName());
+
+			auto const EditorComponentSelection = GEditor->GetSelectedComponents();
+			EditorComponentSelection->Modify();
+
+			// If the component the user clicked on was already selected, then we won't bother clearing the selection
+			bool bNeedViewportRefresh = false;
+			if (!EditorComponentSelection->IsSelected(Component))
+			{
+				EditorComponentSelection->DeselectAll();
+				bNeedViewportRefresh = true;
+			}
+
+			GEditor->SelectComponent(Component, true, true);
+			
+			if (bNeedViewportRefresh)
+			{
+				// Redraw the viewport so the user can see which object was right clicked on
+				ViewportClient->Viewport->Draw();
+				FlushRenderingCommands();
+			}
+
+			PrivateSummonContextMenu(ViewportClient);
+			bComponentClicked = true;
+		}
+		// Selection only
+		else if (Click.GetKey() == EKeys::LeftMouseButton)
+		{
+			const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "ClickingOnComponents", "Clicking on Components"));
+			GEditor->GetSelectedComponents()->Modify();
+
+			if (Click.IsControlDown())
+			{
+				const bool bSelect = !Component->IsSelected();
+				if (bSelect)
+				{
+					UE_LOG(DreamGUIEditor, Log, TEXT("Clicking on Component (CTRL LMB): %s (%s)"), *Component->GetClass()->GetName(), *Component->GetName());
+				}
+				GEditor->SelectComponent(Component, bSelect, true, true);
+				bComponentClicked = true;
+			}
+			else if (Click.IsShiftDown())
+			{
+				if (!Component->IsSelected())
+				{
+					UE_LOG(DreamGUIEditor, Log, TEXT("Clicking on Component (SHIFT LMB): %s (%s)"), *Component->GetClass()->GetName(), *Component->GetName());
+					GEditor->SelectComponent(Component, true, true, true);
+				}
+				bComponentClicked = true;
+			}
+			else
+			{
+				GEditor->GetSelectedComponents()->DeselectAll();
+				UE_LOG(DreamGUIEditor, Log, TEXT("Clicking on Component (LMB): %s (%s)"), *Component->GetClass()->GetName(), *Component->GetName());
+				GEditor->SelectComponent(Component, true, true, true);
+				bComponentClicked = true;
+			}
+		}
+		
+		return bComponentClicked;
+	}
+
+	void ClickBrushVertex(FDreamWidgetDesignerViewportClient* ViewportClient,ABrush* InBrush,FVector* InVertex,const FViewportClick& Click)
+	{
+		// Pivot snapping
+		if( Click.GetKey() == EKeys::MiddleMouseButton && Click.IsAltDown() )
+		{
+			GEditor->SetPivot( GEditor->ClickLocation, true, false, true );
+		}
+		else if( Click.GetKey() == EKeys::RightMouseButton )
+		{
+			const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ClickingOnBrushVertex", "Clicking on Brush Vertex") );
+			const FTransform ActorToWorld = InBrush->ActorToWorld();
+			GEditor->SetPivot( ActorToWorld.TransformPosition(*InVertex), false, false );
+
+			const FVector World = ActorToWorld.TransformPosition(*InVertex);
+			FVector Snapped = World;
+			FSnappingUtils::SnapPointToGrid( Snapped, FVector(GEditor->GetGridSize()) );
+			const FVector Delta = Snapped - World;
+			GEditor->SetPivot( Snapped, false, false );
+
+			if( GLevelEditorModeTools().IsDefaultModeActive() )
+			{		
+				// All selected actors need to move by the delta.
+				for ( FSelectionIterator It( GEditor->GetSelectedActorIterator() ) ; It ; ++It )
+				{
+					AActor* Actor = static_cast<AActor*>( *It );
+					checkSlow( Actor->IsA(AActor::StaticClass()) );
+
+					Actor->Modify();
+
+					FVector ActorLocation = Actor->GetActorLocation() + Delta;
+					Actor->SetActorLocation(ActorLocation, false);
+				}
+			}
+
+			ViewportClient->Invalidate( true, true );
+
+			// Update Bsp
+			GEditor->RebuildAlteredBSP();
+		}
+	}
+
+	void ClickStaticMeshVertex(FDreamWidgetDesignerViewportClient* ViewportClient,AActor* InActor,FVector& InVertex,const FViewportClick& Click)
+	{
+		// Pivot snapping
+		if( Click.GetKey() == EKeys::MiddleMouseButton && Click.IsAltDown() )
+		{
+			GEditor->SetPivot( GEditor->ClickLocation, true, false, true );
+		}
+		else if( Click.GetKey() == EKeys::RightMouseButton )
+		{
+			const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ClickingOnStaticMeshVertex", "Clicking on Static Mesh Vertex") );
+
+			FVector Snapped = InVertex;
+			FSnappingUtils::SnapPointToGrid( Snapped, FVector(GEditor->GetGridSize()) );
+			const FVector Delta = Snapped - InVertex;
+			GEditor->SetPivot( Snapped, false, true );
+
+			// All selected actors need to move by the delta.
+			for ( FSelectionIterator It( GEditor->GetSelectedActorIterator() ) ; It ; ++It )
+			{
+				AActor* Actor = static_cast<AActor*>( *It );
+				checkSlow( Actor->IsA(AActor::StaticClass()) );
+
+				Actor->Modify();
+
+				FVector ActorLocation = Actor->GetActorLocation() + Delta;
+				Actor->SetActorLocation(ActorLocation, false);
+			}
+
+			ViewportClient->Invalidate( true, true );
+		}
+	}
+	static FBspSurf GSaveSurf;
+
+	void ClickSurface(FDreamWidgetDesignerViewportClient* ViewportClient,UModel* Model,int32 iSurf,const FViewportClick& Click)
+	{
+		// Gizmos can cause BSP surfs to become selected without this check
+		if(Click.GetKey() == EKeys::RightMouseButton && Click.IsControlDown())
+		{
+			return;
+		}
+
+		// Remember hit location for actor-adding.
+		FBspSurf& Surf			= Model->Surfs[iSurf];
+
+		// Pivot snapping
+		if( Click.GetKey() == EKeys::MiddleMouseButton && Click.IsAltDown() )
+		{
+			GEditor->SetPivot( GEditor->ClickLocation, true, false, true );
+		}
+		else if( Click.GetKey() == EKeys::LeftMouseButton && Click.IsShiftDown() && Click.IsControlDown() )
+		{
+
+			if( !GetDefault<ULevelEditorViewportSettings>()->bClickBSPSelectsBrush )
+			{
+				// Add to the actor selection set the brush actor that belongs to this BSP surface.
+				// Check Surf.Actor, as it can be NULL after deleting brushes and before rebuilding BSP.
+				if( Surf.Actor )
+				{
+					const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "SelectBrushFromSurface", "Select Brush from Surface") );
+
+					// If the builder brush is selected, first deselect it.
+					USelection* SelectedActors = GEditor->GetSelectedActors();
+					for ( FSelectionIterator It( *SelectedActors ) ; It ; ++It )
+					{
+						ABrush* Brush = Cast<ABrush>( *It );
+						if ( Brush && FActorEditorUtils::IsABuilderBrush( Brush ) )
+						{
+							GEditor->SelectActor( Brush, false, false );
+							break;
+						}
+					}
+
+					GEditor->SelectActor( Surf.Actor, true, true );
+				}
+			}
+			else
+			{
+				// Select or deselect surfaces.
+				{
+					const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "SelectSurfaces", "Select Surfaces") );
+					Model->ModifySurf( iSurf, false );
+					Surf.PolyFlags ^= PF_Selected;
+				}
+				GEditor->NoteSelectionChange();
+			}
+		}
+		else if( Click.GetKey() == EKeys::LeftMouseButton && Click.IsShiftDown() )
+		{
+			FEditorDelegates::LoadSelectedAssetsIfNeeded.Broadcast();
+
+			// Apply texture to all selected.
+			const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ApplyMaterialToSelectedSurfaces", "Apply Material to Selected Surfaces") );
+
+			UMaterialInterface* SelectedMaterialInstance = GEditor->GetSelectedObjects()->GetTop<UMaterialInterface>();
+			for( int32 i=0; i<Model->Surfs.Num(); i++ )
+			{
+				if( Model->Surfs[i].PolyFlags & PF_Selected )
+				{
+					Model->ModifySurf( i, 1 );
+					Model->Surfs[i].Material = SelectedMaterialInstance;
+					const bool bUpdateTexCoords = false;
+					const bool bOnlyRefreshSurfaceMaterials = true;
+					GEditor->polyUpdateBrush(Model, i, bUpdateTexCoords, bOnlyRefreshSurfaceMaterials);
+				}
+			}
+		}
+		// The A / L / S / ; placement shortcuts used to be here. See the note at the top of the file.
+		else if( IsTexelDebuggingEnabled() && Click.GetKey() == EKeys::LeftMouseButton && ViewportClient->Viewport->KeyState(EKeys::T) )
+		{
+			//SetDebugLightmapSample(NULL, Model, iSurf, GEditor->ClickLocation);
+		}
+		else if( Click.IsAltDown() && Click.GetKey() == EKeys::RightMouseButton )
+		{
+			// Grab the texture.
+			GEditor->GetSelectedObjects()->DeselectAll(UMaterialInterface::StaticClass());
+
+			if(Surf.Material)
+			{
+				GEditor->GetSelectedObjects()->Select(Surf.Material);
+			}
+			GSaveSurf = Surf;
+		}
+		else if( Click.IsAltDown() && Click.GetKey() == EKeys::LeftMouseButton)
+		{
+			FEditorDelegates::LoadSelectedAssetsIfNeeded.Broadcast();
+
+			// Apply texture to the one polygon clicked on.
+			const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "ApplyMaterialToSurface", "Apply Material to Surface") );
+			Model->ModifySurf( iSurf, true );
+			Surf.Material = GEditor->GetSelectedObjects()->GetTop<UMaterialInterface>();
+			if( Click.IsControlDown() )
+			{
+				Surf.vTextureU	= GSaveSurf.vTextureU;
+				Surf.vTextureV	= GSaveSurf.vTextureV;
+				if( Surf.vNormal == GSaveSurf.vNormal )
+				{
+					UE_LOG(DreamGUIEditor, Log, TEXT("WARNING: the texture coordinates were not parallel to the surface.") );
+				}
+				Surf.PolyFlags	= GSaveSurf.PolyFlags;
+				const bool bUpdateTexCoords = true;
+				const bool bOnlyRefreshSurfaceMaterials = true;
+				GEditor->polyUpdateBrush(Model, iSurf, bUpdateTexCoords, bOnlyRefreshSurfaceMaterials);
+			}
+			else
+			{
+				const bool bUpdateTexCoords = false;
+				const bool bOnlyRefreshSurfaceMaterials = true;
+				GEditor->polyUpdateBrush(Model, iSurf, bUpdateTexCoords, bOnlyRefreshSurfaceMaterials);
+			}
+		}
+		else if( Click.GetKey() == EKeys::RightMouseButton && !Click.IsControlDown() )
+		{
+			// Select surface and display context menu
+			check( Model );
+
+			bool bNeedViewportRefresh = false;
+			bool bSelectionChanged = !Surf.Actor || !Surf.Actor->IsSelected();
+			{
+				const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "SelectSurfaces", "Select Surfaces") );
+
+				USelection* SelectedActors = GEditor->GetSelectedActors();
+				SelectedActors->BeginBatchSelectOperation();
+
+				// We only need to unselect surfaces if the surface the user clicked on was not already selected
+				if( !( Surf.PolyFlags & PF_Selected ) )
+				{
+					GEditor->SelectNone( false, true );
+					bNeedViewportRefresh = true;
+					bSelectionChanged = true;
+				}
+
+				// Select the surface the user clicked on
+				Model->ModifySurf( iSurf, false );
+				Surf.PolyFlags |= PF_Selected;
+
+				GEditor->SelectActor(Surf.Actor, true, false);
+				SelectedActors->EndBatchSelectOperation(false);
+
+				if (bSelectionChanged)
+				{
+					GEditor->NoteSelectionChange();
+				}
+			}
+
+			if( bNeedViewportRefresh )
+			{
+				// Redraw the viewport so the user can see which object was right clicked on
+				ViewportClient->Viewport->Draw();
+				FlushRenderingCommands();
+			}
+
+			PrivateSummonContextMenu(ViewportClient);
+		}
+		else if( Click.GetEvent() == IE_DoubleClick && Click.GetKey() == EKeys::LeftMouseButton && !Click.IsControlDown() )
+		{
+			{
+				const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "SelectSurface", "Select Surface") );
+
+				// Clear the selection
+				GEditor->SelectNone( false, true );
+
+				// Select the surface
+				const uint32 SelectMask = Surf.PolyFlags & PF_Selected;
+				Model->ModifySurf( iSurf, false );
+				Surf.PolyFlags = ( Surf.PolyFlags & ~PF_Selected ) | ( SelectMask ^ PF_Selected );				
+			}
+			GEditor->NoteSelectionChange();
+
+			// Display the surface properties window
+			GEditor->Exec( ViewportClient->GetWorld(), TEXT("EDCALLBACK SURFPROPS") );
+		}
+		else
+		{	
+			const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "SelectBrushSurface", "Select Brush Surface") );
+			bool bDeselectAlreadyHandled = false;
+			bool bSelectionChanged = !Surf.Actor || !Surf.Actor->IsSelected();
+
+			USelection* SelectedActors = GEditor->GetSelectedActors();
+			SelectedActors->BeginBatchSelectOperation();
+
+			// We are going to handle the notification ourselves
+			const bool bNotify = false;
+			if(GetDefault<ULevelEditorViewportSettings>()->bClickBSPSelectsBrush)
+			{
+				// Add to the actor selection set the brush actor that belongs to this BSP surface.
+				// Check Surf.Actor, as it can be NULL after deleting brushes and before rebuilding BSP.
+				if(Surf.Actor)
+				{
+					if(!Click.IsControlDown())
+					{
+						GEditor->SelectNone(false, true);
+						bDeselectAlreadyHandled = true;
+					}
+					// If the builder brush is selected, first deselect it.
+					for(FSelectionIterator It(*SelectedActors); It; ++It)
+					{
+						ABrush* Brush = Cast<ABrush>(*It);
+						if(Brush && FActorEditorUtils::IsABuilderBrush(Brush))
+						{
+							GEditor->SelectActor(Brush, false, bNotify);
+							break;
+						}
+					}
+
+					GEditor->SelectActor(Surf.Actor, true, bNotify);
+				}
+			}
+
+			// Select or deselect surfaces.
+			{
+				if (Click.IsControlDown() || !(Surf.PolyFlags & PF_Selected))
+				{
+					bSelectionChanged = true;
+				}
+
+				if( !Click.IsControlDown() && !bDeselectAlreadyHandled)
+				{
+					GEditor->SelectNone( false, true );
+				}
+				Model->ModifySurf( iSurf, false );
+				Surf.PolyFlags ^= PF_Selected;
+
+				// If there are no surfaces selected now, deselect the actor
+				if (!Model->HasSelectedSurfaces())
+				{
+					GEditor->SelectActor(Surf.Actor, false, bNotify);
+					bSelectionChanged = true;
+				}
+			}
+
+			SelectedActors->EndBatchSelectOperation(false);
+
+			if (bSelectionChanged)
+			{
+				GEditor->NoteSelectionChange();
+			}
+		}
+	}
+
+	void ClickBackdrop(FDreamWidgetDesignerViewportClient* ViewportClient,const FViewportClick& Click)
+	{
+		// Pivot snapping
+		if( Click.GetKey() == EKeys::MiddleMouseButton && Click.IsAltDown() )
+		{
+			GEditor->SetPivot( GEditor->ClickLocation, true, false, true );
+		}
+		// The A / L / S placement shortcuts used to be here, and this is the handler every click that
+		// misses a widget reaches. See the note at the top of the file.
+		else if( IsTexelDebuggingEnabled() && Click.GetKey() == EKeys::LeftMouseButton && ViewportClient->Viewport->KeyState(EKeys::T) )
+		{
+			//SetDebugLightmapSample(NULL, NULL, 0, GEditor->ClickLocation);
+		}
+		else if( Click.GetKey() == EKeys::RightMouseButton && !Click.IsControlDown() && !ViewportClient->Viewport->KeyState(EKeys::LeftMouseButton) )
+		{
+			// NOTE: We intentionally do not deselect selected actors here even though the user right
+			//		clicked on an empty background.  This is because LDs often use wireframe modes to
+			//		interact with brushes and such, and it's easier to summon the context menu for
+			//		these actors when right clicking *anywhere* will not deselect things.
+
+			// Redraw the viewport so the user can see which object was right clicked on
+			ViewportClient->Viewport->Draw();
+			FlushRenderingCommands();
+
+			PrivateSummonContextMenu(ViewportClient);
+		}
+		else if( Click.GetKey() == EKeys::LeftMouseButton )
+		{
+			if( !Click.IsControlDown() )
+			{
+				if (TSharedPtr<FDreamWidgetBlueprintEditor> Editor = ViewportClient->GetDesigner())
+				{
+					Editor->SelectWidgets({}, false);
+				}
+			}
+		}
+	}
+
+	void ClickLevelSocket(FDreamWidgetDesignerViewportClient* ViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
+	{
+		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "LevelSocketClicked", "Level Socket Clicked") );
+
+		FMessageLog EditorErrors("EditorErrors");
+		EditorErrors.NewPage(LOCTEXT("SocketClickedNewPage", "Socket Clicked"));
+
+		// Attach the selected actors to the socket that was clicked
+		HLevelSocketProxy* SocketProxy = static_cast<HLevelSocketProxy*>( HitProxy );
+		check( SocketProxy->SceneComponent );
+		check( SocketProxy->Actor );
+
+		for ( FSelectionIterator It( GEditor->GetSelectedActorIterator() ) ; It ; ++It )
+		{
+			if (AActor* Actor = Cast<AActor>( *It ))
+			{
+				// Parent actors and handle socket snapping.
+				// Will cause editor to refresh viewport.
+				FText ReasonText;
+				if( GEditor->CanParentActors( SocketProxy->Actor, Actor, &ReasonText ) == false )
+				{
+					EditorErrors.Error(ReasonText);
+				}
+				else
+				{
+					GEditor->ParentActors(SocketProxy->Actor, Actor, SocketProxy->SocketName, SocketProxy->SceneComponent);
+				}
+			}
+		}
+
+		// Report errors
+		EditorErrors.Notify(NSLOCTEXT("ActorAttachmentError", "AttachmentsFailed", "Attachments Failed!"));
+	}
+}
+
+#undef LOCTEXT_NAMESPACE

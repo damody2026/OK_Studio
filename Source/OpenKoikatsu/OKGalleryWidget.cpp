@@ -26,6 +26,7 @@
 #include "Tasks/Task.h"
 #include "Misc/FileHelper.h"
 #include "KKShapeRows.h"
+#include "OKReaderScreen.h"
 #include "Kismet/GameplayStatics.h"
 #include "KKCardReader.h"
 #include "KKCardWriter.h"
@@ -433,7 +434,7 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	TimelineLabel->SetText(FText::FromString(TEXT("動作時間軸")));TimelineButton->SetContent(TimelineLabel);StylePoseButton(TimelineButton);
 	TimelineButton->SetToolTipText(FText::FromString(TEXT("在 OK Studio 開啟目前的角色並打開時間軸：移動／旋轉／縮放、打關鍵幀、輸出影片。影片產生的動作在下方的影片動作區匯入。")));
 	TimelineButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnEnterOkStudioTimeline);ShapeCol->AddChild(TimelineButton);
-	UButton* ModelApngSave=WidgetTree->ConstructWidget<UButton>();
+	UButton* ModelApngSave=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("ModelApngSave"));
 	UTextBlock* ModelApngLabel=WidgetTree->ConstructWidget<UTextBlock>();
 	ModelApngLabel->SetText(FText::FromString(TEXT("另存新檔")));
 	ModelApngSave->AddChild(ModelApngLabel);StylePoseButton(ModelApngSave);
@@ -453,7 +454,7 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	OutfitBox->SetHeightOverride(32.f);
 	OutfitBox->AddChild(OutfitCombo);
 	ShapeCol->AddChild(OutfitBox);
-	auto* HandsButton=WidgetTree->ConstructWidget<UButton>();auto* HandsLabel=WidgetTree->ConstructWidget<UTextBlock>();HandsLabel->SetText(FText::FromString(TEXT("左右手動作")));HandsButton->SetContent(HandsLabel);StylePoseButton(HandsButton);HandsButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnOpenHandControls);ShapeCol->AddChild(HandsButton);
+	auto* HandsButton=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("EditorHands"));auto* HandsLabel=WidgetTree->ConstructWidget<UTextBlock>();HandsLabel->SetText(FText::FromString(TEXT("左右手動作")));HandsButton->SetContent(HandsLabel);StylePoseButton(HandsButton);HandsButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnOpenHandControls);ShapeCol->AddChild(HandsButton);
 	HandCombos.Reset();
 	HandBlendSliders.Reset();
 	for (int32 Side = 0; Side < 2; ++Side)
@@ -1043,6 +1044,12 @@ void UOKGalleryWidget::NativeConstruct()
 			SelectIndex(Idx);
 			OnLoad3D();
 		}
+	}
+	// The DreamGUI screen (DUI/Reader/ReaderScreen.dui) shows the controls; these UMG ones stay as its model, see-through
+	// and letting the pointer through. Opt-in with -OKDreamReader until it has been checked on screen (2026-11-18).
+	if(FParse::Param(FCommandLine::Get(),TEXT("OKDreamReader")))if((ReaderScreen=UOKReaderScreen::Open(this))!=nullptr)
+	{
+		SetRenderOpacity(0.f);SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 }
 
@@ -1653,6 +1660,7 @@ void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSec
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);
+ if(ReaderScreen)ReaderScreen->Tick(DeltaSeconds);
  TickFpsText();
  TickEyeMode();
  TickCharacterMCP();

@@ -1,0 +1,203 @@
+// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#include "Core/Components/DreamScrollBoxInputHandler.h"
+
+#include "Core/Components/DreamPanelLayouts.h"
+#include "Event/DreamPointerEventData.h"
+#include "Engine/World.h"
+
+namespace DreamScrollBoxInputHandlerLocal
+{
+	/**
+	 * The pointer ids the input system gives fingers: the first finger is 100, scripted pointers start at 1000
+	 * (DreamUIPointerIds in DreamGUIInput, which sits above this module). The id is the only thing a pointer event
+	 * carries that tells a finger from the mouse, since a finger presses as the left button.
+	 */
+	constexpr int32 FirstFingerPointerId = 100;
+	constexpr int32 FirstScriptPointerId = 1000;
+
+	static bool IsFingerPointer(const UDreamPointerEventData* InEventData)
+	{
+		return InEventData != nullptr
+			&& InEventData->PointerID >= FirstFingerPointerId
+			&& InEventData->PointerID < FirstScriptPointerId;
+	}
+}
+
+bool UDreamScrollBoxInputHandler::ApplyScroll(float PrimaryDelta) const
+{
+	UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get();
+	return IsValid(Layout) && Layout->ScrollByFromUser(PrimaryDelta);
+}
+
+bool UDreamScrollBoxInputHandler::AcceptsDragGesture(const UDreamPointerEventData* InEventData) const
+{
+	const UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get();
+	if (InEventData == nullptr || !IsValid(Layout))
+	{
+		return false;
+	}
+	if (DreamScrollBoxInputHandlerLocal::IsFingerPointer(InEventData))
+	{
+		// SScrollBox pans for a finger only while bEnableTouchScrolling is on; the button a finger presses as says
+		// nothing about it.
+		return Layout->GetEnableTouchScrolling();
+	}
+	switch (InEventData->MouseButtonType)
+	{
+	case EDreamUIMouseButtonType::Middle:
+		return false;
+	case EDreamUIMouseButtonType::Right:
+		// SScrollBox::OnMouseButtonDown: RightMouseButton && ScrollBar->IsNeeded() && bAllowsRightClickDragScrolling.
+		return Layout->GetAllowRightClickDragScrolling() && Layout->IsScrollNeeded();
+	default:
+		// The left button, and any button a project defines: the drag this box has always taken.
+		return true;
+	}
+}
+
+void UDreamScrollBoxInputHandler::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	if (UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get(); IsValid(Layout))
+	{
+		// Only while something is actually moving: a resting scroll box was paying spring and
+		// momentum math every frame of its life. The handler keeps ticking, so the frame after ANY
+		// path sets the box in motion -- a fling here, an animated SetScrollOffset from code --
+		// IsScrolling turns true and the physics resumes; no opt-in bookkeeping to forget.
+		if (Layout->IsScrolling())
+		{
+			Layout->TickScrollPhysics(DeltaTime);
+		}
+	}
+}
+
+bool UDreamScrollBoxInputHandler::OnPointerBeginDrag_Implementation(UDreamPointerEventData* EventData)
+{
+	DragVelocity = 0.0f;
+	// Decided once, here: a gesture refused at its start -- a button or a finger switched off, a right drag over a
+	// box with nothing to scroll -- is handed on whole, so a scroll box around this one can take it and the content
+	// here never moves under it.
+	bDragAccepted = AcceptsDragGesture(EventData);
+	if (!bDragAccepted)
+	{
+		return true;
+	}
+	PrevPointerPosition = EventData->GetWorldPointInPlane();
+	// Grabbing the content stops whatever it was doing, including a spring-back in progress, and
+	// keeps the physics out of the way until the pointer lets go.
+	if (UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get(); IsValid(Layout))
+	{
+		Layout->SetScrollVelocity(0.0f);
+		Layout->SetDragging(true);
+	}
+	return false;
+}
+
+bool UDreamScrollBoxInputHandler::OnPointerDrag_Implementation(UDreamPointerEventData* EventData)
+{
+	UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get();
+	if (!EventData || !IsValid(Layout) || !bDragAccepted)
+	{
+		return true;
+	}
+	const FVector CurrentPointerPosition = EventData->GetWorldPointInPlane();
+	const FVector LocalMoveDelta =
+		EventData->PressWorldToLocalTransform.TransformVector(CurrentPointerPosition - PrevPointerPosition);
+	PrevPointerPosition = CurrentPointerPosition;
+
+	// DreamGUI local space: Y is horizontal, Z is vertical (up). The content follows the pointer, so
+	// dragging down moves the content down and reveals what is above -- which means the offset moves
+	// WITH the drag, not against it. The signs used to be inverted and the comment above them
+	// described the intended behaviour rather than the actual one, so dragging down scrolled up.
+	//
+	// The mirror flips the horizontal half of that and nothing else. A right-to-left layout reflects
+	// the finished rect about the panel's width AFTER the offset has been spent, so the offset keeps
+	// meaning "how far from the content's start" -- the start edge is simply the right one. The
+	// POINTER is never reflected, so without this sign the content would run away from the finger.
+	const bool bHorizontal = Layout->Orientation == EDreamPanelOrientation::Horizontal;
+	const float MirrorSign = Layout->IsScrollGestureMirrored() ? -1.0f : 1.0f;
+	const float PrimaryDelta = bHorizontal
+		? static_cast<float>(-LocalMoveDelta.Y) * MirrorSign
+		: static_cast<float>(LocalMoveDelta.Z);
+
+	const UWorld* World = GetWorld();
+	const float DeltaTime = FMath::Max(World ? World->GetDeltaSeconds() : 0.0f, KINDA_SMALL_NUMBER);
+	DragVelocity = FMath::Lerp(DragVelocity, PrimaryDelta / DeltaTime, DragVelocitySmoothing);
+
+	const bool bWasInRange = FMath::IsNearlyZero(Layout->GetOverscroll());
+	Layout->ApplyDragDelta(PrimaryDelta);
+	// Bubble up once this box has nothing left to give, so a nested scroll box hands over to its
+	// parent. With overscroll on, the rubber band IS somewhere left to give, so the box keeps the
+	// event until it is already stretched -- otherwise an outer box would steal the gesture the
+	// moment an inner one reached its end.
+	const bool bConsumed = !FMath::IsNearlyZero(Layout->GetOverscroll()) || bWasInRange;
+	return !bConsumed;
+}
+
+bool UDreamScrollBoxInputHandler::OnPointerEndDrag_Implementation(UDreamPointerEventData* EventData)
+{
+	if (!bDragAccepted)
+	{
+		// The end of a gesture this box refused: nothing to let go of, and the box that took it has to hear the end.
+		return true;
+	}
+	bDragAccepted = false;
+	if (UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get(); IsValid(Layout))
+	{
+		// Release the physics first, then hand it the speed: the spring and any momentum only start
+		// once the content is actually let go.
+		Layout->SetDragging(false);
+		if (Layout->bEnableInertia)
+		{
+			Layout->SetScrollVelocity(DragVelocity);
+		}
+	}
+	DragVelocity = 0.0f;
+	return false;
+}
+
+bool UDreamScrollBoxInputHandler::OnPointerScroll_Implementation(UDreamPointerEventData* EventData)
+{
+	UDreamLayoutContainerScrollBox* Layout = TargetLayout.Get();
+	if (!EventData || !IsValid(Layout) || EventData->ScrollAxisValue.IsZero())
+	{
+		return true;
+	}
+	if (Layout->ConsumeMouseWheel == EDreamScrollBoxConsumeMouseWheel::Never)
+	{
+		return true;//hand the wheel straight on without scrolling
+	}
+	const bool bHorizontal = Layout->Orientation == EDreamPanelOrientation::Horizontal;
+	const float Axis = static_cast<float>(bHorizontal
+		? EventData->ScrollAxisValue.X
+		: EventData->ScrollAxisValue.Y);
+	// Sensitivity is the distance one notch covers; the multiplier scales it, so "twice as fast" is
+	// one number rather than a re-tuned sensitivity that then disagrees with every other box. The
+	// mirror sign is the drag's, for the drag's reason: the wheel axis is not reflected either.
+	const float MirrorSign = Layout->IsScrollGestureMirrored() ? -1.0f : 1.0f;
+	const float WheelDelta = -Axis * Layout->ScrollSensitivity
+		* FMath::Max(0.0f, Layout->WheelScrollMultiplier) * MirrorSign;
+	bool bMoved = false;
+	if (Layout->bAnimateWheelScrolling)
+	{
+		// Accumulate onto wherever the ease is already heading, so spinning the wheel several
+		// notches covers several notches instead of restarting the same short glide each time.
+		const float Before = Layout->GetAnimatedScrollTarget();
+		Layout->SetScrollOffsetAnimated(Before + WheelDelta);
+		bMoved = !FMath::IsNearlyEqual(Before, Layout->GetAnimatedScrollTarget());
+		if (bMoved)
+		{
+			Layout->OnUserScrolled.Broadcast(Layout->GetScrollOffset());
+		}
+	}
+	else
+	{
+		bMoved = ApplyScroll(WheelDelta);
+	}
+	if (Layout->ConsumeMouseWheel == EDreamScrollBoxConsumeMouseWheel::Always)
+	{
+		return false;//swallow it even at a limit, so an outer box never takes over
+	}
+	return !bMoved;
+}

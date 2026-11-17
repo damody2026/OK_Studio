@@ -1,0 +1,166 @@
+// The card reader / character editor screen (CardReaderDevelopment.cmd), laid out after the 2026-11-18 sketch:
+//   left   : back to the launcher, four tabs, the category rail, the category's second-level menu, its controls;
+//            the right edge of the panel is a handle that resizes it
+//   centre : the 3D view itself (nothing drawn), the camera bar on top, the card's name at the bottom right
+//   right  : titled drawers that fold away, and the plugin tools fixed at the bottom
+// The skeleton only: UOKReaderScreen (Source/OpenKoikatsu/OKReaderScreen.*) fills the hosts named *Host / *Bar from the
+// character controller and keeps them in step with it. Units are design pixels on a 1080-high screen (the screen
+// canvas scales with the viewport height); Y goes up.
+class /Game/UI/Reader/WBP_ReaderScreen
+use "Theme.dui" as ui
+
+style RailButton {
+    @slot { HorizontalAlignment = Fill  MinDesiredSize = (0, 52) }
+}
+style TopButton {
+    @slot { VerticalAlignment = Fill  MinDesiredSize = (0, 44) }
+}
+
+Widget Root : ui.FillParent {
+
+    // ---------------------------------------------------------------------------------------------- left panel
+    Widget LeftPanel {
+        AnchorData.AnchorMin = (0, 0)
+        AnchorData.AnchorMax = (0, 1)
+        AnchorData.Pivot = (0, 0.5)
+        AnchorData.AnchoredPosition = (0, 0)
+        AnchorData.SizeDelta = (560, 0)
+        + Overlay { }
+        RectBlock LeftFace : ui.Panel : ui.FillSlot
+
+        VerticalBox LeftColumn : ui.FillSlot {
+            Padding = (12, 12, 16, 12)
+            Spacing = 10
+
+            // Back to the launcher, then the four tabs.
+            HorizontalBox TopRow {
+                Spacing = 6
+                @slot HorizontalAlignment = Fill
+                Native.Button BackToLauncher : ui.ButtonSecondary : TopButton {
+                    Text : ui.Label { Text = "返回啟動器" }
+                }
+                Native.Button Tab0 : ui.TabOn : TopButton {
+                    @fill
+                    Text Tab0Label : ui.Label { Text = "編輯" }
+                }
+                Native.Button Tab1 : ui.TabOff : TopButton {
+                    @fill
+                    Text Tab1Label : ui.Label { Text = "人物卡" }
+                }
+                Native.Button Tab2 : ui.TabOff : TopButton {
+                    @fill
+                    Text Tab2Label : ui.Label { Text = "動作" }
+                }
+                Native.Button Tab3 : ui.TabOff : TopButton {
+                    @fill
+                    Text Tab3Label : ui.Label { Text = "設定" }
+                }
+            }
+            RectBlock TopRule : ui.Divider {
+                @slot { HorizontalAlignment = Fill  Size = (0, 2) }
+            }
+
+            HorizontalBox LeftBody {
+                Spacing = 10
+                @slot { HorizontalAlignment = Fill  SizeRule = Fill }
+
+                // The category rail: filled by code (its buttons follow the tab).
+                VerticalBox RailHost {
+                    Spacing = 6
+                    @slot { VerticalAlignment = Fill  MinDesiredSize = (104, 0) }
+                }
+                RectBlock RailRule : ui.Divider {
+                    @slot { VerticalAlignment = Fill  Size = (2, 0) }
+                }
+
+                VerticalBox LeftContent {
+                    Spacing = 8
+                    @slot { VerticalAlignment = Fill  SizeRule = Fill }
+                    Text CategoryTitle : ui.Title {
+                        Text = "臉"
+                        FontSize = @ui.SizeLead
+                        @slot HorizontalAlignment = Fill
+                    }
+                    // The category's second-level menu (face parts, body parts, top / bottom / ...).
+                    WrapBox SubMenuHost {
+                        @slot HorizontalAlignment = Fill
+                    }
+                    Native.ScrollBox LeftScroll {
+                        @slot { HorizontalAlignment = Fill  SizeRule = Fill }
+                    }
+                }
+            }
+        }
+
+        // Drag this to resize the panel.
+        RectBlock LeftResizeHandle {
+            BodyColor = @ui.Edge
+            AnchorData.SizeDelta = (8, 0)
+            @slot { HorizontalAlignment = Right  VerticalAlignment = Fill  Padding = (0, 80, 0, 80) }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------- centre
+    // The camera bar along the top of the 3D view. Code keeps it between the two panels.
+    Widget CameraBar {
+        AnchorData.AnchorMin = (0, 1)
+        AnchorData.AnchorMax = (1, 1)
+        AnchorData.Pivot = (0.5, 1)
+        AnchorData.AnchoredPosition = (80, -12)
+        AnchorData.SizeDelta = (-1000, 56)
+        + Overlay { }
+        RectBlock CameraFace : ui.Plate : ui.FillSlot
+        HorizontalBox CameraBarHost : ui.FillSlot {
+            Padding = (10, 6, 10, 6)
+            Spacing = 6
+        }
+    }
+
+    // The loaded card's name, bottom right of the 3D view.
+    Widget NamePlate {
+        AnchorData.AnchorMin = (1, 0)
+        AnchorData.AnchorMax = (1, 0)
+        AnchorData.Pivot = (1, 0)
+        AnchorData.AnchoredPosition = (-456, 20)
+        AnchorData.SizeDelta = (520, 64)
+        + Overlay { }
+        RectBlock NameFace : ui.Plate : ui.FillSlot
+        Text CardName : ui.Title {
+            Text = ""
+            HAlign = Right
+            AnchorData.SizeDelta = (0, 0)
+            @slot { HorizontalAlignment = Fill  VerticalAlignment = Center  Padding = (16, 0, 16, 0) }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------- right panel
+    Widget RightPanel {
+        AnchorData.AnchorMin = (1, 0)
+        AnchorData.AnchorMax = (1, 1)
+        AnchorData.Pivot = (1, 0.5)
+        AnchorData.AnchoredPosition = (0, 0)
+        AnchorData.SizeDelta = (440, 0)
+        + Overlay { }
+        RectBlock RightFace : ui.Panel : ui.FillSlot
+
+        VerticalBox RightColumn : ui.FillSlot {
+            Padding = (14, 12, 12, 12)
+            Spacing = 10
+            // The drawers: a title row each, filled by code.
+            Native.ScrollBox RightScroll {
+                @slot { HorizontalAlignment = Fill  SizeRule = Fill }
+            }
+            RectBlock PluginRule : ui.Divider {
+                @slot { HorizontalAlignment = Fill  Size = (0, 2) }
+            }
+            // Plugin tools, always at the bottom.
+            Text PluginTitle : ui.Overline {
+                Text = "外掛工具"
+                @slot HorizontalAlignment = Fill
+            }
+            WrapBox PluginHost {
+                @slot HorizontalAlignment = Fill
+            }
+        }
+    }
+}

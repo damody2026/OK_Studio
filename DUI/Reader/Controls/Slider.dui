@@ -1,0 +1,14 @@
+// A slider mirrored from the character controller.
+class /Game/UI/Reader/Controls/WBP_OKSlider
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (240, 36)
+    + Overlay { }
+    Native.Slider Slider {
+        MinValue = 0
+        MaxValue = 1
+        Value = 0.5
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Center  MinDesiredSize = (0, 28) }
+    }
+}

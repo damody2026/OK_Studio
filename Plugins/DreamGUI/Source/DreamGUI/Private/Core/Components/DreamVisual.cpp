@@ -1,0 +1,729 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "Core/Components/DreamVisual.h"
+#include "Core/DreamUITextData.h"
+#include "Core/Text/DreamTextPaint.h"
+#include "Engine/World.h"
+#include "DreamGUI.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Utils/DreamUIUtils.h"
+#include "DreamGUI/Public/MeshModifier/DreamMeshModifierBase.h"
+#include "Core/Components/DreamVisualBatchMesh.h"
+#include "TextureResource.h"
+#include "Core/DreamUIClipData.h"
+#include "Core/DreamUIDataAsTexture.h"
+#include "Core/Components/DreamWidget.h"
+#include "Engine/Texture2D.h"
+#include "Event/DreamPointerEventData.h"
+
+
+bool UDreamVisualCustomRaycast::Raycast(const UDreamVisual* InVisual, const FVector& InLocalSpaceRayStart, const FVector& InLocalSpaceRayEnd, FVector& OutHitPoint, FVector& OutHitNormal)const
+{
+	if (GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint) || !GetClass()->HasAnyClassFlags(CLASS_Native))
+	{
+		return ReceiveRaycast(InVisual, InLocalSpaceRayStart, InLocalSpaceRayEnd, OutHitPoint, OutHitNormal);
+	}
+	return false;
+}
+
+bool UDreamVisualCustomRaycast::GetRaycastPixelFromUIBatchMeshVisual(const UDreamVisualBatchMesh* InVisual, const FVector& InLocalSpaceRayStart, const FVector& InLocalSpaceRayEnd, FVector2D& OutUV, FColor& OutPixel, FVector& OutHitPoint, FVector& OutHitNormal)
+{
+	// Blueprint-callable and static, which is the combination that makes this worth a guard rather
+	// than a contract: a graph can hand it anything, including the null that any unset object pin
+	// is, and the crash lands in the editor with no line naming the node that caused it. Every
+	// caller inside the plugin reaches this through a Cast that has already answered the question.
+	if (!IsValid(InVisual))
+	{
+		return false;
+	}
+	if (auto UIGeo = InVisual->GetGeometry())
+	{
+		//triangle hit test
+		auto& originVertices = UIGeo->OriginVertices;
+		auto& vertices = UIGeo->Vertices;
+		auto& triangleIndices = UIGeo->Triangles;
+		const int triangleCount = triangleIndices.Num() / 3;
+		int index = 0;
+		for (int i = 0; i < triangleCount; i++)
+		{
+			auto vertIndex0 = triangleIndices[index++];
+			auto vertIndex1 = triangleIndices[index++];
+			auto vertIndex2 = triangleIndices[index++];
+			auto point0 = (FVector)(originVertices[vertIndex0].Position);
+			auto point1 = (FVector)(originVertices[vertIndex1].Position);
+			auto point2 = (FVector)(originVertices[vertIndex2].Position);
+			if (FMath::SegmentTriangleIntersection(InLocalSpaceRayStart, InLocalSpaceRayEnd, point0, point1, point2, OutHitPoint, OutHitNormal))
+			{
+				auto baryCentric = FMath::ComputeBaryCentric2D(OutHitPoint, point0, point1, point2);
+				auto& uv0 = vertices[vertIndex0].TextureCoordinate[0];
+				auto& uv1 = vertices[vertIndex1].TextureCoordinate[0];
+				auto& uv2 = vertices[vertIndex2].TextureCoordinate[0];
+				OutUV = FVector2D(baryCentric.X * uv0 + baryCentric.Y * uv1 + baryCentric.Z * uv2);
+				//get pixel
+				// The mip is only an FColor array when the texture is uncompressed BGRA8, and UV
+				// reaches 1.0 at the far edge, one row past the end. Both guards live in the shared
+				// reader, which answers false when the pixel cannot be known -- and a pixel that
+				// cannot be read is not a hit, rather than a hit with an uninitialised colour.
+				if (auto Texture2D = Cast<UTexture2D>(UIGeo->Texture.Get()))
+				{
+					if (FDreamUIUtils::ReadTexture2DPixel(Texture2D, OutUV, OutPixel))
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
+
+UDreamVisual::UDreamVisual(const FObjectInitializer& ObjectInitializer) :Super(ObjectInitializer)
+{
+	VisualType = EDreamVisualType::None;
+
+	bColorChanged = true;
+	bTransformChanged = true;
+	bClipDataPositionChanged = true;
+	bWidgetPropertyDataStartPositionChanged = true;
+	bWidgetPropertyDataFontMarkDirty = true;
+}
+
+void UDreamVisual::OnRegister()
+{
+	Super::OnRegister();
+	bColorChanged = true;
+	bTransformChanged = true;
+}
+
+void UDreamVisual::OnUnregister()
+{
+	Super::OnUnregister();
+}
+
+void UDreamVisual::PostReinitProperties()
+{
+	Super::PostReinitProperties();
+#if WITH_EDITOR
+	if (!this->GetName().StartsWith("Default__"))
+	{
+		if (auto Widget = GetWidget())
+		{
+			if (auto World = Widget->GetWorld())
+			{
+				if (!World->IsGameWorld())
+				{
+					MarkAllDirty();
+				}
+			}
+		}
+	}
+#endif
+}
+
+#if WITH_EDITOR
+void UDreamVisual::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (!this->GetName().StartsWith("Default__") && MarksAllDirtyOnPropertyEdit(PropertyChangedEvent))
+	{
+		MarkAllDirty();
+	}
+}
+
+bool UDreamVisual::CanEditChange(const FProperty* InProperty) const
+{
+	auto PropertyName = InProperty->GetFName();
+	static auto RayCastType_Name = GET_MEMBER_NAME_CHECKED(UDreamVisual, RaycastType);
+	static auto CustomRaycastObject_Name = GET_MEMBER_NAME_CHECKED(UDreamVisual, CustomRaycastObject);
+	static auto VisiblePixelThreshold_Name = GET_MEMBER_NAME_CHECKED(UDreamVisual, VisiblePixelThreshold);
+	if (PropertyName == RayCastType_Name)
+	{
+		if (!this->GetName().StartsWith("Default__"))
+		{
+			if (!GetWidget()->GetRaycastableInHierarchy())
+			{
+				return false;
+			}
+		}
+	}
+	else if (PropertyName == CustomRaycastObject_Name)
+	{
+		if (!this->GetName().StartsWith("Default__"))
+		{
+			if (!GetWidget()->GetRaycastableInHierarchy() || RaycastType!=EDreamVisualRaycastType::Custom)
+			{
+				return false;
+			}
+		}
+	}
+	else if (PropertyName == VisiblePixelThreshold_Name)
+	{
+		if (!this->GetName().StartsWith("Default__"))
+		{
+			if (!GetWidget()->GetRaycastableInHierarchy() || RaycastType!=EDreamVisualRaycastType::VisiblePixel)
+			{
+				return false;
+			}
+		}
+	}
+	return UObject::CanEditChange(InProperty);
+}
+#endif
+
+bool UDreamVisual::GetClipUnderlay(FDreamClipUnderlay& OutUnderlay) const
+{
+	OutUnderlay = FDreamClipUnderlay();
+	OutUnderlay.Unsupported = FString::Printf(TEXT("a %s draws no shape a clip level can follow"), *GetClass()->GetName());
+	return false;
+}
+
+int UDreamVisual::GetClipDataStartPosition() const
+{
+	if (auto ClipData = GetWidget()->GetClipData().Pin())
+	{
+		return ClipData->GetBufferStartPos();
+	}
+	return 0;
+}
+
+UTexture* UDreamVisual::GetClipDataTexture() const
+{
+	if (auto RenderCanvas = GetWidget()->GetRenderCanvas())
+	{
+		return RenderCanvas->GetClipDataTexture();
+	}
+	return nullptr;
+}
+
+void UDreamVisual::OnTransformChanged(bool InPositionChanged, bool InScaleChanged)
+{
+	bTransformChanged = true;
+}
+
+void UDreamVisual::OnRenderCanvasChanged(UDreamCanvas* InOldCanvas, UDreamCanvas* InNewCanvas)
+{
+	// Everything this visual put into its canvas -- geometry, clip and property data at the positions
+	// that canvas gave it -- has to be written into the new one.
+	MarkAllDirty();
+}
+
+void UDreamVisual::MarkColorDirty()
+{
+	bColorChanged = true;
+	GetWidget()->MarkCanvasUpdate(false);
+}
+
+void UDreamVisual::CheckClipDataStartPosition()
+{
+	auto NowClipDataStartPosition = GetClipDataStartPosition();
+	if (ClipDataStartPosition != NowClipDataStartPosition)
+	{
+		ClipDataStartPosition = NowClipDataStartPosition;
+		bClipDataPositionChanged = true;
+	}
+}
+
+void UDreamVisual::UpdateGeometryWidgetPropertyData(TArray<FDreamUIMeshVertex>& InVertices, int InValidNumVertices, int InDataStartPosition)
+{
+	for (int i = 0; i < InValidNumVertices; i++)
+	{
+		InVertices[i].TextureCoordinate[1].X = InDataStartPosition;
+	}
+}
+
+void UDreamVisual::MarkAllDirty()
+{
+	bColorChanged = true;
+	bTransformChanged = true;
+	bClipDataPositionChanged = true;
+	bWidgetPropertyDataStartPositionChanged = true;
+	bWidgetPropertyDataFontMarkDirty = true;
+	GetWidget()->MarkCanvasUpdate(true);
+}
+
+void UDreamVisual::GetGeometryBoundsInLocalSpace(FVector2D& OutMinPoint, FVector2D& OutMaxPoint)const
+{
+	auto Widget = GetWidget();
+	OutMinPoint = Widget->GetLocalSpaceLeftBottomPoint();
+	OutMaxPoint = Widget->GetLocalSpaceRightTopPoint();
+}
+
+void UDreamVisual::GetGeometryBounds3DInLocalSpace(FVector& OutMinPoint, FVector& OutMaxPoint)const
+{
+	auto Widget = GetWidget();
+	const auto MinPoint2D = Widget->GetLocalSpaceLeftBottomPoint();
+	const auto MaxPoint2D = Widget->GetLocalSpaceRightTopPoint();
+	OutMinPoint = FVector(0.1f, MinPoint2D.X, MinPoint2D.Y);
+	OutMaxPoint = FVector(0.1f, MaxPoint2D.X, MaxPoint2D.Y);
+}
+
+void UDreamVisual::SetWidgetPropertyDataStartPosition(int InPosition)
+{
+	if (WidgetPropertyDataStartPosition != InPosition)
+	{
+		WidgetPropertyDataStartPosition = InPosition;
+		bWidgetPropertyDataStartPositionChanged = true;
+
+		//these data store inside DataTexture and use WidgetPropertyDataStartPosition as coordinate, so mark these dirty to fill data
+		bWidgetPropertyDataFontMarkDirty = true;
+		bClipDataPositionChanged = true;
+		// A row handed out again holds whatever its last owner's render layer row was: written with the marks.
+		WrittenRenderLayerRow = INDEX_NONE;
+	}
+}
+
+bool UDreamVisual::LineTraceUIRect(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const
+{
+	auto Widget = GetWidget();
+	// Inside a perspective scope the widget is drawn somewhere its FTransform does not describe, so
+	// the ray has to be brought into the space it is actually drawn in or clicks land on the
+	// un-foreshortened rect. Outside one this is the same call it always was: FMatrix and FTransform
+	// inversion do not agree bit for bit, and the ordinary path should not start moving by a
+	// fraction of a pixel to support a feature it is not using.
+	const bool bPerspective = Widget->HasPerspectiveApplied();
+	const FMatrix WidgetToWorldMatrix = bPerspective ? Widget->GetWorldMatrix() : FMatrix::Identity;
+	const FMatrix WorldToWidgetMatrix = bPerspective ? WidgetToWorldMatrix.Inverse() : FMatrix::Identity;
+	auto InverseTf = Widget->GetWorldTransform().Inverse();
+	auto LocalSpaceRayOrigin = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(Start)) : InverseTf.TransformPosition(Start);
+	auto LocalSpaceRayEnd = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(End)) : InverseTf.TransformPosition(End);
+
+	//DrawDebugLine(this->GetWorld(), Start, End, FColor::Red, false);//just for test
+	//start and end point must be different side of X plane
+	if (FMath::Sign(LocalSpaceRayOrigin.X) != FMath::Sign(LocalSpaceRayEnd.X))
+	{
+		auto Result = FMath::LinePlaneIntersection(LocalSpaceRayOrigin, LocalSpaceRayEnd, FVector::ZeroVector, FVector(1, 0, 0));
+		//hit point inside rect area
+		if (Result.Y > Widget->GetLocalSpaceLeft() && Result.Y < Widget->GetLocalSpaceRight() && Result.Z > Widget->GetLocalSpaceBottom() && Result.Z < Widget->GetLocalSpaceTop())
+		{
+			OutHit.TraceStart = Start;
+			OutHit.TraceEnd = End;
+			OutHit.Widget = Widget;
+			OutHit.Location = bPerspective
+				? FVector(WidgetToWorldMatrix.TransformPosition(Result))
+				: Widget->GetWorldTransform().TransformPosition(Result);
+			OutHit.Normal = bPerspective
+				? FVector(WidgetToWorldMatrix.TransformVector(FVector(1, 0, 0)))
+				: Widget->GetWorldTransform().TransformVector(FVector(1, 0, 0));
+			OutHit.Normal.Normalize();
+			OutHit.Distance = FVector::Distance(Start, OutHit.Location);
+			OutHit.ImpactPoint = OutHit.Location;
+			return true;
+		}
+	}
+	return false;
+}
+bool UDreamVisual::LineTraceUIGeometry(FDreamUIGeometry* InGeo, FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const
+{
+	auto Widget = GetWidget();
+	const bool bPerspective = Widget->HasPerspectiveApplied();
+	const FMatrix WidgetToWorldMatrix = bPerspective ? Widget->GetWorldMatrix() : FMatrix::Identity;
+	const FMatrix WorldToWidgetMatrix = bPerspective ? WidgetToWorldMatrix.Inverse() : FMatrix::Identity;
+	const auto InverseTf = Widget->GetWorldTransform().Inverse();
+	const auto LocalSpaceRayOrigin = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(Start)) : InverseTf.TransformPosition(Start);
+	const auto LocalSpaceRayEnd = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(End)) : InverseTf.TransformPosition(End);
+
+	//DrawDebugLine(this->GetWorld(), Start, End, FColor::Red, false, 5.0f);//just for test
+	//check Line-Plane intersection first, then check Line-Triangle
+	//start and end point must be different side of X plane
+	if (FMath::Sign(LocalSpaceRayOrigin.X) != FMath::Sign(LocalSpaceRayEnd.X))
+	{
+		//triangle hit test
+		auto& vertices = InGeo->OriginVertices;
+		auto& triangleIndices = InGeo->Triangles;
+		const int triangleCount = triangleIndices.Num() / 3;
+		int index = 0;
+		for (int i = 0; i < triangleCount; i++)
+		{
+			auto point0 = (FVector)(vertices[triangleIndices[index++]].Position);
+			auto point1 = (FVector)(vertices[triangleIndices[index++]].Position);
+			auto point2 = (FVector)(vertices[triangleIndices[index++]].Position);
+			FVector HitPoint, HitNormal;
+			if (FMath::SegmentTriangleIntersection(LocalSpaceRayOrigin, LocalSpaceRayEnd, point0, point1, point2, HitPoint, HitNormal))
+			{
+				OutHit.TraceStart = Start;
+				OutHit.TraceEnd = End;
+				OutHit.Widget = Widget;//actually this convert is incorrect, but I need this pointer
+				OutHit.Location = bPerspective ? FVector(WidgetToWorldMatrix.TransformPosition(HitPoint)) : Widget->GetWorldTransform().TransformPosition(HitPoint);
+				OutHit.Normal = bPerspective ? FVector(WidgetToWorldMatrix.TransformVector(HitNormal)) : Widget->GetWorldTransform().TransformVector(HitNormal);
+				OutHit.Normal.Normalize();
+				OutHit.Distance = FVector::Distance(Start, OutHit.Location);
+				OutHit.ImpactPoint = OutHit.Location;
+				OutHit.FaceIndex = i;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool UDreamVisual::LineTraceUICustom(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const
+{
+	if (!IsValid(CustomRaycastObject))
+	{
+		UE_LOG(DreamGUI, Error, TEXT("[%s].%d EUIRenderableRaycastType::Custom need a UUIRenderableCustomRaycast component on this actor!"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__);
+		return false;
+	}
+	auto Widget = GetWidget();
+	const bool bPerspective = Widget->HasPerspectiveApplied();
+	const FMatrix WidgetToWorldMatrix = bPerspective ? Widget->GetWorldMatrix() : FMatrix::Identity;
+	const FMatrix WorldToWidgetMatrix = bPerspective ? WidgetToWorldMatrix.Inverse() : FMatrix::Identity;
+	const auto InverseTf = Widget->GetWorldTransform().Inverse();
+	const auto LocalSpaceRayOrigin = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(Start)) : InverseTf.TransformPosition(Start);
+	const auto LocalSpaceRayEnd = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(End)) : InverseTf.TransformPosition(End);
+
+	if (FMath::Sign(LocalSpaceRayOrigin.X) != FMath::Sign(LocalSpaceRayEnd.X))
+	{
+		FVector HitPoint, HitNormal;
+		if (CustomRaycastObject->Raycast(this, LocalSpaceRayOrigin, LocalSpaceRayEnd, HitPoint, HitNormal))
+		{
+			OutHit.TraceStart = Start;
+			OutHit.TraceEnd = End;
+			OutHit.Widget = Widget;//actually this convert is incorrect, but I need this pointer
+			OutHit.Location = bPerspective ? FVector(WidgetToWorldMatrix.TransformPosition(HitPoint)) : Widget->GetWorldTransform().TransformPosition(HitPoint);
+			OutHit.Normal = bPerspective ? FVector(WidgetToWorldMatrix.TransformVector(HitNormal)) : Widget->GetWorldTransform().TransformVector(HitNormal);
+			OutHit.Normal.Normalize();
+			OutHit.Distance = FVector::Distance(Start, OutHit.Location);
+			OutHit.ImpactPoint = OutHit.Location;
+			return true;
+		}
+	}
+	return false;
+}
+
+void UDreamVisual::SetColor(FColor Value)
+{
+	if (Color != Value)
+	{
+		Color = Value;
+		MarkColorDirty();
+	}
+}
+void UDreamVisual::SetAlpha(float Value)
+{
+	Value = FMath::Clamp(Value, 0.0f, 1.0f);
+	auto uintAlpha = (uint8)(Value * 255);
+	if (Color.A != uintAlpha)
+	{
+		MarkColorDirty();
+		Color.A = uintAlpha;
+	}
+}
+
+void UDreamVisual::SetRaycastTarget(bool Value)
+{
+	bRaycastTarget = Value;
+}
+
+void UDreamVisual::SetCustomRaycastObject(UDreamVisualCustomRaycast* Value)
+{
+	CustomRaycastObject = Value;
+}
+
+void UDreamVisual::SetColorMultiplier(const FLinearColor& Value)
+{
+	if (ColorMultiplier != Value)
+	{
+		ColorMultiplier = Value;
+		MarkColorDirty();
+	}
+}
+
+FColor UDreamVisual::GetFinalColor()const
+{
+	const UDreamWidget* Widget = GetWidget();
+	FColor Result = this->Color;
+	const FLinearColor Tint = Widget->GetInheritedContentTint() * ColorMultiplier;
+	if (Tint != FLinearColor::White)
+	{
+		// Multiplied in linear space, as Slate multiplies a brush's tints: Color is stored sRGB-encoded, so it is
+		// decoded, tinted and encoded again. Skipped while nothing tints, which keeps every untinted visual's colour
+		// exactly what it always was.
+		Result = (FLinearColor(Result) * Tint).ToFColor(/*bSRGB*/true);
+	}
+	Result.A = Result.A * Widget->GetFinalRenderOpacity();
+	return Result;
+}
+
+FColor UDreamVisual::GetFinalTintColor()const
+{
+	// GetFinalColor's expression, word for word, with white for Color.
+	const UDreamWidget* Widget = GetWidget();
+	FColor Result = FColor::White;
+	const FLinearColor Tint = Widget->GetInheritedContentTint() * ColorMultiplier;
+	if (Tint != FLinearColor::White)
+	{
+		Result = (FLinearColor(Result) * Tint).ToFColor(/*bSRGB*/true);
+	}
+	Result.A = Result.A * Widget->GetFinalRenderOpacity();
+	return Result;
+}
+
+uint8 UDreamVisual::GetFinalAlpha()const
+{
+	// The alpha GetFinalColor draws with, tints included -- the same expression as ever while nothing tints.
+	return GetFinalColor().A;
+}
+
+float UDreamVisual::GetFinalAlpha01()const
+{
+	return FDreamUIUtils::ByteToFloat01(GetFinalAlpha());
+}
+
+bool UDreamVisual::LineTraceUI(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const
+{
+	return LineTraceUIRect(OutHit, Start, End);
+}
+
+bool UDreamVisual::GetHitGeometryFitsWidgetRect()const
+{
+	// Keyed on the AUTHORED type rather than on what this class happens to do with it. This base
+	// LineTraceUI ignores RaycastType and always traces the rect, so answering yes for Mesh here
+	// would be true of this class and false of the moment a subclass honours the field -- the
+	// difference between a filter that is conservative and one that is conservative today.
+	return RaycastType == EDreamVisualRaycastType::Rect;
+}
+
+DECLARE_CYCLE_STAT(TEXT("DreamVisual FillWidgetPropertyDataForMaterial"), STAT_FillWidgetPropertyData, STATGROUP_DreamGUI);
+int UDreamVisual::WidgetPropertyDataLength =
+	sizeof(float)//1st pixel, marks: constant top byte, then font mark, then a painted text's paint table link (see PackTextWidgetMarks)
+	+ sizeof(float)//2nd pixel, clip data coordinate, as a float VALUE
+	+ sizeof(float)//3rd pixel, widget width, as a float VALUE
+	+ sizeof(float)//4th pixel, widget height, as a float VALUE
+	+ sizeof(float) * FDreamTextStyle::PackedPixelCount//5th..13th pixel, text style (FDreamTextStyle::Pack), texts only
+	+ sizeof(float)//14th pixel, widget rect centre X in canvas space, as a float VALUE
+	+ sizeof(float)//15th pixel, widget rect centre Y in canvas space, as a float VALUE
+	+ sizeof(float)//16th pixel, the element's render layer row, as a float VALUE (RenderLayerRowPixelStart)
+;
+
+/*
+ * WHY SO MUCH OF THIS ROW IS PLAIN FLOATS AND THE REST CARRIES A CONSTANT TOP BYTE.
+ *
+ * The row lives in an R32_FLOAT texture and every reader gets it back through a float sample. A word
+ * that is really a bit pattern therefore has to BE a valid normal float, because a GPU that flushes
+ * denormals to zero -- which is most mobile ones, and is not optional there -- flushes on the load,
+ * before asuint() ever sees it. The float exponent is bits 30..23, i.e. the top byte and one bit of
+ * the next, so any packing that leaves the top byte small and something further down non-zero is a
+ * value that reads back as 0 on those devices and as itself everywhere the author tested.
+ *
+ * Two answers are used here, and which one applies is a property of the field:
+ *  - numbers that are already numbers (the clip coordinate, the widget size, the centre position)
+ *    are stored as float VALUES. A float value only flushes when it is genuinely ~1e-38, which for a
+ *    size or a canvas-space coordinate is indistinguishable from the zero it flushes to.
+ *  - bit fields (the marks byte here, the colours and flags in UDreamRectBlock) keep a constant in
+ *    the top byte and carry their payload below it, so the exponent can never be all zeros.
+ *
+ * That is why the size and the centre are one component per pixel rather than two halves packed into
+ * one: a centred widget has centre X exactly 0, and a 0 in the high half with anything in the low
+ * half is precisely the denormal case. The centre moved to the END of the row instead of widening in
+ * place, so the text style pixels (4..12, indexed by hand in DreamUIText.ush) did not have to shift.
+ */
+uint32 UDreamVisual::PackWidgetMarks(uint8 InFontMark, uint8 InExtraMark)
+{
+	return WidgetMarksNormalFloatMarker
+		| ((uint32)InFontMark << 16)
+		| ((uint32)InExtraMark << 8)
+		;
+}
+uint32 UDreamVisual::PackTextWidgetMarks(uint8 InFontMark, uint32 InRecordRowLink)
+{
+	// The link takes the extra mark's byte and the one below it, which nothing else wrote: still a bit field under the
+	// constant top byte, so the shader reads it with asuint() as it reads the font mark (DREAMUI_PAINT_RECORD_ROW_LINK_MASK).
+	return WidgetMarksNormalFloatMarker
+		| ((uint32)InFontMark << 16)
+		| (InRecordRowLink & DreamPaintRows::RecordRowLinkMask)
+		;
+}
+namespace DreamVisualPropertyDataLocal
+{
+	/** For the report of a visual with no place in its canvas's property data: whose it is, and where it stands. */
+	FString DescribeUnplaced(const UDreamVisual& InVisual)
+	{
+		const UDreamWidget* Widget = InVisual.GetWidget();
+		if (Widget == nullptr)
+		{
+			return TEXT("a visual with no widget");
+		}
+		static const TCHAR* const Lifecycles[] = { TEXT("constructed"), TEXT("registered"), TEXT("playing"), TEXT("destroyed") };
+		const int32 Lifecycle = static_cast<int32>(Widget->GetLifecycle());
+		const UDreamCanvas* Canvas = Widget->GetRenderCanvas();
+		const UDreamWidget* CanvasWidget = Canvas != nullptr ? Canvas->GetWidget() : nullptr;
+		return FString::Printf(TEXT("the visual of %s, a widget %s; drawn by the canvas of %s, which %s this visual"),
+			*Widget->GetPathDisplayName(), Lifecycle >= 0 && Lifecycle < UE_ARRAY_COUNT(Lifecycles) ? Lifecycles[Lifecycle] : TEXT("in no known state"),
+			CanvasWidget != nullptr ? *CanvasWidget->GetPathDisplayName() : TEXT("nothing"),
+			Canvas == nullptr ? TEXT("cannot hold") : Canvas->GetVisualArray().Contains(&InVisual) ? TEXT("lists") : TEXT("does not list"));
+	}
+}
+
+void UDreamVisual::FillWidgetPropertyDataForMaterial(bool bNeedSize, bool bNeedCenterPosition)const
+{
+	SCOPE_CYCLE_COUNTER(STAT_FillWidgetPropertyData);
+	auto StartPosition = this->WidgetPropertyDataStartPosition;
+	if (StartPosition == INDEX_NONE)
+	{
+		// A visual whose block has not been allocated yet simply has nothing to write. The two
+		// sibling fillers below log and return; this one used to check(0) as well, which turned a
+		// recoverable ordering hiccup into a shipping-configuration crash.
+		UE_LOG(DreamGUI, Error, TEXT("[%s].%d WidgetPropertyDataStartPosition is invalid! (%s)"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+			*DreamVisualPropertyDataLocal::DescribeUnplaced(*this));
+		return;
+	}
+	auto Widget = this->GetWidget();
+	if (!Widget)return;
+	auto Canvas = Widget->GetRenderCanvas();
+	if (!Canvas)return;
+	auto Data = Canvas->GetWidgetPropertyDataAsTexture();
+	if (!Data)return;
+
+	//width & height, one float VALUE per pixel -- see the note above WidgetPropertyDataLength
+	if (bNeedSize)
+	{
+		const float Size[2] = { Widget->GetWidth(), Widget->GetHeight() };
+		TArray<uint8> SizeBuffer;
+		SizeBuffer.SetNumUninitialized(sizeof(Size));
+		FMemory::Memcpy(SizeBuffer.GetData(), Size, sizeof(Size));
+		Data->UpdateBlock(WidgetSizePixelStart, StartPosition, MoveTemp(SizeBuffer), 2);
+	}
+
+	//widget rect center position in canvas space, likewise
+	if (bNeedCenterPosition)
+	{
+		auto WidgetToWorldMatrix = Widget->GetWorldTransform().ToMatrixWithScale();
+		auto WidgetLocalSpaceCenter = Widget->GetLocalSpaceCenter();
+		auto CenterPositionInWorldSpace = WidgetToWorldMatrix.TransformPosition(FVector(0, WidgetLocalSpaceCenter.X, WidgetLocalSpaceCenter.Y));
+		auto CenterPositionInCanvasSpace = Canvas->GetWidget()->GetWorldTransform().InverseTransformPosition(CenterPositionInWorldSpace);
+		const float CenterPosition[2] = { (float)CenterPositionInCanvasSpace.Y, (float)CenterPositionInCanvasSpace.Z };
+		TArray<uint8> CenterBuffer;
+		CenterBuffer.SetNumUninitialized(sizeof(CenterPosition));
+		FMemory::Memcpy(CenterBuffer.GetData(), CenterPosition, sizeof(CenterPosition));
+		Data->UpdateBlock(WidgetCenterPixelStart, StartPosition, MoveTemp(CenterBuffer), 2);
+	}
+}
+
+void UDreamVisual::FillWidgetPropertyDataForMaterial_ClipDataCoordinate(UDreamUIDataAsTexture* DataAsTexture)const
+{
+	auto StartPosition = this->WidgetPropertyDataStartPosition;
+	if (StartPosition == INDEX_NONE)
+	{
+		UE_LOG(DreamGUI, Error, TEXT("[%s].%d WidgetPropertyDataStartPosition is invalid! (%s)"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+			*DreamVisualPropertyDataLocal::DescribeUnplaced(*this));
+		return;
+	}
+	TArray<uint8> BlockBuffer;
+	BlockBuffer.SetNumUninitialized(4);
+
+	// Written as a float VALUE, not as the int's bit pattern -- and DreamUIWidgetProperty.ush reads
+	// it back the same way, with no asuint(). A small integer's bit pattern reinterpreted as a float
+	// is a denormal (coordinate 5 is 7e-45), and mobile GPUs flush denormals to zero on load. Every
+	// element would then read clip coordinate 0, which DreamUIClip.ush treats as "no clip": clipping
+	// disappears wholesale on exactly the hardware nobody tests first. As a float the same number is
+	// ordinary, and the coordinate is an index far below the 2^24 a float represents exactly.
+	const float ClipDataStartPositionAsFloat = (float)this->ClipDataStartPosition;
+	FMemory::Memcpy(BlockBuffer.GetData(), &ClipDataStartPositionAsFloat, 4);
+
+	DataAsTexture->UpdateBlock(1, StartPosition, MoveTemp(BlockBuffer), 1);
+}
+
+void UDreamVisual::FillWidgetPropertyDataForMaterial_RenderLayerRow(UDreamUIDataAsTexture* DataAsTexture, int32 InRow)
+{
+	if (WrittenRenderLayerRow == InRow || WidgetPropertyDataStartPosition == INDEX_NONE || DataAsTexture == nullptr)
+	{
+		return;
+	}
+	WrittenRenderLayerRow = InRow;
+	// A float VALUE, like the clip coordinate beside it: a row's bit pattern would be a denormal.
+	const float RowAsFloat = static_cast<float>(InRow);
+	TArray<uint8> BlockBuffer;
+	BlockBuffer.SetNumUninitialized(sizeof(float));
+	FMemory::Memcpy(BlockBuffer.GetData(), &RowAsFloat, sizeof(float));
+	DataAsTexture->UpdateBlock(RenderLayerRowPixelStart, WidgetPropertyDataStartPosition, MoveTemp(BlockBuffer), 1);
+}
+
+void UDreamVisual::FillWidgetPropertyDataForMaterial_InitialMark(UDreamUIDataAsTexture* DataAsTexture, uint8 FontMark) const
+{
+	auto StartPosition = this->WidgetPropertyDataStartPosition;
+	if (StartPosition == INDEX_NONE)
+	{
+		UE_LOG(DreamGUI, Error, TEXT("[%s].%d WidgetPropertyDataStartPosition is invalid! (%s)"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__,
+			*DreamVisualPropertyDataLocal::DescribeUnplaced(*this));
+		return;
+	}
+	
+	TArray<uint8> BlockBuffer;
+	BlockBuffer.SetNumUninitialized(4);
+
+	// No visual writes an extra mark: bits 0..15 are a painted text's link to its paint table, 0 for everything else.
+	const uint32 Marks = PackTextWidgetMarks(FontMark, GetWidgetMarksRecordLink());
+	FMemory::Memcpy(BlockBuffer.GetData(), &Marks, 4);
+	DataAsTexture->UpdateBlock(0, StartPosition, MoveTemp(BlockBuffer), 1);
+}
+
+#pragma region TweenAnimation
+#include "DreamTweenManager.h"
+namespace DreamVisualTweenChannels
+{
+	/** The visual's own colour and its alpha, for UDreamTweener::SetExclusive: the top two bits, so a subclass numbering
+	 * its properties from 0 never shares one with them. */
+	constexpr uint64 Alpha = 1ull << 63;
+	constexpr uint64 Color = (1ull << 62) | Alpha;
+}
+UDreamTweener* UDreamVisual::ColorTo(FColor endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenColorGetterFunction::CreateUObject(this, &UDreamVisual::GetColor), FDreamTweenColorSetterFunction::CreateUObject(this, &UDreamVisual::SetColor), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamVisualTweenChannels::Color);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(GetWidget(), Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamVisual::ColorFrom(FColor startValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto endValue = this->GetColor();
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenColorGetterFunction::CreateUObject(this, &UDreamVisual::GetColor), FDreamTweenColorSetterFunction::CreateUObject(this, &UDreamVisual::SetColor), endValue, duration);
+	if (Tweener)
+	{
+		// The start value is written only once there is a tween to bring the colour back from it. It
+		// used to go in first, so with no tween manager (a world no game instance owns) the visual was
+		// left at the START for good -- a "from" that ended where it began -- where now it keeps the
+		// colour it had, which is where the tween was going. Writing it after asking changes nothing
+		// when there is a tween: its start is read from the getter on its first step, not here.
+		this->SetColor(startValue);
+		Tweener->SetExclusive(this, DreamVisualTweenChannels::Color);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(GetWidget(), Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamVisual::AlphaTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamVisual::GetAlpha), FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamVisual::SetAlpha), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamVisualTweenChannels::Alpha);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(GetWidget(), Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamVisual::AlphaFrom(float startValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto endValue = this->GetAlpha();
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamVisual::GetAlpha), FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamVisual::SetAlpha), endValue, duration);
+	if (Tweener)
+	{
+		// As in ColorFrom: the start only goes in once a tween exists to fade back from it, so with no
+		// tween manager the visual keeps the alpha it had instead of being left at the start value.
+		this->SetAlpha(startValue);
+		Tweener->SetExclusive(this, DreamVisualTweenChannels::Alpha);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(GetWidget(), Tweener);
+	}
+	return Tweener;
+}
+#pragma endregion
+
+

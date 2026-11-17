@@ -1,0 +1,2604 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+
+#include "DreamTweener.h"
+#include "InputCoreTypes.h"
+// These three arrive transitively under a unity build and vanish the moment this header is
+// compiled on its own -- FMargin, EMouseCursor and EWidgetPixelSnapping are all used below.
+#include "Layout/Margin.h"
+#include "GenericPlatform/ICursor.h"
+#include "Widgets/WidgetPixelSnapping.h"
+#include "Core/DreamUIAnchorData.h"
+#include "Core/DreamLayoutPassContext.h"
+#include "Core/DreamWidgetLifecycle.h"
+#include "Core/DreamUIClipMask.h"
+#include "DreamWidget.generated.h"
+
+class UDreamWidgetSubObjectBehaviour;
+class UDreamUIBehaviour;
+class UDreamLayerGroup;
+class UDreamUserWidget;
+class APlayerController;
+class ULocalPlayer;
+class UGameInstance;
+class UDreamVisual;
+class UDreamLayoutSelf;
+class UDreamLayoutContainer;
+class UDreamPanelSlot;
+class FDreamUIClipData;
+class UDreamUIDataAsTexture;
+class UDreamCanvas;
+class UDreamUIManagerWorldSubsystem;
+enum class EDreamRenderMode : uint8;
+namespace DreamPerspective { struct FScope; }
+
+/**
+ * What kind of change a layout invalidation is reporting.
+ *
+ * Blink's StyleDifference in miniature. There the decision is made once, by diffing the old and new
+ * ComputedStyle, rather than by asking every setter to remember what it affects; the shape here is the
+ * same even though the diff is not, and the point is identical - "something changed" and "the desired
+ * size changed" are different facts and cost very different amounts of work.
+ *
+ * Measure is the safe answer and the default, so a site that says nothing keeps the old behaviour.
+ */
+UENUM(BlueprintType)
+enum class EDreamLayoutInvalidation : uint8
+{
+	/**
+	 * This widget's desired size may have changed. Every ancestor that measures it has to re-run, so
+	 * the whole chain is dirtied. Text, sprites, child count, anything authored about size.
+	 */
+	Measure,
+	/**
+	 * Only where this widget sits inside its parent changed. Panels measure their children by desired
+	 * size and never by position, so nothing above the parent can produce a different answer - the
+	 * parent re-arranges and the walk stops there.
+	 */
+	Arrange,
+};
+
+/** Matches UMG/Slate visibility while keeping WidgetActive as the behaviour lifecycle switch. */
+UENUM(BlueprintType)
+enum class EDreamWidgetVisibility : uint8
+{
+	Visible,
+	Hidden,
+	Collapsed,
+	HitTestInvisible UMETA(DisplayName = "Not Hit-Testable (Self & Children)"),
+	SelfHitTestInvisible UMETA(DisplayName = "Not Hit-Testable (Self Only)"),
+};
+
+/**
+ * Which way a widget wants its layout to flow, for the cultures that read right to left.
+ *
+ * The same four answers UMG's EFlowDirectionPreference gives, spelled the same way, because a project
+ * localizing into Arabic or Hebrew has to be able to say "mirror this one" per widget and a second
+ * vocabulary for the same idea would be one more thing to learn for nothing.
+ *
+ * Inherit is the default, and it is what keeps every existing asset arranged exactly as authored: a
+ * tree in which nobody states a preference resolves left to right throughout.
+ */
+UENUM(BlueprintType)
+enum class EDreamFlowDirectionPreference : uint8
+{
+	/** Whatever the nearest ancestor with an opinion resolved to. */
+	Inherit,
+	/** Follow the running culture's writing direction, flipping when that culture reads right to left. */
+	Culture,
+	/** Left to right, whatever the culture says. */
+	LeftToRight,
+	/** Right to left, whatever the culture says. */
+	RightToLeft,
+};
+
+/**
+ * The resolved answer -- what a layout container actually arranges along. Two values, because a
+ * preference always resolves to one of them; see UDreamWidget::GetResolvedFlowDirection.
+ */
+UENUM(BlueprintType)
+enum class EDreamFlowDirection : uint8
+{
+	LeftToRight,
+	RightToLeft,
+};
+
+UENUM(BlueprintType)
+enum class EDreamAccessibleBehavior : uint8
+{
+	Auto,
+	NotAccessible,
+	Summary,
+	Custom,
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDreamWidgetVisibilityChangedEvent, EDreamWidgetVisibility, Visibility);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FDreamWidgetFocusEvent, int32, UserIndex, int32, PointerId);
+
+UENUM(BlueprintType)
+enum class EDreamWidgetClipping : uint8
+{
+	/**
+	 * This widget does not clip children, it and all children inherit the clipping area of the last widget that clipped.
+	 */
+	Inherit,
+	/**
+	 * This widget clips content the bounds of this widget.  It intersects those bounds with any previous clipping area.
+	 */
+	ClipToBounds,
+	/**
+	 * This widget clips to its bounds.  It does NOT intersect with any existing clipping UIGeometry, it pushes a new clipping 
+	 * state.  Effectively allowing it to render outside the bounds of hierarchy that does clip.
+	 */
+	ClipToBoundsWithoutIntersecting UMETA(DisplayName = "Clip To Bounds - Without Intersecting"),
+	/**
+	 * This widget does not clip.
+	 */
+	Disabled UMETA(DisplayName = "No Clip"),
+};
+
+/** What a directional move does when it runs out of candidates inside a restricted navigation area. */
+UENUM(BlueprintType)
+enum class EDreamUINavigationBoundaryRule : uint8
+{
+	/** Nothing happens. Focus stays where it is. */
+	Stop,
+	/**
+	 * Continue from the far side of the same area, as though the edges were joined. The landing spot
+	 * is wherever holding the opposite direction would have ended up, so wrapping and walking agree.
+	 */
+	Wrap,
+	/**
+	 * Leave the area and let whatever encloses it answer instead -- the way a list inside a page hands
+	 * the move back to the page once the list has nothing more in that direction.
+	 */
+	Escape,
+};
+
+UENUM(BlueprintType)
+enum class EDreamWidgetRaycastableType : uint8
+{
+	//If no parent then use Enabled
+	Inherit,
+	Enabled,
+	Disabled,
+};
+
+UENUM(BlueprintType)
+enum class EDreamWidgetInteractableType : uint8
+{
+	//If no parent then use Enabled
+	Inherit,
+	Enabled,
+	Disabled,
+};
+
+/** Whether a widget may be a render layer, and when: see UDreamWidget::IsRenderLayer. */
+UENUM(BlueprintType)
+enum class EDreamWidgetRenderLayer : uint8
+{
+	/** Once its own render transform has changed on a few frames in a row; no longer once it has held still for a while. */
+	Auto,
+	/** Whenever it can be one, animated or not. */
+	Always,
+	/** Never: what is under it is transformed on the CPU with the rest of its canvas. */
+	Never,
+};
+
+/**
+ * How the Tab stops inside a widget take part in Tab order (UDreamWidget::TabNavigation), which is the hierarchy's, depth
+ * first, siblings by TabIndex. The widget's own stop, when it is one, comes before those inside it.
+ */
+UENUM(BlueprintType)
+enum class EDreamWidgetTabNavigation : uint8
+{
+	/** Its stops are walked where it stands, and Tab goes on past the last of them into what follows it. */
+	Continue,
+	/** Tab at its last stop goes round to its first, and Shift+Tab the other way: it holds Tab once it has it. Entered from outside as usual. */
+	Cycle,
+	/** Tab at its last stop stays there, and Shift+Tab at its first: it holds Tab once it has it, without going round. Entered from outside as usual. */
+	Contained,
+	/**
+	 * One stop: Tab enters it at one widget -- what ResolveTabEntry answers, a list's selected row; else its first stop, its
+	 * last for Shift+Tab -- and the next Tab leaves it. What list, tile and tree views are, as a browser's list boxes and tab
+	 * strips are; the arrows move inside.
+	 */
+	Once,
+	/** Nothing in it is a Tab stop, itself included; arrows, pointers and code still reach it. */
+	None,
+};
+
+enum class EDreamWidgetComponentsChangedType : uint8
+{
+	//New component added to this widget
+	Added,
+	//A component was removed from this widget
+	Removed,
+	//Component reordered
+	Reorder,
+};
+
+/**
+ * What a transform flush tells the canvas and the visual of a widget whose world transform changed
+ * (UDreamWidget::FlushTransformChangesFrom). The render-layer rules choose it: the geometry of a render
+ * layer and of every widget in it is kept relative to the layer, so a layer that moves as a whole moves
+ * its sections and transforms nothing in it again.
+ */
+enum class EDreamTransformChangeNotice : uint8
+{
+	/** A canvas's own widget: the canvas updates it and works out its view again, as for any change of the canvas. */
+	Canvas,
+	/** A render layer: its sections move, and its own vertices, kept relative to it, stay as they are. */
+	RenderLayer,
+	/** Moved relative to what its geometry is kept relative to: its visual transforms its vertices again. */
+	Moved,
+	/** In a render layer that moved with it: nothing it draws changes. */
+	InsideMovedLayer,
+};
+
+/**
+ * Base class for almost all UI related things.
+ */
+UCLASS(ClassGroup = (DreamGUI), BlueprintType, Blueprintable)
+class DREAMGUI_API UDreamWidget : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	DECLARE_EVENT_OneParam(UDreamWidget, FWidgetActiveChangedEvent, bool/*WidgetActive*/);
+	DECLARE_EVENT_ThreeParams(UDreamWidget, FDimensionChangedEvent, bool/*PivotChanged*/, bool/*WidthChanged*/, bool/*HeightChanged*/);
+	DECLARE_EVENT_FourParams(UDreamWidget, FChildDimensionChangedEvent, UDreamWidget*/*Child*/, bool/*PivotChanged*/, bool/*WidthChanged*/, bool/*HeightChanged*/);
+	DECLARE_EVENT(UDreamWidget, FAttachmentChangedEvent);
+	DECLARE_EVENT(UDreamWidget, FTransformChangedEvent);
+	DECLARE_EVENT(UDreamWidget, FSiblingIndexChangedEvent);
+	DECLARE_EVENT_OneParam(UDreamWidget, FInteractableChangedEvent, bool/*Interactable*/);
+	DECLARE_EVENT_OneParam(UDreamWidget, FEnabledChangedEvent, bool/*EnabledInHierarchy*/);
+	DECLARE_EVENT_OneParam(UDreamWidget, FRaycastableChangedEvent, bool/*Raycastable*/)
+	DECLARE_EVENT_OneParam(UDreamWidget, FComponentsChangedEvent, EDreamWidgetComponentsChangedType/*ChangedType*/)
+	
+	UDreamWidget();
+
+	void OnRegister();
+	void OnUnregister();
+
+	void BeginPlay();
+	void EndPlay();
+
+	virtual void PostLoad()override;
+	virtual void BeginDestroy() override;
+	/** A play session's copy of the world never holds one of these: see DreamUI::ReportCopiedIntoPlaySession. */
+	virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
+
+	/**
+	 * Tear this widget and its whole subtree down: unregister, detach from the parent, end play, and
+	 * mark every widget in it as garbage.
+	 *
+	 * IsValid() therefore answers false from here, which is what the plugin's several hundred IsValid
+	 * checks were all written to mean. The memory itself still goes at the next collection; what
+	 * changes is that nothing can mistake a torn-down widget for a live one in the meantime.
+	 *
+	 * Two things are deliberately NOT marked, both in DestroyWidget's own tail: anything reached while
+	 * a collection is running (BeginDestroy calls this from inside one), and anything rooted. Undo
+	 * survives because each widget is Modify()'d before it is marked, so the transaction records the
+	 * transition and reverses it -- see the note on the loop.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Widget")
+	void DestroyWidget();
+
+	virtual UWorld* GetWorld() const override final;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+	virtual bool CanEditChange(const FEditPropertyChain& PropertyChain) const override;
+	virtual void PostEditUndo()override;
+	/** Destroyed -> Constructed, for a widget an undo has brought back to life; nothing otherwise. */
+	void ReviveLifecycleAfterUndo();
+	virtual void PostRename(UObject* OldOuter, const FName OldName) override;
+
+	void EnsureChildrenAfterTransaction();
+	void EnsureDataForRebuild();
+#endif
+	static FName GetPropertyName_AnchorData()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, AnchorData);
+	}
+	static FName GetPropertyName_SiblingIndex()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, SiblingIndex);
+	}
+	static FName GetPropertyName_Children()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, Children);
+	}
+	static FName GetPropertyName_WidgetActive()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, bWidgetActive);
+	}
+	static FName GetPropertyName_Visibility()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, Visibility);
+	}
+	/*
+	 * The three below exist for UDreamDataBinding, which used to spell them as string literals.
+	 *
+	 * They have to live HERE and not at the call site, and the reason is the whole point of the
+	 * change: the properties are protected, and GET_MEMBER_NAME_CHECKED expands to an expression
+	 * that names the member, so only this class can write it. A literal compiles from anywhere,
+	 * which is exactly why it was a literal -- and why renaming any of these three used to make the
+	 * binding's special case silently stop matching and fall through to a memcpy, losing every side
+	 * effect the setter has (the recursive *InHierarchy caches on the children, most of all) while
+	 * still reporting success.
+	 */
+	static FName GetPropertyName_RenderOpacity()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, RenderOpacity);
+	}
+	static FName GetPropertyName_Interactable()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, Interactable);
+	}
+	static FName GetPropertyName_Raycastable()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, Raycastable);
+	}
+	static FName GetPropertyName_DisplayName()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, DisplayName);
+	}
+	static FName GetPropertyName_RelativeLocation()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, RelativeLocation);
+	}
+	static FName GetPropertyName_RelativeRotation()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, RelativeRotation);
+	}
+	static FName GetPropertyName_RelativeRotationEuler()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, RelativeRotationEuler);
+	}
+	static FName GetPropertyName_RelativeScale()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, RelativeScale);
+	}
+	static FName GetPropertyName_Components()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, Components);
+	}
+
+	bool HasBegunPlay()const{return Lifecycle == EDreamWidgetLifecycle::BegunPlay;}
+	/** Registered, whether or not play has begun since: a widget in play is still registered. */
+	bool HasRegistered()const{return Lifecycle == EDreamWidgetLifecycle::Registered || Lifecycle == EDreamWidgetLifecycle::BegunPlay;}
+	/** Where this widget is in its life; EDreamWidgetLifecycle has the steps between the states. */
+	EDreamWidgetLifecycle GetLifecycle()const{return Lifecycle;}
+
+	static void CollectChildrenWidgets(UDreamWidget* Target, TArray<UDreamWidget*>& OutAllChildrenWidgets, bool IncludeTarget = true);
+
+#pragma region CallbackEvents
+private:
+	void Call_WidgetActiveChanged();
+	void Call_TransformChanged();
+	void Call_DimensionsChanged(bool InPivotChanged, bool InWidthChanged, bool InHeightChanged);
+	void Call_ChildDimensionsChanged(UDreamWidget* Child, bool InPivotChanged, bool InWidthChanged, bool InHeightChanged);
+	void Call_AttachmentChanged();
+	void Call_SiblingIndexChanged();
+	void Call_InteractableChanged();
+	void Call_RaycastableChanged();
+#pragma endregion
+private:
+	/**
+	 * Local space position.
+	 * DuiHidden: the setter recomputes the anchors, and AnchorData is what a .dui spells -- a
+	 * reflective sweep that also wrote this would author one position twice.
+	 */
+	UPROPERTY(Interp, BlueprintReadOnly, Getter, Setter, Category = "Transform", meta=(AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	FVector RelativeLocation = FVector::ZeroVector;
+	/**
+	 * Local space rotation.
+	 * Not marked Interp: Sequencer has no property track for FQuat, so this cannot be keyed
+	 * directly. Animate RelativeRotationEuler instead, which mirrors this value.
+	 */
+	// DuiHidden: RelativeRotationEuler is the authored face of this value, and a quaternion has no
+	// spelling -- but FQuat is an ordinary struct, so without the tag a reflective sweep would
+	// recurse it and write X/Y/Z/W component lines beside the euler it already wrote.
+	UPROPERTY(BlueprintReadOnly, Getter, Setter, Category = "Transform", meta = (AllowPrivateAccess = true, DuiHidden))
+	FQuat RelativeRotation = FQuat::Identity;
+	/**
+	 * Local space rotation as euler angles, mirroring RelativeRotation so that rotation can be
+	 * animated: Sequencer has an FRotator property track but none for FQuat.
+	 *
+	 * Transient, because RelativeRotation stays the serialized source of truth. Sequencer reads
+	 * property memory directly while writing through the setter, so this has to be a real stored
+	 * field kept in sync rather than a value derived on demand.
+	 */
+	// DreamGUI_Hidden: the Layout section's rotation row edits it.
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter, Setter, Category = "Transform", meta = (AllowPrivateAccess = true, DreamGUI_Hidden))
+	FRotator RelativeRotationEuler = FRotator::ZeroRotator;
+	/** Local space scale */
+	// DreamGUI_Hidden on this and RelativeLocation: the Layout section's position and scale rows edit them (Interp makes them editable).
+	UPROPERTY(Interp, BlueprintReadOnly, Getter, Setter, Category = "Transform", meta = (AllowPrivateAccess = true, AllowPreserveRatio, DreamGUI_Hidden))
+	FVector RelativeScale = FVector::OneVector;
+
+	/*
+	 * RENDER TRANSFORM.
+	 *
+	 * Moves where a widget is DRAWN without telling layout anything. Layout still measures and
+	 * arranges it exactly as before, siblings do not shift, and nothing here is ever written back to
+	 * AnchorData. That is the whole difference from RelativeLocation, whose setter recomputes the
+	 * anchors and asks the parent layout to rebuild -- which is why animating it inside a panel can
+	 * never work, the animation and the layout just take turns.
+	 *
+	 * Depth runs along local X, and it points AWAY from the viewer: UDreamCanvas::GetViewLocation
+	 * puts the eye at "location - forward * distance", so a NEGATIVE X translation brings a widget
+	 * toward the screen and a positive one pushes it back.
+	 *
+	 * Full 3D, deliberately. The obvious model is UMG's FWidgetTransform, but UMG is a 2D framework
+	 * and this one is not: RelativeLocation, RelativeRotation and RelativeScale are already a
+	 * FVector/FQuat/FVector, world-space canvases exist, and a card flipping about its vertical axis
+	 * is an ordinary thing to want. A 2D render transform would have been narrower than the authored
+	 * transform it mirrors, and would have forbidden effects the framework otherwise allows.
+	 *
+	 * The batching caveat is the one that already applies to the authored transform, not a new one:
+	 * UDreamCanvas::Is2DUITransform drops a widget out of the batched 2D path when it gains depth, yaw
+	 * or pitch. Rolling, scaling and sliding in the canvas plane stay batched; a flip costs a draw
+	 * call, exactly as it would if you had authored the rotation.
+	 */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadOnly, Category = "Render Transform", Getter, Setter, meta = (AllowPrivateAccess = true, DisplayName = "Translation"))
+	FVector RenderTranslation = FVector::ZeroVector;
+	/**
+	 * Render-only rotation about RenderTransformPivot, in degrees. Roll is the in-plane angle, and a positive Roll turns
+	 * the widget clockwise on the screen (its right edge down), as UMG's angle does; Pitch and Yaw turn it out of the
+	 * plane, about its horizontal and vertical axes.
+	 * FRotator rather than FQuat for the same reason RelativeRotationEuler exists: Sequencer has a
+	 * property track for one and not the other. No transient mirror is needed here because this is
+	 * itself the serialized source of truth.
+	 */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadOnly, Category = "Render Transform", Getter, Setter, meta = (AllowPrivateAccess = true, DisplayName = "Rotation"))
+	FRotator RenderRotation = FRotator::ZeroRotator;
+	/** Render-only scale about RenderTransformPivot. */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadOnly, Category = "Render Transform", Getter, Setter, meta = (AllowPrivateAccess = true, DisplayName = "Scale", AllowPreserveRatio))
+	FVector RenderScale = FVector::OneVector;
+	/**
+	 * What RenderRotation and RenderScale turn about, normalized within the widget's own rect.
+	 * (0,0) is bottom-left and (1,1) top-right, matching AnchorData.Pivot rather than UMG's
+	 * top-left origin -- consistency inside this fork beats consistency with the other engine.
+	 * Two-dimensional because the rect is: it resolves to a point on the widget's own plane.
+	 * Independent of AnchorData.Pivot, which belongs to layout.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Render Transform", Getter, Setter, meta = (AllowPrivateAccess = true, DisplayName = "Pivot"))
+	FVector2D RenderTransformPivot = FVector2D(0.5, 0.5);
+	/**
+	 * Render-only slant about this widget's own pivot, in DEGREES, applied to this widget and its
+	 * whole subtree. See GetRenderShear for what it does and does not affect.
+	 *
+	 * Degrees rather than the tangents the matrix actually wants, because that is the unit UMG's
+	 * shear is authored in and an author thinks in angles, not slopes. Clamped just under 90 when it
+	 * is used: the tangent goes to infinity there and the geometry with it.
+	 *
+	 * Not Interp, deliberately, although the other three render channels are: no FVector2D property
+	 * in this plugin is animated yet and RenderTransformPivot is not either, so adding the first one
+	 * belongs with someone actually wiring a shear track rather than with the property itself.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Render Transform", Getter, Setter, meta = (AllowPrivateAccess = true, DisplayName = "Shear"))
+	FVector2D RenderShear = FVector2D::ZeroVector;
+
+	/*
+	 * RENDER LAYER.
+	 *
+	 * A widget can be a render layer of its canvas (IsRenderLayer): the canvas keeps the geometry under it relative to it
+	 * and applies its transform on the GPU, so while it turns or slides, what is under it is neither transformed again nor
+	 * uploaded again -- only its row of the world's render layer table changes (UDreamUIRenderLayerTable). The price is
+	 * batching: a layer's elements batch as 3D elements do, into the draw call just before them only, and are never culled
+	 * by the canvas rect. The canvas makes a widget one once its own render transform has changed on a few frames in a row,
+	 * and takes it back once it has held still for a while (UDreamCanvas::NoteRenderTransformChanged), so this setting is
+	 * rarely one to touch; and some widgets can never be one (UDreamCanvas::CanBeRenderLayer).
+	 */
+	/**
+	 * Whether this widget may be a render layer of its canvas, and when: once its render transform keeps changing (Auto),
+	 * whenever it can be (Always), or never. A layer's transform is applied on the GPU to everything under it.
+	 */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Render Transform")
+	EDreamWidgetRenderLayer RenderLayer = EDreamWidgetRenderLayer::Auto;
+public:
+	/** Whether this widget may be a render layer of its canvas, and when. IsRenderLayer says whether it is one now. */
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	EDreamWidgetRenderLayer GetRenderLayerMode()const { return RenderLayer; }
+	/** Whether this widget may be a render layer of its canvas, and when; its canvas makes it one, or takes it back, at its next update. */
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderLayerMode(EDreamWidgetRenderLayer Value);
+	/** Its row in its world's render layer table while it is a render layer (UDreamUIRenderLayerTable); 0 when it is none. */
+	int32 GetRenderLayerRow()const { return RenderLayerRow; }
+	/**
+	 * The frame its canvas last moved it as a render layer -- or made it one -- (UDreamCanvas::MarkRenderLayerMoved), stamped
+	 * once a frame; 0 for never. What small text inside it reads to know whether the layer has held still.
+	 */
+	uint64 GetRenderLayerMovedFrame()const { return RenderLayerMovedFrame; }
+	/**
+	 * Some small text inside this render layer draws from coverage glyphs and asks to hear of the layer's moves: its canvas
+	 * then calls UDreamText::OnRenderLayerMoved when the layer moves. Set by small text inside it that draws from coverage
+	 * glyphs, or that the layer's own turn or scale keeps on the field; cleared by UDreamText::OnRenderLayerMoved once no
+	 * such text is listed, and when the layer is taken back or forgotten.
+	 */
+	bool GetLayerHoldsCoverageText()const { return bLayerHoldsCoverageText; }
+	void SetLayerHoldsCoverageText(bool bInHolds) { bLayerHoldsCoverageText = bInHolds; }
+private:
+	/** Set and cleared by the canvas that makes this widget a render layer; IsRenderLayer. */
+	uint32 bIsRenderLayer : 1 = false;
+	/** Found unable to be a layer during this run of changes (UDreamCanvas::CanBeRenderLayer); asked again when another run starts. */
+	uint32 bRenderLayerRefused : 1 = false;
+	/** Listed with its canvas as one to make a layer at the canvas's next update. */
+	uint32 bRenderLayerCandidate : 1 = false;
+	/** See GetLayerHoldsCoverageText. */
+	uint32 bLayerHoldsCoverageText : 1 = false;
+	/** See GetRenderLayerRow: held for it by the canvas that made it a layer. */
+	int32 RenderLayerRow = 0;
+	/**
+	 * The frame its own render transform last changed on, and on how many frames in a row it had changed by then: what its
+	 * canvas makes it a layer by, and takes it back by (UDreamCanvas::NoteRenderTransformChanged).
+	 */
+	uint64 RenderLayerLastChangeFrame = 0;
+	int32 RenderLayerChangeStreak = 0;
+	/** See GetRenderLayerMovedFrame: written by the canvas. */
+	uint64 RenderLayerMovedFrame = 0;
+	/** GetRenderLayer's answer, and the generation of the answers it was worked out in (InvalidateRenderLayerCaches). */
+	mutable TWeakObjectPtr<UDreamWidget> CachedRenderLayer;
+	mutable uint64 CachedRenderLayerGeneration = 0;
+	/** IsRenderLayerQuiet's answer, and the generation of the answers it was worked out in. */
+	mutable uint64 CachedLayerQuietGeneration = 0;
+	mutable uint8 bCachedLayerQuiet : 1 = false;
+	/*
+	 * What a render transform's write reads and writes of the widget, besides the render transform and the layer's counters
+	 * above -- the world transform's flags, the children's, the transform event's, the canvas, the cached hierarchy flags,
+	 * the rect bounds' flag, the render-transform bit -- declared together with them: every turning widget of a wall is
+	 * written every frame, and these, spread over the object, were a read from memory each. Each group of bit fields keeps
+	 * the unit it had, apart from the others: some are written from other threads.
+	 */
+	/**
+	 * Every child is stale and pending -- and so, as ever, everything under each -- as this widget's last marking left them:
+	 * none has been composed, flushed or announced since, and none has joined. Its next marking then has nothing to do below
+	 * it, and does not read the children to find that out: a wall of turning buttons read every button's label at every
+	 * turn, only to find it still marked. Whatever takes a child out of that state clears it -- ComputeWorldTransform, the
+	 * flush, a quiet layer's announcement -- and so does a child joining. A byte of its own rather than a bit: a child
+	 * composed on a worker clears it, and workers composing siblings may clear it at once (ForgetChildrenStale).
+	 */
+	mutable int8 ChildrenStaleAndPending = 0;
+	/**
+	 * The transform event was asked for (GetTransformChangedEvent), the only way to bind it. Until then nothing listens, and
+	 * the event is not asked whether anything does: a look that, in a development build, takes the delegate's check against
+	 * other threads, for every write of every animated widget.
+	 */
+	bool bTransformChangedEventAsked = false;
+	/**
+	 * ObjectToWorldTransform is out of date. Set on a widget, it is set on every descendant too -- they are
+	 * composed from it -- which is what lets a second mark stop at a widget already marked.
+	 */
+	mutable uint8 bWorldTransformDirty : 1 = false;
+	/** The world transform changed and the next flush announces it. Like the dirty bit, set here means set below. */
+	uint8 bTransformChangePending : 1 = false;
+	/** The pending change began at this widget, not only above it: what the render-layer rules measure moves by. */
+	uint8 bOwnTransformChanged : 1 = false;
+	/** DreamCanvas which render this UI element */
+	UPROPERTY(Transient) mutable TWeakObjectPtr<UDreamCanvas> RenderCanvas = nullptr;
+	/**
+	 * RenderCanvas as a weak look-up found it while the count of objects gone read RenderCanvasRawGone (DreamUIGone):
+	 * while the count reads the same, it is that canvas, alive and as registered as it was (GetRenderCanvas). Kept on
+	 * the game thread where nothing else reads it meanwhile: SetRenderCanvas, and a render transform's write
+	 * (KeepRenderCanvas).
+	 */
+	mutable UDreamCanvas* RenderCanvasRaw = nullptr;
+	mutable uint64 RenderCanvasRawGone = 0;
+	
+	/** is this widget contains DreamCanvas component */
+	mutable uint32 bIsCanvasWidget:1;
+	
+	mutable uint32 bClipDirty : 1 = true;
+	mutable uint32 bNeedRecreateClip : 1 = true;
+	
+	uint32 bCacheWidgetActiveInHierarchy : 1 = true;
+	uint32 bCacheLayoutVisibleInHierarchy : 1 = true;
+	uint32 bCacheRenderVisibleInHierarchy : 1 = true;
+	uint32 bCacheSelfHitTestVisibleInHierarchy : 1 = true;
+	uint32 bCacheChildrenHitTestVisibleInHierarchy : 1 = true;
+	uint32 bCacheInteractableInHierarchy : 1 = true;
+	/** "This widget and every ancestor are enabled", kept up to date by the interactable walk. */
+	uint32 bCacheEnabledInHierarchy : 1 = true;
+	uint32 bCacheRaycastableInHierarchy : 1 = true;
+	uint32 bLayoutVisibilitySuppressed : 1 = false;
+	uint32 bHasLayoutClippingOverride : 1 = false;
+	FVector2f LayoutScale = FVector2f::UnitVector;
+protected:
+	mutable uint8 bWorldRectBoundsDirty : 1 = true;
+private:
+	/** Cached "any render channel is off its default", so the common case costs one bit test. */
+	uint32 bHasRenderTransform : 1 = false;
+	/**
+	 * Every widget works out GetRenderLayer and IsRenderLayerQuiet again when next asked: a layer came or went, a widget
+	 * changed its place in a tree, or somebody asked for a widget's transform event, to listen to it.
+	 */
+	static void InvalidateRenderLayerCaches();
+
+	/*
+	 * PERSPECTIVE, in the shape CSS uses.
+	 *
+	 * Turning this on establishes a perspective for this widget's DESCENDANTS: children with depth
+	 * are foreshortened toward an eye standing in front of this widget's plane, at whatever distance
+	 * PerspectiveFieldOfView works out to.
+	 * The declaring widget itself is not moved -- the remap fixes its plane pointwise -- so switching
+	 * it on never disturbs an interface that has no depth in it yet.
+	 *
+	 * There is no "inherit" setting because inheritance is what happens by default: everything below
+	 * a scope is inside it. A descendant that declares its own perspective NESTS rather than
+	 * overriding, exactly as nested CSS perspectives do.
+	 *
+	 * It costs nothing when off, and nothing for a subtree whose widgets have no depth: the remap
+	 * only touches the depth direction, so a flat widget comes back bit for bit.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Perspective", Getter = "GetPerspective", Setter = "SetPerspective", meta = (AllowPrivateAccess = true, DisplayName = "Perspective"))
+	bool bPerspective = false;
+	/**
+	 * The angle the subtree is viewed through, in degrees. Wider is a stronger effect, and it means
+	 * exactly what UDreamCanvas::FieldOfView means -- the eye distance is derived from it with the
+	 * same formula, against this widget's own width.
+	 *
+	 * An angle and not a distance, because a widget gets stretched: a distance stays put while the
+	 * widget grows around it, so the same prefab would look half as deep at twice the size. An angle
+	 * is scale-invariant, the way a lens is -- filling more of the frame does not change the lens.
+	 */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadOnly, Category = "Perspective", Getter, Setter, meta = (AllowPrivateAccess = true, EditCondition = "bPerspective", ClampMin = "1.0", ClampMax = "179.0", UIMin = "10.0", UIMax = "120.0", DisplayName = "Field Of View"))
+	float PerspectiveFieldOfView = 60.0f;
+	/**
+	 * Where the eye stands over this widget's own rect, normalized: (0,0) bottom-left, (1,1)
+	 * top-right, matching RenderTransformPivot. The CSS `perspective-origin`, and the vanishing
+	 * point a subtree converges toward.
+	 */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadOnly, Category = "Perspective", Getter, Setter, meta = (AllowPrivateAccess = true, EditCondition = "bPerspective", DisplayName = "Origin"))
+	FVector2D PerspectiveOrigin = FVector2D(0.5, 0.5);
+
+public:
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	const FVector& GetRelativeLocation()const { return RelativeLocation; }
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	const FQuat& GetRelativeRotation()const { return RelativeRotation; }
+	/** Euler-angle mirror of GetRelativeRotation, for animating rotation through Sequencer. */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	const FRotator& GetRelativeRotationEuler()const { return RelativeRotationEuler; }
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	const FVector& GetRelativeScale()const { return RelativeScale; }
+
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	const FVector& GetRenderTranslation()const { return RenderTranslation; }
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	const FVector& GetRenderScale()const { return RenderScale; }
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	const FRotator& GetRenderRotation()const { return RenderRotation; }
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	const FVector2D& GetRenderTransformPivot()const { return RenderTransformPivot; }
+	/** True while any render channel is off its default, i.e. while drawing differs from layout. */
+	UFUNCTION(BlueprintPure, Category = "Render Transform")
+	bool HasRenderTransform()const { return bHasRenderTransform; }
+
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderTranslation(const FVector& Value);
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderScale(const FVector& Value);
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderRotation(const FRotator& Value);
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderTransformPivot(const FVector2D& Value);
+	/** Back to drawing exactly where layout put it, in one invalidation. */
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void ClearRenderTransform();
+
+	/**
+	 * The slant applied when this widget and everything under it are DRAWN -- UMG's
+	 * FWidgetTransform::Shear, in degrees, about this widget's own pivot.
+	 *
+	 * Separate from the other three render channels because it cannot travel with them. Those live in
+	 * ObjectToWorldTransform, an FTransform, and an FTransform cannot carry a shear: SetFromMatrix
+	 * orthonormalizes one away and hands back something plausible and wrong. Shear therefore rides the
+	 * same rails perspective already rides -- the matrix path in FDreamUIGeometry::TransformVertices,
+	 * which exists precisely because a perspective remap is itself a shear.
+	 *
+	 * Consequences worth knowing, all of them shared with perspective:
+	 *   - Layout is untouched. A sheared widget occupies exactly the rect it was given.
+	 *   - HIT TESTING DOES NOT FOLLOW. The raycaster switches to the matrix only inside a perspective
+	 *     scope, so a sheared widget is still clicked on its un-slanted rect. That is deliberate: the
+	 *     ordinary path must not start inverting matrices for a decorative effect, and UMG's own
+	 *     shear has the same split.
+	 *   - Nothing at all happens while X and Y are both zero. The flag below keeps the untouched
+	 *     FTransform path, bit for bit, for every widget that does not use this.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	const FVector2D& GetRenderShear()const { return RenderShear; }
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderShear(const FVector2D& Value);
+	/** True when this widget or any ancestor is sheared -- the bit that chooses the matrix path. */
+	UFUNCTION(BlueprintPure, Category = "Render Transform")
+	bool HasShearApplied()const { return bHasShearInHierarchy; }
+	/** This widget's own shear, ignoring the chain. */
+	UFUNCTION(BlueprintPure, Category = "Render Transform")
+	bool HasOwnRenderShear()const { return !RenderShear.IsNearlyZero(); }
+	/**
+	 * Every shear on the way up, expressed as one world-space correction -- Identity when there is none.
+	 *
+	 * Conjugated per level rather than composed from local-to-parent transforms: each ancestor's shear
+	 * is about ITS pivot in ITS local space, and O^-1*S*O is that same operation said in world terms,
+	 * which is the only space all the levels share. Composing it that way also means the chain is read
+	 * off the world transforms that already exist instead of a parallel set of relative ones.
+	 */
+	FMatrix GetInheritedShearCorrection()const;
+
+	UFUNCTION(BlueprintCallable, Category = "Perspective")
+	bool GetPerspective()const { return bPerspective; }
+	UFUNCTION(BlueprintCallable, Category = "Perspective")
+	float GetPerspectiveFieldOfView()const { return PerspectiveFieldOfView; }
+	/** The eye distance the field of view works out to against the current width. */
+	UFUNCTION(BlueprintPure, Category = "Perspective")
+	float GetPerspectiveDistance()const;
+	UFUNCTION(BlueprintCallable, Category = "Perspective")
+	const FVector2D& GetPerspectiveOrigin()const { return PerspectiveOrigin; }
+	UFUNCTION(BlueprintCallable, Category = "Perspective")
+	void SetPerspective(bool Value);
+	UFUNCTION(BlueprintCallable, Category = "Perspective")
+	void SetPerspectiveFieldOfView(float Value);
+	UFUNCTION(BlueprintCallable, Category = "Perspective")
+	void SetPerspectiveOrigin(const FVector2D& Value);
+
+	/** True when this widget or any ancestor declares a perspective. One bit, kept up to date with the transform. */
+	UFUNCTION(BlueprintPure, Category = "Perspective")
+	bool HasPerspectiveInHierarchy()const { return bHasPerspectiveInHierarchy; }
+	/**
+	 * True when a scope shapes THIS widget's own geometry -- its own declaration or an ancestor's.
+	 * A widget is inside its own perspective: the scope's plane is taken from where layout put the
+	 * widget, so its own render rotation is measured against that plane and foreshortens like
+	 * anything else. A widget with no render transform is flat in that plane and comes back
+	 * untouched, so switching Perspective on still changes nothing until something gains depth.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Perspective")
+	bool HasPerspectiveApplied()const { return bHasPerspectiveInHierarchy; }
+	/** True when an ANCESTOR declares one. Distinct from HasPerspectiveApplied, which includes this widget's own. */
+	UFUNCTION(BlueprintPure, Category = "Perspective")
+	bool HasInheritedPerspective()const { return Parent.IsValid() && Parent->bHasPerspectiveInHierarchy; }
+	/**
+	 * Widget-to-world with any inherited perspective folded in -- where this widget is actually drawn.
+	 *
+	 * An FMatrix and not an FTransform because perspective contributes a shear whenever the scope is
+	 * tilted, and FTransform::SetFromMatrix does not refuse a sheared matrix: it orthonormalizes it
+	 * and hands back something plausible and wrong. Exactly GetWorldTransform().ToMatrixWithScale()
+	 * when no perspective applies, which is almost always.
+	 */
+	FMatrix GetWorldMatrix()const;
+	FMatrix GetInverseWorldMatrix()const;
+	/** The composed remap from this widget's own scope and every one above it. Identity when there is none. */
+	FMatrix GetInheritedPerspectiveRemap()const;
+	/** This widget's own declared scope in world space; false when it declares none. */
+	bool GetPerspectiveScope(DreamPerspective::FScope& OutScope)const;
+
+	/** This widget's render transform alone, in its own local space. Identity when unset. */
+	FTransform GetRenderTransform()const;
+	/**
+	 * Widget-to-world with every render transform on the way up removed -- where layout believes the
+	 * widget is. Needed by the two places that convert a world transform back into authored local
+	 * data (SetWorldTransform and a keep-world-position reparent); using the drawn transform there
+	 * would bake an animation offset into RelativeLocation and leak it into the saved prefab.
+	 */
+	FTransform GetLayoutWorldTransform()const;
+
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	FVector GetWorldLocation()const;
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	FQuat GetWorldRotation()const;
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	FVector GetWorldScale()const;
+
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	FVector GetForwardVector()const;
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	FVector GetRightVector()const;
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	FVector GetUpVector()const;
+
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetRelativeLocation(const FVector& Value);
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetRelativeRotation(const FQuat& Value);
+	/** Set rotation from euler angles. This is the rotation entry point Sequencer drives. */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetRelativeRotationEuler(const FRotator& Value);
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetRelativeScale(const FVector& Value);
+	/** Transient scale contributed by a parent layout. It is never serialized or exposed as authored transform data. */
+	void SetLayoutScale(const FVector2f& Value);
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetRelativeLocationAndRotation(const FVector& InLocation, const FQuat& InRotation);
+
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetWorldLocation(const FVector& Value);
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetWorldRotation(const FQuat& Value);
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetWorldLocationAndRotation(const FVector& InLocation, const FQuat& InRotation);
+
+	FTransform GetLocalTransform()const;
+	/** GetLocalTransform with this widget's render transform applied. What the world transform is built from. */
+	FTransform GetRenderLocalTransform()const;
+	/** Recompute the cached has-a-render-transform bit and push the new transform down the subtree. */
+	void ApplyRenderTransformChange();
+	/** GetRenderCanvas, keeping what it found for the ones after it (RenderCanvasRaw). Game thread, outside parallel work. */
+	UDreamCanvas* KeepRenderCanvas() const;
+	/** Recompute the cached has-a-render-transform bit from the serialized channels. */
+	void RefreshRenderTransformFlag();
+	/**
+	 * Whether this widget is a render layer: its render canvas keeps the geometry of the widgets in its layer relative
+	 * to it and applies its transform on the GPU, so a change of its own transform moves the layer's sections and
+	 * transforms nothing in it again. The canvas decides which widgets are layers.
+	 */
+	bool IsRenderLayer()const;
+	/**
+	 * The render layer this widget's geometry is kept relative to: the nearest render layer among itself and its
+	 * ancestors in the same render canvas, or null when it is in none.
+	 */
+	UDreamWidget* GetRenderLayer()const;
+	/**
+	 * Whether what this render layer holds needs no word when the layer moves as a whole: no widget under it hosts a
+	 * canvas, is a render layer, or has an OnTransformChanged listener. A widget that only moved with such a layer is then
+	 * neither walked nor told at the flush (FlushTransformChanges): it stays stale, and is composed when something reads
+	 * it. Worked out again only after a layer, the tree, or a widget's listeners may have changed.
+	 */
+	bool IsRenderLayerQuiet()const;
+	void ApplyPerspectiveChange();
+#if WITH_EDITOR
+	/** Say plainly when a declared perspective is inert, rather than leaving the author to guess. */
+	void WarnIfPerspectiveCannotApply()const;
+#endif
+	/** Recompute the cached bit for this widget and, when it changes, everything below it. */
+	void RefreshPerspectiveInHierarchy();
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	const FTransform& GetWorldTransform()const;
+
+	/**
+	 * A world-space sphere containing this widget's own rect -- the shape a Rect hit test is decided
+	 * inside -- so a caller sweeping many widgets can throw most of them out before paying for the
+	 * exact test. UDreamBaseRaycaster does exactly that on every pointer update.
+	 *
+	 * FALSE MEANS "NO USABLE BOUND", and a caller must then run the exact test rather than skip the
+	 * widget. Two reasons it says so, both erring the safe way:
+	 *   - a perspective applies. The drawn transform is then GetWorldMatrix(), which folds in a remap
+	 *     built from the render canvas's eye; that eye moves with the canvas and tells this widget
+	 *     nothing, so there is no moment at which a cached sphere could be invalidated.
+	 *   - the rect is degenerate -- zero-sized, or not laid out yet. A zero radius would reject the
+	 *     widget outright, and "not measured" is not the same claim as "nothing there".
+	 *
+	 * The sphere is a pure function of ObjectToWorldTransform, GetWidth(), GetHeight() and the pivot,
+	 * and is cached against exactly those; see MarkWorldRectBoundsDirty.
+	 */
+	bool GetWorldRectBoundingSphere(FVector& OutCenter, double& OutRadius)const;
+	/**
+	 * Drop the cached bounding sphere.
+	 *
+	 * Called from the three places its inputs can change: CalculateObjectToWorldTransform (the single
+	 * funnel for every change of the world transform, which marks the moved widget and every
+	 * descendant stale at once), MarkDimensionChanged (size and pivot, unconditionally -- the flags it
+	 * is handed say WHAT changed, and trusting them would make this cache depend on every caller
+	 * passing them right), and the resolve branch inside GetWidth/GetHeight, which catches the paths
+	 * that dirty the size cache without announcing anything (MarkAllDirty, and a stretched child
+	 * resolving lazily against a parent that has since moved).
+	 */
+	void MarkWorldRectBoundsDirty()const { bWorldRectBoundsDirty = true; }
+
+	void SetWorldTransform(const FTransform& InWorldTransform);
+	/**
+	 * Attach without the register-time side effects, for a hierarchy that is still being assembled:
+	 * class instantiation (UDreamWidgetGeneratedClass), nested-widget and NamedSlot content, and the
+	 * designer's preview host all build their trees this way before anything is registered.
+	 */
+	void SetParentBeforeRegister(UDreamWidget* InParent);
+	/** Restores a serialized hierarchy while preserving legacy over-capacity assets. Cycle checks still apply. */
+	bool SetParentIgnoringCapacity(UDreamWidget* InParent, bool InKeepWorldPosition = false, int InSiblingIndex = -1);
+	/**
+	 * Re-assert a deserialized sibling index after an attach overwrote it with a tail index, deferring
+	 * the reorder to the parent's lazy sort.
+	 */
+	void RestoreSiblingIndex(int32 InSiblingIndex);
+	/**
+	 * Rebuild the transient Parent back-pointers across this subtree from the persistent Children arrays.
+	 *
+	 * Children is the structural truth and survives serialization and object instancing; Parent does not,
+	 * so every path that produces a tree without going through the attach functions -- loading a package,
+	 * instancing a class template, duplicating a subtree -- has to run this before the tree is registered.
+	 * Registration itself does not do it: OnRegister already reads Parent (EnsurePanelSlotForChild).
+	 * Idempotent, and it renumbers nothing -- SiblingIndex is persistent and the lazy sort still owns order.
+	 */
+	void RestoreParentLinksRecursive();
+
+	/**
+	 * Who this widget is, for anything that has to match a widget in one tree against a widget in
+	 * another -- the designer pairing a preview instance with the authored widget it came from,
+	 * above all.
+	 *
+	 * That pairing used to go by FName. Object names are generated (DreamWidget_N) from a counter
+	 * that runs for the life of the process, so within one session they never repeat and the scheme
+	 * looks sound; every asset loaded from disk brings its own numbering back with it, starting at
+	 * zero. Two assets open at once therefore both hold a DreamWidget_0, and a nested widget
+	 * blueprint's contents sit in the same preview hierarchy as the host's own widgets: editing a
+	 * value inside a nested Button wrote it onto whichever host widget happened to share the name.
+	 * Silently, onto the wrong object, and no test in the suite could see it because a single
+	 * process never generates the same name twice.
+	 *
+	 * Instancing carries it, which is what makes it work: a preview is NewObject'd with the authored
+	 * widget as its archetype, so it arrives already holding the same id. Duplication deliberately
+	 * does NOT (DuplicateSubtree issues a fresh one) -- a copy is a different widget.
+	 *
+	 * This is emphatically NOT the prefab guid table that P4 deleted. That one recorded per-instance
+	 * DIFFERENCES against another asset and had to be kept in step with it; this is a name, it
+	 * records nothing, and nothing else stores it.
+	 */
+	const FGuid& GetWidgetGuid() const { return WidgetGuid; }
+	/** Give this widget a new identity. For a copy, which is not the widget it was copied from. */
+	void AssignNewWidgetGuid() { WidgetGuid = FGuid::NewGuid(); }
+	/**
+	 * Give this widget a SPECIFIC identity. For the one caller that derives identity from an
+	 * external name -- the .dui builder, whose hash of the node id makes every compile of the same
+	 * file produce the same guid, so designer state and preview pairing survive the rebuild. A
+	 * random guid here would be AssignNewWidgetGuid; a colliding one is the caller's bug.
+	 */
+	void SetWidgetGuid(const FGuid& InGuid) { WidgetGuid = InGuid; }
+	/**
+	 * Give this widget an identity only if it has none: one saved before ids existed, or built by something
+	 * that did not give it one. Derived from where the widget lives rather than drawn at random, so every
+	 * load of an asset that was never resaved backfills the same id.
+	 */
+	void EnsureWidgetGuid() { if (!WidgetGuid.IsValid()) { WidgetGuid = FGuid::NewDeterministicGuid(GetPathName()); } }
+
+	/**
+	 * Deep-copy this subtree into InOuter, flat, and hand back the copy of this widget.
+	 *
+	 * Each widget is instanced individually and its Children rewired from the source's, rather than
+	 * handing the root to one NewObject and letting FObjectInstancingGraph walk it. That shortcut
+	 * works for a whole UDreamWidgetTree, whose widgets are all its sub-objects; it does NOT work
+	 * from a widget in the middle of one, because Children are outered flat to the tree and are
+	 * therefore external references from any single widget's point of view -- so the "copy" would
+	 * share its children with the original, and every structural comparison would still pass.
+	 *
+	 * Per-widget instancing still does the real work: a widget's visual, behaviours and panel slot
+	 * ARE its own sub-objects, so those come across as fresh copies without any help.
+	 *
+	 * The copy is detached, unregistered, and named by the engine. Attaching, registering and any
+	 * display-name uniquing are the caller's, because only the caller knows where it landed.
+	 */
+	static UDreamWidget* DuplicateSubtree(UObject* InOuter, UDreamWidget* InSource);
+
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	UDreamWidget* GetParent()const { return Parent.Get(); }
+	/**
+	 * Set parent of this widget, could use null to detach it from origin parent.
+	 * @InKeepWorldPosition true - keep world position & rotation & scale after change parent, false - keep relative position & rotation & scale.
+	 * @InSiblingIndex if InParent is a valid widget, then put the widget at specific index in parent's children list, -1 or other out of range value means the widget will be put at tail.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetParent(UDreamWidget* InParent, bool InKeepWorldPosition = true, int InSiblingIndex = -1);
+	/** Same operation as SetParent, but reports capacity/cycle rejection to the caller. */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	bool TrySetParent(UDreamWidget* InParent, bool InKeepWorldPosition = true, int InSiblingIndex = -1);
+	/** Minimum child capacity imposed by the current LayoutContainer and Behaviours. INDEX_NONE is unlimited. */
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	int32 GetMaxChildrenCapacity() const;
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	bool CanAcceptAdditionalChildren(int32 AdditionalChildCount = 1) const;
+	bool CanAcceptChildren(TConstArrayView<UDreamWidget*> InChildren) const;
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	bool CanAcceptChild(const UDreamWidget* InChild) const;
+	/** Set the sibling index of this widget in its parent's children list. */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void SetSiblingIndex(int Value);
+	/**
+	 * Rewrite this widget's children into InDesiredOrder, for a caller that is reordering PAINT order
+	 * and nothing else. InDesiredOrder must be a permutation of the current array, or nothing happens.
+	 *
+	 * Paint order is not geometry: no panel's arrangement reads sibling order, so a reorder must not
+	 * raise a layout invalidation. Doing it through SetSiblingIndex did, once per moved child, and each
+	 * of those re-entered ApplySiblingIndex (remove, insert, then renumber and notify every sibling --
+	 * O(n) apiece, O(n^2) for the reorder) and then MarkLayoutForRebuild on the parent. That parent is
+	 * the panel currently arranging, whose bIsLayoutDirty it had just consumed, so every ZOrder change
+	 * that actually changed something cost one extra whole-tree layout pass. This is the same end state
+	 * in one linear rewrite: the sibling-index notifications are kept, the invalidation is not.
+	 *
+	 * Returns true when the array actually moved.
+	 */
+	bool ReorderChildrenToPaintOrder(const TArray<UDreamWidget*>& InDesiredOrder);
+	/** Recurses up the list of parents and returns true if this widget is a descendant of the InTarget. */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	bool IsChildOf(const UDreamWidget* InTarget)const;
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	const TArray<UDreamWidget*>& GetChildren()const
+	{
+		EnsureUIChildrenSorted();
+		return Children;
+	}
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	int GetChildrenCount()const { return Children.Num(); }
+
+	/**
+	 * UMG's UPanelWidget::AddChild, adapted. UMG needs eight typed variants because each panel has
+	 * its own slot class; here there is one UDreamPanelSlot, so one verb returns it and you can set
+	 * padding straight off the result.
+	 *
+	 * Returns the child's slot, or null -- which means one of two very different things, so check
+	 * the child's parent if you need to tell them apart: a parent with no layout container takes
+	 * children happily and simply has no slots to give (UMG cannot even express this), whereas a
+	 * refusal leaves the child exactly where it was. Refusals are a full panel, a cycle, or null.
+	 *
+	 * Passing a child this widget already owns is a reorder: the slot and everything on it survive,
+	 * matching what dragging a widget within one panel in the editor does.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Transform", meta = (AdvancedDisplay = "InSiblingIndex"))
+	UDreamPanelSlot* AddChild(UDreamWidget* InChild, int32 InSiblingIndex = -1);
+
+	/**
+	 * Detach a child and leave it alive: still registered, subtree intact, ready to be added
+	 * somewhere else. It goes back to the not-yet-added state a freshly created widget is in, so it
+	 * draws nothing and its behaviours are disabled in the meantime -- which is what makes this the
+	 * verb to pool with, and why a pooled widget still shows up as held rather than leaked.
+	 *
+	 * Ownership passes to you. Nothing else refers to the widget afterwards, so either add it
+	 * somewhere or DestroyChild it; dropping the last reference to a live widget is a leak the
+	 * engine cannot clean up quietly.
+	 *
+	 * The slot does not survive, matching UMG and matching what any other move between parents
+	 * does. Set padding and friends again after re-adding.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	bool RemoveChild(UDreamWidget* InChild);
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	bool RemoveChildAt(int32 InIndex);
+	/**
+	 * Detach and destroy a child, and everything below it. Use this when you are finished with it.
+	 * "Destroy" is DestroyWidget's sense of the word: IsValid(InChild) answers false afterwards.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	bool DestroyChild(UDreamWidget* InChild);
+	/**
+	 * Destroy every child and their subtrees. Named for what it does: UMG's ClearChildren merely
+	 * detaches and lets GC take the pieces, which here would leave live registered widgets behind
+	 * with nobody holding them.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	void DestroyAllChildren();
+
+	/**
+	 * Take THIS widget off whatever it is attached to, and stay alive -- UMG's RemoveFromParent, from
+	 * the child's side. Returns false when it was not attached to anything.
+	 *
+	 * There was no way to write "remove myself" before: a widget could only be removed by its parent
+	 * (RemoveChild) or by the screen subsystem, by name. A widget that is a tracked screen page goes
+	 * out through the subsystem as well, so its name is freed rather than left pointing at a page
+	 * that is registered, alive and nowhere.
+	 *
+	 * It leaves the widget in the not-yet-added state, exactly as RemoveChild does: nothing draws and
+	 * its behaviours are disabled until it is added somewhere. Ownership passes to the caller -- add
+	 * it somewhere or destroy it. To take a page off the screen AND destroy it, call
+	 * UDreamScreenUISubsystem::RemoveFromViewport instead.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Transform")
+	bool RemoveFromParent();
+
+	/** Position of InChild among this widget's children, or INDEX_NONE if it is not one. */
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	int32 GetChildIndex(const UDreamWidget* InChild)const;
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	bool HasChild(const UDreamWidget* InChild)const;
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	bool HasAnyChildren()const;
+	/**
+	 * Whether this widget's layout container hands its children a UDreamPanelSlot. This is the
+	 * question behind AddChild returning null: a widget can take children with no container at all,
+	 * and the Dream flex box and grid arrange children without slots, so "arranges children" and
+	 * "has slots" are not the same thing.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Transform")
+	bool HasPanelSlots()const;
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	const TArray<UDreamUIBehaviour*>& GetAllComponents()const{return Components;}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta = (ComponentClass = "/Script/DreamGUI.DreamUIBehaviour", DeterminesOutputType = "ComponentClass"))
+	TArray<UDreamUIBehaviour*> GetComponents(TSubclassOf<UDreamUIBehaviour> ComponentClass)const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta = (ComponentClass = "/Script/DreamGUI.DreamUIBehaviour", DeterminesOutputType = "ComponentClass"))
+	UDreamUIBehaviour* GetComponent(TSubclassOf<UDreamUIBehaviour> ComponentClass)const;
+	template<class T>
+	T* GetComponent()const
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamUIBehaviour>::Value, "'T' template parameter to GetComponent must be derived from UDreamUIBehaviour");
+		return Cast<T>(GetComponent(T::StaticClass()));
+	}
+	/**
+	 * Adds every behaviour NewLayout requires (UDreamLayoutContainer::GetRequiredBehaviourClasses) that is
+	 * not already present, and removes the behaviours only OldLayout required. Idempotent; a second call with
+	 * the same arguments is a no-op. Calls Modify() on the touched objects but opens no transaction of its
+	 * own, so an editor caller must already be inside one. Returns true when a component was added or removed.
+	 */
+	bool SyncRequiredBehavioursForLayoutContainer(const UDreamLayoutContainer* OldLayout, const UDreamLayoutContainer* NewLayout);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta = (DeterminesOutputType = "InterfaceClass"))
+	UDreamUIBehaviour* GetComponentByInterface(UClass* InterfaceClass)const;
+	template<class T>
+	T* GetComponentInParent(bool bIncludeSelf = false)const
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamUIBehaviour>::Value, "'T' template parameter to GetComponentInParent must be derived from UDreamUIBehaviour");
+		T* ResultComp = nullptr;
+		auto ParentWidget = bIncludeSelf ? this : this->GetParent();
+		while (IsValid(ParentWidget))
+		{
+			ResultComp = ParentWidget->GetComponent<T>();
+			if (IsValid(ResultComp))
+			{
+				return ResultComp;
+			}
+			ParentWidget = ParentWidget->GetParent();
+		}
+		return nullptr;
+	}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta = (ComponentClass = "/Script/DreamGUI.DreamUIBehaviour", DeterminesOutputType = "ComponentClass"))
+	UDreamUIBehaviour* AddComponent(TSubclassOf<UDreamUIBehaviour> ComponentClass);
+	UDreamUIBehaviour* AddComponentByTemplate(UDreamUIBehaviour* ComponentTemplate);
+	template<class T>
+	T* AddComponent()
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamUIBehaviour>::Value, "'T' template parameter to GetComponent must be derived from UDreamUIBehaviour");
+		return Cast<T>(AddComponent(T::StaticClass()));
+	}
+	template<class T>
+	T* AddComponentByTemplate(UDreamUIBehaviour* ComponentTemplate)
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamUIBehaviour>::Value, "'T' template parameter to GetComponent must be derived from UDreamUIBehaviour");
+		return Cast<T>(AddComponent(T::StaticClass(), ComponentTemplate));
+	}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta = (ComponentClass = "/Script/DreamGUI.DreamUIBehaviour"))
+	void RemoveComponent(UDreamUIBehaviour* Component);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta = (ComponentClass = "/Script/DreamGUI.DreamUIBehaviour"))
+	void MoveComponentToIndex(UDreamUIBehaviour* Component, int32 NewIndex);
+	/**
+	 * This widget's own transform changed -- its relative, layout or render transform, its parent, or the
+	 * scene component its canvas follows. The single funnel for every such change.
+	 *
+	 * Nothing is computed here. The widget and every descendant are marked stale, and GetWorldTransform
+	 * composes each when it is next read, so a reader right after the write sees the new transform while a
+	 * widget written three times before anyone reads it is composed once. What a move is announced to --
+	 * the canvas, the visual, the OnTransformChanged listeners -- hears it once, at the next flush of this
+	 * world's manager (UDreamUIManagerWorldSubsystem::FlushTransformChanges). Where no manager will flush --
+	 * a tree with no world, a manager that does not tick, r.DreamUI.DeferTransformNotifications 0 -- the
+	 * subtree is flushed before this returns, which is when every move used to be announced.
+	 *
+	 * bPropagateToChildren is kept for the callers that spell it out: a descendant's world transform is
+	 * composed from this one, so the descendants are always marked.
+	 */
+	void CalculateObjectToWorldTransform(bool bPropagateToChildren = true);
+	/** Whether the cached world transform is out of date, to be composed again when next read. */
+	bool IsWorldTransformDirty()const { return bWorldTransformDirty; }
+	/** Whether a change of this widget's world transform waits to be announced at the next flush. */
+	bool IsTransformChangePending()const { return bTransformChangePending; }
+	/**
+	 * The UI manager this widget registered with, kept from registration to unregistration. Null while it is not
+	 * registered, or when its world has no manager. For what is asked every frame of a thousand widgets: finding it
+	 * through the world walks the outers each time.
+	 */
+	UDreamUIManagerWorldSubsystem* GetRegisteredManager()const;
+	/** Announce the changes pending in this widget's subtree now, to its canvases, visuals and listeners. */
+	void FlushTransformChanges();
+	/**
+	 * The walk every flush takes, with its two questions handed in: which widgets are render layers, and
+	 * what telling a widget's canvas and visual means. FlushTransformChanges hands in IsRenderLayer and the
+	 * canvas's own marks; a test hands in its own, to check the render-layer rules against layers of its
+	 * choosing.
+	 *
+	 * The widgets of InRoot's subtree whose change is pending are visited parents first, each once: its
+	 * pending state cleared (a listener that moves it again marks it afresh), its world transform
+	 * composed, InNotify told what EDreamTransformChangeNotice applies, its OnTransformChanged listeners
+	 * called. A widget whose layer-relative transform did not change -- nothing between its render layer
+	 * and it changed its own transform -- is InsideMovedLayer, and its listeners still hear the move: the
+	 * world transform did change.
+	 */
+	static void FlushTransformChangesFrom(UDreamWidget* InRoot, TFunctionRef<bool(const UDreamWidget&)> InIsRenderLayer,
+		TFunctionRef<void(UDreamWidget&, EDreamTransformChangeNotice)> InNotify);
+	/**
+	 * The same walk, which does not go into a render layer InIsQuietLayer answers true for (IsRenderLayerQuiet). What is
+	 * under it only moved with it: it is left stale and pending, to be composed when read, and the layer's next move stops
+	 * at it. One of them that moved on its own is a root of its own at the manager's flush, and is told there.
+	 */
+	static void FlushTransformChangesFrom(UDreamWidget* InRoot, TFunctionRef<bool(const UDreamWidget&)> InIsRenderLayer,
+		TFunctionRef<void(UDreamWidget&, EDreamTransformChangeNotice)> InNotify, TFunctionRef<bool(const UDreamWidget&)> InIsQuietLayer);
+	/** How many world transforms any widget has composed since the process started: what tests and profiling count. */
+	static uint64 GetWorldTransformComputeCount();
+private:
+	UDreamUIBehaviour* AddComponent(TSubclassOf<UDreamUIBehaviour> ComponentClass, UDreamUIBehaviour* ComponentTemplate);
+	bool TrySetParentInternal(UDreamWidget* InParent, bool InKeepWorldPosition, int InSiblingIndex, bool bEnforceCapacity);
+	
+	/**
+	 * The world transform as last composed. GetWorldTransform is its only reader: it composes it again first
+	 * when bWorldTransformDirty says it is out of date, from the parent's (or the canvas's scene component's)
+	 * and GetRenderLocalTransform.
+	 */
+	mutable FTransform ObjectToWorldTransform;
+	// Its flags are declared with the render transform: see bCachedLayerQuiet's neighbours.
+	/** Clears ChildrenStaleAndPending, from any thread. */
+	void ForgetChildrenStale()const
+	{
+		if (FPlatformAtomics::AtomicRead_Relaxed(&ChildrenStaleAndPending) != 0)
+		{
+			FPlatformAtomics::AtomicStore_Relaxed(&ChildrenStaleAndPending, static_cast<int8>(0));
+		}
+	}
+	/**
+	 * The manager this widget registered with (GetRegisteredManager), whose flush announces its changes. Null with
+	 * no manager: every change is then announced on the spot.
+	 */
+	TWeakObjectPtr<UDreamUIManagerWorldSubsystem> RegisteredManager;
+	void ComputeWorldTransform()const;
+	/**
+	 * The world transform as ComputeWorldTransform would compose it now, without keeping it -- nor that of any stale
+	 * ancestor it is composed from: see GetWorldRectBoundingSphere. Writes nothing.
+	 */
+	FTransform ComposeWorldTransformWithoutKeeping()const;
+	/** Mark this widget and its subtree stale and pending, stopping at a descendant already both. */
+	void MarkWorldTransformStaleRecursive();
+	/** What FlushTransformChanges does with a notice: the canvas's marks, and the visual's. */
+	void ApplyTransformChangeNotice(EDreamTransformChangeNotice InNotice);
+
+	/** Tell this widget's layout container, layout self and visual that its transform changed. */
+	virtual void OnUpdateTransform();
+	virtual void OnChildAttached(UDreamWidget* ChildComponent);
+	virtual void OnChildDetached(UDreamWidget* ChildComponent);
+
+	void OnDetachedFromParent();
+	void OnAttachedToParent();
+
+	/** UIItem's hierarchy changed */
+	void OnHierarchyAttachmentChanged(UDreamCanvas* ParentRenderCanvas, UDreamWidget* ParentRoot);
+	/** Called by SetRenderCanvas, after it has moved the widget and its visual to the new canvas (which may be the old one, re-registered). */
+	virtual void OnRenderCanvasChanged(UDreamCanvas* OldCanvas, UDreamCanvas* NewCanvas);
+	void SetRenderCanvas(UDreamCanvas* InNewCanvas);
+
+	UPROPERTY(Instanced)
+	TArray<TObjectPtr<UDreamUIBehaviour>> Components;
+public:
+	/** Called by DreamCanvas, when a new DreamCanvas is registered on self actor */
+	void RegisterRenderCanvas(UDreamCanvas* InRenderCanvas);
+	/** Called by DreamCanvas, when DreamCanvas is unregistered on self actor */
+	void UnregisterRenderCanvas();
+
+	/** Update layout */
+	void UpdateLayout();
+	/** Called by DreamCanvas */
+	void UpdateClip(UDreamUIDataAsTexture* ClipDataTexture, TArray<TSharedPtr<FDreamUIClipData>>& ClipDataList);
+	/** Called by DreamCanvas */
+	void UpdateVisual()const;
+	
+	void ForceUpdateLayout();
+
+	/**
+	 * Re-derive this subtree's render canvas from the parent chain and push it down, registering
+	 * the visuals it reaches. For subtrees assembled through SetParentBeforeRegister, which fires
+	 * no attach events: nothing propagated a canvas into them, so their OnRegister ran with none
+	 * and every visual stayed off the render lists -- built, laid out, and invisible.
+	 */
+	void RefreshRenderCanvasFromParentChain();
+
+	/**
+	 * Recompute every piece of state this subtree INHERITS from its ancestors -- active, visibility,
+	 * raycastable, interactable -- plus the render canvas.
+	 *
+	 * OnRegister only runs those four walks for a widget that is the root of its hierarchy
+	 * (see its IsRootWidgetInHierarchy() gate), because a normal attach event does the propagation
+	 * instead. A subtree parented with SetParentBeforeRegister raises no attach event, so it
+	 * registers holding the defaults it was born with: a raycast-disabled holder does not disable
+	 * its children, a hidden parent does not hide them, a deactivated one does not deactivate them.
+	 * The drag visual walked straight into that -- its holder is Disabled, its instanced content
+	 * was not, so the visual became the pointer's EnterWidget and swallowed every drop.
+	 */
+	void RefreshInheritedStateFromParentChain();
+protected:
+	void RenewRenderCanvasRecursive(UDreamCanvas* InParentRenderCanvas);
+
+private:
+	FWidgetActiveChangedEvent OnWidgetActiveChangedEvent;
+	FTransformChangedEvent OnTransformChangedEvent;
+	FDimensionChangedEvent OnDimensionChangedEvent;
+	FChildDimensionChangedEvent OnChildDimensionChangedEvent;
+	FAttachmentChangedEvent OnAttachmentChangedEvent;
+	FSiblingIndexChangedEvent OnSiblingIndexChangedEvent;
+	FInteractableChangedEvent OnInteractableChangedEvent;
+	FEnabledChangedEvent OnEnabledChangedEvent;
+	FRaycastableChangedEvent OnRaycastableChangedEvent;
+	FComponentsChangedEvent OnComponentsChangedEvent;
+public:
+	FWidgetActiveChangedEvent& GetWidgetActiveChangedEvent(){return OnWidgetActiveChangedEvent;}
+	/** Asking for it counts as meaning to listen: a render layer holding this widget no longer takes its moves as quiet. */
+	FTransformChangedEvent& GetTransformChangedEvent();
+	/** Whether anything listens to the transform event: nothing can before it is asked for (bTransformChangedEventAsked). */
+	bool HasTransformChangedListener()const { return bTransformChangedEventAsked && OnTransformChangedEvent.IsBound(); }
+	FDimensionChangedEvent& GetDimensionChangedEvent(){return OnDimensionChangedEvent;}
+	FChildDimensionChangedEvent& GetChildDimensionChangedEvent(){return OnChildDimensionChangedEvent;}
+	FAttachmentChangedEvent& GetAttachmentChangedEvent(){return OnAttachmentChangedEvent;}
+	FSiblingIndexChangedEvent& GetSiblingIndexChangedEvent(){return OnSiblingIndexChangedEvent;}
+	FInteractableChangedEvent& GetInteractableChangedEvent(){return OnInteractableChangedEvent;}
+	/**
+	 * GetIsEnabledInHierarchy flipped -- this widget's own bIsEnabled or an ancestor's -- whether or not GetInteractableInHierarchy
+	 * flipped with it (it does not when Interactable already said Disabled): what a disabled look that follows UMG's
+	 * IsEnabled, not DreamGUI's Interactable, listens to. Broadcast from the same walk as the interactable event, after it.
+	 */
+	FEnabledChangedEvent& GetEnabledChangedEvent(){return OnEnabledChangedEvent;}
+	FRaycastableChangedEvent& GetRaycastableChangedEvent(){return OnRaycastableChangedEvent;}
+	FComponentsChangedEvent& GetComponentsChangedEvent(){return OnComponentsChangedEvent;}
+protected:
+	/**
+	 * Parent in hierarchy -- a back-pointer derived from the owning widget's Children, never a record
+	 * of its own. DuplicateTransient as well as Transient: copying it would point a duplicated subtree
+	 * at the ORIGINAL's parent, and the copy is rebuilt from Children anyway
+	 * (RestoreParentLinksRecursive), which is the same pass a package load and class-template
+	 * instancing already have to run.
+	 */
+	UPROPERTY(Transient, DuplicateTransient) mutable TWeakObjectPtr<UDreamWidget> Parent = nullptr;
+	/** root in hierarchy */
+	mutable TWeakObjectPtr<UDreamWidget> RootWidget = nullptr;//don't mark this Transactional, because undo or redo will call register/unregister, which will trigger check RootUIItem
+	/**
+	 * UI children array, sorted by hierarchy index -- and the one persistent record of the hierarchy.
+	 *
+	 * Instanced, so FObjectInstancingGraph walks the whole tree when a widget tree is instanced from a
+	 * class template (UDreamWidgetTree). Parent stays transient and is derived from this on load, so
+	 * this array is the single structural truth; nothing else may claim to own the hierarchy.
+	 *
+	 * Note that widgets are outered flat to their UDreamWidgetTree, NOT nested under their parent --
+	 * matching UMG, where UWidgetTree::ConstructWidget outers every widget to the tree and the parent
+	 * links are expressed purely by Instanced properties. Reparenting therefore never moves an outer.
+	 */
+	UPROPERTY(Instanced) mutable TArray<TObjectPtr<UDreamWidget>> Children;
+	/**
+	 * Stable identity across trees. See GetWidgetGuid for what it replaces and why.
+	 *
+	 * Neither Transient nor DuplicateTransient, and that is the mechanism rather than an oversight:
+	 * a preview widget is instanced with its authored counterpart as the archetype, and a class
+	 * archetype is a duplicate of the authoring tree, so both arrive already carrying the id that
+	 * pairs them back. Only DuplicateSubtree, which makes a NEW widget, issues a fresh one.
+	 */
+	UPROPERTY() FGuid WidgetGuid;
+	/** check valid, incase un-normally deleting actor, like undo */
+	void EnsureUIChildrenValid();
+	void EnsureUIChildrenSorted()const;
+
+	/** AnchorData contains rect transform and color */
+	// DreamGUI_Hidden: the Layout section's anchor, position and size rows edit it.
+	UPROPERTY(EditAnywhere, Getter, Setter, Category = "DreamGUI-AnchorData", meta = (DreamGUI_Hidden))
+	FDreamUIAnchorData AnchorData;
+
+	/**
+	 * Animatable mirrors of the resolved geometry, one per channel Sequencer can key. Sequencer
+	 * reads property memory directly while writing through the setter (the RelativeRotationEuler
+	 * story), so each must be a real stored field; SyncAnimatableGeometryMirrors keeps them equal
+	 * to the caches below. A stale cache and its mirror go stale together, which is exactly what
+	 * the details panel shows too.
+	 */
+	// DuiHidden on all six: they are Interp mirrors of AnchorData for Sequencer, and their setters
+	// write through to it -- which is exactly what exempts them from the transient refusal and
+	// exactly why a reflective sweep must not spell them: AnchorData already carries the value. DreamGUI_Hidden for the
+	// same reason: the Layout section's rows edit the value.
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter = "GetWidth", Setter = "SetWidth", Category = "DreamGUI-AnchorData", DisplayName = "Width", meta = (AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	float AnimatableWidth = 0;
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter = "GetHeight", Setter = "SetHeight", Category = "DreamGUI-AnchorData", DisplayName = "Height", meta = (AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	float AnimatableHeight = 0;
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter = "GetAnchorOffsetLeft", Setter = "SetAnchorOffsetLeft", Category = "DreamGUI-AnchorData", DisplayName = "Anchor Left", meta = (AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	float AnimatableAnchorLeft = 0;
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter = "GetAnchorOffsetRight", Setter = "SetAnchorOffsetRight", Category = "DreamGUI-AnchorData", DisplayName = "Anchor Right", meta = (AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	float AnimatableAnchorRight = 0;
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter = "GetAnchorOffsetTop", Setter = "SetAnchorOffsetTop", Category = "DreamGUI-AnchorData", DisplayName = "Anchor Top", meta = (AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	float AnimatableAnchorTop = 0;
+	UPROPERTY(Interp, Transient, BlueprintReadOnly, Getter = "GetAnchorOffsetBottom", Setter = "SetAnchorOffsetBottom", Category = "DreamGUI-AnchorData", DisplayName = "Anchor Bottom", meta = (AllowPrivateAccess = true, DuiHidden, DreamGUI_Hidden))
+	float AnimatableAnchorBottom = 0;
+	void SyncAnimatableGeometryMirrors() const;
+
+	mutable float CacheWidth = 0;
+	//UPROPERTY(EditAnywhere, Transient, Getter="GetHeight", Setter="SetHeight", Category = "DreamGUI-AnchorData", DisplayName="Height")
+	mutable float CacheHeight = 0;
+	//UPROPERTY(EditAnywhere, Transient, Getter="GetAnchorLeft", Setter="SetAnchorLeft", Category = "DreamGUI-AnchorData", DisplayName="AnchorLeft")
+	mutable float CacheAnchorOffsetLeft = 0;
+	//UPROPERTY(EditAnywhere, Transient, Getter="GetAnchorRight", Setter="SetAnchorRight", Category = "DreamGUI-AnchorData", DisplayName="AnchorRight")
+	mutable float CacheAnchorOffsetRight = 0;
+	//UPROPERTY(EditAnywhere, Transient, Getter="GetAnchorTop", Setter="SetAnchorTop", Category = "DreamGUI-AnchorData", DisplayName="AnchorTop")
+	mutable float CacheAnchorOffsetTop = 0;
+	//UPROPERTY(EditAnywhere, Transient, Getter="GetAnchorBottom", Setter="SetAnchorBottom", Category = "DreamGUI-AnchorData", DisplayName="AnchorBottom")
+	mutable float CacheAnchorOffsetBottom = 0;
+	
+	mutable uint8 bCacheWidthDirty : 1 = true, bCacheHeightDirty : 1 = true,
+	bCacheAnchorOffsetLeftDirty : 1 = true, bCacheAnchorOffsetRightDirty : 1 = true,
+	bCacheAnchorOffsetTopDirty : 1 = true, bCacheAnchorOffsetBottomDirty : 1 = true;
+	uint8 bCanSetAnchorFromTransform : 1 = false;
+
+	/** World-space rect bounds, for the raycaster's coarse reject. See GetWorldRectBoundingSphere. */
+	mutable FVector CacheWorldRectCenter = FVector::ZeroVector;
+	/** Zero means "no usable bound" -- a degenerate rect, never a legitimate answer of nothing. */
+	mutable double CacheWorldRectRadius = 0.0;
+	
+#pragma region AnchorData
+public:
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	const FDreamUIAnchorData& GetAnchorData()const { return AnchorData; }
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FVector2D GetPivot() const { return AnchorData.Pivot; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FVector2D GetAnchorMin() const { return AnchorData.AnchorMin; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FVector2D GetAnchorMax() const { return AnchorData.AnchorMax; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FVector2D GetAnchoredPosition() const { return AnchorData.AnchoredPosition; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FVector2D GetSizeDelta() const { return AnchorData.SizeDelta; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	float GetHorizontalAnchoredPosition() const { return AnchorData.AnchoredPosition.X; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	float GetVerticalAnchoredPosition() const { return AnchorData.AnchoredPosition.Y; }
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetWidth() const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetHeight() const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FVector2D GetSize() const{return FVector2D(GetWidth(), GetHeight());}
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetAnchorOffsetLeft()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetAnchorOffsetTop()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetAnchorOffsetRight()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetAnchorOffsetBottom()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	FMargin GetAnchorOffset()const;
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorData(const FDreamUIAnchorData& Value);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetPivot(FVector2D Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorMin(FVector2D Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorMax(FVector2D Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	void SetAnchorOffset(FMargin Value);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetHorizontalAndVerticalAnchorMinMax(FVector2D MinValue, FVector2D MaxValue, bool bKeepSize, bool bKeepRelativeLocation);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetHorizontalAnchorMinMax(FVector2D Value, bool bKeepSize = false, bool bKeepRelativeLocation = false);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetVerticalAnchorMinMax(FVector2D Value, bool bKeepSize = false, bool bKeepRelativeLocation = false);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchoredPosition(FVector2D Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetHorizontalAnchoredPosition(float Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetVerticalAnchoredPosition(float Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetSizeDelta(FVector2D Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+	void SetAnchoredPositionAndSizeDelta(FVector2D Position, FVector2D Size);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetWidth(float Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetHeight(float Value);
+
+	/** This function only valid if UIItem have parent */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorOffsetLeft(float Value);
+	/** This function only valid if UIItem have parent */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorOffsetTop(float Value);
+	/** This function only valid if UIItem have parent */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorOffsetRight(float Value);
+	/** This function only valid if UIItem have parent */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		void SetAnchorOffsetBottom(float Value);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		FVector2D GetLocalSpaceLeftBottomPoint()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		FVector2D GetLocalSpaceRightTopPoint()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		FVector2D GetLocalSpaceCenter()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetLocalSpaceLeft()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetLocalSpaceRight()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetLocalSpaceBottom()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI-AnchorData")
+		float GetLocalSpaceTop()const;
+#pragma endregion
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamWidget* GetChildByIndex(int index)const;
+	/** Get root canvas of hierarchy */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamCanvas* GetRootCanvas()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	USceneComponent* GetAttachedRootSceneComponent()const;
+
+	/** mark all dirty for UI element to update, include all children */
+	void MarkAllDirtyRecursive();
+	virtual void MarkAllDirty();
+	/** Dirty every widget in this subtree that draws into Canvas, because its render mode just changed. */
+	virtual void MarkRenderModeChangeRecursive(UDreamCanvas* Canvas);
+
+	void CalculateAnchorFromTransform();
+	void CalculateTransformFromAnchor();
+	void CalculateTransformFromAnchor(bool& OutHorizontalPositionChanged, bool& OutVerticalPositionChanged);
+	
+	void MarkDimensionChanged(bool InPivotChanged, bool InWidthChanged, bool InHeightChanged);
+	void MarkAnchorDataChanged_Recursive(bool InPivotChanged, bool InWidthChanged, bool InHeightChanged, bool InDiscardCache = true, bool InPropagateToChildren = true);
+	virtual void MarkCanvasUpdate(bool bRebuildDrawCall)const;
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetPositionAndSizeForLayoutAnimation(FVector2D Position, FVector2D Size);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetPositionForLayoutAnimation(FVector2D Position);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetSizeForLayoutAnimation(FVector2D Position);
+	void MarkAnchorDataChangedByLayoutContainer_Recursive(bool InPivotChanged, bool InWidthChanged, bool InHeightChanged, bool InDiscardCache = true, bool InPropagateToChildren = true);
+private:
+	float GetLayoutProperty(TFunctionRef<float(UDreamLayoutSelf*)> GetLayoutSelfProperty
+		, TFunctionRef<float(UDreamLayoutContainer*)> GetLayoutContainerProperty
+		, TFunctionRef<float(UDreamVisual*)> GetVisualProperty
+		, float DefaultValue)const;
+	UObject* GetLayoutSource(TFunctionRef<float(UDreamLayoutSelf*)> GetLayoutSelfProperty
+		, TFunctionRef<float(UDreamLayoutContainer*)> GetLayoutContainerProperty
+		, TFunctionRef<float(UDreamVisual*)> GetVisualProperty
+		)const;
+	
+	mutable uint8 bNeedSortUIChildren : 1;
+	uint8 bIsAttaching : 1 = false;
+
+protected:
+	/** Interp, so a .dui timeline and the animation editor can key a fade as they key a move. */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true, UIMin="0", UIMax="1", DreamGUI_Section = "Layer", DreamGUI_Order = 10))
+	float RenderOpacity = 1.0f;
+	/** See SetContentTint. Runtime state, not saved: what exposes a content colour (a border) sets it from its own property. */
+	FLinearColor ContentTint = FLinearColor::White;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EDreamWidgetClipping Clipping = EDreamWidgetClipping::Inherit;
+	TWeakPtr<FDreamUIClipData> ClipData = nullptr;
+	/**
+	 * X- RightBottom, Y- RightTop, Z- LeftTop, W- LeftBottom
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true, EditCondition="Clipping!=EDreamWidgetClipping::Disabled&&Clipping!=EDreamWidgetClipping::Inherit"))
+	FVector4f ClippingCornerRadius = FVector4f::Zero();
+	/**
+	 * Expand clip area outward.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true, EditCondition="Clipping!=EDreamWidgetClipping::Disabled&&Clipping!=EDreamWidgetClipping::Inherit"))
+	FMargin ClippingMargin = FMargin(0);
+	/**
+	 * A mask on this widget's clip, when it clips to its bounds: a shape, a feathered edge, a texture or a procedural
+	 * pattern, inverted if asked. It clips the whole subtree, as the clip rect does. At its defaults it is no mask.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true, EditCondition="Clipping==EDreamWidgetClipping::ClipToBounds||Clipping==EDreamWidgetClipping::ClipToBoundsWithoutIntersecting",
+		DreamGUI_Section = "Layer", DreamGUI_Group = "Mask", DreamGUI_Order = 40, DreamGUI_Handle = "MaskShape"))
+	FDreamClipMask ClipMask;
+	/**
+	 * Shows this widget and everything under it only where the layer below it is drawn, and through that layer's opacity:
+	 * a clipping mask. The layer below is the sibling drawn before this one that does not clip to the layer below itself,
+	 * so siblings that clip to the layer below in a row share one. It can be a simple or nine-sliced image or texture, or
+	 * a rect block; anything else is not clipped to, with a warning. A hidden layer below hides this too.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter = "GetClipToBelow", Setter = "SetClipToBelow", meta = (AllowPrivateAccess = true, DisplayName = "Clip To Layer Below",
+		DreamGUI_Section = "Layer", DreamGUI_Order = 30))
+	bool bClipToBelow = false;
+#if WITH_EDITORONLY_DATA
+	// DreamGUI_Hidden: the lock on the Corner Radius row of the Clipping group.
+	UPROPERTY(EditAnywhere, Category = "DreamGUI", meta = (DreamGUI_Hidden))
+	bool bUniformSetClippingCornerRadius = true;
+#endif
+	/**
+	 * If not WidgetActive, then not visible, not take layout space, not interactable, not hit-testable
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter = "GetWidgetActive", Setter="SetWidgetActive", meta = (AllowPrivateAccess = true))
+	bool bWidgetActive = true;
+	/** Controls layout, painting and hit testing independently from WidgetActive. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter = "GetVisibility", Setter = "SetVisibility", meta = (AllowPrivateAccess = true))
+	EDreamWidgetVisibility Visibility = EDreamWidgetVisibility::Visible;
+	/**
+	 * Visibility as a yes or no: true is Visible, false is Collapsed. What `Shown <- HasSave()` binds in a .dui, and
+	 * what an `if` block binds on each widget of its branches. Nothing of its own is kept -- reading it reads
+	 * Visibility (anything but Collapsed is shown), writing it writes Visibility -- so the field below is only the
+	 * slot reflection needs for a property with a getter and a setter. DuiHidden: Visibility is what the write-back
+	 * spells, so a sweep must not author the same value twice.
+	 */
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "DreamGUI", Getter = "GetShown", Setter = "SetShown", meta = (AllowPrivateAccess = true, DuiHidden))
+	bool Shown = true;
+#if WITH_EDITORONLY_DATA
+	/** Transient preview state restored from the owning designer data. */
+	bool bHiddenInDesigner = false;
+	/** LayoutContainer captured in PreEditChange so PostEditChangeProperty can diff required behaviours. */
+	TWeakObjectPtr<UDreamLayoutContainer> LayoutContainerBeforeEdit;
+#endif
+	/** If the widget will draw snapped to the nearest pixel.  Improves clarity but might cause visible stepping in animation. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EWidgetPixelSnapping PixelSnapping = EWidgetPixelSnapping::Inherit;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EDreamWidgetRaycastableType Raycastable = EDreamWidgetRaycastableType::Inherit;
+	/** If the widget enable for interaction? */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EDreamWidgetInteractableType Interactable = EDreamWidgetInteractableType::Inherit;
+	/**
+	 * UMG's bIsEnabled: the switch a game flips to grey a thing out and stop it responding.
+	 *
+	 * It is a SECOND question from Interactable, not a rename of it. Interactable is three-valued and
+	 * inheritable and describes how a widget joins the hierarchy's interaction policy; this is one
+	 * bool a caller sets on the widget it is disabling, and it wins over everything below: a child
+	 * that asked for Interactable=Enabled is still disabled when an ancestor is disabled, which is
+	 * what "disable this dialog" has to mean and what UMG's SetIsEnabled does.
+	 *
+	 * The two are AND-ed. GetInteractableInHierarchy -- what input, navigation and the selectables'
+	 * disabled look all read -- answers true only when this widget and every ancestor are enabled AND
+	 * the Interactable rules say so, so every control's existing disabled appearance works through
+	 * this without a line of per-control code.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Behavior", Getter = "GetIsEnabled", Setter = "SetIsEnabled", meta = (AllowPrivateAccess = true))
+	bool bIsEnabled = true;
+	/**
+	 * Restrict navigation area to only children of this UI node, to forbid it navigate out.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter = "GetRestrictNavigationArea", Setter = "SetRestrictNavigationArea", meta = (AllowPrivateAccess = true))
+	uint8 bRestrictNavigationArea : 1 = false;
+	/**
+	 * What happens when a directional move reaches the edge of this area. Only read on a widget that
+	 * is itself a restricted area; Stop keeps the behaviour every existing prefab already has.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter, Setter, meta = (AllowPrivateAccess = true, EditCondition = "bRestrictNavigationArea"))
+	EDreamUINavigationBoundaryRule NavigationBoundaryRule = EDreamUINavigationBoundaryRule::Stop;
+	/**
+	 * Ignore parent layout container
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DreamGUI", Getter = "GetIgnoreLayout", Setter = "SetIgnoreLayout", meta = (AllowPrivateAccess = true))
+	bool bIgnoreLayout = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Instanced, Category = "Visual", Getter, meta = (AllowPrivateAccess = true))
+	TObjectPtr<UDreamVisual> Visual = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Instanced, Category = "LayoutContainer", Getter, meta = (AllowPrivateAccess = true))
+	TObjectPtr<UDreamLayoutContainer> LayoutContainer = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Instanced, Category = "LayoutSelf", Getter, meta = (AllowPrivateAccess = true))
+	TObjectPtr<UDreamLayoutSelf> LayoutSelf = nullptr;
+	/** Parent-panel-owned layout data. This is separate from LayoutSelf so legacy Flex/Grid assets remain valid. */
+	// DreamGUI_Hidden: the slot's own properties are the Slot section's, for the panel the widget is in.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Instanced, Category = "PanelSlot", Getter, meta = (AllowPrivateAccess = true, DreamGUI_Hidden))
+	TObjectPtr<UDreamPanelSlot> PanelSlot = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction|Focus", Getter = "GetIsFocusable", Setter = "SetIsFocusable", meta = (AllowPrivateAccess = true))
+	bool bIsFocusable = false;
+	/**
+	 * Tab and Shift+Tab stop here, when it is focusable and can be navigated to. Off leaves it to the arrows, the pad, a
+	 * pointer and code -- a browser's tabindex="-1".
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction|Focus", Getter = "GetIsTabStop", Setter = "SetIsTabStop", meta = (AllowPrivateAccess = true))
+	bool bIsTabStop = true;
+	/** Its place in Tab order among its siblings: lower first, siblings with the same index in the hierarchy's order. Only siblings are compared. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction|Focus", Getter, Setter, meta = (AllowPrivateAccess = true))
+	int32 TabIndex = 0;
+	/** How the Tab stops inside it take part in Tab order; see EDreamWidgetTabNavigation. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction|Focus", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EDreamWidgetTabNavigation TabNavigation = EDreamWidgetTabNavigation::Continue;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction", Getter, Setter, meta = (AllowPrivateAccess = true))
+	TEnumAsByte<EMouseCursor::Type> Cursor = EMouseCursor::Default;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction", Getter, Setter, meta = (AllowPrivateAccess = true, MultiLine = true))
+	FText ToolTipText;
+	/**
+	 * Show THIS widget class as the tooltip instead of the built-in text bubble. Beats ToolTipText
+	 * when both are set, matching the order the tooltip service already resolves its two content
+	 * paths in.
+	 *
+	 * A class and not an instance, which is the one place this differs from UMG's ToolTipWidget: the
+	 * tooltip service instantiates its content when the bubble appears and destroys it when the
+	 * bubble goes, so a widget kept alive per-host for a tooltip that is shown for two seconds every
+	 * few minutes would be paying rent for nothing. IDreamUITooltipSourceInterface remains the way to
+	 * choose the class at runtime; this is the authored answer for the common case.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction", Getter, Setter, meta = (AllowPrivateAccess = true, DreamGUI_Section = "Behavior"))
+	TSubclassOf<UDreamUserWidget> ToolTipWidgetClass;
+	/**
+	 * Which way this widget's layout flows. Inherit -- the default, and what every asset authored
+	 * before this existed holds -- takes the answer from the nearest ancestor that states one, so a
+	 * whole screen is mirrored by setting Culture once on its root.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Localization", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EDreamFlowDirectionPreference FlowDirectionPreference = EDreamFlowDirectionPreference::Inherit;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Accessibility", Getter, Setter, meta = (AllowPrivateAccess = true))
+	EDreamAccessibleBehavior AccessibleBehavior = EDreamAccessibleBehavior::Auto;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Accessibility", Getter, Setter, meta = (AllowPrivateAccess = true, MultiLine = true))
+	FText AccessibleText;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Accessibility", Getter, Setter, meta = (AllowPrivateAccess = true, MultiLine = true))
+	FText AccessibleSummaryText;
+
+	UPROPERTY(BlueprintAssignable, Category = "DreamGUI|Visibility")
+	FDreamWidgetVisibilityChangedEvent OnVisibilityChanged;
+
+public:
+	// Public, the way UMG's are: a delegate a Blueprint can bind is one C++ should be able to bind too,
+	// and a control that relays focus from one of its parts raises these on itself.
+	UPROPERTY(BlueprintAssignable, Category = "DreamGUI|Focus")
+	FDreamWidgetFocusEvent OnFocusReceived;
+	UPROPERTY(BlueprintAssignable, Category = "DreamGUI|Focus")
+	FDreamWidgetFocusEvent OnFocusLost;
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamWidgetClipping GetClipping()const
+	{
+		return bHasLayoutClippingOverride && Clipping == EDreamWidgetClipping::Inherit
+			? LayoutClippingOverride
+			: Clipping;
+	}
+	EDreamWidgetClipping GetAuthoredClipping()const { return Clipping; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool IsPointVisibleOnClip(const FVector& Value)const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetClipping(EDreamWidgetClipping Value);
+	/** Applies a transient layout default while authored clipping remains Inherit. */
+	void SetLayoutClippingOverride(EDreamWidgetClipping Value);
+	void ClearLayoutClippingOverride();
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	FVector4f GetClippingCornerRadius()const { return ClippingCornerRadius; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	FMargin GetClippingMargin()const { return ClippingMargin; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetClippingCornerRadius(FVector4f Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetClippingMargin(FMargin Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	const FDreamClipMask& GetClipMask()const { return ClipMask; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetClipMask(const FDreamClipMask& Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetClipToBelow()const { return bClipToBelow; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetClipToBelow(bool Value);
+	/**
+	 * The layer this widget clips to while it clips to the layer below (bClipToBelow): the sibling drawn before it that
+	 * does not clip to the layer below itself. Null when it does not, or when nothing is drawn before it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamWidget* FindClipToBelowUnderlay()const;
+	/**
+	 * The textures the clips around this widget read changed: everything drawn through them, this widget and what is under
+	 * it, is batched again, since a draw call binds them.
+	 */
+	void MarkClipMaskTexturesChanged()const;
+	/** The layer group on this widget, while one is registered with it (UDreamLayerGroup). */
+	UDreamLayerGroup* GetLayerGroup()const;
+	/** Set by the layer group as it registers with this widget, and cleared as it unregisters. */
+	void SetLayerGroup(UDreamLayerGroup* InGroup);
+	/**
+	 * The mask this widget's clip is drawn and hit-tested with: the one a behaviour drives on it (SetDrivenClipMask), or
+	 * Clip Mask. While a mask is driven, a widget that does not clip to its bounds does -- Inherit as Clip To Bounds,
+	 * Disabled as Clip To Bounds Without Intersecting -- so that there is a clip for the mask to cut.
+	 */
+	const FDreamClipMask& GetEffectiveClipMask()const;
+	/**
+	 * For a behaviour that drives this widget's clip mask in place of Clip Mask while it runs (UDreamMaskTransition). InMask
+	 * is read on every update of the clip, and must stay where it is for as long as InDriver drives it; nothing of it is
+	 * saved, shown or written into Clip Mask. A null InMask stops InDriver's driving, and leaves another driver's alone.
+	 */
+	void SetDrivenClipMask(const UObject* InDriver, const FDreamClipMask* InMask);
+	/** The driven mask changed, and with bInTextureChanged the texture it reads: the clip takes it on its next update. */
+	void MarkDrivenClipMaskChanged(bool bInTextureChanged);
+	bool IsClipMaskDriven()const;
+private:
+	TWeakObjectPtr<UDreamLayerGroup> LayerGroup;
+	TWeakObjectPtr<const UObject> ClipMaskDriver;
+	const FDreamClipMask* DrivenClipMask = nullptr;
+public:
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	float GetRenderOpacity()const { return RenderOpacity; }
+	/**
+	 * Retrieves the final opacity value used during rendering for this widget, considering all relevant settings and parent opacity.
+	 * This value is influenced by the widget's own `RenderOpacity` property and hierarchical parent `RenderOpacity`.
+	 *
+	 * @return The calculated final opacity value for rendering this widget.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	float GetFinalRenderOpacity()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetRenderOpacity(float Value);
+	/**
+	 * Tint everything drawn below this widget -- its descendants' visuals, never its own -- as UMG's content colour does
+	 * (a border's ContentColorAndOpacity reaching its child, SCompoundWidget's ColorAndOpacity). Multiplied in linear
+	 * space, with every ancestor's, into each descendant visual's UDreamVisual::GetFinalColor; marks their colours dirty.
+	 * White changes nothing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetContentTint(const FLinearColor& Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	FLinearColor GetContentTint()const { return ContentTint; }
+	/** The product of every ancestor's ContentTint, this widget's own left out: what this widget's visual is tinted by. White when none tints. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	FLinearColor GetInheritedContentTint()const;
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EWidgetPixelSnapping GetPixelSnapping()const { return PixelSnapping; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetPixelSnappingInHierarchy()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetPixelSnapping(EWidgetPixelSnapping Value);
+
+	/**
+	 * Get WidgetActive property value
+	 * @return WidgetActive self property
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetWidgetActive()const { return bWidgetActive; }
+	/**
+	 * True between creation and being added to something. Suppresses the widget exactly the way an
+	 * inactive flag would -- nothing draws, no behaviour is enabled -- but it is a separate bit on
+	 * purpose: borrowing bWidgetActive would make SetWidgetActive silently useless during the very
+	 * window in which callers configure a widget. Managed by the creation verbs; not serialized.
+	 */
+	bool IsParked()const { return bParked; }
+	void SetParked(bool Value);
+	/**
+	 * Get widget active in hierarchy
+	 * @return Is widget active in hierarchy
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetWidgetActiveInHierarchy()const;
+#if WITH_EDITOR
+	/** Editor-preview visibility. This never changes the serialized runtime WidgetActive value. */
+	bool GetHiddenInDesigner()const { return bHiddenInDesigner; }
+	void SetHiddenInDesigner(bool bHidden);
+#endif
+	/**
+	 * Set WidgetActive self property
+	 * @param Value 
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetWidgetActive(bool Value);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamWidgetVisibility GetVisibility()const { return Visibility; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetVisibility(EDreamWidgetVisibility Value);
+	/** Anything but Collapsed. See Shown. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool GetShown()const { return Visibility != EDreamWidgetVisibility::Collapsed; }
+	/** Visible when true, Collapsed when false; a shown widget that is Hidden or hit-test invisible keeps that. See Shown. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Visibility")
+	void SetShown(bool Value);
+	/** Temporarily removes this widget from layout, rendering and hit testing without changing Visibility. */
+	void SetLayoutVisibilitySuppressed(bool bSuppressed);
+	/** Hidden still participates in layout; Collapsed does not. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool GetLayoutVisibleInHierarchy()const { return bCacheLayoutVisibleInHierarchy; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool GetRenderVisibleInHierarchy()const { return bCacheRenderVisibleInHierarchy; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool GetHitTestVisibleInHierarchy()const { return bCacheSelfHitTestVisibleInHierarchy; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool GetChildrenHitTestVisibleInHierarchy()const { return bCacheChildrenHitTestVisibleInHierarchy; }
+
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool GetIsFocusable()const { return bIsFocusable; }
+	/**
+	 * Turning this off also gives up any focus the widget currently holds.
+	 *
+	 * It was a bare assignment, which left a widget that can no longer ACCEPT focus still holding it:
+	 * SetFocus refuses to hand it out, nothing else moves the selection, and the navigation cursor
+	 * stays parked on a widget the user can no longer reach.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	void SetIsFocusable(bool Value);
+	/** See bIsTabStop. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool GetIsTabStop()const { return bIsTabStop; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	void SetIsTabStop(bool Value);
+	/** See TabIndex. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	int32 GetTabIndex()const { return TabIndex; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	void SetTabIndex(int32 Value);
+	/** See TabNavigation. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	EDreamWidgetTabNavigation GetTabNavigation()const { return TabNavigation; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	void SetTabNavigation(EDreamWidgetTabNavigation Value);
+	/**
+	 * The widget Tab lands on as it enters this one as a single stop (TabNavigation Once), bInBackward for Shift+Tab: a
+	 * list, tile or tree view answers the row of its selected item -- its first item's when none is selected, its last's
+	 * entered backwards -- scrolled into view and built first, as its rows exist only for what shows. Null: the walk takes
+	 * this widget's first stop, or its last, as for any other. The base answers null. Called by the Tab walk alone, on the
+	 * game thread, inside a navigation step.
+	 */
+	virtual UDreamWidget* ResolveTabEntry(bool bInBackward) { return nullptr; }
+	/**
+	 * The widget whose scrolling container scrolls this widget's own content, for the keys and the stick aimed at it while
+	 * it has focus (paging, Home and End, the right stick): a scroll box control answers its viewport, which carries its
+	 * scroll view. Null, the base's answer: this widget's own containers, then its ancestors', as the search always goes.
+	 */
+	virtual UDreamWidget* GetScrollTargetForNavigation() const { return nullptr; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	bool SetFocus(int32 UserIndex = 0, int32 PointerId = 0);
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool HasFocus(int32 UserIndex = 0, int32 PointerId = 0)const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	void ClearFocus(int32 UserIndex = 0, int32 PointerId = 0);
+	void NotifyFocusReceived(int32 UserIndex, int32 PointerId);
+	void NotifyFocusLost(int32 UserIndex, int32 PointerId);
+
+	/*
+	 * UMG's focus vocabulary, on every widget rather than only on user widgets.
+	 *
+	 * These four used to live on UDreamUserWidget, where they were thin wrappers over SetFocus /
+	 * HasFocus / ClearFocus with the OWNING PLAYER's index rather than player zero. They belong down
+	 * here: the owning player is now a question any widget can answer, the wrappers' bodies are
+	 * unchanged, and a Blueprint reaching them on a user widget still finds them by inheritance.
+	 */
+	/**
+	 * Take focus on the owning player's event system. Returns false when it could not be given now; a widget asked before
+	 * it was first laid out (shown this frame) takes it on the next frame, unless that player's focus moves first.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	bool SetKeyboardFocus();
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool HasKeyboardFocus()const;
+	/** Take focus on a named player's event system. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	bool SetUserFocus(APlayerController* InPlayerController);
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool HasUserFocus(APlayerController* InPlayerController)const;
+	/** Does ANY local player's focus sit on this widget? */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool HasAnyUserFocus()const;
+	/** Does any local player's focus sit on something BELOW this widget? UMG spells it the same way. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool HasFocusedDescendants()const;
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool HasUserFocusedDescendants(APlayerController* InPlayerController)const;
+	/** Give up focus if this widget holds the owning player's. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Focus")
+	void ClearKeyboardFocus();
+	/** UMG's SupportsKeyboardFocus: the same answer as GetIsFocusable, under the name UMG uses. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Focus")
+	bool SupportsKeyboardFocus()const { return bIsFocusable; }
+
+	/**
+	 * Is a pointer over this widget -- or over anything inside it? UMG's IsHovered, and hover reaching
+	 * ancestors is what makes a button's own hover survive the pointer being over its label.
+	 *
+	 * Asked of the OWNING player's event system: that is the one driving this widget, and a second
+	 * player's cursor wandering across a split-screen boundary does not make the first player's button
+	 * hovered.
+	 */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Interaction")
+	bool IsHovered()const;
+	/**
+	 * Is a pointer holding its button down on this widget? The nearest thing this framework has to
+	 * Slate's mouse capture: there is no capture object here, but a pressed pointer's PressWidget is
+	 * exactly who keeps receiving its drag and its release, which is what capture means to a caller.
+	 */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Interaction")
+	bool HasMouseCapture()const;
+	/** Same question for one player, and optionally one pointer. -1 means any of that player's pointers. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Interaction")
+	bool HasMouseCaptureByUser(int32 InUserIndex, int32 InPointerIndex = -1)const;
+
+	/**
+	 * The local player this widget belongs to: the nearest user widget above it owns it, and a tree
+	 * with no user widget in it belongs to the first local player, which is the whole answer in a
+	 * single-player game.
+	 *
+	 * Virtual because UDreamUserWidget answers it for itself -- an explicitly set controller first --
+	 * and an override must NOT repeat the UFUNCTION.
+	 */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Player")
+	virtual APlayerController* GetOwningPlayer()const;
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Player")
+	ULocalPlayer* GetOwningLocalPlayer()const;
+	/**
+	 * The local player INDEX this widget's screen, focus and input use -- the same number a
+	 * UDreamEventSystem, a raycaster and a pointer event all carry. 0 when it cannot be resolved.
+	 */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Player")
+	int32 GetOwningPlayerIndex()const;
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Player")
+	UGameInstance* GetGameInstance()const;
+	/** The local player index InPlayerController belongs to, or 0. Shared by everything that keys on it. */
+	static int32 GetLocalPlayerIndexOf(const APlayerController* InPlayerController);
+
+	/**
+	 * UMG's IsVisible. The hierarchy is folded in, unlike UMG's, which asks only this widget: the
+	 * cascaded answer is the one already cached here and the one every caller means by "on screen".
+	 */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool IsVisible()const { return bCacheRenderVisibleInHierarchy; }
+	/** Visible AND actually contributing colour. A subtree faded to nothing is visible but not rendered. */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Visibility")
+	bool IsRendered()const;
+	/** Is this widget, or something it hangs under, currently on a player's screen? */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Screen")
+	bool IsInViewport()const;
+
+	/** Lay this widget's tree out NOW rather than on the next pass -- UMG's ForceLayoutPrepass. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Layout")
+	void ForceLayoutPrepass();
+	/**
+	 * Ask for a layout pass on this widget next frame. UMG's name; the volatility half of it has no
+	 * counterpart here and is not implied -- see the parity table.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Layout")
+	void InvalidateLayoutAndVolatility();
+	/**
+	 * How big this widget WANTS to be, as its parent panel would measure it.
+	 *
+	 * Measuring is a conversation between a container and its child -- a stretched child's answer
+	 * depends on the space it is offered -- so the parent is the only thing that can answer. A widget
+	 * with no measuring parent has only the size layout already gave it, which is what it returns.
+	 */
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Layout")
+	FVector2D GetDesiredSize()const;
+
+	/**
+	 * The in-plane rotation, in degrees -- UMG's render transform angle.
+	 *
+	 * That is the ROLL channel of RenderRotation and not a fifth stored value: depth runs along local
+	 * X here, so turning about X is the rotation that keeps a widget flat against the canvas, and it
+	 * is the one UMG's single angle means. Pitch and yaw are left alone, so a card that is mid-flip
+	 * does not snap back when a graph sets its angle.
+	 *
+	 * A positive angle turns the widget clockwise on the screen, as UMG's does: its right edge goes down.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderTransformAngle(float InAngle);
+	UFUNCTION(BlueprintPure, Category = "Render Transform")
+	float GetRenderTransformAngle()const { return static_cast<float>(RenderRotation.Roll); }
+	/**
+	 * The render translation's move on the canvas plane -- x right, y up -- with its depth (RenderTranslation.X) left
+	 * where it is: SetRenderTranslation(FVector(0, x, y)) would set the depth to 0 as well. The setter RenderOffsetTo
+	 * tweens.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Render Transform")
+	void SetRenderOffset(const FVector2D& InOffset);
+	UFUNCTION(BlueprintPure, Category = "Render Transform")
+	FVector2D GetRenderOffset()const { return FVector2D(RenderTranslation.Y, RenderTranslation.Z); }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Interaction")
+	EMouseCursor::Type GetCursor()const { return Cursor.GetValue(); }
+	/**
+	 * The cursor to show while the pointer is over this widget. Default means "no opinion" and lets
+	 * whatever is underneath claim it, which is why there is no separate override flag here as there
+	 * is in UMG -- DreamPointerPolicy::ResolveCursor walks the hover stack innermost first and takes
+	 * the first widget with an opinion.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Interaction")
+	void SetCursor(EMouseCursor::Type Value) { Cursor = Value; }
+	/** Back to having no opinion, so an ancestor's cursor shows through again. UMG's ResetCursor. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Interaction")
+	void ResetCursor() { Cursor = EMouseCursor::Default; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Interaction")
+	const FText& GetToolTipText()const { return ToolTipText; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Interaction")
+	void SetToolTipText(const FText& Value) { ToolTipText = Value; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Interaction")
+	TSubclassOf<UDreamUserWidget> GetToolTipWidgetClass()const { return ToolTipWidgetClass; }
+	/** UMG's SetToolTip, by class. Null goes back to the text bubble. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Interaction")
+	void SetToolTipWidgetClass(TSubclassOf<UDreamUserWidget> Value) { ToolTipWidgetClass = Value; }
+
+	UFUNCTION(BlueprintPure, Category = "Localization")
+	EDreamFlowDirectionPreference GetFlowDirectionPreference()const { return FlowDirectionPreference; }
+	/** Changing this re-arranges this widget and every descendant that inherits the answer from it. */
+	UFUNCTION(BlueprintCallable, Category = "Localization")
+	void SetFlowDirectionPreference(EDreamFlowDirectionPreference Value);
+	/**
+	 * Which way this widget's layout actually flows, after following Inherit up the parent chain.
+	 *
+	 * Computed on demand rather than cached, unlike the interactable/visible/raycastable bits beside
+	 * it: those are read on every pointer update and every paint, this one is read once per arrange by
+	 * the container that mirrors, and a cache would need invalidating from attach, detach AND a
+	 * culture change -- three chances to be subtly wrong in exchange for a walk of a handful of links.
+	 *
+	 * A tree in which nobody states a preference answers LeftToRight. Slate's own GSlateFlowDirection
+	 * is deliberately not consulted for that fallback: it is a global Slate sets and restores while
+	 * painting ITS widgets, DreamGUI draws its own geometry and never joins that pass, so reading it
+	 * here would hand back whatever the last unrelated Slate paint happened to leave behind.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Localization")
+	EDreamFlowDirection GetResolvedFlowDirection()const;
+	/**
+	 * Re-arrange whatever in this subtree takes its flow direction from the culture, because the
+	 * culture just changed. GetResolvedFlowDirection already answers the new way on its own -- it
+	 * reads the culture each time it is asked -- so all this does is make the containers ask again.
+	 *
+	 * Driven from UDreamUserWidget's culture-changed handler, which every user widget is already
+	 * registered for. Not per-widget registration: a screen has hundreds of widgets and at most a
+	 * handful of them state a preference at all.
+	 */
+	void RefreshCultureFlowDirection();
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Accessibility")
+	EDreamAccessibleBehavior GetAccessibleBehavior()const { return AccessibleBehavior; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Accessibility")
+	void SetAccessibleBehavior(EDreamAccessibleBehavior Value) { AccessibleBehavior = Value; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Accessibility")
+	const FText& GetAccessibleText()const { return AccessibleText; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Accessibility")
+	void SetAccessibleText(const FText& Value) { AccessibleText = Value; }
+	UFUNCTION(BlueprintPure, Category = "DreamGUI|Accessibility")
+	const FText& GetAccessibleSummaryText()const { return AccessibleSummaryText; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Accessibility")
+	void SetAccessibleSummaryText(const FText& Value) { AccessibleSummaryText = Value; }
+	/** Sends text through Slate's platform accessibility announcement channel. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI|Accessibility")
+	void AnnounceAccessibleText(const FText& Announcement = FText());
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamWidgetRaycastableType GetRaycastable()const { return Raycastable; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetRaycastable(EDreamWidgetRaycastableType Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetRaycastableInHierarchy()const{return bCacheRaycastableInHierarchy;}
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamWidgetInteractableType GetInteractable()const { return Interactable; }
+	/**
+	 * Get if this widget is interactable when use input interaction, considering all parent settings.
+	 * @return If this widget is interactable
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetInteractableInHierarchy()const{return bCacheInteractableInHierarchy;}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetInteractable(EDreamWidgetInteractableType Value);
+
+	/** This widget's own enabled switch. Ask GetIsEnabledInHierarchy for the answer that counts. */
+	UFUNCTION(BlueprintPure, Category = "Behavior")
+	bool GetIsEnabled()const { return bIsEnabled; }
+	/**
+	 * Disable (or re-enable) this widget and everything under it: the subtree stops taking input and
+	 * every control in it takes on its disabled look, because both read GetInteractableInHierarchy
+	 * and this is AND-ed into it.
+	 *
+	 * Virtual because UMG's is, so a control that has to do something extra when it is switched off
+	 * has the hook. An override must NOT repeat the UFUNCTION.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Behavior")
+	virtual void SetIsEnabled(bool bInIsEnabled);
+	/** True when this widget and every ancestor are enabled. The cascaded answer. */
+	UFUNCTION(BlueprintPure, Category = "Behavior")
+	bool GetIsEnabledInHierarchy()const { return bCacheEnabledInHierarchy; }
+
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetRestrictNavigationArea()const{return bRestrictNavigationArea;}
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetIgnoreLayout()const{return bIgnoreLayout;}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetIgnoreLayout(bool Value);
+
+	/**
+	 * Search up parent DreamWidget which bRestrictNavigationArea is true and return it, include this DreamWidget self
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	const UDreamWidget* GetRestrictNavigationAreaWidget()const;
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetRestrictNavigationArea(bool Value);
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamUINavigationBoundaryRule GetNavigationBoundaryRule()const{return NavigationBoundaryRule;}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetNavigationBoundaryRule(EDreamUINavigationBoundaryRule Value);
+
+	/**
+	 * This widget's per-direction navigation rules, or null when it has none.
+	 *
+	 * The rules live on a UDreamWidgetNavigation behaviour rather than inline here, for the same
+	 * reason UMG hangs them off a UWidgetNavigation object: most widgets never author one, and the
+	 * navigation pipeline resolves a move by asking components. These two accessors are the widget's
+	 * face on it, so code and the details panel can treat navigation as a property of the widget.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	class UDreamWidgetNavigation* GetNavigation()const;
+	/** The rules, creating an untouched set if this widget had none. Never null on a live widget. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	class UDreamWidgetNavigation* GetOrCreateNavigation();
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamVisual* GetVisual()const { return Visual; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta=(DeterminesOutputType="VisualClass"))
+	UDreamVisual* CreateNewVisual(TSubclassOf<UDreamVisual> VisualClass);
+	template<class T>
+	T* CreateNewVisual()
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamVisual>::Value, "'T' template parameter to CreateNewVisual must be derived from UDreamVisual");
+		return (T*)CreateNewVisual(T::StaticClass());
+	}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void RemoveVisual();
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamLayoutContainer* GetLayoutContainer()const { return LayoutContainer; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta=(DeterminesOutputType="LayoutClass"))
+	UDreamLayoutContainer* CreateNewLayoutContainer(TSubclassOf<UDreamLayoutContainer> Class);
+	template<class T>
+	T* CreateNewLayoutContainer()
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamLayoutContainer>::Value, "'T' template parameter to CreateNewLayoutContainer must be derived from UDreamLayoutContainer");
+		return (T*)CreateNewLayoutContainer(T::StaticClass());
+	}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void RemoveLayoutContainer();
+	
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamLayoutSelf* GetLayoutSelf()const{return LayoutSelf;}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta=(DeterminesOutputType="LayoutClass"))
+	UDreamLayoutSelf* CreateNewLayoutSelf(TSubclassOf<UDreamLayoutSelf> Class);
+	template<class T>
+	T* CreateNewLayoutSelf()
+	{
+		static_assert(TPointerIsConvertibleFromTo<T, const UDreamLayoutSelf>::Value, "'T' template parameter to CreateNewLayoutSelf must be derived from UDreamLayoutSelf");
+		return (T*)CreateNewLayoutSelf(T::StaticClass());
+	}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void RemoveLayoutSelf();
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	UDreamPanelSlot* GetPanelSlot()const { return PanelSlot; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI", meta=(DeterminesOutputType="SlotClass"))
+	UDreamPanelSlot* CreateNewPanelSlot(TSubclassOf<UDreamPanelSlot> SlotClass);
+	template<class T>
+	T* CreateNewPanelSlot()
+	{
+		return Cast<T>(CreateNewPanelSlot(T::StaticClass()));
+	}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void RemovePanelSlot();
+
+	const TWeakPtr<FDreamUIClipData>& GetClipData()const{return ClipData;}
+
+#pragma region SiblingIndex
+protected:
+	/** hierarchy index, hierarchy order, render order */
+	UPROPERTY(EditAnywhere, Category = DreamGUI, AdvancedDisplay)
+		int32 SiblingIndex = INDEX_NONE;
+	/**
+	 * Flatten depth/hierarchyIndex, relative to root DreamWidget. -1 means not set yet.
+	 * RootWidget - 0
+	 *	 Widget - 1
+	 *	 Widget - 2
+	 *	   Widget - 3
+	 *	   Widget - 4
+	 *	     Widget - 5
+	 *	 Widget - 6
+	 */
+	UPROPERTY(Transient, VisibleAnywhere, Category = DreamGUI, AdvancedDisplay)
+	mutable int32 FlattenHierarchyIndex = -1;
+	void MarkFlattenHierarchyIndexDirty();
+private:
+	/** Only for RootUIItem */
+	void RecalculateFlattenHierarchyIndex()const;
+	void CalculateFlattenHierarchyIndex_Recursive(int& index)const;
+	void ApplySiblingIndex();
+public:
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		int32 GetSiblingIndex() const { return SiblingIndex; }
+	/** Get index order of the widget from top most widget in flatten hierarchy. */
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		int32 GetFlattenHierarchyIndex()const;
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		void SetAsFirstSibling();
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		void SetAsLastSibling();
+#pragma endregion SiblingIndex
+
+#pragma region Name
+private:
+	/** 
+	 * This is useful when you need to find child UI element by name, use function "FindChildByDisplayName" or "FindChildArrayByDisplayName" to do it.
+	 * Mostly the displayName is the same as Actor's ActorLabel. If you want to change it, just change the actor label( Actor's name in world outliner).
+	 * If Actor's ActorLabel start with "//", then the "//" will be ignored.
+	 * ActorLabel is only valid in editor, but this is also valid on runtime.
+	 */
+	UPROPERTY(VisibleAnywhere, Category = DreamGUI, AdvancedDisplay)
+		FString DisplayName;
+public:
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+	FString GetPathDisplayName(const UObject* StopOuter = nullptr)const;
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		const FString& GetDisplayName()const { return DisplayName; }
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		void SetDisplayName(const FString& InName) { DisplayName = InName; }
+	/** 
+	 * Search in children and return the first UIItem that the displayName match input name.
+	 * Support hierarchy nested search, eg: InName = "Content/ListItem/NameLabel".
+	 * @param InName	The child's name that need to find, case sensitive
+	 * @param IncludeChildren	Also search in children
+	 */
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		UDreamWidget* FindChildByDisplayName(const FString& InName, bool IncludeChildren = false)const;
+	/**
+	 * Like "FindChildByDisplayName", but return all children that match the case.
+	 * @param InName	The child's name that need to find, case sensitive
+	 * @param IncludeChildren	Also search in children
+	 */
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+		TArray<UDreamWidget*> FindChildArrayByDisplayName(const FString& InName, bool IncludeChildren = false)const;
+private:
+	UDreamWidget* FindChildByDisplayNameWithChildren_Internal(const FString& InName)const;
+	void FindChildArrayByDisplayNameWithChildren_Internal(const FString& InName, TArray<UDreamWidget*>& OutResultArray)const;
+#pragma endregion Name
+
+#pragma region Tags
+public:
+	/**
+	 * Names for the code that finds widgets by what they ARE rather than by their id -- every trim, every sigil -- as
+	 * AActor::Tags does for actors. A `.dui` writes them `@tag Trim, Glow`; UDreamUserWidget::GetWidgetsByTag finds them
+	 * in a user widget's own tree. Nothing in the library reads them.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = DreamGUI)
+	TArray<FName> Tags;
+
+	/** Whether Tags holds InTag. None is never a tag. */
+	UFUNCTION(BlueprintPure, Category = DreamGUI)
+	bool HasTag(FName InTag) const { return !InTag.IsNone() && Tags.Contains(InTag); }
+
+	/** Adds InTag unless it is already there (or None). */
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+	void AddTag(FName InTag)
+	{
+		if (!InTag.IsNone())
+		{
+			Tags.AddUnique(InTag);
+		}
+	}
+
+	/** Takes InTag out; false when it was not there. */
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+	bool RemoveTag(FName InTag) { return Tags.Remove(InTag) > 0; }
+
+	static FName GetPropertyName_Tags()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamWidget, Tags);
+	}
+#pragma endregion Tags
+
+public:
+	/** Get the canvas that render and update this UI element */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		UDreamCanvas* GetRenderCanvas() const;
+	/** Is this UI element render to screen space overlay? */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		bool IsScreenSpaceOverlayUI()const;
+	/** Is this UI element render to a RenderTarget? */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		bool IsRenderTargetUI()const;
+	/** Is this UI element render in world space? */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		bool IsWorldSpaceUI()const;
+
+	bool IsCanvasWidget()const { return bIsCanvasWidget; }
+
+	/** return root Widget in hierarchy, could be null if not initialized yet. */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		UDreamWidget* GetRootWidgetInHierarchy()const { return RootWidget.Get(); }
+	/** Shutdown-only accessor used while GC may already have marked the hierarchy unreachable. */
+	UDreamWidget* GetRootWidgetInHierarchyEvenIfUnreachable()const { return RootWidget.GetEvenIfUnreachable(); }
+	bool IsRootWidgetInHierarchy()const{return RootWidget.Get() == this;}
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	static void MarkLayoutForRebuild(UDreamWidget* InWidget);
+
+	/**
+	 * Same, but saying which kind of change it was. See EDreamLayoutInvalidation.
+	 *
+	 * The distinction was already in the code as a comment - several position setters read "only
+	 * position change, if parent contains LayoutContainer then we should rebuild layout, otherwise not"
+	 * - but with one bool to invalidate through, the only choices were the whole ancestor chain or
+	 * nothing. This lets a site say what actually changed instead.
+	 */
+	static void MarkLayoutForRebuild(UDreamWidget* InWidget, EDreamLayoutInvalidation Reason);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	static void RebuildLayoutImmediately(UDreamWidget* InWidget);
+
+	/**
+	 * Marks the widget whose layout container is currently writing its results back onto its children.
+	 *
+	 * The write-back uses the ordinary setters, and those call MarkLayoutForRebuild, which walks the whole
+	 * ancestor chain - so without this the first ancestor it reaches is the container that just consumed its
+	 * own dirty flag, and every real geometry change costs two full CalculateLayoutTree passes. While the
+	 * scope is alive, MarkLayoutForRebuild still dirties everything *below* the writer (a nested container
+	 * has to react to the size it was just given) but stops before the writer itself.
+	 */
+	struct DREAMGUI_API FLayoutWriteScope
+	{
+		explicit FLayoutWriteScope(UDreamWidget* InLayoutWidget);
+		FLayoutWriteScope(const FLayoutWriteScope&) = delete;
+		FLayoutWriteScope& operator=(const FLayoutWriteScope&) = delete;
+	private:
+		/** Unset for a widget that is not valid: nothing is writing for it. */
+		TOptional<FDreamLayoutPassContext::FWriteScope> Scope;
+	};
+
+	/**
+	 * True while a layout is computing and writing results in this widget's world, i.e. inside an
+	 * UpdateLayout there.
+	 *
+	 * Distinguishes a size that is layout OUTPUT from a size somebody actually asked for. The two have to
+	 * be told apart, because a panel measures an Auto child from the authored snapshot rather than from its
+	 * current extent - feeding layout output back into measurement is what makes a squeezed widget measure
+	 * as squeezed forever - so the snapshot must follow a real edit and ignore an arranged result.
+	 *
+	 * Broader than FLayoutWriteScope on purpose: that one covers the container write-back only, because it
+	 * governs how far a dirty mark propagates. This covers a LayoutSelf sizing its own widget too.
+	 */
+	bool IsLayoutWriting() const { return GetLayoutPassContext().IsWriting(); }
+
+	/**
+	 * The state this widget's layout passes keep: the writer stack, the pass depth, the desired-size memo.
+	 *
+	 * Its world's, held by that world's manager. A widget in no world with a manager -- a test's tree, an
+	 * authoring template, a commandlet's -- uses one held by the root of its hierarchy instead, made the
+	 * first time it is asked for. That is enough because a pass never leaves the tree it started in: every
+	 * scope a pass opens is on a widget of that tree, and every question asked of the state during it is
+	 * about one, so they all reach the same root.
+	 */
+	FDreamLayoutPassContext& GetLayoutPassContext() const;
+
+private:
+	/** The layout-pass state of a tree no manager holds one for; see GetLayoutPassContext. Only ever made on a root. */
+	mutable TUniquePtr<FDreamLayoutPassContext> DetachedLayoutPassContext;
+
+private:
+	friend class FDreamWidgetCustomization;
+	friend class UDreamCanvas;
+	friend class FDreamUIClipData;
+	friend class FDreamCanvasHierarchyOrderTest;
+	/** Swaps arranged geometry out of AnchorData around prefab serialization; raw access, no side effects. */
+	friend class FDreamUIAuthoredGeometrySaveScope;
+	// The canvas, the cached hierarchy flags and the render-transform bit are declared with the render transform: see
+	// bCachedLayerQuiet's neighbours.
+	EDreamWidgetClipping LayoutClippingOverride = EDreamWidgetClipping::Inherit;
+
+	/**
+	 * Where the widget is in its life. Not a property, so nothing restores it: a duplicate starts at
+	 * Constructed like any new widget, and an undo leaves it as it was -- which is why PostEditUndo puts
+	 * a widget the undo brought back from Destroyed at Constructed before anything registers it.
+	 */
+	EDreamWidgetLifecycle Lifecycle = EDreamWidgetLifecycle::Constructed;
+	/**
+	 * Waiting for a parent. Beside Lifecycle rather than one of its states, because it is a question of
+	 * where the widget hangs, not of how far it has come: a parked widget is registered, and has begun
+	 * play once its world has.
+	 */
+	uint32 bParked : 1 = false;
+	/** Cached "this widget or an ancestor declares a perspective", so the usual case is one bit test. */
+	uint32 bHasPerspectiveInHierarchy : 1 = false;
+	/**
+	 * This widget or an ancestor is sheared. The whole point of the bit: while it is false the vertex
+	 * transform stays on the FTransform fast path it has always used, unchanged to the byte.
+	 */
+	uint32 bHasShearInHierarchy : 1 = false;
+
+	/** Only for root widget, if dirty then we need to recalculate flatten hierarchy index */
+	mutable uint32 bFlattenHierarchyIndexDirty : 1;
+	
+	void MarkClipDirty(bool InClipTypeChanged)const;
+	/** The children that clip to the layer below have their clips made again: which sibling is below one may have changed. */
+	void MarkChildrenClipToBelowDirty()const;
+	void MarkWidgetLayoutDirty();
+	
+	/** find root UIItem of hierarchy */
+	void CheckRootWidget(UDreamWidget* RootWidgetInParent = nullptr);
+
+	void CalculateWidgetActive_Recursive();
+	void CalculateVisibility_Recursive();
+	void CalculateInteractable_Recursive();
+	void CalculateRaycastable_Recursive();
+	/**
+	 * Re-arrange this widget and the descendants that inherit its flow direction. The walk stops at a
+	 * widget that states its own preference, because nothing below it can have changed answer.
+	 */
+	void MarkFlowDirectionChangedRecursive();
+	/** Re-derives bHasShearInHierarchy for this widget and, when it moved, for everything below. */
+	void RefreshShearInHierarchy();
+	/** What a shear change costs: the hierarchy bit, the transform and a canvas update. */
+	void ApplyRenderShearChange();
+	/** How many local players the any-user focus queries have to ask about. Never less than one. */
+	int32 GetLocalPlayerCountForQueries()const;
+	/** Does one player's focus sit on something strictly below this widget? */
+	bool HasFocusedDescendantForUser(int32 InUserIndex)const;
+public:
+#pragma region TweenAnimation
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", DisplayName = "Local Position X To"), Category = "DreamTween")
+	UDreamTweener* LocalPositionXTo(double endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", DisplayName = "Local Position Y To"), Category = "DreamTween")
+	UDreamTweener* LocalPositionYTo(double endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", DisplayName = "Local Position Z To"), Category = "DreamTween")
+	UDreamTweener* LocalPositionZTo(double endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", DisplayName = "World Position X To"), Category = "DreamTween")
+	UDreamTweener* WorldPositionXTo(double endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", DisplayName = "World Position Y To"), Category = "DreamTween")
+	UDreamTweener* WorldPositionYTo(double endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", DisplayName = "World Position Z To"), Category = "DreamTween")
+	UDreamTweener* WorldPositionZTo(double endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTween")
+	UDreamTweener* LocalPositionTo(FVector endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTween")
+	UDreamTweener* WorldPositionTo(FVector endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = DreamTween)
+	UDreamTweener* LocalScaleTo(FVector endValue = FVector(1.0f, 1.0f, 1.0f), float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = DreamTween)
+	UDreamTweener* LocalUniformScaleTo(float endValue = 1.0f, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", ToolTip = "Rotate absolute quaternion rotation value"), Category = "DreamTween")
+	UDreamTweener* LocalRotationQuaternionTo(const FQuat& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", ToolTip = "Rotate absolute rotator value"), Category = "DreamTween")
+	UDreamTweener* LocalRotatorTo(FRotator endValue, bool shortestPath, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", ToolTip = "Rotate absolute quaternion rotation value"), Category = "DreamTween")
+	UDreamTweener* WorldRotationQuaternionTo(const FQuat& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease", ToolTip = "Rotate absolute rotator value"), Category = "DreamTween")
+	UDreamTweener* WorldRotatorTo(FRotator endValue, bool shortestPath, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderOpacityTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* SizeDeltaTo(const FVector2D& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* WidthTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* HeightTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* AnchoredPositionTo(const FVector2D& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* HorizontalAnchoredPositionTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* VerticalAnchoredPositionTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+
+	/**
+	 * The render transform's tweens: they move, scale and turn what is drawn and hit and never the layout, so they are the
+	 * ones for a widget a panel places -- a row of a vertical box sliding in, a tab nudged aside, a line growing from its
+	 * left. The anchored-position and size tweens above write the widget's layout instead, which its panel overrides on
+	 * its next pass. RenderTranslationTo is in local space (X depth, Y right, Z up); RenderOffsetTo is the same move on
+	 * the canvas plane (x right, y up), depth kept; RenderAngleTo is the in-plane angle (SetRenderTransformAngle).
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderTranslationTo(const FVector& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderOffsetTo(const FVector2D& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderScaleTo(const FVector& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderAngleTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	/**
+	 * The whole render rotation, out of the plane as well as in it: a side panel swinging open on its hinge, a card
+	 * turning over. Each of Pitch, Yaw and Roll runs from where it is to where it is told, so 0 to 180 of yaw is half a
+	 * turn rather than none.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderRotationTo(const FRotator& endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	/** The render translation and rotation together, on one clock and one ease: a pose the widget moves into. */
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+	UDreamTweener* RenderPoseTo(const FVector& endTranslation, const FRotator& endRotation, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	// Every tween verb above -- and the visuals' ColorTo, AlphaTo and their siblings -- replaces the earlier ones on the
+	// same property when it starts: RenderOpacityTo(0) started after RenderOpacityTo(1) stops the fade in, rather than
+	// both running and the last to end winning. A verb's tween run by a sequence is left to the sequence, and a tween
+	// kept with SetAutoKill(false) is paused instead of killed. SetReplacesEarlierTweens(false) on a tween lets it run
+	// alongside the others (UDreamTweener::SetExclusive).
+
+	UFUNCTION(BlueprintCallable, Category = "DreamTweenGUI")
+	static void SetWidgetTweenerAffectByGamePauseAndTimeDilation(UDreamWidget* Widget, UDreamTweener* Tweener);
+#pragma endregion
+};

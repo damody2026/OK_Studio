@@ -1,0 +1,279 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "SDreamWidgetDesignerViewport.h"
+#include "DreamWidgetDesignerViewportClient.h"
+#include "DreamWidgetBlueprintEditor.h"
+#include "SDreamWidgetDesignerViewportToolbar.h"
+#include "SDreamWidgetPalette.h"
+#include "Core/DreamUIManager.h"
+#include "Core/DreamUIAnchorData.h"
+#include "Core/Components/DreamLayout.h"
+#include "Core/Components/DreamWidget.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Slate/SceneViewport.h"
+#include "DragAndDrop/AssetDragDropOp.h"
+#include "DreamWidgetEditorHierarchyViewItem.h"
+#include "Workflow/DreamUIPresetLibrary.h"
+
+#define LOCTEXT_NAMESPACE "DreamWidgetDesignerViewport"
+
+void SDreamWidgetDesignerViewport::Construct(const FArguments& InArgs, TSharedPtr<FDreamWidgetBlueprintEditor> InDesigner, EViewModeIndex InViewMode)
+{
+	this->DesignerPtr = InDesigner;
+	this->ViewMode = InViewMode;
+	SEditorViewport::Construct(SEditorViewport::FArguments());
+}
+void SDreamWidgetDesignerViewport::BindCommands()
+{
+	SEditorViewport::BindCommands();
+	// The designer's Copy, Cut, Paste, Duplicate and Delete, answered here as the key comes up from the viewport, before
+	// the toolkit's list is asked -- where Copy is not the designer's (FDreamWidgetBlueprintEditor::GetDesignerCommandList).
+	// UMG's design surface answers them from its own key handler the same way (SDesignerView::OnKeyDown).
+	if (const TSharedPtr<FDreamWidgetBlueprintEditor> Designer = DesignerPtr.Pin(); Designer.IsValid() && Designer->GetDesignerCommandList().IsValid())
+	{
+		CommandList->Append(Designer->GetDesignerCommandList().ToSharedRef());
+	}
+}
+TSharedRef<FEditorViewportClient> SDreamWidgetDesignerViewport::MakeEditorViewportClient()
+{
+	EditorViewportClient = MakeShareable(new FDreamWidgetDesignerViewportClient(this->DesignerPtr, SharedThis(this)));
+	EditorViewportClient->bSetListenerPosition = false;
+	EditorViewportClient->SetRealtime(GetDefault<UDreamUIDesignerSettings>()->bRealtimeViewport);
+	EditorViewportClient->SetShowStats(true);
+	EditorViewportClient->VisibilityDelegate.BindLambda([]() {return true; });
+	EditorViewportClient->SetViewMode(ViewMode);
+	return EditorViewportClient.ToSharedRef();
+}
+
+TSharedPtr<SWidget> SDreamWidgetDesignerViewport::BuildViewportToolbar()
+{
+	return SNew(SDreamWidgetDesignerViewportToolbar, SharedThis(this));
+}
+EVisibility SDreamWidgetDesignerViewport::GetTransformToolbarVisibility() const
+{
+	return EVisibility::Hidden;
+}
+void SDreamWidgetDesignerViewport::OnFocusViewportToSelection()
+{
+	EditorViewportClient->FocusViewportToTargets();
+}
+
+bool SDreamWidgetDesignerViewport::SummonContextMenu()
+{
+	FSlateApplication& SlateApplication = FSlateApplication::Get();
+	SlateApplication.DismissAllMenus();
+
+	TSharedPtr<FDreamWidgetBlueprintEditor> Editor = DesignerPtr.Pin();
+	if (!Editor.IsValid())
+	{
+		return false;
+	}
+	TSharedPtr<SWidget> MenuContent = Editor->BuildWidgetContextMenu();
+	if (!MenuContent.IsValid())
+	{
+		return false;
+	}
+
+	FWidgetPath WidgetPath;
+	if (!SlateApplication.GeneratePathToWidgetUnchecked(AsShared(), WidgetPath))
+	{
+		return false;
+	}
+	return SlateApplication.PushMenu(
+		AsShared(),
+		WidgetPath,
+		MenuContent.ToSharedRef(),
+		SlateApplication.GetCursorPos(),
+		FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu),
+		true,
+		FVector2D::ZeroVector,
+		EPopupMethod::UseCurrentWindow).IsValid();
+}
+
+namespace DreamWidgetDesignerViewportLocal
+{
+	/**
+	 * The geometry a pointer is measured in over this viewport: the scene viewport's own, which its mouse events are
+	 * measured in too (FSceneViewport caches it as it paints and as the mouse moves over it) -- not this widget's, which
+	 * also holds the toolbar above the scene. Measured in this widget's, a drop landed below the pointer by the
+	 * toolbar's share of the height. This widget's own only while the scene viewport has none.
+	 */
+	static const FGeometry& PointerGeometry(const FSceneViewport* InSceneViewport, const FGeometry& InFallback)
+	{
+		if (InSceneViewport != nullptr)
+		{
+			const FGeometry& SceneGeometry = InSceneViewport->GetCachedGeometry();
+			if (SceneGeometry.GetLocalSize().X > 0.0f && SceneGeometry.GetLocalSize().Y > 0.0f)
+			{
+				return SceneGeometry;
+			}
+		}
+		return InFallback;
+	}
+
+	static FIntPoint ToViewportPixel(const FGeometry& Geometry, const FVector2D& ScreenPosition, FViewport* Viewport)
+	{
+		if (!Viewport)return FIntPoint::ZeroValue;
+		const FVector2D LocalPosition = Geometry.AbsoluteToLocal(ScreenPosition);
+		const FVector2D LocalSize = Geometry.GetLocalSize();
+		const FIntPoint ViewportSize = Viewport->GetSizeXY();
+		return FIntPoint(
+			FMath::RoundToInt(LocalSize.X > 0 ? LocalPosition.X * ViewportSize.X / LocalSize.X : 0),
+			FMath::RoundToInt(LocalSize.Y > 0 ? LocalPosition.Y * ViewportSize.Y / LocalSize.Y : 0));
+	}
+}
+
+FReply SDreamWidgetDesignerViewport::OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
+{
+	// A preset from the preset library goes onto the widget under the pointer, not into a container.
+	if (DragDropEvent.GetOperationAs<FDreamUIPresetDragDropOp>().IsValid() && EditorViewportClient.IsValid())
+	{
+		const FIntPoint Pixel = DreamWidgetDesignerViewportLocal::ToViewportPixel(DreamWidgetDesignerViewportLocal::PointerGeometry(SceneViewport.Get(), MyGeometry),
+			DragDropEvent.GetScreenSpacePosition(), EditorViewportClient->Viewport);
+		UDreamWidget* Target = EditorViewportClient->GetWidgetUnderCursor(Pixel.X, Pixel.Y);
+		const bool bTakes = FDreamUIPresetDragDropOp::CanDropOnto(DragDropEvent, Target);
+		EditorViewportClient->SetPaletteDropPreview(bTakes ? Target : nullptr);
+		return bTakes ? FReply::Handled() : FReply::Unhandled();
+	}
+	if (DragDropEvent.GetOperationAs<FDreamUIPaletteDragDropOp>().IsValid() && EditorViewportClient.IsValid())
+	{
+		const FIntPoint Pixel = DreamWidgetDesignerViewportLocal::ToViewportPixel(DreamWidgetDesignerViewportLocal::PointerGeometry(SceneViewport.Get(), MyGeometry),
+			DragDropEvent.GetScreenSpacePosition(), EditorViewportClient->Viewport);
+		UDreamWidget* Target = EditorViewportClient->GetDropContainerUnderCursor(Pixel.X, Pixel.Y);
+		EditorViewportClient->SetPaletteDropPreview(Target);
+		return Target ? FReply::Handled() : FReply::Unhandled();
+	}
+	// A prefab dragged from the Content Browser used to fall straight through to SEditorViewport,
+	// which knows nothing about widgets -- no preview, no cursor feedback, no refusal. The
+	// hierarchy tree accepted the same drag, so the design surface was the odd one out. A widget
+	// dragged out of the hierarchy tree was the same story: the tree could reparent it, the canvas
+	// it is drawn on could not.
+	if (EditorViewportClient.IsValid()
+		&& (DragDropEvent.GetOperationAs<FAssetDragDropOp>().IsValid()
+			|| DragDropEvent.GetOperationAs<FHierarchyDreamWidgetDragDropOp>().IsValid()))
+	{
+		const FIntPoint Pixel = DreamWidgetDesignerViewportLocal::ToViewportPixel(DreamWidgetDesignerViewportLocal::PointerGeometry(SceneViewport.Get(), MyGeometry),
+			DragDropEvent.GetScreenSpacePosition(), EditorViewportClient->Viewport);
+		UDreamWidget* Target = EditorViewportClient->GetDropContainerUnderCursor(Pixel.X, Pixel.Y);
+		// ProcessHierarchyDragDrop is the tree's own validator: it refuses a cycle, a full parent
+		// and a drop onto the dragged widget itself, and writes the reason onto the cursor. Asking
+		// it here is what keeps the two surfaces on one set of rules.
+		const TOptional<EItemDropZone> Zone = ProcessHierarchyDragDrop(DragDropEvent, EItemDropZone::OntoItem,
+			/*bIsDrop*/false, DesignerPtr.Pin(), Target);
+		EditorViewportClient->SetPaletteDropPreview(Zone.IsSet() ? Target : nullptr);
+		return Zone.IsSet() ? FReply::Handled() : FReply::Unhandled();
+	}
+	return SEditorViewport::OnDragOver(MyGeometry, DragDropEvent);
+}
+
+FReply SDreamWidgetDesignerViewport::OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
+{
+	if (DragDropEvent.GetOperationAs<FDreamUIPresetDragDropOp>().IsValid())
+	{
+		const TSharedPtr<FDreamWidgetBlueprintEditor> Editor = DesignerPtr.Pin();
+		if (!Editor.IsValid() || !EditorViewportClient.IsValid())return FReply::Unhandled();
+		const FIntPoint Pixel = DreamWidgetDesignerViewportLocal::ToViewportPixel(DreamWidgetDesignerViewportLocal::PointerGeometry(SceneViewport.Get(), MyGeometry),
+			DragDropEvent.GetScreenSpacePosition(), EditorViewportClient->Viewport);
+		UDreamWidget* Target = EditorViewportClient->GetWidgetUnderCursor(Pixel.X, Pixel.Y);
+		EditorViewportClient->ClearPaletteDropPreview();
+		return FDreamUIPresetDragDropOp::DropOnto(DragDropEvent, *Editor, Target) ? FReply::Handled() : FReply::Unhandled();
+	}
+	if (TSharedPtr<FDreamUIPaletteDragDropOp> PaletteOp = DragDropEvent.GetOperationAs<FDreamUIPaletteDragDropOp>())
+	{
+		TSharedPtr<FDreamWidgetBlueprintEditor> Editor = DesignerPtr.Pin();
+		if (!Editor.IsValid() || !EditorViewportClient.IsValid())return FReply::Unhandled();
+		const FIntPoint Pixel = DreamWidgetDesignerViewportLocal::ToViewportPixel(DreamWidgetDesignerViewportLocal::PointerGeometry(SceneViewport.Get(), MyGeometry),
+			DragDropEvent.GetScreenSpacePosition(), EditorViewportClient->Viewport);
+		UDreamWidget* Parent = EditorViewportClient->GetDropContainerUnderCursor(Pixel.X, Pixel.Y);
+		if (!Parent)return FReply::Unhandled();
+		// A viewport drop names a parent and a position, never a sibling order -- append. The position is the new
+		// widget's anchored position, worked out in the preview parent's rect against the anchors the widget was made
+		// with; the callback is handed the TEMPLATE, inside the creating transaction.
+		const TSharedPtr<FDreamWidgetDesignerViewportClient> DropClient = EditorViewportClient;
+		UDreamWidget* Created = PaletteOp->CreateUnder(Parent, TOptional<int32>(),
+			[DropClient, Pixel, Parent](UDreamWidget* Template)
+		{
+			if (!IsValid(Template) || !DropClient.IsValid())return;
+			FDreamUIAnchorData Anchors = Template->GetAnchorData();
+			FVector2D Position;
+			if (!DropClient->GetDropAnchoredPosition(Pixel.X, Pixel.Y, Parent, Anchors, Position))return;
+			// An axis the parent's panel places is the panel's: a number written there is not where the widget will
+			// stand, and the file would carry it as though somebody had typed it.
+			FDreamLayoutControlAnchorData Control;
+			const UDreamWidget* TemplateParent = Template->GetParent();
+			if (IsValid(TemplateParent) && TemplateParent->GetLayoutContainer() != nullptr)
+			{
+				Control = TemplateParent->GetLayoutContainer()->GetLayoutControlAnchor(Template);
+			}
+			if (!Control.bCanControlHorizontalPosition)Anchors.AnchoredPosition.X = Position.X;
+			if (!Control.bCanControlVerticalPosition)Anchors.AnchoredPosition.Y = Position.Y;
+			Template->SetAnchorData(Anchors);
+		});
+		EditorViewportClient->ClearPaletteDropPreview();
+		if (Created)
+		{
+			// Genuinely optional: the subsystem is null on a world that has begun tearing down, and a
+			// drop can land on a designer that is closing.
+			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Editor->GetWorld()))
+			{
+				Manager->MarkDreamUIWidgetOutlinerChanged();
+			}
+			EditorViewportClient->Invalidate();
+			return FReply::Handled();
+		}
+	}
+	if (DragDropEvent.GetOperationAs<FAssetDragDropOp>().IsValid()
+		|| DragDropEvent.GetOperationAs<FHierarchyDreamWidgetDragDropOp>().IsValid())
+	{
+		TSharedPtr<FDreamWidgetBlueprintEditor> Editor = DesignerPtr.Pin();
+		if (!Editor.IsValid() || !EditorViewportClient.IsValid())return FReply::Unhandled();
+		const FIntPoint Pixel = DreamWidgetDesignerViewportLocal::ToViewportPixel(DreamWidgetDesignerViewportLocal::PointerGeometry(SceneViewport.Get(), MyGeometry),
+			DragDropEvent.GetScreenSpacePosition(), EditorViewportClient->Viewport);
+		UDreamWidget* Parent = EditorViewportClient->GetDropContainerUnderCursor(Pixel.X, Pixel.Y);
+		EditorViewportClient->ClearPaletteDropPreview();
+		if (!Parent)return FReply::Unhandled();
+		// One validator, both surfaces. For an asset it reaches TryHandleAssetDragDropOperation --
+		// the same entry point the hierarchy row uses, so a Content-Browser prefab becomes a linked
+		// sub-prefab here too, guards intact. For a hierarchy drag it reparents, having already
+		// refused the cycles and the full parents.
+		const TOptional<EItemDropZone> Zone = ProcessHierarchyDragDrop(DragDropEvent, EItemDropZone::OntoItem,
+			/*bIsDrop*/true, Editor, Parent);
+		if (!Zone.IsSet())return FReply::Unhandled();
+		if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Editor->GetWorld()))
+		{
+			Manager->MarkDreamUIWidgetOutlinerChanged();
+		}
+		EditorViewportClient->Invalidate();
+		return FReply::Handled();
+	}
+	return SEditorViewport::OnDrop(MyGeometry, DragDropEvent);
+}
+
+void SDreamWidgetDesignerViewport::OnDragLeave(const FDragDropEvent& DragDropEvent)
+{
+	if (EditorViewportClient.IsValid())EditorViewportClient->ClearPaletteDropPreview();
+	SEditorViewport::OnDragLeave(DragDropEvent);
+}
+
+TSharedRef<SEditorViewport> SDreamWidgetDesignerViewport::GetViewportWidget()
+{
+	return SharedThis(this);
+}
+TSharedPtr<FExtender> SDreamWidgetDesignerViewport::GetExtenders() const
+{
+	// Empty on purpose, and required: ICommonEditorViewportToolbarInfoProvider declares this pure
+	// virtual, and the designer toolbar is built by hand (see SDreamWidgetDesignerViewportToolbar)
+	// rather than assembled from extensions. An empty extender is the "nothing to add" answer the
+	// interface asks for, not a stub waiting to be filled in.
+	TSharedPtr<FExtender> Result(MakeShareable(new FExtender));
+	return Result;
+}
+void SDreamWidgetDesignerViewport::OnFloatingButtonClicked()
+{
+	// Also required and also deliberately empty. The level viewport uses this to dismiss its
+	// floating transform toolbar when a menu button is pressed; the designer has no such overlay,
+	// so there is nothing to dismiss.
+}
+
+#undef LOCTEXT_NAMESPACE

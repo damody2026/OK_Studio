@@ -1,0 +1,16 @@
+// A check box and its caption, mirrored from the character controller.
+class /Game/UI/Reader/Controls/WBP_OKToggle
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (300, 36)
+    + HorizontalBox { Spacing = 8 }
+    Native.Toggle Toggle {
+        @slot { VerticalAlignment = Center  MinDesiredSize = (28, 28) }
+    }
+    Text Label : ui.Body {
+        Text = ""
+        FontSize = @ui.SizeCaption
+        @slot { VerticalAlignment = Center  SizeRule = Fill }
+    }
+}

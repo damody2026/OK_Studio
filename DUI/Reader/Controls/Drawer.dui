@@ -1,0 +1,18 @@
+// One of the right panel's drawers: a title row that folds the body away. The body is filled by code.
+class /Game/UI/Reader/Controls/WBP_OKDrawer
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (400, 52)
+    + VerticalBox { Spacing = 6 }
+    Native.Button Header : ui.TabOff {
+        Style.Height = 44
+        @slot HorizontalAlignment = Fill
+        Text Title : ui.Lead { Text = "" }
+    }
+    VerticalBox Body {
+        Spacing = 6
+        Padding = (8, 0, 0, 8)
+        @slot HorizontalAlignment = Fill
+    }
+}

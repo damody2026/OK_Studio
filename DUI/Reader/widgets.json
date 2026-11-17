@@ -1,0 +1,11 @@
+{ "widgets": [
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKLabel",  "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Label.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKButton", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Button.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKSlider", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Slider.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKToggle", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Toggle.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKChoice", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Choice.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKInput",  "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Input.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKImage",  "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Image.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKDrawer", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Drawer.dui" },
+  { "asset": "/Game/UI/Reader/WBP_ReaderScreen",      "parent": "/Script/OpenKoikatsu.OKReaderScreen", "source": "Reader/ReaderScreen.dui" }
+] }

@@ -1,0 +1,774 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#include "SDreamWidgetPalette.h"
+#include "Core/DreamGUISettings.h"
+#include "DreamWidgetBlueprintEditor.h"
+#include "DreamWidgetBlueprint.h"//the "User Created" group is an asset-registry query for these
+#include "DreamUIEditorTools.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/Components/DreamText.h"
+#include "Core/Components/DreamImage.h"
+#include "Core/Components/DreamRectBlock.h"
+#include "Core/DreamUISpriteData.h"
+#include "Core/Components/DreamLayout.h"
+#include "Core/Components/DreamPanelLayouts.h"//what a new child's slot starts with is the panel's to say
+#include "Core/Components/DreamPanelSlot.h"
+
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Styling/AppStyle.h"
+#include "Styling/SlateIconFinder.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SSearchBox.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Widgets/Views/STableRow.h"
+
+#define LOCTEXT_NAMESPACE "DreamWidgetPalette"
+
+namespace DreamUIPalette
+{
+	const TCHAR* FavoritesGroupName = TEXT("Favorites");
+
+	FString MakeFavoriteKey(const FPaletteItem& Item)
+	{
+		switch (Item.Kind)
+		{
+		case EItemKind::Category:
+			return FString();
+		case EItemKind::BasicWidget:
+			return FString::Printf(TEXT("Basic:%s"), *Item.DisplayName);
+		default:
+			// Registry entries are keyed by the registry's Name, not by the label they show: relabeling
+			// a control, or moving it to another category, must not drop the star off it.
+			if (Item.NativeDescriptor.IsValid())
+			{
+				return FString::Printf(TEXT("Control:%s"), *Item.NativeDescriptor->Name.ToString());
+			}
+			// A project's own Widget Blueprint has no registry entry, so its package path is its
+			// identity -- two folders are allowed to hold assets with the same short name, and a
+			// display-name key would have them sharing one star.
+			return FString::Printf(TEXT("Control:%s"),
+				Item.WidgetClassPath.IsEmpty() ? *Item.DisplayName : *Item.WidgetClassPath);
+		}
+	}
+
+	bool ShouldExpandGroup(bool bFilterActive, bool bWasCollapsed)
+	{
+		return bFilterActive || !bWasCollapsed;
+	}
+
+	bool StartsCollapsed(const FString& InGroupName)
+	{
+		return InGroupName == DreamUIPaletteCategory::Legacy;
+	}
+
+	bool ShouldListUserWidget(FName InPackageName, FName InEditedPackage, const TSet<FString>& InAlreadyOffered)
+	{
+		if (InPackageName.IsNone())
+		{
+			return false;
+		}
+		if (!InEditedPackage.IsNone() && InPackageName == InEditedPackage)
+		{
+			return false;
+		}
+		return !InAlreadyOffered.Contains(InPackageName.ToString());
+	}
+
+	void BuildRootItems(const TArray<FItemPtr>& InAllGroups, const TSet<FString>& InFavorites,
+		bool bFilterActive, TFunctionRef<bool(const FPaletteItem&)> InMatchesFilter, TArray<FItemPtr>& OutRootItems)
+	{
+		OutRootItems.Reset();
+		FItemPtr FavoritesGroup = MakeShared<FPaletteItem>();
+		FavoritesGroup->Kind = EItemKind::Category;
+		FavoritesGroup->DisplayName = FavoritesGroupName;
+		for (const FItemPtr& Group : InAllGroups)
+		{
+			if (!Group.IsValid())continue;
+			FItemPtr Shown = MakeShared<FPaletteItem>();
+			Shown->Kind = EItemKind::Category;
+			Shown->DisplayName = Group->DisplayName;
+			for (const FItemPtr& Child : Group->Children)
+			{
+				if (!Child.IsValid())continue;
+				if (bFilterActive && !InMatchesFilter(*Child))continue;
+				Shown->Children.Add(Child);
+				if (!Child->FavoriteKey.IsEmpty() && InFavorites.Contains(Child->FavoriteKey))
+				{
+					FavoritesGroup->Children.Add(MakeShared<FPaletteItem>(*Child));
+				}
+			}
+			if (Shown->Children.Num() > 0)
+			{
+				OutRootItems.Add(Shown);
+			}
+		}
+		if (FavoritesGroup->Children.Num() > 0)
+		{
+			OutRootItems.Insert(FavoritesGroup, 0);
+		}
+	}
+}
+
+SDreamWidgetPalette::~SDreamWidgetPalette()
+{
+	if (RegistryChangedHandle.IsValid())
+	{
+		FDreamUIControlRegistry::Get().OnChanged().Remove(RegistryChangedHandle);
+	}
+	// May already be gone during editor shutdown, hence Get() rather than GetChecked().
+	if (IAssetRegistry* AssetRegistry = IAssetRegistry::Get())
+	{
+		AssetRegistry->OnAssetAdded().Remove(AssetAddedHandle);
+		AssetRegistry->OnAssetRemoved().Remove(AssetRemovedHandle);
+		AssetRegistry->OnAssetRenamed().Remove(AssetRenamedHandle);
+		AssetRegistry->OnFilesLoaded().Remove(FilesLoadedHandle);
+	}
+}
+
+void SDreamWidgetPalette::Construct(const FArguments& InArgs, TSharedPtr<FDreamWidgetBlueprintEditor> InDesigner)
+{
+	DesignerPtr = InDesigner;
+	RegistryChangedHandle = FDreamUIControlRegistry::Get().OnChanged().AddSP(SharedThis(this), &SDreamWidgetPalette::RebuildList);
+	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+	AssetAddedHandle = AssetRegistry.OnAssetAdded().AddSP(SharedThis(this), &SDreamWidgetPalette::HandleWidgetAssetChanged);
+	AssetRemovedHandle = AssetRegistry.OnAssetRemoved().AddSP(SharedThis(this), &SDreamWidgetPalette::HandleWidgetAssetChanged);
+	AssetRenamedHandle = AssetRegistry.OnAssetRenamed().AddSP(SharedThis(this), &SDreamWidgetPalette::HandleWidgetAssetRenamed);
+	FilesLoadedHandle = AssetRegistry.OnFilesLoaded().AddSP(SharedThis(this), &SDreamWidgetPalette::HandleAssetRegistryFilesLoaded);
+	LoadPreferences();
+
+	ChildSlot
+	[
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2, 2, 2, 4)
+		[
+			SNew(SSearchBox)
+			.HintText(LOCTEXT("SearchHint", "Search elements"))
+			.OnTextChanged(this, &SDreamWidgetPalette::OnSearchTextChanged)
+		]
+		+ SVerticalBox::Slot()
+		.FillHeight(1.0f)
+		[
+			SAssignNew(TreeView, STreeView<FItemPtr>)
+			.SelectionMode(ESelectionMode::Single)
+			.TreeItemsSource(&RootItems)
+			.OnGenerateRow(this, &SDreamWidgetPalette::OnGenerateRow)
+			.OnGetChildren(this, &SDreamWidgetPalette::OnGetChildren)
+			.OnExpansionChanged(this, &SDreamWidgetPalette::OnGroupExpansionChanged)
+			.OnMouseButtonDoubleClick(this, &SDreamWidgetPalette::OnItemDoubleClick)
+		]
+	];
+
+	RebuildList();
+}
+
+void SDreamWidgetPalette::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+{
+	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
+	// Importing or deleting a folder of prefabs fires one event per asset; rebuilding the whole tree
+	// for each of them would stall the panel, so a burst collapses into a single rebuild.
+	if (bRebuildRequested && InCurrentTime >= NextRebuildTime)
+	{
+		bRebuildRequested = false;
+		NextRebuildTime = InCurrentTime + 0.25;
+		RebuildList();
+	}
+}
+
+void SDreamWidgetPalette::RequestRebuild()
+{
+	bRebuildRequested = true;
+}
+
+void SDreamWidgetPalette::HandleWidgetAssetChanged(const FAssetData& InAssetData)
+{
+	// Only a widget Blueprint can change this list: the user widgets it lists are those, and every
+	// registered control that names an asset names one of those. Reacting to every asset meant an import
+	// of a folder of textures rebuilt the palette -- and checked every registered control's package on
+	// disk -- four times a second for as long as the import ran, in every open designer.
+	const UClass* AssetClass = InAssetData.GetClass(EResolveClass::No);
+	if (AssetClass == nullptr || !AssetClass->IsChildOf(UDreamWidgetBlueprint::StaticClass()))
+	{
+		return;
+	}
+	RequestRebuild();
+}
+
+void SDreamWidgetPalette::HandleWidgetAssetRenamed(const FAssetData& InAssetData, const FString& InOldObjectPath)
+{
+	HandleWidgetAssetChanged(InAssetData);
+}
+
+void SDreamWidgetPalette::HandleAssetRegistryFilesLoaded()
+{
+	// A prefab whose package the registry had not gathered yet was taken on trust; now that it has, the
+	// rebuild says whether each one really is a DreamUI Widget Blueprint.
+	RequestRebuild();
+}
+
+UDreamWidget* SDreamWidgetPalette::GetSelectedWidget()const
+{
+	if (auto Editor = DesignerPtr.Pin())
+	{
+		for (auto& Weak : Editor->GetSelectedWidgets())
+		{
+			if (Weak.IsValid())return Weak.Get();
+		}
+	}
+	return nullptr;
+}
+
+void SDreamWidgetPalette::CollectBasics(TArray<FItemPtr>& Out)
+{
+	auto Header = MakeShared<FPaletteItem>();
+	Header->Kind = EItemKind::Category;
+	Header->DisplayName = TEXT("Basic");
+
+	auto MakeBasic = [](const FString& Name, UClass* VisualClass, bool bDefaultSprite = false)
+	{
+		auto Item = MakeShared<FPaletteItem>();
+		Item->Kind = EItemKind::BasicWidget;
+		Item->DisplayName = Name;
+		Item->VisualClass = VisualClass;
+		Item->bSetDefaultSprite = bDefaultSprite;
+		Item->FavoriteKey = DreamUIPalette::MakeFavoriteKey(*Item);
+		return Item;
+	};
+	Header->Children.Add(MakeBasic(TEXT("Widget"), nullptr));
+	Header->Children.Add(MakeBasic(TEXT("Text"), UDreamText::StaticClass()));
+	Header->Children.Add(MakeBasic(TEXT("Image"), UDreamImage::StaticClass(), /*bDefaultSprite*/true));
+	Header->Children.Add(MakeBasic(TEXT("RectBlock"), UDreamRectBlock::StaticClass()));
+	Out.Add(Header);
+}
+
+void SDreamWidgetPalette::CollectControls(TArray<FItemPtr>& Out)
+{
+	// In the registry's order of categories and, inside each, by name -- the order the Create menus
+	// use too, so the two lists of the same things read alike.
+	const FDreamUIControlRegistry& Registry = FDreamUIControlRegistry::Get();
+	for (const FName Category : Registry.GetCategoriesInDisplayOrder())
+	{
+		FItemPtr Header = MakeShared<FPaletteItem>();
+		Header->Kind = EItemKind::Category;
+		Header->DisplayName = Category.ToString();
+		for (const FDreamUIControlDescriptor* Descriptor : Registry.GetDescriptorsInCategory(Category))
+		{
+			auto Item = MakeShared<FPaletteItem>();
+			Item->Kind = Descriptor->CreationKind == EDreamUIControlCreationKind::WidgetClass ? EItemKind::WidgetClass : EItemKind::Native;
+			Item->DisplayName = Descriptor->DisplayName.ToString();
+			Item->WidgetClassPath = Descriptor->WidgetClassPath;
+			Item->NativeDescriptor = MakeShared<FDreamUIControlDescriptor>(*Descriptor);
+			Item->bValid = Registry.Validate(*Descriptor, Item->ValidationError);
+			Item->FavoriteKey = DreamUIPalette::MakeFavoriteKey(*Item);
+			Header->Children.Add(Item);
+		}
+		Out.Add(Header);
+	}
+}
+
+void SDreamWidgetPalette::CollectUserWidgets(TArray<FItemPtr>& Out)
+{
+	IAssetRegistry* AssetRegistry = IAssetRegistry::Get();
+	if (AssetRegistry == nullptr)
+	{
+		return;
+	}
+	// Everything the registry already offers, so a plugin preset is not listed a second time under
+	// its asset name. Registered controls carry the package path they are loaded from.
+	TSet<FString> AlreadyOffered;
+	for (const FDreamUIControlDescriptor& Descriptor : FDreamUIControlRegistry::Get().GetDescriptors())
+	{
+		if (!Descriptor.WidgetClassPath.IsEmpty())
+		{
+			AlreadyOffered.Add(Descriptor.WidgetClassPath);
+		}
+	}
+
+	const UDreamWidgetBlueprint* EditedBlueprint = nullptr;
+	if (const TSharedPtr<FDreamWidgetBlueprintEditor> Editor = DesignerPtr.Pin())
+	{
+		EditedBlueprint = Editor->GetWidgetBlueprint();
+	}
+	const FName EditedPackage = IsValid(EditedBlueprint) ? EditedBlueprint->GetOutermost()->GetFName() : NAME_None;
+
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UDreamWidgetBlueprint::StaticClass()->GetClassPathName());
+	Filter.bRecursiveClasses = true;
+	TArray<FAssetData> Assets;
+	AssetRegistry->GetAssets(Filter, Assets);
+	// By name, because the panel is a list to read rather than a directory to browse; the tooltip
+	// carries the path for the two assets that share a name.
+	Assets.Sort([](const FAssetData& A, const FAssetData& B)
+	{
+		return A.AssetName.LexicalLess(B.AssetName);
+	});
+
+	// The plugin's own preset folder is not the project's work. The presets are registered (Legacy) and
+	// already skipped above; what is left in it are helpers that were never meant to be placed, like
+	// BP_NavigationSelectionInputHandler, which turned up here as if the author had made it.
+	const FString PresetFolder = UDreamGUISettings::Get()->PresetControlFolder;
+
+	FItemPtr Header;
+	for (const FAssetData& Asset : Assets)
+	{
+		if (!DreamUIPalette::ShouldListUserWidget(Asset.PackageName, EditedPackage, AlreadyOffered))
+		{
+			continue;
+		}
+		const FString PackagePath = Asset.PackageName.ToString();
+		if (!PresetFolder.IsEmpty() && PackagePath.StartsWith(PresetFolder))
+		{
+			continue;
+		}
+		if (!Header.IsValid())
+		{
+			Header = MakeShared<FPaletteItem>();
+			Header->Kind = EItemKind::Category;
+			// UMG's name for the same group, so the two palettes read alike.
+			Header->DisplayName = TEXT("User Created");
+		}
+		FItemPtr Item = MakeShared<FPaletteItem>();
+		Item->Kind = EItemKind::WidgetClass;
+		Item->DisplayName = Asset.AssetName.ToString();
+		Item->WidgetClassPath = PackagePath;
+		Item->FavoriteKey = DreamUIPalette::MakeFavoriteKey(*Item);
+		Header->Children.Add(Item);
+	}
+	if (Header.IsValid())
+	{
+		Out.Add(Header);
+	}
+}
+
+void SDreamWidgetPalette::RebuildList()
+{
+	AllGroups.Reset();
+	CollectBasics(AllGroups);
+	CollectControls(AllGroups);
+	CollectUserWidgets(AllGroups);
+	// Legacy after the project's own widgets: the registry puts it last among its categories, and the
+	// palette keeps it last of all.
+	const int32 LegacyIndex = AllGroups.IndexOfByPredicate([](const FItemPtr& Group)
+	{
+		return Group.IsValid() && Group->DisplayName == DreamUIPaletteCategory::Legacy;
+	});
+	if (LegacyIndex != INDEX_NONE && LegacyIndex != AllGroups.Num() - 1)
+	{
+		const FItemPtr Legacy = AllGroups[LegacyIndex];
+		AllGroups.RemoveAt(LegacyIndex);
+		AllGroups.Add(Legacy);
+	}
+	RefreshRootItems();
+}
+
+void SDreamWidgetPalette::RefreshRootItems()
+{
+	const bool bFilterActive = !SearchFilter.GetFilterText().IsEmpty();
+	DreamUIPalette::BuildRootItems(AllGroups, Favorites, bFilterActive,
+		[this](const FPaletteItem& Item)
+		{
+			return SearchFilter.TestTextFilter(FBasicStringFilterExpressionContext(Item.DisplayName));
+		}, RootItems);
+
+	if (TreeView.IsValid())
+	{
+		TreeView->RequestTreeRefresh();
+		ApplyGroupExpansion();
+	}
+}
+
+void SDreamWidgetPalette::ApplyGroupExpansion()
+{
+	const bool bFilterActive = !SearchFilter.GetFilterText().IsEmpty();
+	// The tree reports every one of these back through OnGroupExpansionChanged, and a rebuild is not
+	// the user speaking.
+	bApplyingGroupExpansion = true;
+	for (auto& Group : RootItems)
+	{
+		const bool bCollapsed = DreamUIPalette::StartsCollapsed(Group->DisplayName)
+			? !OpenedGroups.Contains(Group->DisplayName)
+			: CollapsedGroups.Contains(Group->DisplayName);
+		TreeView->SetItemExpansion(Group, DreamUIPalette::ShouldExpandGroup(bFilterActive, bCollapsed));
+	}
+	bApplyingGroupExpansion = false;
+}
+
+void SDreamWidgetPalette::OnGroupExpansionChanged(FItemPtr InItem, bool bExpanded)
+{
+	if (bApplyingGroupExpansion || !InItem.IsValid() || InItem->Kind != EItemKind::Category)return;
+	// While a filter is active every group is forced open, so what the tree reports then says nothing
+	// about which groups this user wants closed.
+	if (!SearchFilter.GetFilterText().IsEmpty())return;
+	if (DreamUIPalette::StartsCollapsed(InItem->DisplayName))
+	{
+		// The other way round: what is kept for these is that the user opened one.
+		bool bAlreadyOpened = false;
+		if (bExpanded)
+		{
+			OpenedGroups.Add(InItem->DisplayName, &bAlreadyOpened);
+			if (bAlreadyOpened)return;
+		}
+		else if (OpenedGroups.Remove(InItem->DisplayName) == 0)
+		{
+			return;
+		}
+	}
+	else if (bExpanded)
+	{
+		if (CollapsedGroups.Remove(InItem->DisplayName) == 0)return;
+	}
+	else
+	{
+		bool bAlreadyCollapsed = false;
+		CollapsedGroups.Add(InItem->DisplayName, &bAlreadyCollapsed);
+		if (bAlreadyCollapsed)return;
+	}
+	SavePreferences();
+}
+
+TSharedRef<ITableRow> SDreamWidgetPalette::OnGenerateRow(FItemPtr InItem, const TSharedRef<STableViewBase>& OwnerTable)
+{
+	if (InItem->Kind == EItemKind::Category)
+	{
+		return SNew(STableRow<FItemPtr>, OwnerTable)
+			.ShowSelection(false)
+			.Padding(FMargin(4, 3))
+			[
+				SNew(STextBlock)
+				.Font(FAppStyle::Get().GetFontStyle("SmallFontBold"))
+				.Text(FText::FromString(InItem->DisplayName.ToUpper()))
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+			];
+	}
+
+	const FText FavoriteTooltip = LOCTEXT("FavoriteToggleTooltip", "Keep this element in the Favorites group at the top of the palette.");
+
+	// Registry entries carry an explicit semantic icon. Basics and project prefabs
+	// still resolve through their native class, matching UMG's palette behavior.
+	const FSlateBrush* IconBrush = nullptr;
+	if (InItem->NativeDescriptor.IsValid() && InItem->NativeDescriptor->Icon.IsSet())
+	{
+		IconBrush = InItem->NativeDescriptor->Icon.GetOptionalIcon();
+	}
+	if (!IconBrush)
+	{
+		UClass* IconClass = InItem->VisualClass.IsValid() ? InItem->VisualClass.Get() : UDreamWidget::StaticClass();
+		IconBrush = FSlateIconFinder::FindIconBrushForClass(IconClass);
+	}
+	const FText Tooltip = !InItem->bValid
+		? InItem->ValidationError
+		: InItem->Kind == EItemKind::WidgetClass
+		? FText::Format(LOCTEXT("ControlRowTooltip", "{0}\nDouble-click to add a copy under the selected widget."), FText::FromString(InItem->WidgetClassPath))
+		: FText::Format(LOCTEXT("BasicRowTooltip", "{0}\nDouble-click, or drag onto a Hierarchy widget, to add it under that widget."), FText::FromString(InItem->DisplayName));
+	TSharedRef<STableRow<FItemPtr>> Row = SNew(STableRow<FItemPtr>, OwnerTable)
+		.IsEnabled(InItem->bValid)
+		.Padding(FMargin(2, 2))
+		.ToolTipText(Tooltip)
+		.OnDragDetected(FOnDragDetected::CreateSP(this, &SDreamWidgetPalette::OnItemDragDetected, InItem));
+	// The star shows on a favourite and under the pointer, UMG-palette style. Hover has to be asked of
+	// the row: a check box only ever knows the pointer is over the check box. Hence content after
+	// construction -- the row has to exist before anything inside it can ask it anything.
+	const TWeakPtr<SWidget> WeakRow = Row;
+	Row->SetContent(
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		[
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "UMGEditor.Palette.FavoriteToggleStyle")
+			.ToolTipText(FavoriteTooltip)
+			.IsChecked(this, &SDreamWidgetPalette::GetFavoriteState, InItem)
+			.OnCheckStateChanged(this, &SDreamWidgetPalette::OnFavoriteToggled, InItem)
+			.Visibility_Lambda([this, InItem, WeakRow]()
+			{
+				const TSharedPtr<SWidget> HoverTarget = WeakRow.Pin();
+				return GetFavoriteState(InItem) == ECheckBoxState::Checked || (HoverTarget.IsValid() && HoverTarget->IsHovered())
+					? EVisibility::Visible : EVisibility::Hidden;
+			})
+		]
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		.Padding(2, 0, 6, 0)
+		[
+			SNew(SImage)
+			.Image(IconBrush)
+			.ColorAndOpacity(FSlateColor::UseForeground())
+			.DesiredSizeOverride(FVector2D(16, 16))
+		]
+		+ SHorizontalBox::Slot()
+		.FillWidth(1.0f)
+		.VAlign(VAlign_Center)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(InItem->DisplayName))
+			.HighlightText(this, &SDreamWidgetPalette::GetSearchText)
+		]);
+	return Row;
+}
+
+void SDreamWidgetPalette::OnGetChildren(FItemPtr InItem, TArray<FItemPtr>& OutChildren)
+{
+	OutChildren = InItem->Children;
+}
+
+void SDreamWidgetPalette::OnItemDoubleClick(FItemPtr InItem)
+{
+	if (!InItem.IsValid() || !InItem->bValid)return;
+	if (InItem->Kind == EItemKind::Category)
+	{
+		if (TreeView.IsValid())TreeView->SetItemExpansion(InItem, !TreeView->IsItemExpanded(InItem));
+		return;
+	}
+	CreateItem(InItem);
+}
+
+namespace SDreamWidgetPaletteLocal
+{
+	// Favourites and collapsed groups are per user and per project, and neither is worth a settings
+	// object: nothing outside this panel reads them.
+	static const TCHAR* PreferencesSection = TEXT("DreamWidgetPalette.Preferences");
+	static const TCHAR* FavoritesKey = TEXT("Favorites");
+	static const TCHAR* CollapsedGroupsKey = TEXT("CollapsedGroups");
+	static const TCHAR* OpenedGroupsKey = TEXT("OpenedGroups");
+
+	// shared create path: the create primitives take a "get parent" function, so double-click
+	// (parent = selection) and drop (parent = drop-target widget) reuse the same logic
+	/**
+	 * Where a widget an author just added ends up, decided by what it was added TO.
+	 *
+	 * Written as DATA -- anchors and slot fields -- rather than through the setters: this runs on the
+	 * authoring template, and the setters resolve against a parent rect and a registered layout that a
+	 * template has neither of. It is the same trap that made a stretched axis written with SetWidth
+	 * carry minus the parent's width for ever.
+	 *
+	 * Three cases, and the order they are asked in is the rule:
+	 *
+	 *   The widget IS the root, or sits under a root that arranges nothing and it is the first thing
+	 *   there. UMG never shows this state -- there the first widget dropped is the root, so it is the
+	 *   screen -- and that is what it becomes here: stretched over the root with nothing left over from
+	 *   wherever the cursor let go. A PANEL under such a root fills it whether or not it is first,
+	 *   because holding the rest of the screen is what a panel is dropped for; anything else that
+	 *   arrives second is a free child on a canvas-less page and stays where it was put.
+	 *
+	 *   The parent is a panel. Then the slot starts with that panel's own alignment, as UMG's slot
+	 *   classes do: top-left on an overlay, centred in a scale box, filling a box's band. The slot's
+	 *   class default is Fill for everyone, which is right for a file that says nothing and wrong for a
+	 *   button somebody just dropped on an overlay and watched swallow it.
+	 *
+	 *   Anything else -- a hand-arranged group further down the tree -- is left exactly where the
+	 *   caller's callback placed it.
+	 */
+	void PlaceNewlyAuthoredWidget(UDreamWidget* InWidget, bool bIsPanel)
+	{
+		if (!IsValid(InWidget))
+		{
+			return;
+		}
+		auto FillParent = [InWidget]()
+		{
+			FDreamUIAnchorData Anchors = InWidget->GetAnchorData();
+			Anchors.AnchorMin = FVector2D::ZeroVector;
+			Anchors.AnchorMax = FVector2D(1.0, 1.0);
+			Anchors.AnchoredPosition = FVector2D::ZeroVector;
+			Anchors.SizeDelta = FVector2D::ZeroVector;
+			InWidget->SetAnchorData(Anchors);
+		};
+
+		UDreamWidget* Parent = InWidget->GetParent();
+		if (!IsValid(Parent))
+		{
+			// It became the root. DreamWidgetTreeEditing::CreateWidget already stretched it; what is
+			// being undone here is the drop position the caller wrote over that afterwards.
+			FillParent();
+			return;
+		}
+		if (const UDreamPanelLayoutBase* Panel = Cast<UDreamPanelLayoutBase>(Parent->GetLayoutContainer()))
+		{
+			if (!Parent->HasPanelSlots())
+			{
+				return;
+			}
+			UDreamPanelSlot* Slot = InWidget->GetPanelSlot();
+			if (!IsValid(Slot))
+			{
+				// Registration is what usually mints one, and a template never registers.
+				Slot = InWidget->CreateNewPanelSlot<UDreamPanelSlot>();
+			}
+			if (IsValid(Slot))
+			{
+				Panel->GetNewChildSlotAlignment(Slot->HorizontalAlignment, Slot->VerticalAlignment);
+			}
+			return;
+		}
+		if (IsValid(Parent->GetParent()) || Parent->GetLayoutContainer() != nullptr)
+		{
+			return;
+		}
+		if (!bIsPanel)
+		{
+			for (const UDreamWidget* Sibling : Parent->GetChildren())
+			{
+				if (IsValid(Sibling) && Sibling != InWidget)
+				{
+					return;
+				}
+			}
+		}
+		FillParent();
+	}
+
+	UDreamWidget* CreateElement(bool bIsBasicWidget, UClass* VisualClass, bool bSetDefaultSprite,
+		const TSharedPtr<FDreamUIControlDescriptor>& NativeDescriptor, const FString& WidgetClassPath,
+		const FString& DisplayName, TFunction<UDreamWidget*()> GetParent,
+		TFunction<void(UDreamWidget*)> AfterCreate = nullptr)
+	{
+		// After the caller's callback, so that a drop position it writes does not outlive the decision.
+		const bool bIsPanel = NativeDescriptor.IsValid() && NativeDescriptor->LayoutContainerClass.IsValid();
+		TFunction<void(UDreamWidget*)> PlaceThenSettle = [AfterCreate, bIsPanel](UDreamWidget* InWidget)
+		{
+			if (AfterCreate)AfterCreate(InWidget);
+			PlaceNewlyAuthoredWidget(InWidget, bIsPanel);
+		};
+		if (bIsBasicWidget)
+		{
+			TFunction<void(UDreamWidget*)> Callback = [bSetDefaultSprite, PlaceThenSettle](UDreamWidget* InWidget)
+			{
+				if (bSetDefaultSprite)
+				{
+					if (auto Image = Cast<UDreamImage>(InWidget->GetVisual()))
+					{
+						Image->SetBrush_DreamUISprite(UDreamUISpriteData::GetDefaultFrameRect());
+					}
+				}
+				PlaceThenSettle(InWidget);
+			};
+			return FDreamUIEditorTools::CreateWidgetAndReturn(GetParent, DisplayName, VisualClass, Callback);
+		}
+		if (NativeDescriptor.IsValid())
+		{
+			return FDreamUIEditorTools::CreateRegisteredControlAndReturn(GetParent, NativeDescriptor->Name, PlaceThenSettle);
+		}
+		return FDreamUIEditorTools::CreateUIControlsAndReturn(GetParent, WidgetClassPath, PlaceThenSettle);
+	}
+}
+
+UDreamWidget* FDreamUIPaletteDragDropOp::CreateUnder(UDreamWidget* InParentWidget, TOptional<int32> InSiblingIndex,
+	TFunction<void(UDreamWidget*)> AfterCreate)const
+{
+	if (InParentWidget == nullptr)return nullptr;
+	// Place inside the creation callback rather than after the call returns: the create primitives
+	// run it while their own transaction is still open, so creating and positioning collapse into
+	// one undo step instead of leaving a half-placed widget behind on Ctrl+Z.
+	TFunction<void(UDreamWidget*)> PlaceThenForward =
+		[InSiblingIndex, AfterCreate = MoveTemp(AfterCreate)](UDreamWidget* InWidget)
+		{
+			if (InWidget != nullptr && InSiblingIndex.IsSet())
+			{
+				InWidget->SetSiblingIndex(InSiblingIndex.GetValue());
+			}
+			if (AfterCreate)
+			{
+				AfterCreate(InWidget);
+			}
+		};
+	return SDreamWidgetPaletteLocal::CreateElement(bIsBasicWidget, VisualClass.Get(), bSetDefaultSprite,
+		NativeDescriptor, WidgetClassPath, DisplayName, [InParentWidget]() -> UDreamWidget* { return InParentWidget; },
+		MoveTemp(PlaceThenForward));
+}
+
+void SDreamWidgetPalette::CreateItem(FItemPtr InItem)
+{
+	if (!InItem.IsValid() || InItem->Kind == EItemKind::Category)return;
+	// With nothing selected, fall back to the prefab root -- the same "add to root" the hierarchy's
+	// empty-area drop performs. Double-click used to be a no-op here, which reads as a dead panel.
+	SDreamWidgetPaletteLocal::CreateElement(InItem->Kind == EItemKind::BasicWidget, InItem->VisualClass.Get(),
+		InItem->bSetDefaultSprite, InItem->NativeDescriptor, InItem->WidgetClassPath, InItem->DisplayName,
+		[this]() -> UDreamWidget*
+		{
+			if (UDreamWidget* Selected = GetSelectedWidget())return Selected;
+			if (auto Editor = DesignerPtr.Pin())return Editor->GetPreviewRootWidget();
+			return nullptr;
+		});
+}
+
+FReply SDreamWidgetPalette::OnItemDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent, FItemPtr InItem)
+{
+	if (!InItem.IsValid() || !InItem->bValid || InItem->Kind == EItemKind::Category)return FReply::Unhandled();
+	auto Op = MakeShared<FDreamUIPaletteDragDropOp>();
+	Op->bIsBasicWidget = (InItem->Kind == EItemKind::BasicWidget);
+	Op->VisualClass = InItem->VisualClass;
+	Op->bSetDefaultSprite = InItem->bSetDefaultSprite;
+	Op->NativeDescriptor = InItem->NativeDescriptor;
+	Op->WidgetClassPath = InItem->WidgetClassPath;
+	Op->DisplayName = InItem->DisplayName;
+	Op->Construct();
+	Op->SetToolTip(FText::FromString(InItem->DisplayName), nullptr);
+	// Without a default recorded, ResetToDefaultToolTip clears the decorator, so a handler that
+	// writes CurrentHoverText on hover has nothing to fall back to when the pointer leaves it.
+	Op->SetupDefaults();
+	return FReply::Handled().BeginDragDrop(Op);
+}
+
+void SDreamWidgetPalette::OnSearchTextChanged(const FText& InText)
+{
+	SearchFilter.SetFilterText(InText);
+	RefreshRootItems();
+}
+
+FText SDreamWidgetPalette::GetSearchText()const
+{
+	return SearchFilter.GetFilterText();
+}
+
+void SDreamWidgetPalette::LoadPreferences()
+{
+	if (GConfig == nullptr)return;
+	TArray<FString> Values;
+	GConfig->GetArray(SDreamWidgetPaletteLocal::PreferencesSection, SDreamWidgetPaletteLocal::FavoritesKey, Values, GEditorPerProjectIni);
+	Favorites.Append(Values);
+	Values.Reset();
+	GConfig->GetArray(SDreamWidgetPaletteLocal::PreferencesSection, SDreamWidgetPaletteLocal::CollapsedGroupsKey, Values, GEditorPerProjectIni);
+	CollapsedGroups.Append(Values);
+	Values.Reset();
+	GConfig->GetArray(SDreamWidgetPaletteLocal::PreferencesSection, SDreamWidgetPaletteLocal::OpenedGroupsKey, Values, GEditorPerProjectIni);
+	OpenedGroups.Append(Values);
+}
+
+void SDreamWidgetPalette::SavePreferences()const
+{
+	if (GConfig == nullptr)return;
+	GConfig->SetArray(SDreamWidgetPaletteLocal::PreferencesSection, SDreamWidgetPaletteLocal::FavoritesKey, Favorites.Array(), GEditorPerProjectIni);
+	GConfig->SetArray(SDreamWidgetPaletteLocal::PreferencesSection, SDreamWidgetPaletteLocal::CollapsedGroupsKey, CollapsedGroups.Array(), GEditorPerProjectIni);
+	GConfig->SetArray(SDreamWidgetPaletteLocal::PreferencesSection, SDreamWidgetPaletteLocal::OpenedGroupsKey, OpenedGroups.Array(), GEditorPerProjectIni);
+	GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+ECheckBoxState SDreamWidgetPalette::GetFavoriteState(FItemPtr InItem)const
+{
+	return InItem.IsValid() && !InItem->FavoriteKey.IsEmpty() && Favorites.Contains(InItem->FavoriteKey)
+		? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+}
+
+void SDreamWidgetPalette::OnFavoriteToggled(ECheckBoxState InState, FItemPtr InItem)
+{
+	if (!InItem.IsValid() || InItem->FavoriteKey.IsEmpty())return;
+	if (InState == ECheckBoxState::Checked)
+	{
+		Favorites.Add(InItem->FavoriteKey);
+	}
+	else
+	{
+		Favorites.Remove(InItem->FavoriteKey);
+	}
+	SavePreferences();
+	// The Favorites group is derived, not stored, so it only gains or loses the entry on a re-derive.
+	RefreshRootItems();
+}
+
+#undef LOCTEXT_NAMESPACE

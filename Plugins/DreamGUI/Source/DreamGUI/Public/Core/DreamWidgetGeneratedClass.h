@@ -1,0 +1,175 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Core/DreamWidgetEachBinding.h"
+#include "Core/DreamWidgetPropertyBinding.h"
+#include "Core/DreamWidgetViewModelSlot.h"
+#include "DreamWidgetGeneratedClass.generated.h"
+
+class UDreamUserWidget;
+class UDreamWidget;
+class UDreamWidgetTree;
+
+/**
+ * The class a DreamUI hierarchy compiles into -- UMG's UWidgetBlueprintGeneratedClass, for DreamUI.
+ *
+ * It carries the authored hierarchy as a template on the class itself, which is the whole point: a
+ * prefab's hierarchy lived in a binary blob that only its own deserializer could read, so it could
+ * never be a type. Here it is an ordinary object graph hanging off the class, instanced per instance
+ * by FObjectInstancingGraph like any other archetype.
+ */
+UCLASS()
+class DREAMGUI_API UDreamWidgetGeneratedClass : public UBlueprintGeneratedClass
+{
+	GENERATED_BODY()
+
+public:
+	/**
+	 * The UPROPERTY meta specifier that declares a widget binding: meta = (BindDreamWidget).
+	 *
+	 * Deliberately not UMG's "BindWidget". The two never collide at run time -- one is read on
+	 * UUserWidget subclasses and the other on UDreamUserWidget subclasses, and no class is both --
+	 * but a header is read by people, and a bare meta=(BindWidget) on a Dream widget says it belongs
+	 * to a framework it does not belong to.
+	 *
+	 * Named here, once, because the compiler validates against it and anything else that ever asks
+	 * "is this property a binding" must ask the same question. Two spellings of a metadata key do not
+	 * fail to compile; they fail by quietly never matching.
+	 *
+	 * What it does NOT do, and the name would let you assume it does: it does not decide whether a
+	 * property is bound. InitializeWidgetStatic binds every widget-typed property declared below
+	 * UDreamUserWidget by name, marked or not. This specifier decides whether a MISSING widget is a
+	 * compile error. See DreamGUI.WidgetBlueprint.AnUnmarkedWidgetMemberIsBoundAnyway.
+	 */
+	static const FName BindWidgetMetaName;
+
+	/**
+	 * The same claim for animations: meta = (BindDreamWidgetAnim) on an animation-typed property says
+	 * the class's own code plays an animation of that name, so a hierarchy without one is a compile
+	 * error. UMG spells it BindWidgetAnim; this framework spells its own, for the reason above.
+	 *
+	 * Optional is the same claim without the error, for a class that tests the pointer first. Neither
+	 * decides whether the property is FILLED -- every animation-named property below UDreamUserWidget
+	 * is bound by name, marked or not -- only whether a missing animation stops the compile.
+	 */
+	static const FName BindWidgetAnimMetaName;
+	static const FName BindWidgetAnimOptionalMetaName;
+
+	/** The authored hierarchy this class instantiates. Null on a class that inherits its parent's. */
+	UDreamWidgetTree* GetWidgetTreeArchetype() const { return WidgetTree; }
+
+	/**
+	 * The canvas size the hierarchy was laid out against, as the designer saw it.
+	 *
+	 * UMG keeps its design-time size on the editor-only Blueprint, which is enough there: a screen is
+	 * stretched to whatever viewport it lands in, so the authored size is never anything but a preview.
+	 * A hierarchy hosted in the WORLD has no viewport to stretch to, and the size it was drawn at is
+	 * the only answer anyone can give for how big it should be in centimetres -- so here it rides the
+	 * class and survives into a cooked build.
+	 */
+	FIntPoint GetDesignSize() const { return DesignSize; }
+	void SetDesignSize(FIntPoint InSize);
+
+	/**
+	 * The design size that applies to InClass: the nearest generated class at or above it, as with the
+	 * tree archetype. Unlike the tree, every generated class carries one, so the walk stops at the
+	 * first; a native class never went through a designer and answers the default canvas.
+	 */
+	static FIntPoint FindDesignSize(const UClass* InClass);
+
+	/** The property bindings the compiler resolved for this class. Not inherited: see the getter below. */
+	const TArray<FDreamWidgetPropertyBinding>& GetPropertyBindings() const { return PropertyBindings; }
+	const TArray<FDreamWidgetEventBinding>& GetEventBindings() const { return EventBindings; }
+
+	/**
+	 * Every binding that applies to an instance of InClass, its ancestors' included.
+	 *
+	 * Bindings accumulate down the chain where the tree does not: a subclass that adds none still has
+	 * to honour its parent's, and one that adds some does not replace them.
+	 */
+	static void CollectPropertyBindings(const UClass* InClass, TArray<FDreamWidgetPropertyBinding>& OutBindings);
+	/** Base first, like the property bindings: a subclass listening to the same event binds after. */
+	static void CollectEventBindings(const UClass* InClass, TArray<FDreamWidgetEventBinding>& OutBindings);
+	/** Base first, like the others. */
+	static void CollectEachBindings(const UClass* InClass, TArray<FDreamWidgetEachBinding>& OutBindings);
+
+	/** The `viewmodels` entries this class declares. Not inherited: see CollectViewModelSlots. */
+	const TArray<FDreamWidgetViewModelSlot>& GetViewModelSlots() const { return ViewModelSlots; }
+
+	/** Every `viewmodels` entry an instance of InClass holds, its ancestors' included, base first; one per variable name, the nearest declaration winning. */
+	static void CollectViewModelSlots(const UClass* InClass, TArray<FDreamWidgetViewModelSlot>& OutSlots);
+
+#if WITH_EDITOR
+	/** Compiler-only: hand the class the tree it will instance. */
+	void SetWidgetTreeArchetype(UDreamWidgetTree* InWidgetTree);
+	/** Compiler-only: hand the class the bindings it resolved. */
+	void SetPropertyBindings(TArray<FDreamWidgetPropertyBinding> InBindings);
+	void SetEventBindings(TArray<FDreamWidgetEventBinding> InBindings);
+	void SetEachBindings(TArray<FDreamWidgetEachBinding> InBindings);
+	void SetViewModelSlots(TArray<FDreamWidgetViewModelSlot> InSlots);
+#endif
+
+	/**
+	 * The nearest class at or above InClass that declares a tree of its own.
+	 *
+	 * A subclass that only adds logic declares none, and must instance its parent's -- otherwise
+	 * subclassing a screen to change one function would silently produce an empty screen.
+	 */
+	static UDreamWidgetTree* FindWidgetTreeArchetype(const UClass* InClass);
+
+	/** Build InUserWidget's contents from this class. */
+	void InitializeWidget(UDreamUserWidget* InUserWidget) const;
+
+	/**
+	 * Instance InWidgetTreeArchetype into InUserWidget and resolve the by-name bindings.
+	 *
+	 * Static and archetype-taking so a class that inherited its tree can pass the ancestor's, and so
+	 * the whole step is testable without compiling a Blueprint. Mirrors
+	 * UWidgetBlueprintGeneratedClass::InitializeWidgetStatic, whose three steps this follows:
+	 * instance the tree, bind each widget to the same-named class property, then hand over.
+	 *
+	 * The contents are instanced with InUserWidget's own RF_Transactional, because that flag
+	 * propagates to sub-objects and so decides whether the whole hierarchy is undoable. An
+	 * RF_Transient, non-transactional host -- which is what the designer builds its preview as --
+	 * therefore gets a hierarchy no transaction can record, which is the rule the designer's undo
+	 * model rests on: the authoring tree is the only undoable half.
+	 */
+	static void InitializeWidgetStatic(UDreamUserWidget* InUserWidget, const UClass* InClass, UDreamWidgetTree* InWidgetTreeArchetype);
+
+	virtual void PurgeClass(bool bRecompilingOnLoad) override;
+
+private:
+	/**
+	 * Persistent -- this is the class's data. DuplicateTransient because a duplicated class is about to
+	 * be recompiled and will be handed a freshly generated tree; carrying the old one over would leave
+	 * a copy pointing at an archetype nobody owns. Same reasoning as UMG's.
+	 */
+	UPROPERTY(DuplicateTransient)
+	TObjectPtr<UDreamWidgetTree> WidgetTree = nullptr;
+
+	/** Persistent and DuplicateTransient for the same reasons as WidgetTree. */
+	UPROPERTY(DuplicateTransient)
+	TArray<FDreamWidgetPropertyBinding> PropertyBindings;
+
+	UPROPERTY()
+	TArray<FDreamWidgetEventBinding> EventBindings;
+
+	UPROPERTY()
+	TArray<FDreamWidgetEachBinding> EachBindings;
+
+	UPROPERTY()
+	TArray<FDreamWidgetViewModelSlot> ViewModelSlots;
+
+	/**
+	 * Persistent, and deliberately NOT DuplicateTransient where the tree above is. The tree is dropped
+	 * on duplication because the copy is about to be handed a freshly generated one; this is a plain
+	 * value the compiler copies from the Blueprint's designer data, and a duplicate that never reaches
+	 * the compiler -- a class copied for reinstancing, above all -- would otherwise fall back to the
+	 * default canvas and resize every world-space host built from it.
+	 */
+	UPROPERTY()
+	FIntPoint DesignSize = FIntPoint(1920, 1080);
+};

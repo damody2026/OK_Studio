@@ -98,6 +98,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "DreamGUI",
+			"Enabled": true
+		},
+		{
 			"Name": "ControlRig",
 			"Enabled": true
 		},

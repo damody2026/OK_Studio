@@ -1,0 +1,244 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+#include "CoreMinimal.h"
+#include "DreamUIGeometry.h"
+#include "Engine/Texture.h"
+#include "DreamUIRender/DreamUIMeshIndex.h"
+#include "Core/DreamUIQuadTree.h"
+#include "UObject/ObjectKey.h"
+#include "DreamUIRender/DreamUICompositor.h"
+
+class UDreamVisualPostProcess;
+class UDreamVisual;
+class UDreamUIFontData_BaseObject;
+struct FDreamUIMeshVertex;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UDreamWidget;
+class UDreamVisualBatchMesh;
+class UDreamVisualDirectMesh;
+class UDreamUIMeshComponent;
+class UDreamLayerGroup;
+class UDreamLayerStyle;
+struct FDreamUIRenderSection;
+
+enum class EDreamUIDrawCallType :uint8
+{
+	BatchMesh = 1,
+	PostProcess,
+	DirectMesh,
+	ChildCanvas,
+	/**
+	 * A group opened, and closed: what is drawn between the two goes into a texture of its own, put over what is behind it
+	 * as the group's composite says (FDreamUICompositeDesc). Nothing batches across either.
+	 */
+	GroupBegin,
+	GroupEnd,
+};
+
+class FDreamUIRenderData
+{
+public:
+	FDreamUIRenderData(EDreamUIDrawCallType InType)
+	{
+		Type = InType;
+	}
+	EDreamUIDrawCallType Type = EDreamUIDrawCallType::BatchMesh;
+
+	/**
+	 * The batch mesh's geometry as the batching is to see it: the visual's copy of its geometry, made again only when
+	 * the geometry changed since the last copy, and never written once made (UDreamVisualBatchMesh::
+	 * GetGeometryForBatching). The batching reads it on a worker thread and the draw call keeps it, so a canvas where
+	 * one widget moved copies that widget's geometry and hands every other one over as it was.
+	 */
+	TSharedPtr<const FDreamUIGeometry> BatchMeshGeometry;
+	TWeakObjectPtr<UDreamVisualBatchMesh> BatchMeshVisualObject;
+
+	TWeakObjectPtr<UDreamVisualPostProcess> PostProcessVisualObject;//post process object
+	/**
+	 * The post-process element's canvas-space bounds, read off its geometry on the game thread while this
+	 * render-data is prepared. Batching runs on a worker thread and must not dereference the weak pointer
+	 * above, so the only thing it is allowed to know about a post-process draw-call is these two numbers.
+	 */
+	FVector2D PostProcessBoundsMin2DInCanvasSpace = FVector2D::ZeroVector;
+	FVector2D PostProcessBoundsMax2DInCanvasSpace = FVector2D::ZeroVector;
+
+	TWeakObjectPtr<UDreamVisualDirectMesh> DirectMeshVisualObject;
+	/** How many segments the direct mesh draws in, read off it on the game thread: the batching makes a draw call of each. */
+	int32 DirectMeshSegmentCount = 1;
+
+	TWeakObjectPtr<UDreamCanvas> ChildCanvas;
+
+	/**
+	 * A group marker's composite: the whole of it on the opening marker, its id alone on the closing one. Made on the game
+	 * thread as the markers are put among the entries (UDreamCanvas::InsertCompositeMarkers), never written after.
+	 */
+	TSharedPtr<const FDreamUICompositeDesc> Composite;
+	/** The layer group a marker is for, when it is one's: what its opacity and mode are read from every frame. */
+	TWeakObjectPtr<UDreamLayerGroup> LayerGroup;
+	/** The element a group drawn already is for (UDreamVisual::GetCompositeSource): what its composite is read from every frame. */
+	TWeakObjectPtr<UDreamVisual> CompositeVisual;
+	/** The visual whose effect a group's picture goes through (UDreamVisual::GetChildrenEffect): read every frame. */
+	TWeakObjectPtr<UDreamVisual> EffectVisual;
+	/** The layer style a group's picture is styled by (UDreamLayerStyle on a widget drawn apart): read every frame. */
+	TWeakObjectPtr<UDreamLayerStyle> LayerStyle;
+
+	/**
+	 * The widget the entry was prepared from, as a key: the canvas finds the entry's place in its widget list with it on
+	 * the game thread, and never reaches the widget through it. The batching does not read it.
+	 */
+	TObjectKey<UDreamWidget> Widget;
+};
+
+class DREAMGUI_API FDreamUIDrawCall
+{
+public:
+	FDreamUIDrawCall(EDreamUIDrawCallType InType)
+	{
+		Type = InType;
+	}
+	FDreamUIDrawCall(DreamUIQuadTree::Rectangle InCanvasRect)
+	{
+		Type = EDreamUIDrawCallType::BatchMesh;
+		BatchMeshTreeNode = MakeShared<DreamUIQuadTree::Node>(InCanvasRect);
+	}
+	~FDreamUIDrawCall()
+	{
+		
+	}
+	EDreamUIDrawCallType Type = EDreamUIDrawCallType::BatchMesh;
+
+	TWeakObjectPtr<UTexture> Texture = nullptr;//draw-call use this texture to render
+	TWeakObjectPtr<UTexture> FontTexture = nullptr;//draw-call use this texture to render font
+	TWeakObjectPtr<UDreamUIFontData_BaseObject> Font = nullptr;//the font FontTexture belongs to
+	TWeakObjectPtr<UMaterialInterface> Material = nullptr;//draw-call use this material to render, can be null to use default material
+
+	TWeakObjectPtr<UDreamVisualPostProcess> PostProcessVisualObject;//post process object
+	/** Canvas-space bounds carried over from FDreamUIRenderData so the batching worker thread never has to touch the visual. */
+	FVector2D PostProcessBoundsMin2DInCanvasSpace = FVector2D::ZeroVector;
+	FVector2D PostProcessBoundsMax2DInCanvasSpace = FVector2D::ZeroVector;
+
+	TWeakObjectPtr<UDreamVisualDirectMesh> DirectMeshVisualObject;
+	/** Which of the direct mesh's segments this draw call draws (UDreamVisualDirectMesh::GetSegmentCount). */
+	int32 DirectMeshSegment = 0;
+	/**
+	 * The canvas shades this direct mesh segment itself (UDreamVisualDirectMesh::GetSegmentShading): Texture, Material and
+	 * BlendMode say how, as for a batched draw call, and bDirectMeshBuiltIn whether the built-in shader draws it. Set on the
+	 * game thread as the sections are set up.
+	 */
+	bool bDirectMeshShaded = false;
+	bool bDirectMeshBuiltIn = false;
+
+	/**
+	 * The render section this draw-call produced in UpdateDrawCallMesh, or null when it was skipped
+	 * (invalid object, WorldSpace post process). Draw-call index and section index diverge whenever
+	 * anything is skipped, so priority/geometry updates must address the section through this handle,
+	 * never by the draw-call's position.
+	 */
+	TSharedPtr<struct FDreamUIRenderSection> RenderSection;
+	/**
+	 * A pooled mesh section built from exactly this draw call's geometries, claimed for it before any section is set
+	 * up (UDreamUIMeshComponent::ClaimPooledMeshSections), so that setting up an earlier draw call cannot take it from
+	 * the pool first. Set up, it becomes RenderSection.
+	 */
+	TSharedPtr<struct FDreamUIRenderSection> ClaimedMeshSection;
+	/**
+	 * ClaimedMeshSection was built from geometries laid out as this draw call's are (GeometryListsShareLayout), not all
+	 * of them the same copies: the vertices of those that differ are written into it in place, and the rest of it stays
+	 * as it is, here and on the GPU (UDreamUIMeshComponent::PatchMeshSection).
+	 */
+	bool bPatchClaimedMeshSection = false;
+
+	TArray<TWeakObjectPtr<UDreamVisualBatchMesh>> BatchMeshVisualArray;
+	/**
+	 * The geometries this draw call was built from, in hierarchy order: the visuals' copies, shared and never written.
+	 * Two draw calls built from the same list hold the same vertices, which is how a mesh section built from one is
+	 * known to need nothing uploaded for the other (UDreamUIMeshComponent::SetupRenderSection).
+	 */
+	TArray<TSharedPtr<const FDreamUIGeometry>> BatchMeshGeometryArray;
+	TArray<FDreamUIMeshVertex> CombinedBatchMeshGeometryVertices;
+	TArray<FDreamUIMeshIndex> CombinedBatchMeshGeometryTriangles;
+	/** The box of the elements of no render layer, on the canvas. */
+	FBox CombinedBounds;
+	/** The elements of a render layer: the layer's row of the render layer table, and their box in the layer's space. */
+	struct FLayerBounds
+	{
+		int32 Row = 0;
+		FBox Bounds = FBox(ForceInit);
+	};
+	/** One entry for each run of one layer's elements, in the order they are drawn. */
+	TArray<FLayerBounds> LayerBounds;
+	/**
+	 * The box of everything the draw call holds, on the canvas, which its section is boxed by: CombinedBounds, and each of
+	 * LayerBounds where its row places it now, as a box that does not change while the layer only turns about it -- with
+	 * some room, and kept while it still holds them, so that a layer that only turns does not box its draw call anew each
+	 * frame (PlaceBounds). CombinedBounds alone for a draw call of no layer's elements.
+	 */
+	FBox CanvasBounds;
+	TSharedPtr<DreamUIQuadTree::Node> BatchMeshTreeNode = nullptr;
+	int32 VerticesCount = 0;//vertices count of all BatchMeshRenderObjectList
+	int32 IndicesCount = 0;//triangle indices count of all BatchMeshRenderObjectList
+
+	bool bIs2DSpace = false;//transform relative to canvas is 2d or not? only 2d draw-call can batch
+	/** The blend mode every element in this draw-call shares; the blend state is set once per draw-call. */
+	EDreamUIBlendMode BlendMode = EDreamUIBlendMode::Alpha;
+	/** The mask textures the draw binds: each slot the one its elements read there, if any reads it (FDreamUIMaskTextures). */
+	FDreamUIMaskTextures MaskTextures;
+	/**
+	 * Whether it holds elements of render layers, whose vertices are relative to their layers and are placed on the canvas
+	 * by the layers' rows of the render layer table (DreamUIRenderLayer.ush), on the GPU. Any number of layers, and elements
+	 * of none besides: each vertex's record says which row, if any.
+	 */
+	bool HasRenderLayerElements()const { return LayerBounds.Num() > 0; }
+	/**
+	 * CanvasBounds worked out again from InTable's rows as they are now, or left as it is while it still holds them. Any
+	 * thread, while nothing writes those rows.
+	 */
+	void PlaceBounds(const class UDreamUIRenderLayerTable* InTable);
+
+	TWeakObjectPtr<class UDreamCanvas> ChildCanvas;//insert point to sort child canvas
+
+	/** A group marker's composite and layer group, as FDreamUIRenderData has them; bCompositeBegin for the opening one. */
+	TSharedPtr<const FDreamUICompositeDesc> Composite;
+	TWeakObjectPtr<UDreamLayerGroup> LayerGroup;
+	TWeakObjectPtr<UDreamVisual> CompositeVisual;
+	TWeakObjectPtr<UDreamVisual> EffectVisual;
+	/** See FDreamUIRenderData::LayerStyle. */
+	TWeakObjectPtr<UDreamLayerStyle> LayerStyle;
+	bool bCompositeBegin = false;
+	bool IsGroupMarker() const { return Type == EDreamUIDrawCallType::GroupBegin || Type == EDreamUIDrawCallType::GroupEnd; }
+public:
+	/**
+	 * The cheap refresh, for a draw call whose layout still holds: each visual's copy of its geometry taken again
+	 * (UDreamVisualBatchMesh::GetGeometryForBatching) and its vertices written into the combined buffer where the batch
+	 * put them -- or, when the batching left that buffer to be made (bCombinePending), only taken: the buffer is made
+	 * from them should anything read it. False, and nothing taken, when no visual changed -- the draw call then has
+	 * nothing to upload -- or when the layout no longer holds, which the coming rebuild fixes.
+	 */
+	bool CopyBatchMeshGeometry();
+	/** Whether every copy this draw call now holds has the triangles of the copy it was built from: see CopyBatchMeshGeometry. */
+	bool bTrianglesAsBuilt = true;
+	/**
+	 * Set by the batching when it left the combined buffers empty, because the canvas has a section built from these
+	 * very geometries, or from geometries laid out as they are, and will take it back as it is or with the vertices that
+	 * differ written in place. Everything that reads the buffers asks CombineIfPending first.
+	 */
+	bool bCombinePending = false;
+	/** The combined buffers, made now if the batching left them. */
+	void CombineIfPending();
+	/**
+	 * The bounds ApplyBatchMeshGeometryToCombined works out, alone: for a draw call whose buffers are left. CanvasBounds is
+	 * CombinedBounds after either; a draw call with render layer elements is placed after (PlaceBounds).
+	 */
+	void ApplyBatchMeshBoundsToCombined();
+	void ApplyBatchMeshGeometryToCombined();
+	bool CanConsumeUIGeometryForBatchMesh(const FDreamUIGeometry& geo)const;
+	/**
+	 * Whether a mesh built from A holds B's triangles and a place for each of B's vertices: as many geometries, each with
+	 * the vertex count and the triangles of the one in its place. Only vertices can differ, and B's can be written over
+	 * A's where they are.
+	 */
+	static bool GeometryListsShareLayout(const TArray<TSharedPtr<const FDreamUIGeometry>>& A, const TArray<TSharedPtr<const FDreamUIGeometry>>& B);
+};

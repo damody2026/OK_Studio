@@ -1,0 +1,400 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+
+#include "DreamWidgetSubObjectBehaviour.h"
+#include "DreamTweener.h"
+#include "Utils/DreamUIUtils.h"
+#include "DreamVisual.generated.h"
+
+struct FDreamUIHitResult;
+struct FDreamMeasureSpec;
+class FDreamUIGeometry;
+struct FDreamUIMaterialParameters;
+class UMaterialInterface;
+class UTexture;
+class UDreamCanvas;
+class UDreamVisualCustomRaycast;
+class UDreamVisual;
+struct FDreamUICompositeDesc;
+class FDreamUIImageEffect;
+/** Repeated from DreamUIBackdropEffects.h rather than included, as FDreamVisualPostProcessRenderProxyPtr is: the same type. */
+using FDreamUIImageEffectRef = TSharedPtr<const FDreamUIImageEffect, ESPMode::ThreadSafe>;
+
+/**
+ * This component is only used when DreamVisual's RaycastType = Custom
+ */
+UCLASS(BlueprintType, Blueprintable, Abstract, DefaultToInstanced, EditInlineNew)
+class DREAMGUI_API UDreamVisualCustomRaycast :public UObject
+{
+	GENERATED_BODY()
+
+protected:
+	/**
+	 * Called by DreamVisual when do raycast hit test.
+	 * @param	InVisual			The DreamVisual object which call this Raycast function
+	 * @param	InLocalSpaceRayStart	Ray start point in this UI's local space
+	 * @param	InLocalSpaceRayEnd		Ray end point in this UI's local space
+	 * @param	OutHitPoint				Hit point position in this UI's local space
+	 * @param	OutHitNormal			Hit point normal in this UI's local space
+	 * @return	true if hit this UI object
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "DreamGUI", meta = (DisplayName = "Raycast"))
+		bool ReceiveRaycast(const UDreamVisual* InVisual, const FVector& InLocalSpaceRayStart, const FVector& InLocalSpaceRayEnd, FVector& OutHitPoint, FVector& OutHitNormal)const;
+	/**
+	 * Get pixel value at hit point.
+	 * Only support UI element type which can read pixel value from texture:
+	 *		1. UISprite which use DreamGUIStaticSpriteAtlasData can work perfectly.
+	 *		2. UITexture can work with some specific setting.
+	 *		3. UIText which use dynamic font can not work. (Currently all DreamGUI's built-in font is dynamic)
+	 * Will fallback to Geometry if ui element not support this raycast type.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		static bool GetRaycastPixelFromUIBatchMeshVisual(const class UDreamVisualBatchMesh* InVisual, const FVector& InLocalSpaceRayStart, const FVector& InLocalSpaceRayEnd, FVector2D& OutUV, FColor& OutPixel, FVector& OutHitPoint, FVector& OutHitNormal);
+public:
+	/**
+	 * Called by DreamVisual when do raycast hit test.
+	 * @param	InVisual			The DreamVisual object which call this Raycast function
+	 * @param	InLocalSpaceRayStart	Ray start point in this UI's local space
+	 * @param	InLocalSpaceRayEnd		Ray end point in this UI's local space
+	 * @param	OutHitPoint				Hit point position in this UI's local space
+	 * @param	OutHitNormal			Hit point normal in this UI's local space
+	 * @return	true if hit this UI object
+	 */
+	virtual bool Raycast(const UDreamVisual* InVisual, const FVector& InLocalSpaceRayStart, const FVector& InLocalSpaceRayEnd, FVector& OutHitPoint, FVector& OutHitNormal)const;
+};
+
+UENUM(BlueprintType, Category = DreamGUI)
+enum class EDreamVisualType :uint8
+{
+	None,
+	BatchMesh,
+	PostProcess,
+	DirectMesh,
+};
+
+// Defines how mouse or ray hit on DreamVisual
+UENUM(BlueprintType, Category = DreamGUI)
+enum class EDreamVisualRaycastType :uint8
+{
+	/** Hit on rect range */
+	Rect = 0,
+	/** Hit on actual triangle mesh */
+	Mesh = 1,
+	/**
+	 * Hit on main texture's pixel, if the pixel is not transparent then hit test success.
+	 * Only support UI element type which can read pixel value from texture:
+	 *		1. UISprite which use DreamUIStaticSpriteAtlasData can work perfectly.
+	 *		2. UITexture can work with some specific setting.
+	 *		3. UIText which use dynamic font can NOT work. (Currently all DreamGUI's built-in font is dynamic)
+	 * Will fallback to Mesh if ui element not support this raycast type.
+	 */
+	VisiblePixel = 3,
+	/** Use a user defined UDreamVisualCustomRaycast to process the raycast hit. */
+	Custom = 2,
+};
+
+/** Base class of UI element that can be rendered by DreamCanvas */
+UCLASS(Blueprintable, BlueprintType, Abstract, DefaultToInstanced)
+class DREAMGUI_API UDreamVisual : public UDreamWidgetSubObjectBehaviour
+{
+	GENERATED_BODY()
+
+public:	
+	UDreamVisual(const FObjectInitializer& ObjectInitializer);
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
+protected:
+	friend class FDreamVisualCustomization;
+	friend class UDreamWidget;
+	virtual void PostReinitProperties() override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+	/**
+	 * Whether an edit in the details panel marks everything of this visual dirty (MarkAllDirty), as every edit does by
+	 * default. A visual that has given the edit all it costs already -- a text's paint, written into its paint table --
+	 * answers no.
+	 */
+	virtual bool MarksAllDirtyOnPropertyEdit(const FPropertyChangedEvent& InEvent) const { return true; }
+#endif
+	EDreamVisualType VisualType = EDreamVisualType::None;
+
+	/**
+	 * Render color of UI element.
+	 */
+	UPROPERTY(Interp, EditAnywhere, Category = "DreamGUI", Getter, Setter, BlueprintReadWrite)
+	FColor Color = FColor::White;
+	UPROPERTY(EditAnywhere, Category = "DreamGUI-Raycast")
+	bool bRaycastTarget = true;
+	UPROPERTY(EditAnywhere, Category = "DreamGUI-Raycast", meta=(EditCondition=bRaycastTarget))
+	EDreamVisualRaycastType RaycastType = EDreamVisualRaycastType::Rect;
+	/** Custom raycast object to handle raycast behaviour when DreamUI do raycast hit test. Only valid if RaycastType is Custom. */
+	UPROPERTY(EditAnywhere, Instanced, Category = "DreamGUI-Raycast")
+	TObjectPtr<UDreamVisualCustomRaycast> CustomRaycastObject;
+	/** Pixel's alpha value threshold, if hit a pixel which alpha value is less than this value, then hit test return false. */
+	UPROPERTY(EditAnywhere, Category = "DreamGUI-Raycast")
+	float VisiblePixelThreshold = 0.1f;
+
+	virtual bool LineTraceUIRect(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const;
+	virtual bool LineTraceUIGeometry(FDreamUIGeometry* InGeo, FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const;
+	virtual bool LineTraceUICustom(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const;
+	
+	void UpdateGeometryWidgetPropertyData(TArray<struct FDreamUIMeshVertex>& InVertices, int InValidNumVertices, int InDataStartPosition);
+public:
+	static const FName GetPropertyName_Color()
+	{
+		return GET_MEMBER_NAME_CHECKED(UDreamVisual, Color);
+	}
+	
+	/** get visual type */
+	UFUNCTION(BlueprintCallable, Category = DreamGUI)
+	EDreamVisualType GetVisualType()const { return VisualType; }
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	FColor GetColor() const { return Color; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	float GetAlpha() const { return FDreamUIUtils::ByteToFloat01(Color.A); }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	bool GetRaycastTarget()const{return bRaycastTarget;}
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	EDreamVisualRaycastType GetRaycastType()const { return RaycastType; }
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		UDreamVisualCustomRaycast* GetCustomRaycastObject()const { return CustomRaycastObject; }
+
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetColor(FColor Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetAlpha(float Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetRaycastTarget(bool Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetRaycastType(EDreamVisualRaycastType Value) { RaycastType = Value; }
+	/** Set custom raycast object to handle raycast behaviour, only valid if RaycastType is Custom */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetCustomRaycastObject(UDreamVisualCustomRaycast* Value);
+
+	/**
+	 * A colour this visual's own Color is multiplied by on its way to the screen, in linear space -- what something
+	 * that tints a visual without owning its Color writes: a border's BrushColor, and the alpha it draws at while
+	 * disabled; a scroll box's bar track, dimmed while it is idle. Runtime state, not saved. White changes nothing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	void SetColorMultiplier(const FLinearColor& Value);
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+	FLinearColor GetColorMultiplier()const { return ColorMultiplier; }
+
+	uint8 GetFinalAlpha()const;
+	/** get final alpha, calculated with CanvasGroup's alpha */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		float GetFinalAlpha01()const;
+	/**
+	 * Whether the canvas draws this element as a group drawn already rather than as its geometry -- a texture put over the
+	 * element's rect through a group's composite (FDreamUICompositeDesc::bExternal) -- and what goes into that composite.
+	 * Asked as the canvas makes its draw calls and every frame after, while DrawsThroughComposite says so, and only on a
+	 * canvas that draws groups apart. False draws the element as it is.
+	 */
+	virtual bool GetCompositeSource(FDreamUICompositeDesc& OutDesc)const { return false; }
+	bool DrawsThroughComposite()const { return bDrawsThroughComposite; }
+	/**
+	 * An effect on the subtree of the widget this visual is on: the widget and its children are drawn as a group, and the
+	 * group's picture goes through the effect before it is put down (FDreamUICompositeDesc::Effect) -- an adjustment layer
+	 * or a stylize effect whose target is its own children. Asked as the canvas makes its draw calls and every frame after,
+	 * while DrawsChildrenThroughEffect says so, and only on a canvas that draws groups apart. The same effect, asked again,
+	 * until it changes. Null for none.
+	 */
+	virtual FDreamUIImageEffectRef GetChildrenEffect()const { return nullptr; }
+	bool DrawsChildrenThroughEffect()const { return bDrawsChildrenThroughEffect; }
+protected:
+	/** See GetCompositeSource: a subclass sets it while it has a composite to give. */
+	bool bDrawsThroughComposite = false;
+	/** See GetChildrenEffect: a subclass sets it while it has an effect for its children, and asks its canvas to rebuild. */
+	bool bDrawsChildrenThroughEffect = false;
+public:
+	/**
+	 * The colour this visual is drawn with: Color, times the content tint of every widget above it
+	 * (UDreamWidget::GetInheritedContentTint) and ColorMultiplier, in linear space, with the alpha then scaled by the
+	 * hierarchy's render opacity. Exactly Color with that alpha while both tints are white.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DreamGUI")
+		FColor GetFinalColor()const;
+	/**
+	 * GetFinalColor's answer for a Color of white: the content tint of every widget above it and ColorMultiplier, in linear
+	 * space, at the hierarchy's render opacity. What a painted text's gradient is tinted with in place of its Color.
+	 */
+	FColor GetFinalTintColor()const;
+
+	UFUNCTION(BlueprintCallable, Category = "DreamUI")
+	virtual bool LineTraceUI(FDreamUIHitResult& OutHit, const FVector& Start, const FVector& End)const;
+
+	/**
+	 * True when every hit LineTraceUI can report is guaranteed to lie inside the WIDGET's own rect, so
+	 * a caller may reject this element by that rect alone -- see UDreamWidget::GetWorldRectBoundingSphere,
+	 * which is what a raycaster tests against before paying for the exact trace.
+	 *
+	 * The base answer is yes only for the Rect raycast type, and deliberately so. Rect is the one type
+	 * every LineTraceUI in the family resolves the same way: a crossing of the local X = 0 plane,
+	 * compared against GetLocalSpaceLeft/Right/Bottom/Top, which UDreamRectBlock's override only
+	 * narrows further with its corner radii. The other three cannot promise it:
+	 *
+	 *  - Mesh and VisiblePixel test the built geometry, whose vertices are not bound by the rect --
+	 *    UDreamVisualPostProcess with bUseFullSize builds its quad from the ROOT canvas's size, so its
+	 *    hit shape can be the whole screen while its widget is a button.
+	 *  - Custom hands the ray to a UDreamVisualCustomRaycast and does NO rect test of its own, so the
+	 *    hit shape is whatever that object says. UDreamRingSectorRaycast's unbounded sector claims
+	 *    more than the rect it is drawn in on purpose; that is the weapon-wheel feel.
+	 *
+	 * An element that knows its own geometry stays inside the rect may override this and say so. The
+	 * cost of answering false is only that the exact test runs, so a subclass in doubt should not.
+	 */
+	virtual bool GetHitGeometryFitsWidgetRect()const;
+
+	/**
+	 * This element as the layer below a widget that clips to it (UDreamWidget::bClipToBelow): the shape it draws, in its
+	 * own frame, and the texture an image draws it from. False, with OutUnderlay.Unsupported saying why, for an element
+	 * whose shape a clip level cannot follow -- text, a tiled or filled image, a custom mesh -- which then clips nothing.
+	 */
+	virtual bool GetClipUnderlay(struct FDreamClipUnderlay& OutUnderlay) const;
+
+	int GetClipDataStartPosition()const;
+	UTexture* GetClipDataTexture()const;
+
+	virtual void OnPixelSnappingChanged(){};
+	virtual void OnDimensionChanged(bool InPivotChange, bool InWidthChange, bool InHeightChange){};
+	virtual void OnTransformChanged(bool InPositionChanged, bool InScaleChanged);
+	virtual void OnRenderCanvasChanged(UDreamCanvas* InOldCanvas, UDreamCanvas* InNewCanvas);
+	
+	void MarkColorDirty();
+	void CheckClipDataStartPosition();
+	virtual void MarkAllDirty();
+	
+	/** Called by DreamCanvas when begin to collect geometry for render */
+	virtual void UpdateGeometry() {};
+	/**
+	 * The parameters this visual's material needs besides the canvas's. DreamGUI answers a material's parameters in its
+	 * place (FDreamUIMaterialProxy), so a visual gives its own here rather than setting them on a material instance.
+	 */
+	virtual void AddMaterialParameters(FDreamUIMaterialParameters& InOutParameters) const {};
+
+	/** will this UI element affected by canvas's pixel perfect property? */
+	virtual bool GetShouldAffectByPixelSnapping()const { return true; };
+	/** return bounds min max point in self local space, for DreamCanvas to tell if geometry overlap with each other. */
+	virtual void GetGeometryBoundsInLocalSpace(FVector2D& OutMinPoint, FVector2D& OutMaxPoint)const;
+	/** editor only, return 3d bounds in self local space */
+	virtual void GetGeometryBounds3DInLocalSpace(FVector& OutMinPoint, FVector& OutMaxPoint)const;
+	
+	/**
+	 * How much room this element's CONTENT needs, for a layout that sizes to content -- an Auto slot,
+	 * a WrapBox, anything that asks before it decides. Negative means "no opinion", and the layout
+	 * falls back to whatever the widget was authored at.
+	 *
+	 * Two rules, both of which have already cost this codebase a bug:
+	 *
+	 * -1 AND 0 ARE DIFFERENT ANSWERS. Negative is an abstention; zero is this element asserting that
+	 * it wants no room whatsoever, and a caller has no way to tell an asserted zero from a
+	 * placeholder. A visual whose measurement has not happened yet -- no font, no texture loaded, no
+	 * geometry built -- must abstain. UDreamText answering 0 before it had laid out is what measured
+	 * an entire ring menu at nothing.
+	 *
+	 * IT MUST BE CHEAP AND IT MUST NOT CHANGE ANYTHING. A measure pass calls this once per element,
+	 * and a layout that does not converge calls it again; it is not a place to rebuild geometry,
+	 * initialise an asset, or mark anything dirty. Where the natural source of the number is an
+	 * accessor that initialises on first touch, copy the number where the initialisation already
+	 * happens and answer from the copy -- see UDreamSpriteBase.
+	 *
+	 * It must also answer without a world. Headless tests and Blueprint authoring trees have none;
+	 * ask DreamUI::IsGameWorld rather than dereferencing GetWorld().
+	 *
+	 * Procedural shapes generally have NO answer to give. A ring, a polygon and a polygon line
+	 * derive their vertices from the rect they are given, so asking them how big they want to be is
+	 * asking a question with no content in it: they abstain, which is a decision each of them states
+	 * rather than inherits.
+	 */
+	virtual float GetPreferredWidth()const{return -1;}
+	/** The preferred height. See GetPreferredWidth for the contract -- it binds both. */
+	virtual float GetPreferredHeight()const{return -1;}
+	/**
+	 * The preferred size given what a panel's measurement offers on each axis (FDreamMeasureSpec), under the same contract
+	 * as GetPreferredWidth: what a visual whose height depends on its width -- a text that wraps at its box -- answers for
+	 * the width it is about to be given, rather than for the width it has. By default the two answers above, the offer
+	 * aside.
+	 */
+	virtual FVector2f GetPreferredSizeWithin(const FDreamMeasureSpec& InWidthSpec, const FDreamMeasureSpec& InHeightSpec)const
+	{
+		return FVector2f(GetPreferredWidth(), GetPreferredHeight());
+	}
+
+	static int WidgetPropertyDataLength;
+
+	/**
+	 * The widget-property row, by pixel. Every reader of it is DreamUIWidgetProperty.ush (and
+	 * DreamUIText.ush for the style pixels, which index 4..12 by hand), so these constants and those
+	 * shaders are one layout described twice -- change either and change both.
+	 *
+	 * Pixels that carry a NUMBER carry it as a float value rather than as a bit pattern, because a
+	 * GPU that flushes denormals to zero does it on the load: see the note above
+	 * UDreamVisual::WidgetPropertyDataLength in the .cpp. Pixels that carry BIT FIELDS keep a
+	 * constant in the top byte for the same reason.
+	 */
+	static constexpr int32 WidgetMarksPixelStart = 0;
+	static constexpr int32 ClipDataCoordinatePixelStart = 1;
+	static constexpr int32 WidgetSizePixelStart = 2;//width, then height
+	/** After the text style block (4..12), so adding it did not shift the hand-indexed style pixels. */
+	static constexpr int32 WidgetCenterPixelStart = 13;//centre X, then centre Y
+	/**
+	 * The row of the world's render layer table the element's vertices are placed on the canvas through, as a float value,
+	 * 0 for an element of no layer. Read by both vertex shaders (DreamUIRenderLayer.ush), not by the pixel shader.
+	 */
+	static constexpr int32 RenderLayerRowPixelStart = 15;
+	/** Top byte of the marks pixel: present only so the word is a normal float. */
+	static constexpr uint32 WidgetMarksNormalFloatMarker = 0x3f000000;
+	/** Pack the marks pixel: constant top byte, font mark, extra mark. Mirrored by DreamUI_ReadWidgetProperty. */
+	static uint32 PackWidgetMarks(uint8 InFontMark, uint8 InExtraMark);
+	/**
+	 * Pack a text's marks pixel: constant top byte, font mark, and in bits 0..15 -- where other visuals keep their extra
+	 * mark, which a text has none of -- the link to its paint table, the table's row of the world's paint rows plus one, 0
+	 * for none (DreamPaintRows::RecordRowLinkMask). The word stays a normal float whatever the link: its exponent is the
+	 * constant's.
+	 */
+	static uint32 PackTextWidgetMarks(uint8 InFontMark, uint32 InRecordRowLink);
+
+	void SetWidgetPropertyDataStartPosition(int InPosition);
+	bool IsRegisteredToCanvas()const{return WidgetPropertyDataStartPosition != INDEX_NONE;}
+	int GetWidgetPropertyDataStartPosition()const{return WidgetPropertyDataStartPosition;}
+protected:
+	/** See SetColorMultiplier. Not a property: whoever tints the visual writes it again when it is made. */
+	FLinearColor ColorMultiplier = FLinearColor::White;
+	uint8 bColorChanged : 1;
+	uint8 bTransformChanged : 1;
+	uint8 bClipDataPositionChanged : 1;
+	uint8 bWidgetPropertyDataStartPositionChanged : 1;
+	uint8 bWidgetPropertyDataFontMarkDirty : 1;
+	int ClipDataStartPosition = 0;
+	int WidgetPropertyDataStartPosition = INDEX_NONE;
+
+	/** The row RenderLayerRowPixelStart holds now, as last written; INDEX_NONE when the record is new and holds nothing yet. */
+	int32 WrittenRenderLayerRow = INDEX_NONE;
+	void FillWidgetPropertyDataForMaterial(bool bNeedSize, bool bNeedCenterPosition)const;
+	void FillWidgetPropertyDataForMaterial_ClipDataCoordinate(class UDreamUIDataAsTexture* DataAsTexture)const;
+	/** The record's render layer row, when it is not InRow already. */
+	void FillWidgetPropertyDataForMaterial_RenderLayerRow(class UDreamUIDataAsTexture* DataAsTexture, int32 InRow);
+	// Fill initial mark data, only do this when first create widget property data or when render canvas changed
+	void FillWidgetPropertyDataForMaterial_InitialMark(class UDreamUIDataAsTexture* DataAsTexture, uint8 FontMark)const;
+	/**
+	 * What bits 0..15 of the marks pixel hold for this visual (PackTextWidgetMarks): a painted text's link to its paint
+	 * table; 0, the default, for everything else. Written with the marks.
+	 */
+	virtual uint32 GetWidgetMarksRecordLink()const { return 0; }
+public:
+#pragma region TweenAnimation
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+		UDreamTweener* ColorTo(FColor endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+		UDreamTweener* ColorFrom(FColor startValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+		UDreamTweener* AlphaTo(float endValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "delay,ease"), Category = "DreamTweenGUI")
+		UDreamTweener* AlphaFrom(float startValue, float duration = 0.5f, float delay = 0.0f, EDreamTweenEase ease = EDreamTweenEase::OutCubic);
+#pragma endregion
+};

@@ -1,0 +1,28 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+#include "/Engine/Private/Common.ush"
+
+float4 DreamUIResolveVS(uint Id : SV_VertexID) : SV_POSITION
+{
+    int x = Id & 1;
+    int y = Id >> 1;
+
+    return float4(x * 4 - 1, y * 4 - 1, 0, 1);
+}
+
+#if LEXUI_RESOLVE_SAMPLES
+
+	Texture2DMS<float4, LEXUI_RESOLVE_SAMPLES> Tex;
+	// Each sample weighted 1/N and added in order, as the 2x, 4x and 8x shaders this replaces wrote them out.
+	float4 DreamUIResolvePS(float4 Pos : SV_POSITION) : SV_Target0
+	{
+		uint2 P = uint2(Pos.xy);
+		float4 Color = 0;
+		UNROLL
+		for (int SampleIndex = 0; SampleIndex < LEXUI_RESOLVE_SAMPLES; SampleIndex++)
+		{
+			Color += Tex.Load(P, SampleIndex) * (1.0f / LEXUI_RESOLVE_SAMPLES);
+		}
+		return Color;
+	}
+
+#endif

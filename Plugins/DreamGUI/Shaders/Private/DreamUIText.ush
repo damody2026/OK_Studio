@@ -1,0 +1,599 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+//
+// Glyph decoding and text effects for DreamGUI's built-in UI shader. One HLSL source for every host:
+// the global shader includes it directly; a material that has to draw text through UE's own
+// renderer can include it from a Custom node and call the same functions.
+//
+// Atlas kinds (the FontMark record):
+//   1  bitmap        coverage straight from the texture
+//   2  sdf           one channel, 0.5 at the edge, from a rasterized bitmap (the original method)
+//   3  mtsdf         rgb = multi-channel field (median gives sharp corners), a = true distance
+// 2 and 3 share one convention -- 0 at +spread outside, 0.5 on the edge, 1 at -spread inside -- so
+// the whole style (outline, underlay, glow, fill, dilation) applies to both; an MTSDF only adds
+// sharp corners. The sample just reads the single channel twice for a kind-2 atlas.
+//
+// The text style lives in the widget property record after the four pixels every widget has, so
+// texts with different styles still batch: the shader reads the style by the record index in UV1.x.
+//
+// What a glyph quad is, whatever the atlas kind, comes from its own UV2.x: the per-quad code FDreamTextPainter writes
+// (DreamTextQuadCode in DreamTextPainter.h holds the same numbers as the DREAMUI_TEXT_CODE_ defines below). A painted quad
+// carries its paint slot on top, 128 * slot (DreamUIText_UnpackPaintSlot, DreamUIPaint.ush); every decode below reads the
+// code with the slot taken off. For font marks 1-3 it is decoded in this order:
+//   code < -24.5   -33, a colour glyph a mesh modifier copied (a shadow, an outline): its silhouette, the vertex colour at
+//                  the glyph's alpha (DreamUIText_ShadeColorSilhouette).
+//   code < -0.5    a colour glyph (an emoji: premultiplied BGRA from a bitmap strike or COLR layers) in any atlas. -1 is
+//                  its face, -17 (below -8.5) its effects copy, which draws the underlay from its alpha. UV3.y is the
+//                  cell's texels per em. Outline, glow, dilation and the small-text correction never apply to it.
+//   code > 55.5    56 + DilateEm: a field glyph's underlay copy, its underlay alone (layer 4 below).
+//   layer 3        48 + phase: a coverage glyph, small text hinted for its pixel size, four subpixel phases in the four
+//                  channels of one texel (DreamUIText_ShadeCoverage). UV3.y is the contrast, plus 16 when the target
+//                  blends in linear space.
+//   layers 0-2     a field glyph as below; a bitmap font's plain glyphs write 0.
+//
+// Per-glyph channels of a field glyph (written by FDreamTextPainter):
+//   UV2.x  DilateEm + 16 * Layer, or 56 + DilateEm for the underlay copy. Layer 0 = face only, 1 = glow and outline,
+//          2 = everything in one quad, underlay included; the underlay copy (layer 4) = the underlay alone. A text with
+//          effects emits every glyph's underlay quad first, then every glow-and-outline quad, then the faces, so a
+//          neighbour's glow never lands on top of a face, nor a neighbour's underlay on top of an outline.
+//   UV2.y  the glyph's position across its fill run, 0..1 (every kind of quad)
+//   UV3.x  fill progress of the run (every kind of quad), UV3.y glow boost
+//
+// Every effect reach is clamped to the atlas's field: what the field cannot represent is not drawn,
+// instead of saturating into a visible rectangle at the quad's edge. The painter sizes the quads to
+// the same clamped reach.
+//
+// The face edge, the outline and a hard underlay are measured on the median of the colour channels,
+// which keeps convex corners mitred; glow and soft edges on the true distance in alpha, which is round
+// (see DreamUIText_MedianWeight). Small text is darkened a little (DreamUIText_SmallTextWeight); a font
+// turns that off by passing its em size negated.
+
+#ifndef DREAMUI_TEXT_USH
+#define DREAMUI_TEXT_USH
+
+// Small-text correction at and below 12 screen pixels per em, fading to nothing at 24: how far the face edge moves out
+// on each side, in screen pixels (FreeType's CFF darkening gives a 1 px stem about 0.4 px more), and how much narrower
+// the anti-aliasing ramp gets.
+#define DREAMUI_TEXT_SMALL_DARKEN_PX 0.2
+#define DREAMUI_TEXT_SMALL_CONTRAST 0.25
+#define DREAMUI_TEXT_SMALL_FULL_PX_PER_EM 12.0
+#define DREAMUI_TEXT_SMALL_NONE_PX_PER_EM 24.0
+// The contrast the field face's correction runs with (UDreamGUISettings::bFieldTextCorrection): the coverage glyphs'
+// default (UDreamGUISettings::SmallTextContrast), so the two meet where small text changes from one to the other.
+#define DREAMUI_TEXT_FIELD_CORRECTION_CONTRAST 1.0
+
+// The per-quad codes in UV2.x and UV3.y (DreamTextQuadCode in DreamTextPainter.h): change one, change both.
+#define DREAMUI_TEXT_CODE_FIELD_LAYER_STRIDE 16.0
+#define DREAMUI_TEXT_CODE_COVERAGE_LINEAR_TARGET 16.0
+// A field glyph's underlay copy (DreamTextQuadCode::UnderlayBase, UnderlayThreshold): 56 + DilateEm.
+#define DREAMUI_TEXT_CODE_UNDERLAY_BASE 56.0
+#define DREAMUI_TEXT_CODE_UNDERLAY_THRESHOLD 55.5
+// The layers DreamUIText_UnpackGlyphChannel gives besides a field glyph's 0 (face), 1 (glow and outline) and 2 (both).
+#define DREAMUI_TEXT_LAYER_COVERAGE 3.0
+#define DREAMUI_TEXT_LAYER_UNDERLAY 4.0
+#define DREAMUI_TEXT_CODE_COLOR_THRESHOLD (-0.5)
+#define DREAMUI_TEXT_CODE_COLOR_EFFECTS_THRESHOLD (-8.5)
+// A colour glyph a mesh modifier copied (DreamTextQuadCode::ColorSilhouette, -33): its silhouette, in the vertex colour.
+#define DREAMUI_TEXT_CODE_COLOR_SILHOUETTE_THRESHOLD (-24.5)
+// Paint slots: a painted quad's UV2.x is its code plus 128 * slot -- 0 nothing, 1 the text's own paints, 2..9 its rich-text
+// tag paints (DreamTextQuadCode::SlotStride, TextSlot, FirstTagSlot, MaxSlot). Every code without its slot lies in
+// [-64, 64), so DreamUIText_UnpackPaintSlot is exact whatever the interpolation leaves of a quad's constant UV2.x.
+#define DREAMUI_TEXT_CODE_SLOT_STRIDE 128.0
+#define DREAMUI_TEXT_CODE_TEXT_SLOT 1.0
+#define DREAMUI_TEXT_CODE_MAX_SLOT 9.0
+
+// The world's paint rows (DreamPaintRows in DreamTextPaint.h): RGBA32F, DREAMUI_PAINT_ROW_WIDTH pixels a row, plain float
+// values throughout. A text's text table holds, for slot s (1..9), at pixel ROWS + s (face row, outline row, overlay row,
+// overlay blend), at ANIMATION + s (face phase, outline phase, overlay phase, box aspect), at TRANSFORM + s (angle offset in
+// degrees, centre offset x, centre offset y, scale multiplier); a row number below 0 is a layer the slot does not paint. A
+// gradient row holds (type, spread, interpolation, stop count), (angle, scale, offset, radial shape), (centre x, centre y,
+// radius x, radius y), (radial size, 0, 0, 0), then the stops' positions four to a pixel, then their colours, one a pixel,
+// premultiplied and already in the interpolation space. A text's widget record links to its table through bits 0..15 of
+// its marks pixel: the row + 1, 0 for none. FDreamGradient's comment is the reference evaluation. Change one, change both.
+#define DREAMUI_PAINT_ROW_WIDTH 32
+#define DREAMUI_PAINT_NO_ROW (-1.0)
+#define DREAMUI_PAINT_TEXT_HEADER_PIXEL 0
+#define DREAMUI_PAINT_TEXT_SLOT_ROWS_PIXEL 0
+#define DREAMUI_PAINT_TEXT_SLOT_ANIMATION_PIXEL 9
+#define DREAMUI_PAINT_TEXT_SLOT_TRANSFORM_PIXEL 18
+#define DREAMUI_PAINT_GRADIENT_HEADER_PIXEL 0
+#define DREAMUI_PAINT_GRADIENT_SHAPE_PIXEL 1
+#define DREAMUI_PAINT_GRADIENT_CENTER_PIXEL 2
+#define DREAMUI_PAINT_GRADIENT_SIZE_PIXEL 3
+#define DREAMUI_PAINT_GRADIENT_POSITIONS_PIXEL 4
+#define DREAMUI_PAINT_GRADIENT_COLORS_PIXEL 8
+#define DREAMUI_PAINT_MAX_STOPS 16
+#define DREAMUI_PAINT_RECORD_ROW_LINK_MASK 0xFFFF
+// EDreamPaintType, EDreamPaintSpread, EDreamPaintInterpolation, EDreamPaintRadialShape, EDreamPaintRadialSize and
+// EDreamTextOverlayBlend, value for value.
+#define DREAMUI_PAINT_TYPE_NONE 0
+#define DREAMUI_PAINT_TYPE_LINEAR 1
+#define DREAMUI_PAINT_TYPE_RADIAL 2
+#define DREAMUI_PAINT_TYPE_CONIC 3
+#define DREAMUI_PAINT_TYPE_DIAMOND 4
+#define DREAMUI_PAINT_TYPE_CORNERS 5
+#define DREAMUI_PAINT_TYPE_REFLECTED 6
+// The last type: a row's type past it reads as none.
+#define DREAMUI_PAINT_TYPE_LAST DREAMUI_PAINT_TYPE_REFLECTED
+#define DREAMUI_PAINT_SPREAD_PAD 0
+#define DREAMUI_PAINT_SPREAD_REPEAT 1
+#define DREAMUI_PAINT_SPREAD_REFLECT 2
+#define DREAMUI_PAINT_INTERPOLATION_SRGB 0
+#define DREAMUI_PAINT_INTERPOLATION_LINEAR 1
+#define DREAMUI_PAINT_INTERPOLATION_OKLAB 2
+#define DREAMUI_PAINT_SHAPE_ELLIPSE 0
+#define DREAMUI_PAINT_SHAPE_CIRCLE 1
+#define DREAMUI_PAINT_SIZE_FARTHEST_CORNER 0
+#define DREAMUI_PAINT_SIZE_FARTHEST_SIDE 1
+#define DREAMUI_PAINT_SIZE_CLOSEST_CORNER 2
+#define DREAMUI_PAINT_SIZE_CLOSEST_SIDE 3
+#define DREAMUI_PAINT_SIZE_EXPLICIT 4
+#define DREAMUI_PAINT_OVERLAY_NORMAL 0
+#define DREAMUI_PAINT_OVERLAY_ADD 1
+
+// Only a pixel shader has screen derivatives and implicit-LOD sampling. The other place this code is
+// compiled is a material's ray-tracing hit shader (a world-space canvas hit by a shadow or reflection
+// ray): there, sample level 0 and treat the field as one texel per pixel.
+#if PIXELSHADER
+	#define DREAMUI_SAMPLE(Tex, Sampler, Coord) Tex.Sample(Sampler, Coord)
+	#define DREAMUI_HAS_DERIVATIVES 1
+#else
+	#define DREAMUI_SAMPLE(Tex, Sampler, Coord) Tex.SampleLevel(Sampler, Coord, 0)
+	#define DREAMUI_HAS_DERIVATIVES 0
+#endif
+
+struct FDreamUITextStyle
+{
+	float FaceSoftness;     // em: extra edge width (blur). 0 = crisp
+	float FaceDilate;       // em: grow (+) / shrink (-) the face
+	float4 OutlineColor;
+	float OutlineWidth;     // em
+	float OutlineSoftness;  // em
+	float4 UnderlayColor;
+	float2 UnderlayOffset;  // em, +y down
+	float UnderlaySoftness; // em
+	float UnderlayDilate;   // em
+	float4 GlowColor;
+	float GlowWidth;        // em: how far the glow reaches outside the face
+	float GlowPower;        // falloff exponent
+	float FillDimAlpha;     // alpha of the not-yet-filled part when a glyph carries a fill progress
+	float FillFadeWidth;    // fraction of the segment the fill ramps over
+};
+
+float4 DreamUIText_UnpackColor(float PixelData)
+{
+	uint Packed = asuint(PixelData);
+	return float4((Packed >> 16) & 0xff, (Packed >> 8) & 0xff, Packed & 0xff, (Packed >> 24) & 0xff) / 255.0;
+}
+
+float2 DreamUIText_UnpackHalf2(float PixelData)
+{
+	uint Packed = asuint(PixelData);
+	return float2(f16tof32((Packed >> 16) & 0xffff), f16tof32(Packed & 0xffff));
+}
+
+// Record layout, pixels 4..12 of the widget property row (0..3 are the common ones).
+FDreamUITextStyle DreamUIText_ReadStyle(Texture2D DataTex, float CoordinateInDataTex)
+{
+	int Row = round(CoordinateInDataTex);
+	FDreamUITextStyle S;
+	float2 Face = DreamUIText_UnpackHalf2(DataTex.Load(int3(4, Row, 0)).x);
+	S.FaceSoftness = Face.x;
+	S.FaceDilate = Face.y;
+	S.OutlineColor = DreamUIText_UnpackColor(DataTex.Load(int3(5, Row, 0)).x);
+	float2 Outline = DreamUIText_UnpackHalf2(DataTex.Load(int3(6, Row, 0)).x);
+	S.OutlineWidth = Outline.x;
+	S.OutlineSoftness = Outline.y;
+	S.UnderlayColor = DreamUIText_UnpackColor(DataTex.Load(int3(7, Row, 0)).x);
+	S.UnderlayOffset = DreamUIText_UnpackHalf2(DataTex.Load(int3(8, Row, 0)).x);
+	float2 Underlay = DreamUIText_UnpackHalf2(DataTex.Load(int3(9, Row, 0)).x);
+	S.UnderlaySoftness = Underlay.x;
+	S.UnderlayDilate = Underlay.y;
+	S.GlowColor = DreamUIText_UnpackColor(DataTex.Load(int3(10, Row, 0)).x);
+	float2 Glow = DreamUIText_UnpackHalf2(DataTex.Load(int3(11, Row, 0)).x);
+	S.GlowWidth = Glow.x;
+	S.GlowPower = Glow.y;
+	float2 Fill = DreamUIText_UnpackHalf2(DataTex.Load(int3(12, Row, 0)).x);
+	S.FillDimAlpha = Fill.x;
+	S.FillFadeWidth = Fill.y;
+	// The effect colours are authored in sRGB like the vertex colour, which DreamUI_ShadePixel turns linear before
+	// anything is blended; read as they are stored, an outline, a shadow or a glow came out one encode lighter than the
+	// colour it was given (#E0301E drew as #F0785F), wherever the face was right.
+	S.OutlineColor.rgb = sRGBToLinear(S.OutlineColor.rgb);
+	S.UnderlayColor.rgb = sRGBToLinear(S.UnderlayColor.rgb);
+	S.GlowColor.rgb = sRGBToLinear(S.GlowColor.rgb);
+	return S;
+}
+
+// Pixel 12 of the record alone, as DreamUIText_ReadStyle reads it: x the fill's dim alpha, y its fade width. All a
+// coverage glyph needs of the style.
+float2 DreamUIText_ReadFill(Texture2D DataTex, float CoordinateInDataTex)
+{
+	int Row = round(CoordinateInDataTex);
+	return DreamUIText_UnpackHalf2(DataTex.Load(int3(12, Row, 0)).x);
+}
+
+// Fill progress (lyrics), the same on every kind of glyph quad: the part of the run past FillProgress is dimmed to
+// FillDimAlpha, with a ramp FillFadeWidth wide. The ramp is placed so that progress 0 leaves the whole run dim and
+// progress 1 lights all of it, ramp included. SegmentX is the pixel's position across the run (UV2.y).
+float DreamUIText_FillDim(float FillDimAlpha, float FillFadeWidth, float FillProgress, float SegmentX)
+{
+	float Dim = 1.0;
+	if (FillProgress < 0.9995)
+	{
+		float Fade = max(FillFadeWidth, 0.0001);
+		float Edge = FillProgress * (1.0 + Fade);
+		float Lit = saturate((Edge - SegmentX) / Fade);
+		Dim = lerp(FillDimAlpha, 1.0, Lit);
+	}
+	return Dim;
+}
+
+// The sRGB transfer functions on one value, in full precision.
+float DreamUIText_EncodeSrgb(float LinearValue)
+{
+	float L = saturate(LinearValue);
+	return L < 0.0031308 ? L * 12.92 : 1.055 * pow(L, 1.0 / 2.4) - 0.055;
+}
+
+float DreamUIText_DecodeSrgb(float EncodedValue)
+{
+	float E = saturate(EncodedValue);
+	return E <= 0.04045 ? E / 12.92 : pow((E + 0.055) / 1.055, 2.4);
+}
+
+float DreamUIText_Median(float3 V)
+{
+	return max(min(V.r, V.g), min(max(V.r, V.g), V.b));
+}
+
+// UV2.x of a glyph that is not a colour glyph: dilate in em plus 16 * layer (see the header). A coverage glyph is layer
+// 3 (DREAMUI_TEXT_LAYER_COVERAGE), and what this calls its dilate is its phase; a field glyph's underlay copy, 56 + dilate,
+// is layer 4 (DREAMUI_TEXT_LAYER_UNDERLAY).
+void DreamUIText_UnpackGlyphChannel(float Packed, out float Layer, out float DilateEm)
+{
+	if (Packed > DREAMUI_TEXT_CODE_UNDERLAY_THRESHOLD)
+	{
+		Layer = DREAMUI_TEXT_LAYER_UNDERLAY;
+		DilateEm = Packed - DREAMUI_TEXT_CODE_UNDERLAY_BASE;
+		return;
+	}
+	Layer = floor((Packed + 0.5 * DREAMUI_TEXT_CODE_FIELD_LAYER_STRIDE) / DREAMUI_TEXT_CODE_FIELD_LAYER_STRIDE);
+	DilateEm = Packed - Layer * DREAMUI_TEXT_CODE_FIELD_LAYER_STRIDE;
+}
+
+// UV2.x of any glyph quad split into its paint slot (0 none, 1 the text's own paints, 2..9 tag paints) and its code without
+// it, which every other decode reads (DreamTextQuadCode::GetSlot and StripSlot do the same on the CPU).
+void DreamUIText_UnpackPaintSlot(float Packed, out float Slot, out float Code)
+{
+	Slot = floor((Packed + 0.5 * DREAMUI_TEXT_CODE_SLOT_STRIDE) / DREAMUI_TEXT_CODE_SLOT_STRIDE);
+	Code = Packed - Slot * DREAMUI_TEXT_CODE_SLOT_STRIDE;
+}
+
+// How many screen pixels one atlas texel spans here, read off the UV derivatives and averaged over
+// the two axes -- so perspective, tilt and minification all fall out of it with no special cases.
+float DreamUIText_ScreenPxPerTexel(float2 UV, float2 AtlasSize)
+{
+#if DREAMUI_HAS_DERIVATIVES
+	float2 ScreenPxPerTexel = 1.0 / (fwidth(UV) * AtlasSize);
+	return 0.5 * (ScreenPxPerTexel.x + ScreenPxPerTexel.y);
+#else
+	return 1.0;
+#endif
+}
+
+// How many screen pixels one unit of distance (0..1 across the field's range) spans. The standard
+// msdfgen recipe: the field's pixel range scaled by screen pixels per texel. Returns screen px per
+// field unit; the edge's anti-aliasing band is one screen pixel wide at every magnification, and
+// never less than the whole range when the glyph is minified that far.
+float DreamUIText_ScreenPxRange(float2 UV, float2 AtlasSize, float FieldRangeTexels)
+{
+	return max(DreamUIText_ScreenPxPerTexel(UV, AtlasSize) * FieldRangeTexels, 1.0);
+}
+
+// Coverage of "distance >= Threshold" with a one-pixel anti-aliasing band, widened by Softness
+// (in field units).
+float DreamUIText_Coverage(float Distance, float Threshold, float ScreenPxRange, float Softness)
+{
+	float Band = 1.0 / ScreenPxRange + Softness;
+	return saturate((Distance - Threshold) / Band + 0.5);
+}
+
+// Distance in field units (0..1 across the whole range) for a length given in em.
+float DreamUIText_EmToField(float Em, float FontEmTexels, float FieldRangeTexels)
+{
+	return Em * FontEmTexels / FieldRangeTexels;
+}
+
+// How much of an effect's edge to measure on the median of the colour channels rather than on the
+// true distance in alpha (1 = all median). The median keeps a convex corner mitred -- the way Slate's
+// SDF outline and a browser's text stroke are, and the way a hard shadow of a sharp glyph is -- where
+// the true distance rounds it off. But the median is a distance only near the glyph: further out the
+// three channels follow different edges and stop agreeing. And a soft edge is a blur, which is round.
+// So an edge with no softness that stays within half the field's reach is all median, fading to all
+// true distance as its outer extent nears the end of the field or its softness nears half the reach.
+// A single-channel field has the two equal, so this changes nothing there.
+float DreamUIText_MedianWeight(float OuterReachEm, float SoftEm, float MaxReachEm)
+{
+	float Reach = max(MaxReachEm, 1e-4);
+	return saturate(2.0 - 2.0 * OuterReachEm / Reach) * saturate(1.0 - 2.0 * SoftEm / Reach);
+}
+
+// 1 for text at or below DREAMUI_TEXT_SMALL_FULL_PX_PER_EM screen pixels per em, 0 at and above
+// DREAMUI_TEXT_SMALL_NONE_PX_PER_EM, linear in between. A field's edge is a linear one-pixel ramp
+// centred on the outline, which at those sizes reads softer and lighter than the hinted bitmaps Slate
+// and browsers draw; the correction is a little stem darkening, in the spirit of FreeType's CFF
+// darkening and Skia's, and a little more contrast in the ramp. Large text is never touched.
+float DreamUIText_SmallTextWeight(float ScreenPxPerEm)
+{
+	return saturate((DREAMUI_TEXT_SMALL_NONE_PX_PER_EM - ScreenPxPerEm) / (DREAMUI_TEXT_SMALL_NONE_PX_PER_EM - DREAMUI_TEXT_SMALL_FULL_PX_PER_EM));
+}
+
+/**
+ * A glyph's coverage through Skia's correcting table, worked out per pixel (SkTMaskGamma_build_correcting_lut, sRGB on both
+ * sides, as Chromium ships it), for a glyph drawn in LinearColor: a contrast boost that tapers off as the colour nears
+ * white, then -- only where the target blends encoded values, the gamma-space viewport -- the coverage that makes that
+ * blend of the colour over its opposite come out where a blend in linear light would. A target that blends in linear space
+ * (a render-target canvas) takes the boost alone: the hardware's blend is already right. With no contrast on a gamma target
+ * this is Slate's raw coverage. What coverage glyphs are drawn with, and the field face with bFieldTextCorrection.
+ */
+float DreamUIText_CorrectCoverage(float Coverage, float3 LinearColor, float Contrast, bool bLinearTarget)
+{
+	float A = Coverage;
+	// Skia's source is the colour's luma: its sRGB-encoded channels weighted as SkComputeLuminance weighs them (54, 183 and
+	// 19 in 256ths), not the encoding of its luminance -- a saturated red is a dark source there, not a mid grey. Its guess
+	// at the destination is the opposite luma. (Skia also rounds the luma to one of eight table rows; it is taken as it is
+	// here, so a colour animating through the greys does not step.)
+	float3 EncodedColor = float3(DreamUIText_EncodeSrgb(LinearColor.r), DreamUIText_EncodeSrgb(LinearColor.g), DreamUIText_EncodeSrgb(LinearColor.b));
+	float Src = dot(EncodedColor, float3(54.0, 183.0, 19.0) / 256.0);
+	float LinSrc = DreamUIText_DecodeSrgb(Src);
+	float Dst = 1.0 - Src;
+	float LinDst = DreamUIText_DecodeSrgb(Dst);
+	A = saturate(A + (1.0 - A) * (Contrast * LinDst) * A);
+	// Close to mid grey the step is unstable and Skia leaves it out.
+	if (!bLinearTarget && abs(Src - Dst) >= 1.0 / 256.0)
+	{
+		float Out = DreamUIText_EncodeSrgb(LinSrc * A + LinDst * (1.0 - A));
+		A = saturate((Out - Dst) / (Src - Dst));
+	}
+	return A;
+}
+
+struct FDreamUIGlyphSample
+{
+	float Distance;       // true signed distance, 0.5 at the edge
+	float MedianDistance; // multi-channel distance for the face edge (sharp corners)
+};
+
+FDreamUIGlyphSample DreamUIText_SampleField(Texture2DArray FontTex, SamplerState FontSampler, float2 UV, float Slice, bool bMultiChannel)
+{
+	float4 Texel = DREAMUI_SAMPLE(FontTex, FontSampler, float3(UV, Slice));
+	FDreamUIGlyphSample S;
+	if (bMultiChannel)
+	{
+		S.Distance = Texel.a;
+		S.MedianDistance = DreamUIText_Median(Texel.rgb);
+	}
+	else
+	{
+		S.Distance = Texel.r;
+		S.MedianDistance = Texel.r;
+	}
+	return S;
+}
+
+/**
+ * The whole text look for one pixel: underlay behind, glow outside, outline around, face on top.
+ * Returns straight (non-premultiplied) colour and alpha. FaceColor is what the face is drawn in: the vertex colour, or a
+ * painted face's colour (DreamUIPaint_PaintFace).
+ * Layer selects what this quad draws: 0 the face, 1 the glow and the outline, 2 all of it with the underlay, 4
+ * (DREAMUI_TEXT_LAYER_UNDERLAY) the underlay alone. GlyphDilateEm is the glyph's own dilation (synthetic bold) on top of
+ * the style's. FontEmTexels is the atlas's texels per em, negated when the font has the small-text correction off.
+ * OutlinePaint multiplies the outline's colour: a painted outline's gradient, white and opaque otherwise.
+ * EffectAlpha is what the underlay, the glow and the outline fade by together: an effects copy's vertex alpha, which the
+ * painter makes the text's opacity (render opacity, tint, TextAnimation) and never its colour's alpha -- so a faded text
+ * fades its effects with its face, and a hollow one (a clear face) keeps its outline. 1 on a quad that draws the face.
+ * bFieldCorrection (UDreamGUISettings::bFieldTextCorrection) runs the face's coverage through the correction coverage
+ * glyphs get (DreamUIText_CorrectCoverage), in full above the sizes the small-text correction reaches and fading out as
+ * that one comes in, so the weight does not jump where small text changes from coverage glyphs to the field;
+ * bLinearTarget is how the target blends, which that correction asks.
+ */
+float4 DreamUIText_ShadeField(Texture2DArray FontTex, SamplerState FontSampler, float2 UV, float Slice, bool bMultiChannel,
+	float2 AtlasSize, float FieldRangeTexels, float FontEmTexels, float4 FaceColor, FDreamUITextStyle Style,
+	float FillProgress, float SegmentX, float GlyphGlowBoost, float GlyphDilateEm, float Layer,
+	float4 OutlinePaint, float EffectAlpha, bool bFieldCorrection, bool bLinearTarget)
+{
+	const bool bSmallTextCorrection = FontEmTexels > 0.0;
+	FontEmTexels = abs(FontEmTexels);
+	float PxPerTexel = DreamUIText_ScreenPxPerTexel(UV, AtlasSize);
+	float PxRange = max(PxPerTexel * FieldRangeTexels, 1.0);
+	FDreamUIGlyphSample S = DreamUIText_SampleField(FontTex, FontSampler, UV, Slice, bMultiChannel);
+	const bool bDrawFace = Layer == 0.0 || Layer == 2.0;
+	const bool bDrawEffects = Layer == 1.0 || Layer == 2.0;
+	const bool bDrawUnderlay = Layer == 2.0 || Layer == DREAMUI_TEXT_LAYER_UNDERLAY;
+
+	// The field is valid out to the spread; every reach stops 1.5 texels short of it so the
+	// anti-aliasing band and the bilinear footprint still land on real data.
+	float SpreadEm = 0.5 * FieldRangeTexels / FontEmTexels;
+	float MaxReachEm = max(SpreadEm - 1.5 / FontEmTexels, 0.0);
+
+	// Face: the style's dilate plus the glyph's own (bold), softness shared both sides of the edge.
+	float DilateEm = clamp(Style.FaceDilate + GlyphDilateEm, -SpreadEm, MaxReachEm);
+	float FaceEdge = 0.5 - DreamUIText_EmToField(DilateEm, FontEmTexels, FieldRangeTexels);
+	float FaceSoftEm = clamp(Style.FaceSoftness, 0.0, 2.0 * (MaxReachEm - DilateEm));
+	// Small text: the face alone grows by up to DREAMUI_TEXT_SMALL_DARKEN_PX screen pixels a side and its ramp narrows.
+	// Below 4 px per em the darkening stops growing in em, so a glyph minified to a speck does not turn into a blob; and
+	// the effects keep measuring from the undarkened edge, so an outline's outer edge does not move.
+	float ScreenPxPerEm = PxPerTexel * FontEmTexels;
+	float SmallText = bSmallTextCorrection ? DreamUIText_SmallTextWeight(ScreenPxPerEm) : 0.0;
+	float DarkenEm = min(SmallText * DREAMUI_TEXT_SMALL_DARKEN_PX / max(ScreenPxPerEm, 4.0), max(MaxReachEm - DilateEm, 0.0));
+	float Face = DreamUIText_Coverage(S.MedianDistance, FaceEdge - DreamUIText_EmToField(DarkenEm, FontEmTexels, FieldRangeTexels),
+		PxRange * (1.0 + DREAMUI_TEXT_SMALL_CONTRAST * SmallText), DreamUIText_EmToField(FaceSoftEm, FontEmTexels, FieldRangeTexels));
+	if (bFieldCorrection && bDrawFace)
+	{
+		// In full where the small-text correction is off, fading out as it comes in: the two never stack.
+		Face = lerp(DreamUIText_CorrectCoverage(Face, FaceColor.rgb, DREAMUI_TEXT_FIELD_CORRECTION_CONTRAST, bLinearTarget), Face, SmallText);
+	}
+
+	// Outline: the band between the face edge and OutlineWidth further out, mitred at convex corners
+	// within the reach the median holds (DreamUIText_MedianWeight).
+	float OutlineWidthEm = clamp(Style.OutlineWidth, 0.0, MaxReachEm - DilateEm);
+	float OutlineReachEm = DilateEm + OutlineWidthEm;
+	float OutlineSoftEm = clamp(Style.OutlineSoftness, 0.0, 2.0 * (MaxReachEm - OutlineReachEm));
+	float Outline = 0.0;
+	if (bDrawEffects && OutlineWidthEm > 0.0 && Style.OutlineColor.a > 0.0)
+	{
+		float OutlineDistance = lerp(S.Distance, S.MedianDistance, DreamUIText_MedianWeight(OutlineReachEm + 0.5 * OutlineSoftEm, OutlineSoftEm, MaxReachEm));
+		Outline = DreamUIText_Coverage(OutlineDistance, 0.5 - DreamUIText_EmToField(OutlineReachEm, FontEmTexels, FieldRangeTexels), PxRange,
+			DreamUIText_EmToField(OutlineSoftEm, FontEmTexels, FieldRangeTexels));
+	}
+
+	// Glow: falloff from the face edge out to GlowWidth, on the true distance. It reaches exactly zero
+	// at its clamped width, which the painter keeps inside the quad. A glyph's boost widens the glow
+	// (1 = twice as wide); its strength stays the colour's alpha, so a boost never saturates into a blob.
+	float GlowWidthEm = clamp(Style.GlowWidth * (1.0 + GlyphGlowBoost), 0.0, MaxReachEm - DilateEm);
+	float Glow = 0.0;
+	if (bDrawEffects && GlowWidthEm > 0.0 && Style.GlowColor.a > 0.0)
+	{
+		float GlowWidth = DreamUIText_EmToField(GlowWidthEm, FontEmTexels, FieldRangeTexels);
+		float T = saturate((S.Distance - (FaceEdge - GlowWidth)) / GlowWidth);
+		Glow = pow(T, max(Style.GlowPower, 0.01)) * Style.GlowColor.a;
+	}
+
+	// Underlay: the glyph again, offset and usually softer, behind everything. The offset sample may
+	// leave this glyph's atlas cell near the quad's edge and read a neighbour; it is only trusted where
+	// the unshifted distance proves the shifted sample is still inside the cell (distance to the glyph
+	// is never more than the distance to the cell's edge minus the spread). A hard underlay is the
+	// outlined glyph's own shape, mitred like it; a soft one is a blur and rounds (DreamUIText_MedianWeight). Its own
+	// quad draws it under every glyph's outline (the header).
+	float Underlay = 0.0;
+	if (bDrawUnderlay && Style.UnderlayColor.a > 0.0)
+	{
+		float OffsetLenEm = length(Style.UnderlayOffset);
+		float MaxOffsetEm = 0.5 * SpreadEm;
+		float2 OffsetEm = OffsetLenEm > MaxOffsetEm ? Style.UnderlayOffset * (MaxOffsetEm / OffsetLenEm) : Style.UnderlayOffset;
+		OffsetLenEm = min(OffsetLenEm, MaxOffsetEm);
+		float UnderlayReachEm = clamp(OutlineReachEm + Style.UnderlayDilate, -SpreadEm, MaxReachEm - 2.0 * OffsetLenEm);
+		float UnderlaySoftEm = clamp(Style.UnderlaySoftness, 0.0, 2.0 * (MaxReachEm - 2.0 * OffsetLenEm - UnderlayReachEm));
+		float2 OffsetUV = OffsetEm * FontEmTexels / AtlasSize;
+		FDreamUIGlyphSample U = DreamUIText_SampleField(FontTex, FontSampler, UV - OffsetUV, Slice, bMultiChannel);
+		float Valid = step(DreamUIText_EmToField(OffsetLenEm, FontEmTexels, FieldRangeTexels), S.Distance);
+		float UnderlayDistance = lerp(U.Distance, U.MedianDistance, DreamUIText_MedianWeight(UnderlayReachEm + 0.5 * UnderlaySoftEm, UnderlaySoftEm, MaxReachEm));
+		Underlay = DreamUIText_Coverage(UnderlayDistance, 0.5 - DreamUIText_EmToField(UnderlayReachEm, FontEmTexels, FieldRangeTexels), PxRange,
+			DreamUIText_EmToField(UnderlaySoftEm, FontEmTexels, FieldRangeTexels)) * Style.UnderlayColor.a * Valid;
+	}
+
+	// Fill progress (lyrics).
+	float FaceAlpha = FaceColor.a;
+	float Dim = DreamUIText_FillDim(Style.FillDimAlpha, Style.FillFadeWidth, FillProgress, SegmentX);
+
+	// Composite back to front, premultiplied: each layer over what is under it. Mixing straight colours instead (a lerp
+	// by the layer's alpha) is only right over an opaque layer; over nothing it pulled the colour towards the underlay's
+	// (black by default), and the caller's one premultiply then gave colour times alpha squared: a face at alpha a or
+	// coverage c came out darkened and thinned -- a transparent gradient stop, a faded text, a light text's edges.
+	float3 Premultiplied = Style.UnderlayColor.rgb * Underlay;
+	float Alpha = Underlay;
+	Premultiplied = Style.GlowColor.rgb * Glow + Premultiplied * (1.0 - Glow);
+	Alpha = Glow + Alpha * (1.0 - Glow);
+	float4 OutlineColor = Style.OutlineColor * OutlinePaint;
+	float OutlineA = Outline * OutlineColor.a;
+	Premultiplied = OutlineColor.rgb * OutlineA + Premultiplied * (1.0 - OutlineA);
+	Alpha = OutlineA + Alpha * (1.0 - OutlineA);
+	// The effects fade as one layer, their colours as they were.
+	Premultiplied *= EffectAlpha;
+	Alpha *= EffectAlpha;
+	float FaceA = bDrawFace ? Face * FaceAlpha : 0.0;
+	Premultiplied = FaceColor.rgb * FaceA + Premultiplied * (1.0 - FaceA);
+	Alpha = FaceA + Alpha * (1.0 - FaceA);
+	// Straight again: the caller premultiplies once. Where nothing covers the pixel, the face's colour at alpha 0.
+	float3 Color = Alpha > 0.0 ? Premultiplied / Alpha : FaceColor.rgb;
+	// The dim applies to the whole glyph, effects included, so an unlit lyric fades as one.
+	return float4(Color, Alpha * Dim);
+}
+
+/**
+ * A coverage glyph (layer 3): small text hinted for its pixel size and rasterized as linear 8-bit coverage four times,
+ * moved right by 0, 1/4, 2/4 and 3/4 px, into the four channels of one texel -- bytes B, G, R, A are phases 0..3, so
+ * phase p is component 2, 1, 0, 3 of the sample. The quad sits on whole device pixels and its UVs on whole texels, so a
+ * pixel reads exactly one texel. The coverage then goes through Skia's correcting table for the colour the glyph is drawn
+ * in (DreamUIText_CorrectCoverage) -- FaceColor, the vertex colour or a painted face's, so a gradient is corrected pixel by
+ * pixel for the colour it has there. CoverageCode is UV3.y: the contrast, plus DREAMUI_TEXT_CODE_COVERAGE_LINEAR_TARGET on
+ * a linear target. Returns FaceColor, its alpha times the corrected coverage and the fill's dim.
+ */
+float4 DreamUIText_ShadeCoverage(Texture2DArray FontTex, SamplerState FontSampler, float2 UV, float Slice, float Phase,
+	float CoverageCode, float4 FaceColor, float Dim)
+{
+	float4 Texel = DREAMUI_SAMPLE(FontTex, FontSampler, float3(UV, Slice));
+	float P = round(Phase);
+	float4 PhaseMask = float4(P == 2.0 ? 1.0 : 0.0, P == 1.0 ? 1.0 : 0.0, P == 0.0 ? 1.0 : 0.0, P == 3.0 ? 1.0 : 0.0);
+	float A = saturate(dot(Texel, PhaseMask));
+
+	// The contrast stays below 16 and a linear target adds 16 to it.
+	bool bLinearTarget = CoverageCode > 0.75 * DREAMUI_TEXT_CODE_COVERAGE_LINEAR_TARGET;
+	float Contrast = CoverageCode - (bLinearTarget ? DREAMUI_TEXT_CODE_COVERAGE_LINEAR_TARGET : 0.0);
+	A = DreamUIText_CorrectCoverage(A, FaceColor.rgb, Contrast, bLinearTarget);
+	return float4(FaceColor.rgb, FaceColor.a * A * Dim);
+}
+
+/**
+ * A colour glyph (an emoji from a CBDT/sbix strike or COLRv0 layers): premultiplied BGRA, sRGB-encoded, in a cell padded
+ * with (0,0,0,0). Its face is the glyph's own colours, un-premultiplied and made linear, at its alpha times the vertex
+ * alpha and the fill's dim; the vertex RGB is ignored (the painter writes white): emoji are never tinted.
+ * Its effects copy draws the underlay -- the one effect a colour glyph has, with no field for an outline or a glow -- as
+ * the glyph's alpha in the style's underlay colour. On a field font (bShiftUnderlay) the alpha is sampled at UV minus
+ * the style's offset and the softness is a box blur in four taps. The painter insets that copy by half the field's
+ * spread inside a cell padded by the whole spread, so the offset and the taps are kept within that half, less a texel
+ * for the bilinear footprint, and never sample past the glyph's own cell; as with the field's underlay, what does not
+ * fit is not drawn. On a bitmap font the painter already moved the copy by the shadow offset: it is drawn where it is.
+ * CellTexelsPerEm is UV3.y.
+ */
+float4 DreamUIText_ShadeColorGlyph(Texture2DArray FontTex, SamplerState FontSampler, float2 UV, float Slice, bool bEffects,
+	bool bShiftUnderlay, float2 AtlasSize, float FieldRangeTexels, float FontEmTexels, float CellTexelsPerEm,
+	float4 VertexColor, FDreamUITextStyle Style, float Dim)
+{
+	if (!bEffects)
+	{
+		float4 Texel = DREAMUI_SAMPLE(FontTex, FontSampler, float3(UV, Slice));
+		float3 Straight = saturate(Texel.rgb / max(Texel.a, 1.0 / 255.0));
+		return float4(sRGBToLinear(Straight), Texel.a * VertexColor.a * Dim);
+	}
+
+	float2 OffsetEm = float2(0.0, 0.0);
+	float SoftEm = 0.0;
+	if (bShiftUnderlay)
+	{
+		float SpreadEm = 0.5 * FieldRangeTexels / max(abs(FontEmTexels), 1e-4);
+		float BudgetEm = max(0.5 * SpreadEm - 1.0 / max(CellTexelsPerEm, 1e-4), 0.0);
+		float OffsetLenEm = length(Style.UnderlayOffset);
+		OffsetEm = OffsetLenEm > BudgetEm ? Style.UnderlayOffset * (BudgetEm / OffsetLenEm) : Style.UnderlayOffset;
+		// A tap lands at most 3/8 of the blur's width from the centre along either axis.
+		SoftEm = clamp(Style.UnderlaySoftness, 0.0, (BudgetEm - min(OffsetLenEm, BudgetEm)) / 0.375);
+	}
+	// UV is V down, like the offset's +y.
+	float2 EmToUV = CellTexelsPerEm / AtlasSize;
+	float2 Center = UV - OffsetEm * EmToUV;
+	float2 Blur = SoftEm * EmToUV;
+	// A box blur SoftEm wide, in four taps on a rotated grid: each axis sees four evenly spaced positions, so a straight
+	// edge ramps over the width in four steps, each smoothed by the bilinear filter. With no softness they coincide.
+	float Alpha = 0.25 * (
+		DREAMUI_SAMPLE(FontTex, FontSampler, float3(Center + Blur * float2(-0.375, -0.125), Slice)).a +
+		DREAMUI_SAMPLE(FontTex, FontSampler, float3(Center + Blur * float2(0.125, -0.375), Slice)).a +
+		DREAMUI_SAMPLE(FontTex, FontSampler, float3(Center + Blur * float2(0.375, 0.125), Slice)).a +
+		DREAMUI_SAMPLE(FontTex, FontSampler, float3(Center + Blur * float2(-0.125, 0.375), Slice)).a);
+	return float4(Style.UnderlayColor.rgb, Alpha * Style.UnderlayColor.a * VertexColor.a * Dim);
+}
+
+/**
+ * A colour glyph a mesh modifier copied -- a shadow, an outline, a long shadow (DREAMUI_TEXT_CODE_COLOR_SILHOUETTE_THRESHOLD):
+ * not the glyph's colours again but its silhouette, the vertex colour the modifier gave the copy at the glyph's alpha
+ * times the vertex alpha and the fill's dim, as a field glyph's copy draws its face in that colour. Without it a shadow of
+ * an emoji was a second, full-colour emoji.
+ */
+float4 DreamUIText_ShadeColorSilhouette(Texture2DArray FontTex, SamplerState FontSampler, float2 UV, float Slice,
+	float4 VertexColor, float Dim)
+{
+	float Alpha = DREAMUI_SAMPLE(FontTex, FontSampler, float3(UV, Slice)).a;
+	return float4(VertexColor.rgb, Alpha * VertexColor.a * Dim);
+}
+
+
+#endif // DREAMUI_TEXT_USH

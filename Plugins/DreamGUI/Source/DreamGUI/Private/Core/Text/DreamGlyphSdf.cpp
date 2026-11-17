@@ -1,0 +1,291 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#include "Core/Text/DreamGlyphSdf.h"
+
+#if WITH_FREETYPE
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_OUTLINE_H
+
+// The plugin's own copy of msdfgen, as the single source file that is meant to be included into one
+// translation unit -- the same shape SlateCore and the engine's SVGDistanceField module compile. A
+// launcher engine has only msdfgen.tps in Engine/Source/ThirdParty/msdfgen, so the pair is generated
+// and committed under ThirdParty/ (see ThirdParty/README.md), and DreamGUI.Build.cs puts that folder
+// on the include path. MSDFGEN_PARENT_NAMESPACE wraps the library, which is why every call below reads
+// msdfgen:: -- SlateCore compiles its own copy of msdfgen for its SDF fonts, and in a monolithic build
+// two sets of identically named symbols that are subtly not the same code is worse than a link error.
+THIRD_PARTY_INCLUDES_START
+#define MSDFGEN_PARENT_NAMESPACE DreamMsdfgen
+#include "msdfgen.cpp"
+THIRD_PARTY_INCLUDES_END
+
+namespace DreamGlyphSdfLocal
+{
+	// Corners sharper than ~171 degrees are treated as corners when colouring edges.
+	constexpr double CornerAngleThreshold = 3.0;
+	constexpr int32 MaxSide = 4096;
+	// How far apart, in pixels at the sample size, the rows are that check a reoriented contour's fill.
+	constexpr double FillCheckRowPixels = 0.25;
+	// At most this many rows per contour: a contour taller than 256 sample pixels is checked more coarsely.
+	constexpr int32 MaxFillCheckRowsPerContour = 1024;
+
+	/**
+	 * Give inconsistently wound contours one winding, the way Slate does before it generates a field -- but only when that
+	 * leaves the glyph's fill alone. msdfgen's orientContours reads each contour's direction off the crossing order along a
+	 * scanline, which is the even-odd rule. FreeType, and every other renderer of a TrueType or CFF outline, fills by the
+	 * nonzero rule, under which contours may overlap: a composite accent over its base, a CJK stroke across another. There
+	 * orientContours can turn a correctly wound contour round, and the overlap becomes a hole (the ogonek of Roboto's
+	 * U+0105, a bar of DroidSansFallback's U+C624). Slate pairs it with Skia's overlap removal, which is not here. So the contours are
+	 * oriented on a copy, and the copy is kept only when it fills exactly what the original fills under the nonzero rule.
+	 * That can only change where a contour was turned round, so that is where it is checked: along rows a quarter of a
+	 * sample pixel apart, over each such contour's height. A glyph that only had a contour wound the wrong way, apart from
+	 * the others, keeps its fill and is repaired; one whose overlaps would change keeps its own winding.
+	 * Returns whether the shape was changed.
+	 */
+	bool OrientKeepingNonzeroFill(DreamMsdfgen::msdfgen::Shape& InOutShape, double UnitsPerPixel)
+	{
+		using namespace DreamMsdfgen;
+		msdfgen::Shape Oriented = InOutShape;
+		Oriented.orientContours();
+
+		// The rows across every contour orientContours turned round. Reversing a contour reverses its edge order, so its
+		// first edge is a different edge afterwards.
+		TArray<double> Rows;
+		const double Step = FillCheckRowPixels * UnitsPerPixel;
+		for (int32 ContourIndex = 0; ContourIndex < (int32)InOutShape.contours.size(); ContourIndex++)
+		{
+			const msdfgen::Contour& Before = InOutShape.contours[ContourIndex];
+			const msdfgen::Contour& After = Oriented.contours[ContourIndex];
+			if (Before.edges.empty() || After.edges.empty() || Before.edges.front()->point(.5) == After.edges.front()->point(.5))
+			{
+				continue;
+			}
+			double Left = 1e240, Bottom = 1e240, Right = -1e240, Top = -1e240;
+			Before.bound(Left, Bottom, Right, Top);
+			const int32 RowCount = FMath::Clamp((int32)FMath::CeilToDouble((Top - Bottom) / Step), 1, MaxFillCheckRowsPerContour);
+			const double RowStep = (Top - Bottom) / RowCount;
+			for (int32 Row = 0; Row < RowCount; Row++)
+			{
+				// Off the integer font units a vertex sits at, so no row runs exactly along one.
+				Rows.Add(Bottom + (Row + 0.5618) * RowStep);
+			}
+		}
+		if (Rows.Num() == 0)
+		{
+			return false;
+		}
+
+		const msdfgen::Shape::Bounds Bounds = InOutShape.getBounds();
+		const double XFrom = Bounds.l - 1.0;
+		const double XTo = Bounds.r + 1.0;
+		const double Tolerance = 0.01 * UnitsPerPixel;
+		msdfgen::Scanline BeforeLine, AfterLine;
+		for (const double Y : Rows)
+		{
+			InOutShape.scanline(BeforeLine, Y);
+			Oriented.scanline(AfterLine, Y);
+			if ((XTo - XFrom) - msdfgen::Scanline::overlap(BeforeLine, AfterLine, XFrom, XTo, msdfgen::FILL_NONZERO) > Tolerance)
+			{
+				return false;
+			}
+		}
+		InOutShape.contours.swap(Oriented.contours);
+		return true;
+	}
+
+	// How far apart, in sample pixels, the rows are that measure where contours overlap, and at most how many there are.
+	constexpr double OverlapRowPixels = 0.5;
+	constexpr int32 MaxOverlapRows = 1024;
+
+	/**
+	 * Area, in square sample pixels, where two or more contours fill the same point: along rows half a sample pixel apart,
+	 * the length over which the nonzero winding is two or more. A glyph drawn the usual way -- one contour per closed shape,
+	 * holes wound the other way -- winds 0 or 1 everywhere and measures 0; so does a glyph whose contours only meet.
+	 */
+	double MeasureOverlapPixels(const DreamMsdfgen::msdfgen::Shape& InShape, double UnitsPerPixel)
+	{
+		using namespace DreamMsdfgen;
+		// One contour can overlap itself as well as another: a stroke that loops back over the one before it.
+		const msdfgen::Shape::Bounds Bounds = InShape.getBounds();
+		if (!(Bounds.t > Bounds.b))
+		{
+			return 0.0;
+		}
+		const int32 RowCount = FMath::Clamp((int32)FMath::CeilToDouble((Bounds.t - Bounds.b) / (OverlapRowPixels * UnitsPerPixel)), 1, MaxOverlapRows);
+		const double RowStep = (Bounds.t - Bounds.b) / RowCount;
+		TArray<TPair<double, int32>> Crossings;
+		double OverlapUnits = 0.0;
+		double X[3];
+		int Dy[3];
+		for (int32 Row = 0; Row < RowCount; Row++)
+		{
+			// Off the integer font units a vertex sits at, so no row runs exactly along one.
+			const double Y = Bounds.b + (Row + 0.5618) * RowStep;
+			Crossings.Reset();
+			for (const msdfgen::Contour& Contour : InShape.contours)
+			{
+				for (const msdfgen::EdgeHolder& Edge : Contour.edges)
+				{
+					const int Count = Edge->scanlineIntersections(X, Dy, Y);
+					for (int Index = 0; Index < Count; Index++)
+					{
+						Crossings.Emplace(X[Index], Dy[Index]);
+					}
+				}
+			}
+			Crossings.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
+			int32 Winding = 0;
+			for (int32 Index = 0; Index < Crossings.Num(); Index++)
+			{
+				if (Index > 0 && FMath::Abs(Winding) >= 2)
+				{
+					OverlapUnits += (Crossings[Index].Key - Crossings[Index - 1].Key) * RowStep;
+				}
+				Winding += Crossings[Index].Value;
+			}
+		}
+		return OverlapUnits / (UnitsPerPixel * UnitsPerPixel);
+	}
+}
+#endif
+
+bool FDreamGlyphSdf::GenerateMTSDF(FT_FaceRec_* Face, uint32 GlyphIndex, float PixelsPerEm, float SpreadPixels, float BoldPixels, FDreamGlyphSdfResult& Out)
+{
+#if !WITH_FREETYPE
+	return false;
+#else
+	Out = FDreamGlyphSdfResult();
+	if (Face == nullptr || PixelsPerEm <= 0.0f || Face->units_per_EM == 0)
+	{
+		return false;
+	}
+
+	// Unscaled, unhinted: the outline in font units, exactly as designed.
+	FT_Error Error = FT_Load_Glyph(Face, GlyphIndex, FT_LOAD_NO_SCALE | FT_LOAD_IGNORE_TRANSFORM | FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT | FT_LOAD_NO_BITMAP);
+	if (Error != 0 || Face->glyph->format != FT_GLYPH_FORMAT_OUTLINE)
+	{
+		return false;
+	}
+	const double Scale = (double)PixelsPerEm / (double)Face->units_per_EM;//pixels per font unit
+	const float Advance = (float)(Face->glyph->metrics.horiAdvance * Scale) + (BoldPixels > 0.0f ? BoldPixels : 0.0f);
+	const bool bGenerated = GenerateMTSDFFromOutline(&Face->glyph->outline, Scale, SpreadPixels, BoldPixels, Out);
+	if (bGenerated)
+	{
+		Out.Advance = Advance;
+	}
+	return bGenerated;
+#endif
+}
+
+bool FDreamGlyphSdf::GenerateMTSDFFromOutline(FT_Outline_* Outline, double UnitsToPixels, float SpreadPixels, float BoldPixels, FDreamGlyphSdfResult& Out)
+{
+#if !WITH_FREETYPE
+	return false;
+#else
+	using namespace DreamMsdfgen;
+	using namespace DreamGlyphSdfLocal;
+	Out = FDreamGlyphSdfResult();
+	if (Outline == nullptr || UnitsToPixels <= 0.0)
+	{
+		return false;
+	}
+	const double Scale = UnitsToPixels;
+	if (Outline->n_points <= 0)
+	{
+		// Space-like glyph: an advance and nothing to draw.
+		return true;
+	}
+	if (BoldPixels > 0.0f)
+	{
+		// The outline is unscaled, so its coordinates are plain font units and the strength is too:
+		// the 26.6 convention only applies to scaled outlines.
+		const double BoldUnits = BoldPixels / Scale;
+		FT_Outline_Embolden(Outline, (FT_Pos)FMath::RoundToInt(BoldUnits));
+	}
+
+	msdfgen::Shape Shape;
+	if (msdfgen::readFreetypeOutline(Shape, Outline, 1.0) != 0 || Shape.contours.empty())
+	{
+		return false;
+	}
+	Shape.normalize();
+	// The atlas row 0 is the top; msdfgen's bitmaps are bottom-up unless told otherwise.
+	Shape.inverseYAxis = true;
+
+	const msdfgen::Shape::Bounds Bounds = Shape.getBounds();
+	if (!(Bounds.r > Bounds.l && Bounds.t > Bounds.b))
+	{
+		return true;//degenerate outline: treat as empty
+	}
+	// A glyph wound the other way round as a whole (PostScript outlines run counter-clockwise) would produce an inside-out
+	// field; checked from a point outside the glyph, as Slate does. Reversing every contour leaves the nonzero fill as it is.
+	{
+		const msdfgen::Point2 OuterPoint(Bounds.l - (Bounds.r - Bounds.l) - 1, Bounds.b - (Bounds.t - Bounds.b) - 1);
+		if (msdfgen::SimpleTrueShapeDistanceFinder::oneShotDistance(Shape, OuterPoint) > 0)
+		{
+			for (msdfgen::Contour& Contour : Shape.contours)
+			{
+				Contour.reverse();
+			}
+		}
+	}
+	// Then contour by contour: a contour wound against the rest -- the dot of an i, say -- would otherwise be read as a
+	// hole in nothing and vanish from the field. Only where the fill stays what FreeType fills (see the helper).
+	OrientKeepingNonzeroFill(Shape, 1.0 / Scale);
+	// Contours that overlap rather than meet: measured on the outline as it will be drawn, so the font can say so. msdfgen's
+	// overlap support keeps most of such a glyph, but where strokes cross -- worst where one contour loops back over itself
+	// -- its distances, the true one in alpha included, can read the wrong side of the outline: a gap, or a seam along the
+	// edge that runs inside the other stroke. No mend of the texels afterwards puts that right; merging the contours before
+	// the field is made does, and a font file with its overlaps removed needs nothing.
+	Out.OverlapPixels = (float)MeasureOverlapPixels(Shape, 1.0 / Scale);
+
+	const double SpreadUnits = SpreadPixels / Scale;
+	const double WidthPx = (Bounds.r - Bounds.l) * Scale + 2.0 * SpreadPixels;
+	const double HeightPx = (Bounds.t - Bounds.b) * Scale + 2.0 * SpreadPixels;
+	Out.Width = FMath::CeilToInt(WidthPx) + 1;
+	Out.Height = FMath::CeilToInt(HeightPx) + 1;
+	if (Out.Width <= 0 || Out.Height <= 0 || Out.Width > MaxSide || Out.Height > MaxSide)
+	{
+		Out = FDreamGlyphSdfResult();
+		return false;
+	}
+	// Bitmap pixel (0,0) is the top-left; the shape is moved so its bounds plus spread fill the
+	// bitmap. Half a pixel of slack from the ceil above keeps the outer spread inside.
+	const double PadX = (Out.Width - WidthPx) * 0.5 / Scale;
+	const double PadY = (Out.Height - HeightPx) * 0.5 / Scale;
+	const msdfgen::Vector2 Translate(-Bounds.l + SpreadUnits + PadX, -Bounds.b + SpreadUnits + PadY);
+	Out.Left = (float)((Bounds.l - SpreadUnits - PadX) * Scale);
+	Out.Top = (float)((Bounds.t + SpreadUnits + PadY) * Scale);
+
+	msdfgen::edgeColoringInkTrap(Shape, CornerAngleThreshold);
+
+	TArray<float> FloatPixels;
+	FloatPixels.SetNumUninitialized(Out.Width * Out.Height * 4);
+	TArray<uint8> ErrorCorrectionBuffer;
+	ErrorCorrectionBuffer.SetNumZeroed(Out.Width * Out.Height);
+	msdfgen::BitmapRef<float, 4> FloatBitmap(FloatPixels.GetData(), Out.Width, Out.Height);
+	msdfgen::generateMTSDF(
+		FloatBitmap,
+		Shape,
+		msdfgen::SDFTransformation(msdfgen::Projection(msdfgen::Vector2(Scale), Translate), msdfgen::Range(-SpreadUnits, SpreadUnits)),
+		msdfgen::MSDFGeneratorConfig(true, msdfgen::ErrorCorrectionConfig(
+			msdfgen::ErrorCorrectionConfig::EDGE_PRIORITY,
+			msdfgen::ErrorCorrectionConfig::CHECK_DISTANCE_AT_EDGE,
+			msdfgen::ErrorCorrectionConfig::defaultMinDeviationRatio,
+			msdfgen::ErrorCorrectionConfig::defaultMinImproveRatio,
+			ErrorCorrectionBuffer.GetData())));
+
+	// BGRA in memory (FColor order): the three fields in R, G, B and the true distance in A.
+	Out.Pixels.SetNumUninitialized(Out.Width * Out.Height * 4);
+	for (int32 i = 0; i < Out.Width * Out.Height; i++)
+	{
+		const float* Src = FloatPixels.GetData() + i * 4;
+		uint8* Dst = Out.Pixels.GetData() + i * 4;
+		Dst[0] = msdfgen::pixelFloatToByte(Src[2]);//B
+		Dst[1] = msdfgen::pixelFloatToByte(Src[1]);//G
+		Dst[2] = msdfgen::pixelFloatToByte(Src[0]);//R
+		Dst[3] = msdfgen::pixelFloatToByte(Src[3]);//A
+	}
+	return true;
+#endif
+}

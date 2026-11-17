@@ -1,0 +1,1586 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamUIDetailTrace.h"
+#include <atomic>
+#include "DreamWidgetPrivate.h"
+#include "Core/DreamPerspective.h"
+#include "DreamGUI.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Core/DreamUISettings.h"
+#include "Core/DreamUIManager.h"
+#include "Core/DreamUIRuntimeObject.h"
+#include "Core/DreamScreenUISubsystem.h"
+#include "Engine/World.h"
+#include "DreamTweenManager.h"
+#include "Core/DreamUIClipData.h"
+#include "Core/Components/DreamLayout.h"
+#include "Core/Components/DreamPanelLayouts.h"
+#include "Core/Components/DreamPanelSlot.h"
+#include "Core/Components/DreamVisual.h"
+#if WITH_ACCESSIBILITY
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/Accessibility/SlateAccessibleMessageHandler.h"
+#endif
+#include "Components/SceneComponent.h"
+#include "Core/DreamUIBehaviour.h"
+#include "Core/DreamUserWidget.h"
+#include "Core/DreamWidgetNavigation.h"
+#include "Core/DreamWidgetTree.h"
+#include "Engine/GameInstance.h"
+#include "Engine/LocalPlayer.h"
+#include "Event/DreamPointerEventData.h"
+#include "GameFramework/PlayerController.h"
+// FLayoutLocalization, for the Culture flow-direction preference. SlateCore is already a public
+// dependency; this is the one header of it that answers "which way does the running culture read".
+#include "Layout/FlowDirection.h"
+#if WITH_EDITOR
+#include "UObject/GarbageCollection.h"
+#include "UObject/UnrealType.h"
+#endif
+FVector UDreamWidget::GetWorldLocation()const
+{
+	return GetWorldTransform().GetLocation();
+}
+FQuat UDreamWidget::GetWorldRotation()const
+{
+	return GetWorldTransform().GetRotation();
+}
+FVector UDreamWidget::GetWorldScale()const
+{
+	return GetWorldTransform().GetScale3D();
+}
+
+FVector UDreamWidget::GetForwardVector() const
+{
+	return GetWorldTransform().GetRotation().GetForwardVector();
+}
+
+FVector UDreamWidget::GetRightVector() const
+{
+	return GetWorldTransform().GetRotation().GetRightVector();
+}
+
+FVector UDreamWidget::GetUpVector() const
+{
+	return GetWorldTransform().GetRotation().GetUpVector();
+}
+
+void UDreamWidget::SetRelativeLocation(const FVector& Value)
+{
+	if (this->RelativeLocation != Value)
+	{
+		this->RelativeLocation = Value;
+		this->CalculateObjectToWorldTransform();
+		
+		if (bCanSetAnchorFromTransform)
+		{
+			CalculateAnchorFromTransform();
+			if (Parent.IsValid() && Parent->GetLayoutContainer())//only position change, if parent contains LayoutContainer then we should rebuild layout, otherwise not
+			{
+				MarkLayoutForRebuild(this, EDreamLayoutInvalidation::Arrange);
+			}
+		}
+	}
+}
+void UDreamWidget::SetRelativeRotation(const FQuat& Value)
+{
+	if (this->RelativeRotation != Value)
+	{
+		this->RelativeRotation = Value;
+		this->RelativeRotationEuler = Value.Rotator();
+		this->CalculateObjectToWorldTransform();
+	}
+}
+void UDreamWidget::SetRelativeRotationEuler(const FRotator& Value)
+{
+	// Store what the caller gave us rather than round-tripping through the quaternion: that would
+	// normalize the angles (370 degrees becomes 10), making an animation jump as it crosses a turn.
+	this->RelativeRotationEuler = Value;
+	const FQuat NewRotation = Value.Quaternion();
+	if (this->RelativeRotation != NewRotation)
+	{
+		this->RelativeRotation = NewRotation;
+		this->CalculateObjectToWorldTransform();
+	}
+}
+void UDreamWidget::SetRelativeScale(const FVector& Value)
+{
+	if (this->RelativeScale != Value)
+	{
+		this->RelativeScale = Value;
+		this->CalculateObjectToWorldTransform();
+	}
+}
+
+void UDreamWidget::SetLayoutScale(const FVector2f& Value)
+{
+	const FVector2f SanitizedScale(
+		FMath::IsFinite(Value.X) ? FMath::Max(0.0f, Value.X) : 1.0f,
+		FMath::IsFinite(Value.Y) ? FMath::Max(0.0f, Value.Y) : 1.0f);
+	if (!LayoutScale.Equals(SanitizedScale, 0.0f))
+	{
+		LayoutScale = SanitizedScale;
+		CalculateObjectToWorldTransform();
+	}
+}
+void UDreamWidget::SetRelativeLocationAndRotation(const FVector& InLocation, const FQuat& InRotation)
+{
+	if (this->RelativeLocation != InLocation || this->RelativeRotation != InRotation)
+	{
+		this->RelativeLocation = InLocation;
+		this->RelativeRotation = InRotation;
+		this->RelativeRotationEuler = InRotation.Rotator();
+		this->CalculateObjectToWorldTransform();
+
+		if (bCanSetAnchorFromTransform)
+		{
+			CalculateAnchorFromTransform();
+			if (Parent.IsValid() && Parent->GetLayoutContainer())//only position change, if parent contains LayoutContainer then we should rebuild layout, otherwise not
+			{
+				MarkLayoutForRebuild(this, EDreamLayoutInvalidation::Arrange);
+			}
+		}
+	}
+}
+
+void UDreamWidget::SetWorldLocation(const FVector& Value)
+{
+	auto WorldRotation = GetWorldRotation();
+	SetWorldLocationAndRotation(Value, WorldRotation);
+}
+void UDreamWidget::SetWorldRotation(const FQuat& Value)
+{
+	auto WorldPosition = GetWorldLocation();
+	SetWorldLocationAndRotation(WorldPosition, Value);
+}
+void UDreamWidget::SetWorldLocationAndRotation(const FVector& InLocation, const FQuat& InRotation)
+{
+	FTransform DesiredWorldTransform = GetWorldTransform();
+	DesiredWorldTransform.SetLocation(InLocation);
+	DesiredWorldTransform.SetRotation(InRotation);
+	SetWorldTransform(DesiredWorldTransform);
+}
+
+FTransform UDreamWidget::GetLocalTransform()const
+{
+	return FTransform(RelativeRotation, RelativeLocation,
+		RelativeScale * FVector(1.0, LayoutScale.X, LayoutScale.Y));
+}
+
+FTransform UDreamWidget::GetRenderTransform()const
+{
+	if (!bHasRenderTransform)
+	{
+		return FTransform::Identity;
+	}
+	// The pivot is normalized inside the widget's own rect, so it has to be resolved against the
+	// current size -- a widget stretched by its layout must still turn about its own middle. It sits
+	// on the widget's plane, which is local X = 0.
+	const FVector PivotPoint(0.0,
+		GetLocalSpaceLeft() + GetWidth() * RenderTransformPivot.X,
+		GetLocalSpaceBottom() + GetHeight() * RenderTransformPivot.Y);
+	const FTransform ScaleAndRotate(RenderRotation.Quaternion(), FVector::ZeroVector, RenderScale);
+	// Bracket by the pivot, then translate. FTransform composes left-to-right as "apply A, then B".
+	return FTransform(-PivotPoint) * ScaleAndRotate * FTransform(PivotPoint) * FTransform(RenderTranslation);
+}
+
+FTransform UDreamWidget::GetRenderLocalTransform()const
+{
+	// One bit test on the overwhelmingly common path: nothing is animating, so nothing is composed.
+	return bHasRenderTransform ? GetRenderTransform() * GetLocalTransform() : GetLocalTransform();
+}
+
+FTransform UDreamWidget::GetLayoutWorldTransform()const
+{
+	// Deliberately recomputed by walking up rather than cached: this is only asked for when a world
+	// transform is being converted back into authored data, which is rare, and a second cached chain
+	// would be a second thing to keep in step on every move.
+	const FTransform LocalTransform = GetLocalTransform();
+	if (Parent.IsValid())
+	{
+		return LocalTransform * Parent->GetLayoutWorldTransform();
+	}
+	if (auto WidgetPresenterComponent = GetAttachedRootSceneComponent())
+	{
+		return LocalTransform * WidgetPresenterComponent->GetComponentTransform();
+	}
+	return LocalTransform;
+}
+
+void UDreamWidget::SetRenderTranslation(const FVector& Value)
+{
+	if (this->RenderTranslation != Value)
+	{
+		this->RenderTranslation = Value;
+		this->ApplyRenderTransformChange();
+	}
+}
+
+void UDreamWidget::SetRenderRotation(const FRotator& Value)
+{
+	if (this->RenderRotation != Value)
+	{
+		this->RenderRotation = Value;
+		this->ApplyRenderTransformChange();
+	}
+}
+
+void UDreamWidget::SetRenderScale(const FVector& Value)
+{
+	if (this->RenderScale != Value)
+	{
+		this->RenderScale = Value;
+		this->ApplyRenderTransformChange();
+	}
+}
+
+void UDreamWidget::SetRenderTransformPivot(const FVector2D& Value)
+{
+	if (this->RenderTransformPivot != Value)
+	{
+		this->RenderTransformPivot = Value;
+		this->ApplyRenderTransformChange();
+	}
+}
+
+void UDreamWidget::ClearRenderTransform()
+{
+	if (bHasRenderTransform)
+	{
+		RenderTranslation = FVector::ZeroVector;
+		RenderRotation = FRotator::ZeroRotator;
+		RenderScale = FVector::OneVector;
+		ApplyRenderTransformChange();
+	}
+	// Its own branch: shear is not part of bHasRenderTransform (see RefreshRenderTransformFlag), so a
+	// widget that is only sheared would otherwise walk out of "clear the render transform" still slanted.
+	if (HasOwnRenderShear())
+	{
+		RenderShear = FVector2D::ZeroVector;
+		ApplyRenderShearChange();
+	}
+}
+
+bool UDreamWidget::GetPerspectiveScope(DreamPerspective::FScope& OutScope)const
+{
+	if (!bPerspective)
+	{
+		return false;
+	}
+	// Layout's transform, not the drawn one. The scope's plane has to be where LAYOUT put this
+	// widget: measured against its own drawn transform the declarer is flat in its own plane by
+	// construction, and no perspective of its own could ever reach it. Taken from layout, the
+	// widget's own render rotation is a departure from that plane and foreshortens like anything
+	// else -- while a widget with no render transform still lies in the plane and is left alone.
+	const FTransform World = GetLayoutWorldTransform();
+	// The origin sits on this widget's own rect, like RenderTransformPivot, so it tracks a widget
+	// that gets stretched by its layout rather than drifting off it.
+	const FVector LocalOrigin(0.0,
+		GetLocalSpaceLeft() + GetWidth() * PerspectiveOrigin.X,
+		GetLocalSpaceBottom() + GetHeight() * PerspectiveOrigin.Y);
+	OutScope.PlanePoint = World.TransformPosition(LocalOrigin);
+	OutScope.PlaneNormal = World.TransformVector(FVector::XAxisVector).GetSafeNormal();
+	// MINUS the normal. A widget's local +X points INTO the screen, not out of it:
+	// UDreamCanvas::GetViewLocation puts the viewer at "world location - forward * distance", so the
+	// eye is on the -X side and +X is depth away from it. Placing the scope's eye on +X would put
+	// it behind the plane, opposite the canvas's own eye, and the remap would then re-aim from a
+	// viewer in front to a viewer behind -- foreshortening inverted and overstated. The eye has to
+	// sit on the same side of the plane as the one that is actually looking.
+	OutScope.EyePosition = OutScope.PlanePoint - OutScope.PlaneNormal * GetPerspectiveDistance();
+	return true;
+}
+
+FMatrix UDreamWidget::GetInheritedPerspectiveRemap()const
+{
+	if (!HasPerspectiveApplied())
+	{
+		return FMatrix::Identity;
+	}
+	// Walking up gathers the scopes innermost first, which is the order the composition wants.
+	// Deliberately not cached per widget: caching would be two matrices on every widget in the
+	// project to speed up a subtree that usually does not exist, and this is asked for once per
+	// geometry rebuild rather than per vertex.
+	TArray<DreamPerspective::FScope, TInlineAllocator<4>> Scopes;
+	for (const UDreamWidget* Ancestor = this; Ancestor != nullptr; Ancestor = Ancestor->Parent.Get())
+	{
+		DreamPerspective::FScope Scope;
+		if (Ancestor->GetPerspectiveScope(Scope))
+		{
+			Scopes.Add(Scope);
+		}
+	}
+	// The whole feature works by re-aiming geometry at the eye the canvas projects from, so it only
+	// means anything where that eye is what is actually looking. In a world-space mode the scene
+	// camera does the projecting and the canvas's eye is nobody; re-aiming at it would displace the
+	// geometry for a viewer that does not exist. And an orthographic canvas has its eye at infinity,
+	// which no affine map can reach -- CalculateDistanceToCamera even returns a hard 1000 there,
+	// a number that means "not applicable" rather than a distance.
+	UDreamCanvas* Canvas = GetRenderCanvas();
+	UDreamCanvas* Root = Canvas ? Canvas->GetRootCanvas() : nullptr;
+	if (Root == nullptr || Root->IsRenderToWorldSpace()
+		|| Root->GetProjectionType() != ECameraProjectionMode::Perspective)
+	{
+		return FMatrix::Identity;
+	}
+	return DreamPerspective::ComposeRemap(Scopes, Root->GetViewLocation());
+}
+
+namespace DreamRenderShear
+{
+	/**
+	 * One widget's shear as a matrix in its own local space, origin at its pivot -- which is where the
+	 * local origin already is, so there is no recentring to do.
+	 *
+	 * Local X is DEPTH here and the widget's rect lies in the YZ plane, so the two channels slant Y
+	 * against Z and Z against Y. Row-vector convention, matching everything else in this file: a
+	 * point p becomes p*M, so M's Y row is what Y contributes to the result.
+	 *
+	 * Clamped just under a right angle for the same reason Slate clamps: tan(90) is infinite and one
+	 * authored 90 would send every vertex of the subtree to infinity.
+	 */
+	FMatrix MakeLocalShearMatrix(const FVector2D& InShearDegrees)
+	{
+		const double ClampedX = FMath::Clamp(InShearDegrees.X, -89.0, 89.0);
+		const double ClampedY = FMath::Clamp(InShearDegrees.Y, -89.0, 89.0);
+		const double TanX = FMath::Tan(FMath::DegreesToRadians(ClampedX));
+		const double TanY = FMath::Tan(FMath::DegreesToRadians(ClampedY));
+		FMatrix Result = FMatrix::Identity;
+		// Y' = Y + Z*TanX : the horizontal slant, the one that turns a rectangle into a parallelogram
+		// leaning left or right. Z' = Y*TanY + Z is the vertical one.
+		Result.M[2][1] = TanX;
+		Result.M[1][2] = TanY;
+		return Result;
+	}
+}
+
+FMatrix UDreamWidget::GetInheritedShearCorrection()const
+{
+	// C(X) = O(X)^-1 * S(X) * O(X) * C(parent), read as "apply this level's shear in world terms,
+	// then whatever the levels above already contribute". Walking up rather than caching: the chain
+	// is only ever consulted while something in it is sheared, and a cache would need invalidating
+	// from every transform change in the subtree to stay honest.
+	FMatrix Result = Parent.IsValid() ? Parent->GetInheritedShearCorrection() : FMatrix::Identity;
+	if (HasOwnRenderShear())
+	{
+		const FMatrix ObjectToWorld = GetWorldTransform().ToMatrixWithScale();
+		Result = ObjectToWorld.Inverse() * DreamRenderShear::MakeLocalShearMatrix(RenderShear) * ObjectToWorld * Result;
+	}
+	return Result;
+}
+
+FMatrix UDreamWidget::GetWorldMatrix()const
+{
+	FMatrix Result = GetWorldTransform().ToMatrixWithScale();
+	// Both multiplications are skipped when they would be by Identity, so a widget using neither
+	// feature gets exactly the matrix this function has always returned.
+	if (HasShearApplied())
+	{
+		Result = Result * GetInheritedShearCorrection();
+	}
+	return HasPerspectiveApplied() ? Result * GetInheritedPerspectiveRemap() : Result;
+}
+
+FMatrix UDreamWidget::GetInverseWorldMatrix()const
+{
+	return GetWorldMatrix().Inverse();
+}
+
+void UDreamWidget::SetPerspective(bool Value)
+{
+	if (bPerspective != Value)
+	{
+		bPerspective = Value;
+		ApplyPerspectiveChange();
+	}
+}
+
+float UDreamWidget::GetPerspectiveDistance()const
+{
+	// The same formula UDreamCanvas::CalculateDistanceToCamera uses, so a widget's field of view means
+	// what the canvas's field of view means. Derived rather than stored: the widget's width is what
+	// makes the angle scale-invariant, and that width changes.
+	const float Clamped = FMath::Clamp(PerspectiveFieldOfView, 1.0f, 179.0f);
+	return GetWidth() * 0.5f / FMath::Tan(FMath::DegreesToRadians(Clamped * 0.5f));
+}
+
+void UDreamWidget::SetPerspectiveFieldOfView(float Value)
+{
+	const float Sanitized = FMath::Clamp(Value, 1.0f, 179.0f);
+	if (PerspectiveFieldOfView != Sanitized)
+	{
+		PerspectiveFieldOfView = Sanitized;
+		ApplyPerspectiveChange();
+	}
+}
+
+void UDreamWidget::SetPerspectiveOrigin(const FVector2D& Value)
+{
+	if (PerspectiveOrigin != Value)
+	{
+		PerspectiveOrigin = Value;
+		ApplyPerspectiveChange();
+	}
+}
+
+#if WITH_EDITOR
+void UDreamWidget::WarnIfPerspectiveCannotApply()const
+{
+	if (!bPerspective)
+	{
+		return;
+	}
+	UDreamCanvas* Canvas = GetRenderCanvas();
+	UDreamCanvas* Root = Canvas ? Canvas->GetRootCanvas() : nullptr;
+	const TCHAR* Reason = nullptr;
+	if (Root == nullptr)
+	{
+		Reason = TEXT("this widget is not under a canvas");
+	}
+	else if (Root->IsRenderToWorldSpace())
+	{
+		// The designer previews in world space by default, so this is the message an author is
+		// most likely to need: the field they are adjusting is genuinely inert in front of them.
+		Reason = TEXT("its canvas renders in world space, where the scene camera does the projecting and already supplies perspective of its own. Perspective is defined against a canvas's own virtual camera, so switch the preview canvas to ScreenSpaceOverlay (the Screen Space button on the toolbar). The remap is baked into the geometry, so it then shows in the editor viewport too -- use Canvas Eye to view it from the projection it was built for");
+	}
+	else if (Root->GetProjectionType() != ECameraProjectionMode::Perspective)
+	{
+		Reason = TEXT("its canvas is orthographic, which has its eye at infinity and no perspective to share");
+	}
+	if (Reason != nullptr)
+	{
+		UE_LOG(DreamGUI, Warning, TEXT("Perspective on '%s' has no effect here, because %s."),
+			*GetPathDisplayName(), Reason);
+	}
+}
+#endif
+
+void UDreamWidget::ApplyPerspectiveChange()
+{
+	// Same shape as a render transform change and pointedly not a layout one: a perspective moves
+	// where things are drawn, never where the layout believes they are.
+	RefreshPerspectiveInHierarchy();
+	CalculateObjectToWorldTransform(true);
+	MarkCanvasUpdate(true);
+#if WITH_EDITOR
+	// Said at the moment the author touches it, which is the moment they are wondering.
+	WarnIfPerspectiveCannotApply();
+#endif
+}
+
+void UDreamWidget::RefreshPerspectiveInHierarchy()
+{
+	const bool bNew = bPerspective || (Parent.IsValid() && Parent->bHasPerspectiveInHierarchy);
+	if (bHasPerspectiveInHierarchy != bNew)
+	{
+		bHasPerspectiveInHierarchy = bNew;
+		for (UDreamWidget* Child : Children)
+		{
+			if (IsValid(Child))
+			{
+				Child->RefreshPerspectiveInHierarchy();
+			}
+		}
+	}
+}
+
+void UDreamWidget::RefreshShearInHierarchy()
+{
+	const bool bNew = HasOwnRenderShear() || (Parent.IsValid() && Parent->bHasShearInHierarchy);
+	if (bHasShearInHierarchy != bNew)
+	{
+		bHasShearInHierarchy = bNew;
+		for (UDreamWidget* Child : Children)
+		{
+			if (IsValid(Child))
+			{
+				Child->RefreshShearInHierarchy();
+			}
+		}
+	}
+}
+
+void UDreamWidget::ApplyRenderShearChange()
+{
+	// Same shape as ApplyPerspectiveChange and for the same reason: a shear moves where things are
+	// drawn, never where the layout believes they are. CalculateObjectToWorldTransform(true) is what
+	// marks the subtree, and its flush is what re-runs the geometry; the shear itself contributes
+	// nothing to the FTransform that is composed, which is precisely why it has to ride the matrix
+	// path instead.
+	RefreshShearInHierarchy();
+	CalculateObjectToWorldTransform(true);
+	MarkCanvasUpdate(true);
+}
+
+void UDreamWidget::SetRenderShear(const FVector2D& Value)
+{
+	if (!RenderShear.Equals(Value))
+	{
+		RenderShear = Value;
+		ApplyRenderShearChange();
+	}
+}
+
+void UDreamWidget::RefreshRenderTransformFlag()
+{
+	// RenderShear is deliberately absent. This flag decides whether GetLocalTransform is composed
+	// with a render FTransform, and a shear cannot survive that trip -- it is applied on the matrix
+	// path instead, and folding it in here would only make the FTransform silently orthonormalize it.
+	bHasRenderTransform = !RenderTranslation.IsNearlyZero()
+		|| !RenderRotation.IsNearlyZero()
+		|| !RenderScale.Equals(FVector::OneVector);
+}
+
+void UDreamWidget::ApplyRenderTransformChange()
+{
+	RefreshRenderTransformFlag();
+	// Looked up once, and kept: every write of every animated widget comes through here.
+	if (UDreamCanvas* Canvas = KeepRenderCanvas())
+	{
+		Canvas->NoteRenderTransformChanged(this);
+	}
+	// Exactly what SetLayoutScale does, and pointedly NOT what SetRelativeLocation does: no
+	// CalculateAnchorFromTransform, no MarkLayoutForRebuild. Those two lines are the reason
+	// animating a laid-out widget's position fights the layout instead of moving it.
+	CalculateObjectToWorldTransform(true);
+}
+const FTransform& UDreamWidget::GetWorldTransform()const
+{
+	// Composed when it is read, not when an input changes: a write only marks the widget and its
+	// subtree stale (CalculateObjectToWorldTransform). Every reader -- a raycast in the input tick, a
+	// layout pass asking for a world scale, a test right after a setter -- therefore sees the transform
+	// as it is now, and a widget moved three times before anyone looks is composed once.
+	if (bWorldTransformDirty)
+	{
+		ComputeWorldTransform();
+	}
+	return ObjectToWorldTransform;
+}
+
+bool UDreamWidget::GetWorldRectBoundingSphere(FVector& OutCenter, double& OutRadius)const
+{
+	// A perspective scope never reaches ObjectToWorldTransform: LineTraceUIRect switches to
+	// GetWorldMatrix() when one applies, and that folds in GetInheritedPerspectiveRemap, which is
+	// built from the root canvas's eye position. The eye moves with the canvas and nothing tells this
+	// widget when it does, so no invalidation hook could keep a sphere honest here -- and a stale one
+	// would silently make a foreshortened widget unclickable. Refuse instead; it is a rare feature and
+	// the exact test is still correct.
+	if (HasPerspectiveApplied())
+	{
+		return false;
+	}
+	if (bWorldRectBoundsDirty)
+	{
+		// GetWidth/GetHeight resolve a stretched size against the parent and dirty THIS cache while
+		// doing it, so the flag is cleared only after both have been asked.
+		const double Width = GetWidth();
+		const double Height = GetHeight();
+		const FVector2D LocalCenter = GetLocalSpaceCenter();
+		/**
+		 * A widget whose world transform is stale is left stale: its sphere is worked out from a transform composed here, as
+		 * ComputeWorldTransform would, and neither is kept. What a render layer holds is marked stale each time the layer is
+		 * written, and the marking stops at a widget already stale; a ray that composed every one of them, every frame, had
+		 * every write of a turning layer walk its contents again. The exact test composes a candidate's transform and keeps
+		 * it, as it always did.
+		 */
+		const bool bTransformStale = bWorldTransformDirty;
+		// ...and so is any stale widget between it and the first current one above: a label inside a turning button, under
+		// a panel of the button's own, would otherwise have that panel composed and kept, and walked again at the next turn.
+		const FTransform Composed = bTransformStale ? ComposeWorldTransformWithoutKeeping() : FTransform::Identity;
+		const FTransform& WorldTransform = bTransformStale ? Composed : ObjectToWorldTransform;
+		// The rect lies on local X = 0, so only the two in-plane scales can stretch it. FTransform
+		// scales before it rotates, so a local (0, y, z) lands at R * (0, Sy*y, Sz*z) + T, whose
+		// distance from the transformed centre is at most Max(|Sy|, |Sz|) times the local one --
+		// exact under uniform scale, an over-estimate otherwise, which is the direction to err in.
+		const FVector Scale = WorldTransform.GetScale3D();
+		const double MaxPlaneScale = FMath::Max(FMath::Abs(Scale.Y), FMath::Abs(Scale.Z));
+		const double HalfDiagonal = 0.5 * FMath::Sqrt(Width * Width + Height * Height) * MaxPlaneScale;
+		const FVector Center = WorldTransform.TransformPosition(FVector(0.0, LocalCenter.X, LocalCenter.Y));
+		// A hair of slack on a real rect, so a click landing exactly on a corner cannot be thrown out
+		// by the last bit of a square root: a coarse test that is tighter than the exact test it
+		// stands in front of is a lost hit, which is the one failure mode this must not have. A
+		// degenerate rect gets no slack and is reported as no bound at all.
+		const double Radius = HalfDiagonal > 0.0 ? HalfDiagonal * 1.001 + UE_KINDA_SMALL_NUMBER : 0.0;
+		if (bTransformStale)
+		{
+			if (!(Radius > 0.0))
+			{
+				return false;
+			}
+			OutCenter = Center;
+			OutRadius = Radius;
+			return true;
+		}
+		CacheWorldRectCenter = Center;
+		CacheWorldRectRadius = Radius;
+		bWorldRectBoundsDirty = false;
+	}
+	// Spelt as a negation so a NaN radius -- from a width nobody has measured -- answers "no bound"
+	// rather than sailing through as a sphere no ray can ever be inside.
+	if (!(CacheWorldRectRadius > 0.0))
+	{
+		return false;
+	}
+	OutCenter = CacheWorldRectCenter;
+	OutRadius = CacheWorldRectRadius;
+	return true;
+}
+
+void UDreamWidget::SetWorldTransform(const FTransform& InWorldTransform)
+{
+	const FVector PreviousAuthoredScale = RelativeScale;
+	auto ResolveAuthoredScale = [this, &PreviousAuthoredScale](const FVector& EffectiveLocalScale)
+	{
+		FVector Result = EffectiveLocalScale;
+		Result.Y = FMath::IsNearlyZero(LayoutScale.X) ? PreviousAuthoredScale.Y : EffectiveLocalScale.Y / LayoutScale.X;
+		Result.Z = FMath::IsNearlyZero(LayoutScale.Y) ? PreviousAuthoredScale.Z : EffectiveLocalScale.Z / LayoutScale.Y;
+		return Result;
+	};
+	FTransform LocalTransform = InWorldTransform;
+	if (Parent.IsValid())
+	{
+		// Layout's basis, not the drawn one: if an ancestor is mid-animation, dividing by the drawn
+		// transform would fold that offset into this widget's authored RelativeLocation.
+		LocalTransform = InWorldTransform.GetRelativeTransform(Parent->GetLayoutWorldTransform());
+	}
+	else if (const USceneComponent* WidgetPresenterComponent = GetAttachedRootSceneComponent())
+	{
+		LocalTransform = InWorldTransform.GetRelativeTransform(WidgetPresenterComponent->GetComponentTransform());
+	}
+
+	this->RelativeLocation = LocalTransform.GetLocation();
+	this->RelativeRotation = LocalTransform.GetRotation();
+	this->RelativeRotationEuler = this->RelativeRotation.Rotator();
+	this->RelativeScale = ResolveAuthoredScale(LocalTransform.GetScale3D());
+	CalculateObjectToWorldTransform(true);
+	if (bCanSetAnchorFromTransform)
+	{
+		CalculateAnchorFromTransform();
+		MarkLayoutForRebuild(this);
+	}
+}
+
+namespace DreamWidgetTransformLocal
+{
+	/**
+	 * See UDreamWidget::GetWorldTransformComputeCount. Counted from the game thread, and from the workers a world-space
+	 * raycast walks separate trees on (UDreamBaseRaycaster::GatherRaycastCandidates).
+	 */
+	std::atomic<uint64> WorldTransformComputeCount = 0;
+}
+
+uint64 UDreamWidget::GetWorldTransformComputeCount()
+{
+	return DreamWidgetTransformLocal::WorldTransformComputeCount.load(std::memory_order_relaxed);
+}
+
+FTransform UDreamWidget::ComposeWorldTransformWithoutKeeping()const
+{
+	if (!bWorldTransformDirty)
+	{
+		return ObjectToWorldTransform;
+	}
+	const FTransform LocalTransform = GetRenderLocalTransform();
+	if (const UDreamWidget* ParentWidget = Parent.Get())
+	{
+		return LocalTransform * ParentWidget->ComposeWorldTransformWithoutKeeping();
+	}
+	if (const USceneComponent* WidgetPresenterComponent = GetAttachedRootSceneComponent())
+	{
+		return LocalTransform * WidgetPresenterComponent->GetComponentTransform();
+	}
+	return LocalTransform;
+}
+
+void UDreamWidget::ComputeWorldTransform()const
+{
+	// The parent through its own accessor, so a stale chain is composed from the top down: every
+	// descendant of a stale widget is stale too (MarkWorldTransformStaleRecursive), so the walk up ends
+	// at the first ancestor that is current, and nothing below is ever left composed against an older
+	// value of what is above it.
+	const FTransform LocalTransform = GetRenderLocalTransform();
+	if (const UDreamWidget* ParentWidget = Parent.Get())
+	{
+		ObjectToWorldTransform = LocalTransform * ParentWidget->GetWorldTransform();
+		// No longer stale, which is what the parent may have vouched for (ChildrenStaleAndPending).
+		ParentWidget->ForgetChildrenStale();
+	}
+	else if (const USceneComponent* WidgetPresenterComponent = GetAttachedRootSceneComponent())
+	{
+		ObjectToWorldTransform = LocalTransform * WidgetPresenterComponent->GetComponentTransform();
+	}
+	else
+	{
+		ObjectToWorldTransform = LocalTransform;
+	}
+	bWorldTransformDirty = false;
+	DreamWidgetTransformLocal::WorldTransformComputeCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+static TAutoConsoleVariable<int32> CVarDreamUIQuietRenderLayers(
+	TEXT("r.DreamUI.QuietRenderLayers"),
+	1,
+	TEXT("1: a render layer whose widgets need no word of its moves -- none hosts a canvas, is a layer or is listened to -- ")
+	TEXT("is not walked into when it moves: they stay stale, and are composed when read. 0: every widget under a moved layer ")
+	TEXT("is walked, as it was."),
+	ECVF_Default);
+
+void UDreamWidget::CalculateObjectToWorldTransform(bool /*bPropagateToChildren*/)
+{
+	// No timing scope: this runs for every write of every animated widget, thousands a frame on a busy screen, where one
+	// cost as much as the marking itself.
+	// This widget's own transform moved; the descendants marked below only moved with it. The difference
+	// is what the render-layer rules go by: a widget inside a layer is drawn again only when something
+	// between the layer and it moved on its own.
+	bOwnTransformChanged = true;
+	// Already stale and pending means the whole subtree is: a widget animated on several channels, or
+	// laid out and then animated, walks its subtree once however often it is written before it is read.
+	const bool bWasStaleAndPending = bWorldTransformDirty && bTransformChangePending;
+	if (!bWasStaleAndPending)
+	{
+		MarkWorldTransformStaleRecursive();
+	}
+	/**
+	 * A render layer nothing needs a word of its moves from -- nothing it holds hosts a canvas, is a layer or listens
+	 * (IsRenderLayerQuiet), and nothing listens to it -- is announced here and now. All its move asks of the rest is that its
+	 * row be placed again and a ray traced again (UDreamCanvas::MarkRenderLayerMoved), which is all the flush would have done
+	 * for it; what it holds is left stale and pending, as the flush leaves it, and the layer itself is composed when something
+	 * reads it. A wall of thousands of turning widgets otherwise listed every one of them for the flush, every frame, only for
+	 * it to be told that.
+	 */
+	if (bIsRenderLayer && !HasTransformChangedListener() && CVarDreamUIQuietRenderLayers.GetValueOnGameThread() != 0
+		&& IsRenderLayerQuiet())
+	{
+		bTransformChangePending = false;
+		bOwnTransformChanged = false;
+		// No longer pending, which the parent may have vouched for (ChildrenStaleAndPending) -- only if it already was on the
+		// way in: a parent vouches for a child only while every child is both, and this one was marked just now if it was not.
+		if (bWasStaleAndPending)
+		{
+			if (const UDreamWidget* ParentWidget = Parent.Get())
+			{
+				ParentWidget->ForgetChildrenStale();
+			}
+		}
+		if (UDreamCanvas* Canvas = KeepRenderCanvas())
+		{
+			Canvas->MarkRenderLayerMoved(this);
+		}
+		return;
+	}
+	UDreamUIManagerWorldSubsystem* Manager = RegisteredManager.Get();
+	if (Manager != nullptr && Manager->DefersTransformChanges())
+	{
+		Manager->AddTransformChangeRoot(this);
+	}
+	else
+	{
+		FlushTransformChanges();
+	}
+}
+
+void UDreamWidget::MarkWorldTransformStaleRecursive()
+{
+	bWorldTransformDirty = true;
+	bTransformChangePending = true;
+	// What is built from the world transform goes stale with it here, not at the flush: a raycast before
+	// the flush reads both the rect's bounding sphere and, for a canvas's own widget, the canvas's view.
+	MarkWorldRectBoundsDirty();
+	if (bIsCanvasWidget && RenderCanvas.IsValid())
+	{
+		RenderCanvas->MarkTransformOrDimensionChanged();
+	}
+	// Every child still as this widget's last marking left it: nothing below to do, and none of them to read.
+	if (ChildrenStaleAndPending != 0)
+	{
+		return;
+	}
+	// A child that is garbage and not yet collected only has two flags set that nothing reads: not asking the object array
+	// about each child is a cache miss fewer for every child of every widget written, every frame, on a wall of them.
+	for (UDreamWidget* Child : Children)
+	{
+		if (Child != nullptr && !(Child->bWorldTransformDirty && Child->bTransformChangePending))
+		{
+			Child->MarkWorldTransformStaleRecursive();
+		}
+	}
+	// Marking only sets flags: nothing above took a child out of the state again.
+	ChildrenStaleAndPending = 1;
+}
+
+void UDreamWidget::FlushTransformChanges()
+{
+	FlushTransformChangesFrom(this,
+		[](const UDreamWidget& InWidget) { return InWidget.IsRenderLayer(); },
+		[](UDreamWidget& InWidget, EDreamTransformChangeNotice InNotice) { InWidget.ApplyTransformChangeNotice(InNotice); },
+		[](const UDreamWidget& InLayer) { return CVarDreamUIQuietRenderLayers.GetValueOnGameThread() != 0 && InLayer.IsRenderLayerQuiet(); });
+}
+
+void UDreamWidget::FlushTransformChangesFrom(UDreamWidget* InRoot, TFunctionRef<bool(const UDreamWidget&)> InIsRenderLayer,
+	TFunctionRef<void(UDreamWidget&, EDreamTransformChangeNotice)> InNotify)
+{
+	FlushTransformChangesFrom(InRoot, InIsRenderLayer, InNotify, [](const UDreamWidget&) { return false; });
+}
+
+void UDreamWidget::FlushTransformChangesFrom(UDreamWidget* InRoot, TFunctionRef<bool(const UDreamWidget&)> InIsRenderLayer,
+	TFunctionRef<void(UDreamWidget&, EDreamTransformChangeNotice)> InNotify, TFunctionRef<bool(const UDreamWidget&)> InIsQuietLayer)
+{
+	if (!IsValid(InRoot) || !InRoot->bTransformChangePending)
+	{
+		return;
+	}
+	struct FVisit
+	{
+		UDreamWidget* Widget = nullptr;
+		/** It is in a render layer: one of its ancestors in the same canvas is one. */
+		bool bInLayer = false;
+		/** Something between that layer and it, both left out, changed its own transform. */
+		bool bMovedInLayer = false;
+		/** The widget that walked into it, whose ChildrenStaleAndPending its announcement clears; the root's parent is looked up. */
+		const UDreamWidget* WalkedFrom = nullptr;
+	};
+	// A stack rather than recursion, so the children are read after the listeners have run: a listener
+	// is free to add or remove them. The first child is pushed last and so walked first.
+	TArray<FVisit, TInlineAllocator<32>> ToVisit;
+	// Where the walk starts is where a change was marked: the widget moved relative to whatever it is in.
+	ToVisit.Add({ InRoot, false, true, InRoot->Parent.Get() });
+	while (ToVisit.Num() > 0)
+	{
+		const FVisit Visit = ToVisit.Pop(EAllowShrinking::No);
+		UDreamWidget* Widget = Visit.Widget;
+		// A listener earlier in the walk may have destroyed it, or flushed it itself.
+		if (!IsValid(Widget) || !Widget->bTransformChangePending)
+		{
+			continue;
+		}
+		const bool bMoved = Visit.bMovedInLayer || Widget->bOwnTransformChanged;
+		// Cleared before anyone hears of it, so that a listener moving it again marks it afresh, for a
+		// later pass of the manager's flush, instead of being folded into the move it is answering.
+		Widget->bTransformChangePending = false;
+		Widget->bOwnTransformChanged = false;
+		// No longer pending, which its parent may have vouched for (ChildrenStaleAndPending).
+		if (Visit.WalkedFrom != nullptr)
+		{
+			Visit.WalkedFrom->ForgetChildrenStale();
+		}
+
+		EDreamTransformChangeNotice Notice;
+		bool bChildrenInLayer = Visit.bInLayer;
+		bool bChildrenMovedInLayer = bMoved;
+		bool bWalkChildren = true;
+		if (Widget->bIsCanvasWidget)
+		{
+			// A canvas's widgets are drawn relative to it, never to a layer of the canvas above; it cannot be a layer.
+			Notice = EDreamTransformChangeNotice::Canvas;
+			bChildrenInLayer = false;
+		}
+		else if (InIsRenderLayer(*Widget))
+		{
+			// The layer moves as a whole, and what is in it is measured from it afresh.
+			Notice = EDreamTransformChangeNotice::RenderLayer;
+			bChildrenInLayer = true;
+			bChildrenMovedInLayer = false;
+			// ...and when nothing in it needs a word of that, it is left as the layer's move left it: stale and pending, which
+			// is where the layer's next move stops (MarkWorldTransformStaleRecursive). What moved on its own in it is a root
+			// of its own, and its move is announced from there.
+			bWalkChildren = !InIsQuietLayer(*Widget);
+		}
+		else
+		{
+			Notice = (!Visit.bInLayer || bMoved) ? EDreamTransformChangeNotice::Moved : EDreamTransformChangeNotice::InsideMovedLayer;
+		}
+		// Composed here where something is about to look at it -- a canvas, a visual told to transform again, a layer placed,
+		// a listener. A widget that only moved with its render layer and has no listener stays stale until something reads
+		// it, which a frame of a turning layer's contents mostly never does.
+		if (Notice != EDreamTransformChangeNotice::InsideMovedLayer || Widget->HasTransformChangedListener())
+		{
+			Widget->GetWorldTransform();
+		}
+		InNotify(*Widget, Notice);
+		// Parents before children, and every child already marked: a parent's listener that reads a child's
+		// transform composes it then and there, so it never sees where the child was.
+		if (Widget->HasTransformChangedListener())
+		{
+			DREAMUI_DETAIL_SCOPE(DreamUI_TransformChangedEvent);
+			Widget->Call_TransformChanged();
+		}
+		if (!bWalkChildren)
+		{
+			continue;
+		}
+		const TArray<UDreamWidget*>& WidgetChildren = Widget->GetChildren();
+		for (int32 Index = WidgetChildren.Num() - 1; Index >= 0; --Index)
+		{
+			UDreamWidget* Child = WidgetChildren[Index];
+			if (IsValid(Child) && Child->bTransformChangePending)
+			{
+				ToVisit.Add({ Child, bChildrenInLayer, bChildrenMovedInLayer, Widget });
+			}
+		}
+	}
+}
+
+void UDreamWidget::ApplyTransformChangeNotice(EDreamTransformChangeNotice InNotice)
+{
+	UDreamCanvas* const Canvas = RenderCanvas.Get();
+	switch (InNotice)
+	{
+	case EDreamTransformChangeNotice::Canvas:
+		if (Canvas != nullptr)
+		{
+			Canvas->MarkWidgetUpdate(this, true);
+			// The canvas's view is built from where its widget stands -- a render target canvas moved at run
+			// time kept answering hit tests for its old place without this. Marked stale when the move was
+			// marked, for a reader in between, and here as it always was.
+			Canvas->MarkTransformOrDimensionChanged();
+		}
+		OnUpdateTransform();
+		break;
+	case EDreamTransformChangeNotice::RenderLayer:
+		if (Canvas != nullptr)
+		{
+			Canvas->MarkRenderLayerMoved(this);
+		}
+		break;
+	case EDreamTransformChangeNotice::Moved:
+		if (Canvas != nullptr)
+		{
+			// A move and nothing else: the canvas rebuilds its draw calls only if the move could change how they batch.
+			Canvas->MarkWidgetMoved(this);
+		}
+		OnUpdateTransform();
+		break;
+	case EDreamTransformChangeNotice::InsideMovedLayer:
+		break;
+	}
+}
+
+DECLARE_CYCLE_STAT(TEXT("DreamWidget OnUpdateTransform"), STAT_OnUpdateTransform, STATGROUP_DreamGUI);
+void UDreamWidget::OnUpdateTransform()
+{
+	SCOPE_CYCLE_COUNTER(STAT_OnUpdateTransform)
+	if (LayoutContainer)
+	{
+		LayoutContainer->OnTransformChanged();
+	}
+	if (LayoutSelf)
+	{
+		LayoutSelf->OnTransformChanged();
+	}
+	if (Visual)
+	{
+		// Both flags set. They belong to the visuals' override signature and none of the overrides reads
+		// them; they used to be worked out here from two caches kept for nothing else -- the relative
+		// location and the world scale at the last call -- which cost every moved widget a read of its
+		// world transform.
+		Visual->OnTransformChanged(true, true);
+	}
+}
+
+void UDreamWidget::SetRenderTransformAngle(float InAngle)
+{
+	FRotator NewRotation = RenderRotation;
+	NewRotation.Roll = InAngle;
+	SetRenderRotation(NewRotation);
+}
+
+void UDreamWidget::SetRenderOffset(const FVector2D& InOffset)
+{
+	// The canvas plane is local Y (right) and Z (up); the depth the translation already has is left where it is.
+	SetRenderTranslation(FVector(RenderTranslation.X, InOffset.X, InOffset.Y));
+}
+#pragma region TweenAnimation
+namespace DreamWidgetTweenChannels
+{
+	/**
+	 * One bit for each property the widget's tween verbs write, for UDreamTweener::SetExclusive: a verb that starts stops
+	 * the earlier ones sharing a bit with it. Location is local (X depth, Y right, Z up); the anchored-position verbs
+	 * move Y and Z, and a world-space move any of the three.
+	 */
+	constexpr uint64 LocationX = 1ull << 0;
+	constexpr uint64 LocationY = 1ull << 1;
+	constexpr uint64 LocationZ = 1ull << 2;
+	constexpr uint64 Location = LocationX | LocationY | LocationZ;
+	constexpr uint64 Rotation = 1ull << 3;
+	constexpr uint64 Scale = 1ull << 4;
+	constexpr uint64 Opacity = 1ull << 5;
+	constexpr uint64 Width = 1ull << 6;
+	constexpr uint64 Height = 1ull << 7;
+	constexpr uint64 Size = Width | Height;
+	/** The render translation's depth (X) and its move on the canvas plane (Y, Z). */
+	constexpr uint64 RenderDepth = 1ull << 8;
+	constexpr uint64 RenderPlane = 1ull << 9;
+	constexpr uint64 RenderScale = 1ull << 10;
+	/** The render rotation's in-plane angle (Roll), and its turns out of the plane (Pitch, Yaw). */
+	constexpr uint64 RenderRoll = 1ull << 11;
+	constexpr uint64 RenderTilt = 1ull << 12;
+}
+#pragma region PositionXYZ
+UDreamTweener* UDreamWidget::LocalPositionXTo(double endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenDoubleGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetRelativeLocation().X;
+	}), FDreamTweenDoubleSetterFunction::CreateWeakLambda(this, [this](auto value) {
+		auto location = this->GetRelativeLocation();
+		location.X = value;
+		this->SetRelativeLocation(location);
+	}), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::LocationX);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::LocalPositionYTo(double endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenDoubleGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetRelativeLocation().Y;
+	}), FDreamTweenDoubleSetterFunction::CreateWeakLambda(this, [this](auto value) {
+		auto location = this->GetRelativeLocation();
+		location.Y = value;
+		this->SetRelativeLocation(location);
+	}), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::LocationY);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::LocalPositionZTo(double endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenDoubleGetterFunction::CreateWeakLambda(this, [this] 
+	{
+		return this->GetRelativeLocation().Z;
+	}), FDreamTweenDoubleSetterFunction::CreateWeakLambda(this, [this](auto value) {
+		auto location = this->GetRelativeLocation();
+		location.Z = value;
+		this->SetRelativeLocation(location);
+	}), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::LocationZ);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+
+
+UDreamTweener* UDreamWidget::WorldPositionXTo(double endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenDoubleGetterFunction::CreateWeakLambda(this, [this] 
+	{
+		return this->GetWorldLocation().X;
+	}), FDreamTweenDoubleSetterFunction::CreateWeakLambda(this, [this](auto value) {
+		auto location = this->GetWorldLocation();
+		location.X = value;
+		this->SetWorldLocation(location);
+	}), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Location);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::WorldPositionYTo(double endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenDoubleGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetWorldLocation().Y;
+	}), FDreamTweenDoubleSetterFunction::CreateWeakLambda(this, [this](auto value) {
+		auto location = this->GetWorldLocation();
+		location.Y = value;
+		this->SetWorldLocation(location);
+	}), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Location);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::WorldPositionZTo(double endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenDoubleGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetWorldLocation().Z;
+	}), FDreamTweenDoubleSetterFunction::CreateWeakLambda(this, [this](auto value) {
+		auto location = this->GetWorldLocation();
+		location.Z = value;
+		this->SetWorldLocation(location);
+	}), endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Location);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+
+
+
+#pragma endregion PositionXYZ
+#pragma region Position
+UDreamTweener* UDreamWidget::LocalPositionTo(FVector endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+	, FDreamTweenVectorGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetRelativeLocation();
+	})
+	, FDreamTweenVectorSetterFunction::CreateWeakLambda(this, [this](FVector value)
+	{
+		this->SetRelativeLocation(value);
+	})
+	, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Location);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::WorldPositionTo(FVector endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+	, FDreamTweenVectorGetterFunction::CreateUObject(this, &UDreamWidget::GetWorldLocation)
+	, FDreamTweenVectorSetterFunction::CreateWeakLambda(this, [this](FVector value)
+	{
+		return this->SetWorldLocation(value);
+	})
+	, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Location);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+#pragma endregion Position
+
+
+
+UDreamTweener* UDreamWidget::LocalScaleTo(FVector endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+	, FDreamTweenVectorGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetRelativeScale();
+	})
+	, FDreamTweenVectorSetterFunction::CreateWeakLambda(this, [this](FVector value)
+	{
+		this->SetRelativeScale(value);
+	})
+	, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Scale);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::LocalUniformScaleTo(float endValue, float duration, float delay,	EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+	, FDreamTweenFloatGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetRelativeScale().X;
+	})
+	, FDreamTweenFloatSetterFunction::CreateWeakLambda(this, [this](float value)
+	{
+		this->SetRelativeScale(FVector(value));
+	})
+	, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Scale);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+
+#pragma region Rotation
+UDreamTweener* UDreamWidget::LocalRotationQuaternionTo(const FQuat& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+	, FDreamTweenQuaternionGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetRelativeRotation();
+	}), FDreamTweenQuaternionSetterFunction::CreateUObject(this, &UDreamWidget::SetRelativeRotation)
+	, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Rotation);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::LocalRotatorTo(FRotator endValue, bool shortestPath, float duration, float delay, EDreamTweenEase ease)
+{
+	if (shortestPath)
+	{
+		return LocalRotationQuaternionTo(endValue.Quaternion(), duration, delay, ease);
+	}
+	else
+	{
+		auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenRotatorGetterFunction::CreateWeakLambda(this, [this]
+		{
+			return this->GetRelativeRotation().Rotator();
+		})
+		, FDreamTweenRotatorSetterFunction::CreateWeakLambda(this, [this] (FRotator value)
+		{
+			this->SetRelativeRotation(value.Quaternion());
+		}), endValue, duration);
+		if (Tweener)
+		{
+			Tweener->SetExclusive(this, DreamWidgetTweenChannels::Rotation);
+			Tweener->SetDelay(delay)->SetEase(ease);
+			UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+		}
+		return Tweener;
+	}
+}
+
+
+
+UDreamTweener* UDreamWidget::WorldRotationQuaternionTo(const FQuat& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this, FDreamTweenQuaternionGetterFunction::CreateWeakLambda(this, [this]
+	{
+		return this->GetWorldRotation();
+	}), FDreamTweenQuaternionSetterFunction::CreateUObject(this, &UDreamWidget::SetWorldRotation)
+	, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Rotation);
+		Tweener->SetDelay(delay)->SetEase(ease);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+UDreamTweener* UDreamWidget::WorldRotatorTo(FRotator endValue, bool shortestPath, float duration, float delay, EDreamTweenEase ease)
+{
+	if (shortestPath)
+	{
+		return WorldRotationQuaternionTo(endValue.Quaternion(), duration, delay, ease);
+	}
+	else
+	{
+		auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenRotatorGetterFunction::CreateWeakLambda(this, [this]
+		{
+			return this->GetWorldRotation().Rotator();
+		})
+		, FDreamTweenRotatorSetterFunction::CreateWeakLambda(this, [this](FRotator value)
+		{
+			this->SetWorldRotation(value.Quaternion());
+		}), endValue, duration);
+		if (Tweener)
+		{
+			Tweener->SetExclusive(this, DreamWidgetTweenChannels::Rotation);
+			Tweener->SetDelay(delay)->SetEase(ease);
+			UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+		}
+		return Tweener;
+	}
+}
+
+#pragma endregion Rotation
+
+
+UDreamTweener* UDreamWidget::RenderOpacityTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamWidget::GetRenderOpacity)
+		, FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamWidget::SetRenderOpacity)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Opacity);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::SizeDeltaTo(const FVector2D& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenVector2DGetterFunction::CreateUObject(this, &UDreamWidget::GetSizeDelta)
+		, FDreamTweenVector2DSetterFunction::CreateUObject(this, &UDreamWidget::SetSizeDelta)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Size);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::WidthTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamWidget::GetWidth)
+		, FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamWidget::SetWidth)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Width);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::HeightTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamWidget::GetHeight)
+		, FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamWidget::SetHeight)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::Height);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::AnchoredPositionTo(const FVector2D& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenVector2DGetterFunction::CreateUObject(this, &UDreamWidget::GetAnchoredPosition)
+		, FDreamTweenVector2DSetterFunction::CreateUObject(this, &UDreamWidget::SetAnchoredPosition)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::LocationY | DreamWidgetTweenChannels::LocationZ);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::HorizontalAnchoredPositionTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamWidget::GetHorizontalAnchoredPosition)
+		, FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamWidget::SetHorizontalAnchoredPosition)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::LocationY);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::VerticalAnchoredPositionTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamWidget::GetVerticalAnchoredPosition)
+		, FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamWidget::SetVerticalAnchoredPosition)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::LocationZ);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::RenderTranslationTo(const FVector& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenVectorGetterFunction::CreateWeakLambda(this, [this]
+		{
+			return this->GetRenderTranslation();
+		})
+		, FDreamTweenVectorSetterFunction::CreateWeakLambda(this, [this](FVector Value)
+		{
+			this->SetRenderTranslation(Value);
+		})
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::RenderDepth | DreamWidgetTweenChannels::RenderPlane);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::RenderOffsetTo(const FVector2D& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	// The canvas plane is local Y (right) and Z (up); the depth the translation already has is left where it is.
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenVector2DGetterFunction::CreateWeakLambda(this, [this]
+		{
+			return FVector2D(this->GetRenderTranslation().Y, this->GetRenderTranslation().Z);
+		})
+		, FDreamTweenVector2DSetterFunction::CreateWeakLambda(this, [this](FVector2D Value)
+		{
+			this->SetRenderTranslation(FVector(this->GetRenderTranslation().X, Value.X, Value.Y));
+		})
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::RenderPlane);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::RenderScaleTo(const FVector& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenVectorGetterFunction::CreateWeakLambda(this, [this]
+		{
+			return this->GetRenderScale();
+		})
+		, FDreamTweenVectorSetterFunction::CreateWeakLambda(this, [this](FVector Value)
+		{
+			this->SetRenderScale(Value);
+		})
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::RenderScale);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::RenderAngleTo(float endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateUObject(this, &UDreamWidget::GetRenderTransformAngle)
+		, FDreamTweenFloatSetterFunction::CreateUObject(this, &UDreamWidget::SetRenderTransformAngle)
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::RenderRoll);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::RenderRotationTo(const FRotator& endValue, float duration, float delay, EDreamTweenEase ease)
+{
+	// Component by component, not along the shortest arc: what was asked for is these three angles, and a 0 to 180 yaw
+	// that the arc turned the other way, or folded into a roll, is not the turn that was authored.
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenRotatorGetterFunction::CreateWeakLambda(this, [this]
+		{
+			return this->GetRenderRotation();
+		})
+		, FDreamTweenRotatorSetterFunction::CreateWeakLambda(this, [this](FRotator Value)
+		{
+			this->SetRenderRotation(Value);
+		})
+		, endValue, duration);
+	if (Tweener)
+	{
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::RenderRoll | DreamWidgetTweenChannels::RenderTilt);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+UDreamTweener* UDreamWidget::RenderPoseTo(const FVector& endTranslation, const FRotator& endRotation, float duration, float delay, EDreamTweenEase ease)
+{
+	// One tween of the progress, 0 to 1, driving both, so the two share a clock and an ease and stop together. The start
+	// pose is read when it starts (OnStart comes before the first value is written), as every other verb reads its start.
+	struct FPose
+	{
+		FVector Translation = FVector::ZeroVector;
+		FRotator Rotation = FRotator::ZeroRotator;
+	};
+	TSharedRef<FPose> From = MakeShared<FPose>();
+	auto Tweener = UDreamTweenManager::To(this
+		, FDreamTweenFloatGetterFunction::CreateLambda([]
+		{
+			return 0.0f;
+		})
+		, FDreamTweenFloatSetterFunction::CreateWeakLambda(this, [this, From, endTranslation, endRotation](float Progress)
+		{
+			this->SetRenderTranslation(FMath::Lerp(From->Translation, endTranslation, Progress));
+			this->SetRenderRotation(FRotator(
+				FMath::Lerp(From->Rotation.Pitch, endRotation.Pitch, Progress),
+				FMath::Lerp(From->Rotation.Yaw, endRotation.Yaw, Progress),
+				FMath::Lerp(From->Rotation.Roll, endRotation.Roll, Progress)));
+		})
+		, 1.0f, duration);
+	if (Tweener)
+	{
+		Tweener->OnStart(FSimpleDelegate::CreateWeakLambda(this, [this, From]
+		{
+			From->Translation = this->GetRenderTranslation();
+			From->Rotation = this->GetRenderRotation();
+		}));
+		Tweener->SetExclusive(this, DreamWidgetTweenChannels::RenderDepth | DreamWidgetTweenChannels::RenderPlane
+			| DreamWidgetTweenChannels::RenderRoll | DreamWidgetTweenChannels::RenderTilt);
+		Tweener->SetEase(ease)->SetDelay(delay);
+		UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(this, Tweener);
+	}
+	return Tweener;
+}
+
+void UDreamWidget::SetWidgetTweenerAffectByGamePauseAndTimeDilation(UDreamWidget* Widget, UDreamTweener* Tweener)
+{
+	if (Tweener)
+	{
+		bool bAffectByGamePause;
+		bool bAffectByTimeDilation;
+		// A missing widget is an ordinary argument here, not a caller's mistake: the visuals' and the
+		// behaviours' tween verbs (UDreamVisual::ColorTo and its siblings, UDreamRectBlock's, the
+		// selectables' transitions) all pass their own GetWidget(), which answers null for a sub-object no
+		// widget outers -- one made on its own, or one whose outer chain is being taken apart -- and
+		// Blueprint can pass anything. The tween is still a real one, since it animates the caller's own
+		// property; only the choice of clock has to be made without a widget. It is made the way it
+		// already is for a widget with no render canvas, where IsScreenSpaceOverlayUI answers false:
+		// the world-space pair. Something not known to be on the screen does not get the screen's
+		// exemption from pause and time dilation.
+		if (IsValid(Widget) && Widget->IsScreenSpaceOverlayUI())
+		{
+			bAffectByGamePause = GetDefault<UDreamUISettings>()->bScreenSpaceUIAffectByGamePause;
+			bAffectByTimeDilation = GetDefault<UDreamUISettings>()->bScreenSpaceUIAffectByTimeDilation;
+		}
+		else
+		{
+			bAffectByGamePause = GetDefault<UDreamUISettings>()->bWorldSpaceUIAffectByGamePause;
+			bAffectByTimeDilation = GetDefault<UDreamUISettings>()->bWorldSpaceUIAffectByTimeDilation;
+		}
+		Tweener->SetAffectByGamePause(bAffectByGamePause)->SetAffectByTimeDilation(bAffectByTimeDilation);
+	}
+}
+#pragma endregion

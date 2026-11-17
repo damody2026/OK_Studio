@@ -1,0 +1,405 @@
+﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
+// Modified by TypeDreamMoon.
+
+#pragma once
+
+#include "Components/MeshComponent.h"
+#include "DreamUIRender/DreamUIMeshIndex.h"
+#include "DreamUIRender/DreamUIMeshVertex.h"
+#include "DreamUIRender/DreamUIBaseShaders.h"
+#include "DreamUIRender/DreamUICompositor.h"
+#include "DreamUIMeshComponent.generated.h"
+
+class FDreamUIDrawCall;
+class FDreamUIGeometry;
+struct FDreamUIRenderSectionProxy;
+struct FDreamUISectionProxy_Mesh;
+class FDreamUIMaterialProxy;
+struct FDreamUIRenderSectionProxy_PostProcess;
+struct FDreamUIRenderSectionProxy_ChildCanvas;
+
+#define DEBUG_PRINT_MESH_MEMORY 0
+
+enum class EDreamUIRenderSectionType :uint8
+{
+	Mesh, DirectMesh, PostProcess, ChildCanvas,
+	/** A group opened or closed: what is drawn between the two goes into a texture of its own (FDreamUICompositeDesc). */
+	Group,
+};
+struct FDreamUIRenderSection
+{
+	FDreamUIRenderSection(){};
+	virtual ~FDreamUIRenderSection(){}
+	EDreamUIRenderSectionType Type = EDreamUIRenderSectionType::Mesh;
+	int RenderPriority = 0;
+	FDreamUIRenderSectionProxy* RenderProxy = nullptr;
+	FBox BoundingBox = FBox(EForceInit::ForceInit);//world space bounding box
+
+	virtual void ClearBeforePool() = 0;
+};
+struct DREAMGUI_API FDreamUIRenderSection_Mesh : public FDreamUIRenderSection
+{
+	FDreamUIRenderSection_Mesh() 
+	{
+		Type = EDreamUIRenderSectionType::Mesh; 
+	}
+	virtual ~FDreamUIRenderSection_Mesh()override{}
+
+	TArray<FDreamUIMeshIndex> TriangleIndices;
+	TArray<FDreamUIMeshVertex> Vertices;
+	int32 ValidVerticesNum = 0;
+	int32 ValidTriangleIndicesNum = 0;
+
+	UMaterialInterface* Material = nullptr;
+	/** Set instead of a material when DreamGUI's own renderer draws this section with its built-in shader. */
+	FDreamUIBuiltInDrawParams BuiltIn;
+	/**
+	 * Set with Material when DreamGUI answers the material's parameters in its place: the
+	 * section draws through it, and Material is its source.
+	 */
+	TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe> MaterialProxy;
+	/**
+	 * The geometries the vertices here were built from, as the draw call that last set this section up listed them,
+	 * and whether normals and tangents went up with them; emptied when anything else writes the vertices. A draw call
+	 * built from exactly these, the same way, finds its vertices already here and on the GPU, and takes the section
+	 * back without a copy or an upload.
+	 */
+	TArray<TSharedPtr<const FDreamUIGeometry>> SourceGeometries;
+	bool bSourceNormalAndTangent = false;
+	/**
+	 * In world space, what the section covers, as sent to the render thread for a draw of a mode that reads what is behind
+	 * it (DreamUIBlend::ReadsBackdrop), which copies that much of the target before it draws. Invalid for any other.
+	 */
+	FBox BackdropBounds = FBox(ForceInit);
+
+	void Reset()
+	{
+		Vertices.Reset();
+		TriangleIndices.Reset();
+	}
+	virtual void ClearBeforePool() override;
+};
+struct FDreamUIRenderSection_DirectMesh : public FDreamUIRenderSection_Mesh
+{
+	FDreamUIRenderSection_DirectMesh()
+	{
+		Type = EDreamUIRenderSectionType::DirectMesh;
+	}
+	virtual ~FDreamUIRenderSection_DirectMesh()override{}
+
+	TWeakObjectPtr<class UDreamVisualDirectMesh> DirectMeshVisualObject = nullptr;
+	/** Which of the element's segments this is (UDreamVisualDirectMesh::GetSegmentCount): a pooled section goes back to the same one. */
+	int32 Segment = 0;
+};
+struct FDreamUIRenderSection_PostProcess : public FDreamUIRenderSection
+{
+	FDreamUIRenderSection_PostProcess()
+	{
+		Type = EDreamUIRenderSectionType::PostProcess;
+	}
+	virtual ~FDreamUIRenderSection_PostProcess()override{}
+
+	TWeakObjectPtr<class UDreamVisualPostProcess> PostProcessVisualObject = nullptr;
+
+	virtual void ClearBeforePool() override;
+};
+/** A group's marker: the opening one carries the group's composite, the closing one its id alone. */
+struct FDreamUIRenderSection_Group : public FDreamUIRenderSection
+{
+	FDreamUIRenderSection_Group()
+	{
+		Type = EDreamUIRenderSectionType::Group;
+	}
+	virtual ~FDreamUIRenderSection_Group()override{}
+
+	bool bBegin = true;
+	/** As last sent to the render thread. */
+	FDreamUICompositeDesc Desc;
+
+	virtual void ClearBeforePool() override { Desc = FDreamUICompositeDesc(); }
+};
+struct FDreamUIRenderSection_ChildCanvas : public FDreamUIRenderSection
+{
+	FDreamUIRenderSection_ChildCanvas()
+	{
+		Type = EDreamUIRenderSectionType::ChildCanvas;
+	}
+	virtual ~FDreamUIRenderSection_ChildCanvas()override{}
+
+	TWeakObjectPtr<class UDreamUIMeshComponent> ChildCanvasMeshComponent = nullptr;
+
+	virtual void ClearBeforePool() override;
+};
+
+class FDreamUIRenderer;
+class IDreamUIRendererPrimitive;
+class UDreamCanvas;
+struct FStaticMeshVertexBuffers;
+
+class FDreamUIRenderRoot;
+/**
+ * A mesh's render root (see DreamUIMeshComponent.cpp): made on the game thread, deleted on the render thread by whichever
+ * of the mesh and the scene proxies made for the root lets go of it last.
+ */
+using FDreamUIRenderRootRef = TSharedPtr<FDreamUIRenderRoot, ESPMode::ThreadSafe>;
+DECLARE_MULTICAST_DELEGATE_TwoParams(FDreamUIMeshRenderRootCreatedDelegate, class UDreamUIMeshComponent*, FDreamUIRenderRoot*);
+
+//DreamUI render mesh
+//@todo: split this class to: one for UE renderer && one for DreamUI renderer, will it be more efficient?
+UCLASS(ClassGroup = (DreamGUI))
+class DREAMGUI_API UDreamUIMeshComponent : public UMeshComponent
+{
+	GENERATED_BODY()
+
+public:
+	UDreamUIMeshComponent();
+	virtual void PostInitProperties() override;
+	virtual void PostLoad() override;
+#if WITH_EDITOR
+	virtual void PostEditImport() override;
+#endif
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
+	virtual void BeginDestroy() override;
+	/**
+	 * On the game thread. The engine runs end-of-frame updates on worker threads unless a component says
+	 * otherwise. This one's send the render root its transform, and a mesh registered again makes its root
+	 * with its first proxy, from its canvas's settings: both read the mesh and its canvas as the game
+	 * thread leaves them.
+	 */
+	virtual bool RequiresGameThreadEndOfFrameUpdates() const override { return true; }
+	/**
+	 * A play session's copy of the world never holds one of these: see DreamUI::ReportCopiedIntoPlaySession.
+	 * The bool overload, the one UPrimitiveComponent overrides and so the one that hides the other.
+	 */
+	virtual void PostDuplicate(bool bDuplicateForPIE) override;
+private:
+	/**
+	 * A canvas mesh is only ever made by UDreamCanvas::CheckUIMesh, and always transient. One that is not
+	 * came from a paste -- an import gives what it creates the pasted actor's flags -- or from a map saved
+	 * before the canvas marked its mesh text-export transient. It has no canvas and draws nothing, but its
+	 * materials name another panel's tree, and a play-in-editor duplication carries every non-transient
+	 * component of an actor, so it would clone that tree. This makes such a mesh inert and keeps it from
+	 * being saved, copied or duplicated again.
+	 */
+	void NeutralizeIfOrphan();
+	void UpdateMeshSectionRenderData(FDreamUIRenderSection_Mesh* InMeshSection, bool InRequireNormalAndTangent);
+	void ExpandMeshSectionRenderData(FDreamUIRenderSection_Mesh* InMeshSection);
+	/**
+	 * Point this frame's not-yet-flushed updates at a replacement section proxy (or drop them if there
+	 * is none). Needed because a section proxy can be destroyed, from a render command enqueued
+	 * immediately, while updates naming it are still waiting for FlushRenderCommand.
+	 */
+	void RetargetPendingRenderCommands(FDreamUIRenderSectionProxy* InOldSectionProxy, FDreamUIRenderSectionProxy* InNewSectionProxy);
+public:
+	TSharedPtr<FDreamUIRenderSection> SetupRenderSection(EDreamUIRenderSectionType InType, FDreamUIDrawCall* InDrawCallData);
+	void UpdateMeshSection(const TSharedPtr<FDreamUIRenderSection>& InRenderSection, FDreamUIDrawCall* InDrawCallData);
+	/**
+	 * UpdateMeshSection's patch, and nothing else: true when the section took the draw call's vertices (or is not a mesh
+	 * section, so there was nothing to take), false when it has to be updated whole. Touches only the section and this
+	 * mesh's pending updates and sends no render command, so different meshes may be patched on different threads.
+	 */
+	bool TryPatchMeshSection(const TSharedPtr<FDreamUIRenderSection>& InRenderSection, FDreamUIDrawCall* InDrawCallData);
+	/**
+	 * When InMeshSection holds the layout of InGeometries (FDreamUIDrawCall::GeometryListsShareLayout with the geometries
+	 * it was built from): the vertices of each geometry that is not the one it was built from are written into it where
+	 * they go, and only those go to the render thread; the section then stands for InGeometries. False, with nothing
+	 * written, when it does not hold that layout.
+	 */
+	bool PatchMeshSection(FDreamUIRenderSection_Mesh* InMeshSection, const TArray<TSharedPtr<const FDreamUIGeometry>>& InGeometries);
+	/**
+	 * A render layer whose elements the draw call InRenderSection was set up from holds moved: the section's box follows
+	 * the draw call's CanvasBounds. Nothing goes to the render thread -- the layer's row of the render layer table places
+	 * the vertices. The canvas's own sections only, from any thread, as the canvas's placement may run on a worker.
+	 */
+	void UpdateMeshSectionBounds(const TSharedPtr<FDreamUIRenderSection>& InRenderSection, const FDreamUIDrawCall& InDrawCallData);
+	/**
+	 * Whether a render layer's elements can be drawn here, placed by their layer's row of the render layer table
+	 * (DreamUIRenderLayer.ush). Only DreamGUI's own renderer places them. UE's renderer draws a section through the
+	 * engine's vertex factory and the primitive's transform alone, which leave no room for it, and it draws every mesh
+	 * that carries its section data -- among them every mesh in the level editor's world, for the editor's hit proxies
+	 * (NeedsUERendererSectionData).
+	 */
+	bool CanDrawRenderLayers() const;
+	void SetupDirectMeshRenderSection(FDreamUIRenderSection_DirectMesh* InDirectMeshSection, bool bNeedExpandMeshSection, UMaterialInterface* InMaterial);
+	void SetDirectMeshRenderSectionMaterial(FDreamUIRenderSection_DirectMesh* InDirectMeshSection, UMaterialInterface* InMaterial);
+	/**
+	 * What SetupDirectMeshRenderSection does but the material: the section's vertices and indices, and its box (canvas space,
+	 * taken to the world here), sent to the render thread. For a segment the canvas shades (UDreamVisualDirectMesh::GetSegmentShading),
+	 * whose material or built-in parameters are the canvas's to set. bNeedExpandMeshSection: the arrays grew past what the
+	 * section's buffers were made for.
+	 */
+	void UpdateDirectMeshSectionGeometry(FDreamUIRenderSection_DirectMesh* InDirectMeshSection, bool bNeedExpandMeshSection);
+	void PoolAllRenderSection();
+	void SetRenderSectionRenderPriority(const TSharedPtr<FDreamUIRenderSection>& InRenderSection, int32 InSortPriority);
+	/** InMaterialProxy, when given, is what the section draws through, InMaterial its source (FDreamUIRenderSection_Mesh::MaterialProxy). */
+	void SetMeshSectionMaterial(int32 InSectionIndex, UMaterialInterface* InMaterial, const TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe>& InMaterialProxy = nullptr);
+	/** Draw the section with the built-in UI shader (no material). Pass a disabled params struct to go back to the material. */
+	void SetMeshSectionBuiltIn(int32 InSectionIndex, const FDreamUIBuiltInDrawParams& InParams);
+	/**
+	 * A group marker's composite, sent to the render thread when it differs from what was sent last: the bounds and the canvas
+	 * transform follow what the group holds every frame, and the opacity and mode a layer group's own.
+	 */
+	void SetGroupSectionComposite(const TSharedPtr<FDreamUIRenderSection>& InRenderSection, const FDreamUICompositeDesc& InDesc);
+	/** A mesh section's BackdropBounds, sent when it changed: see FDreamUIRenderSection_Mesh::BackdropBounds. */
+	void SetMeshSectionBackdropBounds(const TSharedPtr<FDreamUIRenderSection>& InRenderSection, const FBox& InWorldBounds);
+	bool IsMeshSectionBuiltIn(int32 InSectionIndex) const;
+
+	void Init(UDreamCanvas* InCanvas);
+	void SetSupportDreamUIRenderer(bool InSupportOrNot, TWeakPtr<FDreamUIRenderer, ESPMode::ThreadSafe> InDreamUIRenderer, bool InIsRenderToWorld);
+	void SetSupportUERenderer(bool InSupportOrNot);
+	void ClearRenderData();
+	void FlushRenderCommand();
+
+	void SetUITranslucentSortPriority(int32 NewTranslucentSortPriority);
+
+	void VerifyMaterials();
+	void SetParentCanvasMeshComp(UDreamUIMeshComponent* InParentCanvasMeshComp);
+	void ClearParentCanvasMeshComp(UDreamUIMeshComponent* InParentCanvasMeshComp);
+
+	//~ Begin UPrimitiveComponent Interface.
+	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
+	//~ End UPrimitiveComponent Interface.
+
+	/** The render thread's side of the sections, while the mesh has one (see EnsureRenderRoot). */
+	FDreamUIRenderRoot* GetRenderRoot() const { return RenderRoot.Get(); }
+	/**
+	 * What this mesh's sections hold on the game thread, for the memory report (DreamGUI.Memory): mesh sections in use and
+	 * waiting in the pools, and the bytes their vertex and index arrays have allocated. The render thread keeps a copy of
+	 * what was uploaded besides. Game thread.
+	 */
+	void GetMemoryInfo(int32& OutSections, int32& OutPooledSections, int64& OutVertexBytes, int64& OutIndexBytes) const;
+
+	/**
+	 * UE's renderer draws a section from split vertex buffers -- positions, colours, tangents and UVs, through a local
+	 * vertex factory -- filled from the section's vertices. InitUERendererVertexBuffers sizes them for InNumVertices with
+	 * every UV channel a vertex carries (LEXUI_VERTEX_UV_CHANNEL_COUNT, at full precision); WriteUERendererVertex copies one
+	 * vertex in: its position, its colour, TextureCoordinate[0..3] as channels 0 to 3 and UV4 as channel 4, which a material
+	 * reads as TexCoord(4), and its tangents when bInTangents. The CPU copies only: their RHI resources are the caller's.
+	 */
+	static void InitUERendererVertexBuffers(FStaticMeshVertexBuffers& OutBuffers, int32 InNumVertices);
+	static void WriteUERendererVertex(FStaticMeshVertexBuffers& InOutBuffers, int32 InIndex, const FDreamUIMeshVertex& InVertex, bool bInTangents);
+protected:
+	/** Both send the render root the transform UE's scene has for the proxy. */
+	virtual void CreateRenderState_Concurrent(FRegisterComponentContext* Context) override;
+	virtual void SendRenderTransform_Concurrent() override;
+public:
+
+	//~ Begin UMeshComponent Interface.
+	virtual int32 GetNumMaterials() const override;
+	//~ End UMeshComponent Interface.
+
+	/** Update LocalBounds member from the local box of each section */
+	void UpdateLocalBounds();
+	void UpdateChildCanvasSectionBox();
+private:
+	TArray<TSharedPtr<FDreamUIRenderSection>> RenderSectionArray;
+	TDoubleLinkedList<TSharedPtr<FDreamUIRenderSection>> RenderSectionPool;
+	struct FMeshRenderSectionPool
+	{
+		FMeshRenderSectionPool() = default;
+		FMeshRenderSectionPool(const FMeshRenderSectionPool& Other)
+		{
+		}
+		TDoubleLinkedList<TSharedPtr<FDreamUIRenderSection_Mesh>> RenderSections;
+	};
+	TArray<FMeshRenderSectionPool> RenderSectionMesh_CascadePool;//for mesh section pool, sorted by vertex buffer size, to prevent memory waste of big vertex and index buffer
+	TDoubleLinkedList<TSharedPtr<FDreamUIRenderSection_Mesh>>& GetRenderSectionMeshPool(int32 InNumVertices);
+public:
+	/**
+	 * After PoolAllRenderSection and before the sections are set up again: every batch-mesh draw call built from
+	 * exactly the geometries a pooled section was built from -- the same copies, which are never written -- claims
+	 * that section, whose vertices are already here and on the GPU. Then each draw call left claims a pooled section
+	 * built from geometries laid out as its own are, to have the vertices that differ written in place
+	 * (FDreamUIDrawCall::bPatchClaimedMeshSection). Claimed first, all together, because the pool hands sections out by
+	 * size: set up in order, an earlier draw call that changed could take a later one's section, and both would upload.
+	 */
+	void ClaimPooledMeshSections(TArray<FDreamUIDrawCall>& InOutDrawCalls);
+	/**
+	 * The geometry lists this mesh's sections were built from, in use or pooled, where their vertices are on the GPU:
+	 * what a rebuild may find again, and so need not combine (see FDreamCanvasPreparedDrawCallData).
+	 */
+	TArray<TArray<TSharedPtr<const FDreamUIGeometry>>> GetMeshSectionGeometryLists() const;
+private:
+#if DEBUG_PRINT_MESH_MEMORY
+	int ExpandMeshSectionCount = 0;
+#endif
+	//~ Begin USceneComponent Interface.
+	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
+	//~ Begin USceneComponent Interface.
+
+	struct UpdateMeshSectionDataStruct
+	{
+		TArray<FDreamUIMeshVertex> VertexBufferData;
+		int32 NumVerts;
+		int32 NumTriangles;
+		TArray<FDreamUIMeshIndex> IndexBufferData;
+		bool RequireNormalAndTangent;
+		FDreamUISectionProxy_Mesh* Section;
+		/**
+		 * Empty for the whole section. Otherwise VertexBufferData holds only these runs of the section's vertices --
+		 * (first vertex, count) -- back to back, and the rest of the section and its indices stay as they are.
+		 */
+		TArray<TPair<int32, int32>> PatchedRuns;
+	};
+	TArray<UpdateMeshSectionDataStruct> PendingUpdateMeshSectionDataArray;
+	struct UpdateRenderSectionPriority
+	{
+		FDreamUIRenderSectionProxy* SectionProxy;
+		int RenderPriority;
+	};
+	TArray<UpdateRenderSectionPriority> PendingUpdateRenderSectionPriorityArray;
+	struct UpdateMeshSectionMaterialDataStruct
+	{
+		FDreamUIRenderSectionProxy* SectionProxy;
+		UMaterialInterface* Material;
+		TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe> MaterialProxy;
+	};
+	TArray<UpdateMeshSectionMaterialDataStruct> PendingUpdateMeshSectionMaterialDataArray;
+	struct UpdateMeshSectionBuiltInDataStruct
+	{
+		FDreamUIRenderSectionProxy* SectionProxy;
+		FDreamUIBuiltInDrawParams Params;
+		/** Taken from Params when the command is enqueued, and read by it alone. */
+		FDreamUIBuiltInTextures Textures;
+	};
+	TArray<UpdateMeshSectionBuiltInDataStruct> PendingUpdateMeshSectionBuiltInDataArray;
+	struct UpdateSectionBackdropBoundsStruct
+	{
+		FDreamUIRenderSectionProxy* SectionProxy;
+		FBox Bounds;
+	};
+	TArray<UpdateSectionBackdropBoundsStruct> PendingUpdateSectionBackdropBoundsArray;
+	/** The box of the section InDrawCallData is drawn with, in world space: its CanvasBounds, through this mesh's transform. */
+	FBox GetMeshSectionBounds(const FDreamUIDrawCall& InDrawCallData) const;
+
+	friend class FDreamUIRenderSceneProxy;
+	/** A child canvas's section takes the child mesh's root by its shared reference (see FDreamUIRenderRoot::CreateSectionData). */
+	friend class FDreamUIRenderRoot;
+
+	/**
+	 * Made with the first section set up while the mesh is registered, from the settings it has then; released by
+	 * ClearRenderData and when the mesh is unregistered. The scene proxies UE makes for the mesh draw it and hold it too,
+	 * so a proxy made again finds the sections where they were.
+	 */
+	FDreamUIRenderRootRef RenderRoot;
+	FDreamUIRenderRoot* EnsureRenderRoot();
+	/** Out of the renderer and out of every parent section; the section proxies go with it, and the updates naming them. */
+	void ReleaseRenderRoot();
+	void PushRenderRootTransform();
+	/** Whether the sections carry UE's vertex buffers and vertex factory as well as DreamGUI's own. */
+	bool NeedsUERendererSectionData() const;
+
+protected:
+	TWeakPtr<FDreamUIRenderer, ESPMode::ThreadSafe> DreamUIRenderer;
+	bool bIsDreamUIRenderToWorld = false;//DreamUI renderer render to world or screen
+	TWeakObjectPtr<UDreamCanvas> RenderCanvas = nullptr;
+	bool bIsSupportUERenderer = true;
+	TWeakObjectPtr<UDreamUIMeshComponent> ParentCanvasMeshComp = nullptr;
+
+public:
+	/** Broadcast as the mesh makes a render root: a parent canvas's section for this mesh points at the new one. */
+	FDreamUIMeshRenderRootCreatedDelegate OnRenderRootCreated;
+};
+
+

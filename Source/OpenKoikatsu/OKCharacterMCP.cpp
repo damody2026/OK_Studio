@@ -3,6 +3,7 @@
 #include "OKHGShading.h"
 #include "OKCharacterMCPRegistry.h"
 #include "OKCharacterMCPGeometry.h"
+#include "OKReaderScreen.h"
 #include "OKVideoMotionPanel.h"
 #include "OKControl.h"
 #include "OKStudioGame.h"
@@ -134,6 +135,7 @@ static FMCPObject State(UOKCharacterController* G,FOKCharacterMCPState& S,bool b
  if(G->PropertyStatus)R->SetStringField(TEXT("property_status"),G->PropertyStatus->GetText().ToString());if(G->AppearanceStatus)R->SetStringField(TEXT("appearance_status"),G->AppearanceStatus->GetText().ToString());
  FMCPRows States;for(int32 I=0;I<9;++I)States.Add(MakeShared<FJsonValueNumber>(G->ClothesStates[I]));R->SetArrayField(TEXT("clothing_states"),States);
  if(auto* V=G->GetWorld()->GetGameViewport())if(V->Viewport){auto Size=V->Viewport->GetSizeXY();R->SetNumberField(TEXT("viewport_width"),Size.X);R->SetNumberField(TEXT("viewport_height"),Size.Y);}
+ if(UOKReaderScreen* Screen=G->ReaderScreen){auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("tab"),Screen->CurrentTab());O->SetStringField(TEXT("category"),Screen->CurrentCategory());O->SetNumberField(TEXT("left_width"),Screen->GetLeftWidth());R->SetObjectField(TEXT("screen"),O);}
  auto* A=G->PreviewActor.Get();if(!A)return R;R->SetNumberField(TEXT("pose_mode"),A->PoseMode);R->SetBoolField(TEXT("preview_ticking"),A->IsActorTickEnabled());auto Waiting=MakeShared<FJsonObject>();Waiting->SetBoolField(TEXT("mods_dirty"),G->bEditorModsDirty);Waiting->SetBoolField(TEXT("shape_dirty"),A->bShapeDirty);Waiting->SetBoolField(TEXT("materials_ready"),A->bPlaybackMaterialsReady);Waiting->SetBoolField(TEXT("shaders_compiling"),GShaderCompilingManager&&GShaderCompilingManager->IsCompiling());R->SetObjectField(TEXT("settling"),Waiting);auto C=MakeShared<FJsonObject>();C->SetNumberField(TEXT("yaw"),A->OrbitYaw);C->SetNumberField(TEXT("pitch"),A->OrbitPitch);C->SetNumberField(TEXT("distance"),A->OrbitDistance);C->SetArrayField(TEXT("focus"),{MakeShared<FJsonValueNumber>(A->OrbitFocus.X),MakeShared<FJsonValueNumber>(A->OrbitFocus.Y),MakeShared<FJsonValueNumber>(A->OrbitFocus.Z)});if(A->StudioLens){C->SetStringField(TEXT("projection"),A->StudioLens->ProjectionMode==ECameraProjectionMode::Orthographic?TEXT("orthographic"):TEXT("perspective"));C->SetNumberField(TEXT("ortho_width"),A->StudioLens->OrthoWidth);}R->SetObjectField(TEXT("camera"),C);R->SetBoolField(TEXT("sweep_active"),A->bProductSweep);R->SetBoolField(TEXT("sweep_latched"),A->bProductLightLatched);R->SetStringField(TEXT("sweep_ramp"),A->ProductRampLabel);R->SetNumberField(TEXT("sweep_slots"),A->ProductRampSlots);return R;
 }
 static void Page(UOKCharacterController* G,FOKCharacterMCPState& S,const FMCPRows& All,const TCHAR* Field=TEXT("parameters"))

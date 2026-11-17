@@ -1,0 +1,259 @@
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+
+#include "DreamUIWidgetPicking.h"
+
+#include "Core/DreamUIManager.h"
+#include "Core/Components/DreamWidget.h"
+#include "Core/DreamUserWidget.h"
+#include "Core/Components/DreamLayout.h"
+#include "Core/Components/DreamCanvas.h"
+#include "Core/Components/DreamVisual.h"
+#include "Core/Components/DreamVisualDirectMesh.h"
+#include "Core/Components/DreamVisualPostProcess.h"
+#include "Extensions/Effects/DreamPixelSort.h"
+
+namespace DreamUIWidgetPicking
+{
+	bool LineTraceWidgetRect(const UDreamWidget* InWidget, const FVector& InLineStart, const FVector& InLineEnd, FVector& OutWorldLocation)
+	{
+		if (!IsValid(InWidget))return false;
+
+		// Same construction as UDreamVisual::LineTraceUIRect: inside a perspective scope the widget is
+		// drawn somewhere its FTransform does not describe, so the ray has to be brought into the
+		// space it is actually drawn in or picks land on the un-foreshortened rect. Outside one this
+		// stays the plain transform inverse, because FMatrix and FTransform inversion do not agree
+		// bit for bit and the ordinary path should not start moving by a fraction of a pixel.
+		const bool bPerspective = InWidget->HasPerspectiveApplied();
+		const FMatrix WidgetToWorldMatrix = bPerspective ? InWidget->GetWorldMatrix() : FMatrix::Identity;
+		const FMatrix WorldToWidgetMatrix = bPerspective ? WidgetToWorldMatrix.Inverse() : FMatrix::Identity;
+		const FTransform InverseTransform = InWidget->GetWorldTransform().Inverse();
+		const FVector LocalStart = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(InLineStart)) : InverseTransform.TransformPosition(InLineStart);
+		const FVector LocalEnd = bPerspective ? FVector(WorldToWidgetMatrix.TransformPosition(InLineEnd)) : InverseTransform.TransformPosition(InLineEnd);
+
+		// start and end must sit on opposite sides of the widget plane
+		if (FMath::Sign(LocalStart.X) == FMath::Sign(LocalEnd.X))return false;
+
+		const FVector LocalHit = FMath::LinePlaneIntersection(LocalStart, LocalEnd, FVector::ZeroVector, FVector(1, 0, 0));
+		if (LocalHit.Y <= InWidget->GetLocalSpaceLeft() || LocalHit.Y >= InWidget->GetLocalSpaceRight())return false;
+		if (LocalHit.Z <= InWidget->GetLocalSpaceBottom() || LocalHit.Z >= InWidget->GetLocalSpaceTop())return false;
+
+		OutWorldLocation = bPerspective
+			? FVector(WidgetToWorldMatrix.TransformPosition(LocalHit))
+			: InWidget->GetWorldTransform().TransformPosition(LocalHit);
+		return true;
+	}
+
+	void RaycastWidgetRects(const UWorld* InWorld, TConstArrayView<UDreamWidget*> InWidgets, const FVector& InLineStart, const FVector& InLineEnd, TArray<FDreamUIWidgetPickHit>& OutHits)
+	{
+		OutHits.Reset();
+		if (InWorld == nullptr)return;
+
+		for (UDreamWidget* Widget : InWidgets)
+		{
+			if (!IsValid(Widget))continue;
+			if (Widget->GetWorld() != InWorld)continue;
+			// bCacheRenderVisibleInHierarchy is maintained for every widget, mesh or not, and it
+			// already folds in bHiddenInDesigner -- so this is the one gate the designer needs.
+			// Hit-test visibility is deliberately not consulted: a HitTestInvisible widget is still
+			// something you author, and UMG lets you select one too.
+			if (!Widget->GetRenderVisibleInHierarchy())continue;
+
+			FVector WorldLocation;
+			if (!LineTraceWidgetRect(Widget, InLineStart, InLineEnd, WorldLocation))continue;
+			if (!Widget->IsPointVisibleOnClip(WorldLocation))continue;
+
+			FDreamUIWidgetPickHit& Hit = OutHits.AddDefaulted_GetRef();
+			Hit.Widget = Widget;
+			Hit.WorldLocation = WorldLocation;
+			Hit.Distance = FVector::Distance(InLineStart, WorldLocation);
+		}
+
+		// Front-to-back, matching RaycastHitUI's order so click-through feels the same as it always
+		// did: canvas sort order first, then flatten index, which puts a child ahead of its parent.
+		// A widget with no visual has no render canvas of its own, so it inherits the comparison's
+		// neutral order and is separated from its siblings by flatten index alone.
+		OutHits.Sort([](const FDreamUIWidgetPickHit& A, const FDreamUIWidgetPickHit& B)
+		{
+			const UDreamCanvas* CanvasA = A.Widget->GetRenderCanvas();
+			const UDreamCanvas* CanvasB = B.Widget->GetRenderCanvas();
+			const int32 SortA = CanvasA ? CanvasA->GetActualSortOrder() : 0;
+			const int32 SortB = CanvasB ? CanvasB->GetActualSortOrder() : 0;
+			if (SortA != SortB)return SortA > SortB;
+			return A.Widget->GetFlattenHierarchyIndex() > B.Widget->GetFlattenHierarchyIndex();
+		});
+	}
+
+	namespace
+	{
+		/** Whether the run time would let a ray hit InWidget: the three tests a raycaster asks, in the order it asks them. */
+		bool IsRaycastTarget(const UDreamWidget* InWidget)
+		{
+			const UDreamVisual* Visual = InWidget->GetVisual();
+			return Visual != nullptr && InWidget->GetRaycastableInHierarchy() && InWidget->GetHitTestVisibleInHierarchy()
+				&& Visual->GetRaycastTarget();
+		}
+
+		/**
+		 * Whether InWidget's own visual puts anything on the screen at the moment.
+		 *
+		 * Answered from what each kind of visual is known to do rather than from one rule, because "nothing" means
+		 * different things: a mesh visual draws nothing at zero alpha, an effect draws nothing while it is switched off
+		 * or its strength is zero. An effect not listed here is taken to draw, which only ever errs towards being
+		 * selectable.
+		 */
+		bool IsDrawing(const UDreamWidget* InWidget)
+		{
+			const UDreamVisual* Visual = InWidget->GetVisual();
+			if (Visual == nullptr)
+			{
+				return false;
+			}
+			switch (Visual->GetVisualType())
+			{
+			case EDreamVisualType::BatchMesh:
+				return Visual->GetFinalAlpha() > 0;
+			case EDreamVisualType::DirectMesh:
+				{
+					const UDreamVisualDirectMesh* Mesh = Cast<UDreamVisualDirectMesh>(Visual);
+					return Mesh == nullptr || Mesh->HaveValidData();
+				}
+			case EDreamVisualType::PostProcess:
+				{
+					const UDreamVisualPostProcess* Effect = Cast<UDreamVisualPostProcess>(Visual);
+					if (Effect != nullptr && !Effect->IsEnabled())
+					{
+						return false;
+					}
+					// Documented on the property: zero disables the whole visual, so the widget shows nothing.
+					const UDreamPixelSort* PixelSort = Cast<UDreamPixelSort>(Visual);
+					return PixelSort == nullptr || PixelSort->GetSortStrength() > 0.0f;
+				}
+			default:
+				return false;
+			}
+		}
+	}
+
+	bool IsWorthPicking(const UDreamWidget* InWidget)
+	{
+		if (!IsValid(InWidget) || InWidget->GetVisual() == nullptr)
+		{
+			// Panels and groups have no visual and are how a layout is selected, rect and all.
+			return true;
+		}
+		if (IsRaycastTarget(InWidget) || IsDrawing(InWidget))
+		{
+			return true;
+		}
+		// Holding children is what makes a widget with a silent visual a group the author still has to be able to reach.
+		return InWidget->GetChildren().ContainsByPredicate([](const UDreamWidget* InChild) { return IsValid(InChild); });
+	}
+
+	UDreamWidget* PickTopmostWidget(const UWorld* InWorld, TConstArrayView<UDreamWidget*> InWidgets, const FVector& InLineStart, const FVector& InLineEnd, int32& InOutCycleIndex)
+	{
+		TArray<FDreamUIWidgetPickHit> Hits;
+		RaycastWidgetRects(InWorld, InWidgets, InLineStart, InLineEnd, Hits);
+		// A full-screen effect that nothing can click and nothing shows is the front-most rect of the whole page, and
+		// left in the stack every click selects it. Looked through, the way a drop looks through a layer that holds
+		// nothing (PickDropTarget) -- but only while something else is under the cursor, so a page made of nothing else
+		// still selects its front-most widget.
+		if (Hits.ContainsByPredicate([](const FDreamUIWidgetPickHit& InHit) { return IsWorthPicking(InHit.Widget); }))
+		{
+			Hits.RemoveAll([](const FDreamUIWidgetPickHit& InHit) { return !IsWorthPicking(InHit.Widget); });
+		}
+		if (Hits.IsEmpty())
+		{
+			InOutCycleIndex = INDEX_NONE;
+			return nullptr;
+		}
+		InOutCycleIndex++;
+		if (InOutCycleIndex >= Hits.Num() || InOutCycleIndex < 0)InOutCycleIndex = 0;
+		return Hits[InOutCycleIndex].Widget;
+	}
+
+	UDreamWidget* PickDropTarget(const UWorld* InWorld, TConstArrayView<UDreamWidget*> InWidgets, const FVector& InLineStart, const FVector& InLineEnd)
+	{
+		TArray<FDreamUIWidgetPickHit> Hits;
+		RaycastWidgetRects(InWorld, InWidgets, InLineStart, InLineEnd, Hits);
+		for (const FDreamUIWidgetPickHit& Hit : Hits)
+		{
+			const UDreamWidget* Widget = Hit.Widget;
+			if (Widget->GetLayoutContainer() != nullptr || Cast<UDreamUserWidget>(Widget) != nullptr
+				|| Widget->GetChildren().ContainsByPredicate([](const UDreamWidget* InChild) { return IsValid(InChild); }))
+			{
+				return Hit.Widget;
+			}
+		}
+		return Hits.IsEmpty() ? nullptr : Hits[0].Widget;
+	}
+
+	UDreamWidget* ResolveDropContainer(UDreamWidget* InHitWidget, const UDreamWidget* InTreeRoot)
+	{
+		const bool bBounded = IsValid(InTreeRoot);
+		if (bBounded && IsValid(InHitWidget) && InHitWidget != InTreeRoot && !InHitWidget->IsChildOf(InTreeRoot))
+		{
+			// Above or beside the tree being edited: whatever holds a container out there is not the
+			// asset's to fill.
+			return nullptr;
+		}
+		for (UDreamWidget* Candidate = InHitWidget; IsValid(Candidate); Candidate = Candidate->GetParent())
+		{
+			// A placed control answers with its default hole, the way a Button in UMG takes what is
+			// dropped on it as its content. The control's own container arranges only its furniture:
+			// asked directly it either refuses (a size box already holding its face) or accepts into
+			// the furniture, which the next rebuild throws away. The hole is what the hierarchy shows
+			// under the control, and the one place under it this asset can author.
+			const UDreamUserWidget* Nested = Cast<UDreamUserWidget>(Candidate);
+			if (Nested != nullptr)
+			{
+				UDreamWidget* Hole = Nested->FindSlotWidget(Nested->GetDefaultSlotName());
+				if (IsValid(Hole) && Hole->CanAcceptAdditionalChildren())
+				{
+					return Hole;
+				}
+			}
+			if (Candidate->GetLayoutContainer() != nullptr && Candidate->CanAcceptAdditionalChildren())
+			{
+				return Candidate;
+			}
+			// A group: a widget with no panel that holds children, each standing where its own anchors put it -- this
+			// plugin's Canvas Panel, and the place a widget dragged about inside it stays and a widget dropped on its
+			// empty middle lands. Walked past, the nearest panel above answers instead: a row dragged a few pixels
+			// sideways inside its group was moved out of it into the root's overlay, and a Text dropped on the group
+			// stood in that overlay's corner. Holding children is what makes it a group rather than content: an empty
+			// widget is a leaf like a Text (a spacer in a row, a label stand-in), and a group gets its first child
+			// from the hierarchy. A placed control's children are its furniture, so only its hole counts, above.
+			if (Nested == nullptr && Candidate->CanAcceptAdditionalChildren()
+				&& Candidate->GetChildren().ContainsByPredicate([](const UDreamWidget* InChild) { return IsValid(InChild); }))
+			{
+				return Candidate;
+			}
+			if (bBounded && Candidate == InTreeRoot)
+			{
+				break;
+			}
+		}
+		return nullptr;
+	}
+
+	void CollectPickableWidgets(const UWorld* InWorld, TArray<UDreamWidget*>& OutWidgets)
+	{
+		OutWidgets.Reset();
+		if (InWorld == nullptr)return;
+		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(const_cast<UWorld*>(InWorld));
+		if (Manager == nullptr)return;
+		for (const TWeakObjectPtr<UDreamCanvas>& WeakCanvas : Manager->GetAllCanvasArray())
+		{
+			UDreamCanvas* Canvas = WeakCanvas.Get();
+			if (!Canvas || !Canvas->IsRootCanvas())continue;
+			UDreamWidget* Root = Canvas->GetWidget();
+			if (!IsValid(Root))continue;
+			// The root is included. ProcessClick used to collect children only, which is why the
+			// prefab root itself could never be selected by clicking it.
+			// Stops at nested widget blueprint instances, the same boundary the hierarchy panel draws.
+			// Without it the panel folds an instance into one row and the viewport still selects the
+			// Text inside it -- and that selection has no row to highlight and no template to edit.
+			CollectDreamWidgetsToNestedBoundary(Root, OutWidgets);
+		}
+	}
+}
