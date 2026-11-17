@@ -67,7 +67,3 @@
 - lodge 第 1 層（z 1200），H1 棟：hotel.door、hotel.lift1:1F、hotel.stair1…（共 4 個）
 - school 第 2 層（z 1650），T1 棟：campus_t1.lift2:2F
 
-## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（1）
-
-- school 第 3 層（z 2020），1 個錨點
-
