@@ -453,4 +453,41 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 - 两趟的 UpdateAllPrimitiveSceneInfos、ParallelDraw、UpdatePrimitive 在加载后没有任何一次超过 30 ms（Insights 导出所有执行绪）。先前的 157／93 ms 是抢 CPU 的结果，不是城市本身的问题。
 - 节流 cvar 没有可见效果（GC 卡顿次数 2 对 1，都在 60 ms 上下，属于噪声），不采用。
 - PSO precache miss：lowspec1118f 那趟的 99 个 miss 全在前 600 帧——开机、第一个女角上屏（runtime mesh／材质）、前景头发遮挡 capture 建立时；游玩期间 0 个。走路／巡游的卡顿与 PSO 无关，不需要 D3D12 PSO 磁碟快取。要列出 miss 的材质与 pass，需在启动时设 r.PSOPrecache.Validation=2（ReadOnly cvar，用 -GameArgs "-ini:Engine:[ConsoleVariables]:r.PSOPrecache.Validation=2"）。
-- 剩下的巡游卡顿只有串流卸载后的完整 GC（约 60 ms）。
+- 剩下的巡游卡顿只有完整 GC（约 60 ms，见 §10：是定时 GC，瞬移卸载决定它要收多少）。
+
+## 10. 巡游里剩下的约 60 ms：完整 GC（2026-11-18 06:47–07:15，c-lowspec，独占整机）
+
+### 两个数字要分开看
+
+- **游戏线程实际停住**：GC 那一帧 58 ms（6.4 万个物件那次），玩家感觉到的就是这一帧。
+- **CPU 总量**：同一帧里约 30 个 worker 也在做同一件事，每个 42–47 ms，合计约 1.3 秒 CPU 时间。这是平行执行的总和，不是卡了 1.3 秒。
+
+### 时间花在哪里
+
+- 不是扫描：GatherUnreachableObjects 的扫描任务每个只花 0.05–0.25 ms。
+- 是 AsyncLoading2 的 `NotifyUnreachableObjects` → `CollectUnreachableObjects`（ParallelFor）。
+- 包只有 legacy .pak、没有 IoStore（`rebuild_street_social_runtime.lua` 为了挂 legacy patch 刻意如此），所以引擎开了 loose file loading。每个不可达物件都要 `GetLinker()`／`SetLinker(nullptr)`，这两个都要拿全局的 `FUObjectAnnotationChunked` 读写锁（`UObjectAnnotation.h:874`），30 个线程抢同一把锁。
+- 触发是 `gc.TimeBetweenPurgingPendingKillObjects=61.1` 的定时，不是串流卸载；卸载只决定那一次要回收多少。
+
+### 物件数与停顿（gcQ-count，Play-20261118T064750，-LogCmds LogGarbage/LogStreaming）
+
+| 回收物件 | 卸下的包 | CollectUnreachableObjects | GC 那一帧 |
+|---|---|---|---|
+| 13,378 | 4,082 | 3.3 ms | 11.1 ms |
+| 21,619 | 6,002 | 11.8 ms | 20.9 ms |
+| 63,625 | 22,162 | 46.4 ms | 58.3 ms |
+
+每个物件的代价随数量上升（0.25 → 0.73 µs），这就是锁竞争的样子。
+
+### 试过、不采用
+
+- `gc.TimeBetweenPurgingPendingKillObjects 20`（gcQ-int20，Play-20261118T071102）：瞬移后的卸载是一次性的，20 秒一次仍然一次收 58,002 个，那一帧 52 ms（原 58 ms）。其余 GC 为 0–2.5 万个、3–20 ms，次数变成约 3 倍。峰值 commit 10.6 GB（对照 11.4 GB），在噪声范围内。效果太小，不采用。
+- 增量 Gather（`gc.AllowIncrementalGather`）：这版引擎的 `FGCFlags::IsIncrementalGatherUnreachableSupported()` 写死回传 false，cvar 无效。增量 purge 的 cvar 只影响之后的 BeginDestroy／FinishDestroy，那部分已经是每帧约 2 ms。
+
+### 实际影响与后续
+
+- 走路（无缝串流）时垃圾是陆续产生的，每次 GC 1–2 万个物件、11–21 ms，§8 的走路回归里没有 GC 超过 60 ms。约 60 ms 只出现在瞬移（一次卸掉 2 万多个包）之后的那次 GC。
+- **根治（已知，待排）**：改用 IoStore，就没有 linker 注解，这一步会降到几 ms，也会少掉 linker 的内存。前提是 runtime patch 改成 IoStore container，并且要完整 cook，所以等整合时单独评估（协调者 2026-11-18 决定，现在不做）。
+- **引擎补丁（未做）**：让 `CollectUnreachableObjects` 少用几个线程，或者把 linker 锁改成每批拿一次。要做的话，方案先给协调者，补丁放 `Tools\EnginePatches\`，三组引擎都要能套用、都要建得过。
+- 游戏里若有黑屏转场（瞬移、换场景），可以在黑屏时主动做一次 GC，把这次停顿藏起来。目前只有测试用的 /warp 会这样瞬移，所以先不做。
+- gcQ-int20 另有一次 103 ms，落在 FTicker 本身、没有子事件（不在 OKControl 的请求里），整趟只出现一次，原因未查。
