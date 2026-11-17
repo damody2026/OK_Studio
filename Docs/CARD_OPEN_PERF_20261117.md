@@ -59,6 +59,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | 把 hair gloss 的贴图读取搬离主执行绪（`lists_stage` 结束时丢给自己的执行绪，到 accessory context 才等）<br>11-18 做的 | `lists+mods+guids` 2379 ms 里有 2340 ms 没被任何子项盖住，拆开才看到是 `lists: hair gloss`（暖磁碟 588 ms、冷磁碟约 2.3 s）。搬走之后 `hair gloss wait` **0.0 ms**、容器 633 → 20 ms，**搬移本身完全成功**；但冷开中位数 1.174 → 1.21 s（没有收益），而 `load_base_bundles` 160–184 → 580–615 ms —— **那约 500 ms 原样换了个地方付**，主执行绪的阶段合计两边一样（1429/1402 对 1324/1410）。把 entry prefetch 关掉再量，**同一笔 gloss 只要约 5 ms** | 回退，只留 `lists: prefetch spawn`／`lists: hair gloss` 两个子计时。**一般结论**：那 500 ms 不是 gloss 自己贵，是它排在 8 个 prefetch helper 后面等基础库读取路径，所以**在 prefetch 那个窗口里「把工作搬到别的执行绪」买不到东西** —— 要拿的是那条路径的吞吐，不是工作的位置 |
 | 贴图 payload 的 memo 从「只收 block-compressed」放宽到「≥512² 的任何格式」，另加 single-flight（同键只算一次）<br>11-18 做的 | 从零解码的次数 C006 124 → 117、C001 124 → 118、C049 93 → 86，其中重复 12 → 5／21 → 15／17 → 10（确定性指标，真的降了：C006 的 `liquid01_t` RGB24 512² 本来一次开卡解 7 遍、`cf_body_00_t` RGBA32 2048²（16 MiB）解 2 遍）。**但冷开 wall 中位数 1.594 → 1.637 s（10 轮交错，更慢）**：这个 memo 的键要雜凑整个 texel，新放进来的约 40 张未命中各付一次雜凑，去换省下的 6–7 次解码，净值是负的。single-flight 单独量只去掉 12–23 次里的 0–2 次，时间无变化 | 两者都放回去。**作者原本只收 block-compressed 是对的** —— 它只在「解码＋编码比雜凑贵」的地方才划算；这一轮量到的次数与为什么不划算写在那个格式闸门旁边 |
 
+| **压缩贴图直通**（没被动过的 BC 块直接交给 UE，省掉解码与编码）<br>11-18 量的上限，没开工 | 新增的 `PROFILE passthrough` 数出「session 真正带着的贴图里，有几张**恰好就是一张未经修改的解码 payload**」：**C006 39/165、C001 82/272、C049 20/99**，其中来源是 BC 格式（BC7／DXT1／DXT5，也就是唯一有解码成本的那些）的是 **33 张／125 次解码（26%）、44／126（35%）、15／93（16%）**。所以上限是 925 ms 的 16–35% 再加上对应那份 `encode_png`，约 **180–390 ms 的跨执行绪 CPU**；换成墙钟顶多几个 percent —— 和 `OK_RAW_TEXTURES` 那笔同一个量级（它把整条链的 encode 都拿掉也只有 −1.7%），**那笔是这条路的现成上界实测**。顺带量到：session 带着的贴图有 **70–80% 是被动过的**（翻转／遮罩／上色／合成），和第四节原本的次数粗估一致 | **不开工**。代价是 Rust 容器＋C header＋UE 三边（C／E／F 共用），换几个 percent 不值得。**但记忆体那一面没算在这里**：33–44 张贴图保持压缩，BC1 对 RGBA8 是 8:1，对 8 GB VRAM 的机器可能是另一回事 —— 要做就以 VRAM 为目标去评，不要拿开卡速度当理由 |
 | 打开已经做好但没人开的 `OK_RAW_TEXTURES=1`（阶段之间的贴图改用 raw LZ4 容器而非 PNG，UE 侧有 `ok_raw_texture.h`，持久化输出仍写 PNG）<br>11-18 量的 | 冷开中位数 1.950 → 1.917 s（8 轮交错，**−1.7%，区间完全重叠**），而 session 每张多 6.7%（43 523 827 → 46 449 563 bytes）。**开关是活的**（同一张卡的 dump：OKRAW 容器 0 → 172 个、PNG 签章 183 → 11），所以这个零是真的。还有机制上的上限佐证：`encode_png` 跨执行绪合计只有 208 ms／149 次，整条链的编解码顶多约 400 ms，对约 1.6 s 的冷开是约 3% —— 和量到的一致 | 继续关着。**不是功能有问题，是这条路上编解码本来就不是瓶颈**（贴图成本的大头是 payload 解码 1133 ms／148 次，那是真工作）；使用者的目标机是 16 GB，不值得为噪声级的时间多付每张 2.9 MB |
 
 ## 三、量测方法与陷阱
@@ -128,6 +129,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 |---|---|
 | `OK_PROFILE=1` | 阶段计时。本轮新增 `batch: slot colour`／`slot finish`／`keys+memo`／`transform`／`emit`，`emit/memo_put`、`emit/regroup`、`emit/ctx.emit`，`base: head textures`、`base: head shape keys+md`、`base: body dynamics+colliders`，`mask bake: decode`／`math`／`encode` |
 | `OK_PROFILE=1`（11-18 新增） | **「从零做了几件、其中几件是重复」**：每次开卡结束印 `from scratch <n> (<m> repeat)`，再把做了两次以上的逐项列出（例如 `7x payload liquid01_t RGB24 512x512`）。数的是 bundle 解析（`parse_bundle_uncached`）与贴图 payload 解码（`png_from_payload_uncached`）；**这个数与机器忙不忙无关**，是吵机器上唯一能用的指标。另外 `lists: prefetch spawn`／`lists: hair gloss`，把原本 2.4 s 却没有任何子项盖住的 `lists+mods+guids` 拆开 |
+| `OK_PROFILE=1`（11-18 新增） | **`PROFILE passthrough <k>/<n> ... by source format {...}`**：session 真正带着的贴图里，有几张恰好就是一张未经修改的解码 payload，按来源格式分。为了判断「压缩贴图直通」值不值得做而加的（答案是不值得，见第二节），留着是因为**它一句话量得出「这次开卡有多少贴图是原样送出的」**，下次有人想碰贴图路径可以先看它 |
 | `OK_GRID_DIAG=1` | 一次烘焙的贴图与遮罩尺寸、filter |
 | `OK_TILE_DIAG=1` | 同值 texel 比例、`has_pat`，以及查表／逐 texel 两条路径各处理多少 texel |
 
@@ -141,7 +143,9 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （256 MiB），在 8 GB VRAM 的目标机上可疑；但**底图的细节不是遮罩给的**，缩的是底图自己那 4096² 的花纹、
   缝线、字样，不是只掉插值。会改变输出位元组，所以验证标准要换成目视（配件上色／头发上色／眼睛贴图／
   有 override 贴图的卡，正面＋近拍）＋改前后平均 RGB 绝对差＋贴图总量。
-- **最大的剩余杠杆是「压缩贴图直通」，但它跨 Rust／C header／UE 三边，不该顺手动**（11-18 盘的）：
+- ~~**最大的剩余杠杆是「压缩贴图直通」**~~ **已量过，不开工（见第二节第一列）**：上限只有约 180–390 ms 的
+  跨执行绪 CPU（session 带着的贴图里，来源是 BC 又原样送出的只占解码次数的 16–35%），墙钟顶多几个 percent。
+  下面这段留着是因为它记了**现况与真的要做时该动哪三处**，以及为什么「925 ms 是 BC 解码」不等于能省 925 ms：
   一张 OK 卡冷开，`png_from_payload` 跨执行绪合计 **1133 ms／148 次**，扣掉里面的 `encode_png`（208 ms）
   约 **925 ms 是 GPU 格式解码**，做的人是纯 Rust 的纯量 `texture2ddecoder 0.1`（BC1／BC3／BC7）。
   而 **DXT1／DXT5／BC7 正是 UE 原生的格式** —— 没被遮罩、上色、翻转或合成动过的贴图，压缩块可以原样
@@ -150,7 +154,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   PNG／raw blob，**没有格式栏位**；内部倒是已经有 GPU 格式的路（`texture_gpu_named_unity` 产 71/72/77/78/98/99
   给衣服的 GPU 烘焙），所以不是从零开始。要动的是：容器加一个带 format 的版本、UE 侧照那个 format 建贴图
   （`ok_raw_texture.h` 已经在 UE 侧）、以及**判断哪些贴图真的没被动过**。
-  **开工之前先做这个便宜又决定性的量测**：把 `png_from_payload` 的输出雜凑记下来，和 session 里真正送出去的
+  **那个便宜又决定性的量测（已做，`PROFILE passthrough`）**：把 `png_from_payload` 的输出雜凑记下来，和 session 里真正送出去的
   贴图雜凑比，**原样送出的有几张**。148 张里若只有少数没被动过，整件事就不值得做；上限就是那个比例乘 925 ms。
   （别用「反正 UE 支援 BC」当理由就开工 —— 这份文件里每条没量过的推估都踩过。）
   **而且先别抱期望**：同一次开卡的 SPOT 次数加起来，「会改到贴图」的操作有约 141 次（`flip_png_v` 56、

@@ -127,6 +127,8 @@ pub(crate) fn png_from_payload(mut tex: unity_asset_decode::texture::Texture2D, 
         // outfit or open (the base body's and face's, a shared mod's) is decoded and encoded once (png_transform_cache).
         use unity_asset_decode::texture::TextureFormat;
         let banded = tex.width as u64 * tex.height as u64 >= 512 * 512;
+        // Noted with every texture this produces (`note_payload_out`): the branch below empties `tex.image_data`.
+        let source_format = format!("{:?}", tex.format);
         if matches!(tex.format, TextureFormat::DXT1 | TextureFormat::BC7) || (banded && tex.format == TextureFormat::DXT5) {
             let name = if tex.name.is_empty() { object_name.clone().unwrap_or_else(|| "tex".into()) } else { tex.name.clone() };
             let parameters = format!("{:?}|{}|{}|{}", tex.format, tex.width, tex.height, crate::teximg::encoding_tag());
@@ -135,9 +137,12 @@ pub(crate) fn png_from_payload(mut tex: unity_asset_decode::texture::Texture2D, 
                 tex.image_data = data.clone();
                 png_from_payload_uncached(tex, object_name).map(|(_, png)| png)
             })?;
+            crate::unity::note_payload_out(&png, &source_format);
             return Some((name, png));
         }
-        return png_from_payload_uncached(tex, object_name);
+        let out = png_from_payload_uncached(tex, object_name);
+        if let Some((_, png)) = out.as_ref() { crate::unity::note_payload_out(png, &source_format); }
+        return out;
     }
     let key = {
         use sha2::Digest;
@@ -149,8 +154,10 @@ pub(crate) fn png_from_payload(mut tex: unity_asset_decode::texture::Texture2D, 
     };
     let name = if tex.name.is_empty() { object_name.clone().unwrap_or_else(|| "tex".into()) } else { tex.name.clone() };
     if let Some(bytes) = get(TEX, &key) { return Some((name, (*bytes).clone())); }
+    let source_format = format!("{:?}", tex.format);
     let out = png_from_payload_uncached(tex, object_name)?;
     put(TEX, &key, || Some(out.1.clone()));
+    crate::unity::note_payload_out(&out.1, &source_format);
     Some(out)
 }
 

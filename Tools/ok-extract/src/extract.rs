@@ -2209,6 +2209,24 @@ pub(crate) fn extract_session_from_info(
         let (total, repeats, rows) = crate::unity::take_work_counts();
         eprintln!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)");
         for (source, n) in rows.iter().filter(|(_, n)| *n > 1) { eprintln!("ok-extract: PROFILE   {n}x {source}"); }
+        // How many of the textures this session carries are **exactly** a decoded payload — nothing flipped,
+        // masked, tinted or composed. Only those could be handed to UE as the source's own BC blocks with no
+        // decode at all, so this share is the ceiling on that idea (CARD_OPEN_PERF 第四节 asks for it first).
+        let outs = crate::unity::take_payload_outs();
+        let (mut carried, mut untouched) = (0u32, 0u32);
+        let mut formats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        for part in &session_parts {
+            let own = [&part.png, &part.alpha_mask, &part.hair_gloss, &part.detail_mask, &part.line_mask,
+                &part.normal_map, &part.normal_detail, &part.normal_mask, &part.overtex_png, &part.overtex2_png];
+            for bytes in own.into_iter().flatten().chain(part.shader_textures.values()) {
+                carried += 1;
+                if let Some(format) = outs.get(&crate::unity::texture_hash(bytes)) {
+                    untouched += 1;
+                    *formats.entry(format.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        eprintln!("ok-extract: PROFILE passthrough {untouched}/{carried} session textures are an undecoded payload, by source format {formats:?}");
     }
     for (name, s) in stages.map(crate::appearance::timings::Capture::finish).unwrap_or_default() {
         eprintln!("ok-extract: STAGE {name:28} {:8.1}ms x{} max {:.1}ms", s.total_ms, s.calls, s.max_ms);

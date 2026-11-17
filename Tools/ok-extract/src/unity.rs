@@ -5851,6 +5851,36 @@ pub(crate) fn note_bundle_parse(source: &str, bytes: usize) {
     note_work("bundle", || if source.is_empty() { format!("<{bytes} bytes>") } else { source.to_string() });
 }
 
+/// OK_PROFILE: the hash of every texture `png_from_payload` produced in this open, against its source format.
+/// The end of the open compares the textures the session actually carries with these, and prints how many of them
+/// are **exactly** a decoded payload — nothing flipped, masked, tinted or composed. Those are the only ones a
+/// compressed-passthrough path (hand UE the BC blocks and skip the decode) could ever help, and the share of them
+/// is the ceiling on that idea; see `Docs/CARD_OPEN_PERF_20261117.md` 第四节, which asks for this number before
+/// anyone touches the FFI that all three groups link.
+static PAYLOAD_OUT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<[u8; 32], String>>> =
+    std::sync::OnceLock::new();
+
+fn payload_out() -> &'static std::sync::Mutex<std::collections::HashMap<[u8; 32], String>> {
+    PAYLOAD_OUT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub(crate) fn texture_hash(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).into()
+}
+
+pub(crate) fn note_payload_out(png: &[u8], format: &str) {
+    if !counting_work() { return; }
+    let mut outs = payload_out().lock().unwrap_or_else(|e| e.into_inner());
+    if outs.len() > 20_000 { outs.clear(); }
+    outs.insert(texture_hash(png), format.to_string());
+}
+
+/// What this open's payload decodes produced, and clears it for the next open.
+pub fn take_payload_outs() -> std::collections::HashMap<[u8; 32], String> {
+    std::mem::take(&mut *payload_out().lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// The counts since the last call, the busiest first, and how many of them were a second or later time for one label.
 pub fn take_work_counts() -> (u32, u32, Vec<(String, u32)>) {
     let counts = std::mem::take(&mut *WORK_COUNTS.lock().unwrap_or_else(|e| e.into_inner()));
