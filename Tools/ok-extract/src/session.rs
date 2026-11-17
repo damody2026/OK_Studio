@@ -8289,13 +8289,50 @@ mod jump_probe_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let edited = dir.join("edited.png");
         std::fs::copy(&card, &edited).unwrap();
-        let (c, o) = (std::ffi::CString::new(edited.to_string_lossy().as_ref()).unwrap(), std::ffi::CString::new(dir.join("out.png").to_string_lossy().as_ref()).unwrap());
-        let mut msg = [0i8; 2048];
-        let r = unsafe { crate::ffi::ok_okcard_make(std::ptr::null(), c.as_ptr(), o.as_ptr(), msg.as_mut_ptr(), 2048) };
-        eprintln!("REMAKE save: r={r} {}", unsafe { std::ffi::CStr::from_ptr(msg.as_ptr()) }.to_string_lossy());
+        // (made from the card data alone, as a save did before an edited OK card kept its own pack: fails without the
+        // card's zipmods)
+        let lib = crate::oklib::configured_library().unwrap();
+        let r = crate::oklib::remake_from_card_data(&lib, std::path::Path::new("X:/NoGame"), &edited);
+        eprintln!("REMAKE save: {:?}", r.as_ref().map(|m| m.0.clone()));
+        assert!(r.is_err(), "the remake from card data alone was expected to fail without the zipmods");
         let (after, text) = open("after");
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(after, 0, "the card no longer opens after the failed save: {text}");
+    }
+
+    /// The reader's save of an edited OK card (ok_okcard_make) on a machine without the card's third-party zipmods: the
+    /// card keeps its own pack and answers, and every outfit of the saved card opens. OK_REMAKE_CARD overrides the card.
+    #[test]
+    #[ignore="local OK card (StreetHeroines/alice.png) and base library"]
+    fn edited_ok_card_saves_without_its_zipmods() {
+        std::env::set_var("OK_GAME_ROOT", "X:/NoGame");
+        let card = std::env::var("OK_REMAKE_CARD").unwrap_or_else(|_|
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../Content/CharacterCards/StreetHeroines/alice.png").to_owned());
+        let dir = std::env::temp_dir().join(format!("ok-resave-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (edited, out) = (dir.join("edited.png"), dir.join("out.png"));
+        std::fs::copy(&card, &edited).unwrap();
+        let (c, o) = (std::ffi::CString::new(edited.to_string_lossy().as_ref()).unwrap(), std::ffi::CString::new(out.to_string_lossy().as_ref()).unwrap());
+        let mut msg = [0i8; 2048];
+        let r = unsafe { crate::ffi::ok_okcard_make(std::ptr::null(), c.as_ptr(), o.as_ptr(), msg.as_mut_ptr(), 2048) };
+        let text = unsafe { std::ffi::CStr::from_ptr(msg.as_ptr()) }.to_string_lossy().into_owned();
+        eprintln!("RESAVE save: r={r} {text}");
+        assert_eq!(r, 0, "{text}");
+        let (src, made) = (std::fs::read(&card).unwrap(), std::fs::read(&out).unwrap());
+        for kind in [crate::oklib::PACK_CHUNK, crate::tree_answers::CHUNK] {
+            assert!(crate::oklib::png_chunk(&src, kind) == crate::oklib::png_chunk(&made, kind), "{} changed", String::from_utf8_lossy(kind));
+        }
+        assert_eq!(crate::oklib::card_identity(&src), crate::oklib::card_identity(&made), "identity changed");
+        let outfits = crate::tree_answers::outfit_count(&made) as i32;
+        for outfit in 0..outfits {
+            let game = std::ffi::CString::new("").unwrap();
+            let mut s = std::ptr::null_mut(); let mut err = [0i8; 1024];
+            let r = unsafe { crate::ffi::session_open(game.as_ptr(), o.as_ptr(), outfit, &mut s, err.as_mut_ptr(), 1024) };
+            assert_eq!(r, 0, "outfit {outfit}: {}", unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }.to_string_lossy());
+            unsafe { crate::ffi::session_free(s); }
+        }
+        eprintln!("RESAVE {outfits} outfits open");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// OK_DET_CARD=<OK card> OK_DET_OUTFIT=<index>: prints the part material digests of one open (run it in several processes

@@ -1559,6 +1559,53 @@ pub fn strip_ok_chunks(bytes: &[u8]) -> Result<Vec<u8>, String> {
 /// from the base library, the card's zipmods and the zipmods the game uses for it (`make_ok_card`), so the models
 /// list, digest and pack always match the card data.
 pub fn remake_ok_card(lib: &Path, game: &Path, card: &Path) -> Result<(String, usize, Vec<u8>, usize), String> {
+    // An OK card whose card data was edited still carries its pack and answers (the reader's save keeps the `ok*`
+    // chunks): when they still cover every outfit it is kept as it is, with its digest and models made again. Made
+    // from the zipmods only otherwise: a player without the card's third-party zipmods could not save an edited OK
+    // card at all (tester's alice, 2026-11-16: 30 things lacking).
+    let refreshed = match refresh_edited_ok_card(lib, card) {
+        Ok(Some(made)) => return Ok(made),
+        Ok(None) => None,
+        Err(e) => Some(e),
+    };
+    remake_from_card_data(lib, game, card).map_err(|e| match refreshed {
+        Some(own) => format!("{e} (with its own pack and answers: {own})"),
+        None => e,
+    })
+}
+
+/// `remake_ok_card` for an OK card carrying its answers (`okLt`): every outfit opened strictly from its own data and
+/// the shared resources, as a strict check does, then its `okLb` digest and models made again. None: not such a card.
+fn refresh_edited_ok_card(lib: &Path, card: &Path) -> Result<Option<(String, usize, Vec<u8>, usize)>, String> {
+    let bytes = std::fs::read(card).map_err(|e| format!("{}: {e}", card.display()))?;
+    if png_chunk(&bytes, CARD_CHUNK).is_none() || png_chunk(&bytes, crate::tree_answers::CHUNK).is_none() || png_has_chunk(&bytes, b"okPv") {
+        return Ok(None);
+    }
+    ensure_library(lib)?;
+    let store = active().ok_or("library not active")?;
+    // Nothing an earlier open in this process kept may stand in for this card's reads (as make_ok_card).
+    crate::unity::release_bundle_caches();
+    crate::clear_entry_memo();
+    store.forget_models();
+    open_outfits(lib, &bytes, "refresh")?;
+    let mut models: Vec<String> = card_models(&bytes).unwrap_or_default();
+    models.extend(store.touched().iter().map(id_hex));
+    models.sort();
+    models.dedup();
+    let nocache = std::env::var_os("OK_NOCACHE");
+    std::env::set_var("OK_NOCACHE", "1");
+    let digest = session_hash_outfit(lib, card, 0);
+    if nocache.is_none() { std::env::remove_var("OK_NOCACHE"); }
+    let (digest, parts, _) = digest?;
+    let payload = serde_json::to_vec(&serde_json::json!({"format":"oklib-card","version":1,"digest":digest,"models":models})).unwrap();
+    let made = crate::tree_answers::with_chunk(&bytes, CARD_CHUNK, &payload)?;
+    let pack = png_chunk(&made, PACK_CHUNK).map_or(0, <[u8]>::len);
+    eprintln!("ok-extract: {}: edited OK card kept its own pack and answers (digest {digest})", card.display());
+    Ok(Some((digest, parts, made, pack)))
+}
+
+/// `remake_ok_card` from the card data alone: OK chunks dropped, converted again from the zipmods.
+pub(crate) fn remake_from_card_data(lib: &Path, game: &Path, card: &Path) -> Result<(String, usize, Vec<u8>, usize), String> {
     let source = card_as_made(card)?;
     let (digest, parts, bytes, pack) = make_ok_card(lib, game, source.as_ref().map_or(card, |t| &t.0))?;
     let input = std::fs::read(card).map_err(|e| e.to_string())?;

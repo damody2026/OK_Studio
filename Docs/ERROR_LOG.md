@@ -4896,7 +4896,7 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 經過：另存走 `FinishOkCardSave` → `ok_okcard_make` → `remake_ok_card`：去掉 OK chunk（含卡內資源包 okLc）從基礎庫重轉。測試者沒有 `[nep] hibari stuff`／`klee stuff` zipmod，轉換在 strict 下記缺口並失敗。
 - 原因：`mods.rs` 的 `ZIP_AB_CACHE` 以「zipmod 路徑＋bundle」當鍵、整個程序共用，轉換時讀不到的結果（None）也存進去。之後正常開 alice，卡內資源包明明有同路徑的 bundle，`zipmod_one_unity3d_source` 卻拿到快取的 None，退去問 override，卡的 okLt 沒有這題（本來不必問）→ 缺口。
 - 修正：讀 bundle 期間這條執行緒記到 strict 缺口（`okstrict::gaps_on_thread` 有變）時不寫進 `ZIP_AB_CACHE`（`zipmod_one_unity3d_arc`、`zipmod_bundle_named`），和 `entries::pack_memo` 的規則一致。測試 `session::jump_probe_tests::failed_remake_leaves_the_card_openable`（ignored，需本機 alice 與基礎庫，`OK_GAME_ROOT=X:/NoGame`）修正前「after: r=1」同一訊息，修正後通過。
-- 未修：另存已編輯的 OK 卡會丟掉原卡的 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。
+- 另存的第二個問題（同日修）：另存已編輯的 OK 卡一律去掉 OK chunk 從 zipmod 重轉，丟掉卡內資源包 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。改成 `remake_ok_card` 先試 `refresh_edited_ok_card`：卡仍帶 okLb＋okLt（讀卡另存會保留 `ok*` chunk）時，用卡自己的資源包與答案嚴格開每套服裝，過了就只重算 okLb 的 digest 與 models，okLc／okLt／okId 原樣保留；開不過才走原本的 zipmod 重轉。讀卡實測：alice 身高改 0.8 →「另存新卡（身材／名稱）」made=1、資源包與原卡相同；新開讀卡直接開存出的卡，zipmod data used false、身高 0.8、畫面正常。測試 `edited_ok_card_saves_without_its_zipmods`。
 - 防範：程序共用的快取，鍵不含「哪張卡／哪個資源包」時，不能存 strict 缺口期間得到的結果，尤其是「沒有」。
 
 ## 2026-11-17 開場景效能：兩個做錯的推論（F 組 f-sceneload）
