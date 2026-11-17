@@ -122,6 +122,13 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   每个 worker 依序转 2–3 张时才有 −0.8 s wall／−1.3 s CPU。注意最后两列：**worker=2 加这项的 wall 和
   4 个 worker 差不多，CPU 却少三分之一** —— 使用者的目标机是 16 GB，每个 worker 自己扛一份库与快取，
   所以 worker 数不是愈多愈好。要两项的收益叠加，就让 worker 数小于卡数、每人依序转好几张。
+
+  **所以这项的收益随「每个 worker 分到的卡数」增加**：一人一张归零，一人 2–3 张约 −0.8 s wall，
+  一人 10 张（21 角色场景、worker=2）约 −6 s。f-sceneload 在它的 worker 实测里确认了这个位置
+  （`8bb19ca63`）：它量到的 `workers=2` → 21 角色 **58.0 s 里面已经含着这约 6 s**，没有这笔会是约 64 s。
+  值得记一句**为什么预设刚好落在收益最大的点**：worker 多会削掉这项的舞台（一人一张时归零），
+  而记忆体又不允许 worker 多（每个 ＋2.1 GB、第 5 个撞 16 GB），两个方向相反的约束从两头夹出 worker=2。
+  不是巧合，调 worker 数的人要知道往哪一边动都会让这项变差。
 - 转卡的次序迴归关卡：`Tools\ok_convert_order_check.lua`（小绯雪／Denia，2026-10-28 那个 bug）。动到
   `remake_ok_card` 的 view 身分、`with_zipmods_and`，或 `--oklib cards` 的 worker 配置，都要先跑它。
 - `library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门：整合保住 F 组的 gap guard
