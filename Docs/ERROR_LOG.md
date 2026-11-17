@@ -5252,3 +5252,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正：不必重新 cook base。編輯器建置是最新的前提下跑 Tools\lua\lua.exe Tools\rebuild_street_social_patch.lua，從目前源碼重新 cook 專案的 global shader map 與 ShaderArchive-Global，產出 RuntimeGlobalShaderPatch-<tag>_P.pak 放進 Saved/StreetSocial/Build/<patch>（這次是 NH1115.patch）。舊的 _P 修補包優先權高於新 cook 的 shader 庫，所以這個 patch 必須跟著源碼一起更新，即使跑了完整 cook 也一樣（協調者在 E 樹踩到）。
 - 驗證：重建 patch（2026-11-18 04:20）後 lowspec1118c 正常啟動，低配走路教堂→百貨 116 s 到達，無 Fatal。
 - 教訓：整合後只要有人動過 global shader（新外掛、Shaders/ 目錄），沿用舊 base 的 stage 都要先重建 patch；動 global shader 的提交應在訊息裡說一聲。
+
+## 2026-11-18 unreal_slot 獨占 claim 和同時進來的 claim 一起成功（C 組 c-lowspec 遇到）
+
+- 錯誤：05:52:48 c-lowspec 以 --need-gb 60 獨占 claim 拿到 slot1，05:52:49 f-yvonne-low 拿到 slot2，兩邊都成功，量測環境不再安靜。try_claim 先檢查其他 slot 再寫 owner.txt，中間要跑兩次 PowerShell 探測（數秒），另一個 claim 能在這段時間通過檢查。
+- 修正（5d0333e34）：檢查與寫入放進 UnrealSlots\claim.lock（mkdir 當鎖，超過 120 秒視為死鎖拆掉）；寫入後再查一次獨占衝突，衝突就退回 slot（擋住還沒更新的舊版腳本）。
+- 驗證：Tools\test_unreal_slot.lua 兩個 claim 同時進來（獨占在前／在後）只成功一個、兩個普通 claim 都成功；去掉鎖的陽性對照兩個競態用例都失敗。
+- 教訓：共用的「先查再寫」檔案協定要有原子步驟；測試要把檢查到寫入的窗口拉開（OK_UNREAL_SLOTS_FAKE pause）才測得到。
