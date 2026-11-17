@@ -686,7 +686,9 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  FString InterruptSaveBefore;
  FOKStreetActorPresence Presence[OKStreetCastCount];
  double StartedAt=0,ReadyAt=0,TestDoneAt=0,NextUI=0,LastWall=0,LineStart=0;
- FRandomStream Random{41729};
+ // Seeded from the clock: a fixed seed replayed the same rolls every launch (R15-34: the first topic rolls "60 17"
+ // twice, "60" 8 times in 78). The self-tests Initialize their own seed.
+ FRandomStream Random{int32(FPlatformTime::Cycles())};
  TArray<double> Frame,Game,Render,Rhi,Gpu;
 };
 
