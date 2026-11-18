@@ -134,6 +134,74 @@ UOKReaderScreen（DUI/Reader/ReaderScreen.dui → /Game/UI/Reader/WBP_ReaderScre
 
 MCP 用的新指令：`ok.ReaderScreen press <文字> [#N]`（按目前顯示、文字相同（找不到再找包含）的第 N 個控制項，等同滑鼠點）、`ok.ReaderScreen scroll <0–1>`（左欄捲到該位置，給長頁截圖）。
 
+### 打包版才出現的問題（2026-11-19）
+
+- **CPU 蒙皮讀回當機**：鏡頭列的構圖原本用 `FrameCurrentPose`（`GetCPUSkinnedVertices`），打包版在 render thread 的 `FSkeletalMeshObjectCPUSkin::CacheVertices` 存取違規。改用 `AKKPreviewActor::FrameCurrentPoseRealtime`：只用目前的關節與邊界框。
+- **Disregard for GC**：DreamGUI 字型換掉的圖集曾用 UPROPERTY 保留；打包版的預設字型在 disregard-for-GC 池，引用沒有 root 的物件，第一次 GC 就 fatal。改成和目前圖集一樣 AddToRoot，最多留 4 張，字型釋放時一起解除。
+- **新控制項要重新 cook**：`WBP_OKCardTile`、`WBP_OKPickTile` 是 2026-11-18 晚上才加的，用 `--skip-cook` 沿用更早 cook 的 base 打出來的 stage 沒有這兩個資產（log：`Reader control WBP_OKCardTile missing`），卡片牆與圖片格是空的。加了 `/Game/UI/Reader` 下的資產後要重新 cook，並換新的 `--base-dir`。
+- **缺 DreamGUI global shader 的 base**：沒有實測。降級路徑會改開舊版、在畫面與 log 寫出重建指示，不會 Fatal。
+
+### 換資源後立刻解除 root／釋放：DreamGUI 盤點（2026-11-19）
+
+| 地方 | 做法 | 結論 |
+|---|---|---|
+| 交給繪製的所有貼圖（圖片、精靈圖頁、字型圖集、縮圖、render target） | `UDreamCanvas::DrawTextureHolds`：繪製資料用到的貼圖持有強引用，不再用之後再留 8 幀 | 這是通則，GC 不會在畫布還拿著舊繪製資料時回收任何一張 |
+| 字型圖集擴張（`RenewFontTexture`） | 舊圖集保持 root，留最近 4 張 | 已修（同上一節） |
+| 動態／靜態精靈圖集頁（`UpdatePermanentHolderRoots`、`ReleasePermanentHolderRoots`） | 只替 disregard-for-GC 池裡的持有者 root 頁面；頁面本身由圖集的陣列持有 | 換頁後舊頁的繪製由 `DrawTextureHolds` 保住，不用改 |
+| 讀卡器縮圖 | 畫面自己的貼圖池，不交給 GC | 已修 |
+| 網格、uniform buffer（`DreamUIMeshComponent`、`DreamUIGizmoMesh`、render target 幾何） | 在 render thread 釋放，或以共享指標由最後一個持有者釋放 | 沒有提前釋放 |
+| 小工具與 tween（`MarkAsGarbage`） | 標垃圾，不是直接 `ConditionalBeginDestroy` | 沒有提前釋放 |
+
+GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolDefrag`），它搬動貼圖記憶體，不是 GC 回收。e-cardload 在 log 盤點時抓到的 `DXGI_ERROR_DEVICE_HUNG`（`fragment_02` MMU fault，停在 `FDreamUIRenderer::PostRenderView_RenderThread`，`Docs/CARD_READER_LOG_TRIAGE.md` 第 1 節），發生在讀卡器關掉整理之前的版本，症狀與位置都和這條相同。關掉整理後同類壓力沒有再重現；是哪一個 draw 還拿著被搬走貼圖的舊綁定，還沒找到。
+
+### 開卡失敗時的畫面（2026-11-19）
+
+使用者回報「換角色時套用上一個角色的物理、mesh 變形」：開卡失敗時舊模型留在畫面，但名牌、滑桿與選取已經是新卡，新卡的身形驅動舊模型。現在換別張卡失敗就退掉舊模型，只留錯誤訊息與卡片上的「開不了」；同一張卡換服裝或外觀失敗時才放回舊模型（`UOKCharacterController::RestoreStaleAfterFailedLoad`）。實拍：`E:\OpenKoikatsu\Saved\Reports\reader-failload-20261119\after-fail.png`。
+
+### MCP 能不能操作（2026-11-19）
+
+只要有控制項 MCP 碰不到，那條路徑上的 bug 就測不到。以控制項的種類列：
+
+| 控制項 | MCP 怎麼操作 | 實測 |
+|---|---|---|
+| 分頁、分類、二級選單、左欄寬度、捲動 | `ok.ReaderScreen tab／category／sub／width／scroll` | 完整驗證腳本逐頁走過 34 頁 |
+| 卡片牆的卡片 | `ok.ReaderScreen card <N>`（照清單順序），或 `press <名字>` | 30 張逐張開 |
+| 鏡頭列、圖片格、抽屜標題、「人物編輯」按鈕區、遊戲目錄頁 | `ok.ReaderScreen press <文字> [#N]` | 實測 |
+| 「眼睛：面向前方／看鼠標／看 Camera」（EyeMode，在「動作與表情」抽屜） | `press 動作與表情›眼睛：面向前方`（路徑），或目前顯示的完整文字；按一次換下一個模式，文字跟著變 | 2026-11-19 實測三個模式循環 |
+| 滑桿、數值、色碼、下拉、勾選（鏡像自 UMG） | `ui_set` 改原本的 UMG 控制項，DreamGUI 下一幀跟著變 | 沒有逐項實測 |
+| 3D 視窗的滑鼠（拖曳轉鏡頭、眼睛跟游標） | `ui_mouse`（走 Slate） | 實測；真實 `SendInput` 進不了遊戲，只能用 `ui_mouse` |
+| 只在 DreamGUI 有、沒有 UMG 來源的控制 | 都是按鈕，走 `press` | 新增時要能被 `press` 找到 |
+
+**控制項路徑**：每個顯示中的控制項有一條路徑，`ok.ReaderScreen controls [篩選]` 列出全部：
+
+- 區域或抽屜，或「分類›二級選單」，再接控制項。例如 `動作與表情›眼睛：面向前方`、`臉›眼睛›上眼瞼形狀1›重置`、`鏡頭›全身`、`抽屜›選擇動畫`、`分類›臉`、`卡片›Alice`。
+- 滑桿列裡的控制項前面加上該列的標籤。
+- 沒有文字、或文字是數值的控制項用種類命名（`Slider`、`Label`、`Input`…），數值會變，不拿來當名字。
+- 同一路徑的第二個以後加 ` #2`、` #3`，照畫面順序。
+
+`press` 的規則：
+
+- 文字帶 `›` 就照路徑比對，否則照顯示文字比對。先找完全相同的，沒有才找包含的。
+- 符合的超過一個時不按，回報 `ambiguous` 並列出各候選的路徑；要指定其中一個，用路徑或 `#N`。
+- 只有一個完全相同、但另有控制項包含這段文字時，照樣按下那一個，並列出另外那些的路徑。例如 `press 眼睛` 按的是「臉›眼睛」，同時列出 `動作與表情›眼睛：面向前方`。
+
+## 完整驗證結果（2026-11-19）
+
+腳本逐頁切換（每頁截圖）、照清單逐張開卡（等 log 的 `OK load3d result`）、每 5 張下一次 `obj gc`、六輪「切卡片來源＋隨機捲動＋點卡」壓力，最後檢查行程還在、log 的 `: Error:`。MCP 一律用 `OK_GAME_PID` 鎖住自己的行程。遊戲目錄暫時指向 `D:\XKoikatuSunshine`（測完還原）。
+
+| 項目 | 怎麼驗 | 開發版（編輯器 `-game`） | 打包版（stage `EFork1119g`，新 cook 的 `BaseE1119A`） |
+|---|---|---|---|
+| 每個分頁與控制項 | 34 頁逐頁切換、截圖 | 34／34 通過 | 32／34；「身子›全身」「身子›腿部」用 `press` 時和鏡頭列同名，被判成有歧義而不按（預期行為，腳本已改用 `category`／`sub`，第二輪 34／34） |
+| 30 張卡逐張開 | `ok.ReaderScreen card N` ＋「載入3D」，等 `OK load3d result ok=1` | 30／30，每張 1–4 秒 | 30／30 |
+| 切卡片來源與捲動 | 六輪切來源＋隨機捲動＋點卡 | 6／6 | 6／6 |
+| 連續 10 分鐘以上＋多次 GC | 全程計時，每 5 張 `obj gc` | 11 分鐘、13 次 GC，存活 | 第一輪 501 秒、6 次 GC 存活；同一行程第二輪約 15 分鐘時，開第 12 張卡發生 GPU PageFault（見下） |
+| log 沒有 `: Error:` | `grep ": Error:"` | 只有原本就有的 CommonUI `Using CommonUI without a CommonGameViewportClient` | 第一輪 0 個；第二輪的錯誤都是那次 PageFault |
+| 卡片格、圖片格 | 打包版要有 `WBP_OKCardTile`、`WBP_OKPickTile` | 有 | 舊 base 沒有（見上一節），重新 cook 後有 |
+| 開卡失敗 | 一張好卡、一張 `okLc` 開頭清零的壞卡，先好後壞 | 名牌、滑桿、模型一致（無模型＋錯誤訊息） | 未測 |
+| EyeMode 按鈕 | `press 動作與表情›眼睛：面向前方` 連按三次 | 三個模式循環，文字跟著變 | 有路徑 |
+
+**仍未解決**：打包版第二輪的 GPU PageFault。當時 `d3d12.VRAMTexturePoolDefrag` 已經是 0，breadcrumb 停在 `FrameRenderFinish › RenderFinish › ViewFamilyExtension(5) › ViewExtension(0)`（DreamGUI），發生在開卡後約 5 秒。不是 GC、也不是貼圖池整理，是第三條。log 保存在 `E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`。
+
 ## 「沒按滑鼠鍵，視野也會動」的排查（2026-11-18）
 
 使用者回報讀卡器的視野在滑鼠左鍵沒按住時會跟著滑鼠動。查過的方向與結論：

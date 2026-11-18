@@ -1420,27 +1420,131 @@ void UOKReaderScreen::ApplyWantedScopes()
 
 void UOKReaderScreen::ScrollLeftPage(float Progress){if(LeftScroll)LeftScroll->SetScrollProgress(FMath::Clamp(Progress,0.f,1.f));}
 
-bool UOKReaderScreen::PressControl(const FString& Text,int32 Index)
+namespace OKReaderPaths
 {
-	TArray<UOKDreamControl*> All;
+	// A drawer title without the fold arrow it shows.
+	static FString Title(const UOKDreamControl* D)
+	{
+		FString T=D->FixedText.IsEmpty()?D->GetShownText():D->FixedText;
+		T.TrimStartAndEndInline();
+		while(T.Len()&&FCString::Strchr(TEXT("▸▾►▼▶▲"),T[T.Len()-1]))T.LeftChopInline(1);
+		return T.TrimEnd();
+	}
+	// The kind of control (WBP_OKSlider_C: "Slider").
+	static FString Kind(const UOKDreamControl* C)
+	{
+		FString K=C->GetClass()->GetName();K.RemoveFromStart(TEXT("WBP_OK"));K.RemoveFromEnd(TEXT("_C"));return K;
+	}
+	// What a control is called: the text it shows, unless that is empty or a value (a number, which changes), then its kind.
+	static FString Name(const UOKDreamControl* C)
+	{
+		const FString T=C->GetShownText().TrimStartAndEnd();
+		if(T.IsEmpty())return Kind(C);
+		bool bValue=true;
+		for(TCHAR Ch:T)if(!(FChar::IsDigit(Ch)||Ch==TEXT('.')||Ch==TEXT('-')||Ch==TEXT('+')||Ch==TEXT('%')||Ch==TEXT(' ')||Ch==TEXT(','))){bValue=false;break;}
+		return bValue?Kind(C):T;
+	}
+	// The label of the row a control sits in: the first Label among its siblings (not itself), in a horizontal row only
+	// (a column's labels title the controls under them, not one row).
+	static FString RowLabel(const UOKDreamControl* C)
+	{
+		const UDreamWidget* P=C->GetParent();if(!P||!Cast<UDreamLayoutContainerHorizontalBox>(P->GetLayoutContainer()))return FString();
+		for(const UDreamWidget* W:P->GetChildren())
+			if(const UOKDreamControl* L=Cast<UOKDreamControl>(W);L&&L!=C&&Kind(L)==TEXT("Label"))
+			{
+				const FString N=Name(L);
+				if(N!=TEXT("Label"))return N;
+			}
+		return FString();
+	}
+}
+
+FString UOKReaderScreen::ControlPath(const UOKDreamControl* C) const
+{
+	if(!C)return FString();
+	const FString Caption=OKReaderPaths::Name(C);
+	auto Has=[C](const TArray<TObjectPtr<UOKDreamControl>>& List){for(const UOKDreamControl* X:List)if(X==C)return true;return false;};
+	if(Has(CardButtons))return TEXT("卡片›")+Caption;
+	if(Has(RailButtons))return TEXT("分類›")+Caption;
+	if(Has(SubButtons))return CurrentCategory()+TEXT("›")+Caption;
+	if(Has(Drawers))return TEXT("抽屜›")+OKReaderPaths::Title(C);
+	FString Leaf=Caption;
+	if(OKReaderPaths::Kind(C)!=TEXT("Label")){const FString Row=OKReaderPaths::RowLabel(C);if(!Row.IsEmpty()&&Row!=Caption)Leaf=Row+TEXT("›")+Caption;}
+	for(const UDreamWidget* P=C->GetParent();P;P=P->GetParent())
+	{
+		for(const UOKDreamControl* D:Drawers)if(IsValid(D)&&D->Body==P)return OKReaderPaths::Title(D)+TEXT("›")+Leaf;
+		if(P==CameraBarHost)return TEXT("鏡頭›")+Leaf;
+		if(P==LeftScroll)
+		{
+			FString Where=CurrentCategory();
+			if(Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub))Where+=TEXT("›")+Categories[Category].Groups[Sub].Name;
+			return Where+TEXT("›")+Leaf;
+		}
+	}
+	return Leaf;
+}
+
+// Every shown control and its path; a path two controls would share gets " #2", " #3" ... in screen order.
+static void OKReaderAllControls(const UOKReaderScreen* S,TArray<UOKDreamControl*>& All,TArray<FString>& Paths,
+	const TArray<TObjectPtr<UOKDreamControl>>& Controls,const TArray<TObjectPtr<UOKDreamControl>>& SubButtons,const TArray<TObjectPtr<UOKDreamControl>>& RailButtons,
+	const TArray<TObjectPtr<UOKDreamControl>>& Drawers,const TArray<TObjectPtr<UOKDreamControl>>& CardButtons)
+{
 	for(UOKDreamControl* C:Controls)if(IsValid(C))All.Add(C);
 	for(UOKDreamControl* C:SubButtons)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:RailButtons)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:Drawers)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:CardButtons)if(IsValid(C))All.AddUnique(C);	// the card list's tiles (by the name they show)
-	for(int32 Pass=0;Pass<2;++Pass)
+	All.RemoveAll([](const UOKDreamControl* C){return !C->GetShown();});
+	TMap<FString,int32> Seen;
+	for(const UOKDreamControl* C:All)
 	{
-		int32 Seen=0;
-		for(UOKDreamControl* C:All)
-		{
-			const FString& Caption=C->GetShownText();
-			if(Pass==0?Caption!=Text:!Caption.Contains(Text))continue;
-			if(!C->GetShown())continue;
-			if(Seen++==Index)return C->Press();
-		}
-		if(Seen)return false;
+		const FString P=S->ControlPath(C);
+		const int32 N=++Seen.FindOrAdd(P);
+		Paths.Add(N>1?FString::Printf(TEXT("%s #%d"),*P,N):P);
 	}
-	return false;
+}
+
+bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutNote)
+{
+	TArray<UOKDreamControl*> All;TArray<FString> Paths;
+	OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
+	// A path names one control; a text may name several. Exact first, then containing it.
+	const bool bPath=Text.Contains(TEXT("›"));
+	TArray<int32> Found;
+	for(int32 Pass=0;Pass<2&&Found.IsEmpty();++Pass)
+		for(int32 I=0;I<All.Num();++I)
+		{
+			const FString Name=bPath?Paths[I]:All[I]->GetShownText().TrimStartAndEnd();
+			if(Pass==0?Name==Text:Name.Contains(Text))Found.Add(I);
+		}
+	auto List=[&Paths](const TArray<int32>& Of){FString L;for(int32 I=0;I<Of.Num();++I)L+=FString::Printf(TEXT("\n  #%d %s"),I,*Paths[Of[I]]);return L;};
+	if(Found.IsEmpty()){if(OutNote)*OutNote=TEXT("no shown control named ")+Text;return false;}
+	int32 Pick=0;
+	if(Index>=0)
+	{
+		if(!Found.IsValidIndex(Index)){if(OutNote)*OutNote=FString::Printf(TEXT("only %d control(s) named %s:"),Found.Num(),*Text)+List(Found);return false;}
+		Pick=Index;
+	}
+	else if(Found.Num()>1){if(OutNote)*OutNote=FString::Printf(TEXT("ambiguous: %d controls named %s; give the path or #N:"),Found.Num(),*Text)+List(Found);return false;}
+	if(OutNote)
+	{
+		*OutNote=TEXT("pressed ")+Paths[Found[Pick]];
+		// A short name matched exactly while other controls contain it: say which, so a caller meaning one of them notices.
+		if(!bPath)
+		{
+			TArray<int32> Also;
+			for(int32 I=0;I<All.Num();++I)if(!Found.Contains(I)&&All[I]->GetShownText().Contains(Text))Also.Add(I);
+			if(Also.Num())*OutNote+=TEXT("\n(also containing it, by path:")+List(Also)+TEXT(")");
+		}
+	}
+	return All[Found[Pick]]->Press();
+}
+
+void UOKReaderScreen::ListControls(FOutputDevice& Out,const FString& Filter) const
+{
+	TArray<UOKDreamControl*> All;TArray<FString> Paths;
+	OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
+	for(const FString& P:Paths)if(Filter.IsEmpty()||P.Contains(Filter))Out.Log(P);
 }
 
 bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
@@ -1624,7 +1728,7 @@ bool OKReaderScreenUnderCursor()
 // For the game MCP (ui_exec) and tests: the screen's own navigation, which has no UMG control to set.
 //   ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state
 static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
-	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <text> [#N] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
+	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <path|text> [#N] | controls [filter] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld*,FOutputDevice& Out)
 	{
 		UOKReaderScreen* S=GScreen.Get();
@@ -1638,10 +1742,14 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		// "press <text> [#N]": the shown control with that text (the N-th of several, from 0) is clicked as the pointer would.
 		else if(Verb==TEXT("press"))
 		{
-			FString Text=Value;int32 Index=0;int32 Hash;
+			FString Text=Value;int32 Index=-1;int32 Hash;
 			if(Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
-			Done=!Text.IsEmpty()&&S->PressControl(Text,Index);
+			FString Note;
+			Done=!Text.IsEmpty()&&S->PressControl(Text,Index,&Note);
+			if(!Note.IsEmpty())Out.Log(Note);
 		}
+		// "controls [filter]": every shown control's path (what press takes), flagging paths two controls share.
+		else if(Verb==TEXT("controls"))S->ListControls(Out,Value);
 		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
 		else if(Verb==TEXT("card"))
 		{

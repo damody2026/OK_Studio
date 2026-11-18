@@ -132,8 +132,14 @@ public:
 	FString CurrentCategory() const;
 	bool SelectCategory(const FString& Name);
 	bool SelectSub(const FString& Name);
-	// Press the shown control with this text (the Index-th of several; exact text first, then containing it).
-	bool PressControl(const FString& Text,int32 Index);
+	// Press the shown control named by Text: its path ("動作與表情›眼睛：面向前方", ControlPath) or its text. A text
+	// several shown controls have (exactly, or failing that, containing it) is ambiguous: nothing is pressed unless
+	// Index (>=0, "#N") picks one, and OutNote lists the candidates' paths.
+	bool PressControl(const FString& Text,int32 Index,FString* OutNote=nullptr);
+	// Where a control is: region or drawer or category›sub, then the text it shows. Stable while the layout is.
+	FString ControlPath(const UOKDreamControl* C) const;
+	// Every shown control, path per line (ok.ReaderScreen controls).
+	void ListControls(FOutputDevice& Out,const FString& Filter) const;
 	// The card list: its N-th tile clicked as the pointer would, and that card's file (ok.ReaderScreen card).
 	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
 	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}
