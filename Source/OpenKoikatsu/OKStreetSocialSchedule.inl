@@ -188,6 +188,15 @@ void AOKStreetSocialScene::TickSchedules(){
   if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.Ext),E)&&E.IsValid()&&E->TryGetObjectField(TEXT("day_plan"),Day)&&int32((*Day)->GetNumberField(TEXT("day")))==S.Store.CalendarDay&&(*Day)->TryGetObjectField(TEXT("actors"),Actors)){
    TMap<int32,TArray<FOKStreetPlanBlock>> Kept;
    for(const auto& P:(*Actors)->Values){const int32 I=CharacterOf(FString(*P.Key));if(I<=0)continue;TArray<FOKStreetPlanBlock> Blocks;for(const auto& V:P.Value->AsArray())if(V->AsObject())Blocks.Add(OKRulesReadBlock(*V->AsObject()));Kept.Add(I,MoveTemp(Blocks));}
+   // A day planned before the at-home limit (plan.rs OUT_OF_REACH_MAX) is kept too: plan_reach splits what is over it,
+   // as plan_all does for a new day (c-conquest slot 29: her shift turned into five hours in her room, kept on load).
+   if(Kept.Num()==S.Manifest.Characters.Num()-1){
+    auto Reach=OKRulesRequest(TEXT("plan_reach"));Reach->SetNumberField(TEXT("day"),S.Store.CalendarDay);Reach->SetObjectField(TEXT("actors"),*Actors);
+    auto Favorites=MakeShared<FJsonObject>();for(const auto& P:(*Actors)->Values){const TSharedPtr<FJsonObject> Profile=S.MindProfiles.FindRef(FString(*P.Key));const TArray<TSharedPtr<FJsonValue>>* Fav=nullptr;if(Profile.IsValid()&&Profile->TryGetArrayField(TEXT("favorite_places"),Fav))Favorites->SetArrayField(FString(*P.Key),*Fav);}
+    Reach->SetObjectField(TEXT("favorites"),Favorites);
+    const TSharedPtr<FJsonObject> Fixed=OKRulesEval(S,Reach);const TSharedPtr<FJsonObject>* Changed=nullptr;
+    if(Fixed.IsValid()&&Fixed->TryGetObjectField(TEXT("actors"),Changed)){for(const auto& P:(*Changed)->Values){const int32 I=CharacterOf(FString(*P.Key));if(I<=0)continue;TArray<FOKStreetPlanBlock> Blocks;for(const auto& V:P.Value->AsArray())if(V->AsObject())Blocks.Add(OKRulesReadBlock(*V->AsObject()));Kept.Add(I,MoveTemp(Blocks));}
+     ApplyRulesEffects(S.Store,*Fixed);}}
    if(Kept.Num()==S.Manifest.Characters.Num()-1){S.Plans=MoveTemp(Kept);S.PlanDay=S.Store.CalendarDay;S.PlanBlock.Reset();S.PlanEaten.Reset();S.MorningPair={INDEX_NONE,INDEX_NONE};S.LifePairRoute.Reset();
     UE_LOG(LogTemp,Display,TEXT("Street plan: day %d as saved (%d heroines), not planned again"),S.PlanDay,S.Plans.Num());}}}
  if(S.PlanDay!=S.Store.CalendarDay){

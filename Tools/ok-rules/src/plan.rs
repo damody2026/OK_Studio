@@ -907,6 +907,30 @@ fn out_of_the_dorm(plan: &mut Vec<Block>, c: &Catalog, day: i32, weekday: i32, f
     }
 }
 
+/// A day planned before OUT_OF_REACH_MAX (kept in the save, not planned again on load): the same split applied to it.
+/// Request: day, actors {id: blocks}, favorites {id: [place]}. Answer: actors {id: blocks} for the plans it changed,
+/// moved [id]. Her birth day (a "birth" block) is left as it is, like plan_all.
+fn plan_reach(c: &Catalog, r: &Value) -> Result<Value, String> {
+    let day = r.get("day").and_then(Value::as_i64).ok_or("missing_field: day")? as i32;
+    let weekday = date(day, 8.0).weekday as i32;
+    let actors: BTreeMap<String, Vec<Block>> = serde_json::from_value(r.get("actors").cloned().unwrap_or(json!({}))).map_err(|e| format!("actors: {e}"))?;
+    let favorites: BTreeMap<String, Vec<String>> = serde_json::from_value(r.get("favorites").cloned().unwrap_or(json!({}))).unwrap_or_default();
+    let mut fx = Effects::default();
+    let (mut changed, mut moved) = (serde_json::Map::new(), Vec::new());
+    for (id, plan) in actors {
+        if plan.iter().any(|b| b.source == "birth") || longest_out_of_reach(&plan) <= OUT_OF_REACH_MAX {
+            continue;
+        }
+        let before = longest_out_of_reach(&plan);
+        let mut fixed = plan;
+        out_of_the_dorm(&mut fixed, c, day, weekday, favorites.get(&id).map(Vec::as_slice).unwrap_or(&[]));
+        fx.log(format!("Street plan: saved day {day} of {id} had {before} min at home on end, now {}", summary(&fixed)));
+        changed.insert(id.clone(), serde_json::to_value(&fixed).map_err(|e| e.to_string())?);
+        moved.push(json!(id));
+    }
+    Ok(json!({"actors": changed, "moved": moved, "effects": fx.into_value()}))
+}
+
 fn summary(plan: &[Block]) -> String {
     plan.iter().map(|x| format!("{:02}:{:02} {} {}", x.start / 60, x.start % 60, x.kind, if x.place.is_empty() { "street" } else { &x.place })).collect::<Vec<_>>().join(", ")
 }
@@ -1183,6 +1207,7 @@ pub fn eval(c: &Catalog, places: &PlacesTuning, kind: &str, r: &Value) -> Option
         "plan_alternative" => open_alternative(c, places, r),
         "plan_reachable" => reachable(c, r),
         "plan_set_promises" => plan_set_promises(c, r),
+        "plan_reach" => plan_reach(c, r),
         "weather" => Ok(json!({"raining": raining_at(day(), r.get("minute").and_then(Value::as_i64).unwrap_or(0) as i32)})),
         "holiday" => Ok(json!({"holiday": holiday_on(day())})),
         _ => return None,
@@ -1559,6 +1584,44 @@ mod tests {
         let doors = json!({"drinkshop": [0, 0], "park": [500, 0], "girls_dorm": [100, 0]});
         let a = open_alternative(c, &t.places, &json!({"block": {"start": 600, "end": 900, "place": "drinkshop", "kind": "leisure"}, "doors": doors, "from": [0, 0], "hours": 9.0, "weekday": 2, "home": "girls_dorm"})).unwrap();
         assert_ne!(a["block"]["place"], "girls_dorm", "{a}");
+    }
+
+    /// A real save (c-conquest play1 slot 30, 2010-09-04 day 3, written before OUT_OF_REACH_MAX): her shift turned into a
+    /// rest at the dorm, 09:49-15:00 at home on end. Loaded, that day is kept, not planned again: plan_reach fixes it.
+    #[test]
+    fn a_saved_day_at_home_five_hours_is_fixed_on_load() {
+        let t = Tuning::builtin();
+        let saved = json!([
+            {"start":0,"end":480,"place":"girls_dorm","kind":"sleep","source":"template"},
+            {"start":480,"end":510,"place":"breakfast","kind":"meal","source":"need","budget":17},
+            {"start":510,"end":548,"place":"","activity":"walk","kind":"leisure","source":"template"},
+            {"start":548,"end":589,"place":"","activity":"walk","kind":"leisure","source":"template"},
+            {"start":589,"end":600,"place":"girls_dorm","kind":"rest","source":"early","job_id":"drinkshop_staff"},
+            {"start":600,"end":900,"place":"girls_dorm","kind":"rest","source":"occupation","job_id":"drinkshop_staff"},
+            {"start":920,"end":980,"place":"cafe","kind":"social","source":"friends","budget":80},
+            {"start":980,"end":1034,"place":"restaurant","kind":"meal","source":"need","budget":55},
+            {"start":1034,"end":1088,"place":"","activity":"walk","kind":"leisure","source":"template"},
+            {"start":1088,"end":1148,"place":"bookstore","kind":"leisure","source":"favorite","budget":150},
+            {"start":1148,"end":1208,"place":"cafe","kind":"leisure","source":"favorite","budget":150},
+            {"start":1208,"end":1268,"place":"","activity":"walk","kind":"leisure","source":"template"},
+            {"start":1268,"end":1314,"place":"girls_dorm","kind":"rest","source":"template"},
+            {"start":1380,"end":1440,"place":"girls_dorm","kind":"sleep","source":"template"}
+        ]);
+        let before: Vec<Block> = serde_json::from_value(saved.clone()).unwrap();
+        assert!(longest_out_of_reach(&before) > OUT_OF_REACH_MAX);
+        let fine = json!([{"start":0,"end":420,"place":"girls_dorm","kind":"sleep"},{"start":420,"end":600,"place":"girls_dorm","kind":"rest"},{"start":600,"end":1440,"place":"cafe","kind":"leisure"}]);
+        let a = plan_reach(&t.catalog, &json!({"day": 3, "actors": {"alice": saved, "other": fine}, "favorites": {"alice": ["bookstore", "cafe"]}})).unwrap();
+        assert_eq!(a["moved"], json!(["alice"]), "{a}");
+        assert!(a["actors"].get("other").is_none(), "an untouched plan is not sent back: {a}");
+        let after: Vec<Block> = serde_json::from_value(a["actors"]["alice"].clone()).unwrap();
+        assert!(longest_out_of_reach(&after) <= OUT_OF_REACH_MAX, "{}", summary(&after));
+        // the rest of her day as it was, and every minute still covered as before
+        assert_eq!(after.iter().map(|b| b.end - b.start).sum::<i32>(), before.iter().map(|b| b.end - b.start).sum::<i32>());
+        assert!(after.iter().any(|b| b.source == "reach" && b.start == 589 + OUT_OF_REACH_MAX && b.end == 900), "{}", summary(&after));
+        // her birth day stays at home
+        let birth = json!([{"start":0,"end":420,"place":"girls_dorm","kind":"sleep"},{"start":420,"end":1380,"place":"girls_dorm","kind":"rest","source":"birth"}]);
+        let b = plan_reach(&t.catalog, &json!({"day": 3, "actors": {"x": birth}})).unwrap();
+        assert_eq!(b["moved"], json!([]));
     }
 
     #[test]
