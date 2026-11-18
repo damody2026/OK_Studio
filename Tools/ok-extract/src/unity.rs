@@ -1458,7 +1458,7 @@ fn cubemap_atlas(tex: &unity_asset_decode::texture::Texture2D) -> Option<(u32, u
             let mut px = vec![0u32; w * w];
             let decoded = match tex.format {
                 TextureFormat::BC6H => texture2ddecoder::decode_bc6(src, w, w, &mut px, false).is_ok(),
-                TextureFormat::BC7 => texture2ddecoder::decode_bc7(src, w, w, &mut px).is_ok(),
+                TextureFormat::BC7 => crate::unity::bc7::decode(src, w, w, &mut px).is_ok(),
                 TextureFormat::DXT5 => texture2ddecoder::decode_bc3(src, w, w, &mut px).is_ok(),
                 TextureFormat::DXT1 => texture2ddecoder::decode_bc1(src, w, w, &mut px).is_ok(),
                 _ => {
@@ -5463,6 +5463,8 @@ pub use tints::*;
 
 mod prefabs;
 pub use prefabs::*;
+
+mod bc7;
 
 #[cfg(test)]
 mod tests;
