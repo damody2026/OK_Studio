@@ -75,7 +75,9 @@ GPU 卡死（`DXGI_ERROR_DEVICE_HUNG`，2026-11-19 在讀卡器抓到一次）�
 
 `CardReaderDevelopment.cmd`／`StreetSocial.cmd` 開的是**使用者的視窗**，卡死了也不自動關——殺掉連畫面都來不及看。取而代之的是講清楚：啟動器印完 PID／Log 之後多一行 `Stuck? ... ok_hang_check.lua`，而 `Tools\lua\lua.exe Tools\ok_hang_check.lua` 會對每個登記中的遊戲（`Saved/OKControl/<pid>.json`）印一行「正常／沒有回應／行程已經不在」；沒有回應的那個另外印出 log 路徑、GPU crash dump 目錄（`Saved/Crashes`），以及要自己關的話該下的那一行 `ok-game-mcp call reader_stop '{"pid": N}'`。它只看不動，有卡住的回結束碼 2。
 
-想讓終端一直盯著，啟動時加 `-Watch`（或自己跑 `ok_hang_check.lua --watch --pid=N [--every=秒]`）：每 10 秒探一次 `/health`，沒回應的那一刻就印上面那幾行、然後以 2 結束，**同樣不碰那個行程**。log 與 dump 請留著，那是查卡死原因的唯一證據。
+**手開的 `.cmd` 本來就會盯著**：`CardReaderDevelopment.cmd`／`SceneEditor.cmd`／`StreetSocial.cmd` 啟動成功後，那個視窗會接著跑 `ok_hang_check.lua --watch-newest`（盯剛登記的那個遊戲）。判斷分兩段：先等它第一次回應（啟動要幾十秒，這段不算卡住；完全沒回應超過 240 s 才算），之後要**連續三次**（約 30 s）探 `/health` 不回才算卡住 —— 一次失敗可能只是它正忙著開一張大卡。卡住就印那幾行（log 是啟動器收據裡記的那一個真檔，不是目錄裡最新的）並以 2 結束，**不碰那個行程**；視窗可以隨時關掉，不影響遊戲。不想要就設 `OK_NO_HANG_WATCH=1`。自動化不受影響：`reader_launch`／`studio_launch` 呼叫的是 `Tools/run_*.lua`，不是 `.cmd`。自己盯別的：`ok_hang_check.lua --watch --pid=N [--every=秒] [--grace=秒]`，或啟動器的 `-Watch`。log 與 dump 請留著，那是查卡死原因的唯一證據。
+
+實測（2026-11-19，手開那條）：真的開一個讀卡器，`--watch` 先報「正常」，用 `NtSuspendProcess` 凍住後**連續 3 次（約 9 秒，`--every=3`）沒有回應 → 印出卡住那幾行、結束碼 2**，而且那個行程**還在**（事後自己 resume 再關）；「從來沒回應過」那條用 `--grace=9` 另外驗過。
 
 實測（2026-11-19）：把自己的讀卡器用 `NtSuspendProcess` 凍住（和 GPU 卡死一樣，通道在但不回應），`OK_MCP_TIMEOUT_CALL=8` 下 `ui_exec` 等 8 s → 探 `/health` 失敗 → `ended it (Win32_Process.Terminate)`，行程確實消失、結束碼非零；沒凍住時同樣的短期限不會誤殺（呼叫 1 s 內就回來了）。
 
