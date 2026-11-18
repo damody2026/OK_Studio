@@ -103,7 +103,13 @@ impl Mind {
         // otherwise read it on the game thread (~3 ms).
         {
             let s = shared.clone();
-            let _ = std::thread::Builder::new().name("ok-mind-preload".into()).spawn(move || s.memories.preload());
+            let _ = std::thread::Builder::new().name("ok-mind-preload".into()).spawn(move || {
+                // The finance data first: the street asks its summary within the first frames.
+                if let Some(f) = &s.finance {
+                    f.preload();
+                }
+                s.memories.preload();
+            });
         }
         Ok(Mind { shared, next_id: AtomicU64::new(1), workers: Mutex::new(workers) })
     }

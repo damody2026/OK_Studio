@@ -299,6 +299,16 @@ impl Finance {
         Ok(Finance { path, data: data_dir.to_path_buf(), book: Mutex::new(book), sports: OnceLock::new(), markets: [OnceLock::new(), OnceLock::new()], fx: [OnceLock::new(), OnceLock::new()], ret: 0.9, wallet: if wallet == "CNY" { "CNY".into() } else { "TWD".into() }, saved: Mutex::new(String::new()) })
     }
 
+    /// Market data, exchange rates and the sports board read now, off the game thread (ok-mind's preload thread): the
+    /// first `summary` after a load read them on the game thread, 72-179 ms in its third frame (2026-11-18).
+    pub fn preload(&self) {
+        for m in [Mkt::Cn, Mkt::Us] {
+            let _ = self.market(m);
+            let _ = self.twd_rate(m, 0);
+        }
+        let _ = self.sports();
+    }
+
     pub fn sports(&self) -> Result<Arc<Sports>, String> {
         self.sports.get_or_init(|| Sports::load(&self.data.join("StreetSocialData").join("sports"), self.ret).map(Arc::new)).clone()
     }

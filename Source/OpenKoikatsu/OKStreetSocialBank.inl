@@ -21,12 +21,13 @@ int64 AOKStreetSocialScene::NetWorthOf(const FOKStreetStore& C,TArray<TPair<FStr
  auto& S=*State;TArray<TPair<FString,int64>> P;
  P.Add({OKT(TEXT("ui.bank.wallet_label")),C.PlayerCash});P.Add({OKT(TEXT("ui.bank.demand_deposit_label")),C.PlayerBank});P.Add({OKT(TEXT("ui.bank.fixed_deposit_label")),OKStreetDepositsTotal(C.Banking)});
  FString Error;
- if(const auto Sum=Fin(TEXT("summary"),nullptr,Error)){
+ TSharedPtr<FJsonObject> Sum;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_NetWorthFinance);Sum=Fin(TEXT("summary"),nullptr,Error);}
+ if(Sum){
   const auto Acc=OKFinObj(Sum,TEXT("accounts"));
   P.Add({OKT(TEXT("ui.bank.a_shares_account_label")),int64(OKFinNum(OKFinObj(Acc,TEXT("cn")),TEXT("twd")))});P.Add({OKT(TEXT("ui.bank.us_account_converted_label")),int64(OKFinNum(OKFinObj(Acc,TEXT("us")),TEXT("twd")))});
   P.Add({OKT(TEXT("ui.bank.pending_bonus_label")),int64(OKFinNum(Sum,TEXT("unclaimed")))});
  }
- if(C.Company.Founded>=0)P.Add({OKT(TEXT("ui.bank.company_equity_label")),CompanyEquity(C)});if(C.Company.Estate.OwnerLoan)P.Add({OKT(TEXT("ui.bank.loan_to_company_label")),C.Company.Estate.OwnerLoan});
+ if(C.Company.Founded>=0){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_NetWorthCompany);P.Add({OKT(TEXT("ui.bank.company_equity_label")),CompanyEquity(C)});}if(C.Company.Estate.OwnerLoan)P.Add({OKT(TEXT("ui.bank.loan_to_company_label")),C.Company.Estate.OwnerLoan});
  int64 Owed=0;for(const auto& R:C.Relations)Owed+=R.OwesPlayer;if(Owed)P.Add({OKT(TEXT("ui.bank.her_owes_you_label")),Owed});
  int64 Held=0,Lent=0;for(const auto& E:C.Entrusts)if(E.Status==TEXT("open")){if(E.Kind==TEXT("entrust"))Held+=E.Principal;else Lent+=E.Principal;}
  if(Lent)P.Add({OKT(TEXT("ui.bank.her_recovery_capital_label")),Lent});if(Held)P.Add({OKT(TEXT("ui.bank.her_money_held_label")),-Held});
