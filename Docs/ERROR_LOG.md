@@ -5809,3 +5809,11 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **做错的事**：查「谁握着前一张卡的贴图」时，`obj refs` 回的是 `(refcounted<1>) ... not currently reachable but it does have 1 refcount set`，于是去找 `TStrongObjectPtr` 持有贴图的快取，找到 `Plugins/KKUnityBundle/.../KKTextureRuntime.cpp` 的 `RecentTextures`（768 MB 预算）就下了结论，还把它当成结果回报出去。推论链（refcount 的语义、预算对得上残留量、`w*h*4*4/3` 的 bytes 公式和 `ListTextures` 印的一模一样）全部成立，**唯独那条路径读卡器根本不走**。
 - **量出来的**：照着改完一跑，`ok.RuntimeTextureCache` 回 `kept 0 textures 0.0 MB ... hits=0 misses=0`。而且**旧 log 里早就写着** `OK readonly GPU textures hits=0 misses=0 metadata_rejections=0 source_bytes=0 entries=0`，一直是零，我没看那行。真的那份是同一个写法的孪生兄弟 `Plugins/KKRuntimePose/.../KKRuntimeMaterial.cpp` 的 `RecentRuntimeTextures`（512 MB 预算）。
 - **再犯前检查**：指认某份快取／某条路径是凶手之前，先用它自己的统计（命中数、项目数，或临时加一条指令）确认**那条路径真的被走到**；旧 log 里已经有的那一行统计要先看完。推论链成立不代表那段程式有在跑。
+
+## 2026-11-19：把「插件有 12 個 collider」讀成「12 個都會掛上」（f-yvonne 的結論有誤，e-cardload-physics 核對後更正）
+
+- **做錯的事**：f-yvonne 留下的保真缺口寫成「原作把那 12 個手臂／大腿 collider 掛到每一條 DynamicBone 鏈上，而讀卡器只把腿的那幾個給了 `ct_clothesBot`」，協調者照這條交辦下來要修。
+- **核對原作之後**（`D:\XKoikatuSunshine\kks_decomp\plugins\KKS_Plugins\KKS_Colliders\KK_Plugins\Colliders.cs`；注意遊戲根目錄現在是 `D:\XKoikatuSunshine`）：地板 collider（`cf_j_root`，半徑 100、中心 y=−100.01）加到**每一條** `DynamicBone` 與 `DynamicBone_Ver02`；**手臂那 6 個只加到左右胸的 `DynamicBone_Ver02`**（`Comment` 是「左胸／右胸」，`UpdateArmCollidersBreastDB`），而且 `UpdateArmCollidersSkirtDB` 對 `ct_clothesBot` 是**主動移除**；**大腿那 6 個只加到 `ct_clothesBot`**（`UpdateLegCollidersSkirtDB`，Skirt Colliders 開著時），另外 root 名第四段為 0 的鏈設 `m_FreezeAxis=X`。`BepInEx/config/com.deathweasel.bepinex.colliders.cfg` 的 Skirt 那條說明也只提「腿與裙子」。
+- **讀卡器本來就一致**：`Tools/ok-extract/src/dbone/game_colliders.rs` 的 `ordinary_colliders` 只在 `component_name=="ct_clothesBot"` 且 `flags.skirt` 時加腿、floor 一律加；`breast_colliders` 的手臂只套 `kind: Some(0|1)`（左右胸）；`freeze_axis` 規則也在。E-058 當初就記過「臂／腿 collider 只處理裙子用 `ct_clothesBot`」。
+- **結論：不要再改。** 長髮／外套穿過手臂在原作也會發生，那不是缺陷；使用者的常駐要求是「和原作一樣」，所以連開關都不做。要「比原作更不穿模」是功能增強，等使用者自己提。
+- **再犯前檢查**：拿到「原作會 X、我們沒做 X」這種保真缺口時，先自己讀原作那段程式確認 X 的**條件**（掛到哪些鏈、有沒有篩選、有沒有反向移除），再決定動不動工；「插件裡有這些資料」不等於「每條鏈都會套用」。
