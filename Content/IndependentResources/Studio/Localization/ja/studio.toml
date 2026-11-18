@@ -1,0 +1,10 @@
+# OK Studio の UI テキスト（Plugins/OKStudio OKStudioText.cpp が読む；ICU MessageFormat、単純な引数のみ）。
+"load.title" = "シーンを読み込み中"
+"load.progress" = "{total, number} 個中 {built, number} 個を構築済み"
+"load.percent" = "{percent, number}%"
+"load.waiting" = "準備中…"
+"load.stage_read" = "シーンカードを読み込み中…"
+"load.stage_cards" = "キャラカードを変換中 {done, number} / {total, number}"
+"load.stage_objects" = "シーンのオブジェクトを整理中 {done, number} / {total, number}"
+"load.stage_open" = "シーンを開いています…"
+"load.stage_release" = "前のシーンを解放中…"

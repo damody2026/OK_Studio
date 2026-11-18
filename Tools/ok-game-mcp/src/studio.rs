@@ -38,6 +38,72 @@ impl Studio {
         })
     }
 
+    /// The process listening on this studio's port (Get-NetTCPConnection), or None.
+    fn owner(&self) -> Option<u32> {
+        let script = format!(
+            "(Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort {} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess",
+            self.port
+        );
+        let out = Command::new("powershell").args(["-NoProfile", "-Command", &script]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok().filter(|p| *p != 0)
+    }
+
+    fn alive(pid: u32) -> bool {
+        Command::new("powershell")
+            .args(["-NoProfile", "-Command", &format!("[bool](Get-Process -Id {pid} -ErrorAction SilentlyContinue)")])
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("true"))
+    }
+
+    fn wait_gone(pid: u32, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if !Self::alive(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        !Self::alive(pid)
+    }
+
+    /// studio_stop: asks the studio to quit (app.quit, or leave with discard: no unsaved-changes dialog), then waits for
+    /// its process to end. A quit request that answered ok proves nothing: the dialog can hold the process (2026-11-18,
+    /// an imported scene's editor stayed up after studio_stop and its slot was released). force ends that one process.
+    pub fn stop(&self, a: &Value) -> Result<Value> {
+        let discard = a["discard"].as_bool().unwrap_or(false);
+        let force = a["force"].as_bool().unwrap_or(false);
+        let pid = self.owner();
+        let asked = if discard { self.call("leave", &json!({})) } else { self.call("cmd", &json!({"id": "app.quit"})) };
+        let text = |v: Value, err: bool| json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}], "isError": err});
+        // What the studio answered to the quit request: {"ok": true} when it took it, {"busy": ...} when it refused it.
+        let request = match &asked {
+            Ok(v) => v.clone(),
+            Err(e) => json!(format!("{e:#}")),
+        };
+        let Some(pid) = pid else {
+            // Nothing listened on the port: either not running, or it never opened its control server.
+            return Ok(match asked {
+                Ok(_) => text(json!({"stopped": true, "pid": null, "how": "no process listened on the port after the request"}), false),
+                Err(e) => text(json!({"stopped": true, "pid": null, "how": format!("not running on port {} ({e:#})", self.port)}), false),
+            });
+        };
+        if Self::wait_gone(pid, Duration::from_secs(20)) {
+            return Ok(text(json!({"stopped": true, "pid": pid, "how": if discard { "leave (unsaved changes discarded)" } else { "app.quit" }}), false));
+        }
+        if force {
+            let _ = Command::new("powershell")
+                .args(["-NoProfile", "-Command", &format!("Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Invoke-CimMethod -MethodName Terminate | Out-Null")])
+                .output();
+            let gone = Self::wait_gone(pid, Duration::from_secs(10));
+            return Ok(text(json!({"stopped": gone, "pid": pid, "how": "terminated (CIM) after the quit request did not end it", "request": request}), !gone));
+        }
+        Ok(text(
+            json!({"stopped": false, "pid": pid, "request": request,
+                   "how": "still running 20 s after the quit request. request ok: the unsaved-changes dialog holds it (studio_stop discard=true quits without it); request busy: the studio refused it; force=true ends the process either way."}),
+            true,
+        ))
+    }
+
     pub fn up(&self) -> bool {
         self.call("state", &json!({})).is_ok_and(|r| r["ok"] == true)
     }
@@ -138,8 +204,10 @@ pub fn tools() -> Vec<Value> {
                  "no_build": {"type": "boolean", "description": "skip the editor rebuild check (-NoBuild)"},
                  "options": {"type": "array", "items": {"type": "string"}, "description": "more Unreal arguments after --"},
                  "timeout_s": {"type": "number"}}), &[]),
-        t("studio_stop", "Quit OK Studio (the command app.quit; it may ask about unsaved changes in its own UI).", json!({}), &[]),
-        t("studio_state", "The scene: scene_file, dirty, selection ids, primary, objects [{id, parent, name, kind, visible, attach_bone, location, rotation, scale, error?}], ui (ui.commands: the command ids for studio_cmd), busy, timeline {time, duration, playing}.",
+        t("studio_stop", "Quit OK Studio and wait until its process has really ended (up to 20 s). Returns {stopped, pid, how}. By default it quits like the menu (app.quit), which waits on the unsaved-changes dialog when the scene has unsaved edits (an imported scene always has): then the reply is an error saying the process still runs. discard=true quits without that dialog (unsaved edits are lost); force=true also ends the process if it is still there after the wait (CIM Terminate of the process listening on this studio's port only, never another one).",
+          json!({"discard": {"type": "boolean", "description": "quit without asking about unsaved changes (they are lost)"},
+                 "force": {"type": "boolean", "description": "end the process if it is still running after the wait"}}), &[]),
+        t("studio_state", "The scene: scene_file, dirty, selection ids, primary, objects [{id, parent, name, kind, visible, attach_bone, location, rotation, scale, error?}], ui (ui.commands: the command ids for studio_cmd), busy, timeline {time, duration, playing}, loading {shown, scene, step, text, done, total} (the loading box: step is a text id such as load.stage_cards, or build while objects build).",
           json!({}), &[]),
         t("studio_inspect", "Everything about one object.", json!({"id": id("object id from studio_state")}), &["id"]),
         t("studio_catalog_search", "Search what can be added or applied: items, effects, maps, animations, poses, cards. query: space-separated terms that must all match; -word excludes. Returns [{kind, key, name, path?}]; key is what studio_spawn item/effect and studio_pose anim take, path what card / pose_file take.",
@@ -306,7 +374,7 @@ pub fn run(studio: &Studio, name: &str, a: &Value) -> Result<Value> {
             let r = studio.launch(a)?;
             json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&r).unwrap_or_default()}], "isError": false})
         }
-        "studio_stop" => reply("cmd", studio.call("cmd", &json!({"id": "app.quit"}))?),
+        "studio_stop" => studio.stop(a)?,
         // Both answer {file}; ui_shot writes it a frame or two later, image_part waits up to 15 s for it.
         "studio_capture" | "studio_ui_shot" => {
             let op = &name["studio_".len()..];

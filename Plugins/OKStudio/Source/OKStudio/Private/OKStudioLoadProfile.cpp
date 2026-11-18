@@ -28,6 +28,8 @@
 #include "Serialization/JsonSerializer.h"
 #include "UnrealClient.h"
 #include "ShaderCompiler.h"
+#include "RHIStats.h"
+#include "DynamicRHI.h"
 
 namespace
 {
@@ -42,8 +44,18 @@ namespace
 		bool bLoading = false;
 		double Start = 0., LoadCallMs = 0.;
 		int32 Frames = 0, ShotWait = 0, ShotExtra = 0;
+		/** OK_SCENE_PROFILE_SHOT_LOADING: the build frame to photograph the screen on (0: none). */
+		int32 LoadingShotFrame = 0;
 		FString ShotPath;
-		double PeakUsedGb = 0.;
+		/** The row of the scene that is settling, the clock since it was ready, and how long the shader compiler has
+		 *  been idle. ready_ms stops when no object is waiting to be built, which is not when the user can look at the
+		 *  scene: not drawing the world while it builds (ok.Studio.LoadSkipDraw) can push the first frame's shader and
+		 *  material work past that line, and a metric that stops earlier would call that an improvement. */
+		TSharedPtr<FJsonObject> SettleRow;
+		double SettleStart = 0.;
+		int32 SettleIdle = 0, SettleFrames = 0;
+		double PeakUsedGb = 0., PeakCommitGb = 0., PeakVramGb = 0., VramBudgetGb = 0.;
+		bool bVramOverBudget = false;
 		TArray<TSharedPtr<FJsonValue>> Rows;
 
 		/** OK_SCENE_PROFILE_DUMP=1: what the built scene is, so two runs can be compared object by object. Opening a
@@ -121,11 +133,46 @@ namespace
 				if (!ShotPath.IsEmpty()) { FScreenshotRequest::RequestScreenshot(ShotPath, false, false); ShotPath.Reset(); ShotWait = 5; }
 				return true;
 			}
+			// Ready, but is it done? The world draws again from here, so the work the build deferred lands in these
+			// frames. Settled means the shader compiler has been idle for 30 frames in a row (settle_timeout=1 if it
+			// never was within a minute of frames).
+			if (SettleRow.IsValid())
+			{
+				++SettleFrames;
+				SettleIdle = (GShaderCompilingManager && GShaderCompilingManager->IsCompiling()) ? 0 : SettleIdle + 1;
+				if (SettleIdle < 30 && SettleFrames < 3600) return true;
+				SettleRow->SetNumberField(TEXT("settle_ms"), (FPlatformTime::Seconds() - SettleStart) * 1000.);
+				SettleRow->SetNumberField(TEXT("settle_frames"), SettleFrames);
+				SettleRow->SetNumberField(TEXT("settle_timeout"), SettleFrames >= 3600 ? 1 : 0);
+				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: settled %.0f ms after ready over %d frames%s"),
+					(FPlatformTime::Seconds() - SettleStart) * 1000., SettleFrames, SettleFrames >= 3600 ? TEXT(" (gave up waiting)") : TEXT(""));
+				SettleRow.Reset();
+			}
 			if (bLoading)
 			{
 				++Frames;
+				// OK_SCENE_PROFILE_SHOT_LOADING=<frame>: a picture of the screen WHILE the scene builds, which is the
+				// only way to see what the user is looking at when ok.Studio.LoadSkipDraw stops the world being drawn.
+				// bShowUI must be true: the first version of this passed false, which leaves the UI and the on-screen
+				// progress line out of the capture - exactly the part this picture exists to check (2026-11-18, the
+				// capture came back black for the drawn run too, so it proved nothing either way).
+				if (Frames == LoadingShotFrame && LoadingShotFrame > 0)
+					FScreenshotRequest::RequestScreenshot(FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_loading.png"), *FPaths::GetBaseFilename(Scenes[Scene])), true, false);
 				// A bigger per-frame budget builds more at once: the memory the renderer has not freed yet is the risk.
-				PeakUsedGb = FMath::Max(PeakUsedGb, FPlatformMemory::GetStats().UsedPhysical / double(1 << 30));
+				// Three numbers, because they run out separately and the target machine is 16 GB RAM / 8 GB VRAM:
+				// the working set (what this process holds in RAM), the commit charge (what it has asked the OS to
+				// back, which is what fails first on a small page file), and the GPU's own local memory.
+				const FPlatformMemoryStats Mem = FPlatformMemory::GetStats();
+				PeakUsedGb = FMath::Max(PeakUsedGb, Mem.UsedPhysical / double(1 << 30));
+				PeakCommitGb = FMath::Max(PeakCommitGb, Mem.UsedVirtual / double(1 << 30));
+				FRHIMemoryStats Vram;
+				RHIGetMemoryStats(Vram);
+				if (Vram.IsValid())
+				{
+					PeakVramGb = FMath::Max(PeakVramGb, Vram.UsedLocal / double(1 << 30));
+					VramBudgetGb = Vram.BudgetLocal / double(1 << 30);
+					if (Vram.IsOverBudget()) bVramOverBudget = true;
+				}
 				if (!Ready(Game)) return true;
 				const double ReadyMs = (FPlatformTime::Seconds() - Start) * 1000.;
 				const AOKSceneActor::FLoadStats& S = Game.SceneActor->LoadStats;
@@ -137,6 +184,10 @@ namespace
 				Row->SetNumberField(TEXT("build_ms"), ReadyMs - LoadCallMs);
 				Row->SetNumberField(TEXT("build_frames"), Frames);
 				Row->SetNumberField(TEXT("peak_used_gb"), PeakUsedGb);
+				Row->SetNumberField(TEXT("peak_commit_gb"), PeakCommitGb);
+				Row->SetNumberField(TEXT("peak_vram_gb"), PeakVramGb);
+				Row->SetNumberField(TEXT("vram_budget_gb"), VramBudgetGb);
+				Row->SetNumberField(TEXT("vram_over_budget"), bVramOverBudget ? 1 : 0);
 				Row->SetNumberField(TEXT("character_open_ms"), S.CharacterOpenMs);
 				Row->SetNumberField(TEXT("character_continue_ms"), S.CharacterContinueMs);
 				Row->SetNumberField(TEXT("character_build_ms"), S.CharacterBuildMs);
@@ -154,12 +205,18 @@ namespace
 				Row->SetNumberField(TEXT("sync_same_ms"), S.SyncSameMs);
 				Row->SetNumberField(TEXT("sync_world_ms"), S.SyncWorldMs);
 				Row->SetNumberField(TEXT("sync_place_ms"), S.SyncPlaceMs);
+				Row->SetNumberField(TEXT("sync_live_ms"), S.SyncLiveMs);
+				Row->SetNumberField(TEXT("sync_map_ms"), S.SyncMapMs);
+				Row->SetNumberField(TEXT("sync_gate_ms"), S.SyncGateMs);
+				Row->SetNumberField(TEXT("sync_loop_ms"), S.SyncLoopMs);
 				Row->SetNumberField(TEXT("characters"), S.Characters);
 				Row->SetNumberField(TEXT("items"), S.Items);
 				Row->SetNumberField(TEXT("others"), S.Others);
 				Row->SetNumberField(TEXT("syncs"), S.Syncs);
 				Row->SetNumberField(TEXT("starved_syncs"), S.StarvedSyncs);
 				Row->SetNumberField(TEXT("objects"), Game.Document ? Game.Document->Objects.Num() : 0);
+				// One per Sync is what the scope costs; many more would mean the saving moved into rebuilding the index.
+				Row->SetNumberField(TEXT("find_index_builds"), Game.Document ? Game.Document->FindIndexBuilds() : 0);
 				Rows.Add(MakeShared<FJsonValueObject>(Row));
 				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: %s pass=%d ready=%.0f ms (open+release=%.0f build=%.0f over %d frames) chars=%d (open=%.0f continue=%.0f build=%.0f) items=%d (build=%.0f: model=%.0f open=%.0f worker_open=%.0f spawn=%.0f node=%.0f cameras=%.0f) map=%.0f starved=%d/%d"),
 					*FPaths::GetCleanFilename(Scenes[Scene]), Pass, ReadyMs, LoadCallMs, ReadyMs - LoadCallMs, Frames,
@@ -180,15 +237,25 @@ namespace
 				if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_DUMP")) == TEXT("1"))
 					Dump(Game, FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_pass%d.json"), *FPaths::GetBaseFilename(Scenes[Scene]), Pass));
 				bLoading = false;
+				// Measured after ready, unless a picture is being taken: that wait has its own shader-compiler loop and
+				// would be counted as settling.
+				if (ShotWait <= 0)
+				{
+					SettleRow = Row;
+					SettleStart = FPlatformTime::Seconds();
+					SettleIdle = 0;
+					SettleFrames = 0;
+				}
 				if (++Pass >= Repeats) { Pass = 0; ++Scene; }
-				if (ShotWait > 0) return true; // the picture is written over the next frames, before the next scene replaces it
+				if (ShotWait > 0 || SettleRow.IsValid()) return true; // the picture, or the settle, needs the next frames
 			}
 			if (Scene >= Scenes.Num()) { Finish(); return false; }
 			// The stats belong to this load alone; the clock starts with the blocking call a click makes.
 			if (Game.SceneActor) Game.SceneActor->LoadStats = AOKSceneActor::FLoadStats();
 			FString Error;
 			Frames = 0;
-			PeakUsedGb = 0.;
+			PeakUsedGb = PeakCommitGb = PeakVramGb = VramBudgetGb = 0.;
+			bVramOverBudget = false;
 			ShotExtra = 0;
 			ShotPath.Reset();
 			Start = FPlatformTime::Seconds();
@@ -226,6 +293,7 @@ namespace
 			if (Run->Scenes.IsEmpty()) { UE_LOG(LogTemp, Error, TEXT("OKStudio.ProfileSceneLoad: %s lists no scene"), *ListFile); return; }
 			Run->Repeats = Args.Num() > 0 && Args[0].IsNumeric() ? FMath::Clamp(FCString::Atoi(*Args[0]), 1, 20) : 3;
 			Run->bExit = Args.Contains(TEXT("exit"));
+			Run->LoadingShotFrame = FCString::Atoi(*FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_SHOT_LOADING")));
 			FString Tag = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_TAG"));
 			if (Tag.IsEmpty()) Tag = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
 			Run->Out = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Reports/scene-load") / (Tag + TEXT(".json")));

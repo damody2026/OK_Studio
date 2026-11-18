@@ -38,6 +38,9 @@
 #include "OKStudioPose.h"
 #include "OKStudioImport.h"
 #include "OKStudioImportSettings.h"
+#include "SOKStudioLoadOverlay.h"
+#include "OKStudioText.h"
+#include "Misc/ScopeExit.h"
 #include "OKSceneCard.h"
 #include "KKAnimatedPng.h"
 #include "NiagaraComponent.h"
@@ -221,6 +224,9 @@ UOKStudioGame* UOKStudioGame::Start(UWorld* World, const FString& InFile, FStrin
 			return true;
 		};
 		if (const TSharedPtr<SViewport> Viewport = GEngine->GameViewport->GetGameViewportWidget()) HideOthers(Viewport.ToSharedRef());
+		// Added after the other branches are hidden, so it stays: a loading scene shows its progress over everything.
+		Game->LoadOverlay = SNew(SOKStudioLoadOverlay).Game(Game);
+		GEngine->GameViewport->AddViewportWidgetContent(Game->LoadOverlay.ToSharedRef(), 30);
 		if (APlayerController* PC = World->GetFirstPlayerController())
 			if (AHUD* HUD = PC->GetHUD(); HUD && HUD->bShowHUD) { HUD->bShowHUD = false; Game->HiddenHUDs.Add(HUD); }
 	}
@@ -409,6 +415,8 @@ void UOKStudioGame::Stop()
 		if (PC && PreviousViewTarget.IsValid() && PC->GetViewTarget() == Viewer) PC->SetViewTarget(PreviousViewTarget.Get());
 	}
 	if (PanelHost && GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(PanelHost.ToSharedRef());
+	if (LoadOverlay && GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(LoadOverlay.ToSharedRef());
+	LoadOverlay.Reset();
 	for (const TPair<TWeakPtr<SWidget>, EVisibility>& W : HiddenViewportWidgets) if (const TSharedPtr<SWidget> Widget = W.Key.Pin()) Widget->SetVisibility(W.Value);
 	HiddenViewportWidgets.Reset();
 	for (const TWeakObjectPtr<AHUD>& HUD : HiddenHUDs) if (HUD.IsValid()) HUD->bShowHUD = true;
@@ -842,10 +850,16 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 {
 	FString Note;
 	const double OpenStart = FPlatformTime::Seconds();
+	// The open holds the game thread (a KStudio scene is imported inside it): the loading box shows what it is doing
+	// until the build takes over with its own progress.
+	SOKStudioLoadOverlay::BeginStage(FPaths::GetBaseFilename(Path));
+	ON_SCOPE_EXIT { SOKStudioLoadOverlay::EndStage(); };
+	SOKStudioLoadOverlay::SetStage(TEXT("load.stage_open"), OKStudioT(TEXT("load.stage_open")));
 	if (!FOKSceneCard::Open(Path, Document, OutError, &Note)) return false;
 	const double Opened = FPlatformTime::Seconds();
 	UE_LOG(LogTemp, Display, TEXT("OK studio: opened %s in %.2f s: %s"), *Path, Opened - OpenStart, *Note);
 	FOKStudioSettings::Get().UseScene(Path);
+	SOKStudioLoadOverlay::SetStage(TEXT("load.stage_release"), OKStudioT(TEXT("load.stage_release")));
 	// A KStudio scene is imported, not edited in place: saving writes an OK scene card beside it.
 	File = FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? FString() : Path;
 	ReleaseSceneResources();

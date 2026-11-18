@@ -5391,3 +5391,179 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **症狀**：之後再建置，`Module.OpenKoikatsu.5.cpp` 在 `DreamUITextData.h(431–455)` 報 C2059／C2589。原因已證實：剛改過的檔案被 UBT 的 adaptive build 排除在 unity 檔外單獨編譯，所以提交前編得過；檔案不再是「修改中」以後（例如乾淨的 clone）就併進 unity 檔，排在某個含 Windows 標頭的原始檔後面，`winnls.h` 的 `HIGH_SURROGATE_START` 等巨集把 DreamGUI 的同名常數替換掉。
 - **處置**：include 前後 `push_macro`／`#undef`／`pop_macro` 這四個名字；以 `-DisableAdaptiveUnity` 建置遊戲與編輯器目標確認（9d4126d18）。4261dd9ea 到 9d4126d18 之間的提交，在乾淨工作樹編不過。
 - **再試前檢查**：新增或大改 `.cpp`，提交前加跑一次 `-DisableAdaptiveUnity`（至少遊戲目標），不能只看本機的增量建置。
+## 2026-11-18 Build.bat 接了 `| tail` 之后回 exit 0，把失败的建置当成成功（F 组 f-sceneload）
+
+- **变更**：背景跑 `Build.bat OpenKoikatsuEditor ... 2>&1 | tail -5`，只想看结尾几行。
+- **症状**：工作回报 `exit code 0`，看起来建置过了；实际是 `Result: Failed (OtherCompilationError)`。失败原因无害（编译全过，连结时 `LNK1104`：别组的编辑器正载着 `Plugins/OKStudio/Binaries/Win64/UnrealEditor-OKStudio.dll`，UBA 等 20 秒后放弃），但如果当成成功就会拿旧 DLL 去量测，并把结果当成新码的。
+- **原因**：管线的退出码是**最后一个指令**的（`tail` 一定成功），不是 `Build.bat` 的。`tail -5` 又刚好把 UBT 打在中间的错误行切掉，只留下时间统计。
+- **处置**：判断建置成不成一律看输出里的 `Result:` 那行（或用 `PIPESTATUS`／不接管线）；`tail` 的行数不够时改 `grep -E "^Result|error|LNK|C[0-9]{4}"`。
+- **再试前检查**：共用工作树上连结 `Plugins/*/Binaries` 的 DLL，要先确认没有别组的编辑器开着——那不是自己的码坏了，也不可以去关别人的进程，等就好。
+
+## 2026-11-18 以为自己的 Unreal 行程已经结束，实际还满载跑着，污染了别组的独占量测（F 组 f-sceneload）
+
+- **变更**：借用的 slot 到期（`until`）前把自己的 `UnrealEditor-Cmd.exe`（自动化测试，还没跑完）杀掉并 `release`。
+- **症状**：`taskkill /F /PID`、`taskkill /F /T /PID`、`Stop-Process -Force` 全部回「错误: ... 无法终止。原因: 没有正在执行的工作阶段」，行程却还列在 `tasklist` 里。我看 PowerShell 的 `HasExited=True`、`Threads.Count=1`，加上 `tasklist` 的记忆体栏两次完全一样（3,544,012 K），就判断「它已经结束，只是被还没关的 handle 留在列表里」，回报说机器是干净的。别组随后在同一台机器上开始独占的低配 A/B。
+- **原因（已证实）**：那个判断是错的。再量一次 **CPU 时间**：4 秒内从 750.6 s 跳到 754.7 s，等于一颗核心满载——行程活着。`HasExited` 与记忆体栏在这种「主执行绪已退出、工作执行绪还在跑」的状态下都会骗人，`tasklist` 的记忆体是停住不更新的旧值。最后用 `Invoke-CimMethod -InputObject (Get-CimInstance Win32_Process -Filter "ProcessId=N") -MethodName Terminate`（`ReturnValue=0`）才真的收掉。
+- **处置**：收掉后确认 `unreal_slot.lua status` 的 `unreal processes: 0`，并告知协调者那段时间别组的量测要重跑。
+- **再试前检查**：判断行程死没死，看 **CPU 时间是否还在增加**（隔几秒量两次），不要看 `HasExited`、不要看 `tasklist` 的记忆体数字；`taskkill` 回「没有正在执行的工作阶段」只说明这条路杀不掉，不是死讯，换 CIM `Terminate`。借用的 slot 到期是「先确认行程真的收掉、再 release」，行程还在就等于没还。
+- **顺带**：借来的短窗口（11 分钟）不要拿去跑 `UnrealEditor-Cmd` 的自动化测试——这个专案的冷启动超过 9 分钟（`-NullRHI -nosound` 也一样），整段会白费。短窗口先跑能拿到数字的那几趟。
+- **归属怎么一眼看出来**：共用机器上「这个 Unreal 是谁的」别靠记忆或互相追问，列 `CreationDate` 就好——
+  启动时间对不上自己那趟的时间，就不是自己的：
+
+  ```
+  powershell -c "Get-CimInstance Win32_Process -Filter \"Name like '%Unreal%' or Name like '%OpenKoikatsu%'\" | Select-Object ProcessId, Name, CreationDate, @{n='GB';e={[math]::Round($_.WorkingSetSize/1GB,2)}} | Format-Table -AutoSize"
+  ```
+
+  2026-11-18 这次就是这样分清的：机器上剩的 `OpenKoikatsu.exe` 建立于 07:16:17，不可能是 07:01 起的那趟测试，
+  是别组的量测行程。`tasklist` 没有这一栏，所以查归属要用 CIM，不要用 `tasklist`。
+
+
+## 2026-11-18 读卡器全跑抓不到「上传后丢像素」这类 bug：它不经过那条路径（F 组 f-yvonne）
+
+- 错误：想用读卡器 53 张全跑（`-OKLowMemory`）证明低记忆体的「帧结束才丢像素」机制（`fa8bb92a4`）有效。用测试开关 `kk.RuntimeTextureDropAtUpload=1` 把旧 bug 放回去（主控台确认值为 1）再跑 C031，结果 pass、BulkData 0：读卡器的「载入 + 蹦跳」根本不经过「建好 → 改设定 → 再上传」的路径，旧 bug 在全跑里看不见。
+- 同类：判定只数「整片黑／白／空」和 BulkData 时，瞳孔去高光后整个消失（白眼）也判通过（c-lowspec 的 VerifyEyeDull，11-18）。一个指标只盖得住它数的东西。
+- 修正：分开讲由谁证明——53 张证明 LUT 修正有效、没有退步；帧结束机制本身由 `ok.VerifyEyeDull` 的阳性对照证明（开关 1：3/3 失败、白眼；开关 0：3/3 通过）。另加 `image_diff`／`reader_jump_compare.lua` 抓「一小块不见了」，它自己也先做阳性对照（白眼 sheet 对正常 sheet，最差区块 172.5 对 0.5）。见 Docs/READER_LOWMEM_FULLRUN_20261118.md。
+- 教训：每个新判定、每轮全跑都要先有一次「该失败时确实失败」的证据（把 bug 放回去跑一次），才能拿它的「通过」当证据；全跑通过只代表它走过的路径没问题。
+
+## 2026-11-18：写下「不画世界 = 画面停在上一帧」，没去看引擎怎么清画布
+
+`ok.Studio.LoadSkipDraw` 量到开卡 −29.7% 之后，我在 cvar 注解、文件与 commit 讯息里都写「载入期间 viewport 停在
+载入前那一帧（UI 照画）」。这是猜的。`UGameViewportClient::Draw` 在 `bDisableWorldRendering` 为真时每帧都会
+`SceneCanvas->Clear(FLinearColor::Transparent)`（`F:/UE5.8/Engine/Source/Runtime/Engine/Private/GameViewportClient.cpp:1985`），
+所以世界那块是**每帧清空**，不是保留上一帧。差别不是修辞：一个是「画面不动」，一个是「一分半的空白画面」，
+后者使用者会当成当掉。
+
+**修正**：同一笔改动补了一行 `AddOnScreenDebugMessage` 进度（画在 `DrawStatsHUD`，不在 `bDisableWorldRendering`
+的守卫里，所以世界不画时它照样出现），并在 profile harness 加 `OK_SCENE_PROFILE_SHOT_LOADING=<帧>`，
+在建构中拍一张来实际看画面——原本的 `OK_SCENE_PROFILE_SHOT` 拍的是成品，看不到载入中。
+
+**教训**：关掉一条渲染路径之后「画面上剩下什么」是引擎行为，不是可以从旗标名字推断的东西；要嘛去读那段
+引擎码，要嘛拍一张。我两件都没做就写进了文件。顺带：数字量得再准，使用者看到的东西没量就不算量过。
+
+## 2026-11-18：用 sed -i 和 Edit 改「混合换行」的档，整档 diff 都变了（f-studio-ui）
+
+`OKStudioGame.cpp` 在 index 里是混合换行（`git ls-files --eol` 显示 `i/mixed`）。我用 Git Bash 的 `sed -i` 插三处，
+sed 把整档统一成同一种换行，`git diff --stat` 变成 5024 行；还原后改用 Edit 工具，Edit 也把原本是 LF 的几行改成 CRLF，
+又多出 36 行无关差异。这种 diff 一提交就会盖掉别人在那些行的 blame，合并时也会冲突。
+
+**修正**：`git checkout` 还原那个档（档里没有别人的未提交改动），改用小 Lua 脚本，以二进位读写，
+只在锚点那一行后面插入，并沿用那一行自己的换行。之后 `--stat` 只剩我的 6 行。
+
+**教训**：动手前先 `git ls-files --eol <档>`。看到 `mixed` 就不要用 sed -i 或 Edit 改那个档，要用按位元组插入的方式。
+改完一律先看 `git diff --stat`，确认行数和自己改的一样，再往下做。
+
+## 2026-11-18：`git add <档案>` 把别组还没提交的 hunk 一起提交了
+
+496dabade 里除了我自己的改动，还有 f-studio-ui 当时还在工作树里、尚未提交的 `EditTexture` 改动（CityHash 快取键、
+只解码一次、`OK_EDIT_TEXTURE_OLD` 开关与三个 include）。原因是我用 `git add <档案路径>`，它把那个档案的**全部**
+改动都放进暂存区，而共用工作树上同一个档案同时有两个人在改——AGENTS.md 的「只提交自己的 hunk」说的就是这件事，
+我以为「只加我改过的档案」就等于「只加我的 hunk」，不是。
+
+结果上没出事（对方建置过编辑器与游戏两个目标，都成功，也同意不改写历史，只在自己的文档提交里注明代码在
+496dabade），但这是运气：若对方那笔还在半成品状态，我就把别人编不过的码提交进去了。
+
+**改法**（`git add -p` 在这个环境不能用，是互动式的）：提交前一定先 `git diff -- <档案>` 看过每个 hunk；
+同一档案有别人的改动时，把自己的 hunk 写成 patch 再 `git apply --cached <patch>` 只暂存那几段，
+然后 `git diff --cached` 复查一遍再 commit。只有确认整个档案的改动都是自己的，才可以直接 `git add <档案>`。
+
+## 2026-11-18：截图传了 `bShowUI=false`，拍回来全黑，还差点被当成引擎不给拍
+
+为了看 `ok.Studio.LoadSkipDraw` 开着时使用者在载入期间看到什么，在 profile harness 加了
+`OK_SCENE_PROFILE_SHOT_LOADING=<帧>`，第一版写成 `FScreenshotRequest::RequestScreenshot(Path, false, false)`。
+第二个参数是 `bShowUI`——传 false 就把 UI 与 HUD 排除在截图外，而**进度行正是画在 UI 层**（`DrawStatsHUD`）。
+结果不画世界那张全黑，画世界那张也全黑（第 120 帧场景还没成形），两张同样大小，什么都没证明。
+
+**修正**：改成 `RequestScreenshot(Path, true, false)`，并把截图帧往后挪。
+
+**教训**：拍不到东西先怀疑自己的截图参数，不要先怀疑引擎或渲染路径。`RequestScreenshot` 的 `bShowUI` 预设直觉上
+像「要不要画面上的除错叠层」，实际上关掉的是整个 UI 层；要验的东西在哪一层，就要确认截图包含那一层。
+还有一点：**对照组也全黑就代表这个取证方法当下无效**，不能只看实验组的那张就下结论。
+
+## 2026-11-18：加的「载入进度行」在 OK Studio 里根本不会显示，而我已经拿它当成底线写进文件
+
+`ok.Studio.LoadSkipDraw` 让世界在建构期间不画（画面每帧清空），为了不让使用者以为当掉，我在
+`AOKSceneActor::SetLoadThrottle` 里用 `GEngine->AddOnScreenDebugMessage` 画一行进度，并在 cvar 注解、
+效能文件与 commit 讯息里写成「这行是这笔改动的一部分，不是装饰」。
+
+实际拍下来才发现它从来没出现过：`AOKStudioGameMode::StartPlay` 就把引擎萤幕讯息整个关掉了
+（`OKStudioGameMode.cpp:27`，`GAreScreenMessagesEnabled = false` 与 `bEnableOnScreenDebugMessages = false`），
+而且是刻意的——shader 编译、渲染警告那些不该出现在编辑器 UI 上。所以我加的是一张名义上的安全网。
+
+**修正**：拿掉那行（连 `LoadProgressKey` 一起），改成在注解里写明「这个预设值依赖 `SOKStudioLoadOverlay`
+显示进度，那个 overlay 不在就把预设改回 0」，并附上两张实拍（1920×1080 与 1280×720）。
+
+**教训**：这是同一天第三次同类错误（猜画面停在上一帧、截图传错 `bShowUI`、进度行根本不画）。共通点是
+**把「我加了 X」当成「使用者看得到 X」**。加任何使用者看得到的东西，交付前一定要有一张实拍；在拍到之前，
+文件里只能写「预期」，不能写成既成事实。
+
+## 2026-11-18：拿「经过时间的总和」当成 CPU 时间，推出「worker 没吃满」的假结论
+
+看到 `item_open_worker_ms` 约 380 s、机器是 8 条执行绪，就除以 8 得到「worker 只用了 48 s，而开卡要 77–86 s，
+中间 20–30 s 没人做事」，据此提出把 `ok.Studio.ItemOpensAhead` 从 8 开大的假设，还写进了给协调者的报告。
+
+实际量下来（8／16／24 各两轮）：墙上时间两轮互相矛盾、没有可测效果，但 `item_open_worker_ms` 随 Ahead 几乎
+线性涨（378→704→1042 s，两轮差 ±2%）。这正说明那个和**不是 CPU 时间**：它把每个 open 的经过时间加总，
+重叠执行的工作被重复计入，所以开的件数变多、每件按比例变慢，和就跟着涨。worker 早就吃满了。
+
+**教训**：拿一个指标去算「有没有吃满」之前，先确认它数的是 CPU 时间还是经过时间，重叠的工作会不会被重复计。
+一个会随并行度线性变化的「总时间」，几乎一定是经过时间的和，不能拿来除以执行绪数。
+
+## 2026-11-18：WMI `PeakWorkingSetSize` 的单位是 KB，不是 bytes
+
+用 `Get-CimInstance Win32_Process` 在外部取样记忆体峰值时，把 `PeakWorkingSetSize`／`PeakPageFileUsage` 当成 bytes
+除以 1 GB，得到 0.01 GB 这种明显不对的数字。同一个类别里 `WorkingSetSize` 是 bytes，但 `PeakWorkingSetSize` 与
+`PeakPageFileUsage` 是 **KB**（WMI 的旧有不一致）。除以 1048576 才是 GB，实际是 8.4–9.8 GB。
+
+**教训**：外部取样的数字先对一下量级再用；同一个 WMI 类别里相邻的栏位不保证同单位。
+
+## 2026-11-18：同一个东西有两套命名，grep 用错一套就「证实」了自己的错觉
+
+在 `FLoadStats` 加三个计时器后，想确认标头的改动套用了没，grep 的是 **JSON 字段名** `sync_gate_ms`——但标头里
+是 **PascalCase 的成员名** `SyncGateMs`。grep 回 0，我当成「没套用」，于是又加了一次，建置才报 C2086 重复定义。
+
+这个专案里同一个量普遍有两套写法：C++ 成员 `SyncGateMs`、JSON／报表字段 `sync_gate_ms`、cvar `ok.Studio.*`。
+grep 回 0 时，**先怀疑自己查的是哪一层的名字**，而不是直接相信「没改到」。
+
+**做法**：查改动套用了没，用 `git diff -- <档>` 或 `git diff --stat` 看实际增删，不要用 grep 关键字去反推；
+真要 grep，就用与该层一致的拼法，或用大小写无关、去掉底线的宽松样式（例如 `grep -iE "sync_?gate_?ms"`）。
+
+和 11-18 的 WMI 单位坑同一类：**工具回了一个看似明确的答案，但我问错了问题。**
+
+## 2026-11-18：在共用工作树上对整个档案 `git checkout --`，把自己和可能是别人的未提交改动一起丢掉
+
+想退掉一个量不到效果的改动，直接 `git checkout -- Plugins/OKStudio/Source/OKStudio/Public/OKSceneActor.h`。
+那个档案同时还有我另一笔要保留的改动（`OpeningItemsFrame`／`OpeningItems`），以及**可能**有别组在同一时段的
+未提交 hunk——全部一起没了，而且 `git checkout` 丢掉的工作区内容救不回来。
+
+同一天早上我才写过「共用工作树上只提交自己的 hunk」，却把这条只用在**提交**那一侧，忘了**还原**那一侧更危险：
+提交错了顶多是把别人的码带进自己的 commit（对方还看得到），还原错了是直接删除别人没存进版本库的工作。
+
+**损害范围**：b5f8fe4b7（12:36）那笔我用 `git add <档>` 把整个标头加进去了，所以 12:36 之前档案里的所有改动
+（含别人的）都在版本库里可以取回；只有 12:36–13:14 之间别人对这个标头的未提交改动会不见。已立即通知
+f-studio-ui 检查，并说明可取回的范围。自己的部分重打了。
+
+**做法**：共用树上永远不要对整个档案 `git checkout --`／`git restore`／`git stash`。要退掉自己那几行就直接编辑回去
+（和写上去是同一种动作，只影响自己那几行），或先 `git diff -- <档> > /tmp/x.patch` 留底再动。
+
+## 2026-11-18：MCP 的 studio_stop 没把编辑器关掉，没握 slot 的 Unreal 留在机器上（f-studio-ui）
+
+我用 `ok-game-mcp call studio_launch` 开 OK Studio 匯入一张原作场景，量完呼叫 `studio_stop` 就 release slot。
+匯入的场景还没存档，`studio_stop`（命令 `app.quit`）在自己的 UI 里问要不要存，所以编辑器没退出（pid 78800）。
+这个 Unreal 没握 slot，却一直留在机器上，会污染别人的量测，仲裁器也把它算进 Unreal 数，挡住别人 claim。协调者巡检时才发现。
+
+**修正**：用 CIM Terminate 收掉（`taskkill` 会回报成功却没杀掉）。检查脚本在 `studio_stop` 之后，
+只收命令列带自己那个 `StudioControlPort=<埠>` 的编辑器。
+
+**教训**：release slot 之前，先确认自己开的 Unreal 真的结束了。用 CIM 比对命令列里的埠或 log 路径来认自己的行程；
+`studio_stop`、`app.quit` 这类「请它自己退出」的呼叫可能被对话框挡住，不能当作结束的证据。
+
+## 2026-11-18：「全跑过了」以外的三个自己踩的坑（f-yvonne，C000 坐姿黑面调查期间）
+
+1. **连拍的「0/12 不黑」其实是没拍到**：读卡器中途崩溃（截图回读 assert），后面每组都没有截图，脚本把「没有图」算成「不黑」，一度差点下结论。
+   之后截图改存 `Saved/CharacterMCP/instances/<pid>/images/`，旧脚本只找 `Saved/CharacterMCP/images/`，又一次 0/0。
+   **修正**：连拍要数实际张数，少拍就写 NOIMG、整组作废；判读前先确认张数。
+2. **环境变数被启动器盖掉**：用 `$env:OK_CPU_SKIN='1'` 开读卡器，结果还是 GPU 蒙皮（`run_card_reader_development.lua` 自己设 OK_CPU_SKIN）。
+   **修正**：用启动器的 `-CpuSkin`，并看启动纪录 json 的 `skinning` 字段确认。
+3. **同时握两个 slot**：一般模式全跑（f-yvonne-norm）在背景跑，调查段（f-yvonne-dbg）又另外 claim，五个 agent 在排队。停全跑时，
+   等「full run ended」的链式脚本也跟着误以为全跑结束。**修正**：同一时间只占一个 slot；暂停全跑要连等它的链式脚本一起停，
+   并在日志补一行说明。

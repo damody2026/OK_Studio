@@ -22,6 +22,9 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "ok_extract.h"
+#include "OKStudioText.h"
+#include "SOKStudioLoadOverlay.h"
+#include "Misc/ScopeExit.h"
 
 namespace
 {
@@ -296,6 +299,8 @@ namespace
 		};
 		while (Next < Jobs.Num() || !Running.IsEmpty())
 		{
+			// The loading box: how many are done, painted at most every 0.2 s while this loop holds the game thread.
+			SOKStudioLoadOverlay::SetStage(TEXT("load.stage_cards"), OKStudioMsg(TEXT("load.stage_cards"), {{TEXT("done"), Done}, {TEXT("total"), Jobs.Num()}}), Done, Jobs.Num());
 			while (Next < Jobs.Num() && Running.Num() < Workers) Launch(Jobs[Next++]);
 			if (Running.IsEmpty()) break;
 			for (int32 i = Running.Num() - 1; i >= 0; --i)
@@ -1032,6 +1037,10 @@ int32 FOKStudioImport::AddVmdCamera(UOKSceneDocument* Document, const FString& K
 bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document, const FString& CardDirectory, FReport& Report, FString& OutError)
 {
 	if (!Document) { OutError = TEXT("no document"); return false; }
+	// The import holds the game thread from here to the end: the loading box says which step it is in.
+	SOKStudioLoadOverlay::BeginStage(FPaths::GetBaseFilename(ScenePng));
+	ON_SCOPE_EXIT { SOKStudioLoadOverlay::EndStage(); };
+	SOKStudioLoadOverlay::SetStage(TEXT("load.stage_read"), OKStudioT(TEXT("load.stage_read")));
 	IFileManager::Get().MakeDirectory(*CardDirectory, true);
 	const double ImportStart = FPlatformTime::Seconds();
 	TArray<ANSICHAR> Buffer;
@@ -1135,7 +1144,12 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 		for (const TPair<FString, FString>& Pair : ConvertCardsInWorkers(Jobs, ImportCardWorkers(), Failures, Importer.CardsUnconvertible)) Importer.CardsMadeAhead.Add(Pair.Key);
 		for (const FString& Failure : Failures) Report.Notes.Add(Failure);
 	}
-	if (Objects) for (const TSharedPtr<FJsonValue>& O : *Objects) Importer.Object(O->AsObject(), -1);
+	if (Objects)
+		for (int32 I = 0; I < Objects->Num(); ++I)
+		{
+			SOKStudioLoadOverlay::SetStage(TEXT("load.stage_objects"), OKStudioMsg(TEXT("load.stage_objects"), {{TEXT("done"), I}, {TEXT("total"), Objects->Num()}}), I, Objects->Num());
+			Importer.Object((*Objects)[I]->AsObject(), -1);
+		}
 	const TArray<TSharedPtr<FJsonValue>>* CardErrors = nullptr;
 	if (Scene->TryGetArrayField(TEXT("card_errors"), CardErrors)) for (const TSharedPtr<FJsonValue>& E : *CardErrors) Report.Notes.Add(E->AsString());
 	// Screen settings (System menu): the Amplify Color filter (the grading LUT is lerp(filter, Lut_Amount, aceBlend):

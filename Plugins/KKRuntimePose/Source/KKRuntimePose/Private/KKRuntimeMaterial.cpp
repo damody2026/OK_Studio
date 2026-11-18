@@ -277,8 +277,21 @@ void DropQueuedRuntimeTexturePixels(){
  }
 }
 }
+// Positive control for the checks that are to catch an empty re-upload (ok.VerifyEyeDull's "iris still there", the
+// reader full run's reader_jump_compare): 1 drops the pixels right at the upload again, as before 2026-11-18, so a later
+// settings change uploads an empty texture (the black LUT, the white eyes). Tests only.
+// It does what BULKDATA_SingleUse did at that upload: the internal copy is taken and freed and the size kept, so the next
+// upload asks to load it from disk ("Attempting to load a BulkData object that cannot be loaded from disk") and gets
+// nothing. RemoveBulkData instead left 0-sized mips, and the editor build asserted building them (Array index out of
+// bounds, 11-18) before any check ran.
+static TAutoConsoleVariable<int32> CVarOKRuntimeTextureDropAtUpload(TEXT("kk.RuntimeTextureDropAtUpload"),0,
+ TEXT("Test only (low-memory mode): 1 drops a runtime texture's pixels right at its upload, the pre-11-18 behaviour, so a later settings change uploads an empty texture."));
 void OKDropRuntimeTexturePixelsAfterFrame(UTexture2D* Texture){
  check(IsInGameThread());if(!Texture||!OKRuntimeLowMemory())return;
+ if(CVarOKRuntimeTextureDropAtUpload.GetValueOnGameThread()!=0){
+  if(Texture->GetResource())if(FTexturePlatformData* Data=Texture->GetPlatformData())for(FTexture2DMipMap& Mip:Data->Mips){
+   Mip.BulkData.SetBulkDataFlags(BULKDATA_SingleUse);void* Copy=nullptr;Mip.BulkData.GetCopy(&Copy,true);FMemory::Free(Copy);}
+  return;}
  static const FDelegateHandle Hook=FCoreDelegates::OnEndFrame.AddStatic(&DropQueuedRuntimeTexturePixels);(void)Hook;
  GDropPixelsQueue.AddUnique(Texture);
 }

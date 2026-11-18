@@ -1,5 +1,8 @@
 -- The card reader's jump check (「Demo：蹦跳」) over OK cards: each card in a fresh reader of its own, lighting views
 -- (原作預設, 無陰影) and, for outfits 1..7, two sets of views a moment apart while the jump plays.
+-- What it covers: load + jump. It does not go through "made, settings changed, uploaded again": with the low-memory bug
+-- put back (kk.RuntimeTextureDropAtUpload=1) C031 still passed, BulkData 0 (11-18). Texture upload / low-memory changes
+-- also need ok.VerifyEyeDull under -OKLowMemory (Docs/READER_LOWMEM_FULLRUN_20261118.md).
 --
 --   Tools\lua\lua.exe Tools\reader_jump_check.lua --out FILE (--cards C025,C026 | --list FILE --from N --to M)
 --       [--lane NAME] [--dir CARD_DIR] [--images DIR] [--polite] [--mcp EXE] [--minutes N] [--extra "-OKLowMemory"]
@@ -9,6 +12,12 @@
 --   --lane      slot name suffix and reader marker (f-yvonne-<lane>, -OKLane=<lane>-<card>-<pid>); default a
 --   --images    copy the view images there (default: left where the reader wrote them)
 --   --polite    before each segment wait while another group (not f-yvonne*) holds or waits for an Unreal slot
+--   --fair      after each segment wait until every agent queued at the release has had the slot once
+--   --lighting  instead of the outfits: each lighting preset and the light / ambient sliders at 2, measured against
+--               原作預設 (LIGHTING lines; needs --images and an --mcp with image_diff)
+--   --clip      the clip played per outfit instead of 「Demo：蹦跳」 (e.g. "Demo：坐姿 01" for the C000 black hair faces);
+--               @FILE reads it from a UTF-8 file (a command line from cmd / Start-Process is not UTF-8)
+--   --outfits   last outfit tried (default 7)
 --   --minutes   one slot claim runs cards while the next one still fits in N minutes, from the average card so far
 --               (default 20, the slot rule's cap); then the slot is given back and claimed again (queueing behind others)
 --   --mcp       ok-game-mcp.exe (default Tools/ok-game-mcp/target/release/ok-game-mcp.exe)
@@ -36,10 +45,12 @@
 --                           the environment is wrong (the reader died, or a call went to no picked game): the run stops
 --                           at once, says so, and exits 2;
 --   anything else           a real refusal of that step.
--- Each card ends with one line `<card> RESULT <pass|card_fail|check|env_abort> retries=N ...`: card_fail is the card
+-- Each card ends with one line `<card> RESULT <pass|card_fail|check|env|env_abort> retries=N ...`: card_fail is the card
 -- itself (load refused or failed, an assertion or a failed load in its log, an outfit that cannot be chosen); check is
--- a step that did not take (the jump did not start, a control did not set) with no failure of the card; env_abort is
--- not the card. The old full runs wrote a busy reader as LOADFAIL (C025, a misjudgement).
+-- a step that did not take (the jump did not start, a control did not set) with no failure of the card; env is a reader
+-- that never got ready for the load (still busy / not ready after every retry; C046 11-18 hung at "Waiting for
+-- ZenServer to be ready"), and the card is tried once more in a fresh reader; env_abort is not the card and stops the run.
+-- The old full runs wrote a busy reader as LOADFAIL (C025, a misjudgement).
 
 local function sleep(s) os.execute(("ping -n %d 127.0.0.1 >nul"):format(math.max(1, math.floor(s + 0.5)) + 1)) end
 
@@ -49,9 +60,14 @@ do
   while arg[i] do
     local k = arg[i]
     if k == "--polite" then args.polite = true; i = i + 1
+    elseif k == "--fair" then args.fair = true; i = i + 1
+    elseif k == "--lighting" then args.lighting = true; i = i + 1
     elseif k:sub(1, 2) == "--" then args[k:sub(3)] = arg[i + 1]; i = i + 2
     else error("unexpected argument " .. k) end
   end
+end
+if args.clip and args.clip:sub(1, 1) == "@" then
+  local f = assert(io.open(args.clip:sub(2), "rb")); args.clip = f:read("a"):gsub("^﻿", ""):gsub("%s+$", ""); f:close()
 end
 local function usage(msg) io.stderr:write(msg .. "\n(see the top of Tools/reader_jump_check.lua)\n"); os.exit(1) end
 if not args.out then usage("--out is required") end
@@ -177,8 +193,8 @@ end
 
 local function clip()
   for _ = 1, 5 do
-    set("control.GameClipCombo", '"Demo：蹦跳"'); sleep(1)
-    if state():find("正在播放：Demo：蹦跳", 1, true) then return "" end
+    set("control.GameClipCombo", ('"%s"'):format(args.clip or "Demo：蹦跳")); sleep(1)
+    if state():find("正在播放：" .. (args.clip or "Demo：蹦跳"), 1, true) then return "" end
   end
   return "NOCLIP"
 end
@@ -214,6 +230,37 @@ local function others_waiting()
   return false
 end
 
+-- --lighting: does each lighting control reach this card's materials? (11-15: the shade preset did nothing on KKUTS
+-- clothes until CardShaderShade; every shader family has to be checked.) For each preset and for the light / ambient
+-- sliders at 2: the views against 原作預設 (image_diff on the front view: whole-image mean |diff| and the worst tile)
+-- and how many material instances ApplyLightingScales wrote (scaled=, from the reader's log line for that change).
+-- A change that moves the picture by almost nothing (mean < 0.3) is written NOEFFECT.
+local function lighting_check(c, lit, log)
+  local base = (args.images or "") .. "/" .. (lit:match("^([^,]+)") or "")
+  local function front(names) return (args.images or "") .. "/" .. (names:match("^([^,]+)") or "") end
+  local function scaled_now()
+    local _, t = count(log, "x"); local s = "?"
+    for n in (t or ""):gmatch("reader lighting[^\n]-scaled=(%d+)") do s = n end
+    return s
+  end
+  local function measure(label, after)
+    local names = views()
+    local d = call_once("image_diff", ('{"a":"%s","b":"%s"}'):format(base, front(names)))
+    local mean, tile = d:match('"mean"%s*:%s*([%d.]+)'), d:match('"tile"%s*:%s*([%d.]+)')
+    emit(("%s LIGHTING %s scaled=%s mean=%s tile=%s%s views=%s"):format(c, label, scaled_now(), mean or "?", tile or "?",
+      (tonumber(mean or "") or 99) < 0.3 and " NOEFFECT" or "", names))
+    if after then after() end
+  end
+  for _, p in ipairs({ "柔和卡通", "強對比卡通", "側光", "逆光", "無陰影（平光）" }) do
+    set("control.LightingPresetCombo", ('"%s"'):format(p)); sleep(2); measure("preset:" .. p)
+  end
+  set("control.LightingPresetCombo", '"原作預設"'); sleep(1)
+  set("control.LightingIntensitySlider", "2"); sleep(2)
+  measure("light=2", function() set("control.LightingIntensitySlider", "1"); sleep(1) end)
+  set("control.LightingAmbientSlider", "2"); sleep(2)
+  measure("ambient=2", function() set("control.LightingAmbientSlider", "1"); sleep(1) end)
+end
+
 local function check_card(c)
   retries = 0
   local tag = ("-OKLane=%s-%s-%d"):format(lane, c, math.random(10000, 99999))
@@ -236,7 +283,9 @@ local function check_card(c)
   local text, code = call("reader_call", ('{"action":"load","path":"%s/%s.png","timeout_s":240}'):format(dir, c))
   if code or not text:find(c .. ".png", 1, true) then
     emit(("%s LOAD %s"):format(c, (text:gsub("%s+", " "):sub(1, 150))))
-    fail = "card_fail"
+    -- still busy / not ready after every retry: the reader never got ready (C046 11-18: it hung at "Waiting for
+    -- ZenServer to be ready" during start-up), not the card. Written as env; the run tries the card once more.
+    fail = (code == "busy" or code == "not_ready") and "env" or "card_fail"
   else
     idle()
     set("control.LightingPresetCombo", '"原作預設"'); sleep(2); local lit = views()
@@ -248,7 +297,8 @@ local function check_card(c)
     for n in (logtext or ""):gmatch("reader lighting[^\n]-scaled=(%d+)") do scaled = math.max(scaled, tonumber(n)) end
     set("control.LightingShadeSlider", "1")
     emit(("%s LIGHT scaled=%d lit=%s flat=%s"):format(c, scaled, lit, flat))
-    for o = 1, 7 do
+    if args.lighting then lighting_check(c, lit, log) end
+    for o = 1, args.lighting and 0 or tonumber(args.outfits or "7") do
       local e = set("control.OutfitCombo", ('"服裝 %d"'):format(o))
       -- (a card saves fewer than 7 outfits: the combo has no "服裝 o"; the old runs wrote C033 O5 as a failure)
       if e and o > 1 and e:find("Value absent from choices", 1, true) then emit(("%s O%d none (the card has %d outfits)"):format(c, o, o - 1)); break end
@@ -271,6 +321,7 @@ local function check_card(c)
     asserts, loadfails, bulk, lowmem, #imgbad > 0 and ("img=" .. table.concat(imgbad, ";") .. " ") or "",
     #note > 0 and (table.concat(note, ";") .. " ") or "", log or "unknown", pid))
   kill(pid); pid = nil
+  return result
 end
 
 math.randomseed(os.time())
@@ -284,7 +335,8 @@ while i <= #cards do
     repeat
       local t = os.time()
       local c = cards[i]; i = i + 1 -- (a card that aborts is not retried: the run stops there)
-      check_card(c)
+      -- a reader that never got ready (env): the same card once more in a fresh reader
+      if check_card(c) == "env" then emit(("%s RETRY (the reader never got ready)"):format(c)); check_card(c) end
       done = done + 1; per_card = per_card + (os.time() - t)
       -- another card only if it still ends inside the claim (the average so far, plus a minute)
     until i > #cards or os.time() - start + per_card / done + 60 > minutes * 60
@@ -299,6 +351,28 @@ while i <= #cards do
     break
   end
   slot("release")
+  -- --fair: the agents queued when the slot went back each get it once before the next claim. f-yvonne ranks first in
+  -- unreal_slot.lua, so a run that claims again at once keeps the others waiting for as long as it runs (11-18: e-120fps
+  -- and e-fork-2 waited 35 minutes while two agents ran segment after segment). Waits until none of them is still
+  -- queued (each has claimed), at most an hour.
+  if args.fair and i <= #cards then
+    local function queued_others()
+      local p = io.popen("Tools\\lua\\lua.exe Tools\\unreal_slot.lua status"); local st = p:read("a"); p:close()
+      local q, set = st:match("queue:([^\n]*)") or "", {}
+      for item in q:gmatch("[^,]+") do
+        local name = item:match("^%s*(%S+)")
+        if name and not item:find("stale", 1, true) and not name:match("^f%-yvonne") then set[name] = true end
+      end
+      return set
+    end
+    local before = queued_others()
+    for _ = 1, 120 do
+      local now, left = queued_others(), false
+      for name in pairs(before) do if now[name] then left = true end end
+      if not left then break end
+      sleep(30)
+    end
+  end
 end
 out:close()
 os.exit(status)
