@@ -310,8 +310,10 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  if(G.Expanded==0&&Open.IsEmpty()&&Cost[Index(Start)]!=0.f){Cost[Index(Start)]=0.f;Open.HeapPush({Heuristic(Start),Start},Less);}
  bool Reached=false;
  while(!Open.IsEmpty()&&G.Expanded<60000){
-  // Out of time: the search goes on from here next slice (the open list, costs and links are kept).
-  if((G.Expanded&31)==0&&FPlatformTime::Seconds()>Deadline)return false;
+  // Out of time: the search goes on from here next slice (the open list, costs and links are kept). Looked at every cell:
+  // one expansion tests up to 8 new cells, and in the city a ground trace took 0.2 ms, so looking every 32 let the
+  // heroines' 2 ms slice run 55 ms (273 cell tests, scope1118a, 2026-11-18).
+  if(FPlatformTime::Seconds()>Deadline)return false;
   TPair<float,FIntPoint> Top;Open.HeapPop(Top,Less);const FIntPoint C=Top.Value;const float Here=Cost[Index(C)];
   if(Top.Key>Here+Heuristic(C)+.01f)continue; // stale entry
   if(C==Goal){Reached=true;break;}
