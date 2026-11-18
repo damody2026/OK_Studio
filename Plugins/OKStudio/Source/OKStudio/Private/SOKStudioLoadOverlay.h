@@ -7,6 +7,12 @@
 //
 // The overlay sits in the game viewport above the studio panel and collapses itself when the scene actor has nothing
 // left to build; it never takes input. Words come from the studio text tables (OKStudioText.h, studio.toml "load.*").
+//
+// ok.Studio.LoadSkipDraw defaults to 1 only because this overlay exists: it is the only progress a loading scene shows
+// (AOKStudioGameMode::StartPlay turns the engine's on-screen messages off, so AddOnScreenDebugMessage never draws in
+// the studio). Before removing it, disabling it or changing when it shows (HasPendingBuilds()), tell whoever owns
+// LoadSkipDraw (OKSceneActor.cpp) so its default goes back to 0 in the same change; otherwise a big scene is black for
+// a minute or more.
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
 #include "UObject/WeakObjectPtrTemplates.h"
