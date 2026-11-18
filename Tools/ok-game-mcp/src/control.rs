@@ -95,6 +95,7 @@ pub fn mutates(name: &str, a: &Value) -> bool {
         "pair_call" => !a["path"].as_str().is_some_and(|p| p.starts_with("/stats") || p.starts_with("/pose")),
         "studio_launch" => false,
         "reader_launch" | "reader_stop" => false,
+        "hscene" => crate::hscene::mutates(a),
         "studio_state" | "studio_inspect" | "studio_scenes" | "studio_catalog" | "studio_catalog_search" | "studio_bones" | "studio_bounds"
         | "studio_report" | "studio_capture" | "studio_ui_shot" => false,
         _ => true,
