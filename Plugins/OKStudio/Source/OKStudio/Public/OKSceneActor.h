@@ -88,6 +88,10 @@ public:
 		/** Sync's per-object pass over what is already applied to each object (morph overrides, live material edits,
 		 *  lights, effects). It runs for every object of the scene every Sync, and nothing timed it before. */
 		double SyncLiveMs = 0.;
+		/** SyncMap() once per Sync, the gate that asks whether an item's session is ready (PrepareItem, asked for every
+		 *  unbuilt item every Sync), and the per-object loop as a whole. SyncMs minus SyncLoopMs minus SyncMapMs is
+		 *  what Sync spends outside the loop. */
+		double SyncMapMs = 0., SyncGateMs = 0., SyncLoopMs = 0.;
 		int32 Characters = 0, Items = 0, Others = 0;
 		/** Syncs in all, and those that built nothing because every character was still opening. */
 		int32 Syncs = 0, StarvedSyncs = 0;

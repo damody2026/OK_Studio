@@ -206,6 +206,9 @@ namespace
 				Row->SetNumberField(TEXT("sync_world_ms"), S.SyncWorldMs);
 				Row->SetNumberField(TEXT("sync_place_ms"), S.SyncPlaceMs);
 				Row->SetNumberField(TEXT("sync_live_ms"), S.SyncLiveMs);
+				Row->SetNumberField(TEXT("sync_map_ms"), S.SyncMapMs);
+				Row->SetNumberField(TEXT("sync_gate_ms"), S.SyncGateMs);
+				Row->SetNumberField(TEXT("sync_loop_ms"), S.SyncLoopMs);
 				Row->SetNumberField(TEXT("characters"), S.Characters);
 				Row->SetNumberField(TEXT("items"), S.Items);
 				Row->SetNumberField(TEXT("others"), S.Others);

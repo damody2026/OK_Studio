@@ -1485,7 +1485,12 @@ void AOKSceneActor::Sync()
 	// carries the id it was indexed under.
 	// A null document is what the scope takes to mean "off", so the switch needs no second code path.
 	const UOKSceneDocument::FFindScope FindScope(CVarOkStudioSyncFindIndex.GetValueOnGameThread() != 0 ? Document : nullptr);
+	// Three timers added on 2026-11-18 to corner the 22-24 s of Sync that no timer accounted for: the map pass, the
+	// gate that asks whether an item's session is ready, and the per-object loop as a whole. Whatever is left after
+	// these is outside the loop, and that is a different place to look.
+	const double MapStart = FPlatformTime::Seconds();
 	SyncMap();
+	LoadStats.SyncMapMs += (FPlatformTime::Seconds() - MapStart) * 1000.;
 	if (!Document->BoneFrame)
 		Document->BoneFrame = [Self = TWeakObjectPtr<AOKSceneActor>(this)](int32 Character, const FString& Bone, FTransform& Out)
 		{
@@ -1507,6 +1512,7 @@ void AOKSceneActor::Sync()
 	bBuildsPending = false;
 	BuildsLeft = 0;
 	TSet<int32> Present;
+	const double LoopStart = FPlatformTime::Seconds();
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
 		Present.Add(Object.Id);
@@ -1538,7 +1544,11 @@ void AOKSceneActor::Sync()
 			}
 		}
 		// An item's session opens on a worker; it is built in the frame it is ready in, not the one that asked for it.
+		// Timed because every item that is not built yet asks this every Sync: thousands of items times hundreds of
+		// frames, and PrepareItem does map work (and, when there is room, builds the item's key) on each one.
+		const double GateStart = FPlatformTime::Seconds();
 		const bool bItemWaiting = !bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Item && !PrepareItem(Object);
+		LoadStats.SyncGateMs += (FPlatformTime::Seconds() - GateStart) * 1000.;
 		// Also not past this Sync's share of the frame: an item is a few milliseconds now that its session is opened on a
 		// worker, so the count alone would let one Sync build for a second.
 		const bool bOverSlice = Built > 0 && FPlatformTime::Seconds() - SyncStart >= BuildSliceSeconds();
@@ -1705,6 +1715,7 @@ void AOKSceneActor::Sync()
 		}
 		LoadStats.SyncPlaceMs += (FPlatformTime::Seconds() - PlaceStart) * 1000.;
 	}
+	LoadStats.SyncLoopMs += (FPlatformTime::Seconds() - LoopStart) * 1000.;
 	for (auto It = Shown.CreateIterator(); It; ++It)
 	{
 		if (!Present.Contains(It.Key())) { Release(It.Value()); Errors.Remove(It.Key()); It.RemoveCurrent(); }
