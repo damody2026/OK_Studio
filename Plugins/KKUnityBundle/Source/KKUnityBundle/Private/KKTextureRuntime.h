@@ -38,3 +38,12 @@ UTexture2D* OKAcquireReadonlyRuntimeTextureFromPng(const TArray<uint8>& Png,
 struct FOKReadonlyTextureCacheStats {uint64 Hits=0,Misses=0,MetadataRejections=0;int64 SourceBytes=0;int32 Entries=0;};
 FOKReadonlyTextureCacheStats OKReadonlyRuntimeTextureCacheStats();
 void OKClearReadonlyRuntimeTextureCache();
+/** The textures kept for a switch back; they hold a refcount, so GC cannot take them. */
+struct FOKRecentTextureCacheStats {int32 Entries=0,StaleEntries=0;int64 Bytes=0,StaleBytes=0;};
+FOKRecentTextureCacheStats OKRecentRuntimeTextureCacheStats();
+/** Marks every kept texture as untouched; the load that follows touches the ones it uses itself. */
+void OKMarkRecentRuntimeTexturesStale();
+/** Releases the kept textures nothing has touched since the mark (returns how many, and their bytes). */
+int32 OKReleaseStaleRecentRuntimeTextures(int64* OutBytes=nullptr);
+/** Releases every kept texture. */
+void OKReleaseRecentRuntimeTextures();

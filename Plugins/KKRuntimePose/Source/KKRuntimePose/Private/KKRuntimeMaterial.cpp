@@ -227,14 +227,21 @@ namespace {
 TMap<FString,TWeakObjectPtr<UTexture2D>> RuntimeTextureCache;
 // Recently used textures stay alive for a while after their last material is gone: the card reader switching back to an
 // outfit or card made them all again. Bounded by their GPU size.
-TArray<TPair<TStrongObjectPtr<UTexture2D>,int64>> RecentRuntimeTextures;int64 RecentRuntimeTextureBytes=0;
+// This is the only thing holding them: RuntimeTextureCache above is weak, and the materials of the card just left are
+// gone. They are held by refcount (TStrongObjectPtr), which GC cannot take, so a reference chain search reads
+// "not currently reachable but it does have 1 refcount set" and the textures of every card opened so far pile up
+// (measured 2026-11-19: 91 MB at the card wall, 1376 MB by the seventh card). Another card never hits them -- a
+// different card means different pixels, so a different identity -- so a card switch releases the ones its own load
+// did not touch, at a point we choose on the game thread. Switching outfit inside one card still hits them.
+struct FRecentRuntimeTexture{TStrongObjectPtr<UTexture2D> Texture;int64 Bytes=0;bool bTouched=true;};
+TArray<FRecentRuntimeTexture> RecentRuntimeTextures;int64 RecentRuntimeTextureBytes=0;
 void KeepRecentRuntimeTexture(UTexture2D* Tex){
  if(!Tex)return;
- const int32 Index=RecentRuntimeTextures.IndexOfByPredicate([Tex](const TPair<TStrongObjectPtr<UTexture2D>,int64>& E){return E.Key.Get()==Tex;});
- if(Index!=INDEX_NONE){auto Entry=MoveTemp(RecentRuntimeTextures[Index]);RecentRuntimeTextures.RemoveAt(Index);RecentRuntimeTextures.Add(MoveTemp(Entry));return;}
+ const int32 Index=RecentRuntimeTextures.IndexOfByPredicate([Tex](const FRecentRuntimeTexture& E){return E.Texture.Get()==Tex;});
+ if(Index!=INDEX_NONE){auto Entry=MoveTemp(RecentRuntimeTextures[Index]);Entry.bTouched=true;RecentRuntimeTextures.RemoveAt(Index);RecentRuntimeTextures.Add(MoveTemp(Entry));return;}
  const int64 Bytes=int64(Tex->GetSizeX())*Tex->GetSizeY()*4*4/3;
- RecentRuntimeTextures.Emplace(TStrongObjectPtr<UTexture2D>(Tex),Bytes);RecentRuntimeTextureBytes+=Bytes;
- while(RecentRuntimeTextureBytes>512ll*1024*1024&&RecentRuntimeTextures.Num()>1){RecentRuntimeTextureBytes-=RecentRuntimeTextures[0].Value;RecentRuntimeTextures.RemoveAt(0);}
+ RecentRuntimeTextures.Add(FRecentRuntimeTexture{TStrongObjectPtr<UTexture2D>(Tex),Bytes,true});RecentRuntimeTextureBytes+=Bytes;
+ while(RecentRuntimeTextureBytes>512ll*1024*1024&&RecentRuntimeTextures.Num()>1){RecentRuntimeTextureBytes-=RecentRuntimeTextures[0].Bytes;RecentRuntimeTextures.RemoveAt(0);}
 }
 FKKRuntimeTextureCacheStats RuntimeTextureStats;
 FString RuntimeTextureIdentity(const FKKRuntimePreparedTexture& T){
@@ -247,6 +254,45 @@ FString RuntimeTextureIdentity(const FKKRuntimePreparedTexture& T){
  Hash.Final();FSHAHash Digest;Hash.GetHash(Digest.Hash);return Digest.ToString();
 }
 }
+FKKRuntimeTextureKeepStats OKRuntimeTextureKeepStats()
+{
+ check(IsInGameThread());FKKRuntimeTextureKeepStats Stats;Stats.Entries=RecentRuntimeTextures.Num();Stats.Bytes=RecentRuntimeTextureBytes;
+ for(const FRecentRuntimeTexture& Entry:RecentRuntimeTextures)if(!Entry.bTouched){++Stats.StaleEntries;Stats.StaleBytes+=Entry.Bytes;}
+ return Stats;
+}
+void OKMarkKeptRuntimeTexturesStale()
+{check(IsInGameThread());for(FRecentRuntimeTexture& Entry:RecentRuntimeTextures)Entry.bTouched=false;}
+int32 OKReleaseStaleKeptRuntimeTextures(int64* OutBytes)
+{
+ check(IsInGameThread());int32 Released=0;int64 Bytes=0;
+ for(int32 Index=RecentRuntimeTextures.Num()-1;Index>=0;--Index)
+ {
+  const FRecentRuntimeTexture& Entry=RecentRuntimeTextures[Index];
+  if(Entry.bTouched&&Entry.Texture.IsValid())continue;
+  Bytes+=Entry.Bytes;RecentRuntimeTextureBytes-=Entry.Bytes;RecentRuntimeTextures.RemoveAt(Index);++Released;
+ }
+ if(OutBytes)*OutBytes=Bytes;
+ return Released;
+}
+void OKReleaseKeptRuntimeTextures()
+{check(IsInGameThread());RecentRuntimeTextures.Reset();RecentRuntimeTextureBytes=0;}
+static FAutoConsoleCommand GOKKeptRuntimeTextureReport(TEXT("ok.KeptTextures"),
+ TEXT("Report the character textures kept for a switch back (they hold a refcount, so GC cannot take them)"),
+ FConsoleCommandDelegate::CreateLambda([]
+ {
+  if(!IsInGameThread())return;
+  const FKKRuntimeTextureKeepStats Keep=OKRuntimeTextureKeepStats();
+  UE_LOG(LogTemp,Display,TEXT("OK kept character textures: %d (%.1f MB); not touched by the current card: %d (%.1f MB)"),
+   Keep.Entries,double(Keep.Bytes)/1048576.0,Keep.StaleEntries,double(Keep.StaleBytes)/1048576.0);
+ }));
+static FAutoConsoleCommand GOKKeptRuntimeTextureClear(TEXT("ok.KeptTexturesClear"),
+ TEXT("Release every kept character texture now (a switch back to that card pays for its textures again)"),
+ FConsoleCommandDelegate::CreateLambda([]
+ {
+  if(!IsInGameThread())return;
+  const FKKRuntimeTextureKeepStats Before=OKRuntimeTextureKeepStats();OKReleaseKeptRuntimeTextures();
+  UE_LOG(LogTemp,Display,TEXT("OK kept character textures: released %d (%.1f MB)"),Before.Entries,double(Before.Bytes)/1048576.0);
+ }));
 FKKRuntimeTextureCacheStats OKRuntimeTextureCacheStats(){check(IsInGameThread());auto Result=RuntimeTextureStats;Result.Entries=RuntimeTextureCache.Num();Result.PreparedCacheHits=PreparedCacheHits.Load();Result.PreparedDecodeJobs=PreparedDecodeJobs.Load();Result.PreparedJoinedJobs=PreparedJoinedJobs.Load();return Result;}
 static TAutoConsoleVariable<int32> CVarOKRuntimeTextureLowMemoryMaxSize(TEXT("kk.RuntimeTextureLowMemoryMaxSize"),512,
  TEXT("Largest runtime character texture (pixels) on a low-memory PC (OKRuntimeLowMemory); larger ones start at a smaller mip."));

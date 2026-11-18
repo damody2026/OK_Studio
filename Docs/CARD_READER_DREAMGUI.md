@@ -273,10 +273,15 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 **breadcrumb 第一次派上用場**：當機那幀 GPU 上「已開始未結束」的 DreamGUI draw 有 13 個：2 個畫精靈圖集（`DreamUIDynamicSpriteAtlasData_Texture_0`）、6 個畫白底（`DreamUIPreset_WhiteSolid`）、4 個畫圖片格的 transient 貼圖（`Texture2D_2147445830`–`833`，連號，是同一批剛建的縮圖）。所以出錯的 draw 不一定是第一個，圖片格的貼圖也是嫌疑。breadcrumb 文字在約 128 字被截斷，`clip／rect／paint／mask0` 欄位看不到；下一版要把欄位拆短或分成兩筆。
 
+**對照：圖片格不畫貼圖（2026-11-19 05:58，stage `EFork1119t`，`ok.ReaderPictures=0`）**：同一個連開腳本、同一批卡，只差圖片格（外觀選擇、瞳孔覆蓋貼圖、卡片牆、鏡像的 UMG 圖片）不畫貼圖。跑滿 18 分鐘、43 張（第二輪到第 13 張），沒有當，log 0 個 Error。畫圖片時這個流程在第 9 張（約 4 分鐘）當；e-cardload 兩趟在第 12、25 張。外觀縮圖快取在這一輪照樣長到 1056 張／457 MiB，所以「快取變大」本身不是觸發條件，有沒有畫才是（`E:\OpenKoikatsu\Saved\Reports\reader-nopics-20261119\resources.txt`）。一次對照還不算定論，但方向一致：嫌疑落在圖片格的 transient 貼圖被 DreamGUI 畫的那一段。
+
+**新指令**：`ok.ReaderScreen resources`（量累積用）、`ok.ReaderPictures 0`（對照用，預設 1）。breadcrumb 拆成三筆（`DreamUIDraw main/font`、`DreamUIData widget/clip`、`DreamUIMore rect/paint/mask0`），每筆都在 128 字內。
+
 **下一步**：
-1. 用同樣的連開步驟對照「圖片格不畫縮圖」與「新建的縮圖貼圖晚幾幀才給 DreamGUI 畫」，看還會不會當（各跑到超過目前最晚的第 25 張）。
-2. breadcrumb 拆短，讓每個欄位都留得下來。
-3. Nsight Graphics 開 dump（見下）。
+1. 用拆短的 breadcrumb 在「畫圖片」下再重現一次，看在途的圖片 draw 綁的完整資源。
+2. 再跑一次 `ok.ReaderPictures=0` 加強對照。
+3. 查圖片格貼圖從建立到給 DreamGUI 畫的路徑（`Thumbnail()`／`EyeOverlayThumb`／卡片縮圖池的 `CreateTransient`＋`UpdateResource`，DreamGUI 圖片筆刷取 `TextureReference` 的時機）。
+4. Nsight Graphics 開 dump（見下）。
 
 **需要的工具**：用 Nsight Graphics 打開 Aftermath dump，就能直接點名出錯的著色器與資源，這台機器沒有裝（只有 Nsight Compute／Systems／VS Edition），要不要裝由使用者決定。dump：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`；log：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-h2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\pagefault.log`。
 
@@ -306,3 +311,62 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 - `look eye_mode=… eye_tracking=… eye_follows_camera=… gaze=… head_follows_camera=… buttons=…`：眼睛在跟誰（`eye_mode=1(cursor)` 就是眼睛跟游標）、頭是否跟鏡頭、Slate 現在認為按著哪些滑鼠鍵（沒按卻不是 `none` 就是按鍵狀態卡住）。
 - `camera yaw=… pitch=… distance=… focus=… last_change=…`：鏡頭最後一次是誰改的（`mouse drag (buttons N)`、`mouse wheel`，或不是滑鼠：鏡頭列按鈕、MCP、載入）、幾秒前、當時 Slate 認為按著的鍵。
+
+### 2026-11-19 e-cardload-physics：累积型假设量到底了（分两层，哪一层确证写明）
+
+协调者提的「连开卡时 GPU 侧的东西一直长 → GC 放掉 → 有人还握着被放掉的那块」这条，量完的结论是：
+**累积是真的，但它不是这条 PageFault 的原因；而且累积的大头也不是「被谁握着」，是 GC 还没来收。**
+
+**第一层：被 refcount 钉死、GC 永远收不掉的那一批（确证，已修）**
+
+| 量什么 | 怎么量 | 结果 |
+|---|---|---|
+| 换卡＋强制 GC 之后，前一张卡的贴图还活着吗 | 开 crowd_C001 → 开 crowd_C006 → 连三次 `obj gc` → 两次 `ListTextures` 取差集 | 第一张卡的贴图**还活着 233 张／419 MB**，其中 transient（只能是开卡建出来的）137 张／370 MB |
+| 谁握着它 | `obj refs name=Texture2D_99`（引用链搜寻） | `(refcounted<1>) ... is not currently reachable but it does have 1 refcount set.` —— **没有任何 UObject 参照它**，是纯 refcount 钉住，所以 GC 收不掉 |
+
+凶手是 `Plugins/KKRuntimePose/Source/KKRuntimePose/Private/KKRuntimeMaterial.cpp` 的 `RecentRuntimeTextures`：
+512 MB 预算、`TStrongObjectPtr` 持有的「切回去很快」快取（它上面的 `RuntimeTextureCache` 是**弱**引用，所以持住贴图的只有它一个）。
+UE 5.8 里 `TStrongObjectPtr` 就是用 UObject refcount 实作的，所以引用链只会说「不可达但有 1 refcount」，不会给出链。
+**跨卡永远不会命中**（不同卡＝不同像素＝不同 identity），所以那是纯浪费。
+
+改法：开卡时（`DestroyAllParts()` 之后）把快取全标「没碰过」，这次载入用到的会被重新碰到，载入完成把没碰过的当场放掉并印一行
+（`OK kept GPU textures: released N (X MB) from the card just left, keeping M (Y MB)`）。同卡换服装照样命中。
+新增 `ok.KeptTextures`／`ok.KeptTexturesClear`（角色贴图侧）与 `ok.RuntimeTextureCache`／`ok.RuntimeTextureCacheClear`
+（`KKTextureRuntime` 侧的同名孪生快取，读卡器不走那条路径，一起补上）。
+
+验收（30 张连开，改后）：每张卡都放掉 1～30 张（5～69 MB），跑完强制 GC 后 `ok.KeptTextures` 回
+`91 (288.9 MB); not touched by the current card: 0 (0.0 MB)` —— **「被钉死的前一张卡贴图」这一项归零，这是确证的。**
+
+**同一轮量到的、要讲清楚的三件事（别误读成修好了）**
+
+1. **贴图总量的峰值没有变小**：改后 30 张照样锯齿上升到 1512 MB（改前第 7 张 1376 MB）。原因是峰值的大头**不是这个快取**，
+   是**还没被 GC 收的垃圾**：`gc.TimeBetweenPurgingPendingKillObjects` 是 61 秒，一张卡约 5 秒，所以一次清理之间会堆十几张卡的垃圾。
+   跑完两次 `obj gc` 后总量回到 485 MB（transient 436 MB＝快取 289 MB ＋ 两张图集 32 MB ＋ 当前这张卡约 115 MB），**没有无法解释的残留**。
+2. **行程没有漏物件**：`getall KKPreviewActor` 全程只有 3 个（当前＋`StalePreview`＋影子），`MaterialInstanceDynamic` 575、`SkeletalMesh` 47，
+   都是当下这张卡的量级，不是每开一张就多一份。
+3. **所以「换卡时主动释放」解决的是浪费，不是当机。**
+
+**第二层：当机（没有解决，而且把一个方向排除掉了）**
+
+| 量什么 | 怎么量 | 结果 |
+|---|---|---|
+| GC 频率是不是放大器 | `gc.CollectGarbageEveryFrame 1`（log 每帧都有 `Compacting FUObjectHashTables`，确认真的在跑），连开 30 张 | **照样在第 12 张（demo_Male01）PageFault**，约 5 分 40 秒；签章相同（`DXGI_ERROR_DEVICE_HUNG`、`MMU Fault Error`、`fragment_02 @ 0x00045f90`） |
+| 便宜的 GC 验证会不会点名 | `gc.VerifyUObjectsAreNotFGCObjects 1`、`gc.VerifyAssumptions true`、`gc.VerifyNoUnreachableObjects 1`（这版引擎三条都有；第一条专案设定关成 0，预设是 1） | 从第 11～12 张开到当机，**log 里零个 FGCObject／Unreachable 报告** |
+| 当机那刻的资源追踪 | log 里 `PageFault: Found 0 released resources ... during last 100 frames` | **不算证据**：同一段也写着 `Logging all resource enabled: No`，追踪没开 |
+
+**由此排除：「GC 把还在用的贴图收掉」这条机制。** 每帧 GC 的话垃圾来不及累积，如果是生命週期问题应该第二三张就炸；
+它却和自然 GC 那两趟一样要开到第 12（或第 25）张。**驱动量是「开了几张卡」，不是时间、不是 GC 频率、不是 VRAM 占用**
+（当机那刻 `Local Used 2512.78 MB / Budget 31419 MB`，只用 8%）。
+
+**剩下最像的方向（协调者提，归 e-fork-2 那侧查）**：有某个**随开卡次数单调增长**的量被 UI 合成那个 draw 用到，长到越界。
+位址固定、和 GC 无关、和 VRAM 无关、要十几张才发生、GBV 下不重现，都符合这个形状。
+我这侧（`KKRuntimePose`／`KKRuntimeMaterial`／材质与贴图建立）**查不到同类的量**：持久容器只有刚修的 `RecentRuntimeTextures`（有预算、现在换卡就放）、
+`RuntimeTextureCache`（弱引用，key 是像素内容 hash，不是递增 id）、toon shadow 的 `Shared[2]`（固定两张轮替）；
+没有递增的 handle／slot id，角色材质用的是 MID 的具名贴图参数，没有被打包进顶点属性或常数的贴图索引，所以**位宽不够那种在这侧不成立**。
+现有量过的东西里，唯一**真正单调上升又会被 UI 合成取样**的是外观缩图快取（88 → 448 张、12 → 102 MiB，依缩图档路径存、没有上限），
+其次是 DreamGUI 的精灵／字型图集（`Texture2DArray`，第 4 张卡时扩张到 2 个 slice）。
+
+**这一轮犯的错（留着当例子）**：我第一次指认的凶手是 `KKUnityBundle` 的 `KKTextureRuntime.cpp` 里**同名写法的孪生快取**，
+推论链（refcount、预算、bytes 公式）全都对得上，但**那条路径读卡器根本不走** —— 新版一跑，`ok.RuntimeTextureCache` 回
+`kept 0 textures 0.0 MB ... hits=0 misses=0`，而且旧 log 里 `OK readonly GPU textures hits=0 misses=0 entries=0` 一直是零，我没看那行就下了结论。
+**认定某份快取是凶手之前，先确认那条路径真的被走到。**

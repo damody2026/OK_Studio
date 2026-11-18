@@ -5803,3 +5803,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **做錯的事**：三次 PageFault 的 DRED 都停在 DreamGUI 第一個 `DrawIndexedInstanced`，就寫成「總是第一個 draw」，排查都圍著第一個 draw 綁的資源（字型圖集、資料貼圖）打轉。
 - **量出來的**：加了每個 draw 的 breadcrumb 之後，05:45 那次顯示當時 GPU 上有 13 個 DreamGUI draw 同時「已開始未結束」，其中 4 個畫的是剛建的圖片格縮圖。DRED 的「最後完成」只表示依序完成到哪裡，GPU 會管線化地往後開始好幾個 draw，出錯的可能是其中任何一個。
 - **再犯前檢查**：用 DRED 判斷是哪個 draw 之前，先看 breadcrumb 裡「已開始未結束」的有幾個；不只一個時，不能說是第一個。
+
+## 2026-11-19：认定某份快取是凶手，却没确认那条路径真的被走到（e-cardload-physics）
+
+- **做错的事**：查「谁握着前一张卡的贴图」时，`obj refs` 回的是 `(refcounted<1>) ... not currently reachable but it does have 1 refcount set`，于是去找 `TStrongObjectPtr` 持有贴图的快取，找到 `Plugins/KKUnityBundle/.../KKTextureRuntime.cpp` 的 `RecentTextures`（768 MB 预算）就下了结论，还把它当成结果回报出去。推论链（refcount 的语义、预算对得上残留量、`w*h*4*4/3` 的 bytes 公式和 `ListTextures` 印的一模一样）全部成立，**唯独那条路径读卡器根本不走**。
+- **量出来的**：照着改完一跑，`ok.RuntimeTextureCache` 回 `kept 0 textures 0.0 MB ... hits=0 misses=0`。而且**旧 log 里早就写着** `OK readonly GPU textures hits=0 misses=0 metadata_rejections=0 source_bytes=0 entries=0`，一直是零，我没看那行。真的那份是同一个写法的孪生兄弟 `Plugins/KKRuntimePose/.../KKRuntimeMaterial.cpp` 的 `RecentRuntimeTextures`（512 MB 预算）。
+- **再犯前检查**：指认某份快取／某条路径是凶手之前，先用它自己的统计（命中数、项目数，或临时加一条指令）确认**那条路径真的被走到**；旧 log 里已经有的那一行统计要先看完。推论链成立不代表那段程式有在跑。

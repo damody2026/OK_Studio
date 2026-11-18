@@ -7812,6 +7812,11 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 	SessionLoadSeenHead.Reset(); SessionLoadTranslucentDepth.Reset();
 	if(!bPreserveSourceWorld)OKDisableRealtimeSky(GetWorld());
 	DestroyAllParts();
+	// The textures kept for a switch back hold a refcount, so GC cannot take them. Mark them untouched here:
+	// what this load uses itself gets touched again, and the rest (the card just left) is released below, on
+	// the game thread at a point we choose, instead of surviving until some later frame's GC.
+	OKMarkRecentRuntimeTexturesStale();
+	OKMarkKeptRuntimeTexturesStale();
 	ProfileAfterDestroy = FPlatformTime::Seconds();
 
 	if (!Session.IsOpen())
@@ -8099,6 +8104,18 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 		GOkCardLoadProfile.bActive = false;
 	}
 	bSessionLoadComplete = true;
+	{
+		int64 ReleasedBytes = 0;
+		const int32 Released = OKReleaseStaleRecentRuntimeTextures(&ReleasedBytes);
+		int64 KeptBytes = 0;
+		const int32 KeptReleased = OKReleaseStaleKeptRuntimeTextures(&KeptBytes);
+		const FKKRuntimeTextureKeepStats Keep = OKRuntimeTextureKeepStats();
+		const FOKRecentTextureCacheStats Kept = OKRecentRuntimeTextureCacheStats();
+		if (Released + KeptReleased > 0 || Kept.Entries + Keep.Entries > 0)
+			UE_LOG(LogTemp, Display, TEXT("OK kept GPU textures: released %d (%.1f MB) from the card just left, keeping %d (%.1f MB)"),
+				Released + KeptReleased, double(ReleasedBytes + KeptBytes) / 1048576.0,
+				Kept.Entries + Keep.Entries, double(Kept.Bytes + Keep.Bytes) / 1048576.0);
+	}
 	if (!MaterialOverrides.IsEmpty()) ApplyMaterialOverrides();
 	return true;
 }
