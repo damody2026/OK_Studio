@@ -24,7 +24,7 @@
 
 ## 打包街區交流 demo（StreetSocial.cmd 執行的版本）
 
-`StreetSocial.cmd` 執行 `Saved/StreetSocial/Build/` 裡最新的 `*.stage`。從 Content 與 Source 重新打包：
+`StreetSocial.cmd` 執行 `Saved/StreetSocial/Build/` 裡最新的 `*.stage`。「最新」看的是各 stage 的 `stage.json` 中的 `staged_at`，不是目錄或 exe 的 mtime（`Tools/street_stage.lua` `newest`）。臨時打的測試 stage 不想讓別人開街區時拿到，就把它自己的 `staged_at` 改得比原本最新的那個早；不要碰別人的 stage。從 Content 與 Source 重新打包：
 
 ```powershell
 .\Tools\lua\lua.exe Tools\rebuild_street_social_runtime.lua --tag <名稱> [--engine <UE5.8>] [--base-dir Saved/StreetSocial/Base]
