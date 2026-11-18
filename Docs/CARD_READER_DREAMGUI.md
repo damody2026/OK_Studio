@@ -440,3 +440,46 @@ UE 5.8 里 `TStrongObjectPtr` 就是用 UObject refcount 实作的，所以引�
 
 **所以这条对 e-cardload-physics 这侧结案**：真因在 DreamGUI 的绘制路径（绑定的是它自己的图集与 data texture），
 角色／预览／材质那条路径上已查无可疑的单调成长量（见上一节）。两笔修正解决的是两笔浪费，不是这条 PageFault。
+
+### 2026-11-19：第三条 GPU PageFault 的正式重现步骤（1～4 分钟内会中）
+
+两次独立命中（第 6 张／约 70 秒、第 13 张／251 秒），再加上关掉缩图与图片那趟（第 12 张／125 秒），共三次。
+
+```powershell
+# 1. 新版 UI 读卡器（不要带 -LegacyReader）
+.\Tools\ok-game-mcp\target\release\ok-game-mcp.exe call reader_launch '{"lane":"repro","card_directory":"E:/OKPackage/TestCards-20261118"}'
+# 2. 逐张开「不同」的卡，每张开完停 6 秒；用 state.session 换了确认真的重开（同路径再开会被跳过）
+#    OK_GAME_PID 锁自己的行程；通常第 6～13 张就 DXGI_ERROR_DEVICE_HUNG ＋ PageFault
+```
+
+驱动脚本（本机，不进版控）就是 `reader_call load` ＋ `Start-Sleep 6` ＋ 每张查一次 log 的 `GPU crash detected`。
+
+**三个必要条件，各有对照**
+
+| 条件 | 对照 | 结果 |
+|---|---|---|
+| **新版 DreamGUI 画面** | 同 build 带 `-LegacyReader` 跑同样 30 张 | 旧版 UMG **不当** |
+| **真的载入 3D** | 只在卡片清单点卡（`ok.ReaderScreen card <N>` 只选取不重开）＋捲动，12 轮＝360 次点卡、60 次捲动 | **不当** |
+| **载入后要停几秒** | 不等待、一张接一张连开 30 张（约 4 秒一张、共 125 秒） | **不当** |
+
+最后那条把危险窗口定在**大规模 UI 重建之后的那几秒 idle 绘制**，不是重建的那一瞬间：连开不停时下一次载入很快把一切推掉，停 6 秒才给了飞行中的帧足够时间用旧绑定去画。
+
+**排除：卡片缩图的背景解码与图片绘制都不是必要条件**
+
+`ok.ReaderThumbs 0`（不再解码缩图）＋ `ok.ReaderPictures 0`（磁砖／镜像图／卡片清单都不画）两条一起设 0
+（读回确认 `LastSetBy: Console`、值为 0），其他条件全部不动 —— **照样在第 12 张／125 秒当**。
+所以 `TickThumbnails()` 与 `OKReaderThumbs` 那一段可以排除。
+（注：APNG 2D 预览的 `NativeTick` 推进是**旧版 UMG gallery** 的事，新版 `UOKReaderScreen::Tick` 里没有 APNG，
+所以「停掉 APNG」这个对照在新版画面上不适用，改用上面两条 cvar 等价替代。）
+
+**所以剩下的范围**：关掉图片之后，当机那一帧飞行中的 draw 仍然是
+`DreamUIDraw main=DreamUIPreset_WhiteSolid font=DreamUIFontData_DistanceField_Texture_0`
+→ `DreamUIData widget=DreamUIDataTexture_6 clip=DreamUIDataTexture_3`
+→ `DreamUIMore rect=DreamUIDataTexture_4 paint=DreamUIDataTexture_1 mask0=fallback`，
+着色器位址照旧 `fragment_02 @ 0x00045f90`。也就是**基本 UI 绘制路径与它的四张 data texture ＋ 字型图集**，
+与卡片图片无关。下一步该查的是这些 data texture 在**大规模重建**（载入完成后镜像控制项整段重建）时的
+重建／扩张，以及那一刻飞行中的帧里的绑定是不是还指着旧的那张
+（`FDreamUIDeferredRelease` 与「资料贴图变大前等 RDG 非同步执行」已经加过，但重建路径未必走同一条等待）。
+
+log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张）、
+`Saved/Logs/CardReader/20261119-070006-26970b24.log`（关图片，第 12 张）、`Saved/Crashes` 的 `UECC-Windows-*`。
