@@ -131,7 +131,30 @@ void UOKCharacterController::RunAppearanceRequest(TSharedRef<FJsonObject> Reques
 }
 void UOKCharacterController::OnOpenAppearance(){
  if(!bModelLayout||bLoadInFlight||bAppearanceBusy||bPropertyBusy||!Entries.IsValidIndex(SelectedIndex))return;AppearancePanel->SetVisibility(ESlateVisibility::Visible);if(MotionPanel)MotionPanel->SetVisibility(ESlateVisibility::Collapsed);
+ // The catalog of this card and outfit is already here (the reader's pages open the picker each time one is entered).
+ if(!AppearanceTargets.IsEmpty()&&!Selected.DeferredPreview&&AppearanceCatalogPath==Entries[SelectedIndex].Path&&AppearanceCatalogOutfit==OutfitIndex){FillAppearanceTargets(AppearanceTarget->GetSelectedOption());return;}
  RefreshAppearanceCatalog();
+}
+void UOKCharacterController::SetAppearanceScope(const TArray<FString>& Prefixes){
+ AppearanceScope=Prefixes;
+ if(AppearancePanel&&AppearancePanel->GetVisibility()!=ESlateVisibility::Collapsed&&!bAppearanceBusy&&!AppearanceTargets.IsEmpty()&&Entries.IsValidIndex(SelectedIndex)&&AppearanceCatalogPath==Entries[SelectedIndex].Path&&AppearanceCatalogOutfit==OutfitIndex)FillAppearanceTargets(AppearanceTarget->GetSelectedOption());
+ else OnOpenAppearance();
+}
+// The target list as AppearanceScope keeps it: Preferred stays chosen when it is in the list, else the first.
+void UOKCharacterController::FillAppearanceTargets(const FString& Preferred){
+ if(!AppearanceTarget)return;
+ TArray<FString> Labels;
+ // In the scope's order (頭髮: 後髮 … before 光澤), the catalog's order within each prefix.
+ if(AppearanceScope.IsEmpty())for(auto T:AppearanceTargets)Labels.Add(T->GetStringField(TEXT("label")));
+ for(const FString& P:AppearanceScope)for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("key")).StartsWith(P))Labels.AddUnique(T->GetStringField(TEXT("label")));
+ const FString Chosen=Labels.Contains(Preferred)?Preferred:Labels.Num()?Labels[0]:FString();
+ bool Same=Labels.Num()==AppearanceTarget->GetOptionCount();for(int32 I=0;Same&&I<Labels.Num();++I)Same=AppearanceTarget->GetOptionAtIndex(I)==Labels[I];
+ if(!Same){AppearanceTarget->ClearOptions();for(const FString& L:Labels)AppearanceTarget->AddOption(L);}
+ if(AppearanceTarget->GetSelectedOption()!=Chosen||!Same)AppearanceTarget->SetSelectedOption(Chosen);
+ // SetSelectedOption fires OnAppearanceTarget only for a change: the page is built here otherwise.
+ FString Key;for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("label"))==Chosen){Key=T->GetStringField(TEXT("key"));break;}
+ if(Key!=AppearanceTargetKey||AppearanceButtons.IsEmpty())OnAppearanceTarget(Chosen,ESelectInfo::Direct);
+ if(Labels.IsEmpty()&&AppearanceStatus)AppearanceStatus->SetText(FText::FromString(TEXT("這張卡沒有這一類可換的項目。")));
 }
 void UOKCharacterController::RefreshAppearanceCatalog(bool bSelectNewestSlot){
  if(MaterializeAppearance([bSelectNewestSlot](UOKCharacterController* G){G->RefreshAppearanceCatalog(bSelectNewestSlot);}))return;
@@ -142,7 +165,9 @@ void UOKCharacterController::RefreshAppearanceCatalog(bool bSelectNewestSlot){
  RunAppearanceRequest(R,[Selection,Outfit,Generation,bSelectNewestSlot](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bAppearanceBusy=false;if(Selection!=G->SelectedIndex||Outfit!=G->OutfitIndex||Generation!=G->LoadGeneration)return;if(!Data){G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀目錄讀取失敗：")+Error));return;}
   G->AppearanceTargets.Reset();G->AppearanceItems.Reset();G->AppearanceTarget->ClearOptions();
   for(auto V:Data->GetArrayField(TEXT("targets")))G->AppearanceTargets.Add(V->AsObject());for(auto V:Data->GetArrayField(TEXT("items")))G->AppearanceItems.Add(V->AsObject());
-  FString Chosen=TEXT("眉毛種類");for(auto T:G->AppearanceTargets){G->AppearanceTarget->AddOption(T->GetStringField(TEXT("label")));if(bSelectNewestSlot&&T->GetStringField(TEXT("key")).StartsWith(TEXT("accessory"))&&T->GetIntegerField(TEXT("category"))==121)Chosen=T->GetStringField(TEXT("label"));}G->AppearanceTarget->SetSelectedOption(Chosen);
+  FString Chosen=TEXT("眉毛種類");for(auto T:G->AppearanceTargets){if(bSelectNewestSlot&&T->GetStringField(TEXT("key")).StartsWith(TEXT("accessory"))&&T->GetIntegerField(TEXT("category"))==121)Chosen=T->GetStringField(TEXT("label"));}
+  G->AppearanceCatalogPath=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();G->AppearanceCatalogOutfit=G->OutfitIndex;
+  G->FillAppearanceTargets(Chosen);
  });
 }
 void UOKCharacterController::OnCloseAppearance(){if(MaterializeAppearance([](UOKCharacterController* G){G->OnCloseAppearance();}))return;if(AppearancePanel)AppearancePanel->SetVisibility(ESlateVisibility::Collapsed);if(MotionPanel)MotionPanel->SetVisibility(bModelLayout?ESlateVisibility::Visible:ESlateVisibility::Collapsed);WarmClothingPreviews();}
@@ -159,8 +184,8 @@ void UOKCharacterController::RebuildAppearancePage(){
   const FString Text=(Item->GetStringField(TEXT("source")).IsEmpty()?TEXT("原始遊戲 類型 "):TEXT("模組 類型 "))+E->GetStringField(TEXT("name"))+TEXT(" ")+FString::FromInt(E->GetIntegerField(TEXT("id")))+TEXT(" ")+Item->GetStringField(TEXT("source"));if(!Search.IsEmpty()&&!Text.Contains(Search))continue;AppearanceFiltered.Add(I);}
  AppearancePage=FMath::Clamp(AppearancePage,0,FMath::Max(0,(AppearanceFiltered.Num()-1)/32));++AppearancePageGeneration;AppearanceGrid->ClearChildren();AppearanceButtons.Reset();AppearanceTextures.Reset();
  for(int32 At=AppearancePage*32;At<FMath::Min((AppearancePage+1)*32,AppearanceFiltered.Num());++At){auto Item=AppearanceItems[AppearanceFiltered[At]];auto E=Item->GetObjectField(TEXT("entry"));auto* B=WidgetTree->ConstructWidget<UOKAppearanceButton>();B->Owner=this;B->ItemKey=Item->GetStringField(TEXT("key"));B->OnClicked.AddDynamic(B,&UOKAppearanceButton::SelectItem);B->SetToolTipText(FText::FromString(E->GetStringField(TEXT("name"))+TEXT("\n")+Item->GetStringField(TEXT("source"))));
-  if(AppearanceSelectedKeys.FindRef(AppearanceTargetKey)==B->ItemKey)B->SetBackgroundColor(FLinearColor(.95,.45,.25));auto* Box=WidgetTree->ConstructWidget<USizeBox>();Box->SetWidthOverride(124);auto* Col=WidgetTree->ConstructWidget<UVerticalBox>();Box->SetContent(Col);B->SetContent(Box);
-  B->Thumbnail=WidgetTree->ConstructWidget<UImage>();B->Thumbnail->SetDesiredSizeOverride(FVector2D(104,104));auto* ThumbBox=WidgetTree->ConstructWidget<USizeBox>();ThumbBox->SetWidthOverride(104);ThumbBox->SetHeightOverride(104);ThumbBox->SetContent(B->Thumbnail);Col->AddChild(ThumbBox);B->ThumbnailStatus=WidgetTree->ConstructWidget<UTextBlock>();B->ThumbnailStatus->SetText(FText::FromString(TEXT("讀取縮圖…")));B->ThumbnailStatus->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",12));Col->AddChild(B->ThumbnailStatus);auto* Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetText(FText::FromString(FString::Printf(TEXT("類型 %d · %s"),E->GetIntegerField(TEXT("id")),Item->GetStringField(TEXT("source")).IsEmpty()?TEXT("原始遊戲"):TEXT("模組"))));Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Text->SetAutoWrapText(true);Col->AddChild(Text);AppearanceGrid->AddChild(B);AppearanceButtons.Add(B);
+  B->bChosen=AppearanceSelectedKeys.FindRef(AppearanceTargetKey)==B->ItemKey;if(B->bChosen)B->SetBackgroundColor(FLinearColor(.95,.45,.25));auto* Box=WidgetTree->ConstructWidget<USizeBox>();Box->SetWidthOverride(124);auto* Col=WidgetTree->ConstructWidget<UVerticalBox>();Box->SetContent(Col);B->SetContent(Box);
+  B->Thumbnail=WidgetTree->ConstructWidget<UImage>();B->Thumbnail->SetDesiredSizeOverride(FVector2D(104,104));auto* ThumbBox=WidgetTree->ConstructWidget<USizeBox>();ThumbBox->SetWidthOverride(104);ThumbBox->SetHeightOverride(104);ThumbBox->SetContent(B->Thumbnail);Col->AddChild(ThumbBox);B->ThumbnailStatus=WidgetTree->ConstructWidget<UTextBlock>();B->ThumbnailStatus->SetText(FText::FromString(TEXT("讀取縮圖…")));B->ThumbnailStatus->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",12));Col->AddChild(B->ThumbnailStatus);auto* Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetText(FText::FromString(FString::Printf(TEXT("類型 %d · %s"),E->GetIntegerField(TEXT("id")),Item->GetStringField(TEXT("source")).IsEmpty()?TEXT("原始遊戲"):TEXT("模組"))));Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Text->SetAutoWrapText(true);Col->AddChild(Text);B->Caption=Text;AppearanceGrid->AddChild(B);AppearanceButtons.Add(B);
  }
  AppearancePageText->SetText(FText::FromString(FString::Printf(TEXT("%d／%d 頁"),AppearancePage+1,FMath::Max(1,(AppearanceFiltered.Num()+31)/32))));AppearanceStatus->SetText(FText::FromString(FString::Printf(TEXT("共 %d 個項目；點選圖片套用，原始卡片不會被覆寫。"),AppearanceFiltered.Num())));LoadAppearanceThumbnails();
 }
@@ -255,7 +280,7 @@ bool UOKCharacterController::ApplyPreparedAppearance(const FString& Key){
    G->AppearanceLastTiming->SetNumberField(TEXT("output_save_ms"),Job->SaveMs);G->AppearanceLastTiming->SetNumberField(TEXT("preview_commit_ms"),(FPlatformTime::Seconds()-Start)*1000.);
    // Selection does not change the catalog or thumbnails. Keep existing
    // widgets/textures rather than decoding and uploading the entire page.
-   for(UOKAppearanceButton* B:G->AppearanceButtons)B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
+   for(UOKAppearanceButton* B:G->AppearanceButtons)B->bChosen=B->ItemKey==Key,B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
    G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀已套用；另存時會保存完整角色資源。")));
   });
  });
@@ -310,7 +335,7 @@ bool UOKCharacterController::ApplyPreparedGeometry(const FString& Key){
    G->AppearanceLastTiming->SetObjectField(TEXT("geometry_publication"),Publication);
    G->AppearanceLastTiming->SetNumberField(TEXT("metadata_copy_ms"),MetadataCopyMs);G->AppearanceLastTiming->SetNumberField(TEXT("output_read_ms"),Job->ReadMs);
    G->AppearanceLastTiming->SetNumberField(TEXT("output_save_ms"),Job->SaveMs);G->AppearanceLastTiming->SetNumberField(TEXT("preview_commit_ms"),(FPlatformTime::Seconds()-Start)*1000.);
-   for(UOKAppearanceButton* B:G->AppearanceButtons)B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
+   for(UOKAppearanceButton* B:G->AppearanceButtons)B->bChosen=B->ItemKey==Key,B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
    G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀已套用；另存時會保存完整角色資源。")));
   });
  });

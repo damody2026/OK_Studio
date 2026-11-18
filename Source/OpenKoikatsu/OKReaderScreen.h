@@ -58,6 +58,9 @@ public:
 	bool IsOpen() const { return bOpen; }
 	// Copy the UMG control's state into this one. Cheap when nothing changed.
 	void Sync();
+	// A click on it, as the pointer would (ok.ReaderScreen press): false when it is not a shown, enabled button.
+	bool Press();
+	const FString& GetShownText() const { return ShownText; }
 
 protected:
 	virtual void NativeOnInitialized() override;
@@ -87,6 +90,9 @@ struct FOKDreamMirrorPanel
 	TWeakObjectPtr<UPanelWidget> Source;
 	TWeakObjectPtr<UDreamWidget> Target;
 	int32 Children=-1;
+	// Which UMG children it was mirrored from: a list rebuilt with as many new widgets (a page of the picture picker, of the
+	// detailed editor) is mirrored again too.
+	TArray<TWeakObjectPtr<UWidget>> Kids;
 	bool bHorizontal=false;
 };
 
@@ -125,6 +131,9 @@ public:
 	FString CurrentCategory() const;
 	bool SelectCategory(const FString& Name);
 	bool SelectSub(const FString& Name);
+	// Press the shown control with this text (the Index-th of several; exact text first, then containing it).
+	bool PressControl(const FString& Text,int32 Index);
+	void ScrollLeftPage(float Progress);
 	void ShowTabPublic(int32 Index){ShowTab(Index);}
 	void SetLeftWidth(float Width);
 	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
@@ -202,6 +211,9 @@ private:
 	// Whether the hidden UMG layer held the keyboard focus last frame (it is logged when it starts to).
 	bool bUmgHadFocus=false;
 	TArray<FOKDreamMirrorPanel> Panels;
+	// The page's part of the picture picker and of the detailed editor (target prefixes, property tokens), asked for again
+	// while the controller is busy (reading the catalog it opens neither): see SyncAll.
+	TOptional<TArray<FString>> WantedTargets,WantedProperties;
 
 	void BuildCategories();
 	void BuildDrawers();
@@ -219,6 +231,7 @@ private:
 	void Layout();
 	void TickResize();
 	void SyncAll();
+	void ApplyWantedScopes();
 
 	UOKDreamControl* MakeControl(const TCHAR* Kind,UDreamWidget* Into);
 	UOKDreamControl* MakeOwnButton(UDreamWidget* Into,const FString& Text,TFunction<void()> Press);

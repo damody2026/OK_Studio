@@ -202,6 +202,16 @@ public:
  TSharedPtr<FOkAppearanceContext,ESPMode::ThreadSafe> AppearanceContext;
  FString AppearanceContextPath;
  int32 AppearanceContextGeneration=INDEX_NONE,AppearanceContextOutfit=INDEX_NONE;
+ // The DreamGUI reader's pages each show their part of the picture picker and of the detailed editor (眉毛, 眼睛,
+ // 頭髮, 配件 ...): target-key prefixes and property tokens (found in a property's key or label). Empty shows all.
+ TArray<FString> AppearanceScope,PropertyScope;
+ void SetAppearanceScope(const TArray<FString>& Prefixes);
+ void SetPropertyScope(const TArray<FString>& Tokens);
+ bool PropertyInScope(const TSharedPtr<FJsonObject>& Property) const;
+ void FillAppearanceTargets(const FString& Preferred);
+ // Which card and outfit AppearanceTargets were read for: a page entered again does not read the catalog again.
+ FString AppearanceCatalogPath;
+ int32 AppearanceCatalogOutfit=INDEX_NONE;
  bool ApplyPreparedAppearance(const FString& Key);
  bool ApplyPreparedGeometry(const FString& Key);
  // Returns true when the requested action must wait for resource persistence.
