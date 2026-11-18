@@ -194,7 +194,20 @@
 
 ## 3. 量测（`Tools/street_city_memory_probe.lua`）
 
-工具：照 `StreetSocial.cmd` 的方式启动（`-Sandbox MemProbe -PortBase 48160 -NoCloud -Control -Window 1280x720`），每 2 秒记录游戏进程的 private commit、工作集、峰值、GPU 专用显存、系统可用 commit；载入后待机 60 秒，再依序瞬移到 department、boys_dorm、skating、gym、church、department，各停 25 秒；最后只结束自己启动的 PID。Unreal slot 名称 `c-lowspec`。输出 `Saved/StreetSocial/MemProbe/<tag>.csv` 与 `.json`。
+工具：照 `StreetSocial.cmd` 的方式启动（`-Sandbox MemProbe -PortBase 48160 -NoCloud -Control -Window 1280x720`），每 2 秒记录游戏进程的 private commit、工作集、峰值、GPU 专用显存、系统可用 commit。
+
+**控制游戏走 ok-game-mcp**（2026-11-18 起，7b7b3bb20）：瞬移、导航、指令、状态、截图都用 `ok-game-mcp.exe call`，`OK_CONTROL_PORT` 固定在 probe 自己的 sandbox。原本用 curl 直接打控制通道；控制有改动时只会改在 MCP 那一层，所以不要再加 curl 端点。迁移前后同一个 stage（lowspec1118i）、同一路线、独占整机的对照：
+
+| 趟 | 控制 | 四段用时 s | 峰值 commit／工作集／显存 GB |
+|---|---|---|---|
+| walkQ-1118 | curl（stage 1118f） | 122／160／75／119 | 11.82／8.10／4.57 |
+| walkQ-1118g | curl（1118g） | 125／161／73／115 | 11.83／8.12／4.56 |
+| walkQ-1118i | curl（1118i） | 123／160／73／113 | 11.88／8.17／4.53 |
+| walkQ-1118i-mcp | MCP（1118i） | 123／159／74／116 | 11.92／8.09／4.56 |
+
+MCP 版落在三趟 curl 之间的跨度内，迁移没有改变量测结果。
+
+载入后待机 60 秒，再依序瞬移到 department、boys_dorm、skating、gym、church、department，各停 25 秒；最后只结束自己启动的 PID。Unreal slot 名称 `c-lowspec`。输出 `Saved/StreetSocial/MemProbe/<tag>.csv` 与 `.json`。
 
 测试者的 stage 不能被改动（启动器会在 stage 的 Content 建 junction），所以在 `Saved/StreetSocial/MemProbe/Pack1114.stage` 用 junction 镜像包的 Engine、Binaries、Plugins、Paks。这个目录有 junction，**不要递归删除**。
 
