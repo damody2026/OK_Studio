@@ -68,6 +68,9 @@ local function parse(argv)
 end
 
 local function say(s) io.write(s, "\n"); io.flush() end
+-- Where the launcher's own time goes before the game starts (the street took 165 s to talk, 2026-11-18).
+local launch_t0 = ok.time.clock()
+local function mark(what) say(("launch timing: %s +%.1fs"):format(what, ok.time.clock() - launch_t0)) end
 local function sha(p) return hash.sha256_file(p):lower() end
 local function exists(p) return p ~= nil and p ~= "" and path.exists(p) end
 local function read_json(p) return json.decode(path.read_text(p)) end
@@ -334,6 +337,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
     return
   end
 
+  mark("build checked")
   local output = path.join(root, "Saved/StreetSocial/Play-" .. os.date("%Y%m%dT%H%M%S"))
   local suffix = 0
   while path.exists(output .. (suffix > 0 and ("-" .. suffix) or "")) do suffix = suffix + 1 end
@@ -352,6 +356,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   local sel = proc.lua(path.join(root, "Tools/prepare_street_social_selection.lua"), { "--male", o.malecard, "--selection", o.selectionfile,
     "--catalogue", build.catalogue, "--materials", materials, "--output", manifest })
   if not sel.ok then error("StreetSocial APNG selection validation failed", 0) end
+  mark("selection prepared")
   if o.retargetfile then retarget("inject", o.retargetfile, manifest) end
   -- The editor has no cooked shader library; the crowd runtime then draws with the editor's own material resources.
   if o.editor then
@@ -437,6 +442,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
     say("No cloud: " .. cleared .. " key(s) emptied in " .. settings_file .. "; the heroines' mind and the voices stay local")
   end
   local settings = player_settings.read(settings_file)
+  mark("settings")
 
   -- This checkout's ports and voice servers (local-instance.json, Tools/ok_instance.lua).
   local ports = instance.ports(root)
@@ -534,6 +540,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
     if not copied then say("Conversation presenter DLL in use, keeping the previous copy: " .. tostring(err)) end
   end
 
+  mark("rules / mind / story DLLs")
   -- The game reads these at start; set only for the processes started below (this launcher's own environment).
   local env = {
     OK_BUILTIN_RESOURCES = path.join(root, "Content/IndependentResources/v1"),
@@ -648,6 +655,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   if o.clock then game[#game + 1] = "-StreetSocialClock=" .. o.clock end
   say("StreetSocial: one male + up to ten heroines. WASD move, Shift run, mouse camera, Ctrl/middle UI cursor, wheel zoom, E talk, 1/2/3 topics, Esc cancel, L Chinese/Japanese voices, V built-in/TTS voice, N skip to 07:00 next morning; friendship/confession results save automatically after dialogue; F9 CPU/GPU; conversation buttons: shared walk/explore, photo (P save), seated talk, drinks, splash either direction; Esc ends activity. Reading uses a hand-held book.")
   if o.control then say(("Control channel: http://127.0.0.1:%d (Tools/ok-game-mcp finds it through local-instance.json)"):format(control_port)) end
+  mark("game start")
   local pid = proc.spawn(game, { cwd = root, hide = o.selftest and true or nil })
   print("game pid " .. pid);io.stdout:flush() -- ok-game-mcp watches it: this launcher leaves while the game runs
 instance.record_launch(pid, root) -- whose game it is, for ok-game-mcp calls with nothing selected
