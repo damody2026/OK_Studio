@@ -21,6 +21,7 @@
 #include "Types/ISlateMetaData.h"
 #include "Widgets/Input/SEditableText.h"
 #include "Widgets/Input/SSpinBox.h"
+#include "SOKStudioLoadOverlay.h"
 
 namespace
 {
@@ -99,6 +100,8 @@ namespace
 		TSharedRef<FJsonObject> O = Result(true);
 		O->SetStringField(TEXT("scene_file"), G.File);
 		O->SetBoolField(TEXT("dirty"), G.bDirty);
+		// The loading box (SOKStudioLoadOverlay): whether it shows and what it says.
+		O->SetObjectField(TEXT("loading"), SOKStudioLoadOverlay::StateJson(&G));
 		TArray<TSharedPtr<FJsonValue>> Sel;
 		for (int32 Id : G.Selection) Sel.Add(MakeShared<FJsonValueNumber>(Id));
 		O->SetArrayField(TEXT("selection"), Sel);
@@ -1628,6 +1631,9 @@ namespace
 	bool LeavesScene(const FString& Op, const TSharedRef<FJsonObject>& J)
 	{
 		FString Id;
+		// leave: studio_stop discard=true quits without the unsaved-changes dialog, and must reach a scene that is still
+		// building just as app.quit does (2026-11-18: refused as busy, the editor stayed up).
+		if (Op == TEXT("leave")) return true;
 		return Op == TEXT("cmd") && J->TryGetStringField(TEXT("id"), Id) && (Id == TEXT("scene.new") || Id == TEXT("app.quit"));
 	}
 

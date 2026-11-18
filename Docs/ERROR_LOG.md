@@ -5391,3 +5391,26 @@ f-studio-ui 检查，并说明可取回的范围。自己的部分重打了。
 
 **做法**：共用树上永远不要对整个档案 `git checkout --`／`git restore`／`git stash`。要退掉自己那几行就直接编辑回去
 （和写上去是同一种动作，只影响自己那几行），或先 `git diff -- <档> > /tmp/x.patch` 留底再动。
+
+## 2026-11-18：MCP 的 studio_stop 没把编辑器关掉，没握 slot 的 Unreal 留在机器上（f-studio-ui）
+
+我用 `ok-game-mcp call studio_launch` 开 OK Studio 匯入一张原作场景，量完呼叫 `studio_stop` 就 release slot。
+匯入的场景还没存档，`studio_stop`（命令 `app.quit`）在自己的 UI 里问要不要存，所以编辑器没退出（pid 78800）。
+这个 Unreal 没握 slot，却一直留在机器上，会污染别人的量测，仲裁器也把它算进 Unreal 数，挡住别人 claim。协调者巡检时才发现。
+
+**修正**：用 CIM Terminate 收掉（`taskkill` 会回报成功却没杀掉）。检查脚本在 `studio_stop` 之后，
+只收命令列带自己那个 `StudioControlPort=<埠>` 的编辑器。
+
+**教训**：release slot 之前，先确认自己开的 Unreal 真的结束了。用 CIM 比对命令列里的埠或 log 路径来认自己的行程；
+`studio_stop`、`app.quit` 这类「请它自己退出」的呼叫可能被对话框挡住，不能当作结束的证据。
+
+## 2026-11-18：「全跑过了」以外的三个自己踩的坑（f-yvonne，C000 坐姿黑面调查期间）
+
+1. **连拍的「0/12 不黑」其实是没拍到**：读卡器中途崩溃（截图回读 assert），后面每组都没有截图，脚本把「没有图」算成「不黑」，一度差点下结论。
+   之后截图改存 `Saved/CharacterMCP/instances/<pid>/images/`，旧脚本只找 `Saved/CharacterMCP/images/`，又一次 0/0。
+   **修正**：连拍要数实际张数，少拍就写 NOIMG、整组作废；判读前先确认张数。
+2. **环境变数被启动器盖掉**：用 `$env:OK_CPU_SKIN='1'` 开读卡器，结果还是 GPU 蒙皮（`run_card_reader_development.lua` 自己设 OK_CPU_SKIN）。
+   **修正**：用启动器的 `-CpuSkin`，并看启动纪录 json 的 `skinning` 字段确认。
+3. **同时握两个 slot**：一般模式全跑（f-yvonne-norm）在背景跑，调查段（f-yvonne-dbg）又另外 claim，五个 agent 在排队。停全跑时，
+   等「full run ended」的链式脚本也跟着误以为全跑结束。**修正**：同一时间只占一个 slot；暂停全跑要连等它的链式脚本一起停，
+   并在日志补一行说明。
