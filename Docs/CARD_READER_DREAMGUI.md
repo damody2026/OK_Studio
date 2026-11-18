@@ -56,7 +56,7 @@ UOKReaderScreen（DUI/Reader/ReaderScreen.dui → /Game/UI/Reader/WBP_ReaderScre
 
 - 外觀選擇與詳細編輯分到各頁（見下方「舊版控制項盤點」），進入頁面時以該頁的範圍打開（`SetAppearanceScope`／`SetPropertyScope`；控制器忙著讀目錄時每幀重試，`ApplyWantedScopes`）；「角色資訊」進入時把卡片牆的 `InspectCol` 顯示回來（開卡後 `SetModelLayout` 會收起它）；「設定／角色風格」進入時顯示 `StyleBox`（UMG 只在舊的「角色風格」分類下顯示它）。UMG 層透明又不吃點擊，所以這些只讓 DreamGUI 有東西可鏡像。
 - 「設定／物理」只鏡像物理下拉與三條滑桿（各自連同前一行說明文字），不是整個動作欄。
-- **讀卡器的物理預設就是「原始 Verlet」**（使用者 2026-11-18；啟動旗標 `-OKPhysics=verlet` → `OKPhysXSecondary.Enabled 0`，在建選單之前套用，`OKCharacterController::ApplyStartupPhysicsBackend`）。2026-11-19 實機再確認：啟動日誌 `Card reader physics: verlet (OKPhysXSecondary.Enabled 0, Backend -1)`、選單值「物理：原始 Verlet」。**不要為了讀卡器去改 `Tools/ok-extract/src/px.rs` 的 `PhysicsComponent::default_solver()`**：那是全域設定，街區、一對一與 Studio 都吃它（`dbone.rs`、`okphysics.rs`），而且 host solver 關著時它根本不生效（`solve_batch` 直接回 false，每條鏈都走 ok-extract 自己的 DynamicBone 更新，也就是原始 Verlet）；它只有在選「依元件（卡片／預設）」時才有影響。
+- **讀卡器的物理預設就是「原始 Verlet」**（使用者 2026-11-18；啟動旗標 `-OKPhysics=verlet` → `OKPhysXSecondary.Enabled 0`，在建選單之前套用，`OKCharacterController::ApplyStartupPhysicsBackend`）。2026-11-19 實機再確認：啟動日誌 `Card reader physics: verlet (OKPhysXSecondary.Enabled 0, Backend -1)`、選單值「物理：原始 Verlet」。同一張卡（C011，九條尾巴＋外套，走路動作）切到「PhysX 5.11」再切回來：原始 Verlet 下尾巴與外套自然垂散、PhysX 下收得較緊，切回來恢復，兩邊都沒有穿模或爆炸；畫面右下角的讀數 48 FPS／20.7 ms（Verlet）對 99 FPS／10.1 ms（PhysX），**原始 Verlet 這張卡大約慢一倍**（單次讀數，不是基準測試）。**不要為了讀卡器去改 `Tools/ok-extract/src/px.rs` 的 `PhysicsComponent::default_solver()`**：那是全域設定，街區、一對一與 Studio 都吃它（`dbone.rs`、`okphysics.rs`），而且 host solver 關著時它根本不生效（`solve_batch` 直接回 false，每條鏈都走 ok-extract 自己的 DynamicBone 更新，也就是原始 Verlet）；它只有在選「依元件（卡片／預設）」時才有影響。
 - 沒有「介面」頁：UMG 的編輯欄寬度與字級只改看不見的 UMG 層；左欄寬度改用拖拉。
 
 - 右欄抽屜的標題列有外框，右側 ▶（收起）／▼（展開）；整列可點（2026-11-18 實拍）。
@@ -148,6 +148,13 @@ MCP 用的新指令：`ok.ReaderScreen press <文字> [#N]`（按目前顯示、
 | 真實滑鼠 | Windows `SendInput` 送出的按鍵與相對位移都沒進到遊戲（Slate 看不到按下、游標也不動） | MCP 沒辦法驅動真實滑鼠，這條沒有測到；不能當成「沒問題」的證據 |
 | 真實滑鼠（2026-11-19 再試） | 先 `SetForegroundWindow` 把遊戲視窗帶到前景，再用 `SendInput` 送絕對座標與相對位移：沒按鍵移動 240 px，`ok.ReaderScreen look` 的 yaw／pitch／distance／focus 與 `last_change` 都沒變、`buttons=none`；**接著送真實左鍵拖曳 180 px，鏡頭一樣沒轉** | 真實輸入到現在還是進不到遊戲（連拖曳都沒反應），所以這條仍然測不到，不能當成「沒問題」的證據 |
 | MCP（Slate）輸入 2026-11-19 複測 | 沒按鍵在 3D 區移動五個位置：鏡頭參數完全不變、`last_change=none`；從左欄（x=200）按下再拖過 3D 區：不轉；在 3D 區按下拖曳：yaw 0→-120，`last_change=mouse drag (buttons 1)` | 相機只在「按鍵從 3D 視窗上按下」時才轉，程式這層是對的 |
+
+### 2026-11-19 的第二輪：改查「跟著游標的是誰」與「有沒有自動轉」
+
+輸入那條已經查到底（上表），所以這輪改查兩個會被描述成「視野會轉」的東西：
+
+- **眼睛跟游標（`EyeMode=1`，選單上的「眼睛：看鼠標」）**：預設是 0（面向前方），要按「眼睛」按鈕才會切到跟游標。但切到之後，`TickEyeMode` 直接拿 Slate 的游標座標算視線，**游標移到左右面板上、移出視窗、甚至移到另一個螢幕，她的眼睛都還在跟**。使用者看到的「畫面上的東西跟著滑鼠動」最可能就是這個。2026-11-19 已修：游標不在 3D 視窗範圍內（面板上、視窗外）就保持上一個視線不再更新；範圍取自 `UOKReaderScreen::ViewSpan`（兩片面板之間的 3D 區），舊版介面（`-LegacyReader`）沒有面板時以視窗範圍為準；MCP 與眼睛審核用的明確像素座標不受影響。修完實測（`ok.Reader.EyeMode 1`，游標用 `ui_mouse` 移動，讀 `ok.ReaderScreen look` 的 `gaze`）：3D 區內三個位置各自不同（`0.275,-0.201,-0.459` → `0.293,-0.220,-1.000` → `0.130,-0.345,-0.499`），移到左欄（x=200）兩個位置與鏡頭列（y=40）都停在最後那組不再變；證據圖 `Saved/Reports/reader-eyes-20261119/cursor-in-3d.png`、`cursor-on-panel.png`（本機，不進版控）。`EyeMode=2`（看 Camera）沒有同樣的毛病：它跟的是 `StudioCam` 的位置（`FollowEyeLookCamera`），實測移動游標 `gaze` 不變。那顆「眼睛」按鈕是純 UMG、DreamGUI 沒鏡像，`ui_press` 與 `control_set` 都碰不到，所以加了 `ok.Reader.EyeMode [0|1|2]`（無參數則循環，`OKEyeCameraAudit.cpp`）讓外部測得到；正式的控制項等 DreamGUI 鏡像那顆按鈕。
+- **自動環繞／待機轉台／跟拍：沒有**。全專案搜過 `OrbitYaw` 的每一個寫入點，讀卡器這邊只有鏡頭列按鈕、`ok.ReaderScreen`／MCP、換卡換服裝時從舊 Actor 沿用（`OKGalleryClothing.cpp`、`OKGalleryWidget.cpp`），其餘是 1 對 1／H 場景與人物編輯 MCP 截圖流程各自設定後還原。`AKKPreviewActor` 裡沒有任何一行按時間推進 yaw，也沒有 turntable／auto-rotate 之類的 cvar，`OrbitFocus` 在 `KKPreviewActor.cpp` 裡只有讀沒有寫。所以「沒碰滑鼠它自己在動」在讀卡器裡不存在。
 
 下次再遇到時，在主控台（或 MCP `ui_exec`）下 `ok.ReaderScreen look`，一行就能定位：
 

@@ -2520,7 +2520,15 @@ void UOKCharacterController::TickEyeMode()
     FVector2D Pixel=EyeMousePixel;
     if(Pixel.X<0){const TSharedPtr<SViewport> Widget=Client->GetGameViewportWidget();FVector2D Size;Client->GetViewportSize(Size);if(!Widget||!FSlateApplication::IsInitialized())return;
         const FGeometry& Geo=Widget->GetCachedGeometry();if(Geo.GetLocalSize().X<=0||Geo.GetLocalSize().Y<=0)return;
-        Pixel=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos())*Size/Geo.GetLocalSize();}
+        Pixel=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos())*Size/Geo.GetLocalSize();
+        // Only while the cursor is on the 3D view itself. The real cursor is read from Slate, so over the panels,
+        // off the window or on another monitor her eyes kept turning to a cursor nobody was pointing at her with --
+        // which reads as "something on screen follows my mouse" (使用者 2026-11-19). She holds her last look instead;
+        // the explicit pixel (MCP, 眼睛審核) still goes through. ViewSpan is the DreamGUI screen's 3D rect; without it
+        // (舊版介面, -LegacyReader) the window itself is the bound.
+        if(Pixel.X<0.f||Pixel.Y<0.f||Pixel.X>Size.X||Pixel.Y>Size.Y)return;
+        float Left=0.f,Right=Size.X,Top=0.f;
+        if(ReaderScreen&&ReaderScreen->ViewSpan(Size,Left,Right,Top)&&(Pixel.X<Left||Pixel.X>Right||Pixel.Y<Top))return;}
     FVector Origin,Direction;if(!UGameplayStatics::DeprojectScreenToWorld(PC,Pixel,Origin,Direction))return;
     // Halfway to her along the cursor's ray: on her own plane a cursor over her eyes would sit inside them.
     const float Distance=FVector::Dist(Origin,PreviewActor->OrbitFocus);

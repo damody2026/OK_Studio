@@ -45,6 +45,20 @@ MCP 沒載入的 session 用 `Tools/ok-game-mcp/target/release/ok-game-mcp.exe c
 
 讀卡的 `parameters` 含 `shape.*`、`bone.*`、`physics.*`、`pregnancy.*`、`style.*`（角色風格的 `style` 與各比例參數）與卡片屬性。
 
+## 每一筆指令都記得是誰送的（2026-11-19）
+
+一台機器上常有好幾個 session 各自開著遊戲，忘了設 `OK_GAME_PID` 的工具會打到別人的遊戲上（2026-11-19 就發生過：別的 session 的驗證腳本在量測中途對另一個讀卡器翻頁、開卡）。所以兩條通道都記來源：
+
+- HTTP 通道（`ui_*`、`game_*`、`studio_*`）：呼叫端送 `X-OK-From: pid=<pid> <lane>`（`ok-game-mcp` 的
+  `game::from_header`，lane 取自 `OK_MCP_FROM` 或 `OK_LANE`），遊戲在分派前記一行
+  `OKControl <path> from <來源>`（`OKControl.cpp` 的 `Drain`）。`/health` 與 `/state` 會被輪詢，不記。
+  沒有這個標頭的呼叫端記成 `unknown`。
+- 讀卡器信箱（`reader_call`）：請求的 JSON 多一個 `from` 欄位（同樣的字串），讀卡器記在
+  `Character MCP operation=… from=…`（`OKCharacterMCP.cpp`）。
+
+查「這個操作是誰送的」就 grep log 的 `OKControl ` 或 `from=`。自己送指令時設 `OK_GAME_PID`
+指定自己的遊戲，並且可以設 `OK_LANE`（或 `OK_MCP_FROM`）讓 log 直接看得出是哪個 session。
+
 ## 不改變一般使用
 
 - 通道開著本身不改變遊戲行為。街區的「滑鼠不鎖、視窗不在前景也讀輸入、跳過開始選單」只給 `-Control`（`-StreetSocialControl`）；沒帶 `-Control` 時，AI 第一次透過 `/key` 送鍵才進入前兩項（`OKVirtualInput().Driven`）。

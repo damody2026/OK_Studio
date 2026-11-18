@@ -61,6 +61,19 @@ impl Game {
     }
 }
 
+/// `X-OK-From:` for every control request, ending in CRLF (empty if there is nothing to say): this process's pid, and
+/// the lane or session name from `OK_MCP_FROM` / `OK_LANE` when the caller set one. The game logs it per request.
+pub fn from_header() -> String {
+    format!("X-OK-From: {}\r\n", from_who())
+}
+
+/// The same identity as plain text, for the card reader's mailbox (its requests are files, not HTTP).
+pub fn from_who() -> String {
+    let who = std::env::var("OK_MCP_FROM").or_else(|_| std::env::var("OK_LANE")).unwrap_or_default();
+    let who = who.chars().filter(|c| !c.is_control()).take(64).collect::<String>();
+    if who.is_empty() { format!("pid={}", std::process::id()) } else { format!("pid={} {who}", std::process::id()) }
+}
+
 /// GET (body None) or POST JSON to a local HTTP control server; the reply is JSON. down: the error when nothing listens.
 pub fn http(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down: impl FnOnce() -> String) -> Result<Value> {
     let text = http_text(port, path, body, timeout, down)?;
@@ -73,13 +86,17 @@ pub fn http_text(port: u16, path: &str, body: Option<&Value>, timeout: Duration,
         let mut stream = TcpStream::connect(("127.0.0.1", port)).with_context(down)?;
         stream.set_read_timeout(Some(timeout))?;
         let payload = body.map(|b| b.to_string()).unwrap_or_default();
+        // Who is asking, for the game's log. Several sessions drive games on one machine and a tool that forgets
+        // OK_GAME_PID lands on someone else's game; without this the log cannot say whose command a page turn was
+        // (2026-11-19: another session's script paged through a reader in the middle of a measurement).
+        let from = from_header();
         let head = if body.is_some() {
             format!(
-                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json; charset=utf-8\r\n{from}Content-Length: {}\r\nConnection: close\r\n\r\n",
                 payload.len()
             )
         } else {
-            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{from}Connection: close\r\n\r\n")
         };
         stream.write_all(head.as_bytes())?;
         stream.write_all(payload.as_bytes())?;

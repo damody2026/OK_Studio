@@ -232,6 +232,9 @@ fn mailbox_call(root: &Path, body: &Value, timeout: f64) -> Result<Value> {
     let name = format!("{id}.json");
     let mut payload = body.clone();
     payload["deadline"] = (now.as_secs_f64() + timeout).into();
+    // Who is asking (the HTTP channel sends the same as X-OK-From): the reader logs it with the operation, so a
+    // command from a tool that forgot OK_GAME_PID can be told apart from this session's own (2026-11-19).
+    payload["from"] = crate::game::from_who().into();
     let request = root.join("requests").join(&name);
     let temp = root.join("requests").join(format!("{id}.tmp"));
     std::fs::write(&temp, payload.to_string())?;

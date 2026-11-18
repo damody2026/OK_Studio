@@ -361,5 +361,16 @@ static void Start(const TArray<FString>& Args)
     UE_LOG(LogTemp,Display,TEXT("Eye camera audit start first=%d dir=%s"),S.Card+1,*S.Dir);
     GTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&Tick),.1f);
 }
+// The 眼睛 button cycles 面向前方 / 看鼠標 / 看 Camera, and it is the only way to that choice: it is a plain UMG
+// button the DreamGUI screen does not mirror, so neither ui_press nor reader_call control_set reaches it and the
+// cursor-following gaze could not be tested from outside (2026-11-19). This sets it directly: ok.Reader.EyeMode [0|1|2].
+static void SetEyeMode(const TArray<FString>& Args)
+{
+    UOKCharacterController* G=Gallery();
+    if(!G){UE_LOG(LogTemp,Warning,TEXT("ok.Reader.EyeMode: no card reader"));return;}
+    if(Args.Num()>=1)G->SetEyeMode(FMath::Clamp(FCString::Atoi(*Args[0]),0,2));else G->OnEyeModeNext();
+    UE_LOG(LogTemp,Display,TEXT("ok.Reader.EyeMode %d (0 ahead, 1 cursor, 2 camera)"),G->EyeMode);
+}
+static FAutoConsoleCommand EyeModeCommand(TEXT("ok.Reader.EyeMode"),TEXT("The card reader's 眼睛 choice: 0 面向前方, 1 看鼠標, 2 看 Camera (no argument cycles)"),FConsoleCommandWithArgsDelegate::CreateStatic(&SetEyeMode));
 static FAutoConsoleCommand Command(TEXT("ok.VerifyEyeCamera"),TEXT("Each outfit of each reader card: eyes follow the camera from left, front, right, above and below (args: first count)"),FConsoleCommandWithArgsDelegate::CreateStatic(&Start));
 }
