@@ -215,6 +215,67 @@ key 形如 `bone.<骨骼名>.<轴>`，`category` 是 `FaceEyes2`（标签「眼�
 `face.pupil.0.pupilHeight`、`face.pupil.0.pupilX/Y`、`face.hlUpColor.*`、`face.whiteBaseColor.*` 等，
 用 `parameters` 的 `query` 过滤 `pupil`／`hl`／`white` 就列得出来。
 
+### 9.2.1 这两页的读：`eye_page`（2026-11-19 已实作）
+
+一页一个回答，UI 画一页只问一次（不分页）。`reader_call`／MCP 与 C++ 两边都走同一条：
+`{"action":"eye_page","page":"eye_scale2"|"eyes"}`，登记为**唯读**动作。
+每一列就是**同名的语义参数**（`OKCharacterMCPRegistry::Parameters`），所以**读到的就是 `set` 写的那个东西**
+（同 key、同 `min`／`max`、同验证），不会有两套数值漂移。程式在
+[`Source/OpenKoikatsu/OKCharacterMCP.cpp`](../Source/OpenKoikatsu/OKCharacterMCP.cpp) 的 `OKEyePage()`。
+
+**写不另做动作**：`set`（`{"action":"set","edits":[{"key":…,"value":…}]}`）已经吃 `bone.*` 与 `shape.*`，
+一次最多 256 笔、`bone` 那部分先在私有文件里暂存再一次 commit、超出 `min`／`max` 或型别不符**直接拒绝**
+（`Error: Value outside allowed range: <key>`，不会静默夹值），`supported=false` 也拒。
+C++ 侧仍可直接呼叫 `OnBoneChanged`／`OnShapeChanged`（9.4）。
+
+#### `page=eye_scale2`
+
+```jsonc
+{"page":"eye_scale2",
+ "groups":[{"key":"cf_J_Eye_tz","label":"雙眼球","bone_left":"cf_J_Eye_tz","bone_right":"","paired":false,
+            "rows":[{"key":"bone.cf_J_Eye_tz.scale.uniform","label":"雙眼球 縮放",
+                     "axis_name":"scale.uniform","axis":-1,"side":"both","group":"cf_J_Eye_tz",
+                     "value":1,"min":0,"max":3,"default":1,"unit":"multiplier",
+                     "supported":true,"kind":"number","category":"FaceEyes2"}, ...]},
+           {"key":"cf_J_Eye_rz_L","label":"眼球 縮放 1","bone_right":"cf_J_Eye_rz_R","paired":true,"rows":[...]},
+           {"key":"cf_J_Eye_tx_L","label":"眼球 縮放 2","bone_right":"cf_J_Eye_tx_R","paired":true,"rows":[...]}]}
+```
+
+三组、共 **50 列**（雙眼球 10 ＋ 縮放1 左右各 10 ＋ 縮放2 左右各 10），列的顺序就是 ABMX 的顺序：
+整体缩放、缩放 XYZ、位移 XYZ、旋转 XYZ。`side` 是 `left`／`right`／`both`，成对的那两组要同步时 UI 自己送两笔 `set`。
+`supported=false` 表示**这张卡的骨架没有那根骨头**（看的是 Session 的骨骼表），另附 `unsupported_reason`；
+要画成不可用而不是省略。
+
+#### `page=eyes`
+
+```jsonc
+{"page":"eyes",
+ "shapes":[{"key":"shape.face.24","index":24,"label":"上眼瞼形狀1","value":0.3,
+            "min":-1,"max":2,"default":0.611,"kind":"number","category":"shape"}, ...],   // 14 列，依序 24…37
+ "targets":[{"key":"pupil0","label":"瞳孔","category":408,"items":123,"applies":true,"current":"<item key>"}, ...],
+ "targets_available":true,
+ "properties":[{"key":"face.pupil.0.baseColor.0","label":"臉部／瞳孔顏色／紅","value":0.57,"kind":"color", ...}, ...]}
+```
+
+- `shapes`：原作 52 项脸部的第 24–37 项（上／下眼瞼形狀 1-3、眼睛上下、水平位置、前後、角度、寬度、長度、
+  眼頭左右、眼尾上下）。滑杆还没建出来时 `label` 用内建中文标签补上，不会是空的。
+- `targets`：瞳孔／渐层／眼白／高光／眼线／眼影六类（category 408／409／407／410／411／412／413／401），
+  `items` 是这一类在目录里有几格、`current` 是目前选的那一格。**没有设定来源游戏时 `items=0`、`applies=false`
+  并附 `unsupported_reason`**，照实说不能用（和 9.3 的 `applies:false` 一致）。
+  `targets_available=false`（附 `targets_reason`）表示**外观目录还没读**（第一次进外观页才会读）：
+  这不是「没有种类」，UI 先呼叫一次 `catalog`（或进那一页）再问。
+- `properties`：只有这一页在编的——`pupil`／`hl`／`white`（瞳孔颜色与大小位置、高光、眼白）；
+  眉毛与眼线颜色属它们自己的页，不收在这里。这张测试卡上是 46 列。
+
+#### 实测（2026-11-19，crowd_C001 与 demo_Male01，`CardReaderDevelopment.cmd` 的同一个 build）
+
+| 测什么 | 结果 |
+|---|---|
+| 整页一次读回 | `eye_scale2` 50 列／3 组；`eyes` 14 滑杆 ＋ 46 properties ＋ `targets_available=false`（当下还没读目录） |
+| 设值→另存→重载→读回一致 | `set` 三笔（两边 `cf_J_Eye_tx_*.scale.x=2.25`、`shape.face.30=1.5`）→ `save` → 开那张工作卡 → 读回**完全相同** |
+| 超出范围要拒绝 | 骨骼 5 与 −1（范围 0–3）、形状 9（范围 −1–2）都回 `Error: Value outside allowed range: <key>`，**而且事后读回的值没有被改动** |
+| `supported=false` | **这一条没有被量到**：两张测试卡的 1928 列骨骼参数**全部** `supported=true`（ABMX 的骨头在标准 KKS 骨架上都有）。旗标接的是 Session 的骨骼表，但 false 那一支**没有实测过** |
+
 ### 9.3 瞳孔覆盖贴图：`eye_overlays` / `eye_overlay_set`（2026-11-19 已实作）
 
 这一页管的是 Material Editor 的 `MaterialTexturePropertyList`（KKEx 区块）：按**材质名＋属性名**定位的覆盖贴图。

@@ -2,6 +2,7 @@
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "OKHGShading.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKBoneControls.h"
 #include "OKCharacterMCPGeometry.h"
 #include "OKReaderScreen.h"
 #include "OKVideoMotionPanel.h"
@@ -179,6 +180,106 @@ static void Page(UOKCharacterController* G,FOKCharacterMCPState& S,const FMCPRow
  auto R=State(G,S);R->SetArrayField(Field,Rows);R->SetNumberField(TEXT("total"),Count);R->SetNumberField(TEXT("next_offset"),int32(Offset)+Rows.Num());
  if(S.Action==TEXT("catalog")){FMCPRows Targets;for(auto T:G->AppearanceTargets)Targets.Add(MakeShared<FJsonValueObject>(T));R->SetArrayField(TEXT("targets"),Targets);}Finish(S,R);
 }
+// The eye detail pages (眼部縮放2 / 眼睛) read as one page each: the UI draws a page from a single answer
+// instead of asking per row. Every row is the semantic parameter of the same name, so what is read here and
+// what `set` writes are the same thing (same key, same range, same validation); nothing is duplicated.
+static const TCHAR* OKEyeShapeLabel(int32 Index)
+{
+ static const TCHAR* Labels[]={TEXT("上眼瞼形狀 1"),TEXT("上眼瞼形狀 2"),TEXT("上眼瞼形狀 3"),
+  TEXT("下眼瞼形狀 1"),TEXT("下眼瞼形狀 2"),TEXT("下眼瞼形狀 3"),TEXT("眼睛上下"),TEXT("眼睛水平位置"),
+  TEXT("眼睛前後"),TEXT("眼睛角度"),TEXT("眼睛寬度"),TEXT("眼睛長度"),TEXT("眼頭左右位置"),TEXT("眼尾上下位置")};
+ return Index>=24&&Index<=37?Labels[Index-24]:TEXT("");
+}
+static const TCHAR* OKEyeBoneGroupLabel(const FString& Bone)
+{
+ if(Bone==TEXT("cf_J_Eye_tz"))return TEXT("雙眼球");
+ if(Bone==TEXT("cf_J_Eye_rz_L"))return TEXT("眼球 縮放 1");
+ if(Bone==TEXT("cf_J_Eye_tx_L"))return TEXT("眼球 縮放 2");
+ return TEXT("");
+}
+static FMCPObject OKEyePage(UOKCharacterController* G,const FString& Page,const FMCPRows& All)
+{
+ TMap<FString,FMCPObject> ByKey;
+ for(auto P:All)ByKey.Add(P->AsObject()->GetStringField(TEXT("key")),P->AsObject());
+ auto Row=[&ByKey](const FString& Key)->FMCPObject{if(auto* Found=ByKey.Find(Key))return MakeShared<FJsonObject>(**Found);return nullptr;};
+ auto Out=MakeShared<FJsonObject>();Out->SetStringField(TEXT("page"),Page);
+ if(Page==TEXT("eye_scale2"))
+ {
+  // One group per bone pair, rows in the ABMX order (uniform scale, scale X/Y/Z, position X/Y/Z, rotation X/Y/Z).
+  TArray<FString> Order;TMap<FString,FMCPRows> Rows;TMap<FString,FString> Right;
+  for(const auto& Def:OKBoneControls)
+  {
+   if(FString(Def.Category)!=TEXT("FaceEyes2"))continue;
+   const FString Bone(Def.Bone),Pair(Def.Right);
+   if(!Order.Contains(Bone)){Order.Add(Bone);Rows.Add(Bone,FMCPRows());Right.Add(Bone,Pair);}
+   const TCHAR* Axis=Def.Axis<0?TEXT("scale.uniform"):Def.Axis==3?TEXT("length"):nullptr;
+   static const TCHAR* Names[]={TEXT("scale.x"),TEXT("scale.y"),TEXT("scale.z"),TEXT("length"),
+    TEXT("position.x"),TEXT("position.y"),TEXT("position.z"),TEXT("rotation.x"),TEXT("rotation.y"),TEXT("rotation.z")};
+   const FString AxisName=Axis?FString(Axis):FString(Names[Def.Axis]);
+   for(int32 Side=0;Side<2;++Side)
+   {
+    const FString Name=Side==0?Bone:Pair;if(Name.IsEmpty())continue;
+    auto R=Row(TEXT("bone.")+Name+TEXT(".")+AxisName);if(!R)continue;
+    R->SetStringField(TEXT("axis_name"),AxisName);
+    R->SetStringField(TEXT("side"),Pair.IsEmpty()?TEXT("both"):Side==0?TEXT("left"):TEXT("right"));
+    R->SetStringField(TEXT("group"),Bone);
+    Rows[Bone].Add(MakeShared<FJsonValueObject>(R));
+   }
+  }
+  FMCPRows Groups;
+  for(const FString& Bone:Order)
+  {
+   auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("key"),Bone);
+   const FString Label=OKEyeBoneGroupLabel(Bone);O->SetStringField(TEXT("label"),Label.IsEmpty()?Bone:Label);
+   O->SetStringField(TEXT("bone_left"),Bone);O->SetStringField(TEXT("bone_right"),Right[Bone]);
+   O->SetBoolField(TEXT("paired"),!Right[Bone].IsEmpty());O->SetArrayField(TEXT("rows"),Rows[Bone]);
+   Groups.Add(MakeShared<FJsonValueObject>(O));
+  }
+  Out->SetArrayField(TEXT("groups"),Groups);
+  return Out;
+ }
+ // The eyes page: the fourteen face shape sliders, then the kind pickers, then the colour/pupil properties.
+ FMCPRows Shapes;
+ for(int32 I=24;I<=37;++I)
+ {
+  auto R=Row(FString::Printf(TEXT("shape.face.%d"),I));if(!R)continue;
+  FString Label;R->TryGetStringField(TEXT("label"),Label);
+  if(Label.IsEmpty()||Label==R->GetStringField(TEXT("key")))R->SetStringField(TEXT("label"),OKEyeShapeLabel(I));
+  R->SetNumberField(TEXT("index"),I);Shapes.Add(MakeShared<FJsonValueObject>(R));
+ }
+ Out->SetArrayField(TEXT("shapes"),Shapes);
+ static const int32 Categories[]={408,409,407,410,411,412,413,401};
+ FMCPRows Targets;
+ for(auto T:G->AppearanceTargets)
+ {
+  double Category=-1;T->TryGetNumberField(TEXT("category"),Category);
+  bool Wanted=false;for(int32 C:Categories)if(int32(Category)==C)Wanted=true;
+  if(!Wanted)continue;
+  auto O=MakeShared<FJsonObject>(*T);const FString Key=T->GetStringField(TEXT("key"));
+  if(const FString* Selected=G->AppearanceSelectedKeys.Find(Key))O->SetStringField(TEXT("current"),*Selected);
+  // Without a source game the catalogue is empty, so the kind grids have nothing to draw: say so instead of
+  // showing empty grids (the shared base library is not a catalogue, see READER_UI_APPEARANCE_API.md section 0).
+  int32 Count=0;for(auto Item:G->AppearanceItems)if(MCPAppearanceCategory(Item)==int32(Category))++Count;
+  O->SetNumberField(TEXT("items"),Count);O->SetBoolField(TEXT("applies"),Count>0);
+  if(Count==0)O->SetStringField(TEXT("unsupported_reason"),TEXT("No source game catalogue for this kind"));
+  Targets.Add(MakeShared<FJsonValueObject>(O));
+ }
+ Out->SetArrayField(TEXT("targets"),Targets);
+ // The catalogue is read when the appearance page is first entered; until then there is nothing to draw,
+ // and an empty list would read as "no kinds". The UI reads catalog (or enters that page) once, then asks again.
+ Out->SetBoolField(TEXT("targets_available"),!G->AppearanceTargets.IsEmpty());
+ if(G->AppearanceTargets.IsEmpty())Out->SetStringField(TEXT("targets_reason"),TEXT("Appearance catalogue not read yet; call catalog first"));
+ FMCPRows Properties;
+ for(auto P:All)
+ {
+  auto O=P->AsObject();const FString Key=O->GetStringField(TEXT("key"));
+  if(!Key.StartsWith(TEXT("face.")))continue;
+  if(!Key.Contains(TEXT("pupil"))&&!Key.Contains(TEXT("hl"))&&!Key.Contains(TEXT("white")))continue;
+  Properties.Add(MakeShared<FJsonValueObject>(MakeShared<FJsonObject>(*O)));
+ }
+ Out->SetArrayField(TEXT("properties"),Properties);
+ return Out;
+}
 static bool Settled(UOKCharacterController* G,FOKCharacterMCPState& S)
 {
  // Progressive material replacement invalidates the readiness flag. Drive its
@@ -306,9 +407,14 @@ void UOKCharacterController::TickCharacterMCP()
  if(S.Action==TEXT("action")){FString Command;S.Request->TryGetStringField(TEXT("command"),Command);
   if(Command==TEXT("tpose"))OnPoseTpose();else if(Command==TEXT("walk"))OnPoseWalk();else if(Command==TEXT("pause"))OnPausePlayback();else if(Command==TEXT("replay"))OnReplayPlayback();else if(Command==TEXT("blink"))OnForceBlink();else if(Command==TEXT("reset_left_hand"))OnResetLeftHand();else if(Command==TEXT("reset_right_hand"))OnResetRightHand();else if(Command==TEXT("speak"))OnSpeak();else if(Command==TEXT("stop_speech"))OnStopSpeech();else if(Command==TEXT("load_speech"))OnLoadSpeech();else if(Command==TEXT("clothing")){double Kind;if(!S.Request->TryGetNumberField(TEXT("clothing_kind"),Kind)||Kind!=FMath::FloorToDouble(Kind)||!((Kind>=0&&Kind<=8)||(Kind>=100&&Kind<=102))){Finish(S,nullptr,TEXT("Invalid clothing_kind"));return;}OnClothesState(int32(Kind));}else{Finish(S,nullptr,TEXT("Unknown editor command"));return;}S.Phase=4;S.ReadyAt=0;return;
  }
- if(S.Action==TEXT("parameters")||S.Action==TEXT("get")||S.Action==TEXT("set")||S.Action==TEXT("reset")){
+ if(S.Action==TEXT("parameters")||S.Action==TEXT("get")||S.Action==TEXT("set")||S.Action==TEXT("reset")||S.Action==TEXT("eye_page")){
   if(!PropertyPanel){Finish(S,nullptr,TEXT("Property editor unavailable"));return;}if(EditorProperties.IsEmpty()||PropertySource!=Entries[SelectedIndex].Path||PropertyOutfit!=OutfitIndex){if(S.Phase==1){Finish(S,nullptr,TEXT("Could not read character properties"));return;}PropertyPanel->SetVisibility(ESlateVisibility::Collapsed);OnOpenProperties();S.Phase=1;return;}
-  const auto All=OKCharacterMCPRegistry::Parameters(this);if(S.Action==TEXT("parameters")){Page(this,S,All);return;}const FMCPRows* Values=nullptr;FMCPRows Edits;
+  const auto All=OKCharacterMCPRegistry::Parameters(this);if(S.Action==TEXT("parameters")){Page(this,S,All);return;}
+  if(S.Action==TEXT("eye_page")){
+   FString Which;S.Request->TryGetStringField(TEXT("page"),Which);
+   if(Which!=TEXT("eye_scale2")&&Which!=TEXT("eyes")){Finish(S,nullptr,TEXT("page must be eye_scale2 or eyes"),TEXT("bad_request"));return;}
+   auto R=State(this,S);auto P=OKEyePage(this,Which,All);for(auto Field:P->Values)R->SetField(Field.Key,Field.Value);Finish(S,R);return;
+  }const FMCPRows* Values=nullptr;FMCPRows Edits;
   if(S.Action==TEXT("get")||S.Action==TEXT("reset")){if(!S.Request->TryGetArrayField(TEXT("keys"),Values)||Values->IsEmpty()||Values->Num()>256){Finish(S,nullptr,TEXT("keys requires 1..256 entries"));return;}FMCPRows Found;for(auto K:*Values){if(K->Type!=EJson::String){Finish(S,nullptr,TEXT("Invalid key type"));return;}FMCPObject P;for(auto V:All)if(V->AsObject()->GetStringField(TEXT("key"))==K->AsString()){P=V->AsObject();break;}if(!P){Finish(S,nullptr,TEXT("Unknown parameter: ")+K->AsString());return;}Found.Add(MakeShared<FJsonValueObject>(P));if(S.Action==TEXT("reset")){auto E=MakeShared<FJsonObject>();E->SetStringField(TEXT("key"),K->AsString());auto D=P->TryGetField(TEXT("default"));if(!D){bool Apply=false;P->TryGetBoolField(TEXT("requires_apply"),Apply);if(Apply){for(auto Original:EditorProperties)if(Original->GetStringField(TEXT("key"))==K->AsString())D=Original->TryGetField(TEXT("value"));}if(!D){Finish(S,nullptr,TEXT("No reliable default: ")+K->AsString());return;}}E->SetField(TEXT("value"),D);Edits.Add(MakeShared<FJsonValueObject>(E));}}
    if(S.Action==TEXT("get")){auto R=State(this,S);R->SetArrayField(TEXT("parameters"),Found);Finish(S,R);return;}}
   else if(S.Request->TryGetArrayField(TEXT("edits"),Values))Edits=*Values;

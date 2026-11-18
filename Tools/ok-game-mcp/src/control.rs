@@ -91,7 +91,7 @@ pub fn mutates(name: &str, a: &Value) -> bool {
         "game_instances" | "game_select" | "game_launch" | "game_stop" | "image_stats" | "image_diff" => false,
         "game_state" | "game_buttons" | "game_screenshot" | "game_log" => false,
         "ui_state" | "ui_widgets" | "ui_screenshot" | "ui_focus" => false,
-        "reader_call" => !matches!(a["action"].as_str().unwrap_or(""), "state" | "cards" | "parameters" | "get" | "controls" | "views" | "measure" | "catalog" | "screenshot" | "snapshot"),
+        "reader_call" => !matches!(a["action"].as_str().unwrap_or(""), "state" | "cards" | "parameters" | "get" | "controls" | "views" | "measure" | "catalog" | "screenshot" | "snapshot" | "eye_page"),
         "pair_call" => !a["path"].as_str().is_some_and(|p| p.starts_with("/stats") || p.starts_with("/pose")),
         "studio_launch" => false,
         "reader_launch" | "reader_stop" => false,
@@ -336,7 +336,7 @@ pub fn tools() -> Vec<Value> {
         t("ui_camera", "Any mode with a free camera (the crowd room): place it.", json!({"location": {"type": "array", "items": {"type": "number"}}, "rotation": {"type": "array", "items": {"type": "number"}}}), &["location", "rotation"]),
         t("ui_exec", "Any mode: run an engine console command and return what it printed.", json!({"command": {"type": "string"}}), &["command"]),
         t("ui_screenshot", "Any mode: a screenshot of the window (ui=false leaves the UI out).", json!({"ui": {"type": "boolean"}}), &[]),
-        t("reader_call", "The card reader through its mailbox. action: state, cards (the card wall: offset, limit, query), select (index), load (path), parameters (query; shape.*, bone.*, physics.*, pregnancy.*, style.* and properties), get (keys), set (edits [{key, value}]), reset (keys), apply, controls, control_set (key, value), action (command), camera, screenshot, views, measure, catalog, appearance, snapshot, restore, save, studio, video_import, partner. session and revision are filled in. Docs/CHARACTER_EDITOR_MCP_USAGE.md.",
+        t("reader_call", "The card reader through its mailbox. action: state, cards (the card wall: offset, limit, query), select (index), load (path), parameters (query; shape.*, bone.*, physics.*, pregnancy.*, style.* and properties), eye_page (page: eye_scale2 | eyes -- one eye detail page in one answer), get (keys), set (edits [{key, value}]), reset (keys), apply, controls, control_set (key, value), action (command), camera, screenshot, views, measure, catalog, appearance, snapshot, restore, save, studio, video_import, partner. session and revision are filled in. Docs/CHARACTER_EDITOR_MCP_USAGE.md.",
           json!({"action": {"type": "string"}, "timeout_s": {"type": "number"}}), &["action"]),
         t("pair_call", "The 1-on-1 interaction scene's channel: /stats, /reset, /exec?cmd=<url-encoded command>, /pose?filter=<text>. Returns its text.", json!({"path": {"type": "string"}}), &["path"]),
     ]
