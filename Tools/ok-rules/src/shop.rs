@@ -629,6 +629,42 @@ fn friends_met(r: &Value) -> Result<Value, String> {
     Ok(json!({"heat": match r.get("heat").and_then(Value::as_f64) { Some(h) => crate::social::bond_heat_add(h as f32, 2.0), None => 22.0 }}))
 }
 
+/// Jobs taken out of the catalogue, and where they were, for saves that still hold them (save_repair). hotel_pool: the
+/// hotel on this map has no pool (its one pool anchor floated 195 cm over the 2F corridor), 2026-11-18.
+const REMOVED_JOBS: [(&str, &str); 1] = [("hotel_pool", "hotel")];
+
+/// A save's jobs against today's catalogue, as it is loaded: a held job no longer in it becomes another job at the same
+/// place he does not hold yet (its rating goes with it), else it goes; a rating of a job that is gone goes. Never an
+/// error: an old save loads. Request: jobs [id], ratings {id: n}. Answer: jobs, ratings, moved [[from, to or null]].
+fn save_repair(c: &Catalog, r: &Value) -> Result<Value, String> {
+    let held: Vec<String> = r.get("jobs").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    let mut ratings = r.get("ratings").and_then(Value::as_object).cloned().unwrap_or_default();
+    let (mut jobs, mut moved) = (Vec::<String>::new(), Vec::new());
+    for id in &held {
+        if c.jobs.contains_key(id) {
+            if !jobs.contains(id) {
+                jobs.push(id.clone());
+            }
+            continue;
+        }
+        let place = REMOVED_JOBS.iter().find(|(j, _)| j == id).map(|(_, p)| *p);
+        let alt = place.and_then(|p| c.jobs.iter().find(|(j, (at, _))| at == p && !held.contains(*j) && !jobs.contains(*j)).map(|(j, _)| j.clone()));
+        let rating = ratings.remove(id);
+        match alt {
+            Some(a) => {
+                if let Some(v) = rating {
+                    ratings.entry(a.clone()).or_insert(v);
+                }
+                moved.push(json!([id, a]));
+                jobs.push(a);
+            }
+            None => moved.push(json!([id, Value::Null])),
+        }
+    }
+    ratings.retain(|id, _| c.jobs.contains_key(id));
+    Ok(json!({"jobs": jobs, "ratings": ratings, "moved": moved}))
+}
+
 /// The manager (only a dialog box) decides on his application: his look and how he did here before; with nobody to
 /// spare, no now and then. Request: look, rating, seed.
 fn job_apply(r: &Value) -> Result<Value, String> {
@@ -885,6 +921,7 @@ pub fn eval(c: &Catalog, kind: &str, r: &Value) -> Option<Result<Value, String>>
         "errand" => errand(c, r),
         "friends_met" => friends_met(r),
         "job_apply" => job_apply(r),
+        "save_repair" => save_repair(c, r),
         "shift_end" => shift_end(r),
         "intimacy_after" => intimacy_after(r),
         _ => return None,
@@ -1144,6 +1181,31 @@ mod tests {
         }
         let v = shift_end(&json!({"wage": 120, "worked": 90, "early": true, "chats": 5, "rating": 20})).unwrap();
         assert_eq!((v["pay"].as_i64(), v["rating"].as_i64(), v["fired"].as_bool()), (Some(180), Some(8), Some(true)));
+    }
+    #[test]
+    fn an_old_save_with_a_job_that_is_gone_still_loads() {
+        // The shipped catalogue: the pool job is gone, other hotel jobs are there.
+        let c = crate::tuning::Tuning::builtin().catalog;
+        assert!(!c.jobs.contains_key("hotel_pool"));
+        let v = save_repair(&c, &json!({"jobs": ["hotel_pool", "conveni_clerk"], "ratings": {"hotel_pool": 41, "conveni_clerk": 70, "nope": 5}})).unwrap();
+        let jobs: Vec<&str> = v["jobs"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(jobs.len(), 2, "{v}");
+        let to = jobs[0];
+        assert!(to != "hotel_pool" && c.jobs.get(to).is_some_and(|j| j.0 == "hotel"), "moved to another hotel job: {v}");
+        assert_eq!(v["ratings"][to].as_i64(), Some(41), "{v}");
+        assert!(v["ratings"].get("hotel_pool").is_none() && v["ratings"].get("nope").is_none(), "{v}");
+        assert_eq!(v["moved"][0][0], "hotel_pool");
+        // Already holding every other hotel job: the pool job just goes; an unknown job with no place goes too.
+        let hotel: Vec<String> = c.jobs.iter().filter(|(_, j)| j.0 == "hotel").map(|(id, _)| id.clone()).collect();
+        let mut all = hotel.clone();
+        all.push("hotel_pool".into());
+        all.push("gone_somewhere".into());
+        let v = save_repair(&c, &json!({"jobs": all})).unwrap();
+        assert_eq!(v["jobs"].as_array().unwrap().len(), hotel.len(), "{v}");
+        assert!(v["moved"].as_array().unwrap().iter().all(|m| m[1].is_null()), "{v}");
+        // Nothing to repair: the same back.
+        let v = save_repair(&c, &json!({"jobs": ["conveni_clerk"], "ratings": {"conveni_clerk": 70}})).unwrap();
+        assert_eq!((v["jobs"][0].as_str(), v["ratings"]["conveni_clerk"].as_i64(), v["moved"].as_array().unwrap().len()), (Some("conveni_clerk"), Some(70), 0));
     }
     #[test]
     fn who_pays_for_her_chat_order() {
