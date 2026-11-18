@@ -475,3 +475,32 @@ GC（量測中自然觸發的那次＋量測剛結束那次；最差單幀是那
 - 窗口內 ≥15 ms 的卡頓：P0 329／385，P1 24／191（P1 兩趟差很多，原因沒查）。最差的幾幀（56～107 ms）兩版都有，是按 H 面板按鈕那一刻 Slate 的 Draw Window，和池子無關。
 - FPS（每秒 `/fps` 取 8 次的平均，只看方向）：loop／fast／after，P0 113/109/110 與 101/74/90，P1 130/125/127 與 133/103/105。
 - 地板污漬：兩版射精後與再插入後同一鏡頭（orbit 90,35,160）各一張，污漬的形狀和位置一樣；image_diff 差最多的那塊是她的身體動作（不同時刻的姿勢），不是污漬。P0 每趟有 500～850 個 ProceduralMeshComponent 垃圾，表示污漬確實到了 MaxFloorStains 上限、在替換，所以 P1 也走到了「搬最舊那塊重用」這條路。
+
+## 一對一完整流程的最差十幀（2026-11-18，EFps1118j＝master 18bf278d5）
+
+量法：`Saved/StreetSocial/Build/EFps1118j.stage`，視窗 1920×1080，獨占（`--need-gb 60`），全程只用 MCP（`game_launch`、`hscene`、`game_exec`、`game_trace_start/stop`），`t.HitchFrameTimeThreshold 15` + `stat dumphitches`，Insights trace（default,cpu,frame）`Saved/Profiling/route_j2.utrace`。流程：開一對一（貞德·Alter）→ 說一句話 → 愛撫分頁 → 站立愛撫 → 摸胸 → 親吻 → 放開 → 體位分頁 → 正常位 → 插入 → 加快 ×2（她自己高潮在裡面，「射在外面」沒出現）→ 事後 → 關閉，共 154 秒。時間是離 trace 開始的秒數；階段由腳本記下的時間點對上。
+
+整段：22,405 幀，p50 6.31、p90 9.71、p99 12.72、最大 303 ms；超過 8.33 ms 的幀佔 19%。這段沒有發生 GC，最差十幀裡也沒有 GC 與 Niagara。
+
+| # | 幀長 | 時間 | 階段 | 主因（GameThread） |
+|---|---:|---:|---|---|
+| 1 | 303.1 ms | 25.5 s | 點「站立愛撫」後第一次摸 | `OK_HCaressItems` 284 ms：第一次用到時同步生成愛撫道具（他的手等，`FKKAnimatedItem::Spawn`），其中 `KK_PreviewCookedRole` 84 ms，其餘約 190 ms 沒有子 scope（道具開 session、讀 controller 等） |
+| 2 | 218.7 ms | 8.7 s | 進場：第一次切到配對狀態 | `KK_PairAdvance` 共 132 ms（`KK_PairNative` 69＋27 ms、`KK_ThighJiggleCloth` 19 ms）＋ H 面板 `OK_HTickWantState` 50 ms |
+| 3 | 176.6 ms | 9.1 s | 進場就緒 | **`FPngImageWrapper::Compress` 125 ms**：`OKInteractionMode.cpp` 就緒時的 `high-interaction.png` 證據截圖（`ReportPath` 非空就拍），PNG 在遊戲執行緒上壓縮 |
+| 4 | 175.7 ms | 39.9 s | 放開 → 換回 Idle | `OK_HTickWantState` 64 ms（`KK_ThighJiggleCloth` 32 ms）＋ `OKInteractionWidget` 的 `KK_SessionSharedWait` 41 ms |
+| 5 | 151.8 ms | 6.5 s | 進場：載入她 | `Sync_RenderingThread` 等 `KK_PreviewSessionBatch` 146 ms（`KK_PreviewPartRange` 88、`KK_CookedRoleParts` 38） |
+| 6 | 116.8 ms | 65.8 s | 加快（WLoop） | `OK_HTickWantState` 77 ms：`KK_ThighJiggleCloth` 46 ms、`OK_HTickAhegao` 11 ms |
+| 7 | 109.7 ms | 4.7 s | 進場：介面啟動 | `OK_IM_Activate` 35 ms（`OK_Act_Widgets` 21）、`OK_IM_HerLoaded` 15 ms、H 面板 29 ms |
+| 8 | 93.9 ms | 9.3 s | 進場後第一個動作 | `KK_NativeAnimation` 80 ms（第一次取樣新的 controller） |
+| 9 | 93.8 ms | 4.4 s | 進場：載入她 | `OK_IM_HerLoaded` → `KK_CookedRoleParts` 92 ms |
+| 10 | 78.9 ms | 0.0 s | 開一對一的請求 | `OKControl /private` 74 ms（請求本身同步做的開場工作） |
+
+次一級（11、12 名）：9.0 s 的 78 ms（`OK_HTickSounds` 43 ms 第一次載入愛撫喘息 cue，加 `KK_SessionSharedWait` 20 ms）、69.8 s 的 77 ms（又是 `OK_HTickWantState`，`KK_ThighJiggleCloth` 44 ms）。
+
+歸類：
+- **每次換狀態都會再來**：`KK_ThighJiggleCloth` 在換狀態那幀花 19–46 ms（#2、#4、#6、第 12 名），流程中出現 4 次，是唯一在進場之後重複出現的。
+- **第一次用到才付**：愛撫道具（#1，全程最大）、喘息 cue（第 11 名）、新 controller 第一次取樣（#8）。可以在進場等待時預先做。
+- **進場一次性**：#3（證據截圖，正常遊玩不需要）、#5、#7、#9、#10。
+- `stat dumphitches` 記到 53 次 ≥15 ms，最大一筆 218.7 ms；#1 的 303 ms 沒寫進 log，所以這張表以 trace 為準。
+
+下一步先不改。要改的話，按收益排的候選是：#3 證據截圖只在跑稽核時拍（或改到背景執行緒壓縮）；#1 愛撫道具在進場等待時預先生成；`KK_ThighJiggleCloth` 換狀態時的重建。每項都要在同一個 stage、同一條流程上做前後對照。

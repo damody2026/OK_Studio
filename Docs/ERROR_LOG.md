@@ -5679,3 +5679,9 @@ LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor �
 `base_library_shared_mods.txt` 不用动。
 转卡当下也没有「漏报」：`absent=` 讲的是**本机没有的 zipmod**，而当时什么都不缺，那一题根本没被问到。
 转卡无法预知以后的版本会多问什么，所以这类的防线只有「动过开卡那条路之后跑 `ok_cards.lua reseal`」。
+
+## 2026-11-18：20:25 在 E 树重编 stage，穿过了 c-lowspec 的独占量测（e-120fps）
+
+协调者 19:5x 通知复工后，我直接开了 `rebuild_street_social_runtime.lua --tag EFps1118j --skip-cook --skip-base`（20:25:16–20:26:37 编 host 与执行档）。建置不占 slot，当时 c-lowspec 正占着整台机器（`--need-gb 60`）做安静走路量测，三棵树同时在编，它那段量测作废。我以为「建置在非独占时做」只要自己不占独占就行，没去确认别人有没有在独占。
+
+**修正**：开任何建置／cook 前先跑 `C:\portable\OpenKoikatsu\Tools\lua\lua.exe C:\portable\OpenKoikatsu\Tools\unreal_slot.lua may-build`，exit 0 才开，exit 3（有人 `[need 60]`）就等（工具闸门见 C 树 `5ed72afe8`）。
