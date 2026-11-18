@@ -12,6 +12,7 @@
 --   --lane      slot name suffix and reader marker (f-yvonne-<lane>, -OKLane=<lane>-<card>-<pid>); default a
 --   --images    copy the view images there (default: left where the reader wrote them)
 --   --polite    before each segment wait while another group (not f-yvonne*) holds or waits for an Unreal slot
+--   --fair      after each segment wait until every agent queued at the release has had the slot once
 --   --minutes   one slot claim runs cards while the next one still fits in N minutes, from the average card so far
 --               (default 20, the slot rule's cap); then the slot is given back and claimed again (queueing behind others)
 --   --mcp       ok-game-mcp.exe (default Tools/ok-game-mcp/target/release/ok-game-mcp.exe)
@@ -54,6 +55,7 @@ do
   while arg[i] do
     local k = arg[i]
     if k == "--polite" then args.polite = true; i = i + 1
+    elseif k == "--fair" then args.fair = true; i = i + 1
     elseif k:sub(1, 2) == "--" then args[k:sub(3)] = arg[i + 1]; i = i + 2
     else error("unexpected argument " .. k) end
   end
@@ -308,6 +310,28 @@ while i <= #cards do
     break
   end
   slot("release")
+  -- --fair: the agents queued when the slot went back each get it once before the next claim. f-yvonne ranks first in
+  -- unreal_slot.lua, so a run that claims again at once keeps the others waiting for as long as it runs (11-18: e-120fps
+  -- and e-fork-2 waited 35 minutes while two agents ran segment after segment). Waits until none of them is still
+  -- queued (each has claimed), at most an hour.
+  if args.fair and i <= #cards then
+    local function queued_others()
+      local p = io.popen("Tools\\lua\\lua.exe Tools\\unreal_slot.lua status"); local st = p:read("a"); p:close()
+      local q, set = st:match("queue:([^\n]*)") or "", {}
+      for item in q:gmatch("[^,]+") do
+        local name = item:match("^%s*(%S+)")
+        if name and not item:find("stale", 1, true) and not name:match("^f%-yvonne") then set[name] = true end
+      end
+      return set
+    end
+    local before = queued_others()
+    for _ = 1, 120 do
+      local now, left = queued_others(), false
+      for name in pairs(before) do if now[name] then left = true end end
+      if not left then break end
+      sleep(30)
+    end
+  end
 end
 out:close()
 os.exit(status)
