@@ -5256,3 +5256,19 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
   2. 根本：4ca2d675a 的 `DreamGUIGlobalShadersWanted()`（`Plugins/DreamGUI/Source/DreamGUIRenderer/Public/DreamUIRender/DreamUIShaderGate.h`）：編輯器與 cook 一律編譯（新 base 照樣帶上），cook 好的遊戲只有 `-OKDreamReader`／`-DreamGUI` 時才列為必須；有旗標卻缺 shader 時印出要重建什麼的訊息再結束，不是引擎的裸 Fatal。
 - **驗證**：stage DGate1118a（舊 base BaseHFace1115，`-pakdir` 只放材質與音效 patch、不放新的 global shader patch）不加參數正常進讀卡器；同一組加 `-OKDreamReader` 照舊 Fatal（陽性對照）。
 - **再試前檢查**：加任何帶 global shader 的程式（外掛、`IMPLEMENT_GLOBAL_SHADER`、`.usf` 改簽名）前，先決定沒用到它的模式要不要列為必須（`ShouldCompilePermutation` 加條件）；提交前拿一個舊 base 的 stage、不掛新 patch 實際啟動一次。
+
+## 2026-11-18 报告里给重复解码写的「原因」是错的，而且上限估高了一个数量级（E 组 e-cardload）
+
+- **变更**：`Docs/CARD_OPEN_PERF_20261117.md` 第四节那个候选「把 `png_transform_cache` 的键换成出处」，
+  它写着第二节「贴图 memo 放宽」量到的零收益是因为「省下的解码被新增的杂凑吃掉」，并估上限 100–250 ms。
+- **症状**：量了之后两个都不成立。一张卡 14 笔重复的解码**合计只有 28 ms**（C011 13 笔 27 ms），
+  wall 10 ms 以内；而那 14 笔**根本没有进过 `png_transform_cache`** —— 它只开给 DXT1／BC7／≥512² 的
+  DXT5，重复的那些是 RGB24、RGBA32 与 256² DXT5，一律直接重算。
+- **原因（已证实）**：两处都是**读程式码读出来的因果，没有量**。「杂凑吃掉」是看到键是
+  `SHA-256(来源位元组)` 就推出来的，没有确认那些格式会不会走到这把键；上限则是把「重复的是大张的」
+  当成了前提，实际重复最多的是 512² 与 256² 的小图。
+- **处置**：`note_work_timed` 让每一笔 `PROFILE   <n>x <label>` 带上实测耗时与「去重复最多省多少」，
+  并在结尾印 `PROFILE repeated work at most <n>ms savable`；第四节的候选划掉，第二节补一列记量到的事实。
+- **验证**：C006／C011 各印出 28／27 ms 合计；`cargo test --lib`、`--no-default-features`、两个 UE 目标。
+- **再试前检查**：**写进报告的「为什么」也要有量过的证据**，不是只有「省多少」要量。像「这条路会不会
+  走到那个快取」这种前提，有一行诊断就能确认（印出格式闸门的判定或命中次数），不要用程式码推。

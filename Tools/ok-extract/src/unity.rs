@@ -5868,6 +5868,38 @@ pub(crate) fn note_bundle_parse(source: &str, bytes: usize) {
     note_work("bundle", || if source.is_empty() { format!("<{bytes} bytes>") } else { source.to_string() });
 }
 
+/// OK_PROFILE: how long the work a row counts took, summed over its repeats. A label done `n` times shows what
+/// de-duplicating it could save **at most**: `total * (n-1)/n`. That is the ceiling asked for before anyone widens
+/// a texture memo (CARD_OPEN_PERF 第四节), and like the counts it is per label, not a wall time. Only a caller that
+/// holds the returned timer gets a time; `note_work` drops it at once, so those rows have none.
+static WORK_MS: std::sync::Mutex<std::collections::BTreeMap<String, f64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub(crate) struct WorkTimer { label: String, at: std::time::Instant }
+impl Drop for WorkTimer {
+    fn drop(&mut self) {
+        let ms = self.at.elapsed().as_secs_f64() * 1000.0;
+        *WORK_MS.lock().unwrap_or_else(|e| e.into_inner()).entry(std::mem::take(&mut self.label)).or_insert(0.0) += ms;
+    }
+}
+
+/// `note_work`, and the work's own duration while the caller holds the guard.
+pub(crate) fn note_work_timed(kind: &str, label: impl FnOnce() -> String) -> Option<WorkTimer> {
+    if !counting_work() { return None; }
+    let label = format!("{kind} {}", label());
+    {
+        let mut counts = WORK_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+        if counts.len() > 20_000 { counts.clear(); }
+        *counts.entry(label.clone()).or_insert(0) += 1;
+    }
+    Some(WorkTimer { label, at: std::time::Instant::now() })
+}
+
+/// The measured milliseconds since the last call, by label.
+pub fn take_work_ms() -> std::collections::BTreeMap<String, f64> {
+    std::mem::take(&mut *WORK_MS.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// OK_PROFILE: the hash of every texture `png_from_payload` produced in this open, against its source format.
 /// The end of the open compares the textures the session actually carries with these, and prints how many of them
 /// are **exactly** a decoded payload — nothing flipped, masked, tinted or composed. Those are the only ones a

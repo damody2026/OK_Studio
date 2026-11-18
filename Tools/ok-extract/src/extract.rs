@@ -2208,7 +2208,21 @@ pub(crate) fn extract_session_from_info(
     if std::env::var_os("OK_PROFILE").is_some() {
         let (total, repeats, rows) = crate::unity::take_work_counts();
         eprintln!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)");
-        for (source, n) in rows.iter().filter(|(_, n)| *n > 1) { eprintln!("ok-extract: PROFILE   {n}x {source}"); }
+        let ms = crate::unity::take_work_ms();
+        // Per repeated row: the work's own time, and the most de-duplicating it could save (CARD_OPEN_PERF 第四节
+        // wants this ceiling before anyone widens a memo). Summed over threads, like every other PROFILE time.
+        let mut ceiling = 0.0;
+        for (source, n) in rows.iter().filter(|(_, n)| *n > 1) {
+            match ms.get(source) {
+                Some(total) => {
+                    let save = total * (*n as f64 - 1.0) / *n as f64;
+                    ceiling += save;
+                    eprintln!("ok-extract: PROFILE   {n}x {source} ({total:.0}ms, at most {save:.0}ms savable)");
+                }
+                None => eprintln!("ok-extract: PROFILE   {n}x {source}"),
+            }
+        }
+        eprintln!("ok-extract: PROFILE repeated work at most {ceiling:.0}ms savable (summed over threads)");
         // How many of the textures this session carries are **exactly** a decoded payload — nothing flipped,
         // masked, tinted or composed. Only those could be handed to UE as the source's own BC blocks with no
         // decode at all, so this share is the ceiling on that idea (CARD_OPEN_PERF 第四节 asks for it first).

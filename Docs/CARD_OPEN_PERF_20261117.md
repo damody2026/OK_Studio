@@ -50,6 +50,8 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 
 | 项目 | 量到的事实 | 处置 |
 |---|---|---|
+| **payload 解码的 memo 换便宜的键**（第四节原本的下一个候选）<br>11-18 量的上限，没开工 | **上限只有 30 ms 合计，不是原估的 100–250 ms**。新增的 `PROFILE repeated work at most <n>ms savable` 把每一笔重复的实际解码时间加起来：C006`14 repeat` 合计 **28 ms**、C011`13 repeat` **27 ms**（最大一笔是 `7x liquid01_t RGB24 512x512` 的 13 ms）。原估计把「重复的那几笔是大张的」想成几十 ms 一笔，实际重复的多是小图，大张的 `2x cf_body_00_t RGBA32 2048x2048` 也只有 8 ms／两次。另外读程式码发现原本的诊断也有一处错：这 14 笔**根本没有进 `png_transform_cache`**（RGB24／RGBA32／256² DXT5 都不在它的格式闸门内），所以它们不是「被杂凑吃掉」，是从来没被 memo 过 | **不开工**。30 ms 合计 ≈ wall 10 ms 以内，而要把出处从 `gamefs`／`oklib` 带到 `png_from_payload` 是跨三个模组的改动 |
+| **把 hair gloss 搬离主执行绪**（`lists: hair gloss` 看起来是最大的单一串行阶段，8 执行绪 216–276 ms、单执行绪 630–770 ms） | **上限只有 50 ms**。临时让它整个不做（`OK_SKIP_GLOSS`，会改结果，只为量上限）：两张卡交错各 n=16，中位数 **1.200 → 1.150 s（−4.2%）**。所以那 216–276 ms 里真正属于它自己的工作不到五分之一，其余是和 8 个 prefetch helper 抢同一条基础库读取路径 —— 和第四节早先那两笔证据（搬离主执行绪后 500 ms 原样出现在 `load_base_bundles`；关掉 prefetch 后同一笔 gloss 从 588 ms 掉到 5 ms）是同一件事的第三次确认 | **不开工**。它那张图是 1024² DXT1，自己的解码本来就只有几十 ms；`profile_tick` 量的是主执行绪的墙钟，在饱和的窗口里**阶段时间不等于该阶段的工作量** |
 | ④`read_strip_all_guids` 併集 | 走树与併集都已免费，成本全在 7300 次 `zip_memo`，其中 97% 是 `fallback_serving_id`。**但那 430 ms 是冷的 Windows 目录元数据**：短路掉它之后这一阶段只剩 18 ms，而且开关开与关都是 18 ms。一次开卡要读几百 MB bundle，会把目录元数据挤出快取，所以下一张卡的全树 stat 又回磁碟（暖 18 ms／被挤掉 250–400 ms／第一张 1.3–1.6 s）。三种做法（serving memo 改吃 `fallback_identity` token、`resolve_mod_archive` 线性扫描换查表、whole-tree pass 并行）交错 A/B 都拿不到 | 全部回退 |
 | `fallback_serving_id` 能不能省掉 | 不能。`open_zip` 的 replay 分支对「library 记录了但本机没有模型」的档案本来就 `fallback_source` 去 stat，而 `real_zip_matches_recorded` 不符时会 `open_real` 直接读真档 —— manifest 真的可能来自真档，键不含 serving id 就会重现 2026-11-12 花火那个 bug | 保留现状 |
 | ②`slot colour` 编解码融合 | math 占 88%（939 ms），PNG 往返只占 12%（decode 91 ms／encode 43 ms），拿不到原估的 80–120 ms | 放弃 |
@@ -152,6 +154,8 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `OK_PROFILE=1`（11-18 新增） | **`SPOT overlay index section`**：`gamefs::read` 那把 index mutex 的「等锁＋持锁」时间，跨执行绪加总。**对单一 mutex 这个加总就是被串行化的墙钟**（临界区内不可能重叠），所以它和其他 SPOT 不同，可以直接读。现况 0.1–0.7 ms／227–320 次读取 —— 一趟就能回答「这把锁是不是问题」，11-18 靠它把一个有机制、有 −5.4% 的假结论挡掉了 |
 | `OK_PROFILE=1`（11-18 新增） | **`PROFILE copied out of the sources <n> MiB in <m> reads`**：这次开卡从库索引与卡片资源包复制出来的总量与次数（`gamefs::entry_bytes`，每次都 `to_vec()` 一份自己的）。**是计数，不随机器负载变动**。改动 6 之前是 3.2–3.3 GiB／19–22 万次，之后 24.1 MiB／4.3 万次，预热不再扫整棵树之后 3.0 MiB |
 | `OK_PROFILE=1`（11-18 新增） | **`load_model scanned <x> MiB of <y> MiB, <n> records: <档>`** 与 `SPOT load_model scan`／`load_model index hit`：开一个库模型要走多少档案、几笔记录，以及有没有命中 `work/model-index`。改动 8 就是靠它找到的（一张卡走过约 1.0 GiB 只为建索引） |
+| `OK_PROFILE=1`（11-18 新增） | **`PROFILE   <n>x <label> (<总>ms, at most <可省>ms savable)` 与结尾一行 `PROFILE repeated work at most <n>ms savable`**：每一笔「做了不只一次」的工作的实测耗时与「去重复最多能省多少」。**「去重复」类的想法先看这一行再决定要不要开工** —— 11-18 就是靠它判掉第二节那笔（原估 100–250 ms，实测 28 ms） |
+| `RAYON_NUM_THREADS=<n>`（量法，不是开关） | **一张卡在 1／2／4／8／16 条执行绪下的冷开**，各 3 趟取中位数：**2.34 / 1.80 / 1.37 / 1.18 / 1.09 s**。1→8 只有 **2.0 倍**，8→16 几乎平（这台机器 32 条硬件执行绪），所以这条路平均只用掉约 2 条执行绪的量。**但不要把它读成「有 6 条核心闲着等人去填」** —— 第四节量过的 prefetch 窗口是那条基础库读取路径饱和（磁碟冷时单项 1.8–2.2 s），加宽与重排都已经各自量过拿不到东西。这组数字的用途是**判断某个阶段的 `profile_tick` 是它自己的工作还是在排队**：把同一个阶段的 1 执行绪与 8 执行绪时间比一下，比值接近 1 的才是它自己的 |
 | `OK_GRID_DIAG=1` | 一次烘焙的贴图与遮罩尺寸、filter |
 | `OK_TILE_DIAG=1` | 同值 texel 比例、`has_pat`，以及查表／逐 texel 两条路径各处理多少 texel |
 
@@ -361,18 +365,10 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   对 45 GB 的库是约 1%，而且只有真的被开到的模型才有。
   闸门：4 张卡全部 outfit 与衣着状态 **168 个 dump 两边逐位元组相同**；**阳性对照**是临时让索引少一笔记录
   → 开卡直接失败（exit 1、0 个 dump），所以索引交出来的东西确实在被用。
-- **下一个候选：payload 解码的 memo 换一把便宜的键**（11-18 读程式码找到，**还没量**，但它解释了第二节
-  已经量到的一个零）。现况：`png_transform_cache::transform` 的键是 `SHA-256(operation ‖ 来源位元组 ‖ 参数)`，
-  而「来源位元组」就是整张贴图的 texels —— 一张 2048×2048 RGBA32 是 16 MiB，**光算这把键就和解码同级**。
-  所以它只开给 DXT1／BC7／大张 DXT5（那些 texels 是压缩的、只有 1/4~1/8 大），RGB24／RGBA32 一律重算；
-  这也正是第二节「贴图 memo 放宽」把重复从 12 降到 5 却量不到时间的原因 —— **省下的解码被新增的杂凑吃掉**。
-  现况一张卡仍有 `from scratch 126 (14 repeat)`，重复里最贵的是 `2x cf_body_00_t RGBA32 2048x2048` 与
-  `7x payload liquid01_t RGB24 512x512`。
-  修法不是放宽那把键，而是**换成「这些位元组是哪来的」**：同一笔 payload 来自同一个模型档的同一个记录
-  （改动 8 之后那个偏移本来就在手上），用 `(模型 id, 记录偏移, 长度, 格式, 宽高)` 当键是精确的、而且零成本，
-  不必碰 texels。要做的是把这个出处从 `gamefs`／`oklib` 一路带到 `png_from_payload`，那是真正的工作量。
-  **上限先量再做**：把 14 笔重复各自的解码时间加起来（`SPOT png_from_payload` 现在是 713 ms／157 次，
-  平均 4.5 ms，但重复的那几笔是大张的），落在 100–250 ms 合计、也就是 wall 约 −30~80 ms 的量级。
+- ~~**下一个候选：payload 解码的 memo 换一把便宜的键**~~ —— **11-18 量了上限，不开工**，搬到第二节。
+  一句话：重复的那 14 笔解码加起来只有 **28 ms**（合计、跨执行绪），而且它们根本没进过 `png_transform_cache`。
+  量法留着：`OK_PROFILE=1` 现在会印 `PROFILE   <n>x <label> (<总>ms, at most <可省>ms savable)` 与一行
+  `PROFILE repeated work at most <n>ms savable`，所以「去重复」这类想法以后都能先看上限再决定要不要开工。
 - **下一个该查的是 entry prefetch 那个窗口的吞吐，不是谁在哪条执行绪上**（11-18 量到的）：
   一张 OK 卡的冷开，8 个 prefetch helper 各自读一个来源包，暖磁碟时每项 207–341 ms、**磁碟冷时 1.8–2.2 s**，
   而主执行绪同时在走 `load_base_bundles` 与身体／脸／头。这段时间里那条基础库读取路径是饱和的，
@@ -380,6 +376,12 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （b）把 prefetch 整个关掉，同一笔 gloss 从 588 ms 掉到约 5 ms。**所以在这个窗口里重排工作一律零收益**，
   要动的是读取本身（一项为什么要 200 ms／冷时 2 s）。`hair slots` 只花 77 ms 说明 **helper 有余裕、
   主执行绪没有**，但 helper 数该不该降目前**没有量过**（11-18 那次扫描因 CRLF 没生效，见第三节）。
+  **11-18 补上的量法与下一步**：`RAYON_NUM_THREADS` 扫描（第三节）给了这条路的平均并行度 —— 1→8 条
+  只有 2.0 倍（2.34 → 1.18 s），8→16 几乎平。配上「窗口饱和」这个已知事实，意思是**剩下的墙钟不在
+  「还有哪件工作可以搬到别条执行绪」，而在「一项 prefetch 为什么要 200 ms」**。下一步就是把一项拆开
+  （例如 `meshes_for_entry chara/co_bra_00.unity3d p_o_bra_04` 的 212 ms）：改动 8 之后记录链已经不走了，
+  所以要查的是剩下的那三段 —— 模型位元组的读取量、payload 解码、mesh 组装各占多少。**先量再改**，
+  并且一样要同时看一个不随机器忙闲变动的次数指标（`copied out of the sources`、`load_model scanned`）。
 - **第一张卡 `base: head textures` 还有约 190–200 ms** 没搬走，原因见第二节 `BUNDLE_CACHE` 那一列
   （要搬得先重构 `ParsedBundle` 的内部可变性模型，代价远大于收益）。
 - **转卡的 view 身分已改由树的内容决定**（`baf5cec10`）。21 角色场景（`koikatu_cs0001521`）同行程依序转，
