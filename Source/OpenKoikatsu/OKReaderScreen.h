@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Core/DreamTextUserWidget.h"
+#include "HAL/ThreadSafeBool.h"
 #include "OKReaderScreen.generated.h"
 
 class UOKCharacterController;
@@ -208,6 +209,14 @@ private:
 	TArray<bool> CardThumbLoading;
 	int32 ThumbsInFlight=0;
 	int32 ThumbGeneration=0;
+	// Raised when the list is rebuilt: decodes still on workers stop and never report back (a destroyed screen is caught by
+	// the weak pointer the report holds).
+	TSharedRef<FThreadSafeBool> ThumbCancel=MakeShared<FThreadSafeBool>(false);
+	// Pictures a tile has just let go of (scrolled far away, list rebuilt) stay referenced a few seconds before the
+	// collector may free them: DreamGUI's draw data built before the brush changed must not outlive its texture.
+	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> RetiredThumbs;
+	TArray<double> RetiredThumbTimes;
+	void RetireThumb(class UTexture2D* Texture);
 	// The 遊戲目錄 page's fields and what they report (the folder count runs on a worker).
 	TWeakObjectPtr<UOKDreamControl> RootInput,RootStatus,LibraryInput,LibraryStatus;
 	int32 RootCheckGeneration=0;

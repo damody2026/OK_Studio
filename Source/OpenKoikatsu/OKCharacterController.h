@@ -216,6 +216,11 @@ public:
  TArray<int32> AccessorySlots;
  int32 AccessorySlot=0;
  bool bFillingAccessorySlots=false;
+ // The catalog's `current` (Docs/READER_UI_APPEARANCE_API.md): per target key what the card has now; an empty item is a mod
+ // this machine does not have (its guid and name still say what it was).
+ TMap<FString,TSharedPtr<FJsonObject>> AppearanceCurrent;
+ bool bAppearanceJumpToChosen=false;
+ FString CurrentAppearanceNote() const;
  FString AccessorySlotScope() const {return FString::Printf(TEXT("accessory%d_"),AccessorySlot);}
  void RefreshAccessorySlots();
  UFUNCTION() void OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type);
@@ -224,6 +229,16 @@ public:
  // Which card and outfit AppearanceTargets were read for: a page entered again does not read the catalog again.
  FString AppearanceCatalogPath;
  int32 AppearanceCatalogOutfit=INDEX_NONE;
+ // No game folder (no abdata/ under it): the pickers have nothing to list. The picker says so and offers this button,
+ // which goes to the reader's 設定 › 遊戲目錄 page (OnWantGameRootSettings, set by the DreamGUI reader).
+ UPROPERTY() TObjectPtr<class UButton> AppearanceRootButton;
+ TFunction<void()> OnWantGameRootSettings;
+ UFUNCTION() void OnAppearanceGoRoot();
+ // While the catalog is built (the first time takes minutes, later reads come from the cache) the status counts the
+ // seconds (NativeTick).
+ double AppearanceCatalogStarted=0;
+ int32 AppearanceCatalogShownSecond=-1;
+ void TickAppearanceCatalogStatus();
  bool ApplyPreparedAppearance(const FString& Key);
  bool ApplyPreparedGeometry(const FString& Key);
  // Returns true when the requested action must wait for resource persistence.

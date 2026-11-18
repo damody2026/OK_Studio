@@ -319,6 +319,20 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	auto* Screen=Cast<UOKReaderScreen>(UDreamUIBPLibrary::AddWidgetOfClassToViewport(Controller,Class,10));
 	if(!Screen)return nullptr;
 	Screen->Controller=Controller;GScreen=Screen;
+	// The picker's 前往 設定 › 遊戲目錄 (shown when there is no game folder): the page switch waits for the next frame, as
+	// the switch destroys the very button whose click asked for it.
+	Controller->OnWantGameRootSettings=[Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)]()
+	{
+		AsyncTask(ENamedThreads::GameThread,[Weak]()
+		{
+			UOKReaderScreen* Self=Weak.Get();if(!IsValid(Self))return;
+			for(int32 I=0;I<Self->Categories.Num();++I)if(Self->Categories[I].Name==TEXT("設定／介面"))
+			{
+				const int32 Sub=Self->Categories[I].Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("遊戲目錄");});
+				Self->ShowCategory(I,FMath::Max(0,Sub));return;
+			}
+		});
+	};
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
 		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080));Canvas->SetMatchFromWidthToHeight(1.f);
@@ -842,13 +856,19 @@ void UOKReaderScreen::BuildPluginTools()
 
 void UOKReaderScreen::ClearPage()
 {
+	// The card tiles let go of their pictures before the tiles and the textures go: no brush is left pointing at a
+	// texture the next collection frees, whenever DreamGUI actually releases the destroyed tiles.
+	for(UOKDreamControl* Tile:CardButtons)if(IsValid(Tile)&&Tile->Picture)
+		if(auto* Image=Cast<UDreamImage>(Tile->Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(nullptr);Image->SetBrush(Brush);}
 	for(UDreamWidget* W:PageWidgets)if(IsValid(W))W->DestroyWidget();
 	PageWidgets.Reset();
 	ShownPageHeight=-1.f;
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
 	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
+	for(UTexture2D* T:CardThumbs)RetireThumb(T);
 	CardThumbs.Reset();CardPaths.Reset();CardThumbLoading.Reset();ThumbsInFlight=0;++ThumbGeneration;
+	*ThumbCancel=true;ThumbCancel=MakeShared<FThreadSafeBool>(false);
 	WantedTargets.Reset();WantedProperties.Reset();
 	RootInput.Reset();RootStatus.Reset();LibraryInput.Reset();LibraryStatus.Reset();++RootCheckGeneration;
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
@@ -916,9 +936,12 @@ namespace OKReaderThumbs
 	// image chunks are read -- an OK card carries its resources in chunks of tens of megabytes after them -- and the
 	// picture is scaled to the tile on this worker, so the game thread only makes a small texture.
 	struct FThumb {int32 Width=0,Height=0;TArray<uint8> Bgra;};
-	FThumb Decode(const FString& Path,int32 MaxWidth,int32 MaxHeight)
+	// Wrappers is looked up on the game thread before the task starts (module loading is not for workers); Cancelled is
+	// the list's own flag, raised when the list is rebuilt, so a stale decode stops before the expensive part.
+	FThumb Decode(IImageWrapperModule* Wrappers,const FString& Path,int32 MaxWidth,int32 MaxHeight,const TSharedRef<FThreadSafeBool>& Cancelled)
 	{
 		FThumb Out;
+		if(!Wrappers||*Cancelled)return Out;
 		TUniquePtr<IFileHandle> File(FPlatformFileManager::Get().GetPlatformFile().OpenRead(*Path));
 		if(!File)return Out;
 		static const uint8 Signature[8]={137,80,78,71,13,10,26,10};
@@ -941,16 +964,21 @@ namespace OKReaderThumbs
 			}
 			else if(!File->Seek(File->Tell()+int64(Length)+4))return Out;
 		}
-		if(!bSawData)return Out;
+		if(!bSawData||*Cancelled)return Out;
+		// The size from IHDR (the first chunk kept) before any pixel is decoded: a card face is a few hundred pixels, so a
+		// picture larger than 2048x2048 is not a card face and is not decoded at all.
+		if(Png.Num()<8+8+13||FMemory::Memcmp(Png.GetData()+12,"IHDR",4)!=0)return Out;
+		auto Be32=[&](int32 At){const uint8* P=Png.GetData()+At;return int64((uint32(P[0])<<24)|(uint32(P[1])<<16)|(uint32(P[2])<<8)|uint32(P[3]));};
+		const int64 HeadWidth=Be32(16),HeadHeight=Be32(20);
+		if(HeadWidth<=0||HeadHeight<=0||HeadWidth>2048||HeadHeight>2048)return Out;
 		static const uint8 End[12]={0,0,0,0,'I','E','N','D',0xAE,0x42,0x60,0x82};Png.Append(End,12);
-		IImageWrapperModule& Wrappers=FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-		TSharedPtr<IImageWrapper> Wrapper=Wrappers.CreateImageWrapper(EImageFormat::PNG);
+		TSharedPtr<IImageWrapper> Wrapper=Wrappers->CreateImageWrapper(EImageFormat::PNG);
 		TArray<uint8> Raw;
 		if(!Wrapper||!Wrapper->SetCompressed(Png.GetData(),Png.Num())||!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return Out;
 		const int32 W=Wrapper->GetWidth(),H=Wrapper->GetHeight();
-		if(W<=0||H<=0)return Out;
+		if(W<=0||H<=0||W!=HeadWidth||H!=HeadHeight||Raw.Num()<int64(W)*H*4||*Cancelled)return Out;
 		const float Scale=FMath::Min(1.f,FMath::Min(float(MaxWidth)/W,float(MaxHeight)/H));
-		Out.Width=FMath::Max(1,FMath::RoundToInt(W*Scale));Out.Height=FMath::Max(1,FMath::RoundToInt(H*Scale));
+		Out.Width=FMath::Clamp(FMath::RoundToInt(W*Scale),1,W);Out.Height=FMath::Clamp(FMath::RoundToInt(H*Scale),1,H);
 		Out.Bgra.SetNumUninitialized(Out.Width*Out.Height*4);
 		// A box filter over the source pixels each output pixel covers.
 		for(int32 Y=0;Y<Out.Height;++Y)for(int32 X=0;X<Out.Width;++X)
@@ -965,7 +993,7 @@ namespace OKReaderThumbs
 	}
 	UTexture2D* MakeTexture(const FThumb& Thumb)
 	{
-		if(Thumb.Width<=0)return nullptr;
+		if(Thumb.Width<=0||Thumb.Height<=0||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return nullptr;
 		UTexture2D* Texture=UTexture2D::CreateTransient(Thumb.Width,Thumb.Height,PF_B8G8R8A8);
 		if(!Texture)return nullptr;
 		Texture->SRGB=true;
@@ -985,8 +1013,20 @@ namespace OKReaderThumbs
 
 // The card list's pictures: decoded on workers for the tiles in or near the scrolled view (a few at a time), dropped
 // again for tiles far out of it, so a folder of hundreds of cards never holds all their pictures.
+void UOKReaderScreen::RetireThumb(UTexture2D* Texture)
+{
+	if(!Texture)return;
+	RetiredThumbs.Add(Texture);RetiredThumbTimes.Add(FPlatformTime::Seconds());
+}
+
 void UOKReaderScreen::TickThumbnails()
 {
+	// Retired pictures go after three seconds (DreamGUI has redrawn the tiles without them by then).
+	{
+		const double Now=FPlatformTime::Seconds();int32 Keep=0;
+		while(Keep<RetiredThumbTimes.Num()&&Now-RetiredThumbTimes[Keep]>3.0)++Keep;
+		if(Keep>0){RetiredThumbs.RemoveAt(0,FMath::Min(Keep,RetiredThumbs.Num()));RetiredThumbTimes.RemoveAt(0,Keep);}
+	}
 	if(CardButtons.IsEmpty()||!LeftScroll)return;
 	const float Scale=FMath::Max(.01f,float(LeftScroll->GetWorldScale().Z>0?LeftScroll->GetWorldScale().Z:LeftScroll->GetWorldScale().Y));
 	const FVector Center=LeftScroll->GetWorldLocation();
@@ -999,27 +1039,36 @@ void UOKReaderScreen::TickThumbnails()
 	{
 		UOKDreamControl* Tile=CardButtons[I];if(!IsValid(Tile))continue;
 		const float Distance=FVector::Dist(Tile->GetWorldLocation(),Center);
-		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);CardThumbs[I]=nullptr;}
+		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);RetireThumb(CardThumbs[I]);CardThumbs[I]=nullptr;}
 		else if(Distance<=Near&&CardThumbs.IsValidIndex(I)&&!CardThumbs[I]&&!CardThumbLoading[I])Wanted.Add(I);
 	}
 	Wanted.Sort([&](int32 A,int32 B){return FVector::DistSquared(CardButtons[A]->GetWorldLocation(),Center)<FVector::DistSquared(CardButtons[B]->GetWorldLocation(),Center);});
 	for(int32 I:Wanted)
 	{
 		if(ThumbsInFlight>=3)break;
+		if(!CardPaths.IsValidIndex(I)||!CardThumbLoading.IsValidIndex(I))continue;
+		// Everything the worker touches is its own: a copy of the path, the module pointer (modules stay loaded until
+		// exit) and a shared cancel flag. The screen is reached only from the game thread, through a weak pointer, and
+		// only for the same list (generation) -- a rebuilt list raised the flag and bumped the generation.
+		IImageWrapperModule* Wrappers=FModuleManager::LoadModulePtr<IImageWrapperModule>(TEXT("ImageWrapper"));
+		if(!Wrappers)return;
 		CardThumbLoading[I]=true;++ThumbsInFlight;
 		const FString Path=CardPaths[I];const int32 Generation=ThumbGeneration;
+		TSharedRef<FThreadSafeBool> Cancelled=ThumbCancel;
 		TWeakObjectPtr<UOKReaderScreen> Weak(this);
-		UE::Tasks::Launch(TEXT("OKReaderThumb"),[Weak,Path,I,Generation]()
+		UE::Tasks::Launch(TEXT("OKReaderThumb"),[Weak,Wrappers,Path,I,Generation,Cancelled]()
 		{
-			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Path,288,402);
-			AsyncTask(ENamedThreads::GameThread,[Weak,I,Generation,Thumb=MoveTemp(Thumb)]()
+			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Wrappers,Path,288,402,Cancelled);
+			if(*Cancelled)return;
+			AsyncTask(ENamedThreads::GameThread,[Weak,I,Generation,Cancelled,Thumb=MoveTemp(Thumb)]()
 			{
-				UOKReaderScreen* Self=Weak.Get();if(!Self||Self->ThumbGeneration!=Generation)return;
-				--Self->ThumbsInFlight;
-				if(!Self->CardThumbs.IsValidIndex(I))return;
-				Self->CardThumbLoading[I]=false;
+				UOKReaderScreen* Self=Weak.Get();
+				if(*Cancelled||!IsValid(Self)||Self->ThumbGeneration!=Generation)return;
+				Self->ThumbsInFlight=FMath::Max(0,Self->ThumbsInFlight-1);
+				if(!Self->CardThumbs.IsValidIndex(I)||!Self->CardThumbLoading.IsValidIndex(I)||!Self->CardButtons.IsValidIndex(I))return;
 				UTexture2D* Texture=OKReaderThumbs::MakeTexture(Thumb);
-				if(!Texture){Self->CardThumbLoading[I]=true;return;}	// unreadable: not asked for again
+				if(!Texture)return;	// unreadable: stays marked loading, so it is not asked for again
+				Self->CardThumbLoading[I]=false;
 				Self->CardThumbs[I]=Texture;OKReaderThumbs::Show(Self->CardButtons[I],Texture);
 			});
 		});

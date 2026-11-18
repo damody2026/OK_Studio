@@ -1699,6 +1699,7 @@ void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSec
 	Super::NativeTick(Geometry,DeltaSeconds);
 	if((CharacterStyle!=0.f||CharacterFaceStyle!=0.f)&&StyledActor!=PreviewActor)ApplyCharacterStyle();
 	ApplyLighting(false);
+	TickAppearanceCatalogStatus();
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);

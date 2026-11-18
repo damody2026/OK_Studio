@@ -5693,3 +5693,8 @@ LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor �
 - **原因**：DreamGUI 一頁的控制項太多，頂點資料貼圖超過上限；銷毀這幾百個控制項時又極慢。
 - **處置**：骨骼頁預設第一個骨骼分類（頭部），只鏡像目前看得到的列（`FGroup::bShownOnly`），分類或「進階」勾選改變時重建該頁（`FGroup::Signature`）；實拍 8 列、266 FPS，骨骼→懷孕→胸部切換正常。
 - **再試前檢查**：DreamGUI 頁面不要一次鏡像上百列；大量列一律依目前條件只建看得到的那些。
+
+## 2026-11-18：may-build 回「wait」還是開了建置（e-fork-2）
+
+- **變更／症狀**：讀卡器第三批要重編，指令寫成 `lua unreal_slot.lua may-build; Build.bat ...` 串在同一行，沒看 exit code。may-build 印出 `wait: e-120fps holds slot1 exclusively (need 60 GB)`（exit 3），Build.bat 照樣跑了，正好撞上 e-120fps 的獨占量測（編譯因自己的錯誤很快中止，但仍佔了 CPU）。
+- **修正**：may-build 單獨跑，exit 0 才開建置；要串在同一行就寫成 `may-build && Build.bat`。exit 3 就等，量測結束再建。
