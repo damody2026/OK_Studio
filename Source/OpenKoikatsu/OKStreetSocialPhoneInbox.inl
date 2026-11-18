@@ -31,9 +31,13 @@ TArray<FOKStreetHistoryEntry>& AOKStreetSocialScene::HistoryOf(const FString& Id
  if(!S.HistoryLoaded.Contains(Id)){
   S.HistoryLoaded.Add(Id);
   const FString Path=HistoryPath(Id);TArray<FString> Lines;OKStreetFlushSaves(); // lines still being appended
-  if(!Path.IsEmpty()&&FFileHelper::LoadFileToStringArray(Lines,*Path)){
-   TArray<FOKStreetHistoryEntry> Loaded;
-   for(const FString& Line:Lines){FOKStreetHistoryEntry E;if(OKStreetHistoryParse(Line,E))Loaded.Add(MoveTemp(E));}
+  // Read at the save's load in the background (FHistoryPreload) unless the file changed since.
+  TArray<FOKStreetHistoryEntry> Loaded;bool Read=false;
+  if(TFuture<FOKStreetSceneState::FHistoryPreload>* Pending=S.HistoryPreload.Find(Id)){FOKStreetSceneState::FHistoryPreload P=Pending->Consume();S.HistoryPreload.Remove(Id);
+   if(P.Path==Path&&P.Stat.bIsValid&&FOKStreetSceneState::OKSameFile(P.Stat,Path)){Loaded=MoveTemp(P.Entries);Read=true;}}
+  if(!Read&&!Path.IsEmpty()&&FFileHelper::LoadFileToStringArray(Lines,*Path)){Read=true;
+   for(const FString& Line:Lines){FOKStreetHistoryEntry E;if(OKStreetHistoryParse(Line,E))Loaded.Add(MoveTemp(E));}}
+  if(Read){
    // Entries later than the save's own time belong to a timeline that was rolled back (the save restored from an
    // earlier copy, the history left as it was): she would remember things that never happened. They move to an
    // archive beside the file instead of being read.

@@ -338,6 +338,11 @@ struct FOKStreetSceneState {
  TMap<int32,FString> LifeUrgent,InitiativeReason;TMap<int32,int64> InitiativeSince;TMap<int32,int64> ArriveLater,ArriveWaiting,MeetJoinSince;TMap<int32,TArray<FString>> ActivitiesDone;int64 ActivitiesDoneDay=-1,SeriesHour=-1;TPair<int32,int32> MorningPair{INDEX_NONE,INDEX_NONE};TMap<int32,int32> LifePairRoute;TMap<int32,TSharedPtr<FOKStreetPlanBlock>> LifeNow;double SkipAskedAt=-100;bool SleepNap=false,SleepWake=false;
  // OKStreetSocialPhoneInbox.inl: her history, the phone (messages, calls), and what is apart.
  TMap<FString,TArray<FOKStreetHistoryEntry>> History;TSet<FString> HistoryLoaded;TMap<FString,int64> PhoneSeen;bool PhoneSeenLoaded=false;
+ // The history and free-talk files read and parsed off the game thread right after the save loads (the first UI
+ // build read them all: 60 ms, c1118i). Used only when the file still has the size and time it had when read.
+ static bool OKSameFile(const FFileStatData& Was,const FString& Path){const FFileStatData Now=IFileManager::Get().GetStatData(*Path);return Was.bIsValid==Now.bIsValid&&(!Was.bIsValid||(Was.FileSize==Now.FileSize&&Was.ModificationTime==Now.ModificationTime));}
+ struct FHistoryPreload{FString Path;FFileStatData Stat;TArray<FOKStreetHistoryEntry> Entries;};TMap<FString,TFuture<FHistoryPreload>> HistoryPreload;
+ struct FFreeTalkPreload{FString LogFile,MemoryFile;FFileStatData LogStat,MemoryStat;TArray<FOKFreeTalkLine> Log;TMap<FString,TArray<FOKFreeTalkTurn>> Memory;};TFuture<FFreeTalkPreload> FreeTalkPreload;
  int32 RemotePeer=INDEX_NONE,RemoteMode=0,PhoneThread=INDEX_NONE,RingGirl=INDEX_NONE,PhoneComposing=0;FString PhoneTab=TEXT("msg"),PhoneDraft,RingWhy;double RingUntil=0,CallStarted=0;
  struct FPendingText{int32 Girl=INDEX_NONE;FString Why,Kind;double Due=0;int32 Tries=0;};TArray<FPendingText> PendingTexts;bool PhoneInFlight=false;double GateNudgeAt=-100;
  TMap<int32,FOKNpcLift> NpcLifts;int32 ActGirl=INDEX_NONE,LastActivityGirl=INDEX_NONE;int32 ArrivedWith=INDEX_NONE;FString ArrivedPlace;int64 ArrivedMinute=-1; /* the last walk he and a girl ended together, for appointments_tick (R5-13) */bool ActCutShort=false,ActTimeCut=false;int64 ActStart=0,LifeBlocksMinute=-1;int32 ActFirstAppointment=0; /* the appointments made during it are for later (ActivityAftermath) */ FString ActId,ActSig,LastActivity;int32 HerPaidGirl=INDEX_NONE;int64 HerPaidAmount=0,HerPaidAt=0;bool HerPaidAgreed=false;FString ShopPromptedPlace; /* the place whose menu prompt she was given (TickShopArrival) */int32 PaidBackGirl=INDEX_NONE;int64 PaidBackAmount=0,PaidBackAt=0;FString HerPaidNote;FString HerPaidShop; /* her own bill just paid (RecordPayAgreed) */ /* ActSig: what kind of activity ActId is (TickActivityWatch) */ TSet<FString> LifeDone;double BiasCheckAt=0;TMap<int32,double> PossessiveAt;
@@ -972,6 +977,17 @@ void AOKStreetSocialScene::BeginPlay(){
  // rules.json (favor caps, preferences, confession chance) is read by the rules with the dialogue catalogue (talk.rs).
  {TSharedPtr<FJsonObject> M;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M)M->TryGetStringField(TEXT("topic_catalogue"),S.TopicCataloguePath);}
  StartCalendarAndMind();
+ // Her history and the free-talk files: read in the background now, taken by the first UI build (FHistoryPreload).
+ {OKStreetFlushSaves();
+  for(int32 Index=1;Index<S.Manifest.Characters.Num();++Index){const FString Id=OKStreetStableId(S.Manifest.Characters[Index]),Path=HistoryPath(Id);
+   if(Path.IsEmpty()||S.HistoryPreload.Contains(Id))continue;
+   S.HistoryPreload.Add(Id,Async(EAsyncExecution::ThreadPool,[Path](){FOKStreetSceneState::FHistoryPreload P;P.Path=Path;P.Stat=IFileManager::Get().GetStatData(*Path);TArray<FString> Lines;
+    if(P.Stat.bIsValid&&FFileHelper::LoadFileToStringArray(Lines,*Path))for(const FString& Line:Lines){FOKStreetHistoryEntry E;if(OKStreetHistoryParse(Line,E))P.Entries.Add(MoveTemp(E));}
+    return P;}));}
+  const FString LogFile=FreeTalkFilePath(TEXT("free-talk-log.json")),MemoryFile=FreeTalkFilePath(TEXT("free-talk-memory.json"));
+  if(!LogFile.IsEmpty())S.FreeTalkPreload=Async(EAsyncExecution::ThreadPool,[LogFile,MemoryFile](){FOKStreetSceneState::FFreeTalkPreload P;P.LogFile=LogFile;P.MemoryFile=MemoryFile;
+   P.LogStat=IFileManager::Get().GetStatData(*LogFile);P.MemoryStat=IFileManager::Get().GetStatData(*MemoryFile);
+   OKStreetFreeTalkLoadLog(LogFile,P.Log);OKStreetFreeTalkLoadMemory(MemoryFile,P.Memory);return P;});}
  {TSharedPtr<FJsonObject> ManifestObject;FString Path,ExpressionBody;bool Enabled=false;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()){ManifestObject->TryGetBoolField(TEXT("enable_face_patterns"),Enabled);if(ManifestObject->TryGetStringField(TEXT("expression_catalogue"),Path)&&FFileHelper::LoadFileToString(ExpressionBody,*Path))S.Expressions=OKStreetParseExpressions(ExpressionBody);else if(Enabled&&!Path.IsEmpty())S.Expressions.Error=TEXT("Enabled facial expressions require the common expression catalogue");if(!S.Expressions.Error.IsEmpty()){S.Errors.Add(S.Expressions.Error);WriteReport(false);return;}}}
  if(S.Manifest.IdentityRetargets.Num()>0||S.RetargetSelfTest){
   if(S.RetargetSelfTest&&S.Manifest.IdentityRetargets.Num()==0){S.IdentityRetargetRejected=1;S.Errors.Add(TEXT("Identity retarget self-test has no explicit requests"));WriteReport(false);return;}
@@ -2317,8 +2333,11 @@ FString AOKStreetSocialScene::FreeTalkFilePath(const TCHAR* Name) const{
 void AOKStreetSocialScene::FreeTalkEnsureLog(){
  auto& S=*State;if(S.FreeTalkLogLoaded)return;S.FreeTalkLogLoaded=true;
  const FString LogFile=FreeTalkFilePath(TEXT("free-talk-log.json")),MemoryFile=FreeTalkFilePath(TEXT("free-talk-memory.json"));
- OKStreetFlushSaves();if(!LogFile.IsEmpty())OKStreetFreeTalkLoadLog(LogFile,S.FreeTalkLog);
- if(!MemoryFile.IsEmpty())OKStreetFreeTalkLoadMemory(MemoryFile,S.FreeTalkMemory);
+ OKStreetFlushSaves();bool Taken=false;
+ if(S.FreeTalkPreload.IsValid()){FOKStreetSceneState::FFreeTalkPreload P=S.FreeTalkPreload.Consume();S.FreeTalkPreload={};
+  if(P.LogFile==LogFile&&P.MemoryFile==MemoryFile&&FOKStreetSceneState::OKSameFile(P.LogStat,LogFile)&&FOKStreetSceneState::OKSameFile(P.MemoryStat,MemoryFile)){S.FreeTalkLog=MoveTemp(P.Log);S.FreeTalkMemory=MoveTemp(P.Memory);Taken=true;}}
+ if(!Taken){if(!LogFile.IsEmpty())OKStreetFreeTalkLoadLog(LogFile,S.FreeTalkLog);
+  if(!MemoryFile.IsEmpty())OKStreetFreeTalkLoadMemory(MemoryFile,S.FreeTalkMemory);}
  S.MindContextKnown.Reset(); // another save: its mind is asked again
  for(const auto& Line:S.FreeTalkLog)S.FreeTalkSerial=FMath::Max(S.FreeTalkSerial,Line.Serial);
 }
