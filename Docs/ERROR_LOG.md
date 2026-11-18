@@ -5334,3 +5334,24 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **验证**：修好后同一段跑完 30 张卡（见下一轮报告）。
 - **再試前檢查**：**任何「一段最多 N 分钟」的计时，起点都要是「真的开始做事」那一刻**，不是脚本启动；
   等待资源的脚本要能判断自己卡住了（有空资源却拿不到就是坏了），不要无声地转。
+
+## 2026-11-18 验收表 29/30 pass，却看不出四张卡是光头（E 组 e-cardload）
+
+- **变更**：`Tools/reader_package_sweep.lua` 的每张卡只印 pass/fail 与视图数，缺了什么部件不进输出。
+- **症状**：6 张原作 KKS 卡两轮都 ok=1、身体都在、判定 pass，但实拍里 `kks_Saria`、
+  `kks_CharacterExport_Female`、`kks_F_20240615`、`kks_anwa_subaru` 是**光头**，`kks_KK_402071` 只剩侧发。
+  表上看不出来，下一个人只会看到 30/30。协调者核对实拍才发现。
+- **原因（已证实，分三层）**：
+  1. 缺的头发**大多有报**，但不叫 hair：mod 用饰品槽提供发型时记成 `part=accessory`
+     （`Saria_Acc_Mod`）或 `part=hair_accessory`（`Sny.Towa.Mod`），按 `item missing part=hair` 去
+     grep 一定漏掉。
+  2. `kks_F_20240615` 与 `kks_anwa_subaru` 头发**一个字都没报**（只报了 shoes_outer），
+     而 `extract.rs` 的头发回圈有一条静默的 `continue`（`parts` 里已经有同 slot＋category 时）。
+  3. **拿日志数头发是错的**：`OK hair static` 这类行只有原作卡的头发流程会印，OK 卡是重放卡内
+     录好的部件，不印 —— `heroine_keqing` 日志里 0 行却有满头头发。第一版栏位就是这样量的，会反过来骗人。
+- **处置**：每张卡固定印 `hair=<数> missing=<part:次数,...>`；`hair` 改成问读卡器自己的
+  **MCP `geometry`**（实际载入的 mesh 名），不再数日志。`missing` 保留日志的三类
+  （`item missing part=`、`not in catalog`、`skip dummy hair`）。渲染行为没有动。
+- **验证**：两份既有日志离线重放，确认 `missing` 对得上；`hair` 栏位在下一轮实跑验。
+- **再試前檢查**：**「通过」的卡也要印出它缺了什么**，不然指标盖不住的东西就等于不存在；
+  还有**别拿「某条日志有没有出现」当成品质指标**，先确认那条日志在两种卡上都会印。

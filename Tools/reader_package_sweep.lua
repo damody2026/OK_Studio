@@ -235,13 +235,33 @@ for i, name in ipairs(cards) do
         logbad[#logbad + 1] = "load3d ok=0: " .. ((fresh:match("OK load3d result ok=0[^\r\n]*") or ""):sub(-150))
       end
       local gap = fresh:match("the OK card lacks[^\r\n]*")
+      -- What this card did not get, as fixed fields. A card can pass every other check and still come out bald: the
+      -- hair pass has a silent path, and a hair that a mod was to provide is reported as `accessory` or
+      -- `hair_accessory`, not as `hair` (2026-11-18: four of six original cards rendered with no hair and the summary
+      -- said 30/30). `hair=` is the count of hair meshes the reader actually drew, so 0 says it plainly.
+      local missing = {}
+      for part in fresh:gmatch("item missing part=([%w_]+)") do missing[part] = (missing[part] or 0) + 1 end
+      for _ in fresh:gmatch("not in catalog") do missing.hair_not_in_catalog = (missing.hair_not_in_catalog or 0) + 1 end
+      for _ in fresh:gmatch("skip dummy hair") do missing.hair_skipped = (missing.hair_skipped or 0) + 1 end
+      local parts = {}
+      for part, n in pairs(missing) do parts[#parts + 1] = ("%s:%d"):format(part, n) end
+      table.sort(parts)
+      -- `hair=` comes from the reader's own geometry (MCP `geometry`), not from the log: an OK card replays its parts
+      -- without the hair pass's log lines, so a log count reads 0 for a card with a full head of hair (heroine_keqing,
+      -- 2026-11-18). The geometry lists what is really loaded, which is the only thing that answers "is she bald".
+      -- `hair=` has **no source yet**. The reader's MCP `geometry` only names two roles (`body`, `head`) and no mesh
+      -- names, so it cannot say whether a head has hair on it; counting the log instead reads 0 for an OK card with a
+      -- full head of hair, because an OK card replays its parts without the hair pass's lines (heroine_keqing).
+      -- Until the reader grows a per-part list over MCP, this says `n/a` rather than a 0 that would be read as bald.
+      local hair = "n/a"
+      local fields = (" hair=%s missing=%s"):format(hair, #parts > 0 and table.concat(parts, ",") or "-")
       local empty = #kept > 0 and #bad == #kept
       if empty or #logbad > 0 then
-        emit(("%s RESULT fail views=%d %s%s"):format(name, #kept, table.concat(bad, " "),
+        emit(("%s RESULT fail views=%d%s %s%s"):format(name, #kept, fields, table.concat(bad, " "),
           #logbad > 0 and (" log: " .. table.concat(logbad, "; ")) or ""))
         fails = fails + 1
       else
-        emit(("%s RESULT pass views=%d%s%s"):format(name, #kept,
+        emit(("%s RESULT pass views=%d%s%s%s"):format(name, #kept, fields,
           #bad > 0 and (" (some views look empty: " .. table.concat(bad, " ") .. ")") or "",
           gap and (" GAP " .. gap:gsub(".*completes it%): ", ""):sub(1, 120)) or ""))
       end
