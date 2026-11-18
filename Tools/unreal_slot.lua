@@ -217,11 +217,26 @@ local function queued_need(agent)
   return okr and tonumber((text or ""):match("\nneed (%d+)")) or 0
 end
 
+-- Waiting too long lifts an agent above everyone who has not: its rank drops by STARVE_BOOST, more than the whole
+-- spread of PRIORITY, so higher-ranked agents taking turns can no longer keep it out (2026-11-18: c-lowspec waited
+-- 40 min twice while f-sceneload, e-cardload and f-yvonne alternated). Agents lifted at the same time keep their
+-- order between themselves.
+local STARVE_MIN = 20
+local STARVE_BOOST = 40
+local function queued_since(agent)
+  local okr, text = pcall(path.read_text, queue_file(agent))
+  return okr and tonumber((text or ""):match("\nsince (%d+)")) or nil
+end
+local function erank(agent)
+  local since = queued_since(agent)
+  if since and os.time() - since >= STARVE_MIN * 60 then return rank(agent) - STARVE_BOOST end
+  return rank(agent)
+end
 -- The higher-priority agents still waiting, as { {agent, need_gb}... }.
 local function waiting_above_all(agent)
   local list = {}
   for _, other in ipairs(queued()) do
-    if other ~= agent and rank(other) < rank(agent) then list[#list + 1] = { other, queued_need(other) } end
+    if other ~= agent and erank(other) < erank(agent) then list[#list + 1] = { other, queued_need(other) } end
   end
   return list
 end
@@ -261,8 +276,14 @@ local MIN_LEND_MIN = 5
 -- An exclusive claim records its need ("need N"): while it waits, a free slot can still be lent (see try_claim_locked).
 local function enqueue(agent, note, me, need_gb)
   path.mkdir(path.join(ROOT, "queue"), true)
+  -- "since <epoch>" survives every refresh: the first line's stamp is rewritten on each poll, so only this can say
+  -- how long an agent has really been queued. starved() uses it to lift an agent that others keep preempting
+  -- (2026-11-18: c-lowspec waited 40 min twice while higher-ranked agents took turns).
+  local okr, old = pcall(path.read_text, queue_file(agent))
+  local since = okr and (old or ""):match("\nsince (%d+)") or nil
   path.write_text(queue_file(agent), agent .. " " .. note .. " " .. now() .. "\n" .. (me and ("pid " .. me .. "\n") or "")
-    .. ((need_gb or 0) >= EXCLUSIVE_GB and ("need " .. need_gb .. "\n") or ""))
+    .. ((need_gb or 0) >= EXCLUSIVE_GB and ("need " .. need_gb .. "\n") or "")
+    .. ("since " .. (since or os.time()) .. "\n"))
 end
 
 -- Test hook, honoured only with OK_UNREAL_SLOTS set (a scratch slot folder): OK_UNREAL_SLOTS_FAKE="free=<GB> pause=<s>"
