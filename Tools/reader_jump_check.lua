@@ -13,6 +13,8 @@
 --   --images    copy the view images there (default: left where the reader wrote them)
 --   --polite    before each segment wait while another group (not f-yvonne*) holds or waits for an Unreal slot
 --   --fair      after each segment wait until every agent queued at the release has had the slot once
+--   --lighting  instead of the outfits: each lighting preset and the light / ambient sliders at 2, measured against
+--               原作預設 (LIGHTING lines; needs --images and an --mcp with image_diff)
 --   --minutes   one slot claim runs cards while the next one still fits in N minutes, from the average card so far
 --               (default 20, the slot rule's cap); then the slot is given back and claimed again (queueing behind others)
 --   --mcp       ok-game-mcp.exe (default Tools/ok-game-mcp/target/release/ok-game-mcp.exe)
@@ -56,6 +58,7 @@ do
     local k = arg[i]
     if k == "--polite" then args.polite = true; i = i + 1
     elseif k == "--fair" then args.fair = true; i = i + 1
+    elseif k == "--lighting" then args.lighting = true; i = i + 1
     elseif k:sub(1, 2) == "--" then args[k:sub(3)] = arg[i + 1]; i = i + 2
     else error("unexpected argument " .. k) end
   end
@@ -221,6 +224,37 @@ local function others_waiting()
   return false
 end
 
+-- --lighting: does each lighting control reach this card's materials? (11-15: the shade preset did nothing on KKUTS
+-- clothes until CardShaderShade; every shader family has to be checked.) For each preset and for the light / ambient
+-- sliders at 2: the views against 原作預設 (image_diff on the front view: whole-image mean |diff| and the worst tile)
+-- and how many material instances ApplyLightingScales wrote (scaled=, from the reader's log line for that change).
+-- A change that moves the picture by almost nothing (mean < 0.3) is written NOEFFECT.
+local function lighting_check(c, lit, log)
+  local base = (args.images or "") .. "/" .. (lit:match("^([^,]+)") or "")
+  local function front(names) return (args.images or "") .. "/" .. (names:match("^([^,]+)") or "") end
+  local function scaled_now()
+    local _, t = count(log, "x"); local s = "?"
+    for n in (t or ""):gmatch("reader lighting[^\n]-scaled=(%d+)") do s = n end
+    return s
+  end
+  local function measure(label, after)
+    local names = views()
+    local d = call_once("image_diff", ('{"a":"%s","b":"%s"}'):format(base, front(names)))
+    local mean, tile = d:match('"mean"%s*:%s*([%d.]+)'), d:match('"tile"%s*:%s*([%d.]+)')
+    emit(("%s LIGHTING %s scaled=%s mean=%s tile=%s%s views=%s"):format(c, label, scaled_now(), mean or "?", tile or "?",
+      (tonumber(mean or "") or 99) < 0.3 and " NOEFFECT" or "", names))
+    if after then after() end
+  end
+  for _, p in ipairs({ "柔和卡通", "強對比卡通", "側光", "逆光", "無陰影（平光）" }) do
+    set("control.LightingPresetCombo", ('"%s"'):format(p)); sleep(2); measure("preset:" .. p)
+  end
+  set("control.LightingPresetCombo", '"原作預設"'); sleep(1)
+  set("control.LightingIntensitySlider", "2"); sleep(2)
+  measure("light=2", function() set("control.LightingIntensitySlider", "1"); sleep(1) end)
+  set("control.LightingAmbientSlider", "2"); sleep(2)
+  measure("ambient=2", function() set("control.LightingAmbientSlider", "1"); sleep(1) end)
+end
+
 local function check_card(c)
   retries = 0
   local tag = ("-OKLane=%s-%s-%d"):format(lane, c, math.random(10000, 99999))
@@ -257,7 +291,8 @@ local function check_card(c)
     for n in (logtext or ""):gmatch("reader lighting[^\n]-scaled=(%d+)") do scaled = math.max(scaled, tonumber(n)) end
     set("control.LightingShadeSlider", "1")
     emit(("%s LIGHT scaled=%d lit=%s flat=%s"):format(c, scaled, lit, flat))
-    for o = 1, 7 do
+    if args.lighting then lighting_check(c, lit, log) end
+    for o = 1, args.lighting and 0 or 7 do
       local e = set("control.OutfitCombo", ('"服裝 %d"'):format(o))
       -- (a card saves fewer than 7 outfits: the combo has no "服裝 o"; the old runs wrote C033 O5 as a failure)
       if e and o > 1 and e:find("Value absent from choices", 1, true) then emit(("%s O%d none (the card has %d outfits)"):format(c, o, o - 1)); break end
