@@ -417,3 +417,27 @@ CPU 蒙皮加晃動跟隨約 1.8 ms。每幀大約是解算時間再加 3 ms 顯
 - 改動後仍有偶發的水槍高峰：可上色元件名單重建那一幀（`OK_PaintDiscoverList` 3.4 ms，每秒一次）、一次 `OK_PaintStep` 11 ms。
 - 1118d（FOKPaintPose 的 morph 累加依權重快取）沒跑：吵機器上量到只省 0.04 ms/幀，改動已撤回，不在任何提交裡。
 - 剩下的平均大項：`KK_PairAdvance` 約 2～3 ms（其中 `KK_PairRoleDisplay` 1.4～2 ms）、`OK_PaintTick` 約 1～3 ms。
+## 2026-11-18 GC 垃圾來源與重用池（未完成量測）
+
+名詞：**液滴** ＝ `OKArousalDrops`（她身上掛著的濕潤小球，StaticMeshComponent）；**滴落** ＝ `OKPaintSprayer` 的流下水滴與地板污漬（KKAffinePMC／ProceduralMeshComponent，各帶一個 MID 與 BodySetup）。
+
+最差幀是 GC（見上節），GC 的成本隨物件數超線性成長（legacy pak 沒 IoStore，Notify／Collect 搶 linker 鎖；c-lowspec 文件 §10，不調 GC cvar）。要壓它只能少產生垃圾。量法：`obj list` → `obj gc` → `obj list`，45 秒窗口內兩次清單的類別數差＝產生的垃圾。
+
+獨佔量測（1118c＝改動前、1118e＝只做液滴重用池），體外射精後再插入的 45 秒：
+
+| 類別 | 1118c | 1118e | 誰產生 |
+|---|---|---|---|
+| MaterialInstanceDynamic | 2,687 | 未記 | 滴落 |
+| BodySetup | 2,687 | 未記 | 滴落 |
+| KKAffinePMC | 1,851 | 未記 | 滴落 |
+| ProceduralMeshComponent | 836 | 未記 | 滴落 |
+| NiagaraComponent | 390 | 未記 | 水槍特效 |
+| StaticMeshComponent | 664 | 0 | 液滴 |
+| 合計（淨垃圾） | 9,574 | 未記 | |
+| 每次 GC 收掉的物件 | 8,035／10,363 | 8,747／9,971 | |
+| GC 總耗時 | 缺 | 缺 | |
+
+- **7% 怎麼來**：液滴的 StaticMeshComponent 664 ÷ 淨垃圾 9,574 ≈ 7%；滴落四類合計 8,061 ≈ 84%，加 Niagara 88%。所以只做液滴池，每次 GC 收的物件數不會降（1118e 的 8,747／9,971 和 1118c 同一量級），要動的是滴落。
+- **GC 總耗時那格為什麼缺**：這兩趟忘了開 `gc.DumpAnalyticsToLog 1`，game.log 只有收掉的物件數，沒有每次 GC 的分段耗時。之後的量測腳本已把它和 `log LogGarbage Log`、`t.HitchFrameTimeThreshold 15`、`stat dumphitches` 一起開。
+- 之後做了滴落的重用池（流下的水滴藏起來重用、地板污漬到 MaxFloorStains 上限時搬最舊那塊重用，MID 留在元件上、BodySetup 在 `bUseAsyncCooking=false` 時沿用）：stage EFps1118g。1118c 對 1118g 的獨佔量測（四類物件數、GC 總耗時、最差單幀、地板污漬目視）**因 C／E／F 整合暫停沒跑**，整合後補。
+- Niagara 不做池：會和 OwnedFX 的管理衝突，先不動。

@@ -9,6 +9,7 @@
 class AActor;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class UMaterialInterface;
 
 namespace OKArousal{
  // Desire (relation sex_desire, up to 200) past which she flushes and runs clear; past which her nipples leak on the
@@ -56,6 +57,13 @@ private:
  struct FMark{TWeakObjectPtr<UStaticMeshComponent> Mesh,Glint;int32 Who=0;uint8 Colour=0;FVector At=FVector::ZeroVector;float Radius=0.f;};
  UMaterialInstanceDynamic* Material(AActor* Owner,uint8 Colour,bool bMark);
  UStaticMeshComponent* NewGlint(AActor* Owner);
+ // A sphere for a drop, a mark or a glint: a hidden one put back earlier when there is one (of the same owner), else a
+ // new one. Drops come and go several a second while she is wet; making and destroying two components for each left
+ // about 15 components a second for the garbage collector, most of what it collected in the one-on-one (2026-11-18).
+ UStaticMeshComponent* Take(AActor* Owner,UMaterialInterface* Material,int32 SortPriority);
+ // Hidden and kept for the next Take (destroyed past the spare limit).
+ void Give(UStaticMeshComponent* C);
+ TArray<TWeakObjectPtr<UStaticMeshComponent>> Spare;
  void PlaceGlints(const FVector& Eye);
  void Land(AActor* Owner,const FDrop& D,const FVector& At);
  TArray<FDrop> Drops;TArray<FMark> Marks;

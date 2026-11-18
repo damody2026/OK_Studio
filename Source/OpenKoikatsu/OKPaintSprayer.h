@@ -139,6 +139,12 @@ private:
  UPROPERTY() TObjectPtr<UNiagaraComponent> JetFX;
  UPROPERTY() TArray<TObjectPtr<UNiagaraComponent>> OwnedFX;
  UPROPERTY() TArray<TObjectPtr<UProceduralMeshComponent>> FloorStains;
+ // Drops that ran off her (or went with their surface), hidden for the next one to hang there. Each drop made a mesh
+ // component, its material and its body setup and destroyed them as it fell: about 60 of each a second while she is
+ // coated, most of what the one-on-one gave the garbage collector (2026-11-18). Not in Overlays while spare.
+ UPROPERTY() TArray<TObjectPtr<UProceduralMeshComponent>> SpareDrops;
+ UProceduralMeshComponent* TakeDropVisual();
+ void GiveDropVisual(UProceduralMeshComponent* Visual);
  double NextSplashAt=0;
  UPROPERTY() TObjectPtr<UProceduralMeshComponent> Gun;
  void DiscoverSurfaces(const FVector& A,const FVector& B,bool SourceCone=true);
