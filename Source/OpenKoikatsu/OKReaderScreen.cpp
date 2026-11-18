@@ -15,6 +15,7 @@
 #include "Core/Components/DreamCanvas.h"
 #include "Core/Components/DreamPanelLayouts.h"
 #include "Core/Components/DreamPanelSlot.h"
+#include "Core/Components/DreamLayout.h"
 #include "Core/DreamScreenUISubsystem.h"
 #include "DreamUIBPLibrary.h"
 #include "Controls/DreamButton.h"
@@ -111,7 +112,14 @@ void UOKDreamControl::Sync()
 	UWidget* S=Source.Get();
 	if(!S){if(!FixedText.IsEmpty())SetText(FixedText);return;}
 	SetShown(IsUmgShown(S));
-	if(Companion.IsValid()&&Companion->GetShown()!=GetShown())Companion->SetShown(GetShown());
+	// The search field only for a list long enough to need one (the lighting presets are OKMotionComboBoxes of a few
+	// entries, and showed "搜尋動作" over them), and while it holds a filter.
+	if(Companion.IsValid())
+	{
+		const UComboBoxString* Combo=Cast<UComboBoxString>(S);
+		const bool bWant=GetShown()&&(!Combo||Combo->GetOptionCount()>=SearchMinOptions||!Filter.IsEmpty());
+		if(Companion->GetShown()!=bWant)Companion->SetShown(bWant);
+	}
 	if(!GetShown())return;
 	TGuardValue<bool> Guard(bPushing,true);
 	if(auto* Drawer=Cast<UOKDrawerButton>(S))
@@ -340,6 +348,24 @@ bool UOKReaderScreen::InPropertyPanel(UWidget* W) const
 	return false;
 }
 
+// A row's caption: the first child of a row of several, a text followed by a value control (a slider, drop-down, field
+// or tick box, maybe in a size box).
+bool UOKReaderScreen::IsRowCaption(UWidget* W)
+{
+	UWidget* Cell=W;UPanelWidget* Row=W?W->GetParent():nullptr;
+	if(Row&&Row->IsA<USizeBox>()&&Row->GetChildrenCount()==1){Cell=Row;Row=Row->GetParent();}
+	if(!Row||!Row->IsA<UHorizontalBox>()||Row->GetChildIndex(Cell)!=0||Row->GetChildrenCount()<2)return false;
+	UWidget* Next=Row->GetChildAt(1);
+	if(auto* Size=Cast<USizeBox>(Next);Size&&Size->GetChildrenCount()==1)Next=Size->GetChildAt(0);
+	return Next&&(Next->IsA<USlider>()||Next->IsA<UComboBoxString>()||Next->IsA<UEditableTextBox>()||Next->IsA<USpinBox>()||Next->IsA<UCheckBox>());
+}
+
+// The name column's width: one rule for every page, a share of the page between the rail and the panel's edge.
+float UOKReaderScreen::CaptionWidth() const
+{
+	return FMath::RoundToFloat(FMath::Clamp((LeftWidth-204.f)*0.32f,110.f,240.f));
+}
+
 // One UMG widget, and everything under it, as DreamGUI controls under Parent. bInRow: Parent lays out across.
 void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 {
@@ -381,14 +407,22 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 	if(Source->IsA<UTextBlock>())
 	{
 		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
-		UPanelWidget* Row=Source->GetParent();
-		const bool bCaption=bPropertyRow&&Row&&Row->GetChildIndex(Source)==0&&Row->GetChildrenCount()>1;
-		Place(C,bCaption?170.f:FMath::Min(200.f,TextWidth(TextIn(Source),18.f)+12.f),false);
+		const bool bCaption=bInRow&&IsRowCaption(Source);
+		Place(C,bCaption?CaptionWidth():FMath::Min(200.f,TextWidth(TextIn(Source),18.f)+12.f),false);
 		if(!C)return;
-		if(bCaption){if(UDreamText* T=TextOf(C->Label)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::Ellipsis);}}
+		// A caption is the row's name column: the same width on every page (臉, 身子, 屬性, 光影 ...), so the values
+		// start at one x whichever page is shown. A longer name wraps (and the row grows) rather than lose its end --
+		// "物理／頭髮（後髮）" and "（前髮）" differ only there.
+		UDreamPanelSlot* Slot=C->GetPanelSlot();
+		if(bCaption&&Slot)
+		{
+			const float Width=CaptionWidth();
+			Slot->SetMinDesiredSize(FVector2D(Width,Slot->MinDesiredSize.Y));Slot->SetMaxDesiredSize(FVector2D(Width,0));
+			if(UDreamText* T=TextOf(C->Label))T->SetAutoWrapText(true);
+		}
 		// Down a column a long text wraps: the line grows with it instead of keeping the designed 30 and drawing over the
 		// row under it.
-		else if(!bInRow)if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+		else if(!bInRow&&Slot)Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
 		return;
 	}
 	if(Source->IsA<UImage>()){Place(MakeControl(TEXT("Image"),Into),0,false);return;}
@@ -396,7 +430,8 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 	if(auto* Size=Cast<USizeBox>(Source);Size&&bInRow&&Size->GetChildrenCount()==1)
 	{
 		const int32 Before=Into->GetChildren().Num();Mirror(Size->GetChildAt(0),Into,true);
-		if(Into->GetChildren().Num()>Before&&Size->GetWidthOverride()>0)Into->GetChildren().Last()->SetWidth(Size->GetWidthOverride());
+		// (Not a caption's: the name column has its own width.)
+		if(Into->GetChildren().Num()>Before&&Size->GetWidthOverride()>0&&!IsRowCaption(Size->GetChildAt(0)))Into->GetChildren().Last()->SetWidth(Size->GetWidthOverride());
 		return;
 	}
 	if(Source->IsA<UPanelWidget>()||Source->IsA<UUserWidget>())
@@ -608,6 +643,7 @@ void UOKReaderScreen::ClearPage()
 {
 	for(UDreamWidget* W:PageWidgets)if(IsValid(W))W->DestroyWidget();
 	PageWidgets.Reset();
+	ShownPageHeight=-1.f;
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
 	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
@@ -790,6 +826,17 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 	}
 	TickResize();
 	SyncAll();
+	// The left scroll box takes its content's extent only when content is added (UDreamScrollBox::AddContent), and a page
+	// is added empty and then filled, rebuilt when a UMG list changes, its rows shown and hidden: measured 2026-11-18, the
+	// 屬性 page ran below the panel with no bar and the wheel did nothing. Re-take it whenever the page's height moved.
+	if(LeftScroll&&PageWidgets.Num()&&++PageMeasureFrame>=6)
+	{
+		PageMeasureFrame=0;
+		const UDreamWidget* Page=PageWidgets.Last();
+		const UDreamLayoutContainer* Layout=Page?Page->GetLayoutContainer():nullptr;
+		const float Height=Layout?Layout->GetLayoutPreferredSize().Y:-1.f;
+		if(!FMath::IsNearlyEqual(Height,ShownPageHeight,0.5f)){ShownPageHeight=Height;LeftScroll->RefreshContentExtent();}
+	}
 }
 
 FString UOKReaderScreen::CurrentTab() const

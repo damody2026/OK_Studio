@@ -49,8 +49,9 @@ public:
 	FString FixedText;
 	// A drop-down: only the options matching this show (a search field above it sets it).
 	FString Filter;
-	// Hidden and shown with this control (its search field).
+	// Hidden and shown with this control (its search field), and only for a list of at least SearchMinOptions entries.
 	TWeakObjectPtr<UDreamWidget> Companion;
+	static constexpr int32 SearchMinOptions=30;
 
 	void SetText(const FString& Text);
 	void SetOpen(bool bOpen);
@@ -184,6 +185,12 @@ private:
 	UDreamWidget* MakePanel(UDreamWidget* Into,bool bHorizontal,float Spacing);
 	void Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow);
 	bool InPropertyPanel(UWidget* W) const;
+	static bool IsRowCaption(UWidget* W);
+	float CaptionWidth() const;
+	// The left page's measured height when the scroll box last took its extent (it measures only when content is added,
+	// and a page is added empty and filled after).
+	float ShownPageHeight=-1.f;
+	int32 PageMeasureFrame=0;
 	void MirrorChildren(UPanelWidget* Source,UDreamWidget* Target,bool bHorizontal);
 	void AddToHost(UDreamWidget* Host,UDreamWidget* Child,bool bFill);
 };
