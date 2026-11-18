@@ -9,13 +9,33 @@
 namespace OKStreetArousal{constexpr float DripRange=1000.f,SeenRange=3000.f;}
 
 // Her card, read once: bust size and KK_SkinEffects' settings (陰部脆弱, 處女膜再生, stretched hymen).
-static const FOKStreetHerCard& OKStreetHerCard(FOKStreetSceneState& S,int32 Girl){
- static const FOKStreetHerCard None;if(Girl<0||Girl>=OKStreetCastCount)return None;
- FOKStreetHerCard& C=S.HerCard[Girl];if(C.Read)return C;C.Read=true;
- const FString Path=OKStreetCardFor(S,Girl);FKKCharacterFile File;FString Error;
+static FOKStreetHerCard OKStreetReadHerCard(int32 Girl,const FString& Path){
+ FOKStreetHerCard C;C.Read=true;FKKCharacterFile File;FString Error;
  if(Path.IsEmpty()||!UKKCardReader::LoadFromFile(Path,File,Error)){UE_LOG(LogTemp,Display,TEXT("Street her card: actor=%d not read (%s)"),Girl,*Error);return C;}
  C.Bust=File.Body.ShapeValueBody.IsValidIndex(4)?File.Body.ShapeValueBody[4]:0.f;C.HymenRegen=File.bHymenRegen;C.HymenStretched=File.bStretchedHymen;C.Fragile=File.bFragileVag;
  UE_LOG(LogTemp,Display,TEXT("Street her card: actor=%d bust %.0f, hymen regen %d, stretched %d, fragile %d"),Girl,C.Bust*100.f,C.HymenRegen,C.HymenStretched,C.Fragile);
+ return C;
+}
+// Every heroine's card read on a pool thread as the street starts (OKStreetHerCardsAsked): read on the game thread the
+// first time she came within 30 m (TickArousal's milk), a whole card file each, it held the frame 108 ms (actor 10,
+// c1118a, 2026-11-18). The reader is file IO and parsing only, no UObjects.
+static TFuture<TArray<FOKStreetHerCard>> GOKStreetHerCards;static bool GOKStreetHerCardsAsked=false;
+static void OKStreetHerCardsAsk(FOKStreetSceneState& S){
+ if(GOKStreetHerCardsAsked)return;GOKStreetHerCardsAsked=true;
+ TArray<FString> Paths;for(int32 Girl=0;Girl<FMath::Min(S.Manifest.Characters.Num(),OKStreetCastCount);++Girl)Paths.Add(Girl>0?OKStreetCardFor(S,Girl):FString());
+ GOKStreetHerCards=Async(EAsyncExecution::ThreadPool,[Paths](){TArray<FOKStreetHerCard> Cards;for(int32 Girl=0;Girl<Paths.Num();++Girl)Cards.Add(Girl>0?OKStreetReadHerCard(Girl,Paths[Girl]):FOKStreetHerCard());return Cards;});
+}
+// Her card known without reading it here: read already, or the background read is done (then taken from it).
+static bool OKStreetHerCardKnown(FOKStreetSceneState& S,int32 Girl){
+ if(Girl<0||Girl>=OKStreetCastCount)return false;FOKStreetHerCard& C=S.HerCard[Girl];if(C.Read)return true;
+ if(!GOKStreetHerCardsAsked||!GOKStreetHerCards.IsReady())return false;
+ const TArray<FOKStreetHerCard>& Cards=GOKStreetHerCards.Get();if(!Cards.IsValidIndex(Girl)||!Cards[Girl].Read)return false;
+ C=Cards[Girl];return true;
+}
+static const FOKStreetHerCard& OKStreetHerCard(FOKStreetSceneState& S,int32 Girl){
+ static const FOKStreetHerCard None;if(Girl<0||Girl>=OKStreetCastCount)return None;
+ FOKStreetHerCard& C=S.HerCard[Girl];if(OKStreetHerCardKnown(S,Girl))return C;
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_HerCardRead);C=OKStreetReadHerCard(Girl,OKStreetCardFor(S,Girl)); // not read in the background yet: here, as before
  return C;
 }
 // Onto her profile, which the rules read (traits.rs): the libido she gained in one-on-ones (ext hexp.<id>.libido_gain, a
@@ -56,10 +76,14 @@ void AOKStreetSocialScene::TickArousal(float Dt){
  // them in FOKArousalDrops::Spawn (LoadObject) and that frame took 458 ms (scope1118d, walking up to the heroines). No
  // drops on the street until they are in; the drops' own code (shared with the private room) is left as it is.
  static TSharedPtr<FStreamableHandle> DropLoad;static bool DropAsked=false;
+ if(!DropAsked)UE_LOG(LogTemp,Display,TEXT("Street drops: before the preload the sphere was %s, the material %s"),
+  FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere")).ResolveObject()?TEXT("in memory"):TEXT("not loaded"),
+  FSoftObjectPath(TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewTranslucent.M_PreviewTranslucent")).ResolveObject()?TEXT("in memory"):TEXT("not loaded"));
  if(!DropAsked&&(DropAsked=true))DropLoad=UAssetManager::GetStreamableManager().RequestAsyncLoad(TArray<FSoftObjectPath>{FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere")),
   FSoftObjectPath(TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewTranslucent.M_PreviewTranslucent"))});
  const bool DropsReady=!DropLoad.IsValid()||DropLoad->HasLoadCompleted();
  auto& S=*State;const int32 Cast=FMath::Min(S.Manifest.Characters.Num(),OKStreetCastCount);
+ OKStreetHerCardsAsk(S); // every heroine's card read in the background as the street starts
  const double Wall=FPlatformTime::Seconds();const int64 Minute=OKStreetMindNow(S);
  // Twice a second: her flush follows her desire (the mind's own face look keeps it as a floor, StreetMind face), and
  // until when she runs white / red (read again only when the save's ext changed); asleep or in the bath her wet marks
@@ -98,7 +122,7 @@ void AOKStreetSocialScene::TickArousal(float Dt){
   if(!S.Agents.IsValidIndex(Girl-1)||S.PrivateGirl==Girl)continue; // in the room with him: the room's own drops (OKHScene)
   const float Far=FVector::Dist(S.Agents[Girl-1].Position,S.Male),Desire=S.ArousalDesire[Girl];if(Far>OKStreetArousal::SeenRange)continue;
   // Milk from her nipples (desire past 150, bust past 40), one side then the other.
-  const float Bust=OKStreetHerCard(S,Girl).Bust;
+  const float Bust=OKStreetHerCardKnown(S,Girl)?S.HerCard[Girl].Bust:0.f; // her card still being read: no milk yet
   if(Desire>OKArousal::DesireMilk&&Bust>OKArousal::BustMilk&&Wall>=S.ArousalNippleAt[Girl]){
    S.ArousalNippleAt[Girl]=Wall+OKArousal::NippleInterval(Desire,Bust)*.5f*FMath::FRandRange(.8f,1.2f); // two nipples by turns
    if(Spawn(Girl,++S.ArousalTurn[Girl]%2?FName(TEXT("cf_j_bnip02_L")):FName(TEXT("cf_j_bnip02_R")),OKArousal::White))++S.ArousalWetMilk[Girl];}

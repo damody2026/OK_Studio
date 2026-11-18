@@ -12,6 +12,7 @@ extern "C" __declspec(dllimport) void __stdcall DisableProcessWindowsGhosting(vo
 #include "OKStreetBacks.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
+#include "Async/Async.h"
 #include "OKStreetSocialText.h"
 #include "OKStreetSpokenText.h"
 #include "OKStreetSocialSpeakerText.h"
