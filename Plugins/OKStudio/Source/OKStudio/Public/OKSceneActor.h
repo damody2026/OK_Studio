@@ -85,6 +85,9 @@ public:
 		 *  the preview and the component. A loading scene walks all of its objects every frame, so these are paid by
 		 *  the objects already built as well (5867 items: 62 s in Sync of which 23 s in Build). */
 		double SyncSameMs = 0., SyncWorldMs = 0., SyncPlaceMs = 0.;
+		/** Sync's per-object pass over what is already applied to each object (morph overrides, live material edits,
+		 *  lights, effects). It runs for every object of the scene every Sync, and nothing timed it before. */
+		double SyncLiveMs = 0.;
 		int32 Characters = 0, Items = 0, Others = 0;
 		/** Syncs in all, and those that built nothing because every character was still opening. */
 		int32 Syncs = 0, StarvedSyncs = 0;

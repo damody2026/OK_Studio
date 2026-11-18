@@ -28,6 +28,8 @@
 #include "Serialization/JsonSerializer.h"
 #include "UnrealClient.h"
 #include "ShaderCompiler.h"
+#include "RHIStats.h"
+#include "DynamicRHI.h"
 
 namespace
 {
@@ -52,7 +54,8 @@ namespace
 		TSharedPtr<FJsonObject> SettleRow;
 		double SettleStart = 0.;
 		int32 SettleIdle = 0, SettleFrames = 0;
-		double PeakUsedGb = 0.;
+		double PeakUsedGb = 0., PeakCommitGb = 0., PeakVramGb = 0., VramBudgetGb = 0.;
+		bool bVramOverBudget = false;
 		TArray<TSharedPtr<FJsonValue>> Rows;
 
 		/** OK_SCENE_PROFILE_DUMP=1: what the built scene is, so two runs can be compared object by object. Opening a
@@ -156,7 +159,20 @@ namespace
 				if (Frames == LoadingShotFrame && LoadingShotFrame > 0)
 					FScreenshotRequest::RequestScreenshot(FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_loading.png"), *FPaths::GetBaseFilename(Scenes[Scene])), true, false);
 				// A bigger per-frame budget builds more at once: the memory the renderer has not freed yet is the risk.
-				PeakUsedGb = FMath::Max(PeakUsedGb, FPlatformMemory::GetStats().UsedPhysical / double(1 << 30));
+				// Three numbers, because they run out separately and the target machine is 16 GB RAM / 8 GB VRAM:
+				// the working set (what this process holds in RAM), the commit charge (what it has asked the OS to
+				// back, which is what fails first on a small page file), and the GPU's own local memory.
+				const FPlatformMemoryStats Mem = FPlatformMemory::GetStats();
+				PeakUsedGb = FMath::Max(PeakUsedGb, Mem.UsedPhysical / double(1 << 30));
+				PeakCommitGb = FMath::Max(PeakCommitGb, Mem.UsedVirtual / double(1 << 30));
+				FRHIMemoryStats Vram;
+				RHIGetMemoryStats(Vram);
+				if (Vram.IsValid())
+				{
+					PeakVramGb = FMath::Max(PeakVramGb, Vram.UsedLocal / double(1 << 30));
+					VramBudgetGb = Vram.BudgetLocal / double(1 << 30);
+					if (Vram.IsOverBudget()) bVramOverBudget = true;
+				}
 				if (!Ready(Game)) return true;
 				const double ReadyMs = (FPlatformTime::Seconds() - Start) * 1000.;
 				const AOKSceneActor::FLoadStats& S = Game.SceneActor->LoadStats;
@@ -168,6 +184,10 @@ namespace
 				Row->SetNumberField(TEXT("build_ms"), ReadyMs - LoadCallMs);
 				Row->SetNumberField(TEXT("build_frames"), Frames);
 				Row->SetNumberField(TEXT("peak_used_gb"), PeakUsedGb);
+				Row->SetNumberField(TEXT("peak_commit_gb"), PeakCommitGb);
+				Row->SetNumberField(TEXT("peak_vram_gb"), PeakVramGb);
+				Row->SetNumberField(TEXT("vram_budget_gb"), VramBudgetGb);
+				Row->SetNumberField(TEXT("vram_over_budget"), bVramOverBudget ? 1 : 0);
 				Row->SetNumberField(TEXT("character_open_ms"), S.CharacterOpenMs);
 				Row->SetNumberField(TEXT("character_continue_ms"), S.CharacterContinueMs);
 				Row->SetNumberField(TEXT("character_build_ms"), S.CharacterBuildMs);
@@ -185,6 +205,7 @@ namespace
 				Row->SetNumberField(TEXT("sync_same_ms"), S.SyncSameMs);
 				Row->SetNumberField(TEXT("sync_world_ms"), S.SyncWorldMs);
 				Row->SetNumberField(TEXT("sync_place_ms"), S.SyncPlaceMs);
+				Row->SetNumberField(TEXT("sync_live_ms"), S.SyncLiveMs);
 				Row->SetNumberField(TEXT("characters"), S.Characters);
 				Row->SetNumberField(TEXT("items"), S.Items);
 				Row->SetNumberField(TEXT("others"), S.Others);
@@ -230,7 +251,8 @@ namespace
 			if (Game.SceneActor) Game.SceneActor->LoadStats = AOKSceneActor::FLoadStats();
 			FString Error;
 			Frames = 0;
-			PeakUsedGb = 0.;
+			PeakUsedGb = PeakCommitGb = PeakVramGb = VramBudgetGb = 0.;
+			bVramOverBudget = false;
 			ShotExtra = 0;
 			ShotPath.Reset();
 			Start = FPlatformTime::Seconds();

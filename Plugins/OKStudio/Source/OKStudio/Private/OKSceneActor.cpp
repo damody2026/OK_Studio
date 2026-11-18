@@ -1577,6 +1577,11 @@ void AOKSceneActor::Sync()
 			// A stopped animation (speed 0) shows the frame at its time: the UI and timeline keys scrub it.
 			if (Object.Character.Speed == 0.f && Item->Time != Object.Character.Time) SetAnimationTime(Object.Id, 0.f);
 		}
+		// From here to the world transform below, every object of the scene is checked against what is already applied
+		// to it - morph overrides, live material edits, lights, effects - once per object per Sync. Nothing timed this,
+		// and on a scene of 8806 objects over ~400 Syncs it was the 18.5-19.5 s that the other timers did not add up to
+		// (2026-11-18, Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md).
+		const double LiveStart = FPlatformTime::Seconds();
 		if (Object.Kind == EOKSceneObjectKind::Item && Item->AppliedMorphOverrides != Object.Item.MorphOverrides)
 		{
 			if (AKKPreviewActor* Preview = Item->Preview.Get())
@@ -1663,6 +1668,7 @@ void AOKSceneActor::Sync()
 			}
 		}
 		const double WorldStart = FPlatformTime::Seconds();
+		LoadStats.SyncLiveMs += (WorldStart - LiveStart) * 1000.;
 		const FTransform World = Document->WorldTransform(Object.Id) * GetActorTransform();
 		// OK_STUDIO_ITEM_DUMP=<group/category/no>: that item's world transform (Unreal), to compare with Studio's.
 		static const FString ItemDump = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STUDIO_ITEM_DUMP"));
