@@ -4757,8 +4757,11 @@ impl ParsedBundle {
     }
 
     fn decode_tex(&self, name: &str) -> Option<Vec<u8>> {
+        // Children of `derive/decode`, the biggest segment of an OK card's open (CARD_OPEN_PERF 第四节): this is a
+        // five-way path, and which way a call takes decides whether its cost is a decode at all.
         let key = name.to_ascii_lowercase();
         if let Some(png) = self.textures.borrow().get(&key) {
+            let _seg = segment("derive/decode/memo hit");
             return Some(png.clone());
         }
         if let (Some(e),Some(id))=(self.model_edits(),self.lib) {
@@ -4774,13 +4777,19 @@ impl ParsedBundle {
             // disk would stand in for the texels the card must carry itself.
             let own=self.lib.is_some_and(|id|crate::oklib::recording_card_pack()||(crate::okstrict::active().is_some()&&!crate::okstrict::library_model(&id)));
             let disk=!crate::memosnap::active(crate::memosnap::TEX)&&!own;
-            if let Some((n,png))=self.lib.filter(|_|disk).and_then(|id|derived_png_load(&id,&key)) {
+            let from_disk = { let _seg = segment("derive/decode/derived load");
+                self.lib.filter(|_|disk).and_then(|id|derived_png_load(&id,&key)) };
+            if let Some((n,png))=from_disk {
+                let _seg = segment("derive/decode/remember");
                 self.remember_texture(n.to_ascii_lowercase(),png.clone());
                 return Some(png);
             }
-            let payload=self.memo_texture("texture_payload",name,||self.texture_payload_unity(name).map(|(t,n)|(TexturePayload(t),n))).map(|(t,n)|(t.0,n));
-            let Some((n,png))=payload.and_then(|p|png_from_payload(p.0,None)) else { return self.dependency_texture_png(name); };
-            if let Some(id)=self.lib.filter(|_|disk) { derived_png_save(&id,&key,&n,&png); }
+            let payload = { let _seg = segment("derive/decode/payload");
+                self.memo_texture("texture_payload",name,||self.texture_payload_unity(name).map(|(t,n)|(TexturePayload(t),n))).map(|(t,n)|(t.0,n)) };
+            let made = { let _seg = segment("derive/decode/png_from_payload"); payload.and_then(|p|png_from_payload(p.0,None)) };
+            let Some((n,png))=made else { return self.dependency_texture_png(name); };
+            if let Some(id)=self.lib.filter(|_|disk) { let _seg = segment("derive/decode/derived save"); derived_png_save(&id,&key,&n,&png); }
+            let _seg = segment("derive/decode/remember");
             self.remember_texture(n.to_ascii_lowercase(),png.clone());
             return Some(png);
         }
@@ -4815,12 +4824,19 @@ impl ParsedBundle {
     /// replaced by `Some(empty)` + a plan entry only when re-deriving it gives
     /// the identical bytes, so restoring is exact.
     fn derive_mesh_texture(&self, name: &str, transform: u8) -> Option<Vec<u8>> {
-        let png = crate::oklib::timed("#derive decode", || self.decode_tex(name))?;
+        // Children of `memo/unpack`, the segment an OK card's item time turned out to be (CARD_OPEN_PERF 第四节):
+        // getting the named texture against the transform the renderer's field needs on top of it.
+        let png = { let _seg = segment("derive/decode"); crate::oklib::timed("#derive decode", || self.decode_tex(name)) }?;
         match transform {
             0 => Some(png),
-            1 => Some(crate::orient_raw_mask(png)),
-            2 => Some(unpack_illusion_albedo(&png).unwrap_or(png)),
+            1 => { let _seg = segment("derive/orient"); Some(crate::orient_raw_mask(png)) }
+            2 => { let _seg = segment("derive/albedo"); Some(unpack_illusion_albedo(&png).unwrap_or(png)) }
             3 => {
+                let _seg = segment("derive/readback");
+                // Measurement switch: skipping the GPU readback gives **wrong** normal maps, so this is only ever
+                // for an A/B that asks what the readback's ceiling is (it measured 69-72% of an item's own time).
+                static SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+                if *SKIP.get_or_init(|| std::env::var_os("OK_SKIP_READBACK").is_some()) { return Some(png); }
                 if self.texture_sampling_named(name).is_some() {
                     if let Some(texture) = self.texture_gpu_named(name) {
                         if let Ok(read) = crate::clothes_gpu::texture_readback(texture) { return Some(read); }
@@ -5866,6 +5882,84 @@ pub(crate) fn note_work(kind: &str, label: impl FnOnce() -> String) {
 
 pub(crate) fn note_bundle_parse(source: &str, bytes: usize) {
     note_work("bundle", || if source.is_empty() { format!("<{bytes} bytes>") } else { source.to_string() });
+}
+
+/// OK_PROFILE: how long the work a row counts took, summed over its repeats. A label done `n` times shows what
+/// de-duplicating it could save **at most**: `total * (n-1)/n`. That is the ceiling asked for before anyone widens
+/// a texture memo (CARD_OPEN_PERF 第四节), and like the counts it is per label, not a wall time. Only a caller that
+/// holds the returned timer gets a time; `note_work` drops it at once, so those rows have none.
+static WORK_MS: std::sync::Mutex<std::collections::BTreeMap<String, f64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub(crate) struct WorkTimer { label: String, at: std::time::Instant }
+impl Drop for WorkTimer {
+    fn drop(&mut self) {
+        let ms = self.at.elapsed().as_secs_f64() * 1000.0;
+        *WORK_MS.lock().unwrap_or_else(|e| e.into_inner()).entry(std::mem::take(&mut self.label)).or_insert(0.0) += ms;
+    }
+}
+
+/// `note_work`, and the work's own duration while the caller holds the guard.
+pub(crate) fn note_work_timed(kind: &str, label: impl FnOnce() -> String) -> Option<WorkTimer> {
+    if !counting_work() { return None; }
+    let label = format!("{kind} {}", label());
+    {
+        let mut counts = WORK_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+        if counts.len() > 20_000 { counts.clear(); }
+        *counts.entry(label.clone()).or_insert(0) += 1;
+    }
+    Some(WorkTimer { label, at: std::time::Instant::now() })
+}
+
+/// The measured milliseconds since the last call, by label.
+pub fn take_work_ms() -> std::collections::BTreeMap<String, f64> {
+    std::mem::take(&mut *WORK_MS.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// OK_PROFILE: inside one piece of work, where its time went. A segment is a **named, non-overlapping** stretch of
+/// one item's own path — for a prefetch item: fetching the model bytes, decoding them into meshes, hanging dynamic
+/// bones, copying the kept meshes out. Each row is `count` and the summed milliseconds over every item **and every
+/// thread**, so the rows of one item's path add up to that path's own work but not to any wall time. Siblings must
+/// not overlap; a name with a `/` (`item decode/parse`) is a **child** of the name before it, so it does overlap its
+/// parent and is left out of the total.
+///
+/// **Read these with `RAYON_NUM_THREADS=1`.** A segment is elapsed time inside its scope, so with the open's helper
+/// threads running it counts *waiting* for whatever they hold — the same trap as `profile_tick` (11-18: `derive
+/// /readback` showed 1934ms over 25 calls at 8 threads and 304ms at 1, and skipping the work entirely bought the
+/// 1-thread figure, not the 8-thread one; `Docs/ERROR_LOG.md` 2026-11-18). At one thread nothing can be waiting on a
+/// sibling, and the figure then predicted that A/B exactly. What the rows then answer is "一项 prefetch 为什么要
+/// 200 ms" (`Docs/CARD_OPEN_PERF_20261117.md` 第四节): which stretch of an item's own path the work is in.
+///
+/// **Even at one thread, only a leaf is trustworthy.** A segment around code that submits rayon work (`par_chunks_mut`
+/// in `decode_bc_banded`) measures the queue, not the work: at `RAYON_NUM_THREADS=1` that one worker serves all nine
+/// threads of the open, and `payload/texels banded` read 1438ms while the closures inside it added up to 699ms. So
+/// trust a segment that calls nothing parallel, and let the `OK_SKIP_*` A/B decide the ceiling.
+static SEGMENTS: std::sync::Mutex<std::collections::BTreeMap<&'static str, (u32, f64)>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub(crate) struct SegmentTimer { name: &'static str, at: std::time::Instant }
+impl Drop for SegmentTimer {
+    fn drop(&mut self) {
+        let ms = self.at.elapsed().as_secs_f64() * 1000.0;
+        let mut rows = SEGMENTS.lock().unwrap_or_else(|e| e.into_inner());
+        let row = rows.entry(self.name).or_insert((0, 0.0));
+        row.0 += 1;
+        row.1 += ms;
+    }
+}
+
+/// Times the caller's scope under `name` while profiling. Keep the guard in a tight scope: it stops at the drop.
+pub(crate) fn segment(name: &'static str) -> Option<SegmentTimer> {
+    if !counting_work() { return None; }
+    Some(SegmentTimer { name, at: std::time::Instant::now() })
+}
+
+/// The segment rows since the last call, the slowest first.
+pub fn take_segments() -> Vec<(&'static str, u32, f64)> {
+    let rows = std::mem::take(&mut *SEGMENTS.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut rows: Vec<_> = rows.into_iter().map(|(n, (c, ms))| (n, c, ms)).collect();
+    rows.sort_by(|a, b| b.2.total_cmp(&a.2));
+    rows
 }
 
 /// OK_PROFILE: the hash of every texture `png_from_payload` produced in this open, against its source format.

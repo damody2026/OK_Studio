@@ -163,8 +163,8 @@ void AOKStreetSocialScene::StartControlServer(){
   else if(Boxes.IsValidIndex(int32(Box)))Pick=int32(Box);
   if(Pick==INDEX_NONE){OKControlReply(Done,OKControlResult(false,TEXT("no such text box")));return;}
   auto& App=FSlateApplication::Get();App.SetKeyboardFocus(Boxes[Pick],EFocusCause::SetDirectly);Boxes[Pick]->SelectAllText();
-  for(const TCHAR C:Text)App.ProcessKeyCharEvent(FCharacterEvent(C,FModifierKeysState(),0,false));
-  if(Enter){const FKeyEvent K(EKeys::Enter,FModifierKeysState(),0,false,0,0);App.ProcessKeyDownEvent(K);App.ProcessKeyUpEvent(K);}
+  // Characters only (the box has the keyboard focus; key downs would also reach the street's bindings), then a real Enter.
+  OKSlateInput::TypeText(Text,false);if(Enter)OKSlateInput::TapKey(EKeys::Enter,{});
   O->SetStringField(TEXT("text"),Boxes[Pick]->GetText().ToString());OKControlReply(Done,O);
  });
 

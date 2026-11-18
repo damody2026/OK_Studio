@@ -5,6 +5,8 @@
 //! engine console commands, game_trace_start/stop record an Unreal Insights trace. Docs/STREET_SOCIAL_GAME_MCP.md.
 mod control;
 mod game;
+mod hscene;
+mod reader;
 mod studio;
 
 use anyhow::{Context, Result, bail};
@@ -19,6 +21,8 @@ fn tools() -> Value {
     let mut all = street_tools();
     all.as_array_mut().expect("tool list").extend(studio::tools());
     all.as_array_mut().expect("tool list").extend(control::tools());
+    all.as_array_mut().expect("tool list").extend(hscene::tools());
+    all.as_array_mut().expect("tool list").extend(reader::tools());
     all
 }
 
@@ -65,7 +69,9 @@ fn street_tools() -> Value {
           json!({"file": {"type": "string"}, "region": {"type": "array", "items": {"type": "number"}}}), &["file"]),
         t("image_diff", "Where two screenshots of the same view differ most (\"something that should be there is gone\": a pupil, an eye, a part — a small area changing a lot while the whole picture barely moves, which whole-image brightness checks miss): the luma difference in block x block tiles (default 24), the worst tile's mean |diff| and its corner, the pixels that changed by more than 80, and the whole image's mean |diff|. crop: also write a side-by-side PNG (a | b, 240x240 around the worst tile, scaled 2x, tile outlined) there.",
           json!({"a": {"type": "string"}, "b": {"type": "string"}, "block": {"type": "integer"}, "crop": {"type": "string"}}), &["a", "b"]),
-        t("game_call", "Any other control endpoint, POST with a JSON body (GET when body is omitted): /saves {op: open|save|load|new, slot}, /rules {action: status|reload|eval, request}, /mind {action}, /song {action, girl}, /money {amount}, /cursor {on}, /summon {slots}, /locale {lang, region}, /menu, /camera {actor, bone, yaw, pitch, distance}, /mic {ignore}, /navigate {stop: true}, /bluff {do, cards}.",
+        t("game_call", "Any other control endpoint, POST with a JSON body (GET when body is omitted): /saves {op: open|save|load|new, slot}, /rules {action: status|reload|eval, request}, /mind {action}, /song {action, girl}, /money {amount}, /cursor {on}, /summon {slots}, /locale {lang, region}, /menu, /camera {actor, bone, yaw, pitch, distance}, /mic {ignore}, /navigate {stop: true}, /bluff {do, cards}, \
+/fps (frame times), /private {girl | off} and /hscene {kind, pose, speed, orbit, ...} (use the hscene tool), /inspect, /stat, /pregnancy, /render {style}, \
+/roster, /activity, /activity_try, /places_check, /text {girl, why, kind}, /wish, /play, /face, /mouse, /type, /hresult_close, /galgame, /clock {paused}, /key, /look, /warp.",
           json!({"path": {"type": "string"}, "body": {"type": "object"}}), &["path"]),
     ])
 }
@@ -188,6 +194,11 @@ fn instances(game: &Game, a: &Value) -> Result<Value> {
 }
 
 fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
+    match name {
+        "reader_launch" => return Ok(json_text(reader::launch(&game.root, a)?)),
+        "reader_stop" => return Ok(json_text(reader::stop(a)?)),
+        _ => {}
+    }
     if name.starts_with("studio_") {
         return studio::run(&studio::Studio::locate(&game.root)?, name, a);
     }
@@ -395,6 +406,7 @@ fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
             json_text(json!({"file": file.to_string_lossy(), "channels": channels, "reply": r}))
         }
         "game_trace_stop" => json_text(game.call("/exec", Some(&json!({"command": "Trace.Stop"})))?),
+        "hscene" => hscene::run(game, a)?,
         "game_call" => {
             let path = a["path"].as_str().context("path is required")?;
             let path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };

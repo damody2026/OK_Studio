@@ -21,7 +21,9 @@ public:
 	bool UpdatePaintGesture(bool Left,bool HasMouse,bool Focused,bool OverUI);
 	void UpdatePaintAim(bool Fire);
 	uint64 PaintAimQueries=0;
-	void SetPaintPreviewActive(bool Enabled);
+	// bShowControls: the water gun's settings panel (top left). The card reader keeps the gun (A + left) but not the panel:
+	// it lay over the reader's tab row (2026-11-18).
+	void SetPaintPreviewActive(bool Enabled, bool bShowControls=true);
 	bool IsPaintPreviewActive() const { return PaintPreviewActive; }
 	virtual void BeginPlay() override;
 	virtual void PlayerTick(float DeltaTime) override;

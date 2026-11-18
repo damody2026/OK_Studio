@@ -9,10 +9,16 @@
 class /Game/UI/Reader/WBP_ReaderScreen
 use "Theme.dui" as ui
 
+// The preset's bold face has no Chinese glyphs (it drew nothing): the regular face, which falls back to CJK.
+style CjkLabel : ui.Label { Font = @ui.FontRegular }
+style CjkTitle : ui.Title { Font = @ui.FontRegular }
+style CjkOverline : ui.Overline { Font = @ui.FontRegular }
+
 style RailButton {
     @slot { HorizontalAlignment = Fill  MinDesiredSize = (0, 52) }
 }
 style TopButton {
+    Style.ContentPadding = (8, 4, 8, 4)
     @slot { VerticalAlignment = Fill  MinDesiredSize = (0, 44) }
 }
 
@@ -37,23 +43,23 @@ Widget Root : ui.FillParent {
                 Spacing = 6
                 @slot HorizontalAlignment = Fill
                 Native.Button BackToLauncher : ui.ButtonSecondary : TopButton {
-                    Text : ui.Label { Text = "返回啟動器" }
+                    Text : CjkLabel { Text = "返回啟動器" }
                 }
                 Native.Button Tab0 : ui.TabOn : TopButton {
                     @fill
-                    Text Tab0Label : ui.Label { Text = "編輯" }
+                    Text Tab0Label : CjkLabel { Text = "編輯" }
                 }
                 Native.Button Tab1 : ui.TabOff : TopButton {
                     @fill
-                    Text Tab1Label : ui.Label { Text = "人物卡" }
+                    Text Tab1Label : CjkLabel { Text = "人物卡" }
                 }
                 Native.Button Tab2 : ui.TabOff : TopButton {
                     @fill
-                    Text Tab2Label : ui.Label { Text = "動作" }
+                    Text Tab2Label : CjkLabel { Text = "衣服卡" }
                 }
                 Native.Button Tab3 : ui.TabOff : TopButton {
                     @fill
-                    Text Tab3Label : ui.Label { Text = "設定" }
+                    Text Tab3Label : CjkLabel { Text = "設定" }
                 }
             }
             RectBlock TopRule : ui.Divider {
@@ -76,7 +82,7 @@ Widget Root : ui.FillParent {
                 VerticalBox LeftContent {
                     Spacing = 8
                     @slot { VerticalAlignment = Fill  SizeRule = Fill }
-                    Text CategoryTitle : ui.Title {
+                    Text CategoryTitle : CjkTitle {
                         Text = "臉"
                         FontSize = @ui.SizeLead
                         @slot HorizontalAlignment = Fill
@@ -125,7 +131,7 @@ Widget Root : ui.FillParent {
         AnchorData.SizeDelta = (520, 64)
         + Overlay { }
         RectBlock NameFace : ui.Plate : ui.FillSlot
-        Text CardName : ui.Title {
+        Text CardName : CjkTitle {
             Text = ""
             HAlign = Right
             AnchorData.SizeDelta = (0, 0)
@@ -154,7 +160,7 @@ Widget Root : ui.FillParent {
                 @slot { HorizontalAlignment = Fill  Size = (0, 2) }
             }
             // Plugin tools, always at the bottom.
-            Text PluginTitle : ui.Overline {
+            Text PluginTitle : CjkOverline {
                 Text = "外掛工具"
                 @slot HorizontalAlignment = Fill
             }

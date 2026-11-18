@@ -959,7 +959,7 @@ void UOKCharacterController::SetModelLayout(bool bEnabled)
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryModelLayout);
 	bModelLayout = bEnabled;
  if(!bEnabled)OnCloseAppearance();
-	if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(bEnabled&&IsValid(PreviewActor)&&!bLoadInFlight&&!bStudioMode);
+	if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(bEnabled&&IsValid(PreviewActor)&&!bLoadInFlight&&!bStudioMode,false);
 	const ESlateVisibility Panels = bEnabled ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	const ESlateVisibility Gallery = bEnabled ? ESlateVisibility::Collapsed : ESlateVisibility::Visible;
 	if (ShapePanel) ShapePanel->SetVisibility(bEnabled || bEditShapes ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -967,7 +967,9 @@ void UOKCharacterController::SetModelLayout(bool bEnabled)
 	if (PreviewSpace) PreviewSpace->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (CardCol) CardCol->SetVisibility(Gallery);
 	if (InspectCol) InspectCol->SetVisibility(Gallery);
-	SetVisibility(bEnabled ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Visible);
+	// With the DreamGUI screen (OKReaderScreen) on top these UMG controls are only the model: never hit-testable, or
+	// they take the clicks meant for the DreamGUI controls drawn over them.
+	SetVisibility(ReaderScreen ? ESlateVisibility::HitTestInvisible : bEnabled ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Visible);
 	// The studio replaces both side panels; reloads (clothes, outfit) must not bring them back.
 	if (bStudioMode)
 	{

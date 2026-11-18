@@ -306,7 +306,59 @@ fn save_guid_cache(mods_dir: &Path, map: &HashMap<String, (PathBuf, String)>, fu
 
 /// find_guids, remembered for the process per mods tree (zip list, mounted card pack) and wanted set: a GUID that is
 /// not in the on-disk cache otherwise makes every card open read every zipmod's manifest again (~0.5 s).
+/// Folders the user pointed at to complete a card whose zipmods this machine does not have (`fill_gaps`). Empty by
+/// default and **only** consulted for GUIDs the normal lookup could not resolve, so an ordinary open scans nothing
+/// extra: a card that needs none of them never touches these folders. This is an in-memory list of candidate
+/// archives, **not** a card-open disk cache (that one stays off forever).
+static EXTRA_ZIPMOD_DIRS: std::sync::RwLock<Vec<PathBuf>> = std::sync::RwLock::new(Vec::new());
+
+/// Replaces the extra folders. Empty restores "nothing extra is searched".
+pub fn set_extra_zipmod_dirs(dirs: Vec<PathBuf>) {
+    *EXTRA_ZIPMOD_DIRS.write().unwrap_or_else(|e| e.into_inner()) = dirs;
+}
+
+pub fn extra_zipmod_dirs() -> Vec<PathBuf> {
+    EXTRA_ZIPMOD_DIRS.read().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// A folder the user named that is no longer there. The caller says so instead of letting the card look broken:
+/// "the path I remembered is gone" and "this card is missing parts" are different things to the person reading it.
+pub fn missing_extra_zipmod_dirs() -> Vec<PathBuf> {
+    extra_zipmod_dirs().into_iter().filter(|d| !d.is_dir() && !d.is_file()).collect()
+}
+
+/// Which archive under the extra folders declares each still-wanted GUID. Scans only those folders, only for the
+/// GUIDs left over, and only when the user supplied some.
+pub fn find_guids_in_extra(wanted: &std::collections::HashSet<String>) -> HashMap<String, PathBuf> {
+    let dirs = extra_zipmod_dirs();
+    if dirs.is_empty() || wanted.is_empty() { return HashMap::new(); }
+    let mut out = HashMap::new();
+    for dir in dirs {
+        let zips: Vec<PathBuf> = if dir.is_file() { vec![dir.clone()] } else { all_zipmods(&dir) };
+        for zip in zips {
+            for guid in guids_from_zipmod(&zip) {
+                if wanted.contains(&guid) || wanted.iter().any(|w| w.eq_ignore_ascii_case(&guid)) {
+                    out.entry(guid).or_insert_with(|| zip.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn find_guids(mods_dir: &Path, wanted: Option<&std::collections::HashSet<String>>) -> HashMap<String, PathBuf> {
+    let found = find_guids_inner(mods_dir, wanted);
+    let Some(w) = wanted else { return found };
+    if extra_zipmod_dirs().is_empty() { return found }
+    // Only what the tree could not answer, so the extra folders never change a card that already resolves.
+    let left: std::collections::HashSet<String> = w.iter().filter(|g| !found.contains_key(*g)).cloned().collect();
+    if left.is_empty() { return found }
+    let mut found = found;
+    found.extend(find_guids_in_extra(&left));
+    found
+}
+
+fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<String>>) -> HashMap<String, PathBuf> {
     let Some(w) = wanted else {
         if crate::tree_answers::unanswered("guids", b"(every guid)") { return HashMap::new(); }
         return crate::okstrict::scanning(|| find_guids_uncached(mods_dir, None));
@@ -1939,5 +1991,37 @@ mod guid_rank_tests {
         assert!(guid_candidate_rank(false, "1.0") > guid_candidate_rank(true, "2.0"));
         assert!(guid_candidate_rank(false, "1.1") > guid_candidate_rank(false, "1.0"));
         assert!(guid_candidate_rank(true, "1.1") > guid_candidate_rank(true, "1.0"));
+    }
+}
+
+#[cfg(test)]
+mod extra_zipmod_tests {
+    use super::*;
+
+    /// The folders the user points at are searched **only** for GUIDs the tree could not answer, and a folder that is
+    /// gone is reported as gone instead of reading as "this card lacks parts". Needs the local reference zipmods
+    /// (third-party, not in version control), so it is ignored by default.
+    #[test]
+    #[ignore = "local reference zipmods (ref/*.zipmod), not in version control"]
+    fn extra_folders_answer_only_what_is_left_over() {
+        let dir = Path::new(crate::test_support::project_path!("ref"));
+        assert!(dir.is_dir(), "no ref folder at {}", dir.display());
+        set_extra_zipmod_dirs(Vec::new());
+        let wanted: std::collections::HashSet<String> = ["[B2.2]Klara_head".to_string()].into_iter().collect();
+        assert!(find_guids_in_extra(&wanted).is_empty(), "nothing is searched while no folder is set");
+
+        set_extra_zipmod_dirs(vec![dir.to_path_buf()]);
+        let found = find_guids_in_extra(&wanted);
+        let zip = found.get("[B2.2]Klara_head").expect("the reference folder declares this GUID");
+        assert!(zip.is_file() && zip.extension().is_some_and(|e| e == "zipmod"), "{}", zip.display());
+
+        // A GUID nothing there declares stays unanswered: the extra folders never invent a result.
+        let absent: std::collections::HashSet<String> = ["no.such.mod".to_string()].into_iter().collect();
+        assert!(find_guids_in_extra(&absent).is_empty());
+
+        // A path that no longer exists is named, so the caller can say so instead of blaming the card.
+        set_extra_zipmod_dirs(vec![dir.join("no-such-folder")]);
+        assert_eq!(missing_extra_zipmod_dirs().len(), 1);
+        set_extra_zipmod_dirs(Vec::new());
     }
 }

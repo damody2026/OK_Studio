@@ -110,6 +110,9 @@ private:
  // at the latest before the next surface step or any public call (SyncTransport).
  TArray<TSharedPtr<FSurface>> DueTransport,InTransport;double DueTransportDt=0;
  mutable UE::Tasks::FTask TransportTask;mutable bool bTransportInFlight=false;
+ // The transport's copies of the surfaces' film and mask, made on a worker before it moves them (TransportTask waits for
+ // it): the next tick waits for this alone before it writes either.
+ UE::Tasks::FTask TransportCopy;
  void RunDueTransport();void LaunchDueTransport();void SyncTransport() const;void MergeTransport();
  /** SyncTransport only when the transport is already done: a tick does not wait for it. */
  void TakeFinishedTransport() const {if(bTransportInFlight&&TransportTask.IsCompleted())SyncTransport();}
@@ -136,6 +139,12 @@ private:
  UPROPERTY() TObjectPtr<UNiagaraComponent> JetFX;
  UPROPERTY() TArray<TObjectPtr<UNiagaraComponent>> OwnedFX;
  UPROPERTY() TArray<TObjectPtr<UProceduralMeshComponent>> FloorStains;
+ // Drops that ran off her (or went with their surface), hidden for the next one to hang there. Each drop made a mesh
+ // component, its material and its body setup and destroyed them as it fell: about 60 of each a second while she is
+ // coated, most of what the one-on-one gave the garbage collector (2026-11-18). Not in Overlays while spare.
+ UPROPERTY() TArray<TObjectPtr<UProceduralMeshComponent>> SpareDrops;
+ UProceduralMeshComponent* TakeDropVisual();
+ void GiveDropVisual(UProceduralMeshComponent* Visual);
  double NextSplashAt=0;
  UPROPERTY() TObjectPtr<UProceduralMeshComponent> Gun;
  void DiscoverSurfaces(const FVector& A,const FVector& B,bool SourceCone=true);

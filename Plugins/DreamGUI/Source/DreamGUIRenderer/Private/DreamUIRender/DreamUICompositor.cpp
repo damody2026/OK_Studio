@@ -1,6 +1,7 @@
 // Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #include "DreamUIRender/DreamUICompositor.h"
+#include "DreamUIRender/DreamUIShaderGate.h"
 
 #include "CommonRenderResources.h"
 #include "GlobalShader.h"
@@ -21,7 +22,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FDreamUICompositeVS, FGlobalShader);
 	using FParameters = FEmptyShaderParameters;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted(Parameters.Platform)) { return false; } return true; }
 };
 
 /** A group's texture put down: DreamUIComposite.usf. Permutations: blended over a copy of what is behind, and masked. */
@@ -56,7 +57,7 @@ public:
 		SHADER_PARAMETER(FVector4f, DreamUI_ViewportRect)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted(Parameters.Platform)) { return false; } return true; }
 };
 
 IMPLEMENT_GLOBAL_SHADER(FDreamUICompositeVS, "/Plugin/DreamGUI/Private/DreamUIComposite.usf", "MainVS", SF_Vertex);

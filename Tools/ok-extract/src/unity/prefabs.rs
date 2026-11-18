@@ -726,7 +726,11 @@ pub fn meshes_skel_for_maindata_ref_with_category<B: BundleInput + ?Sized>(
         105..=112 | 200..=202 | 210..=212 => Some(category),
         _ => None,
     };
-    parse_bundle_ref(bytes).meshes_for_maindata_with_clothes_kind(main_data, false, clothes_category)
+    // Children of the "item decode" segment (98-99% of an item's own time, measured 11-18): parsing the bundle
+    // (decompressing it and reading its object table) against assembling the meshes the prefab names.
+    let parsed = { let _seg = crate::unity::segment("item decode/parse"); parse_bundle_ref(bytes) };
+    let _seg = crate::unity::segment("item decode/meshes");
+    parsed.meshes_for_maindata_with_clothes_kind(main_data, false, clothes_category)
 }
 
 /// Decode Unity DXT1 as BC1 RGBA, retaining the decoder's BGRA byte order.
@@ -740,26 +744,38 @@ pub(crate) fn decode_bc_banded(data: &[u8], w: usize, h: usize, format: unity_as
     let row_bytes = blocks_x * block_bytes;
     if data.len() < row_bytes * blocks_y { return None; }
     let rows_per_band = blocks_y.div_ceil(16).max(1);
-    let mut rgba = vec![0u8; w * h * 4];
+    let mut rgba = { let _seg = crate::unity::segment("banded/alloc out"); vec![0u8; w * h * 4] };
+    // Measurement switch: hands back un-decoded (black) texels, so every block-compressed map is **wrong**. Only for
+    // the A/B that asks what this decode's ceiling is — it is the biggest single piece of an OK card's open
+    // (`Docs/CARD_OPEN_PERF_20261117.md` 第四节: 1159ms/63 and 946ms/44 of serial CPU per card).
+    static SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *SKIP.get_or_init(|| std::env::var_os("OK_SKIP_BC").is_some()) {
+        return image::RgbaImage::from_raw(w as u32, h as u32, rgba);
+    }
+    let _seg_par = crate::unity::segment("banded/parallel");
     let ok = rgba.par_chunks_mut(rows_per_band * 4 * w * 4).enumerate().all(|(band, out)| {
         let y0 = band * rows_per_band * 4;
         let band_h = out.len() / (w * 4);
         let first_row = y0 / 4;
         let src = &data[first_row * row_bytes..(first_row + band_h.div_ceil(4)) * row_bytes];
-        let mut texels = vec![0u32; w * band_h];
+        let mut texels = { let _seg = crate::unity::segment("banded/alloc texels"); vec![0u32; w * band_h] };
+        // Two children of `payload/texels banded`: the block decoder itself against the second pass that re-packs
+        // its `u32` texels into RGBA bytes. Which of the two it is decides whether a byte-identical change exists.
         let decoded = match format {
-            TextureFormat::DXT1 => texture2ddecoder::decode_bc1a(src, w, band_h, &mut texels),
-            TextureFormat::DXT5 => texture2ddecoder::decode_bc3(src, w, band_h, &mut texels),
-            _ => texture2ddecoder::decode_bc7(src, w, band_h, &mut texels),
+            TextureFormat::DXT1 => { let _seg = crate::unity::segment("banded/decoder bc1"); texture2ddecoder::decode_bc1a(src, w, band_h, &mut texels) }
+            TextureFormat::DXT5 => { let _seg = crate::unity::segment("banded/decoder bc3"); texture2ddecoder::decode_bc3(src, w, band_h, &mut texels) }
+            _ => { let _seg = crate::unity::segment("banded/decoder bc7"); texture2ddecoder::decode_bc7(src, w, band_h, &mut texels) }
         };
         if decoded.is_err() { return false; }
         // One 4-byte store a texel (a slice copy here was a memcpy call per texel).
+        let _seg = crate::unity::segment("banded/repack");
         for (p, o) in texels.iter().zip(out.chunks_exact_mut(4)) {
             let o: &mut [u8; 4] = o.try_into().unwrap();
             *o = [((p >> 16) & 0xFF) as u8, ((p >> 8) & 0xFF) as u8, (p & 0xFF) as u8, ((p >> 24) & 0xFF) as u8];
         }
         true
     });
+    drop(_seg_par);
     if !ok { return None; }
     image::RgbaImage::from_raw(w as u32, h as u32, rgba)
 }

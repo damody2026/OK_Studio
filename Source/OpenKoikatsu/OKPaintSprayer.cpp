@@ -604,10 +604,16 @@ void AOKPaintSprayer::Splash(FVector P,FVector N,bool Floor,double Volume)
  if(!Floor)return;
  auto* M=FloorStainMaterial?FloorStainMaterial.Get():DropBase.Get();if(!M)return;
  // A small geometry stain follows any rigid floor/wall, never used on skin.
- auto* Stain=NewObject<UProceduralMeshComponent>(this);Stain->RegisterComponent();Stain->ComponentTags.Add(TEXT("OKPaintOverlay"));Stain->SetCollisionEnabled(ECollisionEnabled::NoCollision);Stain->SetCastShadow(false);auto* MID=UMaterialInstanceDynamic::Create(M,this);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);if(FloorStainMaterial&&OnFloorStain)OnFloorStain(MID);Materials.Add(MID);Stain->SetMaterial(0,MID);Overlays.Add(Stain);
+ // At the limit the oldest stain is moved here (with its material) instead of destroyed and a new one made: a coated
+ // girl dripping onto the floor made and destroyed about 18 stains a second, each with its material and body setup.
+ UProceduralMeshComponent* Stain=nullptr;
+ if(FloorStains.Num()>=FMath::Clamp(Settings.MaxFloorStains,8,512)){Stain=FloorStains[0];FloorStains.RemoveAt(0);
+  if(!IsValid(Stain)||!Stain->IsRegistered()){if(IsValid(Stain)){Overlays.Remove(Stain);Materials.Remove(Cast<UMaterialInstanceDynamic>(Stain->GetMaterial(0)));Stain->DestroyComponent();}Stain=nullptr;}
+  else if(auto* Old=Cast<UMaterialInstanceDynamic>(Stain->GetMaterial(0)))Old->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);}
+ if(!Stain){Stain=NewObject<UProceduralMeshComponent>(this);Stain->RegisterComponent();Stain->ComponentTags.Add(TEXT("OKPaintOverlay"));Stain->SetCollisionEnabled(ECollisionEnabled::NoCollision);Stain->SetCastShadow(false);auto* MID=UMaterialInstanceDynamic::Create(M,this);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);if(FloorStainMaterial&&OnFloorStain)OnFloorStain(MID);Materials.Add(MID);Stain->SetMaterial(0,MID);Overlays.Add(Stain);}
  const double Radius=FMath::Clamp(FMath::Sqrt(Volume/(PI*.015)),.15,2.);FVector U,V;N.FindBestAxisVectors(U,V);TArray<FVector> Vertices={P+N*.1-U*Radius-V*Radius,P+N*.1+U*Radius-V*Radius,P+N*.1+U*Radius+V*Radius,P+N*.1-U*Radius+V*Radius};TArray<FVector> Normals;Normals.Init(N,4);TArray<FVector2D> UV={FVector2D(0,0),FVector2D(1,0),FVector2D(1,1),FVector2D(0,1)};TArray<FColor> Colors;Colors.Init(FColor::White,4);TArray<FProcMeshTangent> Tangents;
  Stain->CreateMeshSection(0,Vertices,{0,1,2,0,2,3},Normals,UV,Colors,Tangents,false);
- FloorStains.Add(Stain);if(FloorStains.Num()>FMath::Clamp(Settings.MaxFloorStains,8,512)){auto Old=FloorStains[0];FloorStains.RemoveAt(0);Overlays.Remove(Old);Materials.Remove(Cast<UMaterialInstanceDynamic>(Old->GetMaterial(0)));Old->DestroyComponent();}
+ FloorStains.Add(Stain);
 }
 void AOKPaintSprayer::Step(double Dt)
 {
@@ -650,10 +656,10 @@ void AOKPaintSprayer::Step(double Dt)
   }else if(WorldHit){FloorVolume+=P.Volume;Splash(Hit.ImpactPoint,Hit.ImpactNormal,true,P.Volume);Packets.RemoveAtSwap(I);}
   else if(P.Age>5||Next.Z < -5000){Escaped+=P.Volume;Packets.RemoveAtSwap(I);}else{P.P=Next;P.V.Z-=980*Dt;}
  }
- for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(!Surfaces.IsValidIndex(D.Target)||!Surfaces[D.Target]->Component.IsValid()){Escaped+=D.Volume;if(D.Visual.IsValid())D.Visual->DestroyComponent();Attached.RemoveAtSwap(I);continue;}
+ for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(!Surfaces.IsValidIndex(D.Target)||!Surfaces[D.Target]->Component.IsValid()){Escaped+=D.Volume;GiveDropVisual(D.Visual.Get());Attached.RemoveAtSwap(I);continue;}
   if(!Surfaces[D.Target]->IsDisplayed())continue;D.Age+=Dt;
   // DrawFilm updates attachment transforms once from the current render pose.
-  if(D.Age>=FMath::Max(.01f,Settings.AdhesionSeconds)){const auto& F=Surfaces[D.Target]->Film.Faces[D.Face];FPacket Drop;Drop.P=F.P[0]*D.Bary.X+F.P[1]*D.Bary.Y+F.P[2]*D.Bary.Z+F.Normal()*Surfaces[D.Target]->CoatingSide*.5;Drop.V=FVector(0,0,-10);Drop.Volume=D.Volume;Drop.Drip=true;Packets.Add(Drop);Dripped+=D.Volume;if(D.Visual.IsValid()){Overlays.Remove(D.Visual.Get());D.Visual->DestroyComponent();}Attached.RemoveAtSwap(I);if(DropSystem&&OwnedFX.Num()<FMath::Clamp(Settings.MaxImpactEffects,1,64)){auto* FX=UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),DropSystem,Drop.P,FRotator(-90,0,0),FVector(1),true,true);if(FX){FX->SetVariableLinearColor(TEXT("User.PaintColor"),Settings.Color);OwnedFX.Add(FX);}}}}
+  if(D.Age>=FMath::Max(.01f,Settings.AdhesionSeconds)){const auto& F=Surfaces[D.Target]->Film.Faces[D.Face];FPacket Drop;Drop.P=F.P[0]*D.Bary.X+F.P[1]*D.Bary.Y+F.P[2]*D.Bary.Z+F.Normal()*Surfaces[D.Target]->CoatingSide*.5;Drop.V=FVector(0,0,-10);Drop.Volume=D.Volume;Drop.Drip=true;Packets.Add(Drop);Dripped+=D.Volume;GiveDropVisual(D.Visual.Get());Attached.RemoveAtSwap(I);if(DropSystem&&OwnedFX.Num()<FMath::Clamp(Settings.MaxImpactEffects,1,64)){auto* FX=UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),DropSystem,Drop.P,FRotator(-90,0,0),FVector(1),true,true);if(FX){FX->SetVariableLinearColor(TEXT("User.PaintColor"),Settings.Color);OwnedFX.Add(FX);}}}}
  // Ballistic sweeps remain at 120 Hz. Surface transport uses its own fixed
  // clock; texture work must not be repeated for each projectile substep.
  BallisticMs+=(FPlatformTime::Seconds()-BallisticStart)*1000;
@@ -687,13 +693,29 @@ void AOKPaintSprayer::AdvanceSurface(double Dt)
    if(AttachedFaces.Contains(F))continue;
    FVector Anchor;const double Amount=Surfaces[S]->Mask.TakeDrip(F,Face,Settings.DripThickness,FMath::Max(0.f,Settings.ResidualThickness),.008,Anchor,Surfaces[S]->CoatingSide);if(Amount<=0)continue;
    Film.AddVolume(F,-Amount);FAttached Drop;Drop.Target=S;Drop.Face=F;Drop.Bary=Anchor;Drop.Volume=Amount;
-   UProceduralMeshComponent* Visual;
-   if(CVarPaintAnimatedDrops.GetValueOnGameThread()!=0){auto* Owned=NewObject<UKKAffineProceduralMeshComponent>(this);Owned->bUseAnimatedStreams=true;Owned->bUseConservativeAnimatedBounds=true;Visual=Owned;}else Visual=NewObject<UProceduralMeshComponent>(this);
-   Visual->RegisterComponent();Visual->SetCollisionEnabled(ECollisionEnabled::NoCollision);Visual->SetCastShadow(false);Visual->ComponentTags.Add(TEXT("OKPaintOverlay"));if(auto* Base=DropBase.Get()){auto* MID=UMaterialInstanceDynamic::Create(Base,Visual);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);Visual->SetMaterial(0,MID);}const double R=FMath::Pow(Amount*3/(4*PI),1./3.);Drop.Radius=R;TArray<FVector> DV={FVector(R,0,0),FVector(-R,0,0),FVector(0,R,0),FVector(0,-R,0),FVector(0,0,R),FVector(0,0,-R)};TArray<FVector2D> DUV;DUV.Init(FVector2D(.5,.5),6);Visual->CreateMeshSection(0,DV,{0,2,4,2,1,4,1,3,4,3,0,4,2,0,5,1,2,5,3,1,5,0,3,5},{},DUV,{},{},false);Visual->SetWorldLocation(Face.P[0]*Anchor.X+Face.P[1]*Anchor.Y+Face.P[2]*Anchor.Z+Face.Normal()*Surfaces[S]->CoatingSide*.2);Drop.Visual=Visual;Overlays.Add(Visual);Attached.Add(MoveTemp(Drop));
+   UProceduralMeshComponent* Visual=TakeDropVisual();const double R=FMath::Pow(Amount*3/(4*PI),1./3.);Drop.Radius=R;TArray<FVector> DV={FVector(R,0,0),FVector(-R,0,0),FVector(0,R,0),FVector(0,-R,0),FVector(0,0,R),FVector(0,0,-R)};TArray<FVector2D> DUV;DUV.Init(FVector2D(.5,.5),6);Visual->CreateMeshSection(0,DV,{0,2,4,2,1,4,1,3,4,3,0,4,2,0,5,1,2,5,3,1,5,0,3,5},{},DUV,{},{},false);Visual->SetWorldLocation(Face.P[0]*Anchor.X+Face.P[1]*Anchor.Y+Face.P[2]*Anchor.Z+Face.Normal()*Surfaces[S]->CoatingSide*.2);Drop.Visual=Visual;Overlays.Add(Visual);Attached.Add(MoveTemp(Drop));
    if(LiveSimulationParticles()>=FMath::Clamp(Settings.MaxSimulationParticles,8,256))break;
   }
   DripUpdateMs+=(FPlatformTime::Seconds()-DripStart)*1000;
  }
+}
+UProceduralMeshComponent* AOKPaintSprayer::TakeDropVisual(){
+ const bool Animated=CVarPaintAnimatedDrops.GetValueOnGameThread()!=0;
+ while(!SpareDrops.IsEmpty()){UProceduralMeshComponent* V=SpareDrops.Pop(EAllowShrinking::No);
+  if(!IsValid(V)||!V->IsRegistered()){if(IsValid(V))V->DestroyComponent();continue;}
+  const auto* Owned=Cast<UKKAffineProceduralMeshComponent>(V);if((Owned&&Owned->UsesAnimatedStreams())!=Animated){V->DestroyComponent();continue;} // the cvar changed
+  if(auto* MID=Cast<UMaterialInstanceDynamic>(V->GetMaterial(0)))MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);
+  V->SetVisibility(true);return V;}
+ UProceduralMeshComponent* Visual;
+ if(Animated){auto* Owned=NewObject<UKKAffineProceduralMeshComponent>(this);Owned->bUseAnimatedStreams=true;Owned->bUseConservativeAnimatedBounds=true;Visual=Owned;}else Visual=NewObject<UProceduralMeshComponent>(this);
+ Visual->RegisterComponent();Visual->SetCollisionEnabled(ECollisionEnabled::NoCollision);Visual->SetCastShadow(false);Visual->ComponentTags.Add(TEXT("OKPaintOverlay"));
+ if(auto* Base=DropBase.Get()){auto* MID=UMaterialInstanceDynamic::Create(Base,Visual);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);Visual->SetMaterial(0,MID);}
+ return Visual;
+}
+void AOKPaintSprayer::GiveDropVisual(UProceduralMeshComponent* Visual){
+ if(!IsValid(Visual))return;Overlays.Remove(Visual);
+ if(SpareDrops.Num()>=FMath::Clamp(Settings.MaxSimulationParticles,8,256)){Visual->DestroyComponent();return;}
+ Visual->SetVisibility(false);SpareDrops.Add(Visual);
 }
 void AOKPaintSprayer::RunDueTransport(){
  if(DueTransport.IsEmpty())return;TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintDueTransport);
@@ -709,18 +731,24 @@ void AOKPaintSprayer::LaunchDueTransport(){
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportLaunch);
  const double Speed=Settings.SurfaceSpeed,Viscosity=Settings.Viscosity,Residual=Settings.ResidualThickness,Step=DueTransportDt;
  TArray<TPair<TSharedPtr<FSurface>,uint64>> Work;
- for(auto& S:DueTransport){FSurface& F=*S;
-  F.TransportMask=MoveTemp(F.Mask);
-  // What the ticks draw and deposit on meanwhile: the texels as they are, the faces still owed to the atlas.
-  F.Mask.Size=F.TransportMask.Size;F.Mask.Height=F.TransportMask.Height;F.Mask.EdgeCoverage=F.TransportMask.EdgeCoverage;
-  F.Mask.DirtyFaces=MoveTemp(F.TransportMask.DirtyFaces);F.TransportMask.DirtyFaces.Reset();
-  F.Mask.ChartBary=F.TransportMask.ChartBary;F.Mask.ChartInterior=F.TransportMask.ChartInterior;F.Mask.ChartResolution=F.TransportMask.ChartResolution;
-  F.TransportFilm=F.Film;F.HeldDeposits.Reset();F.bInTransport=true;
-  Work.Emplace(S,F.GeometryRevision);InTransport.Add(S);}
+ for(auto& S:DueTransport){FSurface& F=*S;F.HeldDeposits.Reset();F.bInTransport=true;Work.Emplace(S,F.GeometryRevision);InTransport.Add(S);}
  DueTransport.Reset();
+ // Its copies are made on a worker as well (her body's film and texels, up to 3 ms of the game thread, 2026-11-18): the
+ // surfaces' mask and film are only read there, and the next tick waits for TransportCopy before it writes them. What
+ // the ticks draw and deposit on meanwhile stays in Mask (the texels as they are, the faces still owed to the atlas); the
+ // transport's own caches go with the transport (nothing else uses them) and come back with it (MergeTransport).
+ TransportCopy=UE::Tasks::Launch(UE_SOURCE_LOCATION,[Work]{
+  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportCopy);
+  for(const auto& W:Work){FSurface& F=*W.Key;FOKPaintMask& T=F.TransportMask;FOKPaintMask& M=F.Mask;
+   T.Size=M.Size;T.Height=M.Height;T.EdgeCoverage=M.EdgeCoverage;T.DirtyFaces.Reset();
+   T.ChartBary=M.ChartBary;T.ChartInterior=M.ChartInterior;T.ChartResolution=M.ChartResolution;
+   T.PreviousHeight=MoveTemp(M.PreviousHeight);T.RouteScratch=MoveTemp(M.RouteScratch);T.TransportGeometry=MoveTemp(M.TransportGeometry);
+   T.TransportGeometryReady=MoveTemp(M.TransportGeometryReady);T.TransportRoutes=MoveTemp(M.TransportRoutes);
+   T.TransportRevision=M.TransportRevision;T.TransportTravel=M.TransportTravel;T.TransportSize=M.TransportSize;
+   F.TransportFilm=F.Film;}});
  TransportTask=UE::Tasks::Launch(UE_SOURCE_LOCATION,[Work=MoveTemp(Work),Speed,Viscosity,Residual,Step]{
   TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintAsyncTransport);
-  for(const auto& W:Work)W.Key->TransportMask.Transport(W.Key->TransportFilm,Step,Speed,Viscosity,Residual,W.Value);});
+  for(const auto& W:Work)W.Key->TransportMask.Transport(W.Key->TransportFilm,Step,Speed,Viscosity,Residual,W.Value);},TransportCopy);
  bTransportInFlight=true;
 }
 void AOKPaintSprayer::SyncTransport() const{
@@ -751,6 +779,8 @@ void AOKPaintSprayer::Tick(float Dt)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTick);
  TakeFinishedTransport();
+ // Nothing below writes a surface's mask or film before the transport has its copies of them (LaunchDueTransport).
+ if(bTransportInFlight){TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportCopyWait);TransportCopy.Wait();}
  Super::Tick(Dt);const double Start=FPlatformTime::Seconds();
  // Ownership is this tick, not GFrameCounter: explicit/manual updates can
  // publish more than one pose in the same engine frame. Never reuse across ticks.
@@ -773,7 +803,7 @@ void AOKPaintSprayer::Tick(float Dt)
    if(!Changed)continue;
    UE_LOG(LogTemp,Display,TEXT("Paint surface topology invalidated component=%s section=%d vertices=%d indices=%d"),*GetNameSafe(C),S.Section,S.Positions.Num(),S.Indices.Num());
    Escaped+=S.Film.Volume();if(S.Overlay){Overlays.Remove(S.Overlay);S.Overlay->DestroyComponent();}ReleaseSurfaceAtlas(S);Materials.Remove(S.Material);
-   const int32 Last=Surfaces.Num()-1;for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(D.Target==Index){Escaped+=D.Volume;if(D.Visual.IsValid()){Overlays.Remove(D.Visual.Get());D.Visual->DestroyComponent();}Attached.RemoveAtSwap(I);}else if(D.Target==Last)D.Target=Index;}Surfaces.RemoveAtSwap(Index);
+   const int32 Last=Surfaces.Num()-1;for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(D.Target==Index){Escaped+=D.Volume;GiveDropVisual(D.Visual.Get());Attached.RemoveAtSwap(I);}else if(D.Target==Last)D.Target=Index;}Surfaces.RemoveAtSwap(Index);
   }}
   if(Spraying||!Packets.IsEmpty())DiscoverSurfaces(Nozzle,Nozzle+Direction*(5*FMath::Clamp(Settings.JetSpeed,10.f,10000.f)));
   bGeometryOnlyPainted=!Flying;RefreshGeometries(bGeometryOnlyPainted);}
@@ -807,7 +837,7 @@ void AOKPaintSprayer::ClearPaintForActor(AActor* Actor)
  for(int32 Index=0;Index<Surfaces.Num();++Index){auto& S=*Surfaces[Index];if(!S.Component.IsValid()||S.Component->GetOwner()!=Actor)continue;
   Cleared+=S.Film.Volume();for(int32 F:S.Film.Active.Array())S.Film.AddVolume(F,-S.Film.Faces[F].Volume);
   for(const auto& E:S.Mask.Height)S.Mask.DirtyFaces.Add(E.Key);S.Mask.Height.Reset();S.Mask.EdgeCoverage.Reset();
-  for(int32 I=Attached.Num()-1;I>=0;--I)if(Attached[I].Target==Index){Cleared+=Attached[I].Volume;if(Attached[I].Visual.IsValid()){Overlays.Remove(Attached[I].Visual.Get());Attached[I].Visual->DestroyComponent();}Attached.RemoveAtSwap(I);}
+  for(int32 I=Attached.Num()-1;I>=0;--I)if(Attached[I].Target==Index){Cleared+=Attached[I].Volume;GiveDropVisual(Attached[I].Visual.Get());Attached.RemoveAtSwap(I);}
   // Upload zero thickness and remove geometry, retaining the immutable chart
   // and BVH for subsequent strokes. Other characters and detached drops survive.
   DrawFilm(S);
@@ -825,7 +855,7 @@ void AOKPaintSprayer::ClearPaint()
  UE_LOG(LogTemp,Display,TEXT("Paint clear surfaces=%d volume=%.9f"),Surfaces.Num(),RemainingVolume());
  Spraying=false;if(JetFX)JetFX->DeactivateImmediate();if(Gun)Gun->SetVisibility(false);for(auto FX:OwnedFX)if(IsValid(FX))FX->DestroyComponent();OwnedFX.Reset();FloorStains.Reset();
  for(const auto& S:Surfaces)Cleared+=S->Film.Volume();for(const auto& D:Attached)Cleared+=D.Volume;
- for(auto C:Overlays)if(IsValid(C))C->DestroyComponent();Overlays.Reset();Materials.Reset();Targets.Reset();AtlasPixels.Reset();SharedAtlas.Reset(Settings.AtlasResolution);Surfaces.Reset();Attached.Reset();Packets.Reset();Accumulator=SurfaceAccumulator=GeometryTime=JetTime=0;Emitted=Deposited=Dripped=FloorVolume=Escaped=Cleared=0;HitCount=0;CoatingRebuilds=CoatingUpdates=0;
+ for(auto C:Overlays)if(IsValid(C))C->DestroyComponent();Overlays.Reset();for(auto C:SpareDrops)if(IsValid(C))C->DestroyComponent();SpareDrops.Reset();Materials.Reset();Targets.Reset();AtlasPixels.Reset();SharedAtlas.Reset(Settings.AtlasResolution);Surfaces.Reset();Attached.Reset();Packets.Reset();Accumulator=SurfaceAccumulator=GeometryTime=JetTime=0;Emitted=Deposited=Dripped=FloorVolume=Escaped=Cleared=0;HitCount=0;CoatingRebuilds=CoatingUpdates=0;
 }
 #if WITH_DEV_AUTOMATION_TESTS
 bool AOKPaintSprayer::VerifyGeometryJobsParity(int32& ComparedVertices,int32& ComparedFaces)

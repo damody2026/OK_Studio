@@ -1,12 +1,15 @@
 #include "OKReaderScreen.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
+#include "OKMotionComboBox.h"
 #include "KKShapeRows.h"
 #include "OKShapeSlider.h"
 #include "Components/VerticalBox.h"
 #include "KKPreviewActor.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Core/Components/DreamWidget.h"
+#include "Core/DreamUIBehaviour.h"
+#include "Core/DreamWidgetTree.h"
 #include "Core/Components/DreamText.h"
 #include "Core/Components/DreamImage.h"
 #include "Core/Components/DreamCanvas.h"
@@ -21,6 +24,8 @@
 #include "Controls/DreamTextInput.h"
 #include "Controls/DreamScrollBox.h"
 #include "Event/DreamEventSystem.h"
+#include "Event/DreamPointerEventData.h"
+#include "Event/DreamUIInputTypes.h"
 #include "Components/Button.h"
 #include "Components/Slider.h"
 #include "Components/CheckBox.h"
@@ -98,6 +103,7 @@ void UOKDreamControl::SetText(const FString& Text)
 void UOKDreamControl::SetOpen(bool bNewOpen)
 {
 	bOpen=bNewOpen;if(Body)Body->SetShown(bOpen);
+	if(auto* T=TextOf(Arrow))T->SetText(FText::FromString(bOpen?TEXT("▼"):TEXT("▶")));
 }
 
 void UOKDreamControl::Sync()
@@ -105,6 +111,7 @@ void UOKDreamControl::Sync()
 	UWidget* S=Source.Get();
 	if(!S){if(!FixedText.IsEmpty())SetText(FixedText);return;}
 	SetShown(IsUmgShown(S));
+	if(Companion.IsValid()&&Companion->GetShown()!=GetShown())Companion->SetShown(GetShown());
 	if(!GetShown())return;
 	TGuardValue<bool> Guard(bPushing,true);
 	if(auto* Drawer=Cast<UOKDrawerButton>(S))
@@ -130,15 +137,26 @@ void UOKDreamControl::Sync()
 	}
 	if(auto* U=Cast<UComboBoxString>(S))if(Choice)
 	{
-		bool Same=ShownOptions.Num()==U->GetOptionCount();
-		for(int32 I=0;Same&&I<ShownOptions.Num();++I)Same=ShownOptions[I]==U->GetOptionAtIndex(I);
+		// The options the filter keeps (all without one), each mapped to its UMG index. Built again when the filter, the
+		// option count or (unfiltered) any option changed.
+		const int32 Count=U->GetOptionCount();
+		bool Same=ShownSourceCount==Count&&ShownFilter==Filter;
+		for(int32 I=0;Same&&Filter.IsEmpty()&&I<ShownOptions.Num();++I)Same=ShownOptions[I]==U->GetOptionAtIndex(I);
 		if(!Same)
 		{
-			ShownOptions.Reset();TArray<FText> Options;
-			for(int32 I=0;I<U->GetOptionCount();++I){ShownOptions.Add(U->GetOptionAtIndex(I));Options.Add(FText::FromString(ShownOptions.Last()));}
+			ShownSourceCount=Count;ShownFilter=Filter;ShownOptions.Reset();OptionMap.Reset();
+			if(Filter.IsEmpty())for(int32 I=0;I<Count;++I){ShownOptions.Add(U->GetOptionAtIndex(I));OptionMap.Add(I);}
+			// The motion list searches its labels as its own popup does (names, ids, the display label; words ANDed).
+			else if(auto* M=Cast<UOKMotionComboBox>(U))
+			{
+				M->SetSearchText(FText::FromString(Filter));
+				for(const FString& O:M->GetFilteredOptions()){const int32 I=U->FindOptionIndex(O);if(I>=0){ShownOptions.Add(O);OptionMap.Add(I);}}
+			}
+			else for(int32 I=0;I<Count;++I)if(U->GetOptionAtIndex(I).Contains(Filter)){ShownOptions.Add(U->GetOptionAtIndex(I));OptionMap.Add(I);}
+			TArray<FText> Options;for(const FString& O:ShownOptions)Options.Add(FText::FromString(O));
 			Choice->SetOptions(Options);
 		}
-		const int32 Index=U->GetSelectedIndex();if(Choice->GetSelectedIndex()!=Index)Choice->SetSelectedIndex(Index);
+		const int32 Index=OptionMap.IndexOfByKey(U->GetSelectedIndex());if(Choice->GetSelectedIndex()!=Index)Choice->SetSelectedIndex(Index);
 		Choice->SetIsEnabled(U->GetIsEnabled());
 	}
 	if(Input)
@@ -189,6 +207,7 @@ void UOKDreamControl::HandleToggle(bool bOn)
 void UOKDreamControl::HandleChoice(int32 Index)
 {
 	if(bPushing)return;
+	if(OptionMap.IsValidIndex(Index))Index=OptionMap[Index];
 	if(auto* U=Cast<UComboBoxString>(Source.Get()))if(Index>=0&&Index<U->GetOptionCount())
 	{
 		const FString Option=U->GetOptionAtIndex(Index);
@@ -263,7 +282,17 @@ UOKDreamControl* UOKReaderScreen::MakeControl(const TCHAR* Kind,UDreamWidget* In
 	if(!Class){UE_LOG(LogTemp,Warning,TEXT("Reader control WBP_OK%s missing"),Kind);return nullptr;}
 	auto* C=Cast<UOKDreamControl>(UDreamUIBPLibrary::CreateDreamWidgetOfClass(this,Class));
 	if(!C)return nullptr;
+	// The .dui gives its root the control's natural size: the control takes that size and its root fills it, so a panel that
+	// stretches the control stretches what is drawn.
+	float Height=0;
+	if(UDreamWidget* Root=C->GetWidgetTree()?C->GetWidgetTree()->GetRootWidget():nullptr)
+	{
+		const FVector2D Natural=Root->GetSizeDelta();C->SetSizeDelta(Natural);Height=Natural.Y;
+		Root->SetAnchorMin(FVector2D(0,0));Root->SetAnchorMax(FVector2D(1,1));Root->SetAnchoredPosition(FVector2D::ZeroVector);Root->SetSizeDelta(FVector2D::ZeroVector);
+	}
 	if(Into)AddToHost(Into,C,false);
+	// Its height is the designed one: a slider measures itself 100 high and stretched every row to that.
+	if(Height>0)if(UDreamPanelSlot* Slot=C->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(0,Height));Slot->SetMaxDesiredSize(FVector2D(0,Height));}
 	Controls.Add(C);return C;
 }
 
@@ -279,8 +308,11 @@ UDreamWidget* UOKReaderScreen::MakePanel(UDreamWidget* Into,bool bHorizontal,flo
 {
 	UDreamWidget* W=UDreamUIBPLibrary::ConstructWidget(this,bHorizontal?TEXT("Row"):TEXT("Column"),nullptr);
 	if(!W)return nullptr;
-	if(bHorizontal){if(auto* L=Cast<UDreamLayoutContainerHorizontalBox>(W->AddComponent(UDreamLayoutContainerHorizontalBox::StaticClass())))L->SetSpacing(Spacing);}
-	else if(auto* L=Cast<UDreamLayoutContainerVerticalBox>(W->AddComponent(UDreamLayoutContainerVerticalBox::StaticClass())))L->SetSpacing(Spacing);
+	// A panel is a widget with a layout container (CreateNewLayoutContainer, not AddComponent: a container is no behaviour).
+	if(bHorizontal){if(auto* L=W->CreateNewLayoutContainer<UDreamLayoutContainerHorizontalBox>())L->SetSpacing(Spacing);}
+	else if(auto* L=W->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>())L->SetSpacing(Spacing);
+	// No size of its own: a panel left at the default 100 x 100 kept rows 100 high whatever they held.
+	W->SetSizeDelta(FVector2D::ZeroVector);
 	if(Into)AddToHost(Into,W,false);
 	return W;
 }
@@ -311,6 +343,24 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 	if(Source->IsA<UButton>()){UOKDreamControl* C=MakeControl(TEXT("Button"),Into);const FString T=TextIn(Source);Place(C,FMath::Max(56.f,TextWidth(T,20.f)+36.f),false);return;}
 	if(Source->IsA<USlider>()){Place(MakeControl(TEXT("Slider"),Into),0,true);return;}
 	if(Source->IsA<UCheckBox>()){Place(MakeControl(TEXT("Toggle"),Into),FMath::Max(80.f,TextWidth(TextIn(Source),18.f)+56.f),false);return;}
+	// The motion lists run to tens of thousands of entries: a search field above the drop-down narrows it, as the UMG
+	// popup's own search box did.
+	if(Source->IsA<UOKMotionComboBox>())
+	{
+		UDreamWidget* Box=MakePanel(Into,false,4.f);if(!Box)return;
+		if(bInRow)if(auto* Slot=Box->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+		UOKDreamControl* Search=MakeControl(TEXT("Input"),Box);
+		UOKDreamControl* C=MakeControl(TEXT("Choice"),Box);if(!C)return;
+		C->Source=Source;C->Companion=Search;
+		if(Search&&Search->Input)
+		{
+			Search->Input->SetPlaceholder(FText::FromString(TEXT("搜尋動作（名稱或編號，空格隔開多個詞）")));
+			// Not kept across a rebuild of its panel: measured 2026-11-18 (ui_type while playing motions, switching outfit,
+			// drawers, tabs and cards) and no panel holding it was mirrored again; SyncAll logs it if one ever is.
+			Search->Input->GetOnTextChangedEvent().AddWeakLambda(C,[C](const FString& Text){C->Filter=Text.TrimStartAndEnd();C->Sync();});
+		}
+		C->Sync();return;
+	}
 	if(Source->IsA<UComboBoxString>()){Place(MakeControl(TEXT("Choice"),Into),0,true);return;}
 	if(Source->IsA<UEditableTextBox>()||Source->IsA<USpinBox>()){Place(MakeControl(TEXT("Input"),Into),bInRow?84.f:0.f,false);return;}
 	if(Source->IsA<UTextBlock>()){Place(MakeControl(TEXT("Label"),Into),FMath::Min(200.f,TextWidth(TextIn(Source),18.f)+12.f),false);return;}
@@ -363,6 +413,9 @@ void UOKReaderScreen::BuildCategories()
 	};
 	auto Group=[](const FString& Name,const TArray<UWidget*>& Sources){FGroup Out;Out.Name=Name;for(UWidget* W:Sources)if(W)Out.Sources.Add(W);return Out;};
 	auto Named=[G](const TCHAR* Name){return G->WidgetTree?G->WidgetTree->FindWidget(FName(Name)):nullptr;};
+	// A UMG drawer body shows (and so mirrors) only while its drawer is open; the appearance panel only once opened.
+	auto OpenDrawer=[](UOKDrawerButton* D){return TFunction<void()>([Weak=TWeakObjectPtr<UOKDrawerButton>(D)](){if(Weak.IsValid()&&!Weak->bOpen)Weak->SetOpen(true,false);});};
+	TFunction<void()> OpenAppearance=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->AppearancePanel&&Weak->AppearancePanel->GetVisibility()==ESlateVisibility::Collapsed)Weak->OnOpenAppearance();};
 
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
 	Categories.Add(MoveTemp(Face));
@@ -382,19 +435,24 @@ void UOKReaderScreen::BuildCategories()
 	Categories.Add(MoveTemp(Body));
 
 	FCategory Clothes;Clothes.Name=TEXT("衣服");
-	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Clothes"))Clothes.Groups.Add(Group(TEXT("穿著狀態"),{D->Body.Get()}));
+	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Clothes")){Clothes.Groups.Add(Group(TEXT("穿著狀態"),{D->Body.Get()}));Clothes.Groups.Last().OnEnter=OpenDrawer(D);}
 	Clothes.Groups.Add(Group(TEXT("服裝"),{G->OutfitCombo?static_cast<UWidget*>(G->OutfitCombo->GetParent()):nullptr,G->OutfitNav.Get()}));
-	Clothes.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));
+	Clothes.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Clothes.Groups.Last().OnEnter=OpenAppearance;
 	for(FGroup& Each:Clothes.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Categories.Add(MoveTemp(Clothes));
 
 	FCategory Accessory;Accessory.Name=TEXT("配件");
-	Accessory.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));
+	Accessory.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Accessory.Groups.Last().OnEnter=OpenAppearance;
 	Accessory.Groups.Add(Group(TEXT("屬性"),{G->PropertyPanel.Get()}));
+	// The property editor reads the card when opened (OnOpenProperties toggles: only while it is folded away).
+	Accessory.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->PropertyPanel&&Weak->PropertyPanel->GetVisibility()==ESlateVisibility::Collapsed)Weak->OnOpenProperties();};
 	Categories.Add(MoveTemp(Accessory));
 
 	FCategory Info;Info.Name=TEXT("角色資訊");
 	Info.Groups.Add(Group(TEXT("角色"),{G->InspectCol.Get()}));
+	// The card wall's info column, collapsed once a card is open (SetModelLayout); the UMG layer is see-through and never
+	// hit-tested, so showing it again only gives this page its mirror.
+	Info.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->InspectCol)Weak->InspectCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);};
 	Categories.Add(MoveTemp(Info));
 
 	FCategory Cards;Cards.Name=TEXT("人物卡總欄");Cards.Tab=1;
@@ -406,10 +464,21 @@ void UOKReaderScreen::BuildCategories()
 	Categories.Add(MoveTemp(ClothesCards));
 
 	FCategory Settings;Settings.Name=TEXT("設定／介面");Settings.Tab=3;
-	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting"))Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));
-	if(G->StyleBox)Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));
-	Settings.Groups.Add(Group(TEXT("物理"),{G->PhysicsBackendCombo?static_cast<UWidget*>(G->PhysicsBackendCombo->GetParent()):nullptr}));
-	Settings.Groups.Add(Group(TEXT("介面"),{G->EditorWidthInput?static_cast<UWidget*>(G->EditorWidthInput->GetParent()):nullptr,G->EditorFontInput?static_cast<UWidget*>(G->EditorFontInput->GetParent()):nullptr}));
+	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting")){Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));Settings.Groups.Last().OnEnter=OpenDrawer(D);}
+	// The style box shows only under the old shape category 角色風格 (OKGalleryBoneControls): this page shows it itself.
+	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->StyleBox)Weak->StyleBox->SetVisibility(ESlateVisibility::Visible);};}
+	// The physics controls sit loose in the animation column, each after its caption: those pairs, not the whole column.
+	{
+		TArray<UWidget*> Physics;
+		for(UWidget* W:{static_cast<UWidget*>(G->PhysicsBackendCombo.Get()),static_cast<UWidget*>(G->PhysicsSoftnessSlider.Get()),static_cast<UWidget*>(G->PhysicsWeightSlider.Get()),static_cast<UWidget*>(G->PhysicsTailSlider.Get())})
+		{
+			if(!W)continue;
+			if(UPanelWidget* P=W->GetParent()){const int32 I=P->GetChildIndex(W);if(I>0&&Cast<UTextBlock>(P->GetChildAt(I-1)))Physics.Add(P->GetChildAt(I-1));}
+			Physics.Add(W);
+		}
+		Settings.Groups.Add(Group(TEXT("物理"),Physics));
+	}
+	// No 介面 page: the UMG panel width and font size (EditorWidthInput, EditorFontInput) only resize the hidden UMG layer.
 	for(FGroup& Each:Settings.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty();});
 	Categories.Add(MoveTemp(Settings));
@@ -418,10 +487,22 @@ void UOKReaderScreen::BuildCategories()
 void UOKReaderScreen::BuildDrawers()
 {
 	UOKCharacterController* G=Controller.Get();if(!G||!RightScroll)return;
-	// The editor's own buttons, as listed in the 2026-11-18 sketch, first.
+	// The sketch (2026-11-18, again 11-18 noon): the titled drawers on top, folded, then the editor's own button block.
+	for(UOKDrawerButton* D:G->MotionDrawers)
+	{
+		if(!D||D->Key==TEXT("Clothes")||D->Key==TEXT("Lighting"))continue;	// those are left-panel categories
+		UOKDreamControl* Drawer=MakeControl(TEXT("Drawer"),RightScroll);if(!Drawer)continue;
+		Drawer->Body=MakePanel(RightScroll,false,6.f);
+		// Folded to their titles at first, as drawn; the UMG drawer folds with it (its layer is not seen).
+		if(D->bOpen)D->SetOpen(false,false);
+		Drawer->Source=D;Drawer->SetOpen(false);Drawers.Add(Drawer);
+		if(D->Body)Mirror(D->Body,Drawer->Body,false);
+		Drawer->Sync();
+	}
+	// The editor's own buttons, below the drawers (the user: "this belongs here").
 	if(UOKDreamControl* Main=MakeControl(TEXT("Drawer"),RightScroll))
 	{
-		Main->FixedText=TEXT("人物編輯");Main->SetText(Main->FixedText);Main->SetOpen(true);Drawers.Add(Main);
+		Main->FixedText=TEXT("人物編輯");Main->SetText(Main->FixedText);Main->Body=MakePanel(RightScroll,false,6.f);Main->SetOpen(true);Drawers.Add(Main);
 		UDreamWidget* Grid=MakePanel(Main->Body,false,6.f);
 		auto Row=[&](std::initializer_list<const TCHAR*> Names)
 		{
@@ -429,21 +510,22 @@ void UOKReaderScreen::BuildDrawers()
 			for(const TCHAR* Name:Names)if(UWidget* W=G->WidgetTree->FindWidget(FName(Name)))
 			{
 				const int32 Before=R->GetChildren().Num();Mirror(W,R,true);
-				if(R->GetChildren().Num()>Before)if(auto* Slot=R->GetChildren().Last()->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+				if(R->GetChildren().Num()<=Before)continue;
+				// Equal thirds, one line each: a long label (重設到預設值, 進入1對1互動場景) shrinks to fit instead of
+				// wrapping and making its row taller than the others.
+				UDreamWidget* B=R->GetChildren().Last();B->SetWidth(0);
+				if(auto* Slot=B->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+				if(auto* Control=Cast<UOKDreamControl>(B))if(UDreamText* T=TextOf(Control->Label))
+				{
+					T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::HorizontalOverflow);
+					T->SetBestFit(true);T->SetBestFitMinSize(12.f);
+				}
 			}
 		};
 		Row({TEXT("ResetAllShapes"),TEXT("ShapeLoad3D"),TEXT("BackGallery")});
 		Row({TEXT("EditorInteraction"),TEXT("EditorStudio"),TEXT("EditorStudioTimeline")});
 		Row({TEXT("ModelApngSave"),TEXT("EditorSaveKks"),TEXT("EditorHands")});
 		if(G->OutfitCombo)Mirror(G->OutfitCombo.Get(),Grid,false);
-	}
-	for(UOKDrawerButton* D:G->MotionDrawers)
-	{
-		if(!D||D->Key==TEXT("Clothes")||D->Key==TEXT("Lighting"))continue;	// those are left-panel categories
-		UOKDreamControl* Drawer=MakeControl(TEXT("Drawer"),RightScroll);if(!Drawer)continue;
-		Drawer->Source=D;Drawer->SetOpen(D->bOpen);Drawers.Add(Drawer);
-		if(D->Body)Mirror(D->Body,Drawer->Body,false);
-		Drawer->Sync();
 	}
 }
 
@@ -462,17 +544,30 @@ void UOKReaderScreen::BuildCameraBar()
 			const FVector At=A->BodySkel->GetBoneLocation(Bone,EBoneSpaces::WorldSpace);
 			if(!At.ContainsNaN()&&!At.IsNearlyZero())A->OrbitFocus=FVector(Base.X,Base.Y,At.Z+(Focus==2?6.f:0.f));
 		}
-		A->OrbitYaw+=Yaw;A->OrbitPitch=Pitch;A->OrbitDistance=Full*Distance;A->ApplyOrbitCamera();
+		// OrbitYaw is the camera's bearing around her (0 = in front): set, not added, so 背面 twice stays behind her; NAN
+		// (the framing buttons) keeps the side the camera is on.
+		if(!FMath::IsNaN(Yaw)){A->OrbitYaw=Yaw;}A->OrbitPitch=Pitch;A->OrbitDistance=Full*Distance;A->ApplyOrbitCamera();
 	};
-	MakeOwnButton(CameraBarHost,TEXT("全身"),[View](){View(0,0,1,0);});
-	MakeOwnButton(CameraBarHost,TEXT("上半身"),[View](){View(0,0,.55f,1);});
-	MakeOwnButton(CameraBarHost,TEXT("臉部"),[View](){View(0,0,.22f,2);});
-	MakeOwnButton(CameraBarHost,TEXT("腿部"),[View](){View(0,0,.6f,3);});
+	MakeOwnButton(CameraBarHost,TEXT("全身"),[View](){View(NAN,0,1,0);});
+	MakeOwnButton(CameraBarHost,TEXT("半身"),[View](){View(NAN,0,.55f,1);});
+	MakeOwnButton(CameraBarHost,TEXT("臉部"),[View](){View(NAN,0,.22f,2);});
+	MakeOwnButton(CameraBarHost,TEXT("腿部"),[View](){View(NAN,0,.6f,3);});
 	MakeOwnButton(CameraBarHost,TEXT("正面"),[View](){View(0,0,1,0);});
 	MakeOwnButton(CameraBarHost,TEXT("左側"),[View](){View(-90,0,1,0);});
 	MakeOwnButton(CameraBarHost,TEXT("右側"),[View](){View(90,0,1,0);});
 	MakeOwnButton(CameraBarHost,TEXT("背面"),[View](){View(180,0,1,0);});
-	MakeOwnButton(CameraBarHost,TEXT("俯視"),[View](){View(0,-35,1,0);});
+	MakeOwnButton(CameraBarHost,TEXT("俯視"),[View](){View(NAN,35,1,0);});
+	// The bar is as wide as the 3D view between the panels: the buttons share what is over their own width, and
+	// SetLeftWidth keeps the left panel from squeezing the view below that (they would run under the right panel).
+	// Two characters each, on one line: at the narrowest view each keeps 64 design pixels (two 20 px glyphs and the
+	// button's 12 px padding each side); the label never wraps (a squeezed one went vertical).
+	CameraBarWidth=20.f;
+	for(UDreamWidget* B:CameraBarHost->GetChildren())if(B)
+	{
+		B->SetWidth(40.f);CameraBarWidth+=64.f+6.f;
+		if(UDreamPanelSlot* Slot=B->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+		if(auto* Control=Cast<UOKDreamControl>(B))if(UDreamText* T=TextOf(Control->Label)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::HorizontalOverflow);}
+	}
 }
 
 void UOKReaderScreen::BuildPluginTools()
@@ -488,8 +583,23 @@ void UOKReaderScreen::ClearPage()
 	PageWidgets.Reset();
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
+	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
 	Panels.RemoveAll([](const FOKDreamMirrorPanel& P){return !P.Target.IsValid()||!IsValid(P.Target.Get());});
+}
+
+// The card list marks the card the reader has (the one whose name is at the bottom right): a sign before its name, the
+// others dimmed a little.
+void UOKReaderScreen::MarkCurrentCard()
+{
+	UOKCharacterController* G=Controller.Get();if(!G||CardButtons.IsEmpty())return;
+	const int32 Current=G->SelectedIndex;if(Current==ShownCardSelection)return;
+	ShownCardSelection=Current;
+	for(int32 I=0;I<CardButtons.Num();++I)if(UOKDreamControl* B=CardButtons[I];IsValid(B)&&CardTexts.IsValidIndex(I))
+	{
+		B->FixedText=I==Current?TEXT("▶ ")+CardTexts[I]:CardTexts[I];B->SetText(B->FixedText);
+		B->SetRenderOpacity(I==Current?1.f:.72f);
+	}
 }
 
 void UOKReaderScreen::ShowTab(int32 Index)
@@ -497,18 +607,19 @@ void UOKReaderScreen::ShowTab(int32 Index)
 	Tab=FMath::Clamp(Index,0,3);
 	UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};
 	for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);
-	// The rail lists the edit categories; the other three tabs are one page each.
+	// The rail lists every category on every tab (the sketch keeps it on the left throughout); 設定 sits alone at its foot.
 	for(UOKDreamControl* B:RailButtons)if(IsValid(B))B->DestroyWidget();
+	for(UDreamWidget* Gap:RailSpacers)if(IsValid(Gap))Gap->DestroyWidget();
+	RailSpacers.Reset();
 	RailButtons.Reset();
 	int32 First=INDEX_NONE;
 	for(int32 I=0;I<Categories.Num();++I)
 	{
 		if(First==INDEX_NONE&&Categories[I].Tab==Tab)First=I;
-		if(Tab!=0)continue;
+		if(RailHost&&Categories[I].Name==TEXT("設定／介面"))if(UDreamWidget* Gap=MakePanel(RailHost,false,0.f)){RailSpacers.Add(Gap);if(auto* Slot=Gap->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);}
 		UOKDreamControl* B=MakeOwnButton(RailHost,Categories[I].Name,[this,I](){ShowCategory(I);});
 		if(B){B->SetWidth(104);if(auto* Slot=B->GetPanelSlot())Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Fill);RailButtons.Add(B);}
 	}
-	if(RailHost)RailHost->SetShown(Tab==0);
 	if(First!=INDEX_NONE)ShowCategory(First);
 }
 
@@ -517,7 +628,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(!Categories.IsValidIndex(Index))return;
 	ClearPage();
 	Category=Index;const FCategory& C=Categories[Index];
-	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);if(RailHost)RailHost->SetShown(Tab==0);}
+	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);}
 	for(int32 I=0;I<RailButtons.Num();++I)if(RailButtons[I])RailButtons[I]->SetRenderOpacity(I==Index?1.f:.7f);
 	if(auto* T=TextOf(CategoryTitle))T->SetText(FText::FromString(C.Name));
 	if(C.OnEnter)C.OnEnter();
@@ -531,6 +642,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(SubMenuHost)SubMenuHost->SetShown(C.Groups.Num()>1);
 	if(LeftScroll&&C.Groups.IsValidIndex(Sub))
 	{
+		if(C.Groups[Sub].OnEnter)C.Groups[Sub].OnEnter();
 		UDreamWidget* Page=MakePanel(nullptr,false,8.f);
 		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);}
 		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page)Mirror(Source.Get(),Page,false);
@@ -544,8 +656,11 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 				const auto& E=G->Entries[I];
 				const FString Text=FString::Printf(TEXT("%s %s  %s"),*E.LastName,*E.FirstName,*E.FileName);
 				TWeakObjectPtr<UOKCharacterController> Weak(G);
-				if(UOKDreamControl* B=MakeOwnButton(List,Text,[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);}))B->SetWidth(0);
+				UOKDreamControl* B=MakeOwnButton(List,Text,[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);});
+				if(B)B->SetWidth(0);
+				CardButtons.Add(B);CardTexts.Add(Text);
 			}
+			ShownCardSelection=INDEX_NONE;MarkCurrentCard();
 		}
 		LeftScroll->ScrollToStart();
 	}
@@ -553,7 +668,11 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 
 void UOKReaderScreen::SetLeftWidth(float Width)
 {
-	LeftWidth=FMath::Clamp(Width,360.f,1000.f);Layout();
+	// No wider than leaves the camera bar its room (the screen is 1080 design pixels high, as wide as its aspect makes it).
+	float Max=1000.f;
+	if(GEngine&&GEngine->GameViewport&&GEngine->GameViewport->Viewport){const FIntPoint Size=GEngine->GameViewport->Viewport->GetSizeXY();if(Size.Y>0)Max=FMath::Min(Max,Size.X*1080.f/Size.Y-RightWidth-32.f-CameraBarWidth);}
+	// 540: narrower cuts the slider rows (their label, value and reset button keep their widths).
+	LeftWidth=FMath::Clamp(Width,540.f,FMath::Max(540.f,Max));Layout();
 }
 
 void UOKReaderScreen::Layout()
@@ -568,13 +687,20 @@ void UOKReaderScreen::Layout()
 // The left panel's right edge is a handle: press near it and drag.
 void UOKReaderScreen::TickResize()
 {
-	APlayerController* PC=GetOwningPlayer();if(!PC)PC=Controller.IsValid()?Controller->GetOwningPlayer():nullptr;
-	if(!PC||!GEngine||!GEngine->GameViewport||!GEngine->GameViewport->Viewport)return;
-	float X=0,Y=0;if(!PC->GetMousePosition(X,Y))return;
+	// The mouse as DreamGUI sees it (the same pointer its hit test uses): its Slate input source consumes presses over its
+	// widgets (the handle is one), so the player controller's input never sees them.
+	if(!GEngine||!GEngine->GameViewport||!GEngine->GameViewport->Viewport)return;
 	const FIntPoint Size=GEngine->GameViewport->Viewport->GetSizeXY();if(Size.Y<=0)return;
-	const float Scale=Size.Y/1080.f;const bool Down=PC->IsInputKeyDown(EKeys::LeftMouseButton);
+	UDreamEventSystem* Events=UDreamEventSystem::GetDreamEventSystemInstance(this,0);
+	const UDreamPointerEventData* Pointer=Events?Events->GetPointerEventData(DreamUIPointerIds::Mouse,false):nullptr;
+	if(!Pointer){bResizing=false;bResizeMouseWasDown=false;return;}
+	const float X=Pointer->PointerPosition.X;
+	const float Scale=Size.Y/1080.f;const bool Down=Pointer->bNowIsTriggerPressed;
+	const bool bJustPressed=Down&&!bResizeMouseWasDown;bResizeMouseWasDown=Down;
 	const float Edge=LeftWidth*Scale;
-	if(!bResizing&&Down&&PC->WasInputKeyJustPressed(EKeys::LeftMouseButton)&&FMath::Abs(X-Edge)<=8.f*Scale){bResizing=true;ResizeStartX=X;ResizeStartWidth=LeftWidth;}
+	if(bJustPressed)UE_LOG(LogTemp,Verbose,TEXT("ok.ReaderScreen: press at x=%.1f, panel edge %.1f"),X,Edge);
+	// The handle is 8 design pixels inside the edge; a little either side of it still grabs.
+	if(!bResizing&&bJustPressed&&X>=Edge-12.f*Scale&&X<=Edge+6.f*Scale){bResizing=true;ResizeStartX=X;ResizeStartWidth=LeftWidth;}
 	if(bResizing){if(!Down)bResizing=false;else SetLeftWidth(ResizeStartWidth+(X-ResizeStartX)/Scale);}
 }
 
@@ -588,7 +714,14 @@ void UOKReaderScreen::SyncAll()
 		UPanelWidget* S=Panels[I].Source.Get();UDreamWidget* T=Panels[I].Target.Get();
 		if(!S||!T||!IsValid(T))continue;
 		T->SetShown(IsUmgShown(S));
-		if(S->GetChildrenCount()!=Panels[I].Children){Panels[I].Children=S->GetChildrenCount();const bool bHorizontal=Panels[I].bHorizontal;MirrorChildren(S,T,bHorizontal);}
+		if(S->GetChildrenCount()!=Panels[I].Children)
+		{
+			// Logged only: a rebuild drops whatever was typed into a field under it (the motion search). Not seen in the
+			// 2026-11-18 measurement; this line says when it happens, before anything is built for it.
+			UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: %s children %d -> %d, mirrored again"),*S->GetName(),Panels[I].Children,S->GetChildrenCount());
+			Panels[I].Children=S->GetChildrenCount();const bool bHorizontal=Panels[I].bHorizontal;
+			MirrorChildren(S,T,bHorizontal);
+		}
 	}
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
 	for(int32 I=0;I<Controls.Num();++I)Controls[I]->Sync();
@@ -598,6 +731,7 @@ void UOKReaderScreen::SyncAll()
 		// The card wall until a card is open, the editor once one is; a new card folder lists again.
 		if(G->bModelLayout!=bShownModelLayout){bShownModelLayout=G->bModelLayout;ShowTab(bShownModelLayout?0:1);}
 		else if(Tab==1&&G->Entries.Num()!=ShownEntries)ShowCategory(Category,Sub);
+		MarkCurrentCard();
 	}
 	if(UOKCharacterController* G=Controller.Get())if(auto* T=TextOf(CardName))
 	{
@@ -618,6 +752,15 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 		bShownModelLayout=Controller->bModelLayout;ShowTab(bShownModelLayout?0:1);
 	}
 	if(!bBuilt)return;
+	// Logged only, once per entry: DreamGUI takes keys only while the game viewport has Slate's keyboard focus
+	// (FDreamUISlateInputSource::IsKeyForThisWorld), so focus inside the hidden UMG layer would leave its fields deaf.
+	// Measured 2026-11-18 with ui_focus (clicks, typing, motions, cards): never happened; nothing is done about it here.
+	if(FSlateApplication::IsInitialized())if(UOKCharacterController* G=Controller.Get())
+	{
+		const bool bUmgFocus=G->HasAnyUserFocus()||G->HasFocusedDescendants();
+		if(bUmgFocus&&!bUmgHadFocus)UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: keyboard focus is in the hidden UMG layer (DreamGUI fields get no keys until the viewport has it)"));
+		bUmgHadFocus=bUmgFocus;
+	}
 	TickResize();
 	SyncAll();
 }
@@ -665,5 +808,20 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		else if(Verb==TEXT("category"))Done=S->SelectCategory(Value);
 		else if(Verb==TEXT("sub"))Done=S->SelectSub(Value);
 		else if(Verb==TEXT("width")){Done=Value.IsNumeric();if(Done)S->SetLeftWidth(FCString::Atof(*Value));}
+		else if(Verb==TEXT("dump"))
+		{
+			// The DreamGUI tree as laid out: name, class, visual, position, size, shown, layout container.
+			TFunction<void(UDreamWidget*,int32)> Walk=[&](UDreamWidget* W,int32 Depth)
+			{
+				if(!W||Depth>14)return;
+				FString Layout;for(UDreamUIBehaviour* C:W->GetAllComponents())if(C&&C->GetClass()->GetName().Contains(TEXT("Layout")))Layout=C->GetClass()->GetName();
+				const FVector2D P=W->GetAnchoredPosition(),Z=W->GetSizeDelta();
+				Out.Logf(TEXT("%s%s [%s%s%s] pos=(%.0f,%.0f) size=(%.0f,%.0f)%s"),*FString::ChrN(Depth*2,TEXT(' ')),*W->GetDisplayName(),*W->GetClass()->GetName(),W->GetVisual()?TEXT(" "):TEXT(""),W->GetVisual()?*W->GetVisual()->GetClass()->GetName():TEXT(""),P.X,P.Y,Z.X,Z.Y,W->GetShown()?*(Layout.IsEmpty()?FString():TEXT(" ")+Layout):TEXT(" HIDDEN"));
+				if(!W->GetShown())return;
+				if(auto* U=Cast<UDreamUserWidget>(W))if(U->GetWidgetTree()&&U->GetWidgetTree()->GetRootWidget()&&!U->GetChildren().Contains(U->GetWidgetTree()->GetRootWidget()))Walk(U->GetWidgetTree()->GetRootWidget(),Depth+1);
+				for(UDreamWidget* C:W->GetChildren())Walk(C,Depth+1);
+			};
+			Walk(S,0);
+		}
 		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth());
 	}));

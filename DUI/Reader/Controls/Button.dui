@@ -2,6 +2,9 @@
 class /Game/UI/Reader/Controls/WBP_OKButton
 use "Theme.dui" as ui
 
+// The preset's bold face has no Chinese glyphs (it drew nothing): the regular face, which falls back to CJK.
+style CjkLabel : ui.Label { Font = @ui.FontRegular }
+
 Widget Root {
     AnchorData.SizeDelta = (200, 44)
     + Overlay { }
@@ -9,6 +12,6 @@ Widget Root {
         Style.Height = 40
         Style.ContentPadding = (12, 4, 12, 4)
         @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
-        Text Label : ui.Label { Text = "" }
+        Text Label : CjkLabel { Text = "" }
     }
 }

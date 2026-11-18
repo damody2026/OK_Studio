@@ -1,6 +1,7 @@
 ﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
 
 #pragma once
+#include "DreamUIRender/DreamUIShaderGate.h"
 
 #include "CoreMinimal.h"
 #include "GlobalShader.h"
@@ -14,7 +15,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FDreamUIResolveShaderVS, FGlobalShader);
 	using FParameters = FEmptyShaderParameters;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted(Parameters.Platform)) { return false; } return true; }
 };
 
 /** Each pixel of a multi-sampled target, the mean of its samples. Permutation: the sample count, 2, 4 or 8. */
@@ -31,5 +32,5 @@ public:
 		SHADER_PARAMETER_TEXTURE(Texture2DMS<float4>, Tex)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted(Parameters.Platform)) { return false; } return true; }
 };

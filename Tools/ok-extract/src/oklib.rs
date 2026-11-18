@@ -46,8 +46,30 @@ struct Model {
     chunks: HashMap<u64, (u64, u32)>,
     len: u64,
 }
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum Loc { Packed(u64, u32), Chunks(Vec<(u64, u32)>) }
+
+/// A model's record index, kept in the library's own work area so opening a model does not have to walk the whole
+/// file: the walk reads a length prefix per record, and those are spread through the file, so a card that needs a few
+/// records out of a 185 MiB model still touches a page per record across all of it (one card at outfit 0 walks ~1 GiB
+/// over 64 models). What this holds is a restatement of the library's own files, **not a memo of a card open**: it
+/// answers nothing a card open computed, so every card — including one never opened before — gets the same answer
+/// from it, and the disk cache for card opens stays off. Same category as the decompressed index copy
+/// `mapped_index` keeps in `work/index-cache`; `work/` is not version controlled and not in the manifest.
+/// Keyed by the model file's length and write time, so a replaced model file is never answered from an old index.
+/// Its proper home is the library build step; until then the first open that needs a model writes it.
+/// Off switch: `OK_NO_MODEL_INDEX=1` (then every open walks the records, which is also the fallback when the index
+/// cannot be read or written).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModelIndex { entries: Vec<((String, Vec<u8>), Loc)>, chunks: Vec<(u64, (u64, u32))>, len: u64 }
+
+fn model_index_path(path: &Path) -> Option<PathBuf> {
+    if std::env::var_os("OK_NO_MODEL_INDEX").is_some() { return None; }
+    let dir = active_dir()?.join("work").join("model-index");
+    let meta = std::fs::metadata(path).ok()?;
+    let stamp = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(dir.join(format!("{}-{}-{stamp}.idx", path.file_stem()?.to_string_lossy(), meta.len())))
+}
 const CHUNK_QUERY: &str = "#chunk";
 const CHUNK_MIN: usize = 4 * 1024;
 const CHUNK_MAX: usize = 64 * 1024;
@@ -248,6 +270,17 @@ fn unchanged_model(path: &Path) -> Arc<Mutex<Model>> {
 
 /// Scan a model's record headers (values are not read).
 fn load_model(path: &Path, hashes: bool) -> Model {
+    let _section = crate::profile::spot("load_model scan");
+    // The index beside the library answers the same thing the walk below builds (value hashes are not in it, so a
+    // `hashes` scan always walks).
+    let side = (!hashes).then(|| model_index_path(path)).flatten();
+    if let Some(saved) = side.as_ref().and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| lz4_flex::block::decompress_size_prepended(&b).ok())
+        .and_then(|b| bincode::deserialize::<ModelIndex>(&b).ok())
+    {
+        let _hit = crate::profile::spot("load_model index hit");
+        return Model { entries: saved.entries.into_iter().collect(), values: HashMap::new(), chunks: saved.chunks.into_iter().collect(), len: saved.len };
+    }
     let mut model = Model::default();
     // Mapped: the record index is read in place (a model file can be hundreds of MB).
     let Ok(file) = File::open(path) else { return model; };
@@ -287,6 +320,32 @@ fn load_model(path: &Path, hashes: bool) -> Model {
         at = start + total;
     }
     model.len = at as u64;
+    if let Some(p) = side {
+        let index = ModelIndex {
+            entries: model.entries.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            chunks: model.chunks.iter().map(|(k, v)| (*k, *v)).collect(),
+            len: model.len,
+        };
+        if let (Some(dir), Ok(bytes)) = (p.parent(), bincode::serialize(&index).map(|b| lz4_flex::block::compress_prepend_size(&b))) {
+            let _ = std::fs::create_dir_all(dir);
+            let tmp = p.with_extension(format!("{}.tmp", std::process::id()));
+            if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &p).is_err() { let _ = std::fs::remove_file(&tmp); }
+            // Indexes of an earlier version of this model file (its length or write time changed) are dead.
+            if let (Some(stem), Ok(read)) = (path.file_stem().map(|s| s.to_string_lossy().into_owned()), std::fs::read_dir(dir)) {
+                for old in read.flatten().map(|e| e.path()).filter(|q| *q != p) {
+                    let name = old.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    if name.starts_with(&format!("{stem}-")) && name.ends_with(".idx") { let _ = std::fs::remove_file(old); }
+                }
+            }
+        }
+    }
+    if std::env::var_os("OK_PROFILE").is_some() {
+        eprintln!(
+            "ok-extract: PROFILE load_model scanned {:.1} MiB of {:.1} MiB, {} records: {}",
+            at as f64 / 1048576.0, bytes.len() as f64 / 1048576.0, model.entries.len() + model.chunks.len(),
+            path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        );
+    }
     model
 }
 /// Hash of a stored (compressed) value, for whole-value deduplication.
@@ -708,6 +767,16 @@ pub fn print_profile() {
     let mut v: Vec<_> = p.iter().collect();
     v.sort_by(|a, b| b.1.0.partial_cmp(&a.1.0).unwrap());
     for (k, (s, n)) in v.into_iter().take(30) { println!("OKPROFILE {s:9.2}s {n:7} {k}"); }
+}
+
+/// The `timed` rows of one card open, slowest first, and clears them for the next. On the open path these labels are
+/// the inside of the mesh decode — the one segment an item's time is in (`Docs/CARD_OPEN_PERF_20261117.md` 第四节) —
+/// so they are printed per open, to stderr beside the PROFILE rows, instead of once at the end of a conversion.
+pub fn drain_profile() -> Vec<(String, f64, u64)> {
+    let p = std::mem::take(&mut *PROFILE.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut v: Vec<_> = p.into_iter().map(|(k, (s, n))| (k, s, n)).collect();
+    v.sort_by(|a, b| b.1.total_cmp(&a.1));
+    v
 }
 
 /// A game root that is an OK base library opens cards from the library alone
@@ -2249,12 +2318,22 @@ pub fn memo_packed<A, R, F>(id: Option<&Id>, method: &str, args: &A, f: F, pack:
 where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
     let (Some(store), Some(id)) = (active(), id) else { return f(); };
     let arg_bytes = bincode::serialize(args).unwrap_or_default();
-    let stored = if store.mode == Mode::Record && refreshing(method) { None } else { store.get_raw_src(id, method, &arg_bytes) };
+    // An OK card's items are answered here, not by Unity: these three children of the item's decode segment are where
+    // its time goes (`Docs/CARD_OPEN_PERF_20261117.md` 第四节). Children, so they are left out of the segment total.
+    let stored = if store.mode == Mode::Record && refreshing(method) { None } else {
+        let _seg = crate::unity::segment("memo/read");
+        store.get_raw_src(id, method, &arg_bytes)
+    };
     if let Some((raw, from_pack)) = stored {
-        if let Ok(mut value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
+        let read = { let _seg = crate::unity::segment("memo/deserialize");
+            crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) };
+        if let Ok(mut value) = read {
             if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
             let _ = from_pack;
-            if !CONVERTING.load(Ordering::Relaxed) { unpack(&mut value); }
+            if !CONVERTING.load(Ordering::Relaxed) {
+                let _seg = crate::unity::segment("memo/unpack");
+                unpack(&mut value);
+            }
             return value;
         }
     }
@@ -3184,16 +3263,45 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             if failed > 0 { return Err(format!("{failed} card(s) failed")); }
         }
         "outfit-gaps" => {
-            // outfit-gaps <lib> <card>...: what each outfit names and nothing provides (outfit_gaps.rs). Prints
-            //   OKGAPS <severe|minor> card outfit count parts; OKGAPS ok card when no outfit lacks anything.
+            // outfit-gaps <lib> [--zipmods DIR[;DIR]] <card>...: what each outfit names and nothing provides
+            //   (outfit_gaps.rs). Prints OKGAPS <severe|minor> card outfit count parts; OKGAPS ok card when no outfit
+            //   lacks anything. With --zipmods, those folders are searched for the GUIDs the tree cannot answer, and
+            //   each gap says which archive there could complete it (`guid@path`) — the list `fill_gaps` works from.
+            //   Without it nothing extra is scanned, so an ordinary run costs exactly what it did before.
             let lib = lib.ok_or("library directory required")?;
+            let mut args = args.to_vec();
+            if let Some(i) = args.iter().position(|a| a == "--zipmods") {
+                let dirs = args.get(i + 1).ok_or("--zipmods needs a folder (several separated by ';')")?.clone();
+                crate::mods::set_extra_zipmod_dirs(dirs.split(';').filter(|s| !s.is_empty()).map(PathBuf::from).collect());
+                for missing in crate::mods::missing_extra_zipmod_dirs() {
+                    // A path that is gone is not the same as a card that lacks parts: say which it is.
+                    println!("OKGAPS path-missing\t{}", missing.display());
+                }
+                args.drain(i..=i + 1);
+            }
             for card in args[2..].iter().map(PathBuf::from) {
+                // `scan` only looks at a library card; an original card in a library root comes back with an empty
+                // list, which used to print as `ok` — "nothing is missing" and "I did not look" said the same thing
+                // (2026-11-18: kks_Saria printed ok here while the reader's own open reported four missing items).
+                if !crate::oklib::is_library_card(&card) {
+                    println!("OKGAPS not-scanned\t{}\toriginal card: its gaps come from the open, not from this scan", card.display());
+                    continue;
+                }
                 let outfits = crate::outfit_gaps::scan(&lib, &card)?;
                 let lacking: Vec<_> = outfits.iter().filter(|o| !o.gaps.is_empty()).collect();
                 if lacking.is_empty() { println!("OKGAPS ok\t{}", card.display()); }
                 for o in lacking {
                     let parts: Vec<String> = o.gaps.iter().map(|g| format!("{}:{}", g.part, g.id)).collect();
                     println!("OKGAPS {}\t{}\t{}\t{}\t{}", if o.severe { "severe" } else { "minor" }, card.display(), o.outfit, o.gaps.len(), parts.join(" "));
+                    // One line a gap with what the card names and, when a searched folder has it, the archive that
+                    // could complete it. The card records the **GUID**, never the file name, so the path is only ever
+                    // what was found here — a gap with no path is left without one rather than guessed at.
+                    for g in &o.gaps {
+                        let wanted = std::collections::HashSet::from([g.guid.clone()]);
+                        let found = (!g.guid.is_empty()).then(|| crate::mods::find_guids_in_extra(&wanted)).unwrap_or_default();
+                        println!("OKGAP\t{}\t{}\t{}\t{}\t{}\t{}\t{}", card.display(), o.outfit, g.part, g.category, g.id, g.guid,
+                            found.get(&g.guid).map(|p| p.display().to_string()).unwrap_or_default());
+                    }
                 }
             }
         }

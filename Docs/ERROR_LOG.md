@@ -5259,3 +5259,135 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正（5d0333e34）：檢查與寫入放進 UnrealSlots\claim.lock（mkdir 當鎖，超過 120 秒視為死鎖拆掉）；寫入後再查一次獨占衝突，衝突就退回 slot（擋住還沒更新的舊版腳本）。
 - 驗證：Tools\test_unreal_slot.lua 兩個 claim 同時進來（獨占在前／在後）只成功一個、兩個普通 claim 都成功；去掉鎖的陽性對照兩個競態用例都失敗。
 - 教訓：共用的「先查再寫」檔案協定要有原子步驟；測試要把檢查到寫入的窗口拉開（OK_UNREAL_SLOTS_FAKE pause）才測得到。
+## 2026-11-18 量测脚本的 grep 抓到了「预热」那行，整天量的都不是开卡（E 组 e-cardload）
+
+- **变更**：A/B 脚本用 `grep -oE '[0-9.]+s$' | head -1` 从 `ok-card-open-bench --sequence` 的输出里取秒数。
+- **症状**：没有任何症状 —— 两边都印出数字、关卡照样 PASS。是「形状可疑」才抓到的：同一个设定，单卡跑和三卡跑的中位数差了 6 倍，而开卡时间不该随卡数变。
+- **原因（已证实）**：`--sequence` 会先印 `ok-extract: prewarm <库> in 0.46s`，才印要的 `ok-card-open-bench: <卡>@0 1.82s`。`head -1` 拿的是前者，**所以量的是启动预热自己的耗时，不是开卡**。两者差一个量级：同一笔改动在预热上是 −83%，在开卡上只有 −2.3%（预热跑在 below-normal 优先权的自己的池上，本来就不太抢开卡的 CPU）。
+- **处置**：匹配钉住自己那行的前缀（`ok-card-open-bench: .*@[0-9]+ [0-9.]+s`）后重量两笔改动，并改掉已提交的 `43efd74c7` 在 `Docs/CARD_OPEN_PERF_20261117.md` 里写错的那个数字（它是预热耗时，不是 wall）。
+- **再试前检查**：从别人的 stdout 取数字，一律用**自己那行的前缀**定位，不要用「第一个／最后一个数字」这种靠位置的匹配 —— 被测程式多印一行就全盘错，而且不会有错误讯息。这是这一天第三个「数字是真的、代表的不是那件事」，前两个都在量测的程式侧，这个在量测的脚本侧。
+
+## 2026-11-18 新增 DreamGUI 的 global shader，所有沿用舊 base、只重編執行檔的 stage 一啟動就 Fatal（E 組 e-fork-2）
+
+- **變更**：574b01b7c 把 DreamGUI 外掛加進專案（讀卡器新介面），外掛的 DreamGUIRenderer 帶 25 個 global shader。
+- **症狀**：沿用 11-18 之前的 base、只重編執行檔的 stage 一啟動就 `Missing global shader FDreamUIBackdropCompositePS's permutation 0, Please make sure cooking was successful`（`ShaderCompiler.cpp:4973` Fatal），**跟有沒有開新讀卡器介面無關**。c-lowspec 的 lowspec1118c、c-conquest 的 conq1118a、c-street-city 的 c4w1118a 與協調者的 Studio 包都踩到。完整 cook 不會出錯：包裡 11-15 的 `RuntimeGlobalShaderPatch` 是 `_P` 修補包，優先權壓過新 cook 的 shader 庫。
+- **原因（已證實）**：引擎啟動時 `VerifyGlobalShaders` 逐一檢查每個已註冊、`ShouldCompilePermutation` 為真的 global shader 都在 cook 好的 global shader map 裡；只要模組連結進執行檔就算數，沒畫 DreamGUI 也一樣。新增 global shader 等於換了 base。
+- **處置**：
+  1. 短期：`Tools\lua\lua.exe Tools\rebuild_street_social_patch.lua` 重建 runtime patch（含新的 global shader map）。
+  2. 根本：4ca2d675a 的 `DreamGUIGlobalShadersWanted()`（`Plugins/DreamGUI/Source/DreamGUIRenderer/Public/DreamUIRender/DreamUIShaderGate.h`）：編輯器與 cook 一律編譯（新 base 照樣帶上），cook 好的遊戲只有 `-OKDreamReader`／`-DreamGUI` 時才列為必須；有旗標卻缺 shader 時印出要重建什麼的訊息再結束，不是引擎的裸 Fatal。
+- **驗證**：stage DGate1118a（舊 base BaseHFace1115，`-pakdir` 只放材質與音效 patch、不放新的 global shader patch）不加參數正常進讀卡器；同一組加 `-OKDreamReader` 照舊 Fatal（陽性對照）。
+- **再試前檢查**：加任何帶 global shader 的程式（外掛、`IMPLEMENT_GLOBAL_SHADER`、`.usf` 改簽名）前，先決定沒用到它的模式要不要列為必須（`ShouldCompilePermutation` 加條件）；提交前拿一個舊 base 的 stage、不掛新 patch 實際啟動一次。
+
+## 2026-11-18 讀卡器 DreamGUI 的點擊被透明的 UMG 層搶走（E 組 e-fork-2）
+
+- **變更**：cbf516d45 之前的讀卡器 DreamGUI 版面只用主控台指令（`ok.ReaderScreen`）與 MCP 驗收，沒有用真實滑鼠點過。
+- **症狀**：用真實滑鼠點左欄「身子」、拖臉部滑桿都沒反應，反而跳出隱藏的「另存 APNG 新卡」提示並觸發該按鈕；中間鏡頭列（下面沒有 UMG 控制項）點得動。
+- **原因（已證實）**：`NativeConstruct` 把 UMG 層設成 `HitTestInvisible`，但開卡後 `SetModelLayout` 把整個 widget 設回 `SelfHitTestInvisible`，透明的 UMG 控制項又能被點到；另外 DreamGUI 預設從 PlayerController 收輸入，讀卡器沒有那套綁定，要開 `bUseSlateInputSource`。左欄拖拉調寬讀 PlayerController 的滑鼠，按在 DreamGUI 把手上的鍵被 Slate 輸入源吃掉，也收不到。
+- **處置**：`SetModelLayout` 在有 `ReaderScreen` 時固定 `HitTestInvisible`；`Config/DefaultDreamGUI.ini` 開 Slate 輸入源（`WhenOverUI`）；`TickResize` 改讀 DreamGUI 的滑鼠指標資料（先試 `FSlateApplication` 的游標換算，實測仍抓不到，原因未查明）。
+- **驗證**：真實滑鼠（SetCursorPos＋mouse_event）點鏡頭列、拖滑桿、重置、分類、二級選單、抽屜、下拉選單都生效。 同一輪實測也發現鏡頭列「背面」是相對旋轉（連按兩次轉回正面）、「俯視」的仰角正負號反了（鏡頭跑到腳下），已改成絕對方位。
+- **再試前檢查**：UI 驗收一定要用真實滑鼠點過一次，主控台指令與 MCP 直接改 UMG，繞過了點擊命中測試；疊在上面的新介面做好後，查一遍所有會改整個 widget 可見度的地方。
+
+## 2026-11-18 报告里给重复解码写的「原因」是错的，而且上限估高了一个数量级（E 组 e-cardload）
+
+- **变更**：`Docs/CARD_OPEN_PERF_20261117.md` 第四节那个候选「把 `png_transform_cache` 的键换成出处」，
+  它写着第二节「贴图 memo 放宽」量到的零收益是因为「省下的解码被新增的杂凑吃掉」，并估上限 100–250 ms。
+- **症状**：量了之后两个都不成立。一张卡 14 笔重复的解码**合计只有 28 ms**（C011 13 笔 27 ms），
+  wall 10 ms 以内；而那 14 笔**根本没有进过 `png_transform_cache`** —— 它只开给 DXT1／BC7／≥512² 的
+  DXT5，重复的那些是 RGB24、RGBA32 与 256² DXT5，一律直接重算。
+- **原因（已证实）**：两处都是**读程式码读出来的因果，没有量**。「杂凑吃掉」是看到键是
+  `SHA-256(来源位元组)` 就推出来的，没有确认那些格式会不会走到这把键；上限则是把「重复的是大张的」
+  当成了前提，实际重复最多的是 512² 与 256² 的小图。
+- **处置**：`note_work_timed` 让每一笔 `PROFILE   <n>x <label>` 带上实测耗时与「去重复最多省多少」，
+  并在结尾印 `PROFILE repeated work at most <n>ms savable`；第四节的候选划掉，第二节补一列记量到的事实。
+- **验证**：C006／C011 各印出 28／27 ms 合计；`cargo test --lib`、`--no-default-features`、两个 UE 目标。
+- **再试前检查**：**写进报告的「为什么」也要有量过的证据**，不是只有「省多少」要量。像「这条路会不会
+  走到那个快取」这种前提，有一行诊断就能确认（印出格式闸门的判定或命中次数），不要用程式码推。
+
+## 2026-11-18 新加的 segment 诊断在 8 条执行绪下量到的是「等」，差点让我追错东西（E 组 e-cardload）
+
+- **变更**：为了回答第四节「一项 prefetch 为什么要 200 ms」，加了 `crate::unity::segment(..)`，在
+  `meshes_for_entry_inner`／`memo_packed`／`derive_mesh_texture` 上切出不重叠的段，印
+  `PROFILE   segment <名> <n>x <ms> (<占比>)`。文件注解当时写着「占比不随机器忙闲变动」。
+- **症状**：8 条执行绪（app 的样子）量到 `derive/readback` 25 次 **1934 ms，占一项时间的 69–72%**，
+  看起来是这条路最大的一笔。做了跳过它的 A/B（`OK_SKIP_READBACK=1`）却只有 C006 ＋3%、C049 −9%，
+  两张卡方向都不一致 —— 和第二节「−5.4% 是噪声」那笔一模一样的形状。
+- **原因（已证实）**：segment 量的是**进入那段到离开那段的经过时间**，8 条执行绪同时抢同一个 D3D11
+  装置时，每次 readback 的大部分时间是**在等**，不是在做。改成 `RAYON_NUM_THREADS=1`（没有兄弟执行绪
+  可以等）再量，同一笔是 **304／302 ms**，而跳过它的 1 执行绪 A/B 省下 **0.13／0.22 s** —— 1 执行绪的
+  段时间**精确预测**了 A/B 的结果，8 执行绪的高出 6 倍。
+- **处置**：注解改成「**一律用 `RAYON_NUM_THREADS=1` 读这些段**」，并把这次的 1934 vs 304 写在注解里；
+  印出来的那行也加上同一句。第四节照 1 执行绪的数字结案（真正最大的一段是 `derive/decode`
+  551／1172 ms／149 与 187 次，不是 readback）。
+- **验证**：C006／C049 的 8 执行绪与 1 执行绪段落各一份，加上两组 A/B（8 执行绪 N=8、1 执行绪 N=4，交错）。
+- **再試前檢查**：**我自己新加的量测工具也要先验证它量的是什么**。这是同一个坑第三次（`profile_tick`
+  的阶段时间、hair gloss 的 216 ms、现在是 segment）：**在饱和的窗口里，任何「经过时间」都包含等待**。
+  新诊断上线前，先用「把那段整个跳掉」的 A/B 对照一次，对得上才能拿它选候选。
+
+## 2026-11-18 以为「1 执行绪就没有等待」，但巢状 rayon 让父段量到的是排队（E 组 e-cardload）
+
+- **变更**：上一笔（`12a45bea5`）把 segment 的读法定成「一律用 `RAYON_NUM_THREADS=1` 读」，理由是
+  没有兄弟执行绪可以等。顺着往下挖 `derive/decode` 时就踩到它的例外。
+- **症状**：`payload/texels banded` 量到 **1438 ms／63 次**，但它里面的子段（`banded/decoder`
+  644 ms、`banded/repack` 52 ms、两个 alloc 共 9 ms）加起来只有 **699 ms**，少掉一半。
+  先猜是「输出缓冲区的归零」（一张 2048² 要 memset 16 MiB），加了段去量 —— **只有 5–8 ms，猜错**。
+- **原因（已证实）**：`decode_bc_banded` 用 `rgba.par_chunks_mut(..).all(..)` 把工作丢进**全域 rayon 池**。
+  `RAYON_NUM_THREADS=1` 时那个池只有一条 worker，而开卡有 9 条执行绪都在丢工作进去，所以**父段量到的
+  是排队**。1 执行绪消掉的是「兄弟执行绪抢资源」那种等，消不掉「自己把工作丢给别人再等回来」那种。
+- **处置**：注解补上「**即使 1 执行绪，也只有 leaf 段可信**」（不呼叫任何并行东西的段），上限一律用
+  `OK_SKIP_*` 的 A/B 定。这一轮就照这条做：`OK_SKIP_BC=1` 的 8 执行绪交错 A/B 给出 −0.18～0.21 s。
+- **验证**：C006 的 `banded/parallel` 1438 ms vs 子段合计 699 ms；alloc 段 5／8 ms（推翻归零那个猜测）；
+  `OK_SKIP_BC` A/B 两张卡 N=8 交错，中位数 0.965 → 0.760 s 与 1.740 → 1.565 s，方向一致。
+- **再試前檢查**：**「量测方法」本身也会有例外，发现例外要连同原本那条规矩一起改**（不是另记一条）。
+  看到「父段 ≫ 子段合计」时，先问「这段里面有没有把工作丢给执行绪池」，不要先猜记忆体或配置。
+
+## 2026-11-18 包验收第一段白跑：slot 的 20 分钟上限从「排队前」开始算（E 组 e-cardload）
+
+- **变更**：新写 `Tools/reader_package_sweep.lua`（把包里的读卡器开一次，逐张卡 load＋拍视图），
+  用 `--minutes` 遵守一段 ≤20 分钟的 slot 规矩。
+- **症状**：拿到 slot、读卡器也起来了（pid 53804），然后立刻印
+  `# stopping at the 20-minute slot cap after 0 cards`，一张卡都没开就 release，白占一次调度。
+- **原因（已证实）**：`started = os.time()` 写在 `claim` **之前**，而那次在队列里等了二十几分钟，
+  所以进到循环时上限早就过了。协调者同时发现另一件：那支 `claim --wait` 的 waiter 活着、每 20 秒
+  刷新队列条目，却在 slot2 空着的时候一直没拿到；他用同样参数手动 claim 一次就成功。
+- **处置**：计时改从 claim 成功之后开始；waiter 回来却没有 slot 时**印一行并再 claim 一次**
+  （活着不等于在工作）；收尾改用 CIM Terminate（`taskkill` 报成功但没杀掉的情形见同日别组纪录），
+  并加 `--noslot 1` 供「slot 已由别人替我拿好」时使用。
+- **验证**：修好后同一段跑完 30 张卡（见下一轮报告）。
+- **再試前檢查**：**任何「一段最多 N 分钟」的计时，起点都要是「真的开始做事」那一刻**，不是脚本启动；
+  等待资源的脚本要能判断自己卡住了（有空资源却拿不到就是坏了），不要无声地转。
+
+## 2026-11-18 验收表 29/30 pass，却看不出四张卡是光头（E 组 e-cardload）
+
+- **变更**：`Tools/reader_package_sweep.lua` 的每张卡只印 pass/fail 与视图数，缺了什么部件不进输出。
+- **症状**：6 张原作 KKS 卡两轮都 ok=1、身体都在、判定 pass，但实拍里 `kks_Saria`、
+  `kks_CharacterExport_Female`、`kks_F_20240615`、`kks_anwa_subaru` 是**光头**，`kks_KK_402071` 只剩侧发。
+  表上看不出来，下一个人只会看到 30/30。协调者核对实拍才发现。
+- **原因（已证实，分三层）**：
+  1. 缺的头发**大多有报**，但不叫 hair：mod 用饰品槽提供发型时记成 `part=accessory`
+     （`Saria_Acc_Mod`）或 `part=hair_accessory`（`Sny.Towa.Mod`），按 `item missing part=hair` 去
+     grep 一定漏掉。
+  2. `kks_F_20240615` 与 `kks_anwa_subaru` 头发**一个字都没报**（只报了 shoes_outer），
+     而 `extract.rs` 的头发回圈有一条静默的 `continue`（`parts` 里已经有同 slot＋category 时）。
+  3. **拿日志数头发是错的**：`OK hair static` 这类行只有原作卡的头发流程会印，OK 卡是重放卡内
+     录好的部件，不印 —— `heroine_keqing` 日志里 0 行却有满头头发。第一版栏位就是这样量的，会反过来骗人。
+- **处置**：每张卡固定印 `hair=<数> missing=<part:次数,...>`；`hair` 改成问读卡器自己的
+  **MCP `geometry`**（实际载入的 mesh 名），不再数日志。`missing` 保留日志的三类
+  （`item missing part=`、`not in catalog`、`skip dummy hair`）。渲染行为没有动。
+- **验证**：两份既有日志离线重放，确认 `missing` 对得上；`hair` 栏位在下一轮实跑验。
+- **再試前檢查**：**「通过」的卡也要印出它缺了什么**，不然指标盖不住的东西就等于不存在；
+  还有**别拿「某条日志有没有出现」当成品质指标**，先确认那条日志在两种卡上都会印。
+
+## 2026-11-18 讀卡器搜尋框「打字漏到鏡頭」是測試手段造成的誤判；改檔時把整個 .cpp 的中文弄成亂碼
+
+- **變更**：DreamGUI 讀卡器的動作搜尋框。先用系統 SendKeys／SetCursorPos 模擬鍵盤和滑鼠測試，看到「打 WALK 時鏡頭跟著動」與「Enter 播了 Demo：蹦跳」，回報成功能壞掉。
+- **證據**：補上走 Slate 的 MCP 工具（`ui_type`／`ui_mouse`／`ui_focus`）後重測：打字進搜尋框、鏡頭位置與角度完全不變；下拉選單開著按 Enter 只移動鍵盤焦點框，不播動作。SendKeys 送到的是前景視窗，焦點不明，當次鏡頭變化的原因沒有證實。
+- **處置**：改用 Slate 工具驗證；仍加上兩道防護（面板重建保留搜尋字與編輯狀態、看不見的 UMG 層拿到鍵盤焦點就還給遊戲視窗）並寫 log，下次重現可直接查。
+- **另一個錯**：用 PowerShell 5.1 的 `Get-Content -Raw`／`Set-Content -Encoding utf8` 改 `OKReaderScreen.cpp` 的一行 include：沒 BOM 的 UTF-8 檔被當成系統碼頁讀進來，寫回後所有中文字串變亂碼（還加了 BOM），編譯前從 `git show HEAD:` 還原後重套改動。另外 PowerShell 5.1 呼叫原生程式時會吃掉參數裡的雙引號，`ok-game-mcp.exe call ui_mouse '{"x":…}'` 送出去的是壞 JSON。
+- **再試前檢查**：測 UI 的鍵盤、滑鼠一律用走 Slate 的 MCP 工具，不用系統按鍵模擬；PowerShell 不拿來改含中文的原始碼（用編輯工具或 Lua），從 PowerShell 呼叫 `ok-game-mcp.exe call` 時把 JSON 裡的 `"` 寫成 `\"`。
+
+## 2026-11-18 4261dd9ea 只在自己的工作樹編得過：新檔進 unity 後撞上 winnls.h 巨集
+
+- **變更**：新檔 `Source/OpenKoikatsu/OKSlateInput.cpp` include DreamGUI 的 `Interaction/UITextInput.h`。提交前編輯器與遊戲目標都建置成功。
+- **症狀**：之後再建置，`Module.OpenKoikatsu.5.cpp` 在 `DreamUITextData.h(431–455)` 報 C2059／C2589。原因已證實：剛改過的檔案被 UBT 的 adaptive build 排除在 unity 檔外單獨編譯，所以提交前編得過；檔案不再是「修改中」以後（例如乾淨的 clone）就併進 unity 檔，排在某個含 Windows 標頭的原始檔後面，`winnls.h` 的 `HIGH_SURROGATE_START` 等巨集把 DreamGUI 的同名常數替換掉。
+- **處置**：include 前後 `push_macro`／`#undef`／`pop_macro` 這四個名字；以 `-DisableAdaptiveUnity` 建置遊戲與編輯器目標確認（9d4126d18）。4261dd9ea 到 9d4126d18 之間的提交，在乾淨工作樹編不過。
+- **再試前檢查**：新增或大改 `.cpp`，提交前加跑一次 `-DisableAdaptiveUnity`（至少遊戲目標），不能只看本機的增量建置。

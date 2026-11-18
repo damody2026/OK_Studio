@@ -205,7 +205,7 @@ pub(crate) fn derived_png_save(id: &crate::oklib::Id, key: &str, name: &str, png
 }
 
 pub(crate) fn png_from_payload_uncached(tex: unity_asset_decode::texture::Texture2D, object_name: Option<String>) -> Option<(String, Vec<u8>)> {
-    crate::unity::note_work("payload", || format!("{} {:?} {}x{}",
+    let _work = crate::unity::note_work_timed("payload", || format!("{} {:?} {}x{}",
         if tex.name.is_empty() { object_name.as_deref().unwrap_or("tex") } else { &tex.name }, tex.format, tex.width, tex.height));
     use std::io::Cursor;
     use unity_asset_decode::texture::{TextureFormat,TextureProcessor};
@@ -221,13 +221,20 @@ pub(crate) fn png_from_payload_uncached(tex: unity_asset_decode::texture::Textur
     }
     // Large BC1/BC3/BC7 maps: decoded in bands of block rows in parallel (blocks are independent; the bytes are the
     // ones the single-call paths below produce: [p>>16, p>>8, p, p>>24] of the decoder's packed texel).
+    // Children of `derive/decode/png_from_payload`, the biggest segment of an OK card's open: the texel decode
+    // against the encode `teximg` puts them back into. There is no colour-space step, no mip generation and no
+    // GPU-format step on this path — those two are the whole of it (CARD_OPEN_PERF 第四节).
     if w as usize * h as usize >= 512 * 512 && matches!(tex.format, TextureFormat::DXT1 | TextureFormat::DXT5 | TextureFormat::BC7) {
-        if let Some(img) = decode_bc_banded(&tex.image_data, w as usize, h as usize, tex.format) {
+        let banded = { let _seg = crate::unity::segment("payload/texels banded");
+            decode_bc_banded(&tex.image_data, w as usize, h as usize, tex.format) };
+        if let Some(img) = banded {
+            let _seg = crate::unity::segment("payload/encode");
             let buf = crate::teximg::encode_rgba_owned(img)?;
             let name = if tex.name.is_empty() { object_name.unwrap_or_else(|| "tex".into()) } else { tex.name };
             return Some((name, buf));
         }
     }
+    let _seg_texels = crate::unity::segment("payload/texels");
     let img = if tex.format == TextureFormat::DXT1 {
         // Unity's DXT1 is DXGI BC1 RGBA: endpoint0 <= endpoint1 reserves
         // selector 3 for transparent black. The generic decoder uses BC1 RGB
@@ -260,7 +267,9 @@ pub(crate) fn png_from_payload_uncached(tex: unity_asset_decode::texture::Textur
     // texture2ddecoder packs `color(r,g,b,a)` as little-endian [b,g,r,a]; both it
     // and unity-asset-decode's S3TC/BC wrappers then read back byte 0 as "R", so
     // red and blue are swapped for DXT1/DXT5 (BC7 fixed above).
+    drop(_seg_texels);
     let img = if matches!(tex.format, TextureFormat::DXT1 | TextureFormat::DXT5) {
+        let _seg = crate::unity::segment("payload/rbswap");
         let mut im = img;
         for p in im.pixels_mut() {
             p.0.swap(0, 2);
@@ -269,6 +278,7 @@ pub(crate) fn png_from_payload_uncached(tex: unity_asset_decode::texture::Textur
     } else {
         img
     };
+    let _seg = crate::unity::segment("payload/encode");
     let buf = crate::teximg::encode_rgba_owned(img)?;
     let name = if tex.name.is_empty() {
         object_name.unwrap_or_else(|| "tex".into())

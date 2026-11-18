@@ -2208,7 +2208,37 @@ pub(crate) fn extract_session_from_info(
     if std::env::var_os("OK_PROFILE").is_some() {
         let (total, repeats, rows) = crate::unity::take_work_counts();
         eprintln!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)");
-        for (source, n) in rows.iter().filter(|(_, n)| *n > 1) { eprintln!("ok-extract: PROFILE   {n}x {source}"); }
+        let ms = crate::unity::take_work_ms();
+        // Per repeated row: the work's own time, and the most de-duplicating it could save (CARD_OPEN_PERF 第四节
+        // wants this ceiling before anyone widens a memo). Summed over threads, like every other PROFILE time.
+        let mut ceiling = 0.0;
+        for (source, n) in rows.iter().filter(|(_, n)| *n > 1) {
+            match ms.get(source) {
+                Some(total) => {
+                    let save = total * (*n as f64 - 1.0) / *n as f64;
+                    ceiling += save;
+                    eprintln!("ok-extract: PROFILE   {n}x {source} ({total:.0}ms, at most {save:.0}ms savable)");
+                }
+                None => eprintln!("ok-extract: PROFILE   {n}x {source}"),
+            }
+        }
+        eprintln!("ok-extract: PROFILE repeated work at most {ceiling:.0}ms savable (summed over threads)");
+        // Where the time inside one item's own path went. Summed over items and threads, so these do not add up to a
+        // wall time, and with the helper threads running they count waiting: read them at `RAYON_NUM_THREADS=1`.
+        let segments = crate::unity::take_segments();
+        // A child row (`item decode/parse`) is inside its parent, so it does not add to the total.
+        let seg_total: f64 = segments.iter().filter(|(n, _, _)| !n.contains('/')).map(|(_, _, ms)| ms).sum();
+        for (name, count, ms) in &segments {
+            let share = if seg_total > 0.0 { ms / seg_total * 100.0 } else { 0.0 };
+            eprintln!("ok-extract: PROFILE   segment {name} {count}x {ms:.0}ms ({share:.0}%)");
+        }
+        if !segments.is_empty() {
+            eprintln!("ok-extract: PROFILE segments {seg_total:.0}ms (summed over threads, not a wall time)");
+        }
+        // With OKLIB_PROFILE too: the inside of the mesh decode, the segment an item's time turned out to be in.
+        for (label, secs, n) in crate::oklib::drain_profile().into_iter().take(12) {
+            eprintln!("ok-extract: PROFILE   oklib {label} {n}x {:.0}ms", secs * 1000.0);
+        }
         // How many of the textures this session carries are **exactly** a decoded payload — nothing flipped,
         // masked, tinted or composed. Only those could be handed to UE as the source's own BC blocks with no
         // decode at all, so this share is the ceiling on that idea (CARD_OPEN_PERF 第四节 asks for it first).

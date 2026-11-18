@@ -171,7 +171,7 @@ void AOpenKoikatsuPlayerController::UpdatePaintAim(bool Fire)
   const FVector Target=Origin+Dir*AimDepth;
   PaintSprayer->SetSpray(Aim,Nozzle,AOKPaintSprayer::AimDirection(Nozzle,Target,PaintSprayer->Settings.JetSpeed));
 }
-void AOpenKoikatsuPlayerController::SetPaintPreviewActive(bool Enabled)
+void AOpenKoikatsuPlayerController::SetPaintPreviewActive(bool Enabled,bool bShowControls)
 {
  if(!Enabled){PaintAimHeld=false;PaintOwnsLeft=false;PaintPreviousLeft=false;CameraDrag.Cancel();}
  PaintPreviewActive=Enabled;
@@ -182,7 +182,7 @@ void AOpenKoikatsuPlayerController::SetPaintPreviewActive(bool Enabled)
  if(IsValid(PaintSprayer)){
   if(Enabled)PaintSprayer->SetActorHiddenInGame(false);
   if(!Enabled){PaintSprayer->SetSpray(false,FVector::ZeroVector,FVector::ForwardVector);PaintSprayer->ClearPaint();}
-  PaintSprayer->SetControlsVisible(Enabled);PaintSprayer->SetActorTickEnabled(Enabled);
+  PaintSprayer->SetControlsVisible(Enabled&&bShowControls);PaintSprayer->SetActorTickEnabled(Enabled);
  }
 }
 bool AOpenKoikatsuPlayerController::UpdatePaintGesture(bool Left,bool HasMouse,bool Focused,bool OverUI)
