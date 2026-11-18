@@ -257,8 +257,45 @@ bool UOKDreamControl::Press()
 {
 	if(!GetShown())return false;
 	if(Header){HandleHeader();return true;}
+	if(auto* U=Cast<UCheckBox>(Source.Get()))
+	{
+		if(!Toggle||!U->GetIsEnabled())return false;
+		HandleToggle(!U->IsChecked());return true;
+	}
 	if(!Button||!Button->GetIsEnabled())return false;
 	HandleClicked();return true;
+}
+bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
+{
+	auto Fail=[OutNote](const FString& Why){if(OutNote)*OutNote=Why;return false;};
+	if(!GetShown())return Fail(TEXT("not shown"));
+	UWidget* S=Source.Get();
+	if(!S||!S->GetIsEnabled())return Fail(TEXT("no enabled control behind it"));
+	if(auto* U=Cast<USlider>(S))
+	{
+		if(!Value.IsNumeric())return Fail(TEXT("a slider takes a number"));
+		const float V=FCString::Atof(*Value);
+		if(V<U->GetMinValue()-1e-4f||V>U->GetMaxValue()+1e-4f)return Fail(FString::Printf(TEXT("out of range %g..%g"),U->GetMinValue(),U->GetMaxValue()));
+		HandleSlider(V);return true;
+	}
+	if(Cast<UCheckBox>(S))
+	{
+		const FString L=Value.ToLower();
+		const bool bOn=L==TEXT("1")||L==TEXT("on")||L==TEXT("true");
+		if(!bOn&&L!=TEXT("0")&&L!=TEXT("off")&&L!=TEXT("false"))return Fail(TEXT("a toggle takes on/off/1/0"));
+		HandleToggle(bOn);return true;
+	}
+	if(auto* U=Cast<UComboBoxString>(S))
+	{
+		int32 Index=U->FindOptionIndex(Value);
+		if(Index==INDEX_NONE&&Value.IsNumeric())Index=FCString::Atoi(*Value);
+		if(Index<0||Index>=U->GetOptionCount())return Fail(TEXT("no option ")+Value);
+		const int32 ShownIndex=OptionMap.IsEmpty()?Index:OptionMap.IndexOfByKey(Index);
+		if(ShownIndex==INDEX_NONE)return Fail(TEXT("option hidden by the filter: ")+Value);
+		HandleChoice(ShownIndex);return true;
+	}
+	if(Cast<UEditableTextBox>(S)){HandleInputCommitted(Value);return true;}
+	return Fail(TEXT("it takes no value"));
 }
 void UOKDreamControl::HandleHeader()
 {
@@ -661,6 +698,20 @@ void UOKReaderScreen::BuildCategories()
 			if(Weak.IsValid()&&Weak->BoneCategoryCombo&&Weak->BoneCategoryCombo->GetSelectedOption()!=Want)Weak->BoneCategoryCombo->SetSelectedOption(Want);
 		});
 	};
+	// 胸部柔軟度／胸部重量 (shown under 原遊戲參數) go with the breast sliders; the bone rows are what follows the last
+	// slider row in the same column (the category drop-down, the X／Y／Z switch, then the rows of the chosen category).
+	TArray<UWidget*> BustRows;
+	for(UOKShapeSlider* S:G->BoneSliders)if(S&&!S->BodyParameter.IsEmpty()&&S->ModRow)BustRows.Add(S->ModRow);
+	TArray<UWidget*> BoneRows;
+	if(G->ShapeBox&&G->ShapeSliders.Num())
+	{
+		const int32 Last=G->ShapeBox->GetChildIndex(G->ShapeSliders.Last()?G->ShapeSliders.Last()->GetParent():nullptr);
+		for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)
+		{
+			UWidget* W=G->ShapeBox->GetChildAt(I);
+			if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox&&W!=G->BoneCategoryCombo&&W!=G->BoneAxesCheck)BoneRows.Add(W);
+		}
+	}
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
 	for(FGroup& Each:Face.Groups)
 	{
@@ -679,6 +730,22 @@ void UOKReaderScreen::BuildCategories()
 		Overlays.Build=[this,G](UDreamWidget* Page){BuildEyeOverlayPage(Page);};
 		int32 After=Face.Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("眼睛");});
 		Face.Groups.Insert(MoveTemp(Overlays),After==INDEX_NONE?Face.Groups.Num():After+1);
+	}
+	// 眼部縮放2: the ABMX eye bones (cf_J_Eye_tz, cf_J_Eye_rz_L/R, cf_J_Eye_tx_L/R …, category FaceEyes2) as the original
+	// game's eye page has them: the bone rows of 骨骼調整：眼球 with the X／Y／Z switch, without the category drop-down.
+	if(BoneRows.Num())
+	{
+		FGroup EyeBones;EyeBones.Name=TEXT("眼部縮放2");EyeBones.bShownOnly=true;
+		EyeBones.OnEnter=BoneCategory(TEXT("骨骼調整：眼球"));
+		EyeBones.Signature=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
+		{
+			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return FString();
+			return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
+		};
+		if(G->BoneAxesCheck)EyeBones.Sources.Add(G->BoneAxesCheck.Get());
+		for(UWidget* W:BoneRows)EyeBones.Sources.Add(W);
+		int32 After=Face.Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("瞳孔覆蓋貼圖");});
+		Face.Groups.Insert(MoveTemp(EyeBones),After==INDEX_NONE?Face.Groups.Num():After+1);
 	}
 	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
 	// page reads the card's catalog).
@@ -699,9 +766,6 @@ void UOKReaderScreen::BuildCategories()
 
 	FCategory Body;Body.Name=TEXT("身子");Body.Groups=ShapeGroups(true,{TEXT("全身"),TEXT("胸部"),TEXT("軀幹"),TEXT("腰臀"),TEXT("手臂"),TEXT("腿部")});
 	{
-		// 胸部柔軟度／胸部重量 (shown under 原遊戲參數): with the breast sliders.
-		TArray<UWidget*> BustRows;
-		for(UOKShapeSlider* S:G->BoneSliders)if(S&&!S->BodyParameter.IsEmpty()&&S->ModRow)BustRows.Add(S->ModRow);
 		for(FGroup& Each:Body.Groups)
 		{
 			Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
@@ -719,15 +783,7 @@ void UOKReaderScreen::BuildCategories()
 		};
 		if(G->BoneCategoryCombo)Bones.Sources.Add(G->BoneCategoryCombo.Get());
 		if(G->BoneAxesCheck)Bones.Sources.Add(G->BoneAxesCheck.Get());
-		if(G->ShapeBox&&G->ShapeSliders.Num())
-		{
-			const int32 Last=G->ShapeBox->GetChildIndex(G->ShapeSliders.Last()?G->ShapeSliders.Last()->GetParent():nullptr);
-			for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)
-			{
-				UWidget* W=G->ShapeBox->GetChildAt(I);
-				if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox)Bones.Sources.Add(W);
-			}
-		}
+		for(UWidget* W:BoneRows)Bones.Sources.Add(W);
 		Bones.OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
 		{
 			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return;
@@ -1583,7 +1639,7 @@ static void OKReaderAllControls(const UOKReaderScreen* S,TArray<UOKDreamControl*
 	}
 }
 
-bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutNote)
+bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutNote,const FString* SetTo)
 {
 	TArray<UOKDreamControl*> All;TArray<FString> Paths;
 	OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
@@ -1607,7 +1663,7 @@ bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutN
 	else if(Found.Num()>1){if(OutNote)*OutNote=FString::Printf(TEXT("ambiguous: %d controls named %s; give the path or #N:"),Found.Num(),*Text)+List(Found);return false;}
 	if(OutNote)
 	{
-		*OutNote=TEXT("pressed ")+Paths[Found[Pick]];
+		*OutNote=(SetTo?FString::Printf(TEXT("set %s = "),*Paths[Found[Pick]])+*SetTo:TEXT("pressed ")+Paths[Found[Pick]]);
 		// A short name matched exactly while other controls contain it: say which, so a caller meaning one of them notices.
 		if(!bPath)
 		{
@@ -1615,6 +1671,13 @@ bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutN
 			for(int32 I=0;I<All.Num();++I)if(!Found.Contains(I)&&All[I]->GetShownText().Contains(Text))Also.Add(I);
 			if(Also.Num())*OutNote+=TEXT("\n(also containing it, by path:")+List(Also)+TEXT(")");
 		}
+	}
+	if(SetTo)
+	{
+		FString Why;
+		if(All[Found[Pick]]->SetValue(*SetTo,&Why))return true;
+		if(OutNote)*OutNote+=TEXT(" failed: ")+Why;
+		return false;
 	}
 	return All[Found[Pick]]->Press();
 }
@@ -1807,7 +1870,7 @@ bool OKReaderScreenUnderCursor()
 // For the game MCP (ui_exec) and tests: the screen's own navigation, which has no UMG control to set.
 //   ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state
 static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
-	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <path|text> [#N] | controls [filter] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
+	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <path|text> [#N] | set <path|text> [#N] = <value> | controls [filter] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld*,FOutputDevice& Out)
 	{
 		UOKReaderScreen* S=GScreen.Get();
@@ -1821,11 +1884,25 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		// "press <text> [#N]": the shown control with that text (the N-th of several, from 0) is clicked as the pointer would.
 		else if(Verb==TEXT("press"))
 		{
-			FString Text=Value;int32 Index=-1;int32 Hash;
+			FString Text=Value;int32 Index=-1;int32 Hash=INDEX_NONE;
 			if(!Text.Contains(TEXT("›"))&&Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
 			FString Note;
 			Done=!Text.IsEmpty()&&S->PressControl(Text,Index,&Note);
 			if(!Note.IsEmpty())Out.Log(Note);
+		}
+		// "set <path|text> [#N] = <value>": a slider, toggle, drop-down or input set as a person would (the same matching as press).
+		else if(Verb==TEXT("set"))
+		{
+			int32 Eq=INDEX_NONE;
+			Done=Value.FindChar(TEXT('='),Eq);
+			if(Done)
+			{
+				FString Text=Value.Left(Eq).TrimStartAndEnd();const FString To=Value.Mid(Eq+1).TrimStartAndEnd();int32 Index=-1;int32 Hash=INDEX_NONE;
+				if(!Text.Contains(TEXT("›"))&&Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
+				FString Note;
+				Done=!Text.IsEmpty()&&S->PressControl(Text,Index,&Note,&To);
+				if(!Note.IsEmpty())Out.Log(Note);
+			}
 		}
 		// "controls [filter]": every shown control's path (what press takes), flagging paths two controls share.
 		else if(Verb==TEXT("controls"))S->ListControls(Out,Value);

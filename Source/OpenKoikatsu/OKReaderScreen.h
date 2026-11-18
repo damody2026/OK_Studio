@@ -59,8 +59,12 @@ public:
 	bool IsOpen() const { return bOpen; }
 	// Copy the UMG control's state into this one. Cheap when nothing changed.
 	void Sync();
-	// A click on it, as the pointer would (ok.ReaderScreen press): false when it is not a shown, enabled button.
+	// A click on it, as the pointer would (ok.ReaderScreen press): false when it is not a shown, enabled button or toggle
+	// (a toggle flips).
 	bool Press();
+	// Set its value as a person would (ok.ReaderScreen set): a slider's number, a toggle's on／off／1／0, a drop-down's
+	// option text or index, an input's text. False when it is not shown, enabled, or the value does not fit.
+	bool SetValue(const FString& Value,FString* OutNote=nullptr);
 	const FString& GetShownText() const { return ShownText; }
 
 protected:
@@ -135,7 +139,7 @@ public:
 	// Press the shown control named by Text: its path ("動作與表情›眼睛：面向前方", ControlPath) or its text. A text
 	// several shown controls have (exactly, or failing that, containing it) is ambiguous: nothing is pressed unless
 	// Index (>=0, "#N") picks one, and OutNote lists the candidates' paths.
-	bool PressControl(const FString& Text,int32 Index,FString* OutNote=nullptr);
+	bool PressControl(const FString& Text,int32 Index,FString* OutNote=nullptr,const FString* SetTo=nullptr);
 	// Where a control is: region or drawer or category›sub, then the text it shows. Stable while the layout is.
 	FString ControlPath(const UOKDreamControl* C) const;
 	// Every shown control, path per line (ok.ReaderScreen controls).
