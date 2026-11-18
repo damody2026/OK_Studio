@@ -132,6 +132,32 @@ fn is_mine(root: &Path, pid: u64) -> bool {
         .is_some_and(|v| v["session"].as_str() == Some(me))
 }
 
+/// The pid this call is acting on: the one the caller named with `OK_GAME_PID` or game_select, else the one the last
+/// lookup on this thread chose, else this session's own game. 0 when there is none (nothing to end on a timeout).
+pub fn acting_pid() -> u32 {
+    if let Some(pid) = std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()).filter(|p| *p != 0) {
+        return pid;
+    }
+    let selected = SELECTED.load(Ordering::Relaxed);
+    if selected != 0 {
+        return selected;
+    }
+    let default = default_target();
+    if default != 0 {
+        return default;
+    }
+    OWN.load(Ordering::Relaxed)
+}
+
+/// Whether this session may end that game when it hangs: the caller named it with `OK_GAME_PID`, or this session
+/// started it. Nothing else is ever ended -- another session's game on the same machine is not ours to kill.
+pub fn owned(root: &Path, pid: u32) -> bool {
+    if std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()) == Some(pid) {
+        return true;
+    }
+    is_mine(root, u64::from(pid))
+}
+
 /// The games listed for a caller that has to pick one.
 fn listing(all: &[Value]) -> String {
     all.iter()
@@ -190,7 +216,24 @@ fn base(root: &Path) -> u16 {
 
 fn ui(root: &Path, path: &str, body: Option<&Value>) -> Result<Value> {
     let port = port(root, "ui", base(root) + 12)?;
-    let r = http(port, path, body, Duration::from_secs(60), || format!("no game answers on the UI channel 127.0.0.1:{port} (game_instances lists what runs)"))?;
+    // A hung game (GPU device hang) keeps its socket open and never replies: wait only so long, then end it
+    // (watchdog.rs). The deadline is OK_MCP_TIMEOUT_CALL / OK_MCP_TIMEOUT.
+    let deadline = crate::watchdog::secs("call", 60.);
+    let began = std::time::Instant::now();
+    let r = match http(port, path, body, Duration::from_secs_f64(deadline.max(1.)), || {
+        format!("no game answers on the UI channel 127.0.0.1:{port} (game_instances lists what runs)")
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            // Only a wait that actually ran out is a hang; a refused connection or a bad reply comes back at once.
+            let waited = began.elapsed().as_secs_f64();
+            if waited < deadline * 0.9 {
+                return Err(e);
+            }
+            let pid = acting_pid();
+            bail!("{e}\n{}", crate::watchdog::timed_out(root, pid, waited, &format!("the UI channel {path}")));
+        }
+    };
     if r["ok"] == false {
         bail!("{}", r["error"].as_str().unwrap_or("failed"));
     }
@@ -216,17 +259,18 @@ fn reader(root: &Path, a: &Value) -> Result<Value> {
     };
     let mut body = a.clone();
     if action != "state" && body["session"].is_null() {
-        let state = mailbox_call(Path::new(&mailbox), &json!({"action": "state"}), 10.)?;
+        let state = mailbox_call(root, Path::new(&mailbox), &json!({"action": "state"}), 10.)?;
         body["session"] = state["session"].clone();
         if body["revision"].is_null() {
             body["revision"] = state["revision"].clone();
         }
     }
-    let timeout = a["timeout_s"].as_f64().unwrap_or(if action == "state" { 10. } else { 120. });
-    mailbox_call(Path::new(&mailbox), &body, timeout)
+    let timeout = a["timeout_s"].as_f64().unwrap_or_else(|| crate::watchdog::secs("reader", if action == "state" { 10. } else { 120. }));
+    mailbox_call(root, Path::new(&mailbox), &body, timeout)
 }
 
-fn mailbox_call(root: &Path, body: &Value, timeout: f64) -> Result<Value> {
+/// `checkout` is the tree the game runs from (for the watchdog); `root` is that reader's mailbox folder.
+fn mailbox_call(checkout: &Path, root: &Path, body: &Value, timeout: f64) -> Result<Value> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
     let id = format!("{:032x}", now.as_nanos() + u128::from(LAST_ID.fetch_add(1, Ordering::Relaxed)));
     let name = format!("{id}.json");
@@ -259,7 +303,13 @@ fn mailbox_call(root: &Path, body: &Value, timeout: f64) -> Result<Value> {
         std::thread::sleep(Duration::from_millis(25));
     }
     let _ = std::fs::remove_file(&request);
-    bail!("the card reader did not answer in {timeout} s")
+    // The mailbox is answered from the reader's own tick: a hung game (GPU device hang) never gets back to it. End it
+    // rather than leave it stuck for ever -- only if it is this session's and answers nothing (watchdog.rs).
+    let pid = acting_pid();
+    bail!(
+        "the card reader did not answer in {timeout} s\n{}",
+        crate::watchdog::timed_out(checkout, pid, timeout, "the card reader mailbox")
+    )
 }
 
 pub fn tools() -> Vec<Value> {

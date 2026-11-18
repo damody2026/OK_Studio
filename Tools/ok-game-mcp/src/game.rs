@@ -223,7 +223,13 @@ impl Game {
             }
             std::thread::sleep(Duration::from_secs(2));
         }
-        bail!("the control channel did not come up in {}s; launcher log:\n{}", timeout.as_secs(), self.launch_log_tail())
+        // Started but never answered (a hang during load, a GPU device hang): end that pid rather than leave it
+        // sitting there for ever. Only the game this call started (watchdog.rs).
+        let hung = self.launched_pid().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+        bail!("the control channel did not come up in {}s; launcher log:
+{}
+{}", timeout.as_secs(), self.launch_log_tail(),
+            crate::watchdog::launch_timed_out(&self.root, hung, timeout.as_secs_f64(), "the street game"))
     }
 
     /// One per control port: games of other sessions in this checkout start at the same time.

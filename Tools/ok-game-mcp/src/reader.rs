@@ -123,7 +123,7 @@ pub fn launch(checkout: &Path, a: &Value) -> Result<Value> {
     let log = stdout.lines().find_map(|l| l.strip_prefix("Log: ").map(|s| s.trim().to_string())).unwrap_or_default();
     // Ready: the reader registered its channels (Saved/OKControl/<pid>.json, under the root it runs from) with the UI
     // channel and the card reader mailbox.
-    let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or(300.0));
+    let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or_else(|| crate::watchdog::secs("launch", 300.0)));
     let start = Instant::now();
     loop {
         let ready = crate::control::instances(&root)
@@ -141,7 +141,12 @@ pub fn launch(checkout: &Path, a: &Value) -> Result<Value> {
             bail!("the reader (pid {pid}) exited before its channels came up; see its log {log}");
         }
         if start.elapsed() > timeout {
-            bail!("the reader (pid {pid}) runs but its channels did not come up within {:.0} s; see its log {log}", timeout.as_secs_f64());
+            // It started but never came up (a hang during load, a GPU device hang): end it rather than leave it
+            // sitting there, and say so. Only this pid, which we started ourselves (watchdog.rs).
+            bail!("the reader (pid {pid}) runs but its channels did not come up within {:.0} s; see its log {log}
+{}",
+                timeout.as_secs_f64(),
+                crate::watchdog::launch_timed_out(&root, pid, timeout.as_secs_f64(), "the card reader"));
         }
         std::thread::sleep(Duration::from_millis(500));
     }

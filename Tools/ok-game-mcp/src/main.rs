@@ -8,6 +8,7 @@ mod game;
 mod hscene;
 mod reader;
 mod studio;
+mod watchdog;
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;

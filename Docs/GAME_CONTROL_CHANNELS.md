@@ -45,6 +45,30 @@ MCP 沒載入的 session 用 `Tools/ok-game-mcp/target/release/ok-game-mcp.exe c
 
 讀卡的 `parameters` 含 `shape.*`、`bone.*`、`physics.*`、`pregnancy.*`、`style.*`（角色風格的 `style` 與各比例參數）與卡片屬性。
 
+## 卡住就強制關：逾時與強制結束（2026-11-19）
+
+GPU 卡死（`DXGI_ERROR_DEVICE_HUNG`，2026-11-19 在讀卡器抓到一次）之後，行程還活著、通道還在聽，但永遠不會再回應——等它的工具會一直等下去，自動化跑一輪會看起來「還在跑」。所以每個等待都有期限，到了就**強制結束那一個行程**（`Tools/ok-game-mcp/src/watchdog.rs`）。
+
+| 等什麼 | 預設 | 環境變數 | 逾時會做什麼 |
+|---|---:|---|---|
+| 單次呼叫（`ui_*`、`game_*` 的 HTTP 通道） | 60 s | `OK_MCP_TIMEOUT_CALL`，或 `OK_MCP_TIMEOUT` | 判定後強制結束 |
+| 讀卡器信箱（`reader_call`） | 120 s（`state` 10 s） | `OK_MCP_TIMEOUT_READER`，或呼叫參數 `timeout_s` | 判定後強制結束 |
+| 啟動等待（`reader_launch`、`game_launch`） | 300 s／街區照呼叫參數 | `OK_MCP_TIMEOUT_LAUNCH`，或 `timeout_s` | 結束剛啟動的那個 pid |
+| 健康探測（判斷是「卡死」還是「只是慢」） | 3 s | `OK_MCP_TIMEOUT_HEALTH` | — |
+| `studio_launch` | 120 s | `OK_MCP_TIMEOUT_LAUNCH` | **不結束任何行程**：它手上的 pid 是啟動器的，不是 OK Studio 的 |
+
+逾時之後的判斷順序：
+
+1. `OK_MCP_KILL_ON_TIMEOUT=0` 就只回報不結束（要現場看卡死的畫面時用）。
+2. **只關自己的**：pid 必須是呼叫端用 `OK_GAME_PID` 指名的，或這個 session 自己啟動的（`Saved/OKControl/launched/<pid>.json`）。別的 session 的遊戲一律不動，只回報。**絕不按視窗標題或執行檔名稱找行程**。
+3. 再探一次 `/health`（3 s）：還會回應就代表「只是慢」，不結束，並叫你把期限調大。
+4. 確認那個 pid 還是遊戲行程（`UnrealEditor*`／`OpenKoikatsu*`，避免 pid 被別人重用），才
+   `Win32_Process.Terminate`——卡死的遊戲不可能禮貌關閉，要關的那條執行緒就是卡住的那條。
+
+結束之後：錯誤訊息與 stderr 都寫明「等了幾秒、結束了哪個 pid、最後的狀況」，而且**不清任何證據**，遊戲的 log 與 Aftermath／D3D12 的 crash dump 原地保留（`Saved/Logs`、`Saved/Crashes`）。逾時一律是失敗：`ok-game-mcp call` 回非零結束碼，MCP 工具回錯誤，所以自動化那一輪會算失敗，不會看起來跑完。
+
+實測（2026-11-19）：把自己的讀卡器用 `NtSuspendProcess` 凍住（和 GPU 卡死一樣，通道在但不回應），`OK_MCP_TIMEOUT_CALL=8` 下 `ui_exec` 等 8 s → 探 `/health` 失敗 → `ended it (Win32_Process.Terminate)`，行程確實消失、結束碼非零；沒凍住時同樣的短期限不會誤殺（呼叫 1 s 內就回來了）。
+
 ## 每一筆指令都記得是誰送的（2026-11-19）
 
 一台機器上常有好幾個 session 各自開著遊戲，忘了設 `OK_GAME_PID` 的工具會打到別人的遊戲上（2026-11-19 就發生過：別的 session 的驗證腳本在量測中途對另一個讀卡器翻頁、開卡）。所以兩條通道都記來源：

@@ -154,7 +154,9 @@ impl Studio {
         }
         let mut child = cmd.spawn().context("could not start Tools/run_scene_editor.lua")?;
         let pid = child.id();
-        let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or(120.0));
+        // OK_MCP_TIMEOUT_LAUNCH / OK_MCP_TIMEOUT override it. Nothing is ended here on a timeout: the pid this call
+        // knows is the launcher's, not OK Studio's, and ending the wrong process is worse than waiting (watchdog.rs).
+        let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or_else(|| crate::watchdog::secs("launch", 120.0)));
         let start = Instant::now();
         while start.elapsed() < timeout {
             if let Some(status) = child.try_wait()? {
