@@ -108,7 +108,7 @@ void AOKStreetSocialScene::TickApproach(){
  auto& S=*State;if(S.SelfTest)return;
  const double Now=FPlatformTime::Seconds();
  if(S.ApproachNext.Num()!=S.Manifest.Characters.Num()){S.ApproachNext.Init(0,S.Manifest.Characters.Num());for(int32 I=1;I<S.ApproachNext.Num();++I)S.ApproachNext[I]=Now+FMath::FRandRange(120.0,600.0);}
- if(S.ApproachGirl!=INDEX_NONE){StepApproach();return;}
+ if(S.ApproachGirl!=INDEX_NONE){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ApproachStep);StepApproach();return;}
  // Busy with someone or something: nobody comes over. Browsing the bookshop each on their own (a solo activity on a date
  // with her) is still that date: 狂死香 walked up to him while he was there with Arthuria.
  if(S.RemoteMode!=0||S.Target!=INDEX_NONE||S.FreeTalkBusy||S.OutingGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.Facility!=INDEX_NONE||S.SoloGirl!=INDEX_NONE||S.SleepPhase!=0||S.PrivateGirl!=INDEX_NONE||S.RingGirl!=INDEX_NONE||Now-S.ApproachLast<60)return;
@@ -122,14 +122,15 @@ void AOKStreetSocialScene::TickApproach(){
   if(const double* Parted=S.PartedAt.Find(I);Parted&&Now-*Parted<180.0)continue; // they just parted (a goodbye, or he sent her off): not straight back // her own reason lets her leave her plan (Life.inl)
   const FString Id=OKStreetStableId(S.Manifest.Characters[I]);const float Distance=FVector::Dist2D(S.Agents[I-1].Position,S.Male)/100.f;
   // Whether she comes over (invite.rs approach_score): her feelings, his appeal, distance, a recent no, today's intent, withdrawal.
+  const TSharedPtr<FJsonObject> Approach=[&]{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ApproachScore);
   auto Request=OKRulesHeroineRequest(S,TEXT("approach_score"),Id);Request->SetNumberField(TEXT("look"),PlayerLook());Request->SetNumberField(TEXT("distance_m"),Distance);
   Request->SetBoolField(TEXT("rejected"),S.InviteRefusals.FindRef(Id)>0);Request->SetStringField(TEXT("intent"),S.Intents.FindRef(Id));Request->SetNumberField(TEXT("withdraw"),BiasOf(I).Withdraw);
-  const TSharedPtr<FJsonObject> Approach=OKRulesEval(S,Request);if(!Approach.IsValid())continue;
+  return OKRulesEval(S,Request);}();if(!Approach.IsValid())continue;
   const float Score=float(Approach->GetNumberField(TEXT("score"))),Appeal=float(Approach->GetNumberField(TEXT("appeal")));
   UE_LOG(LogTemp,Display,TEXT("Street approach check: actor=%d score=%.0f appeal=%.0f distance=%.0fm"),I,Score,Appeal,Distance);
   if(!Approach->GetBoolField(TEXT("comes"))&&!S.InitiativeReason.Contains(I))continue;
-  if(Distance>60){ReachOutByPhone(I);S.ApproachLast=Now;return;} // far: a message, or a lover calls (OKStreetSocialPhoneInbox.inl)
-  auto Path=ContactRoute(S.Agents[I-1].Position,S.Male);if(Path.IsEmpty())continue;
+  if(Distance>60){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ApproachPhone);ReachOutByPhone(I);S.ApproachLast=Now;return;} // far: a message, or a lover calls (OKStreetSocialPhoneInbox.inl)
+  auto Path=[&]{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ApproachRoute);return ContactRoute(S.Agents[I-1].Position,S.Male);}();if(Path.IsEmpty())continue;
   if(S.ScheduleHeld.Contains(I))ReleaseFromSchedule(I);
   S.ApproachLastMinute=OKStreetMindNow(S);
   S.ApproachGirl=I;S.ApproachJoin=false;S.ApproachBlockedNear=false;S.ApproachBlockedSince=0;S.ApproachPath=MoveTemp(Path);S.ApproachStarted=Now;S.ApproachLimit=90.0;S.ApproachLast=Now;S.ApproachAppointment=false;S.ApproachRetries=0;S.Agents[I-1].Held=true;

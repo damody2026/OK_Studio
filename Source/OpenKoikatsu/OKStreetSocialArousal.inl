@@ -51,7 +51,7 @@ static FString OKStreetBodyWetStatus(const FOKStreetSceneState& S,int32 Girl,int
 }
 
 void AOKStreetSocialScene::TickArousal(float Dt){
- TickPregnancy();
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickPregnancy);TickPregnancy();}
  auto& S=*State;const int32 Cast=FMath::Min(S.Manifest.Characters.Num(),OKStreetCastCount);
  const double Wall=FPlatformTime::Seconds();const int64 Minute=OKStreetMindNow(S);
  // Twice a second: her flush follows her desire (the mind's own face look keeps it as a floor, StreetMind face), and
@@ -59,12 +59,13 @@ void AOKStreetSocialScene::TickArousal(float Dt){
  // and wetness go (a new day too: she slept through it).
  if(Wall>=S.ArousalCheckAt){S.ArousalCheckAt=Wall+.5;
   const uint32 ExtHash=GetTypeHash(S.Store.Ext);
-  if(ExtHash!=S.ArousalExtHash){S.ArousalExtHash=ExtHash;TSharedPtr<FJsonObject> E;const TSharedPtr<FJsonObject>* H=nullptr;
+  if(ExtHash!=S.ArousalExtHash){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ArousalExtRead);S.ArousalExtHash=ExtHash;TSharedPtr<FJsonObject> E;const TSharedPtr<FJsonObject>* H=nullptr;
    const bool Read=!S.Store.Ext.IsEmpty()&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.Ext),E)&&E.IsValid()&&E->TryGetObjectField(TEXT("hexp"),H);
    for(int32 Girl=1;Girl<Cast;++Girl){const TSharedPtr<FJsonObject>* Her=nullptr;double White=-1,Red=-1,Day=-1,Climaxes=0;
     if(Read&&(*H)->TryGetObjectField(OKStreetStableId(S.Manifest.Characters[Girl]),Her)){(*Her)->TryGetNumberField(TEXT("white_until"),White);(*Her)->TryGetNumberField(TEXT("red_until"),Red);(*Her)->TryGetNumberField(TEXT("today_day"),Day);(*Her)->TryGetNumberField(TEXT("today_orgasms"),Climaxes);}
     S.ArousalWhiteUntil[Girl]=int64(White);S.ArousalRedUntil[Girl]=int64(Red);S.ArousalClimaxDay[Girl]=Climaxes>=1.?int64(Day):-1;}}
   const bool NewDay=S.ArousalDay!=S.Store.CalendarDay;S.ArousalDay=S.Store.CalendarDay;
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ArousalFaces);
   for(int32 Girl=1;Girl<Cast;++Girl){
    const FOKStreetPlanBlock* B=LifeBlock(Girl,int32(Minute%1440));
    const bool Washing=(B&&(B->Kind==TEXT("sleep")||B->Kind==TEXT("bath")))||S.SleepGirl==Girl||S.SleepGirl2==Girl||(S.Pair.Partner==Girl&&S.Pair.Bath);
@@ -102,5 +103,5 @@ void AOKStreetSocialScene::TickArousal(float Dt){
   const uint8 Colour=White&&Red?(++S.ArousalTurn[Girl]%2?OKArousal::White:OKArousal::Red):White?OKArousal::White:Red?OKArousal::Red:OKArousal::Clear;
   if(Spawn(Girl,TEXT("cf_J_Kokan"),Colour))++S.ArousalWetCrotch[Girl];
  }
- S.ArousalDrops.Tick(Dt,[this](int32 Girl,FName Bone,FVector& At){return OKGetCrowdRuntimeBonePosition(this,Girl,Bone,At);});
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ArousalDrops);S.ArousalDrops.Tick(Dt,[this](int32 Girl,FName Bone,FVector& At){return OKGetCrowdRuntimeBonePosition(this,Girl,Bone,At);});
 }

@@ -595,8 +595,8 @@ bool AOKStreetSocialScene::SongCameraShot(double Now,float Dt,FVector& Location,
 
 void AOKStreetSocialScene::TickSong(double Now){
  if(!State||State->SelfTest)return;auto& S=*State;auto& G=S.Song;
- if(!G.Loaded)SongLoad();
- if(G.SaveDirty&&FPlatformTime::Seconds()-G.DirtySince>20.)SongSave();
+ if(!G.Loaded){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongLoad);SongLoad();}
+ if(G.SaveDirty&&FPlatformTime::Seconds()-G.DirtySince>20.){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongSave);SongSave();}
  if(G.Endpoint.IsEmpty())return;
  // Begun in the same breath as sitting down together ("sit on the bench, sing it now": the judge read both): put back
  // until they sit, as if accepted while they were sitting down.
@@ -632,24 +632,24 @@ void AOKStreetSocialScene::TickSong(double Now){
  case EOKSongPhase::Idle:{
   // Her milestone songs (rules song_milestone): made as soon as one is due or close, offered once it is due.
   if(!G.Enabled||Now<G.NextCheck)return;G.NextCheck=Now+OKSongCheckSeconds;
-  SongTrackStages();
-  const auto D=SongMilestone();const TSharedPtr<FJsonObject>* Pick=nullptr;
+  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongTrackStages);SongTrackStages();}
+  const auto D=[&]{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongMilestone);return SongMilestone();}();const TSharedPtr<FJsonObject>* Pick=nullptr;
   if(!D.IsValid()||!D->TryGetObjectField(TEXT("pick"),Pick)){G.LastReason=TEXT("no milestone");return;}
   FString Id,Occasion;(*Pick)->TryGetStringField(TEXT("id"),Id);(*Pick)->TryGetStringField(TEXT("occasion"),Occasion);G.LastReason=Occasion;
   const int32 Girl=OKSongGirlOf(S,Id);FString Error;
-  if(Girl!=INDEX_NONE&&!SongPrepare(Girl,false,Error,Occasion))UE_LOG(LogTemp,Warning,TEXT("Street song: %s"),*Error);
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongPrepare);if(Girl!=INDEX_NONE&&!SongPrepare(Girl,false,Error,Occasion))UE_LOG(LogTemp,Warning,TEXT("Street song: %s"),*Error);
   return;}
  case EOKSongPhase::Preparing:
   // A job that never finishes (the service stopped mid-job, a stage hung) fails after an hour; the milestone stays
   // and is made again later.
   if(Now-G.PhaseAt>3600){G.Phase=EOKSongPhase::Failed;G.PhaseAt=Now;G.Notice=FString(OKT(TEXT("ui.song.failed")))+TEXT("timeout");UE_LOG(LogTemp,Warning,TEXT("Street song: job %s took over an hour"),*G.JobId);RefreshUI();return;}
-  if(!G.RequestPending&&Now>=G.NextCheck){G.NextCheck=Now+OKSongPollSeconds;SongPoll();}
+  if(!G.RequestPending&&Now>=G.NextCheck){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongPoll);G.NextCheck=Now+OKSongPollSeconds;SongPoll();}
   return;
  case EOKSongPhase::Ready:
   // Is her milestone due yet (a song made ahead waits)? If another heroine's is due first, this one waits in the cache
   // (made again from it later). A test song is always due.
   if(G.Override)G.Due=true;
-  else if(Now>=G.NextCheck){G.NextCheck=Now+OKSongCheckSeconds;SongTrackStages();const auto D=SongMilestone();const TSharedPtr<FJsonObject>* Pick=nullptr;FString Id,Occasion;bool Due=false;
+  else if(Now>=G.NextCheck){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SongReadyCheck);G.NextCheck=Now+OKSongCheckSeconds;SongTrackStages();const auto D=SongMilestone();const TSharedPtr<FJsonObject>* Pick=nullptr;FString Id,Occasion;bool Due=false;
    if(D.IsValid()&&D->TryGetObjectField(TEXT("pick"),Pick)){(*Pick)->TryGetStringField(TEXT("id"),Id);(*Pick)->TryGetStringField(TEXT("occasion"),Occasion);(*Pick)->TryGetBoolField(TEXT("due"),Due);}
    if(Id==G.HeroineId&&Occasion==G.Occasion)G.Due=Due;
    else if(Due){SongReset(OKT(TEXT("ui.song.singer_changed")),false);return;}
