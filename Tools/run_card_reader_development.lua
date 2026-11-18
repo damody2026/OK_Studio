@@ -21,7 +21,7 @@ local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
-local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true }
+local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true }
 local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true }
 
 local function parse(argv)
@@ -123,6 +123,11 @@ local function main()
     extra, stage_env = street_stage.packaged_launch(root, stage_exe)
     for _, x in ipairs(extra) do args[#args + 1] = x end
   end
+  -- The DreamGUI reader screen is the reader's interface; -LegacyReader goes back to the old UMG gallery.
+  -- Passing -OKDreamReader after -- stays allowed (it is the same flag) and is not added twice.
+  local wants_dream = not o.legacyreader
+  for _, x in ipairs(o.passthrough) do if x:lower():match("^%-ok?dreamreader$") or x:lower() == "-dreamgui" then wants_dream = false end end
+  if wants_dream then args[#args + 1] = "-OKDreamReader" end
   for _, x in ipairs(o.passthrough) do args[#args + 1] = x end
   local receipt = json.object({ { "project", project }, { "executable", exe }, { "arguments", json.array({ table.unpack(args, 2) }) },
     { "module", module }, { "card_directory", cards }, { "log", log }, { "skinning", gpu and "GPU" or "CPU" } })
