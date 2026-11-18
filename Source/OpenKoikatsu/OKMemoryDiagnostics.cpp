@@ -116,6 +116,7 @@ void OKStartMemoryDiagnostics() {
 			// Only the streaming levels are read here (UObjects); the sample, the lines and the flush go to a worker. The
 			// flush waits for the log file's writer: on the game thread it took 110-250 ms whenever the disk was busy, three
 			// of the eight hitches of a low-memory walk (2026-11-18, stage conq1117d).
+			QUICK_SCOPE_CYCLE_COUNTER(STAT_OKMem_Tick); // core-ticker callback: named in hitch dumps, not FTicker "Self"
 			if (GSampling.exchange(true)) return true;
 			const int32 Levels = LoadedLevels();
 			Async(EAsyncExecution::ThreadPool, [Levels]() {

@@ -4,6 +4,7 @@
 #include "CityEnvironmentLog.h"
 #include "CityEnvironmentSaveGame.h"
 #include "Misc/App.h"
+#include "Stats/Stats.h"
 
 void UCityEnvironmentClockSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -137,6 +138,7 @@ bool UCityEnvironmentClockSubsystem::ConsumeInitialPlayback()
 
 bool UCityEnvironmentClockSubsystem::TickClock(float DeltaSeconds)
 {
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_CityEnvironment_TickClock); // a core-ticker callback: named in hitch dumps, not FTicker "Self"
 	(void)DeltaSeconds;
 	if (bPaused || bAwaitingSeed || !bHasClock)
 	{

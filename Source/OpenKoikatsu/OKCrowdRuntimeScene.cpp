@@ -1150,6 +1150,9 @@ struct FScene : TSharedFromThis<FScene> {
  FPlatformMisc::RequestExitWithStatus(false,Saved&&Complete==Entries.Num()&&Render->Ready.Load()&&Render->Failures.Load()==0&&VisualError.IsEmpty()?0:1);}
  }
  bool Tick(float Dt){
+  // The whole core-ticker callback under one scope: time outside the named parts below showed as STAT_FTicker_Tick
+  // "Self" (63-78 ms hitches while walking, Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md §11).
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_Tick);
   if(Stopped||!Owner.IsValid()||Owner->IsActorBeingDestroyed()){Shutdown();return false;}
   if(Suspended)return true;
   SceneTime+=Dt;
@@ -1178,7 +1181,7 @@ auto& T=Timings[GpuWindow?1:0];T.Frame.Add((Now-LastWall)*1000);T.Game.Add(FPlat
    }
    if(FPlatformTime::Seconds()>=CommitDeadline)break;
   }
-  if(Submitted){LoadingUploadFence.BeginFence(FRenderCommandFence::ESyncDepth::RHIThread);LoadingUploadPending=true;}
+  if(Submitted){QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_UploadFence);LoadingUploadFence.BeginFence(FRenderCommandFence::ESyncDepth::RHIThread);LoadingUploadPending=true;}
   for(auto& E:Entries)if(E->Stage==6&&E->PackedBank.IsReady()&&E->RevealQueued&&E->RevealFence.IsFenceComplete()){auto Prepared=E->PackedBank.Consume();E->Bank=MoveTemp(Prepared.Validated);if(!E->Bank){Fail(*E,Prepared.Error.IsEmpty()?TEXT("Background private GPU bank packing failed"):Prepared.Error);continue;}E->AnimationBounds=Prepared.Bounds;E->CpuKeys=MoveTemp(Prepared.CpuKeys);for(int32 I=0;I<E->Clips.Num();++I)E->Clips[I].Tracks=MoveTemp(Prepared.CpuTracks[I]);E->Stage=5;--Active;++Complete;GOKRuntimeCharactersInstalled=Complete;ShowLoadingCharacter(*E);}
   // Low-memory PC (OKRuntimeLowMemory): every heroine is installed and no prepare runs, so the decoded source bundles,
   // library models and PNGs her opens kept are not needed any more (a later open decodes them again).
@@ -1210,8 +1213,8 @@ auto& T=Timings[GpuWindow?1:0];T.Frame.Add((Now-LastWall)*1000);T.Game.Add(FPlat
     if(!Passed){R->Fail(Error);R->UploadStatus.Store(-1);}else R->UploadStatus.Store(Done?2:0);
    });}
   }
-  if(Camera.IsValid()&&!ExternalControl)UpdateDisplayLighting(-Camera->GetActorForwardVector());
-  UpdateFaceFlatten();
+  {QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_DisplayLighting);if(Camera.IsValid()&&!ExternalControl)UpdateDisplayLighting(-Camera->GetActorForwardVector());}
+  {QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_FaceFlatten);UpdateFaceFlatten();}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_ShadowSubmission);  ServiceShadowSubmission();
  }
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_Stream);  ServiceStream();

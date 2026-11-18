@@ -4,6 +4,7 @@
 #include "Serialization/JsonReader.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Containers/Ticker.h"
 #include "KKAnimationCatalog.h"
 #include "OKAnimationAssets.h"
@@ -1168,12 +1169,20 @@ namespace
 
 	bool LiveTick()
 	{
-		TArray<FString> Files;
-		IFileManager::Get().FindFiles(Files, *(UOKAnimationLibrary::LiveFolder() / TEXT("*.okanim")), true, false);
-		for (const FString& F : Files)
+		// Runs every 0.5 s in every game (core ticker), on the game thread. The live files are loose files under Saved/, so
+		// only the disk is asked: IFileManager in a packaged game goes through the pak layer, whose FindFiles also walks the
+		// pak indexes, and now and then a call took 60-130 ms while the low-memory city streamed in around him
+		// (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md §11). No Live folder (every player's machine): nothing else is done.
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_OKAnim_LiveTick);
+		IPlatformFile& Disk = IPlatformFile::GetPlatformPhysical();
+		const FString Folder = UOKAnimationLibrary::LiveFolder();
+		if (!Disk.DirectoryExists(*Folder)) return true;
+		TArray<FString> Paths;
+		Disk.FindFiles(Paths, *Folder, TEXT(".okanim"));
+		for (const FString& Path : Paths)
 		{
-			const FString Path = UOKAnimationLibrary::LiveFolder() / F;
-			const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*Path);
+			const FString F = FPaths::GetCleanFilename(Path);
+			const FDateTime Stamp = Disk.GetTimeStamp(*Path);
 			FDateTime& Known = GLive.Seen.FindOrAdd(F, FDateTime::MinValue());
 			if (Stamp <= Known) continue;
 			const bool bFirst = Known == FDateTime::MinValue();
@@ -1202,9 +1211,21 @@ namespace
 		return true;
 	}
 
+	// Live reload is a development tool: a packaged game does not touch the file system for it at all unless asked
+	// (-OKAnimLive, OKAnim.LiveReload 1, or OKAnim.LivePlay). -1 until the module starts: decided there, unless an ini
+	// or the command line set it first.
+	int32 GOKAnimLiveReload = -1;
+	FAutoConsoleVariableRef CVarOKAnimLiveReload(TEXT("OKAnim.LiveReload"), GOKAnimLiveReload,
+		TEXT("Hot reload of Saved/OKAnim/Live/*.okanim, checked every 0.5 s. Default 1 in the editor and uncooked runs, 0 in a packaged game (-OKAnimLive turns it on)."));
+
 	struct FLiveStarter
 	{
-		FLiveStarter() { GLive.Ticker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float) { return LiveTick(); }), 0.5f); }
+		FLiveStarter()
+		{
+			if (GOKAnimLiveReload < 0) GOKAnimLiveReload = (!FPlatformProperties::RequiresCookedData() || FParse::Param(FCommandLine::Get(), TEXT("OKAnimLive"))) ? 1 : 0;
+			UE_LOG(LogTemp, Display, TEXT("OK live reload of Saved/OKAnim/Live: %s"), GOKAnimLiveReload > 0 ? TEXT("on") : TEXT("off (packaged game; -OKAnimLive or OKAnim.LiveReload 1 turns it on)"));
+			GLive.Ticker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float) { return GOKAnimLiveReload <= 0 || LiveTick(); }), 0.5f);
+		}
 		~FLiveStarter() { if (GLive.Ticker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(GLive.Ticker); }
 	};
 
@@ -1219,6 +1240,7 @@ namespace
 			UOKAnimSequence* Seq = A ? UOKAnimationLibrary::LoadOkAnimFile(Path, GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), UOKAnimSequence::StaticClass(), FName(*Args[0])), Error) : nullptr;
 			if (!Seq) { Out.Logf(TEXT("no character or %s: %s"), *Path, *Error); return; }
 			Seq->Meta.Add(TEXT("live_name"), Args[0]);
+			GOKAnimLiveReload = 1;   // asked for a live file: watch it, packaged game or not
 			LiveTick();   // the file as it is now is the baseline
 			Out.Logf(TEXT("live %s (%d frames): "), *Args[0], Seq->Frames);
 			PlaySingle(A, Seq, Out);

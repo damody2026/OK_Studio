@@ -514,3 +514,18 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 - **渲染端 0 个，GC 0 个**（GC 都在 60 ms 以下）。
 - **§8 那组渲染端数字是量错的**：§8 lowspec1118c 走路时的 68／191／75 ms（`UpdatePrimitive` 等 `OcclusionSubmittedFence` 121 ms、`Explicit wait for tasks` 65 ms、`InitViews` 等 queue）在安静机器上同一类走路完全没有出现，和 §9 一样判定为抢 CPU 的结果，不是串流资源初始化本身慢。旧数字留在 §8 表里，它们当时是在别的 Unreal 同时跑的机器上量的。§9 的 157／93 ms 是瞬移巡游、这里是走路，两组独立量测得到同样的结论。
 - **还在的**：没有子事件的 Self 停顿（FTicker 63–78 ms、Slate／FrameTime 约 200 ms）在安静机器上也会出现、能重现（§8 lowspec1118a 也有 70–85 ms 的 FTicker），所以不再当一次性的现象，下一步用这次的 trace 离线拆（Insights 只在机器没人用时跑）。TickApproach／TickSong 的 102 ms 一起看。
+- 102 ms 那帧已从 game.log 查清，是游戏事件、不是串流：女角（actor 5）为了唱歌走到他身边，同一帧里 `StepApproach` 抵达后开启对话（`came over; she opens in her own words`，约 52 ms），接着 `SongBegin` 同步跑规则 `song_choreo`（log：`Street rules slow: song_choreo 39.8 ms`）。只在女角走来唱歌那一刻出现一次，交给街区游戏逻辑那边（可把 song_choreo 改成非同步或在前一步先算好），不在低配串流的范围。
+
+### 没有子事件的 FTicker 停顿：OKAnimation 的 LiveTick（lowspec1118g／1118i，独占、同一路线）
+
+- 引擎的 `FTSTicker` 不替各个 ticker 开 scope（`AddTicker` 的名称不用），所以原本的 trace 拆不出来。先在我们的 core-ticker 回呼补 stat scope：`STAT_OKCrowd_Tick`（与 DisplayLighting／FaceFlatten／UploadFence）、`STAT_OKAnim_LiveTick`、`STAT_CityEnvironment_TickClock`、`STAT_OKMem_Tick`。
+- walkQ-1118g（Play-20261118T123336）：走路期 139.7 ms 那帧里 132 ms 都是 `STAT_OKAnim_LiveTick`。OKAnimation 的热重载每 0.5 秒在游戏执行绪用 `IFileManager::FindFiles` 扫 `Saved/OKAnim/Live`；打包版的 `IFileManager` 要经过 pak 层（会顺带扫 pak 索引），城市在串流时偶尔一次就卡上百毫秒。
+- 修正：
+  - 只查实体磁碟（`IPlatformFile::GetPlatformPhysical()`），没有资料夹就直接返回。
+  - 打包版预设完全不跑（`OKAnim.LiveReload`，未 cook 时预设 1、打包版预设 0；`-OKAnimLive`、`OKAnim.LiveReload 1` 或 `OKAnim.LivePlay` 会打开）。game.log 开头会印 `OK live reload of Saved/OKAnim/Live: on/off`。
+- walkQ-1118i（Play-20261118T140001）：game.log 印出 `off`，整趟没有 LiveTick 帧。峰值 commit 11.9 GB（走路 11.8）、工作集 8.2 GB、显存 4.5 GB。走路期 >60 ms 剩 3 个：
+  - `STAT_Street_TickReadingProps` 84 ms：女角第一次看书时同步载入网格与材质，c-street-city 已改成异步。
+  - `StreetCamera` 的 `GeomSweepSingle` 99 ms：一次查询就 99 ms，见下一项。
+  - GC 61 ms。
+- 开发期仍可用：用未 cook 的 `-game` 测，log 印出 `on`；丢一个档进 `Saved/OKAnim/Live`，`OKAnim.LivePlay status` 的 watched 从 0 变 1（透过 ok-game-mcp `ui_exec` 下指令）。
+- 下一项：串流后物理场景查询偶尔慢上百倍。c-street-city 量到 StreetGround 射线开局每次约 1.3 µs，4 分钟后某几帧每次约 0.2 ms；相机扫描一次 99 ms 也是同一类。疑似新串流进来的碰撞体还没并进查询的加速结构。
