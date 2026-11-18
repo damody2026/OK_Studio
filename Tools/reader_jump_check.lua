@@ -15,6 +15,9 @@
 --   --fair      after each segment wait until every agent queued at the release has had the slot once
 --   --lighting  instead of the outfits: each lighting preset and the light / ambient sliders at 2, measured against
 --               原作預設 (LIGHTING lines; needs --images and an --mcp with image_diff)
+--   --clip      the clip played per outfit instead of 「Demo：蹦跳」 (e.g. "Demo：坐姿 01" for the C000 black hair faces);
+--               @FILE reads it from a UTF-8 file (a command line from cmd / Start-Process is not UTF-8)
+--   --outfits   last outfit tried (default 7)
 --   --minutes   one slot claim runs cards while the next one still fits in N minutes, from the average card so far
 --               (default 20, the slot rule's cap); then the slot is given back and claimed again (queueing behind others)
 --   --mcp       ok-game-mcp.exe (default Tools/ok-game-mcp/target/release/ok-game-mcp.exe)
@@ -62,6 +65,9 @@ do
     elseif k:sub(1, 2) == "--" then args[k:sub(3)] = arg[i + 1]; i = i + 2
     else error("unexpected argument " .. k) end
   end
+end
+if args.clip and args.clip:sub(1, 1) == "@" then
+  local f = assert(io.open(args.clip:sub(2), "rb")); args.clip = f:read("a"):gsub("^﻿", ""):gsub("%s+$", ""); f:close()
 end
 local function usage(msg) io.stderr:write(msg .. "\n(see the top of Tools/reader_jump_check.lua)\n"); os.exit(1) end
 if not args.out then usage("--out is required") end
@@ -187,8 +193,8 @@ end
 
 local function clip()
   for _ = 1, 5 do
-    set("control.GameClipCombo", '"Demo：蹦跳"'); sleep(1)
-    if state():find("正在播放：Demo：蹦跳", 1, true) then return "" end
+    set("control.GameClipCombo", ('"%s"'):format(args.clip or "Demo：蹦跳")); sleep(1)
+    if state():find("正在播放：" .. (args.clip or "Demo：蹦跳"), 1, true) then return "" end
   end
   return "NOCLIP"
 end
@@ -292,7 +298,7 @@ local function check_card(c)
     set("control.LightingShadeSlider", "1")
     emit(("%s LIGHT scaled=%d lit=%s flat=%s"):format(c, scaled, lit, flat))
     if args.lighting then lighting_check(c, lit, log) end
-    for o = 1, args.lighting and 0 or 7 do
+    for o = 1, args.lighting and 0 or tonumber(args.outfits or "7") do
       local e = set("control.OutfitCombo", ('"服裝 %d"'):format(o))
       -- (a card saves fewer than 7 outfits: the combo has no "服裝 o"; the old runs wrote C033 O5 as a failure)
       if e and o > 1 and e:find("Value absent from choices", 1, true) then emit(("%s O%d none (the card has %d outfits)"):format(c, o, o - 1)); break end
