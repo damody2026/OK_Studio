@@ -35,6 +35,9 @@ pub struct EventsTuning {
 }
 
 static TABLE: RwLock<Option<EventsTuning>> = RwLock::new(None);
+// Only without an installed table (unit tests). Reached lazily: `unwrap_or(&BUILTIN)` built it on the first call anyway
+// (the argument derefs the LazyLock), parsing the whole built-in tuning on the game thread: the first `holiday` after a
+// load took 305-691 ms (c1118f / c1118g, 2026-11-18).
 static BUILTIN: std::sync::LazyLock<EventsTuning> = std::sync::LazyLock::new(|| crate::tuning::Tuning::builtin().events);
 
 pub fn install(t: &EventsTuning) {
@@ -59,7 +62,7 @@ fn start_day(e: &Event, game_day: i32) -> Option<i64> {
 /// The events on this day.
 pub fn on(game_day: i32) -> Vec<Event> {
     let Ok(g) = TABLE.read() else { return vec![] };
-    let t = g.as_ref().unwrap_or(&BUILTIN);
+    let t = g.as_ref().unwrap_or_else(|| &BUILTIN);
     t.event.iter().filter(|e| start_day(e, game_day).is_some_and(|s| (s..s + e.days).contains(&(game_day as i64)))).cloned().collect()
 }
 
@@ -71,7 +74,7 @@ pub fn holiday_text(game_day: i32) -> &'static str {
 /// An event's words by id ("" when there is none).
 pub fn name_of(id: &str) -> &'static str {
     let Ok(g) = TABLE.read() else { return "" };
-    let t = g.as_ref().unwrap_or(&BUILTIN);
+    let t = g.as_ref().unwrap_or_else(|| &BUILTIN);
     t.event.iter().find(|e| e.id == id).map(|e| crate::tr::lookup(&e.text, "")).unwrap_or("")
 }
 
@@ -83,7 +86,7 @@ pub fn is_exam(game_day: i32) -> bool {
 fn facts(r: &Value) -> Value {
     let day = r.get("day").and_then(Value::as_i64).unwrap_or(0) as i32;
     let Ok(g) = TABLE.read() else { return json!({"text": "", "today": []}) };
-    let t = g.as_ref().unwrap_or(&BUILTIN);
+    let t = g.as_ref().unwrap_or_else(|| &BUILTIN);
     let mut parts = Vec::new();
     let mut today = Vec::new();
     for e in &t.event {

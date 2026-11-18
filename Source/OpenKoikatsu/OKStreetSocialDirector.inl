@@ -111,21 +111,24 @@ void AOKStreetSocialScene::TickInitiative(){
  const int64 Now=OKStreetMindNow(S);const int32 Minute=int32(Now%1440);
  // Only near a slot change is there anything to weigh (07:00, 12:00, 18:00).
  const int32 Slot=Minute/60>=18?3:Minute/60>=12?2:Minute/60>=7?1:0;if(Slot==0||S.Store.CalendarDay*4+Slot==S.InitiativeSlot)return;
+ // Timed in parts: the first weighing after a load held frame 3 for 305 ms, all of it in this function (c1118f).
  auto Request=OKRulesRequest(TEXT("initiative"));Request->SetNumberField(TEXT("minute"),Minute);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetNumberField(TEXT("last_slot"),S.InitiativeSlot);
  Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash)); // she does not come to borrow from a man with nothing
- Request->SetBoolField(TEXT("rain"),RainingAt(S.Store.CalendarDay,Minute)&&PlaceHere(S.Male).IsEmpty());Request->SetStringField(TEXT("holiday"),HolidayOn(S.Store.CalendarDay));
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_InitiativeWeather);Request->SetBoolField(TEXT("rain"),RainingAt(S.Store.CalendarDay,Minute)&&PlaceHere(S.Male).IsEmpty());Request->SetStringField(TEXT("holiday"),HolidayOn(S.Store.CalendarDay));}
  auto Names=MakeShared<FJsonObject>();TArray<TSharedPtr<FJsonValue>> Rows;
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_InitiativeRows);
  for(int32 I=1;I<S.Manifest.Characters.Num();++I){
   // With him in the private room she is not weighing the street (her "hungry, ask him to eat" came in mid-H).
   if(S.PrivateGirl==I&&S.PrivateMode.IsValid())continue;
   const FString Id=OKStreetStableId(S.Manifest.Characters[I]);Names->SetStringField(Id,S.Manifest.Characters[I].Name);
-  auto H=MakeShared<FJsonObject>();H->SetNumberField(TEXT("actor"),I);H->SetStringField(TEXT("id"),Id);H->SetObjectField(TEXT("relation"),OKRulesRelationJson(OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget)));
+  auto H=MakeShared<FJsonObject>();H->SetNumberField(TEXT("actor"),I);H->SetStringField(TEXT("id"),Id);
+  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_InitiativeRelation);H->SetObjectField(TEXT("relation"),OKRulesRelationJson(OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget)));}
   if(const auto P=ProfileOf(I))H->SetObjectField(TEXT("profile"),P.ToSharedRef());
-  H->SetBoolField(TEXT("busy"),BusyWithPlayer(I));H->SetBoolField(TEXT("near"),S.Agents.IsValidIndex(I-1)&&FVector::Dist2D(S.Agents[I-1].Position,S.Male)<3000);H->SetBoolField(TEXT("birthday_tomorrow"),BirthdayOf(I,S.Store.CalendarDay+1));
+  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_InitiativeBusy);H->SetBoolField(TEXT("busy"),BusyWithPlayer(I));H->SetBoolField(TEXT("near"),S.Agents.IsValidIndex(I-1)&&FVector::Dist2D(S.Agents[I-1].Position,S.Male)<3000);H->SetBoolField(TEXT("birthday_tomorrow"),BirthdayOf(I,S.Store.CalendarDay+1));}
   Rows.Add(MakeShared<FJsonValueObject>(H));
  }
  Request->SetObjectField(TEXT("names"),Names);Request->SetArrayField(TEXT("heroines"),Rows);
- const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request);if(!Answer)return;
+ TSharedPtr<FJsonObject> Answer;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_InitiativeEval);Answer=OKRulesEval(S,Request);}if(!Answer)return;
  S.InitiativeSlot=int32(Answer->GetNumberField(TEXT("slot")));
  double Actor=0;if(!Answer->TryGetNumberField(TEXT("actor"),Actor))return;
  const int32 BestI=int32(Actor);const FString Why=Answer->GetStringField(TEXT("why"));
