@@ -959,7 +959,7 @@ void UOKCharacterController::SetModelLayout(bool bEnabled)
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryModelLayout);
 	bModelLayout = bEnabled;
  if(!bEnabled)OnCloseAppearance();
-	if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(bEnabled&&IsValid(PreviewActor)&&!bLoadInFlight&&!bStudioMode);
+	if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(bEnabled&&IsValid(PreviewActor)&&!bLoadInFlight&&!bStudioMode,false);
 	const ESlateVisibility Panels = bEnabled ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 	const ESlateVisibility Gallery = bEnabled ? ESlateVisibility::Collapsed : ESlateVisibility::Visible;
 	if (ShapePanel) ShapePanel->SetVisibility(bEnabled || bEditShapes ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
