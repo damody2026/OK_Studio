@@ -100,6 +100,61 @@ pub fn http_text(port: u16, path: &str, body: Option<&Value>, timeout: Duration,
     }
 }
 
+/// The game game_launch started here (0 before): game_instances marks it, the launch reply names it.
+static LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn launched() -> u32 {
+    LAUNCHED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Moves the channel files of games that no longer run out of Saved/OKControl (into Saved/OKControl/stale): the pid is
+/// gone, or it now belongs to a process created after that game wrote its file (Windows gives pids out again). A pid
+/// alone is not enough (2026-11-18: game_instances listed three dead games whose pids were ShellExperienceHost, conhost
+/// and nothing). Returns how many were moved; any error leaves the files as they are.
+pub fn prune_stale_channels(root: &Path) -> usize {
+    let dir = root.join("Saved/OKControl");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return 0 };
+    // Every process's creation time in unix seconds, one query.
+    let script = "Get-CimInstance Win32_Process | ForEach-Object { '' + $_.ProcessId + ' ' + ([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds() }";
+    let Ok(out) = Command::new("powershell").args(["-NoProfile", "-Command", script]).output() else { return 0 };
+    if !out.status.success() {
+        return 0;
+    }
+    let created: std::collections::HashMap<u64, i64> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
+        })
+        .collect();
+    if created.is_empty() {
+        return 0;
+    }
+    let mut moved = 0;
+    for e in entries.flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        let Some(v) = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')).ok()) else {
+            continue;
+        };
+        let (Some(pid), Some(started)) = (v["pid"].as_u64(), v["started"].as_i64()) else { continue };
+        // The game writes its file a few seconds after its process starts; a process created later is another program.
+        let stale = match created.get(&pid) {
+            None => true,
+            Some(&c) => c > started + 120,
+        };
+        if stale {
+            let to = dir.join("stale");
+            if std::fs::create_dir_all(&to).is_ok() && std::fs::rename(&path, to.join(e.file_name())).is_ok() {
+                moved += 1;
+            }
+        }
+    }
+    moved
+}
+
 fn pid_alive(pid: &str) -> Result<bool> {
     let out = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output()?;
     Ok(String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")))
@@ -114,6 +169,8 @@ impl Game {
             bail!("this session's game still answers on port {}; game_stop it first", self.live_port()?);
         }
         crate::control::set_own(0);
+        LAUNCHED.store(0, std::sync::atomic::Ordering::Relaxed);
+        prune_stale_channels(&self.root);
         let lua = self.root.join("Tools/lua/lua.exe");
         let script = self.root.join("Tools/run_street_social_development.lua");
         let logs = self.root.join("Saved/StreetSocial");
@@ -137,11 +194,15 @@ impl Game {
                 }
             }
             // Up means the game just started answers (its channels written under its pid), not the newest of another session.
-            if let Some(pid) = self.launched_pid().and_then(|p| p.parse::<u32>().ok()) {
+            let pid = self.launched_pid().and_then(|p| p.parse::<u32>().ok());
+            if let Some(pid) = pid {
                 crate::control::set_own(pid);
             }
             if crate::control::own_ready(&self.root) && self.up() {
-                return Ok(json!({"ok": true, "port": self.live_port()?, "seconds": start.elapsed().as_secs()}));
+                // The tools now act on this game (set_own drops any game_select); the reply names it so no one looks it up.
+                let pid = pid.unwrap_or(0);
+                LAUNCHED.store(pid, std::sync::atomic::Ordering::Relaxed);
+                return Ok(json!({"ok": true, "pid": pid, "acts_on": pid, "port": self.live_port()?, "seconds": start.elapsed().as_secs()}));
             }
             std::thread::sleep(Duration::from_secs(2));
         }

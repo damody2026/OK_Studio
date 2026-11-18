@@ -27,7 +27,7 @@ fn street_tools() -> Value {
         json!({"name": name, "description": description, "inputSchema": {"type": "object", "properties": properties, "required": required}})
     };
     json!([
-        t("game_launch", "Start the StreetSocial game windowed with the control channel and wait until it answers (the first start after Saved/ was cleared rebuilds the build: up to an hour). options: more launcher options, e.g. [\"-Trace\", \"default,cpu,gpu,frame\"] or [\"-Exec\", \"stat unit\"] or [\"-Sandbox\", \"name\"].",
+        t("game_launch", "Start the StreetSocial game windowed with the control channel and wait until it answers (the first start after Saved/ was cleared rebuilds the build: up to an hour). The reply gives its pid, and the tools act on that game from then on (no game_select needed). options: more launcher options, e.g. [\"-Trace\", \"default,cpu,gpu,frame\"] or [\"-Exec\", \"stat unit\"] or [\"-Sandbox\", \"name\"].",
           json!({"window": {"type": "string", "description": "WxH, default 1280x720"}, "mic": {"type": "boolean", "description": "keep the room microphone (default: ignored, so room noise is not said for him)"}, "options": {"type": "array", "items": {"type": "string"}}, "timeout_s": {"type": "number"}}), &[]),
         t("game_stop", "Stop the game on this checkout's control port (only that one; other sessions' sandbox games keep running).", json!({}), &[]),
         t("game_state", "What is going on: game time, the player, the talk, cart and table, the heroines (nearest first). full=true returns the whole raw state.",
@@ -164,11 +164,40 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// game_instances with the channel files of dead games moved aside first (a reused pid is not a running game), and each
+/// game marked: launched_here (game_launch in this server) and acts_on (the one a change goes to: the selected game, else
+/// the one launched here; none when nothing is picked).
+fn instances(game: &Game, a: &Value) -> Result<Value> {
+    let pruned = game::prune_stale_channels(&game.root);
+    let r = control::run(&game.root, "game_instances", a)?;
+    let Some(mut v) = r["content"][0]["text"].as_str().and_then(|t| serde_json::from_str::<Value>(t).ok()) else { return Ok(r) };
+    let selected = v["selected"].as_u64().unwrap_or(0);
+    let launched = u64::from(game::launched());
+    let listed = |p: u64| p != 0 && v["instances"].as_array().is_some_and(|l| l.iter().any(|i| i["pid"].as_u64() == Some(p)));
+    let acts_on = if selected != 0 { selected } else if listed(launched) { launched } else { 0 };
+    if let Some(list) = v["instances"].as_array_mut() {
+        for i in list {
+            let pid = i["pid"].as_u64().unwrap_or(0);
+            i["launched_here"] = json!(pid == launched && launched != 0);
+            i["acts_on"] = json!(pid == acts_on && acts_on != 0);
+        }
+    }
+    v["acts_on"] = json!(acts_on);
+    v["pruned_stale"] = json!(pruned);
+    Ok(json_text(v))
+}
+
 fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
     if name.starts_with("studio_") {
         return studio::run(&studio::Studio::locate(&game.root)?, name, a);
     }
-    if matches!(name, "game_instances" | "game_select" | "reader_call" | "pair_call") || name.starts_with("ui_") {
+    if name == "game_instances" {
+        return instances(game, a);
+    }
+    if name == "game_select" {
+        game::prune_stale_channels(&game.root);
+    }
+    if matches!(name, "game_select" | "reader_call" | "pair_call") || name.starts_with("ui_") {
         return control::run(&game.root, name, a);
     }
     Ok(match name {
