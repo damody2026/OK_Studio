@@ -1286,6 +1286,7 @@ pub(crate) fn extract_session_from_info(
                 &mut mesh,
                 parsed_card.as_ref().and_then(|c| c.edit_fangs),
             );
+            { let _seg = crate::unity::segment("head_detail/prepare/rig");
             rig_mesh(
                 &mut mesh,
                 "head",
@@ -1296,8 +1297,14 @@ pub(crate) fn extract_session_from_info(
                 None,
                 Some(&authored_fbs),
                 None,
-            );
-            if let Some(card) = parsed_card.as_ref() {
+            ); }
+            // OK_SKIP_HDET_TEX=1 is a measurement switch: it leaves every head detail (eyes, brows, lines, teeth,
+            // tongue) **without its texture**, so the output is wrong. It exists because this call is 63 of the
+            // 70 ms of `head_detail/prepare` at one thread, and the only honest way to price a parallel version is
+            // to ask what making it free would buy: 8 threads −0.015 s, 2 threads −0.135 s (2026-11-19, see
+            // `Docs/CARD_OPEN_PERF_20261117.md` 第四节). Never set it outside an A/B.
+            if let Some(card) = parsed_card.as_ref().filter(|_| std::env::var_os("OK_SKIP_HDET_TEX").is_none()) {
+                let _seg = crate::unity::segment("head_detail/prepare/texture");
                 resolve_head_detail_texture(
                     game_root,
                     &vanilla,
@@ -1328,6 +1335,7 @@ pub(crate) fn extract_session_from_info(
             // Unity draws extra materials on the last submesh. rendEyelineUp has
             // materials[1]=EyelineShadowTex * skinMainColor (ChaControl.cs:4046/4073).
             let ln = mesh.name.to_ascii_lowercase();
+            let _seg_kage = crate::unity::segment("head_detail/prepare/kage");
             let kage = parsed_card.as_ref().filter(|_| ln.contains("eyeline") && !ln.contains("low")).map(|card| {
                 // ChaControl.ChangeSettingEyelineUp assigns slot0 and slot1
                 // separately. Preserve slot1 identity before looking up ME

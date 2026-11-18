@@ -450,6 +450,8 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   | `face overlays+emit` | 41.7 | 43.1 | 1.03 | 同上 |
   | `compose_face_texture` | 35.0 | 36.5 | 1.04 | 同上 |
 
+  **`head_detail` 这一笔的上限已经量过了，先看这个再决定要不要做**（`OK_SKIP_HDET_TEX=1`，量测开关，会让每个头部细节都没有贴图，输出是错的）：交错 n=8，**8 执行绪 0.830 → 0.815 s（−1.8%）、2 执行绪 1.195 → 1.060 s（−11%）**。也就是说「把它整个变免费」在 8 执行绪只值 15 ms —— **并行版本不可能超过这个数**，所以那个重构（要把过滤、prepare、emit 三段拆开，而 emit 的顺序就是 session 的顺序）只有在低核机上才划算，和改动 9 的 BC7 同一个形状。子计时也说清楚了要动哪一段：`head_detail/prepare/texture` 63 ms、`kage` 4 ms、`rig` 2 ms、`emit` 1 ms（C006、1 执行绪），**所以要并行的是 `resolve_head_detail_texture`，而它不碰 `parsed_head`**（上面那个 (a) 挡路处只挡 kage 那 4 ms）。
+
   **比值 ≈ 1 的那几段加起来约 270 ms，发生在 prefetch 窗口结束之后**，所以第二节那四笔「重排一律零收益」**不适用这里**——那个结论的前提是「窗口饱和」，而这段时间 8 个核心里只有 1 个在做事。最大的一笔是 `head_detail meshes` 72 ms，新的子计时说它 68 ms 在 `prepare`（14 个 mesh 各约 5 ms：贴图解析与 rig）、只有 1 ms 在 emit，而 emit 的顺序才是 session 的顺序（和第二节 `ctx.emit` 同一个结构）。**所以形状是「并行 prepare、串行 emit」**，和这个 codebase 已经在用的 `push_batch`（`batch: transform (par)` → `batch: emit (serial)`）一模一样。**两个已知的挡路处，开工前要先解掉**：（a）`prepare` 里 eyeline 那条会用到 `parsed_head`，而 `ParsedBundle` 是 `!Send + !Sync`（第二节 `BUNDLE_CACHE` 那列），所以要么把那两个 mesh 留在串行那半，要么先拆掉它；（b）`view_memo` 是 thread-local，并行之后同一张卡的后续衣着状态会分散在不同执行绪上**多算几次**——所以收益要用 `--fresh-dump` 那种「同一个行程开好几次」的序列量，不能只量第一张。
 - **顺带量到的两件事**：一张卡的块压缩贴图合计 **65 张、44.5 Mtexel**，解出来是 **178 MiB 的 RGBA**；
   以及 derived 贴图的磁碟快取（`derived_png_load`）在 OK 卡这条路上**完全没有命中**（159／128 次、0–1 ms），
