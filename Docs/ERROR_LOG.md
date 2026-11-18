@@ -5679,3 +5679,16 @@ LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor �
 `base_library_shared_mods.txt` 不用动。
 转卡当下也没有「漏报」：`absent=` 讲的是**本机没有的 zipmod**，而当时什么都不缺，那一题根本没被问到。
 转卡无法预知以后的版本会多问什么，所以这类的防线只有「动过开卡那条路之后跑 `ok_cards.lua reseal`」。
+
+## 2026-11-18：停背景建置＝停整条链；`TaskStop` 只收掉外壳，Build.bat 底下的 cargo／rustc 继续吃 CPU
+
+整合时被要求立刻停工、把机器让给别组。我停掉了跑建置的背景工作，回报「已停」。实际上那只收掉了最外层的
+shell：底下 `cmd（Build.bat）→ UnrealBuildTool（dotnet）→ cmd（build-release.cmd）→ cargo → cargo → rustc`
+六个行程全都活着，正在编 `ok-extract`，持续吃满核心——也就是别组拿到的仍是一台忙碌的机器。
+
+**查法**：`Get-CimInstance Win32_Process`，用**命令列**比对自己的树（`F:\OpenKoikatsu`），`cmd`、`dotnet`、
+`cargo`、`rustc`、`cl`、`link` 都要看；只杀最底下那支没有用，cargo 会再派生 rustc，要**从最上面的 cmd 往下**
+逐一 Terminate，杀完再列一次确认是空的。
+
+**通则**：回报「已停」之前先验证，不要拿「我下了停止指令」当证据。这跟同一天 `studio_stop` 被存档对话框挡住、
+编辑器留在机器上是同一类坑：**请它停**和**它真的停了**是两件事，中间要有一次实际的观察。
