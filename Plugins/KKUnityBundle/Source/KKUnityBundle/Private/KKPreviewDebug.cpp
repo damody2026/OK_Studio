@@ -191,6 +191,54 @@ static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKDumpPartObjCommand(TEX
 		Ar.Logf(TEXT("OK dump part %s: none"), *Wanted);
 	}));
 
+// The drawn mesh of a part as it is this frame (the procedural sections' vertex buffer: skinned positions and normals
+// on the CPU skinning route, -CpuSkin), and how many triangles' vertex normals point against the triangle: the outline
+// shell extrudes along the vertex normal, so those triangles' shell lands on the camera side (C000 sitting, 11-18).
+// The winding convention is not assumed: the larger group is "along", the smaller "against".
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKDumpPartDrawnCommand(TEXT("ok.Debug.DumpPartDrawn"),
+	TEXT("ok.Debug.DumpPartDrawn <part> <file.obj>: the first character's part of that name as drawn now (positions, normals, triangles of every section, component space, cm) and the count of triangles whose vertex normals point against the face."),
+	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& Ar)
+	{
+		if (Args.Num() < 2) { Ar.Logf(TEXT("ok.Debug.DumpPartDrawn <part> <file.obj>")); return; }
+		const FString File = Args.Last();
+		const FString Wanted = FString::Join(TArrayView<const FString>(Args.GetData(), Args.Num() - 1), TEXT(" "));
+		for (TObjectIterator<AKKPreviewActor> It; It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) || (World && It->GetWorld() != World) || !It->Session.IsOpen()) continue;
+			for (const FKKLoadedPart& Part : It->Parts)
+			{
+				if (!Part.Comp || PartName(Part.Comp) != Wanted) continue;
+				FString Text = FString::Printf(TEXT("# %s %s\n"), *It->GetName(), *Part.Comp->GetName());
+				int32 Base = 1, Along = 0, Against = 0, Flat = 0;
+				for (int32 Section = 0; Section < Part.Comp->GetNumSections(); ++Section)
+				{
+					const FProcMeshSection* Mesh = Part.Comp->GetProcMeshSection(Section);
+					if (!Mesh) continue;
+					Text += FString::Printf(TEXT("o section%d\n"), Section);
+					for (const FProcMeshVertex& V : Mesh->ProcVertexBuffer) Text += FString::Printf(TEXT("v %.4f %.4f %.4f\n"), V.Position.X, V.Position.Y, V.Position.Z);
+					for (const FProcMeshVertex& V : Mesh->ProcVertexBuffer) Text += FString::Printf(TEXT("vn %.4f %.4f %.4f\n"), V.Normal.X, V.Normal.Y, V.Normal.Z);
+					const TArray<uint32>& I = Mesh->ProcIndexBuffer;
+					int32 A = 0, G = 0, F = 0;
+					for (int32 T = 0; T + 2 < I.Num(); T += 3)
+					{
+						const FProcMeshVertex& P0 = Mesh->ProcVertexBuffer[I[T]]; const FProcMeshVertex& P1 = Mesh->ProcVertexBuffer[I[T + 1]]; const FProcMeshVertex& P2 = Mesh->ProcVertexBuffer[I[T + 2]];
+						const FVector Face = FVector::CrossProduct(P1.Position - P0.Position, P2.Position - P0.Position);
+						const double D = FVector::DotProduct(Face.GetSafeNormal(), (P0.Normal + P1.Normal + P2.Normal).GetSafeNormal());
+						if (FMath::Abs(D) < 0.05) ++F; else if (D > 0) ++A; else ++G;
+						Text += FString::Printf(TEXT("f %d//%d %d//%d %d//%d\n"), Base + I[T], Base + I[T], Base + I[T + 1], Base + I[T + 1], Base + I[T + 2], Base + I[T + 2]);
+					}
+					Ar.Logf(TEXT("OK drawn part %s section=%d vertices=%d triangles=%d positive=%d negative=%d edge_on=%d"), *Wanted, Section, Mesh->ProcVertexBuffer.Num(), I.Num() / 3, A, G, F);
+					Along += FMath::Max(A, G); Against += FMath::Min(A, G); Flat += F;
+					Base += Mesh->ProcVertexBuffer.Num();
+				}
+				const bool Ok = FFileHelper::SaveStringToFile(Text, *File);
+				Ar.Logf(TEXT("OK drawn part %s actor=%s along=%d against=%d edge_on=%d file=%s ok=%d"), *Wanted, *It->GetName(), Along, Against, Flat, *File, Ok ? 1 : 0);
+				return;
+			}
+		}
+		Ar.Logf(TEXT("OK drawn part %s: none"), *Wanted);
+	}));
+
 // Her body bones' local rotations in the current pose (Unity Euler degrees), from the session: a shape-driven helper
 // (cf_d_sk_04_00, the qipao's back flare) can be checked against the native capture's transforms.tsv.
 static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKBoneLocalCommand(TEXT("ok.Debug.BoneLocal"),
