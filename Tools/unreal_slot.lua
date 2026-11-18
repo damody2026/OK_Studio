@@ -417,6 +417,22 @@ local function release(agent)
   return 0
 end
 
+-- Builds take no slot, so they used to run straight through someone else's exclusive measurement (2026-11-18 20:25:
+-- three trees compiling while c-lowspec was walking a quiet route). Call this before starting ANY build or cook:
+-- exit 0 = go ahead, exit 3 = an exclusive measurement holds the machine, wait and ask again.
+local function may_build()
+  for i = 1, SLOTS do
+    local who, text = owner(i)
+    local need = who and tonumber((text or ""):match("%[need (%d+)%]"))
+    if need and need >= EXCLUSIVE_GB then
+      io.write("wait: ", who, " holds slot", i, " exclusively (need ", need, " GB); a build would spoil its measurement\n")
+      return 3
+    end
+  end
+  io.write("go\n")
+  return 0
+end
+
 local function status()
   for i = 1, SLOTS do
     local who, text = owner(i)
@@ -479,8 +495,9 @@ local function main()
       os.exit(3)
     end
     io.write("keep\n"); os.exit(0)
+  elseif cmd == "may-build" then os.exit(may_build())
   elseif cmd == "status" or not cmd then os.exit(status())
-  else error("usage: unreal_slot.lua claim|release|yield <agent> [note] [--wait] | status", 0) end
+  else error("usage: unreal_slot.lua claim|release|yield <agent> [note] [--wait] | status | may-build", 0) end
 end
 
 ok.main(main)
