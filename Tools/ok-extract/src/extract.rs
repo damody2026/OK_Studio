@@ -1538,6 +1538,12 @@ pub(crate) fn extract_session_from_info(
                         None,
                         accessory_assignment(game_root,zip_path.map(|p|p.as_path()),&dummy).as_ref(), None, Some(&mut push_batch),
                     )?;
+                } else {
+                    // The card names a mod for this slot and nothing here declares that GUID: no entry, no archive,
+                    // nothing built, and until now not a word either. This is how kks_Saria lost all thirteen of her
+                    // hair accessories under a base library (outfit_gaps.rs `report_empty_slot`).
+                    crate::outfit_gaps::report_empty_slot(outfit, role_early, resolve.category_no, resolve.slot,
+                        &resolve.mod_id, "", "no archive here declares its GUID");
                 }
                 continue;
             };
@@ -1652,6 +1658,9 @@ pub(crate) fn extract_session_from_info(
                 );
             }
             let Some(entry) = entry else {
+                // Reported, not only printed: stderr does not reach the game's log, and a hairstyle that is simply not
+                // there has to say so (outfit_gaps.rs `report_empty_slot`).
+                crate::outfit_gaps::report_empty_slot(outfit, "hair", cat, hid, &guid, "", "no catalogue entry for it");
                 eprintln!("ok-extract: hair slot {hid} cat {cat} not in catalog");
                 continue;
             };
@@ -1740,6 +1749,7 @@ pub(crate) fn extract_session_from_info(
                 .cloned()
                 .or_else(|| mod_catalog.get(a.type_id, a.id).cloned().map(crate::accessory_extract::by_number));
             let Some(entry) = entry else {
+                crate::outfit_gaps::report_empty_slot(outfit, &role, a.type_id, a.id, "", "", "no catalogue entry for it");
                 eprintln!(
                     "ok-extract: accessory[{slot_i}] cat={} id={} not in catalog",
                     a.type_id, a.id

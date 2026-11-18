@@ -5639,3 +5639,43 @@ LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor �
 
 跟同一天那笔「同一个量有 C++ 成员名与 JSON 字段名两套拼法」是同一类：**空结果最会骗人，因为它看起来像一个答案。**
 **做法**：样式写好先对**一次真实输出**试跑（`call ... | grep -oE '<样式>'`），确认抓得到，再放进会跑几百次的回圈。
+## 2026-11-18：开不了的 OK 卡 demo_C050——卡比程式旧，`okLt` 里没有「现在才会问」的那一题
+
+包验收（`E:\OKPackage\Studio-20261118b`，30 张卡）里 `demo_C050.png` 开不起来：
+`the OK card lacks 1 thing(s) ... okLt me-shader xukmi/eyewplustess`。
+
+**根因（量过才写）**：不是转卡漏录，也不是共用资源清单少东西。新加的 `--oklib answers <卡>` 把两张**同一张原作卡**
+转出来的 OK 卡的 `okLt` 并排看：
+
+| 卡 | 做出来的日期 | 记下的 `me-shader` 答案 |
+|---|---|---|
+| `Content/CharacterCards/Demo/C050.png`（开不了） | 2026-10-29 | kkuts、kkutsalpha、kkutshair、xukmi/eyeplus、xukmi/mainitemplus、xukmi/mainopaqueplus、xukmi/skinplus |
+| `Content/CharacterCards/CrowdAPNG/C050.png`（开得了） | 2026-11-15 | xukmi/eyeplus、**xukmi/eyewplustess**、xukmi/skinplus |
+
+**一张 OK 卡只答得出「做它的那个程式问过的题」**（`tree_answers.rs`）。开卡会问哪些题不是固定的：10-29 之后
+材质／shader 那条路变了，开卡开始问 `xukmi/eyewplustess`，而 10-29 做的卡的 `okLt` 里没有这一题 → 严格开卡报缺口。
+`--oklib seal` 一跑就好（`added files=0 zips=34 model records=0`，卡只小了 28 bytes）：**缺的只是一个答案，
+资料一样不缺**，这正是「卡旧了」而不是「资料少了」的证据。
+
+**先错的一个假设**：以为是 `pack_memo` 的跨卡共用把 `tree_answers::record` 的副作用吃掉了（同一个转换程序里，
+第二张卡命中第一张卡留下的 memo，就不会再记一次答案）。改好了才想到要先复现：把同一张原作卡复制成两份、
+在同一个程序里连转两张，两张都 `OKSTRICT ok`。**没复现就不算根因**，那段改动原样退回（它可能仍是个隐患，
+但不是这次的原因，而且会牺牲批次转卡的速度）。
+
+**修源头**：卡旧了是会反复发生的——每次动到开卡读什么、问什么，既有的卡就可能被搁下，而且**要等到有人去开它才会发现**。
+所以补的是修复手段与例行关卡：`Tools\lua\lua.exe Tools\ok_cards.lua reseal <卡资料夹|清单> [--jobs N] [--dry-run 1]`，
+严格开过每张卡、只把开不了的原地重封（重录 `okLt`、补齐库里没有的资料，`okId`／语音／预览原样留着），再开一次确认。
+动过开卡那条路之后要跑一次；出包前也要跑，不要等包验收才发现。
+
+**连带**：`--oklib answers <卡>` 列出一张卡答得出哪些题（`OKANSWER` 一行一题）。
+「卡 A 开得了、卡 B 开不了」时，这是一条命令就能看出差在哪的工具。
+
+**(2026-11-18 补证据)** 上面那笔的归类是 (c)「卡是旧版转的，现在的转卡路径不会漏」，而且是**重转一张证出来的**，不是看码推论：
+把 C050 的原作卡（`CrowdAPNG/sources.tsv` 记的 `Koikatu_F_20260613015010865_Lacrimosa_shibal.png`）用当天的
+`ok-extract` 重转两张（`E:\OKPackage\OrderRepro\out\a_first.png`、`b_second.png`），两张的 `okLt` 都有
+`me-shader xukmi/eyewplustess`，两张都 `OKSTRICT ok`。
+另外两类都排掉了：(a) ME shader 本来就在封存范围内（旧卡自己就录了 7 笔 `me-shader`，只是没有这一笔）；
+(b) 不是「被当成共用资源而基础库没有」—— `seal` 的 `added files=0 model records=0` 表示答案从现有基础库就答得出来，
+`base_library_shared_mods.txt` 不用动。
+转卡当下也没有「漏报」：`absent=` 讲的是**本机没有的 zipmod**，而当时什么都不缺，那一题根本没被问到。
+转卡无法预知以后的版本会多问什么，所以这类的防线只有「动过开卡那条路之后跑 `ok_cards.lua reseal`」。

@@ -6,6 +6,7 @@ use crate::list::ChaListCatalog;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 const CLOTHES_PART: [&str; 9] = ["top", "bottom", "bra", "shorts", "gloves", "pantyhose", "socks", "shoes_inner", "shoes_outer"];
 
@@ -93,6 +94,36 @@ pub(crate) fn of_outfit(card: &CardInfo, outfit: i32, vanilla: &ChaListCatalog, 
     }
     gaps
 }
+
+/// Slots the open asked for and got nothing back for. The gaps above ask the catalogue ("is there an entry for this
+/// id?"); this asks the only question that matches what the user sees ("did the slot make anything?"). The two are not
+/// the same: under a base library the catalogue answers out of `sources.okidx`, which still names archives the library
+/// does not carry (`base_v1\mods\...` need not exist), so the lookup succeeds, the data cannot be read, and the part
+/// silently is not there. kks_Saria lost 13 accessory slots -- her whole hairstyle -- with no line anywhere
+/// (2026-11-18, Docs/OK_CARD_MISSING_PARTS_REPORTING.md).
+///
+/// This is level 1 of the two: the character opens, the part simply is not on her. Level 2 (what stops the open, e.g.
+/// a missing `okLt` answer or body data) is okstrict.rs and fails loudly on its own.
+static EMPTY_SLOTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Reports one such slot, once per distinct row. `why` says what could not be had, `source` the archive or file the
+/// entry named (empty when it named none).
+pub(crate) fn report_empty_slot(outfit: i32, part: &str, category: i32, id: i32, guid: &str, source: &str, why: &str) {
+    let row = format!("part={part} cat={category} id={id} guid={guid} source={source} why={why}");
+    {
+        let mut seen = EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.iter().any(|r| *r == row) { return; }
+        seen.push(row.clone());
+    }
+    let line = format!("ok-extract: ERROR opening outfit {outfit} item missing {row}");
+    eprintln!("{line}");
+    crate::ffi::ffi_log(0, &line);
+}
+
+/// The rows `report_empty_slot` has collected (the conversion prints them; they do not fail it).
+pub fn empty_slots() -> Vec<String> { EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).clone() }
+/// Clears them (one conversion's rows must not be another card's).
+pub fn clear_empty_slots() { EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).clear(); }
 
 /// One line per gap: what `lookup_entry` says for an item a zipmod lacks, for all the ways a slot stays empty. To stderr
 /// and to the game's log, which stderr does not reach.
