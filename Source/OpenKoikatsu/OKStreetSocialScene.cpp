@@ -1025,6 +1025,13 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S); // OKStreetSocialMin
 static void OKStreetApplyHerExtras(FOKStreetSceneState& S,const FString& Id); // OKStreetSocialArousal.inl
 static FString OKStreetBodyWetStatus(const FOKStreetSceneState& S,int32 Girl,int64 Minute); // OKStreetSocialArousal.inl
 static const FOKStreetHerCard& OKStreetHerCard(FOKStreetSceneState& S,int32 Girl); // OKStreetSocialArousal.inl
+// Asleep in her bed (her day says sleep and she lies in the sleeping pose): she does not sit up and chat with a stranger or
+// a friend who walked in (R16-1: 贞德·Alter asleep in the dorm at 08:30 greeted a stranger at once). Her boyfriend may wake her.
+bool AOKStreetSocialScene::AsleepToHim(int32 Character) const{
+ if(!State||!State->Manifest.Characters.IsValidIndex(Character)||!InLifePose(Character))return false;const auto& S=*State;
+ const FOKStreetPlanBlock* B=LifeBlock(Character,int32(OKStreetMindNow(S)%1440));
+ return B&&B->Kind==TEXT("sleep")&&OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Character]),S.Manifest.TalkBudget).Stage!=TEXT("lover");
+}
 bool AOKStreetSocialScene::BeginTalk(int32 Character){
  auto& S=*State;S.WaitsForHim.Remove(Character); // he found her: her waiting for him is over
  if(S.Pair.Partner!=INDEX_NONE||S.Facility!=INDEX_NONE||S.Companion!=INDEX_NONE)return false;
@@ -1043,6 +1050,10 @@ bool AOKStreetSocialScene::BeginTalk(int32 Character){
  if(!OKStreetTalkCandidateEligible(Sample)){
   if(Sample.Female&&Sample.Queried&&Sample.Visible&&!Sample.ActionsReady){S.Message=OKT(TEXT("ui.scene.action_prep_wait"));RefreshUI();}
   return false;
+ }
+ if(AsleepToHim(Character)){
+  S.Message=OKMsg(TEXT("ui.scene.she_is_asleep"),{{TEXT("name"),S.Manifest.Characters[Character].Name}});RefreshUI();
+  UE_LOG(LogTemp,Display,TEXT("Street talk: actor %d is asleep, not woken"),Character);return false;
  }
  const auto& Agent=S.Agents[Character-1];
  EndTalk();S.TalkFailureNotice.Reset();S.MaleAddressed=false;S.Target=Character;S.TalkStartMinute=OKStreetMindNow(S);ProbeVoiceInfo();S.TopicsOpen=false;S.Agents[Character-1].Held=true;
@@ -4751,6 +4762,7 @@ void AOKStreetSocialScene::Tick(float Dt){
   if(Interact&&Result.AdmitSlot==INDEX_NONE&&FreeTalkPartner()!=INDEX_NONE&&!S.FreeTalkLive){S.FreeTalkOpen=true;FreeTalkLiveSet(true);} // E again: back to the live conversation
   if(Result.AdmitSlot!=INDEX_NONE){if(BeginTalk(Result.AdmitSlot)){S.FreeTalkOpen=true;FreeTalkLiveSet(true);}} // E opens the conversation and the microphone together
   else if(S.UserPaused){} // the paused line stays
+  else if(S.Candidate!=INDEX_NONE&&S.Manifest.Characters.IsValidIndex(S.Candidate)&&AsleepToHim(S.Candidate)){const FString Hint=OKMsg(TEXT("ui.scene.she_is_asleep"),{{TEXT("name"),S.Manifest.Characters[S.Candidate].Name}});if(Hint!=S.Message)S.Message=Hint;} // not "E to talk with her"
   else if(S.Candidate!=INDEX_NONE&&S.Manifest.Characters.IsValidIndex(S.Candidate)){const FString Hint=OKStreetTalkCandidateHint(S.Manifest.Characters[S.Candidate].Name,S.CandidateCount);if(!Hint.IsEmpty()&&Hint!=S.Message)S.Message=Hint;} // the box binds to the message (OKStreetDigestMessage): no rebuild
   else if(Interact&&Result.RejectedInteract){
    // E pressed and nobody was taken: say why for each girl in reach (distance, line of sight, readiness, angle off the view).

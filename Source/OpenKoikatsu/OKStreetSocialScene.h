@@ -531,6 +531,7 @@ private:
  void PlaceChatOrder(int32 Her,const FString& HerSaid=FString()); // HerSaid: her line that ordered it (her own offer to pay)
  void TickShopArrival();
  bool InLifePose(int32 I) const;
+ bool AsleepToHim(int32 I) const; // asleep in her bed and he is not her boyfriend: E does not wake her (R16-1)
  void SpawnLifeProps(struct FOKLifePose& Pose,bool SeatOnly=false);
  void TickPartySeats();void StopPartySeat(int32 Index);
  void StudiedTogether(int32 Girl,int32 Minutes); // OKStreetSocialCampus.inl
