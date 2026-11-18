@@ -3,7 +3,7 @@
 -- 16 GB / 8 GB-VRAM machine takes by itself (2026-11-18: the whole 3D view was black there and no card failed to open).
 --
 --   Tools\lua\lua.exe Tools\reader_package_sweep.lua --package DIR --cards DIR --images DIR --out FILE
---       [--extra "-OKLowMemory"] [--lane a] [--minutes 20] [--only NAME,NAME] [--noslot 1]
+--       [--extra "-OKLowMemory"] [--lane a] [--minutes 20] [--only NAME,NAME] [--noslot 1] [--mcp EXE]
 --
 --   --package   the unpacked package (holds PACKAGE.json, Tools\run_card_reader_development.lua and a stage)
 --   --cards     a folder of cards; every *.png in it is opened, in name order (--only picks some by file name)
@@ -41,7 +41,10 @@ local cards_dir = args.cards:gsub("\\", "/"):gsub("/$", "")
 local images = args.images:gsub("\\", "/"):gsub("/$", "")
 local lane = args.lane or "a"
 local minutes = tonumber(args.minutes or "20")
-local mcp = pkg .. "/Tools/ok-game-mcp/target/release/ok-game-mcp.exe"
+-- This checkout's ok-game-mcp by default, not the package's: `reader_launch`/`reader_stop` are newer than any
+-- package's copy, and the checkout's build drives a packaged reader just as well (`root` names the package).
+local mcp = (args.mcp or "Tools/ok-game-mcp/target/release/ok-game-mcp.exe"):gsub("\\", "/")
+if not mcp:match("^%a:") then mcp = ((io.popen("cd"):read("l") or "."):gsub("\\", "/")) .. "/" .. mcp end
 local ARBITER = "C:/portable/OpenKoikatsu/Tools/unreal_slot.lua"
 local AGENT = "e-cardload-" .. lane
 
@@ -142,17 +145,18 @@ end
 local marker = ("sweep-%s-%d"):format(lane, os.time() % 100000)
 local log
 local function start_reader()
-  local extra = args.extra and (" -- -OKLane=" .. marker .. " " .. args.extra) or (" -- -OKLane=" .. marker)
-  local cmd = ('start "" /min "%s\\Tools\\lua\\lua.exe" "%s\\Tools\\run_card_reader_development.lua" -CardDirectory "%s"%s')
-    :format(pkg:gsub("/", "\\"), pkg:gsub("/", "\\"), cards_dir:gsub("/", "\\"), extra)
-  os.execute('cmd /c "' .. cmd .. '"')
-  for _ = 1, 60 do
-    sleep(5)
-    local line = ps(("Get-CimInstance Win32_Process -Filter \"Name='OpenKoikatsu.exe'\" | Where-Object { $_.CommandLine -like '*%s*' } | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }"):format(marker))
-    local found = line:match("^(%d+) ")
-    if found then return found, line:match("%-abslog=(%S+)") end
+  -- Through the MCP (`reader_launch`), not by starting a process and hunting for it: every control of a game goes
+  -- through `Tools/ok-game-mcp` (AGENTS.md). It returns only once the reader's channels answer, so there is no
+  -- "wait and hope" loop here, and `root` pointing at a package runs that package's staged exe.
+  local extra = args.extra and (',"extra":["' .. args.extra:gsub('"', '\\"'):gsub("%s+", '","') .. '"]') or ""
+  local request = ('{"root":"%s","card_directory":"%s","lane":"%s"%s,"timeout_s":600}')
+    :format(pkg, cards_dir, marker, extra)
+  local text, code = call_once("reader_launch", request)
+  if code then
+    emit("# reader_launch refused: " .. (text:gsub("%s+", " "):sub(1, 200)))
+    return nil
   end
-  return nil
+  return text:match('"pid"%s*:%s*(%d+)'), text:match('"log"%s*:%s*"([^"]+)"')
 end
 
 local function log_text()
@@ -283,11 +287,11 @@ emit(("SUMMARY cards=%d fail=%d check=%d game_root_lines=%d lacks=%d open_failed
   :format(#cards, fails, checks, game_lines, count("the OK card lacks"), count("OK load3d result ok=0"),
     count("Missing shader"), count("Default Material"), count("Fatal error"), tostring(log)))
 
+-- Stopped through the MCP too (`reader_stop`), which waits until the process is really gone.
 if alive(pid) then
-  -- CIM Terminate first: taskkill has reported success on a process that kept running (2026-11-18).
-  ps(('Get-CimInstance Win32_Process -Filter \'ProcessId=%s\' | Invoke-CimMethod -MethodName Terminate | Out-Null'):format(pid))
-  sleep(3)
-  if alive(pid) then os.execute(("taskkill /PID %s /F >nul 2>&1"):format(pid)); sleep(2) end
+  call_once("reader_stop", ('{"pid":%s}'):format(pid))
+  sleep(2)
+  if alive(pid) then emit("# reader " .. tostring(pid) .. " still alive after reader_stop") end
 end
 if args.noslot ~= "1" then slot("release") end
 os.exit(fails > 0 and 1 or 0)
