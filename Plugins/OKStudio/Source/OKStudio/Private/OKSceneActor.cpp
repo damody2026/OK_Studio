@@ -27,6 +27,9 @@
 #include "ok_extract.h"
 #include "Misc/ConfigCacheIni.h"
 #include "ImageUtils.h"
+#include "ImageCore.h"
+#include "ImageCoreUtils.h"
+#include "Hash/CityHash.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "EngineUtils.h"
@@ -264,16 +267,48 @@ namespace
 	/** A Material Editor texture (base64 PNG) as an sRGB and a linear texture (cached by content). */
 	TPair<UTexture2D*, UTexture2D*> EditTexture(const FString& Base64)
 	{
+		// The base64 of one texture runs to megabytes and a big scene asks for the same one hundreds of times, so the key is
+		// a cheap 64-bit hash plus the length (was an MD5 of an ANSI copy), and the PNG is decoded once for both textures
+		// (was decoded twice, and the linear one uploaded twice). OK_EDIT_TEXTURE_OLD=1 restores the old path for A/B.
+		static const bool bOld = !FPlatformMisc::GetEnvironmentVariable(TEXT("OK_EDIT_TEXTURE_OLD")).IsEmpty();
 		static TMap<FString, TPair<TStrongObjectPtr<UTexture2D>, TStrongObjectPtr<UTexture2D>>> Cache;
-		const FString Key = FMD5::HashAnsiString(*Base64);
+		const FString Key = bOld ? FMD5::HashAnsiString(*Base64)
+			: FString::Printf(TEXT("%d:%016llx"), Base64.Len(), CityHash64(reinterpret_cast<const char*>(*Base64), Base64.Len() * sizeof(TCHAR)));
 		if (const auto* Found = Cache.Find(Key)) return { Found->Key.Get(), Found->Value.Get() };
 		TArray<uint8> Png;
 		UTexture2D *Srgb = nullptr, *Linear = nullptr;
 		if (FBase64::Decode(Base64, Png) && Png.Num())
 		{
-			Srgb = FImageUtils::ImportBufferAsTexture2D(Png);
-			Linear = FImageUtils::ImportBufferAsTexture2D(Png);
-			if (Linear) { Linear->SRGB = false; Linear->UpdateResource(); }
+			if (bOld)
+			{
+				Srgb = FImageUtils::ImportBufferAsTexture2D(Png);
+				Linear = FImageUtils::ImportBufferAsTexture2D(Png);
+				if (Linear) { Linear->SRGB = false; Linear->UpdateResource(); }
+			}
+			else
+			{
+				FImage Image;
+				if (FImageUtils::DecompressImage(Png.GetData(), Png.Num(), Image))
+				{
+					auto Make = [&Image](bool bSrgb) -> UTexture2D*
+					{
+						ERawImageFormat::Type RawFormat;
+						const EPixelFormat PixelFormat = FImageCoreUtils::GetPixelFormatForRawImageFormat(Image.Format, &RawFormat);
+						UTexture2D* T = UTexture2D::CreateTransient(Image.SizeX, Image.SizeY, PixelFormat);
+						if (!T) return nullptr;
+						T->bNotOfflineProcessed = true;
+						FTexture2DMipMap& Mip = T->GetPlatformData()->Mips[0];
+						uint8* Data = static_cast<uint8*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
+						FImageCore::CopyImage(Image, FImageView(Data, Image.SizeX, Image.SizeY, 1, RawFormat, Image.GammaSpace));
+						Mip.BulkData.Unlock();
+						T->SRGB = bSrgb;
+						T->UpdateResource();
+						return T;
+					};
+					Srgb = Make(true);
+					Linear = Make(false);
+				}
+			}
 		}
 		Cache.Add(Key, { TStrongObjectPtr<UTexture2D>(Srgb), TStrongObjectPtr<UTexture2D>(Linear) });
 		return { Srgb, Linear };
@@ -528,8 +563,12 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.Buil
  *  80 ms. So this stays off: Sync being faster is measured, the open being faster is not.
  *  Measured again the same day with ok.Studio.LoadSkipDraw on, which removes that redraw: 86.3 s without the index
  *  against 86.9 s with it. The open is paced by the workers opening items, so taking work off the game thread does not
- *  move it either way, and the index has nothing left to win. It stays off, and the code stays for the day Sync itself
- *  is what the open waits on. */
+ *  move it either way, and the index has nothing left to win.
+ *  Verdict: KEPT, default 0, correctness verified by OpenKoikatsu.Studio.SceneFindIndex (the indexed answers against the
+ *  scanned ones for every object, a hidden parent, an id that is not there, nested scopes, and objects added or removed
+ *  inside and between scopes). It is here for the day Sync itself is what the open waits on - a scene whose objects
+ *  are all cheap to build, or an editing pass that Syncs without workers in the way - and then it is one cvar away
+ *  rather than a rewrite. If a later round finds no such case, remove it together with the test. */
 static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 0,
 	TEXT("Sync looks objects up through the id index instead of scanning. 0 (default): scan, as before."));
 /** While a scene builds, cap the frame rate to this (0: no cap). The load is paced by the workers opening items, so
@@ -538,8 +577,11 @@ static TAutoConsoleVariable<int32> CVarOkStudioLoadMaxFps(TEXT("ok.Studio.LoadMa
 	TEXT("Frame rate cap while a scene is building (0: no cap). Put back as the scene finishes."));
 /** The more direct form of the same idea: while a scene builds, do not draw the world at all. A capped frame rate
  *  still draws the half-built scene, just less often, and it also slows the Tick that builds the next objects; this
- *  skips only the drawing, so the game thread keeps building at full rate and the frames cost what Sync costs. The
- *  viewport shows the last frame before the load (the UI still draws) until the scene is built.
+ *  skips only the drawing, so the game thread keeps building at full rate and the frames cost what Sync costs.
+ *  What the viewport shows while this is on is NOT the frame before the load: UGameViewportClient::Draw clears the
+ *  scene canvas every frame when world rendering is off (GameViewportClient.cpp:1985), so the world goes blank and
+ *  only what draws after it (the UI, and the on-screen progress below) is left. A blank viewport for a minute and a
+ *  half reads as a hang, which is why the progress line is part of this and not a nicety.
  *  Measured 2026-11-18 on a scene of 8806 objects, cold, one run per cell (Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md):
  *  122.8 s drawing against 86.3 s not drawing, -29.7%, and the cost of a build frame outside Sync falls from 75.5 ms to
  *  22.7 ms, which is the 36 s. It costs the live picture of the scene assembling: until it is built the viewport holds
@@ -2480,11 +2522,23 @@ void AOKSceneActor::SetLoadThrottle(bool bOn)
 	{
 		if (SavedWorldRendering < 0) SavedWorldRendering = Viewport->bDisableWorldRendering ? 1 : 0;
 		Viewport->bDisableWorldRendering = true;
+		// Something has to say the scene is coming, because the world area is blank, not the old frame. This draws
+		// after the world (DrawStatsHUD, outside the bDisableWorldRendering guard), so it is visible exactly when the
+		// world is not. ASCII on purpose: the engine's small font has no CJK glyphs, so the studio's own Chinese would
+		// come out as boxes; a localised overlay belongs in the studio's Slate UI.
+		if (GEngine)
+		{
+			const int32 Built = LoadStats.Characters + LoadStats.Items + LoadStats.Others;
+			const int32 Total = Document ? Document->Objects.Num() : 0;
+			GEngine->AddOnScreenDebugMessage(LoadProgressKey, 2.f, FColor::White,
+				FString::Printf(TEXT("Loading scene   %d / %d"), Built, Total), false);
+		}
 	}
 	else if (SavedWorldRendering >= 0)
 	{
 		Viewport->bDisableWorldRendering = SavedWorldRendering != 0;
 		SavedWorldRendering = -1;
+		if (GEngine) GEngine->RemoveOnScreenDebugMessage(LoadProgressKey);
 	}
 }
 

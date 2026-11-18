@@ -5271,3 +5271,18 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 同类：判定只数「整片黑／白／空」和 BulkData 时，瞳孔去高光后整个消失（白眼）也判通过（c-lowspec 的 VerifyEyeDull，11-18）。一个指标只盖得住它数的东西。
 - 修正：分开讲由谁证明——53 张证明 LUT 修正有效、没有退步；帧结束机制本身由 `ok.VerifyEyeDull` 的阳性对照证明（开关 1：3/3 失败、白眼；开关 0：3/3 通过）。另加 `image_diff`／`reader_jump_compare.lua` 抓「一小块不见了」，它自己也先做阳性对照（白眼 sheet 对正常 sheet，最差区块 172.5 对 0.5）。见 Docs/READER_LOWMEM_FULLRUN_20261118.md。
 - 教训：每个新判定、每轮全跑都要先有一次「该失败时确实失败」的证据（把 bug 放回去跑一次），才能拿它的「通过」当证据；全跑通过只代表它走过的路径没问题。
+
+## 2026-11-18：写下「不画世界 = 画面停在上一帧」，没去看引擎怎么清画布
+
+`ok.Studio.LoadSkipDraw` 量到开卡 −29.7% 之后，我在 cvar 注解、文件与 commit 讯息里都写「载入期间 viewport 停在
+载入前那一帧（UI 照画）」。这是猜的。`UGameViewportClient::Draw` 在 `bDisableWorldRendering` 为真时每帧都会
+`SceneCanvas->Clear(FLinearColor::Transparent)`（`F:/UE5.8/Engine/Source/Runtime/Engine/Private/GameViewportClient.cpp:1985`），
+所以世界那块是**每帧清空**，不是保留上一帧。差别不是修辞：一个是「画面不动」，一个是「一分半的空白画面」，
+后者使用者会当成当掉。
+
+**修正**：同一笔改动补了一行 `AddOnScreenDebugMessage` 进度（画在 `DrawStatsHUD`，不在 `bDisableWorldRendering`
+的守卫里，所以世界不画时它照样出现），并在 profile harness 加 `OK_SCENE_PROFILE_SHOT_LOADING=<帧>`，
+在建构中拍一张来实际看画面——原本的 `OK_SCENE_PROFILE_SHOT` 拍的是成品，看不到载入中。
+
+**教训**：关掉一条渲染路径之后「画面上剩下什么」是引擎行为，不是可以从旗标名字推断的东西；要嘛去读那段
+引擎码，要嘛拍一张。我两件都没做就写进了文件。顺带：数字量得再准，使用者看到的东西没量就不算量过。

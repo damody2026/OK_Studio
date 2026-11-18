@@ -42,6 +42,8 @@ namespace
 		bool bLoading = false;
 		double Start = 0., LoadCallMs = 0.;
 		int32 Frames = 0, ShotWait = 0, ShotExtra = 0;
+		/** OK_SCENE_PROFILE_SHOT_LOADING: the build frame to photograph the screen on (0: none). */
+		int32 LoadingShotFrame = 0;
 		FString ShotPath;
 		double PeakUsedGb = 0.;
 		TArray<TSharedPtr<FJsonValue>> Rows;
@@ -124,6 +126,10 @@ namespace
 			if (bLoading)
 			{
 				++Frames;
+				// OK_SCENE_PROFILE_SHOT_LOADING=<frame>: a picture of the screen WHILE the scene builds, which is the
+				// only way to see what the user is looking at when ok.Studio.LoadSkipDraw stops the world being drawn.
+				if (Frames == LoadingShotFrame && LoadingShotFrame > 0)
+					FScreenshotRequest::RequestScreenshot(FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_loading.png"), *FPaths::GetBaseFilename(Scenes[Scene])), false, false);
 				// A bigger per-frame budget builds more at once: the memory the renderer has not freed yet is the risk.
 				PeakUsedGb = FMath::Max(PeakUsedGb, FPlatformMemory::GetStats().UsedPhysical / double(1 << 30));
 				if (!Ready(Game)) return true;
@@ -228,6 +234,7 @@ namespace
 			if (Run->Scenes.IsEmpty()) { UE_LOG(LogTemp, Error, TEXT("OKStudio.ProfileSceneLoad: %s lists no scene"), *ListFile); return; }
 			Run->Repeats = Args.Num() > 0 && Args[0].IsNumeric() ? FMath::Clamp(FCString::Atoi(*Args[0]), 1, 20) : 3;
 			Run->bExit = Args.Contains(TEXT("exit"));
+			Run->LoadingShotFrame = FCString::Atoi(*FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_SHOT_LOADING")));
 			FString Tag = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_TAG"));
 			if (Tag.IsEmpty()) Tag = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
 			Run->Out = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Reports/scene-load") / (Tag + TEXT(".json")));

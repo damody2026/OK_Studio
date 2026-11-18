@@ -253,8 +253,17 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
   连「限帧之后就会显形」这个上一节写下的预期也被量掉了，码与测试留着，等哪天开卡真的卡在 Sync 自己。
 - 「索引让帧变短 → 每帧建更少 → 帧更多」在不画世界时也成立（407 → 951 帧），只是每帧便宜到不再要紧。
 
-据此 **`ok.Studio.LoadSkipDraw` 预设改成 1**。代价写清楚：**载入期间看不到场景一件件长出来**，viewport 停在载入前
-那一帧（UI 照画），建完才换成完整场景；想看过程就 `ok.Studio.LoadSkipDraw 0`。
+据此 **`ok.Studio.LoadSkipDraw` 预设改成 1**。
+
+代价要说准，我第一次写错了：**不是「停在载入前那一帧」**。`UGameViewportClient::Draw` 在 `bDisableWorldRendering`
+时每帧都 `SceneCanvas->Clear(FLinearColor::Transparent)`（`GameViewportClient.cpp:1985`），所以世界那块是**每帧清空**，
+只剩在它之后画的东西（UI）。一分半的空白画面跟当掉没两样，所以同一笔改动里加了一行进度
+（`AddOnScreenDebugMessage`，画在 `DrawStatsHUD`，不受 `bDisableWorldRendering` 影响）：`Loading scene  n / n`。
+刻意用 ASCII——引擎的 small font 没有 CJK 字形，写中文会变成方框；要本地化的载入画面该做在 Studio 的 Slate UI 里，
+那是另一笔。想看场景一件件长出来就 `ok.Studio.LoadSkipDraw 0`。
+
+验这件事的办法也加进 harness：`OK_SCENE_PROFILE_SHOT_LOADING=<帧>` 会在建构中的那一帧拍一张
+`<tag>_<场景>_loading.png`——载入中的画面只能这样看到，拍完成品的 `OK_SCENE_PROFILE_SHOT` 看不到。
 
 **量到但还没量的**：每格只有一趟（上一节是另一个建置的一趟）；36 s 的差不需要更多趟就成立，0.6% 的那个差需要。
 还有一个没被指标盖住的风险：不画世界可能把 shader／材质的首帧成本推到载入之后，`ready_ms` 看起来变好而使用者

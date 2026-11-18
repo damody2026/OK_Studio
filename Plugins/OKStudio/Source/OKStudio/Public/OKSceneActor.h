@@ -236,6 +236,8 @@ private:
 	float SavedMaxFps = -1.f;
 	/** The viewport's bDisableWorldRendering as it was before a loading scene turned drawing off (-1: not touched). */
 	int8 SavedWorldRendering = -1;
+	/** Key of the on-screen "Loading scene n / n" line, so each frame replaces it instead of stacking. */
+	static constexpr uint64 LoadProgressKey = 0x4F4B4C4F4144ULL; // "OKLOAD"
 	/** While a scene builds, caps the frame rate (ok.Studio.LoadMaxFps) and/or stops drawing the world
 	 *  (ok.Studio.LoadSkipDraw), and puts both back afterwards. A loading scene is paced by the workers that open its
 	 *  items, and the game thread pays for drawing the half-built scene once per frame, so frames spent waiting cost
