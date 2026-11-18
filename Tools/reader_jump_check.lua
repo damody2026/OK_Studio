@@ -1,5 +1,8 @@
 -- The card reader's jump check (「Demo：蹦跳」) over OK cards: each card in a fresh reader of its own, lighting views
 -- (原作預設, 無陰影) and, for outfits 1..7, two sets of views a moment apart while the jump plays.
+-- What it covers: load + jump. It does not go through "made, settings changed, uploaded again": with the low-memory bug
+-- put back (kk.RuntimeTextureDropAtUpload=1) C031 still passed, BulkData 0 (11-18). Texture upload / low-memory changes
+-- also need ok.VerifyEyeDull under -OKLowMemory (Docs/READER_LOWMEM_FULLRUN_20261118.md).
 --
 --   Tools\lua\lua.exe Tools\reader_jump_check.lua --out FILE (--cards C025,C026 | --list FILE --from N --to M)
 --       [--lane NAME] [--dir CARD_DIR] [--images DIR] [--polite] [--mcp EXE] [--minutes N] [--extra "-OKLowMemory"]
