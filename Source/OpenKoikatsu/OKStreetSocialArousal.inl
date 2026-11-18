@@ -52,6 +52,13 @@ static FString OKStreetBodyWetStatus(const FOKStreetSceneState& S,int32 Girl,int
 
 void AOKStreetSocialScene::TickArousal(float Dt){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickPregnancy);TickPregnancy();}
+ // The drops' sphere and translucent material asked for in the background as the street starts: the first drop loaded
+ // them in FOKArousalDrops::Spawn (LoadObject) and that frame took 458 ms (scope1118d, walking up to the heroines). No
+ // drops on the street until they are in; the drops' own code (shared with the private room) is left as it is.
+ static TSharedPtr<FStreamableHandle> DropLoad;static bool DropAsked=false;
+ if(!DropAsked&&(DropAsked=true))DropLoad=UAssetManager::GetStreamableManager().RequestAsyncLoad(TArray<FSoftObjectPath>{FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere")),
+  FSoftObjectPath(TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewTranslucent.M_PreviewTranslucent"))});
+ const bool DropsReady=!DropLoad.IsValid()||DropLoad->HasLoadCompleted();
  auto& S=*State;const int32 Cast=FMath::Min(S.Manifest.Characters.Num(),OKStreetCastCount);
  const double Wall=FPlatformTime::Seconds();const int64 Minute=OKStreetMindNow(S);
  // Twice a second: her flush follows her desire (the mind's own face look keeps it as a floor, StreetMind face), and
@@ -85,7 +92,7 @@ void AOKStreetSocialScene::TickArousal(float Dt){
    FString Error;if(OKSetCrowdRuntimeFaceLook(this,Girl,Look,Error)){S.ArousalBlush[Girl]=Bl;UE_LOG(LogTemp,Display,TEXT("Street arousal: actor=%d desire %.0f, flushed %.2f"),Girl,Desire,Bl);}
   }
  }
- auto Spawn=[&](int32 Girl,FName Bone,uint8 Colour){FVector At;
+ auto Spawn=[&](int32 Girl,FName Bone,uint8 Colour){FVector At;if(!DropsReady)return false;QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_ArousalSpawn);
   return OKGetCrowdRuntimeBonePosition(this,Girl,Bone,At)&&S.ArousalDrops.Spawn(this,Girl,Bone,At,S.Agents[Girl-1].Position.Z+.3f,Colour);};
  for(int32 Girl=1;Girl<Cast;++Girl){
   if(!S.Agents.IsValidIndex(Girl-1)||S.PrivateGirl==Girl)continue; // in the room with him: the room's own drops (OKHScene)
