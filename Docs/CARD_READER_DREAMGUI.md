@@ -234,14 +234,17 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - **資料貼圖變大**：`DreamUIDataTexture` 變大時記一行 log（`DreamUIDataTexture <名稱> grows to <列數> rows`），並先等 RDG 非同步執行完成才換貼圖與更新參照，供下次當機時對時間點。
 - **Aftermath dump**：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`。要用 Nsight Graphics 打開才看得到出錯的著色器與綁定的資源；這台機器只有 Nsight Compute／Systems／VS Edition，沒有 Nsight Graphics。
 
-## 未結案：讀卡器第三條 GPU PageFault（2026-11-19 暫停追查，已取證）
+## 未結案：讀卡器第三條 GPU PageFault（2026-11-19，追查中）
+
+**當前假設：累積型資源成長**（協調者與 e-cardload 提出，正在量）。2026-11-19 05:45 那次量測先排除了它的「VRAM 吃緊、常駐資源被逐出」這條機制，見下方「連開 30 張的量測」。
 
 | 項目 | 內容 |
 |---|---|
 | 症狀 | `LogD3D12RHI: Error: GPU crash detected`，`DXGI_ERROR_DEVICE_HUNG`／`PageFault at VA GPUAddress …`，Aftermath `MMU Fault Error`，著色器位址每次都是 `fragment_02 @ 0x00045f90` |
-| 位置 | DRED：`FrameRenderFinish › RenderFinish › ViewFamilyExtension › ViewExtension(0)`（DreamGUI）裡的**第一個** `DrawIndexedInstanced` |
-| 情境 | 都在連續瀏覽卡片、切分頁時，約 7–15 分鐘或開十幾張卡之後；打包版三次（stage `EFork1119g`、`EFork1119h`、`EFork1119i`），e-cardload 用 `E:\OKPackage\TestCards-20261118` 兩次（第 12、25 張） |
-| 結論 | 幾乎確定是時序／競態：序列化提交（GBV）後不重現，故障位址不屬於任何追蹤到的資源 |
+| 位置 | DreamGUI 的 view extension（`FrameRenderFinish › RenderFinish › ViewFamilyExtension › ViewExtension(0)`）。DRED 的「最後完成」停在第一個 `DrawIndexedInstanced`，以前因此寫成「第一個 draw」；05:45 那次的 breadcrumb 顯示當時 GPU 上同時有 13 個 DreamGUI draw 已開始未結束，出錯的是其中哪一個，DRED 分不出來（見下） |
+| 情境 | 都在連續瀏覽卡片、切分頁時，約 4–15 分鐘或開十幾張卡之後；打包版四次（stage `EFork1119g`、`EFork1119h`、`EFork1119i`、`EFork1119r`），e-cardload 用開發版兩次 |
+| 最好的重現 | e-cardload：把 `E:\OKPackage\TestCards-20261118` 的 30 張連著開（開卡、服裝 2、播一段動畫、翻四個外觀分頁），兩趟各在第 12（heroine_alice）、第 25 張（kks_Saria）卡死；每張單開都正常、每趟卡死的卡不同（`Docs/CARD_READER_30CARD_REGRESSION_20261119.md`）。e-fork-2 同一批卡連開（開卡、翻 5 個分頁），第 9 張卡（第 8 號）開完 12 秒後卡死 |
+| 目前的判斷 | 時序／競態：序列化提交（GBV）後不重現，故障位址不屬於任何追蹤到的資源。累積型成長在量（下節）；VRAM 吃緊已排除 |
 | 修了的不是它 | D3D12 貼圖池整理（已關）、縮圖改貼圖池、字型圖集保留、DrawTextureHolds：它們各自修掉了前兩條，這條照樣出現 |
 | 加了的防護 | `FDreamUIDeferredRelease`（放開的 GPU 資源晚 3 幀）、資料貼圖變大前等 RDG 非同步執行：保留，但不是這條的解 |
 
@@ -255,7 +258,27 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 **取證**：DreamGUI 每個內建繪製在 GPU breadcrumb 寫一筆 `DreamUIDraw main=… font=… widget=… clip=… rect=… paint=… mask0=…`（綁定的每張貼圖的 RHI 名稱）。用 `-gpucrashdebugging` 啟動時，下一次 DRED／Aftermath 指到那個 draw，就能直接看出是哪張貼圖。
 
-**下一步需要的工具**：用 Nsight Graphics 打開 Aftermath dump，就能直接點名出錯的著色器與資源，這台機器沒有裝（只有 Nsight Compute／Systems／VS Edition），要不要裝由使用者決定。dump：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`；log：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-h2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\pagefault.log`。
+**連開 30 張的量測（2026-11-19 05:42，stage `EFork1119r`，`-gpucrashdebugging`）**：每張卡開完、翻完分頁後記 `ok.ReaderScreen resources`（新指令：縮圖池、外觀縮圖快取、鏡像控制項、存活 DreamGUI widget、依類別分的存活貼圖與大小、RHI 貼圖記憶體）與 DreamGUI 延遲釋放佇列，另外每 10 秒記 `nvidia-smi` 的 VRAM。開到第 9 張（05:45:47）卡死。資料在 `E:\OpenKoikatsu\Saved\Reports\reader-grow-20261119\`（`resources.txt`、`vram.txt`、`pagefault.log`、`D3D12.0.2026.11.19-05.45.47.nv-gpudmp`）。
+
+| 量 | 第 1 → 第 8 張 | 判斷 |
+|---|---|---|
+| 這台的 GPU | RTX 5090，32 GB；當機那幀 D3D12 回報 `Local Used 2365 MB / Budget 31419 MB` | VRAM 遠沒吃緊，「逐出常駐資源」這條機制不成立（8 GB 是低配機的目標，不是這台） |
+| transient `Texture2D` | 452 → 635 → 751 → 1048 → **592** → 825 → 972 → **642** MiB | 角色貼圖，GC 會收回，不是單調上升 |
+| 外觀縮圖快取 `AppearanceThumbCache` | 88 → 448 張，12 → 102 MiB，只增不減 | 依縮圖檔路徑存、沒有上限；但它屬於遊戲目錄的項目，總數有上限，且這些貼圖一直被引用、不會被放掉 |
+| 存活 DreamGUI widget／鏡像控制項 | 1472–1477／184，平穩 | 重建頁面有回收 |
+| 卡片縮圖池 | 18–20 張，平穩 | 有重用 |
+| DreamGUI 延遲釋放佇列 | 每次記錄都是 0 | 沒有積壓 |
+| 字型圖集 slice | 第 4 張時擴張到 2（當機前 1.5 分鐘），之後不變 | 不是緊接著當機 |
+| 資料貼圖擴張 | 只在第 1 張（當機前 2 分 47 秒） | 不是緊接著當機 |
+
+**breadcrumb 第一次派上用場**：當機那幀 GPU 上「已開始未結束」的 DreamGUI draw 有 13 個：2 個畫精靈圖集（`DreamUIDynamicSpriteAtlasData_Texture_0`）、6 個畫白底（`DreamUIPreset_WhiteSolid`）、4 個畫圖片格的 transient 貼圖（`Texture2D_2147445830`–`833`，連號，是同一批剛建的縮圖）。所以出錯的 draw 不一定是第一個，圖片格的貼圖也是嫌疑。breadcrumb 文字在約 128 字被截斷，`clip／rect／paint／mask0` 欄位看不到；下一版要把欄位拆短或分成兩筆。
+
+**下一步**：
+1. 用同樣的連開步驟對照「圖片格不畫縮圖」與「新建的縮圖貼圖晚幾幀才給 DreamGUI 畫」，看還會不會當（各跑到超過目前最晚的第 25 張）。
+2. breadcrumb 拆短，讓每個欄位都留得下來。
+3. Nsight Graphics 開 dump（見下）。
+
+**需要的工具**：用 Nsight Graphics 打開 Aftermath dump，就能直接點名出錯的著色器與資源，這台機器沒有裝（只有 Nsight Compute／Systems／VS Edition），要不要裝由使用者決定。dump：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`；log：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-h2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\pagefault.log`。
 
 ## 「沒按滑鼠鍵，視野也會動」的排查（2026-11-18）
 

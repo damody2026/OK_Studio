@@ -5797,3 +5797,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - 症狀、情境、排除的五條與 dump 位置都在 `Docs/CARD_READER_DREAMGUI.md` 的「未結案」一節。結論是時序或競態（GBV 序列化後不重現）。
 - 協調者裁定不做「繪製參數快照化」這種大改：內建繪製本來就在 render thread 用 TextureReference 解析，快照化能換掉的東西不明確，風險大於收益。改加 GPU breadcrumb（每個 DreamGUI 繪製寫下綁定的貼圖名稱），下次發生時直接對名字。
 - 下一步要用 Nsight Graphics 開 Aftermath dump，這台機器沒裝。
+
+## 2026-11-19：把 DRED 的「最後完成的 op」讀成「出錯的是第一個 draw」（e-fork-2）
+
+- **做錯的事**：三次 PageFault 的 DRED 都停在 DreamGUI 第一個 `DrawIndexedInstanced`，就寫成「總是第一個 draw」，排查都圍著第一個 draw 綁的資源（字型圖集、資料貼圖）打轉。
+- **量出來的**：加了每個 draw 的 breadcrumb 之後，05:45 那次顯示當時 GPU 上有 13 個 DreamGUI draw 同時「已開始未結束」，其中 4 個畫的是剛建的圖片格縮圖。DRED 的「最後完成」只表示依序完成到哪裡，GPU 會管線化地往後開始好幾個 draw，出錯的可能是其中任何一個。
+- **再犯前檢查**：用 DRED 判斷是哪個 draw 之前，先看 breadcrumb 裡「已開始未結束」的有幾個；不只一個時，不能說是第一個。
