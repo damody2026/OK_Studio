@@ -48,6 +48,7 @@ pub(crate) fn extract_session_from_info(
     let _view_memo = crate::ViewMemoScope::begin();
     crate::unity::references::begin_load(game_root);
     let t_all = Instant::now();
+    crate::profile_mark_open_start(t_all);
     // OK_PROFILE: the per-slot stage timings (appearance::timings) of this open too.
     let stages = std::env::var_os("OK_PROFILE").map(|_| crate::appearance::timings::Capture::begin());
     let mut t = Instant::now();
@@ -1340,10 +1341,13 @@ pub(crate) fn extract_session_from_info(
         };
         // Rigged and textured the same in every garment state of an outfit (crate::view_memo), keyed by the card data;
         // an OK Studio eye set changes the meshes before this, so it is done afresh.
-        let (mesh, kage) = match parsed_card.as_ref().filter(|_| studio_eyes.is_none()) {
+        let (mesh, kage) = {
+            let _seg = crate::unity::segment("head_detail/prepare");
+            match parsed_card.as_ref().filter(|_| studio_eyes.is_none()) {
             Some(card) => crate::view_memo(format!("head_detail|{:016x}|{outfit}|{}|{}", card.source_digest, mesh.name,
                 mesh.path_id), || prepare(mesh)),
             None => prepare(mesh),
+            }
         };
         let stem = format!("head_{}", sanitize(&mesh.name));
         seen_meshes.insert(mesh.name.to_ascii_lowercase());
@@ -1381,7 +1385,8 @@ pub(crate) fn extract_session_from_info(
                 ..Default::default()
             });
         }
-        let (p, tex) = emit_part(out_dir, &mut session_parts, &stem, "head", &mesh, &blend, unlit)?;
+        let (p, tex) = { let _seg = crate::unity::segment("head_detail/emit");
+            emit_part(out_dir, &mut session_parts, &stem, "head", &mesh, &blend, unlit)? };
         parts.push(ManifestPart {
             role: "head".into(),
             path: p,

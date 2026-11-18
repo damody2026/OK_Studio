@@ -62,6 +62,8 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `BUNDLE_CACHE`（`parse_bundle_cached` 的 thread_local）改程序共用 | `ParsedBundle` 有 18 个 `RefCell` 栏位且 `external_files` 装 `Rc<ExternalFile>` → `!Send + !Sync`，**型别上就放不进跨执行绪的 static**；还骑着「OK 卡资源包只记录真的跑过的查询」这条不变式（F 组 11-16 alice 那个 bug 的同一类）；`TEXTURE_CACHE_BYTES` 已经是每 bundle 192 MiB、每执行绪各一份。`native_workers_broadcast` 也救不了，因为 `base: head textures` 是在开卡那条执行绪上同步跑的 | 不做 |
 | 拿掉 `library_zip_memo` 的 strict 闸门（让 OK 卡也共用按 archive 的新键）<br>`d352dcb90`，整合 #15 后做的 | gap guard（`0dbce369f`）进来之后这道闸门的理由就过期了，所以照计划拿掉并重验 —— **零收益**：同行程 5 张 OK 卡，共用 1498 次 `open_zip`、不共用 1503 次（噪声内），35 个 dump 两边逐位元相同。**开关是活的**（同一执行档两张原作卡 38094 对 52645 次），所以这个零是真的。原因是设计使然：**OK 卡自带资源包**，读的档案几乎都来自自己的包，走 `own` 分支本来就保留 generation；只有「library 记录的档案」能共用，而 OK 卡几乎不读那些 | **放回去**，只留注解写明不要再试（在两次严格开卡之间共用值正是 pack 身分要防的：花火 11-12、alice 11-16，没有收益去换这风险） |
 
+| **normal map 的 GPU 回读**（`derive/readback`，1 执行绪 248 ms／25 次，看起来是 BC7 之后最大的一笔）<br>11-19 量的上限 | **上限只有 1~4%**。`OK_SKIP_READBACK=1`（量测开关，会给错的 normal map）交错 n=8：**8 执行绪 0.900 → 0.890 s（−1.1%）、2 执行绪 1.220 → 1.170 s（−4.1%）**。它那 248 ms 是 8 执行绪下在等（第三节：段时间不是工作量），1 执行绪下才是自己的 304 ms，而这条路上它和别的工作重叠得很好 | **不开工** |
+| **`lists: hair gloss` 第三次**（11-19，这次是在 BC7 变快、惰性 entry 之后重量的） | **上限现在是零**。`OK_SKIP_GLOSS=1` 交错 n=8：8 执行绪 0.890 → 0.890 s、2 执行绪 1.220 → 1.220 s，**两档都一模一样**，而那一行自己还印着 209 ms。也就是说那 209 ms **完全是等**（等 8 个 prefetch helper 用完那条基础库读取路径），把它整个拿掉主执行绪只是换个地方等 | **别再碰它**。这是同一件事的第四次确认（搬离主执行绪两次、换有代表性的路径一次、整个拿掉一次）。`lists` 窗口要变短只能让 **prefetch item 本身变便宜**，不是动 gloss |
 | 同一笔 hair gloss，**改在有代表性的路径上重测**（`--sequence` ＋ `OK_BENCH_PREWARM=concurrent`，也就是读卡器自己的冷路径：启动预热跟第一张卡并行）<br>11-18 做的 | 下面那一列是在**没有预热**的 plain 模式量的，而那条路上 `load_base_bundles` 还在付 160–600 ms、刚好吸收掉搬移的收益 —— 所以我先前的「零收益」其实是**在不代表使用者的路径上量的**（第二层错：数字是真的，代表的不是他的体验）。换到有代表性的路径上，`lists: hair gloss` 仍是 588 ms 而 `load_base_bundles` 只有 95 ms，看起来正是搬移该赚钱的条件。重测：中位数 **2.120 → 2.100 s（8 轮交错，−0.9%，噪声内）**，而 profile 显示 `load_base_bundles` 113 → 678 ms —— **那 600 ms 又一次原样换个地方付**，即使预热已经把它decode 掉了 | 还是回退。预热过的东西不该再花 600 ms，所以那不是 CPU 也不是解码，是**第一次触碰资源包页面的 I/O**；上面那一列把「会不会是那把 mutex」也量掉了。**教训有两层**：一是量测要用使用者真的会走的路径（`--sequence` ＋预热，不是 plain 模式），二是**换对了路径之后结论可能仍然不变** —— 代表性是必要条件，不是会自动给你收益的那种修正 |
 | 把 hair gloss 的贴图读取搬离主执行绪（`lists_stage` 结束时丢给自己的执行绪，到 accessory context 才等）<br>11-18 做的（先在 plain 模式量的） | `lists+mods+guids` 2379 ms 里有 2340 ms 没被任何子项盖住，拆开才看到是 `lists: hair gloss`（暖磁碟 588 ms、冷磁碟约 2.3 s）。搬走之后 `hair gloss wait` **0.0 ms**、容器 633 → 20 ms，**搬移本身完全成功**；但冷开中位数 1.174 → 1.21 s（没有收益），而 `load_base_bundles` 160–184 → 580–615 ms —— **那约 500 ms 原样换了个地方付**，主执行绪的阶段合计两边一样（1429/1402 对 1324/1410）。把 entry prefetch 关掉再量，**同一笔 gloss 只要约 5 ms** | 回退，只留 `lists: prefetch spawn`／`lists: hair gloss` 两个子计时。**一般结论**：那 500 ms 不是 gloss 自己贵，是它排在 8 个 prefetch helper 后面等基础库读取路径，所以**在 prefetch 那个窗口里「把工作搬到别的执行绪」买不到东西** —— 要拿的是那条路径的吞吐，不是工作的位置 |
 | 贴图 payload 的 memo 从「只收 block-compressed」放宽到「≥512² 的任何格式」，另加 single-flight（同键只算一次）<br>11-18 做的 | 从零解码的次数 C006 124 → 117、C001 124 → 118、C049 93 → 86，其中重复 12 → 5／21 → 15／17 → 10（确定性指标，真的降了：C006 的 `liquid01_t` RGB24 512² 本来一次开卡解 7 遍、`cf_body_00_t` RGBA32 2048²（16 MiB）解 2 遍）。**但冷开 wall 中位数 1.594 → 1.637 s（10 轮交错，更慢）**：这个 memo 的键要雜凑整个 texel，新放进来的约 40 张未命中各付一次雜凑，去换省下的 6–7 次解码，净值是负的。single-flight 单独量只去掉 12–23 次里的 0–2 次，时间无变化 | 两者都放回去。**作者原本只收 block-compressed 是对的** —— 它只在「解码＋编码比雜凑贵」的地方才划算；这一轮量到的次数与为什么不划算写在那个格式闸门旁边。**但「放宽」不是唯一的修法**：键换成「这些位元组是哪来的」（模型 id ＋ 记录偏移）就不必碰 texels，那条路还没量，见第四节 |
@@ -158,12 +160,14 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `OK_PROFILE=1`（11-18 新增） | **`PROFILE   <n>x <label> (<总>ms, at most <可省>ms savable)` 与结尾一行 `PROFILE repeated work at most <n>ms savable`**：每一笔「做了不只一次」的工作的实测耗时与「去重复最多能省多少」。**「去重复」类的想法先看这一行再决定要不要开工** —— 11-18 就是靠它判掉第二节那笔（原估 100–250 ms，实测 28 ms） |
 | `OK_PROFILE=1`＋`RAYON_NUM_THREADS=1`（11-18 新增） | **`PROFILE   segment <名> <n>x <ms> (<占比>)`**：一项工作内部不重叠的各段（`item read_source`／`item decode`／`item dbones`／`memo/read`／`memo/deserialize`／`memo/unpack`／`derive/decode`／`derive/readback`／`derive/orient`；名字带 `/` 的是上一层的子段，不计入总和）。**一定要用 `RAYON_NUM_THREADS=1` 读**：段时间是「进入到离开」的经过时间，8 条执行绪抢同一个资源时它量到的是**等**，不是做 —— `derive/readback` 8 执行绪 1934 ms／25 次、1 执行绪只有 304 ms，而「把它整个跳掉」的 A/B 省下的正是 1 执行绪那个数字（`Docs/ERROR_LOG.md` 2026-11-18）。第四节的「一项为什么要 200 ms」就是靠这个结案的 |
 | `RAYON_NUM_THREADS=<n>`（量法，不是开关） | **一张卡在 1／2／4／8／16 条执行绪下的冷开**，各 3 趟取中位数：**2.34 / 1.80 / 1.37 / 1.18 / 1.09 s**。1→8 只有 **2.0 倍**，8→16 几乎平（这台机器 32 条硬件执行绪），所以这条路平均只用掉约 2 条执行绪的量。**但不要把它读成「有 6 条核心闲着等人去填」** —— 第四节量过的 prefetch 窗口是那条基础库读取路径饱和（磁碟冷时单项 1.8–2.2 s），加宽与重排都已经各自量过拿不到东西。这组数字的用途是**判断某个阶段的 `profile_tick` 是它自己的工作还是在排队**：把同一个阶段的 1 执行绪与 8 执行绪时间比一下，比值接近 1 的才是它自己的 |
+| `OK_PROFILE=1`（11-19 新增） | **每一行多一个 `@<n>ms`：这一段在这次开卡的哪个位置结束**。没有它，容器那一行只能靠「把子项加起来」检查，而**完全没有任何 row 盖住的那一段看不见**。11-19 就是用它一趟弄清 `clothes+hair+write` 的 514 ms 对 232 ms 子项**不是漏量**——那个容器从身体那一段就开始了，中间每一段都有 row。顺手把开卡的时间轴摊平：`lists` 窗口 0–286 ms，之后 324–845 ms 是**主执行绪的串行链**（见第四节）|
+| `OK_PROFILE=1`（11-19 新增） | `segment head_detail/prepare`／`head_detail/emit`：`head_detail meshes` 这一段里「每个 mesh 自己的贴图与 rig」对「写进 session」。现况 68 ms 对 1 ms（C006、1 执行绪、14 个 mesh），所以要动的是 prepare，不是 emit |
 | `OK_GRID_DIAG=1` | 一次烘焙的贴图与遮罩尺寸、filter |
 | `OK_TILE_DIAG=1` | 同值 texel 比例、`has_pat`，以及查表／逐 texel 两条路径各处理多少 texel |
 
 **关闭开关**（做 A/B 用，也是出问题时的退路）：`OK_COARSE_ZIP_MEMO=1`、`OK_NO_ROOT_PROBE=1`、
 `OK_NO_TREE_WALK_MEMO=1`、`OK_NO_CHAINED_BODY=1`、`OK_NO_BASE_BUNDLE_PREWARM=1`、`OK_NO_MASK_RUNS=1`、
-`OK_NO_MATERIAL_PRELOAD=1`（UE 侧）、`OK_EAGER_ZIP_ENTRY=1`、`OK_PREWARM_ALL_MODS=1`、`OK_NO_MODEL_INDEX=1`、`OK_SLOW_BC7=1`。
+`OK_NO_MATERIAL_PRELOAD=1`（UE 侧）、`OK_EAGER_ZIP_ENTRY=1`、`OK_PREWARM_ALL_MODS=1`、`OK_NO_MODEL_INDEX=1`、`OK_SLOW_BC7=1`。量测用（会改输出，不要留着跑）：`OK_SKIP_BC=1`、`OK_SKIP_READBACK=1`、`OK_SKIP_GLOSS=1`。
 
 ## 四、还没做的
 
@@ -434,6 +438,19 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 - **BC7 解码器换成自己的（2026-11-19 做完）**：收益与上限的对照见第一节改动 9。两件要记住的事：
   1. **8 执行绪只拿到上限的两成，2 执行绪拿到一半以上**。同时段量的上限（`OK_SKIP_BC=1`，连解码带 repack 一起跳掉）是 C006 −0.225 s／C049 −0.120 s，而把 BC7 的 CPU 砍掉 69% 在 8 执行绪只换到 −0.040 s／0 s，在 2 执行绪换到 −0.140 s／−0.060 s。**和第二节那四笔零收益是同一个形状**：8 执行绪时这个窗口不是 ALU 受限，少花 CPU 不等于少花墙钟；核心一少，省下的 CPU 就直接变成墙钟。所以**这类「同样的工作少花 CPU」的改动，要在低核设定下量一次才看得到它的价值**（使用者的目标机是 16 GB／低阶，不是这台 32 执行绪的）。
   2. **闸门两层都做了**：`bc7_matches_reference_decoder` 拿 20 000 个随机块（八个模式平均分布，含保留块与非 4 倍数尺寸的边缘块）逐 texel 比对 `texture2ddecoder`；整合层是 `--fresh-dump`＋`OK_FRESH_STATES=1`，4 张卡全部 outfit 与衣着状态 **168 个 dump 两边逐位元组相同**。**阳性对照**：临时让解码后的第一个 texel `^= 1` → 同一张卡 42 个 dump **全部 DIFFERS**，所以闸门不是空转；对照做完立刻拿掉。BC7 由规格唯一决定，所以「位元组相同」是对的验收标准，不是近似。
+- **下一个该动的地方：开卡后半段是主执行绪的串行链，而那时候核心是闲的**（11-19，用新的 `@<n>ms` 栏位看出来的）。C006 冷开 869 ms 的形状是：**0–286 ms 的 `lists` 窗口**（prefetch 8 个 helper 在跑，那条读取路径饱和，主执行绪在 gloss 上等——上限已量到是零，见第二节），**然后 324–845 ms 是一条串行链**：`uncensor body` 27＋`uncensor genitals` 47＋`pre-skin` 24＋`skin+rig` 9＋`compose_body_texture` 47＋`compose_face_texture` 35＋`face overlays+emit` 42＋`head_detail meshes` 72＋`hair slots` 44＋`clothes` 74＋`subclothes` 44＋`batch`／`deferred meshes` 66。**判断它们是不是自己的工作，用 1 执行绪／8 执行绪的比值**（第三节那条现成检查）：
+
+  | 阶段 | 8 执行绪 | 1 执行绪 | 比值 | 读法 |
+  |---|---:|---:|---:|---|
+  | `lists: hair gloss` | 208.8 | 517.0 | 2.48 | 在等（上限零） |
+  | `compose_body_texture` | 46.7 | 253.6 | 5.43 | 自己就并行得很好 |
+  | `head_detail meshes` | 72.0 | 73.2 | **1.02** | **纯串行、自己的工作** |
+  | `clothes` | 73.7 | 80.4 | 1.09 | 同上（含 GPU 烘焙 30.7 ms，比值 1.00） |
+  | `subclothes` | 43.5 | 45.7 | 1.05 | 同上 |
+  | `face overlays+emit` | 41.7 | 43.1 | 1.03 | 同上 |
+  | `compose_face_texture` | 35.0 | 36.5 | 1.04 | 同上 |
+
+  **比值 ≈ 1 的那几段加起来约 270 ms，发生在 prefetch 窗口结束之后**，所以第二节那四笔「重排一律零收益」**不适用这里**——那个结论的前提是「窗口饱和」，而这段时间 8 个核心里只有 1 个在做事。最大的一笔是 `head_detail meshes` 72 ms，新的子计时说它 68 ms 在 `prepare`（14 个 mesh 各约 5 ms：贴图解析与 rig）、只有 1 ms 在 emit，而 emit 的顺序才是 session 的顺序（和第二节 `ctx.emit` 同一个结构）。**所以形状是「并行 prepare、串行 emit」**，和这个 codebase 已经在用的 `push_batch`（`batch: transform (par)` → `batch: emit (serial)`）一模一样。**两个已知的挡路处，开工前要先解掉**：（a）`prepare` 里 eyeline 那条会用到 `parsed_head`，而 `ParsedBundle` 是 `!Send + !Sync`（第二节 `BUNDLE_CACHE` 那列），所以要么把那两个 mesh 留在串行那半，要么先拆掉它；（b）`view_memo` 是 thread-local，并行之后同一张卡的后续衣着状态会分散在不同执行绪上**多算几次**——所以收益要用 `--fresh-dump` 那种「同一个行程开好几次」的序列量，不能只量第一张。
 - **顺带量到的两件事**：一张卡的块压缩贴图合计 **65 张、44.5 Mtexel**，解出来是 **178 MiB 的 RGBA**；
   以及 derived 贴图的磁碟快取（`derived_png_load`）在 OK 卡这条路上**完全没有命中**（159／128 次、0–1 ms），
   因为 `disk` 在录卡／严格开卡时是 false —— 要不要让它在一般 OK 卡开卡时生效是另一个候选，**但那是

@@ -111,10 +111,27 @@ fn profile_enabled() -> bool {
     std::env::var("OK_PROFILE").is_ok()
 }
 
+/// When this open started, so every row can also say **where in the open it sits**. Without that column a
+/// container row can only be checked by adding its children up, and a stretch that no row covers at all is
+/// invisible: `clothes+hair+write` read 516ms against 232ms of children (2026-11-19), and the gap is what the
+/// `@` column points at. Set once per open by `profile_mark_open_start`.
+static PROFILE_T0: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+pub(crate) fn profile_mark_open_start(at: Instant) {
+    if profile_enabled() {
+        *PROFILE_T0.lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+    }
+}
+
 fn profile_tick(label: &str, start: Instant) {
     if profile_enabled() {
+        let since = PROFILE_T0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .map(|t0| format!(" @{:.0}ms", t0.elapsed().as_secs_f64() * 1000.0))
+            .unwrap_or_default();
         eprintln!(
-            "ok-extract: PROFILE {label:<32} {:>8.1}ms",
+            "ok-extract: PROFILE {label:<32} {:>8.1}ms{since}",
             start.elapsed().as_secs_f64() * 1000.0
         );
     }
