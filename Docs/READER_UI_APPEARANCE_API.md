@@ -165,3 +165,134 @@ README 里那句指的是**匯入流程**（Tripo 头髮，`Tools/ok-extract/src
 | 切游戏目录 | 每次请求把 `AppearanceRoot` **复制**进 lambda | 在途的请求用的是发出当下的目录；Rust 的目录快取用 canonical root 当 key，换目录自然重建，不会把旧目录的结果当新的 |
 
 也就是说，外观目录这条路上没有「worker 直接写回 UI 资料」的地方；真的要改的是别的地方（见下一段给 e-fork-2 的三点）。
+
+## 9. 眼部三页要用的读写接口（2026-11-19）
+
+e-fork-2 要做「眼部缩放2 / 眼睛 / 瞳孔覆盖贴图」三页。前两页的接口都已经存在，第三页**还没有接口**，
+要什么说一声我补。三页共用同一组读写：
+
+```
+reader_call '{"action":"parameters","query":"<子字串>","offset":0,"limit":128}'   // 列出可调参数（分页）
+reader_call '{"action":"get","keys":[...]}'                                      // 现值
+reader_call '{"action":"set","values":[{"key":"…","value":1.2}]}'                 // 进 PendingProperties
+reader_call '{"action":"apply"}'                                                  // 真正写回并重开
+reader_call '{"action":"reset","keys":[...]}'                                     // 回到 default
+```
+
+每一笔 parameter 都带 `key`／`label`／`value`／`min`／`max`／`default`／`category`／`supported`，
+骨骼那些另带 `bone`／`axis`／`unit`／`coordinate_specific`，不支援时还有 `unsupported_reason`。
+**UI 不要自己假设范围**，照回传的 `min`／`max`／`default` 画。
+
+### 9.1 眼部缩放2（ABMX 骨骼）
+
+key 形如 `bone.<骨骼名>.<轴>`，`category` 是 `FaceEyes2`（标签「眼球」）。使用者说的「眼部缩放2」
+就是 `cf_J_Eye_tx_L`／`cf_J_Eye_tx_R` 这组（`OKBoneControls.h`，分类 `FaceEyes2` 共 30 笔）：
+
+| 这一页该放的 | 骨骼 | 轴（`axis`） | 范围 | 单位 |
+|---|---|---|---|---|
+| 眼球 縮放 2（整体） | `cf_J_Eye_tx_L` / `cf_J_Eye_tx_R` | −1 | 0–3 | multiplier |
+| 眼球 縮放 2 X／Y／Z | 同上 | 0／1／2 | 0–3 | multiplier |
+| 眼球 位移 X／Y／Z | 同上 | 4／5／6 | −1–1 | source_units |
+| 眼球 旋轉 X／Y／Z | 同上 | 7／8／9 | −180–180 | degrees |
+
+同一分类里另有「眼球 縮放 1」(`cf_J_Eye_rz_L/R`) 与「雙眼球」(`cf_J_Eye_tz`，没有左右之分) 两组，
+轴与范围一样。左右各是一个 key（`Def.Bone` 与 `Def.Right`），UI 要同步时自己写两笔 `set`。
+`supported=false` 表示这张卡的骨架没有这根骨头，要画成不可用而不是省略。
+
+### 9.2 眼睛
+
+两部分，都已经有接口：
+
+1. **形状滑杆**（原作 52 项脸部的其中 14 项）：`shape.face.24` … `shape.face.37`，
+   依序是上眼瞼形狀 1/2/3、下眼瞼形狀 1/2/3、眼睛上下、眼睛水平位置、眼睛前後、眼睛角度、
+   眼睛寬度、眼睛长度、眼頭左右位置、眼尾上下位置（`Plugins/KKCard/.../KKShapeRows.cpp`）。
+   范围一律 `min=-1`／`max=2`，`default` 由 `OKShapeDefaults::Value(sex, body=false, index)` 给。
+2. **种类选择**（第 1–3 节的外观目录）：`pupil0`／`pupil1`（408）、`gradation0`／`gradation1`（409）、
+   `eye_white`（407）、`eye_hi_up`／`eye_hi_down`（410／411）、`eyeline_up`／`eyeline_down`（412／413）、
+   `eyeshadow`（401）。清单用 `catalog`，目前选的看 `current`，套用用 `appearance`。
+
+眼睛颜色、瞳孔大小位置那些是 properties：`face.pupil.0.baseColor.r`、`face.pupil.0.pupilWidth`、
+`face.pupil.0.pupilHeight`、`face.pupil.0.pupilX/Y`、`face.hlUpColor.*`、`face.whiteBaseColor.*` 等，
+用 `parameters` 的 `query` 过滤 `pupil`／`hl`／`white` 就列得出来。
+
+### 9.3 瞳孔覆盖贴图：**目前没有读写接口**
+
+卡片里这些覆盖贴图是 Material Editor 的 `MaterialTexturePropertyList`（KKEx 区块），按材质＋属性定位
+（`appearance.rs` `clear_material_conflicts`）：
+
+| 这一页的项目 | 材质名含 | 属性（`Property`，去掉开头底线、不分大小写） |
+|---|---|---|
+| 瞳孔本体贴图 | `hitomi`／`pupil` | `maintex` |
+| 瞳孔渐层遮罩 | `hitomi`／`pupil` | `gradmask`／`gradationmask` |
+| 上高光覆盖 | `hitomi`／`pupil` | `overtex`／`overtex1`／`eyehighlight`／`eyehiuptex` |
+| 下高光覆盖 | `hitomi`／`pupil` | `overtex2`／`eyehighlight2`／`eyehidowntex` |
+| 眼白贴图 | `sirome`／`white` | `maintex` |
+
+**缺口**：`properties` 这条路会**跳过**所有名字含 `texture` 的栏位
+（`appearance/properties/plugins.rs`：`if name.to_ascii_lowercase().contains("texture") { continue }`），
+所以这些列根本不会出现在 `parameters`／`get` 里，UI 现在**既读不到也写不了**。
+
+要做这一页需要我在 Rust 侧补两个动作，说一声我就做：
+
+- 列出：`{"action":"eye_overlays"}` → 每一列 `{material, property, slot:"maintex|gradmask|overtex1|overtex2", present:true/false, bytes, png:"<导出的本机路径>"}`，
+  让 UI 显示现在有没有覆盖、长什么样。
+- 设定／清除：`{"action":"eye_overlay_set","slot":"overtex1","path":"<PNG>"}`／`{"slot":"overtex1","path":""}`，
+  比照 `appearance` 另存一张工作卡片（原卡不覆写），写完重开。
+
+已知的交互规则（做 UI 时要知道）：**用 `appearance` 换瞳孔／渐层／高光的种类，会自动清掉会冲突的那几列覆盖贴图**
+（`clear_material_conflicts`：换 410 清 `overtex/overtex1/eyehighlight/eyehiuptex`，换 411 清 `overtex2/…`，
+换 408/409 清 `maintex/gradmask`）。所以 UI 的「覆盖贴图」页在使用者换了种类之后要重新读一次。
+
+### 9.4 照这个接：每一页的读与写（函式名、参数、回传）
+
+UI 在读卡器行程内，所以**走 C++ 直接呼叫**（下表左栏）；右栏是同一件事的 MCP 版本，给测试与自动化用。
+`UOKCharacterController` 的成员都在 `Source/OpenKoikatsu/OKCharacterController.h`。
+
+#### 读
+
+| 要的东西 | C++ | MCP |
+|---|---|---|
+| 这张卡的脸部形状值（52 项，含眼睛 24–37） | `Selected.Face.ShapeValueFace`（`TArray<float>`，`-1..2`）；预设 `OKShapeDefaults::Value(Selected.Sex,false,Index)`；标签 `KKShapeRows()`（`Plugins/KKCard/.../KKShapeRows.h`，`{Label,Index,bBody,bLast}`） | `{"action":"parameters","query":"shape.face."}` → 每项 `{key,label,value,min:-1,max:2,default,category:"face"}` |
+| ABMX 骨骼现值（眼部缩放 1／2、双眼球） | `EditorModsJson()` → JSON 的 `abm` 阵列，每笔 `{name,location,coord:[{scale:[x,y,z],length,pos:[x,y,z],rot:[x,y,z]}]}`；候选清单与范围是 `OKBoneControls`（`Source/OpenKoikatsu/OKBoneControls.h`，`{Category,Label,Bone,Right,Axis,Min,Max}`） | `{"action":"parameters","query":"bone.cf_J_Eye"}` → `{key,label,value,min,max,default,category:"FaceEyes2",bone,axis,unit,supported,coordinate_specific}` |
+| 种类候选（瞳孔／渐层／眼白／高光／眼线／眼影） | `RefreshAppearanceCatalog()` 之后读 `AppearanceTargets`（挑 `category` 等于 408/409/407/410/411/412/413/401 的 target）与 `AppearanceItems`（用 `entry.category_no` 筛） | `{"action":"catalog","target":"pupil0","query":"","offset":0,"limit":64}` |
+| 目前选的是哪一个 | 同上的 `catalog` 回传里的 `current[<target key>]`（第 3 节） | 同左 |
+| 缩图 | `RunAppearanceRequest({"action":"thumbnails","keys":[...]} , cb)`，一次 ≤48 个；回呼里 `Thumbnail(Path)` 做成 `UTexture2D`（游戏执行绪，>2048² 会被挡掉） | `{"action":"thumbnails","keys":[...]}` → `[{key,path}]` |
+| 瞳孔覆盖贴图现况 | **没有**（`properties` 跳过名字含 `texture` 的栏位），见 9.3 | 同左 |
+
+#### 写
+
+| 要做的事 | C++ | MCP |
+|---|---|---|
+| 改一个脸部形状值 | `OnShapeChanged(false, Index, Value)`（即时套到模型；`ResetShape(false,Index)` 回预设） | `set` → `apply` |
+| 改一个 ABMX 骨骼值 | `OnBoneChanged(Slider, Value)`，Slider 带 `ModBone`／`ModRight`／`ModAxis`／`ModSide`（0=左 1=双 2=右）／`ModCoordinateSpecific`；内部写进 KKEx 的 `abm` 再 `CommitEditorMods` | `set` → `apply`（左右各一个 key） |
+| 换种类（瞳孔／渐层／眼白／高光／眼线／眼影） | `AppearanceTargetKey = <target key>;` 然后 `ApplyAppearanceItem(<item key>)`；空字串＝清空这个槽位 | `{"action":"appearance","target":"pupil0","item":"<item key>"}` |
+| 改颜色等 properties | `SetEditorProperty(Key, Value)` 进 `PendingProperties`，再 `OnApplyProperties()` | `set` → `apply` |
+| 设定／清除瞳孔覆盖贴图 | **要我补**（9.3 列的两个动作） | 同左 |
+
+#### 缩图网格的候选是哪里来的
+
+`AppearanceItems` 的每一项就是一格。判断来源只看两个栏位：
+
+- `source` 空 → **原作素材**（来自游戏 `abdata/list/characustom`），格子上标「原始遊戲」。
+- `source` 非空 → **模组**，值是那个 zipmod 的绝对路径，`guid` 是它的 sideloader GUID；格子上标「模組」，
+  tooltip 用 `entry.name` ＋ `source`。
+- 缩图从 `entry.extra` 的 `ThumbAB`／`ThumbTex` 抽出来（`thumb()`）；这两个是 `0` 或空的素材**不会**有缩图，
+  `thumbnails` 的回传里就没有它，UI 显示「素材未提供縮圖」。
+- **共享资源（基础库）不在这个清单里**：目录只从游戏的 `abdata` 与 `mods/` 建（第 0 节），
+  所以没有设定游戏目录时这三页的种类格子本来就是空的，要先把使用者导去设定页。
+- 排序与筛选照旧在 UI 侧做：`AppearanceItems` 已按 `(category_no, source, id)` 排好，
+  搜寻字串比对的是「原始遊戲／模組 類型 ＋ `entry.name` ＋ `entry.id` ＋ `source`」（旧版 `RebuildAppearancePage` 的作法）。
+
+#### 选取之后走哪一条路径
+
+```
+ApplyAppearanceItem(key)
+  → ApplyPreparedAppearance(key)            // 眼睛这几类（eyebrow/eyeline_*/eye_white/eye_hi_*/nose/pupil*/gradation*）
+      → AppearanceContext->Prepare/Capture  // worker：只换贴图，不重建几何
+      → PreviewActor->ApplyHeadTextureCandidate(...)   // 游戏执行绪；失败就退回下面那条
+  → 否则：完整交易（另存一张新的工作卡片 → 重新开卡）
+```
+
+两条都**不覆写原始卡片**，成功后 `Selected` 换成新的工作卡片、`bIndependentCards=true`、
+`AppearanceSelectedKeys[target]=key`。期间 `bAppearanceBusy=true`，UI 要把这三页设成不可用；
+有未套用的 properties 时会被拒绝（先 `OnApplyProperties()` 或重置）。

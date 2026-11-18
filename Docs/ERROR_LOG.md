@@ -5775,3 +5775,19 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   2. **开引擎前没有先 claim slot**。我当时只是「想问个用法」，心里没把它当成要占机器的动作——但凡一个指令**可能**启动引擎，
      就先看 `unreal_slot.lua status`、先 claim。
 - **通则**：对任何会启动游戏／编辑器的工具，先确认这次呼叫是读还是写；拿不准就去读它的源码，而不是对着别人的量测窗口试。
+
+## 2026-11-19：为了「只读用到的 mod」多问了一次 GUID，把每张指名 mod 的 OK 卡都弄到开不了（e-cardload-physics）
+
+- **变更／症状**：`60c0aaea3` 让原作卡先用「卡片自己指名的 zipmod」建目录。我为此在 `lists_stage` 里**另外**叫了一次
+  `mods::find_guids`，而且 GUID 集合比原本多了 body／penis／balls 三个 uncensor GUID。OK 卡是严格开卡：
+  它只答得出转卡当时记录过的问题（`okstrict.rs`／`tree_answers.rs`），**问题的键一变就是缺口**。
+  结果读卡器开 `crowd_C090` 直接红字「the OK card lacks 1 thing(s) … okLt guids BP.innie,HeadMod,…」，
+  `Content/CharacterCards/CrowdAPNG/C090.png` 本尊 `strict-check` 也一样。这笔已经随整合 #19 上了 master。
+  改成「目录用卡片指名的 zipmod」之后还踩了第二层：`card_mods_catalog` 会去**读**那些真的 zipmod，
+  而严格开卡读树本身就是缺口（`GAMEFS zip mods/kksimportedmods/…`）。
+- **修正**：目录要用的档案直接取自原本就会算的 `guid_index`（不再自己问一次），而且**只在原作卡**走这条
+  （`crate::okstrict::active().is_none()`），OK 卡完全照旧走 `load_mods_catalog_shared`。
+- **再试前检查**：动到开卡路径上任何「问树的问题」（`find_guids`、catalog、override、strip-all）之后，
+  **一定要再跑一次 `Tools/ok_cards.lua verify <本机 OK 卡清单>`**。我这次只量了原作卡的时间与输出，
+  没有重跑 OK 卡的 strict 扫描，所以这个 regression 是使用者在读卡器里先看到的。
+  判准很简单：**严格开卡问的问题必须和转卡当时问的一模一样**，多问一个、键不同都算改了契约。
