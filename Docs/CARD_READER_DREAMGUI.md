@@ -209,6 +209,8 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - **排除了什麼**：GC 回收（`DrawTextureHolds`）、貼圖池整理（已關）、最近 100 幀內釋放的資源（追蹤結果是 0）、DreamGUI 自己換掉的資料貼圖、pooled RT、材質 proxy（延遲釋放後照當）。
 - **剩下的方向**：故障位址不屬於任何追蹤到的資源或 heap，比較像上傳記憶體（uniform buffer、動態緩衝）或描述子指到早已不存在的位置。下一步是拿到帶除錯資訊的著色器（`r.Shaders.Symbols=1` 重新 cook），把 `0x45f90` 對到 DreamGUI 哪個 pixel shader 的哪一行讀取；或在開發版開 D3D12 GPU-based validation 重現。
 - 延遲釋放留著當防護，代價是被放開的 pooled RT 多留 3 幀才回池。
+- **字型圖集 slice 越界（協調者提的方向，2026-11-19 查過）**：三次當機前都有 `AddAtlasSlice … Expend Texture2DArray slice to: 2`，但都是在當機前 4–14 分鐘，不是緊接著。DreamGUI 的 pixel shader 對字型圖集用 `Sample`（`DreamUIText.ush`、`DreamUIShade.ush`），對資料貼圖用 `Texture.Load`。D3D12 的 `Sample` 會把 array index 夾到實際 slice 數，`Load` 越界回傳 0，兩者都不會造成 MMU fault。上傳端 `FlushFontTexture` 也先檢查 `Slice < SliceCount` 才寫。要造成 page fault，必須是描述子本身指到沒有對應的記憶體，所以單純在 shader 裡 clamp slice 不會改變結果，這次沒有加。
+- **Aftermath dump**：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`。要用 Nsight Graphics 打開才看得到出錯的著色器與綁定的資源；這台機器只有 Nsight Compute／Systems／VS Edition，沒有 Nsight Graphics。
 
 ## 「沒按滑鼠鍵，視野也會動」的排查（2026-11-18）
 
