@@ -86,6 +86,7 @@ $mcp = '.\Tools\ok-game-mcp\target\release\ok-game-mcp.exe'
 - 單位 cm，Z 朝上，地面 Z = 0。
 - 角色 `rotation [0,0,0]` 面向 +Y，也就是前視相機（`studio_camera` `preset: "front"`）看到的是臉；yaw −90 面向 +X、yaw 90 面向 −X、yaw 180 背對前視。兩個角色面對面站在 X 軸上：左邊的 yaw −90、右邊的 yaw 90。
 - 道具與角色剛加入時還在建：`studio_bounds` 回 `built: false`，`min`／`max` 只是預留的小框；等到 `built: true`（或 `studio_state` 的 `busy` 不再是 `loading`）再用它的大小擺放。
+- 開場景的進度：`studio_state` 的 `loading`（`step`、`text`、`done`、`total`）只在物件建構階段讀得到（`step` 是 `build`，每幀都在跑）。讀檔與匯入那段會佔住遊戲執行緒，`studio_state` 要等它結束才會回覆，所以讀不到中間的步驟（2026-11-18 f-sceneload 實測：63-2 匯入 22.6 s，期間每 0.6 s 輪詢一次，一筆回覆都沒有）。要看那段的步驟，只能看視窗本身，或設 `OK_STUDIO_STAGE_SHOT=<資料夾>`，每換一步就截一張圖。
 - `studio_bones` 的 FK `euler` 是 Unity 區域角度（與 KK Studio 的 FK 相同）；IK `position` 是角色空間的 cm（+Y 前方、+Z 上方）；`world` 是世界座標 cm。
 - 縮放和 KK Studio 一樣：物件的大小只看自己的 `scale`，不繼承父物件。父物件的縮放只會放大子物件的位置（`location` 乘上父物件的縮放）。所以把東西掛到放大的道具底下時，子物件的 `location` 要除以父物件的縮放；`studio_reparent` 會保持物件的世界大小。
 - 匯入 KStudio 場景卡時，mod 道具要先在基礎庫裡（`ok-extract <遊戲> --oklib studio-mods <基礎庫> <場景資料夾>`）。之後 `studio_catalog` 也會列出 mod 的群組與道具，名稱是 mod 自己取的。
