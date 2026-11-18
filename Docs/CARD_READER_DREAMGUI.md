@@ -397,3 +397,35 @@ UE 5.8 里 `TStrongObjectPtr` 就是用 UObject refcount 实作的，所以引�
 **留给下一个人的两条线**：
 1. 「每次开卡多约 1 张贴图」这个小幅单调成长（只有两张卡时仍然存在），是现在唯一还在爬的量，值得查它是什么。
 2. 要找的那个容器必须是**依「不同资源」成长**的：同一张卡反复开不会让它长。按这个条件筛 DreamGUI 绘制路径上的持久容器。
+
+### 2026-11-19 的第三刀：换掉 UI 这一层（`-LegacyReader`）—— DreamGUI 是必要条件
+
+同一个 build（含 `8889387c2` 换卡释放与 `ca466b2aa` LUT 快取两笔修正）、同一批 30 张卡、
+同样「只开卡，不翻分页、不切服装」、每张停 6 秒、锁自己的 `OK_GAME_PID`，只换掉 UI 这一层。
+
+| 趟 | UI | build | 结果 |
+|---|---|---|---|
+| 1 | 新版 DreamGUI | `8889387c2`（只有换卡释放） | 30 张跑完，**没当** |
+| 2 | **旧版 UMG**（`-LegacyReader`） | 含两笔修正 | 30 张跑完，**没当**；贴图总量照样锯齿（464 → 1371 MB，GC 压回 455 MB） |
+| 3 | 新版 DreamGUI | 含两笔修正（与第 2 趟同 build） | **第 6 张（crowd_C049）就 PageFault** |
+
+**判读：DreamGUI 这一层是必要条件。** 第 2、3 趟只差 UI 这一个变数，旧版 30 张干净、新版第 6 张就当。
+（第 1 趟留着当提醒：**它整趟没当，所以单独一趟「没当」没有鉴别力** —— 这个缺陷本来就不是每趟必中，
+先前是第 8、12、25 张。以后重做这个对照的人不要用一趟的结果下结论。）
+
+先验过旧版真的生效才敢跑：命令列里有 `-LegacyReader`，log 里 `ok.ReaderScreen` **零行**（DreamGUI 画面没开起来）。
+
+**第 3 趟当机那一刻的完整数字**（两个已知的成长源都已修掉，杂讯比前四次少）：
+
+- 签章与前四次相同：`DXGI_ERROR_DEVICE_HUNG`、`MMU Fault Error`、`PageFault at VA GPUAddress 0x2578C91000`，
+  着色器位址 `fragment_02 @ 0x00045f90`（执行中另有 0x00046000／0x0004a740／0x0004a7a0）。
+- **GPU 上「已开始未结束」的 draw 全部是 DreamGUI 自己的**：`DreamUIDraw main=DreamUIDynamicSpriteAtlasData_Texture_0`
+  与 `main=DreamUIPreset_WhiteSolid`，底下 `DreamUIData widget=DreamUIDataTexture_6 clip=DreamUIDataTexture_3`、
+  `DreamUIMore rect=DreamUIDataTexture_4 paint=DreamUIDataTexture_1 mask0=fallback`。
+  **没有一个绑着角色贴图**，位置在 `RenderGraphExecute - CanvasRenderThreadScope` 之后的 ViewExtension(0)。
+- 修正后的两个量都正常：`OK kept GPU textures: released 65 (159.9 MB) from the card just left, keeping 74 (212.4 MB)`，
+  `256x16` 色彩分级 LUT 固定 1 张。所以当机**不是**这两个成长源造成的。
+- log 与 dump：`Saved/Logs/CardReader/20261119-064041-1c8e4928.log`、`Saved/Crashes` 的 `UECC-Windows-*`。
+
+**所以这条对 e-cardload-physics 这侧结案**：真因在 DreamGUI 的绘制路径（绑定的是它自己的图集与 data texture），
+角色／预览／材质那条路径上已查无可疑的单调成长量（见上一节）。两笔修正解决的是两笔浪费，不是这条 PageFault。
