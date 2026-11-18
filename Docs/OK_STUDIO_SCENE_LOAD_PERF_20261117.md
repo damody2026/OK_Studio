@@ -316,3 +316,18 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 `RequestScreenshot(path, bShowUI=false, false)`，把 UI 与进度行排除在截图外，拍回来两边都是全黑，什么也证明不了
 （已改成 `bShowUI=true`，还没跑）。所以「使用者在载入期间看到什么」目前只有引擎码的推论（世界每帧清空＋
 `DrawStatsHUD` 画的进度行），没有照片。
+
+### 载入中的画面：拍到了，而且撑住底线的不是我加的那行
+
+2026-11-18 11:48–11:50，8806 物件那张，`LoadSkipDraw 1`，在建构中的第 250 帧拍：
+
+- `Saved/Reports/scene-load/shotA-draw1-r1_koikatu_cs0003420_2_loading.png`（1920×1080）
+- `Saved/Reports/scene-load/shotB-draw1-r1_koikatu_cs0003420_2_loading.png`（1280×720）
+
+两张都看得到 **`SOKStudioLoadOverlay`**（f-studio-ui 的 Slate 覆盖层，ZOrder 30）：「載入場景 / koikatu_cs0003420_2 /
+67%（720p 那张 68%）/ 已建 5,932 共 8,806 個物件」加进度条，左下角另有「建置場景物件 5932 / 8806」。
+世界那块如预期是空白的，Studio 的面板照常画。**所以「载入期间任何时候都看得到进度」这条底线成立，两种窗口都成立。**
+
+**但我原本以为撑住它的那行不会显示。**我在 `SetLoadThrottle` 里加的 `AddOnScreenDebugMessage` 从来没出现过：
+`AOKStudioGameMode::StartPlay` 就把引擎萤幕讯息整个关掉了（`OKStudioGameMode.cpp:27`），而且是刻意的。
+那行已经移除，注解改成写明 **这个预设值依赖 `SOKStudioLoadOverlay` 显示进度；那个 overlay 不在就把预设改回 0**。

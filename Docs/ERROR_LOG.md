@@ -5313,3 +5313,20 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 **教训**：拍不到东西先怀疑自己的截图参数，不要先怀疑引擎或渲染路径。`RequestScreenshot` 的 `bShowUI` 预设直觉上
 像「要不要画面上的除错叠层」，实际上关掉的是整个 UI 层；要验的东西在哪一层，就要确认截图包含那一层。
 还有一点：**对照组也全黑就代表这个取证方法当下无效**，不能只看实验组的那张就下结论。
+
+## 2026-11-18：加的「载入进度行」在 OK Studio 里根本不会显示，而我已经拿它当成底线写进文件
+
+`ok.Studio.LoadSkipDraw` 让世界在建构期间不画（画面每帧清空），为了不让使用者以为当掉，我在
+`AOKSceneActor::SetLoadThrottle` 里用 `GEngine->AddOnScreenDebugMessage` 画一行进度，并在 cvar 注解、
+效能文件与 commit 讯息里写成「这行是这笔改动的一部分，不是装饰」。
+
+实际拍下来才发现它从来没出现过：`AOKStudioGameMode::StartPlay` 就把引擎萤幕讯息整个关掉了
+（`OKStudioGameMode.cpp:27`，`GAreScreenMessagesEnabled = false` 与 `bEnableOnScreenDebugMessages = false`），
+而且是刻意的——shader 编译、渲染警告那些不该出现在编辑器 UI 上。所以我加的是一张名义上的安全网。
+
+**修正**：拿掉那行（连 `LoadProgressKey` 一起），改成在注解里写明「这个预设值依赖 `SOKStudioLoadOverlay`
+显示进度，那个 overlay 不在就把预设改回 0」，并附上两张实拍（1920×1080 与 1280×720）。
+
+**教训**：这是同一天第三次同类错误（猜画面停在上一帧、截图传错 `bShowUI`、进度行根本不画）。共通点是
+**把「我加了 X」当成「使用者看得到 X」**。加任何使用者看得到的东西，交付前一定要有一张实拍；在拍到之前，
+文件里只能写「预期」，不能写成既成事实。

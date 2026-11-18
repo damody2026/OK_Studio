@@ -581,7 +581,8 @@ static TAutoConsoleVariable<int32> CVarOkStudioLoadMaxFps(TEXT("ok.Studio.LoadMa
  *  What the viewport shows while this is on is NOT the frame before the load: UGameViewportClient::Draw clears the
  *  scene canvas every frame when world rendering is off (GameViewportClient.cpp:1985), so the world goes blank and
  *  only what draws after it (the UI, and the on-screen progress below) is left. A blank viewport for a minute and a
- *  half reads as a hang, which is why the progress line is part of this and not a nicety.
+ *  half reads as a hang, so this default depends on SOKStudioLoadOverlay showing progress while the scene builds
+ *  (photographed at 1920x1080 and 1280x720 on 2026-11-18). If that overlay goes away, this goes back to 0.
  *  Measured 2026-11-18 on a scene of 8806 objects, cold, one run per cell (Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md):
  *  122.8 s drawing against 86.3 s not drawing, -29.7%, and the cost of a build frame outside Sync falls from 75.5 ms to
  *  22.7 ms, which is the 36 s. It costs the live picture of the scene assembling: until it is built the viewport holds
@@ -2522,23 +2523,17 @@ void AOKSceneActor::SetLoadThrottle(bool bOn)
 	{
 		if (SavedWorldRendering < 0) SavedWorldRendering = Viewport->bDisableWorldRendering ? 1 : 0;
 		Viewport->bDisableWorldRendering = true;
-		// Something has to say the scene is coming, because the world area is blank, not the old frame. This draws
-		// after the world (DrawStatsHUD, outside the bDisableWorldRendering guard), so it is visible exactly when the
-		// world is not. ASCII on purpose: the engine's small font has no CJK glyphs, so the studio's own Chinese would
-		// come out as boxes; a localised overlay belongs in the studio's Slate UI.
-		if (GEngine)
-		{
-			const int32 Built = LoadStats.Characters + LoadStats.Items + LoadStats.Others;
-			const int32 Total = Document ? Document->Objects.Num() : 0;
-			GEngine->AddOnScreenDebugMessage(LoadProgressKey, 2.f, FColor::White,
-				FString::Printf(TEXT("Loading scene   %d / %d"), Built, Total), false);
-		}
+		// What tells the user the scene is coming is SOKStudioLoadOverlay (Slate, ZOrder 30, shown while
+		// HasPendingBuilds()), photographed at 1920x1080 and 1280x720 on 2026-11-18. It has to exist: the world area
+		// is blank, not the old frame, so without it a minute and a half of loading reads as a hang. If that overlay
+		// ever goes away, this default goes back to 0.
+		// (An AddOnScreenDebugMessage line stood here first. It could never draw: AOKStudioGameMode::StartPlay turns
+		// engine screen messages off on purpose - OKStudioGameMode.cpp:27 - so it was a safety net in name only.)
 	}
 	else if (SavedWorldRendering >= 0)
 	{
 		Viewport->bDisableWorldRendering = SavedWorldRendering != 0;
 		SavedWorldRendering = -1;
-		if (GEngine) GEngine->RemoveOnScreenDebugMessage(LoadProgressKey);
 	}
 }
 
