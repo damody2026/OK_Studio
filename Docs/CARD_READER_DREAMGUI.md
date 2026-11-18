@@ -56,6 +56,7 @@ UOKReaderScreen（DUI/Reader/ReaderScreen.dui → /Game/UI/Reader/WBP_ReaderScre
 
 - 外觀選擇與詳細編輯分到各頁（見下方「舊版控制項盤點」），進入頁面時以該頁的範圍打開（`SetAppearanceScope`／`SetPropertyScope`；控制器忙著讀目錄時每幀重試，`ApplyWantedScopes`）；「角色資訊」進入時把卡片牆的 `InspectCol` 顯示回來（開卡後 `SetModelLayout` 會收起它）；「設定／角色風格」進入時顯示 `StyleBox`（UMG 只在舊的「角色風格」分類下顯示它）。UMG 層透明又不吃點擊，所以這些只讓 DreamGUI 有東西可鏡像。
 - 「設定／物理」只鏡像物理下拉與三條滑桿（各自連同前一行說明文字），不是整個動作欄。
+- **讀卡器的物理預設就是「原始 Verlet」**（使用者 2026-11-18；啟動旗標 `-OKPhysics=verlet` → `OKPhysXSecondary.Enabled 0`，在建選單之前套用，`OKCharacterController::ApplyStartupPhysicsBackend`）。2026-11-19 實機再確認：啟動日誌 `Card reader physics: verlet (OKPhysXSecondary.Enabled 0, Backend -1)`、選單值「物理：原始 Verlet」。**不要為了讀卡器去改 `Tools/ok-extract/src/px.rs` 的 `PhysicsComponent::default_solver()`**：那是全域設定，街區、一對一與 Studio 都吃它（`dbone.rs`、`okphysics.rs`），而且 host solver 關著時它根本不生效（`solve_batch` 直接回 false，每條鏈都走 ok-extract 自己的 DynamicBone 更新，也就是原始 Verlet）；它只有在選「依元件（卡片／預設）」時才有影響。
 - 沒有「介面」頁：UMG 的編輯欄寬度與字級只改看不見的 UMG 層；左欄寬度改用拖拉。
 
 - 右欄抽屜的標題列有外框，右側 ▶（收起）／▼（展開）；整列可點（2026-11-18 實拍）。
@@ -145,6 +146,8 @@ MCP 用的新指令：`ok.ReaderScreen press <文字> [#N]`（按目前顯示、
 | 開發版（編輯器 `-game`） | MCP `ui_mouse` 走 Slate：沒按鍵移動、在 3D 點一下、點左欄按鈕、點右欄抽屜後再移動，鏡頭參數都不變；3D 上拖曳才轉 | 重現不出來 |
 | 打包版 `Studio-20261118e` | 同上；沒按鍵移動前後 3D 區 0 像素差（鏡頭、頭、眼都沒動），左鍵拖曳 yaw 0→-40 | 重現不出來 |
 | 真實滑鼠 | Windows `SendInput` 送出的按鍵與相對位移都沒進到遊戲（Slate 看不到按下、游標也不動） | MCP 沒辦法驅動真實滑鼠，這條沒有測到；不能當成「沒問題」的證據 |
+| 真實滑鼠（2026-11-19 再試） | 先 `SetForegroundWindow` 把遊戲視窗帶到前景，再用 `SendInput` 送絕對座標與相對位移：沒按鍵移動 240 px，`ok.ReaderScreen look` 的 yaw／pitch／distance／focus 與 `last_change` 都沒變、`buttons=none`；**接著送真實左鍵拖曳 180 px，鏡頭一樣沒轉** | 真實輸入到現在還是進不到遊戲（連拖曳都沒反應），所以這條仍然測不到，不能當成「沒問題」的證據 |
+| MCP（Slate）輸入 2026-11-19 複測 | 沒按鍵在 3D 區移動五個位置：鏡頭參數完全不變、`last_change=none`；從左欄（x=200）按下再拖過 3D 區：不轉；在 3D 區按下拖曳：yaw 0→-120，`last_change=mouse drag (buttons 1)` | 相機只在「按鍵從 3D 視窗上按下」時才轉，程式這層是對的 |
 
 下次再遇到時，在主控台（或 MCP `ui_exec`）下 `ok.ReaderScreen look`，一行就能定位：
 
