@@ -405,6 +405,8 @@ public:
 private:
 	TSharedPtr<SOKStudioPanel> Panel;
 	TSharedPtr<SWidget> PanelHost;
+	/** The loading box over the viewport while a scene builds (SOKStudioLoadOverlay), above the panel. */
+	TSharedPtr<SWidget> LoadOverlay;
 	bool bSyncPending = false;
 	bool bStopRequested = false;
 	bool bStoryMode = false;

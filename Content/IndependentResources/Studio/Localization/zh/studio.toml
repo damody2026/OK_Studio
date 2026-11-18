@@ -1,0 +1,6 @@
+# OK Studio 的介面文字（Plugins/OKStudio OKStudioText.cpp 讀取；ICU MessageFormat，只用簡單引數 {name}、{name, number}）。
+# 載入場景時的覆蓋層（SOKStudioLoadOverlay）。
+"load.title" = "載入場景"
+"load.progress" = "已建 {built, number} / 共 {total, number} 個物件"
+"load.percent" = "{percent, number}%"
+"load.waiting" = "準備中…"
