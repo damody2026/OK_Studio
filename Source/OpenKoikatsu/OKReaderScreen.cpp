@@ -879,7 +879,7 @@ void UOKReaderScreen::ClearPage()
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
 	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
-	for(UTexture2D* T:CardThumbs)RetireThumb(T);
+	for(UTexture2D* T:CardThumbs)GiveBackThumb(T);
 	CardThumbs.Reset();CardPaths.Reset();CardThumbLoading.Reset();ThumbsInFlight=0;++ThumbGeneration;
 	*ThumbCancel=true;ThumbCancel=MakeShared<FThreadSafeBool>(false);
 	WantedTargets.Reset();WantedProperties.Reset();
@@ -990,10 +990,11 @@ namespace OKReaderThumbs
 		if(!Wrapper||!Wrapper->SetCompressed(Png.GetData(),Png.Num())||!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return Out;
 		const int32 W=Wrapper->GetWidth(),H=Wrapper->GetHeight();
 		if(W<=0||H<=0||W!=HeadWidth||H!=HeadHeight||Raw.Num()<int64(W)*H*4||*Cancelled)return Out;
-		const float Scale=FMath::Min(1.f,FMath::Min(float(MaxWidth)/W,float(MaxHeight)/H));
-		Out.Width=FMath::Clamp(FMath::RoundToInt(W*Scale),1,W);Out.Height=FMath::Clamp(FMath::RoundToInt(H*Scale),1,H);
+		// Always the tile's picture size (the pool's textures are all that size): a card face has the tile's shape, any
+		// other picture is stretched to it.
+		Out.Width=MaxWidth;Out.Height=MaxHeight;
 		Out.Bgra.SetNumUninitialized(Out.Width*Out.Height*4);
-		// A box filter over the source pixels each output pixel covers.
+		// A box filter over the source pixels each output pixel covers (nearest when the source is smaller).
 		for(int32 Y=0;Y<Out.Height;++Y)for(int32 X=0;X<Out.Width;++X)
 		{
 			const int32 X0=X*W/Out.Width,X1=FMath::Max(X0+1,(X+1)*W/Out.Width),Y0=Y*H/Out.Height,Y1=FMath::Max(Y0+1,(Y+1)*H/Out.Height);
@@ -1004,9 +1005,11 @@ namespace OKReaderThumbs
 		}
 		return Out;
 	}
+	constexpr int32 TileWidth=288,TileHeight=402;
+	// A new pool texture holding Thumb.
 	UTexture2D* MakeTexture(const FThumb& Thumb)
 	{
-		if(Thumb.Width<=0||Thumb.Height<=0||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return nullptr;
+		if(Thumb.Width!=TileWidth||Thumb.Height!=TileHeight||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return nullptr;
 		UTexture2D* Texture=UTexture2D::CreateTransient(Thumb.Width,Thumb.Height,PF_B8G8R8A8);
 		if(!Texture)return nullptr;
 		Texture->SRGB=true;
@@ -1015,6 +1018,15 @@ namespace OKReaderThumbs
 		Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
 		Texture->UpdateResource();
 		return Texture;
+	}
+	// A pool texture given a new picture: the pixels go to the render thread with their own copy.
+	bool Refill(UTexture2D* Texture,const FThumb& Thumb)
+	{
+		if(!IsValid(Texture)||!Texture->GetResource()||Thumb.Width!=Texture->GetSizeX()||Thumb.Height!=Texture->GetSizeY()||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return false;
+		uint8* Copy=static_cast<uint8*>(FMemory::Malloc(Thumb.Bgra.Num()));FMemory::Memcpy(Copy,Thumb.Bgra.GetData(),Thumb.Bgra.Num());
+		FUpdateTextureRegion2D* Region=new FUpdateTextureRegion2D(0,0,0,0,Thumb.Width,Thumb.Height);
+		Texture->UpdateTextureRegions(0,1,Region,Thumb.Width*4,4,Copy,[](uint8* Data,const FUpdateTextureRegion2D* Regions){FMemory::Free(Data);delete Regions;});
+		return true;
 	}
 	void Show(UOKDreamControl* Tile,UTexture2D* Texture)
 	{
@@ -1026,21 +1038,34 @@ namespace OKReaderThumbs
 
 // The card list's pictures: decoded on workers for the tiles in or near the scrolled view (a few at a time), dropped
 // again for tiles far out of it, so a folder of hundreds of cards never holds all their pictures.
-void UOKReaderScreen::RetireThumb(UTexture2D* Texture)
+// The pictures live in a pool owned by the screen (ThumbPool, a UPROPERTY) for as long as the screen lives: a tile that
+// lets go of its picture gives the texture back to the pool, the next tile gets it refilled. No picture texture is
+// ever collected while the reader runs, so no DreamGUI draw data built before a brush change can outlive its texture
+// (2026-11-19: switching the card source and scrolling fast ended in a GPU page fault after about a minute).
+static TAutoConsoleVariable<int32> CVarReaderThumbs(TEXT("ok.ReaderThumbs"),1,TEXT("Card list pictures in the reader's DreamGUI screen: 1 decode them (default), 0 none (for comparison runs)."));
+
+void UOKReaderScreen::GiveBackThumb(UTexture2D* Texture)
 {
-	if(!Texture)return;
-	RetiredThumbs.Add(Texture);RetiredThumbTimes.Add(FPlatformTime::Seconds());
+	if(Texture&&ThumbPool.Contains(Texture)&&!FreeThumbs.Contains(Texture))FreeThumbs.Add(Texture);
+}
+
+UTexture2D* UOKReaderScreen::PutThumb(int32 Width,int32 Height,const TArray<uint8>& Bgra)
+{
+	OKReaderThumbs::FThumb Thumb;Thumb.Width=Width;Thumb.Height=Height;Thumb.Bgra=Bgra;
+	while(FreeThumbs.Num())
+	{
+		UTexture2D* Texture=FreeThumbs.Pop();
+		if(OKReaderThumbs::Refill(Texture,Thumb))return Texture;
+	}
+	UTexture2D* Texture=OKReaderThumbs::MakeTexture(Thumb);
+	if(Texture)ThumbPool.Add(Texture);
+	return Texture;
 }
 
 void UOKReaderScreen::TickThumbnails()
 {
-	// Retired pictures go after three seconds (DreamGUI has redrawn the tiles without them by then).
-	{
-		const double Now=FPlatformTime::Seconds();int32 Keep=0;
-		while(Keep<RetiredThumbTimes.Num()&&Now-RetiredThumbTimes[Keep]>3.0)++Keep;
-		if(Keep>0){RetiredThumbs.RemoveAt(0,FMath::Min(Keep,RetiredThumbs.Num()));RetiredThumbTimes.RemoveAt(0,Keep);}
-	}
 	if(CardButtons.IsEmpty()||!LeftScroll)return;
+	if(CVarReaderThumbs.GetValueOnGameThread()==0)return;
 	const float Scale=FMath::Max(.01f,float(LeftScroll->GetWorldScale().Z>0?LeftScroll->GetWorldScale().Z:LeftScroll->GetWorldScale().Y));
 	const FVector Center=LeftScroll->GetWorldLocation();
 	const float View=LeftScroll->GetHeight();
@@ -1052,7 +1077,7 @@ void UOKReaderScreen::TickThumbnails()
 	{
 		UOKDreamControl* Tile=CardButtons[I];if(!IsValid(Tile))continue;
 		const float Distance=FVector::Dist(Tile->GetWorldLocation(),Center);
-		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);RetireThumb(CardThumbs[I]);CardThumbs[I]=nullptr;}
+		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);GiveBackThumb(CardThumbs[I]);CardThumbs[I]=nullptr;}
 		else if(Distance<=Near&&CardThumbs.IsValidIndex(I)&&!CardThumbs[I]&&!CardThumbLoading[I])Wanted.Add(I);
 	}
 	Wanted.Sort([&](int32 A,int32 B){return FVector::DistSquared(CardButtons[A]->GetWorldLocation(),Center)<FVector::DistSquared(CardButtons[B]->GetWorldLocation(),Center);});
@@ -1071,7 +1096,7 @@ void UOKReaderScreen::TickThumbnails()
 		TWeakObjectPtr<UOKReaderScreen> Weak(this);
 		UE::Tasks::Launch(TEXT("OKReaderThumb"),[Weak,Wrappers,Path,I,Generation,Cancelled]()
 		{
-			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Wrappers,Path,288,402,Cancelled);
+			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Wrappers,Path,OKReaderThumbs::TileWidth,OKReaderThumbs::TileHeight,Cancelled);
 			if(*Cancelled)return;
 			AsyncTask(ENamedThreads::GameThread,[Weak,I,Generation,Cancelled,Thumb=MoveTemp(Thumb)]()
 			{
@@ -1079,7 +1104,7 @@ void UOKReaderScreen::TickThumbnails()
 				if(*Cancelled||!IsValid(Self)||Self->ThumbGeneration!=Generation)return;
 				Self->ThumbsInFlight=FMath::Max(0,Self->ThumbsInFlight-1);
 				if(!Self->CardThumbs.IsValidIndex(I)||!Self->CardThumbLoading.IsValidIndex(I)||!Self->CardButtons.IsValidIndex(I))return;
-				UTexture2D* Texture=OKReaderThumbs::MakeTexture(Thumb);
+				UTexture2D* Texture=Self->PutThumb(Thumb.Width,Thumb.Height,Thumb.Bgra);
 				if(!Texture)return;	// unreadable: stays marked loading, so it is not asked for again
 				Self->CardThumbLoading[I]=false;
 				Self->CardThumbs[I]=Texture;OKReaderThumbs::Show(Self->CardButtons[I],Texture);

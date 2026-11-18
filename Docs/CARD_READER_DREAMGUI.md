@@ -115,22 +115,21 @@ UOKReaderScreen（DUI/Reader/ReaderScreen.dui → /Game/UI/Reader/WBP_ReaderScre
 
 第二批（2026-11-18 實拍同卡）：骨骼頁預設「骨骼調整：頭部」8 列、266 FPS，勾「進階」後重建成 X／Y／Z 分軸列；懷孕頁顯示啟用、預設與 16 條滑桿；從骨骼頁切到懷孕、胸部都正常，胸部頁有胸部柔軟度／重量；飾品頁先選「配件欄 3」，類別自動成「配件欄 3：髮飾」；鼻子頁 82 種。**骨骼頁不要一次鏡像全部骨骼列**：第一版把幾百列（含收起的）全建出來，建頁卡 1.8 秒、DreamGUI 報 `ExpandTexture ... Maximum texture size is 16,384`，接著切到別頁時銷毀這些控制項讓遊戲卡死好幾分鐘；現在只鏡像該分類看得到的列（`FGroup::bShownOnly`），分類或勾選改變時重建（`FGroup::Signature`）。手動選「骨骼調整：全部」仍會建全部列，盡量別選。
 
-### 崩潰排查（2026-11-19，未完，整合 #19 時停工）
+### 崩潰排查（2026-11-19）
 
-- 縮圖背景解碼已改成不會懸空：
-  - 背景只拿路徑複本、遊戲執行緒先取得的 ImageWrapper 模組指標，以及清單自己的取消旗標，不碰任何 UObject。
+- 縮圖背景解碼不會懸空：
+  - 背景只拿三樣東西：路徑複本、遊戲執行緒先取得的 ImageWrapper 模組指標、清單自己的取消旗標，不碰任何 UObject。
   - 先看 IHDR，超過 2048×2048 不解碼。
   - 清單重建時舉起取消旗標並換 generation，在途的解碼不回寫。
   - 回寫前檢查索引。
-  - 卡片格子先放開圖片再銷毀；放開的貼圖留在 `RetiredThumbs` 3 秒才交給 GC。
-- **仍可重現的崩潰（GPU，不是使用者那筆 CPU 的 `EXCEPTION_ACCESS_VIOLATION`）**：
-  - 開發版讀卡器反覆切「卡片來源」（街頭女主角卡片／APNG 內嵌資源卡片），加上 `ok.ReaderScreen scroll 0..1` 快速捲動，約一分多鐘後當掉。兩次都是這樣，第二次沒有點任何卡。
-  - log 是 `LogD3D12RHI: Error: PageFault`，Aftermath 寫 `fragment_02` MMU fault，`D3D12Util.TerminateOnGPUCrash`。
-  - 時間點符合引擎自動 GC 的週期。但「切來源後立刻 `obj gc`」兩次都沒當。
-  - 推測是某個被 GC 釋放的貼圖或材質，還被 DreamGUI 的繪製資料引用。還沒證實；測試腳本在 scratchpad 的 `stress.sh`。
-  - 整合後要做：
-    1. 加 cvar 關掉縮圖再跑同一組壓力，判斷是不是縮圖。
-    2. 再看 DreamGUI 的 `DestroyWidget` 與材質實例的生命週期。
+- **GPU PageFault（已修）**：
+  - 症狀：開發版讀卡器反覆切「卡片來源」（街頭女主角卡片／APNG 內嵌資源卡片），再加 `ok.ReaderScreen scroll 0..1` 快速捲動，約一分多鐘後當掉。重現兩次，第二次沒點任何卡。log 是 `LogD3D12RHI: Error: PageFault`，Aftermath 寫 `fragment_02` MMU fault。
+  - 原因：DreamGUI 的圖片把貼圖放進畫布的繪製幾何（`UIGeometry->Texture`）。縮圖貼圖被放開後交給 GC，但畫布已建好的繪製資料不一定在那之前重建，GPU 讀到已釋放的貼圖。先前「放開後保留 3 秒」不夠，同一組測試照樣當。
+  - 修正：縮圖改成畫面自己擁有的貼圖池（`ThumbPool`，固定 288×402）。格子放開的貼圖回到池裡，下一張用 `UpdateTextureRegions` 重填。讀卡器存活期間沒有任何縮圖貼圖被回收。
+  - 驗證：同一組壓力（切來源＋捲動）跑 10 輪約 4.5 分鐘，含 3 次 `obj gc`，再加點卡跑 8 輪約 5 分鐘，都沒當。log 的 `: Error:` 只有原本就有的 CommonUI 那一行。縮圖重複使用後顯示正確，沒有錯圖。
+  - 對照開關：`ok.ReaderThumbs 0` 不解碼縮圖。
+  - 外觀選擇的縮圖格（控制器的 `AppearanceTextures`，換頁時重建）是同一類風險，還沒改。
+- 使用者那筆 CPU 的 `EXCEPTION_ACCESS_VIOLATION`（`Foreground Worker #0`）沒有拿到 dump，沒有直接重現。上面兩項修正都針對這條路徑。
 
 MCP 用的新指令：`ok.ReaderScreen press <文字> [#N]`（按目前顯示、文字相同（找不到再找包含）的第 N 個控制項，等同滑鼠點）、`ok.ReaderScreen scroll <0–1>`（左欄捲到該位置，給長頁截圖）。
 

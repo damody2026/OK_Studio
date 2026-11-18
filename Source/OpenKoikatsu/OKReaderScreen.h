@@ -212,11 +212,12 @@ private:
 	// Raised when the list is rebuilt: decodes still on workers stop and never report back (a destroyed screen is caught by
 	// the weak pointer the report holds).
 	TSharedRef<FThreadSafeBool> ThumbCancel=MakeShared<FThreadSafeBool>(false);
-	// Pictures a tile has just let go of (scrolled far away, list rebuilt) stay referenced a few seconds before the
-	// collector may free them: DreamGUI's draw data built before the brush changed must not outlive its texture.
-	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> RetiredThumbs;
-	TArray<double> RetiredThumbTimes;
-	void RetireThumb(class UTexture2D* Texture);
+	// Every picture texture the list ever made, kept for the screen's life and reused (FreeThumbs: the ones no tile shows):
+	// none is collected while DreamGUI may still draw it.
+	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> ThumbPool;
+	TArray<class UTexture2D*> FreeThumbs;
+	void GiveBackThumb(class UTexture2D* Texture);
+	class UTexture2D* PutThumb(int32 Width,int32 Height,const TArray<uint8>& Bgra);
 	// The 遊戲目錄 page's fields and what they report (the folder count runs on a worker).
 	TWeakObjectPtr<UOKDreamControl> RootInput,RootStatus,LibraryInput,LibraryStatus;
 	int32 RootCheckGeneration=0;

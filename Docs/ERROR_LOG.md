@@ -5751,3 +5751,10 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   **一定要再跑一次 `Tools/ok_cards.lua verify <本机 OK 卡清单>`**。我这次只量了原作卡的时间与输出，
   没有重跑 OK 卡的 strict 扫描，所以这个 regression 是使用者在读卡器里先看到的。
   判准很简单：**严格开卡问的问题必须和转卡当时问的一模一样**，多问一个、键不同都算改了契约。
+
+## 2026-11-19：讀卡器縮圖貼圖放開後交給 GC，DreamGUI 還在畫它 → GPU PageFault（e-fork-2）
+
+- **症狀**：讀卡器新畫面反覆切卡片來源、快速捲動，約一分多鐘 `LogD3D12RHI: Error: PageFault`（Aftermath：`fragment_02` MMU fault），遊戲關閉。兩次都在第二輪。
+- **原因**：縮圖是 `UTexture2D::CreateTransient` 做的，捲遠或清單重建就放開讓 GC 回收；DreamGUI 的圖片把貼圖放進畫布的繪製幾何，已建好的繪製資料不一定在 GC 前重建。第一個修法「放開後保留 3 秒」照樣當，等於用時間猜別人的生命週期。
+- **修正**：縮圖改成畫面擁有的固定大小貼圖池，放開的貼圖回池、下一張用 `UpdateTextureRegions` 重填，讀卡器存活期間不回收任何縮圖貼圖。同一組壓力 10＋8 輪（含 `obj gc`）不再當。
+- **再試前檢查**：交給 DreamGUI 畫的貼圖不要在畫面還活著時讓 GC 回收；要換圖就重用同一張貼圖。外觀選擇的縮圖格（`AppearanceTextures`）同類，待改。
