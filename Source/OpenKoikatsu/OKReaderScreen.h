@@ -134,10 +134,12 @@ private:
 	int32 Sub=0;
 	float LeftWidth=560.f;
 	float RightWidth=440.f;
+	// The camera bar's buttons at their natural widths, plus its padding: the 3D view between the panels keeps this much.
+	float CameraBarWidth=0.f;
 	bool bBuilt=false;
 	bool bShownModelLayout=false;
 	int32 ShownEntries=-1;
-	bool bResizing=false;
+	bool bResizing=false,bResizeMouseWasDown=false;
 	float ResizeStartX=0.f,ResizeStartWidth=0.f;
 
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> Controls;

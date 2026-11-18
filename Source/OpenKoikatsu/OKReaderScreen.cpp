@@ -23,6 +23,8 @@
 #include "Controls/DreamTextInput.h"
 #include "Controls/DreamScrollBox.h"
 #include "Event/DreamEventSystem.h"
+#include "Event/DreamPointerEventData.h"
+#include "Event/DreamUIInputTypes.h"
 #include "Components/Button.h"
 #include "Components/Slider.h"
 #include "Components/CheckBox.h"
@@ -481,17 +483,30 @@ void UOKReaderScreen::BuildCameraBar()
 			const FVector At=A->BodySkel->GetBoneLocation(Bone,EBoneSpaces::WorldSpace);
 			if(!At.ContainsNaN()&&!At.IsNearlyZero())A->OrbitFocus=FVector(Base.X,Base.Y,At.Z+(Focus==2?6.f:0.f));
 		}
-		A->OrbitYaw+=Yaw;A->OrbitPitch=Pitch;A->OrbitDistance=Full*Distance;A->ApplyOrbitCamera();
+		// OrbitYaw is the camera's bearing around her (0 = in front): set, not added, so 背面 twice stays behind her; NAN
+		// (the framing buttons) keeps the side the camera is on.
+		if(!FMath::IsNaN(Yaw)){A->OrbitYaw=Yaw;}A->OrbitPitch=Pitch;A->OrbitDistance=Full*Distance;A->ApplyOrbitCamera();
 	};
-	MakeOwnButton(CameraBarHost,TEXT("全身"),[View](){View(0,0,1,0);});
-	MakeOwnButton(CameraBarHost,TEXT("上半身"),[View](){View(0,0,.55f,1);});
-	MakeOwnButton(CameraBarHost,TEXT("臉部"),[View](){View(0,0,.22f,2);});
-	MakeOwnButton(CameraBarHost,TEXT("腿部"),[View](){View(0,0,.6f,3);});
+	MakeOwnButton(CameraBarHost,TEXT("全身"),[View](){View(NAN,0,1,0);});
+	MakeOwnButton(CameraBarHost,TEXT("半身"),[View](){View(NAN,0,.55f,1);});
+	MakeOwnButton(CameraBarHost,TEXT("臉部"),[View](){View(NAN,0,.22f,2);});
+	MakeOwnButton(CameraBarHost,TEXT("腿部"),[View](){View(NAN,0,.6f,3);});
 	MakeOwnButton(CameraBarHost,TEXT("正面"),[View](){View(0,0,1,0);});
 	MakeOwnButton(CameraBarHost,TEXT("左側"),[View](){View(-90,0,1,0);});
 	MakeOwnButton(CameraBarHost,TEXT("右側"),[View](){View(90,0,1,0);});
 	MakeOwnButton(CameraBarHost,TEXT("背面"),[View](){View(180,0,1,0);});
-	MakeOwnButton(CameraBarHost,TEXT("俯視"),[View](){View(0,-35,1,0);});
+	MakeOwnButton(CameraBarHost,TEXT("俯視"),[View](){View(NAN,35,1,0);});
+	// The bar is as wide as the 3D view between the panels: the buttons share what is over their own width, and
+	// SetLeftWidth keeps the left panel from squeezing the view below that (they would run under the right panel).
+	// Two characters each, on one line: at the narrowest view each keeps 64 design pixels (two 20 px glyphs and the
+	// button's 12 px padding each side); the label never wraps (a squeezed one went vertical).
+	CameraBarWidth=20.f;
+	for(UDreamWidget* B:CameraBarHost->GetChildren())if(B)
+	{
+		B->SetWidth(40.f);CameraBarWidth+=64.f+6.f;
+		if(UDreamPanelSlot* Slot=B->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+		if(auto* Control=Cast<UOKDreamControl>(B))if(UDreamText* T=TextOf(Control->Label)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::HorizontalOverflow);}
+	}
 }
 
 void UOKReaderScreen::BuildPluginTools()
@@ -573,7 +588,11 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 
 void UOKReaderScreen::SetLeftWidth(float Width)
 {
-	LeftWidth=FMath::Clamp(Width,360.f,1000.f);Layout();
+	// No wider than leaves the camera bar its room (the screen is 1080 design pixels high, as wide as its aspect makes it).
+	float Max=1000.f;
+	if(GEngine&&GEngine->GameViewport&&GEngine->GameViewport->Viewport){const FIntPoint Size=GEngine->GameViewport->Viewport->GetSizeXY();if(Size.Y>0)Max=FMath::Min(Max,Size.X*1080.f/Size.Y-RightWidth-32.f-CameraBarWidth);}
+	// 540: narrower cuts the slider rows (their label, value and reset button keep their widths).
+	LeftWidth=FMath::Clamp(Width,540.f,FMath::Max(540.f,Max));Layout();
 }
 
 void UOKReaderScreen::Layout()
@@ -588,13 +607,20 @@ void UOKReaderScreen::Layout()
 // The left panel's right edge is a handle: press near it and drag.
 void UOKReaderScreen::TickResize()
 {
-	APlayerController* PC=GetOwningPlayer();if(!PC)PC=Controller.IsValid()?Controller->GetOwningPlayer():nullptr;
-	if(!PC||!GEngine||!GEngine->GameViewport||!GEngine->GameViewport->Viewport)return;
-	float X=0,Y=0;if(!PC->GetMousePosition(X,Y))return;
+	// The mouse as DreamGUI sees it (the same pointer its hit test uses): its Slate input source consumes presses over its
+	// widgets (the handle is one), so the player controller's input never sees them.
+	if(!GEngine||!GEngine->GameViewport||!GEngine->GameViewport->Viewport)return;
 	const FIntPoint Size=GEngine->GameViewport->Viewport->GetSizeXY();if(Size.Y<=0)return;
-	const float Scale=Size.Y/1080.f;const bool Down=PC->IsInputKeyDown(EKeys::LeftMouseButton);
+	UDreamEventSystem* Events=UDreamEventSystem::GetDreamEventSystemInstance(this,0);
+	const UDreamPointerEventData* Pointer=Events?Events->GetPointerEventData(DreamUIPointerIds::Mouse,false):nullptr;
+	if(!Pointer){bResizing=false;bResizeMouseWasDown=false;return;}
+	const float X=Pointer->PointerPosition.X;
+	const float Scale=Size.Y/1080.f;const bool Down=Pointer->bNowIsTriggerPressed;
+	const bool bJustPressed=Down&&!bResizeMouseWasDown;bResizeMouseWasDown=Down;
 	const float Edge=LeftWidth*Scale;
-	if(!bResizing&&Down&&PC->WasInputKeyJustPressed(EKeys::LeftMouseButton)&&FMath::Abs(X-Edge)<=8.f*Scale){bResizing=true;ResizeStartX=X;ResizeStartWidth=LeftWidth;}
+	if(bJustPressed)UE_LOG(LogTemp,Verbose,TEXT("ok.ReaderScreen: press at x=%.1f, panel edge %.1f"),X,Edge);
+	// The handle is 8 design pixels inside the edge; a little either side of it still grabs.
+	if(!bResizing&&bJustPressed&&X>=Edge-12.f*Scale&&X<=Edge+6.f*Scale){bResizing=true;ResizeStartX=X;ResizeStartWidth=LeftWidth;}
 	if(bResizing){if(!Down)bResizing=false;else SetLeftWidth(ResizeStartWidth+(X-ResizeStartX)/Scale);}
 }
 

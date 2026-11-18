@@ -5257,6 +5257,15 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **驗證**：stage DGate1118a（舊 base BaseHFace1115，`-pakdir` 只放材質與音效 patch、不放新的 global shader patch）不加參數正常進讀卡器；同一組加 `-OKDreamReader` 照舊 Fatal（陽性對照）。
 - **再試前檢查**：加任何帶 global shader 的程式（外掛、`IMPLEMENT_GLOBAL_SHADER`、`.usf` 改簽名）前，先決定沒用到它的模式要不要列為必須（`ShouldCompilePermutation` 加條件）；提交前拿一個舊 base 的 stage、不掛新 patch 實際啟動一次。
 
+## 2026-11-18 讀卡器 DreamGUI 的點擊被透明的 UMG 層搶走（E 組 e-fork-2）
+
+- **變更**：cbf516d45 之前的讀卡器 DreamGUI 版面只用主控台指令（`ok.ReaderScreen`）與 MCP 驗收，沒有用真實滑鼠點過。
+- **症狀**：用真實滑鼠點左欄「身子」、拖臉部滑桿都沒反應，反而跳出隱藏的「另存 APNG 新卡」提示並觸發該按鈕；中間鏡頭列（下面沒有 UMG 控制項）點得動。
+- **原因（已證實）**：`NativeConstruct` 把 UMG 層設成 `HitTestInvisible`，但開卡後 `SetModelLayout` 把整個 widget 設回 `SelfHitTestInvisible`，透明的 UMG 控制項又能被點到；另外 DreamGUI 預設從 PlayerController 收輸入，讀卡器沒有那套綁定，要開 `bUseSlateInputSource`。左欄拖拉調寬讀 PlayerController 的滑鼠，按在 DreamGUI 把手上的鍵被 Slate 輸入源吃掉，也收不到。
+- **處置**：`SetModelLayout` 在有 `ReaderScreen` 時固定 `HitTestInvisible`；`Config/DefaultDreamGUI.ini` 開 Slate 輸入源（`WhenOverUI`）；`TickResize` 改讀 DreamGUI 的滑鼠指標資料（先試 `FSlateApplication` 的游標換算，實測仍抓不到，原因未查明）。
+- **驗證**：真實滑鼠（SetCursorPos＋mouse_event）點鏡頭列、拖滑桿、重置、分類、二級選單、抽屜、下拉選單都生效。 同一輪實測也發現鏡頭列「背面」是相對旋轉（連按兩次轉回正面）、「俯視」的仰角正負號反了（鏡頭跑到腳下），已改成絕對方位。
+- **再試前檢查**：UI 驗收一定要用真實滑鼠點過一次，主控台指令與 MCP 直接改 UMG，繞過了點擊命中測試；疊在上面的新介面做好後，查一遍所有會改整個 widget 可見度的地方。
+
 ## 2026-11-18 报告里给重复解码写的「原因」是错的，而且上限估高了一个数量级（E 组 e-cardload）
 
 - **变更**：`Docs/CARD_OPEN_PERF_20261117.md` 第四节那个候选「把 `png_transform_cache` 的键换成出处」，
