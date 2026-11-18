@@ -873,7 +873,8 @@ void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 		TWeakObjectPtr<UOKDreamControl> WeakInput(Input);
 		MakeOwnButton(Row,TEXT("選資料夾…"),[WeakInput,Pick,Save,Changed]()
 		{
-			const FString Chosen=Pick();if(Chosen.IsEmpty())return;
+			// Logged: the system dialog is out of the game MCP's reach, so its outcome is read here.
+			const FString Chosen=Pick();UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: folder dialog %s%s"),Chosen.IsEmpty()?TEXT("cancelled"):TEXT("picked "),*Chosen);if(Chosen.IsEmpty())return;
 			if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Chosen);
 			Save(Chosen);Changed(Chosen);
 		});

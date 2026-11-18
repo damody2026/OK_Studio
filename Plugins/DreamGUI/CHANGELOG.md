@@ -565,6 +565,10 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **The first letter typed into a field no longer goes in twice under DreamGameViewportClient.** A field learned that the
+  host delivers real characters from the first character to arrive, and the key table guessed the keystroke before it
+  as well (a key comes before its character). A world whose game viewport is a `UDreamGameViewportClient` is known to
+  deliver them from the start.
 - **A static atlas's pages are rooted while a disregard-for-GC object points at them.** Static atlas pages are
   transient textures made at run time, like the dynamic atlas's; a sprite or an atlas loaded while the engine starts
   pointing at one broke the cooked build's GC verification the same way. `NotePageHolder` roots exactly those pages
