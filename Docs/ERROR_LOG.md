@@ -5300,3 +5300,16 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 **改法**（`git add -p` 在这个环境不能用，是互动式的）：提交前一定先 `git diff -- <档案>` 看过每个 hunk；
 同一档案有别人的改动时，把自己的 hunk 写成 patch 再 `git apply --cached <patch>` 只暂存那几段，
 然后 `git diff --cached` 复查一遍再 commit。只有确认整个档案的改动都是自己的，才可以直接 `git add <档案>`。
+
+## 2026-11-18：截图传了 `bShowUI=false`，拍回来全黑，还差点被当成引擎不给拍
+
+为了看 `ok.Studio.LoadSkipDraw` 开着时使用者在载入期间看到什么，在 profile harness 加了
+`OK_SCENE_PROFILE_SHOT_LOADING=<帧>`，第一版写成 `FScreenshotRequest::RequestScreenshot(Path, false, false)`。
+第二个参数是 `bShowUI`——传 false 就把 UI 与 HUD 排除在截图外，而**进度行正是画在 UI 层**（`DrawStatsHUD`）。
+结果不画世界那张全黑，画世界那张也全黑（第 120 帧场景还没成形），两张同样大小，什么都没证明。
+
+**修正**：改成 `RequestScreenshot(Path, true, false)`，并把截图帧往后挪。
+
+**教训**：拍不到东西先怀疑自己的截图参数，不要先怀疑引擎或渲染路径。`RequestScreenshot` 的 `bShowUI` 预设直觉上
+像「要不要画面上的除错叠层」，实际上关掉的是整个 UI 层；要验的东西在哪一层，就要确认截图包含那一层。
+还有一点：**对照组也全黑就代表这个取证方法当下无效**，不能只看实验组的那张就下结论。
