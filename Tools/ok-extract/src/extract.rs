@@ -1187,6 +1187,13 @@ pub(crate) fn extract_session_from_info(
     // An OK Studio eyes pattern whose eye set shows a gag eye (ChaControl.ChangeEyesPtn): that object is built, with
     // the set's texture.
     let studio_eyes = crate::studio_status::current().and_then(|o| o.eyes_ptn).and_then(|p| crate::eye_set::eye_set(game_root, p));
+    // Three passes, because the middle one is the expensive one and it is the only one that can run anywhere:
+    // (1) pick the head details this card shows (needs `parsed_head` for each part's skeleton, and the dedup is
+    // order-dependent), (2) give each its textures and rig — 63 of this stage's 70 ms at one thread, and nothing in
+    // it touches another part — then (3) the eyeline shadow (needs `parsed_head` again) and the emit, in the
+    // original order, because that order *is* the session's part order (`batch: emit (serial)` for the same reason).
+    // Kill switch OK_SERIAL_HEAD_DETAIL=1 runs pass 2 one at a time, so the A/B differs only in the iterator.
+    let mut head_jobs: Vec<(ExtractedMesh, Option<crate::pose::Skeleton>, String)> = Vec::new();
     for mut mesh in head_meshes.iter().cloned() {
         let key = mesh.name.to_ascii_lowercase();
         // FBS target references are authoritative, including inactive tears
@@ -1275,88 +1282,127 @@ pub(crate) fn extract_session_from_info(
                 mesh.normals.len()
             );
         }
-        let key = mesh.name.to_ascii_lowercase();
+        let mesh_key = mesh.name.to_ascii_lowercase();
+        head_jobs.push((mesh, part_skel, mesh_key));
+    }
+
+    // Pass 2. A memo hit is taken here on the open's own thread, because `view_memo` is thread-local (its IN_VIEW
+    // flag is only set on this one): doing it on a worker would quietly stop memoising and make every later garment
+    // state of this outfit pay the textures again. So only the misses are handed out, and they are stored back here
+    // under the same keys as before — including the rule that a value made while the strict open met a gap is not
+    // kept (the worker reports its own `gaps_on_thread`, which is what that rule has always compared).
+    let mesh_keys: Vec<String> = head_jobs.iter().map(|(_, _, key)| key.clone()).collect();
+    let memo_keys: Vec<Option<String>> = head_jobs
+        .iter()
+        .map(|(mesh, _, _)| {
+            parsed_card.as_ref().filter(|_| studio_eyes.is_none()).map(|card| {
+                format!("head_detail|{:016x}|{outfit}|{}|{}", card.source_digest, mesh.name, mesh.path_id)
+            })
+        })
+        .collect();
+    let mut prepared: Vec<Option<ExtractedMesh>> = memo_keys
+        .iter()
+        .map(|key| key.as_ref().and_then(|key| crate::entries::view_memo_get::<ExtractedMesh>(key)))
+        .collect();
+    let mut slots: Vec<Option<(ExtractedMesh, Option<crate::pose::Skeleton>, String)>> =
+        head_jobs.into_iter().map(Some).collect();
+    let _ = &mesh_keys;
+    let todo: Vec<(usize, (ExtractedMesh, Option<crate::pose::Skeleton>, String))> = slots
+        .iter_mut()
+        .enumerate()
+        .filter(|(i, _)| prepared[*i].is_none())
+        .filter_map(|(i, slot)| slot.take().map(|job| (i, job)))
+        .collect();
+    // Textures and rig of one head detail: what `resolve_head_detail_texture` and `rig_mesh` do to that mesh alone.
+    let prepare_one = |mesh: ExtractedMesh, part_skel: Option<crate::pose::Skeleton>, key: &str| {
+        let _seg = crate::unity::segment("head_detail/prepare");
         let authored_fbs = HeadFbsInput {
-            mouth:head_mouth_patterns.get(&key).map(|(_,p)|p.as_slice()),
-            eyes:head_eye_patterns.get(&key).map(|(_,p)|p.as_slice()),
-            eyebrow:head_eyebrow_patterns.get(&key).map(|(_,p)|p.as_slice()),
+            mouth: head_mouth_patterns.get(key).map(|(_, p)| p.as_slice()),
+            eyes: head_eye_patterns.get(key).map(|(_, p)| p.as_slice()),
+            eyebrow: head_eyebrow_patterns.get(key).map(|(_, p)| p.as_slice()),
         };
-        let prepare = |mut mesh: ExtractedMesh| {
-            crate::card_plugins::apply_edit_fangs(
-                &mut mesh,
-                parsed_card.as_ref().and_then(|c| c.edit_fangs),
-            );
-            { let _seg = crate::unity::segment("head_detail/prepare/rig");
-            rig_mesh(
-                &mut mesh,
-                "head",
-                body_skel.as_ref(),
-                head_skel.as_ref(),
-                None,
-                part_skel.as_ref(),
-                None,
-                Some(&authored_fbs),
-                None,
-            ); }
-            // OK_SKIP_HDET_TEX=1 is a measurement switch: it leaves every head detail (eyes, brows, lines, teeth,
-            // tongue) **without its texture**, so the output is wrong. It exists because this call is 63 of the
-            // 70 ms of `head_detail/prepare` at one thread, and the only honest way to price a parallel version is
-            // to ask what making it free would buy: 8 threads −0.015 s, 2 threads −0.135 s (2026-11-19, see
-            // `Docs/CARD_OPEN_PERF_20261117.md` 第四节). Never set it outside an A/B.
-            if let Some(card) = parsed_card.as_ref().filter(|_| std::env::var_os("OK_SKIP_HDET_TEX").is_none()) {
-                let _seg = crate::unity::segment("head_detail/prepare/texture");
-                resolve_head_detail_texture(
-                    game_root,
-                    &vanilla,
-                    &mod_catalog,
-                    card,
-                    &guid_index,
-                    outfit,
-                    &mut mesh,
-                    &head_texs,
-                    &body_texs,
-                );
-            }
-            if mesh.texture_png.is_none() {
-                let ln = mesh.name.to_ascii_lowercase();
-                if ln.contains("hitomi") {
-                    mesh.texture_png = simple_iris_png();
-                } else if ln.contains("noseline") || ln.contains("nose") {
-                    mesh.texture_png = crate::unity::solid_png([0.04, 0.03, 0.04, 0.35], 32, 32);
-                } else if ln.contains("eyeline") || ln.contains("mayuge") {
-                    // A missing line texture must not become an opaque dark quad
-                    // over the eyes. The game simply has no texture on that pass.
-                    mesh.texture_png = crate::unity::solid_png([0.0, 0.0, 0.0, 0.0], 32, 32);
-                } else if ln.contains("tooth") || ln.contains("canine") || ln.contains("tang") {
-                    // A missing source MainTex uses the shader's white default.
-                    mesh.texture_png = crate::unity::solid_png([1.0; 4], 8, 8);
-                }
-            }
-            // Unity draws extra materials on the last submesh. rendEyelineUp has
-            // materials[1]=EyelineShadowTex * skinMainColor (ChaControl.cs:4046/4073).
+        let gaps_before = crate::okstrict::gaps_on_thread();
+        let mut mesh = mesh;
+        crate::card_plugins::apply_edit_fangs(&mut mesh, parsed_card.as_ref().and_then(|c| c.edit_fangs));
+        {
+            let _seg = crate::unity::segment("head_detail/prepare/rig");
+            rig_mesh(&mut mesh, "head", body_skel.as_ref(), head_skel.as_ref(), None, part_skel.as_ref(), None,
+                Some(&authored_fbs), None);
+        }
+        // OK_SKIP_HDET_TEX=1 is a measurement switch: it leaves every head detail (eyes, brows, lines, teeth,
+        // tongue) **without its texture**, so the output is wrong. It exists to price this call — 63 of the 70 ms
+        // at one thread — by asking what making it free would buy: 8 threads −0.015 s, 2 threads −0.135 s
+        // (2026-11-19, `Docs/CARD_OPEN_PERF_20261117.md` 第四节). Never set it outside an A/B.
+        if let Some(card) = parsed_card.as_ref().filter(|_| std::env::var_os("OK_SKIP_HDET_TEX").is_none()) {
+            let _seg = crate::unity::segment("head_detail/prepare/texture");
+            resolve_head_detail_texture(game_root, &vanilla, &mod_catalog, card, &guid_index, outfit, &mut mesh,
+                &head_texs, &body_texs);
+        }
+        if mesh.texture_png.is_none() {
             let ln = mesh.name.to_ascii_lowercase();
-            let _seg_kage = crate::unity::segment("head_detail/prepare/kage");
-            let kage = parsed_card.as_ref().filter(|_| ln.contains("eyeline") && !ln.contains("low")).map(|card| {
-                // ChaControl.ChangeSettingEyelineUp assigns slot0 and slot1
-                // separately. Preserve slot1 identity before looking up ME
-                // MainTex/Color; the stroke's replacement belongs only to slot0.
-                let mut kage = eyeline_shadow_mesh(&parsed_head,&mesh);
-                resolve_head_detail_texture(game_root,&vanilla,&mod_catalog,card,&guid_index,
-                    outfit,&mut kage,&head_texs,&body_texs);
-                kage
-            });
-            (mesh, kage)
-        };
-        // Rigged and textured the same in every garment state of an outfit (crate::view_memo), keyed by the card data;
-        // an OK Studio eye set changes the meshes before this, so it is done afresh.
-        let (mesh, kage) = {
-            let _seg = crate::unity::segment("head_detail/prepare");
-            match parsed_card.as_ref().filter(|_| studio_eyes.is_none()) {
-            Some(card) => crate::view_memo(format!("head_detail|{:016x}|{outfit}|{}|{}", card.source_digest, mesh.name,
-                mesh.path_id), || prepare(mesh)),
-            None => prepare(mesh),
+            if ln.contains("hitomi") {
+                mesh.texture_png = simple_iris_png();
+            } else if ln.contains("noseline") || ln.contains("nose") {
+                mesh.texture_png = crate::unity::solid_png([0.04, 0.03, 0.04, 0.35], 32, 32);
+            } else if ln.contains("eyeline") || ln.contains("mayuge") {
+                // A missing line texture must not become an opaque dark quad over the eyes. The game simply has
+                // no texture on that pass.
+                mesh.texture_png = crate::unity::solid_png([0.0, 0.0, 0.0, 0.0], 32, 32);
+            } else if ln.contains("tooth") || ln.contains("canine") || ln.contains("tang") {
+                // A missing source MainTex uses the shader's white default.
+                mesh.texture_png = crate::unity::solid_png([1.0; 4], 8, 8);
             }
+        }
+        (mesh, crate::okstrict::gaps_on_thread() == gaps_before)
+    };
+    let made: Vec<(usize, ExtractedMesh, bool)> = {
+        static SERIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let run_one = |(i, (mesh, part_skel, key)): (usize, (ExtractedMesh, Option<crate::pose::Skeleton>, String))| {
+            let (mesh, keep) = prepare_one(mesh, part_skel, &key);
+            (i, mesh, keep)
         };
+        if *SERIAL.get_or_init(|| std::env::var_os("OK_SERIAL_HEAD_DETAIL").is_some()) {
+            todo.into_iter().map(run_one).collect()
+        } else {
+            use rayon::prelude::*;
+            todo.into_par_iter().map(run_one).collect()
+        }
+    };
+    for (i, mesh, keep) in made {
+        if keep {
+            if let Some(key) = &memo_keys[i] {
+                crate::entries::view_memo_put(key.clone(), mesh.clone());
+            }
+        }
+        prepared[i] = Some(mesh);
+    }
+
+    // Pass 3. The eyeline shadow needs `parsed_head` (a ParsedBundle is !Send, second节 BUNDLE_CACHE), and it is
+    // only 4 ms, so it stays here; the emit order is the session's part order.
+    for (i, mesh) in prepared.into_iter().enumerate() {
+        let Some(mesh) = mesh else { continue };
+        let key = memo_keys[i].clone();
+        // Unity draws extra materials on the last submesh. rendEyelineUp has
+        // materials[1]=EyelineShadowTex * skinMainColor (ChaControl.cs:4046/4073).
+        let ln = mesh.name.to_ascii_lowercase();
+        let kage = {
+            let _seg = crate::unity::segment("head_detail/prepare/kage");
+            parsed_card.as_ref().filter(|_| ln.contains("eyeline") && !ln.contains("low")).and_then(|card| {
+                let make = || {
+                    // ChaControl.ChangeSettingEyelineUp assigns slot0 and slot1 separately. Preserve slot1
+                    // identity before looking up ME MainTex/Color; the stroke's replacement belongs only to slot0.
+                    let mut kage = eyeline_shadow_mesh(&parsed_head, &mesh);
+                    resolve_head_detail_texture(game_root, &vanilla, &mod_catalog, card, &guid_index, outfit,
+                        &mut kage, &head_texs, &body_texs);
+                    kage
+                };
+                match key.as_ref() {
+                    Some(key) => Some(crate::entries::view_memo(format!("{key}|kage"), make)),
+                    None => Some(make()),
+                }
+            })
+        };
+        let key = mesh_keys[i].clone();
         let stem = format!("head_{}", sanitize(&mesh.name));
         seen_meshes.insert(mesh.name.to_ascii_lowercase());
         let (blend, unlit) = blend_for_mesh("head", &mesh);
