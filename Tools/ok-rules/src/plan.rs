@@ -962,9 +962,15 @@ pub fn meal_pick(c: &Catalog, r: &Value) -> Result<Value, String> {
     Ok(json!({"items": items}))
 }
 
-/// The place in her plan is closed: the nearest open place of the same kind, else home to rest.
+/// The place in her plan is closed: the nearest open place of the same kind, else home to rest. Not her shift: closed
+/// is closed to customers, and staff work there before and while it opens (the day it is shut she has no shift,
+/// plan_day). 爱丽丝's drink shop shift 10:00-15:00, and the early walk there from 09:49, became "rest at girls_dorm",
+/// five hours upstairs where he cannot go, on two different days (c-conquest, 2026-11-18).
 pub fn open_alternative(c: &Catalog, places: &PlacesTuning, r: &Value) -> Result<Value, String> {
     let b: Block = serde_json::from_value(r.get("block").cloned().ok_or("missing_field: block")?).map_err(|e| format!("block: {e}"))?;
+    if b.kind == "work" {
+        return Ok(json!({"block": b}));
+    }
     let doors: BTreeMap<String, (f32, f32)> = serde_json::from_value(r.get("doors").cloned().unwrap_or(json!({}))).unwrap_or_default();
     let from: (f32, f32) = serde_json::from_value(r.get("from").cloned().unwrap_or(json!([0, 0]))).unwrap_or((0.0, 0.0));
     let hours = r.get("hours").and_then(Value::as_f64).unwrap_or(12.0);
@@ -1146,6 +1152,23 @@ mod tests {
         // A class is a class.
         let a = ask(json!({"start": 1060, "end": 1100, "place": "lecture", "kind": "class"}), "park");
         assert_eq!(a["changed"], false);
+    }
+
+    #[test]
+    fn her_shift_is_not_moved_because_the_shop_is_not_open_yet() {
+        let t = Tuning::builtin();
+        let mut c = t.catalog.clone();
+        c.places.insert("drinkshop".into(), crate::catalog::Place { open: vec![(11.0, 21.0)], ..Default::default() });
+        let doors = json!({"drinkshop": [0.0, 0.0], "cafe": [1000.0, 0.0]});
+        // 09:49, her walk there before the 10:00 shift, and the shift: still the drink shop, still work.
+        for (block, hours) in [(json!({"start": 589, "end": 600, "place": "drinkshop", "kind": "work", "source": "early", "job_id": "drinkshop_staff"}), 9.8),
+                               (json!({"start": 600, "end": 900, "place": "drinkshop", "kind": "work", "source": "occupation", "job_id": "drinkshop_staff"}), 10.0)] {
+            let a = open_alternative(&c, &t.places, &json!({"block": block, "doors": doors, "from": [0, 0], "hours": hours, "weekday": 2, "home": "girls_dorm"})).unwrap();
+            assert_eq!((a["block"]["place"].as_str(), a["block"]["kind"].as_str()), (Some("drinkshop"), Some("work")), "{a}");
+        }
+        // Leisure at a shop not open yet still goes elsewhere (or home).
+        let a = open_alternative(&c, &t.places, &json!({"block": {"start": 600, "end": 660, "place": "drinkshop", "kind": "leisure"}, "doors": doors, "from": [0, 0], "hours": 10.0, "weekday": 2, "home": "girls_dorm"})).unwrap();
+        assert_ne!(a["block"]["place"].as_str(), Some("drinkshop"), "{a}");
     }
 
     #[test]
