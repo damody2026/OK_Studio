@@ -31,6 +31,8 @@ namespace
 		FString LastScene;
 		int32 Done = 0, Total = 0;
 		double LastPaint = 0.;
+		/** Window paints forced so far in this process (each one is two ForceRedrawWindow calls). */
+		int32 Paints = 0;
 	};
 	FLoadStage& Stage() { static FLoadStage S; return S; }
 
@@ -40,11 +42,16 @@ namespace
 	{
 		FLoadStage& S = Stage();
 		const double Now = FPlatformTime::Seconds();
+		// OK_STUDIO_STAGE_PAINT=0: never paint here (the steps are still recorded and reported, studio_state "loading"
+		// included); for A/B of what these paints cost a load.
+		static const bool bPaint = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STUDIO_STAGE_PAINT")) != TEXT("0");
+		if (!bPaint) return;
 		if (!bForce && Now - S.LastPaint < 0.2) return;
 		if (!IsInGameThread() || !FSlateApplication::IsInitialized() || !UOKStudioGame::Get() || !GEngine || !GEngine->GameViewport) return;
 		const TSharedPtr<SWindow> Window = GEngine->GameViewport->GetWindow();
 		if (!Window.IsValid()) return;
 		S.LastPaint = Now;
+		++S.Paints;
 		FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
 		FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
 		// OK_STUDIO_STAGE_SHOT=<folder>: a picture of the window at each new step, for checking what the user sees while
@@ -83,6 +90,8 @@ void SOKStudioLoadOverlay::SetStage(const TCHAR* Step, const FString& Text, int3
 	S.Total = Total;
 	PaintNow(bNewStep);
 }
+
+int32 SOKStudioLoadOverlay::StagePaints() { return Stage().Paints; }
 
 void SOKStudioLoadOverlay::EndStage()
 {

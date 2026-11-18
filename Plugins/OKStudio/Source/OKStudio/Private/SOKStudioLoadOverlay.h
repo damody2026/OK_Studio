@@ -41,6 +41,9 @@ public:
 	 *  when it counts something, how far it is (Total <= 0: no count). */
 	static void SetStage(const TCHAR* Step, const FString& Text, int32 Done = 0, int32 Total = 0);
 	static void EndStage();
+	/** How many times the steps have painted the window in this process (OK_STUDIO_STAGE_PAINT=0: none), for the load
+	 *  profile's stage_paints. */
+	static int32 StagePaints();
 	/** What the box shows now, for the control channel (studio_state "loading"): shown, scene, step (text id), text,
 	 *  done / total of the step or of the build ("build" while objects build). */
 	static TSharedRef<class FJsonObject> StateJson(const UOKStudioGame* Game);
