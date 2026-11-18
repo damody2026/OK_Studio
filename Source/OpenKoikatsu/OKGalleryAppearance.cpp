@@ -271,7 +271,7 @@ void UOKCharacterController::RebuildAppearancePage(){
 void UOKCharacterController::LoadAppearanceThumbnails(){
  if(bAppearanceThumbBusy||AppearanceButtons.IsEmpty())return;const int32 Generation=AppearancePageGeneration;bAppearanceThumbBusy=true;auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("thumbnails"));TArray<TSharedPtr<FJsonValue>> Keys;for(UOKAppearanceButton* B:AppearanceButtons)Keys.Add(MakeShared<FJsonValueString>(B->ItemKey));R->SetArrayField(TEXT("keys"),Keys);
  RunAppearanceRequest(R,[Generation](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bAppearanceThumbBusy=false;if(Generation!=G->AppearancePageGeneration){G->LoadAppearanceThumbnails();return;}if(!Data){G->AppearanceStatus->SetText(FText::FromString(TEXT("縮圖讀取失敗：")+Error));return;}
-  for(auto V:Data->GetArrayField(TEXT("thumbnails"))){auto Row=V->AsObject();FString Path;Row->TryGetStringField(TEXT("path"),Path);for(UOKAppearanceButton* B:G->AppearanceButtons)if(B->ItemKey==Row->GetStringField(TEXT("key"))){UTexture2D* T=nullptr;if(TObjectPtr<UTexture2D>* Cached=G->AppearanceThumbCache.Find(Path))T=Cached->Get();if(!T&&(T=Thumbnail(Path))!=nullptr)G->AppearanceThumbCache.Add(Path,T);if(T){G->AppearanceTextures.Add(T);B->Thumbnail->SetBrushFromTexture(T);B->ThumbnailStatus->SetVisibility(ESlateVisibility::Collapsed);}else B->ThumbnailStatus->SetText(FText::FromString(TEXT("素材未提供縮圖")));}}
+  for(auto V:Data->GetArrayField(TEXT("thumbnails"))){auto Row=V->AsObject();FString Path;Row->TryGetStringField(TEXT("path"),Path);for(UOKAppearanceButton* B:G->AppearanceButtons)if(B->ItemKey==Row->GetStringField(TEXT("key"))){UTexture2D* T=nullptr;T=G->CachedThumb(Path);if(T){G->AppearanceTextures.Add(T);B->Thumbnail->SetBrushFromTexture(T);B->ThumbnailStatus->SetVisibility(ESlateVisibility::Collapsed);}else B->ThumbnailStatus->SetText(FText::FromString(TEXT("素材未提供縮圖")));}}
  });
 }
 bool UOKCharacterController::MaterializeAppearance(TFunction<void(UOKCharacterController*)> Complete){
@@ -492,6 +492,19 @@ void UOKCharacterController::SetEyeOverlay(const FString& Material,const FString
 }
 UTexture2D* UOKCharacterController::EyeOverlayThumb(const FString& Png){
  if(Png.IsEmpty())return nullptr;
- if(TObjectPtr<UTexture2D>* Cached=AppearanceThumbCache.Find(Png))return Cached->Get();
- UTexture2D* T=Thumbnail(Png);if(T)AppearanceThumbCache.Add(Png,T);return T;
+ return CachedThumb(Png);
+}
+// A limit for the picker thumbnail cache (2026-11-19, the reader's open GPU page fault: a comparison run with the cache
+// bounded). An evicted texture is only dropped from the cache: tiles still showing it keep it (their brushes, DreamGUI's
+// draw holds), and the next request for that file makes a new one.
+static TAutoConsoleVariable<int32> CVarAppearanceThumbCacheMax(TEXT("ok.AppearanceThumbCacheMax"),0,TEXT("Picker thumbnails kept in the cache: 0 no limit (default), N the N most recently used."));
+UTexture2D* UOKCharacterController::CachedThumb(const FString& Path){
+ UTexture2D* T=nullptr;
+ if(TObjectPtr<UTexture2D>* Cached=AppearanceThumbCache.Find(Path))T=Cached->Get();
+ if(!T&&(T=Thumbnail(Path))!=nullptr)AppearanceThumbCache.Add(Path,T);
+ if(!T)return nullptr;
+ AppearanceThumbOrder.Remove(Path);AppearanceThumbOrder.Add(Path);
+ const int32 Max=CVarAppearanceThumbCacheMax.GetValueOnGameThread();
+ while(Max>0&&AppearanceThumbOrder.Num()>Max){AppearanceThumbCache.Remove(AppearanceThumbOrder[0]);AppearanceThumbOrder.RemoveAt(0);}
+ return T;
 }

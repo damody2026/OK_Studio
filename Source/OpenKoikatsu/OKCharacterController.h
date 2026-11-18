@@ -203,6 +203,10 @@ public:
  // its own tiles, whose draw data may outlive a page change), so turning pages or targets reuses them instead of
  // leaving the collector to free textures still drawn.
  UPROPERTY() TMap<FString,TObjectPtr<class UTexture2D>> AppearanceThumbCache;
+ // Least recently used first; ok.AppearanceThumbCacheMax > 0 keeps at most that many (0: no limit).
+ TArray<FString> AppearanceThumbOrder;
+ // The thumbnail for Path from the cache, made and cached when missing.
+ class UTexture2D* CachedThumb(const FString& Path);
  TArray<TSharedPtr<FJsonObject>> AppearanceTargets,AppearanceItems;
  TSharedPtr<FJsonObject> AppearanceLastTiming;
  TArray<int32> AppearanceFiltered;
