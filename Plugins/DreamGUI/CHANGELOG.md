@@ -565,6 +565,13 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **GPU resources DreamGUI lets go of wait three render frames before they are released** (`FDreamUIDeferredRelease`).
+  A data texture replaced when it grows, a composite group's pooled render target, a canvas's target texture and a
+  material proxy's delete now go through a render-thread queue and are released `DelayFrames` (3) frames later, so a
+  graph recorded or translated before the change never reads freed memory. `DreamGUI.LogDeferredRelease` logs how many
+  wait. A safeguard: it did not stop the page fault it was added for (the first draw of the view extension, cause still
+  open).
+
 - **A font atlas that grows no longer leaves its old texture to the collector while it is still drawn.** Growing the
   atlas by a slice makes a new texture; the old one was unrooted at once, and draw data built before the change (a text
   outside the render list, a canvas not rebatched yet) could still sample it after a collection, a GPU page fault. The

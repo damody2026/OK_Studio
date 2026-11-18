@@ -3,6 +3,7 @@
 
 #include "DreamUIRender/DreamUIRenderer.h"
 #include "DreamUIRender/DreamUICompositor.h"
+#include "DreamUIRender/DreamUIDeferredRelease.h"
 #include "DreamUIRender/DreamUIShaders.h"
 #include "DreamUIRender/DreamUIBaseShaders.h"
 #include "Materials/Material.h"
@@ -243,6 +244,8 @@ void FDreamUIRenderer::PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilde
 }
 void FDreamUIRenderer::PostRenderView_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView)
 {
+	// What DreamGUI let go of three or more frames ago is released now (FDreamUIDeferredRelease).
+	FDreamUIDeferredRelease::Tick_RenderThread();
 #if WITH_EDITOR
 	if (ViewsDrawnAfterTonemap.RemoveSwap(&InView) > 0)
 	{
@@ -1225,6 +1228,7 @@ bool FDreamUIRenderer::PrepareTargets_RenderThread(FRDGBuilder& GraphBuilder, FS
 					}
 				);
 			}
+			FDreamUIDeferredRelease::Hold(CanvasTargetTexture);
 			CanvasTargetTexture = nullptr;
 
 			ViewRect = FIntRect(0, 0, ScreenColorRenderTargetTexture->GetSizeXYZ().X, ScreenColorRenderTargetTexture->GetSizeXYZ().Y);

@@ -5779,3 +5779,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **CPU 蒙皮讀回**：打包版切到「身子｜腿部」頁時在 render thread 的 `FSkeletalMeshObjectCPUSkin::CacheVertices` 存取違規。讀卡器的相機列呼叫 `FrameCurrentPose`，它用 `GetCPUSkinnedVertices` 讀頂點算框，開發版沒事、打包版當。改成 `FrameCurrentPoseRealtime`：只用目前的關節與邊界框構圖，不讀 CPU 蒙皮頂點。
 - **字型圖集保留違反 Disregard for GC**：我在 d252904ff 給 DreamGUI 字型加了 `UPROPERTY RetiredTextures` 保留換掉的圖集。打包版的預設字型是開機載入的 cooked 資產，屬於 disregard-for-GC 池，它引用沒有 root 的物件時 GC 驗證直接 fatal（`breaking Disregard for GC assumptions`），第一次 `obj gc` 就停。改成跟目前圖集一樣用 AddToRoot 保留，超過 4 張或釋放字型時 RemoveFromRoot，不再是 UPROPERTY。
 - **再犯前檢查**：開發版（編輯器）沒有 disregard-for-GC 池，也比較少走 CPU 蒙皮路徑；動到 UObject 引用或渲染讀回的修正，提交前要在打包 stage 跑一次含 `obj gc` 的驗證，不能只跑開發版。
+
+## 2026-11-19：讀卡器第三條 GPU PageFault，時間盒內沒找到資源（e-fork-2）
+
+- **症狀**：打包版讀卡器連續開卡、切頁約 7–15 分鐘後 GPU PageFault，停在 DreamGUI ViewExtension 的第一個 draw，著色器位址每次都是 `fragment_02 @ 0x45f90`。`d3d12.VRAMTexturePoolDefrag` 已經關了。
+- **做了什麼**：開 `r.D3D12.TrackAllAllocations=1 -gpucrashdebugging` 重現兩段：故障位址不屬於任何存活、或 100 幀內釋放的資源。照時間盒改做防禦性延遲釋放（`FDreamUIDeferredRelease`，DreamGUI 放開的資料貼圖、pooled RT、畫布目標、材質 proxy 晚 3 幀才放），重現照樣當。
+- **教訓**：前兩條都是「資源被提前放掉」，這條不是同一類，不能看到同一個 pass 就套用同一個結論。下一步要把著色器位址對回原始碼（需要帶符號的著色器），不是再加一層保留。

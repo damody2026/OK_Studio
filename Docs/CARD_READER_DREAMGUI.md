@@ -200,7 +200,15 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 | 開卡失敗 | 一張好卡、一張 `okLc` 開頭清零的壞卡，先好後壞 | 名牌、滑桿、模型一致（無模型＋錯誤訊息） | 未測 |
 | EyeMode 按鈕 | `press 動作與表情›眼睛：面向前方` 連按三次 | 三個模式循環，文字跟著變 | 有路徑 |
 
-**仍未解決**：打包版第二輪的 GPU PageFault。當時 `d3d12.VRAMTexturePoolDefrag` 已經是 0，breadcrumb 停在 `FrameRenderFinish › RenderFinish › ViewFamilyExtension(5) › ViewExtension(0)`（DreamGUI），發生在開卡後約 5 秒。不是 GC、也不是貼圖池整理，是第三條。log 保存在 `E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`。
+**第三條 GPU PageFault（2026-11-19）**：
+
+- **症狀**：打包版第二輪的 GPU PageFault。當時 `d3d12.VRAMTexturePoolDefrag` 已經是 0，breadcrumb 停在 `FrameRenderFinish › RenderFinish › ViewFamilyExtension(5) › ViewExtension(0)`（DreamGUI），發生在開卡後約 5 秒。不是 GC、也不是貼圖池整理，是第三條。log 保存在 `E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`。
+- **重現**：stage `EFork1119h` 用 `-gpucrashdebugging -ini:Engine:[ConsoleVariables]:r.D3D12.TrackAllAllocations=1` 啟動。同一行程第一輪完整驗證通過（559 秒），第二輪切到第 11 頁時當掉，位置一樣是 DreamGUI ViewExtension。資源追蹤的結果是：故障位址 16 MB 內沒有存活的資源，沒有 heap 包含它，最近 100 幀內也沒有釋放過包含它的資源。所以找不到是哪一個（`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-h2\pagefault.log`）。
+- **處置：防禦性延遲釋放**。兩段時間盒內沒抓到具體資源，改成 DreamGUI 放開的 GPU 資源一律晚 3 個 render frame 才真正釋放（`FDreamUIDeferredRelease`）。涵蓋這幾處：資料貼圖變大時換掉的舊貼圖（WidgetData／ClipData／RectBlockData／PaintData，重建頁面時會變大）、合成群組用完的 pooled render target、畫布的目標貼圖、材質 proxy 的刪除。`DreamGUI.LogDeferredRelease` 印出等待中的數量。
+- **延遲釋放沒有解掉這條**：stage `EFork1119i`（含延遲釋放，資源追蹤開著）約 7 分鐘、第一輪第 27 張卡時照樣 PageFault（`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\pagefault.log`）。DRED 這次記到操作：故障在 DreamGUI ViewExtension 的**第一個** `DrawIndexedInstanced`（`BeginEvent [ViewExtension(0)]` 是最後完成的）。Aftermath 每次都指向同一個著色器位址 `fragment_02 @ 0x00045f90`，和 e-cardload 抓到的 `DXGI_ERROR_DEVICE_HUNG` 相同。
+- **排除了什麼**：GC 回收（`DrawTextureHolds`）、貼圖池整理（已關）、最近 100 幀內釋放的資源（追蹤結果是 0）、DreamGUI 自己換掉的資料貼圖、pooled RT、材質 proxy（延遲釋放後照當）。
+- **剩下的方向**：故障位址不屬於任何追蹤到的資源或 heap，比較像上傳記憶體（uniform buffer、動態緩衝）或描述子指到早已不存在的位置。下一步是拿到帶除錯資訊的著色器（`r.Shaders.Symbols=1` 重新 cook），把 `0x45f90` 對到 DreamGUI 哪個 pixel shader 的哪一行讀取；或在開發版開 D3D12 GPU-based validation 重現。
+- 延遲釋放留著當防護，代價是被放開的 pooled RT 多留 3 幀才回池。
 
 ## 「沒按滑鼠鍵，視野也會動」的排查（2026-11-18）
 

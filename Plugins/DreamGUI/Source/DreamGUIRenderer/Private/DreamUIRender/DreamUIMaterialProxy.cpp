@@ -1,6 +1,7 @@
 // Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #include "DreamUIRender/DreamUIMaterialProxy.h"
+#include "DreamUIRender/DreamUIDeferredRelease.h"
 
 #include "Engine/Texture.h"
 #include "MaterialDomain.h"
@@ -82,15 +83,16 @@ TSharedRef<FDreamUIMaterialProxy, ESPMode::ThreadSafe> FDreamUIMaterialProxy::Cr
 	// thread, and a frame the render thread has yet to record may still draw with it.
 	TSharedRef<FDreamUIMaterialProxy, ESPMode::ThreadSafe> Proxy = MakeShareable(new FDreamUIMaterialProxy(InSource), [](FDreamUIMaterialProxy* InProxy)
 	{
+		// Deleted a few frames later still (FDreamUIDeferredRelease): a graph already recorded may read its uniform buffer.
 		if (IsInRenderingThread())
 		{
-			delete InProxy;
+			FDreamUIDeferredRelease::Later([InProxy]() { delete InProxy; });
 			return;
 		}
 		ENQUEUE_RENDER_COMMAND(FDreamUIMaterialProxyDelete)(
 			[InProxy](FRHICommandListImmediate& RHICmdList)
 			{
-				delete InProxy;
+				FDreamUIDeferredRelease::Later([InProxy]() { delete InProxy; });
 			});
 	});
 	DreamUIMaterialProxyLocal::LiveProxies().Add(Proxy);
