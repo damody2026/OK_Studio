@@ -246,6 +246,7 @@ private:
 	void ClearPage();
 	void MarkCurrentCard();
 	void TickThumbnails();
+	void BuildEyeOverlayPage(UDreamWidget* Page);
 	void BuildGameRootPage(UDreamWidget* Page);
 	void CheckGameRoot(const FString& Root);
 	void CheckLocalLibrary(const FString& Library);

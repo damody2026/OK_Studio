@@ -444,3 +444,54 @@ void UOKCharacterController::ApplyAppearanceItem(const FString& Key){
   }
  },CardJob);
 }
+
+// The pupil overlay page: Material Editor texture overrides on the eye materials (eye_overlays / eye_overlay_set,
+// Docs/READER_UI_APPEARANCE_API.md 9.3). Read from the card as it is now (the edit snapshot), written to a new work card.
+void UOKCharacterController::RequestEyeOverlays(){
+ if(bEyeOverlayBusy||bAppearanceBusy||bLoadInFlight||!Entries.IsValidIndex(SelectedIndex))return;
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png"));IFileManager::Get().MakeDirectory(*Folder,true);
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("eye_overlays"));R->SetStringField(TEXT("card"),Input);R->SetNumberField(TEXT("outfit"),OutfitIndex);
+ if(auto* GameRoot=UKKGameRoot::Get())AppearanceRoot=GameRoot->Root;	// as the catalog: the request reads the game's abdata
+ bEyeOverlayBusy=true;EyeOverlayStatus=TEXT("正在讀取這張卡的瞳孔覆蓋貼圖…");++EyeOverlayGeneration;
+ const int32 Selection=SelectedIndex;
+ RunAppearanceRequest(R,[Selection](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+  G->bEyeOverlayBusy=false;++G->EyeOverlayGeneration;
+  if(Selection!=G->SelectedIndex)return;
+  bool bValid=false;if(Data)Data->TryGetBoolField(TEXT("valid"),bValid);
+  G->EyeOverlayStatus.Reset();
+  if(!Data||!bValid){G->EyeOverlayData.Reset();FString Why=Failure;if(Data)Data->TryGetStringField(TEXT("error"),Why);G->EyeOverlayStatus=TEXT("讀不到瞳孔覆蓋貼圖：")+Why;return;}
+  G->EyeOverlayData=Data;G->EyeOverlayCard=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();G->EyeOverlayStatus.Reset();
+  UE_LOG(LogTemp,Display,TEXT("Eye overlays read: slots=%d candidates=%d"),Data->GetArrayField(TEXT("slots")).Num(),Data->GetArrayField(TEXT("candidates")).Num());
+ },CardJob);
+}
+void UOKCharacterController::SetEyeOverlay(const FString& Material,const FString& Property,const FString& Candidate){
+ if(bEyeOverlayBusy||bAppearanceBusy||bLoadInFlight||!Entries.IsValidIndex(SelectedIndex)||Material.IsEmpty()||Property.IsEmpty())return;
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));IFileManager::Get().MakeDirectory(*Folder,true);
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("eye_overlay_set"));R->SetStringField(TEXT("card"),Input);R->SetStringField(TEXT("output"),Output);
+ R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));R->SetNumberField(TEXT("outfit"),OutfitIndex);
+ R->SetStringField(TEXT("material"),Material);R->SetStringField(TEXT("property"),Property);if(!Candidate.IsEmpty())R->SetStringField(TEXT("candidate"),Candidate);
+ if(auto* GameRoot=UKKGameRoot::Get())AppearanceRoot=GameRoot->Root;
+ bEyeOverlayBusy=true;EyeOverlayStatus=Candidate.IsEmpty()?TEXT("正在清掉這個槽位的覆蓋貼圖…"):TEXT("正在套用覆蓋貼圖，完成後更新角色…");++EyeOverlayGeneration;
+ UE_LOG(LogTemp,Display,TEXT("Eye overlay set material=%s property=%s candidate=%s"),*Material,*Property,Candidate.IsEmpty()?TEXT("(clear)"):*Candidate);
+ const int32 Selection=SelectedIndex,Generation=LoadGeneration;
+ RunAppearanceRequest(R,[Selection,Generation,Output,CardJob](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+  G->bEyeOverlayBusy=false;++G->EyeOverlayGeneration;
+  if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration)return;
+  bool bValid=false;if(Data)Data->TryGetBoolField(TEXT("valid"),bValid);
+  if(!Data||!bValid){FString Why=Failure;if(Data)Data->TryGetStringField(TEXT("error"),Why);G->EyeOverlayStatus=TEXT("覆蓋貼圖套用失敗，保留目前角色：")+Why;return;}
+  // As an appearance item: the new work card becomes the selection, the head textures follow it.
+  G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->bIndependentCards=true;
+  FString UpdateError;const bool Incremental=CardJob->AppearanceSession&&IsValid(G->PreviewActor.Get())&&G->PreviewActor->ApplyHeadTextureSession(*CardJob->AppearanceSession,UpdateError);
+  G->PreviewResourceSignature.Empty();
+  if(Incremental)G->PreviewCardPath=Output;else G->StartLoad3D(false);
+  // Read again from the new card: the page asks once the reload is done (it waits while a load is in flight).
+  G->EyeOverlayStatus.Reset();G->EyeOverlayData.Reset();G->EyeOverlayCard.Reset();
+ },CardJob);
+}
+UTexture2D* UOKCharacterController::EyeOverlayThumb(const FString& Png){
+ if(Png.IsEmpty())return nullptr;
+ if(TObjectPtr<UTexture2D>* Cached=AppearanceThumbCache.Find(Png))return Cached->Get();
+ UTexture2D* T=Thumbnail(Png);if(T)AppearanceThumbCache.Add(Png,T);return T;
+}

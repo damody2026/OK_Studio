@@ -56,6 +56,8 @@
 #include "HAL/PlatformFileManager.h"
 #include "HAL/FileManager.h"
 #include "Async/Async.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
 #include "Engine/Texture2D.h"
 #if PLATFORM_WINDOWS
@@ -669,6 +671,15 @@ void UOKReaderScreen::BuildCategories()
 		else if(Each.Name==TEXT("鼻子"))Pickers(Each,{TEXT("nose")},{});
 		else if(Each.Name==TEXT("嘴巴"))Pickers(Each,{TEXT("lip")},{TEXT("lip")});
 	}
+	// The pupil overlay textures (Material Editor overrides on the eye materials): read with eye_overlays when the page
+	// opens, a tile per candidate under each slot that is drawn, and 無 to clear; a pick writes a new work card.
+	{
+		FGroup Overlays;Overlays.Name=TEXT("瞳孔覆蓋貼圖");Overlays.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		Overlays.Signature=[G](){return FString::Printf(TEXT("%d|%d|%d|%d|%s"),G->bModelLayout?1:0,G->bLoadInFlight?1:0,G->EyeOverlayGeneration,G->bEyeOverlayBusy?1:0,*G->EyeOverlayStatus);};
+		Overlays.Build=[this,G](UDreamWidget* Page){BuildEyeOverlayPage(Page);};
+		int32 After=Face.Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("眼睛");});
+		Face.Groups.Insert(MoveTemp(Overlays),After==INDEX_NONE?Face.Groups.Num():After+1);
+	}
 	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
 	// page reads the card's catalog).
 	{
@@ -1181,6 +1192,74 @@ FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
 // 設定 › 遊戲目錄: where the original game is (its mods/ is where zipmods are looked for) and the local library, each a
 // field, a folder button and what is found there, said as soon as it is typed. Kept as the user's own setting
 // (UKKGameRoot::SetUserRoot: GameUserSettings.ini, writable in a package), read again at each card open.
+void UOKReaderScreen::BuildEyeOverlayPage(UDreamWidget* Page)
+{
+	UOKCharacterController* G=Controller.Get();if(!G||!Page)return;
+	auto Text=[this](UDreamWidget* Into,const FString& Value)
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+		return C;
+	};
+	if(!G->bModelLayout){Text(Page,TEXT("要先在「人物卡總欄」選一張卡並按「載入3D」，這一頁才讀得到它的瞳孔覆蓋貼圖。"));return;}
+	if(G->bLoadInFlight){Text(Page,TEXT("等角色載入完成後讀取瞳孔覆蓋貼圖…"));return;}
+	const FString Card=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();
+	// Read once per card (and again after a pick); a failed read waits for 重新讀取 instead of retrying on every rebuild.
+	if(!G->bEyeOverlayBusy&&G->EyeOverlayStatus.IsEmpty()&&(!G->EyeOverlayData.IsValid()||G->EyeOverlayCard!=Card))
+	{
+		G->EyeOverlayData.Reset();
+		AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid())Weak->RequestEyeOverlays();});
+		Text(Page,TEXT("正在讀取這張卡的瞳孔覆蓋貼圖…"));
+		return;
+	}
+	if(!G->EyeOverlayStatus.IsEmpty())Text(Page,G->EyeOverlayStatus);
+	{
+		UDreamWidget* Row=MakePanel(Page,true,6.f);
+		TWeakObjectPtr<UOKCharacterController> Weak(G);
+		MakeOwnButton(Row,TEXT("重新讀取"),[Weak](){if(Weak.IsValid()&&!Weak->bEyeOverlayBusy){Weak->EyeOverlayStatus.Reset();Weak->EyeOverlayData.Reset();Weak->RequestEyeOverlays();}});
+	}
+	const TSharedPtr<FJsonObject> Data=G->EyeOverlayData;
+	if(!Data.IsValid()||G->bEyeOverlayBusy)return;
+	const TArray<TSharedPtr<FJsonValue>>* Slots=nullptr;const TArray<TSharedPtr<FJsonValue>>* Candidates=nullptr;
+	Data->TryGetArrayField(TEXT("slots"),Slots);Data->TryGetArrayField(TEXT("candidates"),Candidates);
+	if(!Slots||Slots->IsEmpty()){Text(Page,TEXT("這張卡的眼睛材質沒有可設定覆蓋貼圖的槽位。"));return;}
+	int32 Unused=0,Other=0;
+	if(Candidates)for(const TSharedPtr<FJsonValue>& V:*Candidates){bool bEye=false;if(V->AsObject())V->AsObject()->TryGetBoolField(TEXT("eye"),bEye);if(!bEye)++Other;}
+	for(const TSharedPtr<FJsonValue>& SlotValue:*Slots)
+	{
+		const TSharedPtr<FJsonObject> Slot=SlotValue->AsObject();if(!Slot)continue;
+		bool bApplies=true;Slot->TryGetBoolField(TEXT("applies"),bApplies);
+		if(!bApplies){++Unused;continue;}
+		FString Label,Material,Property,Current;Slot->TryGetStringField(TEXT("label"),Label);Slot->TryGetStringField(TEXT("material"),Material);Slot->TryGetStringField(TEXT("property"),Property);Slot->TryGetStringField(TEXT("candidate"),Current);
+		bool bPresent=false;Slot->TryGetBoolField(TEXT("present"),bPresent);
+		Text(Page,FString::Printf(TEXT("%s（%s › %s）"),*Label,*Material,*Property));
+		UDreamWidget* Grid=UDreamUIBPLibrary::ConstructWidget(this,TEXT("Grid"),nullptr);
+		if(!Grid)continue;
+		if(auto* Wrap=Grid->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())Wrap->SetSpacing(FVector2D(6,6));
+		Grid->SetSizeDelta(FVector2D::ZeroVector);AddToHost(Page,Grid,false);
+		if(UOKDreamControl* Anchor=Text(Grid,FString::Printf(TEXT("%s（%s › %s）"),*Label,*Material,*Property)))Anchor->SetShown(false);	// names the row for ControlPath
+		TWeakObjectPtr<UOKCharacterController> Weak(G);
+		auto Tile=[this,Grid](const FString& Caption,UTexture2D* Picture,TFunction<void()> Press)
+		{
+			UOKDreamControl* B=MakeControl(TEXT("PickTile"),Grid);if(!B)return;
+			B->FixedText=Caption;B->SetText(Caption);B->OnPressed=MoveTemp(Press);
+			if(UDreamPanelSlot* S=B->GetPanelSlot()){S->SetMinDesiredSize(FVector2D(112,150));S->SetMaxDesiredSize(FVector2D(112,150));}
+			OKReaderThumbs::Show(B,Picture);
+		};
+		Tile(bPresent?TEXT("無"):TEXT("▸ 無"),nullptr,[Weak,Material,Property](){if(Weak.IsValid())Weak->SetEyeOverlay(Material,Property,FString());});
+		if(Candidates)for(const TSharedPtr<FJsonValue>& V:*Candidates)
+		{
+			const TSharedPtr<FJsonObject> C=V->AsObject();if(!C)continue;
+			bool bEye=false;C->TryGetBoolField(TEXT("eye"),bEye);if(!bEye)continue;
+			FString Id,Name,Png;C->TryGetStringField(TEXT("id"),Id);C->TryGetStringField(TEXT("name"),Name);C->TryGetStringField(TEXT("png"),Png);
+			const FString Caption=(Id==Current&&bPresent?TEXT("▸ "):TEXT(""))+(Name.IsEmpty()?Id:Name);
+			Tile(Caption,G->EyeOverlayThumb(Png),[Weak,Material,Property,Id](){if(Weak.IsValid())Weak->SetEyeOverlay(Material,Property,Id);});
+		}
+	}
+	if(Unused)Text(Page,FString::Printf(TEXT("另有 %d 個槽位這條開卡路徑不畫（瞳孔材質上的高光貼圖走「眼睛」頁的高光種類），不列出。"),Unused));
+	if(Other)Text(Page,FString::Printf(TEXT("這張卡另有 %d 張用在衣服或配件上的貼圖，不列在這裡。"),Other));
+}
+
 void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 {
 	auto Text=[this](UDreamWidget* Into,const FString& Value)
@@ -1448,7 +1527,7 @@ namespace OKReaderPaths
 	// (a column's labels title the controls under them, not one row).
 	static FString RowLabel(const UOKDreamControl* C)
 	{
-		const UDreamWidget* P=C->GetParent();if(!P||!Cast<UDreamLayoutContainerHorizontalBox>(P->GetLayoutContainer()))return FString();
+		const UDreamWidget* P=C->GetParent();if(!P||!(Cast<UDreamLayoutContainerHorizontalBox>(P->GetLayoutContainer())||Cast<UDreamLayoutContainerWrapBox>(P->GetLayoutContainer())))return FString();
 		for(const UDreamWidget* W:P->GetChildren())
 			if(const UOKDreamControl* L=Cast<UOKDreamControl>(W);L&&L!=C&&Kind(L)==TEXT("Label"))
 			{
@@ -1743,7 +1822,7 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		else if(Verb==TEXT("press"))
 		{
 			FString Text=Value;int32 Index=-1;int32 Hash;
-			if(Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
+			if(!Text.Contains(TEXT("›"))&&Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
 			FString Note;
 			Done=!Text.IsEmpty()&&S->PressControl(Text,Index,&Note);
 			if(!Note.IsEmpty())Out.Log(Note);

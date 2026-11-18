@@ -175,6 +175,11 @@ public:
  void RebuildAppearancePage();
  void LoadAppearanceThumbnails();
  void ApplyAppearanceItem(const FString& Key);
+ // The pupil overlay page (eye_overlays / eye_overlay_set): what the card has, read on request; set writes a new work card.
+ TSharedPtr<class FJsonObject> EyeOverlayData; FString EyeOverlayStatus,EyeOverlayCard; int32 EyeOverlayGeneration=0; bool bEyeOverlayBusy=false;
+ void RequestEyeOverlays();
+ void SetEyeOverlay(const FString& Material,const FString& Property,const FString& Candidate);
+ class UTexture2D* EyeOverlayThumb(const FString& Png);
  void RunAppearanceRequest(TSharedRef<FJsonObject> Request,TFunction<void(UOKCharacterController*,TSharedPtr<FJsonObject>,const FString&)> Complete,TSharedPtr<FOKAppearanceCardJob,ESPMode::ThreadSafe> CardJob=nullptr);
  UFUNCTION() void OnOpenAppearance();
  UFUNCTION() void OnCloseAppearance();
