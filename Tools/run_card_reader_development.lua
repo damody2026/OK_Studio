@@ -130,11 +130,13 @@ local function main()
     extra, stage_env = street_stage.packaged_launch(root, stage_exe)
     for _, x in ipairs(extra) do args[#args + 1] = x end
   end
-  -- The DreamGUI reader screen is the reader's interface; -LegacyReader goes back to the old UMG gallery.
-  -- Passing -OKDreamReader after -- stays allowed (it is the same flag) and is not added twice.
-  local wants_dream = not o.legacyreader
-  for _, x in ipairs(o.passthrough) do if x:lower():match("^%-ok?dreamreader$") or x:lower() == "-dreamgui" then wants_dream = false end end
-  if wants_dream then args[#args + 1] = "-OKDreamReader" end
+  -- The game shows the DreamGUI reader screen by default; -LegacyReader goes back to the old UMG gallery (kept for
+  -- comparison until the new screen is complete). Passing -LegacyReader after -- works the same and is not added twice.
+  if o.legacyreader then
+    local given = false
+    for _, x in ipairs(o.passthrough) do if x:lower() == "-legacyreader" then given = true end end
+    if not given then args[#args + 1] = "-LegacyReader" end
+  end
   -- 物理：旗標由遊戲在建立物理選單之前套用（OKCharacterController::ApplyStartupPhysicsBackend），選單才會顯示
   -- 真正在跑的那一項。用 -ExecCmds 不行：指令在選單建好之後才跑，解算器已是 Verlet 而選單還寫著「依元件」。
   local physics = (o.physics or os.getenv("OK_READER_PHYSICS") or "verlet"):lower()

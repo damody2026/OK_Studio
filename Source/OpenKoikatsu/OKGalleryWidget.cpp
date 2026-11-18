@@ -1048,8 +1048,10 @@ void UOKGalleryWidget::NativeConstruct()
 		}
 	}
 	// The DreamGUI screen (DUI/Reader/ReaderScreen.dui) shows the controls; these UMG ones stay as its model, see-through
-	// and letting the pointer through. Opt-in with -OKDreamReader until it has been checked on screen (2026-11-18).
-	if(FParse::Param(FCommandLine::Get(),TEXT("OKDreamReader")))if((ReaderScreen=UOKReaderScreen::Open(this))!=nullptr)
+	// and letting the pointer through. It is the reader's interface from every entry (CardReaderDevelopment.cmd, MCP
+	// reader_launch, a stage exe run directly); -LegacyReader shows the old UMG gallery instead, kept for comparison
+	// until the new screen is complete (the user, 2026-11-19: the old UI is not to show up again).
+	if(!FParse::Param(FCommandLine::Get(),TEXT("LegacyReader")))if((ReaderScreen=UOKReaderScreen::Open(this))!=nullptr)
 	{
 		SetRenderOpacity(0.f);SetVisibility(ESlateVisibility::HitTestInvisible);
 	}

@@ -1,4 +1,5 @@
 #include "OKReaderScreen.h"
+#include "DreamUIRender/DreamUIShaderGate.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
 #include "OKMotionComboBox.h"
@@ -309,6 +310,18 @@ void UOKDreamControl::HandleInputCommitted(const FString& Text)
 UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 {
 	if(!Controller)return nullptr;
+	// A stage on a base cooked before DreamGUI has none of its global shaders (startup no longer requires them,
+	// DreamUIShaderGate.h): drawing the screen there would fail on the GPU, so the reader says what to rebuild and
+	// keeps its UMG controls instead of stopping.
+	{
+		FString Why;
+		if(!DreamGUIGlobalShadersReady(&Why))
+		{
+			UE_LOG(LogTemp,Error,TEXT("ok.ReaderScreen: %s"),*Why);
+			if(GEngine)GEngine->AddOnScreenDebugMessage(-1,600.f,FColor::Red,Why);
+			return nullptr;
+		}
+	}
 	UClass* Class=LoadClass<UOKReaderScreen>(nullptr,GScreenPath);
 	if(!Class){UE_LOG(LogTemp,Warning,TEXT("Reader screen %s missing: the reader keeps its UMG controls"),GScreenPath);return nullptr;}
 	// Design pixels on a 1080-high screen, whatever the window.
