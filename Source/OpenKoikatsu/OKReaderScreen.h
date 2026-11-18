@@ -70,6 +70,7 @@ protected:
 private:
 	bool bPushing=false;
 	bool bOpen=true;
+	bool bCaptionFitted=false;
 	FString ShownText;
 	TArray<FString> ShownOptions;
 	// Shown option -> the UMG option index; the filter and option count it was made for.
@@ -182,6 +183,7 @@ private:
 	UOKDreamControl* MakeOwnButton(UDreamWidget* Into,const FString& Text,TFunction<void()> Press);
 	UDreamWidget* MakePanel(UDreamWidget* Into,bool bHorizontal,float Spacing);
 	void Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow);
+	bool InPropertyPanel(UWidget* W) const;
 	void MirrorChildren(UPanelWidget* Source,UDreamWidget* Target,bool bHorizontal);
 	void AddToHost(UDreamWidget* Host,UDreamWidget* Child,bool bFill);
 };

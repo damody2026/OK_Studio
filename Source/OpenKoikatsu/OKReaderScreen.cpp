@@ -137,6 +137,8 @@ void UOKDreamControl::Sync()
 	}
 	if(auto* U=Cast<UComboBoxString>(S))if(Choice)
 	{
+		// The chosen option on one line, cut with "..." (a long one wrapped to three lines over the next row).
+		if(!bCaptionFitted&&Choice->CaptionNode)if(UDreamText* T=TextOf(Choice->CaptionNode)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::Ellipsis);bCaptionFitted=true;}
 		// The options the filter keeps (all without one), each mapped to its UMG index. Built again when the filter, the
 		// option count or (unfiltered) any option changed.
 		const int32 Count=U->GetOptionCount();
@@ -329,6 +331,15 @@ void UOKReaderScreen::AddToHost(UDreamWidget* Host,UDreamWidget* Child,bool bFil
 	}
 }
 
+// Whether a UMG widget sits in the property editor (配件／屬性).
+bool UOKReaderScreen::InPropertyPanel(UWidget* W) const
+{
+	const UOKCharacterController* G=Controller.Get();
+	UWidget* Panel=G?G->PropertyPanel.Get():nullptr;
+	for(UWidget* At=W;At&&Panel;At=At->GetParent())if(At==Panel)return true;
+	return false;
+}
+
 // One UMG widget, and everything under it, as DreamGUI controls under Parent. bInRow: Parent lays out across.
 void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 {
@@ -361,9 +372,25 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 		}
 		C->Sync();return;
 	}
+	// The property editor's rows (caption, value, 撤銷): the caption a fixed column on one line, the value filling the rest,
+	// so the rows line up whatever their caption's length (2026-11-18: captions of every length pushed the values about,
+	// a "0" field shrank to its digit and long choices wrapped over the next row).
+	const bool bPropertyRow=bInRow&&InPropertyPanel(Source);
 	if(Source->IsA<UComboBoxString>()){Place(MakeControl(TEXT("Choice"),Into),0,true);return;}
-	if(Source->IsA<UEditableTextBox>()||Source->IsA<USpinBox>()){Place(MakeControl(TEXT("Input"),Into),bInRow?84.f:0.f,false);return;}
-	if(Source->IsA<UTextBlock>()){Place(MakeControl(TEXT("Label"),Into),FMath::Min(200.f,TextWidth(TextIn(Source),18.f)+12.f),false);return;}
+	if(Source->IsA<UEditableTextBox>()||Source->IsA<USpinBox>()){Place(MakeControl(TEXT("Input"),Into),bPropertyRow?0.f:bInRow?84.f:0.f,bPropertyRow);return;}
+	if(Source->IsA<UTextBlock>())
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		UPanelWidget* Row=Source->GetParent();
+		const bool bCaption=bPropertyRow&&Row&&Row->GetChildIndex(Source)==0&&Row->GetChildrenCount()>1;
+		Place(C,bCaption?170.f:FMath::Min(200.f,TextWidth(TextIn(Source),18.f)+12.f),false);
+		if(!C)return;
+		if(bCaption){if(UDreamText* T=TextOf(C->Label)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::Ellipsis);}}
+		// Down a column a long text wraps: the line grows with it instead of keeping the designed 30 and drawing over the
+		// row under it.
+		else if(!bInRow)if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+		return;
+	}
 	if(Source->IsA<UImage>()){Place(MakeControl(TEXT("Image"),Into),0,false);return;}
 	// A size box in a row only gives its child a width: keep the width, drop the box.
 	if(auto* Size=Cast<USizeBox>(Source);Size&&bInRow&&Size->GetChildrenCount()==1)
