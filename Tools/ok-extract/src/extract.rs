@@ -2942,28 +2942,6 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     eprintln!("ok-extract: global toon ramp bytes={}", ramp_png.as_ref().map_or(0, Vec::len));
     let mods_dir = game_root.join("mods");
     let t_sub = Instant::now();
-    // The card's own zipmods first, the whole tree only if a lookup misses them (list.rs `ChaListCatalog::deferred`).
-    // Merging the catalogues of every archive under mods/ costs about 1.3 s of every original-card open on this
-    // machine, with the sqlite cache or without it, and a card's questions are nearly all about the archives it names
-    // (2026-11-18, the user: reading an original card should not read every mod, only the mods it uses). Answers do
-    // not change: a miss still reaches the whole tree. OK_WHOLE_MODS_CATALOGUE=1 goes back to building it up front.
-    let card_mods: Option<Vec<PathBuf>> = (std::env::var_os("OK_WHOLE_MODS_CATALOGUE").is_none()).then(|| {
-        parsed_card.as_ref().map(|c| {
-            let wanted: std::collections::HashSet<String> = c.resolves.iter().map(|r| r.mod_id.clone())
-                .chain([&c.body_guid, &c.penis_guid, &c.balls_guid].into_iter().flatten().cloned())
-                .filter(|g| !g.is_empty()).collect();
-            if wanted.is_empty() { return Vec::new(); }
-            let mut zips: Vec<PathBuf> = crate::mods::find_guids(&mods_dir, Some(&wanted)).into_values().collect();
-            zips.sort(); zips.dedup(); zips
-        }).unwrap_or_default()
-    });
-    let mod_catalog_shared = match &card_mods {
-        Some(zips) => crate::list::card_mods_catalog(&mods_dir, zips),
-        None => crate::list::load_mods_catalog_shared(&mods_dir),
-    };
-    let mod_catalog = &*mod_catalog_shared;
-    profile_tick("lists: mods catalog", t_sub);
-    let t_sub = Instant::now();
     let guid_index: std::collections::HashMap<String, PathBuf> = parsed_card
         .as_ref()
         .map(|c| {
@@ -2980,6 +2958,30 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     // variants. The game derives state availability and linked clothing from
     // these entries before DrawClothes, including for clothes later hidden.
     profile_tick("lists: guids", t_sub);
+    let t_sub = Instant::now();
+    // The card's own zipmods first, the whole tree only if a lookup misses them (list.rs `ChaListCatalog::deferred`).
+    // Merging the catalogues of every archive under mods/ costs about 1.3 s of every original-card open on this
+    // machine, with the sqlite cache or without it, and a card's questions are nearly all about the archives it names
+    // (2026-11-18, the user: reading an original card should not read every mod, only the mods it uses). Answers do
+    // not change: a miss still reaches the whole tree. OK_WHOLE_MODS_CATALOGUE=1 goes back to building it up front.
+    //
+    // The archives are `guid_index` above, never a lookup of its own: an OK card answers only the questions its
+    // conversion recorded (okstrict / tree_answers), so asking `find_guids` with a different GUID set -- the
+    // body/penis/balls uncensor GUIDs added to the resolve list -- was a question no card had an answer for, and
+    // every OK card that names a mod stopped opening with "okLt guids ..." (2026-11-19, crowd_C090 in the reader).
+    // Only an original card: an OK card's open reads nothing of the mods tree at all (okstrict.rs), and its
+    // catalogue is its own recorded answers -- reading even the archives it names is a gap ("GAMEFS zip mods/...").
+    let mod_catalog_shared = if std::env::var_os("OK_WHOLE_MODS_CATALOGUE").is_none()
+        && parsed_card.is_some() && crate::okstrict::active().is_none() {
+        let mut zips: Vec<PathBuf> = guid_index.values().cloned().collect();
+        zips.sort();
+        zips.dedup();
+        crate::list::card_mods_catalog(&mods_dir, &zips)
+    } else {
+        crate::list::load_mods_catalog_shared(&mods_dir)
+    };
+    let mod_catalog = &*mod_catalog_shared;
+    profile_tick("lists: mods catalog", t_sub);
     let t_sub = Instant::now();
     let selected_clothes = parsed_card.as_ref().map(|card|
         select_card_clothes(card, outfit, &vanilla, &mod_catalog, &guid_index));

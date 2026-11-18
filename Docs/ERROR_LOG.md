@@ -5735,3 +5735,19 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 `ok.Interaction.AsyncShot` 第一版：`OnScreenshotCaptured` 的 lambda 一进来就 `Remove(Handle)`，然后才把捕获的 `File` 复制给背景工作。`Remove` 在广播中会立刻销毁这个 lambda，`File` 已经被释放，读它就是 `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff`（游戏执行绪 memcpy）。stage `EFps1118m` 的 `AsyncShot 1` 那趟在一对一就绪时当掉，量测脚本又没有发现游戏已死，一直等每个指令逾时，独占多占了约 18 分钟。
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
+
+## 2026-11-19：为了「只读用到的 mod」多问了一次 GUID，把每张指名 mod 的 OK 卡都弄到开不了（e-cardload-physics）
+
+- **变更／症状**：`60c0aaea3` 让原作卡先用「卡片自己指名的 zipmod」建目录。我为此在 `lists_stage` 里**另外**叫了一次
+  `mods::find_guids`，而且 GUID 集合比原本多了 body／penis／balls 三个 uncensor GUID。OK 卡是严格开卡：
+  它只答得出转卡当时记录过的问题（`okstrict.rs`／`tree_answers.rs`），**问题的键一变就是缺口**。
+  结果读卡器开 `crowd_C090` 直接红字「the OK card lacks 1 thing(s) … okLt guids BP.innie,HeadMod,…」，
+  `Content/CharacterCards/CrowdAPNG/C090.png` 本尊 `strict-check` 也一样。这笔已经随整合 #19 上了 master。
+  改成「目录用卡片指名的 zipmod」之后还踩了第二层：`card_mods_catalog` 会去**读**那些真的 zipmod，
+  而严格开卡读树本身就是缺口（`GAMEFS zip mods/kksimportedmods/…`）。
+- **修正**：目录要用的档案直接取自原本就会算的 `guid_index`（不再自己问一次），而且**只在原作卡**走这条
+  （`crate::okstrict::active().is_none()`），OK 卡完全照旧走 `load_mods_catalog_shared`。
+- **再试前检查**：动到开卡路径上任何「问树的问题」（`find_guids`、catalog、override、strip-all）之后，
+  **一定要再跑一次 `Tools/ok_cards.lua verify <本机 OK 卡清单>`**。我这次只量了原作卡的时间与输出，
+  没有重跑 OK 卡的 strict 扫描，所以这个 regression 是使用者在读卡器里先看到的。
+  判准很简单：**严格开卡问的问题必须和转卡当时问的一模一样**，多问一个、键不同都算改了契约。
