@@ -144,6 +144,7 @@ private:
 
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> Controls;
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> RailButtons;
+	UPROPERTY() TArray<TObjectPtr<UDreamWidget>> RailSpacers;
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> SubButtons;
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> Drawers;
 	UPROPERTY() TArray<TObjectPtr<UDreamWidget>> PageWidgets;

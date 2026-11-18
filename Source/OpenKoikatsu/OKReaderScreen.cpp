@@ -454,7 +454,19 @@ void UOKReaderScreen::BuildCategories()
 void UOKReaderScreen::BuildDrawers()
 {
 	UOKCharacterController* G=Controller.Get();if(!G||!RightScroll)return;
-	// The editor's own buttons, as listed in the 2026-11-18 sketch, first.
+	// The sketch (2026-11-18, again 11-18 noon): the titled drawers on top, folded, then the editor's own button block.
+	for(UOKDrawerButton* D:G->MotionDrawers)
+	{
+		if(!D||D->Key==TEXT("Clothes")||D->Key==TEXT("Lighting"))continue;	// those are left-panel categories
+		UOKDreamControl* Drawer=MakeControl(TEXT("Drawer"),RightScroll);if(!Drawer)continue;
+		Drawer->Body=MakePanel(RightScroll,false,6.f);
+		// Folded to their titles at first, as drawn; the UMG drawer folds with it (its layer is not seen).
+		if(D->bOpen)D->SetOpen(false,false);
+		Drawer->Source=D;Drawer->SetOpen(false);Drawers.Add(Drawer);
+		if(D->Body)Mirror(D->Body,Drawer->Body,false);
+		Drawer->Sync();
+	}
+	// The editor's own buttons, below the drawers (the user: "this belongs here").
 	if(UOKDreamControl* Main=MakeControl(TEXT("Drawer"),RightScroll))
 	{
 		Main->FixedText=TEXT("人物編輯");Main->SetText(Main->FixedText);Main->Body=MakePanel(RightScroll,false,6.f);Main->SetOpen(true);Drawers.Add(Main);
@@ -472,15 +484,6 @@ void UOKReaderScreen::BuildDrawers()
 		Row({TEXT("EditorInteraction"),TEXT("EditorStudio"),TEXT("EditorStudioTimeline")});
 		Row({TEXT("ModelApngSave"),TEXT("EditorSaveKks"),TEXT("EditorHands")});
 		if(G->OutfitCombo)Mirror(G->OutfitCombo.Get(),Grid,false);
-	}
-	for(UOKDrawerButton* D:G->MotionDrawers)
-	{
-		if(!D||D->Key==TEXT("Clothes")||D->Key==TEXT("Lighting"))continue;	// those are left-panel categories
-		UOKDreamControl* Drawer=MakeControl(TEXT("Drawer"),RightScroll);if(!Drawer)continue;
-		Drawer->Body=MakePanel(RightScroll,false,6.f);
-		Drawer->Source=D;Drawer->SetOpen(D->bOpen);Drawers.Add(Drawer);
-		if(D->Body)Mirror(D->Body,Drawer->Body,false);
-		Drawer->Sync();
 	}
 }
 
@@ -547,18 +550,19 @@ void UOKReaderScreen::ShowTab(int32 Index)
 	Tab=FMath::Clamp(Index,0,3);
 	UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};
 	for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);
-	// The rail lists the edit categories; the other three tabs are one page each.
+	// The rail lists every category on every tab (the sketch keeps it on the left throughout); 設定 sits alone at its foot.
 	for(UOKDreamControl* B:RailButtons)if(IsValid(B))B->DestroyWidget();
+	for(UDreamWidget* Gap:RailSpacers)if(IsValid(Gap))Gap->DestroyWidget();
+	RailSpacers.Reset();
 	RailButtons.Reset();
 	int32 First=INDEX_NONE;
 	for(int32 I=0;I<Categories.Num();++I)
 	{
 		if(First==INDEX_NONE&&Categories[I].Tab==Tab)First=I;
-		if(Tab!=0)continue;
+		if(RailHost&&Categories[I].Name==TEXT("設定／介面"))if(UDreamWidget* Gap=MakePanel(RailHost,false,0.f)){RailSpacers.Add(Gap);if(auto* Slot=Gap->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);}
 		UOKDreamControl* B=MakeOwnButton(RailHost,Categories[I].Name,[this,I](){ShowCategory(I);});
 		if(B){B->SetWidth(104);if(auto* Slot=B->GetPanelSlot())Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Fill);RailButtons.Add(B);}
 	}
-	if(RailHost)RailHost->SetShown(Tab==0);
 	if(First!=INDEX_NONE)ShowCategory(First);
 }
 
@@ -567,7 +571,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(!Categories.IsValidIndex(Index))return;
 	ClearPage();
 	Category=Index;const FCategory& C=Categories[Index];
-	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);if(RailHost)RailHost->SetShown(Tab==0);}
+	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);}
 	for(int32 I=0;I<RailButtons.Num();++I)if(RailButtons[I])RailButtons[I]->SetRenderOpacity(I==Index?1.f:.7f);
 	if(auto* T=TextOf(CategoryTitle))T->SetText(FText::FromString(C.Name));
 	if(C.OnEnter)C.OnEnter();
