@@ -43,7 +43,16 @@ UOKReaderScreen（DUI/Reader/ReaderScreen.dui → /Game/UI/Reader/WBP_ReaderScre
   `ok.ReaderScreen tab <0-3>`、`ok.ReaderScreen category 臉`、`ok.ReaderScreen sub 眼睛`、`ok.ReaderScreen width 640`、`ok.ReaderScreen state`。
 - `reader_call state` 多了 `screen`（`tab`、`category`、`left_width`）。
 
+## 各分頁的來源
+
+- 「配件／屬性」進入時呼叫 `OnOpenProperties`（屬性編輯器要打開才讀卡）；「角色資訊」進入時把卡片牆的 `InspectCol` 顯示回來（開卡後 `SetModelLayout` 會收起它）；「設定／角色風格」進入時顯示 `StyleBox`（UMG 只在舊的「角色風格」分類下顯示它）。UMG 層透明又不吃點擊，所以這些只讓 DreamGUI 有東西可鏡像。
+- 「設定／物理」只鏡像物理下拉與三條滑桿（各自連同前一行說明文字），不是整個動作欄。
+- 沒有「介面」頁：UMG 的編輯欄寬度與字級只改看不見的 UMG 層；左欄寬度改用拖拉。
+
 ## 已知限制
+
+- 卡片清單不標示目前開著的卡。
+- 「屬性」頁的長選項會折成多行、數字欄偏窄。
 
 - 遊戲動作等可搜尋的大清單（`UOKMotionComboBox`）目前是一般下拉選單，沒有搜尋框。
 - 卡片清單一頁最多列 400 張。

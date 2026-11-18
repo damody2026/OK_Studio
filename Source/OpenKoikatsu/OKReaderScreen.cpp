@@ -411,10 +411,15 @@ void UOKReaderScreen::BuildCategories()
 	FCategory Accessory;Accessory.Name=TEXT("配件");
 	Accessory.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Accessory.Groups.Last().OnEnter=OpenAppearance;
 	Accessory.Groups.Add(Group(TEXT("屬性"),{G->PropertyPanel.Get()}));
+	// The property editor reads the card when opened (OnOpenProperties toggles: only while it is folded away).
+	Accessory.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->PropertyPanel&&Weak->PropertyPanel->GetVisibility()==ESlateVisibility::Collapsed)Weak->OnOpenProperties();};
 	Categories.Add(MoveTemp(Accessory));
 
 	FCategory Info;Info.Name=TEXT("角色資訊");
 	Info.Groups.Add(Group(TEXT("角色"),{G->InspectCol.Get()}));
+	// The card wall's info column, collapsed once a card is open (SetModelLayout); the UMG layer is see-through and never
+	// hit-tested, so showing it again only gives this page its mirror.
+	Info.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->InspectCol)Weak->InspectCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);};
 	Categories.Add(MoveTemp(Info));
 
 	FCategory Cards;Cards.Name=TEXT("人物卡總欄");Cards.Tab=1;
@@ -427,9 +432,20 @@ void UOKReaderScreen::BuildCategories()
 
 	FCategory Settings;Settings.Name=TEXT("設定／介面");Settings.Tab=3;
 	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting")){Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));Settings.Groups.Last().OnEnter=OpenDrawer(D);}
-	if(G->StyleBox)Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));
-	Settings.Groups.Add(Group(TEXT("物理"),{G->PhysicsBackendCombo?static_cast<UWidget*>(G->PhysicsBackendCombo->GetParent()):nullptr}));
-	Settings.Groups.Add(Group(TEXT("介面"),{G->EditorWidthInput?static_cast<UWidget*>(G->EditorWidthInput->GetParent()):nullptr,G->EditorFontInput?static_cast<UWidget*>(G->EditorFontInput->GetParent()):nullptr}));
+	// The style box shows only under the old shape category 角色風格 (OKGalleryBoneControls): this page shows it itself.
+	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->StyleBox)Weak->StyleBox->SetVisibility(ESlateVisibility::Visible);};}
+	// The physics controls sit loose in the animation column, each after its caption: those pairs, not the whole column.
+	{
+		TArray<UWidget*> Physics;
+		for(UWidget* W:{static_cast<UWidget*>(G->PhysicsBackendCombo.Get()),static_cast<UWidget*>(G->PhysicsSoftnessSlider.Get()),static_cast<UWidget*>(G->PhysicsWeightSlider.Get()),static_cast<UWidget*>(G->PhysicsTailSlider.Get())})
+		{
+			if(!W)continue;
+			if(UPanelWidget* P=W->GetParent()){const int32 I=P->GetChildIndex(W);if(I>0&&Cast<UTextBlock>(P->GetChildAt(I-1)))Physics.Add(P->GetChildAt(I-1));}
+			Physics.Add(W);
+		}
+		Settings.Groups.Add(Group(TEXT("物理"),Physics));
+	}
+	// No 介面 page: the UMG panel width and font size (EditorWidthInput, EditorFontInput) only resize the hidden UMG layer.
 	for(FGroup& Each:Settings.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty();});
 	Categories.Add(MoveTemp(Settings));
