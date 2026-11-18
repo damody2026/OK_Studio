@@ -220,7 +220,7 @@ local ITEMS = {
   { "hotel_room", "hotel", "景觀雙人房（一晚）", 4800, "stay", "romantic,luxury", "none", false },
   { "hotel_rest", "hotel", "休息 3 小時", 1800, "stay", "", "none", false },
   { "hotel_spa", "hotel", "SPA 90 分", 2800, "spa", "luxury", "none", false },
-  { "hotel_pool", "hotel", "泳池日券", 500, "leisure", "", "none", false },
+  -- hotel_pool（泳池日券）拿掉（11-18）：飯店沒有泳池，見 rules/activities.toml 的注解。
   { "hotel_cocktail", "hotel", "雞尾酒", 320, "alcohol", "alcohol,romantic", "cup", false },
   { "hotel_beer", "hotel", "啤酒", 180, "alcohol", "alcohol", "cup", false },
   { "hotel_mocktail", "hotel", "無酒精特調", 220, "drink", "", "cup", false },
@@ -285,7 +285,7 @@ local JOBS = {
   { "aquarium_staff", "aquarium", "售票、導覽", 100, { { 9, 14 }, { 13, 18 } }, { "tank" }, false },
   { "hotel_front", "hotel", "櫃台", 110, { { 7, 15 }, { 15, 23 }, { 23, 31 } }, { "lobby" }, false },
   { "hotel_bar", "hotel", "酒吧服務生", 120, { { 18, 26 } }, { "bar" }, false },
-  { "hotel_pool", "hotel", "泳池救生、服務", 110, { { 9, 18 } }, { "pool" }, false },
+  -- hotel_pool（泳池救生、服務）拿掉（11-18）：飯店沒有泳池，見 rules/activities.toml 的注解。
   { "hotel_spa", "hotel", "SPA 助理", 120, { { 12, 22 } }, { "lobby" }, false },
   { "lodge_front", "lodge", "會館櫃台", 100, { { 10, 18 }, { 18, 26 } }, { "seat" }, false },
   { "inn_helper", "minshuku", "民宿幫手", 95, { { 7, 11 }, { 15, 21 } }, { "seat" }, false },

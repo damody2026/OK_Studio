@@ -718,14 +718,9 @@ kind = "restroom"
 code = 0
 anchor = "wait"
 
-[[activity]]
-id = "pool"
-strenuous = true
-name = "在飯店泳池玩水"
-place = "hotel"
-kind = "pair"
-code = 3
-anchor = "pool"
+# 11-18：拿掉「在飯店泳池玩水」（id pool，place hotel，anchor pool）。這張地圖的飯店沒有泳池：唯一的 pool 錨點浮在 2F 走道
+# 上方 195 cm、底下是走道與休息區（d1686360a 拿掉錨點）。同時拿掉泳池日券、泳池救生員打工（catalog.json 的 hotel_pool）。
+# 以後飯店做了泳池，連錨點一起加回來；舊存檔裡的 hotel_pool 打工由 save_repair（shop.rs）換成同地點的其他打工。
 
 [[activity]]
 id = "hotel_bar"

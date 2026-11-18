@@ -4922,25 +4922,6 @@
    "consumable": true
   },
   {
-   "id": "hotel_pool",
-   "place": "hotel",
-   "name": "泳池日券",
-   "category": "leisure",
-   "price": {
-    "": 105
-   },
-   "season": null,
-   "tags": [],
-   "prop": "none",
-   "options": [],
-   "effects": {
-    "fun": 30,
-    "mood": 8
-   },
-   "giftable": false,
-   "consumable": false
-  },
-  {
    "id": "hotel_cocktail",
    "place": "hotel",
    "name": "雞尾酒",
@@ -7778,22 +7759,6 @@
    ],
    "stations": [
     "bar"
-   ],
-   "student_only": false
-  },
-  {
-   "id": "hotel_pool",
-   "place": "hotel",
-   "title": "泳池救生、服務",
-   "wage": 23,
-   "shifts": [
-    [
-     9,
-     18
-    ]
-   ],
-   "stations": [
-    "pool"
    ],
    "student_only": false
   },
