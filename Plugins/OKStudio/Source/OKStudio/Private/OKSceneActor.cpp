@@ -561,16 +561,18 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.Buil
  *  of 24.5 s and Sync itself 16 s less, but the whole open took 24.7% LONGER, because a cheaper Sync means shorter
  *  frames, an item is built in the frame its worker has it ready, and every frame redraws the half-built scene for
  *  80 ms. So this stays off: Sync being faster is measured, the open being faster is not.
- *  Measured again the same day with ok.Studio.LoadSkipDraw on, which removes that redraw: 86.3 s without the index
- *  against 86.9 s with it. The open is paced by the workers opening items, so taking work off the game thread does not
- *  move it either way, and the index has nothing left to win.
- *  Verdict: KEPT, default 0, correctness verified by OpenKoikatsu.Studio.SceneFindIndex (the indexed answers against the
- *  scanned ones for every object, a hidden parent, an id that is not there, nested scopes, and objects added or removed
- *  inside and between scopes). It is here for the day Sync itself is what the open waits on - a scene whose objects
- *  are all cheap to build, or an editing pass that Syncs without workers in the way - and then it is one cvar away
- *  rather than a rewrite. If a later round finds no such case, remove it together with the test. */
-static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 0,
-	TEXT("Sync looks objects up through the id index instead of scanning. 0 (default): scan, as before."));
+ *  A single run with ok.Studio.LoadSkipDraw on then said 86.3 s without the index against 86.9 s with it, and I wrote
+ *  that down as "the index wins nothing". Three interleaved pairs later the same day say the opposite, and they do not
+ *  overlap at all: 72.9 / 76.1 / 78.3 s with it against 86.5 / 87.7 / 93.0 s without, -13.2% on the median, Sync itself
+ *  -30%. The one run was the noise, not the answer.
+ *  Why it needed the other switch: the index makes Sync cheap, which makes frames short, which doubles their number
+ *  (408 -> 866); while each frame also redrew the half-built scene for 80 ms that cost more than the index saved.
+ *  With the drawing skipped a frame costs ~24 ms, and the saving survives. The two only pay off together.
+ *  Correctness is verified by OpenKoikatsu.Studio.SceneFindIndex (indexed answers against scanned ones for every
+ *  object, a hidden parent, an id that is not there, nested scopes, and objects added or removed inside and between
+ *  scopes). 0 goes back to the scan. */
+static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 1,
+	TEXT("Sync looks objects up through the id index instead of scanning (0: scan, as before)."));
 /** While a scene builds, cap the frame rate to this (0: no cap). The load is paced by the workers opening items, so
  *  the frames in between only redraw the half-built scene; drawing it fewer times leaves the workers more of the CPU. */
 static TAutoConsoleVariable<int32> CVarOkStudioLoadMaxFps(TEXT("ok.Studio.LoadMaxFps"), 0,
