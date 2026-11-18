@@ -52,7 +52,8 @@ F 组 f-yvonne。验的是低记忆体模式（RAM < 48 GB 或 VRAM < 20 GB 自�
 ## 档案
 
 - 报告与截图：`Saved/Reports/reader-jump-20261118-lowmem/`（`full_low.txt`、`full_drop.txt`、`img_*`、`cmp_low_vs_1116/`、`README.txt`）。本机产物，不进版控。
-- 一般模式对照（同 53 张，不加 `-OKLowMemory`）：**只跑到 26/53，全部 pass**（lowmem=off，BulkData 0，图片判定 0），
-  15:1x 因 C／E／F 整合全部暂停。第 23 张起用的是 12:19 f-sceneload 重新连结的编辑器 DLL（它只改 OKStudio 量测，读卡器路径没动）。
-  剩下 27 张（cards53.txt 第 26 号起）与「低记忆体对一般模式」的 `reader_jump_compare.lua` 比对、`--lighting` 光影检查（C031／C044／C048）
-  整合后再跑：`Tools\lua\lua.exe Tools\reader_jump_check.lua --out …\full_norm.txt --list …\cards53.txt --from 26 --lane norm --fair`。
+- 一般模式对照（同 53 张，不加 `-OKLowMemory`）：**跑到 34/53，全部 pass**（lowmem=off，BulkData 0，图片判定 0）。
+  15:1x 因整合 #17 暂停；整合后（da2738625 起改用 reader_launch／reader_stop）续跑到第 34 张（C081），18:0x 又因整合 #18 暂停。
+  第 23 张起用的是 12:19 f-sceneload 重新连结的编辑器 DLL（它只改 OKStudio 量测，读卡器路径没动）。
+  剩下 19 张（cards53.txt 第 34 号起）与「低记忆体对一般模式」的 `reader_jump_compare.lua` 比对、`--lighting` 光影检查（C031／C044／C048）
+  整合后再跑：`Tools\lua\lua.exe Tools\reader_jump_check.lua --out …\full_norm.txt --list …\cards53.txt --from 34 --lane norm --fair --mcp <含 reader_launch 的 ok-game-mcp>`。
