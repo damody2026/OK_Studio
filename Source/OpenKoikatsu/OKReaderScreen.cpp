@@ -1,4 +1,9 @@
 #include "OKReaderScreen.h"
+#include "UObject/UObjectIterator.h"
+#include "Engine/Texture.h"
+#include "RHIStats.h"
+#include "DynamicRHI.h"
+bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "DreamUIRender/DreamUIShaderGate.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
@@ -176,7 +181,7 @@ void UOKDreamControl::Sync()
 	{
 		SetText((A->bChosen?TEXT("▶ "):TEXT(""))+TextIn(A->Caption));
 		if(Button)Button->SetIsEnabled(A->GetIsEnabled());
-		UTexture* Texture=A->Thumbnail?Cast<UTexture>(A->Thumbnail->GetBrush().GetResourceObject()):nullptr;
+		UTexture* Texture=A->Thumbnail&&OKReaderPicturesShown()?Cast<UTexture>(A->Thumbnail->GetBrush().GetResourceObject()):nullptr;
 		if(Picture&&Texture!=ShownTexture.Get())
 		{
 			ShownTexture=Texture;
@@ -237,7 +242,7 @@ void UOKDreamControl::Sync()
 	}
 	if(auto* U=Cast<UImage>(S))if(Picture)
 	{
-		UTexture* Texture=Cast<UTexture>(U->GetBrush().GetResourceObject());
+		UTexture* Texture=OKReaderPicturesShown()?Cast<UTexture>(U->GetBrush().GetResourceObject()):nullptr;
 		if(Texture!=ShownTexture.Get())
 		{
 			ShownTexture=Texture;
@@ -253,6 +258,11 @@ void UOKDreamControl::HandleClicked()
 	else if(OnPressed)OnPressed();
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
+// ok.ReaderPictures 0: no picture tile or mirrored image draws its texture (a comparison run for the open GPU page
+// fault, Docs/CARD_READER_DREAMGUI.md): the tiles and their captions stay, the pictures do not.
+static TAutoConsoleVariable<int32> CVarReaderPictures(TEXT("ok.ReaderPictures"),1,TEXT("Pictures in the reader's DreamGUI screen (picker tiles, mirrored images, card list): 1 drawn (default), 0 none (for comparison runs)."));
+bool OKReaderPicturesShown(){return CVarReaderPictures.GetValueOnGameThread()!=0;}
+
 bool UOKDreamControl::Press()
 {
 	if(!GetShown())return false;
@@ -1128,6 +1138,7 @@ namespace OKReaderThumbs
 	void Show(UOKDreamControl* Tile,UTexture2D* Texture)
 	{
 		if(!IsValid(Tile)||!Tile->Picture)return;
+		if(!OKReaderPicturesShown())Texture=nullptr;
 		if(auto* Image=Cast<UDreamImage>(Tile->Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(Texture);Image->SetBrush(Brush);}
 		Tile->Picture->SetShown(Texture!=nullptr);
 	}
@@ -1140,6 +1151,37 @@ namespace OKReaderThumbs
 // ever collected while the reader runs, so no DreamGUI draw data built before a brush change can outlive its texture
 // (2026-11-19: switching the card source and scrolling fast ended in a GPU page fault after about a minute).
 static TAutoConsoleVariable<int32> CVarReaderThumbs(TEXT("ok.ReaderThumbs"),1,TEXT("Card list pictures in the reader's DreamGUI screen: 1 decode them (default), 0 none (for comparison runs)."));
+
+void UOKReaderScreen::ListResources(FOutputDevice& Out) const
+{
+	auto MiB=[](int64 Bytes){return double(Bytes)/(1024.0*1024.0);};
+	auto Size=[](const UTexture* T)->int64{return T&&T->GetResource()?int64(T->CalcTextureMemorySizeEnum(TMC_ResidentMips)):0;};
+	FString Line=FString::Printf(TEXT("screen thumbPool=%d free=%d cardThumbs=%d controls=%d pageWidgets=%d cards=%d"),ThumbPool.Num(),FreeThumbs.Num(),CardThumbs.Num(),Controls.Num(),PageWidgets.Num(),CardButtons.Num());
+	if(const UOKCharacterController* G=Controller.Get())
+	{
+		int64 Bytes=0;for(const auto& Pair:G->AppearanceThumbCache)Bytes+=Size(Pair.Value);
+		Line+=FString::Printf(TEXT(" | controller appearanceCache=%d (%.1f MiB) appearanceTextures=%d"),G->AppearanceThumbCache.Num(),MiB(Bytes),G->AppearanceTextures.Num());
+	}
+	int32 Widgets=0,Mirrors=0;
+	for(TObjectIterator<UDreamWidget> It;It;++It)if(IsValid(*It)){++Widgets;if(It->IsA<UOKDreamControl>())++Mirrors;}
+	Line+=FString::Printf(TEXT(" | live dreamWidgets=%d mirrorControls=%d"),Widgets,Mirrors);
+	// Textures by class, the transient ones (made at run time) apart.
+	TMap<FString,TPair<int32,int64>> ByKind;
+	for(TObjectIterator<UTexture> It;It;++It)
+	{
+		const UTexture* T=*It;if(!IsValid(T)||T->HasAnyFlags(RF_ClassDefaultObject))continue;
+		const bool bTransient=T->GetOutermost()==GetTransientPackage();
+		TPair<int32,int64>& Slot=ByKind.FindOrAdd(T->GetClass()->GetName()+(bTransient?TEXT("(transient)"):TEXT("")));
+		++Slot.Key;Slot.Value+=Size(T);
+	}
+	ByKind.ValueSort([](const TPair<int32,int64>& A,const TPair<int32,int64>& B){return A.Value>B.Value;});
+	Line+=TEXT(" | textures");
+	for(const auto& Pair:ByKind)Line+=FString::Printf(TEXT(" %s=%d/%.1fMiB"),*Pair.Key,Pair.Value.Key,MiB(Pair.Value.Value));
+	FTextureMemoryStats Stats;RHIGetTextureMemoryStats(Stats);
+	Line+=FString::Printf(TEXT(" | rhi streaming=%.1fMiB nonStreaming=%.1fMiB dedicated=%.0fMiB"),MiB(Stats.StreamingMemorySize),MiB(Stats.NonStreamingMemorySize),MiB(Stats.DedicatedVideoMemory));
+	Out.Log(Line);
+	UE_LOG(LogTemp,Display,TEXT("OK reader resources %s"),*Line);
+}
 
 void UOKReaderScreen::GiveBackThumb(UTexture2D* Texture)
 {
@@ -1906,6 +1948,9 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		}
 		// "controls [filter]": every shown control's path (what press takes), flagging paths two controls share.
 		else if(Verb==TEXT("controls"))S->ListControls(Out,Value);
+		// "resources": counts and sizes that must not grow without bound over a long session (thumbnail pools and caches,
+		// mirrored controls, live textures by kind, the RHI's texture memory).
+		else if(Verb==TEXT("resources"))S->ListResources(Out);
 		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
 		else if(Verb==TEXT("card"))
 		{

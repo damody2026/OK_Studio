@@ -1022,11 +1022,14 @@ void FDreamUIRenderer::DrawBuiltInBatch(FRHICommandList& RHICmdList, FGraphicsPi
 		FRHITexture* Texture = InReference != nullptr ? InReference->GetReferencedTexture() : nullptr;
 		return Texture != nullptr ? Texture->GetName() : FName(TEXT("fallback"));
 	};
-	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIDraw", "DreamUIDraw main=%s font=%s widget=%s clip=%s rect=%s paint=%s mask0=%s",
+	// A breadcrumb keeps 128 characters (FRHIBreadcrumb::MaxLength): three nested ones, so no texture name is cut off.
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIDraw", "DreamUIDraw main=%s font=%s",
 		RHI_BREADCRUMB_FIELD("Main", Named(Params.MainTextureRHI.GetReference())),
-		RHI_BREADCRUMB_FIELD("Font", Named(Params.FontTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Font", Named(Params.FontTextureRHI.GetReference())));
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIData", "DreamUIData widget=%s clip=%s",
 		RHI_BREADCRUMB_FIELD("WidgetData", Named(Params.WidgetDataTextureRHI.GetReference())),
-		RHI_BREADCRUMB_FIELD("ClipData", Named(Params.ClipDataTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("ClipData", Named(Params.ClipDataTextureRHI.GetReference())));
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIMore", "DreamUIMore rect=%s paint=%s mask0=%s",
 		RHI_BREADCRUMB_FIELD("RectBlock", Named(Params.RectBlockDataRHI.GetReference())),
 		RHI_BREADCRUMB_FIELD("Paint", Named(Params.PaintDataRHI.GetReference())),
 		RHI_BREADCRUMB_FIELD("Mask0", Named(Params.MaskTexture0RHI.GetReference())));
