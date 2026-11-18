@@ -210,6 +210,9 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - **剩下的方向**：故障位址不屬於任何追蹤到的資源或 heap，比較像上傳記憶體（uniform buffer、動態緩衝）或描述子指到早已不存在的位置。下一步是拿到帶除錯資訊的著色器（`r.Shaders.Symbols=1` 重新 cook），把 `0x45f90` 對到 DreamGUI 哪個 pixel shader 的哪一行讀取；或在開發版開 D3D12 GPU-based validation 重現。
 - 延遲釋放留著當防護，代價是被放開的 pooled RT 多留 3 幀才回池。
 - **字型圖集 slice 越界（協調者提的方向，2026-11-19 查過）**：三次當機前都有 `AddAtlasSlice … Expend Texture2DArray slice to: 2`，但都是在當機前 4–14 分鐘，不是緊接著。DreamGUI 的 pixel shader 對字型圖集用 `Sample`（`DreamUIText.ush`、`DreamUIShade.ush`），對資料貼圖用 `Texture.Load`。D3D12 的 `Sample` 會把 array index 夾到實際 slice 數，`Load` 越界回傳 0，兩者都不會造成 MMU fault。上傳端 `FlushFontTexture` 也先檢查 `Slice < SliceCount` 才寫。要造成 page fault，必須是描述子本身指到沒有對應的記憶體，所以單純在 shader 裡 clamp slice 不會改變結果，這次沒有加。
+- **GPU-based validation（2026-11-19，第一長段）**：打包 stage `EFork1119i` 開 `-gpuvalidation`，每輪先切 22 頁讓字型圖集擴張，再開第 18–29 張卡。21 輪、約 250 次開卡，0 個 D3D12 ERROR／WARNING，也沒當（`E:\OpenKoikatsu\Saved\Reports\reader-gbv-20261119`）。GBV 會把提交序列化，序列化後就不重現，比較像時序或競態問題，不是固定的錯綁。
+- **`Failed to read file ''` 與 NeverStream（查過，不成立）**：三次當機的 log 都有 LogStreaming `Failed to read file ''`，出現時刻正好在建外觀縮圖時。曾懷疑是 `CreateTransient` 的貼圖被串流器搬動。開著讀卡器跑 `ListTextures`（`E:\OpenKoikatsu\Saved\Reports\reader-seg2-20261119\listtextures.json`）：598 張 `/Engine/Transient` 貼圖全部 `Streaming=NO`；串流中的只有 13 張引擎內建貼圖（天空、DefaultDiffuse、DefaultTexture 等），都卡在 64×64。這個警告是串流器讀不到這些引擎貼圖的 mip，屬於打包內容的問題，DreamGUI 不畫它們。給讀卡器縮圖補 NeverStream 之後警告照樣出現，所以改動已撤回。
+- **資料貼圖變大**：`DreamUIDataTexture` 變大時記一行 log（`DreamUIDataTexture <名稱> grows to <列數> rows`），並先等 RDG 非同步執行完成才換貼圖與更新參照，供下次當機時對時間點。
 - **Aftermath dump**：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`。要用 Nsight Graphics 打開才看得到出錯的著色器與綁定的資源；這台機器只有 Nsight Compute／Systems／VS Edition，沒有 Nsight Graphics。
 
 ## 「沒按滑鼠鍵，視野也會動」的排查（2026-11-18）

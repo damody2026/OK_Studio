@@ -5785,3 +5785,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **症狀**：打包版讀卡器連續開卡、切頁約 7–15 分鐘後 GPU PageFault，停在 DreamGUI ViewExtension 的第一個 draw，著色器位址每次都是 `fragment_02 @ 0x45f90`。`d3d12.VRAMTexturePoolDefrag` 已經關了。
 - **做了什麼**：開 `r.D3D12.TrackAllAllocations=1 -gpucrashdebugging` 重現兩段：故障位址不屬於任何存活、或 100 幀內釋放的資源。照時間盒改做防禦性延遲釋放（`FDreamUIDeferredRelease`，DreamGUI 放開的資料貼圖、pooled RT、畫布目標、材質 proxy 晚 3 幀才放），重現照樣當。
 - **教訓**：前兩條都是「資源被提前放掉」，這條不是同一類，不能看到同一個 pass 就套用同一個結論。下一步要把著色器位址對回原始碼（需要帶符號的著色器），不是再加一層保留。
+
+## 2026-11-19：把 `Failed to read file ''` 當成 GPU PageFault 的原因，量過才知道不是（e-fork-2）
+
+- **做錯的事**：看到 LogStreaming `Failed to read file ''` 和當機在同一時段，就推定是 `CreateTransient` 的縮圖被串流器搬動，給四處縮圖加了 NeverStream。
+- **量出來的**：`ListTextures` 顯示所有 transient 貼圖本來就是 `Streaming=NO`（只有一個 mip 的貼圖串流器不管）；串流中的只有 13 張引擎內建貼圖，警告是讀它們的 mip 失敗。加了 NeverStream 後警告照樣出現。改動已撤回。
+- **再犯前檢查**：「同時出現」的警告要先用 `ListTextures`、`stat streaming` 之類的工具確認它指的是哪一批資源，再改程式。
