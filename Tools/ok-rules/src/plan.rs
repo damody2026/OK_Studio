@@ -274,7 +274,16 @@ pub fn plan_day(i: &Inputs, c: &Catalog) -> Vec<Block> {
     // 18:00 dinner date with him full).
     let before_date = |s: i32| !i.promises.iter().any(|p| p.start > s && p.start < s + 180 && [LUNCH_WINDOW, DINNER_WINDOW].iter().any(|w| meal_with_him(c, &p.place, p.start, *w)));
     if !eats_with_him(LUNCH_WINDOW) {
-        let starts: Vec<i32> = [720, 660, 780, 975].into_iter().filter(|s| before_date(*s)).collect();
+        // A shift or class over the lunch hours: as soon as it ends (爱丽丝's 10:00-15:00 shift at the drink shop: lunch only
+        // at 16:15, seven hours after breakfast, c-conquest 2026-11-18), before the late 16:15.
+        let mut starts: Vec<i32> = vec![720, 660, 780];
+        for b in day.iter().filter(|b| (b.kind == "work" || b.kind == "class") && b.end > LUNCH_WINDOW.0 && b.end < 975) {
+            if !starts.contains(&b.end) {
+                starts.push(b.end);
+            }
+        }
+        starts.push(975);
+        let starts: Vec<i32> = starts.into_iter().filter(|s| before_date(*s)).collect();
         meal(&mut day, &starts, 60, &lunch, budget);
     }
     // Dinner is not one restaurant for everybody (all ten heroines sat in it at 18:00): a student on a weekday often
@@ -1342,6 +1351,22 @@ mod tests {
     }
 
     #[test]
+    fn a_shift_over_lunch_is_followed_by_lunch() {
+        // 爱丽丝 (c-conquest play1 day 4, a Sunday): breakfast 08:59, the drink shop 10:00-15:00, lunch only at 16:10.
+        let c = Tuning::builtin().catalog;
+        let p = json!({"occupation": {"primary": "clerk", "workplace_place_id": "drinkshop"}});
+        let mut shifts = 0;
+        for seed in 0..300 {
+            let plan = plan_day(&inputs(&p, 6, seed), &c);
+            let Some(w) = plan.iter().find(|b| b.kind == "work" && b.start <= LUNCH_WINDOW.0 && b.end >= 840 && b.end < 975) else { continue };
+            shifts += 1;
+            let lunch = plan.iter().find(|b| b.kind == "meal" && b.start >= w.end && b.start < 1080).unwrap_or_else(|| panic!("seed {seed}: no lunch after the shift: {}", summary(&plan)));
+            assert!(lunch.start <= w.end + 15, "seed {seed}: lunch at {} after a shift ending {}: {}", lunch.start, w.end, summary(&plan));
+        }
+        assert!(shifts > 20, "only {shifts} shifts over lunch in 300 days");
+    }
+
+    #[test]
     fn breakfast_is_not_one_shop_for_everybody() {
         let c = Tuning::builtin().catalog;
         let student = json!({"occupation": {"primary": "student"}});
@@ -1687,13 +1712,13 @@ mod tests {
     #[test]
     fn dinner_is_not_right_after_a_late_lunch() {
         let c = Tuning::builtin().catalog;
-        // working through lunch at the cafe, as Raiden: her lunch slides to 16:15
+        // working through lunch at the cafe, as Raiden: her lunch comes after the shift (15:00-16:00, once 16:15)
         let p = json!({"occupation": {"primary": "clerk", "workplace_place_id": "cafe"}});
         let mut late = 0;
         for seed in 1..60 {
             let plan = plan_day(&inputs(&p, seed % 7, seed * 7919), &c);
             let lunch = plan.iter().filter(|x| x.kind == "meal" && x.start >= LUNCH_WINDOW.0 && x.start < 1000).map(|x| x.end).max();
-            if lunch.map_or(false, |e| e > 960) {
+            if lunch.map_or(false, |e| e > 930) {
                 late += 1;
             }
             if let Some(end) = lunch {
