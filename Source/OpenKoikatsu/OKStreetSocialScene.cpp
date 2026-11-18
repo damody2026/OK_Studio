@@ -9,6 +9,8 @@ extern "C" __declspec(dllimport) void __stdcall DisableProcessWindowsGhosting(vo
 #include "Styling/CoreStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "OKStreetBacks.h"
+#include "Engine/AssetManager.h"
+#include "Engine/StreamableManager.h"
 #include "OKStreetSocialText.h"
 #include "OKStreetSpokenText.h"
 #include "OKStreetSocialSpeakerText.h"
@@ -3849,10 +3851,19 @@ void AOKStreetSocialScene::TickReadingProps(){
   auto* Existing=S.ReadingProps.Find(Character);
   if(!Reading){if(Existing)for(auto& Prop:*Existing)if(Prop.IsValid())Prop->SetActorHiddenInGame(true);continue;}
   if(!Existing){
-   auto* Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Game/Scenes/StreetSocial/Meshes/StreetCube.StreetCube"));if(!Cube)continue;
+   // The book's mesh and materials loaded in the background, once: LoadObject here flushed the async loading and held
+   // the frame 77 ms the first time a girl sat reading on the walk (walkQ-1118i, frame 15541). Until they are in she
+   // reads without the book.
+   static const FSoftObjectPath CubePath(TEXT("/Game/Scenes/StreetSocial/Meshes/StreetCube.StreetCube"));
+   static TSharedPtr<FStreamableHandle> BookLoad;static bool BookAsked=false;
+   if(!BookAsked&&(BookAsked=true))BookLoad=UAssetManager::GetStreamableManager().RequestAsyncLoad(TArray<FSoftObjectPath>{CubePath,
+    FSoftObjectPath(TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial03.StreetMaterial03")),FSoftObjectPath(TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial04.StreetMaterial04"))});
+   if(BookLoad.IsValid()&&!BookLoad->HasLoadCompleted())continue;
+   auto* Cube=Cast<UStaticMesh>(CubePath.ResolveObject());if(!Cube)continue;
+   UE_LOG(LogTemp,Display,TEXT("Street reading props: actor %d holds a book"),Character);
    auto& Parts=S.ReadingProps.Add(Character);
    for(int32 Part=0;Part<5;++Part){auto* Prop=GetWorld()->SpawnActor<AStaticMeshActor>(Status.Transform.GetLocation(),FRotator::ZeroRotator);if(!Prop)break;Prop->SetOwner(this);Prop->SetActorHiddenInGame(true);auto* C=Prop->GetStaticMeshComponent();C->SetMobility(EComponentMobility::Movable);C->SetStaticMesh(Cube);C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    const TCHAR* Material=Part<2||Part==4?TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial04.StreetMaterial04"):TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial03.StreetMaterial03");if(auto* M=LoadObject<UMaterialInterface>(nullptr,Material))C->SetMaterial(0,M);Parts.Add(Prop);}
+    const TCHAR* Material=Part<2||Part==4?TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial04.StreetMaterial04"):TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial03.StreetMaterial03");if(auto* M=Cast<UMaterialInterface>(FSoftObjectPath(Material).ResolveObject()))C->SetMaterial(0,M);Parts.Add(Prop);}
    Existing=&Parts;
   }
   for(int32 Part=0;Part<Existing->Num();++Part)if((*Existing)[Part].IsValid()){
