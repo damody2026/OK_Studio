@@ -605,6 +605,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `2dfff002a` | 改 | 开一个库模型不再走遍它的记录链（记录索引存进库的 `work/model-index`，LZ4）：一张卡少走约 1.0 GiB、`load_model scan` 219 → 49.5 ms、wall 中位数 −3.5%／平均 −5.4%。关闭开关 `OK_NO_MODEL_INDEX=1` |
 | `6429a9e44` | 量 | 每一笔重复的工作带上实测耗时与「去重复最多省多少」（`note_work_timed`、`PROFILE repeated work at most <n>ms savable`）；据此判掉 memo 换出处键（上限 28 ms，不是 100–250 ms）与 hair gloss 搬离主执行绪（上限 50 ms），两笔连同 `RAYON_NUM_THREADS` 扫描写进第二、三、四节 |
 | `12a45bea5` | 改 | 一项工作内部的分段计时（`segment`，要用 1 执行绪读）；量到「一项 200 ms」是还原贴图，不是读取或 mesh |
+| `1f26ccd1f` | 改 | 一层层挖到最大项是 BC7 块解码（上限 −0.18～0.21 s）；修正「1 执行绪就没有等待」，巢状 rayon 下只有 leaf 段可信 |
 
 `d63b37a86` 与 `8fe9c24ab`（17 支工具补 `limit_threads`）已由协调者的 `c0e242763` 一起整合进来，所以批次
 工具既被限回 8 条、也有调高的办法（协调者 2026-11-17 的决定，先跟 C 组打过招呼——百人房间的低模是
