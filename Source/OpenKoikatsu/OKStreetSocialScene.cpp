@@ -3860,6 +3860,8 @@ void AOKStreetSocialScene::TickReadingProps(){
    static TSharedPtr<FStreamableHandle> BookLoad;static bool BookAsked=false;
    if(!BookAsked&&(BookAsked=true))BookLoad=UAssetManager::GetStreamableManager().RequestAsyncLoad(TArray<FSoftObjectPath>{CubePath,
     FSoftObjectPath(TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial03.StreetMaterial03")),FSoftObjectPath(TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial04.StreetMaterial04"))});
+   static bool Told=false; // the first reader, once: whether the book was ready then (it never appeared in c1118d)
+   if(!Told&&(Told=true))UE_LOG(LogTemp,Display,TEXT("Street reading props: actor %d reads, book load %s, mesh %s"),Character,!BookLoad.IsValid()?TEXT("none"):BookLoad->HasLoadCompleted()?TEXT("done"):TEXT("pending"),CubePath.ResolveObject()?TEXT("in memory"):TEXT("not loaded"));
    if(BookLoad.IsValid()&&!BookLoad->HasLoadCompleted())continue;
    auto* Cube=Cast<UStaticMesh>(CubePath.ResolveObject());if(!Cube)continue;
    UE_LOG(LogTemp,Display,TEXT("Street reading props: actor %d holds a book"),Character);
