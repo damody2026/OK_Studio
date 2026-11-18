@@ -129,7 +129,12 @@ void AOKStreetSocialScene::RequestOverheard(int32 A,int32 B){
  // Not friends: they do not tell each other what they heard of him (the rules pass no gossip either), so their talk
  // is not given it (user, 2026-10-27).
  const bool Friends=BondStageOf(A,B)!=TEXT("stranger");const FString None=OKT(TEXT("ui.encounter.heard_none"));
- const FString User=OKMsg(TEXT("ui.encounter.pair_context_summary"), {{TEXT("name_a"), *Persona(A)}, {TEXT("name_b"), *Persona(B)}, {TEXT("bond_score"), S.Store.BondHeat.FindRef(OKStreetBondKey(IdA,IdB))}, {TEXT("jealousy_a_to_b"), RA.JealousyToward.FindRef(IdB)}, {TEXT("jealousy_b_to_a"), RB.JealousyToward.FindRef(IdA)}, {TEXT("heard_a"), Friends?HeardText(A):None}, {TEXT("heard_b"), Friends?HeardText(B):None}, {TEXT("scene_line"), *SceneLine(A)}});
+ // Each part timed on its own: one request held the frame 425 ms (c1118c, all Self) before anything is moved off it.
+ FString PersonaA,PersonaB,HeardA=None,HeardB=None,Scene;
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_OverheardPersona);PersonaA=Persona(A);PersonaB=Persona(B);}
+ if(Friends){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_OverheardHeard);HeardA=HeardText(A);HeardB=HeardText(B);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_OverheardScene);Scene=SceneLine(A);}
+ FString User;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_OverheardMessage);User=OKMsg(TEXT("ui.encounter.pair_context_summary"), {{TEXT("name_a"), *PersonaA}, {TEXT("name_b"), *PersonaB}, {TEXT("bond_score"), S.Store.BondHeat.FindRef(OKStreetBondKey(IdA,IdB))}, {TEXT("jealousy_a_to_b"), RA.JealousyToward.FindRef(IdB)}, {TEXT("jealousy_b_to_a"), RB.JealousyToward.FindRef(IdA)}, {TEXT("heard_a"), HeardA}, {TEXT("heard_b"), HeardB}, {TEXT("scene_line"), *Scene}});}
  TSharedRef<FJsonObject> Job=MakeShared<FJsonObject>();Job->SetStringField(TEXT("kind"),TEXT("chat"));Job->SetStringField(TEXT("priority"),TEXT("overheard"));
  Job->SetStringField(TEXT("tag"),FString::Printf(TEXT("overheard:%d:%d"),A,B));Job->SetNumberField(TEXT("max_tokens"),500);Job->SetNumberField(TEXT("temperature"),1.1);
  TArray<TSharedPtr<FJsonValue>> Messages;
@@ -137,7 +142,8 @@ void AOKStreetSocialScene::RequestOverheard(int32 A,int32 B){
  Add(TEXT("system"),OKT(TEXT("ui.encounter.encounter_dialogue_prompt")));
  Add(TEXT("user"),User);
  Job->SetArrayField(TEXT("messages"),Messages);
- FString Error;if(!S.Mind->Submit(OKStreetMindJson(Job),Error))UE_LOG(LogTemp,Warning,TEXT("Street overheard request failed: %s"),*Error);
+ FString JobText;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_OverheardJobJson);JobText=OKStreetMindJson(Job);}
+ FString Error;QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_OverheardSubmit);if(!S.Mind->Submit(JobText,Error))UE_LOG(LogTemp,Warning,TEXT("Street overheard request failed: %s"),*Error);
 }
 
 void AOKStreetSocialScene::HandleOverheard(const TSharedPtr<FJsonObject>& R,int32 A,int32 B){

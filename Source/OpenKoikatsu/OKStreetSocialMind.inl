@@ -820,7 +820,7 @@ FString AOKStreetSocialScene::PlaceHere(const FVector& Where) const{
 FString AOKStreetSocialScene::SceneLine(int32 Character) const{
  const auto& S=*State;
  const FString Place=PlaceHere(S.Male);const FOKStreetPlaceNorms N=OKStreetNormsOf(Place);
- const FDateTime Now=StreetNow();const float Crowd=OKRulesCrowdAt(S,Place,Now.GetHour()+Now.GetMinute()/60.0);
+ const FDateTime Now=StreetNow();float Crowd;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SceneCrowd);Crowd=OKRulesCrowdAt(S,Place,Now.GetHour()+Now.GetMinute()/60.0);}
  const auto* P=Place.IsEmpty()?nullptr:OKStreetFindPlace(Place);
  int32 Floor=0;if(P)for(int32 I=0;I<P->Rooms.Num();++I)if(P->Rooms[I].IsInsideOrOn(S.Male)&&P->RoomLevels.IsValidIndex(I))Floor=P->RoomLevels[I];
  static const TCHAR* Privacy[]={TEXT("公共"),TEXT("半公共"),TEXT("可上鎖"),TEXT("私密")};
@@ -838,8 +838,11 @@ FString AOKStreetSocialScene::SceneLine(int32 Character) const{
  if(S.OutingGirl==Character&&Character!=INDEX_NONE){FString Dest=S.OutingActivity.StartsWith(TEXT("go:"))?S.OutingActivity.Mid(3):FString();
   if(Dest.IsEmpty())if(const FOKStreetActivity* A=OKStreetFindActivity(S.OutingActivity))Dest=A->Place?A->Place:TEXT("");
   if(!Dest.IsEmpty()&&Dest!=Place)if(const auto* To=OKStreetFindPlace(Dest))Line+=OKMsg(TEXT("ui.mind.heading_to_line"),{{TEXT("place"),To->Name}});}
- const FString Things=ThingsFacts(Character);
- return Line+ActivityBlockedLine(Character)+(Things.IsEmpty()?FString():OKT(TEXT("ui.bank.list_separator"))+Things)+FinanceSceneText();
+ FString Things,Blocked,Finance;
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SceneThings);Things=ThingsFacts(Character);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SceneBlocked);Blocked=ActivityBlockedLine(Character);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SceneFinance);Finance=FinanceSceneText();}
+ return Line+Blocked+(Things.IsEmpty()?FString():OKT(TEXT("ui.bank.list_separator"))+Things)+Finance;
 }
 
 // Her things, and what is lent between them (items.rs items_facts): for her words and for the judge.

@@ -577,6 +577,14 @@ void AOKStreetSocialScene::StartControlServer(){
   if(!B->TryGetNumberField(TEXT("x"),X)||!B->TryGetNumberField(TEXT("y"),Y)||!B->TryGetNumberField(TEXT("z"),Z)){OKControlReply(Done,OKControlResult(false,TEXT("x, y and z are required")));return;}
   StopNavigation(FString());State->Male=FVector(X,Y,Z);OKControlReply(Done,OKControlResult(true));
  });
+ // Two heroines meet now, as TickEncounters would queue it: {"a": 1..10, "b": 1..10, "overheard": true} has him overhear
+ // them (one DeepSeek scene). Tests measure what a meeting costs the frame without waiting for one he stands beside.
+ Bind(TEXT("/encounter"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto B=OKControlBody(Req);double A=0,Bx=0;bool Overheard=false;B->TryGetBoolField(TEXT("overheard"),Overheard);
+  auto& S=*State;
+  if(!B->TryGetNumberField(TEXT("a"),A)||!B->TryGetNumberField(TEXT("b"),Bx)||A==Bx||!S.Agents.IsValidIndex(int32(A)-1)||!S.Agents.IsValidIndex(int32(Bx)-1)){OKControlReply(Done,OKControlResult(false,TEXT("a and b: two different girls 1..10")));return;}
+  S.PendingEncounters.Add(FIntVector(int32(A),int32(Bx),Overheard?1:0));OKControlReply(Done,OKControlResult(true));
+ });
  Bind(TEXT("/navigate"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto B=OKControlBody(Req);bool Stop=false;B->TryGetBoolField(TEXT("stop"),Stop);double Girl=0;FString Place;
   if(Stop){StopNavigation(FString());OKControlReply(Done,OKControlResult(true));return;}

@@ -48,7 +48,7 @@ Tools/ok-game-mcp（Rust）
 | `game_log` | 目前遊戲日誌的最後幾行，可只取含某段文字的行。 |
 | `game_exec` | 引擎主控台指令，回傳輸出：`stat unit`、`stat dumphitches`、`t.HitchFrameTimeThreshold 60` 等（控制通道 `/exec`）。 |
 | `game_trace_start` / `game_trace_stop` | 錄 Unreal Insights trace 到 `Saved/Profiling/<名稱>.utrace`（`Trace.File`／`Trace.Stop`），預設頻道 `default,cpu,gpu,frame,bookmark,loadtime`。 |
-| `game_call` | 其他端點直接呼叫：`/saves`、`/rules`、`/mind`、`/song`、`/money`、`/cursor`、`/summon`、`/locale`、`/menu`、`/camera`、`/mic`、`/navigate {stop}`、`/bluff`。 |
+| `game_call` | 其他端點直接呼叫：`/saves`、`/rules`、`/mind`、`/song`、`/money`、`/cursor`、`/summon`、`/locale`、`/menu`、`/camera`、`/mic`、`/navigate {stop}`、`/bluff`、`/encounter {a, b, overheard}`（立刻讓兩位女角相遇，overheard 為 true 時他偷聽到一段 DeepSeek 對話；量測相遇的幀成本用）。 |
 
 ## 常用流程
 
