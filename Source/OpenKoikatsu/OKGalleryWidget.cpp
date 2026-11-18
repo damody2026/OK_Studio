@@ -2024,7 +2024,7 @@ void UOKCharacterController::FinishLoad3D(int32 Generation, FOkSession Session, 
  UWorld* World=GetWorld();
  const bool KeepView=AppearanceGeometryLoadGeneration==Generation&&IsValid(StalePreview)&&IsValid(StalePreview->StudioCam);
  AKKPreviewActor* Actor=World?World->SpawnActor<AKKPreviewActor>(KeepView?StalePreview->GetActorLocation():FVector(0,0,100),KeepView?StalePreview->GetActorRotation():FRotator::ZeroRotator):nullptr;
- if(!Actor){SetLoadBusy(false);PreviewActor=IsValid(StalePreview)?StalePreview.Get():nullptr;StalePreview=nullptr;if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("載入立體角色失敗：無法建立預覽")));return;}
+ if(!Actor){SetLoadBusy(false);RestoreStaleAfterFailedLoad(KeepView);if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("載入立體角色失敗：無法建立預覽")));return;}
  Actor->SetActorHiddenInGame(true);Actor->SetActorTickEnabled(false);
  Actor->Session=MoveTemp(Session);
  Actor->UseGalleryPhysics();
@@ -2035,6 +2035,22 @@ void UOKCharacterController::FinishLoad3D(int32 Generation, FOkSession Session, 
  if(bOk)bOk=Actor->BeginSessionLoad(Error);
  if(!bOk){FinishPreparedPreview(Actor,false,Error);return;}
  PreparingPreview=Actor;PreparingPreviewGeneration=Generation;
+}
+
+// A failed load leaves the selection, name plate and sliders on the card that failed. The previous character may come
+// back only when it is that same card (an outfit or appearance reload): another card's model driven by this card's
+// shape values is the stretched, wrong body users saw. Otherwise it goes, and the error is all that shows.
+void UOKCharacterController::RestoreStaleAfterFailedLoad(bool bSameCharacter)
+{
+ if(!StalePreview)return;
+ const FString Selecting=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();
+ const bool Same=bSameCharacter||(!Selecting.IsEmpty()&&FPaths::IsSamePath(PreviewCardPath,Selecting));
+ if(Same&&IsValid(StalePreview)){PreviewActor=StalePreview.Get();StalePreview=nullptr;return;}
+ if(IsValid(StalePreview)){
+  UE_LOG(LogTemp,Display,TEXT("OK load3d failed: previous character %s retired (selection is %s)"),*PreviewCardPath,*Selecting);
+  OKRetireActor(StalePreview);
+ }
+ StalePreview=nullptr;PreviewActor=nullptr;PreviewCardPath.Reset();PreviewResourceSignature.Reset();
 }
 
 void UOKCharacterController::TickPreviewPreparation()
@@ -2235,12 +2251,7 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	else
 	{
 		Actor->Destroy();
-		// The previous character comes back only if nothing retired it meanwhile.
-		if (StalePreview)
-		{
-			PreviewActor = IsValid(StalePreview) ? StalePreview.Get() : nullptr;
-			StalePreview = nullptr;
-		}
+		RestoreStaleAfterFailedLoad(GeometryOnly);
 		Report = LocalErr.IsEmpty() ? TEXT("加載3D失败") : LocalErr;
 		FMemory::Memcpy(ClothesStates,LoadedClothesStates,sizeof(ClothesStates));
 		RefreshClothesStateLabels();

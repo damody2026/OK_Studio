@@ -729,6 +729,7 @@ public:
   *  beside it. Saved/AppearanceEditor itself when the card has none. */
  static FString AppearanceWorkFolder(const FString& CardPath);
 	FString PreviewCardPath;
+	void RestoreStaleAfterFailedLoad(bool bSameCharacter);
 	FString PreviewResourceSignature,PendingPreviewResourceSignature;
 	int32 PreviewOutfitIndex = INDEX_NONE;
 
