@@ -56,6 +56,50 @@ pub struct ChaListCatalog {
     /// A mods tree's catalogue as an OK card's open sees it (tree_answers.rs): the card's recorded answers first, the
     /// whole tree's catalogue (built on the first question the card has no answer to) for the rest. `by_id` is empty.
     pub(crate) tree: Option<std::sync::Arc<TreeCatalog>>,
+    /// The whole mods tree's catalogue, built only if a question `by_id` and `base` cannot answer arrives. An
+    /// original card's open asks almost everything about the zipmods the card itself names, and merging the
+    /// catalogues of ~7300 archives costs about 1.3 s of every open on this machine, with the sqlite cache or
+    /// without it (2026-11-18, the user: reading an original card should not read every mod, only the mods it
+    /// uses). Nothing is lost: a question these cannot answer still reaches the whole tree, it just pays then.
+    pub(crate) deferred: Option<std::sync::Arc<DeferredMods>>,
+}
+
+/// See `ChaListCatalog::deferred`.
+#[derive(Debug, Default)]
+pub(crate) struct DeferredMods {
+    mods_dir: std::path::PathBuf,
+    full: std::sync::OnceLock<std::sync::Arc<ChaListCatalog>>,
+}
+impl Clone for DeferredMods {
+    /// A clone shares the folder and, if it was already built, the catalogue.
+    fn clone(&self) -> Self {
+        let full = std::sync::OnceLock::new();
+        if let Some(built) = self.full.get() { let _ = full.set(built.clone()); }
+        DeferredMods { mods_dir: self.mods_dir.clone(), full }
+    }
+}
+impl DeferredMods {
+    fn full(&self, reason: impl FnOnce() -> String) -> &ChaListCatalog {
+        self.full.get_or_init(|| {
+            if std::env::var_os("OK_DIAG").is_some() {
+                eprintln!("ok-extract: deferred mods catalogue built for {}", reason());
+            }
+            load_mods_catalog_shared(&self.mods_dir)
+        })
+    }
+}
+
+/// The catalogue of the zipmods a card names, with the whole tree behind it, built only on a miss
+/// (`ChaListCatalog::deferred`).
+pub fn card_mods_catalog(mods_dir: &Path, zips: &[std::path::PathBuf]) -> std::sync::Arc<ChaListCatalog> {
+    let mut cat = ChaListCatalog {
+        deferred: Some(std::sync::Arc::new(DeferredMods { mods_dir: mods_dir.to_path_buf(), full: Default::default() })),
+        ..Default::default()
+    };
+    for zip in zips {
+        for (key, entry) in zipmod_catalog(zip).by_id.iter() { cat.by_id.entry(*key).or_insert_with(|| entry.clone()); }
+    }
+    std::sync::Arc::new(cat)
 }
 
 /// See `ChaListCatalog::tree`. While answers are recorded (`record`), every question is answered by `full` and logged.
@@ -104,7 +148,9 @@ impl ChaListCatalog {
             tree.log("cat", &(category_no, id), found);
             return found;
         }
-        self.by_id.get(&(category_no, id)).or_else(|| self.base.as_ref()?.by_id.get(&(category_no, id)))
+        self.by_id.get(&(category_no, id))
+            .or_else(|| self.base.as_ref()?.by_id.get(&(category_no, id)))
+            .or_else(|| self.deferred.as_ref()?.full(|| format!("cat {category_no} id {id}")).get(category_no, id))
     }
 
     /// Every entry once, the layered view included.
@@ -113,8 +159,12 @@ impl ChaListCatalog {
             if tree.strict { crate::okstrict::gap(|| "okLt cat: every entry".into()); }
             return tree.full().entries();
         }
-        Box::new(self.by_id.values().chain(self.base.iter().flat_map(|base|
-            base.by_id.iter().filter(|(k, _)| !self.by_id.contains_key(k)).map(|(_, e)| e))))
+        Box::new(self.by_id.values()
+            .chain(self.base.iter().flat_map(|base|
+                base.by_id.iter().filter(|(k, _)| !self.by_id.contains_key(k)).map(|(_, e)| e)))
+            // Every entry is a question only the whole tree can answer, so it is built here.
+            .chain(self.deferred.iter().flat_map(|d| d.full(|| "every entry".into()).entries()
+                .filter(|e| !self.by_id.contains_key(&(e.category_no, e.id))))))
     }
 
     pub fn get_slot(&self, category_no: i32, slot: i32, local_slot: i32) -> Option<&ListEntry> {

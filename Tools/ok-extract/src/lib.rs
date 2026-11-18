@@ -559,6 +559,26 @@ pub mod thigh_jiggle;
 pub mod cloth_gpu;
 pub(crate) use rig::*;
 
+/// Diagnostic for "switching cards deforms the character" (2026-11-18): opens every card of `cards` in THIS process,
+/// in order, steps `frames` physics frames on each at 60 Hz, and returns each part's posed world bounds. Run it once
+/// with the suspect card alone and once with another card before it: a difference in the suspect card's bounds means
+/// something of the previous card survived into it (a chain's particles, a rig, a global). Opens like the reader's
+/// OK-card path (the base library and the card's own pack); no cache is written.
+pub fn switch_bounds(lib: &Path, cards: &[String], frames: u32) -> Result<serde_json::Value, String> {
+    let mut rows = Vec::new();
+    for spec in cards {
+        let (card, outfit) = spec.rsplit_once('@').map(|(c, o)| (c, o.parse().unwrap_or(0))).unwrap_or((spec.as_str(), 0));
+        let mut session = crate::session::open(lib, Some(Path::new(card)), outfit)?;
+        for frame in 0..frames { session.apply_anim_frame(frame as f32 / 60.0, 1.0 / 60.0); }
+        let parts: Vec<_> = session.parts.iter().map(|p| {
+            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+            for v in &p.positions { for k in 0..3 { lo[k] = lo[k].min(v[k]); hi[k] = hi[k].max(v[k]); } }
+            serde_json::json!({"name": p.name, "role": p.role, "vertices": p.positions.len(), "min": lo, "max": hi})
+        }).collect();
+        rows.push(serde_json::json!({"card": card, "outfit": outfit, "frames": frames, "parts": parts}));
+    }
+    Ok(serde_json::json!({"switch": rows}))
+}
 pub fn open_session(game_root: &Path, card_path: Option<&Path>, outfit: i32) -> Result<usize, String> {
     let sess = crate::session::open(game_root, card_path, outfit)?;
     Ok(sess.parts.len())

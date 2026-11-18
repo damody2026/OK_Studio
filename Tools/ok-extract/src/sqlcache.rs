@@ -705,6 +705,9 @@ fn ensure_mods(mods_dir: &Path) -> Arc<ModsMem> {
     let stamps = &snapshot.stamps;
     let sig = snapshot.sig.clone();
     let scanned = started.elapsed();
+    if std::env::var_os("OK_TIMING").is_some() {
+        eprintln!("OKTIME mods inventory {:.2}s ({} archives)", scanned.as_secs_f64(), stamps.len());
+    }
     {
         let slot = MODS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mem) = slot.as_ref() {

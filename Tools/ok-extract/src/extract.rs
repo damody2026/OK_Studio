@@ -2942,7 +2942,25 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     eprintln!("ok-extract: global toon ramp bytes={}", ramp_png.as_ref().map_or(0, Vec::len));
     let mods_dir = game_root.join("mods");
     let t_sub = Instant::now();
-    let mod_catalog_shared = crate::list::load_mods_catalog_shared(&mods_dir);
+    // The card's own zipmods first, the whole tree only if a lookup misses them (list.rs `ChaListCatalog::deferred`).
+    // Merging the catalogues of every archive under mods/ costs about 1.3 s of every original-card open on this
+    // machine, with the sqlite cache or without it, and a card's questions are nearly all about the archives it names
+    // (2026-11-18, the user: reading an original card should not read every mod, only the mods it uses). Answers do
+    // not change: a miss still reaches the whole tree. OK_WHOLE_MODS_CATALOGUE=1 goes back to building it up front.
+    let card_mods: Option<Vec<PathBuf>> = (std::env::var_os("OK_WHOLE_MODS_CATALOGUE").is_none()).then(|| {
+        parsed_card.as_ref().map(|c| {
+            let wanted: std::collections::HashSet<String> = c.resolves.iter().map(|r| r.mod_id.clone())
+                .chain([&c.body_guid, &c.penis_guid, &c.balls_guid].into_iter().flatten().cloned())
+                .filter(|g| !g.is_empty()).collect();
+            if wanted.is_empty() { return Vec::new(); }
+            let mut zips: Vec<PathBuf> = crate::mods::find_guids(&mods_dir, Some(&wanted)).into_values().collect();
+            zips.sort(); zips.dedup(); zips
+        }).unwrap_or_default()
+    });
+    let mod_catalog_shared = match &card_mods {
+        Some(zips) => crate::list::card_mods_catalog(&mods_dir, zips),
+        None => crate::list::load_mods_catalog_shared(&mods_dir),
+    };
     let mod_catalog = &*mod_catalog_shared;
     profile_tick("lists: mods catalog", t_sub);
     let t_sub = Instant::now();

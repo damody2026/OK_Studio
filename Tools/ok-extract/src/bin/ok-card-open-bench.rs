@@ -67,6 +67,16 @@ fn run() -> Result<serde_json::Value, String> {
         eprintln!("shape_face={:?}", card.shape_face);
         return Ok(serde_json::json!({"abm": card.abm.len()}));
     }
+    // ok-card-open-bench --switch LIBRARY FRAMES CARD[@OUTFIT] ...: opens the cards in this one process, steps the
+    // physics, and prints each part's posed bounds (ok_extract::switch_bounds). Comparing a run of "A B" with a run
+    // of "B" alone says whether anything of A survived into B.
+    if args.get(1).map(String::as_str) == Some("--switch") {
+        std::env::set_var("OK_NOCACHE", "1");
+        let lib = Path::new(args.get(2).ok_or("missing LIBRARY")?);
+        std::env::set_var("OK_BASE_LIBRARY", lib);
+        let frames: u32 = args.get(3).ok_or("missing FRAMES")?.parse().map_err(|_| "FRAMES must be a number")?;
+        return ok_extract::switch_bounds(lib, &args[4..], frames);
+    }
     if args.get(1).map(String::as_str) == Some("--sequence") {
         std::env::set_var("OK_NOCACHE", "1");
         let lib = Path::new(args.get(2).ok_or("missing LIBRARY")?);
