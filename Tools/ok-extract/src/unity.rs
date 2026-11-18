@@ -4757,8 +4757,11 @@ impl ParsedBundle {
     }
 
     fn decode_tex(&self, name: &str) -> Option<Vec<u8>> {
+        // Children of `derive/decode`, the biggest segment of an OK card's open (CARD_OPEN_PERF 第四节): this is a
+        // five-way path, and which way a call takes decides whether its cost is a decode at all.
         let key = name.to_ascii_lowercase();
         if let Some(png) = self.textures.borrow().get(&key) {
+            let _seg = segment("derive/decode/memo hit");
             return Some(png.clone());
         }
         if let (Some(e),Some(id))=(self.model_edits(),self.lib) {
@@ -4774,13 +4777,19 @@ impl ParsedBundle {
             // disk would stand in for the texels the card must carry itself.
             let own=self.lib.is_some_and(|id|crate::oklib::recording_card_pack()||(crate::okstrict::active().is_some()&&!crate::okstrict::library_model(&id)));
             let disk=!crate::memosnap::active(crate::memosnap::TEX)&&!own;
-            if let Some((n,png))=self.lib.filter(|_|disk).and_then(|id|derived_png_load(&id,&key)) {
+            let from_disk = { let _seg = segment("derive/decode/derived load");
+                self.lib.filter(|_|disk).and_then(|id|derived_png_load(&id,&key)) };
+            if let Some((n,png))=from_disk {
+                let _seg = segment("derive/decode/remember");
                 self.remember_texture(n.to_ascii_lowercase(),png.clone());
                 return Some(png);
             }
-            let payload=self.memo_texture("texture_payload",name,||self.texture_payload_unity(name).map(|(t,n)|(TexturePayload(t),n))).map(|(t,n)|(t.0,n));
-            let Some((n,png))=payload.and_then(|p|png_from_payload(p.0,None)) else { return self.dependency_texture_png(name); };
-            if let Some(id)=self.lib.filter(|_|disk) { derived_png_save(&id,&key,&n,&png); }
+            let payload = { let _seg = segment("derive/decode/payload");
+                self.memo_texture("texture_payload",name,||self.texture_payload_unity(name).map(|(t,n)|(TexturePayload(t),n))).map(|(t,n)|(t.0,n)) };
+            let made = { let _seg = segment("derive/decode/png_from_payload"); payload.and_then(|p|png_from_payload(p.0,None)) };
+            let Some((n,png))=made else { return self.dependency_texture_png(name); };
+            if let Some(id)=self.lib.filter(|_|disk) { let _seg = segment("derive/decode/derived save"); derived_png_save(&id,&key,&n,&png); }
+            let _seg = segment("derive/decode/remember");
             self.remember_texture(n.to_ascii_lowercase(),png.clone());
             return Some(png);
         }
@@ -5920,6 +5929,11 @@ pub fn take_work_ms() -> std::collections::BTreeMap<String, f64> {
 /// 1-thread figure, not the 8-thread one; `Docs/ERROR_LOG.md` 2026-11-18). At one thread nothing can be waiting on a
 /// sibling, and the figure then predicted that A/B exactly. What the rows then answer is "一项 prefetch 为什么要
 /// 200 ms" (`Docs/CARD_OPEN_PERF_20261117.md` 第四节): which stretch of an item's own path the work is in.
+///
+/// **Even at one thread, only a leaf is trustworthy.** A segment around code that submits rayon work (`par_chunks_mut`
+/// in `decode_bc_banded`) measures the queue, not the work: at `RAYON_NUM_THREADS=1` that one worker serves all nine
+/// threads of the open, and `payload/texels banded` read 1438ms while the closures inside it added up to 699ms. So
+/// trust a segment that calls nothing parallel, and let the `OK_SKIP_*` A/B decide the ceiling.
 static SEGMENTS: std::sync::Mutex<std::collections::BTreeMap<&'static str, (u32, f64)>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
