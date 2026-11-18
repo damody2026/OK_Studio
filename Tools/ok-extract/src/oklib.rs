@@ -769,6 +769,16 @@ pub fn print_profile() {
     for (k, (s, n)) in v.into_iter().take(30) { println!("OKPROFILE {s:9.2}s {n:7} {k}"); }
 }
 
+/// The `timed` rows of one card open, slowest first, and clears them for the next. On the open path these labels are
+/// the inside of the mesh decode — the one segment an item's time is in (`Docs/CARD_OPEN_PERF_20261117.md` 第四节) —
+/// so they are printed per open, to stderr beside the PROFILE rows, instead of once at the end of a conversion.
+pub fn drain_profile() -> Vec<(String, f64, u64)> {
+    let p = std::mem::take(&mut *PROFILE.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut v: Vec<_> = p.into_iter().map(|(k, (s, n))| (k, s, n)).collect();
+    v.sort_by(|a, b| b.1.total_cmp(&a.1));
+    v
+}
+
 /// A game root that is an OK base library opens cards from the library alone
 /// (no installation, no Unity data). Activated once per library directory.
 pub fn ensure_library(game: &Path) -> Result<bool, String> {
@@ -2308,12 +2318,22 @@ pub fn memo_packed<A, R, F>(id: Option<&Id>, method: &str, args: &A, f: F, pack:
 where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
     let (Some(store), Some(id)) = (active(), id) else { return f(); };
     let arg_bytes = bincode::serialize(args).unwrap_or_default();
-    let stored = if store.mode == Mode::Record && refreshing(method) { None } else { store.get_raw_src(id, method, &arg_bytes) };
+    // An OK card's items are answered here, not by Unity: these three children of the item's decode segment are where
+    // its time goes (`Docs/CARD_OPEN_PERF_20261117.md` 第四节). Children, so they are left out of the segment total.
+    let stored = if store.mode == Mode::Record && refreshing(method) { None } else {
+        let _seg = crate::unity::segment("memo/read");
+        store.get_raw_src(id, method, &arg_bytes)
+    };
     if let Some((raw, from_pack)) = stored {
-        if let Ok(mut value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
+        let read = { let _seg = crate::unity::segment("memo/deserialize");
+            crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) };
+        if let Ok(mut value) = read {
             if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
             let _ = from_pack;
-            if !CONVERTING.load(Ordering::Relaxed) { unpack(&mut value); }
+            if !CONVERTING.load(Ordering::Relaxed) {
+                let _seg = crate::unity::segment("memo/unpack");
+                unpack(&mut value);
+            }
             return value;
         }
     }

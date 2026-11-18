@@ -503,24 +503,36 @@ pub(crate) fn meshes_for_entry_inner(
     if entry.main_data.eq_ignore_ascii_case("p_dummy") {
         return (Vec::new(), None);
     }
-    let zip_bytes = accessory_bundle_source(game_root, zip, entry)
-        .and_then(|(bytes,source)|source.map(|source|(source,bytes)));
+    // The four segments of one item: fetch the bytes, decode them into meshes, hang dynamic bones, copy the kept
+    // meshes out. Non-overlapping and summed over threads, so read them at `RAYON_NUM_THREADS=1` (`segment`'s own
+    // comment says why). 11-18: an OK card's time is none of these — it is the texture restore under the decode.
+    let zip_bytes = {
+        let _seg = crate::unity::segment("item bytes");
+        accessory_bundle_source(game_root, zip, entry)
+            .and_then(|(bytes,source)|source.map(|source|(source,bytes)))
+    };
     if let Some((source_zip,b)) = zip_bytes {
         {
             let (mut meshes, mut skel) = if entry.main_data.is_empty() {
                 (Vec::new(), None)
             } else {
+                let _seg = crate::unity::segment("item decode");
                 crate::unity::meshes_skel_for_maindata_ref_with_category(&b, &entry.main_data, entry.category_no)
             };
             // ChaControl.ChangeHairNoAsync: hiPoly runs ChangeShakeHair
             // (DynamicBone on). Only !hiPoly && kind==1 disables it.
-            hang_part_dynamic_bones(game_root, Some(&source_zip), &b, &mut meshes, skel.as_mut(),
-                matches!(entry.category_no, 101..=112) || role_for_category(entry.category_no, "").starts_with("clothes") || role_for_category(entry.category_no, "").contains("acc"), shake_enabled);
+            {
+                let _seg = crate::unity::segment("item dbones");
+                hang_part_dynamic_bones(game_root, Some(&source_zip), &b, &mut meshes, skel.as_mut(),
+                    matches!(entry.category_no, 101..=112) || role_for_category(entry.category_no, "").starts_with("clothes") || role_for_category(entry.category_no, "").contains("acc"), shake_enabled);
+            }
+            let _seg_copy = crate::unity::segment("item copy");
             let kept: Vec<_> = meshes
                 .iter()
                 .filter(|m| !is_dummy_part(&m.name, Some(&entry.name)))
                 .cloned()
                 .collect();
+            drop(_seg_copy);
             if kept.is_empty() {
                 eprintln!(
                     "ok-extract: zip bundle parsed but 0 meshes ab={} data={} raw={}",
@@ -544,21 +556,34 @@ pub(crate) fn meshes_for_entry_inner(
         return (Vec::new(), None);
     }
     let path = game_root.join("abdata").join(&entry.main_ab);
-    let Ok(bytes) = crate::gamefs::read_source(&path) else {
+    // An OK card has no game tree: `gamefs::read_source` serves this from the mounted pack or the library, so this
+    // is **the** path an OK card's items take, and the segments below are where one item's 200 ms goes.
+    let read = {
+        let _seg = crate::unity::segment("item read_source");
+        crate::gamefs::read_source(&path)
+    };
+    let Ok(bytes) = read else {
         return (Vec::new(), None);
     };
     let (mut meshes, mut skel) = if !entry.main_data.is_empty() {
+        let _seg = crate::unity::segment("item decode");
         crate::unity::meshes_skel_for_maindata_ref_with_category(&bytes, &entry.main_data, entry.category_no)
     } else {
+        let _seg = crate::unity::segment("item decode_all");
         let (m, _, s) = crate::unity::parse_bundle_ref(&bytes).decode_all();
         (m, s)
     };
-    hang_part_dynamic_bones(game_root, None, &bytes, &mut meshes, skel.as_mut(),
-        matches!(entry.category_no, 101..=112) || role_for_category(entry.category_no, "").starts_with("clothes") || role_for_category(entry.category_no, "").contains("acc"), shake_enabled);
+    {
+        let _seg = crate::unity::segment("item dbones");
+        hang_part_dynamic_bones(game_root, None, &bytes, &mut meshes, skel.as_mut(),
+            matches!(entry.category_no, 101..=112) || role_for_category(entry.category_no, "").starts_with("clothes") || role_for_category(entry.category_no, "").contains("acc"), shake_enabled);
+    }
+    let _seg_filter = crate::unity::segment("item filter");
     let meshes: Vec<_> = meshes
         .into_iter()
         .filter(|m| !is_dummy_part(&m.name, Some(&entry.name)))
         .collect();
+    drop(_seg_filter);
     if !meshes.is_empty() {
         return (meshes, skel);
     }

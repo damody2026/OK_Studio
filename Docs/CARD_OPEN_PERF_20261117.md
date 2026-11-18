@@ -155,6 +155,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `OK_PROFILE=1`（11-18 新增） | **`PROFILE copied out of the sources <n> MiB in <m> reads`**：这次开卡从库索引与卡片资源包复制出来的总量与次数（`gamefs::entry_bytes`，每次都 `to_vec()` 一份自己的）。**是计数，不随机器负载变动**。改动 6 之前是 3.2–3.3 GiB／19–22 万次，之后 24.1 MiB／4.3 万次，预热不再扫整棵树之后 3.0 MiB |
 | `OK_PROFILE=1`（11-18 新增） | **`load_model scanned <x> MiB of <y> MiB, <n> records: <档>`** 与 `SPOT load_model scan`／`load_model index hit`：开一个库模型要走多少档案、几笔记录，以及有没有命中 `work/model-index`。改动 8 就是靠它找到的（一张卡走过约 1.0 GiB 只为建索引） |
 | `OK_PROFILE=1`（11-18 新增） | **`PROFILE   <n>x <label> (<总>ms, at most <可省>ms savable)` 与结尾一行 `PROFILE repeated work at most <n>ms savable`**：每一笔「做了不只一次」的工作的实测耗时与「去重复最多能省多少」。**「去重复」类的想法先看这一行再决定要不要开工** —— 11-18 就是靠它判掉第二节那笔（原估 100–250 ms，实测 28 ms） |
+| `OK_PROFILE=1`＋`RAYON_NUM_THREADS=1`（11-18 新增） | **`PROFILE   segment <名> <n>x <ms> (<占比>)`**：一项工作内部不重叠的各段（`item read_source`／`item decode`／`item dbones`／`memo/read`／`memo/deserialize`／`memo/unpack`／`derive/decode`／`derive/readback`／`derive/orient`；名字带 `/` 的是上一层的子段，不计入总和）。**一定要用 `RAYON_NUM_THREADS=1` 读**：段时间是「进入到离开」的经过时间，8 条执行绪抢同一个资源时它量到的是**等**，不是做 —— `derive/readback` 8 执行绪 1934 ms／25 次、1 执行绪只有 304 ms，而「把它整个跳掉」的 A/B 省下的正是 1 执行绪那个数字（`Docs/ERROR_LOG.md` 2026-11-18）。第四节的「一项为什么要 200 ms」就是靠这个结案的 |
 | `RAYON_NUM_THREADS=<n>`（量法，不是开关） | **一张卡在 1／2／4／8／16 条执行绪下的冷开**，各 3 趟取中位数：**2.34 / 1.80 / 1.37 / 1.18 / 1.09 s**。1→8 只有 **2.0 倍**，8→16 几乎平（这台机器 32 条硬件执行绪），所以这条路平均只用掉约 2 条执行绪的量。**但不要把它读成「有 6 条核心闲着等人去填」** —— 第四节量过的 prefetch 窗口是那条基础库读取路径饱和（磁碟冷时单项 1.8–2.2 s），加宽与重排都已经各自量过拿不到东西。这组数字的用途是**判断某个阶段的 `profile_tick` 是它自己的工作还是在排队**：把同一个阶段的 1 执行绪与 8 执行绪时间比一下，比值接近 1 的才是它自己的 |
 | `OK_GRID_DIAG=1` | 一次烘焙的贴图与遮罩尺寸、filter |
 | `OK_TILE_DIAG=1` | 同值 texel 比例、`has_pat`，以及查表／逐 texel 两条路径各处理多少 texel |
@@ -376,12 +377,33 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （b）把 prefetch 整个关掉，同一笔 gloss 从 588 ms 掉到约 5 ms。**所以在这个窗口里重排工作一律零收益**，
   要动的是读取本身（一项为什么要 200 ms／冷时 2 s）。`hair slots` 只花 77 ms 说明 **helper 有余裕、
   主执行绪没有**，但 helper 数该不该降目前**没有量过**（11-18 那次扫描因 CRLF 没生效，见第三节）。
-  **11-18 补上的量法与下一步**：`RAYON_NUM_THREADS` 扫描（第三节）给了这条路的平均并行度 —— 1→8 条
+  **11-18 补上的量法**：`RAYON_NUM_THREADS` 扫描（第三节）给了这条路的平均并行度 —— 1→8 条
   只有 2.0 倍（2.34 → 1.18 s），8→16 几乎平。配上「窗口饱和」这个已知事实，意思是**剩下的墙钟不在
-  「还有哪件工作可以搬到别条执行绪」，而在「一项 prefetch 为什么要 200 ms」**。下一步就是把一项拆开
-  （例如 `meshes_for_entry chara/co_bra_00.unity3d p_o_bra_04` 的 212 ms）：改动 8 之后记录链已经不走了，
-  所以要查的是剩下的那三段 —— 模型位元组的读取量、payload 解码、mesh 组装各占多少。**先量再改**，
-  并且一样要同时看一个不随机器忙闲变动的次数指标（`copied out of the sources`、`load_model scanned`）。
+  「还有哪件工作可以搬到别条执行绪」，而在「一项 prefetch 为什么要 200 ms」**。
+
+  **11-18 这一项已经拆开量完，结论和原本的猜完全不同**（新增 `crate::unity::segment(..)`，印
+  `PROFILE   segment <名> <n>x <ms> (<占比>)`，**一律用 `RAYON_NUM_THREADS=1` 读**，见第三节）。原本要查的
+  三段「模型位元组的读取量／payload 解码／mesh 组装」**两段是零、一段根本不执行**：
+
+  | 一项的哪一段 | 1 执行绪实测（C006／C049） | 说明 |
+  |---|---|---|
+  | `item read_source`（模型位元组） | **0 ms／0 ms** | 改动 8 之后 `copied out of the sources` 只剩 **0.4／0.9 MiB、286／335 次**（原本 3.3 GiB／19.9 万次），这一段已经没有了 |
+  | `item decode/parse`（bundle 解压与物件表） | **0 ms／0 ms** | per-thread memo 命中 |
+  | `meshes_for_maindata_unfiltered`（mesh 组装） | **根本不执行** | OK 卡在 `memo_packed` 就命中卡内／库内录好的答案，`#prefab ids`／`#decode meshes` 一次都没跑 |
+  | `memo/read` ＋ `memo/deserialize` | 14＋24 ms／6＋41 ms | 读出来与 bincode 还原 |
+  | **`memo/unpack`（还原贴图）** | **1049 ms／1652 ms** | **一项的时间几乎全在这里**，而且它不只服务 item 这条路 |
+  | └ `derive/decode`（`decode_tex` 取那张具名贴图） | **551 ms／149 次、1172 ms／187 次** | **最大的一段**，每张 3.7／6.3 ms |
+  | └ `derive/readback`（normal map 的 GPU 回读） | 304 ms／25 次、302 ms／22 次 | 每次 12–14 ms |
+  | └ `derive/orient`（遮罩翻转） | 120 ms／45 次、87 ms／46 次 | |
+
+  **所以「一项 200 ms」不是读取、不是 Unity 解码、不是 mesh —— 是把录好的 memo 里的贴图还原回来**，
+  其中最大的一笔是取具名贴图本身（149／187 张）。这把第二节两笔贴图实验（`OK_RAW_TEXTURES` −1.7%、
+  压缩直通上限几个 percent）从「次要」改成「就是这条路的主项」，但也同时说明为什么它们量不到收益：
+  8 执行绪下这些段落里的时间**大部分是在等**（`derive/readback` 8 执行绪 1934 ms vs 1 执行绪 304 ms，
+  跳过它的 A/B 省下的是 1 执行绪那个数字，见 `Docs/ERROR_LOG.md` 2026-11-18 与第三节），窗口本来就饱和。
+  **于是剩下的唯一杠杆是「总量变少」而不是「摆得更好」**：更少或更小的贴图。那正是使用者还没决定的
+  「把底图缩小换速度与 VRAM」，**不要自己先做**。`OK_SKIP_READBACK=1`（量测用，会给出错的 normal map）
+  留在树上，供以后要量这一段时用。
 - **第一张卡 `base: head textures` 还有约 190–200 ms** 没搬走，原因见第二节 `BUNDLE_CACHE` 那一列
   （要搬得先重构 `ParsedBundle` 的内部可变性模型，代价远大于收益）。
 - **转卡的 view 身分已改由树的内容决定**（`baf5cec10`）。21 角色场景（`koikatu_cs0001521`）同行程依序转，

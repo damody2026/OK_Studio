@@ -726,7 +726,11 @@ pub fn meshes_skel_for_maindata_ref_with_category<B: BundleInput + ?Sized>(
         105..=112 | 200..=202 | 210..=212 => Some(category),
         _ => None,
     };
-    parse_bundle_ref(bytes).meshes_for_maindata_with_clothes_kind(main_data, false, clothes_category)
+    // Children of the "item decode" segment (98-99% of an item's own time, measured 11-18): parsing the bundle
+    // (decompressing it and reading its object table) against assembling the meshes the prefab names.
+    let parsed = { let _seg = crate::unity::segment("item decode/parse"); parse_bundle_ref(bytes) };
+    let _seg = crate::unity::segment("item decode/meshes");
+    parsed.meshes_for_maindata_with_clothes_kind(main_data, false, clothes_category)
 }
 
 /// Decode Unity DXT1 as BC1 RGBA, retaining the decoder's BGRA byte order.
