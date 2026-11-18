@@ -175,10 +175,15 @@ bool TapKey(const FKey& Key,const FModifiers& Modifiers)
 
 void TypeText(const FString& Text,bool bKeyEvents)
 {
+	// A symbol typed with Shift on a US keyboard is that key with Shift held, as a real keyboard sends it (":" is Shift +
+	// Semicolon): a field that reads keys rather than characters (DreamGUI's key table, 2026-11-18) dropped ":" when it
+	// came as a Colon key no keyboard sends.
+	static const FString Shifted=TEXT("!@#$%^&*()_+{}|:\"<>?~"),Unshifted=TEXT("1234567890-=[]\\;',./`");
 	for(const TCHAR C:Text)
 	{
-		FModifiers M;M.bShift=FChar::IsUpper(C);
-		const FKey Key=bKeyEvents?KeyOfChar(C):EKeys::Invalid;
+		int32 At=INDEX_NONE;Shifted.FindChar(C,At);
+		FModifiers M;M.bShift=FChar::IsUpper(C)||At!=INDEX_NONE;
+		const FKey Key=bKeyEvents?KeyOfChar(At!=INDEX_NONE?Unshifted[At]:C):EKeys::Invalid;
 		if(Key.IsValid())SendKey(Key,StateOf(M),true);
 		SendChar(C==TEXT('\n')?TEXT('\r'):C,StateOf(M));
 		if(Key.IsValid())SendKey(Key,StateOf(M),false);

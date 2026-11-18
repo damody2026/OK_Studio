@@ -7,5 +7,6 @@
   { "asset": "/Game/UI/Reader/Controls/WBP_OKInput",  "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Input.dui" },
   { "asset": "/Game/UI/Reader/Controls/WBP_OKImage",  "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Image.dui" },
   { "asset": "/Game/UI/Reader/Controls/WBP_OKDrawer", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Drawer.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKCardTile", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/CardTile.dui" },
   { "asset": "/Game/UI/Reader/WBP_ReaderScreen",      "parent": "/Script/OpenKoikatsu.OKReaderScreen", "source": "Reader/ReaderScreen.dui" }
 ] }
