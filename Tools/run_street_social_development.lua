@@ -37,7 +37,7 @@ local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true, lowmemory = true, nolowmemory = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true, lowmemory = true, nolowmemory = true, watch = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true, patchdir = true, maxheroines = true, stage = true }
@@ -671,6 +671,12 @@ instance.record_launch(pid, root) -- whose game it is, for ok-game-mcp calls wit
   -- A normal launch stops this checkout's leftover servers; a running sandbox's are listed here so they are kept.
   if sandbox then path.write_text(path.join(sandbox, "running.json"), json.encode({ game_pid = pid, server_pids = server_pids })) end
   say(output)
+  say("Stuck? Tools\\lua\\lua.exe Tools\\ok_hang_check.lua (or launch with -Watch to keep this window watching)")
+  if o.watch then
+    local checker = { path.join(root, "Tools", "lua", "lua.exe"), path.join(root, "Tools", "ok_hang_check.lua"),
+      "--watch", "--pid=" .. tostring(pid) }
+    os.exit(proc.run(checker, { cwd = root, check = false }).code or 0)
+  end
 end
 
 ok.main(main)

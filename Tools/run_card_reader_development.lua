@@ -21,7 +21,7 @@ local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
-local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true }
+local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true, watch = true }
 local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true, physics = true }
 
 -- -Physics <模式>（或環境變數 OK_READER_PHYSICS，選項優先：reader_launch 的 env 傳得進來）：讀卡器的
@@ -208,6 +208,15 @@ local function main()
   -- No background warm-up of the open-card cache (ok-card-warm): the reader builds each card when it opens it.
   path.write_text(path.join(log_root, tag .. ".json"), json.encode(receipt, { indent = 2, ensure_ascii = false }))
   io.write("Card reader started. PID=", tostring(pid), "\nLog: ", log, "\n")
+  -- GPU 卡死（DXGI_ERROR_DEVICE_HUNG）之後視窗還在、通道還在聽，但不會再回應。這個啟動器照使用者的決定不自動
+  -- 關任何東西（那是你的視窗），只告訴你怎麼看：ok_hang_check 會印出沒回應的行程、log 與 GPU dump 在哪、怎麼自己關。
+  io.write("Stuck? Tools\\lua\\lua.exe Tools\\ok_hang_check.lua (or launch with -Watch to keep this window watching)\n")
+  if o.watch then
+    io.write("\n")
+    local checker = { path.join(root, "Tools", "lua", "lua.exe"), path.join(root, "Tools", "ok_hang_check.lua"),
+      "--watch", "--pid=" .. tostring(pid) }
+    os.exit(proc.run(checker, { cwd = root, check = false }).code or 0)
+  end
 end
 
 ok.main(main)
