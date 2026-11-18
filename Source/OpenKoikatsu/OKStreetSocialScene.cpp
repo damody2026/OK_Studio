@@ -4751,7 +4751,13 @@ void AOKStreetSocialScene::Tick(float Dt){
   if((S.Pair.Conversation()||S.Pair.Splash)&&S.Pair.Phase==1){FVector A,B;if((OKGetCrowdRuntimeBonePosition(this,0,TEXT("cm_j_head"),A)||OKGetCrowdRuntimeBonePosition(this,0,TEXT("cf_j_head"),A))&&OKGetCrowdRuntimeBonePosition(this,S.Pair.Partner,TEXT("cf_j_head"),B)&&!A.ContainsNaN()&&!B.ContainsNaN()){Focus=(A+B)*.5f-FVector(0,0,25);Pivot=Focus;}}
   if(S.Pair.Watermelon&&S.Pair.Phase==1){Focus=(S.Male+S.Agents[S.Pair.Partner-1].Position)*.5f+FVector(0,35,80);Pivot=Focus;}
   GalgameWalkFocus(Focus,Pivot); // walking and talking: between him and her (OKStreetSocialGalgame.inl)
-  const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);FVector Shot=Blocked?Hit.Location:Wanted;
+  const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);
+   // One sweep took 99 ms while walking in the city (walkQ-1118i, frame 16159): logged with how long since a level streamed
+   // in or out, to see whether the slow ones come right after streaming (c-lowspec's guess) before anything is changed.
+   OKStreetWatchLevelStreams();static uint32 CameraStreams=0;static uint64 CameraStreamFrame=0;if(CameraStreams!=GOKStreetLevelStreams){CameraStreams=GOKStreetLevelStreams;CameraStreamFrame=GFrameCounter;}
+   const double SweepAt=FPlatformTime::Seconds();bool Blocked=false;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_CameraSweep);Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);}
+   if(const double SweepMs=(FPlatformTime::Seconds()-SweepAt)*1000.0;SweepMs>20.0)UE_LOG(LogTemp,Display,TEXT("Street camera sweep: %.1f ms, %llu frames after a level streamed in or out (%u so far), %.0f cm"),SweepMs,GFrameCounter-CameraStreamFrame,GOKStreetLevelStreams,FVector::Dist(Pivot,Wanted));
+   FVector Shot=Blocked?Hit.Location:Wanted;
   // At an activity's spot by a wall (the department store's teddy bear, the snack bar's window seat) the lens closed in to
   // his back and the view was his bag (activity audit 11-09): pulled under 40% of its distance, the way round them with
   // the most room is taken instead (a quarter, half or three quarters round), kept until it is blocked too.
