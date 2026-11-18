@@ -1663,7 +1663,9 @@ namespace
 			static const TSet<FString> WhileExporting = { TEXT("click"), TEXT("mouse") };
 			// U255: a scene opens over many frames and the user can act meanwhile; what they can do, the tests must reach.
 			static const TSet<FString> WhileLoading = { TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("select"), TEXT("load"), TEXT("leave") };
-			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)) && !(Busy == TEXT("exporting") && WhileExporting.Contains(Op)) && !(Busy == TEXT("loading") && (WhileLoading.Contains(Op) || LeavesScene(Op, J))))
+			// Leaving the scene (app.quit, scene.new, leave) is answered while it loads or plays, as the menu is: a scene that
+			// plays its timeline on open refused studio_stop as "busy: playing" (2026-11-18). Not while it exports.
+			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && (WhilePlaying.Contains(Op) || LeavesScene(Op, J))) && !(Busy == TEXT("exporting") && WhileExporting.Contains(Op)) && !(Busy == TEXT("loading") && (WhileLoading.Contains(Op) || LeavesScene(Op, J))))
 			{
 				TSharedRef<FJsonObject> O = Result(false, TEXT("busy: ") + Busy);
 				O->SetStringField(TEXT("busy"), Busy);

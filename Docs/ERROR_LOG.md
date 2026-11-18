@@ -5590,3 +5590,19 @@ f-studio-ui 检查，并说明可取回的范围。自己的部分重打了。
 中间不要插入别的工具呼叫、不要停下来思考）。更稳的是 `git commit -- <自己的档路径>`（路径限定提交，完全不碰 index）。
 提交后用 `git log --oneline -1` 确认 HEAD 真的是自己那笔，而不是只看 `git status` 变干净就算成功：
 别人把我的档带走时，`git status` 一样会变干净。
+
+## 2026-11-18：studio_stop 关不掉编辑器，根因多一个「busy: playing」（f-studio-ui）
+
+上一条把 `studio_stop` 没关掉编辑器归因于存档对话框。后来 `studio_stop` 会附上退出请求的回覆（`request`），
+同一张 SD42 实测两次，回覆都是 `{"busy": "playing"}`。这个场景开好会自动播时间轴，控制通道在 `playing` 时
+只放行 `WhilePlaying` 名单，`app.quit`、`leave` 都被拒绝，连对话框都还没跳出来。所以先前那次很可能也是同一个根因。
+
+**修正**：`OKStudioControl` 的放行判断里，离开场景的指令（`app.quit`、`scene.new`、`leave`）在载入中与播放中都放行，
+跟 UI 选单一致；导出中仍然挡住。
+
+**教训**：「请它自己退出」被拒绝时，要把拒绝的回覆带回来，不要自己猜原因。我先前写「最可能是存档对话框」，
+是没看回覆就下的结论。
+
+顺带一件：为了改这一行，我直接重建，没先查 F 树有没有编辑器在跑。结果 f-yvonne-norm 的读卡器（握着 slot）锁住了
+`UnrealEditor-OKStudio.dll`，连结失败 LNK1104。在共用树上，「建置失败」跟「程式码有问题」看起来一样，log 里只有
+LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor 行程；失败了就用 CIM 比对命令列，找出锁 DLL 的是谁。
