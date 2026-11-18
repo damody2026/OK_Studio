@@ -275,6 +275,17 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 **對照：圖片格不畫貼圖（2026-11-19 05:58，stage `EFork1119t`，`ok.ReaderPictures=0`）**：同一個連開腳本、同一批卡，只差圖片格（外觀選擇、瞳孔覆蓋貼圖、卡片牆、鏡像的 UMG 圖片）不畫貼圖。跑滿 18 分鐘、43 張（第二輪到第 13 張），沒有當，log 0 個 Error。畫圖片時這個流程在第 9 張（約 4 分鐘）當；e-cardload 兩趟在第 12、25 張。外觀縮圖快取在這一輪照樣長到 1056 張／457 MiB，所以「快取變大」本身不是觸發條件，有沒有畫才是（`E:\OpenKoikatsu\Saved\Reports\reader-nopics-20261119\resources.txt`）。一次對照還不算定論，但方向一致：嫌疑落在圖片格的 transient 貼圖被 DreamGUI 畫的那一段。
 
+**再兩次對照（2026-11-19 06:23–07:00，stage `EFork1119u`，breadcrumb 已拆成三筆、看得到全部欄位）**：
+
+| 條件 | 結果 | 當時在 GPU 上的 DreamGUI draw |
+|---|---|---|
+| 外觀縮圖快取上限 128（`ok.AppearanceThumbCacheMax=128`，快取停在 128 張／14.4 MiB） | 第 24 張、約 9.5 分鐘卡死（`E:\OpenKoikatsu\Saved\Reports\reader-lru128-20261119\`，含 dump `D3D12.0.2026.11.19-06.33.27.nv-gpudmp`） | 2 個：一個卡片牆縮圖（`Texture2D_2147452573`，288×402，縮圖池的貼圖）、一個白底 |
+| 卡片牆縮圖關掉（`ok.ReaderThumbs=0`），外觀圖片照畫 | 第 23 張、約 16 分鐘卡死（`E:\OpenKoikatsu\Saved\Reports\reader-nothumbs-20261119\`） | 只有精靈圖集與白底的 draw，沒有任何圖片 |
+
+**這兩次推翻了兩條**：快取變大不是原因（上限 128 照當）；卡片牆縮圖池也不是唯一原因（關掉照當，而且當時根本沒有圖片 draw 在跑）。前面「圖片全關 43 張沒當」只跑過一次，目前看起來可能只是運氣（已見的當機張數：9、12、23、24、25）。
+
+**所有當機都相同的部分**：每個 DreamGUI draw 都綁同一組四張資料貼圖（`widget`、`clip`、`rect`、`paint`，`DreamUIDataTexture_*`，每幀用 `UpdateTexture2D` 更新改到的列）；PageFault 的 VA 每次都不同（21 個不同位址，大多以 `…1000` 結尾），所以不是固定某一塊資源被放掉。下一步往兩處查：資料貼圖每幀的部分更新（`DreamUIDataTexture.cpp` 的 `Upload_RenderThread`，非整張時走 staging＋`EnqueueLambda` 複製）和 draw 的錄製順序；以及 bindless 下 `TextureReference` 的描述子在更新時的處理。
+
 **新指令**：`ok.ReaderScreen resources`（量累積用）、`ok.ReaderPictures 0`（對照用，預設 1）。breadcrumb 拆成三筆（`DreamUIDraw main/font`、`DreamUIData widget/clip`、`DreamUIMore rect/paint/mask0`），每筆都在 128 字內。
 
 **下一步**：
