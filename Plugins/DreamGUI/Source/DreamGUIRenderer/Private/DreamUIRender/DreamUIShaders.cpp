@@ -18,6 +18,31 @@ IMPLEMENT_MATERIAL_SHADER_TYPE(, FDreamUIWorldRenderDepthFadePS, TEXT("/Plugin/D
 
 IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FDreamUIWorldRenderDepthTexUB, "DreamUIWorldRenderDepthTexUB");
 
+namespace DreamUIShadersLocal
+{
+	/**
+	 * Whether DreamGUI can draw with this material: a UI material, or an unlit surface one (a custom element material, a
+	 * converted particle material) -- and not one made for a skinned or deforming mesh. A character's unlit toon material
+	 * is unlit too, and every one of them used to carry the four DreamGUI shaders it is never drawn with; a cook that did not
+	 * have the plugin (a separately cooked material patch) left them out, and the game, which has it, called each of those
+	 * materials incomplete ("missing FMaterialShader (FDreamUIWorldRenderDepthFadePS, 0)") on load.
+	 */
+	static bool IsDreamUIMaterial(const FMaterialShaderPermutationParameters& Parameters)
+	{
+		const auto& Material = Parameters.MaterialParameters;
+		if (Material.MaterialDomain == MD_UI)
+		{
+			return true;
+		}
+		if (Material.MaterialDomain != MD_Surface || Material.ShadingModels.CountShadingModels() != 1 || Material.ShadingModels.GetFirstShadingModel() != EMaterialShadingModel::MSM_Unlit)
+		{
+			return false;
+		}
+		return !(Material.bIsUsedWithSkeletalMesh || Material.bIsUsedWithMorphTargets || Material.bIsUsedWithInstancedSkinnedMesh
+			|| Material.bIsUsedWithAPEXCloth || Material.bIsUsedWithGeometryCache || Material.bIsUsedWithMeshDeformer);
+	}
+}
+
 FDreamUIScreenRenderVS::FDreamUIScreenRenderVS(const FMaterialShaderType::CompiledShaderInitializerType& Initializer)
 	: FMaterialShader(Initializer)
 {
@@ -26,10 +51,7 @@ FDreamUIScreenRenderVS::FDreamUIScreenRenderVS(const FMaterialShaderType::Compil
 }
 bool FDreamUIScreenRenderVS::ShouldCompilePermutation(const FMaterialShaderPermutationParameters& Parameters)
 {
-	return
-		(Parameters.MaterialParameters.MaterialDomain == MD_Surface && (Parameters.MaterialParameters.ShadingModels.CountShadingModels() == 1 && Parameters.MaterialParameters.ShadingModels.GetFirstShadingModel() == EMaterialShadingModel::MSM_Unlit))
-		|| Parameters.MaterialParameters.MaterialDomain == MD_UI
-		;
+	return DreamUIShadersLocal::IsDreamUIMaterial(Parameters);
 }
 void FDreamUIScreenRenderVS::ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 {
@@ -60,10 +82,7 @@ FDreamUIScreenRenderPS::FDreamUIScreenRenderPS(const FMaterialShaderType::Compil
 }
 bool FDreamUIScreenRenderPS::ShouldCompilePermutation(const FMaterialShaderPermutationParameters& Parameters)
 {
-	return
-		(Parameters.MaterialParameters.MaterialDomain == MD_Surface && (Parameters.MaterialParameters.ShadingModels.CountShadingModels() == 1 && Parameters.MaterialParameters.ShadingModels.GetFirstShadingModel() == EMaterialShadingModel::MSM_Unlit))
-		|| Parameters.MaterialParameters.MaterialDomain == MD_UI
-		;
+	return DreamUIShadersLocal::IsDreamUIMaterial(Parameters);
 }
 void FDreamUIScreenRenderPS::ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 {

@@ -2443,8 +2443,10 @@ void UDreamUIFontData_FreeTypeRender::NoteOverlappingContours(int32 FaceIndex, u
 #endif
 	const bool bFontFace = Owner->FontType == EDreamUIDynamicFontDataType::EngineFont;
 	const FString File = bFontFace ? GetNameSafe(Owner->EngineFont) : FPaths::GetCleanFilename(Owner->FontFilePath);
-	// A face the engine ships -- the default font's CJK fallback has a few such glyphs -- is not the project's to fix: said
-	// in the log, without a warning.
+	// A face the engine ships -- the default font's CJK fallback (DroidSansFallback) has a few such glyphs -- is not the
+	// project's to fix, and editing the engine's file would only last until the next engine update: Verbose, as nothing
+	// anyone can act on. Seen 2026-11-18: one glyph of the card reader's text, 9 px2 of overlap at the sample size.
+	// A font the project brought still warns.
 	const FString FilePath = Owner->bUseRelativeFilePath ? FPaths::ProjectDir() + Owner->FontFilePath : Owner->FontFilePath;
 	const bool bShippedWithEngine = bFontFace
 		? (Owner->EngineFont != nullptr && Owner->EngineFont->GetPathName().StartsWith(TEXT("/Engine/")))
@@ -2453,7 +2455,7 @@ void UDreamUIFontData_FreeTypeRender::NoteOverlappingContours(int32 FaceIndex, u
 		*Owner->GetName(), *File, GlyphIndex, *GlyphName, OverlapPixels);
 	if (bShippedWithEngine)
 	{
-		UE_LOG(DreamGUI, Log, TEXT("[%s].%d %s"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *Message);
+		UE_LOG(DreamGUI, Verbose, TEXT("[%s].%d %s"), ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *Message);
 	}
 	else
 	{

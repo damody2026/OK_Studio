@@ -565,6 +565,12 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **A character's unlit material no longer carries DreamGUI's shaders.** The screen and world render shaders compiled for
+  every unlit surface material in the project, including ones made for skeletal meshes that DreamGUI never draws; a
+  material cooked without the plugin (a separately cooked material patch) then loaded as incomplete ("missing
+  FMaterialShader (FDreamUIWorldRenderDepthFadePS, 0)"). They now compile for UI materials and for unlit surface ones
+  not used with skeletal meshes, morph targets, skinned instances, cloth, geometry caches or mesh deformers.
+- **The engine CJK fallback's overlapping-contour note is Verbose.** It names a glyph of an engine font nobody can fix.
 - **A cooked build no longer fails GC verification on the default white sprite.** A sprite loaded while the engine starts
   (the default white sprite, loaded by component constructors) is in the disregard-for-GC pool, and its `AtlasTexture`
   pointed at a transient dynamic-atlas page that was not rooted, so a Development build stopped with "breaking Disregard
