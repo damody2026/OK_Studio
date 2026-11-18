@@ -1358,6 +1358,81 @@ bool UOKStudioGame::ApplyGuideDrag(int32 Axis, const FVector2D& Delta)
 	return bOk;
 }
 
+bool UOKStudioGame::RestartModalDrag()
+{
+	FGuideFrame F;
+	if (ModalKind < 0 || !MakeGuideFrame(*this, F) || F.bBone || F.bIk) return false;
+	int32 Handle = ModalAxis;
+	if (ModalKind == 2 && Handle < 0) Handle = 3;
+	else if (Handle < 0)
+	{
+		// The axis whose 10 cm look shortest on screen points most into the view: turn about it, or move on the plane of
+		// the other two (handles 4: X Y, 5: Y Z, 6: X Z).
+		int32 Deep = 0;
+		for (int32 K = 1; K < 3; ++K) if (F.PerCm[K].SizeSquared() < F.PerCm[Deep].SizeSquared()) Deep = K;
+		Handle = ModalKind == 1 ? Deep : (Deep == 2 ? 4 : Deep == 0 ? 5 : 6);
+	}
+	BeginGuideDrag(Handle);
+	return ModalTotal.IsNearlyZero() || DragGuide(ModalTotal, false);
+}
+
+bool UOKStudioGame::BeginModal(int32 Kind)
+{
+	if (IsModal()) EndModal(true);
+	if (Kind < 0 || Kind > 2 || SelectedId < 0 || IsGuideDragging())
+	{
+		UE_LOG(LogTemp, Display, TEXT("OK studio: G / R / S not started (selected %d, dragging %d)"), SelectedId, IsGuideDragging() ? 1 : 0);
+		return false;
+	}
+	GuideMode = Kind;
+	ModalKind = Kind;
+	ModalAxis = -1;
+	ModalTotal = FVector2D::ZeroVector;
+	if (!RestartModalDrag())
+	{
+		UE_LOG(LogTemp, Display, TEXT("OK studio: G / R / S not started: no handles for object %d (hidden guide, a bone or IK guide, off screen)"), SelectedId);
+		ModalKind = -1; EndGuideDrag(); return false;
+	}
+	bUserDragging = true;
+	return true;
+}
+
+void UOKStudioGame::ModalDrag(const FVector2D& Delta)
+{
+	if (!IsModal() || Delta.IsNearlyZero()) return;
+	ModalTotal += Delta;
+	DragGuide(Delta, false);
+}
+
+void UOKStudioGame::RestoreModalStart()
+{
+	if (!Document) return;
+	for (const TPair<int32, FTransform>& Start : DragStart)
+		if (Start.Key <= -1000000)
+			if (FOKSceneObject* O = Document->Find(-1000000 - Start.Key)) O->Transform = Start.Value;
+	Document->NotifyChanged();
+}
+
+void UOKStudioGame::SetModalAxis(int32 Axis)
+{
+	if (!IsModal()) return;
+	ModalAxis = Axis == ModalAxis ? -1 : Axis;
+	// Back to where the selection began, then the same mouse movement along the new axis.
+	RestoreModalStart();
+	RestartModalDrag();
+}
+
+void UOKStudioGame::EndModal(bool bKeep)
+{
+	if (!IsModal()) return;
+	if (!bKeep) RestoreModalStart();
+	EndGuideDrag();
+	ModalKind = -1;
+	ModalAxis = -1;
+	ModalTotal = FVector2D::ZeroVector;
+	bUserDragging = false;
+}
+
 bool UOKStudioGame::IkTargetWorld(int32 Effector, FVector& Out) const
 {
 	const FOKSceneObject* O = Document ? Document->Find(SelectedId) : nullptr;

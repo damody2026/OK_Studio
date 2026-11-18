@@ -1596,6 +1596,18 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 控制通道 `mouse` 多了 `"alt": true`（測 Maya／Max 用）。
 - 驗證（2026-11-16，`Saved/Tests/StudioU276/` 的控制通道輸出）：四種模式各拖八種按鍵組合，相機變化都和上表一致（例如 Maya 的中鍵與左鍵單按都不動、Alt+右鍵距離 400→318；Max 的中鍵平移、Ctrl+Alt+中鍵 400→466）；Blender 下 G／R／S 切成移動／旋轉／縮放。真人滑鼠沒有測。
 
+### U279　Blender 模式的 G／R／S 跟著滑鼠走（2026-11-18，F 組）
+
+- 操作模式選 Blender（`view.scheme 1`）時，游標在 3D 視窗上（不是蓋在上面的面板）按 G／R／S，選取的物件立刻跟著滑鼠移動／旋轉／縮放，不用按住按鍵：
+  - X／Y／Z 鎖定一軸，再按一次同一軸回到自由；中途按 G／R／S 換成另一種。
+  - 左鍵、Enter、空白鍵確定；Esc、右鍵取消並放回原位。進行中其他按鍵（Delete、視角鍵）不作用。
+  - 自由移動走最朝向畫面的那個平面，自由旋轉繞最朝向畫面的那根軸，縮放用等比手柄。
+  - 狀態列顯示「移動 X+10.7 cm」這類即時數值；骨頭或 IK 手柄時、沒有選取時不進入，只照舊切換手柄。
+  - 游標不在視窗上（面板上）時 G／R／S 照舊只切換手柄。判斷用最後一次真實滑鼠移動的位置，不用 widget 的 hover：Slate 會依作業系統游標重新計算 hover，控制通道送的移動會被蓋掉。
+- 控制通道：`studio_mouse` 加 `"press": false`，只移動滑鼠不按鍵；`studio_state` 的 `ui` 多 `modal`（`move`／`rotate`／`scale`／空）與 `modal_axis`。進行中 `busy` 是 `modal`，只接 `key`／`mouse`／`click` 與離開場景。
+- 順帶修正：載入框 `SOKStudioLoadOverlay`（ZOrder 30，蓋住整個視窗）本身是 `Visible`，載入結束後仍是整個畫面最上層的命中點；改成 `SelfHitTestInvisible`。
+- 驗證（2026-11-18，`Saved/Reports/bigscene/modalcheck.sh`，物件是主光，`Saved/OKStudio/mcp_ui/u279-*.png`）：G 向右 100 px 位置 X 0→13.4，Esc 回 0；G＋X 斜移只動 X（10.7），左鍵保留；R 旋轉後右鍵放回原值；S＋Z 只改 Z 縮放（1.007），Enter 保留；Ctrl+Z 撤銷縮放。點工作區的列落在列上，不再落在載入框。Editor 與 Game 兩個目標都建置成功。真人滑鼠沒有測；縮放的靈敏度沿用手柄（50 px 約 0.7%），比 Blender 的「距離比」慢。
+
 ### U277　拖入 FBX、任意人物卡直接匯入；每個物件的材質可編輯（2026-11-16，F 組）
 
 使用者要求：可以拉 FBX、任意人物卡到程式後自動直接匯入；每個物體的材質可以任意編輯。

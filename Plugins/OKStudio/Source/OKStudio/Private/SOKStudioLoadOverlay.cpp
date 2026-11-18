@@ -141,6 +141,9 @@ bool SOKStudioLoadOverlay::Progress(const UOKStudioGame* InGame, int32& OutBuilt
 void SOKStudioLoadOverlay::Construct(const FArguments& InArgs)
 {
 	Game = InArgs._Game;
+	// The box sits over the whole view (ZOrder 30): it never takes the mouse itself, or every click and hover over the
+	// panels and the view below it stops here (U279 found G / R / S never saw the view under it).
+	SetVisibility(EVisibility::SelfHitTestInvisible);
 	using namespace OKStudioStyle;
 	ChildSlot
 	[

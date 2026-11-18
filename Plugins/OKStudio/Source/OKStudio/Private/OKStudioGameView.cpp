@@ -624,6 +624,8 @@ FString UOKStudioGame::BusyReason() const
 {
 	if (IsExporting()) return TEXT("exporting");
 	if (bTimelinePlaying) return TEXT("playing");
+	// Blender's modal G / R / S (U279) runs on keys and plain mouse moves: those still have to reach it.
+	if (IsModal()) return TEXT("modal");
 	if (DragAxis >= 0 || bUserDragging) return TEXT("dragging");
 	if (SceneActor && (SceneActor->HasPendingBuilds() || SceneActor->PreparingMap() >= 0)) return TEXT("loading");
 	if (bStoryMode) return TEXT("story");

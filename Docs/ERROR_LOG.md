@@ -5692,3 +5692,22 @@ shell：底下 `cmd（Build.bat）→ UnrealBuildTool（dotnet）→ cmd（build
 
 **通则**：回报「已停」之前先验证，不要拿「我下了停止指令」当证据。这跟同一天 `studio_stop` 被存档对话框挡住、
 编辑器留在机器上是同一类坑：**请它停**和**它真的停了**是两件事，中间要有一次实际的观察。
+
+## 2026-11-18：共用引擎的树上，停建置要按行程亲子关系，不能按引擎路径一网打尽
+
+闸门 `may-build` 回 exit 3（c-lowspec 独占量测）时，我要停自己那趟 F 建置，用「命令列含 `F:\UE5.8`」当条件一次
+Terminate 了 20 个 `dotnet.exe`。F 树上 f-yvonne、f-sceneload 也用同一个引擎，它们的建置可能一并被我带走。
+
+**做法**：从自己开的外壳／`cmd` 起，用 `Win32_Process` 的 `ParentProcessId` 往下走，逐一 Terminate 子孙；
+不用引擎路径或 exe 名称当条件。杀完再列一次：自己的没了、别人的还在。
+
+## 2026-11-18：全畫面的載入框擋住命中測試；G／R／S 自己的「拖曳中」又擋掉控制通道
+
+U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因：
+
+1. 測試座標落在面板上；Blender 的 G 本來就只在視窗上作用，是測試寫錯。
+2. 換到空白視窗區仍然不進入：判斷用 `View->IsHovered()`，但 `LocateWindowUnderMouse` 回的最上層是 `SOKStudioLoadOverlay`。這個載入框（ZOrder 30，蓋住整個視窗）本身是預設的 `Visible`，內容收起後仍佔著整個畫面的命中測試。改成 `SelfHitTestInvisible`。
+3. 進入後滑鼠與按鍵都被拒：模態設了 `bUserDragging`，控制通道把它當成「人正在拖曳」回 `busy: dragging`，連結束模態的 Esc 都送不進去。改成 `busy: modal`，只放行按鍵、滑鼠與離開場景。
+
+**通則**：蓋在最上層的 Slate 覆蓋層，只要不收滑鼠就要明講 `SelfHitTestInvisible`／`HitTestInvisible`，預設的 `Visible` 會吃掉命中。新增一種「進行中」狀態時，先想清楚控制通道在這段期間要放行哪些請求，至少要能送出結束它的那個輸入。
+10
