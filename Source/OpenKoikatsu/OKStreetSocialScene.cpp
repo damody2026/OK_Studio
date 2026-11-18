@@ -948,13 +948,18 @@ void AOKStreetSocialScene::BeginPlay(){
  for(int32 I=1;I<S.Manifest.Characters.Num();++I)if(!OKStreetIsFemaleTarget(I,S.Manifest.Characters[I])){S.Errors.Add(TEXT("Female metadata validation failed"));WriteReport(false);return;}
  // The original dialogue catalogue is optional (original game data, Tools/original_data.lua): without it she talks through
  // free talk only.
+ const double CatalogueStart=FPlatformTime::Seconds();
  if(!S.Manifest.DialogueCatalogue.IsEmpty()){FString Body;
   if(!FFileHelper::LoadFileToString(Body,*S.Manifest.DialogueCatalogue)){S.Errors.Add(TEXT("Missing dialogue catalogue"));WriteReport(false);return;}
   S.Catalogue=OKStreetParseCatalogue(Body,S.Manifest.DialogueCatalogue);
   if(!S.Catalogue.Error.IsEmpty()||S.Catalogue.Nodes.IsEmpty()){S.Errors.Add(TEXT("Catalogue rejected: ")+S.Catalogue.Error);WriteReport(false);return;}
  }else UE_LOG(LogTemp,Display,TEXT("Street: no original dialogue catalogue, free talk only"));
  {TSharedPtr<FJsonObject> ManifestObject;FString JapanesePath,JapaneseBody;
-  if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()&&ManifestObject->TryGetStringField(TEXT("dialogue_catalogue_ja"),JapanesePath)&&FFileHelper::LoadFileToString(JapaneseBody,*JapanesePath))S.OtherLanguage=OKStreetParseCatalogue(JapaneseBody,JapanesePath);
+  // The Japanese mode reads the same lines (text_jp): the launcher names the same file, parsed once here for both.
+  if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()&&ManifestObject->TryGetStringField(TEXT("dialogue_catalogue_ja"),JapanesePath)){
+   if(!S.Catalogue.Nodes.IsEmpty()&&FPaths::IsSamePath(JapanesePath,S.Manifest.DialogueCatalogue))S.OtherLanguage=S.Catalogue;
+   else if(FFileHelper::LoadFileToString(JapaneseBody,*JapanesePath))S.OtherLanguage=OKStreetParseCatalogue(JapaneseBody,JapanesePath);}
+  UE_LOG(LogTemp,Display,TEXT("Street catalogues: dialogue and its Japanese side read in %.0f ms"),(FPlatformTime::Seconds()-CatalogueStart)*1000.0);
   LoadVoiceSettings(ManifestObject);
   LoadPlayerSettings();
   LoadPlayerName();

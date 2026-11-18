@@ -206,12 +206,39 @@ function M.finish(args, root, male, females, everyone, materials)
   end
   local catalogue_path = T(args.catalogue) and path.abs(args.catalogue) or nil
   local catalogue = nil
-  if catalogue_path and path.is_file(catalogue_path) then
-    catalogue = read_json(catalogue_path)
-    if not json.is_array(catalogue.nodes) or #catalogue.nodes == 0 then fail("Dialogue catalogue has no lines: " .. catalogue_path) end
-  elseif catalogue_path then
+  if catalogue_path and not path.is_file(catalogue_path) then
     print("No original dialogue catalogue (" .. catalogue_path .. "): free talk only")
     catalogue_path = nil
+  end
+  -- The runtime catalogues (dialogue, its rules, topics, relationships) depend on the source files beside the catalogue and
+  -- on the code that writes them, never on the cast: made once into Saved/StreetSocial/DialogueCache/<key>/ and read from
+  -- there by every launch. Writing them took 8-11 s of every start (2026-11-18). The key is the digest of every input file
+  -- and of this code (this script, the localization overlay, the JSON encoder), so any change makes them anew.
+  local cache_dir, cached = nil, false
+  if catalogue_path then
+    local inputs = { catalogue_path }
+    for _, name in ipairs({ "zh_tw.json", "topics.json", "rules.json", "relationships.json" }) do inputs[#inputs + 1] = path.with_name(catalogue_path, name) end
+    for _, code in ipairs({ "Tools/prepare_street_social_selection.lua", "Tools/build_street_social_localization.lua", "Tools/lua/ok/json.lua" }) do
+      inputs[#inputs + 1] = path.join(ok.root, code)
+    end
+    local present = util.filter(inputs, function(p) return path.is_file(p) end)
+    local digests = ok.hash.files(present, "sha256")
+    local parts = {}
+    for i, p in ipairs(present) do
+      if not digests[i] then fail("Cannot read dialogue input: " .. p) end
+      parts[#parts + 1] = path.name(p) .. "=" .. digests[i]
+    end
+    for _, p in ipairs(inputs) do if not path.is_file(p) then parts[#parts + 1] = path.name(p) .. "=absent" end end
+    table.sort(parts)
+    cache_dir = path.join(root, "Saved/StreetSocial/DialogueCache", ok.hash.sha256(table.concat(parts, "\n")):sub(1, 20))
+    cached = path.is_file(path.join(cache_dir, "complete"))
+  end
+  -- Made now into a folder of this run's own, then moved into place whole (two launchers at once never see half of it).
+  local gen_dir = cache_dir and not cached and (cache_dir .. ".part-" .. os.time() .. "-" .. math.random(1, 1 << 30)) or nil
+  if gen_dir then
+    catalogue = read_json(catalogue_path)
+    if not json.is_array(catalogue.nodes) or #catalogue.nodes == 0 then fail("Dialogue catalogue has no lines: " .. catalogue_path) end
+    path.mkdir(gen_dir, true)
   end
   -- Common exact translations cover unvoiced male lines as well as reactions.
   local localized_topics = nil
@@ -239,11 +266,7 @@ function M.finish(args, root, male, females, everyone, materials)
         src.voice_sequence = nil
       end
     end
-    runtime_catalogue = path.join(out_dir, "dialogue.runtime.json")
-    path.write_text(runtime_catalogue, json.encode(catalogue, { ensure_ascii = false }))
-    -- The Japanese mode reads the same lines (text_jp).
-    runtime_japanese = path.join(out_dir, "dialogue.runtime.ja.json")
-    path.write_text(runtime_japanese, json.encode(catalogue, { ensure_ascii = false }))
+    path.write_text(path.join(gen_dir, "dialogue.runtime.json"), json.encode(catalogue, { ensure_ascii = false }))
     -- Original relation limits are common rules, not card-derived assets.
     local rules = path.with_name(catalogue_path, "rules.json")
     if not path.is_file(rules) then fail("Original common dialogue rules are required beside the catalogue") end
@@ -259,7 +282,8 @@ function M.finish(args, root, male, females, everyone, materials)
       end
       runtime_rules.communication_chance = chance
     end
-    path.write_text(path.join(out_dir, "rules.json"), json.encode(runtime_rules, { ensure_ascii = false }))
+    -- Beside the dialogue catalogue: the rules read it from there (talk.rs).
+    path.write_text(path.join(gen_dir, "rules.json"), json.encode(runtime_rules, { ensure_ascii = false }))
   end
   local anim_dir = path.join(root, "Content/IndependentResources/RuntimeAnimations")
   local actions = read_json(path.join(anim_dir, "actions.manifest.json"))
@@ -291,7 +315,7 @@ function M.finish(args, root, male, females, everyone, materials)
   end
   local topic_path = catalogue_path and path.with_name(catalogue_path, "topics.json")
   local runtime_topics = nil
-  if topic_path and path.is_file(topic_path) then
+  if gen_dir and topic_path and path.is_file(topic_path) then
     local topic_data = localized_topics or read_json(topic_path)
     if localized_topics == nil then
       -- No overlay beside this pack: the topic names still show in Chinese (the 48 names are the same everywhere).
@@ -316,12 +340,11 @@ function M.finish(args, root, male, females, everyone, materials)
         for _, part in ipairs(sequence) do part.voices = nil end
       end
     end
-    runtime_topics = path.join(out_dir, "topics.runtime.json")
-    path.write_text(runtime_topics, json.encode(topic_data, { ensure_ascii = false }))
+    path.write_text(path.join(gen_dir, "topics.runtime.json"), json.encode(topic_data, { ensure_ascii = false }))
   end
   local relationship_path = catalogue_path and path.with_name(catalogue_path, "relationships.json")
   local runtime_relationships = nil
-  if relationship_path and path.is_file(relationship_path) then
+  if gen_dir and relationship_path and path.is_file(relationship_path) then
     local relationship_data = read_json(relationship_path)
     relationship_data.source_voice_sha256 = nil
     for _, profile in ipairs(relationship_data.profiles) do
@@ -329,8 +352,24 @@ function M.finish(args, root, male, females, everyone, materials)
         for _, part in ipairs(sequence) do part.voices = nil end
       end
     end
-    runtime_relationships = path.join(out_dir, "relationships.runtime.json")
-    path.write_text(runtime_relationships, json.encode(relationship_data, { ensure_ascii = false }))
+    path.write_text(path.join(gen_dir, "relationships.runtime.json"), json.encode(relationship_data, { ensure_ascii = false }))
+  end
+  if gen_dir then
+    path.write_text(path.join(gen_dir, "complete"), "")
+    -- Another launcher may have finished the same key meanwhile: then its folder is used and this one dropped.
+    if not os.rename(gen_dir, cache_dir) then
+      if not path.is_file(path.join(cache_dir, "complete")) then fail("Cannot place the dialogue cache: " .. cache_dir) end
+      path.rmtree(gen_dir)
+    end
+    print("Dialogue catalogues made: " .. win(cache_dir))
+  end
+  if cache_dir then
+    local function have(name) local p = path.join(cache_dir, name); return path.is_file(p) and p or nil end
+    runtime_catalogue = have("dialogue.runtime.json")
+    -- The Japanese mode reads the same lines (text_jp): the same file, which the game parses once for both.
+    runtime_japanese = runtime_catalogue
+    runtime_topics = have("topics.runtime.json")
+    runtime_relationships = have("relationships.runtime.json")
   end
   local locomotion = read_json(path.join(anim_dir, "locomotion.manifest.json"))
   check_hashes(util.map(locomotion.actions, function(r) return path.join(anim_dir, r.file) end),
