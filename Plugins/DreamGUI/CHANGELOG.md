@@ -565,6 +565,11 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **A static atlas's pages are rooted while a disregard-for-GC object points at them.** Static atlas pages are
+  transient textures made at run time, like the dynamic atlas's; a sprite or an atlas loaded while the engine starts
+  pointing at one broke the cooked build's GC verification the same way. `NotePageHolder` roots exactly those pages
+  until the atlas makes its pages again or goes away. `DreamGUI.Debug.PermanentSpriteOnStaticAtlas [unprotected]`
+  reproduces the case with the default white sprite.
 - **A character's unlit material no longer carries DreamGUI's shaders.** The screen and world render shaders compiled for
   every unlit surface material in the project, including ones made for skeletal meshes that DreamGUI never draws; a
   material cooked without the plugin (a separately cooked material patch) then loaded as incomplete ("missing

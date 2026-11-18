@@ -341,6 +341,7 @@ void UDreamUISpriteData::InitSpriteData()
 				}
 #endif
 				AtlasTexture = PackingAtlas->GetAtlasTexture(AtlasTextureIndex);
+				PackingAtlas->NotePageHolder(this, AtlasTexture);
 				if (AtlasTexture)
 				{
 					bIsInitialized = true;
