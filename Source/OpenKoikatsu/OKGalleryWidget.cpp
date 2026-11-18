@@ -3153,6 +3153,8 @@ void UOKCharacterController::FinishAnimationPreparation(TSharedRef<FOKAnimationM
    ShowAnimationStatus(Error,true);if(InspectorText)InspectorText->SetText(FText::FromString(Error));
    // The failed source was never committed: keep its prior list and selector consistent.
    if(Job->Kind==0&&GameSourceCombo){bSuppressClipCombo=true;GameSourceCombo->SetSelectedOption(SelectedGameSource.IsEmpty()?TEXT("基本動作"):GameSourceLabel(SelectedGameSource));bSuppressClipCombo=false;}
+   // A clip or studio motion that failed: the menu goes back to what still plays, not left on the one that did not load.
+   if((Job->Kind==1||Job->Kind==2)&&GameClipCombo){const FString Playing=AnimationOptionForSelection();bSuppressClipCombo=true;if(Playing.IsEmpty())GameClipCombo->ClearSelection();else GameClipCombo->SetSelectedOption(Playing);bSuppressClipCombo=false;}
    UE_LOG(LogTemp,Warning,TEXT("OK animation menu ready=0 kind=%d source=%s error=%s"),Job->Kind,*Job->Source,*Error);
   }
  }else {
