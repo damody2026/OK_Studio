@@ -155,3 +155,75 @@ OKZIPMODS none  X:/NoSuchPlace        X:/NoSuchPlace is not a directory
 真正让开卡失败的（okstrict 的缺口、读不出来的资料）照旧是失败，会让开卡停下来。
 `p_dummy`（`なし`、`nohairB`、`enk.acc.bald` 这种「这个槽就是空的」的目录项）照游戏行为跳过，
 只留一行 verbose，不进缺件清单。
+
+## 同一个 GUID 两边都有，谁赢
+
+`oklib::with_zipmods_and`（`Tools/ok-extract/src/oklib.rs`）把三个 fallback 依序推进 `gamefs`，
+先回答的那个赢：
+
+1. `roots[0]` = 卡所在资料夹（`loose_mods: true`，含其 `mods/` 子资料夹）
+2. `roots[1]` = 游戏目录里**卡指名的** GUID 那几个档（`card_zipmods`）
+3. `roots[2]` = 游戏安装本身（`installation: true`，卡没指名但要用的东西与它的 UncensorSelector 设定）
+
+所以**卡旁边那份赢**；基础库自己记着的（已经转好的模型）排在这三个之前。
+OK 卡不走这条：它只读自己的 `okLc`／`okLt` 与基础库，连游戏目录都不看（`okstrict.rs`）。
+
+## 哪些缺件只是回报，哪些会让卡开不起来
+
+| 状况 | 结果 | 谁判的 |
+|---|---|---|
+| 原作卡指名的 zipmod 这台机器没有 → 那个槽没东西 | **回报**一行 `item missing …`，其余照开 | `outfit_gaps.rs` |
+| 目录项是 `p_dummy`（`なし`／`nohairB`／`enk.acc.bald`） | **不算缺件**，只留一行 verbose（游戏本身就是跳过） | `extract.rs is_dummy_part` |
+| 压缩档在、但里面没有这个部件的 mesh | **回报**，`why=its archive holds no mesh for it` | `accessory_extract.rs` |
+| 部件建出来了、但材质家族没人支援 | **回报**一行 warning，该部件不画（整张卡照开） | `KKRuntimeSharedMaterial.cpp`；`--oklib crowd-check` 可不开 Unreal 先查 |
+| **OK 卡**开卡时要读自己的 `okLc`／`okLt` 没记的东西 | **FAIL**：开卡停下并列出缺口，不回退去翻 mods 树 | `okstrict.rs` |
+| 卡本身读不出来（PNG chunk、MessagePack、库缺档） | **FAIL** | `card.rs`／`oklib::ensure_library` |
+
+判准是「画面少一块」还是「这张卡的资料不完整」：前者是使用者这台机器的 mod 状态，说一声就好；
+后者表示 OK 卡或基础库坏了，必须停下来修（`demo_C050` 就是这一类，见 `Docs/ERROR_LOG.md` 2026-11-18）。
+
+## 材质家族没支援，部件会被整个丢掉（2026-11-18 修）
+
+`kks_Saria` 的眼线阴影 `cf_O_eyeline_kage` 在打包版留下唯一一条属于我们的 warning：
+
+```
+Unsupported shared material family: part cf_O_eyeline_kage (head, shader Koikano/main_eyew)
+```
+
+查出来**不是 `Koikano/main_eyew` 没支援**（`OKRuntimeSharedMaterialRecipe` 一直认得它，
+对应 `KoikanoEyeWhite`），而是它要求那个部件是 `translucent` + unlit：
+
+- Unity 把 `rendEyelineUp` 的 slot1（阴影）画在跟 slot0（眼线本身）同一个 submesh 上，
+  `extract.rs` 当初就把**眼线的** blend 直接给了阴影部件。
+- 这张卡的眼线被 Material Editor 换成 `KKUSS` 着色器（`masked`、lit），阴影自己的材质
+  `cf_m_eyeline_kage` 仍是 `Koikano/main_eyew`。阴影于是拿到 `masked`，recipe 对不上，整个部件被丢掉。
+
+修法：阴影部件用**它自己的材质**算 blend（`blend_for_mesh("head", &kage)`）。
+量测（`ok-extract --oklib crowd-check`，不必开 Unreal）：
+
+| 卡 | 修正前 | 修正后 |
+|---|---|---|
+| `kks_Saria` | `cf_O_eyeline_kage:Koikano/main_eyew:0:masked` | `-` |
+| 其余 29 张测试卡 | `-`（`kks_haruno_chika` 另见下） | `-` |
+
+顺手补的：`crowd-check` 的 `ANY_KIND` 少了 `Koikano/main_clothes_emblem`（C++ 那边 2026-11-17 加的），
+`kks_haruno_chika` 的校徽被误报成不支援；已补上，现在 30 张全部 `-`。
+**这张表是 C++ `OKRuntimeSharedMaterialRecipe` 的镜子，那边加一个家族，这边就要加。**
+
+### 丢掉它对画面的影响：这张卡上量不到
+
+同一个画面（开发版读卡器、`kks_Saria`、正面脸部、focus `[0,0,166]`／distance 55）拍三张：
+
+| 图 | 内容 |
+|---|---|
+| `E:\OKPackage\EyelineKage\with_kage.png` | 修正前：部件在，但拿到眼线的 `masked` blend |
+| `E:\OKPackage\EyelineKage\without_kage.png` | 临时把 `cf_O_eyeline_kage` 整个不输出 |
+| `E:\OKPackage\EyelineKage\fixed_kage.png` | 修正后：阴影用自己的材质（`translucent`／unlit） |
+
+三张**在脸上逐像素相同**（唯一差异是右下角 FPS 读数那块 28×30 像素）。
+也就是说这张卡的眼线阴影本来就几乎看不见——她的眼线被 Material Editor 换成了 `KKUSS`，
+`EyelineShadowTex` × 肤色在这个取景下没有可见贡献。
+
+所以这个修正的价值不在画面变好看，而在：**打包版不会再因为它整个拒绝这个部件并留一条 warning**，
+而且眼线没被换材质的一般卡片（阴影本来就是 `Koikano/main_eyew` + `_ALPHAPREMULTIPLY_ON` → translucent）
+blend 完全没变——30 张测试卡 `crowd-check` 的结果除了 `kks_Saria` 之外一行都没动。

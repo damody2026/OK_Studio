@@ -1349,6 +1349,12 @@ pub(crate) fn extract_session_from_info(
         seen_meshes.insert(mesh.name.to_ascii_lowercase());
         let (blend, unlit) = blend_for_mesh("head", &mesh);
         if let Some(kage) = kage.filter(|kage| kage.texture_png.is_some()) {
+            // slot1 is its own material (eyeline_shadow_mesh keeps it), so its blend is its own too. Taking the
+            // stroke's dropped the whole part on kks_Saria: Material Editor had given her stroke the KKUSS shader
+            // (masked, lit), while the shadow stayed Koikano/main_eyew, and the shared runtime recipe knows that
+            // shader only as a translucent unlit part — "Unsupported shared material family: part cf_O_eyeline_kage
+            // (head, shader Koikano/main_eyew)" (2026-11-18).
+            let (blend, unlit) = blend_for_mesh("head", &kage);
             head_fbs_sources.insert(kage.name.to_ascii_lowercase(), key.clone());
             eprintln!("ok-extract: KAGE {} slot1={}",kage.name,
                 kage.mat.as_ref().map(|m|m.name.as_str()).unwrap_or(""));
