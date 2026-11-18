@@ -60,6 +60,8 @@ crash dump 在 `Saved/Crashes`（`UECC-Windows-*`）。行程**不会自己结�
   候选原因是缩图贴图建出来没设 `NeverStream`（`Source/OpenKoikatsu/OKReaderScreen.cpp` 的 `MakeTexture`，
   对照 `KKTextureRuntime.cpp` 的 `OKApplyRuntimeTextureSettings` 有设），**但没证实**——真是它的话不该有「某几趟零次」。
   要查的人先量「翻外观分页时会不会稳定冒出来」，再决定。属 e-fork-2 的档案。
+
+  **后续（e-fork-2 当天量了，`cc524c891`）：这条候选不成立，改动已撤回。** `ListTextures` 显示 598 张 transient 贴图**全部 `Streaming=NO`**，串流中的只有 13 张引擎内建贴图 —— 那些缩图本来就不走串流，`NeverStream` 没有东西可修。所以 `Failed to read file ''` 的来源**仍然未知**，而且它**不是** GPU PageFault 的原因（同一轮 GBV 21 轮、约 250 次开卡零个 D3D12 错误也不当，指向时序／竞态）。我当初写的「没证实、某几趟零次和这个解释对不上」是对的；**相关性不是原因**，这一条留着当例子。
 - `LogUIActionRouter: Error: Using CommonUI without a CommonGameViewportClient`：每次启动一行，是既有的外部噪音，
   已经在 [CARD_READER_LOG_TRIAGE.md](CARD_READER_LOG_TRIAGE.md) 记过，不是这批改动带来的。
 - `Performance warning: Many (31) failed FindConsoleObject()`：偶发一行，查的是不存在的 cvar 名称，无害。
