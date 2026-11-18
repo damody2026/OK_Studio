@@ -58,6 +58,12 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
  // in front, then the line without a row, then the anchor itself; nothing clear (or the world not loaded there): as before.
  const FRotator Turn(0,Yaw,0);const float Side=(((I-1)%5)-2)*65.f,Row=((I-1)/5)*70.f;
  const FVector RowSpot=Spot+Turn.RotateVector(FVector(-Row,Side,0));
+ // Her row spot is still in the place: the convenience store's table is 13 cm inside its west wall, and heroine 10's row
+ // spot (1.3 m to the side, 70 cm back) stood her outside it on the second floor; she dropped to the street, was "not at
+ // conveni" and missed her breakfast (c-conquest conq1118g, 2026-11-18). A place without rooms (outdoors) takes any.
+ auto InPlace=[&](const FVector& At){return P->Rooms.IsEmpty()||OKStreetInsidePlace(*P,At);};
+ if(!InPlace(RowSpot)){static TSet<FString> Told; // asked every 2 s: said once per heroine and place
+  if(!Told.Contains(FString::Printf(TEXT("%d %s"),I,*PlaceId))){Told.Add(FString::Printf(TEXT("%d %s"),I,*PlaceId));UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, row spot %s is outside the place"),I,*PlaceId,*RowSpot.ToCompactString());}}
  if(OKStreetCityMode()&&GetWorld()){
   auto Clear=[&](const FVector& At){FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetSpotClear),false,this);
    // Not where another heroine already stands (刻晴 and 爱丽丝 were both moved to the same free spot by the booth).
@@ -67,13 +73,13 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
    return !GetWorld()->OverlapAnyTestByChannel(At+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(25,OKStreetBodyHalf()),Q);};
   // The anchor may be the seat itself (the drink shop's booth: work fell back to a seat, the bench is under every one of
   // the three): then round it, 80 then 140 cm out, still inside the place.
-  TArray<FVector> Tries={Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0)),Spot};
+  TArray<FVector> Tries;for(const FVector& Try:{Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0))})if(InPlace(Try))Tries.Add(Try);Tries.Add(Spot);
   for(const float R:{80.f,140.f})for(int32 K=0;K<8;++K){const FVector Try=Spot+Turn.RotateVector(FRotator(0,K*45.f,0).RotateVector(FVector(R,0,0)));if(OKStreetInsidePlace(*P,Try))Tries.Add(Try);}
   // Only a spot he can walk to from inside the door: 雷电将军's was moved into the cafe's corner behind a row of chairs
   // and a stub of wall, and he walked into that wall 30 times (round 12, 2026-11-15). Chosen once per heroine, place
   // and spot (asked every 2 s); none reachable: the first clear one, as before.
   const bool Forced=CVarOKStreetSpotForceSearch.GetValueOnGameThread()!=0;
-  if(Forced||!Clear(RowSpot)){
+  if(Forced||!InPlace(RowSpot)||!Clear(RowSpot)){
    static TMap<FString,FVector> Chosen;const FString Key=FString::Printf(TEXT("%d %s %.0f %.0f"),I,*PlaceId,RowSpot.X,RowSpot.Y);
    if(const FVector* Was=Chosen.Find(Key);Was&&!Forced)return *Was;
    // None reachable: the first clear one, kept 30 s and then asked again (the world there may not have been loaded;
@@ -96,7 +102,7 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
    Measured();
    if(First&&OutOfTime){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+2.0));return *First;}
    if(First){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+30.0));UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead (none walkable from the door; asked again in 30 s)"),I,*PlaceId,*RowSpot.ToCompactString(),*First->ToCompactString());return *First;}}}
- return RowSpot;
+ return InPlace(RowSpot)?RowSpot:Spot;
 }
 
 // He sits down with her (a meal, a drink, a seat) where other heroines' plans already stood them: the cafeteria's table
