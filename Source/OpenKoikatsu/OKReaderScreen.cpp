@@ -22,6 +22,7 @@
 #include "Controls/DreamToggle.h"
 #include "Controls/DreamDropdown.h"
 #include "Controls/DreamTextInput.h"
+#include "Interaction/UITextInput.h"
 #include "Controls/DreamScrollBox.h"
 #include "Event/DreamEventSystem.h"
 #include "Event/DreamPointerEventData.h"
@@ -355,7 +356,13 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 		if(Search&&Search->Input)
 		{
 			Search->Input->SetPlaceholder(FText::FromString(TEXT("搜尋動作（名稱或編號，空格隔開多個詞）")));
-			Search->Input->GetOnTextChangedEvent().AddWeakLambda(C,[C](const FString& Text){C->Filter=Text.TrimStartAndEnd();C->Sync();});
+			// The panel holding it is mirrored again whenever its UMG children come or go: the search typed so far, and
+			// the edit itself, carry over to the new field (a field rebuilt mid-typing lost both, and the keys typed
+			// next, no field taking them, went to the game).
+			const TWeakObjectPtr<UWidget> Key(Source);
+			if(const FString* Kept=SearchTexts.Find(Key)){Search->Input->SetText(*Kept);C->Filter=Kept->TrimStartAndEnd();}
+			Search->Input->GetOnTextChangedEvent().AddWeakLambda(C,[this,C,Key](const FString& Text){SearchTexts.Add(Key,Text);C->Filter=Text.TrimStartAndEnd();C->Sync();});
+			if(RefocusSearch.IsValid()&&RefocusSearch==Key&&Search->Input->InputBehaviour)Search->Input->InputBehaviour->ActivateInput();
 		}
 		C->Sync();return;
 	}
@@ -712,7 +719,17 @@ void UOKReaderScreen::SyncAll()
 		UPanelWidget* S=Panels[I].Source.Get();UDreamWidget* T=Panels[I].Target.Get();
 		if(!S||!T||!IsValid(T))continue;
 		T->SetShown(IsUmgShown(S));
-		if(S->GetChildrenCount()!=Panels[I].Children){Panels[I].Children=S->GetChildrenCount();const bool bHorizontal=Panels[I].bHorizontal;MirrorChildren(S,T,bHorizontal);}
+		if(S->GetChildrenCount()!=Panels[I].Children)
+		{
+			UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: %s children %d -> %d, mirrored again"),*S->GetName(),Panels[I].Children,S->GetChildrenCount());
+			Panels[I].Children=S->GetChildrenCount();const bool bHorizontal=Panels[I].bHorizontal;
+			// A motion search being typed into goes on in the field that replaces it.
+			RefocusSearch.Reset();
+			for(UOKDreamControl* C:Controls)if(IsValid(C)&&C->Companion.IsValid())
+				if(auto* Search=Cast<UOKDreamControl>(C->Companion.Get());Search&&Search->Input&&Search->Input->InputBehaviour&&Search->Input->InputBehaviour->IsInputActive())RefocusSearch=C->Source;
+			MirrorChildren(S,T,bHorizontal);
+			RefocusSearch.Reset();
+		}
 	}
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
 	for(int32 I=0;I<Controls.Num();++I)Controls[I]->Sync();
@@ -743,6 +760,13 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 		bShownModelLayout=Controller->bModelLayout;ShowTab(bShownModelLayout?0:1);
 	}
 	if(!bBuilt)return;
+	// The UMG layer is not seen and takes no clicks; it must not hold the keyboard either. A key it held went to the
+	// hidden control (Enter committed the hidden motion list's choice and played a motion nobody picked).
+	if(FSlateApplication::IsInitialized())if(UOKCharacterController* G=Controller.Get();G&&(G->HasAnyUserFocus()||G->HasFocusedDescendants()))
+	{
+		UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: keyboard focus was in the hidden UMG layer; moved to the game viewport"));
+		FSlateApplication::Get().SetAllUserFocusToGameViewport();
+	}
 	TickResize();
 	SyncAll();
 }

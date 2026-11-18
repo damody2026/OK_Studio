@@ -2,6 +2,7 @@
 #include "OKCharacterController.h"
 #include "OKCharacterMCPRegistry.h"
 #include "OKControl.h"
+#include "OKSlateInput.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
@@ -167,13 +168,50 @@ void Routes()
   bool Ui=true;Body(Req)->TryGetBoolField(TEXT("ui"),Ui);
   const FString File=OKControl::Checkout()/FString::Printf(TEXT("Saved/OKControl/shots/%u-%04d.png"),FPlatformProcess::GetCurrentProcessId(),++GShots);
   FScreenshotRequest::RequestScreenshot(File,Ui,false);FObject O=Result(true);O->SetStringField(TEXT("path"),File);Reply(Done,O);});
- // {key, seconds}: as the player's keyboard: pressed, and released after that long.
+ // {key, seconds}: straight into the player controller's input (APlayerController::InputKey), pressed and released after
+ // that long. Past every UI -- Slate, UMG, DreamGUI never see it: for game input. What a UI takes: /type.
  Bind(TEXT("/key"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   FObject B=Body(Req);FString Name;B->TryGetStringField(TEXT("key"),Name);double Seconds=.05;B->TryGetNumberField(TEXT("seconds"),Seconds);const FKey Key(*Name);APlayerController* PC=Player();
   if(!Key.IsValid()||!PC){Reply(Done,Result(false,TEXT("unknown key name, or no player")));return;}
   PC->InputKey(FInputKeyEventArgs::CreateSimulated(Key,IE_Pressed,1.f));
   FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak=TWeakObjectPtr<APlayerController>(PC),Key](float){if(Weak.IsValid())Weak->InputKey(FInputKeyEventArgs::CreateSimulated(Key,IE_Released,0.f));return false;}),float(FMath::Clamp(Seconds,0.,60.)));
   Reply(Done,Result(true));});
+ // Keyboard through Slate (OKSlateInput), as a real keyboard reaches the UI: {text, keys (default true)} types characters;
+ // {key, modifiers [shift, ctrl, alt, cmd], action tap|down|up} presses one key; {enter: true} presses Enter after the text.
+ Bind(TEXT("/type"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  FObject B=Body(Req);FString Text,KeyName,Action=TEXT("tap");bool Keys=true,Enter=false;
+  const bool HasText=B->TryGetStringField(TEXT("text"),Text);B->TryGetStringField(TEXT("key"),KeyName);B->TryGetStringField(TEXT("action"),Action);B->TryGetBoolField(TEXT("keys"),Keys);B->TryGetBoolField(TEXT("enter"),Enter);
+  TArray<FString> ModNames;B->TryGetStringArrayField(TEXT("modifiers"),ModNames);
+  OKSlateInput::FModifiers Mods;FString Error;if(!OKSlateInput::ParseModifiers(ModNames,Mods,Error)){Reply(Done,Result(false,Error));return;}
+  if(!HasText&&KeyName.IsEmpty()&&!Enter){Reply(Done,Result(false,TEXT("text or key is required")));return;}
+  const FKey Key(*KeyName);
+  if(!KeyName.IsEmpty()&&!Key.IsValid()){Reply(Done,Result(false,TEXT("unknown key name (Enter, Tab, Left, A, F5, ...)")));return;}
+  if(HasText)OKSlateInput::TypeText(Text,Keys);
+  bool Taken=false;
+  if(Key.IsValid()){Action=Action.ToLower();Taken=Action==TEXT("down")?OKSlateInput::KeyDown(Key,Mods):Action==TEXT("up")?OKSlateInput::KeyUp(Key,Mods):OKSlateInput::TapKey(Key,Mods);}
+  if(Enter)Taken=OKSlateInput::TapKey(EKeys::Enter,{});
+  FObject O=Result(true);if(Key.IsValid()||Enter)O->SetBoolField(TEXT("handled"),Taken);O->SetObjectField(TEXT("focus"),OKSlateInput::DescribeFocus());Reply(Done,O);});
+ // Mouse through Slate at a point of the window in screenshot pixels: {x, y, action click|double|down|up|move|drag|wheel,
+ // button left|right|middle, to_x, to_y (drag), notches (wheel)}. Click and drag run over the next frames.
+ Bind(TEXT("/mouse"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  FObject B=Body(Req);double X=-1,Y=-1,ToX=-1,ToY=-1,Notches=1;FString Action=TEXT("click"),ButtonName=TEXT("left");
+  B->TryGetNumberField(TEXT("x"),X);B->TryGetNumberField(TEXT("y"),Y);B->TryGetNumberField(TEXT("to_x"),ToX);B->TryGetNumberField(TEXT("to_y"),ToY);B->TryGetNumberField(TEXT("notches"),Notches);
+  B->TryGetStringField(TEXT("action"),Action);B->TryGetStringField(TEXT("button"),ButtonName);Action=Action.ToLower();ButtonName=ButtonName.ToLower();
+  if(X<0||Y<0){Reply(Done,Result(false,TEXT("x and y (window pixels, as in ui_screenshot) are required")));return;}
+  const FKey Button=ButtonName==TEXT("right")?EKeys::RightMouseButton:ButtonName==TEXT("middle")?EKeys::MiddleMouseButton:EKeys::LeftMouseButton;
+  const FVector2D At(X,Y);bool Ok=false;
+  if(Action==TEXT("click"))Ok=OKSlateInput::MouseClick(At,Button);
+  else if(Action==TEXT("double"))Ok=OKSlateInput::MouseClick(At,Button,true);
+  else if(Action==TEXT("down"))Ok=OKSlateInput::MouseDown(At,Button);
+  else if(Action==TEXT("up"))Ok=OKSlateInput::MouseUp(At,Button);
+  else if(Action==TEXT("move"))Ok=OKSlateInput::MouseMove(At);
+  else if(Action==TEXT("wheel"))Ok=OKSlateInput::MouseWheel(At,float(Notches));
+  else if(Action==TEXT("drag")){if(ToX<0||ToY<0){Reply(Done,Result(false,TEXT("drag needs to_x and to_y")));return;}Ok=OKSlateInput::MouseDrag(At,FVector2D(ToX,ToY),Button);}
+  else{Reply(Done,Result(false,TEXT("action: click, double, down, up, move, drag or wheel")));return;}
+  Reply(Done,Result(Ok,Ok?FString():TEXT("no game viewport to point at")));});
+ // Where the keyboard goes now: Slate's focused widget and its path, and the DreamGUI fields being edited.
+ Bind(TEXT("/focus"),Get,[](const FHttpServerRequest&,const FHttpResultCallback& Done){
+  FObject O=Result(true);O->SetObjectField(TEXT("focus"),OKSlateInput::DescribeFocus());Reply(Done,O);});
  Bind(TEXT("/camera"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   FObject B=Body(Req);const TArray<TSharedPtr<FJsonValue>>* L=nullptr;const TArray<TSharedPtr<FJsonValue>>* R=nullptr;APlayerController* PC=Player();
   if(!PC||!B->TryGetArrayField(TEXT("location"),L)||!B->TryGetArrayField(TEXT("rotation"),R)||L->Num()!=3||R->Num()!=3){Reply(Done,Result(false,TEXT("location [x,y,z] and rotation [pitch,yaw,roll] are required")));return;}

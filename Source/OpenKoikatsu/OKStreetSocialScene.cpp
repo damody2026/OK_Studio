@@ -1,4 +1,5 @@
 #include "OKStreetSocialScene.h"
+#include "OKSlateInput.h"
 #include "Widgets/SViewport.h"
 #include "MoviePlayer.h"
 #if PLATFORM_WINDOWS

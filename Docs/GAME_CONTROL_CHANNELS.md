@@ -12,7 +12,7 @@
 
 | 通道 | 開在哪 | 預設埠 | 內容 |
 |---|---|---|---|
-| UI（`ui`） | 所有模式 | `port_base`+12 | `/state` `/widgets` `/widget` `/exec` `/screenshot` `/key` `/camera`，MCP 工具 `ui_*` |
+| UI（`ui`） | 所有模式 | `port_base`+12 | `/state` `/widgets` `/widget` `/exec` `/screenshot` `/key` `/type` `/mouse` `/focus` `/camera`，MCP 工具 `ui_*` |
 | 街區（`street`） | StreetSocial | `port_base`+10 | [STREET_SOCIAL_GAME_MCP.md](STREET_SOCIAL_GAME_MCP.md)，`game_*` |
 | Studio（`studio`） | SceneEditor、讀卡內開的 Studio | `port_base`+30 | [OK_STUDIO_MCP.md](OK_STUDIO_MCP.md)，`studio_*` |
 | 1 對 1（`pair`） | `AOKInteractionPairGameMode` | `port_base`+11 | `/exec` `/reset` `/stats` `/pose`，`pair_call`、`ok-pair-mcp` |
@@ -30,7 +30,10 @@
 | `ui_widgets` | 畫面上能操作的一切：按鈕（`label`、`index`；純 Slate 按鈕也算）與控制項（`key`、`label`、`kind`、`value`、範圍、選項） |
 | `ui_press {label, index}` | 按按鈕 |
 | `ui_set {key 或 label, index, value}` | 改控制項，和人操作時觸發一樣的事件 |
-| `ui_key {key, seconds}` | 當成玩家鍵盤按鍵 |
+| `ui_key {key, seconds}` | 直接送進遊戲輸入（`APlayerController::InputKey`），**繞過所有 UI**：Slate、UMG、DreamGUI 都看不到，文字框有焦點時一樣會讓角色走動。測遊戲輸入用；要測 UI 收不收某個鍵，用 `ui_type` |
+| `ui_type {text, keys, key, action, modifiers, enter}` | 像真鍵盤一樣走 Slate（`FSlateApplication` 的 key down／字元／key up）：先經過輸入前處理器（DreamGUI 的文字框），再到有焦點的控制項，最後才到遊戲。`text` 打字（帶按鍵事件，`keys=false` 只送字元）；`key` 按一個具名鍵（Enter、Tab、Escape、Left、BackSpace…），`action` 為 tap／down／up，`modifiers` 為 shift／ctrl／alt／cmd。回覆含 `handled` 與焦點（同 `ui_focus`）。實作在 `Source/OpenKoikatsu/OKSlateInput.*`，街區的 `/type` 也用它 |
+| `ui_mouse {x, y, action, button, to_x, to_y, notches}` | 像真滑鼠一樣走 Slate（也會移動系統游標），座標是 `ui_screenshot` 圖上的像素：點得到 DreamGUI 控制項與 3D 視窗，不只 UMG 按鈕（`ui_press`）。`action`：click（預設）、double、down、up、move、drag、wheel |
+| `ui_focus` | 鍵盤現在會送到哪裡：Slate 的焦點控制項與它往上的路徑、遊戲視窗有沒有焦點、按住的滑鼠鍵，以及正在編輯的 DreamGUI 文字框（它們比 Slate 焦點先拿到鍵） |
 | `ui_camera {location, rotation}` | 放相機（百人房間；其他模式移動 view target） |
 | `ui_exec {command}`、`ui_screenshot {ui}` | 主控台指令、截圖 |
 | `reader_call {action, ...}` | 讀卡信箱：`state`、`cards`（卡片牆）、`select`、`load`、`parameters`、`get`、`set`、`reset`、`apply`、`controls`、`control_set`、`action`…；`session`／`revision` 自動帶 |

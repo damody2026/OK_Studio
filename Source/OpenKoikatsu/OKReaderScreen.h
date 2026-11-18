@@ -162,6 +162,10 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> CardButtons;
 	TArray<FString> CardTexts;
 	int32 ShownCardSelection=INDEX_NONE;
+	// The motion searches typed so far (by UMG list), kept across the rebuilds of their panels; the list whose search
+	// was being typed into while its panel is mirrored again.
+	TMap<TWeakObjectPtr<UWidget>,FString> SearchTexts;
+	TWeakObjectPtr<UWidget> RefocusSearch;
 	TArray<FOKDreamMirrorPanel> Panels;
 
 	void BuildCategories();

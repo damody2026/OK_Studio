@@ -5355,3 +5355,11 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **验证**：两份既有日志离线重放，确认 `missing` 对得上；`hair` 栏位在下一轮实跑验。
 - **再試前檢查**：**「通过」的卡也要印出它缺了什么**，不然指标盖不住的东西就等于不存在；
   还有**别拿「某条日志有没有出现」当成品质指标**，先确认那条日志在两种卡上都会印。
+
+## 2026-11-18 讀卡器搜尋框「打字漏到鏡頭」是測試手段造成的誤判；改檔時把整個 .cpp 的中文弄成亂碼
+
+- **變更**：DreamGUI 讀卡器的動作搜尋框。先用系統 SendKeys／SetCursorPos 模擬鍵盤和滑鼠測試，看到「打 WALK 時鏡頭跟著動」與「Enter 播了 Demo：蹦跳」，回報成功能壞掉。
+- **證據**：補上走 Slate 的 MCP 工具（`ui_type`／`ui_mouse`／`ui_focus`）後重測：打字進搜尋框、鏡頭位置與角度完全不變；下拉選單開著按 Enter 只移動鍵盤焦點框，不播動作。SendKeys 送到的是前景視窗，焦點不明，當次鏡頭變化的原因沒有證實。
+- **處置**：改用 Slate 工具驗證；仍加上兩道防護（面板重建保留搜尋字與編輯狀態、看不見的 UMG 層拿到鍵盤焦點就還給遊戲視窗）並寫 log，下次重現可直接查。
+- **另一個錯**：用 PowerShell 5.1 的 `Get-Content -Raw`／`Set-Content -Encoding utf8` 改 `OKReaderScreen.cpp` 的一行 include：沒 BOM 的 UTF-8 檔被當成系統碼頁讀進來，寫回後所有中文字串變亂碼（還加了 BOM），編譯前從 `git show HEAD:` 還原後重套改動。另外 PowerShell 5.1 呼叫原生程式時會吃掉參數裡的雙引號，`ok-game-mcp.exe call ui_mouse '{"x":…}'` 送出去的是壞 JSON。
+- **再試前檢查**：測 UI 的鍵盤、滑鼠一律用走 Slate 的 MCP 工具，不用系統按鍵模擬；PowerShell 不拿來改含中文的原始碼（用編輯工具或 Lua），從 PowerShell 呼叫 `ok-game-mcp.exe call` 時把 JSON 裡的 `"` 寫成 `\"`。
