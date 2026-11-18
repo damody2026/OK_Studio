@@ -138,6 +138,9 @@ public:
 	// The card list's pictures held now, of how many tiles ("12/101"; "-" with no card list shown).
 	FString ThumbState() const;
 	float GetLeftWidth() const { return LeftWidth; }
+	// The 3D view between the two panels in viewport pixels (the screen canvas is 1080 design pixels high): what the HUD
+	// draws there (the height ruler) stays clear of the panels. False before the screen is laid out.
+	bool ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const;
 
 protected:
 	virtual void NativeOnInitialized() override;

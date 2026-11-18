@@ -390,6 +390,22 @@ float UOKReaderScreen::CaptionWidth() const
 }
 
 // One UMG widget, and everything under it, as DreamGUI controls under Parent. bInRow: Parent lays out across.
+// A row of three or more buttons and nothing else (匯出這套服裝 / 穿上 OK 服裝 / 轉換服裝) at their natural widths ran past
+// the column's right edge: such a row shares the width equally, each label on one line, shrunk when long.
+static void FitButtonRow(UDreamWidget* Target)
+{
+	const TArray<UDreamWidget*> Row(Target->GetChildren());
+	int32 Buttons=0;
+	for(UDreamWidget* Child:Row){const UOKDreamControl* C=Cast<UOKDreamControl>(Child);if(!C||!C->Button)return;if(C->GetShown())++Buttons;}
+	if(Buttons<3)return;
+	for(UDreamWidget* Child:Row)
+	{
+		Child->SetWidth(0);
+		if(auto* Slot=Child->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+		if(UDreamText* T=TextOf(Cast<UOKDreamControl>(Child)->Label)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::HorizontalOverflow);T->SetBestFit(true);T->SetBestFitMinSize(12.f);}
+	}
+}
+
 void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 {
 	if(!Source||!Into)return;
@@ -467,6 +483,7 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 		const TArray<UWidget*> Kids=ChildrenOf(Source);Panel.Children=Kids.Num();
 		Target->SetShown(IsUmgShown(Source));
 		for(UWidget* Child:Kids)Mirror(Child,Target,bHorizontal);
+		if(bHorizontal)FitButtonRow(Target);
 		if(Panel.Source.IsValid())Panels.Add(Panel);
 	}
 }
@@ -476,6 +493,7 @@ void UOKReaderScreen::MirrorChildren(UPanelWidget* Source,UDreamWidget* Target,b
 	if(!Source||!Target)return;
 	for(UDreamWidget* Child:TArray<UDreamWidget*>(Target->GetChildren()))if(Child)Child->DestroyWidget();
 	for(int32 I=0;I<Source->GetChildrenCount();++I)Mirror(Source->GetChildAt(I),Target,bHorizontal);
+	if(bHorizontal)FitButtonRow(Target);
 }
 
 void UOKReaderScreen::BuildCategories()
@@ -690,7 +708,8 @@ void UOKReaderScreen::MarkCurrentCard()
 	for(int32 I=0;I<CardButtons.Num();++I)if(UOKDreamControl* B=CardButtons[I];IsValid(B)&&CardTexts.IsValidIndex(I))
 	{
 		const bool bBad=CardPaths.IsValidIndex(I)&&G->UnopenableCards.Contains(CardPaths[I]);
-		B->FixedText=(I==Current?TEXT("▶ "):TEXT(""))+FString(bBad?TEXT("開不了："):TEXT(""))+CardTexts[I];B->SetText(B->FixedText);
+		// U+00A0 after the mark: the line breaks inside a long name rather than leave the mark alone on its own line.
+		B->FixedText=(I==Current?TEXT("▶ "):TEXT(""))+FString(bBad?TEXT("開不了："):TEXT(""))+CardTexts[I];B->SetText(B->FixedText);
 		B->SetRenderOpacity(I==Current||bBad?1.f:.72f);
 	}
 }
@@ -1008,7 +1027,16 @@ void UOKReaderScreen::ShowTab(int32 Index)
 {
 	Tab=FMath::Clamp(Index,0,3);
 	UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};
-	for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);
+	// The current tab takes the .dui's TabOn look (Tab0's), the rest TabOff (Tab1's); before this only Tab0 ever had the
+	// raised face, so 編輯 looked chosen on every tab.
+	// Both looks come from the same .dui for every reader screen: taken once, before any tab changed.
+	static TOptional<FDreamButtonStyle> TabOnStyle,TabOffStyle;
+	if(!TabOnStyle.IsSet()&&Tab0&&Tab1){TabOnStyle=Tab0->GetStyle();TabOffStyle=Tab1->GetStyle();}
+	for(int32 I=0;I<4;++I)if(Tabs[I])
+	{
+		if(TabOnStyle.IsSet())Tabs[I]->SetStyle(I==Tab?TabOnStyle.GetValue():TabOffStyle.GetValue());
+		Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);
+	}
 	// The rail lists every category on every tab (the sketch keeps it on the left throughout); 設定 sits alone at its foot.
 	for(UOKDreamControl* B:RailButtons)if(IsValid(B))B->DestroyWidget();
 	for(UDreamWidget* Gap:RailSpacers)if(IsValid(Gap))Gap->DestroyWidget();
@@ -1079,6 +1107,19 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 		}
 		LeftScroll->ScrollToStart();
 	}
+}
+
+bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
+{
+	if(!bBuilt||ViewportSize.X<=0.f||ViewportSize.Y<=0.f)return false;
+	// The screen canvas scales with the viewport height (Open: 1920x1080 reference, matched on height).
+	const float Scale=ViewportSize.Y/1080.f;
+	OutLeft=LeftWidth*Scale;OutRight=ViewportSize.X-RightWidth*Scale;
+	// Below the camera bar (12 from the top, 56 high) and a gap.
+	OutTop=(12.f+56.f+8.f)*Scale;
+	// And below the notice while it shows.
+	if(Notice&&bNoticeShown&&!ShownNotice.IsEmpty())OutTop+=(Notice->GetHeight()+8.f)*Scale;
+	return OutRight>OutLeft;
 }
 
 void UOKReaderScreen::SetLeftWidth(float Width)

@@ -1,6 +1,7 @@
 #include "OKHUD.h"
 #include "OKGalleryWidget.h"
 #include "KKPreviewActor.h"
+#include "OKReaderScreen.h"
 #include "Blueprint/UserWidget.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/SizeBox.h"
@@ -57,12 +58,23 @@ void AOKHUD::DrawHUD()
 		Right *= Root.AbsoluteToLocal(Gallery->MotionPanel->GetCachedGeometry().GetAbsolutePosition()).X / Root.GetLocalSize().X;
 	const FLinearColor Colour(1.f, .93f, .6f);
 	UFont* Font = GEngine->GetMediumFont();
-	const float X = FMath::Min(Canvas->Project(Foot).X, Right - 12.f);
+	float X = FMath::Min(Canvas->Project(Foot).X, Right - 12.f);
+	// The DreamGUI reader screen (its UMG panels are hidden and no longer where it draws): the ruler stands on the
+	// character's left, inside the 3D view between the panels, so it clears the right panel and the card's name plate at
+	// the view's bottom right; its numbers (76 px left of the line) stay off the left panel.
+	FVector Base = Foot;
+	float ViewLeft = 0.f, ViewRight = 0.f, Top = 0.f;
+	if (Gallery->ReaderScreen && Gallery->ReaderScreen->ViewSpan(FVector2D(Canvas->ClipX, Canvas->ClipY), ViewLeft, ViewRight, Top))
+	{
+		Base = Ground - Side * (72.f * Actor->GetActorScale3D().Z);
+		X = FMath::Clamp(Canvas->Project(Base).X, ViewLeft + 90.f, FMath::Max(ViewLeft + 90.f, ViewRight - 12.f));
+	}
 	float LastY = 0.f;
 	for (int32 Height = 0; Height <= 300; Height += 10)
 	{
-		const FVector At = Canvas->Project(Foot + FVector(0.f, 0.f, Height));
+		const FVector At = Canvas->Project(Base + FVector(0.f, 0.f, Height));
 		if (At.Z <= 0.f) return;	// behind the camera
+		if (At.Y < Top) return;	// above: the camera bar and the notice under it
 		const bool bMajor = Height % 50 == 0;
 		DrawLine(X - (bMajor ? 18.f : 9.f), At.Y, X, At.Y, Colour, bMajor ? 2.f : 1.f);
 		if (bMajor) DrawText(FString::Printf(TEXT("%d cm"), Height), Colour, X - 76.f, At.Y - 9.f, Font);
