@@ -37,6 +37,9 @@ F 组 f-yvonne。验的是低记忆体模式（RAM < 48 GB 或 VRAM < 20 GB 自�
 - 53/53 pass：每张 `lowmem=on`，日志 BulkData 错误 0，截图「整片黑／整片白／只剩背景」判定 0。
 - C046 第一次读卡器启动卡在 "Waiting for ZenServer to be ready"，载入 8 次都是 busy。这是环境问题，重跑通过。工具改成把这种情况记为 `env`，并换新读卡器重试一次（`f8d5d0ff1`）。
 - 中间为别组的独占量测暂停三次（整合 #16、c-lowspec 两次），从断点续跑。
+- 已知未解：开关 1 跑 C041 时，读卡器（pid 17860，08:55:06）在 MCP views 操作中途消失。日志没有错误也没有退出讯息，
+  Saved/Crashes、WER、Windows Application／System 事件记录都没有纪录。runner 只在卡跑完后、或已判定读卡器不在时才关行程；
+  e-fork-2 查过它没碰过这个 pid。原因未明。C041 的开关 1 没重跑（C031 与 VerifyEyeDull 已足以证明）。
 
 ### 「该有的东西不见了」：`image_diff`／`Tools/reader_jump_compare.lua`
 
