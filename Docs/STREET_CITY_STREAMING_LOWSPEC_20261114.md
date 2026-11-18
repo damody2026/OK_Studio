@@ -427,7 +427,7 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 
 - 载入时间：探针的 `load_seconds` 包含等 slot 的时间（conq1117d 记成 804 s，游戏本身约 16 s 就开好）。看 CSV 第一笔的 `t` 扣掉。
 - 整合 #16 之后，沿用旧 base 只重编执行档的 stage 一启动就 Fatal（缺 global shader `FDreamUIBackdropCompositePS`）：先跑 `Tools\lua\lua.exe Tools\rebuild_street_social_patch.lua` 重建 patch（`Docs/ERROR_LOG.md` 2026-11-18 那条）。
-- 还在的渲染端卡顿：游戏执行绪等渲染执行绪 49–267 ms（串流进来的资源初始化），不在这几笔改动的范围。
+- 还在的渲染端卡顿：游戏执行绪等渲染执行绪 49–267 ms（串流进来的资源初始化），不在这几笔改动的范围。**更正（§11）**：这几趟机器上同时有别的 Unreal；安静机器上同样的走路没有任何渲染端卡顿，这组数字是抢 CPU 造成的。
 
 ### SpotFor 的预算实测（强制走到退路）
 
@@ -494,3 +494,23 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 - 游戏里若有黑屏转场（瞬移、换场景），可以在黑屏时主动做一次 GC，把这次停顿藏起来。目前只有测试用的 /warp 会这样瞬移，所以先不做。
 - 已知未解：gcQ-int20 另有一次 103 ms，落在 FTicker 本身、没有子事件（不在 OKControl 的请求里），整趟只出现一次（而且那趟机器不安静）。一次性、不可重现，先不查；再出现或能稳定重现时再追。
 - 结论：走路碰不到这约 60 ms（只有测试用的 /warp 会一次卸掉两万多个包），GC 不再投入，回到低配无缝串流主线。
+
+## 11. 安静机器上的纯走路串流（2026-11-18 11:30–11:46，c-lowspec，独占整机）
+
+§8 的走路回归是在机器上同时有别的 Unreal 时量的，留下「渲染端 49–267 ms」没解释。这次独占整机（开始时 status 只列我自己的游戏在用 CPU），lowspec1118f、-LowMemory、-Clock 10:00、5 名女角，不瞬移，自动驾驶走 department → boys_dorm → skating → church → department（`walkQ-1118`，Play-20261118T113014），`t.HitchFrameTimeThreshold 60` + `stat dumphitches`，trace cpu,frame,bookmark,rendercommands,rhicommands。
+
+- 四段都走到：122、160、75、119 秒。
+- 峰值：走路 commit 11.8 GB、工作集 8.0 GB、显存 4.6 GB，都在 12 GB／8 GB 目标内。
+- 走路期 >60 ms 的帧 5 个（开场载入的 3 个不计）：
+
+| 帧 | 时间 | 在哪里 |
+|---|---|---|
+| 65239 | 81.6 ms | `STAT_FTicker_Tick` 的 Self，没有 stat 子项 |
+| 84139 | 68.3 ms | 同上 |
+| 106908 | 201.7 ms | Slate `Draw Window And Children` 的 Self 194 ms |
+| 116355 | 215.3 ms | `FrameTime` 的 Self 180 ms（另有 Slate ProcessMouseMove 18 ms） |
+| 129256 | 102.3 ms | 游戏逻辑：`STAT_Street_TickApproach` 53 ms + `STAT_Street_TickSong` 42 ms |
+
+- **渲染端 0 个，GC 0 个**（GC 都在 60 ms 以下）。
+- **§8 那组渲染端数字是量错的**：§8 lowspec1118c 走路时的 68／191／75 ms（`UpdatePrimitive` 等 `OcclusionSubmittedFence` 121 ms、`Explicit wait for tasks` 65 ms、`InitViews` 等 queue）在安静机器上同一类走路完全没有出现，和 §9 一样判定为抢 CPU 的结果，不是串流资源初始化本身慢。旧数字留在 §8 表里，它们当时是在别的 Unreal 同时跑的机器上量的。§9 的 157／93 ms 是瞬移巡游、这里是走路，两组独立量测得到同样的结论。
+- **还在的**：没有子事件的 Self 停顿（FTicker 63–78 ms、Slate／FrameTime 约 200 ms）在安静机器上也会出现、能重现（§8 lowspec1118a 也有 70–85 ms 的 FTicker），所以不再当一次性的现象，下一步用这次的 trace 离线拆（Insights 只在机器没人用时跑）。TickApproach／TickSong 的 102 ms 一起看。
