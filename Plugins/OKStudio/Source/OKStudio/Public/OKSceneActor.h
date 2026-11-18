@@ -239,6 +239,10 @@ private:
 	float ShownSequenceTime = -1.f;
 	/** GFrameCounter of the last Sync that built an object. */
 	uint64 LastBuildFrame = 0;
+	/** Item opens in flight, counted once a frame instead of once per unbuilt item (see PrepareItem), and the frame
+	 *  the count belongs to. */
+	uint64 OpeningItemsFrame = 0;
+	int32 OpeningItems = 0;
 	/** t.MaxFPS as it was before a loading scene capped it (-1: not capped). See SetLoadThrottle. */
 	float SavedMaxFps = -1.f;
 	/** The viewport's bDisableWorldRendering as it was before a loading scene turned drawing off (-1: not touched). */

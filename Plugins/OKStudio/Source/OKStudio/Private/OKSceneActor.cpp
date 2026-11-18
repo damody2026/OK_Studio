@@ -589,6 +589,11 @@ static TAutoConsoleVariable<int32> CVarOkStudioLoadMaxFps(TEXT("ok.Studio.LoadMa
  *  122.8 s drawing against 86.3 s not drawing, -29.7%, and the cost of a build frame outside Sync falls from 75.5 ms to
  *  22.7 ms, which is the 36 s. It costs the live picture of the scene assembling: until it is built the viewport holds
  *  the frame before the load. 0 draws it as before. */
+/** Sync's per-object timers (sync_same_ms, sync_gate_ms, sync_live_ms, sync_world_ms, sync_place_ms). They are two
+ *  clock reads per object per Sync each, tens of millions on a big scene, so they are measurable themselves: set this
+ *  to 0 and compare sync_ms to find out how much of a reading is the reading. */
+static TAutoConsoleVariable<int32> CVarOkStudioSyncDetailTimers(TEXT("ok.Studio.SyncDetailTimers"), 1,
+	TEXT("Sync's per-object timers (0: only the totals, no per-object clock reads)."));
 static TAutoConsoleVariable<int32> CVarOkStudioLoadSkipDraw(TEXT("ok.Studio.LoadSkipDraw"), 1,
 	TEXT("Do not draw the world while a scene is building (0: draw, as before; the scene then appears piece by piece)."));
 int32 AOKSceneActor::ObjectBuildBudget()
@@ -731,9 +736,19 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 		// No room: told before the item's model and build options are worked out, because a Sync of a scene with
 		// thousands of items asks for every one of them. The caps are the opens in flight and the sessions opened but
 		// not built yet (the frames build far fewer than the workers can open).
-		int32 Opening = 0;
-		for (const auto& Pair : PreparedItems) if (!Pair.Value->bDone) ++Opening;
-		if (Opening >= Ahead || PreparedItems.Num() >= Ahead * 3) return false;
+		// Counting the opens in flight used to be this loop, run for every unbuilt item of every Sync: on a scene of
+		// 6816 items over ~850 frames that is 5.8M scans of the map, and sync_gate_ms measured it at 20.5-23.8 s of
+		// an 85 s open (2026-11-18). The count changes in exactly two ways: this function starts an open (counted
+		// below), or a worker finishes one (bDone, on its own thread). So it is recomputed once a frame and kept
+		// exact for the first; the second only makes the number one frame stale, which can delay an item's open by a
+		// frame and nothing else.
+		if (OpeningItemsFrame != GFrameCounter)
+		{
+			OpeningItemsFrame = GFrameCounter;
+			OpeningItems = 0;
+			for (const auto& Pair : PreparedItems) if (!Pair.Value->bDone) ++OpeningItems;
+		}
+		if (OpeningItems >= Ahead || PreparedItems.Num() >= Ahead * 3) return false;
 	}
 	FString Model, Prefab, ModelError;
 	// Not a model this build can find: Build says why, in the frame, as it did before.
@@ -756,6 +771,8 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 		P->bDone = true;
 	}, 4 * 1024 * 1024);
 	PreparedItems.Add(Object.Id, P);
+	// This frame's count knows about the open it just started, so the cap still holds within one Sync.
+	if (OpeningItemsFrame == GFrameCounter) ++OpeningItems;
 	return false;
 }
 
@@ -1512,6 +1529,11 @@ void AOKSceneActor::Sync()
 	bBuildsPending = false;
 	BuildsLeft = 0;
 	TSet<int32> Present;
+	// The five per-object timers below (same, gate, live, world, place) each call FPlatformTime::Seconds() twice for
+	// every object of every Sync: on this scene that is 10 calls x 8806 objects x ~1100 Syncs, about 97 million. That
+	// is instrumentation heavy enough to be worth its own measurement, which is what this switch is for: run the same
+	// scene with it on and off and the difference in sync_ms is what the timers themselves cost. 1 keeps the detail.
+	const bool bDetail = CVarOkStudioSyncDetailTimers.GetValueOnGameThread() != 0;
 	const double LoopStart = FPlatformTime::Seconds();
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
@@ -1521,12 +1543,12 @@ void AOKSceneActor::Sync()
 		// An eyes pattern is set on the live face, unless its eye set changes parts (gag eyes): then it is built in.
 		auto PartsEyes = [](int32 Ptn) { return Ptn >= 0 && FOKStudioCatalog::Get().EyeSet(Ptn).bChangesParts ? Ptn : -1; };
 		if (Item) SwapKeyedMotion(Object, *Item);
-		const double SameStart = FPlatformTime::Seconds();
+		const double SameStart = bDetail ? FPlatformTime::Seconds() : 0.;
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Model || Item->Model == Object.Model)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
-		LoadStats.SyncSameMs += (FPlatformTime::Seconds() - SameStart) * 1000.;
+		if (bDetail) LoadStats.SyncSameMs += (FPlatformTime::Seconds() - SameStart) * 1000.;
 		// A scene opening: the character is got ready over the frames, Build only finishes it. The next one opens meanwhile.
 		if (!bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Character)
 		{
@@ -1546,9 +1568,12 @@ void AOKSceneActor::Sync()
 		// An item's session opens on a worker; it is built in the frame it is ready in, not the one that asked for it.
 		// Timed because every item that is not built yet asks this every Sync: thousands of items times hundreds of
 		// frames, and PrepareItem does map work (and, when there is room, builds the item's key) on each one.
-		const double GateStart = FPlatformTime::Seconds();
+		// Skipping the call once the cap is reached (the answer is the same for every remaining item of the Sync) was
+		// tried on 2026-11-18 and measured nothing: sync_gate_ms 16.4 -> 16.3 s, ready_ms within the noise. So the
+		// cost is not in that early path, and the code stays as it was.
+		const double GateStart = bDetail ? FPlatformTime::Seconds() : 0.;
 		const bool bItemWaiting = !bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Item && !PrepareItem(Object);
-		LoadStats.SyncGateMs += (FPlatformTime::Seconds() - GateStart) * 1000.;
+		if (bDetail) LoadStats.SyncGateMs += (FPlatformTime::Seconds() - GateStart) * 1000.;
 		// Also not past this Sync's share of the frame: an item is a few milliseconds now that its session is opened on a
 		// worker, so the count alone would let one Sync build for a second.
 		const bool bOverSlice = Built > 0 && FPlatformTime::Seconds() - SyncStart >= BuildSliceSeconds();
@@ -1593,7 +1618,7 @@ void AOKSceneActor::Sync()
 		// to it - morph overrides, live material edits, lights, effects - once per object per Sync. Nothing timed this,
 		// and on a scene of 8806 objects over ~400 Syncs it was the 18.5-19.5 s that the other timers did not add up to
 		// (2026-11-18, Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md).
-		const double LiveStart = FPlatformTime::Seconds();
+		const double LiveStart = bDetail ? FPlatformTime::Seconds() : 0.;
 		if (Object.Kind == EOKSceneObjectKind::Item && Item->AppliedMorphOverrides != Object.Item.MorphOverrides)
 		{
 			if (AKKPreviewActor* Preview = Item->Preview.Get())
@@ -1679,8 +1704,8 @@ void AOKSceneActor::Sync()
 								}
 			}
 		}
-		const double WorldStart = FPlatformTime::Seconds();
-		LoadStats.SyncLiveMs += (WorldStart - LiveStart) * 1000.;
+		const double WorldStart = bDetail ? FPlatformTime::Seconds() : 0.;
+		if (bDetail) LoadStats.SyncLiveMs += (WorldStart - LiveStart) * 1000.;
 		const FTransform World = Document->WorldTransform(Object.Id) * GetActorTransform();
 		// OK_STUDIO_ITEM_DUMP=<group/category/no>: that item's world transform (Unreal), to compare with Studio's.
 		static const FString ItemDump = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STUDIO_ITEM_DUMP"));
@@ -1695,12 +1720,12 @@ void AOKSceneActor::Sync()
 				World.GetScale3D().X, World.GetScale3D().Z, World.GetScale3D().Y);
 		}
 		const bool bShown = Document->IsShown(Object.Id);
-		LoadStats.SyncWorldMs += (FPlatformTime::Seconds() - WorldStart) * 1000.;
+		if (bDetail) LoadStats.SyncWorldMs += (FPlatformTime::Seconds() - WorldStart) * 1000.;
 		// Writing the placement every Sync is not what a loading scene spends its time on: of the 63.4 s one 8806
 		// object scene spends in Sync, this is 2.0 s, and a switch that left an object alone when its transform was
 		// already the one to write skipped 19 992 of 1 231 243 placements and made the load no faster (88.0 s against
 		// 87.6 s without it, F-sceneload 2026-11-17). The 23.5 s above it, working out that transform, is the cost.
-		const double PlaceStart = FPlatformTime::Seconds();
+		const double PlaceStart = bDetail ? FPlatformTime::Seconds() : 0.;
 		if (AKKPreviewActor* Preview = Item->Preview.Get())
 		{
 			Preview->SetActorTransform(Compose(Item->RenderCorrection, World));
@@ -1713,7 +1738,7 @@ void AOKSceneActor::Sync()
 			// A camera item's capture keeps drawing while the item is hidden (Studio hides only renderers).
 			if (Item->RenderCameraKey == 0) Component->SetVisibility(bShown, true);
 		}
-		LoadStats.SyncPlaceMs += (FPlatformTime::Seconds() - PlaceStart) * 1000.;
+		if (bDetail) LoadStats.SyncPlaceMs += (FPlatformTime::Seconds() - PlaceStart) * 1000.;
 	}
 	LoadStats.SyncLoopMs += (FPlatformTime::Seconds() - LoopStart) * 1000.;
 	for (auto It = Shown.CreateIterator(); It; ++It)
