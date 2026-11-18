@@ -16,6 +16,11 @@ namespace
 		{TEXT("load.progress"), TEXT("已建 {built, number} / 共 {total, number} 個物件")},
 		{TEXT("load.percent"), TEXT("{percent, number}%")},
 		{TEXT("load.waiting"), TEXT("準備中…")},
+		{TEXT("load.stage_read"), TEXT("讀取場景卡…")},
+		{TEXT("load.stage_cards"), TEXT("轉換角色卡 {done, number} / {total, number}")},
+		{TEXT("load.stage_objects"), TEXT("整理場景物件 {done, number} / {total, number}")},
+		{TEXT("load.stage_open"), TEXT("開啟場景…")},
+		{TEXT("load.stage_release"), TEXT("釋放上一個場景…")},
 	};
 
 	struct FTable

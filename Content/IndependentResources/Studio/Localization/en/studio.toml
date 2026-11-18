@@ -3,3 +3,8 @@
 "load.progress" = "Built {built, number} of {total, number} objects"
 "load.percent" = "{percent, number}%"
 "load.waiting" = "Preparing…"
+"load.stage_read" = "Reading the scene card…"
+"load.stage_cards" = "Converting character cards {done, number} / {total, number}"
+"load.stage_objects" = "Reading scene objects {done, number} / {total, number}"
+"load.stage_open" = "Opening the scene…"
+"load.stage_release" = "Releasing the previous scene…"

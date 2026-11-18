@@ -12,6 +12,110 @@
 #include "Widgets/Images/SThrobber.h"
 #include "Widgets/Layout/SDPIScaler.h"
 #include "Widgets/Notifications/SProgressBar.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SWindow.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "Dom/JsonObject.h"
+
+namespace
+{
+	/** The step before the build that holds the game thread (see BeginStage). Depth: Begin / End pairs nest (opening a
+	 *  KStudio scene file imports it inside), the outermost names the scene. */
+	struct FLoadStage
+	{
+		int32 Depth = 0;
+		FString Scene, Text, Step;
+		/** The scene the last steps were for: the build after them shows it (an imported KStudio scene has no file of
+		 *  its own until it is saved, so the studio's File is empty then). */
+		FString LastScene;
+		int32 Done = 0, Total = 0;
+		double LastPaint = 0.;
+	};
+	FLoadStage& Stage() { static FLoadStage S; return S; }
+
+	/** Paints the game window now: the caller holds the game thread, so Slate would not otherwise. Twice, because the
+	 *  window has two buffers and either may be the one shown while the frame is held (as SOKStudioPanel::PaintStatus). */
+	void PaintNow(bool bForce)
+	{
+		FLoadStage& S = Stage();
+		const double Now = FPlatformTime::Seconds();
+		if (!bForce && Now - S.LastPaint < 0.2) return;
+		if (!IsInGameThread() || !FSlateApplication::IsInitialized() || !UOKStudioGame::Get() || !GEngine || !GEngine->GameViewport) return;
+		const TSharedPtr<SWindow> Window = GEngine->GameViewport->GetWindow();
+		if (!Window.IsValid()) return;
+		S.LastPaint = Now;
+		FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
+		FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
+		// OK_STUDIO_STAGE_SHOT=<folder>: a picture of the window at each new step, for checking what the user sees while
+		// the game thread is held (no frame runs then, so the profile's frame-based screenshots cannot take one).
+		static const FString ShotDir = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STUDIO_STAGE_SHOT"));
+		if (bForce && !ShotDir.IsEmpty())
+		{
+			static int32 Shot = 0;
+			TArray<FColor> Pixels;
+			FIntVector Size;
+			if (FSlateApplication::Get().TakeScreenshot(Window.ToSharedRef(), Pixels, Size) && Size.X > 0 && Size.Y > 0)
+			{
+				for (FColor& C : Pixels) C.A = 255;
+				TArray64<uint8> Png;
+				FImageUtils::PNGCompressImageArray(Size.X, Size.Y, TArrayView64<const FColor>(Pixels.GetData(), Pixels.Num()), Png);
+				FFileHelper::SaveArrayToFile(Png, *(ShotDir / FString::Printf(TEXT("stage_%02d.png"), ++Shot)));
+			}
+		}
+	}
+}
+
+void SOKStudioLoadOverlay::BeginStage(const FString& SceneName)
+{
+	FLoadStage& S = Stage();
+	if (S.Depth++ == 0) { S.Scene = SceneName; S.Step = TEXT("load.waiting"); S.Text = OKStudioT(TEXT("load.waiting")); S.Done = S.Total = 0; PaintNow(true); }
+}
+
+void SOKStudioLoadOverlay::SetStage(const TCHAR* Step, const FString& Text, int32 Done, int32 Total)
+{
+	FLoadStage& S = Stage();
+	if (S.Depth <= 0) return;
+	const bool bNewStep = S.Step != Step;
+	S.Step = Step;
+	S.Text = Text;
+	S.Done = Done;
+	S.Total = Total;
+	PaintNow(bNewStep);
+}
+
+void SOKStudioLoadOverlay::EndStage()
+{
+	FLoadStage& S = Stage();
+	if (S.Depth > 0 && --S.Depth == 0) { S.Text.Reset(); S.LastScene = MoveTemp(S.Scene); S.Scene.Reset(); }
+}
+
+TSharedRef<FJsonObject> SOKStudioLoadOverlay::StateJson(const UOKStudioGame* InGame)
+{
+	TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+	const FLoadStage& S = Stage();
+	int32 Built = 0, Total = 0;
+	const bool bBuilding = Progress(InGame, Built, Total);
+	O->SetBoolField(TEXT("shown"), S.Depth > 0 || bBuilding);
+	if (S.Depth > 0)
+	{
+		O->SetStringField(TEXT("scene"), S.Scene);
+		O->SetStringField(TEXT("step"), S.Step);
+		O->SetStringField(TEXT("text"), S.Text);
+		O->SetNumberField(TEXT("done"), S.Done);
+		O->SetNumberField(TEXT("total"), S.Total);
+	}
+	else if (bBuilding)
+	{
+		O->SetStringField(TEXT("scene"), InGame && !InGame->File.IsEmpty() ? FPaths::GetBaseFilename(InGame->File) : S.LastScene);
+		O->SetStringField(TEXT("step"), TEXT("build"));
+		O->SetStringField(TEXT("text"), Built == 0 ? OKStudioT(TEXT("load.waiting"))
+			: OKStudioMsg(TEXT("load.progress"), {{TEXT("built"), Built}, {TEXT("total"), Total}}));
+		O->SetNumberField(TEXT("done"), Built);
+		O->SetNumberField(TEXT("total"), Total);
+	}
+	return O;
+}
 
 bool SOKStudioLoadOverlay::Progress(const UOKStudioGame* InGame, int32& OutBuilt, int32& OutTotal)
 {
@@ -92,17 +196,19 @@ void SOKStudioLoadOverlay::Construct(const FArguments& InArgs)
 EVisibility SOKStudioLoadOverlay::Shown() const
 {
 	int32 Built, Total;
-	return Progress(Game.Get(), Built, Total) ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
+	return Stage().Depth > 0 || Progress(Game.Get(), Built, Total) ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
 }
 
 FText SOKStudioLoadOverlay::SceneName() const
 {
+	if (Stage().Depth > 0) return FText::FromString(Stage().Scene);
 	const UOKStudioGame* G = Game.Get();
-	return FText::FromString(G && !G->File.IsEmpty() ? FPaths::GetBaseFilename(G->File) : FString());
+	return FText::FromString(G && !G->File.IsEmpty() ? FPaths::GetBaseFilename(G->File) : Stage().LastScene);
 }
 
 FText SOKStudioLoadOverlay::ProgressText() const
 {
+	if (Stage().Depth > 0) return FText::FromString(Stage().Text);
 	int32 Built, Total;
 	if (!Progress(Game.Get(), Built, Total)) return FText::GetEmpty();
 	if (Built == 0) return FText::FromString(OKStudioT(TEXT("load.waiting")));
@@ -111,6 +217,8 @@ FText SOKStudioLoadOverlay::ProgressText() const
 
 FText SOKStudioLoadOverlay::PercentText() const
 {
+	// Before the build there is no share of the whole to give: the steps differ too much in length.
+	if (Stage().Depth > 0) return FText::GetEmpty();
 	int32 Built, Total;
 	if (!Progress(Game.Get(), Built, Total) || Total <= 0) return FText::GetEmpty();
 	return FText::FromString(OKStudioMsg(TEXT("load.percent"), {{TEXT("percent"), int32(100.0 * Built / Total)}}));
@@ -118,6 +226,8 @@ FText SOKStudioLoadOverlay::PercentText() const
 
 TOptional<float> SOKStudioLoadOverlay::Fraction() const
 {
+	// A step that counts (cards converted, objects read) fills the bar for that step.
+	if (Stage().Depth > 0) return Stage().Total > 0 ? float(Stage().Done) / float(Stage().Total) : 0.f;
 	int32 Built, Total;
 	if (!Progress(Game.Get(), Built, Total) || Total <= 0) return 0.f;
 	return float(Built) / float(Total);

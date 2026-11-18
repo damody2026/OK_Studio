@@ -3,3 +3,8 @@
 "load.progress" = "{total, number} 個中 {built, number} 個を構築済み"
 "load.percent" = "{percent, number}%"
 "load.waiting" = "準備中…"
+"load.stage_read" = "シーンカードを読み込み中…"
+"load.stage_cards" = "キャラカードを変換中 {done, number} / {total, number}"
+"load.stage_objects" = "シーンのオブジェクトを整理中 {done, number} / {total, number}"
+"load.stage_open" = "シーンを開いています…"
+"load.stage_release" = "前のシーンを解放中…"

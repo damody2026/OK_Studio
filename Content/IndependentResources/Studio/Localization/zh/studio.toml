@@ -4,3 +4,9 @@
 "load.progress" = "已建 {built, number} / 共 {total, number} 個物件"
 "load.percent" = "{percent, number}%"
 "load.waiting" = "準備中…"
+# 建構之前的步驟（匯入原作場景、開啟場景檔）：它們佔住遊戲執行緒，覆蓋層顯示正在做哪一步。
+"load.stage_read" = "讀取場景卡…"
+"load.stage_cards" = "轉換角色卡 {done, number} / {total, number}"
+"load.stage_objects" = "整理場景物件 {done, number} / {total, number}"
+"load.stage_open" = "開啟場景…"
+"load.stage_release" = "釋放上一個場景…"

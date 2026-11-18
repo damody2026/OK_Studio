@@ -39,6 +39,8 @@
 #include "OKStudioImport.h"
 #include "OKStudioImportSettings.h"
 #include "SOKStudioLoadOverlay.h"
+#include "OKStudioText.h"
+#include "Misc/ScopeExit.h"
 #include "OKSceneCard.h"
 #include "KKAnimatedPng.h"
 #include "NiagaraComponent.h"
@@ -848,10 +850,16 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 {
 	FString Note;
 	const double OpenStart = FPlatformTime::Seconds();
+	// The open holds the game thread (a KStudio scene is imported inside it): the loading box shows what it is doing
+	// until the build takes over with its own progress.
+	SOKStudioLoadOverlay::BeginStage(FPaths::GetBaseFilename(Path));
+	ON_SCOPE_EXIT { SOKStudioLoadOverlay::EndStage(); };
+	SOKStudioLoadOverlay::SetStage(TEXT("load.stage_open"), OKStudioT(TEXT("load.stage_open")));
 	if (!FOKSceneCard::Open(Path, Document, OutError, &Note)) return false;
 	const double Opened = FPlatformTime::Seconds();
 	UE_LOG(LogTemp, Display, TEXT("OK studio: opened %s in %.2f s: %s"), *Path, Opened - OpenStart, *Note);
 	FOKStudioSettings::Get().UseScene(Path);
+	SOKStudioLoadOverlay::SetStage(TEXT("load.stage_release"), OKStudioT(TEXT("load.stage_release")));
 	// A KStudio scene is imported, not edited in place: saving writes an OK scene card beside it.
 	File = FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? FString() : Path;
 	ReleaseSceneResources();

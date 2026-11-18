@@ -31,6 +31,20 @@ public:
 	/** Objects built and in all for the scene being loaded; false when nothing is loading. */
 	static bool Progress(const UOKStudioGame* Game, int32& OutBuilt, int32& OutTotal);
 
+	/** The steps before the build hold the game thread (importing a KStudio scene: the Rust export, converting its
+	 *  cards in child processes, the walk over its objects; opening a scene file), so nothing ticks or paints by
+	 *  itself. They say what they are doing here, and the overlay shows it, painted on the spot (a new step at once, the same step at most every 0.2 s; only Slate is drawn, the 3D view is not rendered again).
+	 *  BeginStage names the scene and shows the box; EndStage hands over to the build's own progress. Painting
+	 *  happens only while a studio runs in a game viewport (an import from the editor or a commandlet paints nothing). */
+	static void BeginStage(const FString& SceneName);
+	/** The current step (its text id: a new id paints at once, the same one only on the 0.2 s clock), its words and,
+	 *  when it counts something, how far it is (Total <= 0: no count). */
+	static void SetStage(const TCHAR* Step, const FString& Text, int32 Done = 0, int32 Total = 0);
+	static void EndStage();
+	/** What the box shows now, for the control channel (studio_state "loading"): shown, scene, step (text id), text,
+	 *  done / total of the step or of the build ("build" while objects build). */
+	static TSharedRef<class FJsonObject> StateJson(const UOKStudioGame* Game);
+
 private:
 	TWeakObjectPtr<UOKStudioGame> Game;
 	EVisibility Shown() const;
