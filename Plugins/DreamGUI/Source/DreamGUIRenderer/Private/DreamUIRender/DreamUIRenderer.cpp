@@ -4,6 +4,8 @@
 #include "DreamUIRender/DreamUIRenderer.h"
 #include "DreamUIRender/DreamUICompositor.h"
 #include "DreamUIRender/DreamUIDeferredRelease.h"
+#include "RHITextureReference.h"
+#include "RHIBreadcrumbs.h"
 #include "DreamUIRender/DreamUIShaders.h"
 #include "DreamUIRender/DreamUIBaseShaders.h"
 #include "Materials/Material.h"
@@ -1012,6 +1014,22 @@ void FDreamUIRenderer::DrawBuiltInBatch(FRHICommandList& RHICmdList, FGraphicsPi
 	PSParameters.DreamUI_BackdropTex = bBackdrop ? InBackdrop->Texture : GBlackTexture->TextureRHI.GetReference();
 	SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PSParameters);
 
+	// OpenKoikatsu (2026-11-19): every built-in draw names the textures it binds in the GPU breadcrumbs, so a page fault
+	// DRED or Aftermath puts on one of these draws says which texture it was (the reader's open GPU page fault,
+	// Docs/CARD_READER_DREAMGUI.md). Only recorded when breadcrumbs are (-gpucrashdebugging, r.GPUCrashDebugging).
+	auto Named = [](FRHITextureReference* InReference) -> FName
+	{
+		FRHITexture* Texture = InReference != nullptr ? InReference->GetReferencedTexture() : nullptr;
+		return Texture != nullptr ? Texture->GetName() : FName(TEXT("fallback"));
+	};
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIDraw", "DreamUIDraw main=%s font=%s widget=%s clip=%s rect=%s paint=%s mask0=%s",
+		RHI_BREADCRUMB_FIELD("Main", Named(Params.MainTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Font", Named(Params.FontTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("WidgetData", Named(Params.WidgetDataTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("ClipData", Named(Params.ClipDataTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("RectBlock", Named(Params.RectBlockDataRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Paint", Named(Params.PaintDataRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Mask0", Named(Params.MaskTexture0RHI.GetReference())));
 	RHICmdList.SetStreamSource(0, Batch.GetVertexBuffer(), 0);
 	RHICmdList.DrawIndexedPrimitive(Batch.GetIndexBuffer(), 0, 0, Batch.NumVerts, 0, Mesh.Elements[0].NumPrimitives, Mesh.Elements[0].NumInstances);
 }

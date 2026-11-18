@@ -5791,3 +5791,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **做錯的事**：看到 LogStreaming `Failed to read file ''` 和當機在同一時段，就推定是 `CreateTransient` 的縮圖被串流器搬動，給四處縮圖加了 NeverStream。
 - **量出來的**：`ListTextures` 顯示所有 transient 貼圖本來就是 `Streaming=NO`（只有一個 mip 的貼圖串流器不管）；串流中的只有 13 張引擎內建貼圖，警告是讀它們的 mip 失敗。加了 NeverStream 後警告照樣出現。改動已撤回。
 - **再犯前檢查**：「同時出現」的警告要先用 `ListTextures`、`stat streaming` 之類的工具確認它指的是哪一批資源，再改程式。
+
+## 2026-11-19：讀卡器第三條 GPU PageFault 暫停追查（未結案，已取證）（e-fork-2）
+
+- 症狀、情境、排除的五條與 dump 位置都在 `Docs/CARD_READER_DREAMGUI.md` 的「未結案」一節。結論是時序或競態（GBV 序列化後不重現）。
+- 協調者裁定不做「繪製參數快照化」這種大改：內建繪製本來就在 render thread 用 TextureReference 解析，快照化能換掉的東西不明確，風險大於收益。改加 GPU breadcrumb（每個 DreamGUI 繪製寫下綁定的貼圖名稱），下次發生時直接對名字。
+- 下一步要用 Nsight Graphics 開 Aftermath dump，這台機器沒裝。

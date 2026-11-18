@@ -215,6 +215,29 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - **資料貼圖變大**：`DreamUIDataTexture` 變大時記一行 log（`DreamUIDataTexture <名稱> grows to <列數> rows`），並先等 RDG 非同步執行完成才換貼圖與更新參照，供下次當機時對時間點。
 - **Aftermath dump**：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`。要用 Nsight Graphics 打開才看得到出錯的著色器與綁定的資源；這台機器只有 Nsight Compute／Systems／VS Edition，沒有 Nsight Graphics。
 
+## 未結案：讀卡器第三條 GPU PageFault（2026-11-19 暫停追查，已取證）
+
+| 項目 | 內容 |
+|---|---|
+| 症狀 | `LogD3D12RHI: Error: GPU crash detected`，`DXGI_ERROR_DEVICE_HUNG`／`PageFault at VA GPUAddress …`，Aftermath `MMU Fault Error`，著色器位址每次都是 `fragment_02 @ 0x00045f90` |
+| 位置 | DRED：`FrameRenderFinish › RenderFinish › ViewFamilyExtension › ViewExtension(0)`（DreamGUI）裡的**第一個** `DrawIndexedInstanced` |
+| 情境 | 都在連續瀏覽卡片、切分頁時，約 7–15 分鐘或開十幾張卡之後；打包版三次（stage `EFork1119g`、`EFork1119h`、`EFork1119i`），e-cardload 用 `E:\OKPackage\TestCards-20261118` 兩次（第 12、25 張） |
+| 結論 | 幾乎確定是時序／競態：序列化提交（GBV）後不重現，故障位址不屬於任何追蹤到的資源 |
+| 修了的不是它 | D3D12 貼圖池整理（已關）、縮圖改貼圖池、字型圖集保留、DrawTextureHolds：它們各自修掉了前兩條，這條照樣出現 |
+| 加了的防護 | `FDreamUIDeferredRelease`（放開的 GPU 資源晚 3 幀）、資料貼圖變大前等 RDG 非同步執行：保留，但不是這條的解 |
+
+**排除了的五條**
+
+1. 資源提前釋放：開 `r.D3D12.TrackAllAllocations=1` 時，故障位址不屬於存活資源，也不屬於最近 100 幀內釋放的資源；加了延遲釋放佇列照樣當。
+2. 字型圖集 `Texture2DArray` slice 越界：`Sample` 會夾 index、`Load` 越界回 0，上傳端也檢查 slice 數。圖集擴張都在當機前 4–14 分鐘，不是緊接著。
+3. 跨幀懸空描述子：繪製參數在 game thread 用 `.Get()` 取 `UTexture*`，到 render command 才解析成 `TextureReference`（引用計數持有，貼圖釋放時改指預設貼圖）；UObject 要等 render thread 處理完它的 release 才釋放。
+4. NeverStream／串流器搬動 transient 貼圖：`ListTextures` 量到所有 transient 貼圖都是 `Streaming=NO`。`Failed to read file ''` 是 13 張引擎內建貼圖讀不到 mip。
+5. GBV：`-gpuvalidation` 21 輪、約 250 次開卡，0 個 D3D12 錯誤也不當。
+
+**取證**：DreamGUI 每個內建繪製在 GPU breadcrumb 寫一筆 `DreamUIDraw main=… font=… widget=… clip=… rect=… paint=… mask0=…`（綁定的每張貼圖的 RHI 名稱）。用 `-gpucrashdebugging` 啟動時，下一次 DRED／Aftermath 指到那個 draw，就能直接看出是哪張貼圖。
+
+**下一步需要的工具**：用 Nsight Graphics 打開 Aftermath dump，就能直接點名出錯的著色器與資源，這台機器沒有裝（只有 Nsight Compute／Systems／VS Edition），要不要裝由使用者決定。dump：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`；log：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-g2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-h2\pagefault.log`、`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\pagefault.log`。
+
 ## 「沒按滑鼠鍵，視野也會動」的排查（2026-11-18）
 
 使用者回報讀卡器的視野在滑鼠左鍵沒按住時會跟著滑鼠動。查過的方向與結論：
