@@ -483,3 +483,16 @@ UE 5.8 里 `TStrongObjectPtr` 就是用 UObject refcount 实作的，所以引�
 
 log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张）、
 `Saved/Logs/CardReader/20261119-070006-26970b24.log`（关图片，第 12 张）、`Saved/Crashes` 的 `UECC-Windows-*`。
+
+### 2026-11-19 07:00–07:12 e-fork-2：用短配方排除 bindless 描述子堆擴張
+
+用 e-cardload 的短配方（新版 UI、`TestCards-20261118`、逐張開不同的卡、每張停 6 秒，腳本只開卡不翻頁），stage `EFork1119u`，`-gpucrashdebugging`。
+
+| 條件 | 結果 |
+|---|---|
+| 不改設定 | 第 9 張、269 秒卡死（`E:\OpenKoikatsu\Saved\Reports\reader-dwell-base-20261119\`） |
+| bindless 資源描述子堆一開始就 1,000,000（`-ini:Engine:[SystemSettings]:D3D12.Bindless.ResourceDescriptorHeapSize=1000000`，log 確認 `Initializing allocators with 1000000 Resource`，不會擴張） | 第 10 張、118 秒卡死（`E:\OpenKoikatsu\Saved\Reports\reader-dwell-heap1m-20261119\`） |
+
+**為什麼查這條**：引擎 `BaseWindowsEngine.ini` 把描述子堆的起始大小設成 32768（引擎程式預設是 100 萬），滿了會翻倍並換一個 GPU 堆（`FD3D12BindlessDescriptorAllocator::ResizeGrowAndAllocate`），而「開過幾套不同資源」正好會讓描述子數量越過界。**結果不成立**：起始就是 100 萬、不會擴張，照樣在第 10 張當。
+
+**當時 GPU 上的狀態（不改設定那趟）**：DreamGUI 這一幀前 47 個 draw 已完成，第 48、49 個（精靈圖集、白底）在跑，後面 49 個還沒開始；98 個 draw 綁的是同一組貼圖（資料貼圖四張、字型圖集、精靈圖集或白底）。載入在 8 秒前完成，中間 log 沒有任何 DreamGUI 的變大、擴張或重建紀錄。DreamGUI 的著色器只綁固定的幾張貼圖，沒有動態描述子索引。所以出錯的位址比較像來自這兩個 draw 自己讀到的東西（頂點資料、或資料貼圖裡的列內容），而不是綁定換了。
