@@ -8,7 +8,7 @@
 --     --no-tour     no warps (only the start position)
 --     --no-slot     the caller holds an Unreal slot already (Tools/unreal_slot.lua)
 --     --memreport   "memreport -full" at the end of the idle samples
---     --shots       a screenshot 10 s after each warp, and on --walk (control_shots beside the run's report)
+--     --shots       a screenshot 10 s after each warp, and on --walk (ok-game-mcp game_screenshot)
 --     --soak MIN    after the tour, MIN minutes of rounds: warp to a far place, then walk to a heroine for 45 s (the
 --                   autopilot, /navigate); each round's lowest commit goes to <tag>.json soak_rounds, so memory that
 --                   keeps climbing shows as a rising floor (soak_floor_first_gb / soak_floor_last_gb)
@@ -84,11 +84,16 @@ $os = Get-CimInstance Win32_OperatingSystem
   return { commit = v[1], ws = v[2], peak_commit = v[3], peak_ws = v[4], gpu = v[5], free_commit = v[6] }
 end
 
-local function http(method, route, body)
-  local args = { "curl.exe", "-s", "-m", "20", "-X", method, ("http://127.0.0.1:%d%s"):format(control, route) }
-  if body then args[#args + 1] = "-H"; args[#args + 1] = "Content-Type: application/json"; args[#args + 1] = "-d"; args[#args + 1] = body end
-  local r = proc.run(args, { hide = true, capture = true })
-  return r.stdout or ""
+-- The game is driven through ok-game-mcp only (user 2026-11-18: one path for controlling the game, so a control that
+-- changes in the MCP layer changes here too). Migrated from curl on the control endpoints; do not add curl calls back.
+-- OK_CONTROL_PORT pins the tools to this probe's sandbox game. Returns the tool's printed text and whether it worked.
+require("okfs").setenv("OK_CONTROL_PORT", tostring(control))
+local mcp_exe = path.join(root, "Tools/ok-game-mcp/target/release/ok-game-mcp.exe")
+local function mcp(tool, args)
+  local body = (args and next(args)) and json.encode(args) or "{}" -- an empty Lua table encodes as []
+  local r = proc.run({ mcp_exe, "call", tool, body }, { hide = true, capture = true })
+  local out = r.ok and (r.stdout or "") or ((r.stdout or "") .. (r.stderr or ""))
+  return out:gsub("%s+$", ""), r.ok
 end
 
 -- One test holds the machine at most 20 minutes (user 2026-11-15, Tools/unreal_slot.lua): a soak runs in segments of
@@ -156,7 +161,7 @@ local ok_run, err = pcall(function()
     while os.time() < deadline do
       record()
       local text = log and path.is_file(log) and path.read_text(log) or ""
-      if text:find("Load map complete", 1, true) and http("GET", "/health"):match('"ok"%s*:%s*true') then return end
+      if text:find("Load map complete", 1, true) and select(2, mcp("game_state")) then return end
       sleep(2)
     end
   end
@@ -170,7 +175,7 @@ local ok_run, err = pcall(function()
   -- The next segment (one test holds the machine at most 20 minutes): stop the game, give the machine back, queue
   -- again, relaunch, and let the heroines finish installing before going on.
   local function new_segment(left)
-    http("POST", "/navigate", json.encode({ stop = true }))
+    mcp("game_call", { path = "/navigate", body = { stop = true } })
     proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true })
     pid = nil
     release()
@@ -184,13 +189,13 @@ local ok_run, err = pcall(function()
     local settle_end = os.time() + o.seconds
     while os.time() < settle_end do record(); sleep(2) end
   end
-  if o.exec then for c in o.exec:gmatch("[^;]+") do say("exec " .. c .. ": " .. http("POST", "/exec", json.encode({ command = c }))) end end
+  if o.exec then for c in o.exec:gmatch("[^;]+") do say("exec " .. c .. ": " .. mcp("game_exec", { command = c })) end end
   phase = "idle"
   local idle_end = os.time() + o.seconds
   while os.time() < idle_end do record(); sleep(2) end
   -- --memreport: where the memory is (Saved/Profiling/MemReports under the stage's OpenKoikatsu folder).
   if o.memreport then
-    say("memreport: " .. http("POST", "/exec", json.encode({ command = "memreport -full" })))
+    say("memreport: " .. mcp("game_exec", { command = "memreport -full" }))
     -- it writes ~13 MB over several seconds; the game must not be stopped before it is done
     local t_end = os.time() + 30
     while os.time() < t_end do record(); sleep(2) end
@@ -199,11 +204,11 @@ local ok_run, err = pcall(function()
     -- Far corners of the city: each warp makes the streamed map load the cells round him and drop the old ones.
     for _, place in ipairs({ "department", "boys_dorm", "skating", "gym", "church", "department" }) do
       phase = "tour:" .. place
-      say("warp " .. place .. ": " .. http("POST", "/warp", json.encode({ place = place })))
+      say("warp " .. place .. ": " .. mcp("game_warp", { place = place }))
       local t_end, shot = os.time() + 25, os.time() + 10
       while os.time() < t_end do
         record(); sleep(2)
-        if o.shots and shot and os.time() >= shot then say("shot " .. place .. ": " .. http("POST", "/screenshot", "{}")); shot = nil end
+        if o.shots and shot and os.time() >= shot then say("shot " .. place .. ": " .. mcp("game_screenshot")); shot = nil end
       end
     end
   end
@@ -220,7 +225,7 @@ local ok_run, err = pcall(function()
     local route = { "department", "boys_dorm", "skating", "gym", "church", "department" }
     if o.route then route = {}; for id in o.route:gmatch("[^,]+") do route[#route + 1] = id end end
     local function where()
-      local st = http("GET", "/state")
+      local st = mcp("game_state", { full = true })
       local ok_s, t = pcall(json.decode, st)
       if not ok_s or type(t) ~= "table" or type(t.player) ~= "table" then return nil end
       -- his position is under "player"; activity.nav_point is true while the autopilot leads him to a spot or door
@@ -228,7 +233,7 @@ local ok_run, err = pcall(function()
     end
     local function to_start(place)
       phase = "walk_start"
-      say("warp " .. place .. " (start of the walk): " .. http("POST", "/warp", json.encode({ place = place })))
+      say("warp " .. place .. " (start of the walk): " .. mcp("game_warp", { place = place }))
       local t_end = os.time() + 30
       while os.time() < t_end do record(); sleep(2) end
     end
@@ -242,7 +247,7 @@ local ok_run, err = pcall(function()
         to_start(from)
       end
       phase = "walk:" .. dest
-      say(("walk %s -> %s: %s"):format(from, dest, http("POST", "/navigate", json.encode({ place = dest }))))
+      say(("walk %s -> %s: %s"):format(from, dest, mcp("game_call", { path = "/navigate", body = { place = dest } })))
       local door = doors[dest]
       local leg_start, still_since, lx, ly = os.time(), os.time(), nil, nil
       local why = "timeout"
@@ -250,7 +255,7 @@ local ok_run, err = pcall(function()
       while os.time() - leg_start < o.leg do
         record(); sleep(2)
         -- --shots: the camera behind him looks down the street ahead, where the loading range's edge is
-        if o.shots and os.time() >= next_shot then say("shot walking: " .. http("POST", "/screenshot", "{}")); next_shot = os.time() + 30 end
+        if o.shots and os.time() >= next_shot then say("shot walking: " .. mcp("game_screenshot")); next_shot = os.time() + 30 end
         local x, y, nav = where()
         if x then
           if door and math.sqrt((x - door[1]) ^ 2 + (y - door[2]) ^ 2) < 600 then why = "arrived"; break end
@@ -262,9 +267,9 @@ local ok_run, err = pcall(function()
       end
       peak.walk_legs[#peak.walk_legs + 1] = ("%s -> %s: %s after %d s"):format(from, dest, why, os.time() - leg_start)
       say(peak.walk_legs[#peak.walk_legs])
-      if o.shots then say("shot at " .. dest .. ": " .. http("POST", "/screenshot", "{}")) end
+      if o.shots then say("shot at " .. dest .. ": " .. mcp("game_screenshot")) end
     end
-    http("POST", "/navigate", json.encode({ stop = true }))
+    mcp("game_call", { path = "/navigate", body = { stop = true } })
     -- standing where the walk ended (he walked there: still a walking sample, the cells round him settle); with
     -- --shots a look round (four yaws) for buildings popping in at the edge of the loading range
     if o.dwell > 0 then
@@ -275,9 +280,9 @@ local ok_run, err = pcall(function()
       while os.time() < t_end do
         record(); sleep(2)
         if yaws[k] and os.time() >= t_end - o.dwell + 8 * k then
-          http("POST", "/look", json.encode({ yaw = yaws[k], pitch = -5 }))
+          mcp("game_look", { yaw = yaws[k], pitch = -5 })
           sleep(2)
-          say(("shot yaw %d: %s"):format(yaws[k], http("POST", "/screenshot", "{}")))
+          say(("shot yaw %d: %s"):format(yaws[k], mcp("game_screenshot")))
           k = k + 1
         end
       end
@@ -294,18 +299,18 @@ local ok_run, err = pcall(function()
       round = round + 1
       local place, girl = places[(round - 1) % #places + 1], (round - 1) % 5 + 1
       phase = ("soak%d:%s"):format(round, place)
-      say("warp " .. place .. ": " .. http("POST", "/warp", json.encode({ place = place })))
+      say("warp " .. place .. ": " .. mcp("game_warp", { place = place }))
       local floor_before = math.huge
       local t_end = os.time() + 20
       while os.time() < t_end do record(); sleep(2) end
-      say("walk to girl " .. girl .. ": " .. http("POST", "/navigate", json.encode({ girl = girl })))
+      say("walk to girl " .. girl .. ": " .. mcp("game_call", { path = "/navigate", body = { girl = girl } }))
       t_end = os.time() + 45
       while os.time() < t_end do local s = record(); if s then floor_before = math.min(floor_before, s.commit) end; sleep(2) end
       peak.soak_rounds[#peak.soak_rounds + 1] = gb(floor_before)
       say(("round %d floor %.2f GB"):format(round, gb(floor_before)))
       soak_left = soak_left - (os.time() - round_start)
     end
-    http("POST", "/navigate", json.encode({ stop = true }))
+    mcp("game_call", { path = "/navigate", body = { stop = true } })
   end
 end)
 csv:close()
