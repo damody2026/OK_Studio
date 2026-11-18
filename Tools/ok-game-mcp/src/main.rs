@@ -5,6 +5,7 @@
 //! engine console commands, game_trace_start/stop record an Unreal Insights trace. Docs/STREET_SOCIAL_GAME_MCP.md.
 mod control;
 mod game;
+mod reader;
 mod studio;
 
 use anyhow::{Context, Result, bail};
@@ -19,6 +20,7 @@ fn tools() -> Value {
     let mut all = street_tools();
     all.as_array_mut().expect("tool list").extend(studio::tools());
     all.as_array_mut().expect("tool list").extend(control::tools());
+    all.as_array_mut().expect("tool list").extend(reader::tools());
     all
 }
 
@@ -165,6 +167,11 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
 }
 
 fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
+    match name {
+        "reader_launch" => return Ok(json_text(reader::launch(&game.root, a)?)),
+        "reader_stop" => return Ok(json_text(reader::stop(a)?)),
+        _ => {}
+    }
     if name.starts_with("studio_") {
         return studio::run(&studio::Studio::locate(&game.root)?, name, a);
     }

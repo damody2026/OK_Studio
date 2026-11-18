@@ -5,7 +5,21 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Framework/Application/SlateApplication.h"
+// winnls.h defines these as macros; in a unity file after a source that included the Windows headers they replaced
+// DreamGUI's constants of the same names (DreamUITextData.h: C2059). Hidden for its headers only.
+#pragma push_macro("HIGH_SURROGATE_START")
+#pragma push_macro("HIGH_SURROGATE_END")
+#pragma push_macro("LOW_SURROGATE_START")
+#pragma push_macro("LOW_SURROGATE_END")
+#undef HIGH_SURROGATE_START
+#undef HIGH_SURROGATE_END
+#undef LOW_SURROGATE_START
+#undef LOW_SURROGATE_END
 #include "Interaction/UITextInput.h"
+#pragma pop_macro("LOW_SURROGATE_END")
+#pragma pop_macro("LOW_SURROGATE_START")
+#pragma pop_macro("HIGH_SURROGATE_END")
+#pragma pop_macro("HIGH_SURROGATE_START")
 #include "Core/Components/DreamWidget.h"
 #include "UnrealClient.h"
 #include "UObject/UObjectIterator.h"

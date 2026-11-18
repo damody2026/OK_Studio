@@ -22,7 +22,6 @@
 #include "Controls/DreamToggle.h"
 #include "Controls/DreamDropdown.h"
 #include "Controls/DreamTextInput.h"
-#include "Interaction/UITextInput.h"
 #include "Controls/DreamScrollBox.h"
 #include "Event/DreamEventSystem.h"
 #include "Event/DreamPointerEventData.h"
@@ -356,13 +355,9 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 		if(Search&&Search->Input)
 		{
 			Search->Input->SetPlaceholder(FText::FromString(TEXT("搜尋動作（名稱或編號，空格隔開多個詞）")));
-			// The panel holding it is mirrored again whenever its UMG children come or go: the search typed so far, and
-			// the edit itself, carry over to the new field (a field rebuilt mid-typing lost both, and the keys typed
-			// next, no field taking them, went to the game).
-			const TWeakObjectPtr<UWidget> Key(Source);
-			if(const FString* Kept=SearchTexts.Find(Key)){Search->Input->SetText(*Kept);C->Filter=Kept->TrimStartAndEnd();}
-			Search->Input->GetOnTextChangedEvent().AddWeakLambda(C,[this,C,Key](const FString& Text){SearchTexts.Add(Key,Text);C->Filter=Text.TrimStartAndEnd();C->Sync();});
-			if(RefocusSearch.IsValid()&&RefocusSearch==Key&&Search->Input->InputBehaviour)Search->Input->InputBehaviour->ActivateInput();
+			// Not kept across a rebuild of its panel: measured 2026-11-18 (ui_type while playing motions, switching outfit,
+			// drawers, tabs and cards) and no panel holding it was mirrored again; SyncAll logs it if one ever is.
+			Search->Input->GetOnTextChangedEvent().AddWeakLambda(C,[C](const FString& Text){C->Filter=Text.TrimStartAndEnd();C->Sync();});
 		}
 		C->Sync();return;
 	}
@@ -721,14 +716,11 @@ void UOKReaderScreen::SyncAll()
 		T->SetShown(IsUmgShown(S));
 		if(S->GetChildrenCount()!=Panels[I].Children)
 		{
+			// Logged only: a rebuild drops whatever was typed into a field under it (the motion search). Not seen in the
+			// 2026-11-18 measurement; this line says when it happens, before anything is built for it.
 			UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: %s children %d -> %d, mirrored again"),*S->GetName(),Panels[I].Children,S->GetChildrenCount());
 			Panels[I].Children=S->GetChildrenCount();const bool bHorizontal=Panels[I].bHorizontal;
-			// A motion search being typed into goes on in the field that replaces it.
-			RefocusSearch.Reset();
-			for(UOKDreamControl* C:Controls)if(IsValid(C)&&C->Companion.IsValid())
-				if(auto* Search=Cast<UOKDreamControl>(C->Companion.Get());Search&&Search->Input&&Search->Input->InputBehaviour&&Search->Input->InputBehaviour->IsInputActive())RefocusSearch=C->Source;
 			MirrorChildren(S,T,bHorizontal);
-			RefocusSearch.Reset();
 		}
 	}
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
@@ -760,12 +752,14 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 		bShownModelLayout=Controller->bModelLayout;ShowTab(bShownModelLayout?0:1);
 	}
 	if(!bBuilt)return;
-	// The UMG layer is not seen and takes no clicks; it must not hold the keyboard either. A key it held went to the
-	// hidden control (Enter committed the hidden motion list's choice and played a motion nobody picked).
-	if(FSlateApplication::IsInitialized())if(UOKCharacterController* G=Controller.Get();G&&(G->HasAnyUserFocus()||G->HasFocusedDescendants()))
+	// Logged only, once per entry: DreamGUI takes keys only while the game viewport has Slate's keyboard focus
+	// (FDreamUISlateInputSource::IsKeyForThisWorld), so focus inside the hidden UMG layer would leave its fields deaf.
+	// Measured 2026-11-18 with ui_focus (clicks, typing, motions, cards): never happened; nothing is done about it here.
+	if(FSlateApplication::IsInitialized())if(UOKCharacterController* G=Controller.Get())
 	{
-		UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: keyboard focus was in the hidden UMG layer; moved to the game viewport"));
-		FSlateApplication::Get().SetAllUserFocusToGameViewport();
+		const bool bUmgFocus=G->HasAnyUserFocus()||G->HasFocusedDescendants();
+		if(bUmgFocus&&!bUmgHadFocus)UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: keyboard focus is in the hidden UMG layer (DreamGUI fields get no keys until the viewport has it)"));
+		bUmgHadFocus=bUmgFocus;
 	}
 	TickResize();
 	SyncAll();

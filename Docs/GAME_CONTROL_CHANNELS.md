@@ -22,6 +22,10 @@
 
 ## MCP 工具
 
+MCP 沒載入的 session 用 `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call <工具> '<JSON>'`。**從 Windows PowerShell 5.1 呼叫時，JSON 裡的雙引號要寫成 `\"`**：`ok-game-mcp.exe call ui_mouse '{\"x\":1400,\"y\":123}'`。PowerShell 5.1 傳參數給原生程式時會把 `"` 吃掉，沒跳脫時送出去的是壞 JSON（`key must be a string`）。Git Bash 和 Lua 的 `os.execute` 沒有這個問題。
+
+**兩條輸入路徑要分清楚**：`ui_key` 直接送進 `PlayerController`，不經過任何 UI；`ui_type`／`ui_mouse` 走 Slate，和真鍵盤、真滑鼠一樣先給 UI（DreamGUI、UMG）再給遊戲。測 UI 收不收某個鍵、點不點得到某個控制項，只能用後者；用前者或系統按鍵模擬（SendKeys、SetCursorPos）測出來的現象不算數（2026-11-18 的誤判，見 `Docs/ERROR_LOG.md`）。
+
 | 工具 | 用途 |
 |---|---|
 | `game_instances` | 列出這個 checkout 所有執行中的遊戲（任何模式，手動開的也在內） |
