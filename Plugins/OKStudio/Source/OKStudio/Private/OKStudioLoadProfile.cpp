@@ -160,6 +160,8 @@ namespace
 				Row->SetNumberField(TEXT("syncs"), S.Syncs);
 				Row->SetNumberField(TEXT("starved_syncs"), S.StarvedSyncs);
 				Row->SetNumberField(TEXT("objects"), Game.Document ? Game.Document->Objects.Num() : 0);
+				// One per Sync is what the scope costs; many more would mean the saving moved into rebuilding the index.
+				Row->SetNumberField(TEXT("find_index_builds"), Game.Document ? Game.Document->FindIndexBuilds() : 0);
 				Rows.Add(MakeShared<FJsonValueObject>(Row));
 				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: %s pass=%d ready=%.0f ms (open+release=%.0f build=%.0f over %d frames) chars=%d (open=%.0f continue=%.0f build=%.0f) items=%d (build=%.0f: model=%.0f open=%.0f worker_open=%.0f spawn=%.0f node=%.0f cameras=%.0f) map=%.0f starved=%d/%d"),
 					*FPaths::GetCleanFilename(Scenes[Scene]), Pass, ReadyMs, LoadCallMs, ReadyMs - LoadCallMs, Frames,

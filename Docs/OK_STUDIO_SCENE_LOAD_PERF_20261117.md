@@ -172,3 +172,46 @@ OK_SCENE_PROFILE_LIST=F:/OpenKoikatsu/Saved/Reports/scene-load-f/list-b.txt OK_S
 2. **道具的 Unreal spawn**：搬走 `PrepareRuntimeMaterials` 之后剩 4.6 s，其中 2.1 s 是建 parts、0.84 s 是 `OKPrepareCookedRole` 剩下的部分（建每个实例自己的 MID，不能共用：颜色与 Material Editor 覆写是逐实例写进去的）。要再往下砍得共用同型号的 static mesh，那要动 `Plugins/KKUnityBundle`（三组共用）。
 3. **`Sync()` 每帧走过全部物件**：5867 道具场景里，`Sync` 总共 62 s，其中只有 23 s 是 `Build()`；其余约 39 s 是 8806 个物件 × 291 次 Sync 的回圈本身（世界变换、可见性、材质覆写比对）。只对「这一帧真的会变」的物件做事，是最后一块。
 4. `ready_ms` 是「物件都建完」，不是「材质都编译完」。拍照比对一定要等 shader 编译结束，否则比到的是编译进度（见 `Docs/ERROR_LOG.md` 的记录）。
+
+## 2026-11-18：`Sync()` 开 id 索引——Sync 自己快了 16 s，**整体反而慢 24.7%**
+
+`AOKSceneActor::Tick` 在 2437 行先调 `Sync()`，才在下一行建 `FFindScope`，所以 `Sync` 整段跑在 scope 之外，
+里头每个 `WorldTransform`／`IsShown` 沿父链的查找都是 `Objects` 的线性扫描（物件上千就是平方级）。
+改成在 `Sync()` 顶端自己开 scope，开关 `ok.Studio.SyncFindIndex`（预设 1，0 回到扫描）。
+
+**A/B**（`koikatu_cs0003420_2.okscene`：1 角色、5867 道具、2938 其他，共 8806 物件；冷开＝全新行程第一个场景、
+`OK_NOCACHE=1`、`RAYON_NUM_THREADS=8`、编辑器 `-game`、`OKStudio.ProfileSceneLoad 1 exit`、F 树 `7e003b86f` ＋
+未提交的计数器，**各一趟**）：
+
+| | 索引关 | 索引开 | |
+|---|---:|---:|---|
+| `ready_ms` | 111 924 | 139 555 | **+24.7%** |
+| `sync_world_ms`（`WorldTransform`＋`IsShown`） | 24 518 | **1 197** | −95.1% |
+| `sync_ms`（Sync 全部） | 79 160 | 63 008 | −20.4% |
+| `build_frames`／`syncs` | 418／419 | 919／920 | **+120%** |
+| `starved_syncs` | 99 | 238 | |
+| `sync_same_ms` | 788 | 1 460 | |
+| `sync_place_ms` | 3 008 | 5 047 | |
+| `item_open_worker_ms`（8 条 worker 合计） | 419 325 | 453 042 | +8% |
+| `find_index_builds` | 449 | 1 870 | 每次 Sync 1.07 vs 2.03 次 |
+
+**索引本身做到了它该做的事**：那 23–24 s 的父链查找是真的，也真的消掉了（−95.1%），Sync 自己少了 16.2 s；
+`find_index_builds / syncs` 关是 1.07、开是 2.03（Sync 自己一次 ＋ Tick 原本那次），没有「成本从扫描搬去重建」。
+
+**但整体变慢，机制是帧数**：每帧 Sync 以外的固定成本两边都约 80 ms（关 75.3、开 81.8，主要是把半成品场景画一遍），
+而 `Sync` 变便宜之后每帧只建 6.4 个道具（关是 14.0 个），帧数就从 418 翻到 919；919 × 80 ms 把省下的 16 s
+吃掉还倒赔 27.5 s。为什么每帧建得更少：`OKSceneActor.cpp:1474` 的 `bItemWaiting = ... && !PrepareItem(Object)`
+——**道具是在它的 worker session 准备好的那一帧才建**，所以每帧建几个只取决于「这一帧有多长」× worker 的产出速率。
+帧变短 → 每帧等到的更少 → 帧更多 → 画得更多次 → 还跟 worker 抢 CPU（worker 合计时间 +8%，产出速率从 53/s 掉到 42/s）。
+
+也就是说**这段载入是 worker 产出在计价，游戏执行绪是在陪跑**，而陪跑的单位成本是「画一次半成品场景」。
+每次 Sync 只花 68 ms（关是 189 ms），离 `ok.Studio.BuildSliceMs` 的 250 ms 与 `BuildsPerFrame` 的 96 都很远，
+所以瓶颈不在这两个旋钮。
+
+**没有结论的一趟**：同一张场景加大预算（`BuildsPerFrame 512`、`BuildSliceMs 2000`）跑了 16 分钟还没开完
+（基线 139 s），因 slot 到期被我中止，没有数字。日志只到场景开始建，没有 `scene load:` 那行。原因未查，
+不要拿它当「预算开大会更慢」的证据。
+
+**下一步**：既然贵的是「画半成品场景的次数」，就在建构期间限帧（例如 `bBuildsPending` 期间压到 10 FPS），
+让两边都少画几次，索引省下的 16 s 才会显示在 `ready_ms` 上。在那之前 `ok.Studio.SyncFindIndex` 的预设值
+还不能当成已验证的改善——它让 `Sync` 变快是实测，让整体变快还没有。

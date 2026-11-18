@@ -1609,11 +1609,17 @@ public:
 
 	void NotifyChanged() { OnChanged.Broadcast(); }
 
+	/** How many times FFindScope's index has been built. A scope's first lookup builds one, so a loading scene pays one
+	 *  per Sync; more than that means Objects changed under an open scope. Without this, a cost that moved out of the
+	 *  linear scan and into rebuilding the index would be invisible: the total would just not improve as much. */
+	int32 FindIndexBuilds() const { return FindIndexBuildCount; }
+
 private:
 	/** FFindScope's index: id -> position in Objects, valid for the array's storage and size it was built for. */
 	mutable TMap<int32, int32> FindIndex;
 	mutable const FOKSceneObject* FindIndexData = nullptr;
 	mutable int32 FindIndexNum = -1;
 	mutable int32 FindScopes = 0;
+	mutable int32 FindIndexBuildCount = 0;
 	const FOKSceneObject* FindIndexed(int32 Id) const;
 };

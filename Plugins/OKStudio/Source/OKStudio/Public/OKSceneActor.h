@@ -232,6 +232,12 @@ private:
 	float ShownSequenceTime = -1.f;
 	/** GFrameCounter of the last Sync that built an object. */
 	uint64 LastBuildFrame = 0;
+	/** t.MaxFPS as it was before a loading scene capped it (-1: not capped). See SetLoadFpsCap. */
+	float SavedMaxFps = -1.f;
+	/** Caps the frame rate while a scene builds, and puts it back afterwards (ok.Studio.LoadMaxFps). A loading scene
+	 *  is paced by the workers that open its items, and the game thread pays for drawing the half-built scene once per
+	 *  frame, so frames spent waiting cost real time (2026-11-18: 80 ms each, 919 of them). */
+	void SetLoadFpsCap(bool bOn);
 
 	struct FShown
 	{

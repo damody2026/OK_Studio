@@ -66,6 +66,20 @@ bool FOKSceneFindIndexTest::RunTest(const FString& Parameters)
 		TestNull(TEXT("an object removed inside the scope is gone"), Doc->Find(Added));
 		TestTrue(TEXT("removal leaves the rest where they were"), Doc->WorldTransform(Chain[5]).Equals(Deep, .0001f));
 	}
+	// One object removed and another added between two scopes, so the array's length and storage can both come back
+	// unchanged while the contents moved. An index kept from the first scope would answer "no such object" for the new
+	// id; the scope's entry throws its index away for exactly this, and this case is what forbids reusing it.
+	{
+		{ const UOKSceneDocument::FFindScope Scope(Doc); Doc->WorldTransform(Chain[5]); }
+		const int32 Doomed = Doc->Objects.Last().Id;
+		const int32 Was = Doc->Objects.Num();
+		TestTrue(TEXT("the last object is removed between the scopes"), Doc->RemoveObject(Doomed));
+		const int32 Added = Doc->AddObject(EOKSceneObjectKind::Item, TEXT("added between the scopes"), Chain[1]);
+		TestEqual(TEXT("the array is the length it was"), Doc->Objects.Num(), Was);
+		const UOKSceneDocument::FFindScope Scope(Doc);
+		TestNotNull(TEXT("the object added between the scopes is found"), Doc->Find(Added));
+		TestNull(TEXT("the object removed between the scopes is gone"), Doc->Find(Doomed));
+	}
 	return true;
 }
 #endif

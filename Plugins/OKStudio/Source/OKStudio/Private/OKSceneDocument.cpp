@@ -114,6 +114,7 @@ const FOKSceneObject* UOKSceneDocument::FindIndexed(int32 Id) const
 		for (int32 I = 0; I < Objects.Num(); ++I) FindIndex.Add(Objects[I].Id, I);
 		FindIndexData = Objects.GetData();
 		FindIndexNum = Objects.Num();
+		++FindIndexBuildCount;
 	};
 	if (FindIndexData != Objects.GetData() || FindIndexNum != Objects.Num()) Rebuild();
 	const int32* At = FindIndex.Find(Id);

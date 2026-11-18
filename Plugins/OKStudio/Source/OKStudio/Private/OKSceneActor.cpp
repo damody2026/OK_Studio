@@ -522,8 +522,17 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.Buil
 /** Tick opens the id index (FFindScope) for the passes below Sync, but Sync itself runs above that scope and so looked
  *  every object and every one of its parents up with a linear scan of Objects. In a scene of thousands that is
  *  quadratic, and Sync runs once per frame for as many frames as the build budget needs. 0 goes back to the scan. */
-static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 1,
-	TEXT("Sync looks objects up through the id index instead of scanning (1 by default). 0: scan, as before."));
+/*  Measured on 2026-11-18 (Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md): with the index the lookups cost 1.2 s instead
+ *  of 24.5 s and Sync itself 16 s less, but the whole open took 24.7% LONGER, because a cheaper Sync means shorter
+ *  frames, an item is built in the frame its worker has it ready, and every frame redraws the half-built scene for
+ *  80 ms. So this stays off until the frame rate during a build is capped (ok.Studio.LoadMaxFps): Sync being faster is
+ *  measured, the open being faster is not. */
+static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 0,
+	TEXT("Sync looks objects up through the id index instead of scanning. 0 (default): scan, as before."));
+/** While a scene builds, cap the frame rate to this (0: no cap). The load is paced by the workers opening items, so
+ *  the frames in between only redraw the half-built scene; drawing it fewer times leaves the workers more of the CPU. */
+static TAutoConsoleVariable<int32> CVarOkStudioLoadMaxFps(TEXT("ok.Studio.LoadMaxFps"), 0,
+	TEXT("Frame rate cap while a scene is building (0: no cap). Put back as the scene finishes."));
 int32 AOKSceneActor::ObjectBuildBudget()
 {
 	return FMath::Clamp(CVarOkStudioBuildsPerFrame.GetValueOnGameThread(), 0, 4096);
@@ -2431,9 +2440,31 @@ void AOKSceneActor::UpdateLooks(float DeltaSeconds, bool bApplyStaticPose)
 	}
 }
 
+void AOKSceneActor::SetLoadFpsCap(bool bOn)
+{
+	static IConsoleVariable* const MaxFps = IConsoleManager::Get().FindConsoleVariable(TEXT("t.MaxFPS"));
+	if (!MaxFps) return;
+	const int32 Cap = FMath::Clamp(CVarOkStudioLoadMaxFps.GetValueOnGameThread(), 0, 240);
+	if (bOn && Cap > 0)
+	{
+		// Remember what it was, once: the cap is set every frame of the build, and reading it back after the first
+		// frame would remember the cap itself.
+		if (SavedMaxFps < 0.f) SavedMaxFps = MaxFps->GetFloat();
+		if (MaxFps->GetFloat() != (float)Cap) MaxFps->Set((float)Cap, ECVF_SetByCode);
+	}
+	else if (SavedMaxFps >= 0.f)
+	{
+		MaxFps->Set(SavedMaxFps, ECVF_SetByCode);
+		SavedMaxFps = -1.f;
+	}
+}
+
 void AOKSceneActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	// The cap goes on while objects are still being built and comes off the moment they are not, so a finished scene
+	// runs at its own rate again. Sync clears bBuildsPending when it has built the last one.
+	SetLoadFpsCap(bBuildsPending && Document != nullptr);
 	if (bBuildsPending && Document) Sync();
 	// A sequence-driven scene shows SequenceTime instead of playing on its own.
     if (!SceneJson.IsEmpty()) ShowSequenceTime();
