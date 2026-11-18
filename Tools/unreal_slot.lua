@@ -40,7 +40,7 @@ local MAX_UNREAL = SLOTS + 1
 local RESERVE_GB = 25
 -- f-sceneload ranks first since 2026-11-18: the user named 開場景卡片優化 the top-priority line, and at rank 9 it sat behind four agents.
 -- Lower runs first; agents not listed rank after these.
-local PRIORITY = { ["f-sceneload"] = -20, ["e-cardload"] = -15, ["f-yvonne"] = -11, ["c-lowspec"] = -9, ["e-120fps"] = -5, ["e-120fps-quiet"] = -5, ["f-cover"] = -3, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
+local PRIORITY = { ["f-sceneload"] = -20, ["e-cardload"] = -25, ["f-yvonne"] = -11, ["c-lowspec"] = -9, ["e-120fps"] = -5, ["e-120fps-quiet"] = -5, ["f-cover"] = -3, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
 -- Agent names carry suffixes (f-yvonne-q1, e-fork-2): the longest listed name that equals the agent or is a "-"
 -- prefix of it gives the rank, so f-yvonne-q1 ranks as f-yvonne (2026-11-16: exact lookup left it at 9, behind e-120fps).
