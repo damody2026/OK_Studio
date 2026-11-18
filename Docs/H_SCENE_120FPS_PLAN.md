@@ -441,3 +441,37 @@ CPU 蒙皮加晃動跟隨約 1.8 ms。每幀大約是解算時間再加 3 ms 顯
 - **GC 總耗時那格為什麼缺**：這兩趟忘了開 `gc.DumpAnalyticsToLog 1`，game.log 只有收掉的物件數，沒有每次 GC 的分段耗時。之後的量測腳本已把它和 `log LogGarbage Log`、`t.HitchFrameTimeThreshold 15`、`stat dumphitches` 一起開。
 - 之後做了滴落的重用池（流下的水滴藏起來重用、地板污漬到 MaxFloorStains 上限時搬最舊那塊重用，MID 留在元件上、BodySetup 在 `bUseAsyncCooking=false` 時沿用）：stage EFps1118g。1118c 對 1118g 的獨佔量測（四類物件數、GC 總耗時、最差單幀、地板污漬目視）**因 C／E／F 整合暫停沒跑**，整合後補。
 - Niagara 不做池：會和 OwnedFX 的管理衝突，先不動。
+### 2026-11-18 重用池 A/B（ok.Paint.Pool，同一個 stage 交錯量測）
+
+`ok.Paint.Pool`（預設 1）：0 時液滴、滴落與地板污漬回到改動前的「用完就毀、下次新建」，所以同一個 stage（EFps1118h，base `BaseE1118A`）就能 A/B，不必再打改動前的版本，兩版之間也沒有別的差異。獨佔 slot，背景只有 MuMu 模擬器（整機約 11～15%）。順序 0→1、1→0 交錯各一趟；每趟同一張卡（女主 1，衣服 3100，姿勢 1046，體外射精 2005），開 `gc.DumpAnalyticsToLog 1`、`log LogGarbage Log`、`t.HitchFrameTimeThreshold 15`、`stat dumphitches`。
+
+插入期間 45 秒的淨垃圾（`obj list` → `obj gc` → `obj list` 的差）：
+
+| 類別 | Pool=0 第一趟 | Pool=0 第二趟 | Pool=1 第一趟 | Pool=1 第二趟 |
+|---|---|---|---|---|
+| KKAffineProceduralMeshComponent | 2,022 | 1,932 | 0 | 0 |
+| ProceduralMeshComponent | 522 | 853 | 0 | 0 |
+| MaterialInstanceDynamic | 2,544 | 2,785 | 0 | 0 |
+| BodySetup | 2,544 | 2,785 | 0 | 0 |
+| StaticMeshComponent（液滴） | 674 | 668 | 0 | 0 |
+| NiagaraComponent | 445 | 441 | 423 | 430 |
+| 淨垃圾合計 | 9,210 | 9,922 | 881 | 888 |
+
+Pool=1 剩下的 881～888：Niagara 約 430（這輪不動，要改用引擎元件池，會和 OwnedFX 衝突）、H 面板按鈕一排約 94×4（OKHSceneButton／ButtonSlot／TextBlock／WrapBoxSlot，要先量是不是每次開面板整排重建）、KKSpeechWave 約 82。
+
+GC（量測中自然觸發的那次＋量測剛結束那次；最差單幀是那次 GC 前後 1.5 秒內、名稱裡帶 GC 範圍的卡頓幀）：
+
+| | Pool=0 第一趟 | Pool=0 第二趟 | Pool=1 第一趟 | Pool=1 第二趟 |
+|---|---|---|---|---|
+| 量測中 GC：收掉物件 | 7,914 | 8,501 | 1,349 | 1,363 |
+| 量測中 GC：總耗時 | 31.8 ms | 34.5 ms | 13.2 ms | 11.1 ms |
+| 量測中 GC：最差單幀 | 18.7 ms | 23.1 ms | 16.9 ms | 22.9 ms |
+| 量測後 GC：收掉物件 | 14,226 | 9,429 | 518 | 513 |
+| 量測後 GC：總耗時 | 50.9 ms | 54.4 ms | 17.3 ms | 17.4 ms |
+| 量測後 GC：最差單幀 | 61.0 ms | 69.8 ms | 26.3 ms | 30.0 ms |
+
+- GC 總耗時是那次收集各段相加（Reachability、NotifyUnreachable、Purge 的多次 iteration），會分散到幾幀；對 120 FPS（8.3 ms）有意義的是最差單幀那列。
+- 量測中那次 GC 的最差單幀兩版都在 17～23 ms，沒拉開：物件少了，但 Reachability（約 4～6 ms，掃整個 16 萬物件）和固定開銷還在。物件多時（量測後那次，P0 9～14k）單幀才拉到 61～70 ms，Pool=1 是 26～30 ms。
+- 窗口內 ≥15 ms 的卡頓：P0 329／385，P1 24／191（P1 兩趟差很多，原因沒查）。最差的幾幀（56～107 ms）兩版都有，是按 H 面板按鈕那一刻 Slate 的 Draw Window，和池子無關。
+- FPS（每秒 `/fps` 取 8 次的平均，只看方向）：loop／fast／after，P0 113/109/110 與 101/74/90，P1 130/125/127 與 133/103/105。
+- 地板污漬：兩版射精後與再插入後同一鏡頭（orbit 90,35,160）各一張，污漬的形狀和位置一樣；image_diff 差最多的那塊是她的身體動作（不同時刻的姿勢），不是污漬。P0 每趟有 500～850 個 ProceduralMeshComponent 垃圾，表示污漬確實到了 MaxFloorStains 上限、在替換，所以 P1 也走到了「搬最舊那塊重用」這條路。

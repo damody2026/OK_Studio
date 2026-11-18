@@ -3,6 +3,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "HAL/IConsoleManager.h"
 #include "GameFramework/Actor.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Camera/PlayerCameraManager.h"
@@ -35,7 +36,8 @@ UStaticMeshComponent* FOKArousalDrops::Take(AActor* Owner,UMaterialInterface* Ma
 void FOKArousalDrops::Give(UStaticMeshComponent* C){
  if(!C)return;
  // Every drop with its glint, and as many again: enough that a wet scene settles to making none.
- if(Spare.Num()>=MaxDrops*4){C->DestroyComponent();return;}
+ static IConsoleVariable* Pool=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.Paint.Pool")); // OKPaintSprayer.cpp
+ if((Pool&&Pool->GetInt()==0)||Spare.Num()>=MaxDrops*4){C->DestroyComponent();return;}
  C->SetVisibility(false);C->SetWorldScale3D(FVector(.0001f));Spare.Add(C);
 }
 

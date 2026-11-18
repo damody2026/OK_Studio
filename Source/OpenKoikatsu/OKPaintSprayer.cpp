@@ -608,7 +608,8 @@ void AOKPaintSprayer::Splash(FVector P,FVector N,bool Floor,double Volume)
  // girl dripping onto the floor made and destroyed about 18 stains a second, each with its material and body setup.
  UProceduralMeshComponent* Stain=nullptr;
  if(FloorStains.Num()>=FMath::Clamp(Settings.MaxFloorStains,8,512)){Stain=FloorStains[0];FloorStains.RemoveAt(0);
-  if(!IsValid(Stain)||!Stain->IsRegistered()){if(IsValid(Stain)){Overlays.Remove(Stain);Materials.Remove(Cast<UMaterialInstanceDynamic>(Stain->GetMaterial(0)));Stain->DestroyComponent();}Stain=nullptr;}
+  extern TAutoConsoleVariable<int32> CVarPaintPool;
+  if(!IsValid(Stain)||!Stain->IsRegistered()||CVarPaintPool.GetValueOnGameThread()==0){if(IsValid(Stain)){Overlays.Remove(Stain);Materials.Remove(Cast<UMaterialInstanceDynamic>(Stain->GetMaterial(0)));Stain->DestroyComponent();}Stain=nullptr;}
   else if(auto* Old=Cast<UMaterialInstanceDynamic>(Stain->GetMaterial(0)))Old->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);}
  if(!Stain){Stain=NewObject<UProceduralMeshComponent>(this);Stain->RegisterComponent();Stain->ComponentTags.Add(TEXT("OKPaintOverlay"));Stain->SetCollisionEnabled(ECollisionEnabled::NoCollision);Stain->SetCastShadow(false);auto* MID=UMaterialInstanceDynamic::Create(M,this);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);if(FloorStainMaterial&&OnFloorStain)OnFloorStain(MID);Materials.Add(MID);Stain->SetMaterial(0,MID);Overlays.Add(Stain);}
  const double Radius=FMath::Clamp(FMath::Sqrt(Volume/(PI*.015)),.15,2.);FVector U,V;N.FindBestAxisVectors(U,V);TArray<FVector> Vertices={P+N*.1-U*Radius-V*Radius,P+N*.1+U*Radius-V*Radius,P+N*.1+U*Radius+V*Radius,P+N*.1-U*Radius+V*Radius};TArray<FVector> Normals;Normals.Init(N,4);TArray<FVector2D> UV={FVector2D(0,0),FVector2D(1,0),FVector2D(1,1),FVector2D(0,1)};TArray<FColor> Colors;Colors.Init(FColor::White,4);TArray<FProcMeshTangent> Tangents;
@@ -699,6 +700,9 @@ void AOKPaintSprayer::AdvanceSurface(double Dt)
   DripUpdateMs+=(FPlatformTime::Seconds()-DripStart)*1000;
  }
 }
+// 0: drops, their glints and floor stains are destroyed and made again as before the pools (OKArousalDrops reads it too),
+// for an A/B of the garbage they make in one build (2026-11-18).
+TAutoConsoleVariable<int32> CVarPaintPool(TEXT("ok.Paint.Pool"),1,TEXT("1 reuse paint drops, floor stains and arousal drops; 0 destroy and recreate them (A/B)"));
 UProceduralMeshComponent* AOKPaintSprayer::TakeDropVisual(){
  const bool Animated=CVarPaintAnimatedDrops.GetValueOnGameThread()!=0;
  while(!SpareDrops.IsEmpty()){UProceduralMeshComponent* V=SpareDrops.Pop(EAllowShrinking::No);
@@ -714,7 +718,7 @@ UProceduralMeshComponent* AOKPaintSprayer::TakeDropVisual(){
 }
 void AOKPaintSprayer::GiveDropVisual(UProceduralMeshComponent* Visual){
  if(!IsValid(Visual))return;Overlays.Remove(Visual);
- if(SpareDrops.Num()>=FMath::Clamp(Settings.MaxSimulationParticles,8,256)){Visual->DestroyComponent();return;}
+ if(CVarPaintPool.GetValueOnGameThread()==0||SpareDrops.Num()>=FMath::Clamp(Settings.MaxSimulationParticles,8,256)){Visual->DestroyComponent();return;}
  Visual->SetVisibility(false);SpareDrops.Add(Visual);
 }
 void AOKPaintSprayer::RunDueTransport(){
