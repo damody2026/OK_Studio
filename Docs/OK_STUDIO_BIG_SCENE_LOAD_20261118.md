@@ -1,4 +1,4 @@
-# 很大的原作场景卡：冷开变快（2026-11-18，F 树，f-studio-ui，进行中、暂停）
+# 很大的原作场景卡：冷开变快（2026-11-18，F 树，f-studio-ui）
 
 使用者要求：「能快速读取 `E:\OpenKoikatsu\ref\很大的卡`」。那六张 PNG（130–615 MB）**不是角色卡，是原作 KStudio 场景**
 （IEND 后面是场景版本 `4.2`／`1.0.4.2`、ColorCorrection、camera…），在 OK Studio 里走「导入原作场景」那条路。
@@ -98,8 +98,27 @@ Rust 导出本身差不多（写档多 0.3–0.5 s）；省下的在 UE 端：JS
 开关确认真的在切：每趟日志 `import scene export ... JSON X MB` 的 X 是 3.6／2.6 MB 对 347.7／297.3 MB。
 两种都是 4/4、3/3 角色转成 OK 卡（`import converted`）。
 
+## 其余五张场景进 OK Studio（实拍，`cf87fee50` 的建置，1920×1080）
+
+冷开，`OK_NOCACHE=1`，每张一个全新行程。截图在 `F:\OpenKoikatsu\Saved\Reports\scene-load\big-look<N>_<场景>_pass0.png`
+（建好的成品）与 `..._loading.png`（建构中第 40 帧）。
+
+| 场景 | 角色转成 OK 卡 | 子行程转卡 s | `ready_ms` |
+|---|---:|---:|---:|
+| 2026_0221_1637_17_768 | 5/5 | 18.9 | 25 783 |
+| 65 | 3/3 | 14.7 | 29 646 |
+| SD42 full | 10/10 | 23.0 | 34 643 |
+| [EveKaczmarek] Evelyn on Top | 8/8 | 16.8 | 24 363 |
+| 認識阻害おじさんvs授業中ギャル（TimeLine） | 8/8 | 19.3 | 30 198 |
+
+五张成品都看得到角色身体和场景（道具、背景、文字看板），缺 zipmod 的部件不显示：多数是头发，所以角色是光头。
+载入中那张显示 Slate 载入框（「載入場景」、进度条、「已建 n / 共 n 個物件」）。
+SD42 另外用 1024×576 窗口开一次，载入框完整没被裁掉（`big-small-sd42_SD42 full_loading.png`）。
+那次的建构阶段场景名是空的，因为匯入的场景在存档前没有自己的档名；已改成沿用匯入时的场景名。
+量的时候机器上同时还有别的 Unreal（slot 机制下另一格），`ready_ms` 只能当参考。
+
 ## 还没看的
 
 - `character_open_ms` 约 9.8 s（以原作卡开那 4 位角色，在 worker 上）。
-- `OKSceneActor.cpp` 的 `EditTexture`：每次都对整串 base64 算 MD5，并把同一张 PNG 解码两次（sRGB 与 linear）。
-- 其余五张场景还没在 UE 里拍照确认身体（等 c-lowspec 独占量测结束）。
+- `OKSceneActor.cpp` 的 `EditTexture`：改成只解码一次、快取键改用 CityHash，并加了 `OK_EDIT_TEXTURE_OLD=1` 关闭开关。
+  代码已在 `496dabade`（共用工作树被一起提交），A/B 还没量。
