@@ -5698,3 +5698,9 @@ LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor �
 
 - **變更／症狀**：讀卡器第三批要重編，指令寫成 `lua unreal_slot.lua may-build; Build.bat ...` 串在同一行，沒看 exit code。may-build 印出 `wait: e-120fps holds slot1 exclusively (need 60 GB)`（exit 3），Build.bat 照樣跑了，正好撞上 e-120fps 的獨占量測（編譯因自己的錯誤很快中止，但仍佔了 CPU）。
 - **修正**：may-build 單獨跑，exit 0 才開建置；要串在同一行就寫成 `may-build && Build.bat`。exit 3 就等，量測結束再建。
+
+## 2026-11-18：证据截图改背景压缩，第一版在回呼里移除自己后读已释放的捕获，进一对一就当机（e-120fps）
+
+`ok.Interaction.AsyncShot` 第一版：`OnScreenshotCaptured` 的 lambda 一进来就 `Remove(Handle)`，然后才把捕获的 `File` 复制给背景工作。`Remove` 在广播中会立刻销毁这个 lambda，`File` 已经被释放，读它就是 `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff`（游戏执行绪 memcpy）。stage `EFps1118m` 的 `AsyncShot 1` 那趟在一对一就绪时当掉，量测脚本又没有发现游戏已死，一直等每个指令逾时，独占多占了约 18 分钟。
+
+**修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
