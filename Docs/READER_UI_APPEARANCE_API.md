@@ -150,3 +150,18 @@ README 里那句指的是**匯入流程**（Tripo 头髮，`Tools/ok-extract/src
 见 [Tripo 头髮 APNG](TRIPO_HAIR_APNG.md)），不是读卡器上的一个开关——现行程式里没有这个控制项，
 旧版 UI 也没有。头髮在 UI 上可调的是：髮型模型（`hair0`…`hair3`）、头髮光泽种类（`hair_gloss`），
 以及颜色／光泽那一组参数（第 6 节）。要做成开关得另外设计，不属于「补回不见的控制项」。
+
+## 8. 外观这一侧的背景工作：为什么不会回写到已释放的资料（2026-11-18 查）
+
+使用者遇到 `EXCEPTION_ACCESS_VIOLATION` 崩在 `Foreground Worker #0`，所以把外观目录这条背景路径查了一遍。
+结论：**这一侧没有悬空回写，不需要另外加取消旗标或强参考**，理由逐条写在这里，省得下次再查一遍。
+
+| 路径 | 背景做什么 | 为什么安全 |
+|---|---|---|
+| `RunAppearanceRequest`（catalog／thumbnails／apply 都走它） | `Async(EAsyncExecution::ThreadPool)` 里呼叫 `FOkSession::AppearanceRequest`，读写 `Saved/AppearanceEditor` 的请求／报告档 | worker 的 lambda **只捕获值**（`Root`、`Input`／`Output` 路径、`RequestOutfit`、`RequestClothes` 复本、`CardJob` 的 thread-safe shared ptr），从头到尾不解参照任何 UObject；控制器只以 `TWeakObjectPtr` 捕获，而且只在游戏执行绪的完成 lambda 里 `Weak.Get()` |
+| 完成回写 | `AsyncTask(ENamedThreads::GameThread,…)` | 除了 `Weak.Get()`，还比对 `SelectedIndex`／`LoadGeneration`／`OutfitIndex` 才会 rebase `AppearanceContext`；catalog 的回呼另外比对这三个，thumbnails 比对 `AppearancePageGeneration`，apply 比对 Selection／Generation／Outfit |
+| 缩图解码 | **不在 worker**：`Thumbnail(Path)`（PNG → `UTexture2D::CreateTransient`）在游戏执行绪的完成 lambda 里跑，且先挡掉 >2048×2048 | 产生的贴图存进 `UPROPERTY() TArray<TObjectPtr<UTexture2D>> AppearanceTextures`，按钮存进 `UPROPERTY() TArray<TObjectPtr<UOKAppearanceButton>>`，GC 期间都有强参考 |
+| 两个请求同时在途 | `bAppearanceBusy`（catalog／apply）与 `bAppearanceThumbBusy`（thumbnails）是两个旗标，所以切卡时**可能**有两个请求同时进 Rust | FFI `ok_appearance_request`（`ffi.rs`）本身有 `static LOCK:Mutex<()>` 把每个请求序列化，外面再包 `catch_unwind`，所以两边不会在 Rust 里互踩，panic 也不会穿过 FFI |
+| 切游戏目录 | 每次请求把 `AppearanceRoot` **复制**进 lambda | 在途的请求用的是发出当下的目录；Rust 的目录快取用 canonical root 当 key，换目录自然重建，不会把旧目录的结果当新的 |
+
+也就是说，外观目录这条路上没有「worker 直接写回 UI 资料」的地方；真的要改的是别的地方（见下一段给 e-fork-2 的三点）。
