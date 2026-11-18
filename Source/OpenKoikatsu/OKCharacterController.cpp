@@ -67,6 +67,30 @@ namespace
 #endif
     };
 }
+void UOKCharacterController::ApplyStartupPhysicsBackend(){
+    // The card reader starts on 原始 Verlet (使用者 2026-11-18): the host solver is off and every chain -- hair,
+    // clothes, accessories, bust and hips alike -- is stepped by ok-extract's own DynamicBone update (px.rs
+    // Solver::Verlet / FLAG_BUILTIN). The launcher says so with -OKPhysics=<mode>; -ExecCmds would run after this
+    // widget is built, so the menu would have shown the wrong entry while Verlet was already running.
+    FString Mode;
+    if(!FParse::Value(FCommandLine::Get(),TEXT("OKPhysics="),Mode))return;
+    Mode.TrimStartAndEndInline();
+    // verlet: Enabled 0 (the menu's 原始 Verlet). The rest leave the host on and pick its Backend.
+    int32 Backend=-1;
+    if(Mode.Equals(TEXT("verlet"),ESearchCase::IgnoreCase))Backend=-2;
+    else if(Mode.Equals(TEXT("component"),ESearchCase::IgnoreCase))Backend=-1;
+    else if(Mode.Equals(TEXT("dynbone"),ESearchCase::IgnoreCase))Backend=6;
+    else if(Mode.Equals(TEXT("physx"),ESearchCase::IgnoreCase))Backend=0;
+    else if(Mode.Equals(TEXT("kawaii"),ESearchCase::IgnoreCase))Backend=1;
+    else if(Mode.Equals(TEXT("chaos"),ESearchCase::IgnoreCase))Backend=2;
+    else{UE_LOG(LogTemp,Warning,TEXT("-OKPhysics=%s is not a solver name; leaving the physics settings alone"),*Mode);return;}
+    IConsoleVariable* Enabled=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Enabled"));
+    IConsoleVariable* BackendVar=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Backend"));
+    if(!Enabled||!BackendVar)return;
+    if(Backend>=-1)BackendVar->Set(Backend,ECVF_SetByConsole);
+    Enabled->Set(Backend>=-1?1:0,ECVF_SetByConsole);
+    UE_LOG(LogTemp,Display,TEXT("Card reader physics: %s (OKPhysXSecondary.Enabled %d, Backend %d)"),*Mode,Backend>=-1?1:0,BackendVar->GetInt());
+}
 void UOKCharacterController::FillPhysicsBackendCombo(){
     if(!PhysicsBackendCombo)return;
     PhysicsBackendCombo->ClearOptions();

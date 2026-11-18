@@ -580,6 +580,10 @@ public:
     // Runtime switch of the hair/cloth/breast solver (OKPhysXSecondary CVars): Verlet, PhysX, KawaiiPhysics, Chaos.
     UPROPERTY() TObjectPtr<UComboBoxString> PhysicsBackendCombo;
     void FillPhysicsBackendCombo();
+    // -OKPhysics=<verlet|component|dynbone|physx|kawaii|chaos> on the command line: which solver this process starts
+    // with. Only the card reader's launcher passes it (run_card_reader_development.lua -Physics, default 原始 Verlet),
+    // so no other mode is touched. Call it before FillPhysicsBackendCombo so the menu shows what is running.
+    static void ApplyStartupPhysicsBackend();
     UFUNCTION() void OnPhysicsBackendSelected(FString Item,ESelectInfo::Type Type);
     // Hair/cloth hardness (OKPhysXSecondary.Hardness, 1 = softest .. 10 = as authored).
     UPROPERTY() TObjectPtr<USlider> PhysicsSoftnessSlider;
