@@ -565,6 +565,12 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **A cooked build no longer fails GC verification on the default white sprite.** A sprite loaded while the engine starts
+  (the default white sprite, loaded by component constructors) is in the disregard-for-GC pool, and its `AtlasTexture`
+  pointed at a transient dynamic-atlas page that was not rooted, so a Development build stopped with "breaking Disregard
+  for GC assumptions" on its first collection. A page is now in the root set exactly while such a sprite is packed into
+  it, and leaves it when the sprite is evicted, the page dropped or the atlas released; other pages stay owned by their
+  atlas entry alone.
 - **A preview right after a change draws the screen.** The source watcher rebuilds a `.dui` a moment after it changes;
   when that rebuild landed in the frames a DreamMCP `preview` (or `layout`) spent on a screen it had just compiled, it
   reinstanced the screen on the stage and the picture came out empty ("draws almost nothing"), the next one fine. The
