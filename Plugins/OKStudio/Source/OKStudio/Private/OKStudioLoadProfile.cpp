@@ -30,6 +30,7 @@
 #include "ShaderCompiler.h"
 #include "RHIStats.h"
 #include "DynamicRHI.h"
+#include "SOKStudioLoadOverlay.h"
 
 namespace
 {
@@ -43,6 +44,8 @@ namespace
 		int32 Scene = 0, Pass = 0;
 		bool bLoading = false;
 		double Start = 0., LoadCallMs = 0.;
+		/** Window paints the loading box forced during the load call (SOKStudioLoadOverlay steps). */
+		int32 StagePaints = 0;
 		int32 Frames = 0, ShotWait = 0, ShotExtra = 0;
 		/** OK_SCENE_PROFILE_SHOT_LOADING: the build frame to photograph the screen on (0: none). */
 		int32 LoadingShotFrame = 0;
@@ -181,6 +184,7 @@ namespace
 				Row->SetNumberField(TEXT("pass"), Pass); // 0 is this process's first open of the scene
 				Row->SetNumberField(TEXT("ready_ms"), ReadyMs);
 				Row->SetNumberField(TEXT("load_call_ms"), LoadCallMs);
+				Row->SetNumberField(TEXT("stage_paints"), StagePaints);
 				Row->SetNumberField(TEXT("build_ms"), ReadyMs - LoadCallMs);
 				Row->SetNumberField(TEXT("build_frames"), Frames);
 				Row->SetNumberField(TEXT("peak_used_gb"), PeakUsedGb);
@@ -259,7 +263,9 @@ namespace
 			ShotExtra = 0;
 			ShotPath.Reset();
 			Start = FPlatformTime::Seconds();
+			const int32 PaintsBefore = SOKStudioLoadOverlay::StagePaints();
 			const bool bOpened = Game.Load(Scenes[Scene], Error);
+			StagePaints = SOKStudioLoadOverlay::StagePaints() - PaintsBefore;
 			LoadCallMs = (FPlatformTime::Seconds() - Start) * 1000.;
 			if (!bOpened)
 			{

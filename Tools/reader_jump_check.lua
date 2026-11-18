@@ -9,7 +9,7 @@
 --
 --   --cards     card names (C025 -> <dir>/C025.png), or --list (one name per line) with --from/--to (0-based, to exclusive)
 --   --dir       default Content/CharacterCards/CrowdAPNG
---   --lane      slot name suffix and reader marker (f-yvonne-<lane>, -OKLane=<lane>-<card>-<pid>); default a
+--   --lane      slot name suffix and reader marker (f-yvonne-<lane>, -OKLane=<lane>-<card>-<random>); default a
 --   --images    copy the view images there (default: left where the reader wrote them)
 --   --polite    before each segment wait while another group (not f-yvonne*) holds or waits for an Unreal slot
 --   --fair      after each segment wait until every agent queued at the release has had the slot once
@@ -35,7 +35,8 @@
 --   builds that need the run stopped (its slots given back): any that relinks an editor module the reader loaded (a C++
 --     change to it), else LNK1104.
 --
--- The reader is found by the marker on its own command line, never as "the newest reader", and every call names it
+-- The reader is started and stopped through ok-game-mcp (reader_launch with the lane marker: it waits until the
+-- control channels answer and returns the pid; reader_stop by pid). Its pid comes from reader_launch, never as "the newest reader", and every call names it
 -- (OK_GAME_PID): another session's reader started at the same moment is never taken (C025, 2026-11-16).
 --
 -- A refusal is read by its code (OKCharacterMCP Finish, ok-game-mcp: "<code>: <message>"):
@@ -199,16 +200,9 @@ local function clip()
   return "NOCLIP"
 end
 
-local function ps(cmd)
-  local p = io.popen('powershell -NoProfile -Command "' .. cmd .. '"')
-  local text = p:read("a"); p:close(); return text
-end
-local function find_reader(tag)
-  local line = ps(("Get-CimInstance Win32_Process -Filter 'Name=''UnrealEditor.exe''' | Where-Object { $_.CommandLine -like '*%s *' -or $_.CommandLine -like '*%s' } | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }"):format(tag, tag))
-  local found, log = line:match("^(%d+) "), line:match("%-abslog=(%S+)")
-  return found, log
-end
-local function kill(p) if p then os.execute(("taskkill /PID %s /F >nul 2>&1"):format(p)); sleep(3) end end
+-- ok-game-mcp reader_stop: Win32_Process.Terminate, returns once the process is gone (taskkill could report success
+-- and leave it running).
+local function kill(p) if p then call_once("reader_stop", ('{"pid":%s}'):format(p)) end end
 local function count(log, needle)
   local f = log and io.open(log, "rb"); if not f then return "?" end
   local text = f:read("a"); f:close()
@@ -216,11 +210,13 @@ local function count(log, needle)
   return n, text
 end
 
+-- The slots are arbitrated by the C checkout's copy (the others may be out of date).
+local SLOT = "Tools\\lua\\lua.exe C:\\portable\\OpenKoikatsu\\Tools\\unreal_slot.lua"
 local function slot(cmd, reason)
-  return os.execute(("Tools\\lua\\lua.exe Tools\\unreal_slot.lua %s f-yvonne-%s%s"):format(cmd, lane, reason and (" " .. q(reason) .. " --wait") or ""))
+  return os.execute(("%s %s f-yvonne-%s%s"):format(SLOT, cmd, lane, reason and (" " .. q(reason) .. " --wait") or ""))
 end
 local function others_waiting()
-  local p = io.popen("Tools\\lua\\lua.exe Tools\\unreal_slot.lua status"); local st = p:read("a"); p:close()
+  local p = io.popen(SLOT .. " status"); local st = p:read("a"); p:close()
   for holder in st:gmatch("slot%d+: (%S+)") do if holder ~= "(free)" and not holder:match("^f%-yvonne") then return true end end
   local queue = st:match("queue:([^\n]*)") or ""
   for item in queue:gmatch("[^,]+") do
@@ -263,21 +259,20 @@ end
 
 local function check_card(c)
   retries = 0
-  local tag = ("-OKLane=%s-%s-%d"):format(lane, c, math.random(10000, 99999))
+  local tag = ("%s-%s-%d"):format(lane, c, math.random(10000, 99999))
   -- -LiveCoding=false: no LiveCodingConsole (LiveCodingModule.cpp reads `-LiveCoding=`), whose mutex made every other
   -- group's editor build fail ("Unable to build while Live Coding is active") while a full run was going.
   imgbad = {}
-  local extra = ""
-  for a in (args.extra or ""):gmatch("%S+") do extra = extra .. ",'" .. a .. "'" end
-  ps(("Start-Process -FilePath '%s\\CardReaderDevelopment.cmd' -ArgumentList '-NoBuild','--','-NoCloud','-LiveCoding=false','%s'%s -WorkingDirectory '%s'"):format(root:gsub("/", "\\"), tag, extra, root:gsub("/", "\\")))
-  local log
+  local extra = { '"-NoCloud"', '"-LiveCoding=false"' }
+  for a in (args.extra or ""):gmatch("%S+") do extra[#extra + 1] = '"' .. a .. '"' end
+  -- ok-game-mcp reader_launch: starts the reader with -OKLane=<tag>, waits until its UI channel and reader mailbox
+  -- answer, and returns its pid and log (no polling of the process list here).
   pid = nil
-  for _ = 1, 90 do
-    sleep(5)
-    pid, log = find_reader(tag)
-    if pid and select(2, call_once("reader_call", '{"action":"state"}')) == nil then break end
-  end
-  if not pid then error({ EnvAbort, "reader " .. tag .. " never came up" }) end
+  local launched = call_once("reader_launch", ('{"lane":"%s","no_build":true,"extra":[%s],"timeout_s":450}'):format(tag, table.concat(extra, ",")))
+  pid = launched:match('"pid"%s*:%s*(%d+)')
+  local log = launched:match('"log"%s*:%s*"([^"]+)"')
+  if log then log = log:gsub("\\\\", "/") end
+  if not pid then error({ EnvAbort, "reader " .. tag .. " never came up: " .. launched:gsub("%s+", " "):sub(1, 200) }) end
   sleep(10)
   local fail, note = nil, {}
   local text, code = call("reader_call", ('{"action":"load","path":"%s/%s.png","timeout_s":240}'):format(dir, c))
@@ -357,7 +352,7 @@ while i <= #cards do
   -- queued (each has claimed), at most an hour.
   if args.fair and i <= #cards then
     local function queued_others()
-      local p = io.popen("Tools\\lua\\lua.exe Tools\\unreal_slot.lua status"); local st = p:read("a"); p:close()
+      local p = io.popen(SLOT .. " status"); local st = p:read("a"); p:close()
       local q, set = st:match("queue:([^\n]*)") or "", {}
       for item in q:gmatch("[^,]+") do
         local name = item:match("^%s*(%S+)")

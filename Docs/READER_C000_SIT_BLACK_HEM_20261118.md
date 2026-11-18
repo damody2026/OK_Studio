@@ -41,3 +41,11 @@ F 组 f-yvonne。e-fork-2 在读卡器测新版面时撞到，回报为「坐姿
 ## 档案
 本机：`Saved/Reports/reader-sit-20261118/`（NOTES.md、dbg*.txt、dbg/ 截图与 OBJ、dbg*.lua、burst.lua）。
 重现：`Tools\lua\lua.exe Tools\reader_jump_check.lua --cards C000 --clip @<UTF-8 档：Demo：坐姿 01> --outfits 1 --images <资料夹> --out <档>`。
+
+## 补：和 11-16 旗袍跳跃黑带的对照（16:2x）
+ERROR_LOG 11-16 的旗袍跳跃黑带是「网格本身一条法线与面向相反的带」。这次四个 dump 里在四帧都反向的三角形 25 个（固定带），
+面积 134 cm²，只占前片 4912 cm² 的 2.7%、零散分布 → 最多造成细带，不是整片黑的原因；整片黑仍归因下摆穿腿。
+
+## 碰撞那件的起点
+下摆前片 cf_j_sk_00 链的碰撞体来自来源：脊椎、胸、肩、臂、腰、臀、大腿 cf_hit_thigh01/02，**没有膝盖与小腿**；末端粒子 stiffness 0.036。
+蹲坐时前片挂在膝盖与小腿前没有东西推开，对得上黑帧里前片斜插在小腿前。原作是否也没有小腿碰撞体待查（读取的就是来源名单，推测原作同样没有）。
