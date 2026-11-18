@@ -454,6 +454,8 @@ public:
 	bool Open(const FString& Library, const FString& ModelId, const FString& Prefab, FString& OutError);
 	void Close();
 	bool IsOpen() const { return Item != nullptr; }
+	/** Takes Other's open item (Other is left closed): an item opened on a worker handed to the one that draws it. */
+	void TakeFrom(FOkSkinnedItem& Other) { if (this != &Other) { Close(); Item = Other.Item; Other.Item = nullptr; } }
 	/** Poses the item Seconds into State (a key of AnimRoot, e.g. ControllerLayerState) with the controller's float
 	 *  parameters and writes its vertices into Session's parts of the same names: the parts written, -1 on error. */
 	int32 PoseSession(FOkSession& Session, const FString& AnimRoot, const FString& State, float Seconds, const TMap<FString, float>& Values);

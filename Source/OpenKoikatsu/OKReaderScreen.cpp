@@ -4,6 +4,7 @@
 #include "OKMotionComboBox.h"
 #include "KKShapeRows.h"
 #include "OKShapeSlider.h"
+#include "OKAppearanceButton.h"
 #include "Components/VerticalBox.h"
 #include "KKPreviewActor.h"
 #include "Components/PoseableMeshComponent.h"
@@ -48,11 +49,49 @@
 #include "Engine/Engine.h"
 #include "GameFramework/PlayerController.h"
 #include "Framework/Application/SlateApplication.h"
+#include "KKGameRoot.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
+#include "HAL/PlatformFileManager.h"
+#include "HAL/FileManager.h"
+#include "Async/Async.h"
+#include "Tasks/Task.h"
+#include "Engine/Texture2D.h"
+#if PLATFORM_WINDOWS
+// The folder picker. winnls.h's surrogate macros broke DreamUITextData.h in a unity file after this one (ERROR_LOG
+// 2026-11-18): they are put back as they were around the system headers.
+#pragma push_macro("HIGH_SURROGATE_START")
+#pragma push_macro("HIGH_SURROGATE_END")
+#pragma push_macro("LOW_SURROGATE_START")
+#pragma push_macro("LOW_SURROGATE_END")
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <shobjidl.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#pragma pop_macro("LOW_SURROGATE_END")
+#pragma pop_macro("LOW_SURROGATE_START")
+#pragma pop_macro("HIGH_SURROGATE_END")
+#pragma pop_macro("HIGH_SURROGATE_START")
+#endif
 
 namespace
 {
 const TCHAR* GScreenPath=TEXT("/Game/UI/Reader/WBP_ReaderScreen.WBP_ReaderScreen_C");
 TWeakObjectPtr<UOKReaderScreen> GScreen;
+
+// Who moved the reader's camera last (ok.ReaderScreen look): the player controller says so when the mouse turns, pans or
+// zooms it (OKNoteCameraChange); a change nobody announced came from elsewhere (a view button, the MCP, a load).
+namespace OKReaderCameraWatch
+{
+	FString NotedWho;uint64 NotedFrame=0;
+	FString LastWho;double LastAt=0;FString LastButtons;
+	bool bHave=false;float Yaw=0,Pitch=0,Distance=0;FVector Focus=FVector::ZeroVector;
+	FString PressedButtons()
+	{
+		if(!FSlateApplication::IsInitialized())return TEXT("-");
+		FString Out;for(const FKey& K:FSlateApplication::Get().GetPressedMouseButtons()){if(!Out.IsEmpty())Out+=TEXT("+");Out+=K.ToString();}
+		return Out.IsEmpty()?TEXT("none"):Out;
+	}
+}
 
 UDreamText* TextOf(UDreamWidget* W){return W?Cast<UDreamText>(W->GetVisual()):nullptr;}
 
@@ -81,6 +120,7 @@ TArray<UWidget*> ChildrenOf(UWidget* W)
 }
 float TextWidth(const FString& S,float PerChar){float W=0;for(TCHAR C:S)W+=C<128?PerChar*.55f:PerChar;return W;}
 }
+void OKNoteCameraChange(const FString& Who){OKReaderCameraWatch::NotedWho=Who;OKReaderCameraWatch::NotedFrame=GFrameCounter;}
 
 // ------------------------------------------------------------------------------------------------- UOKDreamControl
 
@@ -126,6 +166,20 @@ void UOKDreamControl::Sync()
 	{
 		SetText(FixedText.IsEmpty()?Drawer->Title:FixedText);
 		if(Drawer->bOpen!=bOpen)SetOpen(Drawer->bOpen);
+		return;
+	}
+	// A picture-picker tile: its thumbnail over its caption, the item the card has marked.
+	if(auto* A=Cast<UOKAppearanceButton>(S))
+	{
+		SetText((A->bChosen?TEXT("▶ "):TEXT(""))+TextIn(A->Caption));
+		if(Button)Button->SetIsEnabled(A->GetIsEnabled());
+		UTexture* Texture=A->Thumbnail?Cast<UTexture>(A->Thumbnail->GetBrush().GetResourceObject()):nullptr;
+		if(Picture&&Texture!=ShownTexture.Get())
+		{
+			ShownTexture=Texture;
+			if(auto* Image=Cast<UDreamImage>(Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(Texture);Image->SetBrush(Brush);}
+			Picture->SetShown(Texture!=nullptr);
+		}
 		return;
 	}
 	if(Button){SetText(FixedText.IsEmpty()?TextIn(S):FixedText);Button->SetIsEnabled(S->GetIsEnabled());}
@@ -196,6 +250,13 @@ void UOKDreamControl::HandleClicked()
 	else if(OnPressed)OnPressed();
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
+bool UOKDreamControl::Press()
+{
+	if(!GetShown())return false;
+	if(Header){HandleHeader();return true;}
+	if(!Button||!Button->GetIsEnabled())return false;
+	HandleClicked();return true;
+}
 void UOKDreamControl::HandleHeader()
 {
 	if(auto* Drawer=Cast<UOKDrawerButton>(Source.Get())){Drawer->SetOpen(!Drawer->bOpen,true);SetOpen(Drawer->bOpen);}
@@ -258,6 +319,20 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	auto* Screen=Cast<UOKReaderScreen>(UDreamUIBPLibrary::AddWidgetOfClassToViewport(Controller,Class,10));
 	if(!Screen)return nullptr;
 	Screen->Controller=Controller;GScreen=Screen;
+	// The picker's 前往 設定 › 遊戲目錄 (shown when there is no game folder): the page switch waits for the next frame, as
+	// the switch destroys the very button whose click asked for it.
+	Controller->OnWantGameRootSettings=[Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)]()
+	{
+		AsyncTask(ENamedThreads::GameThread,[Weak]()
+		{
+			UOKReaderScreen* Self=Weak.Get();if(!IsValid(Self))return;
+			for(int32 I=0;I<Self->Categories.Num();++I)if(Self->Categories[I].Name==TEXT("設定／介面"))
+			{
+				const int32 Sub=Self->Categories[I].Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("遊戲目錄");});
+				Self->ShowCategory(I,FMath::Max(0,Sub));return;
+			}
+		});
+	};
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
 		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080));Canvas->SetMatchFromWidthToHeight(1.f);
@@ -367,16 +442,36 @@ float UOKReaderScreen::CaptionWidth() const
 }
 
 // One UMG widget, and everything under it, as DreamGUI controls under Parent. bInRow: Parent lays out across.
+// A row of three or more buttons and nothing else (匯出這套服裝 / 穿上 OK 服裝 / 轉換服裝) at their natural widths ran past
+// the column's right edge: such a row shares the width equally, each label on one line, shrunk when long.
+static void FitButtonRow(UDreamWidget* Target)
+{
+	const TArray<UDreamWidget*> Row(Target->GetChildren());
+	int32 Buttons=0;
+	for(UDreamWidget* Child:Row){const UOKDreamControl* C=Cast<UOKDreamControl>(Child);if(!C||!C->Button)return;if(C->GetShown())++Buttons;}
+	if(Buttons<3)return;
+	for(UDreamWidget* Child:Row)
+	{
+		Child->SetWidth(0);
+		if(auto* Slot=Child->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+		if(UDreamText* T=TextOf(Cast<UOKDreamControl>(Child)->Label)){T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::HorizontalOverflow);T->SetBestFit(true);T->SetBestFitMinSize(12.f);}
+	}
+}
+
 void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 {
 	if(!Source||!Into)return;
 	if(Source->IsA<UOKDrawerButton>())return;	// the right panel's drawers show these
+	// The picker's 關閉 would fold the picker away out of the page it is part of.
+	if(UOKCharacterController* Owner=Controller.Get())if(Source==Owner->AppearanceCloseButton)return;
 	if(Source->IsA<UListView>())return;	// the card list has a page of its own
 	auto Place=[&](UOKDreamControl* C,float RowWidth,bool bFill)
 	{
 		if(!C)return;C->Source=Source;C->Sync();
 		if(bInRow){if(RowWidth>0)C->SetWidth(RowWidth);if(bFill)if(auto* Slot=C->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);}
 	};
+	// The picture picker's items: a tile with the item's thumbnail (the button's own label is only its caption).
+	if(Source->IsA<UOKAppearanceButton>()){if(UOKDreamControl* C=MakeControl(TEXT("PickTile"),Into)){C->Source=Source;if(C->Picture)C->Picture->SetShown(false);C->Sync();}return;}
 	if(Source->IsA<UButton>()){UOKDreamControl* C=MakeControl(TEXT("Button"),Into);const FString T=TextIn(Source);Place(C,FMath::Max(56.f,TextWidth(T,20.f)+36.f),false);return;}
 	if(Source->IsA<USlider>()){Place(MakeControl(TEXT("Slider"),Into),0,true);return;}
 	if(Source->IsA<UCheckBox>()){Place(MakeControl(TEXT("Toggle"),Into),FMath::Max(80.f,TextWidth(TextIn(Source),18.f)+56.f),false);return;}
@@ -403,7 +498,10 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 	// a "0" field shrank to its digit and long choices wrapped over the next row).
 	const bool bPropertyRow=bInRow&&InPropertyPanel(Source);
 	if(Source->IsA<UComboBoxString>()){Place(MakeControl(TEXT("Choice"),Into),0,true);return;}
-	if(Source->IsA<UEditableTextBox>()||Source->IsA<USpinBox>()){Place(MakeControl(TEXT("Input"),Into),bPropertyRow?0.f:bInRow?84.f:0.f,bPropertyRow);return;}
+	if(Source->IsA<UEditableTextBox>()||Source->IsA<USpinBox>()){UOKDreamControl* C=MakeControl(TEXT("Input"),Into);Place(C,bPropertyRow?0.f:bInRow?84.f:0.f,bPropertyRow);
+		// The UMG field's hint (搜尋名稱、編號或模組來源 ...) as the placeholder: an empty box said nothing.
+		if(auto* E=Cast<UEditableTextBox>(Source))if(C&&C->Input&&!E->GetHintText().IsEmpty())C->Input->SetPlaceholder(E->GetHintText());
+		return;}
 	if(Source->IsA<UTextBlock>())
 	{
 		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
@@ -436,14 +534,28 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 	}
 	if(Source->IsA<UPanelWidget>()||Source->IsA<UUserWidget>())
 	{
-		const bool bHorizontal=Source->IsA<UHorizontalBox>()||Source->IsA<UWrapBox>();
-		UDreamWidget* Target=MakePanel(Into,bHorizontal,bHorizontal?6.f:6.f);
+		// The picture picker's grid wraps its tiles into rows as wide as the page (one row of 32 ran off the panel).
+		UOKCharacterController* G=Controller.Get();
+		const bool bWrap=G&&Source==G->AppearanceGrid;
+		const bool bHorizontal=!bWrap&&(Source->IsA<UHorizontalBox>()||Source->IsA<UWrapBox>());
+		UDreamWidget* Target=nullptr;
+		if(bWrap)
+		{
+			Target=UDreamUIBPLibrary::ConstructWidget(this,TEXT("PickGrid"),nullptr);
+			if(Target)
+			{
+				if(auto* Wrap=Target->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())Wrap->SetSpacing(FVector2D(6,6));
+				Target->SetSizeDelta(FVector2D::ZeroVector);AddToHost(Into,Target,false);
+			}
+		}
+		else Target=MakePanel(Into,bHorizontal,bHorizontal?6.f:6.f);
 		if(!Target)return;
 		if(bInRow)if(auto* Slot=Target->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
 		FOKDreamMirrorPanel Panel;Panel.Source=Cast<UPanelWidget>(Source);Panel.Target=Target;Panel.bHorizontal=bHorizontal;
-		const TArray<UWidget*> Kids=ChildrenOf(Source);Panel.Children=Kids.Num();
+		const TArray<UWidget*> Kids=ChildrenOf(Source);Panel.Children=Kids.Num();for(UWidget* K:Kids)Panel.Kids.Add(K);
 		Target->SetShown(IsUmgShown(Source));
 		for(UWidget* Child:Kids)Mirror(Child,Target,bHorizontal);
+		if(bHorizontal)FitButtonRow(Target);
 		if(Panel.Source.IsValid())Panels.Add(Panel);
 	}
 }
@@ -453,6 +565,7 @@ void UOKReaderScreen::MirrorChildren(UPanelWidget* Source,UDreamWidget* Target,b
 	if(!Source||!Target)return;
 	for(UDreamWidget* Child:TArray<UDreamWidget*>(Target->GetChildren()))if(Child)Child->DestroyWidget();
 	for(int32 I=0;I<Source->GetChildrenCount();++I)Mirror(Source->GetChildAt(I),Target,bHorizontal);
+	if(bHorizontal)FitButtonRow(Target);
 }
 
 void UOKReaderScreen::BuildCategories()
@@ -477,37 +590,137 @@ void UOKReaderScreen::BuildCategories()
 	auto Named=[G](const TCHAR* Name){return G->WidgetTree?G->WidgetTree->FindWidget(FName(Name)):nullptr;};
 	// A UMG drawer body shows (and so mirrors) only while its drawer is open; the appearance panel only once opened.
 	auto OpenDrawer=[](UOKDrawerButton* D){return TFunction<void()>([Weak=TWeakObjectPtr<UOKDrawerButton>(D)](){if(Weak.IsValid()&&!Weak->bOpen)Weak->SetOpen(true,false);});};
-	TFunction<void()> OpenAppearance=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->AppearancePanel&&Weak->AppearancePanel->GetVisibility()==ESlateVisibility::Collapsed)Weak->OnOpenAppearance();};
 
+	// A page's part of the picture picker (target-key prefixes) and of the detailed editor (tokens in a property's key or
+	// label), both under the page's own sliders: 眉毛 lists the eyebrow kinds and colours, not every target of the card.
+	// Asked for again by SyncAll while the controller is busy: reading the catalog, it opens neither panel.
+	auto Pickers=[this,G](FGroup& Into,const TArray<FString>& Targets,const TArray<FString>& Properties)
+	{
+		if(!Targets.IsEmpty()&&G->AppearancePanel)Into.Sources.Add(G->AppearancePanel.Get());
+		if(!Properties.IsEmpty()&&G->PropertyPanel)Into.Sources.Add(G->PropertyPanel.Get());
+		TFunction<void()> Before=MoveTemp(Into.OnEnter);
+		Into.OnEnter=[this,Targets,Properties,Before]()
+		{
+			if(Before)Before();
+			if(!Targets.IsEmpty())WantedTargets=Targets;
+			if(!Properties.IsEmpty())WantedProperties=Properties;
+			ApplyWantedScopes();
+		};
+	};
+	// The bone category drop-down decides which rows of the shared slider column show: anything but 原遊戲參數 folds the
+	// face and body sliders away (they are the same UMG rows the 臉 and 身子 pages mirror). Each page sets the one it needs.
+	auto BoneCategory=[G](const FString& Want)
+	{
+		return TFunction<void()>([Weak=TWeakObjectPtr<UOKCharacterController>(G),Want]()
+		{
+			if(Weak.IsValid()&&Weak->BoneCategoryCombo&&Weak->BoneCategoryCombo->GetSelectedOption()!=Want)Weak->BoneCategoryCombo->SetSelectedOption(Want);
+		});
+	};
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
+	for(FGroup& Each:Face.Groups)
+	{
+		Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		if(Each.Name==TEXT("眉毛"))Pickers(Each,{TEXT("eyebrow")},{TEXT("eyebrow")});
+		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_"),TEXT("eyeline_"),TEXT("eyeshadow")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown"),TEXT("eyeline"),TEXT("eyeshadow")});
+		else if(Each.Name==TEXT("臉頰"))Pickers(Each,{TEXT("cheek"),TEXT("mole")},{TEXT("cheek"),TEXT("mole")});
+		else if(Each.Name==TEXT("鼻子"))Pickers(Each,{TEXT("nose")},{});
+		else if(Each.Name==TEXT("嘴巴"))Pickers(Each,{TEXT("lip")},{TEXT("lip")});
+	}
+	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
+	// page reads the card's catalog).
+	{
+		FGroup Skin;Skin.Name=TEXT("頭型與膚質");Skin.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		Pickers(Skin,{TEXT("head"),TEXT("face_detail"),TEXT("facepaint")},{TEXT("detail"),TEXT("paint"),TEXT("skin")});
+		Face.Groups.Add(MoveTemp(Skin));
+	}
 	Categories.Add(MoveTemp(Face));
+
+	// Hair: its models (後髮, 前髮, 側髮, 附加頭髮, 光澤) and its colours and settings.
+	{
+		FCategory Hair;Hair.Name=TEXT("頭髮");
+		FGroup Styles;Styles.Name=TEXT("髮型");Pickers(Styles,{TEXT("hair0"),TEXT("hair1"),TEXT("hair2"),TEXT("hair3"),TEXT("hair_gloss")},{});Hair.Groups.Add(MoveTemp(Styles));
+		FGroup Colours;Colours.Name=TEXT("髮色與設定");Pickers(Colours,{},{TEXT("hair"),TEXT("髮")});Hair.Groups.Add(MoveTemp(Colours));
+		Categories.Add(MoveTemp(Hair));
+	}
 
 	FCategory Body;Body.Name=TEXT("身子");Body.Groups=ShapeGroups(true,{TEXT("全身"),TEXT("胸部"),TEXT("軀幹"),TEXT("腰臀"),TEXT("手臂"),TEXT("腿部")});
 	{
-		// The bone controls follow the last slider row in the same column.
-		FGroup Bones;Bones.Name=TEXT("骨骼");
+		// 胸部柔軟度／胸部重量 (shown under 原遊戲參數): with the breast sliders.
+		TArray<UWidget*> BustRows;
+		for(UOKShapeSlider* S:G->BoneSliders)if(S&&!S->BodyParameter.IsEmpty()&&S->ModRow)BustRows.Add(S->ModRow);
+		for(FGroup& Each:Body.Groups)
+		{
+			Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+			if(Each.Name==TEXT("胸部"))for(UWidget* W:BustRows)Each.Sources.Add(W);
+		}
+		// The bone controls follow the last slider row in the same column: the category drop-down and the X／Y／Z switch
+		// first. Only the rows the category shows are mirrored, the page built again when the category or the switch
+		// changes: every bone row at once (骨骼調整：全部) held the frame 1.8 s (2026-11-18), so it opens on the first
+		// bone category.
+		FGroup Bones;Bones.Name=TEXT("骨骼");Bones.bShownOnly=true;
+		Bones.Signature=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
+		{
+			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return FString();
+			return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
+		};
+		if(G->BoneCategoryCombo)Bones.Sources.Add(G->BoneCategoryCombo.Get());
+		if(G->BoneAxesCheck)Bones.Sources.Add(G->BoneAxesCheck.Get());
 		if(G->ShapeBox&&G->ShapeSliders.Num())
 		{
 			const int32 Last=G->ShapeBox->GetChildIndex(G->ShapeSliders.Last()?G->ShapeSliders.Last()->GetParent():nullptr);
-			for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)if(!G->ShapeSeparators.Contains(G->ShapeBox->GetChildAt(I)))Bones.Sources.Add(G->ShapeBox->GetChildAt(I));
+			for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)
+			{
+				UWidget* W=G->ShapeBox->GetChildAt(I);
+				if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox)Bones.Sources.Add(W);
+			}
 		}
+		Bones.OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
+		{
+			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return;
+			const FString Now=Weak->BoneCategoryCombo->GetSelectedOption();
+			auto NotBones=[](const FString& O){return O==TEXT("原遊戲參數")||O==TEXT("骨骼調整：全部")||O==TEXT("角色風格")||O==TEXT("腹部形變");};
+			if(!NotBones(Now))return;
+			for(int32 I=0;I<Weak->BoneCategoryCombo->GetOptionCount();++I)
+				if(!NotBones(Weak->BoneCategoryCombo->GetOptionAtIndex(I))){Weak->BoneCategoryCombo->SetSelectedIndex(I);return;}
+		};
 		if(Bones.Sources.Num())Body.Groups.Add(MoveTemp(Bones));
-		if(G->PregnancyBox)Body.Groups.Add(Group(TEXT("懷孕"),{G->PregnancyBox.Get()}));
+		if(G->PregnancyBox){Body.Groups.Add(Group(TEXT("懷孕"),{G->PregnancyBox.Get()}));Body.Groups.Last().OnEnter=BoneCategory(TEXT("腹部形變"));}
+		// The body's skin: detail, tan lines, nipples, underhair, body paint.
+		FGroup Skin;Skin.Name=TEXT("皮膚");
+		Pickers(Skin,{TEXT("body_detail"),TEXT("sunburn"),TEXT("nipple"),TEXT("underhair"),TEXT("bodypaint")},{TEXT("body."),TEXT("sunburn"),TEXT("nip"),TEXT("underhair")});
+		Body.Groups.Add(MoveTemp(Skin));
 	}
 	Categories.Add(MoveTemp(Body));
 
 	FCategory Clothes;Clothes.Name=TEXT("衣服");
 	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Clothes")){Clothes.Groups.Add(Group(TEXT("穿著狀態"),{D->Body.Get()}));Clothes.Groups.Last().OnEnter=OpenDrawer(D);}
 	Clothes.Groups.Add(Group(TEXT("服裝"),{G->OutfitCombo?static_cast<UWidget*>(G->OutfitCombo->GetParent()):nullptr,G->OutfitNav.Get()}));
-	Clothes.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Clothes.Groups.Last().OnEnter=OpenAppearance;
+	{FGroup Pick;Pick.Name=TEXT("外觀選擇");Pickers(Pick,{TEXT("clothes"),TEXT("pattern"),TEXT("emblem"),TEXT("sub")},{});Clothes.Groups.Add(MoveTemp(Pick));}
+	{FGroup Colours;Colours.Name=TEXT("顏色與設定");Pickers(Colours,{},{TEXT("clothes")});Clothes.Groups.Add(MoveTemp(Colours));}
 	for(FGroup& Each:Clothes.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Categories.Add(MoveTemp(Clothes));
 
+	// Accessories: the slot first (配件欄 1 … 額外配件欄 N), then that slot's category and model; a new slot; the slots'
+	// colours, offsets and bones; and the detailed editor whole (全部屬性).
 	FCategory Accessory;Accessory.Name=TEXT("配件");
-	Accessory.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Accessory.Groups.Last().OnEnter=OpenAppearance;
-	Accessory.Groups.Add(Group(TEXT("屬性"),{G->PropertyPanel.Get()}));
-	// The property editor reads the card when opened (OnOpenProperties toggles: only while it is folded away).
-	Accessory.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->PropertyPanel&&Weak->PropertyPanel->GetVisibility()==ESlateVisibility::Collapsed)Weak->OnOpenProperties();};
+	{
+		FGroup Slots;Slots.Name=TEXT("飾品");
+		if(G->AppearancePanel)Slots.Sources.Add(G->AppearancePanel.Get());
+		Slots.OnEnter=[this,Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(!Weak.IsValid())return;WantedTargets=TArray<FString>{Weak->AccessorySlotScope()};ApplyWantedScopes();};
+		Slots.Build=[this](UDreamWidget* Page)
+		{
+			TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+			MakeOwnButton(Page,TEXT("新增飾品欄位"),[Weak](){if(Weak.IsValid())Weak->OnAddAccessorySlot();});
+		};
+		Accessory.Groups.Add(MoveTemp(Slots));
+	}
+	{FGroup Settings;Settings.Name=TEXT("飾品顏色與位置");Pickers(Settings,{},{TEXT("accessory"),TEXT("飾品")});Accessory.Groups.Add(MoveTemp(Settings));}
+	// The property editor reads the card when opened; the empty token list is "all" here, so its scope is cleared by hand.
+	{
+		FGroup All=Group(TEXT("全部屬性"),{G->PropertyPanel.Get()});
+		All.OnEnter=[this](){WantedProperties=TArray<FString>();ApplyWantedScopes();};
+		Accessory.Groups.Add(MoveTemp(All));
+	}
 	Categories.Add(MoveTemp(Accessory));
 
 	FCategory Info;Info.Name=TEXT("角色資訊");
@@ -526,9 +739,11 @@ void UOKReaderScreen::BuildCategories()
 	Categories.Add(MoveTemp(ClothesCards));
 
 	FCategory Settings;Settings.Name=TEXT("設定／介面");Settings.Tab=3;
+	// The game folder (where zipmods are looked for) and the local library: a page of the screen's own, first.
+	{FGroup Folders;Folders.Name=TEXT("遊戲目錄");Folders.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};Settings.Groups.Add(MoveTemp(Folders));}
 	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting")){Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));Settings.Groups.Last().OnEnter=OpenDrawer(D);}
-	// The style box shows only under the old shape category 角色風格 (OKGalleryBoneControls): this page shows it itself.
-	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->StyleBox)Weak->StyleBox->SetVisibility(ESlateVisibility::Visible);};}
+	// The style box shows only under the bone category 角色風格 (OKGalleryBoneControls): this page selects it.
+	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=BoneCategory(TEXT("角色風格"));}
 	// The physics controls sit loose in the animation column, each after its caption: those pairs, not the whole column.
 	{
 		TArray<UWidget*> Physics;
@@ -542,7 +757,7 @@ void UOKReaderScreen::BuildCategories()
 	}
 	// No 介面 page: the UMG panel width and font size (EditorWidthInput, EditorFontInput) only resize the hidden UMG layer.
 	for(FGroup& Each:Settings.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
-	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty();});
+	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty()&&!Each.Build;});
 	Categories.Add(MoveTemp(Settings));
 }
 
@@ -641,12 +856,21 @@ void UOKReaderScreen::BuildPluginTools()
 
 void UOKReaderScreen::ClearPage()
 {
+	// The card tiles let go of their pictures before the tiles and the textures go: no brush is left pointing at a
+	// texture the next collection frees, whenever DreamGUI actually releases the destroyed tiles.
+	for(UOKDreamControl* Tile:CardButtons)if(IsValid(Tile)&&Tile->Picture)
+		if(auto* Image=Cast<UDreamImage>(Tile->Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(nullptr);Image->SetBrush(Brush);}
 	for(UDreamWidget* W:PageWidgets)if(IsValid(W))W->DestroyWidget();
 	PageWidgets.Reset();
 	ShownPageHeight=-1.f;
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
 	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
+	for(UTexture2D* T:CardThumbs)RetireThumb(T);
+	CardThumbs.Reset();CardPaths.Reset();CardThumbLoading.Reset();ThumbsInFlight=0;++ThumbGeneration;
+	*ThumbCancel=true;ThumbCancel=MakeShared<FThreadSafeBool>(false);
+	WantedTargets.Reset();WantedProperties.Reset();
+	RootInput.Reset();RootStatus.Reset();LibraryInput.Reset();LibraryStatus.Reset();++RootCheckGeneration;
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
 	Panels.RemoveAll([](const FOKDreamMirrorPanel& P){return !P.Target.IsValid()||!IsValid(P.Target.Get());});
 }
@@ -656,20 +880,371 @@ void UOKReaderScreen::ClearPage()
 void UOKReaderScreen::MarkCurrentCard()
 {
 	UOKCharacterController* G=Controller.Get();if(!G||CardButtons.IsEmpty())return;
-	const int32 Current=G->SelectedIndex;if(Current==ShownCardSelection)return;
-	ShownCardSelection=Current;
+	const int32 Current=G->SelectedIndex;const int32 Unopenable=G->UnopenableCards.Num();
+	if(Current==ShownCardSelection&&Unopenable==ShownUnopenable)return;
+	ShownCardSelection=Current;ShownUnopenable=Unopenable;
+	// A card that could not be read or opened stays in the list, marked (pressing it again tries again).
 	for(int32 I=0;I<CardButtons.Num();++I)if(UOKDreamControl* B=CardButtons[I];IsValid(B)&&CardTexts.IsValidIndex(I))
 	{
-		B->FixedText=I==Current?TEXT("▶ ")+CardTexts[I]:CardTexts[I];B->SetText(B->FixedText);
-		B->SetRenderOpacity(I==Current?1.f:.72f);
+		const bool bBad=CardPaths.IsValidIndex(I)&&G->UnopenableCards.Contains(CardPaths[I]);
+		// U+00A0 after the mark: the line breaks inside a long name rather than leave the mark alone on its own line.
+		B->FixedText=(I==Current?TEXT("▶ "):TEXT(""))+FString(bBad?TEXT("開不了："):TEXT(""))+CardTexts[I];B->SetText(B->FixedText);
+		B->SetRenderOpacity(I==Current||bBad?1.f:.72f);
 	}
+}
+
+void UOKReaderScreen::ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text)
+{
+	UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen notice: %s"),*Text.Replace(TEXT("\n"),TEXT(" | ")));
+	if(Text.IsEmpty()){Notes.Remove(Key);return;}
+	FNote& N=Notes.FindOrAdd(Key);N.Text=Text.TrimEnd();N.Color=Color;N.Until=FPlatformTime::Seconds()+FMath::Max(Seconds,.5f);N.Order=++NoteOrder;
+}
+
+FString UOKReaderScreen::NoticeState() const
+{
+	TArray<const FNote*> Due;for(const auto& P:Notes)Due.Add(&P.Value);
+	Due.Sort([](const FNote& A,const FNote& B){return A.Order<B.Order;});
+	FString Out;for(const FNote* N:Due){if(!Out.IsEmpty())Out+=TEXT("\n");Out+=N->Text;}
+	return Out;
+}
+
+// The notice under the camera bar: the reports still due, oldest first, coloured after the latest, as tall as its lines.
+void UOKReaderScreen::TickNotice()
+{
+	const double Now=FPlatformTime::Seconds();
+	for(auto It=Notes.CreateIterator();It;++It)if(It->Value.Until<=Now)It.RemoveCurrent();
+	const FString Text=NoticeState();
+	if(!Notice)return;
+	if(Text.IsEmpty()){ShownNotice.Reset();if(bNoticeShown){bNoticeShown=false;Notice->SetShown(false);}return;}
+	if(Text==ShownNotice&&bNoticeShown)return;
+	ShownNotice=Text;bNoticeShown=true;
+	const FNote* Latest=nullptr;for(const auto& P:Notes)if(!Latest||P.Value.Order>Latest->Order)Latest=&P.Value;
+	if(UDreamText* T=TextOf(NoticeText))
+	{
+		T->SetText(FText::FromString(Text));
+		if(Latest)T->SetColor(Latest->Color.WithAlpha(255));
+		const float Width=FMath::Max(120.f,Notice->GetWidth()-28.f);
+		const float Height=T->GetPreferredSizeWithin(FDreamMeasureSpec::Exactly(Width),FDreamMeasureSpec::Undefined()).Y;
+		Notice->SetHeight(FMath::Max(44.f,Height+12.f));
+	}
+	Notice->SetShown(true);
+}
+
+namespace OKReaderThumbs
+{
+	// The card's own picture: a card file is a PNG (an OK card an APNG) whose default image is the card face. Only the
+	// image chunks are read -- an OK card carries its resources in chunks of tens of megabytes after them -- and the
+	// picture is scaled to the tile on this worker, so the game thread only makes a small texture.
+	struct FThumb {int32 Width=0,Height=0;TArray<uint8> Bgra;};
+	// Wrappers is looked up on the game thread before the task starts (module loading is not for workers); Cancelled is
+	// the list's own flag, raised when the list is rebuilt, so a stale decode stops before the expensive part.
+	FThumb Decode(IImageWrapperModule* Wrappers,const FString& Path,int32 MaxWidth,int32 MaxHeight,const TSharedRef<FThreadSafeBool>& Cancelled)
+	{
+		FThumb Out;
+		if(!Wrappers||*Cancelled)return Out;
+		TUniquePtr<IFileHandle> File(FPlatformFileManager::Get().GetPlatformFile().OpenRead(*Path));
+		if(!File)return Out;
+		static const uint8 Signature[8]={137,80,78,71,13,10,26,10};
+		TArray<uint8> Png;Png.Append(Signature,8);
+		uint8 Head[8];
+		if(!File->Read(Head,8)||FMemory::Memcmp(Head,Signature,8)!=0)return Out;
+		bool bSawData=false;
+		while(File->Read(Head,8))
+		{
+			const uint32 Length=(uint32(Head[0])<<24)|(uint32(Head[1])<<16)|(uint32(Head[2])<<8)|uint32(Head[3]);
+			const FAnsiString Type=FAnsiString::ConstructFromPtrSize(reinterpret_cast<const ANSICHAR*>(Head+4),4);
+			const bool bKeep=Type==ANSITEXTVIEW("IHDR")||Type==ANSITEXTVIEW("PLTE")||Type==ANSITEXTVIEW("tRNS")||Type==ANSITEXTVIEW("IDAT");
+			if(Type==ANSITEXTVIEW("IEND")||(bSawData&&Type!=ANSITEXTVIEW("IDAT")))break;	// the default image's data is one run
+			if(bKeep)
+			{
+				if(Length>64u*1024*1024)return Out;
+				const int32 At=Png.Num();Png.AddUninitialized(8+Length+4);FMemory::Memcpy(Png.GetData()+At,Head,8);
+				if(!File->Read(Png.GetData()+At+8,Length+4))return Out;
+				bSawData|=Type==ANSITEXTVIEW("IDAT");
+			}
+			else if(!File->Seek(File->Tell()+int64(Length)+4))return Out;
+		}
+		if(!bSawData||*Cancelled)return Out;
+		// The size from IHDR (the first chunk kept) before any pixel is decoded: a card face is a few hundred pixels, so a
+		// picture larger than 2048x2048 is not a card face and is not decoded at all.
+		if(Png.Num()<8+8+13||FMemory::Memcmp(Png.GetData()+12,"IHDR",4)!=0)return Out;
+		auto Be32=[&](int32 At){const uint8* P=Png.GetData()+At;return int64((uint32(P[0])<<24)|(uint32(P[1])<<16)|(uint32(P[2])<<8)|uint32(P[3]));};
+		const int64 HeadWidth=Be32(16),HeadHeight=Be32(20);
+		if(HeadWidth<=0||HeadHeight<=0||HeadWidth>2048||HeadHeight>2048)return Out;
+		static const uint8 End[12]={0,0,0,0,'I','E','N','D',0xAE,0x42,0x60,0x82};Png.Append(End,12);
+		TSharedPtr<IImageWrapper> Wrapper=Wrappers->CreateImageWrapper(EImageFormat::PNG);
+		TArray<uint8> Raw;
+		if(!Wrapper||!Wrapper->SetCompressed(Png.GetData(),Png.Num())||!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return Out;
+		const int32 W=Wrapper->GetWidth(),H=Wrapper->GetHeight();
+		if(W<=0||H<=0||W!=HeadWidth||H!=HeadHeight||Raw.Num()<int64(W)*H*4||*Cancelled)return Out;
+		const float Scale=FMath::Min(1.f,FMath::Min(float(MaxWidth)/W,float(MaxHeight)/H));
+		Out.Width=FMath::Clamp(FMath::RoundToInt(W*Scale),1,W);Out.Height=FMath::Clamp(FMath::RoundToInt(H*Scale),1,H);
+		Out.Bgra.SetNumUninitialized(Out.Width*Out.Height*4);
+		// A box filter over the source pixels each output pixel covers.
+		for(int32 Y=0;Y<Out.Height;++Y)for(int32 X=0;X<Out.Width;++X)
+		{
+			const int32 X0=X*W/Out.Width,X1=FMath::Max(X0+1,(X+1)*W/Out.Width),Y0=Y*H/Out.Height,Y1=FMath::Max(Y0+1,(Y+1)*H/Out.Height);
+			uint32 Sum[4]={0,0,0,0};
+			for(int32 SY=Y0;SY<Y1;++SY)for(int32 SX=X0;SX<X1;++SX){const uint8* P=Raw.GetData()+(SY*W+SX)*4;for(int32 C=0;C<4;++C)Sum[C]+=P[C];}
+			const uint32 Count=uint32((X1-X0)*(Y1-Y0));uint8* O=Out.Bgra.GetData()+(Y*Out.Width+X)*4;
+			for(int32 C=0;C<4;++C)O[C]=uint8(Sum[C]/Count);
+		}
+		return Out;
+	}
+	UTexture2D* MakeTexture(const FThumb& Thumb)
+	{
+		if(Thumb.Width<=0||Thumb.Height<=0||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return nullptr;
+		UTexture2D* Texture=UTexture2D::CreateTransient(Thumb.Width,Thumb.Height,PF_B8G8R8A8);
+		if(!Texture)return nullptr;
+		Texture->SRGB=true;
+		void* Data=Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+		FMemory::Memcpy(Data,Thumb.Bgra.GetData(),Thumb.Bgra.Num());
+		Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
+		Texture->UpdateResource();
+		return Texture;
+	}
+	void Show(UOKDreamControl* Tile,UTexture2D* Texture)
+	{
+		if(!IsValid(Tile)||!Tile->Picture)return;
+		if(auto* Image=Cast<UDreamImage>(Tile->Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(Texture);Image->SetBrush(Brush);}
+		Tile->Picture->SetShown(Texture!=nullptr);
+	}
+}
+
+// The card list's pictures: decoded on workers for the tiles in or near the scrolled view (a few at a time), dropped
+// again for tiles far out of it, so a folder of hundreds of cards never holds all their pictures.
+void UOKReaderScreen::RetireThumb(UTexture2D* Texture)
+{
+	if(!Texture)return;
+	RetiredThumbs.Add(Texture);RetiredThumbTimes.Add(FPlatformTime::Seconds());
+}
+
+void UOKReaderScreen::TickThumbnails()
+{
+	// Retired pictures go after three seconds (DreamGUI has redrawn the tiles without them by then).
+	{
+		const double Now=FPlatformTime::Seconds();int32 Keep=0;
+		while(Keep<RetiredThumbTimes.Num()&&Now-RetiredThumbTimes[Keep]>3.0)++Keep;
+		if(Keep>0){RetiredThumbs.RemoveAt(0,FMath::Min(Keep,RetiredThumbs.Num()));RetiredThumbTimes.RemoveAt(0,Keep);}
+	}
+	if(CardButtons.IsEmpty()||!LeftScroll)return;
+	const float Scale=FMath::Max(.01f,float(LeftScroll->GetWorldScale().Z>0?LeftScroll->GetWorldScale().Z:LeftScroll->GetWorldScale().Y));
+	const FVector Center=LeftScroll->GetWorldLocation();
+	const float View=LeftScroll->GetHeight();
+	// Distances along the panel, in its units: the box's location is a point of its own rect (its pivot), so "near"
+	// reaches a view's height past both edges whichever point that is.
+	const float Near=(View*2.f+260.f)*Scale,Far=(View*4.f+260.f)*Scale;
+	TArray<int32> Wanted;
+	for(int32 I=0;I<CardButtons.Num();++I)
+	{
+		UOKDreamControl* Tile=CardButtons[I];if(!IsValid(Tile))continue;
+		const float Distance=FVector::Dist(Tile->GetWorldLocation(),Center);
+		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);RetireThumb(CardThumbs[I]);CardThumbs[I]=nullptr;}
+		else if(Distance<=Near&&CardThumbs.IsValidIndex(I)&&!CardThumbs[I]&&!CardThumbLoading[I])Wanted.Add(I);
+	}
+	Wanted.Sort([&](int32 A,int32 B){return FVector::DistSquared(CardButtons[A]->GetWorldLocation(),Center)<FVector::DistSquared(CardButtons[B]->GetWorldLocation(),Center);});
+	for(int32 I:Wanted)
+	{
+		if(ThumbsInFlight>=3)break;
+		if(!CardPaths.IsValidIndex(I)||!CardThumbLoading.IsValidIndex(I))continue;
+		// Everything the worker touches is its own: a copy of the path, the module pointer (modules stay loaded until
+		// exit) and a shared cancel flag. The screen is reached only from the game thread, through a weak pointer, and
+		// only for the same list (generation) -- a rebuilt list raised the flag and bumped the generation.
+		IImageWrapperModule* Wrappers=FModuleManager::LoadModulePtr<IImageWrapperModule>(TEXT("ImageWrapper"));
+		if(!Wrappers)return;
+		CardThumbLoading[I]=true;++ThumbsInFlight;
+		const FString Path=CardPaths[I];const int32 Generation=ThumbGeneration;
+		TSharedRef<FThreadSafeBool> Cancelled=ThumbCancel;
+		TWeakObjectPtr<UOKReaderScreen> Weak(this);
+		UE::Tasks::Launch(TEXT("OKReaderThumb"),[Weak,Wrappers,Path,I,Generation,Cancelled]()
+		{
+			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Wrappers,Path,288,402,Cancelled);
+			if(*Cancelled)return;
+			AsyncTask(ENamedThreads::GameThread,[Weak,I,Generation,Cancelled,Thumb=MoveTemp(Thumb)]()
+			{
+				UOKReaderScreen* Self=Weak.Get();
+				if(*Cancelled||!IsValid(Self)||Self->ThumbGeneration!=Generation)return;
+				Self->ThumbsInFlight=FMath::Max(0,Self->ThumbsInFlight-1);
+				if(!Self->CardThumbs.IsValidIndex(I)||!Self->CardThumbLoading.IsValidIndex(I)||!Self->CardButtons.IsValidIndex(I))return;
+				UTexture2D* Texture=OKReaderThumbs::MakeTexture(Thumb);
+				if(!Texture)return;	// unreadable: stays marked loading, so it is not asked for again
+				Self->CardThumbLoading[I]=false;
+				Self->CardThumbs[I]=Texture;OKReaderThumbs::Show(Self->CardButtons[I],Texture);
+			});
+		});
+	}
+}
+
+// A folder through the system's own folder picker (Windows: IFileOpenDialog with FOS_PICKFOLDERS). Empty when cancelled.
+FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
+{
+	FString Result;
+#if PLATFORM_WINDOWS
+	const HRESULT Init=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE);
+	IFileOpenDialog* Dialog=nullptr;
+	if(SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&Dialog))))
+	{
+		DWORD Options=0;Dialog->GetOptions(&Options);Dialog->SetOptions(Options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST);
+		Dialog->SetTitle(*Title);
+		if(!Start.IsEmpty()&&FPaths::DirectoryExists(Start))
+		{
+			IShellItem* Folder=nullptr;const FString Native=FPaths::ConvertRelativePathToFull(Start).Replace(TEXT("/"),TEXT("\\"));
+			if(SUCCEEDED(SHCreateItemFromParsingName(*Native,nullptr,IID_PPV_ARGS(&Folder)))){Dialog->SetFolder(Folder);Folder->Release();}
+		}
+		const HWND Owner=GEngine&&GEngine->GameViewport&&GEngine->GameViewport->GetWindow().IsValid()&&GEngine->GameViewport->GetWindow()->GetNativeWindow().IsValid()
+			?static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle()):nullptr;
+		if(SUCCEEDED(Dialog->Show(Owner)))
+		{
+			IShellItem* Item=nullptr;
+			if(SUCCEEDED(Dialog->GetResult(&Item)))
+			{
+				PWSTR Chosen=nullptr;
+				if(SUCCEEDED(Item->GetDisplayName(SIGDN_FILESYSPATH,&Chosen))){Result=FString(Chosen).Replace(TEXT("\\"),TEXT("/"));CoTaskMemFree(Chosen);}
+				Item->Release();
+			}
+		}
+		Dialog->Release();
+	}
+	if(SUCCEEDED(Init))CoUninitialize();
+#endif
+	return Result;
+}
+
+// 設定 › 遊戲目錄: where the original game is (its mods/ is where zipmods are looked for) and the local library, each a
+// field, a folder button and what is found there, said as soon as it is typed. Kept as the user's own setting
+// (UKKGameRoot::SetUserRoot: GameUserSettings.ini, writable in a package), read again at each card open.
+void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
+{
+	auto Text=[this](UDreamWidget* Into,const FString& Value)
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+		return C;
+	};
+	auto Field=[this,Text](UDreamWidget* Into,const FString& Caption,const FString& Value,const FString& Hint,
+		TFunction<void(const FString&)> Changed,TFunction<void(const FString&)> Save,TFunction<FString()> Pick,TFunction<FString()> Reset)
+	{
+		Text(Into,Caption);
+		// The path on a line of its own (a folder path is long), the buttons under it.
+		UOKDreamControl* Input=MakeControl(TEXT("Input"),Into);
+		UDreamWidget* Row=MakePanel(Into,true,6.f);
+		if(Input)
+		{
+			if(Input->Input)
+			{
+				Input->Input->SetText(Value);Input->Input->SetPlaceholder(FText::FromString(Hint));
+				Input->Input->GetOnTextChangedEvent().AddWeakLambda(this,[Changed](const FString& Typed){Changed(Typed.TrimStartAndEnd());});
+				Input->Input->GetOnTextCommittedEvent().AddWeakLambda(this,[Save](const FString& Typed){Save(Typed.TrimStartAndEnd());});
+			}
+		}
+		TWeakObjectPtr<UOKDreamControl> WeakInput(Input);
+		MakeOwnButton(Row,TEXT("選資料夾…"),[WeakInput,Pick,Save,Changed]()
+		{
+			// Logged: the system dialog is out of the game MCP's reach, so its outcome is read here.
+			const FString Chosen=Pick();UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: folder dialog %s%s"),Chosen.IsEmpty()?TEXT("cancelled"):TEXT("picked "),*Chosen);if(Chosen.IsEmpty())return;
+			if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Chosen);
+			Save(Chosen);Changed(Chosen);
+		});
+		MakeOwnButton(Row,TEXT("還原預設"),[WeakInput,Reset,Changed]()
+		{
+			const FString Default=Reset();
+			if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Default);
+			Changed(Default);
+		});
+		return Input;
+	};
+	UKKGameRoot* Game=UKKGameRoot::Get();
+	const FString Root=Game?Game->Root:FString();
+	RootInput=Field(Page,TEXT("遊戲目錄（原作 Koikatsu Sunshine 的資料夾：開卡時從它的 mods/ 找 zipmod）"),Root,TEXT("例如 D:/KoikatuSunshine"),
+		[this](const FString& Typed){CheckGameRoot(Typed);},
+		[](const FString& Typed){UKKGameRoot::SetUserRoot(Typed);},
+		[this](){return PickFolder(TEXT("選擇遊戲目錄"),UKKGameRoot::Get()->Root);},
+		[](){UKKGameRoot::ClearUserRoot();return UKKGameRoot::Get()->Root;});
+	RootStatus=Text(Page,FString());
+	const FString Library=Game?Game->LocalLibrary:FString();
+	LibraryInput=Field(Page,TEXT("本機模型庫（LocalLibrary：在這台電腦轉出的第三方 mod 模型；空白就用基礎庫旁的 local_v1）"),Library,TEXT("空白：基礎庫旁的 local_v1"),
+		[this](const FString& Typed){CheckLocalLibrary(Typed);},
+		[](const FString& Typed){UKKGameRoot::SetUserLocalLibrary(Typed);},
+		[this](){return PickFolder(TEXT("選擇本機模型庫"),UKKGameRoot::ResolvedLocalLibrary());},
+		[](){UKKGameRoot::ClearUserLocalLibrary();return UKKGameRoot::Get()->LocalLibrary;});
+	LibraryStatus=Text(Page,FString());
+	Text(Page,TEXT("按 Enter 或選資料夾就存下（下次開程式還在），下一次開卡就用新的路徑，不必重開程式。卡片清單若列的是遊戲的卡片資料夾，到「人物卡總欄」按「使用遊戲卡片目錄」重新列出。"));
+	CheckGameRoot(Root);CheckLocalLibrary(Library);
+}
+
+// What is in the folder typed so far: counted on a worker (a mods/ folder holds thousands of zipmods), the newest answer
+// shown.
+void UOKReaderScreen::CheckGameRoot(const FString& Root)
+{
+	const int32 Generation=++RootCheckGeneration;
+	auto Say=[this](const FString& Value){if(UOKDreamControl* C=RootStatus.Get()){C->FixedText=Value;C->SetText(Value);}};
+	if(Root.IsEmpty()){Say(UKKGameRoot::NoGame()?TEXT("未設定：這個包沒有原作遊戲，只用卡片旁邊的 zipmod 與基礎庫。"):TEXT("未設定：只用卡片旁邊的 zipmod 與基礎庫。"));return;}
+	Say(TEXT("檢查中…"));
+	TWeakObjectPtr<UOKReaderScreen> Weak(this);
+	UE::Tasks::Launch(TEXT("OKReaderGameRoot"),[Weak,Root,Generation]()
+	{
+		FString Message;
+		const FString Mods=Root/TEXT("mods");
+		if(!FPaths::DirectoryExists(Root))Message=TEXT("✗ 找不到這個資料夾。");
+		else if(!FPaths::DirectoryExists(Mods))Message=TEXT("✗ 這個路徑底下沒有 mods/ 資料夾，找不到 zipmod。");
+		else
+		{
+			TArray<FString> Found;IFileManager::Get().FindFilesRecursive(Found,*Mods,TEXT("*.zipmod"),true,false);
+			Message=FString::Printf(TEXT("✓ 找到 mods/，%d 個 zipmod。"),Found.Num());
+			if(!FPaths::DirectoryExists(Root/TEXT("abdata")))Message+=TEXT("（沒有 abdata/：不像原作遊戲的資料夾）");
+		}
+		AsyncTask(ENamedThreads::GameThread,[Weak,Generation,Message]()
+		{
+			UOKReaderScreen* Self=Weak.Get();if(!Self||Self->RootCheckGeneration!=Generation)return;
+			if(UOKDreamControl* C=Self->RootStatus.Get()){C->FixedText=Message;C->SetText(Message);}
+		});
+	});
+}
+
+FString UOKReaderScreen::ThumbState() const
+{
+	if(CardThumbs.IsEmpty())return TEXT("-");
+	int32 Held=0;for(const TObjectPtr<UTexture2D>& T:CardThumbs)if(T)++Held;
+	return FString::Printf(TEXT("%d/%d"),Held,CardThumbs.Num());
+}
+
+void UOKReaderScreen::ApplyFolderSetting(bool bLibrary,const FString& Folder,bool bForget)
+{
+	if(bLibrary){if(bForget)UKKGameRoot::ClearUserLocalLibrary();else UKKGameRoot::SetUserLocalLibrary(Folder);}
+	else{if(bForget)UKKGameRoot::ClearUserRoot();else UKKGameRoot::SetUserRoot(Folder);}
+	UKKGameRoot* Game=UKKGameRoot::Get();
+	const FString Now=bLibrary?Game->LocalLibrary:Game->Root;
+	if(UOKDreamControl* Field=(bLibrary?LibraryInput:RootInput).Get())if(Field->Input)Field->Input->SetText(Now);
+	if(bLibrary){if(LibraryStatus.IsValid())CheckLocalLibrary(Now);}
+	else if(RootStatus.IsValid())CheckGameRoot(Now);
+}
+
+void UOKReaderScreen::CheckLocalLibrary(const FString& Library)
+{
+	FString Message;
+	if(Library.IsEmpty())Message=TEXT("未設定：用基礎庫旁的 local_v1（有的話）。");
+	else
+	{
+		const FString Full=FPaths::IsRelative(Library)?FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()/Library):Library;
+		Message=FPaths::DirectoryExists(Full)?FString::Printf(TEXT("✓ 找到資料夾 %s"),*Full):TEXT("✗ 找不到這個資料夾。");
+	}
+	if(UOKDreamControl* C=LibraryStatus.Get()){C->FixedText=Message;C->SetText(Message);}
 }
 
 void UOKReaderScreen::ShowTab(int32 Index)
 {
 	Tab=FMath::Clamp(Index,0,3);
 	UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};
-	for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);
+	// The current tab takes the .dui's TabOn look (Tab0's), the rest TabOff (Tab1's); before this only Tab0 ever had the
+	// raised face, so 編輯 looked chosen on every tab.
+	// Both looks come from the same .dui for every reader screen: taken once, before any tab changed.
+	static TOptional<FDreamButtonStyle> TabOnStyle,TabOffStyle;
+	if(!TabOnStyle.IsSet()&&Tab0&&Tab1){TabOnStyle=Tab0->GetStyle();TabOffStyle=Tab1->GetStyle();}
+	for(int32 I=0;I<4;++I)if(Tabs[I])
+	{
+		if(TabOnStyle.IsSet())Tabs[I]->SetStyle(I==Tab?TabOnStyle.GetValue():TabOffStyle.GetValue());
+		Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);
+	}
 	// The rail lists every category on every tab (the sketch keeps it on the left throughout); 設定 sits alone at its foot.
 	for(UOKDreamControl* B:RailButtons)if(IsValid(B))B->DestroyWidget();
 	for(UDreamWidget* Gap:RailSpacers)if(IsValid(Gap))Gap->DestroyWidget();
@@ -708,25 +1283,97 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 		if(C.Groups[Sub].OnEnter)C.Groups[Sub].OnEnter();
 		UDreamWidget* Page=MakePanel(nullptr,false,8.f);
 		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);}
-		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page)Mirror(Source.Get(),Page,false);
-		// The card list: a page of buttons, as the UMG list view shows them.
+		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page&&(!C.Groups[Sub].bShownOnly||IsUmgShown(Source.Get())))Mirror(Source.Get(),Page,false);
+		ShownSignature=C.Groups[Sub].Signature?C.Groups[Sub].Signature():FString();
+		if(C.Groups[Sub].Build&&Page)C.Groups[Sub].Build(Page);
+		// The card list: a grid of the cards' pictures with their names under them, as a file browser shows pictures (the
+		// pictures load as their tiles scroll into view, TickThumbnails).
 		if(Tab==1&&Page)if(UOKCharacterController* G=Controller.Get())
 		{
-			UDreamWidget* List=MakePanel(Page,false,4.f);
+			UDreamWidget* List=UDreamUIBPLibrary::ConstructWidget(this,TEXT("CardGrid"),nullptr);
+			if(List)
+			{
+				if(auto* Wrap=List->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())Wrap->SetSpacing(FVector2D(8,8));
+				List->SetSizeDelta(FVector2D::ZeroVector);AddToHost(Page,List,false);
+			}
 			ShownEntries=G->Entries.Num();
-			for(int32 I=0;I<G->Entries.Num()&&I<400;++I)
+			for(int32 I=0;I<G->Entries.Num()&&I<400&&List;++I)
 			{
 				const auto& E=G->Entries[I];
-				const FString Text=FString::Printf(TEXT("%s %s  %s"),*E.LastName,*E.FirstName,*E.FileName);
+				const FString Name=FString::Printf(TEXT("%s %s"),*E.LastName,*E.FirstName).TrimStartAndEnd();
+				const FString Text=Name.IsEmpty()?FPaths::GetBaseFilename(E.FileName):Name;
 				TWeakObjectPtr<UOKCharacterController> Weak(G);
-				UOKDreamControl* B=MakeOwnButton(List,Text,[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);});
-				if(B)B->SetWidth(0);
-				CardButtons.Add(B);CardTexts.Add(Text);
+				UOKDreamControl* B=MakeControl(TEXT("CardTile"),List);
+				if(B)
+				{
+					B->FixedText=Text;B->OnPressed=[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);};B->SetText(Text);
+					if(UDreamPanelSlot* Slot=B->GetPanelSlot()){Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Left);Slot->SetMinDesiredSize(FVector2D(156,252));Slot->SetMaxDesiredSize(FVector2D(156,252));}
+					if(B->Picture)B->Picture->SetShown(false);
+				}
+				CardButtons.Add(B);CardTexts.Add(Text);CardPaths.Add(E.Path);CardThumbs.Add(nullptr);CardThumbLoading.Add(false);
 			}
 			ShownCardSelection=INDEX_NONE;MarkCurrentCard();
 		}
 		LeftScroll->ScrollToStart();
 	}
+}
+
+UOKCharacterController* UOKReaderScreen::GetController() const{return Controller.Get();}
+
+// The page's picker and editor, opened with its scope once the controller can: a page entered while the catalog is read
+// (or a card loads) would otherwise stay without them. Asked once it shows (or a request for it is on its way).
+void UOKReaderScreen::ApplyWantedScopes()
+{
+	UOKCharacterController* G=Controller.Get();
+	if(!G||!G->bModelLayout||G->bAppearanceBusy||G->bPropertyBusy||G->bLoadInFlight)return;
+	auto IsOpen=[](UWidget* W){return W&&W->GetVisibility()!=ESlateVisibility::Collapsed;};
+	if(WantedTargets.IsSet())
+	{
+		G->SetAppearanceScope(WantedTargets.GetValue());
+		if(IsOpen(G->AppearancePanel)||G->bAppearanceBusy)WantedTargets.Reset();
+	}
+	if(WantedProperties.IsSet()&&!G->bAppearanceBusy)
+	{
+		G->SetPropertyScope(WantedProperties.GetValue());
+		if(IsOpen(G->PropertyPanel)||G->bPropertyBusy)WantedProperties.Reset();
+	}
+}
+
+void UOKReaderScreen::ScrollLeftPage(float Progress){if(LeftScroll)LeftScroll->SetScrollProgress(FMath::Clamp(Progress,0.f,1.f));}
+
+bool UOKReaderScreen::PressControl(const FString& Text,int32 Index)
+{
+	TArray<UOKDreamControl*> All;
+	for(UOKDreamControl* C:Controls)if(IsValid(C))All.Add(C);
+	for(UOKDreamControl* C:SubButtons)if(IsValid(C))All.AddUnique(C);
+	for(UOKDreamControl* C:RailButtons)if(IsValid(C))All.AddUnique(C);
+	for(UOKDreamControl* C:Drawers)if(IsValid(C))All.AddUnique(C);
+	for(int32 Pass=0;Pass<2;++Pass)
+	{
+		int32 Seen=0;
+		for(UOKDreamControl* C:All)
+		{
+			const FString& Caption=C->GetShownText();
+			if(Pass==0?Caption!=Text:!Caption.Contains(Text))continue;
+			if(!C->GetShown())continue;
+			if(Seen++==Index)return C->Press();
+		}
+		if(Seen)return false;
+	}
+	return false;
+}
+
+bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
+{
+	if(!bBuilt||ViewportSize.X<=0.f||ViewportSize.Y<=0.f)return false;
+	// The screen canvas scales with the viewport height (Open: 1920x1080 reference, matched on height).
+	const float Scale=ViewportSize.Y/1080.f;
+	OutLeft=LeftWidth*Scale;OutRight=ViewportSize.X-RightWidth*Scale;
+	// Below the camera bar (12 from the top, 56 high) and a gap.
+	OutTop=(12.f+56.f+8.f)*Scale;
+	// And below the notice while it shows.
+	if(Notice&&bNoticeShown&&!ShownNotice.IsEmpty())OutTop+=(Notice->GetHeight()+8.f)*Scale;
+	return OutRight>OutLeft;
 }
 
 void UOKReaderScreen::SetLeftWidth(float Width)
@@ -745,6 +1392,8 @@ void UOKReaderScreen::Layout()
 	// The camera bar spans the 3D view between the two panels, 16 px clear of each.
 	if(CameraBar){CameraBar->SetSizeDelta(FVector2D(-(LeftWidth+RightWidth+32.f),56.f));CameraBar->SetHorizontalAnchoredPosition((LeftWidth-RightWidth)*.5f);}
 	if(NamePlate)NamePlate->SetHorizontalAnchoredPosition(-(RightWidth+16.f));
+	// The notice spans the 3D view as the camera bar does; its height follows its lines (TickNotice).
+	if(Notice){Notice->SetSizeDelta(FVector2D(-(LeftWidth+RightWidth+32.f),Notice->GetSizeDelta().Y));Notice->SetHorizontalAnchoredPosition((LeftWidth-RightWidth)*.5f);ShownNotice.Reset();}
 }
 
 // The left panel's right edge is a handle: press near it and drag.
@@ -777,15 +1426,24 @@ void UOKReaderScreen::SyncAll()
 		UPanelWidget* S=Panels[I].Source.Get();UDreamWidget* T=Panels[I].Target.Get();
 		if(!S||!T||!IsValid(T))continue;
 		T->SetShown(IsUmgShown(S));
-		if(S->GetChildrenCount()!=Panels[I].Children)
+		bool bSame=S->GetChildrenCount()==Panels[I].Children&&Panels[I].Kids.Num()==Panels[I].Children;
+		for(int32 K=0;bSame&&K<Panels[I].Kids.Num();++K)bSame=Panels[I].Kids[K].Get()==S->GetChildAt(K);
+		if(!bSame)
 		{
 			// Logged only: a rebuild drops whatever was typed into a field under it (the motion search). Not seen in the
 			// 2026-11-18 measurement; this line says when it happens, before anything is built for it.
 			UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: %s children %d -> %d, mirrored again"),*S->GetName(),Panels[I].Children,S->GetChildrenCount());
-			Panels[I].Children=S->GetChildrenCount();const bool bHorizontal=Panels[I].bHorizontal;
+			Panels[I].Children=S->GetChildrenCount();Panels[I].Kids.Reset();for(int32 K=0;K<S->GetChildrenCount();++K)Panels[I].Kids.Add(S->GetChildAt(K));const bool bHorizontal=Panels[I].bHorizontal;
 			MirrorChildren(S,T,bHorizontal);
 		}
 	}
+	// A page built from what showed then (the bone rows of one category) is built again when that changes.
+	if(Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub))
+	{
+		const FGroup& Current=Categories[Category].Groups[Sub];
+		if(Current.Signature&&Current.Signature()!=ShownSignature)ShowCategory(Category,Sub);
+	}
+	ApplyWantedScopes();
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
 	for(int32 I=0;I<Controls.Num();++I)Controls[I]->Sync();
 	for(UOKDreamControl* D:Drawers)if(IsValid(D))D->Sync();
@@ -796,6 +1454,7 @@ void UOKReaderScreen::SyncAll()
 		else if(Tab==1&&G->Entries.Num()!=ShownEntries)ShowCategory(Category,Sub);
 		MarkCurrentCard();
 	}
+	TickNotice();
 	if(UOKCharacterController* G=Controller.Get())if(auto* T=TextOf(CardName))
 	{
 		FString Name;
@@ -826,6 +1485,21 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 	}
 	TickResize();
 	SyncAll();
+	TickThumbnails();
+	// The camera watch (ok.ReaderScreen look): a changed orbit is put down to the mouse when the player controller noted
+	// a drag or wheel this frame or the last, else to something else; with the mouse buttons Slate holds as pressed then.
+	if(UOKCharacterController* G=Controller.Get())if(const AKKPreviewActor* A=G->PreviewActor.Get())
+	{
+		using namespace OKReaderCameraWatch;
+		const bool bMoved=bHave&&(!FMath::IsNearlyEqual(Yaw,A->OrbitYaw,.01f)||!FMath::IsNearlyEqual(Pitch,A->OrbitPitch,.01f)
+			||!FMath::IsNearlyEqual(Distance,A->OrbitDistance,.05f)||!Focus.Equals(A->OrbitFocus,.05f));
+		if(bMoved)
+		{
+			LastWho=NotedFrame+1>=GFrameCounter&&!NotedWho.IsEmpty()?NotedWho:TEXT("not the mouse (a view button, the MCP, a load or a pose change)");
+			LastAt=FPlatformTime::Seconds();LastButtons=PressedButtons();
+		}
+		bHave=true;Yaw=A->OrbitYaw;Pitch=A->OrbitPitch;Distance=A->OrbitDistance;Focus=A->OrbitFocus;
+	}
 	// The left scroll box takes its content's extent only when content is added (UDreamScrollBox::AddContent), and a page
 	// is added empty and then filled, rebuilt when a UMG list changes, its rows shown and hidden: measured 2026-11-18, the
 	// 屬性 page ran below the panel with no bar and the wheel did nothing. Re-take it whenever the page's height moved.
@@ -870,7 +1544,7 @@ bool OKReaderScreenUnderCursor()
 // For the game MCP (ui_exec) and tests: the screen's own navigation, which has no UMG control to set.
 //   ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state
 static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
-	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state: the card reader's DreamGUI screen"),
+	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <text> [#N] | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld*,FOutputDevice& Out)
 	{
 		UOKReaderScreen* S=GScreen.Get();
@@ -881,7 +1555,41 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		if(Verb==TEXT("tab")){Done=Value.IsNumeric();if(Done)S->ShowTabPublic(FCString::Atoi(*Value));}
 		else if(Verb==TEXT("category"))Done=S->SelectCategory(Value);
 		else if(Verb==TEXT("sub"))Done=S->SelectSub(Value);
+		// "press <text> [#N]": the shown control with that text (the N-th of several, from 0) is clicked as the pointer would.
+		else if(Verb==TEXT("press"))
+		{
+			FString Text=Value;int32 Index=0;int32 Hash;
+			if(Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
+			Done=!Text.IsEmpty()&&S->PressControl(Text,Index);
+		}
+		// "scroll <0..1>": the left page to that point of its length (screenshots of a long page).
+		else if(Verb==TEXT("scroll")){Done=Value.IsNumeric();if(Done)S->ScrollLeftPage(FCString::Atof(*Value));}
 		else if(Verb==TEXT("width")){Done=Value.IsNumeric();if(Done)S->SetLeftWidth(FCString::Atof(*Value));}
+		// 設定 › 遊戲目錄: "gameroot <folder>" / "library <folder>" save as the page does ("default" forgets the user's choice);
+		// either with no folder reports what is set and found.
+		// "look": what follows the cursor and who moved the camera last, so "the view moves without a button held" is told
+		// apart in one line: eyes on the cursor (eye_mode 1), the head following the camera, or the camera itself.
+		else if(Verb==TEXT("look"))
+		{
+			using namespace OKReaderCameraWatch;
+			UOKCharacterController* G=S->GetController();const AKKPreviewActor* A=G?G->PreviewActor.Get():nullptr;
+			if(!A){Out.Log(TEXT("look: no character"));return;}
+			static const TCHAR* EyeModes[]={TEXT("front"),TEXT("cursor"),TEXT("camera")};
+			Out.Logf(TEXT("look eye_mode=%d(%s) eye_tracking=%d eye_follows_camera=%d gaze=%.3f,%.3f,%.3f head_follows_camera=%d buttons=%s"),
+				G->EyeMode,EyeModes[FMath::Clamp(G->EyeMode,0,2)],A->bEyeLookTracking?1:0,A->bEyeLookFollowCamera?1:0,
+				A->EyeGaze[0],A->EyeGaze[1],A->EyeGaze[2],A->bHeadLookFollowCamera?1:0,*PressedButtons());
+			Out.Logf(TEXT("camera yaw=%.2f pitch=%.2f distance=%.1f focus=%s last_change=%s %s"),A->OrbitYaw,A->OrbitPitch,A->OrbitDistance,*A->OrbitFocus.ToCompactString(),
+				LastWho.IsEmpty()?TEXT("none"):*LastWho,LastWho.IsEmpty()?TEXT(""):*FString::Printf(TEXT("%.1f s ago, buttons then=%s"),FPlatformTime::Seconds()-LastAt,*LastButtons));
+			return;
+		}
+		else if(Verb==TEXT("gameroot")||Verb==TEXT("library"))
+		{
+			const bool bLibrary=Verb==TEXT("library");
+			if(!Value.IsEmpty())S->ApplyFolderSetting(bLibrary,Value==TEXT("default")?FString():Value,Value==TEXT("default"));
+			UKKGameRoot* Game=UKKGameRoot::Get();
+			Out.Logf(TEXT("%s=%s user=%s"),*Verb,bLibrary?*Game->LocalLibrary:*Game->Root,(bLibrary?UKKGameRoot::HasUserLocalLibrary():UKKGameRoot::HasUserRoot())?TEXT("yes"):TEXT("no"));
+			if(!bLibrary){const FString Mods=Game->Root/TEXT("mods");TArray<FString> Found;if(!Game->Root.IsEmpty()&&FPaths::DirectoryExists(Mods))IFileManager::Get().FindFilesRecursive(Found,*Mods,TEXT("*.zipmod"),true,false);Out.Logf(TEXT("mods=%s zipmods=%d"),FPaths::DirectoryExists(Mods)?TEXT("yes"):TEXT("no"),Found.Num());}
+		}
 		else if(Verb==TEXT("dump"))
 		{
 			// The DreamGUI tree as laid out: name, class, visual, position, size, shown, layout container.
@@ -897,5 +1605,5 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			};
 			Walk(S,0);
 		}
-		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth());
+		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f thumbs=%s notice=%s"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth(),*S->ThumbState(),*S->NoticeState().Replace(TEXT("\n"),TEXT(" | ")));
 	}));

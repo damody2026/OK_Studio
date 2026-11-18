@@ -74,10 +74,13 @@ void UOKCharacterController::BuildAppearanceControls(UVerticalBox* Parent){auto*
 void UOKCharacterController::BuildAppearancePanel(){
  AppearancePanel=WidgetTree->ConstructWidget<USizeBox>();AppearancePanel->SetWidthOverride(560);AppearancePanel->SetVisibility(ESlateVisibility::Collapsed);
  auto* Border=WidgetTree->ConstructWidget<UBorder>();Border->SetBrushColor(FLinearColor(.035,.10,.14,1));AppearancePanel->SetContent(Border);auto* Col=WidgetTree->ConstructWidget<UVerticalBox>();Border->SetContent(Col);
- auto* Nav=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,Nav,TEXT("隨機"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceRandom);Button(WidgetTree,Nav,TEXT("重置類型"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceReset);Button(WidgetTree,Nav,TEXT("關閉"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnCloseAppearance);Col->AddChild(Nav);
+ auto* Nav=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,Nav,TEXT("隨機"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceRandom);Button(WidgetTree,Nav,TEXT("重置類型"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceReset);AppearanceCloseButton=Button(WidgetTree,Nav,TEXT("關閉"));AppearanceCloseButton->OnClicked.AddDynamic(this,&UOKCharacterController::OnCloseAppearance);Col->AddChild(Nav);
+ // Shown only while the picker lists one accessory slot (the reader's 飾品 page, FillAppearanceTargets); in the tree so ui_* reach it.
+ AccessorySlotChoice=WidgetTree->ConstructWidget<UOKComboBoxString>();AccessorySlotChoice->OnSelectionChanged.AddDynamic(this,&UOKCharacterController::OnAccessorySlotChoice);AccessorySlotChoice->SetVisibility(ESlateVisibility::Collapsed);Col->AddChild(AccessorySlotChoice);
  AppearanceTarget=WidgetTree->ConstructWidget<UOKComboBoxString>();AppearanceTarget->OnSelectionChanged.AddDynamic(this,&UOKCharacterController::OnAppearanceTarget);Col->AddChild(AppearanceTarget);
  AppearanceSearch=WidgetTree->ConstructWidget<UEditableTextBox>();AppearanceSearch->SetHintText(FText::FromString(TEXT("搜尋名稱、編號或模組來源")));AppearanceSearch->OnTextChanged.AddDynamic(this,&UOKCharacterController::OnAppearanceSearch);Col->AddChild(AppearanceSearch);
  AppearanceStatus=WidgetTree->ConstructWidget<UTextBlock>();AppearanceStatus->SetAutoWrapText(true);AppearanceStatus->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));Col->AddChild(AppearanceStatus);
+ {auto* RootRow=WidgetTree->ConstructWidget<UHorizontalBox>();AppearanceRootButton=Button(WidgetTree,RootRow,TEXT("前往 設定 › 遊戲目錄"));AppearanceRootButton->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceGoRoot);AppearanceRootButton->SetVisibility(ESlateVisibility::Collapsed);Col->AddChild(RootRow);}
  auto* Scroll=WidgetTree->ConstructWidget<UScrollBox>();AppearanceGrid=WidgetTree->ConstructWidget<UWrapBox>();AppearanceGrid->SetInnerSlotPadding(FVector2D(4,4));Scroll->AddChild(AppearanceGrid);Col->AddChildToVerticalBox(Scroll)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
  auto* PageNav=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,PageNav,TEXT("上一頁"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearancePrev);AppearancePageText=WidgetTree->ConstructWidget<UTextBlock>();PageNav->AddChild(AppearancePageText);Button(WidgetTree,PageNav,TEXT("下一頁"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceNext);Col->AddChild(PageNav);
 }
@@ -131,22 +134,121 @@ void UOKCharacterController::RunAppearanceRequest(TSharedRef<FJsonObject> Reques
 }
 void UOKCharacterController::OnOpenAppearance(){
  if(!bModelLayout||bLoadInFlight||bAppearanceBusy||bPropertyBusy||!Entries.IsValidIndex(SelectedIndex))return;AppearancePanel->SetVisibility(ESlateVisibility::Visible);if(MotionPanel)MotionPanel->SetVisibility(ESlateVisibility::Collapsed);
+ // The catalog of this card and outfit is already here (the reader's pages open the picker each time one is entered).
+ if(!AppearanceTargets.IsEmpty()&&!Selected.DeferredPreview&&AppearanceCatalogPath==Entries[SelectedIndex].Path&&AppearanceCatalogOutfit==OutfitIndex){FillAppearanceTargets(AppearanceTarget->GetSelectedOption());return;}
  RefreshAppearanceCatalog();
+}
+void UOKCharacterController::SetAppearanceScope(const TArray<FString>& Prefixes){
+ AppearanceScope=Prefixes;
+ if(AppearancePanel&&AppearancePanel->GetVisibility()!=ESlateVisibility::Collapsed&&!bAppearanceBusy&&!AppearanceTargets.IsEmpty()&&Entries.IsValidIndex(SelectedIndex)&&AppearanceCatalogPath==Entries[SelectedIndex].Path&&AppearanceCatalogOutfit==OutfitIndex)FillAppearanceTargets(AppearanceTarget->GetSelectedOption());
+ else OnOpenAppearance();
+}
+// The accessory slots the catalog lists (20 of the card, then its MoreAccessories slots), named as the targets name
+// them (配件欄 1, 額外配件欄 21); AccessorySlot stays chosen while it is there.
+void UOKCharacterController::RefreshAccessorySlots(){
+ if(!AccessorySlotChoice)return;
+ AccessorySlots.Reset();TArray<FString> Labels;
+ for(auto T:AppearanceTargets){
+  const FString Key=T->GetStringField(TEXT("key"));if(!Key.StartsWith(TEXT("accessory")))continue;
+  int32 Under;if(!Key.FindChar(TEXT('_'),Under))continue;const FString Number=Key.Mid(9,Under-9);if(!Number.IsNumeric())continue;
+  // SlotIndex, not Slot: a local named Slot hides the widget's own member and the game target fails with C4458.
+  const int32 SlotIndex=FCString::Atoi(*Number);if(AccessorySlots.Contains(SlotIndex))continue;
+  FString Label=T->GetStringField(TEXT("label"));int32 Colon;if(Label.FindChar(TEXT('：'),Colon))Label=Label.Left(Colon);
+  // What the slot holds now (the catalog's current), so the slot list says which slots are used.
+  const FString Prefix=FString::Printf(TEXT("accessory%d_"),SlotIndex);for(const auto& C:AppearanceCurrent)if(C.Key.StartsWith(Prefix)&&C.Value.IsValid()){FString Name;C.Value->TryGetStringField(TEXT("name"),Name);FString Item;C.Value->TryGetStringField(TEXT("item"),Item);if(!Name.IsEmpty())Label+=TEXT("：")+Name.Left(24)+(Item.IsEmpty()?TEXT("（來源缺失）"):TEXT(""));break;}
+  AccessorySlots.Add(SlotIndex);Labels.Add(Label);
+ }
+ if(!AccessorySlots.Contains(AccessorySlot)&&AccessorySlots.Num())AccessorySlot=AccessorySlots[0];
+ bool Same=Labels.Num()==AccessorySlotChoice->GetOptionCount();for(int32 I=0;Same&&I<Labels.Num();++I)Same=AccessorySlotChoice->GetOptionAtIndex(I)==Labels[I];
+ TGuardValue<bool> Guard(bFillingAccessorySlots,true);
+ if(!Same){AccessorySlotChoice->ClearOptions();for(const FString& L:Labels)AccessorySlotChoice->AddOption(L);}
+ const int32 At=AccessorySlots.IndexOfByKey(AccessorySlot);
+ if(At!=INDEX_NONE&&AccessorySlotChoice->GetSelectedIndex()!=At)AccessorySlotChoice->SetSelectedIndex(At);
+}
+// The status line's word on what the card has for the shown target: where it is, or that its mod is not here.
+FString UOKCharacterController::CurrentAppearanceNote() const{
+ const TSharedPtr<FJsonObject>* Current=AppearanceCurrent.Find(AppearanceTargetKey);if(!Current||!Current->IsValid())return FString();
+ FString Item,Name,Guid;(*Current)->TryGetStringField(TEXT("item"),Item);(*Current)->TryGetStringField(TEXT("name"),Name);(*Current)->TryGetStringField(TEXT("guid"),Guid);
+ if(Item.IsEmpty())return FString::Printf(TEXT("\n目前是「%s」：來源缺失，這台沒裝 mod %s。"),*Name,Guid.IsEmpty()?TEXT("（無 GUID）"):*Guid);
+ for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Item)return FString::Printf(TEXT("\n目前是「%s」（第 %d 頁，標 ▸）。"),*Name,I/32+1);
+ return FString::Printf(TEXT("\n目前是「%s」（不在搜尋結果裡）。"),*Name);
+}
+void UOKCharacterController::OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type){
+ if(bFillingAccessorySlots||!AccessorySlotChoice)return;
+ const int32 At=AccessorySlotChoice->FindOptionIndex(Value);if(!AccessorySlots.IsValidIndex(At))return;
+ AccessorySlot=AccessorySlots[At];
+ // The category stays (髮飾 of slot 1 → 髮飾 of slot 2): the same name after the slot's own.
+ FString Category=AppearanceTarget?AppearanceTarget->GetSelectedOption():FString();int32 Colon;Category=Category.FindChar(TEXT('：'),Colon)?Category.Mid(Colon):FString();
+ AppearanceScope={AccessorySlotScope()};
+ // The slot's own category when it holds something (current), else the category shown before.
+ FString Preferred;for(const auto& C:AppearanceCurrent)if(C.Key.StartsWith(AccessorySlotScope())){for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("key"))==C.Key){Preferred=T->GetStringField(TEXT("label"));break;}break;}
+ if(Preferred.IsEmpty())for(auto T:AppearanceTargets){const FString L=T->GetStringField(TEXT("label"));if(T->GetStringField(TEXT("key")).StartsWith(AccessorySlotScope())&&!Category.IsEmpty()&&L.EndsWith(Category)){Preferred=L;break;}}
+ FillAppearanceTargets(Preferred);
+}
+// The target list as AppearanceScope keeps it: Preferred stays chosen when it is in the list, else the first.
+void UOKCharacterController::FillAppearanceTargets(const FString& Preferred){
+ if(!AppearanceTarget)return;
+ if(AccessorySlotChoice)AccessorySlotChoice->SetVisibility(AppearanceScope.Num()==1&&AppearanceScope[0].StartsWith(TEXT("accessory"))?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+ TArray<FString> Labels;
+ // In the scope's order (頭髮: 後髮 … before 光澤), the catalog's order within each prefix.
+ if(AppearanceScope.IsEmpty())for(auto T:AppearanceTargets)Labels.Add(T->GetStringField(TEXT("label")));
+ for(const FString& P:AppearanceScope)for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("key")).StartsWith(P))Labels.AddUnique(T->GetStringField(TEXT("label")));
+ // One accessory slot: the category the slot holds (current) rather than 髮飾 first.
+ FString Chosen=Labels.Contains(Preferred)?Preferred:FString();
+ if(Chosen.IsEmpty()&&AppearanceScope.Num()==1&&AppearanceScope[0].StartsWith(TEXT("accessory")))for(auto T:AppearanceTargets){const FString L=T->GetStringField(TEXT("label"));if(Labels.Contains(L)&&AppearanceCurrent.Contains(T->GetStringField(TEXT("key")))){Chosen=L;break;}}
+ if(Chosen.IsEmpty()&&Labels.Num())Chosen=Labels[0];
+ bool Same=Labels.Num()==AppearanceTarget->GetOptionCount();for(int32 I=0;Same&&I<Labels.Num();++I)Same=AppearanceTarget->GetOptionAtIndex(I)==Labels[I];
+ if(!Same){AppearanceTarget->ClearOptions();for(const FString& L:Labels)AppearanceTarget->AddOption(L);}
+ if(AppearanceTarget->GetSelectedOption()!=Chosen||!Same)AppearanceTarget->SetSelectedOption(Chosen);
+ // SetSelectedOption fires OnAppearanceTarget only for a change: the page is built here otherwise.
+ FString Key;for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("label"))==Chosen){Key=T->GetStringField(TEXT("key"));break;}
+ if(Key!=AppearanceTargetKey||AppearanceButtons.IsEmpty())OnAppearanceTarget(Chosen,ESelectInfo::Direct);
+ if(Labels.IsEmpty()&&AppearanceStatus)AppearanceStatus->SetText(FText::FromString(TEXT("這張卡沒有這一類可換的項目。")));
+}
+void UOKCharacterController::OnAppearanceGoRoot(){if(OnWantGameRootSettings)OnWantGameRootSettings();}
+// The catalog's status while it is built: the first build reads every abdata bundle and zipmod (minutes), later ones the
+// cache under Saved/AppearanceEditor/cache (seconds). Called from NativeTick; changes the text once a second.
+void UOKCharacterController::TickAppearanceCatalogStatus(){
+ if(AppearanceCatalogStarted<=0||!bAppearanceBusy||!AppearanceStatus)return;
+ const int32 Second=int32(FPlatformTime::Seconds()-AppearanceCatalogStarted);if(Second==AppearanceCatalogShownSecond)return;AppearanceCatalogShownSecond=Second;
+ AppearanceStatus->SetText(FText::FromString(FString::Printf(TEXT("正在建立外觀目錄（讀遊戲的 abdata 與 mods），第一次約需數分鐘，之後會快取…已 %d 秒"),Second)));
 }
 void UOKCharacterController::RefreshAppearanceCatalog(bool bSelectNewestSlot){
  if(MaterializeAppearance([bSelectNewestSlot](UOKCharacterController* G){G->RefreshAppearanceCatalog(bSelectNewestSlot);}))return;
  auto* Root=UKKGameRoot::Get();AppearanceRoot=Root?Root->Root:FString();
- if(AppearanceRoot.IsEmpty()||!IFileManager::Get().DirectoryExists(*(AppearanceRoot/TEXT("abdata")))){AppearanceStatus->SetText(FText::FromString(TEXT("請先設定遊戲目錄，才能讀取新增外觀的原始素材。")));return;}
- bAppearanceBusy=true;AppearanceStatus->SetText(FText::FromString(TEXT("正在建立遊戲與模組圖片目錄，首次讀取需要較長時間…")));auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("catalog"));R->SetStringField(TEXT("card"),Entries[SelectedIndex].Path);R->SetNumberField(TEXT("outfit"),OutfitIndex);
+ if(AppearanceRoot.IsEmpty()||!IFileManager::Get().DirectoryExists(*(AppearanceRoot/TEXT("abdata"))))
+ {
+  // Nothing to list without the game's abdata/ and mods/: say where to set it instead of leaving the pickers blank.
+  AppearanceTargets.Reset();AppearanceItems.Reset();AppearanceFiltered.Reset();AppearanceCurrent.Reset();AppearanceCatalogPath.Reset();
+  if(AppearanceTarget)AppearanceTarget->ClearOptions();if(AppearanceGrid)AppearanceGrid->ClearChildren();
+  const FString Where=AppearanceRoot.IsEmpty()?TEXT("目前沒有設定。"):FString::Printf(TEXT("目前的「%s」底下沒有 abdata/。"),*AppearanceRoot);
+  AppearanceStatus->SetText(FText::FromString(TEXT("要先在「設定 › 遊戲目錄」指定遊戲資料夾（含 abdata/ 與 mods/ 的原作資料夾）才有選項；")+Where));
+  if(AppearanceRootButton)AppearanceRootButton->SetVisibility(ESlateVisibility::Visible);
+  return;
+ }
+ if(AppearanceRootButton)AppearanceRootButton->SetVisibility(ESlateVisibility::Collapsed);
+ bAppearanceBusy=true;AppearanceCatalogStarted=FPlatformTime::Seconds();AppearanceCatalogShownSecond=-1;TickAppearanceCatalogStatus();auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("catalog"));R->SetStringField(TEXT("card"),Entries[SelectedIndex].Path);R->SetNumberField(TEXT("outfit"),OutfitIndex);
  const int32 Selection=SelectedIndex,Outfit=OutfitIndex,Generation=LoadGeneration;
- RunAppearanceRequest(R,[Selection,Outfit,Generation,bSelectNewestSlot](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bAppearanceBusy=false;if(Selection!=G->SelectedIndex||Outfit!=G->OutfitIndex||Generation!=G->LoadGeneration)return;if(!Data){G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀目錄讀取失敗：")+Error));return;}
+ RunAppearanceRequest(R,[Selection,Outfit,Generation,bSelectNewestSlot](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bAppearanceBusy=false;G->AppearanceCatalogStarted=0;if(Selection!=G->SelectedIndex||Outfit!=G->OutfitIndex||Generation!=G->LoadGeneration)return;if(!Data){G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀目錄讀取失敗：")+Error));return;}
   G->AppearanceTargets.Reset();G->AppearanceItems.Reset();G->AppearanceTarget->ClearOptions();
   for(auto V:Data->GetArrayField(TEXT("targets")))G->AppearanceTargets.Add(V->AsObject());for(auto V:Data->GetArrayField(TEXT("items")))G->AppearanceItems.Add(V->AsObject());
-  FString Chosen=TEXT("眉毛種類");for(auto T:G->AppearanceTargets){G->AppearanceTarget->AddOption(T->GetStringField(TEXT("label")));if(bSelectNewestSlot&&T->GetStringField(TEXT("key")).StartsWith(TEXT("accessory"))&&T->GetIntegerField(TEXT("category"))==121)Chosen=T->GetStringField(TEXT("label"));}G->AppearanceTarget->SetSelectedOption(Chosen);
+  // What the card has now: marked in the grid; a mod not installed here is told in the status line.
+  G->AppearanceCurrent.Reset();const TSharedPtr<FJsonObject>* Current=nullptr;
+  if(Data->TryGetObjectField(TEXT("current"),Current))for(const auto& P:(*Current)->Values){const TSharedPtr<FJsonObject> O=P.Value.IsValid()?P.Value->AsObject():nullptr;if(!O)continue;const FString Key(P.Key);G->AppearanceCurrent.Add(Key,O);FString Item;if(O->TryGetStringField(TEXT("item"),Item)&&!Item.IsEmpty())G->AppearanceSelectedKeys.Add(Key,Item);}
+  FString Chosen=TEXT("眉毛種類");for(auto T:G->AppearanceTargets){if(bSelectNewestSlot&&T->GetStringField(TEXT("key")).StartsWith(TEXT("accessory"))&&T->GetIntegerField(TEXT("category"))==121)Chosen=T->GetStringField(TEXT("label"));}
+  G->AppearanceCatalogPath=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();G->AppearanceCatalogOutfit=G->OutfitIndex;
+  G->RefreshAccessorySlots();
+  // A slot just added: the reader's 飾品 page moves to it (its scope is one slot's categories).
+  if(bSelectNewestSlot&&G->AccessorySlots.Num()){
+   G->AccessorySlot=G->AccessorySlots.Last();
+   if(G->AppearanceScope.Num()==1&&G->AppearanceScope[0].StartsWith(TEXT("accessory")))G->AppearanceScope={G->AccessorySlotScope()};
+   G->RefreshAccessorySlots();
+  }
+  G->FillAppearanceTargets(Chosen);
  });
 }
 void UOKCharacterController::OnCloseAppearance(){if(MaterializeAppearance([](UOKCharacterController* G){G->OnCloseAppearance();}))return;if(AppearancePanel)AppearancePanel->SetVisibility(ESlateVisibility::Collapsed);if(MotionPanel)MotionPanel->SetVisibility(bModelLayout?ESlateVisibility::Visible:ESlateVisibility::Collapsed);WarmClothingPreviews();}
-void UOKCharacterController::OnAppearanceTarget(FString Value,ESelectInfo::Type){for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("label"))==Value){AppearanceTargetKey=T->GetStringField(TEXT("key"));break;}AppearancePage=0;RebuildAppearancePage();}
+void UOKCharacterController::OnAppearanceTarget(FString Value,ESelectInfo::Type){for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("label"))==Value){AppearanceTargetKey=T->GetStringField(TEXT("key"));break;}AppearancePage=0;bAppearanceJumpToChosen=true;RebuildAppearancePage();}
 void UOKCharacterController::OnAppearanceSearch(const FText&){AppearancePage=0;RebuildAppearancePage();}
 void UOKCharacterController::OnAppearancePrev(){AppearancePage=FMath::Max(0,AppearancePage-1);RebuildAppearancePage();}
 void UOKCharacterController::OnAppearanceNext(){AppearancePage++;RebuildAppearancePage();}
@@ -157,12 +259,14 @@ void UOKCharacterController::RebuildAppearancePage(){
  if(!AppearanceGrid||bAppearanceBusy)return;int32 Category=-1;for(auto T:AppearanceTargets)if(T->GetStringField(TEXT("key"))==AppearanceTargetKey)Category=T->GetIntegerField(TEXT("category"));
  const FString Search=AppearanceSearch->GetText().ToString();AppearanceFiltered.Reset();for(int32 I=0;I<AppearanceItems.Num();++I){auto Item=AppearanceItems[I];auto E=Item->GetObjectField(TEXT("entry"));if(E->GetIntegerField(TEXT("category_no"))!=Category)continue;
   const FString Text=(Item->GetStringField(TEXT("source")).IsEmpty()?TEXT("原始遊戲 類型 "):TEXT("模組 類型 "))+E->GetStringField(TEXT("name"))+TEXT(" ")+FString::FromInt(E->GetIntegerField(TEXT("id")))+TEXT(" ")+Item->GetStringField(TEXT("source"));if(!Search.IsEmpty()&&!Text.Contains(Search))continue;AppearanceFiltered.Add(I);}
+ // A target just chosen opens on the page of what the card has.
+ if(bAppearanceJumpToChosen){bAppearanceJumpToChosen=false;const FString Chosen=AppearanceSelectedKeys.FindRef(AppearanceTargetKey);if(!Chosen.IsEmpty())for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Chosen){AppearancePage=I/32;break;}}
  AppearancePage=FMath::Clamp(AppearancePage,0,FMath::Max(0,(AppearanceFiltered.Num()-1)/32));++AppearancePageGeneration;AppearanceGrid->ClearChildren();AppearanceButtons.Reset();AppearanceTextures.Reset();
  for(int32 At=AppearancePage*32;At<FMath::Min((AppearancePage+1)*32,AppearanceFiltered.Num());++At){auto Item=AppearanceItems[AppearanceFiltered[At]];auto E=Item->GetObjectField(TEXT("entry"));auto* B=WidgetTree->ConstructWidget<UOKAppearanceButton>();B->Owner=this;B->ItemKey=Item->GetStringField(TEXT("key"));B->OnClicked.AddDynamic(B,&UOKAppearanceButton::SelectItem);B->SetToolTipText(FText::FromString(E->GetStringField(TEXT("name"))+TEXT("\n")+Item->GetStringField(TEXT("source"))));
-  if(AppearanceSelectedKeys.FindRef(AppearanceTargetKey)==B->ItemKey)B->SetBackgroundColor(FLinearColor(.95,.45,.25));auto* Box=WidgetTree->ConstructWidget<USizeBox>();Box->SetWidthOverride(124);auto* Col=WidgetTree->ConstructWidget<UVerticalBox>();Box->SetContent(Col);B->SetContent(Box);
-  B->Thumbnail=WidgetTree->ConstructWidget<UImage>();B->Thumbnail->SetDesiredSizeOverride(FVector2D(104,104));auto* ThumbBox=WidgetTree->ConstructWidget<USizeBox>();ThumbBox->SetWidthOverride(104);ThumbBox->SetHeightOverride(104);ThumbBox->SetContent(B->Thumbnail);Col->AddChild(ThumbBox);B->ThumbnailStatus=WidgetTree->ConstructWidget<UTextBlock>();B->ThumbnailStatus->SetText(FText::FromString(TEXT("讀取縮圖…")));B->ThumbnailStatus->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",12));Col->AddChild(B->ThumbnailStatus);auto* Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetText(FText::FromString(FString::Printf(TEXT("類型 %d · %s"),E->GetIntegerField(TEXT("id")),Item->GetStringField(TEXT("source")).IsEmpty()?TEXT("原始遊戲"):TEXT("模組"))));Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Text->SetAutoWrapText(true);Col->AddChild(Text);AppearanceGrid->AddChild(B);AppearanceButtons.Add(B);
+  B->bChosen=AppearanceSelectedKeys.FindRef(AppearanceTargetKey)==B->ItemKey;if(B->bChosen)B->SetBackgroundColor(FLinearColor(.95,.45,.25));auto* Box=WidgetTree->ConstructWidget<USizeBox>();Box->SetWidthOverride(124);auto* Col=WidgetTree->ConstructWidget<UVerticalBox>();Box->SetContent(Col);B->SetContent(Box);
+  B->Thumbnail=WidgetTree->ConstructWidget<UImage>();B->Thumbnail->SetDesiredSizeOverride(FVector2D(104,104));auto* ThumbBox=WidgetTree->ConstructWidget<USizeBox>();ThumbBox->SetWidthOverride(104);ThumbBox->SetHeightOverride(104);ThumbBox->SetContent(B->Thumbnail);Col->AddChild(ThumbBox);B->ThumbnailStatus=WidgetTree->ConstructWidget<UTextBlock>();B->ThumbnailStatus->SetText(FText::FromString(TEXT("讀取縮圖…")));B->ThumbnailStatus->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",12));Col->AddChild(B->ThumbnailStatus);auto* Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetText(FText::FromString(FString::Printf(TEXT("類型 %d · %s"),E->GetIntegerField(TEXT("id")),Item->GetStringField(TEXT("source")).IsEmpty()?TEXT("原始遊戲"):TEXT("模組"))));Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Text->SetAutoWrapText(true);Col->AddChild(Text);B->Caption=Text;AppearanceGrid->AddChild(B);AppearanceButtons.Add(B);
  }
- AppearancePageText->SetText(FText::FromString(FString::Printf(TEXT("%d／%d 頁"),AppearancePage+1,FMath::Max(1,(AppearanceFiltered.Num()+31)/32))));AppearanceStatus->SetText(FText::FromString(FString::Printf(TEXT("共 %d 個項目；點選圖片套用，原始卡片不會被覆寫。"),AppearanceFiltered.Num())));LoadAppearanceThumbnails();
+ AppearancePageText->SetText(FText::FromString(FString::Printf(TEXT("%d／%d 頁"),AppearancePage+1,FMath::Max(1,(AppearanceFiltered.Num()+31)/32))));AppearanceStatus->SetText(FText::FromString(FString::Printf(TEXT("共 %d 個項目；點選圖片套用，原始卡片不會被覆寫。"),AppearanceFiltered.Num())+CurrentAppearanceNote()));LoadAppearanceThumbnails();
 }
 void UOKCharacterController::LoadAppearanceThumbnails(){
  if(bAppearanceThumbBusy||AppearanceButtons.IsEmpty())return;const int32 Generation=AppearancePageGeneration;bAppearanceThumbBusy=true;auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("thumbnails"));TArray<TSharedPtr<FJsonValue>> Keys;for(UOKAppearanceButton* B:AppearanceButtons)Keys.Add(MakeShared<FJsonValueString>(B->ItemKey));R->SetArrayField(TEXT("keys"),Keys);
@@ -255,7 +359,7 @@ bool UOKCharacterController::ApplyPreparedAppearance(const FString& Key){
    G->AppearanceLastTiming->SetNumberField(TEXT("output_save_ms"),Job->SaveMs);G->AppearanceLastTiming->SetNumberField(TEXT("preview_commit_ms"),(FPlatformTime::Seconds()-Start)*1000.);
    // Selection does not change the catalog or thumbnails. Keep existing
    // widgets/textures rather than decoding and uploading the entire page.
-   for(UOKAppearanceButton* B:G->AppearanceButtons)B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
+   for(UOKAppearanceButton* B:G->AppearanceButtons)B->bChosen=B->ItemKey==Key,B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
    G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀已套用；另存時會保存完整角色資源。")));
   });
  });
@@ -310,7 +414,7 @@ bool UOKCharacterController::ApplyPreparedGeometry(const FString& Key){
    G->AppearanceLastTiming->SetObjectField(TEXT("geometry_publication"),Publication);
    G->AppearanceLastTiming->SetNumberField(TEXT("metadata_copy_ms"),MetadataCopyMs);G->AppearanceLastTiming->SetNumberField(TEXT("output_read_ms"),Job->ReadMs);
    G->AppearanceLastTiming->SetNumberField(TEXT("output_save_ms"),Job->SaveMs);G->AppearanceLastTiming->SetNumberField(TEXT("preview_commit_ms"),(FPlatformTime::Seconds()-Start)*1000.);
-   for(UOKAppearanceButton* B:G->AppearanceButtons)B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
+   for(UOKAppearanceButton* B:G->AppearanceButtons)B->bChosen=B->ItemKey==Key,B->SetBackgroundColor(B->ItemKey==Key?FLinearColor(.95f,.45f,.25f):FLinearColor::White);
    G->AppearanceStatus->SetText(FText::FromString(TEXT("外觀已套用；另存時會保存完整角色資源。")));
   });
  });

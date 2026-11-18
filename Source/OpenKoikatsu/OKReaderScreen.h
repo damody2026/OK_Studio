@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Core/DreamTextUserWidget.h"
+#include "HAL/ThreadSafeBool.h"
 #include "OKReaderScreen.generated.h"
 
 class UOKCharacterController;
@@ -58,6 +59,9 @@ public:
 	bool IsOpen() const { return bOpen; }
 	// Copy the UMG control's state into this one. Cheap when nothing changed.
 	void Sync();
+	// A click on it, as the pointer would (ok.ReaderScreen press): false when it is not a shown, enabled button.
+	bool Press();
+	const FString& GetShownText() const { return ShownText; }
 
 protected:
 	virtual void NativeOnInitialized() override;
@@ -87,6 +91,9 @@ struct FOKDreamMirrorPanel
 	TWeakObjectPtr<UPanelWidget> Source;
 	TWeakObjectPtr<UDreamWidget> Target;
 	int32 Children=-1;
+	// Which UMG children it was mirrored from: a list rebuilt with as many new widgets (a page of the picture picker, of the
+	// detailed editor) is mirrored again too.
+	TArray<TWeakObjectPtr<UWidget>> Kids;
 	bool bHorizontal=false;
 };
 
@@ -113,6 +120,8 @@ public:
 	UPROPERTY() TObjectPtr<UDreamWidget> CardName;
 	UPROPERTY() TObjectPtr<UDreamScrollBox> RightScroll;
 	UPROPERTY() TObjectPtr<UDreamWidget> PluginHost;
+	UPROPERTY() TObjectPtr<UDreamWidget> Notice;
+	UPROPERTY() TObjectPtr<UDreamWidget> NoticeText;
 
 	// Show this screen for the controller, whose UMG tree must already be built.
 	static UOKReaderScreen* Open(UOKCharacterController* Controller);
@@ -123,9 +132,26 @@ public:
 	FString CurrentCategory() const;
 	bool SelectCategory(const FString& Name);
 	bool SelectSub(const FString& Name);
+	// Press the shown control with this text (the Index-th of several; exact text first, then containing it).
+	bool PressControl(const FString& Text,int32 Index);
+	void ScrollLeftPage(float Progress);
 	void ShowTabPublic(int32 Index){ShowTab(Index);}
 	void SetLeftWidth(float Width);
+	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
+	// when shown, shows it and what is found there. bForget: back to the default.
+	void ApplyFolderSetting(bool bLibrary,const FString& Folder,bool bForget);
+	// A report from the controller (UOKCharacterController::ScreenNote), shown under the camera bar for Seconds; a report
+	// with the same key replaces the one shown. The engine's own on-screen messages would draw over the left panel.
+	void ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text);
+	// The reports shown now, one per line (for the game MCP and tests).
+	FString NoticeState() const;
+	// The card list's pictures held now, of how many tiles ("12/101"; "-" with no card list shown).
+	FString ThumbState() const;
 	float GetLeftWidth() const { return LeftWidth; }
+	class UOKCharacterController* GetController() const;
+	// The 3D view between the two panels in viewport pixels (the screen canvas is 1080 design pixels high): what the HUD
+	// draws there (the height ruler) stays clear of the panels. False before the screen is laid out.
+	bool ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const;
 
 protected:
 	virtual void NativeOnInitialized() override;
@@ -136,7 +162,11 @@ protected:
 	UFUNCTION() void HandleTab3();
 
 private:
-	struct FGroup {FString Name;TArray<TWeakObjectPtr<UWidget>> Sources;TFunction<void()> OnEnter;};
+	// Sources: UMG widgets mirrored onto the page; Build: a page of the screen's own (no UMG counterpart).
+	// bShownOnly: only the sources shown now are mirrored (the bone rows: hundreds, most folded away by the category);
+	// Signature: the page is built again when it changes (the bone category and the X／Y／Z switch).
+	struct FGroup {FString Name;TArray<TWeakObjectPtr<UWidget>> Sources;TFunction<void()> OnEnter;TFunction<void(UDreamWidget*)> Build;bool bShownOnly=false;TFunction<FString()> Signature;};
+	FString ShownSignature;
 	struct FCategory {FString Name;int32 Tab=0;TArray<FGroup> Groups;TFunction<void()> OnEnter;};
 
 	TWeakObjectPtr<UOKCharacterController> Controller;
@@ -164,9 +194,38 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> CardButtons;
 	TArray<FString> CardTexts;
 	int32 ShownCardSelection=INDEX_NONE;
+	// How many cards were marked as not opening when the list was last marked.
+	int32 ShownUnopenable=0;
+	struct FNote{FString Text;FColor Color;double Until=0;uint64 Order=0;};
+	TMap<int32,FNote> Notes;
+	uint64 NoteOrder=0;
+	// The text the notice shows, and whether it is shown (as laid out until the first frame hides it).
+	FString ShownNotice;bool bNoticeShown=true;
+	void TickNotice();
+	// The card list's pictures, one per tile (null until it scrolls into view; dropped again far out of it), and which
+	// tiles have a decode on the way. ThumbGeneration discards a decode finishing after the list was rebuilt.
+	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CardThumbs;
+	TArray<FString> CardPaths;
+	TArray<bool> CardThumbLoading;
+	int32 ThumbsInFlight=0;
+	int32 ThumbGeneration=0;
+	// Raised when the list is rebuilt: decodes still on workers stop and never report back (a destroyed screen is caught by
+	// the weak pointer the report holds).
+	TSharedRef<FThreadSafeBool> ThumbCancel=MakeShared<FThreadSafeBool>(false);
+	// Pictures a tile has just let go of (scrolled far away, list rebuilt) stay referenced a few seconds before the
+	// collector may free them: DreamGUI's draw data built before the brush changed must not outlive its texture.
+	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> RetiredThumbs;
+	TArray<double> RetiredThumbTimes;
+	void RetireThumb(class UTexture2D* Texture);
+	// The 遊戲目錄 page's fields and what they report (the folder count runs on a worker).
+	TWeakObjectPtr<UOKDreamControl> RootInput,RootStatus,LibraryInput,LibraryStatus;
+	int32 RootCheckGeneration=0;
 	// Whether the hidden UMG layer held the keyboard focus last frame (it is logged when it starts to).
 	bool bUmgHadFocus=false;
 	TArray<FOKDreamMirrorPanel> Panels;
+	// The page's part of the picture picker and of the detailed editor (target prefixes, property tokens), asked for again
+	// while the controller is busy (reading the catalog it opens neither): see SyncAll.
+	TOptional<TArray<FString>> WantedTargets,WantedProperties;
 
 	void BuildCategories();
 	void BuildDrawers();
@@ -176,9 +235,15 @@ private:
 	void ShowCategory(int32 Index,int32 SubIndex=0);
 	void ClearPage();
 	void MarkCurrentCard();
+	void TickThumbnails();
+	void BuildGameRootPage(UDreamWidget* Page);
+	void CheckGameRoot(const FString& Root);
+	void CheckLocalLibrary(const FString& Library);
+	static FString PickFolder(const FString& Title,const FString& Start);
 	void Layout();
 	void TickResize();
 	void SyncAll();
+	void ApplyWantedScopes();
 
 	UOKDreamControl* MakeControl(const TCHAR* Kind,UDreamWidget* Into);
 	UOKDreamControl* MakeOwnButton(UDreamWidget* Into,const FString& Text,TFunction<void()> Press);

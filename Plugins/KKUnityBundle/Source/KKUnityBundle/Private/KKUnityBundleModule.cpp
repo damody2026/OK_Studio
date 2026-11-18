@@ -14,10 +14,12 @@ void FKKUnityBundleModule::StartupModule()
 		FPlatformMisc::SetEnvironmentVar(TEXT("OK_ANIM_CACHE_DIR"), *FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OkAnimCache")));
 	}
 	// Local library (models only third-party mods use, apart from the shared base library): the user's folder from the
-	// KKGameRoot LocalLibrary setting; Rust falls back to local_v1 beside the base library (oklib::local_libraries).
+	// KKGameRoot LocalLibrary setting -- the user's choice (GameUserSettings.ini [OKGameRoot], UKKGameRoot::SetUserLocalLibrary)
+	// over DefaultGame.ini; Rust falls back to local_v1 beside the base library (oklib::local_libraries).
 	FString LocalLibrary;
+	const bool bUserLibrary = GConfig && GConfig->GetString(TEXT("OKGameRoot"), TEXT("LocalLibrary"), LocalLibrary, GGameUserSettingsIni);
 	if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_LOCAL_LIBRARY")).IsEmpty() && GConfig
-		&& GConfig->GetString(TEXT("/Script/KKSideloader.KKGameRoot"), TEXT("LocalLibrary"), LocalLibrary, GGameIni) && !LocalLibrary.IsEmpty())
+		&& (bUserLibrary || GConfig->GetString(TEXT("/Script/KKSideloader.KKGameRoot"), TEXT("LocalLibrary"), LocalLibrary, GGameIni)) && !LocalLibrary.IsEmpty())
 	{
 		if (FPaths::IsRelative(LocalLibrary)) LocalLibrary = FPaths::ProjectDir() / LocalLibrary;
 		FPlatformMisc::SetEnvironmentVar(TEXT("OK_LOCAL_LIBRARY"), *FPaths::ConvertRelativePathToFull(LocalLibrary));

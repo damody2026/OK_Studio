@@ -32,6 +32,8 @@
 #include "Serialization/JsonSerializer.h"
 #include "UnrealClient.h"
 #include "Engine/GameViewportClient.h"
+#include "ImageUtils.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
@@ -517,6 +519,28 @@ void AOKInteractionMode::SetHPaused(bool bPaused){
     Controller->PairedPlayback->SetPaused(bPaused);if(Controller->PreviewActor)Controller->PreviewActor->SetSpeechPaused(bPaused);if(Controller->PartnerActor)Controller->PartnerActor->SetSpeechPaused(bPaused);
     UE_LOG(LogTemp,Display,TEXT("H scene: %s"),bPaused?TEXT("paused"):TEXT("resumed"));
 }
+// The ready evidence shot (high-interaction.png, checked by verify_street_social_contacts.lua): the engine hands the
+// pixels to the screenshot delegate instead of writing the file, and the PNG is compressed and written on a worker
+// (2026-11-18: compressing it in FViewport_Draw was a 125 ms frame at every one-on-one entry). 0: the engine writes it.
+static TAutoConsoleVariable<int32> CVarInteractionAsyncShot(TEXT("ok.Interaction.AsyncShot"),1,TEXT("1: the one-on-one's ready screenshot is compressed and saved on a worker; 0: by the engine on the game thread"));
+static void OKRequestShotAsync(const FString& File,bool bShowUI){
+    static FDelegateHandle Handle;
+    if(CVarInteractionAsyncShot.GetValueOnGameThread()==0||Handle.IsValid()||UGameViewportClient::OnScreenshotCaptured().IsBound()||FScreenshotRequest::IsScreenshotRequested()){
+        FScreenshotRequest::RequestScreenshot(File,bShowUI,false);return;} // someone else takes screenshots now: the engine way
+    static bool bTaken=false;bTaken=false;
+    Handle=UGameViewportClient::OnScreenshotCaptured().AddLambda([File](int32 W,int32 H,const TArray<FColor>& Bitmap){
+        if(bTaken)return; // ours came already; a later shot before the unbind is not ours to save
+        bTaken=true;
+        // Not removed from inside its own broadcast: Remove destroys the lambda (its File) while it still runs
+        // (2026-11-18: reading File after Remove crashed the game on the first entry). Unbound on the next game-thread
+        // task instead, after this broadcast is over.
+        Async(EAsyncExecution::ThreadPool,[Path=FString(File),W,H,Pixels=TArray64<FColor>(Bitmap)]{TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_ShotSave);
+            TArray64<uint8> Png;FImageUtils::PNGCompressImageArray(W,H,Pixels,Png);IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path),true);
+            const FString Tmp=Path+TEXT(".tmp");
+            if(Png.IsEmpty()||!FFileHelper::SaveArrayToFile(Png,*Tmp)||!IFileManager::Get().Move(*Path,*Tmp,true))UE_LOG(LogTemp,Warning,TEXT("Interaction shot not saved: %s"),*Path);});
+        AsyncTask(ENamedThreads::GameThread,[]{if(Handle.IsValid()){UGameViewportClient::OnScreenshotCaptured().Remove(Handle);Handle.Reset();}});});
+    FScreenshotRequest::RequestScreenshot(File,bShowUI,false);
+}
 void AOKInteractionMode::Tick(float Delta){
     Super::Tick(Delta);if(Finished||!Controller)return;
     if(ReaderTalk&&Ready)ReaderTalk->Tick(*this);
@@ -589,7 +613,7 @@ void AOKInteractionMode::Tick(float Delta){
         int64 Vertices=0;int32 Components=0;for(const auto& Part:Controller->PreviewActor->Parts){Vertices+=Part.BaseVertices.Num();if(IsValid(Part.Comp))++Components;}
         Evidence->SetNumberField(TEXT("render_vertices"),Vertices);Evidence->SetNumberField(TEXT("render_components"),Components);
         Evidence->SetNumberField(TEXT("playback_start_seconds"),Controller->PairedPlayback->GetElapsed());
-        if(!ReportPath.IsEmpty())FScreenshotRequest::RequestScreenshot(FPaths::GetPath(ReportPath)/TEXT("high-interaction.png"),true,false);
+        if(!ReportPath.IsEmpty())OKRequestShotAsync(FPaths::GetPath(ReportPath)/TEXT("high-interaction.png"),true);
     }
     if(Ready){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_OutfitSwap);TickOutfitSwap();}
 #if !UE_BUILD_SHIPPING

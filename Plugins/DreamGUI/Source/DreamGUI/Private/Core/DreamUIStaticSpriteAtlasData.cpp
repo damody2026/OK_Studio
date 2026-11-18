@@ -9,6 +9,7 @@
 #include "Core/IDreamUISpriteRenderInterface.h"
 #include "TextureResource.h"
 #include "Core/DreamUIManager.h"
+#include "HAL/IConsoleManager.h"
 
 #define LOCTEXT_NAMESPACE "DreamUIStaticSpriteAtlasData"
 
@@ -267,6 +268,7 @@ void UDreamUIStaticSpriteAtlasData::CheckSprite()
 }
 bool UDreamUIStaticSpriteAtlasData::PackAtlas()
 {
+	ReleasePermanentHolderRoots();
 	AtlasTextureArray.Empty();
 
 	if (SpriteDataArray.Num() <= 0)return false;
@@ -729,6 +731,7 @@ void UDreamUIStaticSpriteAtlasData::BeginDestroy()
 		item->bIsInitialized = false;
 	}
 #endif
+	ReleasePermanentHolderRoots();
 	Super::BeginDestroy();
 }
 
@@ -785,6 +788,7 @@ bool UDreamUIStaticSpriteAtlasData::InitCheck()
 			TexturePixelDataForBuild;
 #endif
 
+		ReleasePermanentHolderRoots();
 		this->AtlasTextureArray.Empty();
 		uint32 TextureDataOffset = 0;
 		static int TextureNameSuffix = 0;
@@ -835,6 +839,7 @@ bool UDreamUIStaticSpriteAtlasData::InitCheck()
 			NewTexture->UpdateResource();
 
 			this->AtlasTextureArray.Add(NewTexture);
+			NotePageHolder(this, NewTexture);
 #if WITH_EDITOR
 			for (auto& sprite : RenderSpriteArray)
 			{
@@ -886,5 +891,87 @@ bool UDreamUIStaticSpriteAtlasData::ReadPixel(int InTextureIndex, const FVector2
 	}
 	return false;
 }
+
+void UDreamUIStaticSpriteAtlasData::NotePageHolder(const UObject* Holder, UTexture2D* Page)
+{
+	if (Holder == nullptr || Page == nullptr || !AtlasTextureArray.Contains(Page))return;
+	if (!GUObjectArray.IsDisregardForGC(Holder))return;
+	//a page someone else rooted stays theirs: rooting it again here would make the release below drop their claim
+	if (Page->IsRooted())return;
+	Page->AddToRoot();
+	PagesRootedForPermanentHolders.Add(Page);
+}
+
+void UDreamUIStaticSpriteAtlasData::ReleasePermanentHolderRoots()
+{
+	// The pages are about to be replaced (or this atlas is going): whoever pointed at them points at the new ones
+	// once it asks again (UDreamUISpriteData::InitSpriteData notes it then).
+	for (const TWeakObjectPtr<UTexture2D>& Page : PagesRootedForPermanentHolders)
+	{
+		if (UTexture2D* Texture = Page.Get())Texture->RemoveFromRoot();
+	}
+	PagesRootedForPermanentHolders.Reset();
+}
+
+#if !UE_BUILD_SHIPPING
+void UDreamUIStaticSpriteAtlasData::DebugPermanentSpriteOnStaticAtlas(bool bProtected, FOutputDevice& Out)
+{
+	UDreamUISpriteData* Sprite = UDreamUISpriteData::GetDefaultWhiteSolid();
+	if (Sprite == nullptr){ Out.Log(TEXT("no default white sprite")); return; }
+	const bool bPooled = GUObjectArray.IsDisregardForGC(Sprite);
+	// A static atlas of one 4 x 4 page, as a cooked atlas carries it (TexturePixelDataForBuild: every mip, largest first).
+	// Rooted for the length of the test: a real atlas a pooled sprite packs into is loaded with it, in the pool too.
+	UDreamUIStaticSpriteAtlasData* Atlas = NewObject<UDreamUIStaticSpriteAtlasData>(GetTransientPackage(), TEXT("DreamUIDebugStaticAtlas"), RF_Transient);
+	Atlas->AddToRoot();
+	Atlas->TextureSizeArray = { 4 };
+	Atlas->TexturePixelDataForBuild.Init(255, (16 + 4 + 1) * 4);
+#if WITH_EDITORONLY_DATA
+	Atlas->TexturePixelData = Atlas->TexturePixelDataForBuild;
+	Atlas->bIsAtlasPackDirty = false;
+#endif
+	// The sprite as it was, to put back after.
+	const EDreamUISpritePackingType OldType = Sprite->PackingType;
+	UDreamUIStaticSpriteAtlasData* const OldAtlas = Sprite->PackingAtlas;
+	const int32 OldIndex = Sprite->AtlasTextureIndex;
+	UTexture2D* const OldTexture = Sprite->AtlasTexture;
+	const bool bOldInitialized = Sprite->bIsInitialized;
+
+	Sprite->PackingType = EDreamUISpritePackingType::Static;
+	Sprite->PackingAtlas = Atlas;
+	Sprite->AtlasTextureIndex = 0;
+	Sprite->bIsInitialized = false;
+	if (bProtected)
+	{
+		Sprite->InitSpriteData();
+	}
+	else
+	{
+		// What InitSpriteData did before NotePageHolder: the page, and no word to the atlas about who holds it.
+		Sprite->AtlasTexture = Atlas->GetAtlasTexture(0);
+	}
+	UTexture2D* Page = Sprite->AtlasTexture;
+	Out.Logf(TEXT("sprite %s in the disregard-for-GC pool: %s; static page %s rooted: %s; collecting garbage (%s)"),
+		*Sprite->GetName(), bPooled ? TEXT("yes") : TEXT("no"), *GetNameSafe(Page), Page && Page->IsRooted() ? TEXT("yes") : TEXT("no"),
+		bProtected ? TEXT("protected") : TEXT("unprotected: a cooked Development build should stop on it"));
+	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, true);
+
+	Sprite->PackingType = OldType;
+	Sprite->PackingAtlas = OldAtlas;
+	Sprite->AtlasTextureIndex = OldIndex;
+	Sprite->AtlasTexture = OldTexture;
+	Sprite->bIsInitialized = bOldInitialized;
+	Atlas->ReleasePermanentHolderRoots();
+	Atlas->RemoveFromRoot();
+	Out.Log(TEXT("collected without a failure; the sprite is back as it was"));
+}
+
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GDreamUIDebugPermanentSpriteOnStaticAtlas(
+	TEXT("DreamGUI.Debug.PermanentSpriteOnStaticAtlas"),
+	TEXT("[unprotected] Point the default white sprite (in the disregard-for-GC pool in a cooked build) at a static atlas page, collect garbage, restore it. 'unprotected' skips rooting the page, reproducing the GC verification failure."),
+	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld*, FOutputDevice& Out)
+	{
+		UDreamUIStaticSpriteAtlasData::DebugPermanentSpriteOnStaticAtlas(!(Args.Num() > 0 && Args[0] == TEXT("unprotected")), Out);
+	}));
+#endif
 
 #undef LOCTEXT_NAMESPACE

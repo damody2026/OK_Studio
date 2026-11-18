@@ -122,6 +122,35 @@ void FDreamUIDynamicSpriteAtlasData::ReleaseAtlasTextures()
 	SpriteDataArray.Reset();
 	AtlasTextureArray.Reset();
 	AtlasBinPackArray.Reset();
+	UpdatePermanentHolderRoots();
+}
+
+void FDreamUIDynamicSpriteAtlasData::UpdatePermanentHolderRoots()
+{
+	TArray<UTexture2D*, TInlineAllocator<4>> Wanted;
+	for (const auto& SpriteData : SpriteDataArray)
+	{
+		if (!IsValid(SpriteData) || !GUObjectArray.IsDisregardForGC(SpriteData))continue;
+		UTexture2D* Page = SpriteData->AtlasTexture.Get();
+		if (Page != nullptr && AtlasTextureArray.Contains(Page))
+		{
+			Wanted.AddUnique(Page);
+		}
+	}
+	for (int32 i = PagesRootedForPermanentSprites.Num() - 1; i >= 0; i--)
+	{
+		UTexture2D* Page = PagesRootedForPermanentSprites[i].Get();
+		if (Page != nullptr && Wanted.Contains(Page))continue;
+		if (Page != nullptr)Page->RemoveFromRoot();
+		PagesRootedForPermanentSprites.RemoveAtSwap(i);
+	}
+	for (UTexture2D* Page : Wanted)
+	{
+		//a page someone else rooted stays theirs: rooting it again here would make the un-root above release their claim
+		if (Page->IsRooted())continue;
+		Page->AddToRoot();
+		PagesRootedForPermanentSprites.Add(Page);
+	}
 }
 
 int32 FDreamUIDynamicSpriteAtlasData::GetAtlasTextureSize()
@@ -249,6 +278,7 @@ int32 FDreamUIDynamicSpriteAtlasData::DropEmptyPages()
 		}
 		DroppedCount++;
 	}
+	UpdatePermanentHolderRoots();
 	return DroppedCount;
 }
 
@@ -268,6 +298,7 @@ bool FDreamUIDynamicSpriteAtlasData::PackSprite(UDreamUISpriteData* Sprite)
 {
 	// Reject incompatible platform data before allocating a page or evicting any existing sprites.
 	if (!IsValid(Sprite) || !IsValid(Sprite->GetSpriteTexture()) || Sprite->GetSpriteTexture()->GetPixelFormat() != PF_B8G8R8A8)return false;
+	ON_SCOPE_EXIT{ UpdatePermanentHolderRoots(); };
 	if (TryPackSpriteIntoExistingPages(Sprite))
 	{
 		return true;

@@ -5711,3 +5711,27 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 **通則**：蓋在最上層的 Slate 覆蓋層，只要不收滑鼠就要明講 `SelfHitTestInvisible`／`HitTestInvisible`，預設的 `Visible` 會吃掉命中。新增一種「進行中」狀態時，先想清楚控制通道在這段期間要放行哪些請求，至少要能送出結束它的那個輸入。
 10
+## 2026-11-18：20:25 在 E 树重编 stage，穿过了 c-lowspec 的独占量测（e-120fps）
+
+协调者 19:5x 通知复工后，我直接开了 `rebuild_street_social_runtime.lua --tag EFps1118j --skip-cook --skip-base`（20:25:16–20:26:37 编 host 与执行档）。建置不占 slot，当时 c-lowspec 正占着整台机器（`--need-gb 60`）做安静走路量测，三棵树同时在编，它那段量测作废。我以为「建置在非独占时做」只要自己不占独占就行，没去确认别人有没有在独占。
+
+**修正**：开任何建置／cook 前先跑 `C:\portable\OpenKoikatsu\Tools\lua\lua.exe C:\portable\OpenKoikatsu\Tools\unreal_slot.lua may-build`，exit 0 才开，exit 3（有人 `[need 60]`）就等（工具闸门见 C 树 `5ed72afe8`）。
+
+## 2026-11-18：讀卡器 DreamGUI 骨骼頁一次鏡像全部骨骼列，換頁時遊戲卡死
+
+- **變更**：新版讀卡器「身子 › 骨骼」補上骨骼分類下拉，第一版進頁時切到「骨骼調整：全部」，把 ShapeBox 裡全部骨骼列（含收起的，幾百列）都鏡像成 DreamGUI 控制項。
+- **症狀與證據**：建頁那一幀 1823 ms（0.55 FPS）；log 連續出現 DreamGUI `UDreamUIDataAsTexture::ExpandTexture ... Maximum texture size is:16,384`；接著按「懷孕」換頁，遊戲單核滿載、`Responding=False` 數分鐘不恢復，只能結束行程。
+- **原因**：DreamGUI 一頁的控制項太多，頂點資料貼圖超過上限；銷毀這幾百個控制項時又極慢。
+- **處置**：骨骼頁預設第一個骨骼分類（頭部），只鏡像目前看得到的列（`FGroup::bShownOnly`），分類或「進階」勾選改變時重建該頁（`FGroup::Signature`）；實拍 8 列、266 FPS，骨骼→懷孕→胸部切換正常。
+- **再試前檢查**：DreamGUI 頁面不要一次鏡像上百列；大量列一律依目前條件只建看得到的那些。
+
+## 2026-11-18：may-build 回「wait」還是開了建置（e-fork-2）
+
+- **變更／症狀**：讀卡器第三批要重編，指令寫成 `lua unreal_slot.lua may-build; Build.bat ...` 串在同一行，沒看 exit code。may-build 印出 `wait: e-120fps holds slot1 exclusively (need 60 GB)`（exit 3），Build.bat 照樣跑了，正好撞上 e-120fps 的獨占量測（編譯因自己的錯誤很快中止，但仍佔了 CPU）。
+- **修正**：may-build 單獨跑，exit 0 才開建置；要串在同一行就寫成 `may-build && Build.bat`。exit 3 就等，量測結束再建。
+
+## 2026-11-18：证据截图改背景压缩，第一版在回呼里移除自己后读已释放的捕获，进一对一就当机（e-120fps）
+
+`ok.Interaction.AsyncShot` 第一版：`OnScreenshotCaptured` 的 lambda 一进来就 `Remove(Handle)`，然后才把捕获的 `File` 复制给背景工作。`Remove` 在广播中会立刻销毁这个 lambda，`File` 已经被释放，读它就是 `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff`（游戏执行绪 memcpy）。stage `EFps1118m` 的 `AsyncShot 1` 那趟在一对一就绪时当掉，量测脚本又没有发现游戏已死，一直等每个指令逾时，独占多占了约 18 分钟。
+
+**修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。

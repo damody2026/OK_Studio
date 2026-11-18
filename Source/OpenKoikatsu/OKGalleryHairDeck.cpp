@@ -34,7 +34,7 @@ static FAutoConsoleCommand ReaderHairDeckCmd(TEXT("ok.ReaderHairDeck"),
 			if(!It->HasPreviewCharacter())continue;
 			FString Report;const bool bOk=It->ApplyHairDeckHair(Cards,Opts,Report);
 			UE_LOG(LogTemp,Display,TEXT("OK HairDeck %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*Report);
-			if(GEngine)GEngine->AddOnScreenDebugMessage(2,8.f,bOk?FColor::Cyan:FColor::Orange,bOk?TEXT("已換上 HairDeck 頭髮"):Report);
+			It->ScreenNote(2,8.f,bOk?FColor::Cyan:FColor::Orange,bOk?TEXT("已換上 HairDeck 頭髮"):Report);
 			return;
 		}
 	}));

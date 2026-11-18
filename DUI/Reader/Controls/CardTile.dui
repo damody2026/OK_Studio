@@ -1,0 +1,33 @@
+// One card of the card list (人物卡總欄): its picture over its name, the whole tile one button. The picture is loaded
+// by code when the tile scrolls into view (UOKReaderScreen::TickThumbnails).
+class /Game/UI/Reader/Controls/WBP_OKCardTile
+use "Theme.dui" as ui
+
+// The preset's bold face has no Chinese glyphs (it drew nothing): the regular face, which falls back to CJK.
+style CjkLabel : ui.Label { Font = @ui.FontRegular }
+
+Widget Root {
+    AnchorData.SizeDelta = (156, 252)
+    + Overlay { }
+    RectBlock Face : ui.Card {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+    // A card is 252 x 352: 144 x 201 keeps its shape, with the name under it.
+    Image Picture {
+        @slot { HorizontalAlignment = Center  VerticalAlignment = Top  Padding = (6, 6, 6, 0)  MinDesiredSize = (144, 201)  MaxDesiredSize = (144, 201) }
+    }
+    // Over the picture and see-through (hovered or pressed only tints): the whole tile takes the click.
+    Native.Button Button : ui.TabOff {
+        Style.Height = 252
+        Style.ContentPadding = (6, 212, 6, 4)
+        Style.Hovered = #FFFFFF1F
+        Style.Pressed = #00000040
+        Style.Focused = #FFFFFF0A
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+        Text Label : CjkLabel {
+            Text = ""
+            FontSize = @ui.SizeCaption
+            HAlign = Center
+        }
+    }
+}

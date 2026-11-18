@@ -9,6 +9,7 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "Misc/PackageName.h"
 #include "Modules/ModuleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogCityLanguage, Log, All);
@@ -44,10 +45,20 @@ namespace CityLanguage
         GConfig->SetString(Section, TEXT("Language"), *UCityLanguageLibrary::GetCityLanguageCode(Language), GGameUserSettingsIni);
         GConfig->Flush(false, GGameUserSettingsIni);
     }
+    constexpr const TCHAR* CollectionPackage = TEXT("/Game/UniversityCity/Localization/MPC_CityLanguage");
+    constexpr const TCHAR* CollectionPath = TEXT("/Game/UniversityCity/Localization/MPC_CityLanguage.MPC_CityLanguage");
+    bool HasCityContent()
+    {
+        static const bool bHas = FPackageName::DoesPackageExist(CollectionPackage);
+        return bHas;
+    }
     UMaterialParameterCollectionInstance* Instance(UWorld* World)
     {
         if (!World) return nullptr;
-        auto* Collection = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/UniversityCity/Localization/MPC_CityLanguage.MPC_CityLanguage"));
+        // A build without the university city (the OK Studio and card reader package does not cook /Game/UniversityCity)
+        // has no collection: nothing to switch there, so no load attempt (which logged two warnings) and no error.
+        if (!HasCityContent()) return nullptr;
+        auto* Collection = LoadObject<UMaterialParameterCollection>(nullptr, CollectionPath);
         return Collection ? World->GetParameterCollectionInstance(Collection) : nullptr;
     }
     bool Apply(UWorld* World, ECityLanguage Language)
@@ -55,6 +66,11 @@ namespace CityLanguage
         if (!World || !IsValid(Language)) return false;
         auto* MPC = Instance(World);
         float PreviousIndex;
+        if (!HasCityContent())
+        {
+            UE_LOG(LogCityLanguage, Verbose, TEXT("No university city content in this build: city language not applied"));
+            return false;
+        }
         if (!MPC || !MPC->GetScalarParameterValue(Parameter, PreviousIndex))
         {
             UE_LOG(LogCityLanguage, Error, TEXT("City language collection or LanguageIndex is missing"));

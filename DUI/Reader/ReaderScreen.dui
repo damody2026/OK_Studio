@@ -122,6 +122,24 @@ Widget Root : ui.FillParent {
         }
     }
 
+    // What the controller reports (loaded, saved, a mod missing...), under the camera bar; hidden with nothing to say.
+    // Code keeps it between the panels, sizes it to its lines and colours it after the latest report.
+    Widget Notice {
+        AnchorData.AnchorMin = (0, 1)
+        AnchorData.AnchorMax = (1, 1)
+        AnchorData.Pivot = (0.5, 1)
+        AnchorData.AnchoredPosition = (80, -76)
+        AnchorData.SizeDelta = (-1000, 44)
+        + Overlay { }
+        RectBlock NoticeFace : ui.Plate : ui.FillSlot
+        Text NoticeText : CjkLabel {
+            Text = ""
+            bAutoWrapText = true
+            AnchorData.SizeDelta = (0, 0)
+            @slot { HorizontalAlignment = Fill  VerticalAlignment = Center  Padding = (14, 6, 14, 6) }
+        }
+    }
+
     // The loaded card's name, bottom right of the 3D view.
     Widget NamePlate {
         AnchorData.AnchorMin = (1, 0)

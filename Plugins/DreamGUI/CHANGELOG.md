@@ -565,6 +565,27 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **The first letter typed into a field no longer goes in twice under DreamGameViewportClient.** A field learned that the
+  host delivers real characters from the first character to arrive, and the key table guessed the keystroke before it
+  as well (a key comes before its character). A world whose game viewport is a `UDreamGameViewportClient` is known to
+  deliver them from the start.
+- **A static atlas's pages are rooted while a disregard-for-GC object points at them.** Static atlas pages are
+  transient textures made at run time, like the dynamic atlas's; a sprite or an atlas loaded while the engine starts
+  pointing at one broke the cooked build's GC verification the same way. `NotePageHolder` roots exactly those pages
+  until the atlas makes its pages again or goes away. `DreamGUI.Debug.PermanentSpriteOnStaticAtlas [unprotected]`
+  reproduces the case with the default white sprite.
+- **A character's unlit material no longer carries DreamGUI's shaders.** The screen and world render shaders compiled for
+  every unlit surface material in the project, including ones made for skeletal meshes that DreamGUI never draws; a
+  material cooked without the plugin (a separately cooked material patch) then loaded as incomplete ("missing
+  FMaterialShader (FDreamUIWorldRenderDepthFadePS, 0)"). They now compile for UI materials and for unlit surface ones
+  not used with skeletal meshes, morph targets, skinned instances, cloth, geometry caches or mesh deformers.
+- **The engine CJK fallback's overlapping-contour note is Verbose.** It names a glyph of an engine font nobody can fix.
+- **A cooked build no longer fails GC verification on the default white sprite.** A sprite loaded while the engine starts
+  (the default white sprite, loaded by component constructors) is in the disregard-for-GC pool, and its `AtlasTexture`
+  pointed at a transient dynamic-atlas page that was not rooted, so a Development build stopped with "breaking Disregard
+  for GC assumptions" on its first collection. A page is now in the root set exactly while such a sprite is packed into
+  it, and leaves it when the sprite is evicted, the page dropped or the atlas released; other pages stay owned by their
+  atlas entry alone.
 - **A preview right after a change draws the screen.** The source watcher rebuilds a `.dui` a moment after it changes;
   when that rebuild landed in the frames a DreamMCP `preview` (or `layout`) spent on a screen it had just compiled, it
   reinstanced the screen on the stage and the picture came out empty ("draws almost nothing"), the next one fine. The

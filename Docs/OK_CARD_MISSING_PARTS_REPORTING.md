@@ -98,3 +98,132 @@ hair id=0   cat=102/103/104  entry=("なし", "p_dummy")      → skip dummy hai
 **结论是 (b)：包里那条路径没走到该走的检查。** `outfit_gaps` 问的是「目录里有没有这一项」，
 该问的是「卡要的这个槽最后有没有做出东西来」。按后者问，头发、头发配件、衣服全都涵盖，
 也不会有有游戏那边的误报。
+
+## 读卡时去哪里找 zipmod（2026-11-18 量过的现况）
+
+开一张**原作卡**时（`oklib::open_original_card` → `with_zipmods`），按这个次序找：
+
+| 次序 | 来源 | 由谁决定 |
+|---:|---|---|
+| 1 | **卡所在的资料夹**里的 `.zipmod`／`.zip`，以及它底下的 `mods/` 子资料夹 | 自动，不必指定 |
+| 2 | 游戏目录 `mods/` 里**卡指名的** GUID 对应的那几个档 | 给了游戏目录（CLI 参数、`Config/DefaultGame.ini` 的 `Root`，或 `OK_GAME_ROOT`）时自动 |
+| 3 | 游戏安装本身（卡没指名但开卡要用的东西、它的 UncensorSelector 设定） | 同上 |
+
+**优先序是「卡旁边先」**，理由：使用者把 zipmod 放到卡旁边，是针对**这张卡**的明确指示；
+游戏目录里的是全机器共用的、可能是别的版本。同一个 GUID 两边都有时，照这个次序先用卡旁边那份，
+使用者不必动游戏目录就能修好一张卡。基础库自己记着的资料排在最前（它是已经转好的模型），
+卡旁边的 zipmod 补的是库里没有的东西。
+
+实测（`ok-card-open-bench --sequence`，就是读卡器开卡那条路）：洛天依 AI 那张卡（`ref/png/Koikatu_F_...洛 天依.png`）
+指名 GUID `jq_lty_ai`，基础库没有它：
+
+| 卡旁边放什么 | 缺件行数 | 开卡 |
+|---|---:|---|
+| 什么都不放 | 9（bottom、gloves、pantyhose、shoes_inner／outer、shorts、accessory、两个 top_sub） | 2.6 s |
+| `jq_lty_ai.zipmod` | **0** | 5.6 s |
+| `mods/jq_lty_ai.zipmod`（子资料夹） | **0** | 14.8 s |
+| `九泉_洛天依_AI.zip`（副档名是 `.zip`） | **0**（2026-11-18 修好之前是 9） | 5.4 s |
+
+最后一列是这次补的：`mods.rs` 的 `collect_zipmods_walk` 只认 `.zipmod`，而专案其他每一处
+（`gamefs.rs`、`oklib_convert.rs`、`unity/references.rs`）都同时认 `.zip`，卡片包附的档又常是 `.zip`，
+于是「把它丢在卡旁边」没有用。没有 manifest 的压缩档不宣告任何 GUID、也列不出东西，所以多看一眼不会有副作用。
+
+## 给设定页的查询：`ok_zipmod_count`
+
+使用者在新版 UI 的设定页选一个游戏目录之后，**不必等到开卡才知道选对没有**：
+
+```
+extern "C" int32_t ok_zipmod_count(const char* path);   // Unreal 直接宣告，不用 bindings table、不用 session
+```
+
+回传 ≥0 是那个目录 `mods/` 底下的 zipmod 数（目录名本身就是 `mods` 时直接算它），
+**-2** 是「这路径底下没有 `mods/`」，**-1** 是「这路径读不到／不是资料夹」。CLI 同一条逻辑可单独试：
+
+```
+ok-extract X:/NoGame --oklib zipmods <目录>...
+OKZIPMODS ok    D:/XKoikatuSunshine   7296
+OKZIPMODS none  X:/NoSuchPlace        X:/NoSuchPlace is not a directory
+```
+
+开卡用的游戏目录由 Unreal 那一侧（`UKKGameRoot`：使用者设定优先、`Config/DefaultGame.ini` 的 `Root` 当预设）
+在每次开卡时传进来，Rust 不自己记；没有设定（打包版 `-NoGameRoot`）时就只有「卡旁边」那条，**不是错误**。
+
+## 记录等级：缺件不是 Error
+
+缺件的行走 `ffi_log` 等级 0（Unreal 的 `LogOkExtract: Log`），讯息里也不再带 `ERROR` 字样：
+一张卡指名了这台机器没有的 mod，是**预期内**的状况，说一声就好，不该混进「日志里的错误」里。
+真正让开卡失败的（okstrict 的缺口、读不出来的资料）照旧是失败，会让开卡停下来。
+`p_dummy`（`なし`、`nohairB`、`enk.acc.bald` 这种「这个槽就是空的」的目录项）照游戏行为跳过，
+只留一行 verbose，不进缺件清单。
+
+## 同一个 GUID 两边都有，谁赢
+
+`oklib::with_zipmods_and`（`Tools/ok-extract/src/oklib.rs`）把三个 fallback 依序推进 `gamefs`，
+先回答的那个赢：
+
+1. `roots[0]` = 卡所在资料夹（`loose_mods: true`，含其 `mods/` 子资料夹）
+2. `roots[1]` = 游戏目录里**卡指名的** GUID 那几个档（`card_zipmods`）
+3. `roots[2]` = 游戏安装本身（`installation: true`，卡没指名但要用的东西与它的 UncensorSelector 设定）
+
+所以**卡旁边那份赢**；基础库自己记着的（已经转好的模型）排在这三个之前。
+OK 卡不走这条：它只读自己的 `okLc`／`okLt` 与基础库，连游戏目录都不看（`okstrict.rs`）。
+
+## 哪些缺件只是回报，哪些会让卡开不起来
+
+| 状况 | 结果 | 谁判的 |
+|---|---|---|
+| 原作卡指名的 zipmod 这台机器没有 → 那个槽没东西 | **回报**一行 `item missing …`，其余照开 | `outfit_gaps.rs` |
+| 目录项是 `p_dummy`（`なし`／`nohairB`／`enk.acc.bald`） | **不算缺件**，只留一行 verbose（游戏本身就是跳过） | `extract.rs is_dummy_part` |
+| 压缩档在、但里面没有这个部件的 mesh | **回报**，`why=its archive holds no mesh for it` | `accessory_extract.rs` |
+| 部件建出来了、但材质家族没人支援 | **回报**一行 warning，该部件不画（整张卡照开） | `KKRuntimeSharedMaterial.cpp`；`--oklib crowd-check` 可不开 Unreal 先查 |
+| **OK 卡**开卡时要读自己的 `okLc`／`okLt` 没记的东西 | **FAIL**：开卡停下并列出缺口，不回退去翻 mods 树 | `okstrict.rs` |
+| 卡本身读不出来（PNG chunk、MessagePack、库缺档） | **FAIL** | `card.rs`／`oklib::ensure_library` |
+
+判准是「画面少一块」还是「这张卡的资料不完整」：前者是使用者这台机器的 mod 状态，说一声就好；
+后者表示 OK 卡或基础库坏了，必须停下来修（`demo_C050` 就是这一类，见 `Docs/ERROR_LOG.md` 2026-11-18）。
+
+## 材质家族没支援，部件会被整个丢掉（2026-11-18 修）
+
+`kks_Saria` 的眼线阴影 `cf_O_eyeline_kage` 在打包版留下唯一一条属于我们的 warning：
+
+```
+Unsupported shared material family: part cf_O_eyeline_kage (head, shader Koikano/main_eyew)
+```
+
+查出来**不是 `Koikano/main_eyew` 没支援**（`OKRuntimeSharedMaterialRecipe` 一直认得它，
+对应 `KoikanoEyeWhite`），而是它要求那个部件是 `translucent` + unlit：
+
+- Unity 把 `rendEyelineUp` 的 slot1（阴影）画在跟 slot0（眼线本身）同一个 submesh 上，
+  `extract.rs` 当初就把**眼线的** blend 直接给了阴影部件。
+- 这张卡的眼线被 Material Editor 换成 `KKUSS` 着色器（`masked`、lit），阴影自己的材质
+  `cf_m_eyeline_kage` 仍是 `Koikano/main_eyew`。阴影于是拿到 `masked`，recipe 对不上，整个部件被丢掉。
+
+修法：阴影部件用**它自己的材质**算 blend（`blend_for_mesh("head", &kage)`）。
+量测（`ok-extract --oklib crowd-check`，不必开 Unreal）：
+
+| 卡 | 修正前 | 修正后 |
+|---|---|---|
+| `kks_Saria` | `cf_O_eyeline_kage:Koikano/main_eyew:0:masked` | `-` |
+| 其余 29 张测试卡 | `-`（`kks_haruno_chika` 另见下） | `-` |
+
+顺手补的：`crowd-check` 的 `ANY_KIND` 少了 `Koikano/main_clothes_emblem`（C++ 那边 2026-11-17 加的），
+`kks_haruno_chika` 的校徽被误报成不支援；已补上，现在 30 张全部 `-`。
+**这张表是 C++ `OKRuntimeSharedMaterialRecipe` 的镜子，那边加一个家族，这边就要加。**
+
+### 丢掉它对画面的影响：这张卡上量不到
+
+同一个画面（开发版读卡器、`kks_Saria`、正面脸部、focus `[0,0,166]`／distance 55）拍三张：
+
+| 图 | 内容 |
+|---|---|
+| `E:\OKPackage\EyelineKage\with_kage.png` | 修正前：部件在，但拿到眼线的 `masked` blend |
+| `E:\OKPackage\EyelineKage\without_kage.png` | 临时把 `cf_O_eyeline_kage` 整个不输出 |
+| `E:\OKPackage\EyelineKage\fixed_kage.png` | 修正后：阴影用自己的材质（`translucent`／unlit） |
+
+三张**在脸上逐像素相同**（唯一差异是右下角 FPS 读数那块 28×30 像素）。
+也就是说这张卡的眼线阴影本来就几乎看不见——她的眼线被 Material Editor 换成了 `KKUSS`，
+`EyelineShadowTex` × 肤色在这个取景下没有可见贡献。
+
+所以这个修正的价值不在画面变好看，而在：**打包版不会再因为它整个拒绝这个部件并留一条 warning**，
+而且眼线没被换材质的一般卡片（阴影本来就是 `Koikano/main_eyew` + `_ALPHAPREMULTIPLY_ON` → translucent）
+blend 完全没变——30 张测试卡 `crowd-check` 的结果除了 `kks_Saria` 之外一行都没动。

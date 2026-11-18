@@ -245,7 +245,7 @@ bool OKPickFile(const TCHAR* Filter,const TCHAR* Title,FString& Out){
 }
 }
 void UOKCharacterController::OnExportOkClothes(){
- auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));if(GEngine)GEngine->AddOnScreenDebugMessage(1,8.f,FColor::Cyan,Text);};
+ auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};
  if(!Entries.IsValidIndex(SelectedIndex)){Report(TEXT("請先選擇一張角色卡。"));return;}
  const FString Directory=OutputDirectoryInput?OutputDirectoryInput->GetText().ToString().TrimStartAndEnd():FString();
  if(Directory.IsEmpty()){Report(TEXT("請先在卡片列表填寫另存資料夾。"));return;}
@@ -257,7 +257,7 @@ void UOKCharacterController::OnExportOkClothes(){
  Report(Ok?FString::Printf(TEXT("已匯出服裝 %d：%s"),OutfitIndex,*Output):TEXT("匯出服裝失敗：")+Summary);
 }
 void UOKCharacterController::OnWearOkClothes(){
- auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));if(GEngine)GEngine->AddOnScreenDebugMessage(1,8.f,FColor::Cyan,Text);};
+ auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};
  if(!Entries.IsValidIndex(SelectedIndex)){Report(TEXT("請先選擇一張角色卡。"));return;}
  const FString Directory=OutputDirectoryInput?OutputDirectoryInput->GetText().ToString().TrimStartAndEnd():FString();
  if(Directory.IsEmpty()){Report(TEXT("請先在卡片列表填寫另存資料夾。"));return;}
@@ -273,7 +273,7 @@ void UOKCharacterController::OnWearOkClothes(){
  RefreshCardList();
 }
 void UOKCharacterController::OnImportClothesCard(){
- auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));if(GEngine)GEngine->AddOnScreenDebugMessage(1,8.f,FColor::Cyan,Text);};
+ auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};
  const FString Directory=OutputDirectoryInput?OutputDirectoryInput->GetText().ToString().TrimStartAndEnd():FString();
  if(Directory.IsEmpty()){Report(TEXT("請先在卡片列表填寫另存資料夾。"));return;}
  FString Coordinate;if(!OKPickFile(TEXT("服裝卡\0*.png\0所有檔案\0*.*\0"),TEXT("選擇遊戲的服裝卡"),Coordinate))return;

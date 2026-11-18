@@ -1046,8 +1046,20 @@ UUITextInput* UUITextInput::GetActiveTextInputForPlayer(const UObject* WorldCont
 }
 bool UUITextInput::IsHostDeliveringCharacterEvents(const UObject* WorldContextObject)
 {
-	const UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(WorldContextObject);
-	return Input != nullptr && Input->DoesHostDeliverCharacters();
+	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(WorldContextObject);
+	if (Input == nullptr)return false;
+	if (Input->DoesHostDeliverCharacters())return true;
+	// A world whose game viewport is a UDreamGameViewportClient delivers characters from the first keystroke: waiting for the
+	// first one to arrive let the key table guess that keystroke too, and the first letter of a session went in twice ("AAbc",
+	// 2026-11-18) -- the platform sends the key before its character.
+	const UWorld* World = WorldContextObject != nullptr ? WorldContextObject->GetWorld() : nullptr;
+	const UGameViewportClient* Viewport = World != nullptr ? World->GetGameViewport() : nullptr;
+	if (Viewport != nullptr && Viewport->IsA<UDreamGameViewportClient>())
+	{
+		Input->NoteHostDeliversCharacters();
+		return true;
+	}
+	return false;
 }
 void UUITextInput::SetHostDeliversCharacterEventsForTesting(const UObject* WorldContextObject, bool bInDelivers)
 {

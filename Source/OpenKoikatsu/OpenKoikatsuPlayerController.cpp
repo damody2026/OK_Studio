@@ -30,6 +30,7 @@ AKKPreviewActor* AOpenKoikatsuPlayerController::GetPreviewCameraOwner() const
 }
 
 bool OKReaderScreenUnderCursor();	// OKReaderScreen.cpp: the DreamGUI panels of the card reader
+void OKNoteCameraChange(const FString& Who);	// OKReaderScreen.cpp: the camera watch behind "ok.ReaderScreen look"
 // Sliders and buttons should keep the click. The 3D view is the viewport itself.
 static bool CursorOverInteractiveUI()
 {
@@ -213,7 +214,10 @@ void AOpenKoikatsuPlayerController::UpdateCameraMouse(bool HasMouse,bool Focused
  const FVector2D Delta=CameraDrag.Update(Buttons,HasMouse,Focused,OverUI,Position);
  if(!Actor){CameraDrag.Cancel();return;}
  // BaseCameraControl_Ver2.LateUpdate gives wheel input priority over drag.
- if(CameraDrag.Owned&&WheelFrame!=GFrameCounter)Actor->OrbitMouse(Buttons,Delta.X,Delta.Y);
+ if(CameraDrag.Owned&&WheelFrame!=GFrameCounter){
+  Actor->OrbitMouse(Buttons,Delta.X,Delta.Y);
+  if(!Delta.IsNearlyZero())OKNoteCameraChange(FString::Printf(TEXT("mouse drag (buttons %d: 1 left, 2 right, 4 middle)"),Buttons));
+ }
 }
 
 bool AOpenKoikatsuPlayerController::InputKey(const FInputKeyEventArgs& Params)
@@ -233,7 +237,7 @@ bool AOpenKoikatsuPlayerController::InputKey(const FInputKeyEventArgs& Params)
 		if (AKKPreviewActor* Actor = GetPreviewCameraOwner())
 		{
 			Actor->OrbitZoom(Params.AmountDepressed);
-			if(!FMath::IsNearlyZero(Params.AmountDepressed))WheelFrame=GFrameCounter;
+			if(!FMath::IsNearlyZero(Params.AmountDepressed)){WheelFrame=GFrameCounter;OKNoteCameraChange(TEXT("mouse wheel"));}
 		}
 	}
 	return Super::InputKey(Params);

@@ -86,14 +86,17 @@ pub(crate) fn emit<'a>(game:&'a Path,card:&'a CardInfo,outfit:i32,source:&Source
     // hairstyle went missing with no line anywhere (outfit_gaps.rs `report_empty_slot`). Empty slots (category 120,
     // id 0, `p_dummy`) never reach here: they are dropped before `emit`.
     if std::env::var_os("OK_DIAG").is_some() {
-        eprintln!("ok-extract: acc emit {} cat={} id={} guid={:?} zip={:?} meshes={}",source.property,source.category,source.id,
-            source.guid,source.zip,meshes.len());
+        eprintln!("ok-extract: acc emit {} cat={} id={} guid={:?} ab={:?} data={:?} zip={:?} meshes={}",source.property,source.category,source.id,
+            source.guid,source.entry.main_ab,source.entry.main_data,source.zip,meshes.len());
     }
     if meshes.is_empty() {
         let source_name=source.zip.as_deref().map(|p|p.display().to_string())
             .unwrap_or_else(||if source.entry.main_ab.is_empty() {String::new()} else {format!("abdata/{}",source.entry.main_ab)});
+        // A real file on disk, not `gamefs::metadata`: under a base library the recorded index answers for archives
+        // the machine does not have (`base_v1\mods\...` need not exist), and saying "holds no mesh" about an archive
+        // nobody has sends the reader looking in the wrong place.
         let why=if source_name.is_empty() {"the entry names no archive"}
-            else if !source.zip.as_deref().is_some_and(|p|crate::gamefs::metadata(p).is_ok()) {"its archive is not there"}
+            else if !source.zip.as_deref().is_some_and(|p|p.is_file()) {"its archive is not on this machine"}
             else {"its archive holds no mesh for it"};
         crate::outfit_gaps::report_empty_slot(outfit,role,source.category,source.id,
             source.guid.as_deref().unwrap_or(""),&source_name,why);

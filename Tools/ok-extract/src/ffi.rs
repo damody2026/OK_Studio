@@ -2546,6 +2546,20 @@ pub(crate) unsafe extern "C" fn coord_count(s: *mut OkSession) -> i32 {
         .unwrap_or(0)
 }
 
+/// How many zipmods the chosen game directory offers (`mods::zipmod_count`), for the settings page to answer
+/// "is this the right folder?" without opening a card: -1 the path is unreadable or not a directory, -2 there is no
+/// `mods/` under it, otherwise the number of archives. Declared in Unreal as
+/// `extern "C" int32_t ok_zipmod_count(const char*)`; it needs no session and no bindings table.
+#[no_mangle]
+pub unsafe extern "C" fn ok_zipmod_count(path: *const c_char) -> i32 {
+    let Some(path) = cstr_opt(path) else { return -1 };
+    match crate::mods::zipmod_count(std::path::Path::new(&path)) {
+        Ok(n) => n.min(i32::MAX as usize) as i32,
+        Err(e) if e.ends_with("has no mods/") => -2,
+        Err(_) => -1,
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ok_register_bindings(
     unreal: OkUnrealBindings,

@@ -202,6 +202,43 @@ public:
  TSharedPtr<FOkAppearanceContext,ESPMode::ThreadSafe> AppearanceContext;
  FString AppearanceContextPath;
  int32 AppearanceContextGeneration=INDEX_NONE,AppearanceContextOutfit=INDEX_NONE;
+ // The DreamGUI reader's pages each show their part of the picture picker and of the detailed editor (眉毛, 眼睛,
+ // 頭髮, 配件 ...): target-key prefixes and property tokens (found in a property's key or label). Empty shows all.
+ TArray<FString> AppearanceScope,PropertyScope;
+ void SetAppearanceScope(const TArray<FString>& Prefixes);
+ void SetPropertyScope(const TArray<FString>& Tokens);
+ bool PropertyInScope(const TSharedPtr<FJsonObject>& Property) const;
+ void FillAppearanceTargets(const FString& Preferred);
+ // The reader's 配件 › 飾品 page picks the slot first (配件欄 1 … 額外配件欄 N), then the category in AppearanceTarget:
+ // the slots the catalog has, inside the picker panel and shown only on that page (the old picker lists every slot's
+ // every category in one list).
+ UPROPERTY() TObjectPtr<class UComboBoxString> AccessorySlotChoice;
+ TArray<int32> AccessorySlots;
+ int32 AccessorySlot=0;
+ bool bFillingAccessorySlots=false;
+ // The catalog's `current` (Docs/READER_UI_APPEARANCE_API.md): per target key what the card has now; an empty item is a mod
+ // this machine does not have (its guid and name still say what it was).
+ TMap<FString,TSharedPtr<FJsonObject>> AppearanceCurrent;
+ bool bAppearanceJumpToChosen=false;
+ FString CurrentAppearanceNote() const;
+ FString AccessorySlotScope() const {return FString::Printf(TEXT("accessory%d_"),AccessorySlot);}
+ void RefreshAccessorySlots();
+ UFUNCTION() void OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type);
+ // The picker's 關閉 (the reader's pages show the picker as part of the page: it is not mirrored there).
+ UPROPERTY() TObjectPtr<class UButton> AppearanceCloseButton;
+ // Which card and outfit AppearanceTargets were read for: a page entered again does not read the catalog again.
+ FString AppearanceCatalogPath;
+ int32 AppearanceCatalogOutfit=INDEX_NONE;
+ // No game folder (no abdata/ under it): the pickers have nothing to list. The picker says so and offers this button,
+ // which goes to the reader's 設定 › 遊戲目錄 page (OnWantGameRootSettings, set by the DreamGUI reader).
+ UPROPERTY() TObjectPtr<class UButton> AppearanceRootButton;
+ TFunction<void()> OnWantGameRootSettings;
+ UFUNCTION() void OnAppearanceGoRoot();
+ // While the catalog is built (the first time takes minutes, later reads come from the cache) the status counts the
+ // seconds (NativeTick).
+ double AppearanceCatalogStarted=0;
+ int32 AppearanceCatalogShownSecond=-1;
+ void TickAppearanceCatalogStatus();
  bool ApplyPreparedAppearance(const FString& Key);
  bool ApplyPreparedGeometry(const FString& Key);
  // Returns true when the requested action must wait for resource persistence.
@@ -580,6 +617,10 @@ public:
     // Runtime switch of the hair/cloth/breast solver (OKPhysXSecondary CVars): Verlet, PhysX, KawaiiPhysics, Chaos.
     UPROPERTY() TObjectPtr<UComboBoxString> PhysicsBackendCombo;
     void FillPhysicsBackendCombo();
+    // -OKPhysics=<verlet|component|dynbone|physx|kawaii|chaos> on the command line: which solver this process starts
+    // with. Only the card reader's launcher passes it (run_card_reader_development.lua -Physics, default 原始 Verlet),
+    // so no other mode is touched. Call it before FillPhysicsBackendCombo so the menu shows what is running.
+    static void ApplyStartupPhysicsBackend();
     UFUNCTION() void OnPhysicsBackendSelected(FString Item,ESelectInfo::Type Type);
     // Hair/cloth hardness (OKPhysXSecondary.Hardness, 1 = softest .. 10 = as authored).
     UPROPERTY() TObjectPtr<USlider> PhysicsSoftnessSlider;
@@ -805,6 +846,12 @@ public:
 	UPROPERTY() TObjectPtr<UTextBlock> FpsText;
 	// The DreamGUI screen that shows these UMG controls (OKReaderScreen.h); null keeps the UMG controls on screen.
 	UPROPERTY() TObjectPtr<class UOKReaderScreen> ReaderScreen;
+	// A report for the user (loaded, saved, a mod missing): on the DreamGUI screen's notice when it is shown, else the
+	// engine's on-screen messages (those draw at the top left, over the screen's left panel). Key replaces a report
+	// with the same key, as AddOnScreenDebugMessage does.
+	void ScreenNote(int32 Key, float Seconds, const FColor& Color, const FString& Text);
+	// Cards in the list that could not be read or opened: the list marks them instead of leaving them out.
+	TMap<FString, FString> UnopenableCards;
 	double FpsShownAt = 0.;
 	void TickFpsText();
 	bool bModelLayout = false;

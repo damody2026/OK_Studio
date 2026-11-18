@@ -70,6 +70,37 @@ pub fn targets()->Vec<Target>{
    format!("ChaFileClothes.{prefix}{}",if parts[2]=="id"{String::new()}else if parts[2]=="colorInfo"{format!("Pattern{}",parts[3])}else if parts[2]=="emblemeId"{"Emblem".into()}else{"Emblem2".into()})};
  }t
 }
+/// What the card has in each target's field right now: the stored id, the mod it came from (the sideloader
+/// resolve row whose `Property` is this target's) and the catalogue item that matches, when one does. A UI that
+/// lists the pictures needs this to mark the current one; the catalogue alone never said which was chosen, so the
+/// old grid only highlighted what the user had clicked in that session (2026-11-18).
+/// Extra MoreAccessories slots are left out: their id lives in the KKEx XML, not in a card field.
+fn current_selection(original:&[u8],outfit:usize,targets:&[Target],items:&[Item])->Result<J,String>{
+ let values:BTreeMap<String,String>=list_paths(original,outfit)?.into_iter().collect();
+ let card=crate::card::parse_card_bytes(original,outfit as i32).ok();
+ let mut out=serde_json::Map::new();
+ for t in targets {
+  if t.section=="accessory_extra" {continue}
+  let Some(raw)=values.get(&format!("{}.{}",t.section,t.path)) else {continue};
+  let Ok(stored)=raw.parse::<i32>() else {continue};
+  // An accessory slot wears one category at a time; the other nine targets of that slot are not what it holds.
+  if t.section=="accessory" {
+   let worn=t.path.split('.').nth(1).and_then(|i|values.get(&format!("accessory.parts.{i}.type"))).and_then(|v|v.parse::<i32>().ok());
+   if worn!=Some(t.category) {continue}
+  }
+  // An accessory's resolve row is written per outfit ("outfit2.accessory3.ChaFileAccessory.PartsInfo.id",
+  // push.rs outfit_prefix); the face/body/hair ones are not prefixed.
+  let prefixed=format!("outfit{outfit}.{}",t.property);
+  let resolve=card.as_ref().and_then(|c|c.resolves.iter().find(|r|r.property==t.property||r.property==prefixed));
+  // The field holds the resolved slot; which of Slot/LocalSlot is the mod's own id differs by card, so both are
+  // offered, in the order `ChaListCatalog::get_slot` (list.rs) tries them.
+  let (guid,ids)=match resolve {Some(r)=>(r.mod_id.clone(),vec![r.slot,r.local_slot]),None=>(String::new(),vec![stored])};
+  let item=ids.iter().find_map(|id|items.iter().find(|i|i.entry.category_no==t.category&&i.entry.id==*id&&i.guid.eq_ignore_ascii_case(&guid)));
+  out.insert(t.key.clone(),json!({"stored_id":stored,"ids":ids,"guid":guid,"item":item.map(|i|i.key.as_str()),
+   "name":item.map(|i|i.entry.name.as_str()).or_else(||resolve.map(|r|r.name.as_str()))}));
+ }
+ Ok(J::Object(out))
+}
 fn hash(data:&[u8])->String{format!("{:x}",Sha256::digest(data))}
 fn signature(root:&Path)->String{
  fn walk(p:&Path,out:&mut Vec<String>){if let Ok(rd)=crate::gamefs::read_dir(p){for e in rd.flatten(){let p=e.path();if p.ok_is_dir(){walk(&p,out)}else if let Ok(m)=e.metadata(){if p.extension().is_some_and(|e|e=="zipmod"||e=="unity3d"){out.push(format!("{}:{}:{:?}",p.display(),m.len(),m.modified().ok()));}}}}}
@@ -450,7 +481,9 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  let cache=Path::new(text(&r,"cache")?);let items=catalog(root,cache)?;
  match text(&r,"action")? {
-  "catalog"=>{let t=if let Some(card)=r["card"].as_str(){let original=crate::gamefs::read(card).map_err(|e|e.to_string())?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=original_metadata(root,cache,&original)?{blocks.insert("KKEx".into(),metadata);}extra::targets_for(&blocks,r["outfit"].as_u64().unwrap_or(0) as usize)?}else{targets()};Ok(json!({"valid":true,"targets":t,"items":items.as_ref()}))},
+  "catalog"=>{let t=if let Some(card)=r["card"].as_str(){let original=crate::gamefs::read(card).map_err(|e|e.to_string())?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=original_metadata(root,cache,&original)?{blocks.insert("KKEx".into(),metadata);}extra::targets_for(&blocks,r["outfit"].as_u64().unwrap_or(0) as usize)?}else{targets()};
+   let current=if let Some(card)=r["card"].as_str(){let original=crate::gamefs::read(card).map_err(|e|e.to_string())?;current_selection(&original,r["outfit"].as_u64().unwrap_or(0) as usize,&t,&items)?}else{J::Object(serde_json::Map::new())};
+   Ok(json!({"valid":true,"targets":t,"items":items.as_ref(),"current":current}))},
   "thumbnails"=>{let keys=r["keys"].as_array().ok_or("缺少縮圖清單")?;if keys.len()>48{return Err("縮圖分頁超過上限".into());}let mut out=Vec::new();for k in keys {let key=k.as_str().ok_or("縮圖識別碼錯誤")?;if let Some(i)=items.iter().find(|i|i.key==key){out.push(json!({"key":key,"path":thumb(root,cache,i)?}));}}Ok(json!({"valid":true,"thumbnails":out}))},
   "verify"=>{
    let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;

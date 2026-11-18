@@ -1,0 +1,32 @@
+// One item of the picture picker (眉毛種類, 前髮, 配件欄 N ...): its thumbnail over its caption, the whole tile one
+// button. The thumbnail is the UMG picker's own (UOKDreamControl::Sync, UOKAppearanceButton).
+class /Game/UI/Reader/Controls/WBP_OKPickTile
+use "Theme.dui" as ui
+
+// The preset's bold face has no Chinese glyphs (it drew nothing): the regular face, which falls back to CJK.
+style CjkLabel : ui.Label { Font = @ui.FontRegular }
+
+Widget Root {
+    AnchorData.SizeDelta = (112, 150)
+    + Overlay { }
+    RectBlock Face : ui.Card {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+    Image Picture {
+        @slot { HorizontalAlignment = Center  VerticalAlignment = Top  Padding = (4, 4, 4, 0)  MinDesiredSize = (104, 104)  MaxDesiredSize = (104, 104) }
+    }
+    // Over the picture and see-through (hovered or pressed only tints): the whole tile takes the click.
+    Native.Button Button : ui.TabOff {
+        Style.Height = 150
+        Style.ContentPadding = (4, 110, 4, 2)
+        Style.Hovered = #FFFFFF1F
+        Style.Pressed = #00000040
+        Style.Focused = #FFFFFF0A
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+        Text Label : CjkLabel {
+            Text = ""
+            FontSize = @ui.SizeCaption
+            HAlign = Center
+        }
+    }
+}

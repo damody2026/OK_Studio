@@ -26,6 +26,12 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <dxgi1_4.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+// winnls.h's surrogate macros would break whatever shares this file's unity blob (DreamGUI's FDreamUIText_CodePoint
+// constants of the same names: the game target failed with C2059 when the two landed in one unity file, 2026-11-18).
+#undef HIGH_SURROGATE_START
+#undef HIGH_SURROGATE_END
+#undef LOW_SURROGATE_START
+#undef LOW_SURROGATE_END
 #endif
 
 // Characters installed in the runtime scene (OKCrowdRuntimeScene.cpp keeps it current).

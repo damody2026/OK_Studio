@@ -88,7 +88,7 @@ void UOKCharacterController::OnSaveKks()
 	const auto Report = [this](const FString& Text)
 	{
 		if (InspectorText) InspectorText->SetText(FText::FromString(Text));
-		if (GEngine) GEngine->AddOnScreenDebugMessage(1, 10.f, FColor::Green, Text);
+		ScreenNote(1, 10.f, FColor::Green, Text);
 	};
 	if (NicknameBox) Selected.Nickname = NicknameBox->GetText().ToString();
 	const FString Directory = OutputDirectoryInput ? OutputDirectoryInput->GetText().ToString().TrimStartAndEnd() : FString();

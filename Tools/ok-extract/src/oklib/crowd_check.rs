@@ -18,7 +18,7 @@ const ANY_KIND: &[&str] = &[
     "Koikano/main_skin", "Shader Forge/main_skin", "Koikano/main_nose", "Koikano/main_eyeb", "Koikano/main_clothes_opaque",
     "Koikano/main_clothes_item", "Koikano/main_clothes_alpha", "Koikano/low_clothes_alpha", "IBL_Shader_alpha", "IBL_Shader",
     "KKUSSitem", "xukmi/MainItemPlus", "Shader Forge/toon_glasses_lod0", "Shader Forge/main_StandardMDK_studio",
-    "Shader Forge/main_item_studio", "Goo", "Shader Forge/main_item_ditherd", "Shader Forge/main_item_emission", "KKUSS",
+    "Shader Forge/main_item_studio", "Koikano/main_clothes_emblem", "Goo", "Shader Forge/main_item_ditherd", "Shader Forge/main_item_emission", "KKUSS",
     "Shader Forge/toon_eyew_lod0", "DA/Chara/Oil Painting", "BetterMatcap", "Koikano/hair_main_sun",
     "Koikano/hair_main_sun_front", "Koikano/main_clothes_item_glasses",
     "KKUTS", "KKUTS_Tess", "KKUTSitem", "KKUTSitem_Tess", "KKUTSalpha", "KKUTSalpha_Tess",

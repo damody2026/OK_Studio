@@ -34,6 +34,25 @@ struct DREAMGUI_API FDreamUIDynamicSpriteAtlasData
 	/** collection of all objects that use this atlas to render. Object must implement IUISpriteRenderableInterface. */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "DreamGUI", AdvancedDisplay)
 	TArray<TWeakObjectPtr<UObject>> RenderSpriteArray;
+	/**
+	 * Pages this entry put in the root set because a sprite packed into them lives in the
+	 * disregard-for-GC pool (see UpdatePermanentHolderRoots). Nothing else roots a page.
+	 */
+	TArray<TWeakObjectPtr<UTexture2D>> PagesRootedForPermanentSprites;
+
+	/**
+	 * Root exactly the pages a disregard-for-GC sprite points at, and un-root the ones that stopped.
+	 *
+	 * A sprite loaded while the engine starts (the default white sprite, loaded by component
+	 * constructors) lands in the disregard-for-GC pool, whose objects may reference only objects in
+	 * the pool or in the root set. Its AtlasTexture points at a transient page made here, which is
+	 * owned by this entry and not rooted, so a cooked Development build's GC verification fails
+	 * ("breaking Disregard for GC assumptions") on the first collection. Rooting every page brings back
+	 * the leak CreateAtlasTexture describes; rooting only these, and letting go the moment no such
+	 * sprite is packed there any more, keeps both rules. In the editor the pool is empty and this
+	 * roots nothing.
+	 */
+	void UpdatePermanentHolderRoots();
 
 	void EnsureAtlasTexture();
 	void CreateAtlasTexture(int InTextureSize);

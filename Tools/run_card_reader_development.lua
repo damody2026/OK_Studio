@@ -22,7 +22,14 @@ local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
 local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true }
-local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true }
+local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true, physics = true }
+
+-- -Physics <模式>（或環境變數 OK_READER_PHYSICS，選項優先：reader_launch 的 env 傳得進來）：讀卡器的
+-- 頭髮／衣物／配件物理解算器，**預設是原始 Verlet**（使用者 2026-11-18）。「原始 Verlet」就是選單裡那一項：
+-- OKPhysXSecondary.Enabled 0，宿主完全不接手，每條鏈都由 ok-extract 自己的 DynamicBone 更新走
+-- （px.rs 的 Solver::Verlet／FLAG_BUILTIN），所以頭髮、裙擺、配件、胸臀全部一致。
+-- 只影響讀卡器這條啟動路徑；街區、一對一、Studio、百人房間各自決定，不受影響。執行中仍可從選單切換。
+local PHYSICS = { verlet = true, component = true, dynbone = true, physx = true, kawaii = true, chaos = true }
 
 local function parse(argv)
   local o, i = {}, 1
@@ -128,6 +135,16 @@ local function main()
   local wants_dream = not o.legacyreader
   for _, x in ipairs(o.passthrough) do if x:lower():match("^%-ok?dreamreader$") or x:lower() == "-dreamgui" then wants_dream = false end end
   if wants_dream then args[#args + 1] = "-OKDreamReader" end
+  -- 物理：旗標由遊戲在建立物理選單之前套用（OKCharacterController::ApplyStartupPhysicsBackend），選單才會顯示
+  -- 真正在跑的那一項。用 -ExecCmds 不行：指令在選單建好之後才跑，解算器已是 Verlet 而選單還寫著「依元件」。
+  local physics = (o.physics or os.getenv("OK_READER_PHYSICS") or "verlet"):lower()
+  if not PHYSICS[physics] then
+    local names = {}
+    for k in pairs(PHYSICS) do names[#names + 1] = k end
+    table.sort(names)
+    error(("-Physics must be one of: %s"):format(table.concat(names, ", ")), 0)
+  end
+  args[#args + 1] = "-OKPhysics=" .. physics
   for _, x in ipairs(o.passthrough) do args[#args + 1] = x end
   local receipt = json.object({ { "project", project }, { "executable", exe }, { "arguments", json.array({ table.unpack(args, 2) }) },
     { "module", module }, { "card_directory", cards }, { "log", log }, { "skinning", gpu and "GPU" or "CPU" } })
