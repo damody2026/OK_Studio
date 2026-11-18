@@ -232,12 +232,15 @@ private:
 	float ShownSequenceTime = -1.f;
 	/** GFrameCounter of the last Sync that built an object. */
 	uint64 LastBuildFrame = 0;
-	/** t.MaxFPS as it was before a loading scene capped it (-1: not capped). See SetLoadFpsCap. */
+	/** t.MaxFPS as it was before a loading scene capped it (-1: not capped). See SetLoadThrottle. */
 	float SavedMaxFps = -1.f;
-	/** Caps the frame rate while a scene builds, and puts it back afterwards (ok.Studio.LoadMaxFps). A loading scene
-	 *  is paced by the workers that open its items, and the game thread pays for drawing the half-built scene once per
-	 *  frame, so frames spent waiting cost real time (2026-11-18: 80 ms each, 919 of them). */
-	void SetLoadFpsCap(bool bOn);
+	/** The viewport's bDisableWorldRendering as it was before a loading scene turned drawing off (-1: not touched). */
+	int8 SavedWorldRendering = -1;
+	/** While a scene builds, caps the frame rate (ok.Studio.LoadMaxFps) and/or stops drawing the world
+	 *  (ok.Studio.LoadSkipDraw), and puts both back afterwards. A loading scene is paced by the workers that open its
+	 *  items, and the game thread pays for drawing the half-built scene once per frame, so frames spent waiting cost
+	 *  real time (2026-11-18: 80 ms each, 919 of them). */
+	void SetLoadThrottle(bool bOn);
 
 	struct FShown
 	{

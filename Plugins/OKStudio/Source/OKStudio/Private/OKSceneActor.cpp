@@ -525,14 +525,27 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.Buil
 /*  Measured on 2026-11-18 (Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md): with the index the lookups cost 1.2 s instead
  *  of 24.5 s and Sync itself 16 s less, but the whole open took 24.7% LONGER, because a cheaper Sync means shorter
  *  frames, an item is built in the frame its worker has it ready, and every frame redraws the half-built scene for
- *  80 ms. So this stays off until the frame rate during a build is capped (ok.Studio.LoadMaxFps): Sync being faster is
- *  measured, the open being faster is not. */
+ *  80 ms. So this stays off: Sync being faster is measured, the open being faster is not.
+ *  Measured again the same day with ok.Studio.LoadSkipDraw on, which removes that redraw: 86.3 s without the index
+ *  against 86.9 s with it. The open is paced by the workers opening items, so taking work off the game thread does not
+ *  move it either way, and the index has nothing left to win. It stays off, and the code stays for the day Sync itself
+ *  is what the open waits on. */
 static TAutoConsoleVariable<int32> CVarOkStudioSyncFindIndex(TEXT("ok.Studio.SyncFindIndex"), 0,
 	TEXT("Sync looks objects up through the id index instead of scanning. 0 (default): scan, as before."));
 /** While a scene builds, cap the frame rate to this (0: no cap). The load is paced by the workers opening items, so
  *  the frames in between only redraw the half-built scene; drawing it fewer times leaves the workers more of the CPU. */
 static TAutoConsoleVariable<int32> CVarOkStudioLoadMaxFps(TEXT("ok.Studio.LoadMaxFps"), 0,
 	TEXT("Frame rate cap while a scene is building (0: no cap). Put back as the scene finishes."));
+/** The more direct form of the same idea: while a scene builds, do not draw the world at all. A capped frame rate
+ *  still draws the half-built scene, just less often, and it also slows the Tick that builds the next objects; this
+ *  skips only the drawing, so the game thread keeps building at full rate and the frames cost what Sync costs. The
+ *  viewport shows the last frame before the load (the UI still draws) until the scene is built.
+ *  Measured 2026-11-18 on a scene of 8806 objects, cold, one run per cell (Docs/OK_STUDIO_SCENE_LOAD_PERF_20261117.md):
+ *  122.8 s drawing against 86.3 s not drawing, -29.7%, and the cost of a build frame outside Sync falls from 75.5 ms to
+ *  22.7 ms, which is the 36 s. It costs the live picture of the scene assembling: until it is built the viewport holds
+ *  the frame before the load. 0 draws it as before. */
+static TAutoConsoleVariable<int32> CVarOkStudioLoadSkipDraw(TEXT("ok.Studio.LoadSkipDraw"), 1,
+	TEXT("Do not draw the world while a scene is building (0: draw, as before; the scene then appears piece by piece)."));
 int32 AOKSceneActor::ObjectBuildBudget()
 {
 	return FMath::Clamp(CVarOkStudioBuildsPerFrame.GetValueOnGameThread(), 0, 4096);
@@ -2440,31 +2453,47 @@ void AOKSceneActor::UpdateLooks(float DeltaSeconds, bool bApplyStaticPose)
 	}
 }
 
-void AOKSceneActor::SetLoadFpsCap(bool bOn)
+void AOKSceneActor::SetLoadThrottle(bool bOn)
 {
 	static IConsoleVariable* const MaxFps = IConsoleManager::Get().FindConsoleVariable(TEXT("t.MaxFPS"));
-	if (!MaxFps) return;
 	const int32 Cap = FMath::Clamp(CVarOkStudioLoadMaxFps.GetValueOnGameThread(), 0, 240);
-	if (bOn && Cap > 0)
+	if (MaxFps)
 	{
-		// Remember what it was, once: the cap is set every frame of the build, and reading it back after the first
-		// frame would remember the cap itself.
-		if (SavedMaxFps < 0.f) SavedMaxFps = MaxFps->GetFloat();
-		if (MaxFps->GetFloat() != (float)Cap) MaxFps->Set((float)Cap, ECVF_SetByCode);
+		if (bOn && Cap > 0)
+		{
+			// Remember what it was, once: the cap is set every frame of the build, and reading it back after the first
+			// frame would remember the cap itself.
+			if (SavedMaxFps < 0.f) SavedMaxFps = MaxFps->GetFloat();
+			if (MaxFps->GetFloat() != (float)Cap) MaxFps->Set((float)Cap, ECVF_SetByCode);
+		}
+		else if (SavedMaxFps >= 0.f)
+		{
+			MaxFps->Set(SavedMaxFps, ECVF_SetByCode);
+			SavedMaxFps = -1.f;
+		}
 	}
-	else if (SavedMaxFps >= 0.f)
+	// Both are restored by what was saved rather than by the cvar, so turning the cvar off mid-load, or the scene
+	// going away while it builds (EndPlay), still leaves the viewport drawing again.
+	UGameViewportClient* Viewport = GEngine ? GEngine->GameViewport : nullptr;
+	if (!Viewport) return;
+	if (bOn && CVarOkStudioLoadSkipDraw.GetValueOnGameThread() != 0)
 	{
-		MaxFps->Set(SavedMaxFps, ECVF_SetByCode);
-		SavedMaxFps = -1.f;
+		if (SavedWorldRendering < 0) SavedWorldRendering = Viewport->bDisableWorldRendering ? 1 : 0;
+		Viewport->bDisableWorldRendering = true;
+	}
+	else if (SavedWorldRendering >= 0)
+	{
+		Viewport->bDisableWorldRendering = SavedWorldRendering != 0;
+		SavedWorldRendering = -1;
 	}
 }
 
 void AOKSceneActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	// The cap goes on while objects are still being built and comes off the moment they are not, so a finished scene
-	// runs at its own rate again. Sync clears bBuildsPending when it has built the last one.
-	SetLoadFpsCap(bBuildsPending && Document != nullptr);
+	// The throttle goes on while objects are still being built and comes off the moment they are not, so a finished
+	// scene draws and runs at its own rate again. Sync clears bBuildsPending when it has built the last one.
+	SetLoadThrottle(bBuildsPending && Document != nullptr);
 	if (bBuildsPending && Document) Sync();
 	// A sequence-driven scene shows SequenceTime instead of playing on its own.
     if (!SceneJson.IsEmpty()) ShowSequenceTime();
@@ -3426,6 +3455,9 @@ void AOKSceneActor::PlaceSky(const FTransform& View)
 
 void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
 {
+	// Whatever the load throttle turned off goes back on: a scene that goes away mid-build must not leave the viewport
+	// not drawing, or the frame rate capped, for whatever comes next.
+	SetLoadThrottle(false);
 	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
 	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
 	Prepared.Reset();
