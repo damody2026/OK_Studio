@@ -5685,3 +5685,11 @@ LNK1104，看不出是谁锁的。建置前先查 `F:\UE5.8` 的 UnrealEditor �
 协调者 19:5x 通知复工后，我直接开了 `rebuild_street_social_runtime.lua --tag EFps1118j --skip-cook --skip-base`（20:25:16–20:26:37 编 host 与执行档）。建置不占 slot，当时 c-lowspec 正占着整台机器（`--need-gb 60`）做安静走路量测，三棵树同时在编，它那段量测作废。我以为「建置在非独占时做」只要自己不占独占就行，没去确认别人有没有在独占。
 
 **修正**：开任何建置／cook 前先跑 `C:\portable\OpenKoikatsu\Tools\lua\lua.exe C:\portable\OpenKoikatsu\Tools\unreal_slot.lua may-build`，exit 0 才开，exit 3（有人 `[need 60]`）就等（工具闸门见 C 树 `5ed72afe8`）。
+
+## 2026-11-18：讀卡器 DreamGUI 骨骼頁一次鏡像全部骨骼列，換頁時遊戲卡死
+
+- **變更**：新版讀卡器「身子 › 骨骼」補上骨骼分類下拉，第一版進頁時切到「骨骼調整：全部」，把 ShapeBox 裡全部骨骼列（含收起的，幾百列）都鏡像成 DreamGUI 控制項。
+- **症狀與證據**：建頁那一幀 1823 ms（0.55 FPS）；log 連續出現 DreamGUI `UDreamUIDataAsTexture::ExpandTexture ... Maximum texture size is:16,384`；接著按「懷孕」換頁，遊戲單核滿載、`Responding=False` 數分鐘不恢復，只能結束行程。
+- **原因**：DreamGUI 一頁的控制項太多，頂點資料貼圖超過上限；銷毀這幾百個控制項時又極慢。
+- **處置**：骨骼頁預設第一個骨骼分類（頭部），只鏡像目前看得到的列（`FGroup::bShownOnly`），分類或「進階」勾選改變時重建該頁（`FGroup::Signature`）；實拍 8 列、266 FPS，骨骼→懷孕→胸部切換正常。
+- **再試前檢查**：DreamGUI 頁面不要一次鏡像上百列；大量列一律依目前條件只建看得到的那些。

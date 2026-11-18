@@ -209,6 +209,18 @@ public:
  void SetPropertyScope(const TArray<FString>& Tokens);
  bool PropertyInScope(const TSharedPtr<FJsonObject>& Property) const;
  void FillAppearanceTargets(const FString& Preferred);
+ // The reader's 配件 › 飾品 page picks the slot first (配件欄 1 … 額外配件欄 N), then the category in AppearanceTarget:
+ // the slots the catalog has, inside the picker panel and shown only on that page (the old picker lists every slot's
+ // every category in one list).
+ UPROPERTY() TObjectPtr<class UComboBoxString> AccessorySlotChoice;
+ TArray<int32> AccessorySlots;
+ int32 AccessorySlot=0;
+ bool bFillingAccessorySlots=false;
+ FString AccessorySlotScope() const {return FString::Printf(TEXT("accessory%d_"),AccessorySlot);}
+ void RefreshAccessorySlots();
+ UFUNCTION() void OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type);
+ // The picker's 關閉 (the reader's pages show the picker as part of the page: it is not mirrored there).
+ UPROPERTY() TObjectPtr<class UButton> AppearanceCloseButton;
  // Which card and outfit AppearanceTargets were read for: a page entered again does not read the catalog again.
  FString AppearanceCatalogPath;
  int32 AppearanceCatalogOutfit=INDEX_NONE;

@@ -74,7 +74,9 @@ void UOKCharacterController::BuildAppearanceControls(UVerticalBox* Parent){auto*
 void UOKCharacterController::BuildAppearancePanel(){
  AppearancePanel=WidgetTree->ConstructWidget<USizeBox>();AppearancePanel->SetWidthOverride(560);AppearancePanel->SetVisibility(ESlateVisibility::Collapsed);
  auto* Border=WidgetTree->ConstructWidget<UBorder>();Border->SetBrushColor(FLinearColor(.035,.10,.14,1));AppearancePanel->SetContent(Border);auto* Col=WidgetTree->ConstructWidget<UVerticalBox>();Border->SetContent(Col);
- auto* Nav=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,Nav,TEXT("隨機"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceRandom);Button(WidgetTree,Nav,TEXT("重置類型"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceReset);Button(WidgetTree,Nav,TEXT("關閉"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnCloseAppearance);Col->AddChild(Nav);
+ auto* Nav=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,Nav,TEXT("隨機"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceRandom);Button(WidgetTree,Nav,TEXT("重置類型"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAppearanceReset);AppearanceCloseButton=Button(WidgetTree,Nav,TEXT("關閉"));AppearanceCloseButton->OnClicked.AddDynamic(this,&UOKCharacterController::OnCloseAppearance);Col->AddChild(Nav);
+ // Shown only while the picker lists one accessory slot (the reader's 飾品 page, FillAppearanceTargets); in the tree so ui_* reach it.
+ AccessorySlotChoice=WidgetTree->ConstructWidget<UOKComboBoxString>();AccessorySlotChoice->OnSelectionChanged.AddDynamic(this,&UOKCharacterController::OnAccessorySlotChoice);AccessorySlotChoice->SetVisibility(ESlateVisibility::Collapsed);Col->AddChild(AccessorySlotChoice);
  AppearanceTarget=WidgetTree->ConstructWidget<UOKComboBoxString>();AppearanceTarget->OnSelectionChanged.AddDynamic(this,&UOKCharacterController::OnAppearanceTarget);Col->AddChild(AppearanceTarget);
  AppearanceSearch=WidgetTree->ConstructWidget<UEditableTextBox>();AppearanceSearch->SetHintText(FText::FromString(TEXT("搜尋名稱、編號或模組來源")));AppearanceSearch->OnTextChanged.AddDynamic(this,&UOKCharacterController::OnAppearanceSearch);Col->AddChild(AppearanceSearch);
  AppearanceStatus=WidgetTree->ConstructWidget<UTextBlock>();AppearanceStatus->SetAutoWrapText(true);AppearanceStatus->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));Col->AddChild(AppearanceStatus);
@@ -140,9 +142,40 @@ void UOKCharacterController::SetAppearanceScope(const TArray<FString>& Prefixes)
  if(AppearancePanel&&AppearancePanel->GetVisibility()!=ESlateVisibility::Collapsed&&!bAppearanceBusy&&!AppearanceTargets.IsEmpty()&&Entries.IsValidIndex(SelectedIndex)&&AppearanceCatalogPath==Entries[SelectedIndex].Path&&AppearanceCatalogOutfit==OutfitIndex)FillAppearanceTargets(AppearanceTarget->GetSelectedOption());
  else OnOpenAppearance();
 }
+// The accessory slots the catalog lists (20 of the card, then its MoreAccessories slots), named as the targets name
+// them (配件欄 1, 額外配件欄 21); AccessorySlot stays chosen while it is there.
+void UOKCharacterController::RefreshAccessorySlots(){
+ if(!AccessorySlotChoice)return;
+ AccessorySlots.Reset();TArray<FString> Labels;
+ for(auto T:AppearanceTargets){
+  const FString Key=T->GetStringField(TEXT("key"));if(!Key.StartsWith(TEXT("accessory")))continue;
+  int32 Under;if(!Key.FindChar(TEXT('_'),Under))continue;const FString Number=Key.Mid(9,Under-9);if(!Number.IsNumeric())continue;
+  // SlotIndex, not Slot: a local named Slot hides the widget's own member and the game target fails with C4458.
+  const int32 SlotIndex=FCString::Atoi(*Number);if(AccessorySlots.Contains(SlotIndex))continue;
+  FString Label=T->GetStringField(TEXT("label"));int32 Colon;if(Label.FindChar(TEXT('：'),Colon))Label=Label.Left(Colon);
+  AccessorySlots.Add(SlotIndex);Labels.Add(Label);
+ }
+ if(!AccessorySlots.Contains(AccessorySlot)&&AccessorySlots.Num())AccessorySlot=AccessorySlots[0];
+ bool Same=Labels.Num()==AccessorySlotChoice->GetOptionCount();for(int32 I=0;Same&&I<Labels.Num();++I)Same=AccessorySlotChoice->GetOptionAtIndex(I)==Labels[I];
+ TGuardValue<bool> Guard(bFillingAccessorySlots,true);
+ if(!Same){AccessorySlotChoice->ClearOptions();for(const FString& L:Labels)AccessorySlotChoice->AddOption(L);}
+ const int32 At=AccessorySlots.IndexOfByKey(AccessorySlot);
+ if(At!=INDEX_NONE&&AccessorySlotChoice->GetSelectedIndex()!=At)AccessorySlotChoice->SetSelectedIndex(At);
+}
+void UOKCharacterController::OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type){
+ if(bFillingAccessorySlots||!AccessorySlotChoice)return;
+ const int32 At=AccessorySlotChoice->FindOptionIndex(Value);if(!AccessorySlots.IsValidIndex(At))return;
+ AccessorySlot=AccessorySlots[At];
+ // The category stays (髮飾 of slot 1 → 髮飾 of slot 2): the same name after the slot's own.
+ FString Category=AppearanceTarget?AppearanceTarget->GetSelectedOption():FString();int32 Colon;Category=Category.FindChar(TEXT('：'),Colon)?Category.Mid(Colon):FString();
+ AppearanceScope={AccessorySlotScope()};
+ FString Preferred;for(auto T:AppearanceTargets){const FString L=T->GetStringField(TEXT("label"));if(T->GetStringField(TEXT("key")).StartsWith(AccessorySlotScope())&&!Category.IsEmpty()&&L.EndsWith(Category)){Preferred=L;break;}}
+ FillAppearanceTargets(Preferred);
+}
 // The target list as AppearanceScope keeps it: Preferred stays chosen when it is in the list, else the first.
 void UOKCharacterController::FillAppearanceTargets(const FString& Preferred){
  if(!AppearanceTarget)return;
+ if(AccessorySlotChoice)AccessorySlotChoice->SetVisibility(AppearanceScope.Num()==1&&AppearanceScope[0].StartsWith(TEXT("accessory"))?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
  TArray<FString> Labels;
  // In the scope's order (頭髮: 後髮 … before 光澤), the catalog's order within each prefix.
  if(AppearanceScope.IsEmpty())for(auto T:AppearanceTargets)Labels.Add(T->GetStringField(TEXT("label")));
@@ -167,6 +200,13 @@ void UOKCharacterController::RefreshAppearanceCatalog(bool bSelectNewestSlot){
   for(auto V:Data->GetArrayField(TEXT("targets")))G->AppearanceTargets.Add(V->AsObject());for(auto V:Data->GetArrayField(TEXT("items")))G->AppearanceItems.Add(V->AsObject());
   FString Chosen=TEXT("眉毛種類");for(auto T:G->AppearanceTargets){if(bSelectNewestSlot&&T->GetStringField(TEXT("key")).StartsWith(TEXT("accessory"))&&T->GetIntegerField(TEXT("category"))==121)Chosen=T->GetStringField(TEXT("label"));}
   G->AppearanceCatalogPath=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();G->AppearanceCatalogOutfit=G->OutfitIndex;
+  G->RefreshAccessorySlots();
+  // A slot just added: the reader's 飾品 page moves to it (its scope is one slot's categories).
+  if(bSelectNewestSlot&&G->AccessorySlots.Num()){
+   G->AccessorySlot=G->AccessorySlots.Last();
+   if(G->AppearanceScope.Num()==1&&G->AppearanceScope[0].StartsWith(TEXT("accessory")))G->AppearanceScope={G->AccessorySlotScope()};
+   G->RefreshAccessorySlots();
+  }
   G->FillAppearanceTargets(Chosen);
  });
 }

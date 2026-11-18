@@ -162,7 +162,10 @@ protected:
 
 private:
 	// Sources: UMG widgets mirrored onto the page; Build: a page of the screen's own (no UMG counterpart).
-	struct FGroup {FString Name;TArray<TWeakObjectPtr<UWidget>> Sources;TFunction<void()> OnEnter;TFunction<void(UDreamWidget*)> Build;};
+	// bShownOnly: only the sources shown now are mirrored (the bone rows: hundreds, most folded away by the category);
+	// Signature: the page is built again when it changes (the bone category and the X／Y／Z switch).
+	struct FGroup {FString Name;TArray<TWeakObjectPtr<UWidget>> Sources;TFunction<void()> OnEnter;TFunction<void(UDreamWidget*)> Build;bool bShownOnly=false;TFunction<FString()> Signature;};
+	FString ShownSignature;
 	struct FCategory {FString Name;int32 Tab=0;TArray<FGroup> Groups;TFunction<void()> OnEnter;};
 
 	TWeakObjectPtr<UOKCharacterController> Controller;

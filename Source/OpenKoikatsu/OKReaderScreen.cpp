@@ -448,6 +448,8 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 {
 	if(!Source||!Into)return;
 	if(Source->IsA<UOKDrawerButton>())return;	// the right panel's drawers show these
+	// The picker's 關閉 would fold the picker away out of the page it is part of.
+	if(UOKCharacterController* Owner=Controller.Get())if(Source==Owner->AppearanceCloseButton)return;
 	if(Source->IsA<UListView>())return;	// the card list has a page of its own
 	auto Place=[&](UOKDreamControl* C,float RowWidth,bool bFill)
 	{
@@ -591,11 +593,31 @@ void UOKReaderScreen::BuildCategories()
 			ApplyWantedScopes();
 		};
 	};
+	// The bone category drop-down decides which rows of the shared slider column show: anything but 原遊戲參數 folds the
+	// face and body sliders away (they are the same UMG rows the 臉 and 身子 pages mirror). Each page sets the one it needs.
+	auto BoneCategory=[G](const FString& Want)
+	{
+		return TFunction<void()>([Weak=TWeakObjectPtr<UOKCharacterController>(G),Want]()
+		{
+			if(Weak.IsValid()&&Weak->BoneCategoryCombo&&Weak->BoneCategoryCombo->GetSelectedOption()!=Want)Weak->BoneCategoryCombo->SetSelectedOption(Want);
+		});
+	};
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
 	for(FGroup& Each:Face.Groups)
 	{
+		Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
 		if(Each.Name==TEXT("眉毛"))Pickers(Each,{TEXT("eyebrow")},{TEXT("eyebrow")});
-		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_"),TEXT("eyeline_")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown"),TEXT("eyeline")});
+		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_"),TEXT("eyeline_"),TEXT("eyeshadow")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown"),TEXT("eyeline"),TEXT("eyeshadow")});
+		else if(Each.Name==TEXT("臉頰"))Pickers(Each,{TEXT("cheek"),TEXT("mole")},{TEXT("cheek"),TEXT("mole")});
+		else if(Each.Name==TEXT("鼻子"))Pickers(Each,{TEXT("nose")},{});
+		else if(Each.Name==TEXT("嘴巴"))Pickers(Each,{TEXT("lip")},{TEXT("lip")});
+	}
+	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
+	// page reads the card's catalog).
+	{
+		FGroup Skin;Skin.Name=TEXT("頭型與膚質");Skin.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		Pickers(Skin,{TEXT("head"),TEXT("face_detail"),TEXT("facepaint")},{TEXT("detail"),TEXT("paint"),TEXT("skin")});
+		Face.Groups.Add(MoveTemp(Skin));
 	}
 	Categories.Add(MoveTemp(Face));
 
@@ -609,15 +631,50 @@ void UOKReaderScreen::BuildCategories()
 
 	FCategory Body;Body.Name=TEXT("身子");Body.Groups=ShapeGroups(true,{TEXT("全身"),TEXT("胸部"),TEXT("軀幹"),TEXT("腰臀"),TEXT("手臂"),TEXT("腿部")});
 	{
-		// The bone controls follow the last slider row in the same column.
-		FGroup Bones;Bones.Name=TEXT("骨骼");
+		// 胸部柔軟度／胸部重量 (shown under 原遊戲參數): with the breast sliders.
+		TArray<UWidget*> BustRows;
+		for(UOKShapeSlider* S:G->BoneSliders)if(S&&!S->BodyParameter.IsEmpty()&&S->ModRow)BustRows.Add(S->ModRow);
+		for(FGroup& Each:Body.Groups)
+		{
+			Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+			if(Each.Name==TEXT("胸部"))for(UWidget* W:BustRows)Each.Sources.Add(W);
+		}
+		// The bone controls follow the last slider row in the same column: the category drop-down and the X／Y／Z switch
+		// first. Only the rows the category shows are mirrored, the page built again when the category or the switch
+		// changes: every bone row at once (骨骼調整：全部) held the frame 1.8 s (2026-11-18), so it opens on the first
+		// bone category.
+		FGroup Bones;Bones.Name=TEXT("骨骼");Bones.bShownOnly=true;
+		Bones.Signature=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
+		{
+			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return FString();
+			return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
+		};
+		if(G->BoneCategoryCombo)Bones.Sources.Add(G->BoneCategoryCombo.Get());
+		if(G->BoneAxesCheck)Bones.Sources.Add(G->BoneAxesCheck.Get());
 		if(G->ShapeBox&&G->ShapeSliders.Num())
 		{
 			const int32 Last=G->ShapeBox->GetChildIndex(G->ShapeSliders.Last()?G->ShapeSliders.Last()->GetParent():nullptr);
-			for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)if(!G->ShapeSeparators.Contains(G->ShapeBox->GetChildAt(I)))Bones.Sources.Add(G->ShapeBox->GetChildAt(I));
+			for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)
+			{
+				UWidget* W=G->ShapeBox->GetChildAt(I);
+				if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox)Bones.Sources.Add(W);
+			}
 		}
+		Bones.OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
+		{
+			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return;
+			const FString Now=Weak->BoneCategoryCombo->GetSelectedOption();
+			auto NotBones=[](const FString& O){return O==TEXT("原遊戲參數")||O==TEXT("骨骼調整：全部")||O==TEXT("角色風格")||O==TEXT("腹部形變");};
+			if(!NotBones(Now))return;
+			for(int32 I=0;I<Weak->BoneCategoryCombo->GetOptionCount();++I)
+				if(!NotBones(Weak->BoneCategoryCombo->GetOptionAtIndex(I))){Weak->BoneCategoryCombo->SetSelectedIndex(I);return;}
+		};
 		if(Bones.Sources.Num())Body.Groups.Add(MoveTemp(Bones));
-		if(G->PregnancyBox)Body.Groups.Add(Group(TEXT("懷孕"),{G->PregnancyBox.Get()}));
+		if(G->PregnancyBox){Body.Groups.Add(Group(TEXT("懷孕"),{G->PregnancyBox.Get()}));Body.Groups.Last().OnEnter=BoneCategory(TEXT("腹部形變"));}
+		// The body's skin: detail, tan lines, nipples, underhair, body paint.
+		FGroup Skin;Skin.Name=TEXT("皮膚");
+		Pickers(Skin,{TEXT("body_detail"),TEXT("sunburn"),TEXT("nipple"),TEXT("underhair"),TEXT("bodypaint")},{TEXT("body."),TEXT("sunburn"),TEXT("nip"),TEXT("underhair")});
+		Body.Groups.Add(MoveTemp(Skin));
 	}
 	Categories.Add(MoveTemp(Body));
 
@@ -629,11 +686,13 @@ void UOKReaderScreen::BuildCategories()
 	for(FGroup& Each:Clothes.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Categories.Add(MoveTemp(Clothes));
 
-	// Accessories: each slot's model (配件欄 N：髮飾 ...), a new slot, and the slots' colours, offsets and bones. The old
-	// picker and editor whole (every target, every property) stay as 其他外觀 and 全部屬性.
+	// Accessories: the slot first (配件欄 1 … 額外配件欄 N), then that slot's category and model; a new slot; the slots'
+	// colours, offsets and bones; and the detailed editor whole (全部屬性).
 	FCategory Accessory;Accessory.Name=TEXT("配件");
 	{
-		FGroup Slots;Slots.Name=TEXT("飾品");Pickers(Slots,{TEXT("accessory")},{});
+		FGroup Slots;Slots.Name=TEXT("飾品");
+		if(G->AppearancePanel)Slots.Sources.Add(G->AppearancePanel.Get());
+		Slots.OnEnter=[this,Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(!Weak.IsValid())return;WantedTargets=TArray<FString>{Weak->AccessorySlotScope()};ApplyWantedScopes();};
 		Slots.Build=[this](UDreamWidget* Page)
 		{
 			TWeakObjectPtr<UOKCharacterController> Weak(Controller);
@@ -642,7 +701,6 @@ void UOKReaderScreen::BuildCategories()
 		Accessory.Groups.Add(MoveTemp(Slots));
 	}
 	{FGroup Settings;Settings.Name=TEXT("飾品顏色與位置");Pickers(Settings,{},{TEXT("accessory"),TEXT("飾品")});Accessory.Groups.Add(MoveTemp(Settings));}
-	{FGroup Other;Other.Name=TEXT("其他外觀");Pickers(Other,{TEXT("head"),TEXT("face_detail"),TEXT("nose"),TEXT("lipline"),TEXT("mole"),TEXT("eyeshadow"),TEXT("cheek"),TEXT("lip"),TEXT("facepaint"),TEXT("body_detail"),TEXT("sunburn"),TEXT("nipple"),TEXT("underhair"),TEXT("bodypaint")},{});Accessory.Groups.Add(MoveTemp(Other));}
 	// The property editor reads the card when opened; the empty token list is "all" here, so its scope is cleared by hand.
 	{
 		FGroup All=Group(TEXT("全部屬性"),{G->PropertyPanel.Get()});
@@ -670,8 +728,8 @@ void UOKReaderScreen::BuildCategories()
 	// The game folder (where zipmods are looked for) and the local library: a page of the screen's own, first.
 	{FGroup Folders;Folders.Name=TEXT("遊戲目錄");Folders.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};Settings.Groups.Add(MoveTemp(Folders));}
 	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting")){Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));Settings.Groups.Last().OnEnter=OpenDrawer(D);}
-	// The style box shows only under the old shape category 角色風格 (OKGalleryBoneControls): this page shows it itself.
-	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->StyleBox)Weak->StyleBox->SetVisibility(ESlateVisibility::Visible);};}
+	// The style box shows only under the bone category 角色風格 (OKGalleryBoneControls): this page selects it.
+	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=BoneCategory(TEXT("角色風格"));}
 	// The physics controls sit loose in the animation column, each after its caption: those pairs, not the whole column.
 	{
 		TArray<UWidget*> Physics;
@@ -1176,7 +1234,8 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 		if(C.Groups[Sub].OnEnter)C.Groups[Sub].OnEnter();
 		UDreamWidget* Page=MakePanel(nullptr,false,8.f);
 		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);}
-		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page)Mirror(Source.Get(),Page,false);
+		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page&&(!C.Groups[Sub].bShownOnly||IsUmgShown(Source.Get())))Mirror(Source.Get(),Page,false);
+		ShownSignature=C.Groups[Sub].Signature?C.Groups[Sub].Signature():FString();
 		if(C.Groups[Sub].Build&&Page)C.Groups[Sub].Build(Page);
 		// The card list: a grid of the cards' pictures with their names under them, as a file browser shows pictures (the
 		// pictures load as their tiles scroll into view, TickThumbnails).
@@ -1328,6 +1387,12 @@ void UOKReaderScreen::SyncAll()
 			Panels[I].Children=S->GetChildrenCount();Panels[I].Kids.Reset();for(int32 K=0;K<S->GetChildrenCount();++K)Panels[I].Kids.Add(S->GetChildAt(K));const bool bHorizontal=Panels[I].bHorizontal;
 			MirrorChildren(S,T,bHorizontal);
 		}
+	}
+	// A page built from what showed then (the bone rows of one category) is built again when that changes.
+	if(Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub))
+	{
+		const FGroup& Current=Categories[Category].Groups[Sub];
+		if(Current.Signature&&Current.Signature()!=ShownSignature)ShowCategory(Category,Sub);
 	}
 	ApplyWantedScopes();
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
