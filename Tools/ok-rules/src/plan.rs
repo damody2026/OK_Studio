@@ -353,6 +353,9 @@ pub fn plan_day(i: &Inputs, c: &Catalog) -> Vec<Block> {
 
 // ------------------------------------------------------------------------------------------------ everyone's own day
 
+/// A gap this long after a meal is not eaten through: she leaves and walks (settle).
+const MEAL_GAP_WALK: i32 = 30;
+
 fn fixed(b: &Block) -> bool {
     b.kind == "class" || b.kind == "work" || b.kind == "promise" || b.kind == "encounter" || (b.kind == "sleep" && b.start > 0)
 }
@@ -384,13 +387,26 @@ fn settle(day: &mut Vec<Block>, wake: i32) {
             out.push(b);
         }
     }
-    // Close gaps: a movable block runs on until the next one begins.
-    for k in 0..out.len().saturating_sub(1) {
-        if out[k].end < out[k + 1].start && !fixed(&out[k]) {
-            out[k].end = out[k + 1].start;
+    // Close gaps: a movable block runs on until the next one begins. Not a meal past half an hour: the gap after it is a
+    // walk (Raiden's late lunch at 16:28 ran on to 18:22, two hours at the restaurant full; lunches of 1 h 45 at the
+    // cafeteria, a dinner of 2 h at the department store).
+    let mut closed: Vec<Block> = Vec::with_capacity(out.len());
+    for k in 0..out.len() {
+        let mut b = out[k].clone();
+        if let Some(next) = out.get(k + 1) {
+            if b.end < next.start && !fixed(&b) {
+                if b.kind == "meal" && next.start - b.end >= MEAL_GAP_WALK {
+                    let walk = block(b.end, next.start, "", "leisure", "template", "walk", 0);
+                    closed.push(b);
+                    closed.push(walk);
+                    continue;
+                }
+                b.end = next.start;
+            }
         }
+        closed.push(b);
     }
-    *day = out;
+    *day = closed;
 }
 
 /// Puts b into the day over free time only (no fixed block in the way); what it covers is cut round it.
@@ -1157,6 +1173,23 @@ mod tests {
         // Five minutes of the second before closing: it goes.
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[1].place, "library");
+    }
+
+    #[test]
+    fn a_meal_is_not_eaten_through_a_long_gap() {
+        // Raiden's late lunch after her shift: 16:28-17:28, nothing until 18:22. The meal stays an hour, then she walks.
+        let mut day = vec![block(988, 1048, "restaurant", "meal", "need", "", 0), block(1102, 1160, "", "leisure", "template", "walk", 0)];
+        settle(&mut day, 420);
+        assert_eq!((day[0].kind.as_str(), day[0].start, day[0].end), ("meal", 988, 1048), "{day:?}");
+        assert_eq!((day[1].kind.as_str(), day[1].place.as_str(), day[1].start, day[1].end), ("leisure", "", 1048, 1102), "{day:?}");
+        // A short gap is still eaten through (no sliver of a walk).
+        let mut day = vec![block(720, 780, "cafeteria", "meal", "need", "", 0), block(800, 860, "library", "leisure", "favorite", "", 0)];
+        settle(&mut day, 420);
+        assert_eq!((day[0].end, day.len()), (800, 2), "{day:?}");
+        // Free time still runs on to the next block.
+        let mut day = vec![block(600, 660, "park", "leisure", "favorite", "", 0), block(760, 820, "cafeteria", "meal", "need", "", 0)];
+        settle(&mut day, 420);
+        assert_eq!((day[0].end, day.len()), (760, 2), "{day:?}");
     }
 
     fn inputs(profile: &Value, weekday: i32, seed: i32) -> Inputs<'_> {
