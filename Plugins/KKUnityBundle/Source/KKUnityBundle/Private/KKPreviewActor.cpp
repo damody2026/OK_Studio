@@ -481,6 +481,13 @@ static UTexture2D* TextureFromPngFile(const FString& Path, bool bClamp = false)
 // (2026-11-17, the Studio package on a 16 GB laptop).
 static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
 {
+	// Kept per file: the camera setup asks for the same LUT on every card open (the StudioCam's own settings and the
+	// studio post-process volume), and a fresh 256x16 transient texture each time piled up two per open -- the volume's
+	// FPostProcessSettings keeps the one it was given, so GC could not take them (2026-11-19: 12 alive after 12 opens,
+	// the first one still reachable through APostProcessVolume::Settings). Rooted rather than a static strong pointer,
+	// which would outlive UObject shutdown (as OKLoadRenderRamp does it).
+	static TMap<FString, UTexture2D*> Kept;
+	if (UTexture2D* const* Hit = Kept.Find(Path)) if (*Hit) return *Hit;
 	TArray<uint8> Png;
 	if (!FFileHelper::LoadFileToArray(Png, *Path) || Png.Num() < 16) return nullptr;
 	IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
@@ -501,6 +508,8 @@ static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
 	Tex->AddressY = TA_Clamp;
 	Tex->NeverStream = true;
 	Tex->UpdateResource();
+	Tex->AddToRoot();
+	Kept.Add(Path, Tex);
 	return Tex;
 }
 
