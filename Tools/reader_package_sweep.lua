@@ -114,7 +114,9 @@ end
 local function image_bad(path)
   local f = io.open(path, "rb"); if not f then return "missing" end
   local size = f:seek("end"); f:close()
-  if size < 150000 then return ("tiny%dB"):format(size) end
+  -- A character on a plain background can compress well (a white outfit on black came out at 124 KB and was perfect),
+  -- so this only catches a PNG too small to hold anything at all.
+  if size < 60000 then return ("tiny%dB"):format(size) end
   local text = call_once("image_stats", ('{"file":"%s","region":[0,0,1,1]}'):format(path))
   local black = tonumber(text:match('"black"%s*:%s*([%d.]+)'))
   local white = tonumber(text:match('"white"%s*:%s*([%d.]+)'))
