@@ -8,6 +8,7 @@ use sha2::{Digest,Sha256};
 mod properties;
 pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
+mod eye_overlay;
 pub(crate) mod live_head;
 pub(crate) mod timings;
 mod live_head_ffi;
@@ -469,6 +470,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   std::fs::write(output,&out).map_err(|e|e.to_string())?;
   return Ok(json!({"valid":true,"output":output.to_string_lossy(),"bytes":out.len()}));
  }
+ // The eye pages' Material Editor overlay textures. They are addressed by material and property,
+ // not by a catalogue id, so they take neither the catalogue nor a target (appearance/eye_overlay.rs).
+ if text(&r,"action")?=="eye_overlays"{return eye_overlay::list(root,&r);}
+ if text(&r,"action")?=="eye_overlay_set"{return eye_overlay::apply(root,&r);}
  if matches!(text(&r,"action")?,"properties"|"properties_apply"|"accessory_slot_add"){
   let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
   let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}

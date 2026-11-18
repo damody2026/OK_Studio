@@ -168,8 +168,8 @@ README 里那句指的是**匯入流程**（Tripo 头髮，`Tools/ok-extract/src
 
 ## 9. 眼部三页要用的读写接口（2026-11-19）
 
-e-fork-2 要做「眼部缩放2 / 眼睛 / 瞳孔覆盖贴图」三页。前两页的接口都已经存在，第三页**还没有接口**，
-要什么说一声我补。三页共用同一组读写：
+e-fork-2 要做「眼部缩放2 / 眼睛 / 瞳孔覆盖贴图」三页。三页的接口都已经存在（第三页 2026-11-19 补上，见 9.3）。
+前两页共用同一组读写：
 
 ```
 reader_call '{"action":"parameters","query":"<子字串>","offset":0,"limit":128}'   // 列出可调参数（分页）
@@ -215,33 +215,77 @@ key 形如 `bone.<骨骼名>.<轴>`，`category` 是 `FaceEyes2`（标签「眼�
 `face.pupil.0.pupilHeight`、`face.pupil.0.pupilX/Y`、`face.hlUpColor.*`、`face.whiteBaseColor.*` 等，
 用 `parameters` 的 `query` 过滤 `pupil`／`hl`／`white` 就列得出来。
 
-### 9.3 瞳孔覆盖贴图：**目前没有读写接口**
+### 9.3 瞳孔覆盖贴图：`eye_overlays` / `eye_overlay_set`（2026-11-19 已实作）
 
-卡片里这些覆盖贴图是 Material Editor 的 `MaterialTexturePropertyList`（KKEx 区块），按材质＋属性定位
-（`appearance.rs` `clear_material_conflicts`）：
+这一页管的是 Material Editor 的 `MaterialTexturePropertyList`（KKEx 区块）：按**材质名＋属性名**定位的覆盖贴图。
+`properties` 那条路会跳过所有名字含 `texture` 的栏位（`appearance/properties/plugins.rs`），所以这页不走 `parameters`／`set`，
+改走两个专用动作，程式在 [`Tools/ok-extract/src/appearance/eye_overlay.rs`](../Tools/ok-extract/src/appearance/eye_overlay.rs)。
+两个动作都经 `UOKCharacterController::RunAppearanceRequest`（和 `catalog`／`apply` 同一条 worker），
+`cache` 栏位由它自己填，**不用 UI 管**。
 
-| 这一页的项目 | 材质名含 | 属性（`Property`，去掉开头底线、不分大小写） |
-|---|---|---|
-| 瞳孔本体贴图 | `hitomi`／`pupil` | `maintex` |
-| 瞳孔渐层遮罩 | `hitomi`／`pupil` | `gradmask`／`gradationmask` |
-| 上高光覆盖 | `hitomi`／`pupil` | `overtex`／`overtex1`／`eyehighlight`／`eyehiuptex` |
-| 下高光覆盖 | `hitomi`／`pupil` | `overtex2`／`eyehighlight2`／`eyehidowntex` |
-| 眼白贴图 | `sirome`／`white` | `maintex` |
+#### 读：`eye_overlays`
 
-**缺口**：`properties` 这条路会**跳过**所有名字含 `texture` 的栏位
-（`appearance/properties/plugins.rs`：`if name.to_ascii_lowercase().contains("texture") { continue }`），
-所以这些列根本不会出现在 `parameters`／`get` 里，UI 现在**既读不到也写不了**。
+```jsonc
+{"action":"eye_overlays","card":"<目前卡片绝对路径>","outfit":0,
+ "library":["<可选：自己的 PNG 资料夹>", "..."]}
+```
 
-要做这一页需要我在 Rust 侧补两个动作，说一声我就做：
+回传：
 
-- 列出：`{"action":"eye_overlays"}` → 每一列 `{material, property, slot:"maintex|gradmask|overtex1|overtex2", present:true/false, bytes, png:"<导出的本机路径>"}`，
-  让 UI 显示现在有没有覆盖、长什么样。
-- 设定／清除：`{"action":"eye_overlay_set","slot":"overtex1","path":"<PNG>"}`／`{"slot":"overtex1","path":""}`，
-  比照 `appearance` 另存一张工作卡片（原卡不覆写），写完重开。
+```jsonc
+{"valid":true,
+ "slots":[{"key":"cf_m_hitomi_00/maintex",      // 稳定识别码（材质小写/属性小写）
+           "label":"瞳孔本體貼圖","material":"cf_m_hitomi_00","property":"MainTex",
+           "part":"cf_Ohitomi_L02","shader":"Shader Forge/main_hitomi",
+           "declared":false,   // 属性名是不是这张卡的材质自己宣告的（false＝用原作眼睛 shader 的预设槽位）
+           "applies":true,     // 这条开卡路径会不会真的画它，见下
+           "present":true,"tex_id":5,"bytes":57114,"width":512,"height":512,
+           "png":"<cache>/eye_overlays/<sha 前16>.png",   // 现在这张覆盖贴图，已导出成档案
+           "candidate":"card:b211e0bed8d1c4a0"}],         // 对应 candidates 里的哪一格
+ "candidates":[{"id":"card:b211e0bed8d1c4a0","name":"瞳孔本體貼圖","source":"card","guid":"",
+                "eye":true,"bytes":57114,"width":512,"height":512,
+                "png":"<cache>/eye_overlays/b211e0bed8d1c4a0.png","used_by":["瞳孔本體貼圖"]}],
+ "current":{"cf_m_hitomi_00/maintex":"card:b211e0bed8d1c4a0","cf_m_sirome_00/maintex":null},
+ "skipped":[{"part":"cf_O_face","material":"cf_m_face_00"}],   // 不属于这页的头部材质，debug 用
+ "plugin":"com.deathweasel.bepinex.materialeditor","outfit":0}
+```
 
-已知的交互规则（做 UI 时要知道）：**用 `appearance` 换瞳孔／渐层／高光的种类，会自动清掉会冲突的那几列覆盖贴图**
+- **格子就是 `candidates`**：`id`／`name`／`source`／`png`（本机绝对路径，直接 `Thumbnail(Path)` 做 `UTexture2D`）／
+  `bytes`／`width`／`height`／`used_by`。`source` 是 `"card"`（这张卡里已经有的贴图）或你传进去的资料夹路径。
+  `guid` 一律空字串：覆盖贴图是卡片自己带的 PNG，没有 sideloader 来源，这栏只是和别页的格子对齐。
+  `eye:true` 的排在前面，`eye:false` 是这张卡用在衣服／配件上的贴图（也能拿来用，UI 自己决定要不要藏）。
+- **清空**是一格固定的「無」，不在 `candidates` 里：送出时 `png` 与 `candidate` 都不给就是清空。
+- `slots` 的来源是**开卡后的真材质**（`MeshMaterial::tex_slots`），不是写死清单，所以模组眼睛会列出它自己的属性名。
+  材质没传回属性时退回原作眼睛 shader 的槽位，并标 `declared:false`。
+- **`applies:false` 的槽位现在不会被画**：`head_body.rs` 在 **hitomi（瞳孔）**材质上跳过 `overtex1`／`overtex2`／`expression`，
+  瞳孔高光是走卡片自己的 410／411 种类（`appearance` 那条路）。UI 要嘛不显示这些格子，要嘛标成灰的，别让使用者以为设了有效。
+
+#### 写：`eye_overlay_set`
+
+```jsonc
+{"action":"eye_overlay_set","card":"<目前卡片>","output":"<新的工作卡片绝对路径>",
+ "resources":"<ProjectContentDir>/IndependentResources/v1","outfit":0,
+ "material":"cf_m_hitomi_00","property":"MainTex",
+ "candidate":"card:b211e0bed8d1c4a0"}     // 或 "png":"<PNG 档绝对路径>"；两个都不给＝清空这个槽位
+```
+
+回传 `{"valid":true,"output":"…","material":"…","property":"…","cleared":false}`。
+`output` 不能已存在；成功后和 `apply` 一样**另存一张工作卡片，不覆写原卡**，UI 要把 `Selected` 换成它再重开。
+
+规则（已实测）：
+
+- **属性名不带开头底线**。Material Editor 自己存的就是 `MainTex`／`overtex1`，开卡的查询也用这个形式；
+  写成 `_MainTex` 会存得进去、读得回来，但**永远不会被画**。传进来的底线会被自动去掉，列表回的也已经是去掉的形式。
+- 同一张贴图不会重复塞进卡里：内容一样就重用既有的 `TexID`（和原作 maker 的行为一样）。
+- 清空会一并把没人引用的贴图从 `TextureDictionary` 删掉，卡片不会越存越肥。
+- 卡片原本没有 Material Editor 区块时会自己建一个（`com.deathweasel.bepinex.materialeditor`）。
+
+已知的交互规则：**用 `appearance` 换瞳孔／渐层／高光的种类，会清掉会冲突的那几列覆盖贴图**
 （`clear_material_conflicts`：换 410 清 `overtex/overtex1/eyehighlight/eyehiuptex`，换 411 清 `overtex2/…`，
-换 408/409 清 `maintex/gradmask`）。所以 UI 的「覆盖贴图」页在使用者换了种类之后要重新读一次。
+换 408/409 清 `maintex/gradmask`）。所以这页在使用者换了种类之后要重新 `eye_overlays` 一次。
+
+实测（`Alice_keiyuu.png`＋`D:/XKoikatuSunshine`）：8 个槽位、41 个候选（3 个 `eye:true`）；
+以候选 id 写入、以档案路径写入、清空三种都写进去又读得回来，清空不影响其他槽位。
 
 ### 9.4 照这个接：每一页的读与写（函式名、参数、回传）
 
@@ -257,7 +301,7 @@ UI 在读卡器行程内，所以**走 C++ 直接呼叫**（下表左栏）；�
 | 种类候选（瞳孔／渐层／眼白／高光／眼线／眼影） | `RefreshAppearanceCatalog()` 之后读 `AppearanceTargets`（挑 `category` 等于 408/409/407/410/411/412/413/401 的 target）与 `AppearanceItems`（用 `entry.category_no` 筛） | `{"action":"catalog","target":"pupil0","query":"","offset":0,"limit":64}` |
 | 目前选的是哪一个 | 同上的 `catalog` 回传里的 `current[<target key>]`（第 3 节） | 同左 |
 | 缩图 | `RunAppearanceRequest({"action":"thumbnails","keys":[...]} , cb)`，一次 ≤48 个；回呼里 `Thumbnail(Path)` 做成 `UTexture2D`（游戏执行绪，>2048² 会被挡掉） | `{"action":"thumbnails","keys":[...]}` → `[{key,path}]` |
-| 瞳孔覆盖贴图现况 | **没有**（`properties` 跳过名字含 `texture` 的栏位），见 9.3 | 同左 |
+| 瞳孔覆盖贴图现况 | `RunAppearanceRequest({"action":"eye_overlays","card":<卡片>,"outfit":N}, cb)` → `slots`／`candidates`／`current`（9.3） | `{"action":"eye_overlays","card":"…"}` |
 
 #### 写
 
@@ -267,7 +311,7 @@ UI 在读卡器行程内，所以**走 C++ 直接呼叫**（下表左栏）；�
 | 改一个 ABMX 骨骼值 | `OnBoneChanged(Slider, Value)`，Slider 带 `ModBone`／`ModRight`／`ModAxis`／`ModSide`（0=左 1=双 2=右）／`ModCoordinateSpecific`；内部写进 KKEx 的 `abm` 再 `CommitEditorMods` | `set` → `apply`（左右各一个 key） |
 | 换种类（瞳孔／渐层／眼白／高光／眼线／眼影） | `AppearanceTargetKey = <target key>;` 然后 `ApplyAppearanceItem(<item key>)`；空字串＝清空这个槽位 | `{"action":"appearance","target":"pupil0","item":"<item key>"}` |
 | 改颜色等 properties | `SetEditorProperty(Key, Value)` 进 `PendingProperties`，再 `OnApplyProperties()` | `set` → `apply` |
-| 设定／清除瞳孔覆盖贴图 | **要我补**（9.3 列的两个动作） | 同左 |
+| 设定／清除瞳孔覆盖贴图 | `RunAppearanceRequest({"action":"eye_overlay_set","card":…,"output":<新工作卡片>,"resources":…,"material":…,"property":…,"candidate"\|"png":…}, cb, CardJob)`；两个都不给＝清空（9.3） | 同左 |
 
 #### 缩图网格的候选是哪里来的
 
