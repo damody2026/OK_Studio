@@ -3456,6 +3456,14 @@ void UDreamUIFontData_FreeTypeRender::RenewFontTexture()
 		{
 			OldTexture->RemoveFromRoot();
 		}
+		// Kept referenced a while: draw data built before this change may still point at it (RetiredTextures). Only the
+		// last few; an older one has long been replaced everywhere.
+		RetiredTextures.Add(OldTexture);
+		constexpr int32 MaxRetiredTextures = 4;
+		if (RetiredTextures.Num() > MaxRetiredTextures)
+		{
+			RetiredTextures.RemoveAt(0, RetiredTextures.Num() - MaxRetiredTextures);
+		}
 	}
 
 	for (auto textItem : RenderTextArray)

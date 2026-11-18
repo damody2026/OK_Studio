@@ -4077,6 +4077,54 @@ void UDreamCanvas::UpdateDrawCallMaterial()
 			}
 		}
 	}
+
+	// The textures every section draws with now -- through a proxy (above) or the built-in shader -- are held while in
+	// use and a few frames after the rebuild that stopped using them (DrawTextureHolds), whatever the order of this
+	// rebuild's render commands and the next collection.
+	{
+		constexpr uint64 InUse = MAX_uint64;
+		constexpr uint64 KeepFrames = 8;
+		TSet<UTexture*> Now;
+		for (UObject* Held : MaterialProxyReferences)
+		{
+			if (UTexture* Texture = Cast<UTexture>(Held))
+			{
+				Now.Add(Texture);
+			}
+		}
+		for (const FDreamUIDrawCall& DrawCallItem : CurrentDrawCallData.DrawCallArray)
+		{
+			auto Add = [&Now](UTexture* Texture) { if (Texture != nullptr) { Now.Add(Texture); } };
+			Add(DrawCallItem.Texture.Get());
+			Add(DrawCallItem.FontTexture.Get());
+			Add(DrawCallItem.MaskTextures.Slots[0].Get());
+			Add(DrawCallItem.MaskTextures.Slots[1].Get());
+		}
+		const uint64 Frame = GFrameCounter;
+		for (auto It = DrawTextureHolds.CreateIterator(); It; ++It)
+		{
+			if (It.Key() == nullptr || (!Now.Contains(It.Key().Get()) && It.Value() != InUse && Frame > It.Value() + KeepFrames))
+			{
+				It.RemoveCurrent();
+			}
+			else if (!Now.Contains(It.Key().Get()) && It.Value() == InUse)
+			{
+				It.Value() = Frame;
+			}
+		}
+		static IConsoleVariable* LogHeld = IConsoleManager::Get().RegisterConsoleVariable(TEXT("DreamGUI.LogHeldTextures"), 0,
+			TEXT("1: log each texture a canvas starts drawing with (name, size, mips, outer), to tell which one a GPU page fault sampled."), ECVF_Default);
+		for (UTexture* Texture : Now)
+		{
+			if (LogHeld->GetInt() != 0 && !DrawTextureHolds.Contains(Texture))
+			{
+				const UTexture2D* T2D = Cast<UTexture2D>(Texture);
+				UE_LOG(DreamGUI, Log, TEXT("DreamGUI.LogHeldTextures: canvas %s holds %s (%s %dx%d mips=%d outer=%s)"), *GetPathName(), *Texture->GetName(), *Texture->GetClass()->GetName(),
+					T2D ? T2D->GetSizeX() : 0, T2D ? T2D->GetSizeY() : 0, T2D ? T2D->GetNumMips() : 0, Texture->GetOuter() ? *Texture->GetOuter()->GetName() : TEXT("-"));
+			}
+			DrawTextureHolds.Add(Texture, InUse);
+		}
+	}
 }
 
 void UDreamCanvas::MarkNeedVerifyMaterials()

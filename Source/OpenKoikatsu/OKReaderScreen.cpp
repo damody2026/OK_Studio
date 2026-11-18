@@ -324,6 +324,15 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	}
 	UClass* Class=LoadClass<UOKReaderScreen>(nullptr,GScreenPath);
 	if(!Class){UE_LOG(LogTemp,Warning,TEXT("Reader screen %s missing: the reader keeps its UMG controls"),GScreenPath);return nullptr;}
+	// D3D12 moves textures to compact its texture pool (after a collection frees many, a card switch); with the reader's
+	// DreamGUI screen up, a draw then sampled a moved texture's old place: a GPU page fault ("DefragFree: 1" on the
+	// released texture in the D3D12 tracking log). 2026-11-19: eight rounds of card loads + source switches + obj gc with
+	// the defrag off, none crashed; with it on, every run crashed in round 1-3. Which draw keeps the stale binding is not
+	// found yet: the defrag stays off while the reader screen runs (the other modes keep it).
+	if(IConsoleVariable* Defrag=IConsoleManager::Get().FindConsoleVariable(TEXT("d3d12.VRAMTexturePoolDefrag")))
+	{
+		if(Defrag->GetInt()!=0){Defrag->Set(0,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: d3d12.VRAMTexturePoolDefrag 0 (texture pool defrag off while the DreamGUI reader runs)"));}
+	}
 	// Design pixels on a 1080-high screen, whatever the window.
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
@@ -1418,6 +1427,7 @@ bool UOKReaderScreen::PressControl(const FString& Text,int32 Index)
 	for(UOKDreamControl* C:SubButtons)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:RailButtons)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:Drawers)if(IsValid(C))All.AddUnique(C);
+	for(UOKDreamControl* C:CardButtons)if(IsValid(C))All.AddUnique(C);	// the card list's tiles (by the name they show)
 	for(int32 Pass=0;Pass<2;++Pass)
 	{
 		int32 Seen=0;
@@ -1614,7 +1624,7 @@ bool OKReaderScreenUnderCursor()
 // For the game MCP (ui_exec) and tests: the screen's own navigation, which has no UMG control to set.
 //   ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state
 static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
-	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <text> [#N] | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
+	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <text> [#N] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld*,FOutputDevice& Out)
 	{
 		UOKReaderScreen* S=GScreen.Get();
@@ -1631,6 +1641,13 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			FString Text=Value;int32 Index=0;int32 Hash;
 			if(Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
 			Done=!Text.IsEmpty()&&S->PressControl(Text,Index);
+		}
+		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
+		else if(Verb==TEXT("card"))
+		{
+			const int32 I=Value.IsNumeric()?FCString::Atoi(*Value):-1;
+			Done=S->PressCard(I);
+			if(Done)Out.Logf(TEXT("card=%d file=%s"),I,*S->CardFile(I));
 		}
 		// "scroll <0..1>": the left page to that point of its length (screenshots of a long page).
 		else if(Verb==TEXT("scroll")){Done=Value.IsNumeric();if(Done)S->ScrollLeftPage(FCString::Atof(*Value));}

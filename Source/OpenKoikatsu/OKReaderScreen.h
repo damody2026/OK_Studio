@@ -134,6 +134,9 @@ public:
 	bool SelectSub(const FString& Name);
 	// Press the shown control with this text (the Index-th of several; exact text first, then containing it).
 	bool PressControl(const FString& Text,int32 Index);
+	// The card list: its N-th tile clicked as the pointer would, and that card's file (ok.ReaderScreen card).
+	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
+	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}
 	void ScrollLeftPage(float Progress);
 	void ShowTabPublic(int32 Index){ShowTab(Index);}
 	void SetLeftWidth(float Width);

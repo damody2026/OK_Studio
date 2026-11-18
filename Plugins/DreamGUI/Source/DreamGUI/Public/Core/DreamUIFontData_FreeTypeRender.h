@@ -180,6 +180,14 @@ protected:
 		TObjectPtr<UTexture2DArray> Texture;
 
 	/**
+	 * The atlases this font replaced most recently (growing by a slice makes a new texture). Draw data built before the
+	 * change can still point at the old one for a while -- a text not in the render list, a canvas not rebatched yet --
+	 * and an atlas the collector frees under it is a GPU page fault. The last few stay referenced here.
+	 */
+	UPROPERTY(Transient, NonTransactional)
+		TArray<TObjectPtr<UTexture2DArray>> RetiredTextures;
+
+	/**
 	 * The faces tried for what this font's own face lacks. Entry i is face index i + 1. Which one draws a character is
 	 * decided by FDreamFontFaceResolver from each entry's ranges, cultures and preference, and the text's language.
 	 */

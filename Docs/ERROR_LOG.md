@@ -5758,3 +5758,18 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **原因**：縮圖是 `UTexture2D::CreateTransient` 做的，捲遠或清單重建就放開讓 GC 回收；DreamGUI 的圖片把貼圖放進畫布的繪製幾何，已建好的繪製資料不一定在 GC 前重建。第一個修法「放開後保留 3 秒」照樣當，等於用時間猜別人的生命週期。
 - **修正**：縮圖改成畫面擁有的固定大小貼圖池，放開的貼圖回池、下一張用 `UpdateTextureRegions` 重填，讀卡器存活期間不回收任何縮圖貼圖。同一組壓力 10＋8 輪（含 `obj gc`）不再當。
 - **再試前檢查**：交給 DreamGUI 畫的貼圖不要在畫面還活著時讓 GC 回收；要換圖就重用同一張貼圖。外觀選擇的縮圖格（`AppearanceTextures`）同類，待改。
+
+## 2026-11-19：驗證腳本沒設 OK_GAME_PID，指令打到別人的讀卡器（e-fork-2）
+
+- **症狀**：讀卡器完整驗證用 `ok-game-mcp.exe call ui_exec ...` 逐頁點、逐張開卡。中段的截圖檔名是別的 pid（55528），開卡段一直逾時。
+- **原因**：每次 `call` 都是新的程序，沒有 game_select 的狀態；JSON 裡的 `"pid"` 不會被當成目標，沒設 `OK_GAME_PID` 就落到「最新的遊戲」。同一個 checkout 裡 e-cardload-physics 也開著讀卡器（lane `e-cardload-physics`），我的點頁、`card N`、「載入3D」有一段打到了它那邊；我自己的遊戲那時已經 GPU PageFault 當掉。
+- **修正**：腳本一開頭 `export OK_GAME_PID=<自己的 pid>`，每張截圖檢查檔名的 pid 是自己的，不是就記失敗。
+- **再試前檢查**：用 ok-game-mcp CLI 批次操作前先 export `OK_GAME_PID`；`game_instances` 有不只一個遊戲時更要確認。
+
+## 2026-11-19：讀卡器 GPU PageFault 的真正觸發是 D3D12 貼圖池整理，不只是縮圖被回收（e-fork-2）
+
+- **症狀**：縮圖改成貼圖池後，切來源＋捲動的壓力測試不再當；但完整驗證（開卡＋`obj gc`）照樣 `LogD3D12RHI: Error: PageFault`，每次都在第 1–3 輪。
+- **查法**：用 `-ini:Engine:[ConsoleVariables]:r.D3D12.TrackAllAllocations=1 -gpucrashdebugging` 啟動，PageFault 會列出位址所在、剛被釋放的資源：每次都是 1024×1024 或 512×512、帶 mip 的 `Texture2D_N`，旁邊標著 `DefragFree: 1`，也就是被貼圖池整理搬走，不是被銷毀。出錯的 draw 在 `RenderFinish › ViewFamilyExtension › ViewExtension`，也就是 DreamGUI 的繪製。DreamGUI 畫布持有的貼圖清單（`DreamGUI.LogHeldTextures 1`）裡沒有那張。
+- **對照**：`d3d12.VRAMTexturePoolDefrag=0` 跑同一組 8 輪全過；開著每次 1–3 輪就當。
+- **處置**：讀卡器打開 DreamGUI 畫面時把 `d3d12.VRAMTexturePoolDefrag` 設成 0，其他模式不受影響。同時補了兩處 DreamGUI 的貼圖持有：字型圖集擴張後保留舊圖集，畫布對交給繪製的貼圖持有強引用。哪個 draw 還拿著被搬走貼圖的舊綁定，還沒找到。
+- **再試前檢查**：看到 PageFault 先開資源追蹤看 `DefragFree`，不要只靠「GC 後才當」就認定是 UObject 被回收。第一個縮圖修正的驗證只跑了切來源＋捲動，沒有開卡，把它當成已修好是我判斷太早。
