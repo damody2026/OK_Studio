@@ -41,6 +41,7 @@ static const FOKStreetHerCard& OKStreetHerCard(FOKStreetSceneState& S,int32 Girl
 // Onto her profile, which the rules read (traits.rs): the libido she gained in one-on-ones (ext hexp.<id>.libido_gain, a
 // point a climax past ten in a day) as libido_gain, and her card's hymen / 陰部脆弱 settings as traits (a profile's own
 // vagina_fragile stays). The profile comes from the mind each run; the gain lives in the save, the settings in her card.
+static TSet<FString> GOKStreetHerExtrasWaiting; // profiles whose card settings wait for the background read
 static void OKStreetApplyHerExtras(FOKStreetSceneState& S,const FString& Id){
  const TSharedPtr<FJsonObject> Profile=S.MindProfiles.FindRef(Id);if(!Profile.IsValid())return;
  TSharedPtr<FJsonObject> E;const TSharedPtr<FJsonObject>* H=nullptr;const TSharedPtr<FJsonObject>* Her=nullptr;double Gain=0;
@@ -48,6 +49,11 @@ static void OKStreetApplyHerExtras(FOKStreetSceneState& S,const FString& Id){
   &&E->TryGetObjectField(TEXT("hexp"),H)&&(*H)->TryGetObjectField(Id,Her))(*Her)->TryGetNumberField(TEXT("libido_gain"),Gain);
  Profile->SetNumberField(TEXT("libido_gain"),Gain);
  const int32 Girl=S.Manifest.Characters.IndexOfByPredicate([&](const FOKStreetCharacterMeta& C){return OKStreetStableId(C)==Id;});if(Girl<=0)return;
+ // Her card not read yet: its settings go on once the background read is done (TickArousal), not read here. Six
+ // profiles arriving at the start read six cards on the game thread, 431 ms in one frame (c1118d, MindResult).
+ // (A card the background could not read is read here once it is done, as before.)
+ OKStreetHerCardsAsk(S);if(!OKStreetHerCardKnown(S,Girl)&&!GOKStreetHerCards.IsReady()){GOKStreetHerExtrasWaiting.Add(Id);return;}
+ GOKStreetHerExtrasWaiting.Remove(Id);
  const FOKStreetHerCard& Card=OKStreetHerCard(S,Girl);
  const TSharedPtr<FJsonObject>* Found=nullptr;TSharedPtr<FJsonObject> Traits=Profile->TryGetObjectField(TEXT("traits"),Found)?*Found:MakeShared<FJsonObject>();
  bool Own=false;Traits->TryGetBoolField(TEXT("vagina_fragile"),Own);
@@ -84,6 +90,7 @@ void AOKStreetSocialScene::TickArousal(float Dt){
  const bool DropsReady=!DropLoad.IsValid()||DropLoad->HasLoadCompleted();
  auto& S=*State;const int32 Cast=FMath::Min(S.Manifest.Characters.Num(),OKStreetCastCount);
  OKStreetHerCardsAsk(S); // every heroine's card read in the background as the street starts
+ if(!GOKStreetHerExtrasWaiting.IsEmpty()&&GOKStreetHerCards.IsReady())for(const FString& Id:GOKStreetHerExtrasWaiting.Array())OKStreetApplyHerExtras(S,Id);
  const double Wall=FPlatformTime::Seconds();const int64 Minute=OKStreetMindNow(S);
  // Twice a second: her flush follows her desire (the mind's own face look keeps it as a floor, StreetMind face), and
  // until when she runs white / red (read again only when the save's ext changed); asleep or in the bath her wet marks
