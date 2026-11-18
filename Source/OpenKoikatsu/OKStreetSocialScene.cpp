@@ -4316,13 +4316,23 @@ static void OKStreetCityDress(ULevel* Level){
 }
 static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& CameraAt,const FVector& CameraForward,float Dt){
  auto& Mirrors=GOKStreetCityMirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
- if(For!=World){For=World;Mirrors.Reset();Wait=0;
+ // The pieces already in at the start are dressed a few a frame (a few ms each): all at once held the street's third
+ // frame 47 ms (c1118g, 2026-11-18). Pieces streamed in later are dressed as they come (one at a time anyway).
+ static TArray<TWeakObjectPtr<ULevel>> Undressed;static double DressMs=0,DressLongest=0;static int32 DressFrames=0,Dressed=0;
+ if(For!=World){For=World;Mirrors.Reset();Wait=0;Undressed.Reset();DressMs=DressLongest=0;DressFrames=Dressed=0;
   if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading_ToBeRemoved")))Clustered->Set(1,ECVF_SetByConsole);
   // Screen-space reflections smeared whoever stood before a mirror across its glass, next to the mirror's own picture.
   if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))Ssr->Set(0,ECVF_SetByConsole);
-  for(ULevel* Level:World->GetLevels())if(Level&&Level->bIsVisible)OKStreetCityDress(Level);
-  static FDelegateHandle Added;if(!Added.IsValid())Added=FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel* Level,UWorld* In){if(Level&&In==For.Get())OKStreetCityDress(Level);});
-  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors at the start"),Mirrors.Num());}
+  // The persistent level first: the sun, the sky light and the city controller are there.
+  for(ULevel* Level:World->GetLevels())if(Level&&Level->bIsVisible){if(Level==World->PersistentLevel)Undressed.Insert(Level,0);else Undressed.Add(Level);}
+  static FDelegateHandle Added;if(!Added.IsValid())Added=FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel* Level,UWorld* In){if(Level&&In==For.Get())OKStreetCityDress(Level);});}
+ if(!Undressed.IsEmpty()){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_CityDressStart);
+  const double Start=FPlatformTime::Seconds();++DressFrames;
+  while(!Undressed.IsEmpty()&&(FPlatformTime::Seconds()-Start)*1000.0<4.0){const TWeakObjectPtr<ULevel> Next=Undressed[0];Undressed.RemoveAt(0);
+   if(ULevel* Level=Next.Get();Level&&Level->bIsVisible){const double One=FPlatformTime::Seconds();OKStreetCityDress(Level);++Dressed;DressLongest=FMath::Max(DressLongest,(FPlatformTime::Seconds()-One)*1000.0);}}
+  DressMs+=(FPlatformTime::Seconds()-Start)*1000.0;
+  if(Undressed.IsEmpty())UE_LOG(LogTemp,Display,TEXT("Street city: %d pieces dressed at the start in %.1f ms over %d frames (longest %.1f ms), %d mirrors"),Dressed,DressMs,DressFrames,DressLongest,Mirrors.Num());
+  return;}
  Wait-=Dt;if(Wait>0)return;Wait=.2f;
  TArray<TPair<double,UPlanarReflectionComponent*>> Near;
  for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(1000.f))Near.Emplace(Offset.SizeSquared(),R);}
