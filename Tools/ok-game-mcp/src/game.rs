@@ -51,9 +51,22 @@ impl Game {
     /// GET (body None) or POST JSON to the control channel; the reply is JSON.
     pub fn call(&self, path: &str, body: Option<&Value>) -> Result<Value> {
         let port = self.live_port()?;
-        http(port, path, body, Duration::from_secs(60), || {
+        // A hung game keeps the socket open and never replies: wait only so long, then end it (watchdog.rs).
+        let deadline = crate::watchdog::secs("call", 60.);
+        let began = Instant::now();
+        match http(port, path, body, Duration::from_secs_f64(deadline.max(1.)), || {
             format!("the game's control channel is not up on 127.0.0.1:{port} (start it with game_launch)")
-        })
+        }) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let waited = began.elapsed().as_secs_f64();
+                if waited < deadline * 0.9 {
+                    return Err(e);
+                }
+                let pid = crate::control::acting_pid();
+                anyhow::bail!("{e}\n{}", crate::watchdog::timed_out(&self.root, pid, waited, &format!("the street control channel {path}")));
+            }
+        }
     }
 
     pub fn up(&self) -> bool {

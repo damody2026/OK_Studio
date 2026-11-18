@@ -56,6 +56,8 @@ GPU 卡死（`DXGI_ERROR_DEVICE_HUNG`，2026-11-19 在讀卡器抓到一次）�
 | 啟動等待（`reader_launch`、`game_launch`） | 300 s／街區照呼叫參數 | `OK_MCP_TIMEOUT_LAUNCH`，或 `timeout_s` | 結束剛啟動的那個 pid |
 | 健康探測（判斷是「卡死」還是「只是慢」） | 3 s | `OK_MCP_TIMEOUT_HEALTH` | — |
 | `studio_launch` | 120 s | `OK_MCP_TIMEOUT_LAUNCH` | **不結束任何行程**：它手上的 pid 是啟動器的，不是 OK Studio 的 |
+| 街區控制通道（`game_*` 的每一次呼叫） | 60 s | `OK_MCP_TIMEOUT_CALL` | 判定後強制結束 |
+| OK Studio 的每一次呼叫（載入、存檔、截圖都走這裡） | 180 s | `OK_MCP_TIMEOUT_STUDIO` | 結束**佔著那個埠**的行程（`Get-NetTCPConnection`），一樣只關自己的 |
 
 逾時之後的判斷順序：
 
@@ -66,6 +68,8 @@ GPU 卡死（`DXGI_ERROR_DEVICE_HUNG`，2026-11-19 在讀卡器抓到一次）�
    `Win32_Process.Terminate`——卡死的遊戲不可能禮貌關閉，要關的那條執行緒就是卡住的那條。
 
 結束之後：錯誤訊息與 stderr 都寫明「等了幾秒、結束了哪個 pid、最後的狀況」，而且**不清任何證據**，遊戲的 log 與 Aftermath／D3D12 的 crash dump 原地保留（`Saved/Logs`、`Saved/Crashes`）。逾時一律是失敗：`ok-game-mcp call` 回非零結束碼，MCP 工具回錯誤，所以自動化那一輪會算失敗，不會看起來跑完。
+
+> **改了 `ok-game-mcp` 之後，還在跑的舊 MCP server 行程仍然是舊版。** 它的執行檔被自己鎖住換不掉（`cargo build` 會停在 os error 5），所以那個 session 的呼叫**不會有逾時強制結束，也不會送 `X-OK-From`**——log 裡記成 `from unknown` 就是這個訊號：那是舊版工具送進來的。要生效就得重啟那個 MCP server（整合時統一做）；想先驗證可以用獨立的 target 目錄建置（`CARGO_TARGET_DIR=<暫存>`）再直接跑那支 exe。
 
 實測（2026-11-19）：把自己的讀卡器用 `NtSuspendProcess` 凍住（和 GPU 卡死一樣，通道在但不回應），`OK_MCP_TIMEOUT_CALL=8` 下 `ui_exec` 等 8 s → 探 `/health` 失敗 → `ended it (Win32_Process.Terminate)`，行程確實消失、結束碼非零；沒凍住時同樣的短期限不會誤殺（呼叫 1 s 內就回來了）。
 

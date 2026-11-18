@@ -33,9 +33,24 @@ impl Studio {
 
     /// POST /studio/<op>; the reply as it came (ok true or false). Loading, saving and capturing can take a while.
     pub fn call(&self, op: &str, body: &Value) -> Result<Value> {
-        http(self.port, &format!("/studio/{op}"), Some(body), Duration::from_secs(180), || {
+        // Loading, saving and capturing can take a while, but not for ever: a hung OK Studio (GPU device hang) never
+        // replies. OK_MCP_TIMEOUT_STUDIO / OK_MCP_TIMEOUT override it; the process on the port is the one ended, and
+        // only when it is this session's (watchdog.rs).
+        let deadline = crate::watchdog::secs("studio", 180.);
+        let began = Instant::now();
+        match http(self.port, &format!("/studio/{op}"), Some(body), Duration::from_secs_f64(deadline.max(1.)), || {
             format!("OK Studio is not running on 127.0.0.1:{} (start it with studio_launch or SceneEditor.cmd)", self.port)
-        })
+        }) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let waited = began.elapsed().as_secs_f64();
+                if waited < deadline * 0.9 {
+                    return Err(e);
+                }
+                let pid = self.owner().unwrap_or_else(crate::control::acting_pid);
+                anyhow::bail!("{e}\n{}", crate::watchdog::timed_out(&self.root, pid, waited, &format!("OK Studio /studio/{op}")));
+            }
+        }
     }
 
     /// The process listening on this studio's port (Get-NetTCPConnection), or None.
