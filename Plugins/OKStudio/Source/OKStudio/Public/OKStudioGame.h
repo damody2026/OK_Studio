@@ -235,6 +235,17 @@ public:
 	bool DragGuide(const FVector2D& Delta, bool bCtrl);
 	void EndGuideDrag();
 	bool IsGuideDragging() const { return DragAxis >= 0; }
+	/** Blender's G / R / S (U279): the selection follows the mouse with no button held; X / Y / Z lock that axis (the same
+	 *  key again frees it), a left click or Enter keeps the change, a right click or Esc puts the selection back. Kind 0
+	 *  moves (free: on the plane facing the view), 1 turns (free: about the axis nearest the view), 2 scales (free: all
+	 *  three). Objects only: with a bone or IK guide shown it does not start. */
+	bool BeginModal(int32 Kind);
+	void ModalDrag(const FVector2D& Delta);
+	void SetModalAxis(int32 Axis);
+	void EndModal(bool bKeep);
+	bool IsModal() const { return ModalKind >= 0; }
+	int32 ModalKind = -1;
+	int32 ModalAxis = -1;
 	/** The guide's axes: the world's, or the object's own (local). */
 	bool bLocalAxes = false;
 	/** Snap moves, turns and scales to the settings' steps (Ctrl does it while held). */
@@ -424,6 +435,12 @@ private:
 	/** The guide drag: its axis, the movement so far, the selection's world transforms when it started, a bone's turn. */
 	int32 DragAxis = -1;
 	FVector2D DragTotal = FVector2D::ZeroVector;
+	/** The mouse movement since a modal G / R / S began (kept when its axis changes). */
+	FVector2D ModalTotal = FVector2D::ZeroVector;
+	/** Starts the guide drag for the modal kind and axis and applies ModalTotal from where the selection began. */
+	bool RestartModalDrag();
+	/** Puts the selection back where the modal G / R / S found it. */
+	void RestoreModalStart();
 	TMap<int32, FTransform> DragStart;
 	float DragBoneApplied = 0.f;
 	double LastBackupSeconds = 0.;

@@ -108,3 +108,4 @@ $mcp = '.\Tools\ok-game-mcp\target\release\ok-game-mcp.exe'
 
 - Studio 開著控制通道時，AI 的編輯與人的編輯在同一份 undo 歷史裡，兩邊都可以 `Ctrl+Z`／`studio_undo` 復原對方的步驟。
 - 人正在拖曳、場景載入中、時間軸播放或匯出時，AI 的編輯會被拒絕並回 `busy`（`{"ok":false,"busy":"<原因>"}`）；等人放手或載入、播放結束後再試，不要連續重送。
+- Blender 模式的 G／R／S（U279）進行中 `busy` 是 `modal`：只接 `studio_key`、`studio_mouse`（`"press": false` 只移動）、`studio_click` 與離開場景；用 Enter／Esc 或一次點擊結束後再做其他編輯。

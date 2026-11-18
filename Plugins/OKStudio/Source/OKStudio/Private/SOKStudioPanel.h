@@ -238,6 +238,13 @@ public:
 	virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
 	virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override { return OnKey && OnKey(Event); }
 	virtual bool HandleKeyUpEvent(FSlateApplication&, const FKeyEvent& Event) override { return OnKeyUp && OnKeyUp(Event); }
+	/** The mouse anywhere in the window, first (Blender's modal G / R / S follows it and takes its clicks, U279). */
+	TFunction<bool(const FPointerEvent&)> OnMouseMove;
+	TFunction<bool(const FPointerEvent&)> OnMouseDown;
+	TFunction<bool(const FPointerEvent&)> OnMouseUp;
+	virtual bool HandleMouseMoveEvent(FSlateApplication&, const FPointerEvent& Event) override { return OnMouseMove && OnMouseMove(Event); }
+	virtual bool HandleMouseButtonDownEvent(FSlateApplication&, const FPointerEvent& Event) override { return OnMouseDown && OnMouseDown(Event); }
+	virtual bool HandleMouseButtonUpEvent(FSlateApplication&, const FPointerEvent& Event) override { return OnMouseUp && OnMouseUp(Event); }
 	virtual const TCHAR* GetDebugName() const override { return TEXT("OKStudioKeys"); }
 };
 
@@ -481,6 +488,31 @@ public:
 		KeyProcessor = MakeShared<FOKStudioKeyProcessor>();
 		KeyProcessor->OnKey = [this](const FKeyEvent& E) { return HandleKey(E); };
 		KeyProcessor->OnKeyUp = [this](const FKeyEvent& E) { return HandleKeyUp(E); };
+		KeyProcessor->OnMouseMove = [this](const FPointerEvent& E)
+		{
+			// Where the mouse last was (only real moves reach here, not the moves Slate synthesizes): G / R / S start only
+			// over the view (U279). A widget's hover is not used: Slate re-hovers from the OS cursor every few frames.
+			LastMouseScreen = E.GetScreenSpacePosition();
+			if (!Game.IsValid() || !Game->IsModal()) return false;
+			Game->ModalDrag(E.GetCursorDelta());
+			return true;
+		};
+		// A click while G / R / S runs ends it (left keeps, right puts back) and goes nowhere else, its release neither.
+		KeyProcessor->OnMouseDown = [this](const FPointerEvent& E)
+		{
+			if (!Game.IsValid() || !Game->IsModal()) return false;
+			const bool bKeep = E.GetEffectingButton() != EKeys::RightMouseButton;
+			Game->EndModal(bKeep);
+			SetStatus(bKeep ? TEXT("已套用") : TEXT("已取消，回到原位"));
+			bModalSwallowUp = true;
+			return true;
+		};
+		KeyProcessor->OnMouseUp = [this](const FPointerEvent&)
+		{
+			const bool bSwallow = bModalSwallowUp;
+			bModalSwallowUp = false;
+			return bSwallow;
+		};
 		FSlateApplication::Get().RegisterInputPreProcessor(KeyProcessor);
 	}
 
@@ -1204,8 +1236,27 @@ public:
 		}
 		const TSharedPtr<SWidget> Focus = FSlateApplication::Get().GetKeyboardFocusedWidget();
 		if (Focus && (Focus->GetType() == TEXT("SEditableText") || Focus->GetType() == TEXT("SMultiLineEditableText"))) return false;
+		// Blender's modal G / R / S (U279) takes the keys while it runs: X / Y / Z lock an axis, G / R / S switch to another,
+		// Enter / Space keep, Esc puts back; the rest do nothing until it ends (a Delete or a view key would act mid-move).
+		if (Game->IsModal())
+		{
+			if (K == EKeys::LeftControl || K == EKeys::RightControl || K == EKeys::LeftShift || K == EKeys::RightShift || K == EKeys::LeftAlt || K == EKeys::RightAlt) return false;
+			if (K == EKeys::Escape || K == EKeys::Enter || K == EKeys::SpaceBar)
+			{
+				const bool bKeep = K != EKeys::Escape;
+				Game->EndModal(bKeep);
+				SetStatus(bKeep ? TEXT("已套用") : TEXT("已取消，回到原位"));
+			}
+			else if (K == EKeys::X || K == EKeys::Y || K == EKeys::Z) { Game->SetModalAxis(K == EKeys::X ? 0 : K == EKeys::Y ? 1 : 2); ModalStatus(); }
+			else if (K == EKeys::G || K == EKeys::R || K == EKeys::S)
+			{
+				const int32 Kind = K == EKeys::G ? 0 : K == EKeys::R ? 1 : 2;
+				if (Kind != Game->ModalKind) { Game->EndModal(false); Game->BeginModal(Kind); ModalStatus(); }
+			}
+			return true;
+		}
 		// Flying: the movement keys are held, not commands.
-		if (Game->bFlying && (K == EKeys::W || K == EKeys::A || K == EKeys::S || K == EKeys::D || K == EKeys::Q || K == EKeys::E)) { Game->FlyKeys.Add(K); return true; }
+		if (Game->bFlying &&(K == EKeys::W || K == EKeys::A || K == EKeys::S || K == EKeys::D || K == EKeys::Q || K == EKeys::E)) { Game->FlyKeys.Add(K); return true; }
 		// The timeline's own Delete / copy / paste while it has focus.
 		if (Focus && TimelineView && Focus == TimelineView && (K == EKeys::Delete || (E.IsControlDown() && (K == EKeys::C || K == EKeys::V)))) return false;
 		if (K == EKeys::Escape)
@@ -1221,10 +1272,39 @@ public:
 		}
 		const FString Id = FOKStudioSettings::Get().CommandFor(E);
 		if (Id.IsEmpty() || !Commands.Contains(Id)) return false;
+		// Blender view scheme: G / R / S over the view move, turn or scale the selection with the mouse at once (U279);
+		// elsewhere, or with nothing that can follow (no selection, a bone or IK guide), they only switch the handles.
+		if (FOKStudioSettings::Get().ViewScheme == 1 && !E.IsRepeat() && IsOverView() && (Id == TEXT("gizmo.move") || Id == TEXT("gizmo.rotate") || Id == TEXT("gizmo.scale"))
+			&& Game->BeginModal(Id == TEXT("gizmo.move") ? 0 : Id == TEXT("gizmo.rotate") ? 1 : 2))
+		{
+			ModalStatus();
+			return true;
+		}
 		// Held keys repeat only for stepping through frames.
 		if (E.IsRepeat() && Id != TEXT("timeline.prev") && Id != TEXT("timeline.next")) return true;
 		RunCommand(Id);
 		return true;
+	}
+	/** The last real mouse position, and whether the view (not a panel over it) is what lies there. */
+	FVector2D LastMouseScreen = FVector2D(-1.e6, -1.e6);
+	bool IsOverView() const
+	{
+		if (!View.IsValid() || !FSlateApplication::IsInitialized()) return false;
+		FSlateApplication& App = FSlateApplication::Get();
+		const FWidgetPath Under = App.LocateWindowUnderMouse(LastMouseScreen, App.GetInteractiveTopLevelWindows(), false, App.GetUserIndexForMouse());
+		const bool bOver = Under.IsValid() && Under.ContainsWidget(View.Get());
+		UE_LOG(LogTemp, Display, TEXT("OK studio: G / R / S over the view=%d at %.0f,%.0f (under %s)"), bOver ? 1 : 0, LastMouseScreen.X, LastMouseScreen.Y, Under.IsValid() ? *Under.GetLastWidget()->GetTypeAsString() : TEXT("none"));
+		return bOver;
+	}
+	/** The click that ended a modal G / R / S: its release is taken too. */
+	bool bModalSwallowUp = false;
+	void ModalStatus()
+	{
+		if (!Game.IsValid() || !Game->IsModal()) return;
+		static const TCHAR* Kinds[] = { TEXT("移動"), TEXT("旋轉"), TEXT("縮放") };
+		static const TCHAR* Axes[] = { TEXT("X"), TEXT("Y"), TEXT("Z") };
+		const FString Lock = Game->ModalAxis >= 0 ? FString::Printf(TEXT("（鎖 %s 軸）"), Axes[Game->ModalAxis]) : FString();
+		SetStatus(FString::Printf(TEXT("%s%s：移動滑鼠；X／Y／Z 鎖軸，左鍵或 Enter 確定，右鍵或 Esc 取消"), Kinds[FMath::Clamp(Game->ModalKind, 0, 2)], *Lock));
 	}
 	bool HandleKeyUp(const FKeyEvent& E)
 	{
@@ -1287,6 +1367,9 @@ public:
 		static const TCHAR* GizmoModes[] = { TEXT("move"), TEXT("rotate"), TEXT("scale") };
 		J->SetStringField(TEXT("gizmo_mode"), Game.IsValid() ? GizmoModes[FMath::Clamp(int32(Game->GuideMode), 0, 2)] : TEXT(""));
 		J->SetStringField(TEXT("view_scheme"), FOKStudioSettings::ViewSchemeName(FOKStudioSettings::Get().ViewScheme));
+		// Blender's modal G / R / S while it runs (U279): "move" / "rotate" / "scale", and the locked axis (-1: free).
+		J->SetStringField(TEXT("modal"), Game.IsValid() && Game->IsModal() ? GizmoModes[FMath::Clamp(Game->ModalKind, 0, 2)] : TEXT(""));
+		J->SetNumberField(TEXT("modal_axis"), Game.IsValid() ? Game->ModalAxis : -1);
 		J->SetStringField(TEXT("card_folder"), CardFolder);
 		J->SetNumberField(TEXT("card_back"), CardBack.Num());
 		J->SetNumberField(TEXT("card_forward"), CardForward.Num());
