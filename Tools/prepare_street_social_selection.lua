@@ -26,15 +26,38 @@ end
 -- Hash files in one batch; stop at the first unreadable file or mismatch, in order.
 -- An outfit that would leave her bare or bald for want of a mod (outfit_gaps.rs) is not put on her by itself: the next
 -- one that is whole. No ok-extract here: she keeps it.
-local function avoid_severe_outfit(character)
+-- The check is one ok-extract per card: one after another they took ~5 s of every start (2026-11-18), so four run at once,
+-- two threads each (the ok-* tools keep to eight threads in all).
+local OUTFIT_CHECKS_AT_ONCE = 4
+local function outfit_gaps(characters)
   local exe = path.join(ok.root, "Tools/ok-extract/target/release/ok-extract.exe")
-  if not character.path or not path.exists(exe) then return end
-  local pipe = io.popen(('""%s" X:/NoGame --oklib outfit-gaps "%s" "%s" 2>nul"'):format(win(exe), win(path.join(ok.root, "Content/IndependentResources/base_v1")), win(character.path)))
-  if not pipe then return end
-  local severe = {}
-  for outfit in pipe:read("a"):gmatch("OKGAPS severe\t[^\t]*\t(%d+)") do severe[tonumber(outfit)] = true end
-  pipe:close()
-  if not severe[character.outfit] then return end
+  local out = {}
+  if not path.exists(exe) then return out end
+  local base = path.join(ok.root, "Content/IndependentResources/base_v1")
+  local old = os.getenv("RAYON_NUM_THREADS")
+  ok.fs.setenv("RAYON_NUM_THREADS", "2")
+  local ok_run, err = pcall(function()
+    for first = 1, #characters, OUTFIT_CHECKS_AT_ONCE do
+      local running = {}
+      for k = first, math.min(#characters, first + OUTFIT_CHECKS_AT_ONCE - 1) do
+        local c = characters[k]
+        if c.path then running[k] = ok.proc.popen({ win(exe), "X:/NoGame", "--oklib", "outfit-gaps", win(base), win(c.path) }, { stderr = "NUL", hide = true }) end
+      end
+      for k, p in pairs(running) do
+        local severe = {}
+        for outfit in (p:read("a") or ""):gmatch("OKGAPS severe\t[^\t]*\t(%d+)") do severe[tonumber(outfit)] = true end
+        p:wait()
+        out[k] = severe
+      end
+    end
+  end)
+  ok.fs.setenv("RAYON_NUM_THREADS", old)
+  if not ok_run then error(err, 0) end
+  return out
+end
+
+local function avoid_severe_outfit(character, severe)
+  if not severe or not severe[character.outfit] then return end
   for outfit = 0, 6 do
     if not severe[outfit] then
       print(("%s: outfit %d lacks items, wearing %d"):format(character.id, character.outfit, outfit))
@@ -181,11 +204,12 @@ function M.cast(male_path, paths)
   end
   -- Her everyday clothes: the card's coordinate her profile names (everyday_outfit), else the first one. Card authors
   -- put anything in the first slot (a bunny suit, a swimsuit); a university town is everyday clothes.
-  for _, female in ipairs(females) do
+  local gaps = outfit_gaps(females)
+  for k, female in ipairs(females) do
     local profile_path = path.join(ok.root, "Content/IndependentResources/StreetSocialData/Profiles", female.id .. ".json")
     female.outfit = 0
     if path.exists(profile_path) then female.outfit = tonumber(get(read_json(profile_path), "everyday_outfit", 0)) or 0 end
-    avoid_severe_outfit(female)
+    avoid_severe_outfit(female, gaps[k])
   end
   male.outfit = 0
   local everyone = { male, table.unpack(females) }
