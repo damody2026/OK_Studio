@@ -47,6 +47,25 @@ Street navigation: no way (to the lift landing again) from V(X=48179.40, Y=60425
 | arcade → cafe（上一行的终点出发） | 2 s 报走不到 | 130 s 抵达 |
 | gym 5F 垫子 (81020,23760,4790) → campus_sports | 走不回 1F | 45 s 抵达 |
 
+### SP（campus_sports）各层补测（11-18，c4w1118a）
+
+「到 cafeteria 门口」表示走到门口，但店没开，所以没进去（导航本身算成功）。
+
+| 起点 → 终点 | 结果 |
+|---|---|
+| 2F 电梯旁走廊 (76880,21400,2120) → cafeteria | 96 s 到 cafeteria 门口 |
+| 3F 电梯旁走廊 (76880,21400,3140) → cafeteria | 102 s 到门口 |
+| 4F 电梯旁走廊 (76880,21400,4160) → campus_sports | 28 s 抵达 |
+| 5F 楼梯口 (77360,21420,4780) → campus_sports | 24 s 抵达 |
+| 2F 北端 (77175,30195,2120)，离电梯约 89 m → campus_sports | 36 s 抵达 |
+| 3F 北端 (77175,30195,3140) → cafeteria | 123 s 到门口 |
+| gym 门（4F，离电梯约 89 m）→ cafeteria | 130 s 到门口 |
+| gym_storage 门（4F）→ campus_sports | 48 s 抵达 |
+| gym_hall → gym（上楼） | 70 s 抵达 |
+| cafeteria → gym_storage（上楼） | 129 s 抵达 |
+
+注意：(76760,21420) 是电梯井，那一格没有地面。从那里瞬移出发，人会卡住不动，游戏回「路被擋住」，这不是导航的问题。测试起点要用旁边的走廊格 (76880,21400)；`street_city_reach_check.lua probe <z> x y ...` 印出的 `first cell: no ground` 就是这种情况。
+
 ## 当初的修法规划
 
 - 楼上（`OKStreetUpstairs(From)`）时，就算 `OKStreetCityFar`，也先在同一层跑 `GridRoute(From, Landing)`；格子找到就用。
