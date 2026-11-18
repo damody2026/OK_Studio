@@ -274,7 +274,10 @@ C++ 侧仍可直接呼叫 `OnBoneChanged`／`OnShapeChanged`（9.4）。
 | 整页一次读回 | `eye_scale2` 50 列／3 组；`eyes` 14 滑杆 ＋ 46 properties ＋ `targets_available=false`（当下还没读目录） |
 | 设值→另存→重载→读回一致 | `set` 三笔（两边 `cf_J_Eye_tx_*.scale.x=2.25`、`shape.face.30=1.5`）→ `save` → 开那张工作卡 → 读回**完全相同** |
 | 超出范围要拒绝 | 骨骼 5 与 −1（范围 0–3）、形状 9（范围 −1–2）都回 `Error: Value outside allowed range: <key>`，**而且事后读回的值没有被改动** |
-| `supported=false` | **这一条没有被量到**：两张测试卡的 1928 列骨骼参数**全部** `supported=true`（ABMX 的骨头在标准 KKS 骨架上都有）。旗标接的是 Session 的骨骼表，但 false 那一支**没有实测过** |
+| `supported=false` | **已验到（2026-11-19 补量）**：两张测试卡的 1928 列骨骼参数本来全部 `supported=true`（ABMX 的骨头在标准 KKS 骨架上都有），所以改用诊断 cvar `ok.PretendBonesMissing <骨名,骨名>` 把骨头从 Session 的骨骼表里拿掉：`eye_page` 回 `supported=false` ＋ `unsupported_reason: Bone absent from current character skeleton`（50 列里 20 列），对那个 key 下 `set` 回 `Error: Parameter unsupported by current model: <key>`，而同一对的另一侧（还在骨架上）照样写得进去 |
+
+`ok.PretendBonesMissing` 是**诊断用**的（预设空字串，逗号分隔，**中间不要空格**：主控台的字串 cvar 只吃第一个 token），
+用途就是在骨架什么都有的卡上走到「这张卡没有那根骨头」那一支。它只影响 `Parameters()` 看到的骨骼表，不改模型。
 
 ### 9.3 瞳孔覆盖贴图：`eye_overlays` / `eye_overlay_set`（2026-11-19 已实作）
 

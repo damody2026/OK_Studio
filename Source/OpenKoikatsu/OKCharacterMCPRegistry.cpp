@@ -60,7 +60,15 @@ FRows Parameters(UOKCharacterController* G)
    auto P=Number(FString::Printf(TEXT("shape.%s.%d"),Body?TEXT("body"):TEXT("face"),I),L,Values.IsValidIndex(I)?Values[I]:.5,-1,2,OKShapeDefaults::Value(G->Selected.Sex,Body,I));P->SetStringField(TEXT("category"),Body?TEXT("body"):TEXT("face"));Add(P);}
  }
  const auto M=Mods(G);TSet<FString> Available;
+ // Diagnostics: pretend these bones are absent from the skeleton, so the "this character has no such bone"
+ // branch (supported=false, and `set` refusing that key) can be exercised on a card whose skeleton has them
+ // all -- every ABMX bone exists on the stock KKS skeleton, so no test card reaches it.
+ static TAutoConsoleVariable<FString> CVarMissingBones(TEXT("ok.PretendBonesMissing"),TEXT(""),
+  TEXT("Comma separated bone names to report as absent from the character's skeleton (diagnostics)."));
+ TArray<FString> Missing;CVarMissingBones.GetValueOnGameThread().ParseIntoArray(Missing,TEXT(","));
+ for(FString& Name:Missing)Name.TrimStartAndEndInline();
  if(G->PreviewActor&&G->PreviewActor->Session.IsOpen())for(int32 I=0;I<G->PreviewActor->Session.SkelBoneCount();++I){OkBoneView V{};if(G->PreviewActor->Session.SkelBoneAt(I,V)&&V.name)Available.Add(UTF8_TO_TCHAR(V.name));}
+ for(const FString& Name:Missing)if(!Name.IsEmpty())Available.Remove(Name);
  TSet<FString> Seen;
  for(const auto& Def:OKBoneControls)for(const FString Name:{FString(Def.Bone),FString(Def.Right)}){
   if(Name.IsEmpty())continue;const FString Key=TEXT("bone.")+Name+TEXT(".")+AxisName(Def.Axis);if(Seen.Contains(Key))continue;Seen.Add(Key);
