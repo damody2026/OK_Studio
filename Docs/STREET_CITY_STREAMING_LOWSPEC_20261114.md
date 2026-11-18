@@ -542,3 +542,30 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
   - GC 61 ms。
 - 开发期仍可用：用未 cook 的 `-game` 测，log 印出 `on`；丢一个档进 `Saved/OKAnim/Live`，`OKAnim.LivePlay status` 的 watched 从 0 变 1（透过 ok-game-mcp `ui_exec` 下指令）。
 - 下一项：串流后物理场景查询偶尔慢上百倍。c-street-city 量到 StreetGround 射线开局每次约 1.3 µs，4 分钟后某几帧每次约 0.2 ms；相机扫描一次 99 ms 也是同一类。疑似新串流进来的碰撞体还没并进查询的加速结构。
+## 12. 低配释放 NavCollision（2026-11-18，c-lowspec；未量完，整合 #18 中断）
+
+**前提（必读）：这个专案不建导航网格，也不查导航资料。** Source／Plugins 里没有任何 NavigationSystem、RecastNavMesh、AI MoveTo 的用法；街区的路线（GridRoute）与 NavCellTest 都是物理查询。哪天有人接上引擎的导航，必须关掉 `ok.TrimNavCollision`（设 0），否则执行期建的导航网格会少掉所有静态网格的碰撞。
+
+- **为什么做**：walkQ-1118j-llm（stage lowspec1118j，base BaseC1118A，独占，`-llm -llmcsv`）commit 峰值 11.3 GB 那一刻，LLM 组成如下（这趟开了 LLM，四段慢约 7%，峰值不能当基准）：
+
+| 类别 | 大小 | 走路中的变化 |
+|---|---|---|
+| Untracked（驱动映射的显存、Rust、执行档） | 5.6 GB | |
+| Textures | 1.44 GB | 0.74 → 1.44 GB |
+| **NavigationCollision** | **1.10 GB** | 0.62 → 1.10 GB |
+| Physics/ChaosTrimesh | 0.97 GB | 0.56 → 0.97 GB |
+| Untagged | 0.40 GB | |
+
+  每个 UStaticMesh 都带一个 UNavCollision：cooked bulk，加上 PostLoad 时从 bulk 解出来的顶点／索引阵列。这份资料只在建导航网格时才读。
+- **做法**（`Source/OpenKoikatsu/OKLowMemoryNavCollision.cpp`）：
+  - UObject 建立监听器记下新建的 UNavCollision（任何执行绪都可能建立，用锁保护）。
+  - 游戏执行绪每秒处理一次新记下的物件：清掉 TriMesh／Convex 阵列，并 `CookedFormatData.FlushData()`。还在载入的物件留到下一次。
+  - 不会每秒遍历全部 UObject。
+  - 不动物理碰撞（UBodySetup／Chaos trimesh 是另一份资料）。
+  - 需要完整 cook 的根治方式：网格关掉 bHasNavigationData，下次整合时评估。
+- **开关**：`ok.TrimNavCollision`，-1（预设）＝低配模式才开，1 开，0 关。log 会印 `Low-memory mode: navigation collision freed for N meshes, X MB so far (this pass ... ms, longest pass ... ms)`。
+- **还没量**：A／B／C 三趟（lowspec1118l，同一路线）被整合 #18 打断，整合后要补：
+  - A：不开 LLM，`ok.TrimNavCollision 0`，新 base 的基准。
+  - B：不开 LLM，预设（开）。
+  - C：开 LLM，确认 NavigationCollision 这一类消失。
+  - 同时要检查：角色不穿地、GridRoute 照常走到、StreetCamera 的 GeomSweepSingle 没变慢、每次处理的耗时（看 log 的 longest pass）。

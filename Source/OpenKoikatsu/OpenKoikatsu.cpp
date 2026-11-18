@@ -11,6 +11,7 @@
 
 void OKHSceneInstallPrecacheAhead(); // OKHScene.h
 void OKStartMemoryDiagnostics(); // OKMemoryDiagnostics.cpp
+void OKStartNavCollisionTrim(); // OKLowMemoryNavCollision.cpp
 
 class FOpenKoikatsuModule final : public FDefaultGameModuleImpl {
 public:
@@ -23,6 +24,8 @@ public:
         // OKMachine / OKMem lines in game.log (machine, memory and VRAM every 30 s, out-of-memory), so a tester's crash
         // can be read from the log.
         OKStartMemoryDiagnostics();
+        // Low-memory PC: the navigation collision streamed-in meshes carry is freed (no navigation mesh is ever built).
+        OKStartNavCollisionTrim();
         // Every mode (street, card reader, studio): shaders never compile in a frame that waits for them. A draw whose PSO
         // is still compiling (precached late, a cold driver cache) is left out of that frame instead of the frame waiting,
         // 100-200 ms each at the one-on-one's start (user 2026-11-12: a one-off event must not hold up frame generation).
