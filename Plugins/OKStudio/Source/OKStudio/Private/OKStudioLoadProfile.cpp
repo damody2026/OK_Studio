@@ -45,6 +45,13 @@ namespace
 		/** OK_SCENE_PROFILE_SHOT_LOADING: the build frame to photograph the screen on (0: none). */
 		int32 LoadingShotFrame = 0;
 		FString ShotPath;
+		/** The row of the scene that is settling, the clock since it was ready, and how long the shader compiler has
+		 *  been idle. ready_ms stops when no object is waiting to be built, which is not when the user can look at the
+		 *  scene: not drawing the world while it builds (ok.Studio.LoadSkipDraw) can push the first frame's shader and
+		 *  material work past that line, and a metric that stops earlier would call that an improvement. */
+		TSharedPtr<FJsonObject> SettleRow;
+		double SettleStart = 0.;
+		int32 SettleIdle = 0, SettleFrames = 0;
 		double PeakUsedGb = 0.;
 		TArray<TSharedPtr<FJsonValue>> Rows;
 
@@ -123,13 +130,31 @@ namespace
 				if (!ShotPath.IsEmpty()) { FScreenshotRequest::RequestScreenshot(ShotPath, false, false); ShotPath.Reset(); ShotWait = 5; }
 				return true;
 			}
+			// Ready, but is it done? The world draws again from here, so the work the build deferred lands in these
+			// frames. Settled means the shader compiler has been idle for 30 frames in a row (settle_timeout=1 if it
+			// never was within a minute of frames).
+			if (SettleRow.IsValid())
+			{
+				++SettleFrames;
+				SettleIdle = (GShaderCompilingManager && GShaderCompilingManager->IsCompiling()) ? 0 : SettleIdle + 1;
+				if (SettleIdle < 30 && SettleFrames < 3600) return true;
+				SettleRow->SetNumberField(TEXT("settle_ms"), (FPlatformTime::Seconds() - SettleStart) * 1000.);
+				SettleRow->SetNumberField(TEXT("settle_frames"), SettleFrames);
+				SettleRow->SetNumberField(TEXT("settle_timeout"), SettleFrames >= 3600 ? 1 : 0);
+				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: settled %.0f ms after ready over %d frames%s"),
+					(FPlatformTime::Seconds() - SettleStart) * 1000., SettleFrames, SettleFrames >= 3600 ? TEXT(" (gave up waiting)") : TEXT(""));
+				SettleRow.Reset();
+			}
 			if (bLoading)
 			{
 				++Frames;
 				// OK_SCENE_PROFILE_SHOT_LOADING=<frame>: a picture of the screen WHILE the scene builds, which is the
 				// only way to see what the user is looking at when ok.Studio.LoadSkipDraw stops the world being drawn.
+				// bShowUI must be true: the first version of this passed false, which leaves the UI and the on-screen
+				// progress line out of the capture - exactly the part this picture exists to check (2026-11-18, the
+				// capture came back black for the drawn run too, so it proved nothing either way).
 				if (Frames == LoadingShotFrame && LoadingShotFrame > 0)
-					FScreenshotRequest::RequestScreenshot(FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_loading.png"), *FPaths::GetBaseFilename(Scenes[Scene])), false, false);
+					FScreenshotRequest::RequestScreenshot(FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_loading.png"), *FPaths::GetBaseFilename(Scenes[Scene])), true, false);
 				// A bigger per-frame budget builds more at once: the memory the renderer has not freed yet is the risk.
 				PeakUsedGb = FMath::Max(PeakUsedGb, FPlatformMemory::GetStats().UsedPhysical / double(1 << 30));
 				if (!Ready(Game)) return true;
@@ -188,8 +213,17 @@ namespace
 				if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_DUMP")) == TEXT("1"))
 					Dump(Game, FPaths::GetPath(Out) / FPaths::GetBaseFilename(Out) + FString::Printf(TEXT("_%s_pass%d.json"), *FPaths::GetBaseFilename(Scenes[Scene]), Pass));
 				bLoading = false;
+				// Measured after ready, unless a picture is being taken: that wait has its own shader-compiler loop and
+				// would be counted as settling.
+				if (ShotWait <= 0)
+				{
+					SettleRow = Row;
+					SettleStart = FPlatformTime::Seconds();
+					SettleIdle = 0;
+					SettleFrames = 0;
+				}
 				if (++Pass >= Repeats) { Pass = 0; ++Scene; }
-				if (ShotWait > 0) return true; // the picture is written over the next frames, before the next scene replaces it
+				if (ShotWait > 0 || SettleRow.IsValid()) return true; // the picture, or the settle, needs the next frames
 			}
 			if (Scene >= Scenes.Num()) { Finish(); return false; }
 			// The stats belong to this load alone; the clock starts with the blocking call a click makes.
