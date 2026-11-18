@@ -805,6 +805,12 @@ public:
 	UPROPERTY() TObjectPtr<UTextBlock> FpsText;
 	// The DreamGUI screen that shows these UMG controls (OKReaderScreen.h); null keeps the UMG controls on screen.
 	UPROPERTY() TObjectPtr<class UOKReaderScreen> ReaderScreen;
+	// A report for the user (loaded, saved, a mod missing): on the DreamGUI screen's notice when it is shown, else the
+	// engine's on-screen messages (those draw at the top left, over the screen's left panel). Key replaces a report
+	// with the same key, as AddOnScreenDebugMessage does.
+	void ScreenNote(int32 Key, float Seconds, const FColor& Color, const FString& Text);
+	// Cards in the list that could not be read or opened: the list marks them instead of leaving them out.
+	TMap<FString, FString> UnopenableCards;
 	double FpsShownAt = 0.;
 	void TickFpsText();
 	bool bModelLayout = false;

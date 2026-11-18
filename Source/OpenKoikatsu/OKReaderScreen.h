@@ -113,6 +113,8 @@ public:
 	UPROPERTY() TObjectPtr<UDreamWidget> CardName;
 	UPROPERTY() TObjectPtr<UDreamScrollBox> RightScroll;
 	UPROPERTY() TObjectPtr<UDreamWidget> PluginHost;
+	UPROPERTY() TObjectPtr<UDreamWidget> Notice;
+	UPROPERTY() TObjectPtr<UDreamWidget> NoticeText;
 
 	// Show this screen for the controller, whose UMG tree must already be built.
 	static UOKReaderScreen* Open(UOKCharacterController* Controller);
@@ -128,6 +130,11 @@ public:
 	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
 	// when shown, shows it and what is found there. bForget: back to the default.
 	void ApplyFolderSetting(bool bLibrary,const FString& Folder,bool bForget);
+	// A report from the controller (UOKCharacterController::ScreenNote), shown under the camera bar for Seconds; a report
+	// with the same key replaces the one shown. The engine's own on-screen messages would draw over the left panel.
+	void ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text);
+	// The reports shown now, one per line (for the game MCP and tests).
+	FString NoticeState() const;
 	// The card list's pictures held now, of how many tiles ("12/101"; "-" with no card list shown).
 	FString ThumbState() const;
 	float GetLeftWidth() const { return LeftWidth; }
@@ -170,6 +177,14 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> CardButtons;
 	TArray<FString> CardTexts;
 	int32 ShownCardSelection=INDEX_NONE;
+	// How many cards were marked as not opening when the list was last marked.
+	int32 ShownUnopenable=0;
+	struct FNote{FString Text;FColor Color;double Until=0;uint64 Order=0;};
+	TMap<int32,FNote> Notes;
+	uint64 NoteOrder=0;
+	// The text the notice shows, and whether it is shown (as laid out until the first frame hides it).
+	FString ShownNotice;bool bNoticeShown=true;
+	void TickNotice();
 	// The card list's pictures, one per tile (null until it scrolls into view; dropped again far out of it), and which
 	// tiles have a decode on the way. ThumbGeneration discards a decode finishing after the list was rebuilt.
 	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CardThumbs;

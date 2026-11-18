@@ -75,9 +75,9 @@ bool UOKCharacterController::CanAcceptDroppedCard() const
 bool UOKCharacterController::OpenDroppedCard(const FString& Raw)
 {
 	const FString Path = FPaths::ConvertRelativePathToFull(Raw);
-	auto Say = [](const FString& Text, const FColor& Color)
+	auto Say = [this](const FString& Text, const FColor& Color)
 	{
-		if (GEngine) GEngine->AddOnScreenDebugMessage(1, 6.f, Color, Text);
+		ScreenNote(1, 6.f, Color, Text);
 		UE_LOG(LogTemp, Display, TEXT("OK reader drop: %s"), *Text);
 	};
 	if (!FPaths::GetExtension(Path).Equals(TEXT("png"), ESearchCase::IgnoreCase) || !IFileManager::Get().FileExists(*Path))

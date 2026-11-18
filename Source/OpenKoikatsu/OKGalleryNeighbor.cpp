@@ -67,9 +67,11 @@ void UOKCharacterController::TickNeighborPreload(){
  }
  // NeighborPath set without a job: started (in flight) or failed for this card; nothing more to do for it.
  if(bNeighborInFlight||!NeighborPath.IsEmpty())return;
- UKKGameRoot* Root=bIndependentCards?nullptr:UKKGameRoot::Get();
- if(!bIndependentCards&&!Root)return;
- const FString OpenPath=bIndependentCards?UKKCardWorkspace::PortableSourcePath(Target):Target;
+ // A card folder holds OK cards and original ones side by side: each opens the way the card itself needs.
+ const bool bTargetPortable=CurrentCardDirectory.IsEmpty()?bIndependentCards:!UKKCardWorkspace::PortableSourcePath(Target).IsEmpty();
+ UKKGameRoot* Root=bTargetPortable?nullptr:UKKGameRoot::Get();
+ if(!bTargetPortable&&!Root)return;
+ const FString OpenPath=bTargetPortable?UKKCardWorkspace::PortableSourcePath(Target):Target;
  FKKCharacterFile Card;FString Error;
  NeighborPath=Target;
  if(OpenPath.IsEmpty()){UE_LOG(LogTemp,Warning,TEXT("OK neighbor preload %s: no portable source"),*Target);return;}

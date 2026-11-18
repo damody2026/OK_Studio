@@ -683,13 +683,53 @@ void UOKReaderScreen::ClearPage()
 void UOKReaderScreen::MarkCurrentCard()
 {
 	UOKCharacterController* G=Controller.Get();if(!G||CardButtons.IsEmpty())return;
-	const int32 Current=G->SelectedIndex;if(Current==ShownCardSelection)return;
-	ShownCardSelection=Current;
+	const int32 Current=G->SelectedIndex;const int32 Unopenable=G->UnopenableCards.Num();
+	if(Current==ShownCardSelection&&Unopenable==ShownUnopenable)return;
+	ShownCardSelection=Current;ShownUnopenable=Unopenable;
+	// A card that could not be read or opened stays in the list, marked (pressing it again tries again).
 	for(int32 I=0;I<CardButtons.Num();++I)if(UOKDreamControl* B=CardButtons[I];IsValid(B)&&CardTexts.IsValidIndex(I))
 	{
-		B->FixedText=I==Current?TEXT("▶ ")+CardTexts[I]:CardTexts[I];B->SetText(B->FixedText);
-		B->SetRenderOpacity(I==Current?1.f:.72f);
+		const bool bBad=CardPaths.IsValidIndex(I)&&G->UnopenableCards.Contains(CardPaths[I]);
+		B->FixedText=(I==Current?TEXT("▶ "):TEXT(""))+FString(bBad?TEXT("開不了："):TEXT(""))+CardTexts[I];B->SetText(B->FixedText);
+		B->SetRenderOpacity(I==Current||bBad?1.f:.72f);
 	}
+}
+
+void UOKReaderScreen::ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text)
+{
+	UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen notice: %s"),*Text.Replace(TEXT("\n"),TEXT(" | ")));
+	if(Text.IsEmpty()){Notes.Remove(Key);return;}
+	FNote& N=Notes.FindOrAdd(Key);N.Text=Text.TrimEnd();N.Color=Color;N.Until=FPlatformTime::Seconds()+FMath::Max(Seconds,.5f);N.Order=++NoteOrder;
+}
+
+FString UOKReaderScreen::NoticeState() const
+{
+	TArray<const FNote*> Due;for(const auto& P:Notes)Due.Add(&P.Value);
+	Due.Sort([](const FNote& A,const FNote& B){return A.Order<B.Order;});
+	FString Out;for(const FNote* N:Due){if(!Out.IsEmpty())Out+=TEXT("\n");Out+=N->Text;}
+	return Out;
+}
+
+// The notice under the camera bar: the reports still due, oldest first, coloured after the latest, as tall as its lines.
+void UOKReaderScreen::TickNotice()
+{
+	const double Now=FPlatformTime::Seconds();
+	for(auto It=Notes.CreateIterator();It;++It)if(It->Value.Until<=Now)It.RemoveCurrent();
+	const FString Text=NoticeState();
+	if(!Notice)return;
+	if(Text.IsEmpty()){ShownNotice.Reset();if(bNoticeShown){bNoticeShown=false;Notice->SetShown(false);}return;}
+	if(Text==ShownNotice&&bNoticeShown)return;
+	ShownNotice=Text;bNoticeShown=true;
+	const FNote* Latest=nullptr;for(const auto& P:Notes)if(!Latest||P.Value.Order>Latest->Order)Latest=&P.Value;
+	if(UDreamText* T=TextOf(NoticeText))
+	{
+		T->SetText(FText::FromString(Text));
+		if(Latest)T->SetColor(Latest->Color.WithAlpha(255));
+		const float Width=FMath::Max(120.f,Notice->GetWidth()-28.f);
+		const float Height=T->GetPreferredSizeWithin(FDreamMeasureSpec::Exactly(Width),FDreamMeasureSpec::Undefined()).Y;
+		Notice->SetHeight(FMath::Max(44.f,Height+12.f));
+	}
+	Notice->SetShown(true);
 }
 
 namespace OKReaderThumbs
@@ -1057,6 +1097,8 @@ void UOKReaderScreen::Layout()
 	// The camera bar spans the 3D view between the two panels, 16 px clear of each.
 	if(CameraBar){CameraBar->SetSizeDelta(FVector2D(-(LeftWidth+RightWidth+32.f),56.f));CameraBar->SetHorizontalAnchoredPosition((LeftWidth-RightWidth)*.5f);}
 	if(NamePlate)NamePlate->SetHorizontalAnchoredPosition(-(RightWidth+16.f));
+	// The notice spans the 3D view as the camera bar does; its height follows its lines (TickNotice).
+	if(Notice){Notice->SetSizeDelta(FVector2D(-(LeftWidth+RightWidth+32.f),Notice->GetSizeDelta().Y));Notice->SetHorizontalAnchoredPosition((LeftWidth-RightWidth)*.5f);ShownNotice.Reset();}
 }
 
 // The left panel's right edge is a handle: press near it and drag.
@@ -1108,6 +1150,7 @@ void UOKReaderScreen::SyncAll()
 		else if(Tab==1&&G->Entries.Num()!=ShownEntries)ShowCategory(Category,Sub);
 		MarkCurrentCard();
 	}
+	TickNotice();
 	if(UOKCharacterController* G=Controller.Get())if(auto* T=TextOf(CardName))
 	{
 		FString Name;
@@ -1220,5 +1263,5 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			};
 			Walk(S,0);
 		}
-		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f thumbs=%s"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth(),*S->ThumbState());
+		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f thumbs=%s notice=%s"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth(),*S->ThumbState(),*S->NoticeState().Replace(TEXT("\n"),TEXT(" | ")));
 	}));

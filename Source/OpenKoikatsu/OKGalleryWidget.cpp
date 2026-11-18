@@ -1059,6 +1059,40 @@ void UOKGalleryWidget::NativeConstruct()
 static FString StreetHeroineCardDirectory(){return FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()/TEXT("CharacterCards/StreetHeroines"));}
 static bool IsStreetHeroineCardDirectory(const FString& Directory){return !Directory.IsEmpty()&&FPaths::IsSamePath(FPaths::ConvertRelativePathToFull(Directory),StreetHeroineCardDirectory());}
 
+// An original character card (KK / KKS / KKSP): its data follows the PNG's IEND and opens with the product number and
+// a "【KoiKatuChara…】" mark. Only the chunk headers and the first bytes after IEND are read, not the whole file.
+static bool OKIsOriginalCharacterCard(const FString& Path)
+{
+	TUniquePtr<FArchive> File(IFileManager::Get().CreateFileReader(*Path));
+	if(!File||File->TotalSize()<20)return false;
+	uint8 Signature[8];File->Serialize(Signature,8);
+	if(FMemory::Memcmp(Signature,"\x89PNG\r\n\x1a\n",8)!=0)return false;
+	for(int64 At=8;At<=File->TotalSize()-12;)
+	{
+		uint8 Header[8];File->Seek(At);File->Serialize(Header,8);
+		const int64 Length=(int64(Header[0])<<24)|(int64(Header[1])<<16)|(int64(Header[2])<<8)|int64(Header[3]);
+		const int64 Next=At+12+Length;
+		if(File->IsError()||Next>File->TotalSize())return false;
+		if(FMemory::Memcmp(Header+4,"IEND",4)==0)
+		{
+			const int64 Count=FMath::Min<int64>(64,File->TotalSize()-Next);
+			if(Count<16)return false;
+			TArray<uint8> After;After.SetNumUninitialized(Count);File->Seek(Next);File->Serialize(After.GetData(),Count);
+			static const char Mark[]="KoiKatuChara";
+			for(int64 I=0;I+int64(sizeof(Mark)-1)<=Count;++I)if(FMemory::Memcmp(After.GetData()+I,Mark,sizeof(Mark)-1)==0)return true;
+			return false;
+		}
+		At=Next;
+	}
+	return false;
+}
+
+void UOKCharacterController::ScreenNote(int32 Key, float Seconds, const FColor& Color, const FString& Text)
+{
+	if(ReaderScreen){ReaderScreen->ShowNotice(Key,Seconds,Color,Text);return;}
+	if(GEngine)GEngine->AddOnScreenDebugMessage(Key,Seconds,Color,Text);
+}
+
 void UOKCharacterController::ScanAndShow()
 {
 	if (bLoadInFlight) return;
@@ -1080,7 +1114,8 @@ void UOKCharacterController::ScanAndShow()
 		// Probe PNG chunk headers without decompressing every embedded model.
 		// Visible rows fetch metadata asynchronously; the list never parses every model.
 		TArray<FString> Files;IFileManager::Get().FindFilesRecursive(Files,*Folder,TEXT("*.png"),true,false);Files.Sort();
-		for(const FString& Path:Files)if(!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()){FKKCardListEntry Entry;Entry.Path=Path;Entry.FileName=FPaths::GetCleanFilename(Path);Entries.Add(MoveTemp(Entry));}
+		// OK cards and original ones alike: each opens the way it needs when chosen (SelectIndex).
+		for(const FString& Path:Files)if(!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()||OKIsOriginalCharacterCard(Path)){FKKCardListEntry Entry;Entry.Path=Path;Entry.FileName=FPaths::GetCleanFilename(Path);Entries.Add(MoveTemp(Entry));}
 	}
 	else if (Root)
 	{
@@ -1143,7 +1178,7 @@ void UOKCharacterController::OnOpenCardFolder()
 void UOKCharacterController::OnUseGameCards()
 {
 	if (bLoadInFlight) return;
-	UKKCardWorkspace* Settings = GetMutableDefault<UKKCardWorkspace>(); if(bIndependentCards&&!CurrentCardDirectory.IsEmpty()&&!IsStreetHeroineCardDirectory(CurrentCardDirectory))Settings->ApngCardDirectory=CurrentCardDirectory; Settings->CardDirectory.Empty(); Settings->SaveConfig();
+	UKKCardWorkspace* Settings = GetMutableDefault<UKKCardWorkspace>(); if(!CurrentCardDirectory.IsEmpty()&&!IsStreetHeroineCardDirectory(CurrentCardDirectory))Settings->ApngCardDirectory=CurrentCardDirectory; Settings->CardDirectory.Empty(); Settings->SaveConfig();
 	CurrentCardDirectory.Empty();bCardDirectoryInitialized=true;
 	if (CardDirectoryInput) CardDirectoryInput->SetText(FText::FromString(Settings->ApngCardDirectory));
 	SetModelLayout(false); ScanAndShow();
@@ -1152,8 +1187,8 @@ void UOKCharacterController::OnUseGameCards()
 void UOKCharacterController::OnCardSourceChanged(FString Item,ESelectInfo::Type)
 {
  if(!bCardDirectoryInitialized||bLoadInFlight)return;
- if(Item==TEXT("KKS 遊戲目錄卡片")){if(bIndependentCards)OnUseGameCards();return;}
- const FString Previous=!bIndependentCards?TEXT("KKS 遊戲目錄卡片"):IsStreetHeroineCardDirectory(CurrentCardDirectory)?TEXT("街頭女主角卡片"):TEXT("APNG 內嵌資源卡片");
+ if(Item==TEXT("KKS 遊戲目錄卡片")){if(!CurrentCardDirectory.IsEmpty())OnUseGameCards();return;}
+ const FString Previous=CurrentCardDirectory.IsEmpty()?TEXT("KKS 遊戲目錄卡片"):IsStreetHeroineCardDirectory(CurrentCardDirectory)?TEXT("街頭女主角卡片"):TEXT("APNG 內嵌資源卡片");
  if(Item==Previous||!CardDirectoryInput)return;
  if(Item==TEXT("街頭女主角卡片"))CardDirectoryInput->SetText(FText::FromString(StreetHeroineCardDirectory()));
  else if(Item==TEXT("APNG 內嵌資源卡片")){
@@ -1165,7 +1200,7 @@ void UOKCharacterController::OnCardSourceChanged(FString Item,ESelectInfo::Type)
  else return;
  OnOpenCardFolder();
  // The folder did not open: show the source that is still loaded.
- const FString Now=!bIndependentCards?TEXT("KKS 遊戲目錄卡片"):IsStreetHeroineCardDirectory(CurrentCardDirectory)?TEXT("街頭女主角卡片"):TEXT("APNG 內嵌資源卡片");
+ const FString Now=CurrentCardDirectory.IsEmpty()?TEXT("KKS 遊戲目錄卡片"):IsStreetHeroineCardDirectory(CurrentCardDirectory)?TEXT("街頭女主角卡片"):TEXT("APNG 內嵌資源卡片");
  if(Now!=Item&&CardSourceCombo)CardSourceCombo->SetSelectedOption(Now);
 }
 
@@ -1272,6 +1307,8 @@ void UOKCharacterController::SelectIndex(int32 Index)
  const FString SourcePath=Source?Source->Key:Entries[Index].Path;
  if (!UKKCardReader::LoadFromFile(SourcePath, LoadedCard, Err))
 	{
+		UnopenableCards.Add(SourcePath,Err);
+		ScreenNote(1,8.f,FColor::Red,FString::Printf(TEXT("讀不到這張角色卡：%s\n%s"),*FPaths::GetCleanFilename(SourcePath),*Err));
 		if (InspectorText)
 		{
 			InspectorText->SetText(FText::FromString(Err));
@@ -1281,6 +1318,9 @@ void UOKCharacterController::SelectIndex(int32 Index)
 	// Publish a selection only after parsing succeeds. A re-selection is a
 	// fresh read of saved parameters, even when its geometry can be reused.
 	if(Source){Entries[Index].Path=SourcePath;bIndependentCards=Source->Value;CardSources.Remove(Index);}
+	// A card folder lists OK cards and original ones together: an OK card opens from its own resources, an original
+	// card as the KKS source does (game folder when set, else the shared library alone).
+	else if(!CurrentCardDirectory.IsEmpty())bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Entries[Index].Path).IsEmpty();
 	SelectedIndex = Index;Selected=MoveTemp(LoadedCard);bEditorModsDirty=true;
     OutfitIndex=0;FMemory::Memzero(ClothesStates,sizeof(ClothesStates));
  OKRequestCardWarm(bIndependentCards?UKKCardWorkspace::PortableSourcePath(Entries[Index].Path):Entries[Index].Path);
@@ -1521,7 +1561,7 @@ void UOKCharacterController::FinishOkCardSave(const FString& Output,const FStrin
   const FString Note=Made?TEXT("\n已轉成 OK 卡（OK 共用資源 + 卡內資源）。"):TEXT("\nOK 卡轉換失敗：")+Summary;
   AsyncTask(ENamedThreads::GameThread,[Weak,Message,Note,Made](){
    if(auto* Widget=Weak.Get()){Widget->bPortableSaveInFlight=false;if(Widget->InspectorText)Widget->InspectorText->SetText(FText::FromString(Message+Note));}
-   if(GEngine)GEngine->AddOnScreenDebugMessage(1,10.f,Made?FColor::Green:FColor::Yellow,Message+Note);
+   if(auto* Widget=Weak.Get())Widget->ScreenNote(1,10.f,Made?FColor::Green:FColor::Yellow,Message+Note);
   });
  });
 }
@@ -1539,7 +1579,7 @@ void UOKCharacterController::FinishPortableSave(const FString& Source,const FStr
   UE_LOG(LogTemp,Display,TEXT("Portable save resources copied=%d background_seconds=%.3f output=%s warning=%s"),Copied,FPlatformTime::Seconds()-Start,*Output,*Warning);
   AsyncTask(ENamedThreads::GameThread,[Weak,Message,Warning,Copied](){
    if(auto* Widget=Weak.Get()){Widget->bPortableSaveInFlight=false;if(Widget->InspectorText)Widget->InspectorText->SetText(FText::FromString(Message+Warning));}
-   if(GEngine)GEngine->AddOnScreenDebugMessage(1,10.f,Copied?FColor::Green:FColor::Yellow,Message+Warning);
+   if(auto* Widget=Weak.Get())Widget->ScreenNote(1,10.f,Copied?FColor::Green:FColor::Yellow,Message+Warning);
   });
  });
 }
@@ -1719,7 +1759,7 @@ void UOKCharacterController::OnSaveApng()
 {
 	if(bAppearanceBusy||bPropertyBusy||bLoadInFlight)return;
 	if(MaterializeAppearance([](UOKCharacterController* G){G->OnSaveApng();}))return;
-	auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));if(GEngine)GEngine->AddOnScreenDebugMessage(1,8.f,FColor::Cyan,Text);};
+	auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};
 	if(bApngCaptureInFlight||bPortableSaveInFlight)return;
 	if(!Entries.IsValidIndex(SelectedIndex)||!IsValid(PreviewActor)||PreviewCardPath!=Entries[SelectedIndex].Path||PreviewOutfitIndex!=OutfitIndex||!PreviewActor->Session.IsPortable())
 	{Report(TEXT("請先載入這張獨立卡片的 3D，再匯出 APNG。"));return;}
@@ -1763,7 +1803,7 @@ void UOKCharacterController::OnSaveApng()
                 const FString Line=Good?FString::Printf(TEXT("低模已輸出：%s\n%s"),*FOkLowPoly::GlbPath(Output),*Summary)
                     :FString::Printf(TEXT("低模輸出失敗：%s"),*Error);
                 UE_LOG(LogTemp,Display,TEXT("APNG low-poly %s: %s"),Good?TEXT("PASS"):TEXT("FAILED"),*Line);
-                if(GEngine)GEngine->AddOnScreenDebugMessage(2,8.f,Good?FColor::Cyan:FColor::Orange,Line);
+                if(auto* Noted=Weak.Get())Noted->ScreenNote(2,8.f,Good?FColor::Cyan:FColor::Orange,Line);
                 auto* Widget=Weak.Get();
                 if(Widget&&Widget->InspectorText)
                     Widget->InspectorText->SetText(FText::FromString(Widget->InspectorText->GetText().ToString()+TEXT("\n")+Line));
@@ -1818,7 +1858,7 @@ void UOKCharacterController::StartLoad3D(bool bAppearanceGeometryOnly)
 	{
 		if (GEngine)
 		{
-			GEngine->AddOnScreenDebugMessage(1, 2.f, FColor::Yellow, TEXT("正在加載，请稍候"));
+			ScreenNote(1, 2.f, FColor::Yellow, TEXT("正在加載，请稍候"));
 		}
 		RestorePairAfterReload();
 		return;
@@ -1885,7 +1925,7 @@ void UOKCharacterController::StartLoad3D(bool bAppearanceGeometryOnly)
 	}
 	if (GEngine)
 	{
-		GEngine->AddOnScreenDebugMessage(1, 8.f, FColor::Yellow, FString::Printf(TEXT("正在打開 %s"), *FPaths::GetCleanFilename(CardPath)));
+		ScreenNote(1, 8.f, FColor::Yellow, FString::Printf(TEXT("正在打開 %s"), *FPaths::GetCleanFilename(CardPath)));
 	}
 	if ((!bIndependentCards && !Root) || CardPath.IsEmpty())
 	{
@@ -2208,10 +2248,8 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	{
 		InspectorText->SetText(FText::FromString(Report));
 	}
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(1, 8.f, bOk ? FColor::Green : FColor::Red, Report);
-	}
+	if(Entries.IsValidIndex(SelectedIndex)){const FString& Opened=Entries[SelectedIndex].Path;if(bOk)UnopenableCards.Remove(Opened);else UnopenableCards.Add(Opened,Report);}
+	ScreenNote(1, 8.f, bOk ? FColor::Green : FColor::Red, Report.TrimEnd());
 	if(IsValid(PreviewActor)&&(!bOk||!GeometryOnly))PreviewActor->SetupStudioView();
 	if(bOk)Actor->SetActorHiddenInGame(false);
 	SetLoadBusy(false);
@@ -2690,7 +2728,7 @@ void UOKCharacterController::ShowPairStatus(const FString& Text,bool bOnScreen){
     if(InspectorText)InspectorText->SetText(FText::FromString(Shown));
     // The one-on-one scene shows it in its panel already; on screen it was debug text over the scene (with the engine's
     // "DisableAllScreenMessages" hint) in the street's packaged game.
-    if(bOnScreen&&!bInteractionOnly&&GEngine)GEngine->AddOnScreenDebugMessage(91,8.f,FColor::Yellow,Shown);
+    if(bOnScreen&&!bInteractionOnly)ScreenNote(91,8.f,FColor::Yellow,Shown);
 }
 void UOKCharacterController::RebuildPartnerMaleButtons(){
     if(!PartnerMaleList)return;PartnerMaleList->ClearChildren();
@@ -2735,7 +2773,7 @@ void UOKCharacterController::RefreshPartnerMales(){
     FString Keep;if(PartnerMalePaths.IsValidIndex(SelectedPartnerMale))Keep=PartnerMalePaths[SelectedPartnerMale];
     PartnerMalePaths.Reset();PartnerMaleLabels.Reset();
     bSuppressPartnerMale=true;PartnerMaleCombo->ClearOptions();PartnerMaleCombo->AddOption(TEXT("選擇男角"));
-    if(bIndependentCards&&!CurrentCardDirectory.IsEmpty()){
+    if(!CurrentCardDirectory.IsEmpty()){
         TArray<FString> Files;IFileManager::Get().FindFilesRecursive(Files,*CurrentCardDirectory,TEXT("*.png"),true,false);Files.Sort();
         for(const auto& Path:Files){FKKCharacterFile Card;FString Error;if(UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()||!UKKCardReader::LoadFromFile(Path,Card,Error)||Card.Sex!=0)continue;
             FString Label=FString::Printf(TEXT("%s %s（%s）"),*Card.LastName,*Card.FirstName,*FPaths::GetBaseFilename(Path));PartnerMalePaths.Add(Path);PartnerMaleLabels.Add(Label);PartnerMaleCombo->AddOption(Label);
@@ -2751,7 +2789,7 @@ void UOKCharacterController::RefreshPartnerMales(){
             for(const FString& Name:Names){
                 const FString Path=Folder/Name;FKKCharacterFile Card;FString Error;if(!UKKCardReader::LoadFromFile(Path,Card,Error)||Card.Sex!=0)continue;
                 FString Who=FString::Printf(TEXT("%s %s"),*Card.LastName,*Card.FirstName).TrimStartAndEnd();if(Who.IsEmpty())Who=FPaths::GetBaseFilename(Name);else Who+=FString::Printf(TEXT("（%s）"),*FPaths::GetBaseFilename(Name));
-                if(bIndependentCards)Who+=TEXT("（遊戲卡）");
+                if(!CurrentCardDirectory.IsEmpty())Who+=TEXT("（遊戲卡）");
                 PartnerMaleCombo->AddOption(Who);PartnerMalePaths.Add(Path);PartnerMaleLabels.Add(Who);
             }
         }
