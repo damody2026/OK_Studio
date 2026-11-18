@@ -5414,14 +5414,3 @@ f-studio-ui 检查，并说明可取回的范围。自己的部分重打了。
 3. **同时握两个 slot**：一般模式全跑（f-yvonne-norm）在背景跑，调查段（f-yvonne-dbg）又另外 claim，五个 agent 在排队。停全跑时，
    等「full run ended」的链式脚本也跟着误以为全跑结束。**修正**：同一时间只占一个 slot；暂停全跑要连等它的链式脚本一起停，
    并在日志补一行说明。
-
-## 2026-11-18：「全跑过了」以外的三个自己踩的坑（f-yvonne，C000 坐姿黑面调查期间）
-
-1. **连拍的「0/12 不黑」其实是没拍到**：读卡器中途崩溃（截图回读 assert），后面每组都没有截图，脚本把「没有图」算成「不黑」，一度差点下结论。
-   之后截图改存 `Saved/CharacterMCP/instances/<pid>/images/`，旧脚本只找 `Saved/CharacterMCP/images/`，又一次 0/0。
-   **修正**：连拍要数实际张数，少拍就写 NOIMG、整组作废；判读前先确认张数。
-2. **环境变数被启动器盖掉**：用 `$env:OK_CPU_SKIN='1'` 开读卡器，结果还是 GPU 蒙皮（`run_card_reader_development.lua` 自己设 OK_CPU_SKIN）。
-   **修正**：用启动器的 `-CpuSkin`，并看启动纪录 json 的 `skinning` 字段确认。
-3. **同时握两个 slot**：一般模式全跑（f-yvonne-norm）在背景跑，调查段（f-yvonne-dbg）又另外 claim，五个 agent 在排队。停全跑时，
-   等「full run ended」的链式脚本也跟着误以为全跑结束。**修正**：同一时间只占一个 slot；暂停全跑要连等它的链式脚本一起停，
-   并在日志补一行说明。
