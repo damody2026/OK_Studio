@@ -17,6 +17,10 @@ pub(crate) fn extract_session_from_info(
     if let Some(card)=parsed_card.as_mut(){crate::mods::apply_strip_all_migrations(game_root,card);}
     // What the card says (CardInfo::source_digest): with the outfit and a mesh, the key of its rig (rig_memo).
     let card_digest = parsed_card.as_ref().map(|card| card.source_digest);
+    // Missing slots are collected per card (a conversion opens every outfit and garment state and wants them all
+    // together, reported once each); another card starts a fresh list, or a reader would go quiet about the second
+    // card's slots because the first card had the same ids.
+    if let Some(digest) = card_digest { crate::outfit_gaps::begin_card(digest); }
     let rig_key = |what: &str, mesh: &ExtractedMesh| card_digest.map(|d| format!("{d:016x}|{outfit}|{what}|{}|{}", mesh.name, mesh.path_id));
     if game_root.join("require_complete_mods").ok_is_file() {
         if let Some(card)=parsed_card.as_ref() {
@@ -1552,6 +1556,14 @@ pub(crate) fn extract_session_from_info(
                 continue;
             }
             if role.starts_with("acc") {
+                // `ChangeAccessoryNoAsync` instantiates nothing for a `p_dummy` entry, and a mod whose whole point is
+                // an empty slot ships exactly that ([DokEnkephalin]NoHairAccs, `enk.acc.bald`: the bald accessory).
+                // The slot below the resolve pass has always checked this; here only the resolve's own name was
+                // checked, so those slots reached the extraction, made nothing, and were reported as missing parts.
+                if is_dummy_part(&entry.main_data, Some(&entry.name)) {
+                    eprintln!("ok-extract: skip dummy accessory cat={} id={} guid={} {}", resolve.category_no, resolve.slot, resolve.mod_id, entry.name);
+                    continue;
+                }
                 let source=crate::accessory_extract::Source {entry:entry.clone(),zip:zip_path.cloned(),
                     guid:Some(resolve.mod_id.clone()),category:resolve.category_no,id:resolve.slot,
                     property:resolve.property.clone(),display:if resolve.name.is_empty(){entry.name.clone()}else{resolve.name.clone()},missing_entry:false};

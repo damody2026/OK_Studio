@@ -3257,6 +3257,15 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
                 Err(e) => { println!("OKSEALSTEP error {step}: {e}"); return Err(e); }
             }
         }
+        "zipmods" => {
+            // zipmods <dir>...: what each chosen game directory offers (the settings page's question, ok_zipmod_count).
+            for dir in args[1..].iter().map(PathBuf::from) {
+                match crate::mods::zipmod_count(&dir) {
+                    Ok(n) => println!("OKZIPMODS ok\t{}\t{n}", dir.display()),
+                    Err(e) => println!("OKZIPMODS none\t{}\t{e}", dir.display()),
+                }
+            }
+        }
         "answers" => {
             // answers <OK card>...: the questions of the open the card answers (okLt, tree_answers.rs), one a line.
             // Which answer a card lacks is what its strict open names; this says which it has, so two cards made from

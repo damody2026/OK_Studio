@@ -104,32 +104,53 @@ pub(crate) fn of_outfit(card: &CardInfo, outfit: i32, vanilla: &ChaListCatalog, 
 ///
 /// This is level 1 of the two: the character opens, the part simply is not on her. Level 2 (what stops the open, e.g.
 /// a missing `okLt` answer or body data) is okstrict.rs and fails loudly on its own.
-static EMPTY_SLOTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static EMPTY_SLOTS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
-/// Reports one such slot, once per distinct row. `why` says what could not be had, `source` the archive or file the
-/// entry named (empty when it named none).
+/// Which card the rows belong to (`CardInfo::source_digest`); another card clears them.
+static EMPTY_SLOTS_CARD: Mutex<u64> = Mutex::new(0);
+
+/// Starts (or continues) collecting for one card. Every outfit and garment state of the same card adds to one list;
+/// a different card starts over.
+pub(crate) fn begin_card(digest: u64) {
+    let mut current = EMPTY_SLOTS_CARD.lock().unwrap_or_else(|e| e.into_inner());
+    if *current == digest { return; }
+    *current = digest;
+    EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// Keeps one row per slot; false when that slot has already been reported, by either pass.
+fn remember(key: String, row: String) -> bool {
+    let mut seen = EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.iter().any(|(k, _)| *k == key) { return false; }
+    seen.push((key, row));
+    true
+}
+
+/// Reports one such slot, once per (part, category, id, guid) however it was found. `why` says what could not be had,
+/// `source` the archive or file the entry named (empty when it named none). The catalogue pass (`log`) registers the
+/// same keys, so a slot both passes notice is said once, not twice.
 pub(crate) fn report_empty_slot(outfit: i32, part: &str, category: i32, id: i32, guid: &str, source: &str, why: &str) {
     let row = format!("part={part} cat={category} id={id} guid={guid} source={source} why={why}");
-    {
-        let mut seen = EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
-        if seen.iter().any(|r| *r == row) { return; }
-        seen.push(row.clone());
-    }
-    let line = format!("ok-extract: ERROR opening outfit {outfit} item missing {row}");
+    if !remember(format!("{part}|{category}|{id}|{guid}"), row.clone()) { return; }
+    let line = format!("ok-extract: outfit {outfit} item missing {row}");
     eprintln!("{line}");
     crate::ffi::ffi_log(0, &line);
 }
 
-/// The rows `report_empty_slot` has collected (the conversion prints them; they do not fail it).
-pub fn empty_slots() -> Vec<String> { EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).clone() }
+/// Every slot reported, by either pass (the conversion prints them; they do not fail it).
+pub fn empty_slots() -> Vec<String> { EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(_, r)| r.clone()).collect() }
 /// Clears them (one conversion's rows must not be another card's).
-pub fn clear_empty_slots() { EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).clear(); }
+pub fn clear_empty_slots() { EMPTY_SLOTS.lock().unwrap_or_else(|e| e.into_inner()).clear(); *EMPTY_SLOTS_CARD.lock().unwrap_or_else(|e| e.into_inner()) = 0; }
 
 /// One line per gap: what `lookup_entry` says for an item a zipmod lacks, for all the ways a slot stays empty. To stderr
 /// and to the game's log, which stderr does not reach.
 pub(crate) fn log(card: &str, outfit: i32, gaps: &[Gap]) {
     for g in gaps {
-        let line = format!("ok-extract: ERROR {card} outfit {outfit} item missing part={} cat={} id={} guid={}", g.part, g.category, g.id, g.guid);
+        let row = format!("part={} cat={} id={} guid={}", g.part, g.category, g.id, g.guid);
+        // Registered under the same key as `report_empty_slot`: the extraction meets the same slot again and would
+        // otherwise say it a second time, in a second wording.
+        if !remember(format!("{}|{}|{}|{}", g.part, g.category, g.id, g.guid), row.clone()) { continue; }
+        let line = format!("ok-extract: card {card} outfit {outfit} item missing {row}");
         eprintln!("{line}");
         crate::ffi::ffi_log(0, &line);
     }

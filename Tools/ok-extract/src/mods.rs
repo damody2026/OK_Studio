@@ -346,6 +346,17 @@ pub fn find_guids_in_extra(wanted: &std::collections::HashSet<String>) -> HashMa
     out
 }
 
+/// What a chosen game directory offers, for the settings page to say so before a card is ever opened: how many
+/// archives its `mods/` holds. `dir` is the installation (or a folder named `mods` itself, as `zipmod_source` takes
+/// it). Err when there is no directory there, or no `mods/` under it -- the page should say that, not wait for a card
+/// to open without its clothes.
+pub fn zipmod_count(dir: &Path) -> Result<usize, String> {
+    if !dir.is_dir() { return Err(format!("{} is not a directory", dir.display())); }
+    let mods = if dir.file_name().is_some_and(|n| n.eq_ignore_ascii_case("mods")) { dir.to_path_buf() } else { dir.join("mods") };
+    if !mods.is_dir() { return Err(format!("{} has no mods/", dir.display())); }
+    collect_zipmods(&mods).map(|z| z.len()).map_err(|e| format!("{}: {e}", mods.display()))
+}
+
 pub fn find_guids(mods_dir: &Path, wanted: Option<&std::collections::HashSet<String>>) -> HashMap<String, PathBuf> {
     let found = find_guids_inner(mods_dir, wanted);
     let Some(w) = wanted else { return found };
@@ -818,7 +829,12 @@ fn collect_zipmods_walk(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
             } else if path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("zipmod"))
+                // `.zip` too, as every other archive check in this project does (gamefs.rs, oklib_convert.rs,
+                // unity/references.rs) and as the archives shipped beside cards are named: ref/九泉_洛天依_AI.zip is
+                // a zipmod in everything but its extension, and the walk was the one place that dropped it, so the
+                // card beside it opened without its clothes. An archive with no manifest declares no GUID and lists
+                // nothing, so it costs a look and changes nothing.
+                .map(|e| e.eq_ignore_ascii_case("zipmod") || e.eq_ignore_ascii_case("zip"))
                 .unwrap_or(false)
             {
                 out.push(path);

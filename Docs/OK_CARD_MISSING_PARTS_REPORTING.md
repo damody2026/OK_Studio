@@ -98,3 +98,60 @@ hair id=0   cat=102/103/104  entry=("なし", "p_dummy")      → skip dummy hai
 **结论是 (b)：包里那条路径没走到该走的检查。** `outfit_gaps` 问的是「目录里有没有这一项」，
 该问的是「卡要的这个槽最后有没有做出东西来」。按后者问，头发、头发配件、衣服全都涵盖，
 也不会有有游戏那边的误报。
+
+## 读卡时去哪里找 zipmod（2026-11-18 量过的现况）
+
+开一张**原作卡**时（`oklib::open_original_card` → `with_zipmods`），按这个次序找：
+
+| 次序 | 来源 | 由谁决定 |
+|---:|---|---|
+| 1 | **卡所在的资料夹**里的 `.zipmod`／`.zip`，以及它底下的 `mods/` 子资料夹 | 自动，不必指定 |
+| 2 | 游戏目录 `mods/` 里**卡指名的** GUID 对应的那几个档 | 给了游戏目录（CLI 参数、`Config/DefaultGame.ini` 的 `Root`，或 `OK_GAME_ROOT`）时自动 |
+| 3 | 游戏安装本身（卡没指名但开卡要用的东西、它的 UncensorSelector 设定） | 同上 |
+
+**优先序是「卡旁边先」**，理由：使用者把 zipmod 放到卡旁边，是针对**这张卡**的明确指示；
+游戏目录里的是全机器共用的、可能是别的版本。同一个 GUID 两边都有时，照这个次序先用卡旁边那份，
+使用者不必动游戏目录就能修好一张卡。基础库自己记着的资料排在最前（它是已经转好的模型），
+卡旁边的 zipmod 补的是库里没有的东西。
+
+实测（`ok-card-open-bench --sequence`，就是读卡器开卡那条路）：洛天依 AI 那张卡（`ref/png/Koikatu_F_...洛 天依.png`）
+指名 GUID `jq_lty_ai`，基础库没有它：
+
+| 卡旁边放什么 | 缺件行数 | 开卡 |
+|---|---:|---|
+| 什么都不放 | 9（bottom、gloves、pantyhose、shoes_inner／outer、shorts、accessory、两个 top_sub） | 2.6 s |
+| `jq_lty_ai.zipmod` | **0** | 5.6 s |
+| `mods/jq_lty_ai.zipmod`（子资料夹） | **0** | 14.8 s |
+| `九泉_洛天依_AI.zip`（副档名是 `.zip`） | **0**（2026-11-18 修好之前是 9） | 5.4 s |
+
+最后一列是这次补的：`mods.rs` 的 `collect_zipmods_walk` 只认 `.zipmod`，而专案其他每一处
+（`gamefs.rs`、`oklib_convert.rs`、`unity/references.rs`）都同时认 `.zip`，卡片包附的档又常是 `.zip`，
+于是「把它丢在卡旁边」没有用。没有 manifest 的压缩档不宣告任何 GUID、也列不出东西，所以多看一眼不会有副作用。
+
+## 给设定页的查询：`ok_zipmod_count`
+
+使用者在新版 UI 的设定页选一个游戏目录之后，**不必等到开卡才知道选对没有**：
+
+```
+extern "C" int32_t ok_zipmod_count(const char* path);   // Unreal 直接宣告，不用 bindings table、不用 session
+```
+
+回传 ≥0 是那个目录 `mods/` 底下的 zipmod 数（目录名本身就是 `mods` 时直接算它），
+**-2** 是「这路径底下没有 `mods/`」，**-1** 是「这路径读不到／不是资料夹」。CLI 同一条逻辑可单独试：
+
+```
+ok-extract X:/NoGame --oklib zipmods <目录>...
+OKZIPMODS ok    D:/XKoikatuSunshine   7296
+OKZIPMODS none  X:/NoSuchPlace        X:/NoSuchPlace is not a directory
+```
+
+开卡用的游戏目录由 Unreal 那一侧（`UKKGameRoot`：使用者设定优先、`Config/DefaultGame.ini` 的 `Root` 当预设）
+在每次开卡时传进来，Rust 不自己记；没有设定（打包版 `-NoGameRoot`）时就只有「卡旁边」那条，**不是错误**。
+
+## 记录等级：缺件不是 Error
+
+缺件的行走 `ffi_log` 等级 0（Unreal 的 `LogOkExtract: Log`），讯息里也不再带 `ERROR` 字样：
+一张卡指名了这台机器没有的 mod，是**预期内**的状况，说一声就好，不该混进「日志里的错误」里。
+真正让开卡失败的（okstrict 的缺口、读不出来的资料）照旧是失败，会让开卡停下来。
+`p_dummy`（`なし`、`nohairB`、`enk.acc.bald` 这种「这个槽就是空的」的目录项）照游戏行为跳过，
+只留一行 verbose，不进缺件清单。
