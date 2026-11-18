@@ -504,3 +504,20 @@ GC（量測中自然觸發的那次＋量測剛結束那次；最差單幀是那
 - `stat dumphitches` 記到 53 次 ≥15 ms，最大一筆 218.7 ms；#1 的 303 ms 沒寫進 log，所以這張表以 trace 為準。
 
 下一步先不改。要改的話，按收益排的候選是：#3 證據截圖只在跑稽核時拍（或改到背景執行緒壓縮）；#1 愛撫道具在進場等待時預先生成；`KK_ThighJiggleCloth` 換狀態時的重建。每項都要在同一個 stage、同一條流程上做前後對照。
+
+### 修第 1 項：愛撫道具改在背景開（`ok.HScene.CaressPrepare`）
+
+改法：進入愛撫時（讀到 `caress_items.json` 那一刻），在背景執行緒把他的手、手指、舌頭（kind 0–2）的 session 與道具打開，同時讀好每個道具層會用到的 controller 狀態與男方膚色；第一次摸只在遊戲執行緒生成 actor（`LoadSession`），每幀最多生成一件。`FKKAnimatedItem::Spawn` 拆成 `Open`（任何執行緒）與 `Spawn(Source)`（遊戲執行緒），舊的 `Spawn` 等於兩者接著做。`ok.HScene.CaressPrepare 0` 是改之前的做法，用來在同一個 stage 做前後對照。
+
+對照：stage `EFps1118k`，同一路線、同一相機，獨占，先 0 後 1 各一趟（`route_k0`／`route_k1`）。
+
+| | 第一次摸胸那幀 | `OK_HCaressItems` | 其中開道具 | 其中生成 | 全段 p50／p99 | 全段最長 |
+|---|---:|---:|---:|---:|---:|---:|
+| CaressPrepare 0 | 208.7 ms | 192.2 ms | 99.1 ms | 78.4 ms | 5.93／12.48 ms | 229.3 ms（進場） |
+| CaressPrepare 1 | 99.5 ms | 83.2 ms | 0（背景） | 81.6 ms | 5.89／12.60 ms | 198.8 ms（進場） |
+
+- 那一幀少了約 110 ms，剩下的是遊戲執行緒上的 `LoadSession`（建網格、材質），這次沒動。
+- 兩趟都只生成了右手（`p_handR`），之後每次 `OK_HCaressItems` 都在 5–8 ms 以內。
+- 手的位置兩趟一樣：同一根骨頭 `k_f_mune03L_02`、同一個座標、同一個狀態（`Te_mune_sawari_R`→`Te_mune_D_momu_R`），見兩趟 game.log 的 `Animated item p_handR` 行。這次沒有截圖。
+- 第一次量（`route_j2`）同一幀是 303 ms，這次 0 是 208.7 ms；同版本兩趟之間的差就有這麼大，所以只看同一 stage 交錯跑的這兩趟。
+- 修後這一幀在 `route_k1` 排第 5（前 4 名都在進場）；最長一幀從這項換成進場的 198.8 ms。

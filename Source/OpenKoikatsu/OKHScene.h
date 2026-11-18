@@ -294,6 +294,10 @@ private:
     TMap<int32,TUniquePtr<FKKAnimatedItem>> CaressItems;
     TMap<FString,FString> CaressItemStates;
     TSharedPtr<FJsonObject> CaressItemTable;bool bCaressItemsLoaded=false;FString CaressItemLibrary,CaressItemAnimRoot;
+    // His hands, fingers and tongue opened (and their controller states read) on a worker as soon as the caress table is
+    // read, so the first touch only spawns them (2026-11-18: opening them on the touch was a 303 ms frame).
+    TSharedPtr<struct FOKCaressPrepare,ESPMode::ThreadSafe> CaressPrepare;
+    void PrepareCaressItems();
     void UpdateCaressItems(float Delta);
     // Her body layer of the place his hand is on (HandCtrl: female.setLayerWeight(1, layerActions[action].front.body)):
     // her caress state's key with that layer on (FOkSession::KeyWithLayer, made off the game thread, cached), played

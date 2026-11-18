@@ -8,14 +8,31 @@
 #include "KKExactSkinning.h"
 #include "Components/PoseableMeshComponent.h"
 #include "ok_extract.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+
+void FKKAnimatedItem::Open(FKKAnimatedItemSource& Source, const FString& Library, const FString& Model, const FString& InPrefab)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_AnimatedItemOpen);
+	Source.bOpen = Source.Session.OpenOkModel(Library, Model, InPrefab, false, Source.Error) && Source.Item.Open(Library, Model, InPrefab, Source.Error);
+}
 
 bool FKKAnimatedItem::Spawn(UWorld* World, const FString& Library, const FString& Model, const FString& InPrefab, const FString& InAnimRoot, FString& OutError, const TArray<FLinearColor>& Colors)
 {
+	FKKAnimatedItemSource Source;
+	Open(Source, Library, Model, InPrefab);
+	if (!Source.bOpen) { Destroy(); OutError = Source.Error; return false; }
+	return Spawn(World, Source, InPrefab, InAnimRoot, OutError, Colors);
+}
+
+bool FKKAnimatedItem::Spawn(UWorld* World, FKKAnimatedItemSource& Source, const FString& InPrefab, const FString& InAnimRoot, FString& OutError, const TArray<FLinearColor>& Colors)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_AnimatedItemSpawn);
 	Destroy();
 	if (!World) { OutError = TEXT("no world"); return false; }
-	FOkSession Session;
-	if (!Session.OpenOkModel(Library, Model, InPrefab, false, OutError)) return false;
-	if (!Item.Open(Library, Model, InPrefab, OutError)) return false;
+	if (!Source.bOpen) { OutError = Source.Error.IsEmpty() ? TEXT("item not opened") : Source.Error; return false; }
+	FOkSession Session = MoveTemp(Source.Session);
+	Item.TakeFrom(Source.Item);
+	Source.bOpen = false;
 	FActorSpawnParameters Params;
 	Params.ObjectFlags = RF_Transient;
 	AKKPreviewActor* A = World->SpawnActor<AKKPreviewActor>(FVector::ZeroVector, FRotator::ZeroRotator, Params);

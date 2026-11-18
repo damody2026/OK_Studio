@@ -841,14 +841,49 @@ void UOKHScenePanel::UpdateCaress(float Delta){
 // each of its items on its bone of hers, playing the item layer of the action: 0 resting, 1 a single touch (the
 // original's click), 2 stroking (its drag). The male body stays hidden, as in the original's caress.
 static TAutoConsoleVariable<int32> CVarHCaressItems(TEXT("ok.HScene.CaressItems"),1,TEXT("1: his hand, finger or tongue (the original's caress items) on the place he caresses; 0 none"));
+static TAutoConsoleVariable<int32> CVarHCaressPrepare(TEXT("ok.HScene.CaressPrepare"),1,TEXT("1: open the caress items on a worker when the caress begins and spawn at most one a frame; 0: open each on the game thread at its first touch (before 2026-11-18)"));
+// Read on the worker, handed over once bDone is set: each item's opened session and item, its colours, and the
+// controller state of every item layer the caress table can ask for ("id|layer").
+struct FOKCaressPrepare{
+    TMap<int32,TSharedPtr<FKKAnimatedItemSource>> Items;TMap<int32,TArray<FLinearColor>> Colors;TMap<FString,FString> States;
+    std::atomic<bool> bDone{false};bool bMerged=false;};
+void UOKHScenePanel::PrepareCaressItems(){
+    const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;const TArray<TSharedPtr<FJsonValue>>* Areas=nullptr;
+    if(CaressPrepare.IsValid()||!CaressItemTable.IsValid()||!CaressItemTable->TryGetArrayField(TEXT("items"),Items)||!CaressItemTable->TryGetArrayField(TEXT("areas"),Areas))return;
+    struct FJob{int32 Id;FString Model,Prefab,ControllerSource,Controller;bool bMale;TSet<int32> Layers;};TMap<int32,FJob> Jobs;
+    for(const auto& V:*Items){const auto O=V->AsObject();if(!O)continue;FJob J;J.Id=int32(O->GetNumberField(TEXT("id")));
+        if(int32(O->GetNumberField(TEXT("kind")))>2)continue; // his hand, finger, tongue: the toys are not ours
+        J.Model=O->GetStringField(TEXT("model"));J.Prefab=O->GetStringField(TEXT("prefab"));J.ControllerSource=O->GetStringField(TEXT("controller_source"));
+        J.Controller=O->GetStringField(TEXT("controller"));J.bMale=false;O->TryGetBoolField(TEXT("male_colour"),J.bMale);Jobs.Add(J.Id,J);}
+    for(const auto& A:*Areas)for(const auto& V:A->AsArray()){const auto L=V->AsObject();if(!L)continue;const TArray<TSharedPtr<FJsonValue>>* Ids=nullptr;const TArray<TSharedPtr<FJsonValue>>* Acts=nullptr;
+        if(!L->TryGetArrayField(TEXT("items"),Ids)||!L->TryGetArrayField(TEXT("actions"),Acts))continue;
+        for(const auto& Id:*Ids)if(FJob* J=Jobs.Find(int32(Id->AsNumber())))for(const auto& Act:*Acts)if(const auto AO=Act->AsObject())J->Layers.Add(int32(AO->GetNumberField(TEXT("front_item"))));}
+    TSharedPtr<FOKCaressPrepare,ESPMode::ThreadSafe> P=MakeShared<FOKCaressPrepare,ESPMode::ThreadSafe>();CaressPrepare=P;
+    TArray<FJob> JobList;Jobs.GenerateValueArray(JobList);
+    Async(EAsyncExecution::ThreadPool,[P,JobList=MoveTemp(JobList),Library=CaressItemLibrary,Root=CaressItemAnimRoot,Partner=Gallery?Gallery->PartnerCardPath:FString()]{
+        TRACE_CPUPROFILER_EVENT_SCOPE(OK_HCaressPrepare);
+        FLinearColor Skin;const bool bSkin=FOkSession::CardSkinColor(Partner,Skin);
+        for(const FJob& J:JobList){
+            TSharedPtr<FKKAnimatedItemSource> S=MakeShared<FKKAnimatedItemSource>();FKKAnimatedItem::Open(*S,Library,J.Model,J.Prefab);P->Items.Add(J.Id,S);
+            if(J.bMale&&bSkin)P->Colors.Add(J.Id,{Skin});
+            for(int32 Layer:J.Layers)P->States.Add(FString::Printf(TEXT("%d|%d"),J.Id,Layer),FOkSkinnedItem::ControllerLayerState(Root,J.ControllerSource,J.Controller,Layer));}
+        P->bDone=true;});
+}
 void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HCaressItems);
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     auto HideAll=[&](){for(auto& P:CaressItems)if(P.Value&&P.Value->IsVisible())P.Value->SetVisible(false);SetHerBodyLayer(-1);HoldHerDynamics(-1,true);};
-    if(CVarHCaressItems.GetValueOnGameThread()==0||Mode!=0||SoloInfo||!IsValid(Girl)||TouchArea<1||TouchArea>5){HideAll();return;}
+    const bool bPrepare=CVarHCaressPrepare.GetValueOnGameThread()!=0;
+    // The table is read (and the items prepared) when the caress begins, not at the first touch.
+    if(CVarHCaressItems.GetValueOnGameThread()==0||Mode!=0||SoloInfo||!IsValid(Girl)||(!bPrepare&&(TouchArea<1||TouchArea>5))){HideAll();return;}
     if(!bCaressItemsLoaded){bCaressItemsLoaded=true;
         CaressItemAnimRoot=FOkSession::CommonPairRoot();CaressItemLibrary=FPaths::GetPath(CaressItemAnimRoot);FString Text;
         if(CaressItemAnimRoot.IsEmpty()||!FFileHelper::LoadFileToString(Text,*(CaressItemLibrary/TEXT("h/caress_items.json")))||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),CaressItemTable))
             UE_LOG(LogTemp,Warning,TEXT("H scene: no caress items (%s/h/caress_items.json; ok-extract --oklib h-items)"),*CaressItemLibrary);}
+    if(bPrepare)PrepareCaressItems();
+    if(TouchArea<1||TouchArea>5){HideAll();return;}
+    FOKCaressPrepare* Prepared=CaressPrepare.IsValid()&&CaressPrepare->bDone.load()?CaressPrepare.Get():nullptr;
+    if(Prepared&&!Prepared->bMerged){Prepared->bMerged=true;for(const auto& S:Prepared->States)CaressItemStates.FindOrAdd(S.Key,S.Value);}
+    bool bSpawned=false; // one spawn a frame: each builds its drawing on the game thread
     if(!CaressItemTable.IsValid()){HideAll();return;}
     const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;const TArray<TSharedPtr<FJsonValue>>* Areas=nullptr;
     if(!CaressItemTable->TryGetArrayField(TEXT("items"),Items)||!CaressItemTable->TryGetArrayField(TEXT("areas"),Areas)){HideAll();return;}
@@ -877,6 +912,12 @@ void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCO
     for(int32 K=0;K<Ids.Num();++K){const int32 Id=int32(Ids[K]->AsNumber());const auto Item=Id>=0?ItemOf(Id):nullptr;if(!Item)continue;
         const FString Bone=Parents.IsValidIndex(K)?Parents[K]->AsString():Parents.Num()?Parents[0]->AsString():FString();if(Bone.IsEmpty())continue;
         TUniquePtr<FKKAnimatedItem>& ItemSlot=CaressItems.FindOrAdd(Id);
+        if(!ItemSlot&&bPrepare&&CaressPrepare.IsValid()){
+            if(!Prepared||bSpawned)continue; // still opening on the worker, or one spawned already this frame: next frame
+            if(TSharedPtr<FKKAnimatedItemSource> Source=Prepared->Items.FindRef(Id)){Prepared->Items.Remove(Id);bSpawned=true;
+                ItemSlot=MakeUnique<FKKAnimatedItem>();FString Error;const TArray<FLinearColor>* Colors=Prepared->Colors.Find(Id);
+                if(!ItemSlot->Spawn(GetWorld(),*Source,Item->GetStringField(TEXT("prefab")),CaressItemAnimRoot,Error,Colors?*Colors:TArray<FLinearColor>()))
+                    UE_LOG(LogTemp,Warning,TEXT("H scene: caress item %s not shown: %s"),*Item->GetStringField(TEXT("prefab")),*Error);}}
         if(!ItemSlot){ItemSlot=MakeUnique<FKKAnimatedItem>();FString Error;
             // HandCtrl.Init(female, male.chaFile.custom.body.skinMainColor): the items it takes the material of
             // (isMaterialGet: his hands and fingers) are coloured with his skin.

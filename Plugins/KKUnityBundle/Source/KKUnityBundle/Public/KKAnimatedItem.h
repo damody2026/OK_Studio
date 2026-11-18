@@ -10,6 +10,16 @@
 class AKKPreviewActor;
 class UWorld;
 
+/** What FKKAnimatedItem::Spawn opens before it touches the world (the session that draws the prefab and the posed item):
+ *  native work only, so it can be done on a worker ahead of time (FKKAnimatedItem::Open) and spawned later. */
+struct KKUNITYBUNDLE_API FKKAnimatedItemSource
+{
+	FOkSession Session;
+	FOkSkinnedItem Item;
+	FString Error;
+	bool bOpen = false;
+};
+
 class KKUNITYBUNDLE_API FKKAnimatedItem
 {
 public:
@@ -22,6 +32,10 @@ public:
 	 *  animation root its controller's states are read from (the base library's `paired`). Colors: its item colours
 	 *  (sRGB _Color.._Color4; alpha < 0 keeps the model's), as HandCtrl gives the caressing hand his skin colour. */
 	bool Spawn(UWorld* World, const FString& Library, const FString& Model, const FString& Prefab, const FString& AnimRoot, FString& OutError, const TArray<FLinearColor>& Colors = TArray<FLinearColor>());
+	/** The native half of Spawn (any thread): opens the prefab's session and item. */
+	static void Open(FKKAnimatedItemSource& Source, const FString& Library, const FString& Model, const FString& Prefab);
+	/** The game-thread half of Spawn: spawns the actor from an opened Source (its session and item are taken). */
+	bool Spawn(UWorld* World, FKKAnimatedItemSource& Source, const FString& Prefab, const FString& AnimRoot, FString& OutError, const TArray<FLinearColor>& Colors = TArray<FLinearColor>());
 	void Destroy();
 	bool IsSpawned() const { return Actor.IsValid() && Item.IsOpen(); }
 	AKKPreviewActor* GetActor() const { return Actor.Get(); }
