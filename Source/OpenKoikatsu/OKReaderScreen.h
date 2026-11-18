@@ -38,6 +38,8 @@ public:
 	UPROPERTY() TObjectPtr<UDreamButton> Header;
 	UPROPERTY() TObjectPtr<UDreamWidget> Title;
 	UPROPERTY() TObjectPtr<UDreamWidget> Body;
+	// A drawer's fold sign (▼ open, ▶ folded).
+	UPROPERTY() TObjectPtr<UDreamWidget> Arrow;
 
 	// The UMG control this one shows (null for a control of the screen's own).
 	TWeakObjectPtr<UWidget> Source;
@@ -45,6 +47,10 @@ public:
 	TFunction<void()> OnPressed;
 	// Text shown instead of the source's own (a drawer's title, a tab).
 	FString FixedText;
+	// A drop-down: only the options matching this show (a search field above it sets it).
+	FString Filter;
+	// Hidden and shown with this control (its search field).
+	TWeakObjectPtr<UDreamWidget> Companion;
 
 	void SetText(const FString& Text);
 	void SetOpen(bool bOpen);
@@ -66,6 +72,10 @@ private:
 	bool bOpen=true;
 	FString ShownText;
 	TArray<FString> ShownOptions;
+	// Shown option -> the UMG option index; the filter and option count it was made for.
+	TArray<int32> OptionMap;
+	FString ShownFilter;
+	int32 ShownSourceCount=-1;
 	TWeakObjectPtr<class UTexture> ShownTexture;
 };
 
@@ -148,6 +158,10 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> SubButtons;
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> Drawers;
 	UPROPERTY() TArray<TObjectPtr<UDreamWidget>> PageWidgets;
+	// The card list's buttons, their texts, and the card they last marked as the current one.
+	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> CardButtons;
+	TArray<FString> CardTexts;
+	int32 ShownCardSelection=INDEX_NONE;
 	TArray<FOKDreamMirrorPanel> Panels;
 
 	void BuildCategories();
@@ -157,6 +171,7 @@ private:
 	void ShowTab(int32 Index);
 	void ShowCategory(int32 Index,int32 SubIndex=0);
 	void ClearPage();
+	void MarkCurrentCard();
 	void Layout();
 	void TickResize();
 	void SyncAll();

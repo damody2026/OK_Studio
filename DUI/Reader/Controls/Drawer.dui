@@ -1,13 +1,27 @@
 // The title row of one of the right panel's drawers; pressing it folds the drawer's body (made by code, placed right
-// under this row) away.
+// under this row) away. A framed row with the fold sign on the right, so it reads as something that opens.
 class /Game/UI/Reader/Controls/WBP_OKDrawer
 use "Theme.dui" as ui
 
 Widget Root {
     AnchorData.SizeDelta = (400, 48)
     + Overlay { }
+    RectBlock Face : ui.Card {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+    // Under the button (its normal face is see-through): the button keeps the whole row's clicks.
+    Text Arrow : ui.Lead {
+        Text = "▼"
+        HAlign = Right
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Center  Padding = (0, 0, 16, 0) }
+    }
     Native.Button Header : ui.TabOff {
         Style.Height = 44
+        Style.ContentPadding = (16, 4, 44, 4)
+        // See-through when hovered or pressed: an opaque tint covered the fold sign under it.
+        Style.Hovered = #FFFFFF14
+        Style.Pressed = #00000040
+        Style.Focused = #FFFFFF0A
         @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
         Text Title : ui.Lead { Text = "" }
     }

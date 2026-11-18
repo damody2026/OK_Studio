@@ -1,6 +1,7 @@
 #include "OKReaderScreen.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
+#include "OKMotionComboBox.h"
 #include "KKShapeRows.h"
 #include "OKShapeSlider.h"
 #include "Components/VerticalBox.h"
@@ -102,6 +103,7 @@ void UOKDreamControl::SetText(const FString& Text)
 void UOKDreamControl::SetOpen(bool bNewOpen)
 {
 	bOpen=bNewOpen;if(Body)Body->SetShown(bOpen);
+	if(auto* T=TextOf(Arrow))T->SetText(FText::FromString(bOpen?TEXT("▼"):TEXT("▶")));
 }
 
 void UOKDreamControl::Sync()
@@ -109,6 +111,7 @@ void UOKDreamControl::Sync()
 	UWidget* S=Source.Get();
 	if(!S){if(!FixedText.IsEmpty())SetText(FixedText);return;}
 	SetShown(IsUmgShown(S));
+	if(Companion.IsValid()&&Companion->GetShown()!=GetShown())Companion->SetShown(GetShown());
 	if(!GetShown())return;
 	TGuardValue<bool> Guard(bPushing,true);
 	if(auto* Drawer=Cast<UOKDrawerButton>(S))
@@ -134,15 +137,26 @@ void UOKDreamControl::Sync()
 	}
 	if(auto* U=Cast<UComboBoxString>(S))if(Choice)
 	{
-		bool Same=ShownOptions.Num()==U->GetOptionCount();
-		for(int32 I=0;Same&&I<ShownOptions.Num();++I)Same=ShownOptions[I]==U->GetOptionAtIndex(I);
+		// The options the filter keeps (all without one), each mapped to its UMG index. Built again when the filter, the
+		// option count or (unfiltered) any option changed.
+		const int32 Count=U->GetOptionCount();
+		bool Same=ShownSourceCount==Count&&ShownFilter==Filter;
+		for(int32 I=0;Same&&Filter.IsEmpty()&&I<ShownOptions.Num();++I)Same=ShownOptions[I]==U->GetOptionAtIndex(I);
 		if(!Same)
 		{
-			ShownOptions.Reset();TArray<FText> Options;
-			for(int32 I=0;I<U->GetOptionCount();++I){ShownOptions.Add(U->GetOptionAtIndex(I));Options.Add(FText::FromString(ShownOptions.Last()));}
+			ShownSourceCount=Count;ShownFilter=Filter;ShownOptions.Reset();OptionMap.Reset();
+			if(Filter.IsEmpty())for(int32 I=0;I<Count;++I){ShownOptions.Add(U->GetOptionAtIndex(I));OptionMap.Add(I);}
+			// The motion list searches its labels as its own popup does (names, ids, the display label; words ANDed).
+			else if(auto* M=Cast<UOKMotionComboBox>(U))
+			{
+				M->SetSearchText(FText::FromString(Filter));
+				for(const FString& O:M->GetFilteredOptions()){const int32 I=U->FindOptionIndex(O);if(I>=0){ShownOptions.Add(O);OptionMap.Add(I);}}
+			}
+			else for(int32 I=0;I<Count;++I)if(U->GetOptionAtIndex(I).Contains(Filter)){ShownOptions.Add(U->GetOptionAtIndex(I));OptionMap.Add(I);}
+			TArray<FText> Options;for(const FString& O:ShownOptions)Options.Add(FText::FromString(O));
 			Choice->SetOptions(Options);
 		}
-		const int32 Index=U->GetSelectedIndex();if(Choice->GetSelectedIndex()!=Index)Choice->SetSelectedIndex(Index);
+		const int32 Index=OptionMap.IndexOfByKey(U->GetSelectedIndex());if(Choice->GetSelectedIndex()!=Index)Choice->SetSelectedIndex(Index);
 		Choice->SetIsEnabled(U->GetIsEnabled());
 	}
 	if(Input)
@@ -193,6 +207,7 @@ void UOKDreamControl::HandleToggle(bool bOn)
 void UOKDreamControl::HandleChoice(int32 Index)
 {
 	if(bPushing)return;
+	if(OptionMap.IsValidIndex(Index))Index=OptionMap[Index];
 	if(auto* U=Cast<UComboBoxString>(Source.Get()))if(Index>=0&&Index<U->GetOptionCount())
 	{
 		const FString Option=U->GetOptionAtIndex(Index);
@@ -328,6 +343,22 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 	if(Source->IsA<UButton>()){UOKDreamControl* C=MakeControl(TEXT("Button"),Into);const FString T=TextIn(Source);Place(C,FMath::Max(56.f,TextWidth(T,20.f)+36.f),false);return;}
 	if(Source->IsA<USlider>()){Place(MakeControl(TEXT("Slider"),Into),0,true);return;}
 	if(Source->IsA<UCheckBox>()){Place(MakeControl(TEXT("Toggle"),Into),FMath::Max(80.f,TextWidth(TextIn(Source),18.f)+56.f),false);return;}
+	// The motion lists run to tens of thousands of entries: a search field above the drop-down narrows it, as the UMG
+	// popup's own search box did.
+	if(Source->IsA<UOKMotionComboBox>())
+	{
+		UDreamWidget* Box=MakePanel(Into,false,4.f);if(!Box)return;
+		if(bInRow)if(auto* Slot=Box->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+		UOKDreamControl* Search=MakeControl(TEXT("Input"),Box);
+		UOKDreamControl* C=MakeControl(TEXT("Choice"),Box);if(!C)return;
+		C->Source=Source;C->Companion=Search;
+		if(Search&&Search->Input)
+		{
+			Search->Input->SetPlaceholder(FText::FromString(TEXT("搜尋動作（名稱或編號，空格隔開多個詞）")));
+			Search->Input->GetOnTextChangedEvent().AddWeakLambda(C,[C](const FString& Text){C->Filter=Text.TrimStartAndEnd();C->Sync();});
+		}
+		C->Sync();return;
+	}
 	if(Source->IsA<UComboBoxString>()){Place(MakeControl(TEXT("Choice"),Into),0,true);return;}
 	if(Source->IsA<UEditableTextBox>()||Source->IsA<USpinBox>()){Place(MakeControl(TEXT("Input"),Into),bInRow?84.f:0.f,false);return;}
 	if(Source->IsA<UTextBlock>()){Place(MakeControl(TEXT("Label"),Into),FMath::Min(200.f,TextWidth(TextIn(Source),18.f)+12.f),false);return;}
@@ -477,7 +508,16 @@ void UOKReaderScreen::BuildDrawers()
 			for(const TCHAR* Name:Names)if(UWidget* W=G->WidgetTree->FindWidget(FName(Name)))
 			{
 				const int32 Before=R->GetChildren().Num();Mirror(W,R,true);
-				if(R->GetChildren().Num()>Before)if(auto* Slot=R->GetChildren().Last()->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+				if(R->GetChildren().Num()<=Before)continue;
+				// Equal thirds, one line each: a long label (重設到預設值, 進入1對1互動場景) shrinks to fit instead of
+				// wrapping and making its row taller than the others.
+				UDreamWidget* B=R->GetChildren().Last();B->SetWidth(0);
+				if(auto* Slot=B->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);
+				if(auto* Control=Cast<UOKDreamControl>(B))if(UDreamText* T=TextOf(Control->Label))
+				{
+					T->SetAutoWrapText(false);T->SetOverflowType(EDreamUITextOverflowType::HorizontalOverflow);
+					T->SetBestFit(true);T->SetBestFitMinSize(12.f);
+				}
 			}
 		};
 		Row({TEXT("ResetAllShapes"),TEXT("ShapeLoad3D"),TEXT("BackGallery")});
@@ -541,8 +581,23 @@ void UOKReaderScreen::ClearPage()
 	PageWidgets.Reset();
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
+	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
 	Panels.RemoveAll([](const FOKDreamMirrorPanel& P){return !P.Target.IsValid()||!IsValid(P.Target.Get());});
+}
+
+// The card list marks the card the reader has (the one whose name is at the bottom right): a sign before its name, the
+// others dimmed a little.
+void UOKReaderScreen::MarkCurrentCard()
+{
+	UOKCharacterController* G=Controller.Get();if(!G||CardButtons.IsEmpty())return;
+	const int32 Current=G->SelectedIndex;if(Current==ShownCardSelection)return;
+	ShownCardSelection=Current;
+	for(int32 I=0;I<CardButtons.Num();++I)if(UOKDreamControl* B=CardButtons[I];IsValid(B)&&CardTexts.IsValidIndex(I))
+	{
+		B->FixedText=I==Current?TEXT("▶ ")+CardTexts[I]:CardTexts[I];B->SetText(B->FixedText);
+		B->SetRenderOpacity(I==Current?1.f:.72f);
+	}
 }
 
 void UOKReaderScreen::ShowTab(int32 Index)
@@ -599,8 +654,11 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 				const auto& E=G->Entries[I];
 				const FString Text=FString::Printf(TEXT("%s %s  %s"),*E.LastName,*E.FirstName,*E.FileName);
 				TWeakObjectPtr<UOKCharacterController> Weak(G);
-				if(UOKDreamControl* B=MakeOwnButton(List,Text,[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);}))B->SetWidth(0);
+				UOKDreamControl* B=MakeOwnButton(List,Text,[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);});
+				if(B)B->SetWidth(0);
+				CardButtons.Add(B);CardTexts.Add(Text);
 			}
+			ShownCardSelection=INDEX_NONE;MarkCurrentCard();
 		}
 		LeftScroll->ScrollToStart();
 	}
@@ -664,6 +722,7 @@ void UOKReaderScreen::SyncAll()
 		// The card wall until a card is open, the editor once one is; a new card folder lists again.
 		if(G->bModelLayout!=bShownModelLayout){bShownModelLayout=G->bModelLayout;ShowTab(bShownModelLayout?0:1);}
 		else if(Tab==1&&G->Entries.Num()!=ShownEntries)ShowCategory(Category,Sub);
+		MarkCurrentCard();
 	}
 	if(UOKCharacterController* G=Controller.Get())if(auto* T=TextOf(CardName))
 	{
