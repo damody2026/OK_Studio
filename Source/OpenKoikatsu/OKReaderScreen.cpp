@@ -77,6 +77,21 @@ namespace
 const TCHAR* GScreenPath=TEXT("/Game/UI/Reader/WBP_ReaderScreen.WBP_ReaderScreen_C");
 TWeakObjectPtr<UOKReaderScreen> GScreen;
 
+// Who moved the reader's camera last (ok.ReaderScreen look): the player controller says so when the mouse turns, pans or
+// zooms it (OKNoteCameraChange); a change nobody announced came from elsewhere (a view button, the MCP, a load).
+namespace OKReaderCameraWatch
+{
+	FString NotedWho;uint64 NotedFrame=0;
+	FString LastWho;double LastAt=0;FString LastButtons;
+	bool bHave=false;float Yaw=0,Pitch=0,Distance=0;FVector Focus=FVector::ZeroVector;
+	FString PressedButtons()
+	{
+		if(!FSlateApplication::IsInitialized())return TEXT("-");
+		FString Out;for(const FKey& K:FSlateApplication::Get().GetPressedMouseButtons()){if(!Out.IsEmpty())Out+=TEXT("+");Out+=K.ToString();}
+		return Out.IsEmpty()?TEXT("none"):Out;
+	}
+}
+
 UDreamText* TextOf(UDreamWidget* W){return W?Cast<UDreamText>(W->GetVisual()):nullptr;}
 
 // The text a UMG control shows: its own (a text block) or the first text inside it (a button's label).
@@ -104,6 +119,7 @@ TArray<UWidget*> ChildrenOf(UWidget* W)
 }
 float TextWidth(const FString& S,float PerChar){float W=0;for(TCHAR C:S)W+=C<128?PerChar*.55f:PerChar;return W;}
 }
+void OKNoteCameraChange(const FString& Who){OKReaderCameraWatch::NotedWho=Who;OKReaderCameraWatch::NotedFrame=GFrameCounter;}
 
 // ------------------------------------------------------------------------------------------------- UOKDreamControl
 
@@ -1109,6 +1125,8 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	}
 }
 
+UOKCharacterController* UOKReaderScreen::GetController() const{return Controller.Get();}
+
 bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
 {
 	if(!bBuilt||ViewportSize.X<=0.f||ViewportSize.Y<=0.f)return false;
@@ -1223,6 +1241,20 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 	TickResize();
 	SyncAll();
 	TickThumbnails();
+	// The camera watch (ok.ReaderScreen look): a changed orbit is put down to the mouse when the player controller noted
+	// a drag or wheel this frame or the last, else to something else; with the mouse buttons Slate holds as pressed then.
+	if(UOKCharacterController* G=Controller.Get())if(const AKKPreviewActor* A=G->PreviewActor.Get())
+	{
+		using namespace OKReaderCameraWatch;
+		const bool bMoved=bHave&&(!FMath::IsNearlyEqual(Yaw,A->OrbitYaw,.01f)||!FMath::IsNearlyEqual(Pitch,A->OrbitPitch,.01f)
+			||!FMath::IsNearlyEqual(Distance,A->OrbitDistance,.05f)||!Focus.Equals(A->OrbitFocus,.05f));
+		if(bMoved)
+		{
+			LastWho=NotedFrame+1>=GFrameCounter&&!NotedWho.IsEmpty()?NotedWho:TEXT("not the mouse (a view button, the MCP, a load or a pose change)");
+			LastAt=FPlatformTime::Seconds();LastButtons=PressedButtons();
+		}
+		bHave=true;Yaw=A->OrbitYaw;Pitch=A->OrbitPitch;Distance=A->OrbitDistance;Focus=A->OrbitFocus;
+	}
 	// The left scroll box takes its content's extent only when content is added (UDreamScrollBox::AddContent), and a page
 	// is added empty and then filled, rebuilt when a UMG list changes, its rows shown and hidden: measured 2026-11-18, the
 	// 屬性 page ran below the panel with no bar and the wheel did nothing. Re-take it whenever the page's height moved.
@@ -1281,6 +1313,21 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		else if(Verb==TEXT("width")){Done=Value.IsNumeric();if(Done)S->SetLeftWidth(FCString::Atof(*Value));}
 		// 設定 › 遊戲目錄: "gameroot <folder>" / "library <folder>" save as the page does ("default" forgets the user's choice);
 		// either with no folder reports what is set and found.
+		// "look": what follows the cursor and who moved the camera last, so "the view moves without a button held" is told
+		// apart in one line: eyes on the cursor (eye_mode 1), the head following the camera, or the camera itself.
+		else if(Verb==TEXT("look"))
+		{
+			using namespace OKReaderCameraWatch;
+			UOKCharacterController* G=S->GetController();const AKKPreviewActor* A=G?G->PreviewActor.Get():nullptr;
+			if(!A){Out.Log(TEXT("look: no character"));return;}
+			static const TCHAR* EyeModes[]={TEXT("front"),TEXT("cursor"),TEXT("camera")};
+			Out.Logf(TEXT("look eye_mode=%d(%s) eye_tracking=%d eye_follows_camera=%d gaze=%.3f,%.3f,%.3f head_follows_camera=%d buttons=%s"),
+				G->EyeMode,EyeModes[FMath::Clamp(G->EyeMode,0,2)],A->bEyeLookTracking?1:0,A->bEyeLookFollowCamera?1:0,
+				A->EyeGaze[0],A->EyeGaze[1],A->EyeGaze[2],A->bHeadLookFollowCamera?1:0,*PressedButtons());
+			Out.Logf(TEXT("camera yaw=%.2f pitch=%.2f distance=%.1f focus=%s last_change=%s %s"),A->OrbitYaw,A->OrbitPitch,A->OrbitDistance,*A->OrbitFocus.ToCompactString(),
+				LastWho.IsEmpty()?TEXT("none"):*LastWho,LastWho.IsEmpty()?TEXT(""):*FString::Printf(TEXT("%.1f s ago, buttons then=%s"),FPlatformTime::Seconds()-LastAt,*LastButtons));
+			return;
+		}
 		else if(Verb==TEXT("gameroot")||Verb==TEXT("library"))
 		{
 			const bool bLibrary=Verb==TEXT("library");
