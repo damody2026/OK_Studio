@@ -5363,3 +5363,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **處置**：改用 Slate 工具驗證；仍加上兩道防護（面板重建保留搜尋字與編輯狀態、看不見的 UMG 層拿到鍵盤焦點就還給遊戲視窗）並寫 log，下次重現可直接查。
 - **另一個錯**：用 PowerShell 5.1 的 `Get-Content -Raw`／`Set-Content -Encoding utf8` 改 `OKReaderScreen.cpp` 的一行 include：沒 BOM 的 UTF-8 檔被當成系統碼頁讀進來，寫回後所有中文字串變亂碼（還加了 BOM），編譯前從 `git show HEAD:` 還原後重套改動。另外 PowerShell 5.1 呼叫原生程式時會吃掉參數裡的雙引號，`ok-game-mcp.exe call ui_mouse '{"x":…}'` 送出去的是壞 JSON。
 - **再試前檢查**：測 UI 的鍵盤、滑鼠一律用走 Slate 的 MCP 工具，不用系統按鍵模擬；PowerShell 不拿來改含中文的原始碼（用編輯工具或 Lua），從 PowerShell 呼叫 `ok-game-mcp.exe call` 時把 JSON 裡的 `"` 寫成 `\"`。
+
+## 2026-11-18 4261dd9ea 只在自己的工作樹編得過：新檔進 unity 後撞上 winnls.h 巨集
+
+- **變更**：新檔 `Source/OpenKoikatsu/OKSlateInput.cpp` include DreamGUI 的 `Interaction/UITextInput.h`。提交前編輯器與遊戲目標都建置成功。
+- **症狀**：之後再建置，`Module.OpenKoikatsu.5.cpp` 在 `DreamUITextData.h(431–455)` 報 C2059／C2589。原因已證實：剛改過的檔案被 UBT 的 adaptive build 排除在 unity 檔外單獨編譯，所以提交前編得過；檔案不再是「修改中」以後（例如乾淨的 clone）就併進 unity 檔，排在某個含 Windows 標頭的原始檔後面，`winnls.h` 的 `HIGH_SURROGATE_START` 等巨集把 DreamGUI 的同名常數替換掉。
+- **處置**：include 前後 `push_macro`／`#undef`／`pop_macro` 這四個名字；以 `-DisableAdaptiveUnity` 建置遊戲與編輯器目標確認（9d4126d18）。4261dd9ea 到 9d4126d18 之間的提交，在乾淨工作樹編不過。
+- **再試前檢查**：新增或大改 `.cpp`，提交前加跑一次 `-DisableAdaptiveUnity`（至少遊戲目標），不能只看本機的增量建置。
