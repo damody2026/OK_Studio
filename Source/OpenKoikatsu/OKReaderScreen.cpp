@@ -484,7 +484,8 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 		if(bInRow){if(RowWidth>0)C->SetWidth(RowWidth);if(bFill)if(auto* Slot=C->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);}
 	};
 	// The picture picker's items: a tile with the item's thumbnail (the button's own label is only its caption).
-	if(Source->IsA<UOKAppearanceButton>()){if(UOKDreamControl* C=MakeControl(TEXT("PickTile"),Into)){C->Source=Source;if(C->Picture)C->Picture->SetShown(false);C->Sync();}return;}
+	// Every tile the same size (a long caption such as 類型 1806 · 模組 widened its tile, so rows held two or three).
+	if(Source->IsA<UOKAppearanceButton>()){if(UOKDreamControl* C=MakeControl(TEXT("PickTile"),Into)){C->Source=Source;if(C->Picture)C->Picture->SetShown(false);if(UDreamPanelSlot* Slot=C->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(112,150));Slot->SetMaxDesiredSize(FVector2D(112,150));}C->Sync();}return;}
 	if(Source->IsA<UButton>()){UOKDreamControl* C=MakeControl(TEXT("Button"),Into);const FString T=TextIn(Source);Place(C,FMath::Max(56.f,TextWidth(T,20.f)+36.f),false);return;}
 	if(Source->IsA<USlider>()){Place(MakeControl(TEXT("Slider"),Into),0,true);return;}
 	if(Source->IsA<UCheckBox>()){Place(MakeControl(TEXT("Toggle"),Into),FMath::Max(80.f,TextWidth(TextIn(Source),18.f)+56.f),false);return;}
@@ -611,6 +612,26 @@ void UOKReaderScreen::BuildCategories()
 	{
 		if(!Targets.IsEmpty()&&G->AppearancePanel)Into.Sources.Add(G->AppearancePanel.Get());
 		if(!Properties.IsEmpty()&&G->PropertyPanel)Into.Sources.Add(G->PropertyPanel.Get());
+		// Without a character in 3D the picker and the detailed editor have nothing to read (both work on the loaded card):
+		// the page says so, and is built again once a character is in (the signature changes).
+		TFunction<void(UDreamWidget*)> BeforeBuild=MoveTemp(Into.Build);
+		Into.Build=[this,BeforeBuild](UDreamWidget* Page)
+		{
+			if(BeforeBuild)BeforeBuild(Page);
+			UOKCharacterController* C=Controller.Get();
+			if(C&&!C->bModelLayout)if(UOKDreamControl* L=MakeControl(TEXT("Label"),Page))
+			{
+				const FString Say=TEXT("要先在「人物卡總欄」選一張卡並按「載入3D」，這裡才有外觀選擇與詳細編輯。");
+				L->FixedText=Say;L->SetText(Say);
+				if(UDreamPanelSlot* Slot=L->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+			}
+		};
+		TFunction<FString()> BeforeSignature=MoveTemp(Into.Signature);
+		Into.Signature=[this,BeforeSignature]()
+		{
+			const UOKCharacterController* C=Controller.Get();
+			return (C&&C->bModelLayout?TEXT("3d|"):TEXT("none|"))+(BeforeSignature?BeforeSignature():FString());
+		};
 		TFunction<void()> Before=MoveTemp(Into.OnEnter);
 		Into.OnEnter=[this,Targets,Properties,Before]()
 		{
@@ -1269,14 +1290,25 @@ void UOKReaderScreen::CheckLocalLibrary(const FString& Library)
 	if(UOKDreamControl* C=LibraryStatus.Get()){C->FixedText=Message;C->SetText(Message);}
 }
 
+// The current tab takes the .dui's TabOn look (Tab0's), the rest TabOff (Tab1's); before this only Tab0 ever had the
+// raised face, so 編輯 looked chosen on every tab. Both looks come from the same .dui for every reader screen: taken
+// once, before any tab changed. Also used when a page of another tab is opened directly (前往 設定 › 遊戲目錄).
+static TOptional<FDreamButtonStyle> GTabOnStyle,GTabOffStyle;
+static void PaintTabs(UDreamButton* const (&Tabs)[4],int32 Current)
+{
+	if(!GTabOnStyle.IsSet()&&Tabs[0]&&Tabs[1]){GTabOnStyle=Tabs[0]->GetStyle();GTabOffStyle=Tabs[1]->GetStyle();}
+	for(int32 I=0;I<4;++I)if(Tabs[I])
+	{
+		if(GTabOnStyle.IsSet())Tabs[I]->SetStyle(I==Current?GTabOnStyle.GetValue():GTabOffStyle.GetValue());
+		Tabs[I]->SetRenderOpacity(I==Current?1.f:.62f);
+	}
+}
+
 void UOKReaderScreen::ShowTab(int32 Index)
 {
 	Tab=FMath::Clamp(Index,0,3);
 	UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};
-	// The current tab takes the .dui's TabOn look (Tab0's), the rest TabOff (Tab1's); before this only Tab0 ever had the
-	// raised face, so 編輯 looked chosen on every tab.
-	// Both looks come from the same .dui for every reader screen: taken once, before any tab changed.
-	static TOptional<FDreamButtonStyle> TabOnStyle,TabOffStyle;
+	TOptional<FDreamButtonStyle>& TabOnStyle=GTabOnStyle;TOptional<FDreamButtonStyle>& TabOffStyle=GTabOffStyle;
 	if(!TabOnStyle.IsSet()&&Tab0&&Tab1){TabOnStyle=Tab0->GetStyle();TabOffStyle=Tab1->GetStyle();}
 	for(int32 I=0;I<4;++I)if(Tabs[I])
 	{
@@ -1304,7 +1336,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(!Categories.IsValidIndex(Index))return;
 	ClearPage();
 	Category=Index;const FCategory& C=Categories[Index];
-	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);}
+	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[4]={Tab0,Tab1,Tab2,Tab3};PaintTabs(Tabs,Tab);}
 	for(int32 I=0;I<RailButtons.Num();++I)if(RailButtons[I])RailButtons[I]->SetRenderOpacity(I==Index?1.f:.7f);
 	if(auto* T=TextOf(CategoryTitle))T->SetText(FText::FromString(C.Name));
 	if(C.OnEnter)C.OnEnter();

@@ -170,7 +170,7 @@ FString UOKCharacterController::CurrentAppearanceNote() const{
  const TSharedPtr<FJsonObject>* Current=AppearanceCurrent.Find(AppearanceTargetKey);if(!Current||!Current->IsValid())return FString();
  FString Item,Name,Guid;(*Current)->TryGetStringField(TEXT("item"),Item);(*Current)->TryGetStringField(TEXT("name"),Name);(*Current)->TryGetStringField(TEXT("guid"),Guid);
  if(Item.IsEmpty())return FString::Printf(TEXT("\n目前是「%s」：來源缺失，這台沒裝 mod %s。"),*Name,Guid.IsEmpty()?TEXT("（無 GUID）"):*Guid);
- for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Item)return FString::Printf(TEXT("\n目前是「%s」（第 %d 頁，標 ▸）。"),*Name,I/32+1);
+ for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Item)return FString::Printf(TEXT("\n目前是「%s」（第 %d 頁，名稱前標 ▶）。"),*Name,I/32+1);
  return FString::Printf(TEXT("\n目前是「%s」（不在搜尋結果裡）。"),*Name);
 }
 void UOKCharacterController::OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type){
@@ -271,7 +271,7 @@ void UOKCharacterController::RebuildAppearancePage(){
 void UOKCharacterController::LoadAppearanceThumbnails(){
  if(bAppearanceThumbBusy||AppearanceButtons.IsEmpty())return;const int32 Generation=AppearancePageGeneration;bAppearanceThumbBusy=true;auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("thumbnails"));TArray<TSharedPtr<FJsonValue>> Keys;for(UOKAppearanceButton* B:AppearanceButtons)Keys.Add(MakeShared<FJsonValueString>(B->ItemKey));R->SetArrayField(TEXT("keys"),Keys);
  RunAppearanceRequest(R,[Generation](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bAppearanceThumbBusy=false;if(Generation!=G->AppearancePageGeneration){G->LoadAppearanceThumbnails();return;}if(!Data){G->AppearanceStatus->SetText(FText::FromString(TEXT("縮圖讀取失敗：")+Error));return;}
-  for(auto V:Data->GetArrayField(TEXT("thumbnails"))){auto Row=V->AsObject();FString Path;Row->TryGetStringField(TEXT("path"),Path);for(UOKAppearanceButton* B:G->AppearanceButtons)if(B->ItemKey==Row->GetStringField(TEXT("key"))){if(auto* T=Thumbnail(Path)){G->AppearanceTextures.Add(T);B->Thumbnail->SetBrushFromTexture(T);B->ThumbnailStatus->SetVisibility(ESlateVisibility::Collapsed);}else B->ThumbnailStatus->SetText(FText::FromString(TEXT("素材未提供縮圖")));}}
+  for(auto V:Data->GetArrayField(TEXT("thumbnails"))){auto Row=V->AsObject();FString Path;Row->TryGetStringField(TEXT("path"),Path);for(UOKAppearanceButton* B:G->AppearanceButtons)if(B->ItemKey==Row->GetStringField(TEXT("key"))){UTexture2D* T=nullptr;if(TObjectPtr<UTexture2D>* Cached=G->AppearanceThumbCache.Find(Path))T=Cached->Get();if(!T&&(T=Thumbnail(Path))!=nullptr)G->AppearanceThumbCache.Add(Path,T);if(T){G->AppearanceTextures.Add(T);B->Thumbnail->SetBrushFromTexture(T);B->ThumbnailStatus->SetVisibility(ESlateVisibility::Collapsed);}else B->ThumbnailStatus->SetText(FText::FromString(TEXT("素材未提供縮圖")));}}
  });
 }
 bool UOKCharacterController::MaterializeAppearance(TFunction<void(UOKCharacterController*)> Complete){

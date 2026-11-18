@@ -194,6 +194,10 @@ public:
  UPROPERTY() TObjectPtr<class UTextBlock> AppearancePageText;
  UPROPERTY() TArray<TObjectPtr<class UOKAppearanceButton>> AppearanceButtons;
  UPROPERTY() TArray<TObjectPtr<class UTexture2D>> AppearanceTextures;
+ // Every picker thumbnail made so far, by file: kept while the controller lives (the DreamGUI reader draws them through
+ // its own tiles, whose draw data may outlive a page change), so turning pages or targets reuses them instead of
+ // leaving the collector to free textures still drawn.
+ UPROPERTY() TMap<FString,TObjectPtr<class UTexture2D>> AppearanceThumbCache;
  TArray<TSharedPtr<FJsonObject>> AppearanceTargets,AppearanceItems;
  TSharedPtr<FJsonObject> AppearanceLastTiming;
  TArray<int32> AppearanceFiltered;
