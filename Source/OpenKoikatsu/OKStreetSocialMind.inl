@@ -1,5 +1,21 @@
 // Included by OKStreetSocialScene.cpp: the 2010 calendar (plan §5) and the in-process heroine mind (plan §3).
 
+// A save holding a job the catalogue no longer has (the hotel's pool job, taken out 2026-11-18): another job at the same
+// place, else none, its rating with it (save_repair, shop.rs). Left as it was, the job stayed in his list and its shifts
+// never started.
+static void OKStreetRepairSavedJobs(FOKStreetSceneState& S){
+ if(S.Store.PlayerJobs.IsEmpty()&&S.Store.JobRating.IsEmpty())return;
+ auto Request=OKRulesRequest(TEXT("save_repair"));
+ TArray<TSharedPtr<FJsonValue>> Held;for(const FString& J:S.Store.PlayerJobs)Held.Add(MakeShared<FJsonValueString>(J));Request->SetArrayField(TEXT("jobs"),Held);
+ auto Ratings=MakeShared<FJsonObject>();for(const auto& R:S.Store.JobRating)Ratings->SetNumberField(R.Key,R.Value);Request->SetObjectField(TEXT("ratings"),Ratings);
+ const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);const TArray<TSharedPtr<FJsonValue>>* Moved=nullptr;
+ if(!Out.IsValid()||!Out->TryGetArrayField(TEXT("moved"),Moved)||Moved->IsEmpty())return;
+ TArray<FString> Jobs;const TArray<TSharedPtr<FJsonValue>>* Kept=nullptr;if(Out->TryGetArrayField(TEXT("jobs"),Kept))for(const auto& V:*Kept)Jobs.Add(V->AsString());
+ TMap<FString,int32> Rating;const TSharedPtr<FJsonObject>* Rated=nullptr;if(Out->TryGetObjectField(TEXT("ratings"),Rated))for(const auto& P:(*Rated)->Values)Rating.Add(FString(*P.Key),int32(P.Value->AsNumber()));
+ S.Store.PlayerJobs=MoveTemp(Jobs);S.Store.JobRating=MoveTemp(Rating);
+ for(const auto& M:*Moved){const auto& Pair=M->AsArray();if(Pair.Num()==2)UE_LOG(LogTemp,Display,TEXT("Street save: job %s is no longer in the catalogue, now %s"),*Pair[0]->AsString(),Pair[1]->IsNull()?TEXT("none"):*Pair[1]->AsString());}
+}
+
 // Called once the relationship save is loaded. A saved game continues at its saved minute; a new game starts at
 // 08:00 on 2010-09-01. -StreetSocialClock= still overrides the time of day (self-tests and captures).
 void AOKStreetSocialScene::StartCalendarAndMind(){
@@ -10,6 +26,7 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
    UE_LOG(LogTemp,Display,TEXT("StreetSocial rules: %s (tuning %s)"),*S.Rules->DllPath(),*FOKStreetRules::TuningDir());}
   else{S.Rules.Reset();OKStreetRulesFatal(Error);return;}}
  LoadCatalog();
+ OKStreetRepairSavedJobs(S); // jobs taken out of the catalogue since the save was written
  // A saved game continues where he was (the start place below, a development switch, still wins).
  // A save from the other map: the spot means nothing here, he starts at the dorm, and who was with him goes on from her day.
  // (The inspection room, z 20000, is not the other map: that save starts at the spawn below.)
