@@ -796,8 +796,13 @@ pub fn plan_all(c: &Catalog, r: &Value) -> Result<Value, String> {
         }
     }
     // Last, whatever moved a block (her own minutes, leaving early, the rain): it stays within the place's hours.
-    for (_, plan) in plans.iter_mut() {
+    for (actor, plan) in plans.iter_mut() {
         within_hours(plan, c, weekday);
+        let fav: Vec<String> = heroines.iter().find(|h| h.actor == *actor).and_then(|h| h.profile.get("favorite_places")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+        let birth = heroines.iter().any(|h| h.actor == *actor && h.pregnancy["days_since_birth"] == 0);
+        if !birth {
+            out_of_the_dorm(plan, c, day, weekday, &fav);
+        }
     }
     for (actor, plan) in &plans {
         fx.log(format!("Street plan staggered day {day} actor {actor}: {}", summary(plan)));
@@ -825,6 +830,81 @@ fn within_hours(plan: &mut Vec<Block>, c: &Catalog, weekday: i32) {
         b.end = b.end.min(to);
         b.end - b.start >= 10
     });
+}
+
+/// Awake, she is not out of his reach for longer than this on end: upstairs in the girls' dorm he cannot go (her meals
+/// are in the lounge, where he can sit with her). Rest, rain and spare hours at home added up: 早濑优香 07:00-12:12 on
+/// day 51, 爱丽丝 five hours on two days (c-conquest, 2026-11-18).
+pub const OUT_OF_REACH_MAX: i32 = 180;
+
+fn out_of_reach(b: &Block) -> bool {
+    b.place == "girls_dorm" && b.kind != "sleep" && b.kind != "meal"
+}
+
+/// The longest awake stretch out of his reach in a day (OUT_OF_REACH_MAX), in minutes.
+pub fn longest_out_of_reach(plan: &[Block]) -> i32 {
+    let (mut best, mut run, mut end) = (0, 0, i32::MIN);
+    let mut sorted: Vec<&Block> = plan.iter().collect();
+    sorted.sort_by_key(|b| b.start);
+    for b in sorted {
+        if !out_of_reach(b) {
+            if b.end > b.start {
+                run = 0;
+            }
+            continue;
+        }
+        if b.start > end {
+            run = 0;
+        }
+        run += b.end - b.start.max(end);
+        end = end.max(b.end);
+        best = best.max(run);
+    }
+    best
+}
+
+/// A stretch at home longer than OUT_OF_REACH_MAX goes on somewhere he can find her: a favourite place, else a cafe,
+/// the library, a bookstore or the department store, open the whole time (indoors in the rain), else a walk.
+fn out_of_the_dorm(plan: &mut Vec<Block>, c: &Catalog, day: i32, weekday: i32, fav: &[String]) {
+    plan.sort_by_key(|b| b.start);
+    let (mut run, mut end) = (0, i32::MIN);
+    let mut k = 0;
+    while k < plan.len() {
+        let b = plan[k].clone();
+        if !out_of_reach(&b) {
+            if b.end > b.start {
+                run = 0;
+            }
+            k += 1;
+            continue;
+        }
+        if b.start > end {
+            run = 0;
+        }
+        let len = b.end - b.start;
+        if run + len <= OUT_OF_REACH_MAX {
+            run += len;
+            end = b.end;
+            k += 1;
+            continue;
+        }
+        let cut = b.start + (OUT_OF_REACH_MAX - run).max(0);
+        let open_all = |p: &str| (cut..b.end).step_by(30).chain(std::iter::once(b.end - 1)).all(|m| c.place_open(p, m as f64 / 60.0, weekday));
+        let rain = (cut..b.end).step_by(30).any(|m| raining_at(day, m));
+        const PUBLIC: [&str; 5] = ["cafe", "library", "bookstore", "department", "park"];
+        let place = fav.iter().map(String::as_str).chain(PUBLIC).filter(|p| *p != "girls_dorm" && !p.is_empty()).filter(|p| !(rain && matches!(*p, "park" | "playground" | "shrine"))).find(|p| open_all(p)).unwrap_or("");
+        let out = block(cut, b.end, place, "leisure", "reach", if place.is_empty() { "walk" } else { "" }, 0);
+        if cut > b.start {
+            plan[k].end = cut;
+            plan.insert(k + 1, out);
+            k += 2;
+        } else {
+            plan[k] = out;
+            k += 1;
+        }
+        run = 0;
+        end = i32::MIN;
+    }
 }
 
 fn summary(plan: &[Block]) -> String {
@@ -986,6 +1066,23 @@ pub fn open_alternative(c: &Catalog, places: &PlacesTuning, r: &Value) -> Result
         if d < best {
             best = d;
             alt.place = id.clone();
+        }
+    }
+    // None of its kind open: a public place he can find her at (the nearest open), not home upstairs for the rest of the
+    // block (OUT_OF_REACH_MAX); home only when nothing is open.
+    if best == f32::MAX {
+        const PUBLIC: [&str; 5] = ["cafe", "library", "bookstore", "department", "park"];
+        for id in PUBLIC {
+            let Some(door) = doors.get(id) else { continue };
+            if b.place == id || !c.place_open(id, hours, weekday) {
+                continue;
+            }
+            let d = ((door.0 - from.0).powi(2) + (door.1 - from.1).powi(2)).sqrt();
+            if d < best {
+                best = d;
+                alt.place = id.into();
+                alt.kind = "leisure".into();
+            }
         }
     }
     if best == f32::MAX {
@@ -1429,6 +1526,41 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn awake_she_is_never_out_of_his_reach_three_hours_on_end() {
+        // Tired girls rest at home, rain sends some home, shifts at shops that open late: added up, 早濑优香 was upstairs in
+        // the dorm 07:00-12:12 (c-conquest, 2026-11-18). Ten girls, every day of four months.
+        let c = Tuning::builtin().catalog;
+        let jobs = ["drinkshop", "cafe", "library", "", "conveni"];
+        let ten: Vec<Value> = (1..=10)
+            .map(|k| json!({"actor": k, "id": format!("d{k}"), "name": format!("d{k}"), "relation": {"id": format!("d{k}"), "stage": "friend", "favor": 60, "energy": if k % 2 == 0 { 20.0 } else { 70.0 }},
+                "profile": {"occupation": {"primary": if k % 3 == 0 { "staff" } else { "student" }, "role": "staff", "workplace_place_id": jobs[k as usize % jobs.len()]}}}))
+            .collect();
+        let mut moved = 0;
+        for day in 0..120 {
+            let v = plan_all(&c, &json!({"day": day, "now": 0, "doors": {"cafe": [0, 0]}, "heroines": ten})).unwrap();
+            for (actor, p) in v["plans"].as_object().unwrap() {
+                let plan: Vec<Block> = serde_json::from_value(p.clone()).unwrap();
+                let longest = longest_out_of_reach(&plan);
+                assert!(longest <= OUT_OF_REACH_MAX, "day {day} actor {actor}: {longest} min upstairs: {}", summary(&plan));
+                moved += plan.iter().filter(|b| b.source == "reach").count();
+                for w in plan.windows(2) {
+                    assert!(w[0].end <= w[1].start, "day {day} actor {actor}: overlap {}", summary(&plan));
+                }
+            }
+        }
+        assert!(moved > 0, "the test saw long stretches at home at all");
+    }
+
+    #[test]
+    fn nothing_of_its_kind_open_is_a_public_place_not_her_room() {
+        let t = Tuning::builtin();
+        let c = &t.catalog;
+        let doors = json!({"drinkshop": [0, 0], "park": [500, 0], "girls_dorm": [100, 0]});
+        let a = open_alternative(c, &t.places, &json!({"block": {"start": 600, "end": 900, "place": "drinkshop", "kind": "leisure"}, "doors": doors, "from": [0, 0], "hours": 9.0, "weekday": 2, "home": "girls_dorm"})).unwrap();
+        assert_ne!(a["block"]["place"], "girls_dorm", "{a}");
+    }
+
     #[test]
     fn a_broke_heroine_still_eats_something() {
         let c = crate::tuning::Tuning::builtin().catalog;
