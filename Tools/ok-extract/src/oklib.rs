@@ -1955,6 +1955,9 @@ fn make_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i32) ->
     if outfit < 0 || outfit >= outfits { return Err(format!("{}: outfit {outfit} of {outfits}", card.display())); }
     LAST_ABSENT_ZIPMODS.lock().unwrap().clear();
     LAST_UNNAMED_ZIPMOD_BYTES.store(0, Ordering::Relaxed);
+    // The slots this card's opens ask for and get nothing for, reported with the card (outfit_gaps.rs): one card's
+    // rows must not be read as the next card's.
+    crate::outfit_gaps::clear_empty_slots();
     let work = lib.join("work").join(format!("convert_{}", std::process::id()));
     let (profile, clock) = (std::env::var_os("OK_PROFILE").is_some(), std::time::Instant::now());
     let lap = |what: &str| if profile { eprintln!("OKPROFILE convert {what} at {:.2}s", clock.elapsed().as_secs_f64()); };
@@ -2739,6 +2742,7 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             println!("OKCARD size {}", size_rule.clone().unwrap_or_else(|e| e));
             let absent = LAST_ABSENT_ZIPMODS.lock().unwrap().clone();
             if !absent.is_empty() { println!("OKCARD absent zipmods {}", absent.join(" | ")); }
+            for row in crate::outfit_gaps::empty_slots() { println!("OKCARD missing {row}"); }
             size_rule?;
         }
         "card-outfit" => {
@@ -2850,7 +2854,11 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
                         std::fs::write(&out, &bytes).map_err(|e| e.to_string())?;
                         done += 1;
                         let absent = LAST_ABSENT_ZIPMODS.lock().unwrap().join(" | ");
-                        println!("OKCARDS ok\t{}\t{digest}\tparts={parts}\tpack={pack_len}\t{:.1}s\tabsent={absent}", card.display(), t0.elapsed().as_secs_f64());
+                        // `absent` names zipmod files this machine lacks (other tools read it as file names, okAb);
+                        // `missing` names the slots that made nothing, whatever the reason -- hair and hair
+                        // accessories among them, which `absent` never showed.
+                        let missing = crate::outfit_gaps::empty_slots().join(" | ");
+                        println!("OKCARDS ok\t{}\t{digest}\tparts={parts}\tpack={pack_len}\t{:.1}s\tabsent={absent}\tmissing={missing}", card.display(), t0.elapsed().as_secs_f64());
                         if std::env::var_os("OK_PROFILE").is_some() { eprintln!("OKPROFILE gpu {:.2}s in {} calls", crate::clothes_gpu::GPU_NANOS.load(Ordering::Relaxed) as f64 / 1e9, crate::clothes_gpu::GPU_CALLS.load(Ordering::Relaxed)); }
                     }
                     Err(e) => { failed += 1; println!("OKCARDS error\t{}\t{}\t{:.1}s", card.display(), e.replace(['\t', '\n'], " "), t0.elapsed().as_secs_f64()); }
@@ -3247,6 +3255,24 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
                     println!("OKSEALSTEP {summary}");
                 }
                 Err(e) => { println!("OKSEALSTEP error {step}: {e}"); return Err(e); }
+            }
+        }
+        "answers" => {
+            // answers <OK card>...: the questions of the open the card answers (okLt, tree_answers.rs), one a line.
+            // Which answer a card lacks is what its strict open names; this says which it has, so two cards made from
+            // the same original can be compared when one of them opens and the other does not.
+            for card in args[1..].iter().map(PathBuf::from) {
+                let bytes = std::fs::read(&card).map_err(|e| format!("{}: {e}", card.display()))?;
+                match crate::tree_answers::parse(&bytes) {
+                    None => println!("OKANSWERS none\t{}\tno okLt chunk (not an OK card, or an older version)", card.display()),
+                    Some(table) => {
+                        let mut rows: Vec<(String, String, usize)> = table.iter()
+                            .map(|((kind, key), value)| (kind.clone(), String::from_utf8_lossy(key).replace('\n', ","), value.len())).collect();
+                        rows.sort();
+                        for (kind, key, bytes) in &rows { println!("OKANSWER\t{}\t{kind}\t{key}\t{bytes}", card.display()); }
+                        println!("OKANSWERS ok\t{}\t{} answer(s)", card.display(), rows.len());
+                    }
+                }
             }
         }
         "strict-check" => {

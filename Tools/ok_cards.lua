@@ -8,6 +8,10 @@
 --     Every card in a new process with an empty temporary folder and no disk cache: every outfit must open strictly
 --     (okLc/okLt and shared resources only). A gap is a conversion bug. Do not run conversions meanwhile. Also lists the
 --     outfits that name items nothing provides (outfit_gaps.rs: severe or minor); those do not fail it.
+--   Tools\lua\lua.exe Tools\ok_cards.lua reseal <card dir|list> [--jobs N] [--report FILE] [--dry-run 1]
+--     Strict-opens every card and re-seals in place the ones that do not open (okLt recorded again, library data
+--     copied in; okId, voice and preview kept), then opens them again. The repair for cards older than the code:
+--     an open asks questions the binary that made the card never asked. --dry-run only lists them.
 --   Tools\lua\lua.exe Tools\ok_cards.lua cold <card dir|list> [--report FILE]
 --     Outfit 0 opened once per card in a new process (empty temporary folder, no cache), one card at a time: the cold
 --     read. Take both machine-wide slots first (C:\portable\OpenKoikatsu\Saved\UnrealSlots\slot1 and slot2, owner.txt
@@ -135,6 +139,44 @@ elseif cmd == "verify" and pos[1] then
   report(opts.report, "result\tcard\tgaps", rows)
   print(("verify: %d cards, %d failed, %d outfits lack items (%d severe)"):format(#cards, failed, lacking, severe))
   os.exit(failed == 0 and 0 or 1)
+elseif cmd == "reseal" and pos[1] then
+  -- The repair for a card older than the code: the questions an open asks are not fixed for all time (a new
+  -- MaterialEditor shader family, a part a later version reads), and a card only answers (okLt) what the binary that
+  -- made it asked. A question it never recorded is a gap and the card does not open -- demo_C050, made 2026-10-29,
+  -- lost `me-shader xukmi/eyewplustess` and failed in the 2026-11-18 package acceptance.
+  -- Sealing records the answers again and copies in whatever the library lacks; it needs no game, no zipmods and no
+  -- original card, and keeps the rest of the PNG (okId, the voice okVo, the preview). Only cards that fail a strict
+  -- open are written: a card that opens is left exactly as it is.
+  local cards = cards_of(pos[1])
+  local jobs = tonumber(opts.jobs) or 4
+  local function strict(card) return { opts.exe, "X:/NoGame", "--oklib", "strict-check", lib, card } end
+  local broken, rows = {}, {}
+  each(cards, jobs, strict, function(card, text)
+    if not (text:match("OKSTRICT ok") ) then
+      broken[#broken + 1] = card
+      rows[#rows + 1] = "stale\t" .. path.name(card) .. "\t" .. ((text:match("OKSTRICT [^\n]*") or "no result"):gsub("\t", " "):sub(1, 2000))
+      print(rows[#rows]:sub(1, 300)); io.stdout:flush()
+    end
+  end)
+  print(("reseal: %d of %d card(s) do not open"):format(#broken, #cards))
+  if opts["dry-run"] then report(opts.report, "result\tcard\tdetail", rows); os.exit(0) end
+  local sealed, still = 0, 0
+  -- One card per process (sealing opens every outfit twice); sequential, because each seal takes the whole machine.
+  each(broken, 1, function(card) return { opts.exe, "X:/NoGame", "--oklib", "seal", lib, card } end, function(card, text)
+    local line = text:match("OKSEAL [^\n]*") or "no result"
+    rows[#rows + 1] = "seal\t" .. path.name(card) .. "\t" .. line:gsub("\t", " "):sub(1, 2000)
+    print(rows[#rows]:sub(1, 300)); io.stdout:flush()
+  end)
+  each(broken, jobs, strict, function(card, text)
+    local passed = text:match("OKSTRICT ok") ~= nil
+    if passed then sealed = sealed + 1 else still = still + 1 end
+    rows[#rows + 1] = (passed and "fixed\t" or "FAIL\t") .. path.name(card) .. "\t" .. ((text:match("OKSTRICT [^\n]*") or "no result"):gsub("\t", " "):sub(1, 2000))
+    print(rows[#rows]:sub(1, 300)); io.stdout:flush()
+  end)
+  table.sort(rows)
+  report(opts.report, "result\tcard\tdetail", rows)
+  print(("reseal: %d card(s) sealed and opening, %d still failing"):format(sealed, still))
+  os.exit(still == 0 and 0 or 1)
 elseif cmd == "cold" and pos[1] then
   local cards, rows, times = cards_of(pos[1]), {}, {}
   each(cards, 1, function(card) return { bench, "--sequence", lib, card .. "@0" } end, function(card, text)

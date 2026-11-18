@@ -81,6 +81,23 @@ pub(crate) fn emit<'a>(game:&'a Path,card:&'a CardInfo,outfit:i32,source:&Source
     }else{crate::meshes_for_accessory_entry(game,source.zip.as_deref(),&source.entry,card,outfit,&source.property)});
     // A slot whose list entry is missing (an OK card's own accessory) still takes the card's DynamicBoneEditor rows.
     if source.missing_entry {crate::apply_dynamic_bone_editor(&mut meshes,card,outfit,&source.property);}
+    // The catalogue answered for this slot and the extraction still got nothing: the archive the entry names is not
+    // there, does not read, or does not hold what it says. Say so -- a slot that quietly makes nothing is how a whole
+    // hairstyle went missing with no line anywhere (outfit_gaps.rs `report_empty_slot`). Empty slots (category 120,
+    // id 0, `p_dummy`) never reach here: they are dropped before `emit`.
+    if std::env::var_os("OK_DIAG").is_some() {
+        eprintln!("ok-extract: acc emit {} cat={} id={} guid={:?} zip={:?} meshes={}",source.property,source.category,source.id,
+            source.guid,source.zip,meshes.len());
+    }
+    if meshes.is_empty() {
+        let source_name=source.zip.as_deref().map(|p|p.display().to_string())
+            .unwrap_or_else(||if source.entry.main_ab.is_empty() {String::new()} else {format!("abdata/{}",source.entry.main_ab)});
+        let why=if source_name.is_empty() {"the entry names no archive"}
+            else if !source.zip.as_deref().is_some_and(|p|crate::gamefs::metadata(p).is_ok()) {"its archive is not there"}
+            else {"its archive holds no mesh for it"};
+        crate::outfit_gaps::report_empty_slot(outfit,role,source.category,source.id,
+            source.guid.as_deref().unwrap_or(""),&source_name,why);
+    }
     if std::env::var_os("OK_DBONE_DIAG").is_some() {
         eprintln!("ok-extract: DBONE slot {} missing_entry={} ab={} main={} zip={:?} meshes={:?}",source.property,source.missing_entry,source.entry.main_ab,source.entry.main_data,source.zip,
             meshes.iter().map(|m|(m.name.clone(),m.deferred_dbones.as_ref().map(|d|d.len()))).collect::<Vec<_>>());
