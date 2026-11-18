@@ -855,7 +855,7 @@ void UOKReaderScreen::BuildCameraBar()
 	auto View=[this](float Yaw,float Pitch,float Distance,int32 Focus)
 	{
 		UOKCharacterController* G=Controller.Get();AKKPreviewActor* A=G?G->PreviewActor.Get():nullptr;if(!A)return;
-		A->FrameCurrentPose();
+		A->FrameCurrentPoseRealtime();	// no CPU-skinned readback (a package crashed in CacheVertices)
 		const FVector Base=A->OrbitFocus;const float Full=A->OrbitDistance;
 		// Focus: 0 whole body, 1 upper body, 2 face, 3 legs.
 		if(Focus>0&&A->BodySkel)

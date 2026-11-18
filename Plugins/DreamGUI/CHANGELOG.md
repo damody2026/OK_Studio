@@ -568,7 +568,9 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 - **A font atlas that grows no longer leaves its old texture to the collector while it is still drawn.** Growing the
   atlas by a slice makes a new texture; the old one was unrooted at once, and draw data built before the change (a text
   outside the render list, a canvas not rebatched yet) could still sample it after a collection, a GPU page fault. The
-  last four replaced atlases stay referenced (`RetiredTextures`).
+  last four replaced atlases stay rooted (`RetiredTextures`), as the current one is: not a property, because a cooked
+  font sits in the disregard-for-GC pool, and a reference from it to an unrooted texture stops a packaged build at the
+  first collection ("breaking Disregard for GC assumptions").
 - **A texture a canvas draws with is no longer collected under the draw.** A draw call keeps weak pointers, and the
   built-in shader's draws only the render thread's references: an image given another picture let its old texture go to
   the collector while the canvas's sections still sampled it, a GPU page fault (seen as `PageFault` on a released

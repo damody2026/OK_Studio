@@ -12479,6 +12479,16 @@ void AKKPreviewActor::FrameCurrentPose()
 	StudioCam->SetActorLocationAndRotation(Rig.BodyLoc, Rig.BodyRot);
 }
 
+void AKKPreviewActor::FrameCurrentPoseRealtime()
+{
+	if (!StudioCam) { return; }
+	FOkCamRig Rig = GStudioRig;
+	Rig.BodyRot = StudioCam->GetActorRotation();
+	OkFitCaptureRig(this, Rig, nullptr, true);
+	ResetOrbit(Rig.BodyCenter, Rig.BodyLoc);
+	StudioCam->SetActorLocationAndRotation(Rig.BodyLoc, Rig.BodyRot);
+}
+
 void AKKPreviewActor::FramePairedPose(AKKPreviewActor* Partner){
     if(!StudioCam||!IsValid(Partner))return;FOkCamRig Rig=GStudioRig;Rig.BodyRot=StudioCam->GetActorRotation();
     OkFitCaptureRig(this,Rig,Partner,true);ResetOrbit(Rig.BodyCenter,Rig.BodyLoc);StudioCam->SetActorLocationAndRotation(Rig.BodyLoc,Rig.BodyRot);

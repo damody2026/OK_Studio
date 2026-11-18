@@ -5773,3 +5773,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **對照**：`d3d12.VRAMTexturePoolDefrag=0` 跑同一組 8 輪全過；開著每次 1–3 輪就當。
 - **處置**：讀卡器打開 DreamGUI 畫面時把 `d3d12.VRAMTexturePoolDefrag` 設成 0，其他模式不受影響。同時補了兩處 DreamGUI 的貼圖持有：字型圖集擴張後保留舊圖集，畫布對交給繪製的貼圖持有強引用。哪個 draw 還拿著被搬走貼圖的舊綁定，還沒找到。
 - **再試前檢查**：看到 PageFault 先開資源追蹤看 `DefragFree`，不要只靠「GC 後才當」就認定是 UObject 被回收。第一個縮圖修正的驗證只跑了切來源＋捲動，沒有開卡，把它當成已修好是我判斷太早。
+
+## 2026-11-19：打包版讀卡器兩個只在打包才出現的當機（e-fork-2）
+
+- **CPU 蒙皮讀回**：打包版切到「身子｜腿部」頁時在 render thread 的 `FSkeletalMeshObjectCPUSkin::CacheVertices` 存取違規。讀卡器的相機列呼叫 `FrameCurrentPose`，它用 `GetCPUSkinnedVertices` 讀頂點算框，開發版沒事、打包版當。改成 `FrameCurrentPoseRealtime`：只用目前的關節與邊界框構圖，不讀 CPU 蒙皮頂點。
+- **字型圖集保留違反 Disregard for GC**：我在 d252904ff 給 DreamGUI 字型加了 `UPROPERTY RetiredTextures` 保留換掉的圖集。打包版的預設字型是開機載入的 cooked 資產，屬於 disregard-for-GC 池，它引用沒有 root 的物件時 GC 驗證直接 fatal（`breaking Disregard for GC assumptions`），第一次 `obj gc` 就停。改成跟目前圖集一樣用 AddToRoot 保留，超過 4 張或釋放字型時 RemoveFromRoot，不再是 UPROPERTY。
+- **再犯前檢查**：開發版（編輯器）沒有 disregard-for-GC 池，也比較少走 CPU 蒙皮路徑；動到 UObject 引用或渲染讀回的修正，提交前要在打包 stage 跑一次含 `obj gc` 的驗證，不能只跑開發版。
