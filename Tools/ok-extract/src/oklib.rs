@@ -3263,16 +3263,45 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             if failed > 0 { return Err(format!("{failed} card(s) failed")); }
         }
         "outfit-gaps" => {
-            // outfit-gaps <lib> <card>...: what each outfit names and nothing provides (outfit_gaps.rs). Prints
-            //   OKGAPS <severe|minor> card outfit count parts; OKGAPS ok card when no outfit lacks anything.
+            // outfit-gaps <lib> [--zipmods DIR[;DIR]] <card>...: what each outfit names and nothing provides
+            //   (outfit_gaps.rs). Prints OKGAPS <severe|minor> card outfit count parts; OKGAPS ok card when no outfit
+            //   lacks anything. With --zipmods, those folders are searched for the GUIDs the tree cannot answer, and
+            //   each gap says which archive there could complete it (`guid@path`) — the list `fill_gaps` works from.
+            //   Without it nothing extra is scanned, so an ordinary run costs exactly what it did before.
             let lib = lib.ok_or("library directory required")?;
+            let mut args = args.to_vec();
+            if let Some(i) = args.iter().position(|a| a == "--zipmods") {
+                let dirs = args.get(i + 1).ok_or("--zipmods needs a folder (several separated by ';')")?.clone();
+                crate::mods::set_extra_zipmod_dirs(dirs.split(';').filter(|s| !s.is_empty()).map(PathBuf::from).collect());
+                for missing in crate::mods::missing_extra_zipmod_dirs() {
+                    // A path that is gone is not the same as a card that lacks parts: say which it is.
+                    println!("OKGAPS path-missing\t{}", missing.display());
+                }
+                args.drain(i..=i + 1);
+            }
             for card in args[2..].iter().map(PathBuf::from) {
+                // `scan` only looks at a library card; an original card in a library root comes back with an empty
+                // list, which used to print as `ok` — "nothing is missing" and "I did not look" said the same thing
+                // (2026-11-18: kks_Saria printed ok here while the reader's own open reported four missing items).
+                if !crate::oklib::is_library_card(&card) {
+                    println!("OKGAPS not-scanned\t{}\toriginal card: its gaps come from the open, not from this scan", card.display());
+                    continue;
+                }
                 let outfits = crate::outfit_gaps::scan(&lib, &card)?;
                 let lacking: Vec<_> = outfits.iter().filter(|o| !o.gaps.is_empty()).collect();
                 if lacking.is_empty() { println!("OKGAPS ok\t{}", card.display()); }
                 for o in lacking {
                     let parts: Vec<String> = o.gaps.iter().map(|g| format!("{}:{}", g.part, g.id)).collect();
                     println!("OKGAPS {}\t{}\t{}\t{}\t{}", if o.severe { "severe" } else { "minor" }, card.display(), o.outfit, o.gaps.len(), parts.join(" "));
+                    // One line a gap with what the card names and, when a searched folder has it, the archive that
+                    // could complete it. The card records the **GUID**, never the file name, so the path is only ever
+                    // what was found here — a gap with no path is left without one rather than guessed at.
+                    for g in &o.gaps {
+                        let wanted = std::collections::HashSet::from([g.guid.clone()]);
+                        let found = (!g.guid.is_empty()).then(|| crate::mods::find_guids_in_extra(&wanted)).unwrap_or_default();
+                        println!("OKGAP\t{}\t{}\t{}\t{}\t{}\t{}\t{}", card.display(), o.outfit, g.part, g.category, g.id, g.guid,
+                            found.get(&g.guid).map(|p| p.display().to_string()).unwrap_or_default());
+                    }
                 }
             }
         }
