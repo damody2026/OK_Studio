@@ -151,9 +151,20 @@ namespace DreamUIBaseShadersLocal
 		FName ReferencedName[BoundFieldCount];
 	};
 
-	/** 16384 draws. The dump prints the frame of every entry, so the window in FRAMES is measured, never estimated. */
-	static constexpr int32 BoundRingSize = 16384;
-	static FBoundEntry BoundRing[BoundRingSize];
+	/**
+	 * How many draws the ring holds, read at startup (ECVF_ReadOnly) so a window that turns out too short can be
+	 * reopened wider without another build. An entry is a few hundred bytes, so even 131072 draws is tens of MB, and
+	 * at the ~30 draws per frame this scene runs that is roughly 4300 frames -- the longest gap measured between a
+	 * texture's memory being returned and the fault that reads it is 4116 frames.
+	 * The dump prints the frame of every entry, so the window in FRAMES is always measured, never estimated.
+	 */
+	static TAutoConsoleVariable<int32> CVarBoundRingSize(
+		TEXT("DreamGUI.BoundRingSize"), 16384,
+		TEXT("How many draws the bound-texture ring holds (read at startup)."),
+		ECVF_ReadOnly);
+
+	static int32 BoundRingSize = 0;
+	static TArray<FBoundEntry> BoundRing;
 	static int32 BoundRingNext = 0;
 	static uint32 BoundDrawCounter = 0;
 	static FThreadSafeCounter BoundDumpCount;
@@ -179,6 +190,15 @@ namespace DreamUIBaseShadersLocal
 		// might fire is hooked and the reader of the log de-duplicates by the "DreamUI bound ring" header.
 		const int32 Ordinal = BoundDumpCount.Increment();
 		int32 Printed = 0;
+		if (BoundRing.Num() == 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("DreamUI bound ring (%s) #%d: empty, nothing was recorded"), InWhy, Ordinal);
+			return;
+		}
+		// At a large ring size printing every field of every draw would be millions of lines. Two passes instead:
+		// every entry that bound a card-class texture (Texture2D_<n>, which is what the page fault dump names), and
+		// then the last few hundred draws in full, so the moment of the fault is always there whatever it bound.
+		const int32 TailEntries = 512;
 		UE_LOG(LogTemp, Display, TEXT("DreamUI bound ring (%s) #%d: slots=%d next=%d draws=%u")
 			, InWhy, Ordinal, BoundRingSize, BoundRingNext, BoundDrawCounter);
 		for (int32 Step = 0; Step < BoundRingSize; ++Step)
@@ -189,9 +209,14 @@ namespace DreamUIBaseShadersLocal
 			{
 				continue;
 			}
+			const bool bTail = (Step >= BoundRingSize - TailEntries);
 			for (int32 Field = 0; Field < BoundFieldCount; ++Field)
 			{
 				if (Entry.Bound[Field] == nullptr)
+				{
+					continue;
+				}
+				if (!bTail && !Entry.ReferencedName[Field].ToString().StartsWith(TEXT("Texture2D_")))
 				{
 					continue;
 				}
@@ -214,6 +239,37 @@ namespace DreamUIBaseShadersLocal
 	 * context and then forces an exit, so all three are hooked and whichever runs first wins. If a faulting trip comes
 	 * back with no ring dump at all, that is an instrument failure, not a negative result (ERROR_LOG #11).
 	 */
+	/**
+	 * MEASURED, not assumed (2026-11-20): on a GPU page fault NONE of the three delegates ran -- the log ends on the
+	 * last line of the RHI's own crash report and the process is gone, so the ring was never dumped and the trip only
+	 * showed that the trigger was wrong (ERROR_LOG #11: an instrument that cannot report is not a negative result).
+	 * What does happen on that path is the report itself being written to the log, so the ring now rides on that: an
+	 * output device watches the stream and dumps inline, on the same thread, while the process is still alive.
+	 */
+	class FBoundRingCrashWatcher : public FOutputDevice
+	{
+	public:
+		virtual void Serialize(const TCHAR* InText, ELogVerbosity::Type InVerbosity, const FName& InCategory) override
+		{
+			if (bDumping || InText == nullptr)
+			{
+				return;
+			}
+			if (FCString::Strifind(InText, TEXT("PageFault")) == nullptr && FCString::Strifind(InText, TEXT("MMU Fault")) == nullptr)
+			{
+				return;
+			}
+			bDumping = true;
+			DumpBoundRing(TEXT("gpu fault report"));
+			// Once is enough: the report prints many lines and the ring does not change after the fault.
+		}
+		virtual bool CanBeUsedOnAnyThread() const override { return true; }
+		virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
+	private:
+		bool bDumping = false;
+	};
+	static FBoundRingCrashWatcher GBoundRingCrashWatcher;
+
 	static void EnsureBoundDumpHooks()
 	{
 		static bool bHooked = false;
@@ -222,6 +278,10 @@ namespace DreamUIBaseShadersLocal
 			return;
 		}
 		bHooked = true;
+		if (GLog != nullptr)
+		{
+			GLog->AddOutputDevice(&GBoundRingCrashWatcher);
+		}
 		FCoreDelegates::OnHandleSystemError.AddStatic([]() { DumpBoundRing(TEXT("system error")); });
 		FCoreDelegates::OnShutdownAfterError.AddStatic([]() { DumpBoundRing(TEXT("shutdown after error")); });
 		FCoreDelegates::OnEnginePreExit.AddStatic([]() { DumpBoundRing(TEXT("engine pre exit")); });
@@ -237,6 +297,12 @@ void DreamUIRecordBoundTextures(const FDreamUIBasePS::FParameters& InPS, FRHITex
 		return;
 	}
 	EnsureBoundDumpHooks();
+	if (BoundRing.Num() == 0)
+	{
+		BoundRingSize = FMath::Clamp(CVarBoundRingSize.GetValueOnRenderThread(), 256, 1 << 21);
+		BoundRing.SetNum(BoundRingSize);
+		UE_LOG(LogTemp, Display, TEXT("DreamUI bound ring allocated: slots=%d"), BoundRingSize);
+	}
 	FBoundEntry& Entry = BoundRing[BoundRingNext];
 	BoundRingNext = (BoundRingNext + 1) % BoundRingSize;
 	Entry = FBoundEntry();
