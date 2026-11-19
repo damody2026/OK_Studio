@@ -19,6 +19,13 @@ const ALWAYS: &[&str] = &["session", "revision"];
 /// person's decision, not a parameter a script should learn to pass.
 pub const FORCE: &str = "force";
 
+/// Tools whose legal arguments depend on another argument, and which hand the whole object to the game's mailbox:
+/// `reader_call` takes `index` for `select`, `keys` for `get`, `values` for `set`, `query`/`offset`/`limit` for
+/// `cards`, and so on — a flat `inputSchema` cannot say that, so its schema lists only `action`. Checking those
+/// against the schema rejects every real call (it rejected `{"action":"select","index":1}` the same morning this
+/// file was written). The game answers an action it does not know, so the check belongs there, not here.
+const PASSTHROUGH: &[&str] = &["reader_call"];
+
 /// The arguments this tool declares, from its `inputSchema`.
 fn allowed(tools: &Value, name: &str) -> Option<Vec<String>> {
     let tool = tools.as_array()?.iter().find(|t| t["name"] == name)?;
@@ -28,6 +35,7 @@ fn allowed(tools: &Value, name: &str) -> Option<Vec<String>> {
 /// Refuse an argument the tool does not declare, naming what it does take. Silently ignoring a misspelled field is
 /// worse than failing: the caller believes they set something they did not (and `{"help":true}` quietly launched a game).
 pub fn check_args(tools: &Value, name: &str, a: &Value) -> Result<()> {
+    if PASSTHROUGH.contains(&name) { return Ok(()) }
     let Some(known) = allowed(tools, name) else { return Ok(()) };
     let Some(given) = a.as_object() else { return Ok(()) };
     let unknown: Vec<&str> = given.keys()
@@ -86,4 +94,34 @@ pub fn check_launch(name: &str, a: &Value) -> Result<Option<String>> {
     }
     bail!("{name} refused: {reason}. Wait for it to finish (`unreal_slot.lua status` says who and since when), or \
         pass \"force\": true if you really mean to start an engine beside it.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The schema of an action-dispatched tool cannot list the fields its actions take, so it must not be used to
+    /// reject them. This is the regression, not a style preference: with the check on, no `reader_call` but a bare
+    /// `state` worked, and the failure read like the game ignoring the call rather than the call never arriving.
+    #[test]
+    fn a_passthrough_tool_keeps_the_fields_its_action_needs() {
+        let tools = json!([{ "name": "reader_call",
+            "inputSchema": {"properties": {"action": {"type": "string"}, "timeout_s": {"type": "number"}}} }]);
+        for a in [json!({"action": "select", "index": 1}),
+                  json!({"action": "get", "keys": ["face.foregroundEyes"]}),
+                  json!({"action": "set", "values": [{"key": "face.foregroundEyes", "value": 2}]})] {
+            check_args(&tools, "reader_call", &a).expect("a reader_call action's own fields must reach the game");
+        }
+    }
+
+    /// A tool that does declare its arguments still refuses a field it never heard of, and says what it takes.
+    #[test]
+    fn a_declared_tool_still_names_what_it_takes() {
+        let tools = json!([{ "name": "reader_launch",
+            "inputSchema": {"properties": {"card": {"type": "string"}, "lane": {"type": "string"}}} }]);
+        check_args(&tools, "reader_launch", &json!({"card": "x.png"})).unwrap();
+        let err = check_args(&tools, "reader_launch", &json!({"help": true})).unwrap_err().to_string();
+        assert!(err.contains("help") && err.contains("card") && err.contains("--describe"), "{err}");
+    }
 }
