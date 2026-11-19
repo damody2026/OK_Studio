@@ -640,6 +640,23 @@ placed／池化 → 还给池子、heap 留着）。所以要判它，得先知�
 **注意一个会误导人的细节**：`PF_B8G8R8A8` 在 D3D12 上的平台格式本来就是 `B8G8R8A8_TYPELESS`
 （UE 要同时开 UNORM 与 UNORM_SRGB 两种 view），**所以 TYPELESS 不代表 sRGB，也不能用来区分谁建的**。
 
+#### 13b-2. 名字 `Texture2D_1003` 自己就是一个筛子（协调给的线索，我核过程式码）
+
+`Texture2D_NNNN` 是 UE 给**类别恰好是 `UTexture2D`、而且建立时没有给名字**的物件自动取的名。这两件事各排除一批：
+
+| 建立点 | 名字会是什么 | 判定 |
+|---|---|---|
+| `UDreamUIDataTexture`（资料贴图） | `MakeUniqueObjectName(..., "DreamUIDataTexture")` → `DreamUIDataTexture_N`；而且**类别是子类别 `UDreamUIDataTexture`**，自动名也不会是 `Texture2D_N` | **排除**（`DreamUIDataAsTexture.cpp:80-82`） |
+| DreamGUI 动态精灵图集页 | 显式名 `DreamUIDynamicSpriteAtlasData_Texture_%d`（`FDreamUIUtils::CreateTexture` 的 `InDefaultName`，`DreamUIUtils.h:35`） | **排除**（`DreamUIDynamicSpriteAtlasData.cpp:29-33`） |
+| `DreamMaskTransition` / `DreamNiagaraSystem` 的贴图 | 都传了显式名 | 排除（`DreamMaskTransition.cpp:85`、`DreamNiagaraSystem.cpp:77`） |
+| **`KKTextureRuntime` 的卡片贴图** | **没给名字**（`:96`、`:241` 不传；`:240` 明写 `NAME_None`） | **符合** |
+| `OKGalleryWidget.cpp:140`／`:1414`、`OKGalleryAppearance.cpp:70`、`OKReaderScreen.cpp:1219` | 都没给名字 | 符合命名，但 `OKReaderScreen` 那条已被尺寸排除（288×402） |
+
+**所以名字也指向「不是 DreamGUI 建的贴图」**，和 §13b 的尺寸／格式筛选同一个方向。
+
+另外一个**软**讯号（只是量级，不能当证据）：序号 **978／1003** 说明那一次执行里已经建过上千个
+匿名 `UTexture2D`。一张卡的贴图是**几百张**的量级，UI 的那几张不是——这和「卡片贴图」同向。
+
 ### 13c. 这条筛选的后果：**它把「故障 shader 是 DreamGUI 的 `MainPS`」这个前提又推回台面**
 
 如果故障的那张是**卡片自己的贴图**，那它**根本不是 DreamGUI 的贴图**——DreamGUI 不会去取样角色的身体／衣服贴图。
