@@ -145,8 +145,25 @@ git ls-files -s 的索引  → 5a880719bda34dafbd391f435efc0b031c3ca306
 （见 [OK_STUDIO_SCENE_LOAD_PERF_20261117.md](OK_STUDIO_SCENE_LOAD_PERF_20261117.md) 的自查节）。
 
 - **最小实验**：`koikatu_cs0003420_2.okscene`（8 806 物件），`SyncFindIndex` 0／1 交错两轮，共 4 趟。
-- **阳性样本（和被判的指标不同一个数）**：`sync_world_ms`。索引开的时候它该从两万多毫秒掉到一千出头；
-  **没掉就是旋钮没生效，那一趟作废重跑，不要拿去比 `ready_ms`。**
+- **阳性样本（独立于被判的指标）：`find_index_builds`。** 不是 `sync_world_ms`。
+  这是**开跑前读程式码确定的**（7f）：`SyncFindIndex=1` 让 `FFindScope` 开着，
+  `Find(Id)` 走雜湊索引（每个 scope 第一次查就建一次，计数器 `FindIndexBuilds()`）；
+  设 0 则 scope 是空的，`Find` 退回 `FindByPredicate` 线性扫描。**两条路都在同一段里付钱**
+  （`WorldTransform` 就在 `sync_world_ms` 的窗口内），所以**不会有「工作搬到别的阶段」这回事**——
+  能分辨两条路的是**索引建了几次**，而它已经写进 profile：`find_index_builds`
+  （`OKStudioLoadProfile.cpp:223`）。实测一趟预设（cvar=1）是 **4149**。
+
+  **开跑前写下的预测**：设 1 → `find_index_builds` **远大于 0**（千的量级，随 Sync 次数走）；
+  设 0 → **恰好 0**。
+- **判读三分，每一种都明确（不依结果剔除趟）**：
+  | 看到 | 读成 | 接下来 |
+  |---|---|---|
+  | 设 0 时 `find_index_builds` = 0、设 1 时 ≫ 0 | **旋钮到达了** | 才去比 `sync_world_ms`／`ready_ms` |
+  | 设 0 时它仍 > 0 | **旋钮没到达**（第 1 种） | **停下来查接线**，不是重跑；先查 `OK_STUDIO_FIND_INDEX` 这个环境变数（它会盖过 cvar） |
+  | 到达了但 `sync_world_ms` 没差 | **到达了、这段工作本来就便宜** | 结论写「这个 cvar 在这两个场景上不改变载入耗时」（第 10 条措辞） |
+
+  **不得因为「数字没差」就作废一趟重跑**：那是依结果剔除，重跑到有差为止必然有差；
+  而且重跑解决不了歧义——歧义要用独立的到达证据解，不是用更多趟。
 - **判准：用 `sync_world_ms`，不用 `ready_ms` 下结论。** 自测那两趟给了理由：`ready_ms` 的趟间抖动
   **大于 1.7 秒**（38.1 对 39.7，而且注入 2 秒的那趟反而比较小）——**一个 2 秒的真实变化在 `ready_ms`
   上看不出来**。38 秒的载入上，1.7 秒是 4.5%：**任何小于约 5% 的端到端效果，用 `ready_ms` 这把尺看不见**，
@@ -154,6 +171,9 @@ git ls-files -s 的索引  → 5a880719bda34dafbd391f435efc0b031c3ca306
 - **开跑前先量 `sync_world_ms` 自己的地板**（第 11 条）：同设定连跑两趟，差值就是地板；
   0 与 1 的差没有明显大于它就写「**判不出来**」。这两趟并进交错两轮里，不另外花趟数。
   **地板用 `sync_world_ms` 量，不是 `ready_ms`**（后者自己的抖动就超过 1.7 秒）。
+  **runner 冻结**：`scratchpad/q1_trip.lua`，`git hash-object` **88fb0f3f2fe1bd39e9fcb495aa3e2f508577fc9f**
+  （记进段 A 的纪录；它在 scratchpad 所以手动记）。它清掉 `OK_SELFTEST_SYNC_WORLD_SLEEP_MS`
+  与 `OK_STUDIO_FIND_INDEX`，并在设 cvar 后回显一次（只排除打错名字，不当阳性样本）。
   **按 11d 检查这个地板，但要有第三趟**：「每次都是同一个数」在 n=2 看不出来——
   **两次相同是很常见的巧合**（尤其数值已被四舍五入）。所以**每个设定跑三趟**，
   同设定两两之差若都一样才谈系统性偏移；只有两趟就记「**n=2，分不出**」，
