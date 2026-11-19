@@ -2444,3 +2444,31 @@ D3D12 那一層把真正的記憶體釋放推到 EOP（`FD3D12DynamicRHI::Enqueu
 `Submit_Close` 裡「先 delete 還是先送交」的實際順序，
 以及 D3D12 的 EOP 任務是否涵蓋**已錄好但當下還沒送交**的命令清單——
 若不涵蓋，那就是破口。
+
+### 拆刻度的結果：**只有 `Later()` 那一支會動到當機位置**（2026-11-19 14:38–15:05）
+
+同一個二進位、同一個配方（`gc=10` ＋ noclear），每趟的 in-effect log 都確認只抬了一個刻度。
+
+| 刻度設成 240 | 第 1 趟 | 第 2 趟 | 和基線（4／7）比 |
+|---|---:|---:|---|
+| 都是 3（基線） | 7 | 4 | — |
+| `Frames.Texture` | 6 | 7 | **沒有效果**，落在基線裡 |
+| **`Frames.Func`** | **19** | **15**（重跑） | **明顯推遲，兩趟都在基線之外、不重疊** |
+| `Frames.Pooled` | 待跑 | 待跑 | — |
+| `Frames.Buffer` | 不必跑 | — | **全樹沒有任何 `Hold(FBufferRHIRef)` 呼叫點，這個刻度是空的** |
+
+四趟 `Func`／`Texture` 的斷言（`DreamGUI.LogStaleTextures`）**全部 0 次命中**，簽章每趟相同。
+
+**所以隊列裡會動到當機位置的是 `Later()` 這一支**，也就是
+`DreamUIMaterialProxy.cpp:89/95` 的 `delete FDreamUIMaterialProxy`。
+**但兩趟都沒活過 30 張，所以這是「推遲」不是「修掉」**——
+240 帧（1.45 秒）只是把扣扳機的那一下推遠。
+
+**和前面幾節接起來**：`Later()` 跑的是**裸 `delete`**，不經 RHI 的計數與延遲刪除，
+而 proxy 的解構會經由 uniform buffer 的 `ResourceTable` 放掉**材質綁的那些貼圖的計數**
+（上一節，`MainPS` 綁的是同一批）。兩件合起來說明**扳機在 `Later()`**，
+而被放掉的東西是它連帶交出的。缺的仍然是「哪一步繞過 EOP 圍欄」。
+
+**還有一個刻度共用的細節要記住**：`Frames.Texture` 這個刻度同時管
+資料貼圖（`DataTexture.cpp:143`）與 canvas target（`Renderer.cpp:1253`），
+而它兩趟都沒效果，**所以這兩個一起出局**，不必再各測一次。
