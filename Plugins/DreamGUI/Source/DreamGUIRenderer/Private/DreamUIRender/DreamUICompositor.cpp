@@ -12,6 +12,7 @@
 #include "RenderGraphUtils.h"
 #include "RenderTargetPool.h"
 #include "RenderingThread.h"
+#include "Misc/ScopeLock.h"
 #include "RHIStaticStates.h"
 #include "ShaderParameterStruct.h"
 #include "DreamUIRender/DreamUIRenderer.h"
@@ -189,13 +190,18 @@ namespace DreamUIGroupPoolReuse
 
 	static constexpr uint32 ReportEveryFrames = 600;
 
-	/** Render thread (graph setup), which is also the only place a group target is taken. */
+	/**
+	 * Taken during graph setup, which RDG may run as parallel tasks, so the counters below are shared state and need
+	 * the lock: a measurement that corrupts a TMap would be read as a crash of the thing being measured.
+	 */
 	static void Note(FRHITexture* InTexture)
 	{
 		if (InTexture == nullptr || CVarLogPoolReuse.GetValueOnRenderThread() == 0)
 		{
 			return;
 		}
+		static FCriticalSection Lock;
+		FScopeLock Scope(&Lock);
 		static TMap<FRHITexture*, uint32> LastHandedOut;
 		static uint32 Handouts = 0;
 		static uint32 MinGap = MAX_uint32;
