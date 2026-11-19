@@ -367,3 +367,92 @@ reader_stop {"lane":"f-shot-d"}
 
 **不要把改过的卡留在游戏的卡片资料夹**：`textures_apply` 的输出在
 `Saved/`（`AppearanceWorkFolder`）底下，原卡 `KK_110449.png` 不会被改写；拍完确认一下它的 mtime 没变。
+
+## 6. 批次 E：袖型 0／1（`KK_007604` 服装 1，lane `f-shot-e`）
+
+f-yvonne 的题目，画面验证：CLI 已确认 `clothes.parts.0.sleevesType` 的 0 是短袖加扣子、1 是长袖到手腕。
+
+**顺序不能换：先脱手套，再换上衣，最后才拍。** 没脱手套，前臂会被 `o_gloves_magic` 盖住，这组就白拍了——
+拍到一半才发现等于整批重来。
+
+```jsonc
+reader_launch {"card":"<KK_007604 的完整路径>","lane":"f-shot-e","no_build":true}
+ui_exec {"command":"ok.ReaderScreen press 載入3D"}
+reader_call {"action":"state"}
+```
+
+**切到服装 1**：`reader_call {"action":"controls"}` 列出画面上的控件，找服装选择那个（Gallery 里叫
+`OutfitCombo`），再 `reader_call {"action":"control_set","key":"<列出来的 key>","value":1}`。
+**key 以 `controls` 列出来的为准，不要按这里的名字硬下**——这份清单写的是哪一年的名字，不保证是窗口当天的。
+
+**脱手套、换上衣**：`reader_call {"action":"catalog"}` 列出 targets 与 items。
+
+1. 找手套那个 target（`kind 4`），`reader_call {"action":"appearance","target":"<它的 key>","item":""}`
+   （空字串＝脱掉）。
+2. 找上衣那个 target，在 items 里找**原作来源、id 217**（セーラーワンピース）那一笔，
+   `reader_call {"action":"appearance","target":"<上衣 target>","item":"<那一笔的 key>"}`。
+   **按 id 找，不要按名字找**：名字会因语言与 mod 重名。
+3. `reader_call {"action":"state"}` 等 settling 全 false。
+
+**两个袖型各拍正面与侧面**（`sleevesType` 是模型旗标，**staged 不会动模型**，要 `apply` 之后才变）：
+
+```jsonc
+reader_call {"action":"set","edits":[{"key":"clothes.parts.0.sleevesType","value":0}]}
+reader_call {"action":"apply"}
+reader_call {"action":"state"}
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":150,"focus":[0,0,105]}   // 正面，手臂要入镜
+ui_screenshot {}                                                                     // → sleeves-0-front.png
+reader_call {"action":"camera","yaw":-90,"pitch":0,"distance":150,"focus":[0,0,105]} // 侧面
+ui_screenshot {}                                                                     // → sleeves-0-side.png
+reader_call {"action":"get","keys":["clothes.parts.0.sleevesType"]}                   // 数值，贴进文件
+```
+
+`value` 换成 1 再跑一次，档名 `sleeves-1-front.png`／`sleeves-1-side.png`。
+
+**期望**：0 = 短袖、袖口有扣子；1 = 长袖到手腕。**手腕到手肘那一段必须看得见**（手套已脱），
+否则这两张分不出差别，重拍。四张的 `camera` 参数必须完全一样，不然不能并排比。
+
+收尾 `reader_stop {"lane":"f-shot-e"}`。
+
+## 7. 批次 F：领口是旗标还是模型（同一张卡同一套服装，lane `f-shot-f`）
+
+要证明的事：先前截图里领口从蝴蝶结变成长领带，是**显示旗标不同**，不是**模型不同**
+（两次导出的网格清单相同）。所以**每张图都要配当时的数值**——这组图单看没有意义。
+
+```jsonc
+reader_launch {"card":"<KK_007604 的完整路径>","lane":"f-shot-f","no_build":true}
+ui_exec {"command":"ok.ReaderScreen press 載入3D"}
+reader_call {"action":"state"}
+// 切到服装 1（同批次 E 的做法）
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":90,"focus":[0,0,135]}   // 领口特写
+ui_screenshot {}                                                                    // → collar-first-open.png
+reader_call {"action":"parameters","query":"clothes.parts.0.hideOpt"}               // 记下 .0 与 .1
+reader_call {"action":"parameters","query":"accessory"}                             // 找槽 12（o_necktie_yure_long）的显示状态
+```
+
+**重新载入，再拍一次同一个画面**：
+
+```jsonc
+ui_exec {"command":"ok.ReaderScreen press 載入3D"}
+reader_call {"action":"state"}
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":90,"focus":[0,0,135]}   // 和上面一字不差
+ui_screenshot {}                                                                    // → collar-reloaded.png
+reader_call {"action":"parameters","query":"clothes.parts.0.hideOpt"}
+reader_call {"action":"parameters","query":"accessory"}
+```
+
+**判准**（这组特别容易得出错的结论，所以写死）：
+
+- 两张图**看起来不同**，而两次的**网格清单相同**，而 `hideOpt` 或槽 12 的显示状态**不同**
+  → 结论成立：是旗标。
+- 两张图看起来不同，但 `hideOpt` 与槽 12 的显示状态**也相同** → **结论不成立**，
+  差异来自别的东西（材质、动态骨、载入时序都可能）。这时候**不要**把它写成「旗标问题」，
+  记进 `Docs/ERROR_LOG.md` 说「两次不同但已知旗标相同，原因未定」。
+- 两张图**看起来一样** → 这次没重现，照实写「没重现」，不要去调参数直到它重现为止
+  ——那是在制造证据，不是在找证据。
+- 槽 12 的显示状态**用 `parameters` 列出来的那个键的实际名字写进文件**，不要写成
+  「o_necktie_yure_long 开着」——配件槽与模型名是两件事，混着写下一个人会以为是同一件。
+
+收尾 `reader_stop {"lane":"f-shot-f"}`。
+
+**两张图的 `camera` 必须一字不差**，否则「看起来不同」可能只是镜头差一点。
