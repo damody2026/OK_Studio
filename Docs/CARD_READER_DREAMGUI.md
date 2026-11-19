@@ -4003,3 +4003,21 @@ STOP card=none (crowd_C001.png) reader_started=0 (never returned to gallery) ...
 第 1 趟開了 **6 張**卡，這個計數卻是 **1**——`returned to gallery` 一個 session 只印一次，
 **它不是卡數**。我原本把欄位叫 `opened=`，那就是又一次「用旁邊的欄位冒充那件事」。
 已改名為 `reader_started=` / `returned_to_gallery=`，名字只講它實際量到的東西。
+
+### `late shader associations` 的耗時在兩趟之間差 63 倍，這正好是它**在故障之後**的旁證
+
+| 趟 | 秒數 | 故障卡 | `Created late shader associations` |
+|---|---|---|---|
+| 1 | 94.3 | 第 5 張後 | **16 ms** |
+| 2 | 86.9 | 第 5 張後 | **1012 ms** |
+
+兩趟都當、簽名相同，這個欄位卻差 63 倍。先前已從程式碼確認它來自
+**Aftermath 當機傾印的解碼器**（`RHICoreNvidiaAftermath.cpp:848-857`，註解寫著 `// Allow association after a fault`），
+那 ~1008 ms 是 `CreateShaderAssociations` 裡寫死的 1 秒逾時（`D3D12NvidiaExtensions.cpp:62`）。
+**這兩趟的數字和那個解釋一致**：它量的是解碼器等了多久，不是故障前發生了什麼。
+
+所以這一條**不是新發現，是把一個已經靠讀原始碼定性的結論，補上行為上的證據**：
+1012 ms 那趟等滿了逾時，16 ms 那趟沒等到就拿到了。**兩者都在故障之後。**
+
+**明確堵住一個誘人的讀法**：不可以寫成「1008 ms 是前兆」或「它和故障有關」——
+第 1 趟只有 16 ms 照樣當。這個欄位在尺 1 裡**沒有判別力**，往後的機制格不要拿它當指標。
