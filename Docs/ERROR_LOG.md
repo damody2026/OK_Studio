@@ -5745,6 +5745,13 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
 
+## 2026-11-20：照 11-17 的报告去优化 Sync 的父链走访，那个成本早就被 11-18 的 id 索引拿掉了（f-sceneload）
+
+- **变更**：`UOKSceneDocument::FPlaceScope`——一次由上而下算完全部世界变换与可见性，`WorldTransform`／`IsShown` 从表里回答（`ok.Studio.SyncPlaceIndex`）。依据是 11-17 的报告：那两个函式在 8806 物件场景占 23 526 ms。
+- **症狀与证据**：交错四趟（`Saved/Reports/scene-load/heavy-place-*`）量到 `sync_world_ms` **关 1 182 ms、开 1 927 ms**（目标那段变慢 63%），`ready_ms` 66 049 → 65 390（−1.0%，噪声内）。
+- **原因状态（已证实）**：（1）**前提过期**：那 23.5 s 是 `ok.Studio.SyncFindIndex`（11-18）之前的数字，当时每走一层父链都要线性扫 `Objects`；索引把它拿掉之後，链走本身只剩 1.1–1.2 s，上限是 63 s 的 1.9%，连 3% 门槛都到不了。（2）**在「边建边同步」下净亏**：场景分 1 170 个 Sync 建完，每个 Sync 的回圈只碰目前已存在的物件，而 pass 每次都走完全部 8 806 个并建表。
+- **处置**：**整个撤回**（`FPlaceScope`、cvar、`place_builds`、`OpenKoikatsu.Studio.ScenePlaceIndex` 全移除），不留 default-off 的死码。实作本身没问题——逐物件对照测试全 PASS、两条路径数字一致——错在题目。量测过程与数字写进 [OK_STUDIO_SYNC_PLACEMENT_PASS_20261120.md](OK_STUDIO_SYNC_PLACEMENT_PASS_20261120.md)，另外那一趟**按预先登记的闸门不算有效 A/B**（关的那侧 `place_builds=1` 而非 0——cvar 在第一个 Sync 之後才生效；`find_index_builds` 两侧不同——pass 不走 `Find()`），闸门的措辞要在**下次跑之前**改，不是看到数字再放宽。
+- **再试前检查**：**拿旧报告的数字当题目之前，先用现在的建置重量一次那个字段**。中间别人（或自己）改掉的东西会让一个 23 s 的热点变成 1 s，而文件不会自己更新。
 ## 2026-11-20：量测行程空转十几分钟没人发现，清场又按行程名杀掉了别人的等待器（f-sceneload）
 
 - **变更**：要量 `ok.Studio.SyncPlaceIndex`（Sync 的摆位改成一次由上而下）在 8806 物件场景上的 A/B，用 `Saved/Reports/scene-load-f/ab-place.lua` 跑交错四趟。
