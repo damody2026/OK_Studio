@@ -138,7 +138,7 @@ namespace DreamActionBarWorldTestLocal
 		OutScene.Bar->Rebuild();
 
 		const TArray<FDreamUIActionBinding>& Prompts = OutScene.Bar->GetPrompts();
-		const TArray<TObjectPtr<UDreamWidget>>& Entries = OutScene.Bar->GetEntryWidgets();
+		const TArray<UDreamWidget*> Entries = OutScene.Bar->GetEntryWidgets();	// by value: a UFUNCTION cannot return TObjectPtr
 		if (!InTest.TestEqual(TEXT("The bar shows a prompt for each action"), Prompts.Num(), OutScene.Actions.Num())
 			|| !InTest.TestEqual(TEXT("...each drawn by an entry"), Entries.Num(), Prompts.Num()))
 		{

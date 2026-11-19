@@ -398,7 +398,8 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
   mesh section and its render proxy name their material weakly and resolve it as they draw, so a visual hidden or
   collected while its section waits in the pool leaves no address behind; the queued material update does the same. The
   virtual keyboard entry and the IME context a text input gives Slate name that input weakly, since Slate outlives the
-  component. `UDreamUIActionBar::GetEntryWidgets` now returns `TArray<TObjectPtr<UDreamWidget>>`, and
+  component. `UDreamUIActionBar::GetEntryWidgets` keeps the entries as `TObjectPtr` and returns them by value as
+  `TArray<UDreamWidget*>` (a UFUNCTION can neither take nor return a `TObjectPtr`, which UHT refuses), and
   `UDreamSpriteBase::OverrideMaterial` and `UDreamTextureBase::OverrideMaterial` are `TObjectPtr` as every other
   property of theirs already was. C++ that took the old array type by reference changes with it; nothing drawn changes.
 

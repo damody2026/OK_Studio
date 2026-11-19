@@ -4068,11 +4068,11 @@ void UDreamCanvas::UpdateDrawCallMaterial()
 		for (const TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe>& Proxy : SourceAndPool.Value.Proxies)
 		{
 			MaterialProxyReferences.Add(Proxy->GetSource());
-			for (const TPair<FName, const UTexture*>& Texture : Proxy->GetParameters_GameThread().Textures)
+			for (const TPair<FName, TWeakObjectPtr<const UTexture>>& Texture : Proxy->GetParameters_GameThread().Textures)
 			{
-				if (Texture.Value != nullptr)
+				if (const UTexture* Bound = Texture.Value.Get())
 				{
-					MaterialProxyReferences.Add(const_cast<UTexture*>(Texture.Value));
+					MaterialProxyReferences.Add(const_cast<UTexture*>(Bound));
 				}
 			}
 		}

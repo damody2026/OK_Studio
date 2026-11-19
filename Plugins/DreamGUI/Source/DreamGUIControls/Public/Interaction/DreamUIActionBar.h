@@ -125,9 +125,12 @@ public:
 	/** -1: the owning player. */
 	UFUNCTION(BlueprintCallable, Category = "DreamGUI-Navigation")
 	void SetUserIndex(int32 Value);
-	/** The entry widgets currently on the bar, in the order they are shown. */
+	/**
+	 * The entry widgets currently on the bar, in the order they are shown. By value and as raw pointers because a
+	 * UFUNCTION cannot take or return a TObjectPtr (UHT refuses it); the member keeps the strong references.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "DreamGUI-Navigation")
-	const TArray<TObjectPtr<UDreamWidget>>& GetEntryWidgets()const{ return EntryWidgets; }
+	TArray<UDreamWidget*> GetEntryWidgets()const{ TArray<UDreamWidget*> Out; Out.Reserve(EntryWidgets.Num()); for(const TObjectPtr<UDreamWidget>& Each : EntryWidgets) Out.Add(Each.Get()); return Out; }
 	/**
 	 * What the last rebuild put on the bar, in order, MaxEntries at most: one prompt per entry -- the same list
 	 * with no entry prefab to draw it, which is how a test or a bar drawn some other way reads it.

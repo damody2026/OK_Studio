@@ -30,24 +30,32 @@ namespace DreamUIBaseShadersLocal
 
 	static FThreadSafeCounter StaleHits;
 
-	/** Flags only: never a virtual call or a resource read on a pointer that may already be gone. */
-	static void CheckNotStale(const UTexture* InTexture, const TCHAR* InSlot)
+	/**
+	 * Flags only: never a virtual call or a resource read on a pointer that may already be gone. The slot now carries
+	 * a weak pointer, so "stale" has a third shape besides garbage and unreachable: a weak that WAS set and no longer
+	 * resolves, which is the collected texture this diagnostic was written to catch (`collected=1`, and no name to
+	 * print, because the object is gone).
+	 */
+	static void CheckNotStale(const TWeakObjectPtr<const UTexture>& InWeak, const TCHAR* InSlot)
 	{
-		if (InTexture == nullptr || CVarLogStaleTextures.GetValueOnRenderThread() == 0)
+		if (CVarLogStaleTextures.GetValueOnRenderThread() == 0 || InWeak.IsExplicitlyNull())
 		{
 			return;
 		}
-		const bool bGarbage = !IsValid(InTexture);
-		const bool bUnreachable = InTexture->IsUnreachable();
-		if (!bGarbage && !bUnreachable)
+		const UTexture* InTexture = InWeak.Get();
+		const bool bCollected = InTexture == nullptr;
+		const bool bGarbage = !bCollected && !IsValid(InTexture);
+		const bool bUnreachable = !bCollected && InTexture->IsUnreachable();
+		if (!bCollected && !bGarbage && !bUnreachable)
 		{
 			return;
 		}
 		const int32 Hits = StaleHits.Increment();
 		if (Hits <= 20 || (Hits % 100) == 0)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("DreamGUI stale texture at resolve: slot=%s name=%s garbage=%d unreachable=%d frame=%u hits=%d")
-				, InSlot, *InTexture->GetFName().ToString(), bGarbage ? 1 : 0, bUnreachable ? 1 : 0, GFrameNumberRenderThread, Hits);
+			UE_LOG(LogTemp, Warning, TEXT("DreamGUI stale texture at resolve: slot=%s name=%s collected=%d garbage=%d unreachable=%d frame=%u hits=%d")
+				, InSlot, bCollected ? TEXT("<collected>") : *InTexture->GetFName().ToString()
+				, bCollected ? 1 : 0, bGarbage ? 1 : 0, bUnreachable ? 1 : 0, GFrameNumberRenderThread, Hits);
 		}
 	}
 
@@ -74,12 +82,15 @@ namespace DreamUIBaseShadersLocal
 	static constexpr int32 NumLoggedSlots = 9;
 
 	/** Render thread only (ResolveTextures_RenderThread checks IsInRenderingThread), so plain statics are fine. */
-	static void LogSlot(int32 InIndex, const TCHAR* InSlot, const UTexture* InTexture, const FTextureReferenceRHIRef& InReference)
+	static void LogSlot(int32 InIndex, const TCHAR* InSlot, const TWeakObjectPtr<const UTexture>& InWeak, const FTextureReferenceRHIRef& InReference)
 	{
 		if (CVarLogTextureSlots.GetValueOnRenderThread() == 0)
 		{
 			return;
 		}
+		// Resolved here, on the render thread, like everything else this function reads; a collected texture prints
+		// as <collected> instead of a name, which is the case the page-fault hunt cares about.
+		const UTexture* InTexture = InWeak.Get();
 		static const void* LastReference[NumLoggedSlots] = {};
 		static const void* LastReferenced[NumLoggedSlots] = {};
 		static uint32 LastHeartbeatFrame = 0;
@@ -101,7 +112,7 @@ namespace DreamUIBaseShadersLocal
 		UE_LOG(LogTemp, Display, TEXT("DreamUI slot %s: %s src=%s ref=%p referenced=%p referenced_name=%s frame=%u")
 			, InSlot
 			, bChanged ? TEXT("changed") : TEXT("heartbeat")
-			, InTexture != nullptr ? *InTexture->GetFName().ToString() : TEXT("null")
+			, InTexture != nullptr ? *InTexture->GetFName().ToString() : (InWeak.IsExplicitlyNull() ? TEXT("null") : TEXT("<collected>"))
 			, Reference, Referenced
 			, Referenced != nullptr ? *Referenced->GetName().ToString() : TEXT("none")
 			, GFrameNumberRenderThread);
