@@ -249,3 +249,121 @@ reader_stop {"lane":"f-shot-c"}
    - 没拍到的继续写「预期」，不要整段一起改掉。
 4. 有任何一项和「期望看到」不符，先记进 `Docs/ERROR_LOG.md` 再改程式——**图是拿来找 bug 的，
    不是拿来确认我们没错的**；拍到不符而只改文件描述，等于把证据丢掉。
+
+## 5. 批次 D：指派一张检查贴图，加偏移／缩放（`KK_110449`，lane `f-shot-d`）
+
+素材：`F:\OpenKoikatsu\Tools\testdata\uv_check_512.png`（进版控，自制内容），
+产生脚本 `F:\OpenKoikatsu\Tools\make_uv_check_texture.lua`：
+
+```powershell
+F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\make_uv_check_texture.lua
+```
+
+**为什么是这张图**：随便指派一张图拍出来只是一张花脸，证明不了写回对不对。这张能同时验四件事——
+8×8 **棋盘格**看缩放与平铺、**四角四色**（左上红、右上绿、左下蓝、右下黄）看旋转与镜像、
+中央一个**「F」**（两个轴都不对称）看水平翻／垂直翻／转 90°、**外框一圈青**看取样有没有超出 0..1。
+
+卡：`D:\XKoikatuSunshine\UserData\chara\female\KK_110449.png`。指派到**这一列**（CLI 量过的第 0 套 9 列之一）：
+
+| 种类 | 槽 | 材质 | 属性 | 原本 |
+|---|---:|---|---|---|
+| `clothing` | 0 | `cf_m_top_02` | `MainTex` | 2048×2048，约 38 KB |
+
+挑它是因为它是这张卡上**最大的一片看得见的布**；`DetailMask`／`LineMask` 那两列不要用——它们不是颜色图，
+贴棋盘格上去只会变成一片怪阴影，看不出 UV。**这张卡开不开得起来要当场看**（它要游戏的 mods）：
+开不了就退而求其次，在页面上挑**任何一列 `MainTex` 且尺寸 ≥ 1024²** 的（例如 `acs_m_neck_knight`／`MainTex`），
+并把实际用的那一列写进文件——**不要硬套上表**。
+
+```jsonc
+reader_launch {"card":"D:/XKoikatuSunshine/UserData/chara/female/KK_110449.png","lane":"f-shot-d","no_build":true}
+ui_exec {"command":"ok.ReaderScreen press 載入3D"}
+reader_call {"action":"state"}
+ui_exec {"command":"ok.ReaderScreen category 材質貼圖"}
+ui_screenshot {}                       // → assign-page-before.png（先确认页面 9 行、顺序与上表对得上）
+reader_call {"action":"textures"}      // 数值版的 before，贴进文件
+```
+
+拍身上那片布的特写（上衣在胸腹，相机对准躯干）：
+
+```jsonc
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":120,"focus":[0,0,110]}
+ui_screenshot {}                       // → assign-cloth-before.png
+```
+
+### D1 指派
+
+界面走「選 PNG…」会开系统对话框，**MCP 点不到那个对话框**，所以窗口里用两种做法之一：
+
+- **拍界面**：`ui_exec {"command":"ok.ReaderScreen press 選 PNG…"}` 之后人手在对话框选档，再
+  `ui_exec {"command":"ok.ReaderScreen press 指派 #1"}`（`#N` 是第几个同名按钮，从 0；先用
+  `assign-page-before.png` 确认 `cf_m_top_02／MainTex` 是第几行）。
+- **不靠对话框**（可完全自动，建议拍图用这条）：直接下
+
+```jsonc
+reader_call {"action":"textures_apply","changes":[{"object":1,"coordinate":0,"slot":0,
+  "material":"cf_m_top_02","property":"MainTex","png":"F:/OpenKoikatsu/Tools/testdata/uv_check_512.png"}]}
+reader_call {"action":"state"}         // 它会重开卡，等 settling 全 false
+```
+
+```jsonc
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":120,"focus":[0,0,110]}
+ui_screenshot {}                       // → assign-cloth-after.png
+ui_exec {"command":"ok.ReaderScreen category 材質貼圖"}
+ui_screenshot {}                       // → assign-page-after.png
+reader_call {"action":"textures"}      // 数值版的 after，贴进文件
+```
+
+**期望**：
+
+- 画面上那片布变成棋盘格＋「F」。**F 正着、没镜像**；四角的红绿蓝黄按左上／右上／左下／右下排。
+  （布是曲面又有 UV 切割，所以图会被拉扯、也可能看到好几块——**这正常**。要判的是「有没有贴上去」与
+  「有没有整片翻过来」，不是「格子方不方」。）
+- 数值上：那一列的 `bytes` = **这个档案的大小**、`size` = **[512, 512]**、`tex_id` 是一个整数。
+  **这是证据，图是说明**（和 A7／A8 同一条判准）。
+- 其余 8 列**完全不动**（`tex_id` 与 `bytes` 都和 before 一样）。动了就是写回碰到了不该碰的列。
+
+### D2 偏移 `Offset [0.5, 0]`
+
+**界面目前没有偏移／缩放的控件**（`材質貼圖` 页只做了指派与清除），所以这两张只能走 `reader_call`。
+这是已知的缺口，不是这次拍照要解决的事；要补就是另外一批工作。
+
+```jsonc
+reader_call {"action":"textures"}      // 先重读：上一次 apply 之后清单已经重建
+reader_call {"action":"textures_apply","changes":[{"object":1,"coordinate":0,"slot":0,
+  "material":"cf_m_top_02","property":"MainTex","offset":[0.5,0]}]}
+reader_call {"action":"state"}
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":120,"focus":[0,0,110]}
+ui_screenshot {}                       // → assign-cloth-offset.png
+reader_call {"action":"textures"}      // offset 应该读回 [0.5, 0]
+```
+
+### D3 缩放 `Scale [2, 2]`
+
+```jsonc
+reader_call {"action":"textures_apply","changes":[{"object":1,"coordinate":0,"slot":0,
+  "material":"cf_m_top_02","property":"MainTex","scale":[2,2]}]}
+reader_call {"action":"state"}
+reader_call {"action":"camera","yaw":0,"pitch":0,"distance":120,"focus":[0,0,110]}
+ui_screenshot {}                       // → assign-cloth-scale.png
+reader_call {"action":"textures"}      // scale 应该读回 [2, 2]
+```
+
+**期望与判准**（这一段要写得保守，因为画面上会怎么动**取决于那个材质的取样 wrap 模式**，不是我们定的）：
+
+- **数值是判准**：读回的 `offset` 就是 `[0.5, 0]`、`scale` 就是 `[2, 2]`，一分不差。
+  形状照原作的 `Vector2Formatter`（两个 float32 的定长阵列）写，所以读回来不该变成 `null`，
+  也不该是 `{x, y}`。读回 `null` = 写进去的形状游戏读不懂，这是**真 bug**，先记 `ERROR_LOG`。
+- **画面只当说明**：偏移之后图样应该沿着 U 轴挪半张；缩放之后格子变小、一张图在同一片布上重复更多次
+  （wrap 是 clamp 的话会变成边缘拉长——**也算合理**，不要因为「不是我想的那样」就判定失败）。
+  `assign-cloth-after.png`／`-offset.png`／`-scale.png` 三张并排放。
+- 这是**偏移／缩放那条写回路径第一次有画面证据**，在此之前只有 CLI 的来回测试
+  （`unity_structs_are_float32_arrays_on_a_real_card` 只钉住了形状，没有画面）。
+
+收尾：
+
+```jsonc
+reader_stop {"lane":"f-shot-d"}
+```
+
+**不要把改过的卡留在游戏的卡片资料夹**：`textures_apply` 的输出在
+`Saved/`（`AppearanceWorkFolder`）底下，原卡 `KK_110449.png` 不会被改写；拍完确认一下它的 mtime 没变。
