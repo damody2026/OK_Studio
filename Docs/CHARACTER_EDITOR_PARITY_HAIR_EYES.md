@@ -570,8 +570,9 @@ KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等
 > **所以这批的落差只在「写」与「界面」**：属性清单没把贴图这一类列出来、没有设定／清除的路径。
 > 教训同一条：**说某件事「没做」之前先 grep 全库**，我差点把一个做好的读取路径重做一遍。
 
-- 写回路径：`plugins.<身分>.a1.MaterialTexturePropertyList`（packed），**和颜色那条同一个 `packed` 机制**，
-  所以 `plugins.rs` 的 `replace()` 走 `packed` 分支就能写，不需要新的编码路径。
+- 写回路径（**形状以 12.6 为准**：`plugins.MaterialEditor.a1.@MaterialTexturePropertyList.packed.a<i>.…`），
+  **和颜色那条同一个 `packed` 机制**，所以 `plugins.rs` 的 `replace()` 走 `packed` 分支就能写，不需要新的编码路径。
+  （后来贴图整列另开了 `textures`／`textures_apply` 自己管，见 12.7；这条路径仍是颜色那批与「能不能写」的依据。）
 - **原本列的两个未知已经由我们自己的程式回答**：每笔 texture property **指向 `TextureDictionary` 的整数 ID**
   （`card.rs:890` 解字典、`me_tex` 存解好的结果），字典就在同一个资料 map 的 `TextureDictionary` 键。
 - **所以写回要做三件**：把 PNG bytes 加进 `TextureDictionary`（相同内容要重用既有 ID，别每次新增一笔——
@@ -664,3 +665,32 @@ plugins.MaterialEditor.a1.@MaterialColorPropertyList.packed.a<i>.@Value…
 **还没验的**：偏移／缩放的写（`Vector2?` 的两种 msgpack 形状），因为量到的三张卡**一笔偏移／缩放都没有**，
 所以程式的作法是「照这张卡自己既有的那一笔的形状写，整张卡没有就拒绝、不猜」。要验就得先找到一张有的卡。
 界面也还没接（这一节只到 CLI）；界面与截图照第 8.4 节的验收边界，没拍到前文件只写预期。
+
+### 12.8 外挂键的完整走法（f-yvonne 给的，消费端照抄不要猜）
+
+`plugins.<外挂 id>.<内部路径>`。**外挂 id** 是 `appearance/properties/plugins.rs` `PLUGIN_SECTIONS` 的 `id` 栏：
+`MaterialEditor`、`HairAccessoryCustomizer`、`Pushup`、`DynamicBoneEditor`、`MoreAccessories`、`AccessoryStates`、
+`AccessoryStateSync`、`KoiSkinOverlayX`、`KoiClothesOverlayX`、`HairShadowColorControl`、`EyeControl`、
+`EyeShaking`、`UncensorSelector`。写回时**每张卡按 id 重新找区段**；卡上没有那个外挂是**错误**
+（「這張卡沒有這個模組：<id>」），不是空值。
+
+| 一步 | 意思 | 位置式吗 |
+|---|---|---|
+| `@<名字>` | 字串键的 map，名字原样（不含「.」） | 不是 |
+| `#<数字>` | 整数键的 map，**按键值**找（Pushup、overlay 按服装编号） | 不是 |
+| `a<索引>` | 阵列的第几个 —— 这张卡自己的条目 | 是，但条目是每张卡各自读的 |
+| `packed` | 二进位里再解一层 msgpack | 不是 |
+| `xml` | MoreAccessories 的 XML，后面接 `<槽>.<属性>` | 不是 |
+| `m<索引>` | **只有**键既不是字串、也不是整数，或字串含「.」时才用 | 是（alice、megumin 两张实卡上都没出现） |
+
+区段值固定是 `[版本, data]`，所以开头那个 `a1` 是**固定形状**的第二格，不是「碰巧第 1 个」。
+
+实例（alice 与 megumin 键形一致，这才是「跨卡可照抄」的意思）：
+
+```
+plugins.Pushup.a1.@Pushup_BraData.packed.#0.@Firmness          (alice)
+plugins.Pushup.a1.@Pushup_BraData.packed.#4.@Firmness          (megumin)
+plugins.MaterialEditor.a1.@MaterialColorPropertyList.packed.a<i>.@Value.a0
+```
+
+对照第 10 节那两个 `plugins.m…`：那是**反例**，留着只为说明位置式长什么样，不可照抄。
