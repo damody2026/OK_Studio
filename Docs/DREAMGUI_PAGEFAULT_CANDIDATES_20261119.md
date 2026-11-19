@@ -854,7 +854,69 @@ per-frame 机制的约束，也不该拿 `Frames.*` 那种帧数旋钮去对。
 
 **不谈修法**（按指示）。
 
+## 16. MID 这条路：**协调押的那个前提是对的**（引擎侧已核实），但「重新指向」本身不会悬空
+
+本节 OK 侧行号读 `E:\OpenKoikatsu`（崩溃那一版，只读），引擎行号读 `F:/UE5.8`（§11 已证两棵位元组相同）。
+
+### 16a. 引擎侧前提：**材质实例 render thread 那一半，贴图参数存的是裸 `const UTexture*`**
+
+```cpp
+// Engine\Source\Runtime\Engine\Private\Materials\MaterialInstanceSupport.h:412
+THashedMaterialParameterMap<const UTexture*> TextureParameterArray;   // FMaterialInstanceRenderProxy
+// 同档 :454  TArray<THashedMaterialParameterMap<const UTexture*>::TNamedParameter> TextureParameters;
+```
+
+**确认：不是 UObject 参照。** 它的安全完全靠游戏执行绪那一侧
+`UMaterialInstance::TextureParameterValues`（`UPROPERTY`）把贴图留住。
+
+### 16b. 那张贴图确实是用 `SetTextureParameterValue` 设给 MID 的，而且 **MID 是沿用、只重新指向**
+
+| 行 | 写法 |
+|---|---|
+| `KKRuntimePose/.../KKRuntimeSharedMaterial.cpp:419-420` | `auto* M=UMaterialInstanceDynamic::Create(Parent, GetTransientPackage());` 然后 `for(const auto& T:B.Textures) M->SetTextureParameterValue(T.Key, Textures[T.Value]);` |
+| `KKUnityBundle/.../KKPreviewRuntimeMaterials.inl:74` | `OKCreateRuntimePreparedTexture(...)` 的结果同时进 `Role.Textures` 与 `To.Textures` |
+| `KKPreviewActor.cpp:5246`、`:5256`、`:5276` | `if(Target && Target!=Current) M->SetTextureParameterValue(Name, Target);` ——**沿用同一个 MID、只把参数指向新贴图** |
+| `KKPreviewActor.cpp:5190`、`:5244`、`:5274` | `if(!M){ M=UMaterialInstanceDynamic::Create(Parent,this); Mesh->SetMaterial(Slot,M); … }` ——**槽里已有就沿用，不重建** |
+
+### 16c. 但「重新指向」这件事本身**不会**留下旧指标
+
+`SetTextureParameterValue` 会**同时**改游戏执行绪的值并推一笔 render thread 更新，而
+`THashedMaterialParameterMap` 是**按名字覆写**（`MaterialInstanceSupport.h:120-126`、`:273`）：
+同名参数的旧裸指标被新的盖掉。**所以被重新指向的那些参数是安全的。**
+
+**没被重新指向的那些**（`Target` 为 null、或新卡没有这个参数）两边都还留著旧贴图——
+但游戏执行绪那一侧的 `TextureParameterValues` 是 `UPROPERTY`，**那就是强参照**，
+所以这种情形产生的是**泄漏**，不是悬空（和 §14c 的 brush 同一个形状）。
+
+### 16d. 剩下的那个形状：**MID 自己死掉，而 scene proxy 还用裸指标指著它**
+
+`KKRuntimeSharedMaterial.cpp:419` 那个 MID 的 **Outer 是 `GetTransientPackage()`**，不是 actor 或元件——
+**它没有任何拥有者关系**，活著完全靠接手的人存住（元件的 `OverrideMaterials`、`CookedRoleMaterials`、
+或 `Part.SurfaceMat`）。而消费端那条路上有一个**每帧读、不持有**的指标：
+
+```cpp
+// E:\OpenKoikatsu\Plugins\KKUnityBundle\...\KKStreamMeshProxy.cpp:69
+UMaterialInterface* Material;            // FKKStreamProxySection 的成员，render thread 长期存活
+// 每帧：Section->Material->GetRenderProxy()      :463 / :580 / :595
+```
+
+接上 16a：**若某个 MID 失去最后一个强参照被 GC 收走，而 scene proxy 这个裸指标还指著它**，
+每帧 `GetRenderProxy()` 读到的就是**已释放的 `FMaterialInstanceRenderProxy`**，
+它的 `TextureParameterArray` 里是**裸 `const UTexture*`**，指向同一次 GC 一起死掉的卡片贴图——
+**一个每帧都在用、不持任何参照、指向已归还位址的绑定**，正是要找的形状，
+也和「释放后 105 帧仍在取样」「每趟贴图不同、尺寸不同」相容。
+
+**我没有验证、而且它决定这条成不成立的那一步**：标准路径 `UMeshComponent::SetMaterial` 会
+`MarkRenderStateDirty` 重建 proxy，所以换材质本身是安全的。要出事，得有一条路
+**换掉／放掉某个 section 的材质而没有重建 render state**。`KKPreviewActor.cpp:5244` 那行同时做了
+`Mesh->SetMaterial(Slot,M)` 与 `Part.SurfaceMat=M`，**但 progressive stand-in 换成最终材质、
+以及 `:5318`／`:5661`／`:8007` 的 `CookedRoleMaterials.Reset()` 这几条，我没有逐条追 render state
+有没有跟著重建**。这是下一步该读的，而且**可量**：e-cardload 的「交接与放手反查」log 只要能印出
+「某个 section 的 `Material` 指向的 MID 已不在任何强参照里」，就能直接证实或否掉。
+
+**不谈修法**（按指示）。
+
 ---
 
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12–§15 的程式码是我自己读的（§14、§15 读的是 E 树的副本，只读）。
+§11 的两棵引擎比对、§12–§16 的程式码是我自己读的（§14–§16 的 OK 侧读的是 E 树的副本，只读）。
