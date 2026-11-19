@@ -5,6 +5,35 @@
 **为什么是清单而不是 Lua 脚本**：这些是 agent 的 MCP 工具呼叫（`reader_launch`／`ui_exec`／`reader_call`），
 Lua 脚本发不出去。只有「把截图改名搬到交付资料夹」那一步是 shell，写在每批末尾。
 
+## 0.0 每一批开拍前先写表头（否则两批不能互比）
+
+**每一批的第一个步骤**，在**建置之后、`reader_launch` 之前**跑这一行（只跑 git，不占机器）：
+
+```powershell
+F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua write --exe F:\OpenKoikatsu\Binaries\Win64\UnrealEditor-OpenKoikatsu.dll --out F:\OpenKoikatsu\Saved\Reports\reader-shots-2026-11-19\<批次资料夹> --label <批次名>
+```
+
+| 批次 | `--out` 的 `<批次资料夹>` | `--label` |
+|---|---|---|
+| A 头发／瞳／两组前后 | `A-hair-eyes` | `A` |
+| B `foregroundEyes` 一对 | `B-foreground-eyes` | `B` |
+| C `Tohru` 材質貼圖页 | `C-textures-tohru` | `C` |
+| D 指派＋偏移缩放 | `D-assign` | `D` |
+| E 袖型 0／1 | `E-sleeves` | `E` |
+| F 领口旗标 | `F-collar` | `F` |
+| G MoreAccessories 第 21 栏 | `G-extra-acc` | `G` |
+| H `HairShadowColorControl` | `H-hairshadow` | `H` |
+
+两批要并排比之前先 `... check <A 资料夹> <B 资料夹>`：**`SAME` 才能比**；`DIFFERENT`（exit 1）会列出哪一项不同，
+**「修好前」那批作废重拍**；缺表头回 `MISSING`（exit 2）。
+
+**`--exe` 为什么是那个 DLL，不是 exe**：读卡器（`reader_launch` 的预设 root）跑的是
+`F:\UE5.8\Engine\Binaries\Win64\UnrealEditor.exe` 加这个专案——**那支是引擎，我们从来不重建它**
+（本机 mtime 停在 10-29），拿它当身分每一批都一样，等于没记。真正会随我们的建置改变的是专案的编辑器模组
+`Binaries\Win64\UnrealEditor-OpenKoikatsu.dll`（这次建置后是 11-19 15:14:49、68,494,848 bytes）。
+**如果哪一批改用打包版跑**（`reader_launch` 带 `root`），那一批的 `--exe` 要换成
+`<那个 root>\...\OpenKoikatsu.exe`，并在该批注明——两种跑法的身分不能混着比。
+
 ## 0. 前提
 
 - **不建置**：`reader_launch` 带 `no_build: true`。这些图不需要新的建置，而窗口期间别人可能在量测。
