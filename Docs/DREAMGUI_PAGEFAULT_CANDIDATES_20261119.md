@@ -2261,3 +2261,134 @@ if (TextureReferenceRHI.IsValid()) { RHICmdList.UpdateTextureReference(TextureRe
 **三条共同的缺口都一样**：它们解释「资源被别人覆写」，不解释「整页不在页表」。
 **所以若 e-cardload 的 mode 2 失败，下一步不是直接挑这三条去改，而是先用候选一那两个现成 cvar
 把「故障那张是不是这个队列放手的」问掉——那是零成本，而且注解说那个桩就是为这件事埋的。**
+
+---
+
+## §33 descriptor／绑定这一层：**唯一跨帧的持有者是材质 proxy 的 uniform expression cache**，而且前人已经为它埋好工具
+
+读的是 E 树 `Plugins/DreamGUI`（只读）。**先更正我自己上一节的建议**：我一直在说「要在
+`DreamUIRenderer.cpp:1017` 插桩印 12 个槽」——**那件事有一半已经做好了**，见 33e。
+
+### 33a 第 1 题：跨帧保存的 shader binding——**SRV／descriptor handle 全数零命中**
+
+全 plugin（`DreamGUI`、`DreamGUIRenderer`、其余模组）grep：
+
+| 形状 | 命中 |
+|---|---|
+| `CreateShaderResourceView` | **0** |
+| `FShaderResourceViewRHIRef`／`TRefCountPtr<FRHIShaderResourceView>` | **0** |
+| `FRHIDescriptorHandle` | **0** |
+| `CreateUniformBuffer*` | **4 处，全部 `UniformBuffer_SingleFrame`** |
+
+四处 uniform buffer：`DreamUIRenderer.cpp:1492`、`:2219`（view UB）、
+`DreamUIShaders.cpp:128`、`:143`。唯一「做一次、重复用」的是 `InOutDepthTextureBuffer`
+（`DreamUIShaders.cpp:136-150`，`if (!InOutDepthTextureBuffer.IsValid())` 才建），
+**而它的持有者是 pass lambda 的区域变数**（`DreamUIRenderer.cpp:1614`
+`TUniformBufferRef<FDreamUIWorldRenderDepthTexUB> DepthTextureBuffer;`，用在 `:1682`、`:1713`）
+**＋ `UniformBuffer_SingleFrame`**。所以它跨 draw、不跨帧。**这一类没有候选。**
+
+### 33b 第 2 题：**唯一跨帧的 descriptor 持有者，是 `FDreamUIMaterialProxy` 继承的 uniform expression cache**
+
+`FDreamUIMaterialProxy` 是 `FMaterialRenderProxy` 的子类，所以它带著引擎的
+`UniformExpressionCache[FeatureLevel]`——**一个 uniform buffer，其 resource table 持有该材质的贴图**。
+它只在三个地方被重建：
+
+| 时机 | 行 |
+|---|---|
+| `SetParameters_GameThread` 送出的 render command 里 `CacheUniformExpressions(RHICmdList, false)` | `DreamUIMaterialProxy.cpp:154-165`（`:163`） |
+| `FollowSource_RenderThread`（父材质的 expression cache serial 变了才动） | `:167-185`（`:181-184`） |
+| `LetGoOfUnreachable`（`PostReachabilityAnalysis`） | `:188-220`（`:219`） |
+
+**没有任何每帧重建。** 所以「descriptor 比贴图活得久」这个形状在 DreamGUI 里**只有这一处**。
+
+清理责任与它的缺口：`LetGoOfUnreachable` 挂在 `FCoreUObjectDelegates::PostReachabilityAnalysis`
+（`:122`，`Create` 里一次性注册），只走 `LiveProxies()`（`:46`、`:143`，一张 `TWeakPtr` 清单），
+只在 `IsGone(InTexture.Value)` 时把那笔贴图从 `GameThreadParameters.Textures` `RemoveAll` 再重建快取
+（`:211-219`），注解写「Carried out before the objects are freed: freeing them waits for the render thread
+to pass their release.」**缺口是：它只管 proxy 自己那张 `TArray<TPair<FName, const UTexture*>> Textures`
+（`DreamUIMaterialProxy.h:15`，非持有），父材质（`GetParent()`，`:222-232`）自己的 uniform expression
+cache 不在它手上。**
+
+### 33c **前人已经为这一条埋好工具，而且读法事先登记了**（这是本节最重要的一段）
+
+`DreamUIMaterialProxy.cpp:79-98` 的注解，照抄要点：
+
+> 「EXPERIMENT (default off), and **NOT a fix candidate**: when on, a proxy that has lost its last reference is
+> never deleted at all -- it is deliberately leaked. … **`Frames.Func=240` only moved the crash from card 4/7
+> to 19/15**, so a count cannot say whether the destructor is the trigger. Never running it can.
+>
+> Reading registered before the run: if the crash disappears in BOTH reproductions, **the trigger is the
+> proxy's destructor itself (which lets go of the texture refcounts its uniform buffer holds for the material,
+> and MainPS binds the same textures)**. If it still faults, the destructor is not the trigger…」
+
+三件因此确定：
+
+1. **旗标会动它**：`Frames.Func=240` 把崩溃从第 4／7 张移到第 19／15 张——**不是消掉，是推后**；
+2. **`DreamGUI.Experiment.NeverDeleteProxy`**（`:95-98`，预设 0，`ECVF_RenderThreadSafe`，**执行期可开、不必重编**）
+   是现成的判别器，而且是「永不解构」而非「延后解构」，所以它能分开计数分不开的两件事；
+3. **假设本身已经把 `MainPS` 接上了**：proxy 的 uniform buffer 为材质持有贴图 refcount，而 `MainPS` 绑同一批贴图。
+
+**这是今天唯一一个「能分辨机制、零建置、读法事先登记」的工具。**
+
+### 33d 第 3 题：RDG 外部注册有没有存过帧——**没有**
+
+`FRDGTextureRef` 作为成员的全部出现：`DreamUICompositor.h:114`（`FFrame::Texture`）、`:126`（`HeldBase`）
+——两者都在 `FDreamUICompositeStack` 里，**那是一帧的栈**；`DreamUILayerStyleComposite.h:30`、
+`Effects/DreamUIBackdropEffectPasses.h:19`／`:50`——pass 内。**没有一处跨帧。**
+`MSAARenderTarget` 是 renderer 成员，但它持有的是 pool element（§32e），属於跨帧**滞留**，不是悬空。
+
+### 33e 第 4 题：`DreamUI_SceneDepthTex`，以及 **`DreamGUI.LogTextureSlots` 已经存在而且已接上**
+
+**SceneDepthTex 绑的是谁的 RHI**：`DreamUIRendererLocal::SceneDepthOf(GraphBuilder, InView)`
+（`DreamUIRenderer.cpp:1178-1199` 一带，呼叫在 `:1201-1203`）——取的是**场景渲染器的**
+`GetSceneTextureShaderParameters(InView)` 的 `SceneTextures->GetContents()->SceneDepthTexture`
+（行动平台走 `MobileSceneTextures`），**拿不到就 `GSystemTextures.GetDepthDummy(GraphBuilder)`**；
+render-target 模式（`RendererType == EDreamUIRendererType::RenderTarget`）**直接用 dummy**。
+绑定点：built-in 走 `:1006`（裸 `FRHITexture*`，pass 内），材质路径走 `:1682`／`:1713`
+（包进那个 single-frame uniform buffer）。**两条都不跨帧保存。**
+
+**有没有现成 cvar 关掉它**：**没有。** 我把 `DreamGUI.*` 的全部 cvar 都列了（下表），没有 depth blend 的开关；
+最接近的是把画布设成 screen space——那时 `:2358-2360` 直接给 `GBlackTexture`——**但那是内容设定，不是 cvar。**
+
+**现成 cvar 全表（这张表对下一趟直接有用）**：
+
+| cvar／命令 | 预设 | 行 |
+|---|---|---|
+| `DreamGUI.LogStaleTextures` | 0 | `DreamUIBaseShaders.cpp:27` |
+| **`DreamGUI.LogTextureSlots`** | 0 | `DreamUIBaseShaders.cpp:69-72` |
+| `DreamGUI.Experiment.LogPoolReuse` | 0 | `DreamUICompositor.cpp:187` |
+| **`DreamGUI.Experiment.NoBackdrop`** | 0 | `DreamUICompositor.cpp:348` |
+| `DreamGUI.DeferredRelease.Frames.Texture/Buffer/Pooled/Func` | 3／3／3／3 | `DreamUIDeferredRelease.cpp:12/16/20/24` |
+| `DreamGUI.DeferredRelease.LogEntries` | 0 | `DreamUIDeferredRelease.cpp:41` |
+| `DreamGUI.LogDeferredRelease`（命令） | — | `DreamUIDeferredRelease.cpp:164` |
+| **`DreamGUI.Experiment.NeverDeleteProxy`** | 0 | `DreamUIMaterialProxy.cpp:96` |
+| `DreamGUI.LogHeldTextures` | 0 | `DreamCanvas.cpp:4115` |
+| `DreamGUI.Memory`（命令） | — | `DreamUIMemoryReport.cpp:487` |
+
+**更正我自己的建议**：`DreamGUI.LogTextureSlots` **已经写好并接上了**
+——定义 `DreamUIBaseShaders.cpp:54-108`，呼叫 `:167-175`，在 `ResolveTextures_RenderThread` 里
+对**九个 reference 槽**各印一次 `src=` `ref=` `referenced=` `referenced_name=` `frame=`，
+只在值变化时印，外加每 600 帧一次心跳（所以乾淨的一趟也能看出仪器活著）。
+注解把读法也登记好了，而且**它自己就引用了我 §28c／§31d 给的那条事实**：
+
+> 「the indirection does NOT merely borrow its target. `FRHITextureReference` holds it as
+> `TRefCountPtr<FRHITexture>` (RHITextureReference.h:53) … The measured chain says the allocation WAS
+> released, so one of these must be true: **(a)** the reference was pointed somewhere else (a default texture)
+> before the release, leaving nothing stale -- then no slot ever names the faulting texture; or **(b)** a slot
+> still names it, and then **the release happened despite a live refcount, which would be the find**.」
+
+**所以 §28／§31 那条「不可能」已经被接成一个可量的二分法，而且桩已经在。**
+**它还没覆盖的只有两件**：`SceneDepthTex`／`BackdropTex` 这两个裸位址槽（不在那九个里），
+以及「每笔 draw 真正绑进去的那一笔」（桩在 resolve 点，不在 `:1016` 的绑定点）。
+
+### 33f 前三名，以及每条能不能解释 `AddressTranslationError`
+
+| 名次 | 候选 | 行 | 怎麼验 | 能解释整页不在页表吗 |
+|---|---|---|---|---|
+| 1 | **材质 proxy 的 uniform expression cache 跨帧持有贴图，而只在三个时机重建** | `DreamUIMaterialProxy.cpp:154-165`／`:167-185`／`:188-220`；缺口在 `:222-232` 的父材质 cache | **`DreamGUI.Experiment.NeverDeleteProxy 1`**（`:96`，执行期 cvar，读法已登记于 `:79-93`）；对照 `DreamGUI.DeferredRelease.Frames.Func` 240 已知会把崩溃推后 | **差一环**：uniform buffer 的 resource table 是持有参照，持有就不该被释放。要成立，必须「释放绕过了 refcount」——**而那正好是 33e 的 (b)**，所以这两条是同一个检验的两面 |
+| 2 | **`DreamGUI.LogTextureSlots` 的 (a)/(b) 二分**（判别器，不是候选） | `DreamUIBaseShaders.cpp:69-108`／`:167-175` | **开 cvar 跑会故障的那一趟**，看有没有任何 slot 的 `referenced_name=` 对上故障那张 | **(b) 成立就能解释**：那意味著释放路径没看 refcount，页才会真的被还掉；(a) 成立则这整条关掉 |
+| 3 | 群组 pool 归还只等 3 帧（§32b）＋ font staging 零延迟重用（§32c） | `DreamUICompositor.cpp:407`；`DreamUIFontData_FreeTypeRender.cpp:3016-3031` | `DreamGUI.DeferredRelease.LogEntries 1` ＋ `DreamGUI.Experiment.LogPoolReuse 1` | **不能**：它们解释「内容被覆写」，不解释 unmap。差的那一环是「谁把页还给系统」 |
+
+**一句话**：这一层查完之后，**唯一跨帧的 descriptor 持有者只有材质 proxy 那一个**，
+而它和 §28／§31 的「不可能」会在同一个检验上碰头——
+**`NeverDeleteProxy` 与 `LogTextureSlots` 两个现成 cvar 併跑一趟，就能同时判掉第 1 与第 2 名。**
