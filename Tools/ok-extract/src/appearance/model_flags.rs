@@ -102,11 +102,14 @@ pub(super) fn annotate(root:&Path,cache:&Path,original:&[u8],outfit:usize,props:
   if let Some(use_color)=use_color {for (c,on) in use_color.iter().enumerate(){set(&format!("accessory.parts.{slot}.color.{c}."),*on,None);}}
   // None: the model was recorded before node names were kept for accessories; the second group's rows stay as they were.
   let move2=shared.as_ref().and_then(|s|crate::unity::prefab_node_names_recorded(&s.0,&item.entry.main_data)).map(|n|n.contains("N_move2"));
+  // `defColor01..04` for the colour reset button only (`CvsAccessory.btnInitColor`). Not put on the rows as `default`:
+  // reading a card never falls back to it. null: not recorded for this model, or the model has no ChaAccessoryComponent.
+  let default_colors=shared.as_ref().and_then(|s|crate::unity::accessory_default_colors_recorded(&s.0,&item.entry.main_data)).flatten();
   set(&format!("accessory.parts.{slot}.parentKey"),parent_editable,None);
   for i in 0..3 {set(&format!("accessory.parts.{slot}.addMove.2.{i}."),parent_editable,None);}
   if let Some(m)=move2 {for i in 3..6 {set(&format!("accessory.parts.{slot}.addMove.2.{i}."),parent_editable&&m,None);}}
   else if !parent_editable {for i in 3..6 {set(&format!("accessory.parts.{slot}.addMove.2.{i}."),false,None);}}
-  accessories.insert(slot.to_string(),json!({"use_color":use_color,"parent_editable":parent_editable,"move2":move2}));
+  accessories.insert(slot.to_string(),json!({"use_color":use_color,"parent_editable":parent_editable,"move2":move2,"default_colors":default_colors}));
  }
  Ok(json!({"clothes":summary,"accessories":accessories,"pages":pages(&selection,&items)}))
 }
