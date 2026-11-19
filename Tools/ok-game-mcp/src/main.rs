@@ -5,6 +5,7 @@
 //! engine console commands, game_trace_start/stop record an Unreal Insights trace. Docs/STREET_SOCIAL_GAME_MCP.md.
 mod control;
 mod game;
+mod guard;
 mod hscene;
 mod reader;
 mod studio;
@@ -159,8 +160,14 @@ fn end_talk(game: &Game) -> Result<()> {
 /// One tool call. With nothing picking the game (game_select, OK_GAME_PID, game_launch) and several running, a change is
 /// refused in control::target; a read says in its reply which pid answered.
 fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
+    // An argument we do not know is an error, and a call that starts an engine looks at the machine first (guard.rs).
+    guard::check_args(&tools(), name, a)?;
+    let forced = guard::check_launch(name, a)?;
     control::begin_call(control::mutates(name, a));
     let mut r = dispatch(game, name, a)?;
+    if let (Some(note), Some(content)) = (forced, r["content"].as_array_mut()) {
+        content.push(json!({"type": "text", "text": note}));
+    }
     let pid = control::default_target();
     if pid != 0 {
         if let Some(content) = r["content"].as_array_mut() {
@@ -556,7 +563,20 @@ async fn main() -> Result<()> {
     }
     if argv.get(1).map(String::as_str) == Some("call") {
         // ok-game-mcp call TOOL [JSON]: the same tools from a shell (scripts, or a session without the MCP loaded).
-        let name = argv.get(2).context("call TOOL [JSON]")?.clone();
+        let name = argv.get(2).context("call TOOL [JSON] | call TOOL --describe | call --list")?.clone();
+        // Asking what a tool takes must never run it. Without this, the only way to ask was to call it with a made-up
+        // field and read the error — and a tool that ignores unknown fields answers that by doing its job (2026-11-19:
+        // `reader_launch {"help":true}` started a card reader inside someone else's exclusive measurement).
+        let describe = argv.iter().any(|x| x == "--describe" || x == "--schema");
+        if name == "--list" || describe || name == "--describe" || name == "--schema" {
+            let want = if name.starts_with("--") { argv.get(3).cloned() } else { Some(name.clone()) };
+            for t in tools().as_array().into_iter().flatten() {
+                if want.as_deref().is_some_and(|w| t["name"] != w) { continue }
+                if want.is_none() { println!("{}", s(&t["name"])); continue }
+                println!("{}", serde_json::to_string_pretty(t)?);
+            }
+            return Ok(());
+        }
         let args: Value = argv.get(3).map(|j| serde_json::from_str(j)).transpose()?.unwrap_or(json!({}));
         let r = tokio::task::spawn_blocking(move || run(&game, &name, &args)).await??;
         for c in r["content"].as_array().into_iter().flatten() {
