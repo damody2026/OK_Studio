@@ -30,6 +30,12 @@ fn allowed(tools: &Value, name: &str) -> Option<Vec<String>> {
 pub fn check_args(tools: &Value, name: &str, a: &Value) -> Result<()> {
     let Some(known) = allowed(tools, name) else { return Ok(()) };
     let Some(given) = a.as_object() else { return Ok(()) };
+    // A tool that dispatches on `action` carries a payload whose fields are the action's, not the tool's: reader_call
+    // alone takes path, index, offset, limit, query, keys, edits, page, key, value, command … each only for its own
+    // action, and its inputSchema declares none of them. Checking those against one static schema refused every
+    // correct call and broke the card reader's whole command-line automation (2026-11-19, within an hour of shipping
+    // this check). So here the envelope is all we can judge; the game itself rejects a payload field it does not know.
+    if known.iter().any(|k| k == "action") { return Ok(()) }
     let unknown: Vec<&str> = given.keys()
         .map(String::as_str)
         .filter(|k| *k != FORCE && !ALWAYS.contains(k) && !known.iter().any(|w| w == k))
