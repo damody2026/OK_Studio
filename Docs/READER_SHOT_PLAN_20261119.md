@@ -24,8 +24,20 @@ F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua wr
 | G MoreAccessories 第 21 栏 | `G-extra-acc` | `G` |
 | H `HairShadowColorControl` | `H-hairshadow` | `H` |
 
-两批要并排比之前先 `... check <A 资料夹> <B 资料夹>`：**`SAME` 才能比**；`DIFFERENT`（exit 1）会列出哪一项不同，
-**「修好前」那批作废重拍**；缺表头回 `MISSING`（exit 2）。
+两批要并排比之前先 `... check <A 资料夹> <B 资料夹>`：**`SAME` 才能比**；`DIFFERENT` 会指名哪一项不同，
+**「修好前」那批作废重拍**；缺表头回 `MISSING`；旧版写的表头回 `OLD`（那之后程式路径没动的话，
+用现在这版**重写一次就是同一批，不必重拍**）。
+
+**`check` 比的是什么**（f-yvonne 2026-11-19 第二版）：九支 `UnrealEditor-*.dll`，加上**只看程式路径**的工作树指纹
+（`Source`／`Plugins`／`Tools`／`Config`／`Content`／`OpenKoikatsu.uproject`，排除 `Content/CharacterCards`
+与外挂的 `Binaries`／`Intermediate`）——这些路径在 HEAD 的已提交 id，加上这些路径下**未提交的** status／diff。
+所以**提交 `Docs` 或改 `Saved` 不会让两批变成 `DIFFERENT`**，而**未提交的 C++ 会**。
+**`HEAD` 只记不比**（`check` 会注明 `not compared`）：提交文件会动 HEAD 却不动程式，未提交的 C++ 动了程式却不动 HEAD。
+`write` 会逐行列出未提交的程式档，`check` 会印 `compared N items … M differ`（带分母）。
+
+> **看 `check` 的结果要看字串，不要只看结束码**：`OLD` 目前也是 exit 0，
+> 只认结束码的话会把「这张表头是旧版写的、还没真的比过」当成「`SAME`，可以比」。
+> 已回报 f-yvonne（2026-11-19）。
 
 **为什么是 `--editor`，不是某一支 exe**：读卡器（`reader_launch` 的预设 root）跑的是
 `F:\UE5.8\Engine\Binaries\Win64\UnrealEditor.exe` 加这个专案——**那支是引擎，我们从来不重建它**
