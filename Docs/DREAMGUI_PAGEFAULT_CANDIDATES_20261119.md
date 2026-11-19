@@ -1,4 +1,10 @@
-# 读卡开卡时 GPU 页错误：DreamGUI 侧的候选清单与可检验性（2026-11-19）
+# 读卡开卡时 GPU 页错误：候选清单与可检验性（2026-11-19）
+
+> **档名归档用，内容已经不只是 DreamGUI 的事。** 这份从「DreamGUI 侧的候选」开始写，
+> 但 **DreamGUI 这一支已被实测与读碼双向排除**：它每一条贴图绑定都持参照（§13a）、
+> 四十秒的存活期把那张表变成排除证据（§13a 的更新）、卡片角色贴图没有任何路径进到 UI 绘製（§14b）、
+> 而 brush 本身是强参照（§14c）。现在的主线是**消费端**（§15）。
+> 档名没有改，因为别的 session 的纪录与讯息都引用这个路径。
 
 只读调查，**没有改任何程式、没有建置、没有跑引擎、没有抢槽位**。下面全部是**候选与各自的检验方式**，
 不是成因。被我查过而**查不出破口**的路径也照实列出来，免得下一个人重走一遍。
@@ -792,5 +798,63 @@ per-frame 机制的约束，也不该拿 `Frames.*` 那种帧数旋钮去对。
 
 ---
 
+## 15. 消费端：**3D 预览那一侧也找不到「存位址而不持参照」的容器**（第 4 题成立）
+
+本节行号全部读 **`E:\OpenKoikatsu`**（崩溃的那一版，只读）。
+
+### 15a. 一张卡片贴图从建立到被取样，经过的容器与各自的持有方式
+
+| 容器 | 存什么 | 行号 | 持有？ |
+|---|---|---|---|
+| `RecentTextures`（全域快取，768 MB 预算） | `TStrongObjectPtr<UTexture2D>`（注解：只靠 refcount 活著、不靠可达性） | `KKTextureRuntime.cpp:356-358` | **强参照（UObject）** |
+| `ReadonlyTextures`（内容定址快取） | `TWeakObjectPtr<UTexture2D>` | `:340-341` | 弱——但只是快取查询，不参与绘製 |
+| `AKKPreviewActor` 的 `LoadedTextures`／`WornTextures`／`WornBodyMasks` | `UPROPERTY TArray<TObjectPtr<UTexture2D>>` | `KKPreviewActor.h:616`、`:623`、`:916-917` | **强参照** |
+| MID（`CookedRoleMaterials`／每个 part 的 `SurfaceMat`） | 贴图参数是 MID 自己的 `UPROPERTY` | 建立在 `KKPreviewActor.cpp:5190`、`:5244`、`:5274` | **强参照** |
+| 元件的材质槽 | `UMeshComponent::OverrideMaterials` 是 `UPROPERTY` | `SetMaterial(...)`，例 `:3666`、`:3711`、`:5190` | **强参照**（所以 `CookedRoleMaterials.Reset()`（`:5318`、`:5661`、`:8007`）放掉 actor 那一份时，MID 仍由元件持有） |
+| 材质的 uniform expression cache（贴图真正到 GPU 的那一步） | **`TextureReference.TextureReferenceRHI`**，而 ResourceTable 是 `TRefCountPtr` | 引擎 `MaterialUniformExpressions.cpp:1712-1729`、`RHIResources.h:1286-1294` | **持有 reference**，贴图死时引擎已先清掉它 |
+| 交给 Rust session 的 | C ABI 传的是**资料 view**（mesh／bone／morph／texture 的位元组），不是 RHI 指标 | `include/ok_extract.h`、`KKRustExtract.cpp` | 不涉及 GPU 位址 |
+
+**我们自己的程式码里没有任何裸 `FRHITexture*` 成员。** 全树（`Source/OpenKoikatsu`＋
+`KKUnityBundle`／`KKRuntimePose`／`KKCrowdGpuPacking`）`FRHITexture` 只出现三次，
+而且**三次都是 render command 内的区域变数**：`KKTextureRuntime.cpp:141`、`:189`（`ReadSurfaceData`）、
+`KKRuntimeMaterial.cpp:353`（读 mip）。
+
+### 15b. 「一次性建立、之后每帧重用」的那一类，查到的全部是这些
+
+| 结构 | 内容 | 判定 |
+|---|---|---|
+| `FKKStreamSceneProxy`／`FKKStreamProxySection`（预览网格的自订 scene proxy，render thread 长期存活） | 顶点／索引缓冲区、`FLocalVertexFactory`、`TRefCountPtr<FRDGPooledBuffer>`（GPU deform／coating）——**没有存任何贴图** | 每帧用 `Section->Material->GetRenderProxy()` 重新取材质（`KKStreamMeshProxy.cpp:463`、`:580`、`:595`）→ 贴图每帧经材质重新解析 |
+| 同上的 `UMaterialInterface* Material` | **裸 UObject 指标**，而且**每帧被读** | `KKStreamMeshProxy.cpp:69` —— **这是我在消费端找到的唯一一个「每帧读、而且不持有」的东西**。但它持的是**材质**，不是贴图；而材质由元件的 `OverrideMaterials`（`UPROPERTY`）持有，所以它要悬空，得先有一个 MID 在元件还指著它的时候死掉 |
+| primitive uniform buffer | `FDynamicPrimitiveUniformBuffer`，`AllocateOneFrameResource`（逐帧） | `:481`、`:605` → 不跨帧 |
+| `OKSourceMaterialOracle` 的 `TUniformBufferRef<FPrimitiveUniformShaderParameters>`（`UniformBuffer_MultiFrame`） | 只有 primitive 参数，**没有贴图** | `OKSourceMaterialOracle.cpp:47`、`:70` |
+| 两个裸 `UTexture*` 成员 | `KKPreviewActor.h:257` `RampOverride`（注解写明「must stay alive (OKLoadRenderRamp roots it)」，而且只在载入时读一次：`KKPreviewActor.cpp:5423`）；`KKMainItemPlus.h:22` `ForgeShadowDepth` | 都不是每帧绘製读的绑定 |
+
+### 15c. 换卡时谁被通知、有谁的寿命比贴图长
+
+- scene proxy 属于**元件**，元件重建时整个丢掉重做；它不存贴图，所以没有「proxy 比贴图活得久」的问题。
+- MID 属于**元件的材质槽**（`UPROPERTY`），比 actor 的 `CookedRoleMaterials` 阵列活得久——
+  但那是**强参照**，所以方向是「材质和它的贴图一起被留住」，不是悬空。
+- **寿命最长的其实是全域快取 `RecentTextures`**（跨 actor、跨卡片），也就是说
+  **贴图比容器活得久**，而不是反过来。
+
+### 15d. 所以第 4 题成立：**找不到不持有参照的容器**
+
+把 §13a（UI 侧）与 §15a／§15b（3D 侧）放在一起：**从卡片贴图到 GPU 的每一条路，
+在它被绘製的那一刻都持有某种参照**——UObject 的强参照、RHI 参照，或引擎会在贴图死前清掉的 texture reference。
+**我找不到一个「存位址、不持参照、而且每帧被读」的容器。**
+
+按协调自己定的界线，这个结果把方向推回：**那张贴图可能不是我们建的，消费者也可能不是我们的**
+（e-cardload 插了九个建立点、三趟 48／48／93 笔，故障那张一次都没出现，和这个结论同向）。
+两个还没排除的非我们自己的消费者：
+
+1. **引擎自己的常驻结构**：texture streaming、`FRenderAssetStreamingManager` 的 handle、
+   或某个 cached PSO／descriptor table。这一类我没有读。
+2. **shader 身分仍未定**（§1a、§5a）：若故障的不是 UI 的 shader，消费端的搜索范围要整个换。
+   `r.Shaders.ExtraData=1` 重编一次就能让崩溃档自己印出 shader type 名——**这仍是最便宜的下一步**。
+
+**不谈修法**（按指示）。
+
+---
+
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12–§14 的程式码是我自己读的（§14 读的是 E 树的副本，只读）。
+§11 的两棵引擎比对、§12–§15 的程式码是我自己读的（§14、§15 读的是 E 树的副本，只读）。
