@@ -144,6 +144,11 @@ public:
  void ResetEditorProperty(const FString& Key);
  UFUNCTION() void OnOpenProperties();
  UFUNCTION() void OnApplyProperties();
+ // One action of the original editor, applied as one write: the hair colour with its four settings writes every
+ // slot's base/gradient/outline/gloss, "copy the left eye" writes seven pupil fields. The expansion is in
+ // ok-extract (`appearance/ops.rs`), so the UI, the MCP and the CLI cannot drift apart on what a button means.
+ // Returns the reason it did not start, or an empty string. Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7.
+ FString ApplyPropertyOps(const TArray<TSharedPtr<FJsonValue>>& Ops);
  UFUNCTION() void OnResetProperties();
  UFUNCTION() void OnPropertySearch(const FText& Value);
  UFUNCTION() void OnPropertyPrev();

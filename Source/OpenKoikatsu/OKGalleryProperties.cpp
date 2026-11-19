@@ -104,6 +104,32 @@ void UOKCharacterController::OnApplyProperties(){
   for(auto P:G->EditorProperties)if(auto* V=G->PendingProperties.Find(P->GetStringField(TEXT("key"))))P->SetField(TEXT("value"),*V);G->PendingProperties.Reset();G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->PropertySource=Output;G->bIndependentCards=true;G->PreviewResourceSignature.Empty();G->OnLoad3D();G->PropertyStatus->SetText(FText::FromString(TEXT("已套用並保存外觀，可繼續編輯或另存角色卡。")));
  },CardJob);
 }
+// Deliberately beside OnApplyProperties rather than folded into it: that function is being edited by other sessions
+// this week, and the two differ in what they know afterwards. An `edits` apply knows every new value (it sent them,
+// so it patches the rows in place); an `ops` apply does not -- the expansion happens in Rust and can touch fields no
+// row asked for -- so it drops the rows and lets the panel read them back from the card it just wrote.
+FString UOKCharacterController::ApplyPropertyOps(const TArray<TSharedPtr<FJsonValue>>& Ops){
+ if(Ops.IsEmpty())return TEXT("No operation given");
+ if(bPropertyBusy||bAppearanceBusy||bLoadInFlight||bAnimationPreparing)return TEXT("Busy; retry when the current work finishes");
+ if(!Entries.IsValidIndex(SelectedIndex))return TEXT("No character loaded");
+ if(!PendingProperties.IsEmpty())return TEXT("Apply or discard the staged property edits first");
+ if(PropertySource!=Entries[SelectedIndex].Path||PropertyOutfit!=OutfitIndex)return TEXT("Character or outfit changed; reopen the detailed editor");
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("properties_apply"));R->SetStringField(TEXT("card"),Input);R->SetStringField(TEXT("output"),Output);R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));R->SetNumberField(TEXT("outfit"),OutfitIndex);R->SetArrayField(TEXT("ops"),Ops);
+ bPropertyBusy=true;bAppearanceBusy=true;if(PropertyPanel)PropertyPanel->SetIsEnabled(false);if(ShapePanel)ShapePanel->SetIsEnabled(false);
+ if(PropertyStatus)PropertyStatus->SetText(FText::FromString(TEXT("正在套用這個動作並產生外觀…")));
+ const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
+ RunAppearanceRequest(R,[Selection,Generation,Outfit,Output,CardJob](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+  G->bPropertyBusy=false;G->bAppearanceBusy=false;if(G->PropertyPanel)G->PropertyPanel->SetIsEnabled(true);if(G->ShapePanel)G->ShapePanel->SetIsEnabled(true);
+  if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
+  if(!Data){if(G->PropertyStatus)G->PropertyStatus->SetText(FText::FromString(TEXT("這個動作沒有套用，角色保持原樣：")+Failure));return;}
+  // The rows are stale in a way we cannot repair from here, so they are re-read rather than guessed.
+  G->EditorProperties.Reset();G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->PropertySource=Output;G->bIndependentCards=true;G->PreviewResourceSignature.Empty();G->OnLoad3D();
+  if(G->PropertyStatus)G->PropertyStatus->SetText(FText::FromString(TEXT("已套用這個動作並保存外觀。")));
+ },CardJob);
+ return FString();
+}
 bool UOKCharacterController::PropertyInScope(const TSharedPtr<FJsonObject>& P) const{
  if(PropertyScope.IsEmpty())return true;
  const FString Key=P->GetStringField(TEXT("key")),Label=P->GetStringField(TEXT("label"));
