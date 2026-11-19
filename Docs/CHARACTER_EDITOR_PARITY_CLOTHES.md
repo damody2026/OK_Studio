@@ -344,7 +344,7 @@
 **B 类（资料端，我的），照优先：**
 
 1. 让 `visit()` 露出整数，以及有已知型别的字串列：Accessory States 的绑定与区间、MaterialEditor 的浮点（字串存）与渲染器开关。照 §8 的身分式键，限制照上表。
-2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。
+2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。**已写**（`properties.rs` `refuse_unapplied`，原因文字 id `reader.unsupported.pushup_body_backup`，测试 `pushup_body_backup_is_offered_but_not_editable`）：列照样列出来，MCP 的 `set` 回「Parameter unsupported」；尚未编译。
 3. 查清 MoreAccessories v2 的 XML 副本改了有没有效；若无效，改成编辑 `parts[20..]`。
 4. KSOX／KCOX 换图：和 f-sceneload 的贴图动作对齐后另开动作。
 5. 低优先：Pushup 范围中继资料；MaterialEditor 换 shader。

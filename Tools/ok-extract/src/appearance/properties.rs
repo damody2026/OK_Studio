@@ -148,6 +148,15 @@ fn refuse_unapplied(props:&mut [J]){
  for p in props.iter_mut(){
   let Some(key)=p["key"].as_str() else{continue};
   let parts:Vec<&str>=key.split('.').collect();
+  // Pushup_BodyData is Pushup's copy of the body sliders before the push (`Pushup.cs` BodyData → `shapeValueBody[4..13]`,
+  // bustSoftness, bustWeight); the plugin rebuilds `shape.*` from it and the garments' ClothData. A second place to
+  // edit the same sliders means one silently overwrites the other — the reason ABMX stays out of `plugins.*` too.
+  if key.starts_with("plugins.Pushup.")&&parts.iter().any(|p|*p=="@Pushup_BodyData") {
+   p["supported"]=json!(false);
+   p["unsupported_reason"]=json!("Pushup's copy of the body sliders; edit the body sliders instead");
+   p["unsupported_reason_id"]=json!("reader.unsupported.pushup_body_backup");
+   continue;
+  }
   if !matches!(parts.as_slice(),["hair","parts",_,"pos"|"rot"|"scl",_]){continue}
   p["supported"]=json!(false);
   p["unsupported_reason"]=json!("Hair slot transform is parsed but not applied by the renderer");
@@ -321,6 +330,17 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
 }
 
 #[cfg(test)] mod tests {
+ #[test]fn pushup_body_backup_is_offered_but_not_editable(){
+  use super::{Value,encode};
+  let body=Value::Map(vec![("Size".into(),Value::F32(0.5))]);
+  let bra=Value::Map(vec![(Value::from(0),Value::Map(vec![("Firmness".into(),Value::F32(0.9))]))]);
+  let kkex=Value::Map(vec![("com.deathweasel.bepinex.pushup".into(),Value::Map(vec![("Pushup_BodyData".into(),body),("Pushup_BraData".into(),bra)]))]);
+  let blocks=super::BTreeMap::from([("KKEx".to_string(),encode(&kkex).unwrap())]);
+  let mut props=Vec::new();super::plugins::catalog(&blocks,0,&mut props).unwrap();super::refuse_unapplied(&mut props);
+  let row=|k:&str|props.iter().find(|p|p["key"]==k).unwrap_or_else(||panic!("{k} not in {props:?}")).clone();
+  assert_eq!(row("plugins.Pushup.@Pushup_BodyData.@Size")["supported"],false);
+  assert!(row("plugins.Pushup.@Pushup_BraData.#0.@Firmness").get("supported").is_none());
+ }
  #[test]fn range_metadata_rounds_wraps_and_names_both_values(){
   let rot=range_meta("accessory.parts.3.addMove.2.4.1").unwrap();assert_eq!(rot["wrap"],true);
   assert_eq!(ranged(&rot,359.6).unwrap(),0.0);assert_eq!(ranged(&rot,-30.0).unwrap(),330.0);assert_eq!(ranged(&rot,725.0).unwrap(),5.0);

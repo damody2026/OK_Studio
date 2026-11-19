@@ -2774,6 +2774,7 @@ uncensor_selector = "Body replacement"
 
 [reader.unsupported]
 hair_transform_not_applied = "The card stores this, but the renderer does not use it yet, so changing it would do nothing."
+pushup_body_backup = "Pushup's copy of the body sliders before the push. Edit the body sliders instead; a change here would be overwritten."
 
 [ui.editor_eyes]
 foreground_config = "Follow the game setting"
