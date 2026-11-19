@@ -2019,3 +2019,38 @@ FDreamUIDeferredRelease::Hold(Top.Pooled);        // 還池之前先壓住 Delay
 **讀法先登記**：`r.RDG.TransientAllocator=0` 兩趟都活過 30 張 ⇒ 受害者是被 allocator 疊記憶體的 RDG transient
 （`MainPS` 讀到的只有背景拷貝這一個）；還是死在第 4–9 張 ⇒ aliasing 出局，
 隊列裡剩下的就是 `GRenderTargetPool` 那個元素（`Frame.Pooled`）或資料貼圖（`DataTexture.cpp:143`）。
+
+### 內建路徑的貼圖生命週期其實是設計過的，所以「proxy 存裸 `UObject*`」這個嫌犯比看起來弱（2026-11-19）
+
+協調提的機制是：外掛存裸 `const UTexture*`，物件被 purge 之後還拿它去取
+`TextureReference.TextureReferenceRHI`，於是**每一帧現算出一個壞的 RHI 指標**。
+這個形狀很漂亮（壞指標不是舊的、是新產生的，所以 EOP 圍欄、描述子快照、defrag 全都不相干），
+**但照程式看，這條路有兩層保護，而且是刻意做的**：
+
+1. **遊戲執行緒那側是弱參照。** `FDreamUIBuiltInDrawParams` 的九支貼圖全是
+   `TWeakObjectPtr<const UTexture>`（`DreamUIBaseShaders.h:55-77`，欄位註解寫明
+   「Game thread: the textures, as the canvas names them. **Never read on the render thread.**」），
+   由 `GetTexturesForRenderCommand()` 在遊戲執行緒上 `Get()` 成裸指標再交給 render command。
+2. **繪製執行緒那側是計數參照，而且死了會變黑。**
+   `ResolveTextures_RenderThread`（`DreamUIBaseShaders.cpp:26-55`）存的是
+   `FTextureReferenceRHIRef`——**貼圖參照物件**的計數參照，不是貼圖本身。
+   而 `FDynamicRHI::RHIUpdateTextureReference`（引擎 `RHI/Private/DynamicRHI.cpp:586`）是
+   `InReferencedTexture ? InReferencedTexture : FRHITextureReference::GetDefaultTexture()`，
+   所以**貼圖死掉之後，那個參照指向全域黑貼圖，不是懸空**（`RHITextureReference.h:61`
+   的註解也寫明這個 fallback 的用途）。
+
+**剩下的窗口只有一個**：遊戲執行緒 `Get()` 出來的裸指標，到繪製執行緒 `ResolveTextures_RenderThread`
+真的 deref 它之間。而這段**被引擎自己的 destroy fence 蓋住**：`UTexture` 的
+`IsReadyForFinishDestroy` 要等資源釋放的 fence 過了才允許 purge，
+也就是繪製執行緒走過那個點之後——在它之前排進去的 render command 早就消費掉了。
+
+**所以預測是「斷言一次都不會命中」。** 斷言還是值得加（命中就是真發現，而且是便宜的），
+但**不要把它當成主要證據**，拆常數那兩格才是。
+欄位註解最後一段還留著上一次的病歷：
+「The resource pointers they replace were kept across frames and left dangling by each of those until the next
+rebuild of the draw call」——**作者已經為了同一類 bug 把裸資源指標換成參照過一次**。
+這也是為什麼我不認為第二次還會是同一個形狀。
+
+**同時要承認這條路解釋不了的事**：它完全不解釋 `DelayFrames` 為什麼有效，
+而那是今天唯一控制住其他兩條軸測出來的效應。所以要嘛有兩個洞，
+要嘛 `DelayFrames` 是透過某種時序副作用起作用的，這點目前沒有證據，不要替它編故事。
