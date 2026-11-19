@@ -95,7 +95,7 @@ UWorld* FDreamUISequenceEditorToolkit::GetPreviewWorld() const
 
 void FDreamUISequenceEditorToolkit::DestroyPreviewTree()
 {
-	if (Sequence != nullptr && Sequence->GetPreviewRoot() == PreviewRoot.Get())
+	if (Sequence.IsValid() && Sequence->GetPreviewRoot() == PreviewRoot.Get())
 	{
 		Sequence->SetPreviewRoot(nullptr);
 	}
@@ -109,7 +109,7 @@ void FDreamUISequenceEditorToolkit::DestroyPreviewTree()
 
 void FDreamUISequenceEditorToolkit::EvacuateSequencerEntities()
 {
-	if (!Sequencer.IsValid() || bPlaybackContextSuppressed || Sequence == nullptr)
+	if (!Sequencer.IsValid() || bPlaybackContextSuppressed || !Sequence.IsValid())
 	{
 		return;
 	}
@@ -135,7 +135,7 @@ void FDreamUISequenceEditorToolkit::ResumeSequencerEvaluation()
 		return;
 	}
 	bPlaybackContextSuppressed = false;
-	if (Sequence != nullptr && Sequence->GetPreviewRoot() == Cast<UDreamWidget>(SuppressionContext.Get()))
+	if (Sequence.IsValid() && Sequence->GetPreviewRoot() == Cast<UDreamWidget>(SuppressionContext.Get()))
 	{
 		// Nothing put a real tree back -- the class is unset, or instantiation failed -- so the
 		// sentinel must not be left standing in for one.
@@ -157,8 +157,8 @@ void FDreamUISequenceEditorToolkit::RebuildPreviewTree()
 	DestroyPreviewTree();
 	// What this build is FROM, whether or not it succeeds: an undo compares against it (HandleUndoRedo), and a
 	// class that fails to load must not be retried on every undo that leaves it in place.
-	BuiltPreviewClassPath = Sequence != nullptr ? Sequence->PreviewWidgetClass.ToSoftObjectPath() : FSoftObjectPath();
-	UClass* WidgetClass = Sequence != nullptr ? Sequence->PreviewWidgetClass.LoadSynchronous() : nullptr;
+	BuiltPreviewClassPath = Sequence.IsValid() ? Sequence->PreviewWidgetClass.ToSoftObjectPath() : FSoftObjectPath();
+	UClass* WidgetClass = Sequence.IsValid() ? Sequence->PreviewWidgetClass.LoadSynchronous() : nullptr;
 	if (WidgetClass == nullptr || !PreviewScene.IsValid())
 	{
 		ResumeSequencerEvaluation();
@@ -204,7 +204,7 @@ void FDreamUISequenceEditorToolkit::RebuildPreviewTree()
 
 void FDreamUISequenceEditorToolkit::OnObjectPropertyChanged(UObject* InObject, FPropertyChangedEvent& InEvent)
 {
-	if (InObject == Sequence
+	if (InObject == Sequence.Get()
 		&& InEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDreamUISequence, PreviewWidgetClass))
 	{
 		RebuildPreviewForNewClass();
@@ -236,7 +236,7 @@ void FDreamUISequenceEditorToolkit::RebuildPreviewForNewClass()
 bool FDreamUISequenceEditorToolkit::MatchesContext(const FTransactionContext& InContext,
 	const TArray<TPair<UObject*, FTransactionObjectEvent>>& TransactionObjectContexts) const
 {
-	if (Sequence == nullptr)
+	if (!Sequence.IsValid())
 	{
 		return false;
 	}
@@ -271,7 +271,7 @@ void FDreamUISequenceEditorToolkit::PostRedo(bool bSuccess)
 
 void FDreamUISequenceEditorToolkit::HandleUndoRedo(bool bSuccess)
 {
-	if (!bSuccess || Sequence == nullptr)
+	if (!bSuccess || !Sequence.IsValid())
 	{
 		return;
 	}
@@ -285,7 +285,7 @@ void FDreamUISequenceEditorToolkit::HandleUndoRedo(bool bSuccess)
 
 void FDreamUISequenceEditorToolkit::HealStrayBindings()
 {
-	if (Sequence == nullptr)
+	if (!Sequence.IsValid())
 	{
 		return;
 	}
@@ -303,7 +303,7 @@ void FDreamUISequenceEditorToolkit::HealStrayBindings()
 
 FGuid FDreamUISequenceEditorToolkit::FindBindingForWidget(const UDreamWidget* InWidget) const
 {
-	if (Sequence == nullptr || InWidget == nullptr || PreviewRoot.Get() == nullptr)
+	if (!Sequence.IsValid() || InWidget == nullptr || PreviewRoot.Get() == nullptr)
 	{
 		return FGuid();
 	}
@@ -354,7 +354,7 @@ void FDreamUISequenceEditorToolkit::SelectWidgetFromViewport(UDreamWidget* InWid
 
 void FDreamUISequenceEditorToolkit::HandleSequencerSelectionChanged(TArray<FGuid> InObjectGuids)
 {
-	if (SelectionSyncGuard != 0 || Sequence == nullptr)
+	if (SelectionSyncGuard != 0 || !Sequence.IsValid())
 	{
 		return;
 	}
@@ -487,7 +487,7 @@ void FDreamUISequenceEditorToolkit::Initialize(const EToolkitMode::Type Mode, co
 
 	FSequencerInitParams SequencerInitParams;
 	{
-		SequencerInitParams.RootSequence = Sequence;
+		SequencerInitParams.RootSequence = Sequence.Get();
 		SequencerInitParams.bEditWithinLevelEditor = false;
 		// Standalone opens hand in a null InitToolkitHost; InitAssetEditor above has created this
 		// toolkit's own host by now, and CreateSequencer asserts on a null one.
@@ -564,7 +564,7 @@ void FDreamUISequenceEditorToolkit::ReportUnresolvableBindings()
 	// track that will silently drive nothing -- the classic aftermath of a widget rename that this
 	// asset was not loaded for -- and the moment the asset is opened is the one moment someone is
 	// looking at it.
-	if (Sequence == nullptr || !PreviewRoot.IsValid())
+	if (!Sequence.IsValid() || !PreviewRoot.IsValid())
 	{
 		return;
 	}
@@ -671,7 +671,7 @@ TSharedRef<SDockTab> FDreamUISequenceEditorToolkit::SpawnTab_Details(const FSpaw
 		FDetailsViewArgs DetailsViewArgs;
 		DetailsViewArgs.bHideSelectionTip = true;
 		DetailsView = PropertyModule.CreateDetailView(DetailsViewArgs);
-		DetailsView->SetObject(Sequence);
+		DetailsView->SetObject(Sequence.Get());
 	}
 	return SNew(SDockTab)
 		.Label(LOCTEXT("DetailsTabLabel", "Details"))

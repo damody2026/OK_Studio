@@ -158,7 +158,7 @@ void SDreamWidgetHierarchyPickerView::RefreshTree()
 	// to reach for RootWidgets[0] and assert instead of showing an empty tree. BuildRoots resets
 	// the output and is a no-op on an empty input, so that case needs no branch of its own; giving
 	// it one only put the empty path somewhere the helper's tests could not reach.
-	DreamWidgetHierarchyPicker_BuildRoots(Roots, ObjectClass, RootWidgets);
+	DreamWidgetHierarchyPicker_BuildRoots(Roots, ObjectClass.Get(), RootWidgets);
 
 	FilterHandler->RefreshAndFilterTree();
 }
@@ -196,7 +196,7 @@ void SDreamWidgetHierarchyPickerView::RebuildTreeView()
 
 TSharedRef< ITableRow > SDreamWidgetHierarchyPickerView::OnGenerateRow(DataType InItem, const TSharedRef<STableViewBase>& OwnerTable)
 {
-	return SNew(SDreamWidgetHierarchyPickerViewItem, OwnerTable, InItem, ObjectClass)
+	return SNew(SDreamWidgetHierarchyPickerViewItem, OwnerTable, InItem, ObjectClass.Get())
 		.OnSelectObject(OnSelectItem)
 		.IsEnabled(InItem->ValidObjectArray.Num() > 0)
 		;

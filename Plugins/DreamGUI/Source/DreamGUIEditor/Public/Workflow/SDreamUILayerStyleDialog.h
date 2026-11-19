@@ -44,7 +44,7 @@ public:
 	void SelectRow(const FDreamUIStyleDialogRow& InRow);
 	FDreamUIStyleDialogRow GetSelectedRow() const { return Selected; }
 	/** The struct the parameter area shows, and whether a field of it is shown on the selected page. */
-	const UScriptStruct* GetShownStruct() const { return ShownStruct; }
+	const UScriptStruct* GetShownStruct() const { return ShownStruct.Get(); }
 	bool IsFieldShown(FName InField) const;
 
 	/** What the + of a row does: another instance after it, selected. What the - does: that instance taken out. */
@@ -83,7 +83,8 @@ private:
 	TSharedPtr<SListView<TSharedPtr<FDreamUIStyleDialogRow>>> List;
 	TSharedPtr<IStructureDetailsView> Details;
 	FDreamUIStyleDialogRow Selected;
-	const UScriptStruct* ShownStruct = nullptr;
+	/** Weak: the dialog is reopened against whatever struct a page shows, and a reload can replace the type. */
+	TWeakObjectPtr<const UScriptStruct> ShownStruct;
 	TArray<FName> ShownFields;
 	bool bSelecting = false;
 };

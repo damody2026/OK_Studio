@@ -7,7 +7,10 @@
 class UDreamWidget;
 class UWorld;
 
-/** One widget whose rect the pick ray crossed. */
+/**
+ * One widget whose rect the pick ray crossed. Raw, and good only for the call that filled the array: RaycastWidgetRects
+ * fills it from widgets its caller holds, and every caller reads the hits before anything can go.
+ */
 struct FDreamUIWidgetPickHit
 {
 	UDreamWidget* Widget = nullptr;

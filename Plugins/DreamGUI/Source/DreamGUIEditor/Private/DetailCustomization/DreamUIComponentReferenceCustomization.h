@@ -38,9 +38,9 @@ private:
 
 	TSharedPtr<IPropertyHandle> PropertyHandle;
 	/** Classes that can be used with this property */
-	TArray<const UClass*> AllowedComponentClassFilters;
+	TArray<TWeakObjectPtr<const UClass>> AllowedComponentClassFilters;
 	/** Classes that can NOT be used with this property */
-	TArray<const UClass*> DisallowedComponentClassFilters;
+	TArray<TWeakObjectPtr<const UClass>> DisallowedComponentClassFilters;
 	TSharedPtr<SBox> ContentWidgetBox;
 	bool bIsInWorld = false;
 };

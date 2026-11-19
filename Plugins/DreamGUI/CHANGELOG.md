@@ -394,6 +394,14 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **The editor's own stored object pointers are weak, and the ones that stay raw say why.** The sequence editor's
+  asset, the hierarchy picker's class filter, a component-reference property's allowed and disallowed class lists and
+  the layer style dialog's shown struct are weak pointers resolved where they are read; `GetShownStruct` still hands
+  back a plain pointer, so callers are unchanged. What stays raw is what lives inside one call or one pass -- a pick
+  hit, a Niagara conversion's materials, an MCP compile outcome, a binding site, a details placement's objects, and
+  the Blueprint compiler's class and old tree, which the engine's own compiler context holds the same way -- and each
+  now says in a comment whose lifetime covers it.
+
 - **A section's material, a text input's owner and an action bar's row are named the way their lifetime works.** A
   mesh section and its render proxy name their material weakly and resolve it as they draw, so a visual hidden or
   collected while its section waits in the pool leaves no address behind; the queued material update does the same. The

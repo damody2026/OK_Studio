@@ -279,8 +279,13 @@ bool FDreamUIComponentReferenceCustomization::IsAllowedComponentClass(UActorComp
 	{
 		for (auto& ClassItem : AllowedComponentClassFilters)
 		{
-			const bool bAllowedClassIsInterface = ClassItem->HasAnyClassFlags(CLASS_Interface);
-			if (Class == ClassItem || Class->IsChildOf(ClassItem) || (bAllowedClassIsInterface && Class->ImplementsInterface(ClassItem)))
+			const UClass* const FilterClass = ClassItem.Get();
+			if (FilterClass == nullptr)
+			{
+				continue;
+			}
+			const bool bAllowedClassIsInterface = FilterClass->HasAnyClassFlags(CLASS_Interface);
+			if (Class == FilterClass || Class->IsChildOf(FilterClass) || (bAllowedClassIsInterface && Class->ImplementsInterface(FilterClass)))
 			{
 				bResult = true;
 				break;
@@ -295,8 +300,13 @@ bool FDreamUIComponentReferenceCustomization::IsAllowedComponentClass(UActorComp
 	{
 		for (auto& ClassItem : DisallowedComponentClassFilters)
 		{
-			const bool bAllowedClassIsInterface = ClassItem->HasAnyClassFlags(CLASS_Interface);
-			if (Class == ClassItem || Class->IsChildOf(ClassItem) || (bAllowedClassIsInterface && Class->ImplementsInterface(ClassItem)))
+			const UClass* const FilterClass = ClassItem.Get();
+			if (FilterClass == nullptr)
+			{
+				continue;
+			}
+			const bool bAllowedClassIsInterface = FilterClass->HasAnyClassFlags(CLASS_Interface);
+			if (Class == FilterClass || Class->IsChildOf(FilterClass) || (bAllowedClassIsInterface && Class->ImplementsInterface(FilterClass)))
 			{
 				bResult = false;
 				break;
@@ -307,7 +317,7 @@ bool FDreamUIComponentReferenceCustomization::IsAllowedComponentClass(UActorComp
 }
 void FDreamUIComponentReferenceCustomization::BuildClassFilters()
 {
-	auto AddToClassFilters = [this](const UClass* Class, TArray<const UClass*>& ComponentList)
+	auto AddToClassFilters = [this](const UClass* Class, TArray<TWeakObjectPtr<const UClass>>& ComponentList)
 	{
 		if (Class->IsChildOf(UActorComponent::StaticClass()))
 		{
@@ -315,7 +325,7 @@ void FDreamUIComponentReferenceCustomization::BuildClassFilters()
 		}
 	};
 
-	auto ParseClassFilters = [this, AddToClassFilters](const FString& MetaDataString, TArray<const UClass*>& ComponentList)
+	auto ParseClassFilters = [this, AddToClassFilters](const FString& MetaDataString, TArray<TWeakObjectPtr<const UClass>>& ComponentList)
 	{
 		if (!MetaDataString.IsEmpty())
 		{

@@ -94,7 +94,8 @@ protected:
 
 	bool bRefreshRequested = true;
 	FOnSelectItem OnSelectItem;
-	UClass* ObjectClass = nullptr;
+	/** The class a pickable object has to be. Weak: this widget outlives what it was opened on (see RootWidget below). */
+	TWeakObjectPtr<UClass> ObjectClass;
 	/**
 	 * Weak, because this picker outlives what it was opened on: a preview rebuild destroys the root
 	 * it was given and the tree refreshes from a timer, so a raw pointer here was passed to IsValid

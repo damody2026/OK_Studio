@@ -81,7 +81,10 @@ private:
 	struct FPlacement
 	{
 		const FProperty* Property = nullptr;
-		/** The objects of a property of InHosted; empty for the objects being customized. */
+		/**
+		 * The objects of a property of InHosted; empty for the objects being customized. Raw: a placement lives inside one
+		 * CustomizeDetails pass, which the panel holds its objects through.
+		 */
 		TArray<UObject*> Objects;
 	};
 
