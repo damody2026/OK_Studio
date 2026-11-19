@@ -292,6 +292,18 @@ Global/FOKGpuRigSkeletonCS/0/{CompileDXC.bat, DebugCompileArgs.txt, DebugHash_<6
 
 ## 9. 把 bindless descriptor heap 读到底（第三轮）——**结论是它解释不了这个故障**
 
+> **［前提已撤回，2026-11-19 晚］§9 与 §10 的推论，都建立在「`Found 0 active heaps` 是一个量测」这个前提上，
+> 而这个前提没了。** e-cardload 在同一段报告里找到我们三个都跳过的一行：
+> `PageFault: Logging all resource enabled: **No**`，后面三行全是 0（active resources／active heaps／
+> released resources），`DRED: No PageFault data.`
+> **三个零来自同一个没开的追踪**（§12b：追踪关着时 `SetHeap` 不取 heap 的 GPU 位址、不登记，那个查询必然回 0）。
+> 所以那个零不是「找遍了都没有」，是「没有在找」。
+>
+> §9 的两个结论本身**仍然成立**，而且已被 e-cardload 的 log 实测佐证
+> （`Configuration=RayTracing` → 图形侧不用 bindless；释放是 fence 门控不是帧数），
+> **但它们当初是为了解释一个不存在的观测而写的**——把它们当成「这条路排除了」的纪录读，
+> 不要当成「这条路曾经有证据」。§7 那张「哪一种耗尽最合这句话」的表同理：它整张都在解释那个零。
+
 读的是 **F 组自己的引擎 `F:/UE5.8`**（`Tools\ok_engine.lua` 回报的就是这个；协调写的 `E:\PhysX\UE5.8` 是 E 组那份，我没读）。全部只读。
 
 ### 9a. 先讲结论，因为它会省掉两格实验
