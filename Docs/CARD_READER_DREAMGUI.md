@@ -1606,3 +1606,49 @@ DRED（基線配方）      13:32:00 – 13:35:56
 
 一般規則（今天第二次用到）：**別人進來的時間窗，要和各格的 log 時間窗對過才知道污染到誰。**
 憑印象說「那段我在量」或「應該在噪聲裡」都不算——每一格的起訊時間都在它自己的 log 第一行。
+
+### 唯一沒被圍欄保護、也不是快照的那條路：VRAM defrag 會把貼圖搬家
+
+**先更正一處讀法：`0x00045f90` 不是堆裡的位移，是 shader 的 program counter。**
+同一份 dump 裡還有 `fragment_02 @ 0x00046000`、`0x0004a780`、`0x0004a7a0`，
+全部落在 `"Shader size": 375040` 之內——那是**同一個 shader 裡不同 warp 的指令位置**。
+所以它每次相同的原因是「同一個 shader 的同一條取樣指令」，和記憶體布局無關。
+真正的故障位址是 **`0xEFB481000`**。不要再從 `0x45f90` 推記憶體結構。
+
+**四個 D3D12 貼圖池裡只有一個開 defrag**（`D3D12Allocation.cpp` 建池處）：
+
+| 池 | `bDefragEnabled` |
+|---|---|
+| `D3D12 ReadOnly4K Texture Pool Allocator` | `false`（註解：都是 4K 的倍數，不會碎） |
+| **`D3D12 ReadOnly Texture Pool Allocator`** | **`true`** |
+| `D3D12 RenderTarget Pool Allocator` | `false` |
+| `D3D12 UAV Pool Allocator` | `false` |
+
+**唯一會 defrag 的是「唯讀貼圖池」——普通被取樣的貼圖住的地方**，也就是
+`FDreamUIBasePS` 在取樣的那些卡片／角色貼圖。defrag 走 `HandleDefragRequest` ＋
+`FD3D12VRAMCopyOperation`，**把 placed resource 搬到另一個堆**；舊的塊還給池子，
+池子空了就 `MemoryPool->Destroy()`（`D3D12PoolAllocator.cpp:850`，條件是
+`IsEmpty() && LastUsedFrameFence + InFrameLag <= CompletedFence`）。
+
+**這是第一個能同時解釋全部證據的機制：**
+
+| 證據 | defrag 怎麼解釋 |
+|---|---|
+| 故障位址**不屬於任何追蹤到的資源、堆、或最近 100 帧釋放過的資源**（11-18 那份、追蹤開著） | 那個資源**從來沒被釋放，它被搬走了**；舊塊還給池子、池子被 trim 掉，位址底下什麼都不剩 |
+| 延遲刪除的 EOP 圍欄擋不住 | 圍欄保護的是**資源物件的銷毀**；defrag 釋放舊塊掛在**帧 fence** 上並重建描述子，**搬家前錄好的描述子快照可以在搬家後才執行** |
+| 釋放是必要條件（`gc=300` 零釋放、三十張全過） | defrag 需要碎洞，碎洞來自 free |
+| 釋放不是充分條件（每卡 0.1 次那幾格過了） | defrag 還要 `Usage < RHIPoolAllocator.DefragSizeFraction`（預設 0.9），而且每次最多清 `DefragMaxPoolsToClear` 個池（預設 1） |
+| 面板畫出來更容易當 | 取樣的 draw 越多，撞到過期描述子的機會越大 |
+| 存量高卻沒事（1690 張） | 存量高＝池子用得滿＝`Usage` 高＝**不符合 defrag 條件**，反而更安全 |
+
+最後一列是個額外的好處：它讓「存量軸被推翻」從一個反直覺的結果變成**可預期的結果**。
+
+**可以不建置就關掉，兩條獨立的路**：池子只有在
+`Usage < GRHIPoolAllocatorDefragSizeFraction` 時才會成為 defrag 目標（`RHIPoolAllocator.cpp:986`），
+所以 **`RHIPoolAllocator.DefragSizeFraction=0`** 讓那個條件永遠為假；
+另外 `MaxPoolsToDefrag == 0` 直接 return（`:993`），所以 **`DefragMaxPoolsToClear=0`** 也能關。
+**兩個都設**，免得「其中一個沒接上」又變成一次假陰性。
+
+**決定性的格子**：`gc=10` ＋ noclear（今天最快當的組合，第 7 張）＋ 關掉 defrag。
+活過 30 張就是 **7 → 30** 的跳動，遠在 6 張的趟間差異之外；還是第 7 張附近當，
+那 defrag 也不是，而且那時整條「釋放 → 某個東西被搬走或歸還」的線就只剩實際拿到名字一條路。
