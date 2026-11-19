@@ -1,6 +1,6 @@
 ---
 title: 贡献
-description: 如何报告问题、提出更改并让拉取请求获得合并——问题表单与环境命令、仓库布局、在宿主项目中构建、Quick 测试门禁、随更改需要更新的内容、文档与翻译流程，以及 AI 辅助贡献。
+description: 如何报告问题、提出更改并让拉取请求获得合并——问题表单与环境命令、仓库布局、在宿主项目中构建、Quick 测试门禁、存起来的指标可以是什么、随更改需要更新的内容、文档与翻译流程，以及 AI 辅助贡献。
 ---
 
 DreamGUI 在 [GitHub](https://github.com/TypeDreamMoon/DreamGUI) 上接收缺陷报告、提案、文档修复和拉取请求。本页是总览。拉取请求必须遵守的检查清单是仓库中的 [CONTRIBUTING.md](../../../CONTRIBUTING.md)。AI 代理从 [AGENTS.md](../../../AGENTS.md) 开始。
@@ -65,6 +65,42 @@ pwsh -NoProfile -File Tools/Tests/Invoke-DreamGUITests.ps1 -Project "<Project>/<
 ```
 
 它会运行静态检查、构建、检查模块清单，并在无人值守的编辑器中运行无头测试套件。请先关闭该项目的所有编辑器。退出码 `0` 为绿色，`1` 为红色，`2` 表示无法判定本次运行。它会打印一行以 `RESULT` 开头的内容：将该行粘贴到拉取请求中。其他预设（用于像素测试的 `Rhi`、`Designer`、`Pie`、`All`）、报告、已知问题以及静态检查规则见[自动化测试套件](../tools/tests.md)。`python Tools/Tests/static_checks.py` 仅运行静态检查，不需要引擎。
+
+<a id="changing-what-a-stored-pointer-is"></a>
+
+## 存起来的指标可以是什么
+
+持有 `UObject` 的成员一律是 `TWeakObjectPtr`，除非有别的东西强参照它：裸指标只是一个位址，说不出物件已经没了，
+而 `TObjectPtr` 在 `UPROPERTY` 之外不持有任何东西。持有 RHI 资源的成员一律是有参照计数的参照
+（`FTextureRHIRef`、`FBufferRHIRef`、`TRefCountPtr<...>`）；RHI 物件没有 weak 这种形式，所以只有「持有」或「不要存」
+两个选择。只用来回答「还是同一个东西吗」的指标不是身分：一个位址被释放又重新发出去，比起来是相等的。
+请改成持有的参照，或自己的序号——不要存位址。
+
+改动本身是机械的，但只有编译器找得出全部呼叫端。以下是它会报的形状，以及它**不会**报的两种：
+
+| 形状 | 改前 | 改后 |
+| --- | --- | --- |
+| 当引数传给收裸指标的东西 | `DrawFrames(Ctx.World, 2)` | `DrawFrames(Ctx.World.Get(), 2)` |
+| 指派给裸区域变数 | `UWorld* W = Scoped.World;` | `... = Scoped.World.Get();` |
+| 和 `nullptr` 比较 | `if (Kinds.Surface != nullptr)` | `if (Kinds.Surface.IsValid())` |
+| out 参数 | `Place(..., Kinds.CanvasRoot)` | 用裸区域变数接，再存进去 |
+| 大括号初始化列表或转型 | `{ static_cast<AActor*>(Rendered), ... }` | 先 `.Get()` 再转型 |
+| **当真假值用** | `if (Member)`、`!Member`、`Member ? a : b` | **编不过**：`TWeakObjectPtr` 刻意删掉了 `operator bool`，理由是「避免过于频繁地解析 weak 指标——在一个函式里只 `Get()` 一次」 |
+| **用 `->` 解参** | `Kinds.Actor->GetWidget()` | **原样编得过，而且语意变了** |
+
+最后一列是会花掉一个下午的那一列。`TWeakObjectPtr::operator->` 回传的是 `Get()`，所以每一行 `->` 都照样编得过
+——而在物件已经没了的时候，它现在是对 null 解参、当场崩，而不是读已释放的记忆体、有时侥幸过去。
+那是更好的行为，也正是改动的目的，但它把「大多数时候会过」变成「每次都失败」，
+所以这种改动之后开始失败的测试，通常是在报告一个一直都在的生命期错误。把它记下来、指出崩在哪一步，
+**另外修**——不要把指标改回去。
+
+还有两处语意差异，都是刻意的：`Weak == nullptr` 等于 `!IsValid()`，所以物件被回收时它也成立，
+而裸指标的同一句只问「指标有没有设」；另外，weak 和裸指标比较时会为此建一个 `TWeakObjectPtrBase`，
+所以在每帧都跑的路径上请写 `Member.Get() == Other`。
+
+因此：成员改成 weak 的结构，**在相信建置结果之前先把它们身上每一个 `->` 看一遍**，
+并且宁可写成显式的 `if (UWorld* World = Ctx.World.Get())`，不要靠 `operator->` 赌。
+其余不必改：只是透过指标呼叫的那些行本来就是对的。
 
 <a id="what-to-update-with-a-change"></a>
 
