@@ -86,19 +86,28 @@ fn range_meta(path:&str)->Option<J>{
   _=>None,
  }
 }
-fn with_range(mut row:J,path:&str)->J{if row["kind"]!="number"{return row;}if let (Some(J::Object(m)),J::Object(r))=(range_meta(path),&mut row){r.extend(m);}row}
+/// `min`／`max` are the maker's slider ends (its UI range), not what the card may hold: the game writes these floats
+/// without clamping (ABMX／slider unlocker cards carry values outside them), so a value outside is kept as it is and
+/// its row says `out_of_range`. Only `limit_min`／`limit_max`, written where the data itself is bounded, refuse.
+fn with_range(mut row:J,path:&str)->J{
+ if row["kind"]!="number"{return row;}
+ if let (Some(J::Object(m)),J::Object(r))=(range_meta(path),&mut row){r.extend(m);}
+ if let (Some(v),Some(lo),Some(hi))=(row["value"].as_f64(),row["min"].as_f64(),row["max"].as_f64()){if row["wrap"]!=true&&(v<lo||v>hi){row["out_of_range"]=json!(true);}}
+ row
+}
 /// Apply a row's range metadata to an edit: round to `decimals` first, then take a `wrap` value modulo [min,max)
-/// (359.6 rounds to 360 and wraps to 0, so a wrapped value always lands inside and is never refused for its range).
-/// Keep this order: wrapping first leaves 359.6 as it is (already inside [0,360)), rounding then gives 360, outside
-/// [0,360), and the edit the user meant as "0" would be refused. A wrapped parameter is never refused for its range,
-/// by design, not a missing check. Last, anything outside [min,max] is refused, naming the value sent and the rounded one.
+/// (359.6 rounds to 360 and wraps to 0). Keep this order: wrapping first leaves 359.6 as it is (already inside
+/// [0,360)), rounding then gives 360, outside [0,360), not the "0" the user meant.
+/// The result is never clamped and never refused for leaving [min,max] (that is the slider range, a soft limit:
+/// refusing or clamping would rewrite an ABMX value the card already has). Refused: a value that is not finite, or
+/// one outside `limit_min`／`limit_max` when the row has them (the message names the value sent and the rounded one).
 pub(crate) fn ranged(p:&J,n:f64)->Result<f64,String>{
  if !n.is_finite(){return Err("數值格式錯誤".into());}
- let (lo,hi)=(p["min"].as_f64().unwrap_or(-1e6),p["max"].as_f64().unwrap_or(1e6));
  let mut v=n;
  if let Some(d)=p["decimals"].as_u64(){let k=10f64.powi(d as i32);v=(v*k).round()/k;}
- if p["wrap"]==true&&hi>lo{v=lo+(v-lo).rem_euclid(hi-lo);}
- if v<lo||v>hi{return Err(if v==n{format!("數值 {n} 超出範圍 {lo}～{hi}")}else{format!("數值 {n}（取整後 {v}）超出範圍 {lo}～{hi}")});}
+ if let (true,Some(lo),Some(hi))=(p["wrap"]==true,p["min"].as_f64(),p["max"].as_f64()){if hi>lo{v=lo+(v-lo).rem_euclid(hi-lo);}}
+ let (lo,hi)=(p["limit_min"].as_f64().unwrap_or(f64::NEG_INFINITY),p["limit_max"].as_f64().unwrap_or(f64::INFINITY));
+ if v<lo||v>hi{return Err(if v==n{format!("數值 {n} 超出資料範圍 {lo}～{hi}")}else{format!("數值 {n}（取整後 {v}）超出資料範圍 {lo}～{hi}")});}
  Ok(v)
 }
 /// Integer fields offered as choices: the top's sleeve type (`parts[0].sleevesType`, 0..2, `ChaControl.DrawSode`) and an
@@ -129,6 +138,12 @@ pub(super) fn catalog_properties_with_unknown(original:&[u8],outfit:usize)->Resu
 /// bone gets), so the no-op is stated rather than performed. Remove a line here when its consumer lands.
 /// `hair.parts.N.pos/rot/scl`: `card.rs` reads them into `CardInfo.hair_parts`, and the only consumers of that
 /// struct take colours and `length` (`accessories.rs`); the C ABI carries no hair transform at all (2026-11-19).
+/// **The original does not apply them either**, so this is not a gap to close: in the whole decompiled
+/// `Assembly-CSharp`, `.scl` appears 47 times and the only hair one is `ChaFileHair.PartsInfo.Copy`
+/// (`scl = _src.scl`); `CvsHair.cs`, the hair editor, mentions `pos`/`rot`/`scl` zero times; and nothing writes
+/// `parts[..].pos/rot/scl`. The game stores the three per slot, copies them with the card, and never reads them --
+/// like `hair.kind`. Making them editable here would invent a behaviour no card was authored for, so they stay
+/// refused rather than implemented (2026-11-19, exhaustive grep; Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §11).
 fn refuse_unapplied(props:&mut [J]){
  for p in props.iter_mut(){
   let Some(key)=p["key"].as_str() else{continue};
@@ -153,7 +168,8 @@ pub(super) fn patch_properties(original:&[u8],outfit:usize,edits:&[J])->Result<V
    _ if p["integer"]==true=>{let n=edit["value"].as_f64().ok_or("數值格式錯誤")?;let (lo,hi)=(p["min"].as_f64().unwrap_or(0.0),p["max"].as_f64().unwrap_or(0.0));
     if !n.is_finite()||n.fract()!=0.0||n<lo||n>hi{return Err("數值超出可用範圍".into());}Value::from(n as i64)},
    _ if p.get("min").is_some()&&p["kind"]=="number"=>Value::F32(ranged(p,edit["value"].as_f64().ok_or("數值格式錯誤")?)? as f32),
-   kind=>{let n=edit["value"].as_f64().ok_or("數值格式錯誤")?;if !n.is_finite()||n.abs()>1e6||(kind=="color"&&!(0.0..=1.0).contains(&n)){return Err("數值超出可用範圍".into());}Value::F32(n as f32)}
+   // A number without range metadata: only finite (no made-up bound). A colour component is 0..1 by structure.
+   kind=>{let n=edit["value"].as_f64().ok_or("數值格式錯誤")?;if !n.is_finite()||(kind=="color"&&!(0.0..=1.0).contains(&n)){return Err("數值超出可用範圍".into());}Value::F32(n as f32)}
   };changes.insert(key.to_string(),value);
  }
  let mut blocks=blocks_from_card(original)?;
@@ -310,9 +326,16 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   assert_eq!(ranged(&rot,359.6).unwrap(),0.0);assert_eq!(ranged(&rot,-30.0).unwrap(),330.0);assert_eq!(ranged(&rot,725.0).unwrap(),5.0);
   let pos=range_meta("accessory.parts.3.addMove.2.0.2").unwrap();assert_eq!(ranged(&pos,1.26).unwrap(),1.3);
   let err=ranged(&pos,100.04).unwrap();assert_eq!(err,100.0);
-  let err=ranged(&pos,100.06).unwrap_err();assert!(err.contains("100.06")&&err.contains("100.1"),"{err}");
-  let scl=range_meta("accessory.parts.0.addMove.2.5.0").unwrap();assert!(ranged(&scl,0.004).is_err());assert_eq!(ranged(&scl,0.005).unwrap(),0.01);
-  let tiling=range_meta("clothes.parts.0.colorInfo.2.tiling.1").unwrap();assert!(ranged(&tiling,1.2).is_err());assert_eq!(tiling["default"],0.0);
+  // Soft range: outside the slider is kept (rounded, never clamped); only limit_min／limit_max refuse.
+  assert_eq!(ranged(&pos,100.06).unwrap(),100.1);assert_eq!(ranged(&pos,-250.0).unwrap(),-250.0);
+  let mut limited=pos.clone();limited["limit_max"]=json!(100.0);let err=ranged(&limited,100.06).unwrap_err();assert!(err.contains("100.06")&&err.contains("100.1"),"{err}");
+  assert!(ranged(&pos,f64::NAN).is_err()&&ranged(&pos,f64::INFINITY).is_err());
+  let scl=range_meta("accessory.parts.0.addMove.2.5.0").unwrap();assert_eq!(ranged(&scl,0.004).unwrap(),0.0);assert_eq!(ranged(&scl,0.005).unwrap(),0.01);
+  let tiling=range_meta("clothes.parts.0.colorInfo.2.tiling.1").unwrap();assert_eq!(ranged(&tiling,1.2).unwrap(),1.2);assert_eq!(tiling["default"],0.0);
+  // An ABMX-style body value read from the card stays as it is and is marked, not clamped.
+  let row=with_range(json!({"kind":"number","value":1.4}),"body.shapeValueBody.4");assert_eq!((row["value"].as_f64(),row["out_of_range"].as_bool()),(Some(1.4),Some(true)));
+  assert!(with_range(json!({"kind":"number","value":0.4}),"body.shapeValueBody.4").get("out_of_range").is_none());
+  assert!(with_range(json!({"kind":"number","value":400.0}),"accessory.parts.0.addMove.2.1.0").get("out_of_range").is_none());
   assert_eq!(range_meta("clothes.parts.0.colorInfo.2.rotate").unwrap()["default"],0.5);
   let face=range_meta("face.detailPower").unwrap();assert_eq!((face["max"].as_f64(),face["display_scale"].as_i64(),face.get("wrap")),(Some(1.0),Some(100),None));
   assert!(range_meta("hair.parts.0.length").is_none());
