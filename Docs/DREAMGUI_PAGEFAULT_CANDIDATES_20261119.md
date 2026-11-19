@@ -1853,3 +1853,96 @@ D3D12 那一侧（`Runtime/D3D12RHI/Private/D3D12TextureReference.cpp`）：
 而 `Type = AddressTranslationError` 正是「整页已经不在页表里」的样子——
 这与「那张贴图的配置被释放、页被还给系统」一致，但**它对「是哪个槽带进来的」没有分辨力**，
 所以还是要靠第 1 步的位址比对。
+
+---
+
+## §29 三题直答（§28 已答一与二，这一节补第三题：**那条「没有新值就不动」的路径找到了，在 group 那一支**）
+
+读的是 E 树（只读）。协调那三题与 §28 交叉，所以这里只补新材料，重複的指回 §28。
+
+### 29a 第 1 题：每个槽在 render 侧存什麼——**十个是持有的 reference，两个是裸位址**
+
+完整表在 §23a，型别在 §23b／§28c。一句话版：
+
+- `MainTex`／`FontTex`／`WidgetData`／`ClipData`／`RectBlockData`／`PaintData`／`MaskTex0`／`MaskTex1`／
+  `RenderLayerTable`／`RenderLayerWidgetData` ⇒ **`FTextureReferenceRHIRef`**
+  （`DreamUIBaseShaders.h:80-92`，`TRefCountPtr`），**不是裸指标、不是 SRV、不是 `UTexture*`**；
+- `SceneDepthTex`（`DreamUIRenderer.cpp:1006`，函式参数）与 `BackdropTex`
+  （`:1015`，`FDreamUIBuiltInBackdrop::Texture`，`DreamUIRenderer.h:29`）⇒ **裸 `FRHITexture*`**，
+  两者都是 pass 内 RDG 产物。
+- `UTexture*` 只在**交接那一瞬间**存在（`FDreamUIBuiltInTextures` 的九个裸 `const UTexture*`，
+  `DreamUIBaseShaders.h:22-33`），由 `GetTexturesForRenderCommand`（`:55-70`）产生、
+  `ResolveTextures_RenderThread`（`:72-110`）当场换成 reference。
+
+**而 §28c 的硬结论是：reference 的 `ReferencedTexture` 是 `TRefCountPtr<FRHITexture>`，
+所以持有 reference 等於持有那张 RHI 贴图；配置要能释放，必定已被 `SwitchToNewTexture` 换成全域黑图。**
+⇒ 那十个槽绑出来只会是「活的」或「黑图」。
+
+### 29b 第 2 题：fallback **只在「从没设过」**
+
+`TextureOrFallback`（`DreamUIRenderer.cpp:970-974`）判 `InReference != nullptr`，而 reference 只在
+「解参当时 `UTexture` 是 null」才为空（`DreamUIBaseShaders.cpp:86-110`）。
+**所以 `mask0=fallback` ＝「这笔 draw 没有元素读遮罩」，不是「它死了所以换白图」。**
+协调担心的「死掉的槽留著旧 descriptor」在这一层确实没有救援机制——**但 29a 末那条让它不构成问题。**
+
+### 29c 第 3 题：清除时机——**mesh 那一支清，group 那一支不清，而 group 还有一个 `bSame` 早退**
+
+这是这一节的新材料，四个点：
+
+1. **mesh section 的 proxy 入池时会清掉**：
+   `FDreamUISectionProxy_Mesh::Disable()`（`DreamGUI/Private/Core/DreamUIMesh/DreamUIMeshComponent.cpp:194-200`）
+   ＝ `Material = nullptr; BuiltIn = FDreamUIBuiltInDrawParams(); bDrawStateStale = true; bCanRender = false;`
+   而且它上面的注解写明**旧行为是 bug**：「A direct mesh's section used to keep both, and went on drawing
+   the old mesh through a material that might no longer exist.」入池由
+   `PoolAllSectionData_RenderThread()`（`:640-656`）对每个 section 呼叫 `Disable()`。
+2. **group section 的 proxy 入池时不清**：
+   `FDreamUIRenderSectionProxy_Group::Disable()`（`:233-237`）**只有 `bCanRender = false;`**，
+   `Desc`（`FDreamUICompositeDesc`，含 `Textures` 的那几个 `FTextureReferenceRHIRef` 与
+   `ClipMaskTextures`）**原封不动留著**。
+3. **而 group 那一支正是「只在有新值时才写」**：
+   `UDreamUIMeshComponent::SetGroupSectionComposite`（`:2164-2189`）先算 `bSame`，
+   比的其中包含 `Sent.Textures.MainTexture == InDesc.Textures.MainTexture`、`...ClipDataTexture`、
+   `...MaskTexture0/1`——**这些都是 `TWeakObjectPtr`，而 `TWeakObjectPtr::operator==` 比的是
+   index/serial 组合，不是解参后的指标**。所以**一个 weak ptr 指向已死物件时，它和自己仍然相等**：
+   **贴图死了、desc 其他栏位没变 ⇒ `bSame` 为真 ⇒ `return`，render 侧那一份永远不会被重新解参。**
+   **这就是协调问的那条路径，位置在 `:2171-2182`。**
+4. **built-in 那一支没有这种早退**：`SetMeshSectionBuiltIn`（`:2597-2624`）每次呼叫都送，
+   `SetMeshSectionBuiltIn_RenderThread`（`:675-680`）无条件 `MeshSection->BuiltIn = Params; bDrawStateStale = true;`。
+   另外 `EnableMeshSection_RenderThread`（`:669-674`，注解「A pooled mesh section taken back by a draw call
+   without new geometry: drawn again, with InMaterial」）**只设 `Material` 与 `bCanRender`，不碰 `BuiltIn`**
+   ——这只因为 `Disable()` 已经清过才安全。
+
+**但照那把尺，这四点全部不合**：group 留下来的是 `FTextureReferenceRHIRef`（持有）与
+`FTexture2DResource` 解出来的 `FTextureRHIRef`（`DreamVisualPostProcessRenderProxy.h:161`、`:177`，
+也持有），**不是位址**。持有就不可能让配置被释放（§28c），所以它们会变成黑图或变成洩漏，**不会变成故障**。
+
+### 29d 我卡在哪（照协调要求明说）
+
+**卡在同一件事上：整个 DreamGUI 的 render 侧，我找不到任何「跨帧保存一个贴图位址」的储存。** 盘点过的：
+
+| 可能的形状 | 实际是什麼 | 行 |
+|---|---|---|
+| 槽阵列／descriptor table | 没有；每笔 draw 都是函式区域 `FParameters`，12 个槽全写 | `DreamUIRenderer.cpp:981-1016` |
+| 跨 draw 快取 | 只存 shader 与 pipeline 身分，没有贴图 | `:921-938`、`:951-968` |
+| 以索引／handle 为键的注册表 | 没有；唯一以位址为键的是预设关的量测，只比对不解参 | `DreamUICompositor.cpp:205`、`:186-189` |
+| 入池残留 | mesh 清、group 不清，但留的是**持有的** handle | `DreamUIMeshComponent.cpp:194-200`、`:233-237` |
+| post-process 的 mask | `FTextureRHIRef`（持有真正的 RHI 贴图）＋注解说明为何不留 `FTexture2DResource*` | `DreamVisualPostProcessRenderProxy.h:177`、`.cpp:/SetMaskTexture_GameThread/` |
+| 裸 `FRHITexture*` | **只有两个**，都是 pass 内 RDG 产物 | `DreamUIRenderer.cpp:1006`、`:1015`、`.h:29` |
+
+**所以我这一侧的结论是明确的否定**：按程式码，DreamGUI 的 built-in draw 不可能把一个已释放的贴图位址绑进
+`MainPS`。而 `-LegacyReader` 0/3 ＋ 基线 6/6 说 Dream 读卡器画面路径是必要条件。
+**两者相加，剩下的解释不在「DreamGUI 存了什麼」这一层**，而在：
+
+1. **绑进去的 descriptor 与 shader 实际取样的 descriptor 不是同一个**（descriptor 表／PSO 那一层，
+   §25c 第 2 条、§26e 候选 3）；或
+2. **故障的贴图根本不是那 12 个槽的任何一个**，而是 Dream 画面路径**同时**让别的东西（角色预览的
+   render target、toon shadow 的 capture、群组 pool 的 target）进入某个状态。
+
+**两条都要位址比对才能分，所以插桩位置我给两处**（e-cardload 可以一次改完）：
+
+- **主位置 `DreamUIRenderer.cpp:1017`**（`SetShaderParameters` 之后、breadcrumb 之前）：把
+  **12 个槽解出来的 `FRHITexture*` 位址**印出来（reference 的要印 `GetReferencedTexture()`），
+  和 `0x000000256bd01000` 比对。**这一步直接判掉上面两条。**
+- **次位置：同一行顺手补 §23a 漏印的 `MaskTex1` 与 `RenderLayerTable` 两个 breadcrumb 槽。**
+
+**若 12 个位址都对不上，这条线就该转到 descriptor／PSO 那一层，而那层不能用这把尺读——要量。**
