@@ -2687,3 +2687,37 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 `LogPoolReuse` 的 handouts／distinct／reuse gap 也跟著重要起來。
 **報齊時的解讀規則**：哪一格動了，就指向那個**不走圍欄**的配置器；
 五格全不動，則「位址不屬於任何堆」還沒有任何配置器可以解釋，那本身就是下一個要追的事實。
+
+### 那三個 0 的保存期只有 **100 帧＝0.6 秒**，所以它們沒有排除任何東西（2026-11-19）
+
+13:37 那一格開著資源追蹤（`Logging all resource enabled: Yes`），回報：
+
+```
+PageFault: Found 0 active tracked resources in 16.00 MB range of page fault address
+PageFault: Found 0 active heaps containing page fault address
+PageFault: Found 0 released resources containing the page fault address during last 100 frames
+```
+
+**第三行的「last 100 frames」是一個 cvar 的預設值**：
+`D3D12.TrackedReleasedAllocationFrameRetention`（`D3D12Adapter.cpp:49-55`，預設 **100**，
+`ECVF_RenderThreadSafe` 所以可以設），字面意思是
+「Amount of frames for which we keep freed allocation data around when resource tracking is enabled」。
+而那行 log 的 100 是寫死在訊息字串裡的（`D3D12Util.cpp:716`），**實際用的是那個 cvar**。
+
+**關鍵**：讀卡器是 **165 FPS**，所以 100 帧 = **0.6 秒**。
+而今天量到的時間尺度是**秒**級（`DelayFrames=240` 就是 1.45 秒，而它只是把當機推遲）。
+**所以那個 0 的意思是「最近 0.6 秒內沒有東西在那個位址被釋放」，
+不是「從來沒有東西在那個位址被釋放」。** 我先前把這三個 0 當成「位址從不屬於任何追蹤配置」是過度解讀。
+
+**於是協調想要的東西有一個便宜得多的做法，不必改引擎**：
+把 `D3D12.TrackAllAllocations=1` 和 **`D3D12.TrackedReleasedAllocationFrameRetention` 調大**
+（例如 20000 帧 ≈ 2 分鐘，涵蓋整格）一起設上去，再跑最凶配方與 19 秒重現各兩趟。
+當機時引擎自己的 page-fault 處理器就會**把那個已釋放資源的名字印出來**——
+這正是「受害者那一側直接拿名字」，而且是 cvar，不是引擎改動。
+
+**跑之前登記的讀法**：
+- **印出名字 ⇒ 受害者有名字了**，連同它的大小與釋放帧號，直接指向擁有它的子系統；
+- **保存期調到涵蓋整格之後仍然 0 ⇒ 那個位址真的不屬於任何追蹤過的配置**，
+  那麼候選就換成「垃圾描述子／垃圾位址」這一類（不是「被放掉的記憶體」），
+  而那會解釋為什麼所有延後釋放的旋鈕都只能改機率、不能修掉。
+- 兩種結果都比再猜一個子系統值錢，而且這一格**不必改引擎樹**。
