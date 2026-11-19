@@ -9,6 +9,7 @@ mod properties;
 pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
 mod ops;
+mod textures;
 mod model_flags;
 pub(crate) mod live_head;
 pub(crate) mod timings;
@@ -470,6 +471,18 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   let output=Path::new(text(&r,"output")?);if let Some(dir)=output.parent(){std::fs::create_dir_all(dir).map_err(|e|e.to_string())?;}
   std::fs::write(output,&out).map_err(|e|e.to_string())?;
   return Ok(json!({"valid":true,"output":output.to_string_lossy(),"bytes":out.len()}));
+ }
+ // MaterialEditor 的贴图：PNG 不是属性值，所以不走 `properties` 的键／值清单，自己一个动作。
+ // 身分是那一列的 5 个栏位，不是列号 —— 列的顺序是每张卡自己的事（和外挂栏位改成身分式键同一个理由）。
+ if matches!(text(&r,"action")?,"textures"|"textures_apply"){
+  let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
+  let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;
+  let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
+  let original=write_blocks(&original,blocks)?;
+  if text(&r,"action")?=="textures"{return Ok(json!({"valid":true,"textures":textures::list(&original,outfit)?}));}
+  let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
+  let raw=textures::apply(&original,outfit,r["changes"].as_array().ok_or("缺少修改清单")?)?;
+  return export_edited(root,&r,&raw,output);
  }
  if matches!(text(&r,"action")?,"properties"|"properties_apply"|"accessory_slot_add"){
   let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;

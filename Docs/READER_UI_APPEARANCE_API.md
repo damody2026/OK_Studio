@@ -332,3 +332,46 @@ ApplyAppearanceItem(key)
 end 与 gloss 0.222/0.667/1.000、outline 0.111/0.333/0.500，色相比例保持）。
 **注意对照要同卡型同读法**：先前拿「读 OK 卡」比「读剥过 OK 区块的输出卡」，diff 里会混进
 `accessory.parts.N.hideCategory`、`clothes.parts.0.sleevesType`、`physics.*` 等读法差异，不是写入差异。
+
+## 11. 贴图：`textures` 与 `textures_apply`
+
+MaterialEditor 把作者指派的 PNG 存在 `TextureDictionary`（id → bytes），指派本身是
+`MaterialTexturePropertyList` 的一列。**一张 PNG 不是属性值**，所以它不走第 9／10 节的键／值清单，
+自己两个动作。偏移与缩放也在这里，不在 `plugins.*` 属性键里：同一笔资料两个地方可改，等于一边的修改
+会被另一边无声盖掉（`properties/plugins.rs` 为 ABMX 写下的理由），所以那边按名字跳过 `texture` 的那行
+**要留着**。
+
+```jsonc
+// 读
+{"action":"textures","card":"<卡>","outfit":0,"cache":"<快取>"}
+// → {"valid":true,"textures":[{ "object":4,"kind":"character","coordinate":0,"slot":0,
+//      "material":"cf_m_face_00","property":"DetailMask",
+//      "tex_id":1,"bytes":126358,"size":[1024,1024],"offset":null,"scale":null }]}
+
+// 写（一次一批，和 properties_apply 一样只开卡一次）
+{"action":"textures_apply","card":"<卡>","outfit":0,"cache":"<快取>","output":"<输出>",
+ "changes":[
+  {"object":4,"coordinate":0,"slot":0,"material":"cf_m_face_00","property":"DetailMask",
+   "png":"D:/.../skin.png"},                                   // 指派：整个档案的 bytes
+  {"object":1,"slot":0,"material":"cf_m_top_02","property":"LineMask","clear":true},  // 清掉贴图
+  {"object":1,"slot":0,"material":"cf_m_top_02","property":"MainTex","offset":[0.1,0],"scale":null}
+ ]}
+```
+
+**一列的身分是 5 个栏位** `object`（`ObjectType`：0 unknown／1 clothing／2 accessory／3 hair／4 character）、
+`coordinate`、`slot`、`material`、`property` —— 原作 `FirstOrDefault` 的条件，**不是列号**。清单的顺序是每张
+卡自己的事（和外挂栏位改成身分式键同一个理由）。`coordinate` 可以不给：照原作 `GetCoordinateIndex`，服装与
+饰品补成 `outfit`，其他一律 0。
+
+照原作的三件事，照直觉做都会错：
+
+| 原作 | 行为 | 猜错会怎样 |
+|---|---|---|
+| `SetAndGetTextureID`（1281） | 字典里已有**完全相同的 bytes** 就重用那个 id，否则 `max(id)+1` | 每次指派都多存一份；`KK_110449` 的 `DetailMask` 与 `LineMask` 本来就共用 id 5，两个饰品栏共用 id 1 |
+| `RemoveMaterialTexture`（2166） | 只把 `TexID` 设 nil；**只有** `NullCheck()`（TexID／Offset／Scale 都没有）才删整列 | 「清除就删列」会把同一列上的偏移与缩放一起弄丢 |
+| `PurgeUnusedTextures`（2512） | 存档前把没有任何列引用的字典项丢掉 | 卡片带着改过好几轮的死图，白白几 MB |
+
+**边界（没做，不是漏）**：新增一列需要那个材质属性真的存在于模型上，那是原作界面照着 live renderer 列出来的，
+CLI 看不到模型；所以这里只改既有的列，以及对**已经给了身分**的属性指派。偏移／缩放的 `Vector2?` 在不同
+MessagePack resolver 下存成 `[x,y]` 或 `{x,y}`，两种原作都读得到，所以写的时候照这张卡自己既有的那一笔的形状写；
+**整张卡一笔都没有就拒绝，不猜**（量到的 3 张卡都没有任何偏移／缩放，所以这条路还没被真实资料走过）。

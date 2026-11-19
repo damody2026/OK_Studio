@@ -634,3 +634,33 @@ plugins.MaterialEditor.a1.@MaterialColorPropertyList.packed.a<i>.@Value…
 `oklib.rs:1724` 的 `TempCard` 留下的，时间都是 **10-28**（三周前），不是这轮产生的。
 `TempCard` 应该在 Drop 时删掉自己，所以这四个代表**当时那些行程是被杀掉的**（和「`TaskStop` 只杀
 最上层 shell、子行程不会跑收尾」是同一件事的另一面）。它们在使用者的游戏资料夹里，我不自行删除。
+
+### 12.7 贴图的写回落地了（2026-11-19）
+
+`appearance` 多两个动作 `textures`／`textures_apply`，程式在
+[Tools/ok-extract/src/appearance/textures.rs](../Tools/ok-extract/src/appearance/textures.rs)，介面与原作的三条
+语义写在 [READER_UI_APPEARANCE_API.md](READER_UI_APPEARANCE_API.md) 第 11 节。**不动
+`properties.rs`／`plugins.rs`**（f-yvonne 的区域），也不解除 `plugins.rs` 按名字跳过 `texture` 的那行：
+整列贴图（bytes、偏移、缩放）只由新模组负责，免得同一笔资料两边都能改。
+
+12.5 节提过「剩下两个未知」，两个都定了，都是**从反编译读出来的、不是猜的**：
+
+1. **清除贴图不等于删掉那一列。** `RemoveMaterialTexture` 只把 `TexID` 设 nil，只有 `NullCheck()`（TexID、
+   Offset、Scale 三个都没有）才删列。按直觉删列会把同一列上的偏移与缩放一起弄丢。
+2. **字典的 id 怎么配。** `SetAndGetTextureID` 先比**完整 bytes**，一样就重用，否则 `max(id)+1`。
+   这不是优化，是原作行为：`KK_110449.png` 的 `cf_m_top_02` 两个属性本来就共用 id 5，两个饰品栏共用 id 1。
+
+量过的（`OK_TEX_CARD=<卡> cargo test --release --lib textures::tests -- --ignored --nocapture`，一张卡上
+读 → 清除 → 指派 → 同 bytes 重用 id 的来回）：
+
+| 卡 | 第 0 套的列数 | 其中 |
+|---|---:|---|
+| `D:\XKoikatuSunshine\UserData\chara\female\Re：从零开始的异世界生活 雷姆.png` | 1 | 角色本体 `cf_m_face_00`／`DetailMask` 1024² |
+| `D:\XKoikatuSunshine\UserData\chara\female\Tohru.png` | 6 | 脸、身体、舌、两层眼线、一个饰品栏（slot 30） |
+| `D:\XKoikatuSunshine\UserData\chara\female\KK_110449.png` | 9 | 上衣 2048²、手套、两个饰品栏共用同一张 1.3 MB |
+
+全 lib 测试 515 passed／0 failed（新模组是新增的，没有动既有路径）。
+
+**还没验的**：偏移／缩放的写（`Vector2?` 的两种 msgpack 形状），因为量到的三张卡**一笔偏移／缩放都没有**，
+所以程式的作法是「照这张卡自己既有的那一笔的形状写，整张卡没有就拒绝、不猜」。要验就得先找到一张有的卡。
+界面也还没接（这一节只到 CLI）；界面与截图照第 8.4 节的验收边界，没拍到前文件只写预期。
