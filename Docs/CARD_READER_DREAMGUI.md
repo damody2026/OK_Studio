@@ -1242,3 +1242,57 @@ grep 不到這個字，所以那部分未經證實，要當證據得先指出是
 下一格用 `gc.TimeBetweenPurgingPendingKillObjects=10` 直接驗這個機制（當機消失＝峰值就是原因），
 **但那是定位用的旋鈕不是上線的修法**：全域 10 秒清掃是付在帧時間上的，這個專案有 120 FPS 的目標；
 上線的做法是**積壓超過上限才收一次**。
+
+#### 為什麼一張卡會多 2～3 個 actor：服裝暖機，每個暖機都是一整個隱藏角色
+
+`objlist_*` 的名字與建立順序（第一格的原始檔）：
+
+```
+開卡後      0
+1 對 1 裡   0 1 2 3
+回程        0 1 2 3 4
+第 1 張     0 1 4          ← _2 _3 被收掉了（clone 與男角）
+第 2 張     0 1 4 5 6
+第 3 張     0 1 4 5 6 7 8 9
+第 5 張     … 到 14
+第 9 張     … 到 26
+第 10 張    25 28 29       ← GC 掃過
+```
+
+**`_2 _3` 在回程後的下一次取樣就不見了**，正好對上 e-fork-2 的讀碼：1 對 1 的 clone 與男角由
+`OwnController` 那條 `Destroy` 收掉，讀卡器原本那個（`_0`）從頭到尾都在。**所以回程沒有孤兒，那張
+「1 對 1 不藏」的舊表是把 `Shared` 當成 `Source`。**
+
+多出來的 2～3 個是**服裝暖機**：`TickClothingPreviews`（`OKGalleryClothing.cpp:127`）對
+`for(int32 Action:{100,101,103})` 三種脫衣轉移各算一個 key，每個 key
+**`SpawnActor<AKKPreviewActor>` 一個隱藏的完整角色**，自己的 Rust session、自己的貼圖、自己的材質
+（`SetActorHiddenInGame(true)`＋關 tick＋`SuspendDisplayTicks`）。所以一次開卡建的是
+**1 個 `PreviewActor` ＋ 最多 3 個暖機 actor**，上一張那一組同時退休。
+
+- **這不是獨立的 bug，是設計**：`ClothingPreviews` 的活快取封在 3 個（`:60`），`ResetClothingPreviews`
+  換卡時會把上一組退休（`:46`）。但它把**每張卡的 churn 乘了三到四倍**，
+  而每一個都是「一整個角色的 GPU 資源」——這就是峰值衝到 25 個 actor／784 張貼圖的速度來源。
+- **所以有界積壓的上限不能訂 8～10 個**：光是「該在的」就有 `PreviewActor` ＋ 3 個暖機 ＋
+  `StalePreview` ≈ 5 個，上限 10 等於**每開一張多一點就要收一次**。上限要照「該在的穩態」往上留，
+  不是照峰值往下留；穩態是量出來的 3（GC 後三趟都一樣），加上窗口期的一組 4，**合理的上限在 12～14**，
+  而且要記每次觸發的耗時——那是使用者感覺得到的代價。
+- 有一個**不用改程式的對照旋鈕**：`OK_NO_CLOTHING_WARM=1`（`OKGalleryClothing.cpp:110`）整個關掉暖機，
+  churn 掉回每張一個。它同樣**只是定位用**（關掉換服裝就不再是即時的），但它能把
+  「峰值是不是當機的原因」和「GC 時機」分開量。
+
+#### DreamGUI 抓的是 UObject 參照，不是裸 RHI 參照——但第二條修法會繞過它的保護
+
+- `UDreamCanvas::DrawTextureHolds` 是 **`UPROPERTY TMap<TObjectPtr<UTexture>,uint64>`**
+  （`DreamCanvas.h:982`）：**UObject 參照**，GC 看得到，在用時標 `MAX_uint64`，停用後再留 8 帧。
+- `FDreamUIDeferredRelease` 握的是 `FTextureRHIRef`／`FBufferRHIRef`／`TRefCountPtr<IPooledRenderTarget>`
+  （`DreamUIDeferredRelease.cpp:8-13`）——**都是 refcount，不是裸指標**，只會延後銷毀，不會變成懸空參照。
+
+**所以「DreamGUI 握著裸參照」這個嫌疑不成立。** 但這段程式的註解本身是一段歷史證詞：
+> 內建 shader 的 draw 只留弱指標與 render thread 的參照，而一張 widget 放掉的貼圖
+> （圖片被換成另一張）在那些 draw 還在取樣時被回收——一個 GPU page fault。
+
+**這正是我們現在這個當機的同一個形狀，而 DreamGUI 已經用「把 UObject 多留 8 帧」修過一次。**
+關鍵的推論是：**它的保護是「讓 UObject 活著」，不是「讓 RHI 資源活著」**。所以第二條修法
+（退休時就 `ReleaseResource()` 放掉 GPU 貼圖）**會從它底下穿過去**：UObject 還活著、
+`DrawTextureHolds` 也還抓著，但 RHI 已經空了，而那些 draw 只有弱指標。
+第二條要做就得帶同樣的延遲（至少 8 帧，或走 `FDreamUIDeferredRelease` 那種 latency），不能當下就放。
