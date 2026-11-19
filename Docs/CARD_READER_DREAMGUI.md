@@ -743,3 +743,51 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
 - 原始資料：log `E:\OpenKoikatsu\Saved\Logs\CardReader\fps1on1-p0b.log`、`fps1on1-p0c.log`、`fps1on1-p2b.log`、`fps1on1-p2c.log`（`LogChartCreation` 那段）。
 
 順手看到的（未處理）：從讀卡器進 1 對 1 時，讀卡器的 DreamGUI 畫面沒有藏起來，疊在 1 對 1 的 UMG 介面底下（`OKInteractionMode.cpp` `EnterReader` 只把 UMG controller 設成 Collapsed）。
+
+## 外觀縮圖快取的上限（2026-11-19，e-fork-2）
+
+選圖頁的縮圖依檔案路徑快取，原本只增不減：開第 1 張卡後 88 張，開滿 30 張卡後 448 張、102 MiB。它和 PageFault 無關（當機時它是 0）。現在預設 `ok.AppearanceThumbCacheMax 128`（四頁，每頁 32 格），用 LRU 淘汰；設 0 是不設上限。淘汰只是從快取拿掉，畫面上還在顯示的格子會繼續持有自己的貼圖。`ok.ReaderScreen resources` 多了 `decodes=`，記從檔案解碼了幾次，也就是快取沒命中的次數。
+
+量測：stage `EFork1119t`。開卡後依序走過眉毛、眼睛、髮型、飾品四頁，再到髮型往後翻 6 頁、往前翻 6 頁：
+
+| 時點 | 快取張數 | MiB | 累計解碼 |
+|---|---:|---:|---:|
+| 四個選圖頁各看一頁 | 128 | 8.5 | 128 |
+| 髮型往後翻 1～6 頁 | 128 | 8.5 → 50.3 | 160 → 281（每頁 +29～32） |
+| 往前翻 1～4 頁（最近四頁內） | 128 | 50.3 | 281（**沒有重新解碼**） |
+| 往前翻第 5、6 頁（超過四頁） | 128 | 33.9 → 10.9 | 313 → 345（每頁 +32） |
+
+- 張數封頂在 128。沒有上限時，同一趟會留住全部 281 張，開 30 張卡後是 448 張、102 MiB。
+- MiB 隨內容浮動：後面幾頁的髮型縮圖比較大張。
+- 加上限的風險是捲動、翻頁時一直重新解碼。量到的是：**最近四頁內來回翻不會重新解碼**；只有翻回四頁以前，才會每頁重新解碼一次（32 張）。這和第一次看到那頁的成本一樣，不會在同一頁上反覆解碼。
+
+## 完整驗證：使用者回報的清單（2026-11-19，新版 UI，打包版）
+
+條件：stage `EFork1119t`（含 `4dabc065a` 與縮圖上限），以 `CardReaderDevelopment.cmd` 的參數（`r.RDG.ParallelExecute=0`、`-OKPhysics=verlet`）啟動，卡片 `E:\OKPackage\TestCards-20261118`，遊戲目錄用 `D:\XKoikatuSunshine`，全程用 MCP（`ok.ReaderScreen`、`reader_call`、`ui_mouse`）操作。結果在 `E:\OpenKoikatsu\Saved\Reports\reader-fullcheck-20261119\`（`results.txt`、`results2.txt`、`results3.txt`），截圖在 `E:\OpenKoikatsu\Saved\OKControl\shots\56548-*.png`，log 在 `E:\OpenKoikatsu\Saved\Logs\CardReader\fullcheck-t.log`。
+
+| # | 項目 | 結果 | 怎麼驗的 |
+|---|---|---|---|
+| 1 | 卡片選擇要有縮圖 | 通過 | 人物卡總欄截圖（`56548-0001.png`、`-0025.png`）：30 張卡，看得到的格子都有縮圖與名字。`state` 的 `thumbs=0/30` 是剛切頁時取的值，截圖時已經畫上 |
+| 2 | 設定裡能設遊戲目錄，指錯會大聲講 | 通過 | `gameroot D:/NoSuchGameFolder`：回 `mods=no zipmods=0`；**設定／介面›遊戲目錄**頁顯示「✗ 設定的遊戲目錄不存在：D:/NoSuchGameFolder」（`-0002.png`）。改回 `D:/XKoikatuSunshine`：`mods=yes zipmods=7296` |
+| 3 | 眉毛、眼睛、髮型、飾品能選材質與模型 | 通過，有一個顯示問題 | 四個選圖頁都有圖片格（眉毛 257 項、髮型 306 項、飾品 2225 項）。按眉毛「類型 3」、髮型「類型 3」、飾品「類型 5」，各自觸發重新載入（`OK load3d result ok=1`），格子上標 ▸，模型跟著換（`-0021`～`-0024.png`）。**顯示問題**：套用後眉毛、髮型頁上方的說明仍寫「目前是「」：來源缺失，這台沒裝 mod（無 GUID）」，和已標 ▸ 的格子不一致 |
+| 4 | 眼睛三頁 | 通過 | 臉›眼部縮放2（18 個控制項）、臉›眼睛（285）、臉›瞳孔覆蓋貼圖（15）都打得開、有內容（`-0011`～`-0013.png`）；內容細節前面「臉›眼部縮放2」一節另驗過 |
+| 5 | 視角不按左鍵不轉 | 通過 | `ui_mouse` 不按鍵在 3D 視窗移動四個點，前後 `ok.ReaderScreen look` 都是 `yaw=0.00 pitch=0.00 distance=478.8`、`last_change=none` |
+| 6 | 換卡不會把上一個角色的物理套上去 | 通過（參數層） | 卡 C（Hayase Yuuka）原本 `bustSoftness 0.62／bustWeight 0.642`，改成 1／1；開卡 D 讀到 D 自己的 0.30／0.64；再開回 C，讀到卡上的 0.62／0.642，不是 1／1。Session 裡實際套用的物理值讀不到，所以只驗到參數層 |
+| 6b | 開卡失敗時退掉舊模型 | 本輪未重驗 | `reader_call load` 給壞卡，MCP 在開卡前就拒絕（`Card could not be read`），沒有走到開卡流程；測試卡資料夾裡沒有壞卡。沿用前面「開卡失敗時的畫面」一節的驗證 |
+| 7 | log 零 Error（打包版） | 通過 | 整趟（含 4 次選圖套用、4 次開卡、遊戲目錄指錯又改回）`Error:` 0 條、Fatal／Ensure 0 條；Warning 72 條，未逐條分類 |
+
+要補的：#3 套用後的「目前是…」說明文字沒更新。#6b 要在測試卡資料夾放一張壞卡再走一次卡片牆。
+
+### PageFault 防護的限制：同一張 GPU 上有第二個 Unreal 遊戲時擋不住（e-cardload 2026-11-19）
+
+e-cardload 對照了時間點：它所有乾淨的趟都是機器上只有它一個 Unreal 的時候，包括讀卡器自己 30 張 ×2、讀卡器→Studio→回來同一行程累計 60 次。會當的三趟都在 09:12 之後，當時這邊的量測 stage（pid 56548）也在同一張 GPU 上跑：
+
+- 讀卡器→1 對 1→回來：第 9、第 17 張當。
+- **純讀卡器、不進任何模式：第 12 次開卡當。**
+
+四趟簽章都一樣（`E6753E1E…`、`fragment_02 @ 0x00045f90`）。所以：
+
+- `4dabc065a` 在安靜機器上擋得住，但同一張 GPU 上有另一個 Unreal 遊戲時擋不住。這也符合「真因未解，這只是迴避」。
+- 之前「1 對 1 回程是洞」的結論有這個混淆變數，**撤回**。「安靜機器 + 1 對 1 回程」這一格，e-cardload 排時段補量，量到之前不改 1 對 1 的路徑。
+- 以後量這條線，先確認機器上只有一個 Unreal。
+
