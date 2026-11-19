@@ -5887,3 +5887,10 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **再犯前檢查**：**每一張卡（每一個量測單位）記一次機器狀態，和那一列數據寫在一起**，不要只在頭尾取樣。通則一句：**取樣點落在自己安靜的時刻，就什麼都測不到**。
 
 這是「驗證方法本身會騙人」的第三例，和上面那條的三件事同一類（子字串篩選命不中 `KSOX`、那張卡的頭髮其實是飾品、對沒被走到的那份快取做實驗）。第四例在同一條路上：`r.RHICmdBypass=1` 只有在 **RHI 執行緒不是獨立執行緒**時才生效（`RHICommandList.cpp`：`bNewBypass = (IsInGameThread() || bypass>=1) && !IsRunningRHIInSeparateThread()`），所以不加 `-norhithread`（或 `r.RHIThread.Enable 0`）就設它，cvar 查起來是 1、行為卻完全沒變——又是一個「旋鈕沒接上卻以為轉了」。
+
+## 2026-11-19：驗證前沒確認產物的 mtime 晚於要驗的那個 commit（e-cardload-physics 記錄，現象由 f-yvonne 量到）
+
+- **現象**：f-yvonne 在 F 樹量到「`okLt guids` 缺口」——OK 卡嚴格開卡失敗，83/101 張 CrowdAPNG、17/19 張 StreetHeroines 中招——並回報「配 E 那支 00:40 的 exe：過；配 F 樹現在的 exe：不過」，看起來像兩棵樹的程式碼不同。
+- **實際上**：那個回歸（`60c0aaea3` 00:15，`card_mods` 的 `wanted` 多串了 body／penis／balls 三個 uncensor GUID，問的問題和轉卡當時不一樣）**00:55 就修好了**（`4a17979ad`：檔案清單直接取自已算好的 `guid_index`，不再另外問一次 `find_guids`，並用 `okstrict::active().is_none()` 把整條路徑限定在原版卡）。F 樹只是缺那個 commit。
+- **而「E 的 exe 過」是產物不同步造成的**：E 樹的 `Tools/ok-extract/target/release/ok-extract.exe` 是 **00:40**（早於 00:55 的修法），而 `ok_extract.lib`（Unreal 連進去、讀卡器實際在用的那個）是 **11:16**（含修法）。所以在同一棵樹上「用 CLI 驗」和「用讀卡器驗」驗的是**兩個不同版本的程式**，結論可以剛好相反。
+- **再犯前檢查**：**驗證前先確認產物的 mtime 晚於要驗的那個 commit**（`ls -l` 那支 exe／lib，對 `git log -1 --format=%ad <commit>`），跨樹對照時兩邊都要確認；同一棵樹裡 CLI 與靜態庫是**兩個產物**，不要以為跑過 cargo 就兩個都新。這是「驗證方法本身會騙人」的第五例，通則與前四例同一句：**先證明觀察管道（這裡是你手上那個二進位檔）真的是你要驗的那份東西**。
