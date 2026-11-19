@@ -899,6 +899,12 @@ Studio 這邊：只把讀卡器的 actor 藏起來、在原地開 Studio 場景�
 - 下一張卡開完，transient 降到 145／352.8 MiB：這些貼圖在之後的開卡中**陸續被放掉**。
 - **同一趟在「從 1 對 1 回來」之後的第 2 張卡就當了**，簽章和其他趟一樣（PageFault、唯一的 Active Shader 是 `MainPS`，Shader Hash `E6753E1EA9F1F20775D8BC0AD963B1EF`）。log `E:\OpenKoikatsu\Saved\Logs\CardReader\leftover-q.log`。這是目前最快的重現：進一次 1 對 1、出來、開兩張卡。
 
+### 第二輪（2026-11-19 10:15）：那 43 張是快取，不是洩漏；「第 2 張就當」不是穩定重現
+
+- **43 張的歸屬**：從 1 對 1 回來後下 `ok.KeptTexturesClear`，transient 貼圖從 158 張／437.3 MiB 降到 118 張／288.7 MiB，少了 40 張、約 149 MiB。所以它們是 `KKRuntimePose` 的 `RecentRuntimeTextures`（e-cardload 的 kept 快取，預算 512 MB）照設計留下的。換卡時會先標 stale，開完再放掉；log 有 `OK kept GPU textures: released 61 (197.5 MB) from the card just left`。「之後隨開卡陸續放掉」就是這條路徑，不是 1 對 1 漏放。
+- **重現率**：同條件的對照趟（stage `EFork1119q`，單一 Unreal，進 1 對 1 待 30 秒、出來，再開 10 張、每張停 6 秒）**10 張都沒當**。上一輪「第 2 張就當」只是單一一趟，不能當作穩定的快速重現。要排除差集，每格得照 e-cardload 的配方跑 30 張、至少兩趟。
+- 還沒排除的仍是上面差集的第 1～5 項。可以接著做的 A/B：從 1 對 1 回來後先 `ok.KeptTexturesClear`，再照配方開卡，看還當不當。這能回答「回程留在快取裡的貼圖，被放掉的那一刻是不是觸發點」。
+
 ### 下一步（逐項排除）
 
 1. 找出那 43 張是誰建的：第 1 項的複製 session 和讀卡器的 session 共用貼圖快取，最可能。如果是，就是「別的 actor 建的貼圖被讀卡器的 actor 共用，之後隨開卡放掉」。這和 GPU 讀到失效位址的形狀吻合：貼圖放掉時，還在飛行中的幀如果有東西引用它，就會讀到失效位址。
