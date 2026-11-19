@@ -1595,21 +1595,24 @@ void UOKReaderScreen::AuditControls(FOutputDevice& Out)
 		for(const UWidget* At=W;At;At=At->GetParent())if(Where.Contains(At))return true;
 		return false;
 	};
-	int32 Keys=0,KeysOnPage=0;TArray<FString> UiGap,DataGap;TSet<FString> RegistryKeys;
+	int32 Keys=0,KeysOnPage=0;TArray<FString> UiGap,DataGap,RangeGap;TSet<FString> RegistryKeys;
 	for(const TSharedPtr<FJsonValue>& Row:OKCharacterMCPRegistry::Parameters(G))
 	{
 		const TSharedPtr<FJsonObject> P=Row.IsValid()?Row->AsObject():nullptr;if(!P)continue;
 		FString Key,Label,Kind;P->TryGetStringField(TEXT("key"),Key);P->TryGetStringField(TEXT("label"),Label);P->TryGetStringField(TEXT("category"),Kind);
 		if(Key.IsEmpty())continue;
 		++Keys;RegistryKeys.Add(Key);
+		// A number the registry gives no range yet (f-yvonne's metadata: range_missing is true, never written false).
+		bool bRangeMissing=false;
+		if(P->TryGetBoolField(TEXT("range_missing"),bRangeMissing)&&bRangeMissing)RangeGap.Add(FString::Printf(TEXT("%s\t%s"),*Key,*Label.Replace(TEXT("\n"),TEXT(" "))));
 		const UWidget* W=OKRegistryControl(G,P);
 		if(OnPage(W))++KeysOnPage;
 		else UiGap.Add(FString::Printf(TEXT("%s\t%s\t%s"),*Key,*Label.Replace(TEXT("\n"),TEXT(" ")),W?TEXT("its control is on no page"):TEXT("no control")));
 	}
 	for(const FString& K:PageKeys)if(!RegistryKeys.Contains(K))DataGap.Add(K);
 	Lines.Add(FString::Printf(TEXT("audit: %d pages; old screen operable controls %d: mirrored %d, drawn by the new screen itself %d, missing %d; short names shown twice on a page: %d"),Pages,Total,Covered,Replaced,Missing.Num(),Ambiguous.Num()));
-	Lines.Add(FString::Printf(TEXT("registry: %d keys, on a page %d, on no page (UI 缺) %d; keys the definition names %d, not in the registry (資料端缺) %d; pages: %s, %d problems"),
-		Keys,KeysOnPage,UiGap.Num(),PageKeys.Num(),DataGap.Num(),*PagesSource,PagesErrors.Num()));
+	Lines.Add(FString::Printf(TEXT("registry: %d keys, on a page %d, on no page (UI 缺) %d; keys the definition names %d, not in the registry (資料端缺) %d; numbers without a range (範圍缺, range_missing) %d; pages: %s, %d problems"),
+		Keys,KeysOnPage,UiGap.Num(),PageKeys.Num(),DataGap.Num(),RangeGap.Num(),*PagesSource,PagesErrors.Num()));
 	Lines.Add(TEXT("done another way by the new screen:"));
 	for(const FString& R:ReplacedBy)Lines.Add(TEXT("  ")+R);
 	Lines.Add(TEXT("missing (class, name, label, visibility, nearest named parent):"));
@@ -1620,6 +1623,8 @@ void UOKReaderScreen::AuditControls(FOutputDevice& Out)
 	for(const FString& U:UiGap)Lines.Add(TEXT("  ")+U);
 	Lines.Add(TEXT("keys the definition file names that the registry lacks (資料端缺):"));
 	for(const FString& D:DataGap)Lines.Add(TEXT("  ")+D);
+	Lines.Add(TEXT("registry numbers without a range (範圍缺: key, label):"));
+	for(const FString& Gap:RangeGap)Lines.Add(TEXT("  ")+Gap);
 	Lines.Add(TEXT("problems in the definition file:"));
 	for(const FString& E:PagesErrors)Lines.Add(TEXT("  ")+E);
 	const FString File=FPaths::ProjectSavedDir()/TEXT("Reports/reader-control-audit.txt");
@@ -2046,6 +2051,20 @@ void UOKReaderScreen::ApplyWantedScopes()
 	}
 }
 
+FString UOKReaderScreen::PageFit() const
+{
+	if(!LeftScroll||PageWidgets.IsEmpty())return TEXT("pagefit: no page");
+	const UDreamWidget* Page=PageWidgets.Last();
+	const UDreamLayoutContainer* PageLayout=Page?Page->GetLayoutContainer():nullptr;
+	const float Height=PageLayout?PageLayout->GetLayoutPreferredSize().Y:-1.f;
+	const float View=LeftScroll->GetHeight(),End=LeftScroll->GetScrollOffsetOfEnd();
+	// The page's own height less the view is what scrolling must cover; a little slack for the padding round it.
+	const float Need=FMath::Max(0.f,Height-View);
+	const bool bOk=Height>=0&&End+FMath::Max(8.f,Need*.03f)>=Need;
+	const FString Where=Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub)?Categories[Category].Name+TEXT("›")+Categories[Category].Groups[Sub].Name:CurrentCategory();
+	return FString::Printf(TEXT("pagefit %s page=%.0f view=%.0f scroll_end=%.0f need=%.0f view_fraction=%.3f %s"),*Where,Height,View,End,Need,LeftScroll->GetViewFraction(),bOk?TEXT("ok"):TEXT("MISMATCH"));
+}
+
 void UOKReaderScreen::ScrollLeftPage(float Progress){if(LeftScroll)LeftScroll->SetScrollProgress(FMath::Clamp(Progress,0.f,1.f));}
 
 namespace OKReaderPaths
@@ -2464,6 +2483,7 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			if(Done)Out.Logf(TEXT("card=%d file=%s"),I,*S->CardFile(I));
 		}
 		// "scroll <0..1>": the left page to that point of its length (screenshots of a long page).
+		else if(Verb==TEXT("pagefit"))Out.Log(S->PageFit());
 		else if(Verb==TEXT("scroll")){Done=Value.IsNumeric();if(Done)S->ScrollLeftPage(FCString::Atof(*Value));}
 		else if(Verb==TEXT("width")){Done=Value.IsNumeric();if(Done)S->SetLeftWidth(FCString::Atof(*Value));}
 		// 設定 › 遊戲目錄: "gameroot <folder>" / "library <folder>" save as the page does ("default" forgets the user's choice);

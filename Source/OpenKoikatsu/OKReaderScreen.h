@@ -166,6 +166,9 @@ public:
 	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
 	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}
 	void ScrollLeftPage(float Progress);
+	// "pagefit": the shown page's height against the left scroll box (its view, how far it lets you scroll): a page
+	// taller than the view must scroll to its end (MISMATCH otherwise). Read a few frames after the page opens.
+	FString PageFit() const;
 	void ShowTabPublic(int32 Index){ShowTab(Index);}
 	void SetLeftWidth(float Width);
 	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
