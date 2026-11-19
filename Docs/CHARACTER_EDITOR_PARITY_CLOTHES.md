@@ -348,7 +348,14 @@
    - 字串只露出 MaterialEditor 的 `Value`：内容是数字的当数字列，`True`／`False` 当布林列，不给自由打字。写回时保持字串（`replace` 照原型别转）。ShadowCastingMode 那种列举字串（`Off`／`On`…）还没露出。
 2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。**已写**（`properties.rs` `refuse_unapplied`，原因文字 id `reader.unsupported.pushup_body_backup`，测试 `pushup_body_backup_is_offered_but_not_editable`）：挡写不挡读，列照样列出来（它是诊断用的事实，也可以看备份值是多少），MCP 的 `set` 回「Parameter unsupported」；尚未编译。**这个入口在 2026-11-19 之前是开着的**（`plugins.Pushup.@Pushup_BodyData…` 可写）。已经从这里改过的卡不迁移、不自动修；那样的卡，Pushup 会用改过的备份重算身体。
 3. **未确认，不动程式**：MoreAccessories v2 的 XML 副本改了有没有效。要等有画面时用真卡核对（清单交给 f-sceneload 的拍照窗口）；若无效，就是 `extra.rs` 改错了地方，改成编辑 `parts[20..]`。`HairShadowColorControl` 那一列同样**未确认**，不删。
-4. KSOX／KCOX 换图：和 f-sceneload 的贴图动作对齐后另开动作。
+4. KSOX／KCOX 换图：**资料端已写（尚未编译）**，`appearance/overlays.rs`，动作 `overlays`（读）／`overlays_apply`（写）。和 f-sceneload 的 `textures`／`textures_apply` 同一个形状：读一支、写一支，写入只有这一支；界面、`reader_call`、MCP 要接的是这一个动作，不另立写法。C++ 的 MCP 与控制器还没接。
+   - **身分**（不用列号）：KSOX 是（服装号, `type`＝`TexType` 数值），KCOX 是（服装号, `slot`＝衣服物件名或 `BodyMask`／`InnerMask`／`BraMask`）。和 MaterialEditor 贴图不同：卡上存的就是 PNG bytes，没有共用字典加列的结构。
+   - **换图**：`png` 给档案路径，bytes 原封不动放进卡。**不压缩、不缩图、不重新编码**，那会改使用者的素材。原作两个外挂读图时会 `EncodeToPNG` 重编，所以同一张图被原作再存一次后 bytes 会不同，读回来仍是同一张图。
+   - **清除**（照原作，出处在 `overlays.rs` 开头）：KSOX 的 `SetTexture(type, null)` 是把那一种从这套服装的 `Lookup` **移除**，不是存一张空图；没人引用的 `_TextureID_` 照 `PurgeUnused` 丢掉。KCOX 的清除只把 bytes 设成 null；这时 `Override` 若还开着，项留着，原本的贴图照样隐藏；`Override` 也关了，`CleanupTextureList` 就把整项丢掉。
+   - **原作会顺手做、我们也照做的**：KSOX 的 `EyeOver`／`EyeUnder`（6／5）不写自己，写左右两种（+2、+4）。卡不是「每套服装各自」（`IsPerCoord()==false`，所有服装的表都相同）时，改一套就套到所有服装（GUI 的 `CopyToOtherCoords`）。读的回应带 `skin_per_outfit`，让 UI 能讲清楚。KSOX 新贴图 id 原作取 1000..9989 的乱数，我们取 1000 起第一个没用过的；id 只要不重复都合法。
+   - **体积**：建议大小是身体 2048²、脸 1024²、眼／眉／眼线 512²（`Util.GetRecommendedTexSize`）。一次换图，卡大约多出那个 PNG 档的大小。同一张卡里，KSOX 同样 bytes 只存一份；KCOX 每个物件各存一份。
+   - 旧版 KSOX（v1，PNG 直接以种类名存）不写，回错误请先在原作存一次；读卡端（`card.rs`）照常读得到。
+   - 测试：`ksox_clear_removes_the_kind_and_shared_edits_reach_every_outfit`、`ksox_per_outfit_edit_stays_on_its_outfit_and_reuses_identical_bytes`、`kcox_clear_keeps_an_override_entry_and_drops_an_empty_one`、`stored_bytes_are_the_users_file_unchanged`。
 5. 低优先：Pushup 范围中继资料；MaterialEditor 换 shader。
 
 ### 10.6 我接下来要做的（B 类，照优先）

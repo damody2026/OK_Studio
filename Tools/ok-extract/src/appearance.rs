@@ -10,6 +10,7 @@ pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
 mod ops;
 mod textures;
+mod overlays;
 mod model_flags;
 pub(crate) mod live_head;
 pub(crate) mod timings;
@@ -538,6 +539,18 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   if text(&r,"action")?=="textures"{return Ok(json!({"valid":true,"textures":textures::list(&original,outfit)?}));}
   let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
   let raw=textures::apply(&original,outfit,r["changes"].as_array().ok_or("缺少修改清单")?)?;
+  return export_edited(root,&r,&raw,output);
+ }
+ // KoiSkinOverlayX／KoiClothesOverlayX 的覆盖图：和 MaterialEditor 贴图同一个形状（读一支、写一支），身分是
+ // （外挂, 服装号, 覆盖种类／物件名），不是列号。语意与体积见 `overlays.rs`。
+ if matches!(text(&r,"action")?,"overlays"|"overlays_apply"){
+  let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
+  let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;
+  let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
+  let original=write_blocks(&original,blocks)?;
+  if text(&r,"action")?=="overlays"{let mut out=overlays::list(&original,outfit)?;out["valid"]=json!(true);return Ok(out);}
+  let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
+  let raw=overlays::apply(&original,outfit,r["changes"].as_array().ok_or("缺少修改清单")?)?;
   return export_edited(root,&r,&raw,output);
  }
  if matches!(text(&r,"action")?,"properties"|"properties_apply"|"accessory_slot_add"){
