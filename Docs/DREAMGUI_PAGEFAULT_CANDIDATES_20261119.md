@@ -1534,3 +1534,105 @@ breadcrumb 既然八笔同时 `[Active]`、只印 7 个槽，就不可能靠它�
 
 **第 1 条可以用一行 breadcrumb 排掉**（§23a 末），**这是现在最便宜的下一步**；
 第 2 条要等第 1 条排掉之后再谈，而且它要的是量测不是阅读。
+
+---
+
+## §26 `VirtualTextureUpdate` 那个节点：名字是历史遗留，没有已配置的 VT 时它只有一个 UAV transition
+
+引擎读的是 `E:/PhysX/UE5.8`（与 F 的 `F:/UE5.8` 同一个 commit，§11），专案读的是 E 树（只读）。
+
+### 26a VT 支援预设是**开**的，而且本专案从没覆写
+
+`r.VirtualTextures` **预设 1**，`ECVF_RenderThreadSafe | ECVF_ReadOnly`
+（`Source/Runtime/Engine/Private/Texture.cpp:66-70`），对应专案设定 `URendererSettings::bVirtualTextures`
+（`Classes/Engine/RendererSettings.h:413-417`，`ConfigRestartRequired`）；判定走
+`UseVirtualTexturing()`（`Runtime/RenderCore/Private/RenderUtils.cpp:1194-1199`）。
+
+本专案 **`Config/*.ini` 里 `VirtualTexture` 零命中**，`Source/`、`Plugins/KKRuntimePose/Source`、
+`Plugins/KKUnityBundle/Source`、`Plugins/KKCard/Source` 里 `VirtualTextureStreaming`／`VirtualTexture` 也**零命中**。
+**所以 VT 支援是开的（引擎预设），但「支援开着」不等於「有任何 VT 贴图存在」。**
+
+### 26b 读卡器那些 `CreateTransient` 贴图**不可能**进 VT 系统
+
+- `UTexture2D::CreateTransient`（`Runtime/Engine/Private/Texture2D.cpp`）**从头到尾没有碰
+  `VirtualTextureStreaming`**：它只设 platform data 的 `SizeX/SizeY/NumSlices/PixelFormat`、
+  `bNotOfflineProcessed`、第 0 层 mip。`VirtualTextureStreaming` 是 `uint8 : 1` 的 `UPROPERTY`
+  （`Classes/Engine/Texture.h:1610-1611`），UObject 零初始化 ⇒ **0**。
+- 门槛是 `UTexture2D::IsCurrentlyVirtualTextured()`（`Texture2D.cpp`）：
+  **`VirtualTextureStreaming && GetPlatformData() && GetPlatformData()->VTData`** 两个都要。
+  `VTData` 只有资产烘焙（editor texture build）才会产生，`CreateTransient` 不建。
+
+**所以协调的预期是对的：`KKRuntimeMaterial` 与读卡器的 `CreateTransient` 贴图全部不是 VT。**
+母材质有没有 VT 取样节点这一题，用二进位 grep 扫了，**先讲它的区分力**：拿一个一定不用 VT 的
+贴图资产当对照——`Content/IndependentResources/RuntimeMaterials/R1145/T_black.uasset` 里
+`VirtualTextureStreaming` 命中 1 次（那是**序列化属性名**，每个 `UTexture2D` 资产都有），
+`RuntimeVirtualTexture` 与 `MaterialExpressionRuntimeVirtualTextureSample` 都 **0**。
+**所以 `VirtualTextureStreaming` 这个字串没有判别力，`RuntimeVirtualTexture*` 有。**
+
+按这个标准扫全 `Content/`：`RuntimeVirtualTexture`／`MaterialExpressionRuntimeVirtualTextureSample`／
+`RuntimeVirtualTextureOutput` 的命中**只有** `Content/Scenes/CrowdRoom/EnvironmentR1/M_*.uasset`（9 个）
+与 `Content/Scenes/StreetSocial/Materials/StreetMaterial00.uasset`。
+`Content/Koikatsu`、`Content/PaintDemo`、`Content/IndependentResources`、
+`Plugins/KKRuntimePose/Content`、`Plugins/OKStudio/Content` **零命中**。
+**这些命中全在 CrowdRoom／StreetSocial 的内容里，读卡器场景不载入它们。**
+
+### 26c 那个 breadcrumb 节点实际是什麼：**VT feedback，不是 page upload**
+
+`VirtualTextureUpdate` 这个名字在整个 Renderer 里**只有一处**产生：
+`Runtime/Renderer/Private/VT/VirtualTextureFeedbackResource.cpp:125`
+`RDG_EVENT_SCOPE_STAT(GraphBuilder, VirtualTextureUpdate, "VirtualTextureUpdate")`，
+而且它上面一行的注解自己讲明名字是历史遗留：
+「VirtualTextureFeedback would be a more descriptive stat name, but VirtualTextureUpdate was used
+historically and some profile tools may depend on that.」
+
+**真正的 VT page update 不叫这个名字**：那是 `FVirtualTextureSystem::BeginUpdate`／`EndUpdate`
+（`Runtime/Renderer/Private/DeferredShadingRenderer.cpp:1917`、`:2296`）。
+
+这个 scope 里的内容，按顺序：
+
+1. `:127-131` `AddPass(..., RDG_EVENT_NAME("VirtualTextureFeedbackTransition"), ...)`
+   ——`EndUAVOverlap` ＋ 一个 `FRHITransitionInfo(UAV, UAVMask → SRVCompute)`。**纯 transition，不取样任何东西。**
+2. `:134-138` **`if (!FVirtualTextureSystem::Get().HasAllocatedVirtualTextures()) return;`**
+   （`VirtualTextureSystem.h:189`：`AllocatedVTs.Num() > 0`），注解写
+   「If there are no allocated VTs then we can assume that no GPU feedback was generated.」
+3. 之后才是压缩与 readback：`RegisterExternalBuffer(PooledBuffer, ERDGBufferFlags::SkipTracking)`、
+   `CompactedFeedback`／`HashTableKeys`／`HashTableElementIndices`／`HashTableElementCounts` 等
+   **全部是 RDG buffer，没有一个是贴图**（`:140-175`）。
+
+**所以第 3 题的答案**：这个 pass 读的是一个 pooled feedback buffer 与几个当帧 RDG buffer，
+**它不绑任何贴图、也没有 page table／physical space 的贴图快取**；page table／physical space 属於
+`FVirtualTextureSystem`，那是另一个 pass 的事，而且在没有 `AllocatedVTs` 时整条都不跑。
+**「只存位址」的形状在这里找不到。**
+
+### 26d 第 4 题：节点为什麼还在——**scope 开在 early-out 之前**
+
+`RDG_EVENT_SCOPE_STAT` 在 `:125`，early-out 在 `:135`。**所以就算一个 VT 都没有，
+`VirtualTextureUpdate` 这个节点照样存在，里面就只有那一个 `VirtualTextureFeedbackTransition`。**
+它不是「RDG 的空 pass」，是「一个 UAV transition」——**但同样不可能在贴图位址上 page fault。**
+
+### 26e 那个冲突，照协调要求明确写出来
+
+把 26c／26d 与 §25 并排，就得到一个不自洽的三角，**我不绕过它**：
+
+- **26c／26d**：`VirtualTextureUpdate` 分支不取样贴图 ⇒ **故障不在它身上**（除非 `AllocatedVTs > 0`，
+  而那要量，见下）。
+- **§25**：角色 runtime 贴图（故障那张，带 `_overtex1` 等参数名）**进不了 DreamGUI 的四个 brush 站点**，
+  程式码上没有第五条路。
+- **两者相加**：`[Active]` 的两个分支，一个不碰贴图，另一个碰的不是这张贴图。**所以至少有一个前提是错的。**
+
+**三个候选，按便宜排序**，每一个都可以用现有资料或零成本的一步判：
+
+1. **`[Active]` 不等於「出错的那一个」。** breadcrumb 只说「这些还没结束」。在 D3D12 上
+   `DumpActiveBreadcrumbs` 印的是 In／Out 标记之间尚未回收的节点，**整个 `RenderFinish` 子树都会在那里**，
+   包括与故障无关的同层节点。**这一条是我认为最可能的**，而且它意味着 breadcrumb 这条线到此为止，
+   不该再从「哪个节点 Active」推取样者。
+2. **`AllocatedVTs > 0`**（例如某个 engine／plugin 内容带了 VT）。**零成本判别**：在那一趟的 log 里
+   下 `r.VT.Dump`（`VirtualTextureSystem.cpp:301`）或 `r.VT.DumpPoolUsage`（`:305`）；
+   或者直接看现有崩溃档里有没有 VT 相关的 pool 配置行。**不必重编。**
+3. **取样者不在这两个分支里**，而是在 descriptor 表／PSO 那一层（§25c 第 2 条）。这一层我没读，
+   而且它不是「某个 C++ 成员存了裸位址」的形状，**那把尺找不到它**。
+
+**`-LegacyReader` 三趟正好把候选 1 与候选 2／3 分开**：若 0/3 不故障，取样者确实与 DreamUI 的 draw 相关，
+那麼 §25 的否证就说明「绑进去的贴图」与「故障的贴图」是两张，**问题落在候选 3**；
+若照样故障，取样者与 DreamUI 无关，**而候选 2 只要一行 `r.VT.Dump` 就能判掉**，剩下的还是候选 3。
+**两种结果都指向候选 3，所以我建议把量测力气放在那里，而不是继续读 VT。**
