@@ -4266,3 +4266,49 @@ STOP card=none (crowd_C001.png) reader_started=0 (never returned to gallery) ...
 
 這也是為什麼二元尺（有沒有死）在這堆爛條件下反而是最穩的讀法：
 **上面每一項干擾都影響秒數，沒有一項明顯會把「死」變成「不死」。**
+
+## 旋鈕實驗前置清單（第 7 條的操作化，F 組查到環境變數蓋過 cvar 之後）
+
+f-sceneload 發現 `OK_STUDIO_FIND_INDEX=0` 這個**環境變數會蓋過同名 cvar**：
+環境裡殘留一個，整格就跑在它以為自己關掉的那條路上，**兩種設定看起來一模一樣**，
+結論會是「這個旋鈕沒有效果」——**而且沒有任何跡象**。那正是我最怕的那種結果：
+一個看起來乾淨的「沒效果」。
+
+> 1. **列出所有能設定這個旋鈕的輸入**——cvar、環境變數、`Default*.ini`、命令列、
+>    程式裡的預設與硬寫死值——每一個都控制或記錄。**贏的那個往往不是你設的那個。**
+> 2. **在機制作用的那一點找到達證據**，不是 setter 那一點。
+> 3. **事前寫下預測，包含方向與量級。**
+
+### 第 1 項對 cvar 已經有一半的自動解：`LastSetBy`
+
+我每趟都印旋鈕讀回值，而 UE 的讀回值**自己就說了是誰贏的**：
+
+```
+# knob now: r.RDG.TransientAllocator = "0"   LastSetBy: SystemSettingsIni
+```
+
+`SystemSettingsIni` 正是我用 `-ini:Engine:[ConsoleVariables]:` 送進去的那條路。
+**所以對「有好幾個來源都在寫同一個 cvar」這種情況，`LastSetBy` 直接給出答案**，
+不必去逐一排查 ini／命令列／程式預設——**只要把 `LastSetBy` 記進表頭就夠了**（已經在記）。
+
+### 但 `LastSetBy` **蓋不住 F 組那一類**，殘差風險要講清楚
+
+`LastSetBy` 只在**值是經由 cvar 系統設定**時才有意義。兩種情況它看不見：
+
+1. **環境變數被程式直接讀取**（`getenv`／`FPlatformMisc::GetEnvironmentVariable`），
+   完全繞過 cvar 系統——**cvar 讀回值會顯示我設的值，而程式用的是別的值**。f-sceneload 那個就是這類。
+2. **程式在某處讀了自己的欄位／常數而不是 cvar**，或把 cvar 的值快取在啟動時。
+
+**所以三格的前置各加一步（純讀碼，零機器時間，排在 `release` 與 Q1 之後、跑格子之前）**：
+
+| 格 | 旋鈕 | 要查的殘差來源 |
+|---|---|---|
+| `NeverDeleteProxy` | `DreamGUI.*` | `Config/DefaultDreamGUI.ini` 有沒有這個 key（**它已在 `IDPATHS` 裡，正因為它能蓋過 cvar**）；有沒有同名環境變數被直接讀 |
+| `gclrun` | `RHI.TransientAllocator.GarbageCollectLatency` | 引擎端有沒有在啟動時快取這個值；`Default*.ini` 有沒有設 |
+| retention／名字 | `DreamGUI.*` retention | 同 `NeverDeleteProxy`，另查該值是否在物件建構時取樣一次 |
+
+查法：對每個旋鈕名在 `Source/`、`Plugins/`、`Config/` 各搜一次，並搜 `GetEnvironmentVariable`／`getenv`
+附近有沒有同名字串。**完全不用機器**，而且它能救的正是那種看起來乾淨的「沒效果」。
+
+第 2 項我已有範例（`1008 → 11 ms` 之於 `EnableAsyncCacheConsolidation`、`Note()` 到達次數之於 `Frames.Pooled`）；
+第 3 項也做過（`1008 → 11` 就是事前預測）。**三格真正缺的就是第 1 項。**
