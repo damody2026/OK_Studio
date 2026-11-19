@@ -250,7 +250,7 @@ pub(super)fn patch(blocks:&mut BTreeMap<String,Vec<u8>>,changes:&BTreeMap<String
 
   let v=decode(&blocks["KKEx"]).unwrap();let me=v.as_map().unwrap().iter().find(|(k,_)|k.as_str()==Some("com.deathweasel.bepinex.materialeditor")).unwrap().1.clone();
   let entry=&me.as_map().unwrap()[0].1.as_array().unwrap()[0];
-  assert_eq!(entry.as_map().unwrap().iter().find(|(k,_)|k.as_str()==Some("Value")).unwrap().1,&Value::String("0.3".into()));
+  assert_eq!(entry.as_map().unwrap().iter().find(|(k,_)|k.as_str()==Some("Value")).unwrap().1,Value::String("0.3".into()));
  }
  #[test]fn extra_accessory_xml_preserves_unknown_attributes_and_other_outfits(){
   let xml="<root><accessorySet type=\"0\"><accessory parentKey=\"a_n_head\" color0r=\"0.5\" addMove01x=\"0\" unknown=\"keep\" /></accessorySet><accessorySet type=\"1\"><accessory color0r=\"0.9\" /></accessorySet></root>";
