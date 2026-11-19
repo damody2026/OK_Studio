@@ -292,9 +292,62 @@
 | `hideCategory` 只在 `Game.isAddH` 时显示 | 原作游戏进度条件，读卡器没有游戏进度，照常显示 |
 | `CvsDrawCtrl`（穿着状态预览、姿势、背景等） | 只影响预览、不进卡。我们的「穿着状态」抽屉已经涵盖衣服部分 |
 
-### 10.5 没盘点的（外挂）
+### 10.5 外挂（2026-11-19 盘点）
 
-外挂加的衣服／配件栏位，资料端都以 `plugins.<id>.…` 通用列出现，界面在「全部属性」。各外挂原本的专用页（反编译 `plugins\` 下的 `KKS_Accessory_States`、`KKS_OverlayMods`、`KKS_MoreAccessoryParents`、`KKS_ClothingBlendShape`，以及 `KKS_Plugins` 内的 MaterialEditor、HairAccessoryCustomizer、Pushup）这次没有逐页对。其中 `KKS_MoreAccessoryParents` 会加父骨键，我们的 55 键选单不含它们；照通则那些键照收、标 `out_of_range`（`appearance.rs` `mark_unknown_parents`），不挡写入。
+语意来源：反编译 `D:\XKoikatuSunshine\kks_decomp\plugins\` 下各外挂自己的存档程式（`OnCardBeingSaved`／`OnCoordinateBeingSaved`）。我们这边看的是 `Tools/ok-extract/src/appearance/properties/plugins.rs`（`PLUGIN_SECTIONS`、`visit()`）与读卡算图那一侧（`card.rs`、`card_plugins.rs`）。
+
+**先讲共通的两件事：**
+
+- **界面**：外挂列全在「全部属性」（`pages.json` 的 `property_panel`），没有专用页，所以下表每个外挂的界面都是 A（e-fork-2 的排版工作），表里不再逐列写。
+- **资料端只露出一部分栏位**，取舍由 `visit()` 决定：
+  - 会露出：浮点数（`F32`／`F64`）、布林、颜色（四个浮点），以及 MoreAccessories 的 XML 字串。
+  - **露不出**：整数、一般字串、PNG／`byte[]`。键名含 `texture` 与结尾是 `Original` 的栏位，`visit()` 刻意跳过。
+  - 这条规则让几个外挂的主要数值没有列可改，见下表标 **B** 的地方。
+  - 「露不露出」是照 `visit()` 规则对外挂存档型别推出来的，还没有逐个外挂拿真卡核对过。
+
+限制一律照 §9.1：外挂没有给范围中继资料的，只检查有限数（「不限」）；颜色依结构 0..1。
+
+| 外挂（区段键，按身分） | 存在哪里 | 栏位 | 资料端 | 算图 | 限制 | 分类 |
+|---|---|---|---|---|---|---|
+| **MaterialEditor**（`com.deathweasel.bepinex.materialeditor`） | 角色卡＋服装卡；一个区段装全部服装，`CoordinateIndex` 分开 | `MaterialColorPropertyList`（`Value` 是 Color） | 有（颜色列；只露出当前服装的衣服与饰品列，`visit()` 第 76 行） | 有 | 硬：颜色 0..1 | A |
+| 同上 | 同上 | `MaterialFloatPropertyList`（`Value` 存成**字串**） | **没有**：字串不露出 | 有 | 原作滑杆预设 0..1，shader 的 `Range` 属性会改写 → 软 | **B** |
+| 同上 | 同上 | `MaterialKeywordPropertyList`（`Value` bool） | 有 | 待查 | bool | A |
+| 同上 | 同上 | `RendererPropertyList`（`Value` 字串：Enabled／ShadowCastingMode／ReceiveShadows／RecalculateNormals） | **没有** | 有（渲染器开关） | 硬：列举值 | **B** |
+| 同上 | 同上 | `MaterialShaderList`（`ShaderName` 字串、`RenderQueue` int?） | **没有** | 有（shader 家族） | 硬：shader 名单；RenderQueue 整数 | **B**（低优先：换 shader 牵涉材质重建） |
+| 同上 | 同上 | `MaterialTexturePropertyList`＋`TextureDictionary`（贴图、偏移、缩放） | **已由 f-sceneload 覆盖**（`7ecd947ff`／`3af999058`／`fe5d80d11`，`appearance/textures.rs`，另开动作，不走 `plugins.*`） | 有 | — | 不重做 |
+| 同上 | 同上 | `MaterialCopyList`（材质复本） | 没有 | 待查 | — | C：会多出一个材质槽，是结构编辑，不是数值；读卡器照卡原样保留 |
+| **KoiSkinOverlayX**（`KSOX`，v2） | 只在角色卡；里面按服装分 | `Lookup`（服装 → 贴图种类 → 贴图 id）＋ `_TextureID_<n>`（PNG） | **没有**：贴图不是属性值 | 有（身体／脸／眼的覆盖贴图） | — | **B**：要像 MaterialEditor 贴图那样另开一个换图动作，与 f-sceneload 的贴图动作同一套做法，做之前先和它对齐 |
+| 同上 | 同上 | `EnableInStudioSkin`／`EnableInStudioIris`（只在 false 时写） | 有（bool） | — | bool | C：只影响 Studio |
+| **KoiClothesOverlayX**（`KCOX`） | 角色卡（按服装分）＋服装卡 | `Overlays`：衣服物件名或遮罩名（`BodyMask`／`InnerMask`／`BraMask`）→ `[PNG, Override]` | `Override`（bool）有；PNG 没有 | 有；换上衣时一起清掉上衣的覆盖与遮罩（`properties.rs` 约 258 行） | bool | 贴图 **B**（同 KSOX）；`Override` A |
+| 同上 | 同上 | `EnableInStudio` | 有 | — | bool | C：只影响 Studio |
+| **Pushup**（`com.deathweasel.bepinex.pushup`） | 角色卡：`Pushup_BraData`／`Pushup_TopData`（以服装号为键）、`Pushup_BodyData`；服装卡：`PushupCoordinate_*` | `ClothData`：Firmness／Lift／PushTogether／Squeeze／CenterNipples（浮点）、EnablePushup／FlattenNipples／UseAdvanced（bool）、进阶 12 项身体值 | 有（浮点与 bool；键用 `#<服装号>`） | 有（`card.rs` `apply_pushup_shape`） | 基本五项：原作滑杆 0..1，软；进阶 12 项：滑杆 −1..2，软；没有范围中继资料时只检查有限数 | A；范围中继资料可补（B，低优先） |
+| 同上 | 同上 | `Pushup_BodyData`（没推挤前的身体） | 有 | 有 | 软 | C：**不该给人改**。它是原作 `shape.*` 的备份，改了会和身体滑杆打架；同一笔资料两个地方能改，正是 ABMX 不进 `plugins.*` 的理由。写入端要挡，**B**：把它标成 `supported:false`（同 `refuse_unapplied`） |
+| **HairAccessoryCustomizer**（`com.deathweasel.bepinex.hairaccessorycustomizer`） | 角色卡 `HairAccessories`（服装 → 饰品栏）；服装卡 `CoordinateHairAccessories` | HairGloss、ColorMatch（bool）；OutlineColor、AccessoryColor、GlossColor（颜色）；HairLength（浮点） | 有 | 有 | 颜色硬 0..1；HairLength 原作 0..1，软 | A。只对有 `ChaCustomHairComponent` 的饰品有效，可用性可从 `model.accessories` 的 `use_color` 那份资料推，UI 要时再补旗标 |
+| **MoreAccessories**（`moreAccessories`，v2） | 第 21 栏以后其实存在原作的 `accessory.parts` 阵列（超过 20 个）；`additionalAccessories` 是旧版相容用的 XML 副本 | XML 里每栏：type、id、parentKey、addMove、color、hideCategory、noShake | 有（`accessory_extra`，XML 列） | 有 | 同原作配件（§9.3） | A。**待查**：v2 卡的真资料在 `parts[20..]`，XML 只是副本。我们改的是 XML 那份，要确认原作读 v2 卡时以 `parts` 为准、不读 XML（反编译 `MoreAccessories.cs` 426–485：v2 忽略 XML），否则我们改了也不会生效 → 可能是 **B** |
+| 同上 | 同上 | `ShowAccessories`（bool[]） | 有 | — | bool | C：只在 Studio 写 |
+| **Accessory States**（`Accessory_States`，v1） | 角色卡 `CoordinateData`（以服装号为键）＋服装卡 | 每个饰品栏：`_binding`（int：0–8 衣服种类，9 以上自订组）、`_state`（`[开始,结束]` 整数区间）、`_shoetype`（byte）、`_parented`（bool）；组名 `_names`（字串） | 只有 `_parented`；**其余都是整数或字串，没露出** | 有（`card_plugins.rs`） | `_binding` 硬（列举）；`_state` 硬 0..3（衣服）或组的最大值 | **B**（原作 UI 是一个下拉加两个 0..3 滑杆，资料端要能露出整数列） |
+| **AccessoryStateSync**（`madevil.kk.ass`，v6） | 角色卡 | `TriggerPropertyList`／`TriggerGroupList` | 部分 | 有 | — | C：Accessory States 存档时会**从自己的资料重写**这份相容副本（`CharaEvent.cs` 568–614），单独改它，下次存档就被盖掉。以 `Accessory_States` 为准 |
+
+**其他会影响衣服／饰品的外挂**（这次没展开，只列区段键，都还不在 `PLUGIN_SECTIONS`，会出现在 `unknown_plugin_sections`）：
+
+- `com.deathweasel.bepinex.clothingunlocker`：`ClothingUnlocked`。
+- `com.deathweasel.bepinex.moreoutfits`：`CoordinateNames`，服装名，字串。
+- `KK_InvisibleBody`：`Visible`。
+- `nakay.kk.ClothingBlendShape`：`ClothesDataSet`。已在 `card_plugins.rs` 算图，属性端没有。
+- `com.deathweasel.bepinex.dynamicboneeditor`：已在 `PLUGIN_SECTIONS`，`AccessoryDynamicBoneData` 是浮点列。
+
+**两件和先前写法不一致、要更正或核对的**：
+
+- `KKS_MoreAccessoryParents` 反编译里**没有卡资料**：它加的父骨直接以字串写进原作的 `parentKey`。这正是 §10.3 改成软限制要放行的情形。
+- `PLUGIN_SECTIONS` 有一列 `HairShadowColorControl`（标「source」），但反编译里这个外挂**找不到卡资料**。那一列可能是空设定，要找一张真卡确认，不要凭推测删。
+
+**B 类（资料端，我的），照优先：**
+
+1. 让 `visit()` 露出整数，以及有已知型别的字串列：Accessory States 的绑定与区间、MaterialEditor 的浮点（字串存）与渲染器开关。照 §8 的身分式键，限制照上表。
+2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。
+3. 查清 MoreAccessories v2 的 XML 副本改了有没有效；若无效，改成编辑 `parts[20..]`。
+4. KSOX／KCOX 换图：和 f-sceneload 的贴图动作对齐后另开动作。
+5. 低优先：Pushup 范围中继资料；MaterialEditor 换 shader。
 
 ### 10.6 我接下来要做的（B 类，照优先）
 
