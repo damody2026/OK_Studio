@@ -688,3 +688,21 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
 資料：格 2 `Saved/Logs/CardReader/20261119-084556-7c116d38.log`、
 格 3 `Saved/Logs/CardReader/20261119-084231-097a2ef0.log`、
 格 4 `Saved/Logs/CardReader/20261119-082405-73d69668.log` 與 `Saved/Logs/D3D12.0.2026.11.19-08.27.05.nv-gpudmp`。
+
+### 三個模式是不是同一個行程（決定「按行程設」的代價，2026-11-19 查證）
+
+**同一個執行檔，模式在啟動時由參數決定，三個入口各自是獨立行程**：
+
+| 入口 | 行程裡有什麼 | 會不會設那條 cvar |
+|---|---|---|
+| `CardReaderDevelopment.cmd`／`reader_launch`（`run_card_reader_development.lua`） | 讀卡器畫面（`OKGalleryWidget.cpp:1054` 建 `UOKReaderScreen`，`-LegacyReader` 則不建） | **會**（唯一一處） |
+| `SceneEditor.cmd`（`run_scene_editor.lua`） | 只有 Studio（空地圖＋`AOKStudioGameMode`），不建讀卡器畫面 | 不會 |
+| 街區 stage（`StreetSocial.cmd`） | 街區＋從街區進的 1 對 1（`AOKInteractionMode::EnterCards`），不建讀卡器畫面 | 不會 |
+
+**但讀卡器那個行程可以在執行中切進另兩個模式**，而且是同一個行程（不是另開 exe）：
+- OK Studio：`OnEnterOkStudio()`／`reader_call studio enter`——實測同一個 pid，cvar `0→2→0`。
+- 1 對 1：`AOKInteractionMode::EnterReader(Source)` 在同一個 `APlayerController` 上 `CreateWidget`。
+
+**所以「按行程、啟動時設、不還原」的代價只落在「從讀卡器進去的 Studio／1 對 1」**。
+街區那條線的 1 對 1（120 FPS 的目標）與單獨開的 `SceneEditor.cmd` 是不同行程、不設那條 cvar，**完全不受影響**。
+要量代價，量的對象就只有「從讀卡器進 1 對 1／Studio」這一種用法。
