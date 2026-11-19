@@ -1031,6 +1031,85 @@ fn copy_body_material_targets_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_n
     out
 }
 
+/// `SetRenderQueue_Custom` components inside the named prefab subtree: the GameObject's own name with its
+/// `m_queueDatas` as (material index, queue while on, queue while off). `ChaForegroundComponent.SetForeground`
+/// flips `isSetQueue` on the eye meshes (and the eyebrow) from `ChaControl.SetForegroundEyesAndEyebrow`, and
+/// `SetRenderQueue_Custom.ChangeRendererQueue` then writes `m_queues` (on) or `m_queuesBackup` (off) into each
+/// listed material's render queue — that is the whole of the original's "draw the eyes in front" option.
+/// The numbers live in the prefab, not in code (the class only defaults both to 3000), so they have to be read.
+/// Keyed by GameObject name because the head's renderers are rebuilt per card; the renderer path ids of the
+/// prefab do not survive into our parts.
+/// Optional query: an OK card sealed before this existed records nothing and answers an empty list. Callers must
+/// say so instead of silently drawing the eyes behind the hair (`--oklib answers` / `ok_cards.lua reseal` fix it).
+pub fn foreground_render_queues<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(String, Vec<(i32, i32, i32)>)> {
+    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "foreground_render_queues", prefab_name, || foreground_render_queues_unity(bytes, prefab_name))
+}
+fn foreground_render_queues_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(String, Vec<(i32, i32, i32)>)> {
+    let Ok(bundle) = load_bundle_source(bytes.to_source(), false) else { return Vec::new() };
+    let bundle = Arc::new(bundle);
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    let mut out: Vec<(String, Vec<(i32, i32, i32)>)> = Vec::new();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+                scripts.insert(info.path_id, class.to_string());
+            }
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let mut parent_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_father: HashMap<i64, i64> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+        }
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+                if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
+            }
+        }
+        for (tf, go) in &tf_go {
+            if let Some(pgo) = tf_father.get(tf).and_then(|f| tf_go.get(f)) { parent_go.insert(*go, *pgo); }
+        }
+        let in_prefab = |mut go: i64| {
+            for _ in 0..=parent_go.len() {
+                let l = go_names.get(&go).map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+                if l == want || (!want_trim.is_empty() && l == want_trim) { return true; }
+                let Some(p) = parent_go.get(&go) else { return false };
+                go = *p;
+            }
+            false
+        };
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else { continue };
+            let props = obj.class.properties();
+            let class = props.get("m_Script").and_then(pptr_path_id).and_then(|id| scripts.get(&id)).cloned().unwrap_or_default();
+            // The script may live in another serialized file; its one serialized field identifies it then.
+            if class != "SetRenderQueue_Custom" && !(class.is_empty() && props.contains_key("m_queueDatas")) { continue; }
+            let Some(go) = props.get("m_GameObject").and_then(pptr_path_id) else { continue };
+            if !in_prefab(go) { continue; }
+            let Some(name) = go_names.get(&go).cloned() else { continue };
+            let mut queues = Vec::new();
+            for data in props.get("m_queueDatas").map(uv_arr).unwrap_or_default() {
+                let Some(d) = data.as_object() else { continue };
+                let n = |k: &str, fallback: i32| d.get(k).map(uv_i32).unwrap_or(fallback);
+                queues.push((n("id", 0), n("m_queues", 3000), n("m_queuesBackup", 3000)));
+            }
+            if queues.is_empty() { continue; }
+            out.push((name, queues));
+        }
+        if !out.is_empty() { break; }
+    }
+    out
+}
+
 /// Node existence used by `ChaControl.AddClothesStateKind` through
 /// `ChaReference.GetReferenceInfo`. This walks the named prefab subtree, so a
 /// sibling prefab in the same asset bundle cannot lend it a reference node.

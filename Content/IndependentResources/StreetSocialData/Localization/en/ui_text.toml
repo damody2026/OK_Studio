@@ -2748,3 +2748,27 @@ cannot_pay_note = "(He did not have the {fare, number, ::currency} fare in his w
 no_bus_note = "(No bus suits this walk.)"
 no_taxi_note = "(It is close enough; no taxi needed.)"
 judge_ride = "\nThey are on a long walk together and could ride the bus or a taxi. If he suggests or agrees to the bus, set action to take_bus; the taxi, take_taxi."
+
+# The card reader's property editor: one group name per KKEx plugin section (ok-extract PLUGIN_SECTIONS).
+[reader.plugin_group]
+material_editor = "Material Editor"
+hair_accessory = "Hair accessory"
+hair_shadow_color = "Hair shadow colour"
+pushup = "Pushup"
+dynamic_bone_editor = "Bone physics"
+more_accessories = "Extra accessories"
+accessory_states = "Accessory states"
+accessory_state_sync = "Accessory state sync"
+skin_overlay = "Skin overlays"
+clothes_overlay = "Clothing overlays"
+eye_control = "Eye opening"
+eye_shaking = "Shaking eye highlights"
+uncensor_selector = "Body replacement"
+
+[reader.unsupported]
+hair_transform_not_applied = "The card stores this, but the renderer does not use it yet, so changing it would do nothing."
+
+[ui.editor_eyes]
+foreground_config = "Follow the game setting"
+foreground_off = "Behind"
+foreground_on = "In front"

@@ -48,7 +48,14 @@ void UOKCharacterController::OnOpenProperties(){
  auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
  if(auto* Root=UKKGameRoot::Get())AppearanceRoot=Root->Root;
  auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("properties"));R->SetStringField(TEXT("card"),Input);R->SetNumberField(TEXT("outfit"),OutfitIndex);bPropertyBusy=true;PropertyStatus->SetText(FText::FromString(TEXT("讀取目前角色的可編輯設定…")));const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
- RunAppearanceRequest(R,[Selection,Generation,Outfit](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bPropertyBusy=false;if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;if(!Data){G->PropertyStatus->SetText(FText::FromString(TEXT("設定讀取失敗：")+Error));return;}for(auto V:Data->GetArrayField(TEXT("properties")))G->EditorProperties.Add(V->AsObject());G->EditorPropertyParents.Reset();for(auto V:Data->GetArrayField(TEXT("parents")))G->EditorPropertyParents.Add(V->AsObject());G->RebuildPropertyControls();},CardJob);
+ RunAppearanceRequest(R,[Selection,Generation,Outfit](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bPropertyBusy=false;if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;if(!Data){G->PropertyStatus->SetText(FText::FromString(TEXT("設定讀取失敗：")+Error));return;}for(auto V:Data->GetArrayField(TEXT("properties")))G->EditorProperties.Add(V->AsObject());G->EditorPropertyParents.Reset();for(auto V:Data->GetArrayField(TEXT("parents")))G->EditorPropertyParents.Add(V->AsObject());
+  // Sections ok-extract does not know: named, never silently dropped (see EditorUnknownPluginSections).
+  G->EditorUnknownPluginSections.Reset();const TArray<TSharedPtr<FJsonValue>>* Unknown=nullptr;
+  if(Data->TryGetArrayField(TEXT("unknown_plugin_sections"),Unknown))for(auto V:*Unknown){const FString S=V->AsString();if(!S.IsEmpty())G->EditorUnknownPluginSections.Add(S);}
+  G->RebuildPropertyControls();
+  if(!G->EditorUnknownPluginSections.IsEmpty())G->PropertyStatus->SetText(FText::FromString(FString::Printf(
+   TEXT("這張卡有 %d 個尚未支援的外掛區段，內容不會顯示也不會被改到：%s"),
+   G->EditorUnknownPluginSections.Num(),*FString::Join(G->EditorUnknownPluginSections,TEXT("、")))));},CardJob);
 }
 void UOKCharacterController::OnPropertySearch(const FText& Value){PropertyPage=0;RebuildPropertyControls();}
 void UOKCharacterController::OnPropertyPrev(){PropertyPage=FMath::Max(0,PropertyPage-1);RebuildPropertyControls();}
