@@ -189,6 +189,23 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
    - ABMX `location≥10` 的饰品本地骨。
    - UncensorSelector 的选择（跨到身体那一块，和别人的盘点合并再做）。
 
+## 5.1 这个选项在我们手上的卡里几乎没人用（2026-11-19 扫描）
+
+扫过 `Content/CharacterCards/StreetHeroines/` 全部 18 张，`face.foregroundEyes` 与 `face.foregroundEyebrow`
+**全部是 0**（＝跟随玩家设定，而原作预设两者皆关）。`CrowdAPNG/C000.png` 是少数例外（`foregroundEyebrow=2`）。
+
+两个推论：
+
+- **这解释了为什么我们没套用这个选项却一直没人发现**——绝大多数卡根本没开它，画面当然没人觉得不对。
+  这类「资料端缺口藏在没人用的栏位里」不会被使用回报找出来，只会被盘点找出来。
+- **排程上它该往后放**：第二批优先做使用者天天会碰的（头发四页、眼睛两页的实际滑杆与颜色），
+  描画前面这种少用选项做完资料端即可，UI 顺手带上就好。
+
+验这个选项要自己造卡：`ok-appearance` 的 `properties_apply` 写 `face.foregroundEyes`／`foregroundEyebrow` = 2，
+现成的一对在 `Saved/Reports/foreground-eyes/pair/`（`alice_fg_off.png` 对 `alice_fg_on.png`，
+抽取日志确认 on 那张换了 `cf_Ohitomi_R02 2902→2802`、`cf_Ohitomi_L 2901→2801`、`cf_Ohitomi_L02 2902→2802`、
+`cf_O_eyeline_low 2903→2803`）。
+
 ## 6. 本文的证据边界
 
 - 第 1–4 节的盘点来自读 `D:\XKoikatuSunshine\kks_decomp` 的程式码与本仓库的程式码；
