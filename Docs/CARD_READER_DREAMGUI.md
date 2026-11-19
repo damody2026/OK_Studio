@@ -5868,3 +5868,64 @@ frame 24406   PageFault at 0x2588DC1000，落在 [0x2588DA0000 .. 0x2588E00000] 
 
 所以剩下的是：**在 sweep 之後 105～2854 幀之間，每幀都還在畫的那個綁定裡，存的是這張貼圖的位址。**
 下一步要查的是材質／MID／uniform buffer／shader binding 這一側——那是修法要動的地方。
+
+# 三題：貼圖怎麼交給材質、換卡時 MID 怎麼處理、sweep 之前有沒有清引用（純讀碼）
+
+## 一、卡片貼圖是怎麼交給材質的
+
+只有一條路：**`SetTextureParameterValue` 到一個當場新建的 MID**。
+
+```
+KKRuntimeMaterial.cpp:378  CreateTransient(W,H,PF_B8G8R8A8)        ← 貼圖在這裡誕生
+      ↓ 以 UTexture2D* 陣列往下傳（TConstArrayView<UTexture2D*>）
+KKRuntimeSharedMaterial.cpp:419  UMaterialInstanceDynamic::Create(Parent,GetTransientPackage())
+KKRuntimeSharedMaterial.cpp:420  for(const auto& T:B.Textures) M->SetTextureParameterValue(T.Key,Textures[T.Value]);
+```
+
+讀卡器自己另有幾處同樣形狀的（`KKPreviewActor.cpp:3701/4551/4662/4727/5190/5244/5274`），
+差別只在 Outer 給的是 **元件或 Actor**（`Create(Mat,Comp)`、`Create(Parent,this)`），然後
+`Comp->SetMaterial(Slot,Dynamic)`。
+
+所以材質那一側持有貼圖的只有兩個東西：
+
+1. **MID 的 `TextureParameterValues`**（`UPROPERTY`）—— GC 看得見，會延命；
+2. **`FMaterialInstanceResource` 在 render thread 上的 `const UTexture*`** —— **裸指針**，GC 看不見。
+
+## 二、換卡時 MID 怎麼處理：整個丟掉重建
+
+**不沿用。每次載入、每個部件都新建一個。**
+
+- 全專案 `OKCreateRuntimeSharedMaterial` 只有 `:419` 一個 `UMaterialInstanceDynamic::Create`，沒有任何
+  MID 快取：grep `TMap<...UMaterialInstanceDynamic>`、`TStrongObjectPtr<UMaterialInstanceDynamic>`、
+  `MaterialCache`、`SharedMaterials` 在這些檔案裡**都沒有命中**。
+- 唯一的重用是**同一次載入之內**的去重（`OKCrowdRuntimeScene.cpp:798` 比對 identity／FaceClass 相同就沿用
+  `E.Materials[Match]`，`:825` 的 `OutlineSlots` 同理）。跨卡沒有。
+- `KKRuntimeMaterial.cpp` 全檔 **`SetTextureParameterValue` 命中 0 次**——它只生產貼圖，從不改既有材質的綁定。
+
+**而這一題有一個比讀碼更硬的證據：記憶體真的在放手後 3 幀被釋放。**
+MID 的 `TextureParameterValues` 是 `UPROPERTY`。若換卡後還有任何一個活著的 MID 指著那張貼圖，
+GC 就**不可能**回收它。它被回收了，所以那一刻**沒有任何 GC 看得見的材質引用存在**。
+`KKRuntimeMaterial.cpp:230` 的註解本來就這樣寫：「*the materials of the card just left are gone*」——
+量到的 3 幀把這句話從設計假設變成事實。
+
+## 三、sweep 把 `TStrongObjectPtr` 移出之前有沒有清引用：**沒有，確認的反面事實**
+
+`OKReleaseStaleKeptRuntimeTextures`（`:265`）全身只有三件事：倒著走陣列、看 `bTouched`、`RemoveAt`。
+
+- 沒有 `SetTextureParameterValue`、沒有 `MarkRenderStateDirty`、沒有 `CacheUniformExpressions`、
+- 沒有 `FlushRenderingCommands`、沒有 `ENQUEUE_RENDER_COMMAND`、沒有任何 render thread 同步。
+
+它是**純 game thread 的記帳**。預期的「沒有」成立。
+
+## 四、這三題把嫌疑縮到哪裡
+
+既然 GC 回收成功 ⇒ **換卡後活著的 MID／元件不可能是那個消費者**（它們若活著，貼圖就不會被釋放）。
+而我們的程式**也沒有長期保存裸 `FRHITexture*`**：全專案只有三處（`KKRuntimeMaterial.cpp:372`、
+`KKTextureRuntime.cpp:149/197`），**三處都在 render command 裡當場讀完就丟**，沒有存起來。
+`FMaterialRenderProxy` 也沒有任何快取持有（grep 0 命中）。
+
+所以剩下的嫌疑只在 **GC 看不見、但 GC 回收時應該要被一起拆掉的那一側**：
+`FMaterialInstanceResource` 的裸 `const UTexture*`、它的 uniform expression cache，
+或已錄好的 mesh draw command。**換卡後 105～2854 幀之間每幀都還在畫的那個綁定，就在這裡面。**
+
+這一節是讀碼，沒有新建置、沒有新趟數。
