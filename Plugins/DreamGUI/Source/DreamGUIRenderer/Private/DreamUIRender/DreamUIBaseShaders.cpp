@@ -5,6 +5,7 @@
 #include "Engine/Texture.h"
 #include "RenderingThread.h"
 #include "TextureResource.h"
+#include "RHITextureReference.h"
 
 #include "HAL/IConsoleManager.h"
 #include "HAL/ThreadSafeCounter.h"
@@ -48,6 +49,62 @@ namespace DreamUIBaseShadersLocal
 			UE_LOG(LogTemp, Warning, TEXT("DreamGUI stale texture at resolve: slot=%s name=%s garbage=%d unreachable=%d frame=%u hits=%d")
 				, InSlot, *InTexture->GetFName().ToString(), bGarbage ? 1 : 0, bUnreachable ? 1 : 0, GFrameNumberRenderThread, Hits);
 		}
+	}
+
+	// DIAGNOSTIC (log only, default off), for the GPU page fault of 2026-11-19. What a slot actually stores is an
+	// FRHITextureReference -- an indirection -- and what the shader samples is whatever that indirection points at
+	// RIGHT NOW. So the question this answers is: at the moment a built-in draw is resolved, which RHI texture is each
+	// slot pointing at, and does a slot ever end up pointing at the texture the page-fault report names?
+	//
+	// Worth recording before the first run, because it corrects the mechanism this cell was asked for: the
+	// indirection does NOT merely borrow its target. FRHITextureReference holds it as TRefCountPtr<FRHITexture>
+	// (RHITextureReference.h:53), so while a slot points at a texture, that texture's RHI object is kept alive by
+	// refcount. The measured chain says the allocation WAS released, so one of these must be true, and the log tells
+	// which: (a) the reference was pointed somewhere else (a default texture) before the release, leaving nothing
+	// stale -- then no slot ever names the faulting texture; or (b) a slot still names it, and then the release
+	// happened despite a live refcount, which would be the find.
+	//
+	// Printed only when a slot's value changes, plus a heartbeat, so the arrival evidence is visible on a clean trip
+	// too -- a cell whose instrument only speaks when something breaks cannot be read in the outcome we expect.
+	static TAutoConsoleVariable<int32> CVarLogTextureSlots(
+		TEXT("DreamGUI.LogTextureSlots"), 0,
+		TEXT("Log each built-in draw slot's texture reference and the RHI texture it currently points at (log only, off by default)."),
+		ECVF_RenderThreadSafe);
+
+	static constexpr int32 NumLoggedSlots = 9;
+
+	/** Render thread only (ResolveTextures_RenderThread checks IsInRenderingThread), so plain statics are fine. */
+	static void LogSlot(int32 InIndex, const TCHAR* InSlot, const UTexture* InTexture, const FTextureReferenceRHIRef& InReference)
+	{
+		if (CVarLogTextureSlots.GetValueOnRenderThread() == 0)
+		{
+			return;
+		}
+		static const void* LastReference[NumLoggedSlots] = {};
+		static const void* LastReferenced[NumLoggedSlots] = {};
+		static uint32 LastHeartbeatFrame = 0;
+		FRHITextureReference* Reference = InReference.GetReference();
+		FRHITexture* Referenced = Reference != nullptr ? Reference->GetReferencedTexture() : nullptr;
+		const bool bChanged = LastReference[InIndex] != Reference || LastReferenced[InIndex] != Referenced;
+		// One heartbeat per 600 frames across all slots: enough to prove the instrument is alive without flooding.
+		const bool bHeartbeat = GFrameNumberRenderThread - LastHeartbeatFrame >= 600;
+		if (!bChanged && !bHeartbeat)
+		{
+			return;
+		}
+		if (bHeartbeat)
+		{
+			LastHeartbeatFrame = GFrameNumberRenderThread;
+		}
+		LastReference[InIndex] = Reference;
+		LastReferenced[InIndex] = Referenced;
+		UE_LOG(LogTemp, Display, TEXT("DreamUI slot %s: %s src=%s ref=%p referenced=%p referenced_name=%s frame=%u")
+			, InSlot
+			, bChanged ? TEXT("changed") : TEXT("heartbeat")
+			, InTexture != nullptr ? *InTexture->GetFName().ToString() : TEXT("null")
+			, Reference, Referenced
+			, Referenced != nullptr ? *Referenced->GetName().ToString() : TEXT("none")
+			, GFrameNumberRenderThread);
 	}
 }
 
@@ -106,6 +163,16 @@ void FDreamUIBuiltInDrawParams::ResolveTextures_RenderThread(const FDreamUIBuilt
 	MaskSampler0RHI = Sampler(InTextures.MaskTexture0);
 	MaskTexture1RHI = Reference(InTextures.MaskTexture1);
 	MaskSampler1RHI = Sampler(InTextures.MaskTexture1);
+	// Diagnostic, once every slot is resolved: which RHI texture is each slot pointing at right now?
+	LogSlot(0, TEXT("Main"), InTextures.Main, MainTextureRHI);
+	LogSlot(1, TEXT("Font"), InTextures.Font, FontTextureRHI);
+	LogSlot(2, TEXT("WidgetData"), InTextures.WidgetData, WidgetDataTextureRHI);
+	LogSlot(3, TEXT("ClipData"), InTextures.ClipData, ClipDataTextureRHI);
+	LogSlot(4, TEXT("RenderLayerTable"), InTextures.RenderLayerTable, RenderLayerTableRHI);
+	LogSlot(5, TEXT("RectBlockData"), InTextures.RectBlockData, RectBlockDataRHI);
+	LogSlot(6, TEXT("PaintData"), InTextures.PaintData, PaintDataRHI);
+	LogSlot(7, TEXT("MaskTexture0"), InTextures.MaskTexture0, MaskTexture0RHI);
+	LogSlot(8, TEXT("MaskTexture1"), InTextures.MaskTexture1, MaskTexture1RHI);
 }
 
 IMPLEMENT_GLOBAL_SHADER(FDreamUIBaseVS, "/Plugin/DreamGUI/Private/DreamUIBase.usf", "MainVS", SF_Vertex);

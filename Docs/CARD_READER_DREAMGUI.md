@@ -6161,3 +6161,35 @@ render thread 那條路上（f-sceneload 正在查），而**不在**換卡 swee
 故障後與報告的 `GPU VA` 比對。**命中就是指認；從沒命中就把 DreamGUI 這一側排掉**，
 而「讀卡器畫面路徑」裡剩下的東西成為下一個目標。那一格的到達證據天生在乾淨趟可見（每幀都印）。
 插樁位置等 DreamGUI 槽／descriptor 那題的答案，**位置沒定不先動碼**。
+
+# 槽位那一趟：故障那張從沒進過任何槽，而 DreamGUI 確實會綁別的 `Texture2D_<n>`
+
+趟次：一趟（一趟一 claim）、`FAULTED after card 17`（`17_heroine_klara.png`）、`fault_secs 142.6`、
+`shader_hash=E6753E1EA9F1F20775D8BC0AD963B1EF`（**同一顆**）、`fault_texture=Texture2D_901`。
+
+| 讀數 | 值 |
+|---|---|
+| `slot_lines` | **6461**（全部 `changed`） |
+| **`slot_hits_fault_texture`** | **0** |
+| `slot_named_texture2d` | **928** |
+| `slots_seen` | `Main`／`Font`／`WidgetData`／`ClipData`／`RectBlockData`／`PaintData` |
+| 從未出現 | **`RenderLayerTable`、`MaskTexture0`、`MaskTexture1`**（始終為空，和 breadcrumb 的 `mask0=fallback` 一致） |
+| `distinct_referenced_names`（前幾名） | `DreamUIPreset_WhiteSolid` 2297、`DreamUIDynamicSpriteAtlasData_Texture_0` 1366、`DreamUIFontData_DistanceField_Texture_0` 931、`none` 930、`Texture2D_9` 57、`Texture2D_24` 52、`Texture2D_7`／`_19`／`_20`／`_22`／`_23`／`_25` 各 50 |
+
+## 兩個事實要一起讀
+
+1. **故障那張（`Texture2D_901`）從頭到尾沒有被綁進任何槽。**
+   所以「某個 DreamUI 槽指著那張已死的貼圖」在**解參層面是陰性**。
+   這和那九個槽的型別一致：全是 `FTextureReferenceRHIRef`，持有 `TRefCountPtr<FRHITexture>`
+   （`RHITextureReference.h:53`），**指著就不會被釋放**。
+2. **但 DreamGUI 真的會把 `Texture2D_<n>` 綁進槽**——928 行，編號都很小（`_7`／`_9`／`_19`–`_25`）。
+   **照第十五條，名字不唯一**：那些極可能是 UI 縮圖／預覽（CPU 解碼那群），
+   而角色 runtime 貼圖的編號是幾百到幾千（故障那張是 `_901`、前幾趟是 `_507`／`_2999`／`_1407`）。
+   **所以既不能說「卡片貼圖會進 DreamGUI」，也不能說「`Texture2D_` 都不進」——要靠語意分。**
+
+## 因此 DreamGUI 這一側只剩兩個
+
+`DreamUI_SceneDepthTex`，以及 **`DreamUI_BackdropTex`**——
+`FDreamUIBuiltInBackdrop::Texture` 是整個 renderer 裡**唯一的裸 `FRHITexture*`**（`DreamUIRenderer.h:29`，
+寫入點 `DreamUIRenderer.cpp:1619`／`:2365`，綁定點 `:1015`，fallback `GBlackTexture`），
+**既沒有引用計數、不在任何 breadcrumb 裡、也不在那九個槽裡**。下一格（`NoBackdrop=2`）判它的必要性。
