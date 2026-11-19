@@ -1276,3 +1276,124 @@ breadcrumb context 在 DRED 打开时就是**无条件强制开**的：
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
 §11 的两棵引擎比对、§12–§20 的程式码是我自己读的（§14–§20 的 OK 侧读的是 E 树的副本，只读）；
 §21 是在协调更正那把尺之后对我自己先前排除的审计；§22 读的是 `E:/PhysX/UE5.8`。
+
+---
+
+## §23 breadcrumb 命中之后：built-in draw 的 12 个贴图槽，与那个只存位址的一处
+
+读的是 E 树（只读）。breadcrumb 的那三行**是我们自己加的**，不是引擎的：
+`Plugins/DreamGUI/Source/DreamGUIRenderer/Private/DreamUIRender/DreamUIRenderer.cpp:1027`、`:1030`、`:1033`
+（`RHI_BREADCRUMB_EVENT_F`，注解写明「Only recorded when breadcrumbs are」）。它们只在
+`FDreamUIRenderer::DrawBuiltInBatch`（`:900`）里，材质路径没有。breadcrumb scope 是 RAII、到函式结尾才结束，
+所以 `[Active]` 落在 `DreamUIMore` ⇒ **故障那一笔 draw 是 built-in shader 路径的 draw**，不是材质路径。
+这把范围收到下面这 12 个槽。
+
+### 23a 槽的全表：7 个被印出，5 个没有
+
+绑定全在 `DreamUIRenderer.cpp:983-1017`。PS 10 个、VS 2 个：
+
+| 槽 | 绑定行 | 来源成员 | breadcrumb | 没有贴图时 |
+|---|---|---|---|---|
+| `DreamUI_MainTex` | `:992` | `Params.MainTextureRHI` | `main=` | `GWhiteTexture` |
+| `DreamUI_FontTex` | `:994` | `FontTextureRHI` | `font=` | `GBlackArrayTexture` |
+| `DreamUI_WidgetDataTex` | `:996` | `WidgetDataTextureRHI` | `widget=` | `GBlackTexture` |
+| `DreamUI_ClipDataTex` | `:997` | `ClipDataTextureRHI` | `clip=` | `GBlackTexture` |
+| `DreamUI_RectBlockDataTex` | `:998` | `RectBlockDataRHI` | `rect=` | `GBlackTexture` |
+| `DreamUI_PaintDataTex` | `:1000` | `PaintDataRHI` | `paint=` | `GBlackTexture` |
+| `DreamUI_MaskTex0` | `:1002` | `MaskTexture0RHI` | `mask0=` | `GWhiteTexture` |
+| **`DreamUI_MaskTex1`** | `:1004` | `MaskTexture1RHI` | **没印** | `GWhiteTexture` |
+| **`DreamUI_SceneDepthTex`** | `:1006` | 函式参数 `FRHITexture* SceneDepthTexture` | **没印** | `GBlackTexture` |
+| **`DreamUI_BackdropTex`** | `:1015` | `InBackdrop->Texture` | **没印** | `GBlackTexture` |
+| **`DreamUI_RenderLayerTable`**（VS） | `:983` | `RenderLayerTableRHI` | **没印** | `GBlackTexture` |
+| **`DreamUI_RenderLayerWidgetData`**（VS） | `:984` | `WidgetDataTextureRHI` | **没印**（与 `widget=` 同一个） | `GBlackTexture` |
+
+**所以「breadcrumb 里搜 `Texture2D_` 零命中」不等于那张卡片贴图没被绑。** 没印出来的 5 个之中，
+`MaskTex1`、`RenderLayerTable` 可以是任意外部 `UTexture`；`SceneDepthTex` 与 `BackdropTex` 是 pass 内的
+RDG 资源（`:845`、`:1589-1594`、`:2358-2360`），不是卡片贴图。**要补的是 MaskTex1 与 RenderLayerTable
+这两行，一行 breadcrumb 就有。**
+
+### 23b render thread 那一侧存的是什么：持有，**除了交接的那一瞬间**
+
+`DreamGUIRenderer/Public/DreamUIRender/DreamUIBaseShaders.h:51-95`——`FDreamUIBuiltInDrawParams` 是两半：
+
+- game thread 那一半：**`TWeakObjectPtr<const UTexture>`**（`:55-78`），注解说明是为了「a section that waits
+  in a pool keeps its parameters, and a texture can be collected meanwhile」；
+- render thread 那一半：**`FTextureReferenceRHIRef`**（`:80-92`，`TRefCountPtr`，**持有**）。
+
+绑定时 `TextureOrFallback`（`DreamUIRenderer.cpp:970-974`）绑的是
+`static_cast<FRHITexture*>(InReference)`——**绑的是 texture reference 物件本身**，不是被引用的贴图。
+reference 被持有，而 UTexture 死亡时 `RHIClearTextureReference` 会把它指向黑色贴图
+（`StreamableTextureResource.cpp:231-242`）。**所以跨帧那一段，这 12 个槽没有一个是裸位址。**
+
+### 23c 降级点就一处，而它已经被埋了桩
+
+`FDreamUIBuiltInTextures`（同一档 `:22-33`）是**九个裸 `const UTexture*`**。降级与还原：
+
+- **降级**：`DreamUIBaseShaders.cpp:55-70` `GetTexturesForRenderCommand()`——把九个 weak ptr `.Get()` 成裸指标，
+  由 lambda 捕获进 render command（呼叫点 `DreamGUI/Private/Core/DreamUIMesh/DreamUIMeshComponent.cpp:697`、
+  `:1529`、`:1597`、`:2613`）；
+- **解参**：`DreamUIBaseShaders.cpp:72-110` `ResolveTextures_RenderThread()`——在 render thread 上
+  **解参那些裸指标**：`:88-91` `InTexture->TextureReference.TextureReferenceRHI`、`InTexture->GetResource()`。
+
+**这就是那把新尺要找的「只存位址」的一处，而且是唯一一处。** 它的形状正是「位址不在任何 heap 里」：
+UObject 若在 enqueue 与 execute 之间被清掉，`:89` 读的是已释放的 UObject 记忆体，拿到的不是旧指标而是
+**凭空捏出来的 `FRHITextureReference` 指标**。
+
+**这一条已经有桩，预设关**：`DreamGUI.LogStaleTextures`（`DreamUIBaseShaders.cpp:25-28`，`ECVF_RenderThreadSafe`，
+**不是 ReadOnly，可执行期开**），命中时印 `slot=` `name=` `garbage=` `unreachable=` `frame=`。
+档内写明的事前预测是 **NO hits**，理由是 `UTexture::IsReadyForFinishDestroy` 会等 resource release fence。
+**这是零风险、一个 cvar、不必重编的一趟**，而且它直接回答「是谁还在画」：若有命中，画的人就是这个 render command。
+
+### 23d 新候选：动态 sprite atlas 的页面——型别、名字、建法全都对上
+
+breadcrumb 里 `main=DreamUIDynamicSpriteAtlasData_Texture_0`。这个名字只有一个产地：
+`DreamGUI/Private/Core/DreamUIDynamicSpriteAtlasData.cpp` 的 `CreateAtlasTexture`，
+名字 `DreamUIDynamicSpriteAtlasData_Texture_%d`、outer 是 `GetTransientPackage()`；它呼叫的
+`DreamUIUtils.cpp` 的 `FDreamUIUtils::CreateTexture` 用 **`PF_B8G8R8A8`**、**正方形 `InSize×InSize`**、
+**单一 mip**、`RF_Transient`（页面上限预设 `SIZE_2048x2048`，`DreamUISettings.h:53`）。
+
+**这推翻不了也证实不了 §16–§18 的归属，但它给了一个零成本的判别**：故障那张 `B8G8R8A8_TYPELESS` 贴图
+**是不是正方形**。atlas 页面必然正方（2048×2048 或 1024×1024 一类）；卡片 runtime 贴图与读卡缩图
+（`OKReaderScreen.cpp:1216-1221`，上限 288×402）**不是**。e-cardload 的追踪报告里已经有宽高，**翻一下就知道。**
+
+页面确实会被丢掉，而且**丢掉它的就是开卡时在打包新 sprite**：
+`PackSprite`（`:300-316`）在页面满了时先 `EvictUnusedSprites` → `RepackPages`（`:231-261`）→
+`DropEmptyPages`（`:265-281`，`AtlasTextureArray.RemoveAt(i)`，注解写「This is where the memory actually
+goes back -- one page is a full atlas texture」）。页面的强参照只有 `AtlasTextureArray`（`TObjectPtr`）与
+每个已打包 sprite 的 `AtlasTexture`（`DreamUISpriteData.h:80`，`UPROPERTY(Transient)`）；`ReleaseAtlasTextures`
+（`:110-126`）把后者一并清成 `nullptr`。**两者都放手之后，页面就只是个可回收的 UObject——没有 fence、没有
+延迟删除**，下一次 GC 就释放它的 RHI 贴图。
+
+通知只有一条路：`NotifyRenderSpritesAtlasChanged`（`:283-293`）走 `RenderSpriteArray`
+（**`TWeakObjectPtr`**，`DreamUIDynamicSpriteAtlasData.h:35`）呼叫 `ApplyAtlasTextureChange`，
+元件那一侧（`DreamSpriteBase.cpp:43-51`）重取 `Sprite->GetAtlasTexture()` 并 `MarkCanvasUpdate(true)`，
+当帧重建 draw call、当帧重新解参。**所以结构上是守住的——条件是每个在画它的元件都在 `RenderSpriteArray` 里。**
+登记只有一处：`DreamUISpriteData.cpp:479-500` 的 `AddUISprite`，而且**只对实作
+`IDreamUISpriteRenderInterface` 并自己呼叫它的元件生效**（静态打包那一支还包在 `#if WITH_EDITOR` 里，`:487`）。
+**一个画了页面却没登记的元件，永远收不到这个通知**——它的 proxy 持有的 reference 会被清成黑色；
+而它的 weak ptr 失效之后，那一节的 `MainTexture` 就是 null，下一次 `GetTexturesForRenderCommand` 交出 null，
+**不是裸位址**。所以这条到目前为止也没有「只存位址」的出口；**真正的出口还是 23c 那一处。**
+
+### 23e 外部 `UTexture2D` 进到这些槽的入口（Q4）
+
+- `MainTex`：`DreamCanvas.cpp:4018` `BuiltIn.MainTexture = DrawCallItem.Texture.Get()`；
+  `DrawCallItem.Texture` 来自 geometry 的 `Texture`（`DreamCanvas.cpp:2817`、`:2937`、`:3541`），
+  而 geometry 的设定者只有四处：`DreamImage.cpp:238`、`DreamRectBlock.cpp:1406`、`DreamSpriteBase.cpp:45`
+  （都是 `Sprite->GetAtlasTexture()`，即**打包后的页面**，不是来源贴图）、
+  `DreamText.cpp:838` 与 `DreamVisualBatchMesh.cpp:270`（`GetTextureToCreateGeometry()`）。
+  **所以外部 `UTexture2D` 走正常 sprite 路径时绑的是 atlas 页面，不是它自己**——
+  例外是 `PackSprite` 对非 `PF_B8G8R8A8` 的来源直接拒收（`:302`），那种 sprite 不会被打包。
+- `MaskTex0/1`：`DreamCanvas.cpp:4025-4026`，来自 clip mask 的 `FDreamUIMaskTextures::Slots`（任意外部贴图）。
+- `RenderLayerTable`／`WidgetData`／`ClipData`／`RectBlockData`／`PaintData`：`DreamCanvas.cpp:4019-4024`，
+  全是 DreamGUI 自己的 data texture 与 world subsystem 的 row texture。
+- 另外两个把外部贴图直接塞进 `MainTexture` 的入口：
+  `DreamGUIExtensions/Private/Extensions/DreamCanvasRenderTargetPreviewer.cpp:261`（render target）、
+  `DreamLayerGroup.cpp:102`（mask 槽）。
+- 读卡那一侧，唯一把外部物件交给 DreamGUI 的是 `OKReaderScreen.cpp` 的 `SetResourceObject`
+  （`:193`、`:254`、`:1297`、`:1457`），进的是 `FDreamUIImageBrush::ResourceObject`
+  （`DreamUIImageBrush.h:54-62`，**`UPROPERTY`，强参照**），再经 sprite 打包成页面。
+
+### 23f 我没读的
+
+材质路径的绑定（`FDreamUIMaterialProxy` 的非持有 `TArray<TPair<FName, const UTexture*>>`，§13）这次没重读：
+breadcrumb 指的是 built-in 路径，故障那一笔不是材质路径的。若日后 breadcrumb 指向材质路径，§13 要重开。
