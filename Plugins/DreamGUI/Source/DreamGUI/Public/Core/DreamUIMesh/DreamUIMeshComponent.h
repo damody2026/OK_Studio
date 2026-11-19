@@ -50,7 +50,11 @@ struct DREAMGUI_API FDreamUIRenderSection_Mesh : public FDreamUIRenderSection
 	int32 ValidVerticesNum = 0;
 	int32 ValidTriangleIndicesNum = 0;
 
-	UMaterialInterface* Material = nullptr;
+	/**
+	 * The material this section draws with. Weak: the visual that gave it can be hidden or collected while the section
+	 * waits in the pool, and what carries it to the render thread resolves it there.
+	 */
+	TWeakObjectPtr<UMaterialInterface> Material;
 	/** Set instead of a material when DreamGUI's own renderer draws this section with its built-in shader. */
 	FDreamUIBuiltInDrawParams BuiltIn;
 	/**
@@ -352,7 +356,8 @@ private:
 	struct UpdateMeshSectionMaterialDataStruct
 	{
 		FDreamUIRenderSectionProxy* SectionProxy;
-		UMaterialInterface* Material;
+		/** Weak: the update waits a frame, and the visual that gave the material can go meanwhile. */
+		TWeakObjectPtr<UMaterialInterface> Material;
 		TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe> MaterialProxy;
 	};
 	TArray<UpdateMeshSectionMaterialDataStruct> PendingUpdateMeshSectionMaterialDataArray;

@@ -28,7 +28,7 @@ protected:
 	TObjectPtr<UTexture> Texture = nullptr;
 	/** Use a custom material to render this texture */
 	UPROPERTY(EditAnywhere, Category = "DreamUI")
-	UMaterialInterface* OverrideMaterial = nullptr;
+	TObjectPtr<UMaterialInterface> OverrideMaterial = nullptr;
 
 	virtual UTexture* GetTextureToCreateGeometry()override;
 	virtual UMaterialInterface* GetMaterialToCreateGeometry() override;

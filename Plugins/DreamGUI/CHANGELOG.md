@@ -394,6 +394,14 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **A section's material, a text input's owner and an action bar's row are named the way their lifetime works.** A
+  mesh section and its render proxy name their material weakly and resolve it as they draw, so a visual hidden or
+  collected while its section waits in the pool leaves no address behind; the queued material update does the same. The
+  virtual keyboard entry and the IME context a text input gives Slate name that input weakly, since Slate outlives the
+  component. `UDreamUIActionBar::GetEntryWidgets` now returns `TArray<TObjectPtr<UDreamWidget>>`, and
+  `UDreamSpriteBase::OverrideMaterial` and `UDreamTextureBase::OverrideMaterial` are `TObjectPtr` as every other
+  property of theirs already was. C++ that took the old array type by reference changes with it; nothing drawn changes.
+
 - **The renderer's textures and buffers are named by something that can say the thing is gone.** The staging struct a
   built-in draw's textures travel in (`FDreamUIBuiltInTextures`), a material proxy's own texture parameters and source
   material (`FDreamUIMaterialParameters`, `FDreamUIMaterialProxy`), a layer style's pattern textures

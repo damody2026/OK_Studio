@@ -54,8 +54,11 @@ struct FDreamUIRenderSectionProxy
 /** Class representing a single section of the DreamUI mesh */
 struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 {
-	/** Material applied to this section */
-	UMaterialInterface* Material = nullptr;
+	/**
+	 * Material applied to this section. Weak: a visual hidden or collected while its section waits in the pool takes
+	 * its material with it, and the render thread would be left reading an address. Resolved as it is drawn.
+	 */
+	TWeakObjectPtr<UMaterialInterface> Material;
 	/** What the section draws through instead of Material's own render proxy, when DreamGUI answers its parameters. */
 	TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe> MaterialProxy;
 	FMaterialRenderProxy* GetMaterialRenderProxy() const
@@ -64,7 +67,8 @@ struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 		{
 			return MaterialProxy.Get();
 		}
-		return Material != nullptr ? Material->GetRenderProxy() : nullptr;
+		UMaterialInterface* const Resolved = Material.Get();
+		return Resolved != nullptr ? Resolved->GetRenderProxy() : nullptr;
 	}
 	/**
 	 * Built-in shader parameters; when enabled the material is not used by DreamGUI's renderer. Enabled or not, the widget
@@ -1537,7 +1541,7 @@ FDreamUIRenderSectionProxy* FDreamUIRenderRoot::CreateSectionData(FDreamUIRender
 						NewSectionProxy->bDrawStateStale = true;
 					});
 			}
-			if (NewSectionProxy->Material == nullptr)
+			if (!NewSectionProxy->Material.IsValid())
 			{
 				NewSectionProxy->Material = UMaterial::GetDefaultMaterial(MD_Surface);
 			}
@@ -1980,7 +1984,7 @@ TSharedPtr<FDreamUIRenderSection> UDreamUIMeshComponent::SetupRenderSection(EDre
 				FDreamUIRenderRootRef Root = RenderRoot;
 				ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_EnableMeshSection)(
 					[Root, SectionProxy = MeshSectionPtr->RenderProxy, Material = MeshSectionPtr->Material](FRHICommandListImmediate& RHICmdList) {
-						Root->EnableMeshSection_RenderThread(SectionProxy, Material);
+						Root->EnableMeshSection_RenderThread(SectionProxy, Material.Get());
 					});
 				if (InDrawCallData->bPatchClaimedMeshSection)
 				{
@@ -2072,7 +2076,7 @@ TSharedPtr<FDreamUIRenderSection> UDreamUIMeshComponent::SetupRenderSection(EDre
 				FDreamUIRenderRootRef Root = RenderRoot;
 				ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_EnableDirectMeshSection)(
 					[Root, SectionProxy = DirectMeshSectionPtr->RenderProxy, Material = DirectMeshSectionPtr->Material](FRHICommandListImmediate& RHICmdList) {
-						Root->EnableMeshSection_RenderThread(SectionProxy, Material);
+						Root->EnableMeshSection_RenderThread(SectionProxy, Material.Get());
 					});
 			}
 		}
@@ -2380,7 +2384,7 @@ void UDreamUIMeshComponent::SetDirectMeshRenderSectionMaterial(FDreamUIRenderSec
 			FDreamUIRenderRootRef Root = RenderRoot;
 			ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_SetMeshSectionMaterial)(
 				[Root, UpdateData = MoveTemp(UpdateData)](FRHICommandListImmediate& RHICmdList) {
-					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material);
+					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material.Get());
 				});
 		}
 	}
@@ -2592,7 +2596,7 @@ void UDreamUIMeshComponent::SetMeshSectionMaterial(int32 InSectionIndex, UMateri
 			FDreamUIRenderRootRef Root = RenderRoot;
 			ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_SetMeshSectionMaterial)(
 				[Root, UpdateData = MoveTemp(UpdateData)](FRHICommandListImmediate& RHICmdList) {
-					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material);
+					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material.Get());
 				});
 #endif
 		}
@@ -2687,7 +2691,7 @@ void UDreamUIMeshComponent::VerifyMaterials()
 		case EDreamUIRenderSectionType::DirectMesh:
 			{
 				auto MeshSection = static_cast<FDreamUIRenderSection_Mesh*>(RenderSectionItem.Get());
-				SetMaterialForUI(MatIndex++, MeshSection->Material);
+				SetMaterialForUI(MatIndex++, MeshSection->Material.Get());
 			}
 			break;
 		case EDreamUIRenderSectionType::ChildCanvas:
@@ -3167,7 +3171,7 @@ void UDreamUIMeshComponent::FlushRenderCommand()
 			[Root, PendingUpdateMeshSectionMaterialDataArray = MoveTemp(PendingUpdateMeshSectionMaterialDataArray)](FRHICommandListImmediate& RHICmdList) {
 				for (auto& UpdateData : PendingUpdateMeshSectionMaterialDataArray)
 				{
-					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material, UpdateData.MaterialProxy);
+					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material.Get(), UpdateData.MaterialProxy);
 				}
 			});
 	}

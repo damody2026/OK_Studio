@@ -3743,7 +3743,7 @@ void UUITextInput::FTextInputMethodContext::Dispose()
 }
 bool UUITextInput::FTextInputMethodContext::ProjectUIPointToScreen(const FVector& InWorldPosition, FVector2D& OutScreenPosition)
 {
-	if (InputComp == nullptr)return false;
+	if (!InputComp.IsValid())return false;
 	if (!FSlateApplication::IsInitialized())return false;
 	if (!IsValid(GEngine) || !IsValid(GEngine->GameViewport))return false;
 	UDreamWidget* Widget = InputComp->GetWidget();
@@ -3769,7 +3769,7 @@ bool UUITextInput::FTextInputMethodContext::ProjectUIPointToScreen(const FVector
 }
 bool UUITextInput::FTextInputMethodContext::DeprojectScreenPointToUI(const FVector2D& InScreenPosition, FVector& OutWorldPosition)
 {
-	if (InputComp == nullptr)return false;
+	if (!InputComp.IsValid())return false;
 	if (!FSlateApplication::IsInitialized())return false;
 	if (!IsValid(GEngine) || !IsValid(GEngine->GameViewport))return false;
 	UDreamText* TextVisualObject = InputComp->TextVisual.Get();
@@ -3802,7 +3802,7 @@ bool UUITextInput::FTextInputMethodContext::DeprojectScreenPointToUI(const FVect
 }
 int32 UUITextInput::FTextInputMethodContext::CaretIndexFromCharIndex(int32 InCharIndex)const
 {
-	if (InputComp == nullptr)return 0;
+	if (!InputComp.IsValid())return 0;
 	if (!DreamTextInputLocal::CanMapCaretIndices(InputComp->TextVisual))return InCharIndex;
 	return InputComp->TextVisual->GetCaretIndexByCharIndex(FMath::Clamp(InCharIndex, 0, InputComp->Text.Len()));
 }
@@ -3815,11 +3815,11 @@ bool UUITextInput::FTextInputMethodContext::IsReadOnly()
 #if DreamGUI_LOG_TextInputMethodContext
 	//UE_LOG(DreamGUI, Log, TEXT("IsReadOnly"));
 #endif
-	return InputComp == nullptr || InputComp->GetReadOnly();
+	return !InputComp.IsValid() || InputComp->GetReadOnly();
 }
 uint32 UUITextInput::FTextInputMethodContext::GetTextLength()
 {
-	if (InputComp == nullptr)return 0;
+	if (!InputComp.IsValid())return 0;
 #if DreamGUI_LOG_TextInputMethodContext
 	UE_LOG(DreamGUI, Log, TEXT("GetTextLength, Text:%s, Length:%d"), *InputComp->Text, InputComp->Text.Len());
 #endif
@@ -3830,7 +3830,7 @@ void UUITextInput::FTextInputMethodContext::GetSelectionRange(uint32& BeginIndex
 	BeginIndex = 0;
 	Length = 0;
 	OutCaretPosition = ECaretPosition::Ending;
-	if (InputComp == nullptr)return;
+	if (!InputComp.IsValid())return;
 	// In source offsets, which is what the IME counts in -- TSF's InsertTextAtSelection hands this range
 	// straight to SetTextInRange. These used to be the raw caret indices, which count clusters and line
 	// ends: an emoji before the caret, or any wrapped line above it, put the IME's text in the wrong place,
@@ -3847,7 +3847,7 @@ void UUITextInput::FTextInputMethodContext::GetSelectionRange(uint32& BeginIndex
 }
 void UUITextInput::FTextInputMethodContext::SetSelectionRange(const uint32 BeginIndex, const uint32 Length, const ECaretPosition InCaretPosition)
 {
-	if (InputComp == nullptr)return;
+	if (!InputComp.IsValid())return;
 	// The range is [BeginIndex, BeginIndex + Length) in source offsets, and InCaretPosition says which end the
 	// caret is on; the anchor is the other end, as Slate's own context reads it. The Beginning case used to
 	// put the caret at BeginIndex - Length, which selected the stretch BEFORE the range. Both ends become
@@ -3866,7 +3866,7 @@ void UUITextInput::FTextInputMethodContext::SetSelectionRange(const uint32 Begin
 }
 void UUITextInput::FTextInputMethodContext::GetTextInRange(const uint32 BeginIndex, const uint32 Length, FString& OutString)
 {
-	if (InputComp == nullptr)
+	if (!InputComp.IsValid())
 	{
 		OutString.Reset();
 		return;
@@ -3878,7 +3878,7 @@ void UUITextInput::FTextInputMethodContext::GetTextInRange(const uint32 BeginInd
 }
 void UUITextInput::FTextInputMethodContext::SetTextInRange(const uint32 BeginIndex, const uint32 Length, const FString& InString)
 {
-	if (InputComp == nullptr)return;
+	if (!InputComp.IsValid())return;
 	// The IME holds its OWN idea of the range and hands it back whenever it likes. Nothing stops the
 	// game from rewriting Text mid-composition -- a timer, a replication update, any SetText caller
 	// -- and an unclamped RemoveAt against a shorter string is TArray's RangeCheck, i.e. a crash.
@@ -3919,7 +3919,7 @@ int32 UUITextInput::FTextInputMethodContext::GetCharacterIndexFromPoint(const FV
 	// Was a flat "return 0", which told every IME that any point in the field is the very start of
 	// the text -- so reconversion and mouse positioning inside a composition both aimed at index 0.
 	// The text already knows how to answer this from a world point; the work is getting there.
-	if (InputComp == nullptr)return 0;
+	if (!InputComp.IsValid())return 0;
 	if (!DreamTextInputLocal::CanMapCaretIndices(InputComp->TextVisual))return 0;
 	UDreamText* TextVisualObject = InputComp->TextVisual.Get();
 	FVector WorldPosition = FVector::ZeroVector;
@@ -3944,7 +3944,7 @@ bool UUITextInput::FTextInputMethodContext::GetTextBounds(const uint32 BeginInde
 	// project all four through the canvas that draws the field.
 	Position = FVector2D::ZeroVector;
 	Size = FVector2D::ZeroVector;
-	UDreamText* TextVisualObject = (InputComp != nullptr) ? InputComp->TextVisual.Get() : nullptr;
+	UDreamText* TextVisualObject = InputComp.IsValid() ? InputComp->TextVisual.Get() : nullptr;
 	UDreamWidget* TextWidget = (TextVisualObject != nullptr) ? TextVisualObject->GetWidget() : nullptr;
 	if (TextWidget == nullptr)return false;
 
@@ -3996,7 +3996,7 @@ void UUITextInput::FTextInputMethodContext::GetScreenBounds(FVector2D& Position,
 	// canvas may be rotated in the world and an axis-aligned rect is all the IME can hold.
 	Position = FVector2D::ZeroVector;
 	Size = FVector2D::ZeroVector;
-	UDreamWidget* Widget = (InputComp != nullptr) ? InputComp->GetWidget() : nullptr;
+	UDreamWidget* Widget = InputComp.IsValid() ? InputComp->GetWidget() : nullptr;
 	if (Widget == nullptr)return;
 
 	const float Left = Widget->GetLocalSpaceLeft();
@@ -4034,7 +4034,7 @@ TSharedPtr<FGenericWindow> UUITextInput::FTextInputMethodContext::GetWindow()
 	// viewport for the same two calls; this one did not, and FindWidgetWindow legitimately returns
 	// null for a widget that has not been arranged into a window yet -- which is the state of a
 	// widget added to the viewport overlay in this very function.
-	if (InputComp == nullptr)return nullptr;//disposed: a window added now would never be taken out again
+	if (!InputComp.IsValid())return nullptr;//disposed: a window added now would never be taken out again
 	if (!IsValid(GEngine) || !IsValid(GEngine->GameViewport))return nullptr;
 	if (!FSlateApplication::IsInitialized())return nullptr;
 	if (!CachedWindow.IsValid())
@@ -4051,7 +4051,7 @@ TSharedPtr<FGenericWindow> UUITextInput::FTextInputMethodContext::GetWindow()
 }
 void UUITextInput::FTextInputMethodContext::BeginComposition()
 {
-	if (InputComp == nullptr)return;
+	if (!InputComp.IsValid())return;
 	bIsComposing = true;
 	bCompositionUndoStepTaken = false;//this composition's step is taken by its first write
 	OriginString = InputComp->Text;
@@ -4065,7 +4065,7 @@ void UUITextInput::FTextInputMethodContext::UpdateCompositionRange(const int32 I
 	// The IME telling us which part of the text it is still working on. Drawn as the third sprite
 	// stack beside the caret and the selection mask -- the text pipeline paints one colour for a
 	// whole string, so a per-run strip is how a mesh UI says "this is not committed yet".
-	if (InputComp != nullptr)
+	if (InputComp.IsValid())
 	{
 		InputComp->SetCompositionRange(InBeginIndex, (int32)InLength);
 	}
@@ -4086,7 +4086,7 @@ void UUITextInput::FTextInputMethodContext::CloseComposition(bool bInReportChang
 	// second change.
 	const bool bWasComposing = bIsComposing;
 	bIsComposing = false;
-	if (InputComp == nullptr)return;
+	if (!InputComp.IsValid())return;
 	//whatever is left is committed text now, so the "still being typed" mark comes off
 	InputComp->HideCompositionUnderline();
 	// Case-sensitively: FString's != ignores case, and a composition that only changed case changed the text.
