@@ -59,8 +59,8 @@
 | 光泽色 | 颜色 | `hair.parts.N.glossColor` | 预设 `#D9D9D9` | 有 | 有 | 同上 | UI |
 | 髮饰色 1–3（＋第 4 个未用） | 颜色 ×4 | `hair.parts.N.acsColor.0…3` | 预设白 | 有 | 有 | 同上 | UI |
 | 頭髮光泽种类 | 选图 | `hair.glossId` | 目录 id，预设 0 | 有 | 有（`hair_gloss`） | 有 | — |
-| 位置／旋转／缩放 | 数值 ×9 | `hair.parts.N.pos`／`rot`／`scl` | `scl` 预设 1，其余 0 | 待查 | 有（走访会列出） | 没有 | 先查卡片读取是否套用 |
-| 整髮型組 | 下拉 | `hair.kind` | 整数 | 待查 | **没有（整数不列）** | 没有 | 资料端＋UI |
+| 位置／旋转／缩放 | 数值 ×9 | `hair.parts.N.pos`／`rot`／`scl` | `scl` 预设 1，其余 0 | **读了但没套用** | 有（走访会列出） | 没有 | `card.rs:1969-1977` 把三者读进 `CardInfo.hair_parts`，全仓库没有第二处消费它们（`accessories.rs` 只用颜色与 `length`）。所以现在改这九项**画面不会变**；要给 UI 之前得先让它真的套用 |
+| 整髮型組 | 下拉 | `hair.kind` | 整数 | **没读**（`card.rs` 没有 `kind` 分支） | **没有（整数不列）** | 没有 | 资料端＋UI |
 | 四槽同步设定 | 开关 | 不在卡片里（`CustomBase.customSettingSave.hairSameSetting`，预设 true） | — | 不适用 | — | 没有 | UI（是编辑器状态，不是卡片资料） |
 | 「反映」把主色套到全部槽 | 按钮 | `btnReflectColor` → 写四槽 | — | 不适用 | 可用现有 set 做 | 没有 | UI |
 | 把髮色套到眉毛／陰毛 | 按钮 ×2 | `btnEyebrowColor`／`btnUnderhairColor` → `face.eyebrowColor`／`body.underhairColor` | — | 有 | 有（两个目标栏位都读写得到） | 没有 | UI |
@@ -85,7 +85,7 @@
 | 14 根眼睛形状滑杆 | 滑杆 | `shapeValueFace[24…37]` | 有 | 有（`shape.face.24…37`） | 有（Gallery 52 根脸部滑杆内） | — |
 | 上眼线种类／下眼线种类 | 选图 ×2 | `face.eyelineUpId`／`eyelineDownId` | 有 | 有（`eyeline_up`／`eyeline_down`） | 有 | — |
 | 眼线颜色 | 颜色 | `face.eyelineColor` | 有 | 有 | 扁平清单 | UI |
-| 上眼线粗细 | — | `face.eyelineUpWeight`（预设 1） | 待查 | 有（走访列出，已有中文标签「上眼線粗細」） | 没有 | **原作编辑器本身也没有这个控制项**（整份 decomp 只在 `MemberInit`／`Copy` 出现），要做是我们加的 |
+| 上眼线粗细 | — | `face.eyelineUpWeight`（预设 1） | 待查（原作也只存不改） | 有（走访列出，已有中文标签「上眼線粗細」） | 没有 | **原作编辑器本身也没有这个控制项**（整份 decomp 只在 `MemberInit`／`Copy` 出现），要做是我们加的 |
 
 ### 3.2 瞳（`CvsEye02`）
 
@@ -106,8 +106,8 @@
 | 上高光种类／下高光种类 | 选图 ×2 | `face.hlUpId`／`hlDownId` | 有 | 有（`eye_hi_up/down`） | 有 | — |
 | 上／下高光颜色 | 颜色 ×2 | `face.hlUpColor`／`hlDownColor` | 有 | 有 | 扁平清单 | UI |
 | 上／下高光 X／Y | 滑杆 ×4 | `face.hlUpX/Y`、`hlDownX/Y` | 有 | 有（已有中文标签） | 扁平清单 | UI |
-| 眼睛描画前后（三选一） | 单选 ×3 | `face.foregroundEyes`（byte 0/1/2） | 待查 | **没有（byte 不列）** | 没有 | **资料端＋UI** |
-| 眉毛描画前后 | 单选 | `face.foregroundEyebrow`（byte） | 待查 | **没有** | 没有 | 资料端＋UI（严格说属眉毛页，一起补） |
+| 眼睛描画前后（三选一） | 单选 ×3 | `face.foregroundEyes`（byte 0/1/2） | **没读**（全仓库 grep 无此栏位） | **没有（byte 不列）** | 没有 | **资料端＋UI**；连开卡渲染都没套用 |
+| 眉毛描画前后 | 单选 | `face.foregroundEyebrow`（byte） | **没读** | **没有** | 没有 | 资料端＋UI（严格说属眉毛页，一起补） |
 | 左右同时／左／右 切换 | 三选一 | `selEyeSetType`（编辑器状态，非卡片） | 不适用 | — | 没有 | UI |
 | 左右是否同设定 | 唯读 | `face.isPupilSameSetting`（计算属性） | 不适用 | — | 没有 | UI |
 | 左→右／右→左 复制 | 按钮 ×2 | `btnCopyLtoR`／`btnCopyRtoL` | 不适用 | 可用现有 set 做 | 没有 | UI |
@@ -126,13 +126,29 @@
 |---|---|---|---|---|---|---|
 | HairAccessoryCustomizer | `KK_Plugins.HairAccessoryCustomizer`（含 `CoordinateHairAccessories`） | 跟随髮色、頭髮光澤、轮廓色、饰品色、髮长、光澤色（每个饰品槽一组） | 有（`accessories.rs`） | 有（白名单内，已有中文标签） | 扁平清单 | UI |
 | HairShadowColorControl | 实际写在 MaterialEditor 的 `ShadowColor` 属性；自身区段键 `HairShadowColorControl` | 四个髮槽各一个「Hair shadow color」 | 待查 | 有（`hairshadowcolor` 与 `materialeditor` 都在白名单） | 扁平清单 | UI |
-| MaterialEditor | `KK_Plugins.MaterialEditor` | 每个 renderer／material 的 float、color、keyword、**texture**、renderer 属性 | 有 | **只有 float 与 color**；texture 被 `visit()` 跳过；keyword／renderer 属性未确认 | 扁平清单 | 贴图：资料端＋UI；keyword：待查 |
+| MaterialEditor | `KK_Plugins.MaterialEditor` | 每个 renderer／material 的 float、color、keyword、**texture**、renderer 属性 | 有 | float、color、**keyword 都读写得到**（`MaterialKeywordProperty.Value` 是 bool，`visit()` 收 bool）；**texture 被跳过**（名称含 `texture`）；**RendererProperty 也读写不到**（它的 `Value` 是字串 `"0"`／`"True"`，`visit()` 只收长得像 XML 的字串） | 扁平清单 | 贴图：资料端＋UI；renderer 开关（Enabled／ShadowCastingMode／ReceiveShadows／RecalculateNormals）：资料端＋UI |
 | ABMX（KKSABMX / `KKABMX.Core`） | `KKABMX.Core` | 眉毛／双眼球／眼球缩放 1–2／上睫毛 1–5／下睫毛 1–3（本文第 1 节） | 有（`abmx.rs`） | 有（`bone.*`，经 `EditorModsJson`） | 有（骨骼滑杆） | 部分：`BoneData` 只取 `location<10`，**饰品本地骨（location≥10）的修改读不到** |
 | KoiSkinOverlayX | **`KSOX`** | 脸／身体 under/over 贴图，**`EyeUnderL/R`、`EyeOverL/R`、`EyelineUnder`、`EyebrowUnder`** | 有（`card.rs` 认 `KSOX`） | **没有**：`relevant("KSOX")` 不含 `overlay` 字样，整段不收 | 没有 | 资料端＋UI（眼睛这块的重点漏项） |
 | KoiClothesOverlayX | **`KCOX`** | 衣物贴图层、BodyMask／BraMask／InnerMask | 有 | 部分：`properties.rs` 另有一段专门认 `KCOX` 的 `Overlays`，但贴图本身仍不是可编辑项 | 没有 | 贴图：资料端＋UI |
 | EyeControl | `com.deathweasel.bepinex.eyecontrol` | `EyeOpenMax`（0–1，预设 1）、`DisableBlinking`（bool） | 有（`card_plugins::apply_eyecontrol`） | **没有**（不在白名单） | 没有 | 资料端＋UI |
-| EyeShaking | `com.deathweasel.bepinex.eyeshaking` | `EyeShaking`（bool） | 待查（未在 `card.rs` 找到） | **没有** | 没有 | 资料端＋UI |
+| EyeShaking | `com.deathweasel.bepinex.eyeshaking` | `EyeShaking`（bool） | **没读**（全仓库 grep 无此 GUID） | **没有** | 没有 | 资料端＋UI；原作这项只在 H 场景生效，优先度低 |
 | UncensorSelector | `com.deathweasel.bepinex.uncensorselector` | 身体／部件 GUID 选择 | 有（`card.rs` 有 `uncensorselector` 分支） | **没有**（不在白名单） | 没有 | 资料端＋UI（不属头发眼睛，但在我这块的点名范围内） |
+
+### 4.1 哪些外挂真的会在「头发／眼睛」这两页加栏位（已穷举）
+
+对 `kks_decomp\plugins` 全文 grep `MakerSlider`／`MakerToggle`／`MakerColor`／`MakerDropdown`／`MakerCategory`，
+会注册 Maker 控制项的外挂有 17 个；再按分页过滤（`00_FaceTop/tglEye01`＝目、`tglEye02`＝瞳、头发四页、饰品窗），
+**真的落在我这两块的只有四个**：
+
+- **EyeControl** → 目／瞳分页加「Eye Open Max」滑杆（0–1，预设 1）与「Disable Character Blinking」开关。
+- **HairShadowColorControl** → 四个头发分页各加一个「Hair shadow color」颜色块（实际存进 MaterialEditor 的 `ShadowColor`）。
+- **HairAccessoryCustomizer** → 饰品窗里对「髮饰类」饰品加六项（跟随髮色、頭髮光澤、轮廓色、饰品色、髮长、光澤色）。
+- **KKSABMX** → 自建分页 `tglEye02ABM`（Eyes 2）、`tglEyelashUpABM`／`tglEyelashLoABM`（上／下睫毛），并沿用原作的眉毛分页。
+
+其余（SkinEffects、EditFangs、SexFaces、Bulge、BecomeTrap、Pregnancy、ClothingBlendShape、
+ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、FKIK…）都不在这两页，
+属于别人那两块或与编辑栏位无关。**所以「外挂扩充」这一块的清单就是上面四个＋MaterialEditor／Overlay 这两个通用层**，
+不必再回去翻一遍 plugins 目录。
 
 ## 5. 分批顺序
 
@@ -149,14 +165,18 @@
    - `KSOX` 的眼睛／眼线／眉毛 overlay 贴图读写；MaterialEditor 的 texture 属性。
    - 要先决定「贴图怎么在读卡器里给／存」（档案选择、存回卡片的体积），不是单纯补栏位。
 4. **第四批（边角）**
-   - `hair.kind`、`hair.parts.N.pos/rot/scl` 先确认卡片读取是否真的套用，再决定要不要给 UI。
+   - `hair.parts.N.pos/rot/scl`：**先让它真的套用**（现在读进 `CardInfo` 就没人用了），否则 UI 上调了没反应比没有更糟；
+     `hair.kind` 连读都还没读。
+   - MaterialEditor 的 `RendererProperty`（renderer 开关，`Value` 是字串）。
    - ABMX `location≥10` 的饰品本地骨。
    - UncensorSelector 的选择（跨到身体那一块，和别人的盘点合并再做）。
 
 ## 6. 本文的证据边界
 
 - 全部结论来自读 `D:\XKoikatuSunshine\kks_decomp` 的程式码与本仓库的程式码，**没有启动游戏、没有启动读卡器、没有实拍**。
-  标「待查」的项目就是只凭读码不敢断言的。
+  标「待查」的项目就是只凭读码不敢断言的（目前只剩 `face.eyelineUpWeight` 一项，原作自己也只存不改）。
+- 「没读」是对本仓库 `Tools/ok-extract/src/` 全文 grep 该栏位名／GUID 没有命中；
+  「读了但没套用」是读进 `CardInfo` 之后没有第二处消费。两者都是读码结论，不是实测。
 - 「扁平清单」指的是属性面板现在呈现 `hair.parts.0.baseColor.r` 这种 key 的样子；
   我没有实际开读卡器截图确认它当下长什么样，所以第 2、3 节的「UI」栏是按程式与读写表推出来的，
   要动手做之前应该先开一次读卡器拍一张现况图。
