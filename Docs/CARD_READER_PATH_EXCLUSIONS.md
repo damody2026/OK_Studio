@@ -297,3 +297,30 @@ mid=MID_M_ForgeSkin_Flat_72 params=15 _MainTex=Texture2D_3159 _overtex1=Texture2
 
 **什麼會讓這條的結論失效**：若某處把外觀縮圖當成角色材質的 `_overtex1`／`_MainTex` 餵進去
 （目前沒有這種站點），歸屬就要重新判。
+
+## 十六、`[Active]` breadcrumb 有選擇效應：它偏向「排在最後的 pass」，不是「出錯的 pass」（2026-11-19）
+
+**結構上的理由**（協調 session 提出）：DreamUI 的那串 draw 是**整幀最後才送的**——三份 log 的祖先鏈
+完全固定：`Frame` → `SceneRender` → `RenderGraphExecute` → `Scene` → `FrameRenderFinish` →
+`RenderFinish` → `ViewFamilyExtension(3)` → `ViewExtension(0)`。而 GPU 當機是在**幀末**被偵測到。
+**所以不論真正出錯的是誰，只要 GPU 在幀末卡住，「還沒結束」的就會是最後送的那一串。**
+
+**我這邊有一個數字正好支持它**：三份 log 裡 `[Active]` 的 `DreamUIDraw` 數量**不一樣**——
+3、8、8（總節點 17／31／33）。若 `[Active]` 標的是「出錯的那一個 draw」，數量不會這樣浮動；
+**它浮動正是因為那是「送出順序的一個尾段」，尾段多長取決於 GPU 停在哪裡。**
+
+**因此這條的寫法要改**：
+- **不可以**寫成「DreamUI 是取樣者」或「故障發生在 DreamGUI 的 draw 裡」；
+- **只能**寫成「在這三趟中，DreamUI 的那串 draw 都是幀末未完成的那些」。
+
+**連帶降級的**：先前第十四條裡「消費端不排除，而且很可能是」那個「很可能」，
+**依據是這個有選擇效應的集合，所以降級為「尚無指認」**。釋放端的排除不受影響（那是另一組證據）。
+
+**這條怎麼用**：`[Active]`／「最後未完成」這類讀數要先問一句——
+**這個集合是由「出錯」決定的，還是由「順序」決定的？** 若是順序，它只能用來排除
+「已 `Finished` 的那些」，不能用來指認還在飛的任何一個。
+（所以 `BasePass`／`ShadowDepths`／`Translucency` 已 `Finished` **仍然是有效的排除**：
+那些 pass 的工作已經完成，不是它們在撞那個位址。）
+
+**什麼會讓它可用**：若 DRED 給出 `PageFault data`（指名哪個資源、哪個操作），那就不靠順序了。
+目前三趟都是 `DRED: No breadcrumb head found.` ／ `DRED: No PageFault data.`，**所以這條路現在沒有讀數**。
