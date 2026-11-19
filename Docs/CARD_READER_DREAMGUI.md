@@ -2373,3 +2373,44 @@ in-effect log 確認只抬了一個刻度：`texture=3 buffer=3 pooled=3 func=24
   這也剛好對上 `gc` 那條軸（proxy 的 delete 是 reachability 驅動的）。
 - **第 2 趟回到 4–7 ⇒ 第 1 趟的 19 是擲骰的上緣**，`Func` 不成立，
   四個刻度全部沒救到它，`DelayFrames` 的效應就要完全歸給時序（reuse 量測那一格）。
+
+### 更正：**delete 一個 proxy 確實會放掉 `MainPS` 綁的東西**——經由它的 uniform buffer 的 resource table（2026-11-19）
+
+前面我寫過「delete 一個 proxy 不放掉任何 `MainPS` 綁的東西，因為 `FDreamUIMaterialProxy` 只有裸指標與數值」。
+**那句是錯的**：我只看了外掛自己的成員，沒看 `~FMaterialRenderProxy` 會放掉什麼。鏈條是：
+
+```
+delete FDreamUIMaterialProxy
+  -> ~FMaterialRenderProxy            (引擎 MaterialRenderProxy.cpp:773)
+       -> ReleaseResource()           (:851 -> FRenderResource::ReleaseResource)
+            -> FUniformExpressionCache::UniformBuffer 被釋放   (MaterialRenderProxy.h:51)
+                 -> FRHIUniformBuffer 的 ResourceTable 放掉它持有的 TRefCountPtr<FRHIResource>
+                    (RHIResources.h:1286, GetResourceTable)
+                      -> 那些是材質綁的貼圖；若那是最後一個參照，貼圖的 RHI 就被銷毀
+```
+
+**`FRHIUniformBuffer` 的 `ResourceTable` 是 `TArray<TRefCountPtr<FRHIResource>>`——它替材質持有那些貼圖的計數。**
+而 DreamGUI 的材質參數是用名字設進去的（`FDreamUIMaterialParameters::SetTexture`），
+**設的就是 canvas 那幾張貼圖（圖集、資料貼圖、sprite atlas），而內建的 `MainPS` 綁的是同一批**。
+所以 proxy 的 delete **的確會放掉 `MainPS` 綁的東西**，只是不是它自己擁有，而是經由 uniform buffer。
+
+**這解掉了我登記的那個矛盾**，而且形狀正是隊列註解自己寫的
+「a release may hand something else over (a proxy's delete releasing its resources)」：
+**proxy 是扣扳機的那一個，被放掉的是它的 uniform buffer 替別人持有的計數。**
+
+另外兩條（協調問的）答案是「不會」與「有順序」：
+
+- **`LiveProxies()` 的移除不會讓任何 UObject 失去參照**：它存的是
+  `TWeakPtr`（`DreamUIMaterialProxy.cpp:43-46`），而 `GameThreadSource` 是裸 `UMaterialInterface*`，
+  兩者都不持有 UObject。所以 delete 不會「讓下一次 GC 把材質或貼圖收走」。
+- **同一次 tick 裡，`Later()` 的 lambda 全部先跑，`Hold` 的計數才掉**：
+  `Tick_RenderThread` 先把到期的項目 `MoveTemp` 進區域 `Due`、解鎖、跑完每一個 `Entry.Release()`，
+  而 `FTextureRHIRef`／`FBufferRHIRef`／`Pooled` 的計數要到 `Due` 在函式結束時解構才放掉。
+  **所以 proxy 的 delete 一定跑在同一批 `Hold` 項目釋放之前。**
+
+**這條鏈同時解釋四件已知事實**：`Func=240` 推遲當機（delete 被延後 ⇒ 計數下降被延後）、
+`gc` 那條軸（delete 是 reachability 驅動的）、故障的是 `MainPS`（貼圖被材質路徑與內建路徑共用）、
+以及斷言從不命中（UObject 那側沒事，掉的是 RHI 的計數）。
+**還沒解釋的**：引擎的 EOP 圍欄本該蓋住「計數歸零 ⇒ 銷毀」這一步
+（`FRHIResource::MarkForDelete` → `PendingDeletes` → `DeleteResources`），
+所以若這條鏈成立，必須找出哪一步繞過了那個圍欄。**在找到之前，這仍是假設，不是結論。**
