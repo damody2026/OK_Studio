@@ -198,7 +198,12 @@ Tools\lua\lua.exe Tools\reader_pages.lua --new <新的 pages.json>     （在專
   - 認得的外掛裡某個欄位缺範圍 → 那是「範圍缺（`range_missing`）」欄，不混進這欄。
 - **一律按身分，不按位置**：外掛欄位的鍵是位置式的，同一個位置在不同卡上是不同外掛（alice 的 `m8` 是 MaterialEditor、megumin 的 `m8` 是 Pushup）。所以稽核按區段鍵（身分）數，不按位置、不跨卡沿用位置；否則同一個 build 在不同卡上會數出不同結論。
 - **它的意思**：「這個 build 缺支援」，不是「這張卡有問題」。換一個認得表更新的 build，同一張卡就會變空。所以歸在「我們缺支援」那一類，不要讓使用者去改卡。
-- **接線**：C++ 側的 `EditorUnknownPluginSections`（F 樹 `ccde34b12`）在建置窗口進 E 樹後，`ok.ReaderScreen audit` 的 registry 行加這一欄。產生端（ok-extract 輸出 `unknown_plugin_sections`、認得表 `PLUGIN_SECTIONS`）**目前還沒有人寫**，由 f-yvonne 做（以它的身分式外掛鍵 `cb5459b1d` 為基礎）。所以接上的第一版，這一欄會照下一節寫「缺支援」。
+- **接線**：C++ 側的 `EditorUnknownPluginSections`（F 樹 `ccde34b12`）在建置窗口進 E 樹後，`ok.ReaderScreen audit` 的 registry 行加這一欄。產生端（ok-extract 輸出 `unknown_plugin_sections`、認得表 `PLUGIN_SECTIONS`）在 F 樹已經有了：`136e791f5` 讓 `appearance.rs` 輸出這個欄位，`cb5459b1d` 把外掛鍵改成身分式。但它們不在 E 樹，只帶 `ccde34b12` 不會一起帶進來，所以 E 接上的第一版，這一欄會照下一節寫「缺支援」。
+- **刻意不收的區段**：產生端故意不把四個區段放進 `PLUGIN_SECTIONS`，所以它們每張卡都會出現在 `unknown_plugin_sections`。這不是缺支援，也不算 unknown，另列「刻意不收 N（…）」。
+  - `KKABMPlugin.ABMData`、`KKABMX.Core`：由 `bone.*` 編輯，同一份資料在兩處提供，一邊改了另一邊會被默默忽略；
+  - `com.bepis.sideloader.universalautoresolver`：解析清單，由 appearance 整份重寫；
+  - `OpenKoikatsu.AppearanceSource`：我們自己的來源紀錄。
+  - 清單寫在 `reader_pages.lua` 的 `DELIBERATELY_ABSENT`，C++ 照抄。
 
 ### 稽核四欄各自顯示什麼（一次寫定，2026-11-19）
 
@@ -218,6 +223,6 @@ KKEx 欄在有卡時分四種：
 - 正在讀這張卡的屬性 →「讀取中」；
 - 這張卡（這套服裝）的屬性還沒讀過 →「未讀（這張卡的屬性還沒讀）」；
 - 讀了，但產生端的回覆**沒有 `unknown_plugin_sections` 這個欄位** →「缺支援（這個 build 的產生端沒有 unknown_plugin_sections）」。這是「這個 build 缺支援」，不是 0，也不是空白；
-- 讀了，而且有這個欄位 → 個數，有的話接上清單，例如「2：KSOX、com.x」。空清單才寫「0」。
+- 讀了，而且有這個欄位 → 個數，有的話接上清單，例如「2：KSOX、com.x」。空清單才寫「0」。刻意不收的區段不算進個數，接在後面寫，例如「0；刻意不收 1（KKABMX.Core）」。
 
 C++ 怎麼分辨「沒有欄位」和「空清單」：控制器記 `EditorPluginSectionsState`。開始讀時設為 0；收到回覆時，有欄位設 2，沒欄位設 1。只有屬性的來源卡與服裝等於目前的卡與服裝時才採用，否則算「未讀」。

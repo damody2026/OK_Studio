@@ -177,6 +177,15 @@ end
 --                 "absent" (read, but the producer gave no unknown_plugin_sections: this build lacks the support),
 --                 or the list of section keys (empty list: none unknown)
 -- A missing answer is never written as 0: 0 means "counted and none".
+-- Sections ok-extract leaves out of PLUGIN_SECTIONS on purpose (F tree plugins.rs, cb5459b1d), so they always come
+-- back in unknown_plugin_sections; they are not "this build lacks support" and are not counted as unknown:
+-- ABMX is edited through bone.*, the sideloader resolve list is rewritten as a whole by appearance, and
+-- OpenKoikatsu.AppearanceSource is our own provenance block. Matched case-insensitively, like the producer.
+M.DELIBERATELY_ABSENT = {
+  ["kkabmplugin.abmdata"] = true, ["kkabmx.core"] = true,
+  ["com.bepis.sideloader.universalautoresolver"] = true, ["openkoikatsu.appearancesource"] = true,
+}
+
 function M.audit_cells(s)
   local cells = {}
   if s.card then
@@ -186,7 +195,14 @@ function M.audit_cells(s)
     if s.kkex == "busy" then cells.kkex = "讀取中"
     elseif s.kkex == "unread" or s.kkex == nil then cells.kkex = "未讀（這張卡的屬性還沒讀）"
     elseif s.kkex == "absent" then cells.kkex = "缺支援（這個 build 的產生端沒有 unknown_plugin_sections）"
-    else cells.kkex = tostring(#s.kkex) .. (#s.kkex > 0 and ("：" .. table.concat(s.kkex, "、")) or "") end
+    else
+      local unknown, kept_out = {}, {}
+      for _, key in ipairs(s.kkex) do
+        if M.DELIBERATELY_ABSENT[key:lower()] then kept_out[#kept_out + 1] = key else unknown[#unknown + 1] = key end
+      end
+      cells.kkex = tostring(#unknown) .. (#unknown > 0 and ("：" .. table.concat(unknown, "、")) or "")
+      if #kept_out > 0 then cells.kkex = cells.kkex .. "；刻意不收 " .. #kept_out .. "（" .. table.concat(kept_out, "、") .. "）" end
+    end
   else
     cells.ui = s.ui .. "（沒有卡：卡的屬性鍵未計）"
     cells.data = s.data .. ("（沒有卡：只有卡才有的鍵 %d 個未判）"):format(s.unjudged or 0)

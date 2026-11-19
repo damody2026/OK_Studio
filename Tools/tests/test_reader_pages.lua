@@ -106,6 +106,16 @@ T:case("kkex_column_says_missing_support_when_the_producer_has_no_field_never_0"
   t:eq(pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = "busy" }).kkex, "讀取中")
 end)
 
+-- The producer (F tree plugins.rs) keeps ABMX, the sideloader resolve list and our provenance block out of
+-- PLUGIN_SECTIONS on purpose: they come back in unknown_plugin_sections on every card and are not a support gap.
+T:case("sections_left_out_on_purpose_are_not_counted_as_unknown", function(t)
+  local c = pages.audit_cells({ card = true, ui = 0, data = 0, range = 0,
+    kkex = { "KKABMX.Core", "com.bepis.sideloader.universalautoresolver", "KSOXv2", "OpenKoikatsu.AppearanceSource" } })
+  t:eq(c.kkex, "1：KSOXv2；刻意不收 3（KKABMX.Core、com.bepis.sideloader.universalautoresolver、OpenKoikatsu.AppearanceSource）")
+  local only = pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = { "kkabmplugin.ABMData" } })
+  t:eq(only.kkex, "0；刻意不收 1（kkabmplugin.ABMData）")
+end)
+
 T:case("without_a_card_every_column_says_so", function(t)
   local c = pages.audit_cells({ card = false, ui = 4, data = 0, unjudged = 1, range = 2, kkex = { "KSOX" } })
   t:eq(c.kkex, "沒有卡")	-- whatever a previous card left behind
