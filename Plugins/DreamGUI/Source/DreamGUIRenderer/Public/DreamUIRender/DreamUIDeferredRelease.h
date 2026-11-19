@@ -15,7 +15,14 @@
 class DREAMGUIRENDERER_API FDreamUIDeferredRelease
 {
 public:
-	static constexpr uint32 DelayFrames = 3;
+	// DIAGNOSTIC VALUE, not a fix. 12 is here to answer one question: is three frames too short?
+	// What this queue must outlive is "the GPU has not run that command list yet", and a frame counter does not
+	// measure that -- a hitch, the RHI thread running ahead, or a blocked present all advance frames while the GPU
+	// stands still. So no constant here is correctness, only "enough on this machine today"; the real fix is to
+	// hold until the RHI frame fence of the frame that handed the resource over has completed, and to put
+	// UDreamCanvas::DrawTextureHolds (which keeps 8 frames) on that same criterion rather than on another number.
+	// Picked as 12 because the canvas already keeps 8: whatever the right answer is, 3 and 8 cannot both be it.
+	static constexpr uint32 DelayFrames = 12;
 
 	static void Hold(FTextureRHIRef InTexture);
 	static void Hold(FBufferRHIRef InBuffer);
