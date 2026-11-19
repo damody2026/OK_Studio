@@ -529,6 +529,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   let path=c001();let path=path.as_path();if !path.ok_exists(){return;}
   let mut source=crate::oklib::open_test_card(path,0).unwrap();
   let mut live=crate::session::OkSession::from_cache_bytes(&source.to_cache_bytes().unwrap()).unwrap();
+  // C001 wears a Pushup garment, on purpose: the opened card keeps raw sliders plus `pushup`, the cache round-trip
+  // keeps the pushed sliders and no `pushup`, so this test walks head_texture_changes' Pushup path. Keep a Pushup card.
+  assert!(source.pushup.is_some()&&live.pushup.is_none()&&source.shape_body!=live.shape_body,"C001 must exercise the Pushup comparison");
+  assert_eq!(source.shaping_body(&source.shape_body),live.shaping_body(&live.shape_body));
   let index=source.parts.iter().position(|p|p.name.to_ascii_lowercase().contains("mayuge")).unwrap();
   source.parts[index].png=Some(vec![11,22,33]);
   live.anim_time=42.;let uv=live.parts[index].uvs[0];live.parts[index].uvs[0]=[0.123,0.456];

@@ -2143,7 +2143,12 @@ impl OkSession {
     /// clocks, solver state and GPU stream identities. Validate the complete
     /// source transaction before committing any replacement.
     pub(crate) fn head_texture_changes(&self,source:&Self)->Result<Vec<usize>,String>{
-        if self.parts.len()!=source.parts.len()||self.shape_body!=source.shape_body||self.shape_face!=source.shape_face {
+        // Compare the sliders each side is shaped with, not the stored `shape_body`: the two may hold different kinds
+        // of value for the same character (b98a5edcb). An opened card keeps the raw sliders and its `pushup`
+        // (applied when shaping); a session read back from cache bytes (`SessionBlob`) keeps the sliders with Pushup
+        // already applied and `pushup: None`. `shaping_body` applies each side's own Pushup once (none for the cached
+        // one), so a Pushup card compares equal either way. Applying one side's Pushup to the other would push twice.
+        if self.parts.len()!=source.parts.len()||self.shaping_body(&self.shape_body)!=source.shaping_body(&source.shape_body)||self.shape_face!=source.shape_face {
             return Err("appearance changed model layout or shape".into());
         }
         let mut changed=Vec::new();

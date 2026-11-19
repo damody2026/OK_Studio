@@ -988,7 +988,11 @@ pub struct ClothesOptionGroups {
 /// Read [`ClothesOptionGroups`] for the named prefab (same subtree association as [`clothes_renderer_map`]). Optional
 /// query: a shared `.okmodel` recorded before it answers the default (no groups), which leaves the prefab as it was.
 pub fn clothes_option_groups<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> ClothesOptionGroups {
-    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "clothes_option_groups", prefab_name, || clothes_option_groups_unity(bytes, prefab_name).unwrap_or_default())
+    clothes_option_groups_recorded(bytes, prefab_name).unwrap_or_default()
+}
+/// [`clothes_option_groups`], `None` when the model was recorded before this query (the answer is unknown, not empty).
+pub fn clothes_option_groups_recorded<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesOptionGroups> {
+    crate::oklib::memo_bytes_recorded(bytes.bundle_bytes(), "clothes_option_groups", prefab_name, || clothes_option_groups_unity(bytes, prefab_name).unwrap_or_default())
 }
 fn clothes_option_groups_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesOptionGroups> {
     let bundle = Arc::new(load_bundle_source(bytes.to_source(), false).ok()?);

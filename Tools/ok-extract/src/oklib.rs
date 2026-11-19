@@ -2463,18 +2463,26 @@ where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::Deserialize
 /// without recording a `missing.txt` gap on pre-existing shared `.okmodel` tokens that lack this query.
 pub fn memo_bytes_optional<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) -> R
 where A: serde::Serialize + ?Sized, R: Default + serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
-    if !ACTIVE.load(Ordering::Relaxed) { return f(); }
-    let Some(store) = active() else { return f(); };
+    memo_bytes_recorded(bytes, method, args, f).unwrap_or_default()
+}
+
+/// `memo_bytes_optional` that says when there is no answer: `None` is a shared `.okmodel` token recorded before this
+/// query (its Unity bytes are not here to compute it). A caller that must not act on a guess (the property editor's
+/// model flags) tells "not recorded" from a value that is legitimately all defaults this way, never from the value.
+pub fn memo_bytes_recorded<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) -> Option<R>
+where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
+    if !ACTIVE.load(Ordering::Relaxed) { return Some(f()); }
+    let Some(store) = active() else { return Some(f()); };
     let id = content_id(bytes);
     let arg_bytes = bincode::serialize(args).unwrap_or_default();
     if let Some(raw) = store.get_raw_optional(&id, method, &arg_bytes) {
         if let Ok(value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
             if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
-            return value;
+            return Some(value);
         }
     }
     if token_id(bytes).is_some() {
-        return R::default();
+        return None;
     }
     let value = f();
     if store.mode == Mode::Record {
@@ -2484,7 +2492,7 @@ where A: serde::Serialize + ?Sized, R: Default + serde::Serialize + serde::de::D
     } else if crate::okstrict::completing_model(&id) {
         if let Ok(raw) = crate::unity::with_texture_plans(|| bincode::serialize(&value)) { crate::okstrict::keep_record(&id, method, &arg_bytes, raw); }
     }
-    value
+    Some(value)
 }
 
 /// A session needed the contents of model `id`, which this checkout does not have.

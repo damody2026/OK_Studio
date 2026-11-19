@@ -141,3 +141,18 @@
 
 - F 树的游戏目录：版控里 `Config/DefaultGame.ini` 写的是 `Root=D:/KoikatuSunshine`，这台机器上没有这个目录；正确的原作目录是 `D:\XKoikatuSunshine`（注意有 **X**）。所以本机的 `Saved/Config/WindowsEditor/GameUserSettings.ini` 加了 `[OKGameRoot] Root=D:/XKoikatuSunshine`。这是本机设定，不进版控；版控那行要不要改，由使用者决定。没有这行时，读卡器开原作卡会读不到任何 bundle，画面是空的。
 - 判定鞋子页编哪一槽的方法（复查时照做）：`KoikatsuSunshine_Data/level*` 没有型别树，所以按 MonoBehaviour 标头的位移读：m_GameObject 12 bytes、m_Enabled 4 bytes、m_Script 12 bytes（fileID i32 ＋ pathID i64）、m_Name（长度 i32 ＋ 字串，补齐到 4 的倍数），之后的第一个 i32 就是 `CvsClothes.typeClothes`。把 MonoBehaviour 按 m_Script 分组，找每组 7–10 个、第一个整数都在 0..8 的组。level3 有一组 8 个元件，每个大小 1936 bytes（第 8 个是 1972），值是 0–6 和 8。程式在 `Tools/ok-extract/src/entries.rs` 的忽略测试 `clothes_page_kinds`，执行：`OK_GAME=D:/XKoikatuSunshine cargo test --lib clothes_page_kinds -- --ignored --nocapture`。
+
+## 8. 第 2 批验收纪录与注意事项（2026-11-19）
+
+- **范围是软限制**：`min`／`max` 是原作 UI 滑杆的两端（配合 `display_scale`／`unit` 显示），不是资料的合法范围。原作 `ChaControl.SetShape*Value` 与衣服、配件的数值都不夹值，ABMX／slider unlocker 的卡带 0..1 以外的值。所以：
+  - 超出 `min`／`max` 的值接受、不夹住、不拒绝，那一列标 `out_of_range: true`（读进来的值与 `set` 后待套用的值都算）。
+  - 只有 `limit_min`／`limit_max` 会拒绝，且只写在资料本身有界的地方：颜色分量 0..1。`shape.*`、图样大小／位置／旋转、配件 `addMove` 都不写。骨骼、物理、怀孕、风格这几组沿用原本的硬界（`Number()` 给的 `limit_*`）。
+  - 其他硬拒：非有限数、型别不对、`choice` 给了 `options` 以外的值。
+  - 读卡、`apply` 都不按范围改值：只写被编辑的键，送来的值只取整（`decimals`）与 `wrap`。
+- **衣服选项与袖型实测**（读卡器 parameters＋截图，`Saved/Reports/editor-parity-clothes/shots/`）：KK_007604 服装 1 换成原作上衣 217 セーラーワンピース。袖型 0 → 1：领口的蝴蝶结换成长领带；`hideOpt.0`：蓝绿色水手领消失。旗标：颜色层 1～3 可用、第 4 层不可用，选项 1 可用、选项 2 不可用，和 prefab 一致。
+  - **`objSleeves` 不等于袖长**。它是 prefab 里一组随袖型切换的物件，内容由 prefab 决定。セーラーワンピース的这组是领带／蝴蝶结，所以切袖型时画面上变的是领口。拿这件验袖型、看到领口在变，是对的。
+  - 三张截图里手臂的长袖与蓝绿袖口都没变。是不是卡上的手臂配件盖住了上衣本身的袖子：**未确认**。
+- **要验原作服装功能，先确认那张卡穿的是原作衣服**：KK_007604 原本 7 套的上衣都是 mod 衣服（model 摘要里没有 kind 0），所以原卡上找不到可切换的选项。挑法：`entries.rs` 的忽略测试 `clothes_option_survey` 列出有 `objOpt`／`objSleeves` 的原作衣服，再用 appearance 的 `apply` 换上。和「验头发前先确认 hair0 真的是头发部件」是同一类坑。
+- **旧 OK 卡卡内模型没有新查询**：`clothes_option_groups` 是可选查询，卡内的第三方模型转卡时还没有它。`model_flags` 用 `clothes_option_groups_recorded`（`oklib::memo_bytes_recorded`）分辨「没录到」与「合法地全是预设值」：没录到的那件衣服，它的列不标 `available`；有录到的照实标。
+- **乾净 clone 对照的已知差异（不是这次补录造成的）**：`kks-verify` 拿原作卡比游戏模式与基础库模式，差在**每个部件**的 `_OKShaderState`、`_OKShaderCull`、`_OKShaderOutline`、`_OKShaderQueue`、`_OKShaderZWrite` 与 `_GlassRamp`：游戏模式从 shader 读出（`unity.rs`），基础库模式（CLI 的 `kks-verify`／`replay`）不套 `shader_states.json`（`shader_states::complete` 只在 `okmodel_view` 与读卡器背景流程呼叫）。从 `ebd5a5329`／`97985fd99` 那条线起就有。完整库与乾净库两边的 live digest 相同、`gaps=0`、`game_reads=0`，所以补录这件的对照算过。
+- **`C:\portable\OKGameOnly` 不能当乾净基线**：那是 2026-11-04 只靠游戏还原的快照，比现在的程式少很多查询，拿它比一定不同。乾净对照要用当下 HEAD 的 clone 跑 `original_data.lua restore --game`（本机在 `F:\OKCleanYvonne`，还原跑到一半暂停，等量测让出机器再续跑）。
