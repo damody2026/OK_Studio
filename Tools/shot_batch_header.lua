@@ -40,6 +40,13 @@
 --   * an untracked file added under Tools/ → DIFFERENT (1 of 17: uncommitted status_hash), exit 1 — known negative;
 --   * a header from the whole-tree version → OLD (exit 3, its own code since 2026-11-19: it shared 2 with MISSING, and
 --     one run piped through a pager read as exit 0); no header → MISSING (exit 2).
+--   After adding the data folders (2026-11-19, F tree; 21 items = 9 binaries + 6 program paths + 2 uncommitted hashes
+--   + 4 data folders; the scan of ~16k files takes about 1 s):
+--   * two writes → SAME (0 of 21);
+--   * a temporary new file in base_v1 → DIFFERENT (1 of 21: data base_v1, 15370 → 15371 files), exit 1;
+--   * BodyInteractions/manifest.json mtime moved +60 s → DIFFERENT (1 of 21: data BodyInteractions, newest and list
+--     hash), exit 1; mtime restored exactly → SAME again.
+--   Not seen: a data edit that keeps both size and mtime (nothing we run does that), and data outside DATA_DIRS.
 --
 -- Which binaries: the card reader runs the ENGINE's UnrealEditor.exe with the project (run_card_reader_development.lua),
 -- and the engine is never rebuilt — its mtime says nothing. What our builds change are the project's editor modules, and
@@ -106,6 +113,46 @@ local function pathspec()
   for _, p in ipairs(EXCLUDE) do parts[#parts + 1] = '":(exclude)' .. p .. '"' end
   return table.concat(parts, " ")
 end
+-- Data git cannot see changes the pictures too: the original-game data kept out of git (Tools/original_data_manifest.json,
+-- `.gitignore`d) — the base library's models, animations, shader states, the runtime clips, the preview LUTs. Re-recording
+-- base_v1 (`--oklib convert`) rewrites .okmodel files; with only git in the fingerprint, two batches across that would
+-- be SAME while a broken texture may come or go. So each data folder is one compared item: its file count, total
+-- size, newest mtime and a hash of the sorted "path size mtime" list (stat only, no content hash — tens of GB).
+-- The voice audio (base_v1/h/voice, 120k files) is left out: it cannot change a picture.
+local DATA_DIRS = {
+  { name = "base_v1", path = "Content/IndependentResources/base_v1", skip = { ["h/voice"] = true } },
+  { name = "RuntimeAnimations", path = "Content/IndependentResources/RuntimeAnimations" },
+  { name = "BodyInteractions", path = "Content/IndependentResources/BodyInteractions" },
+  { name = "KKPreview", path = "Content/KKPreview" },
+}
+local function data_identity(root)
+  local out = {}
+  for _, d in ipairs(DATA_DIRS) do
+    local base = root .. "/" .. d.path
+    if lfs.attributes(base, "mode") ~= "directory" then out[d.name] = { absent = true } else
+      local lines, count, bytes, newest = {}, 0, 0, 0
+      local function walk(rel)
+        local dir = rel == "" and base or (base .. "/" .. rel)
+        for n in lfs.dir(dir) do
+          if n ~= "." and n ~= ".." then
+            local r = rel == "" and n or (rel .. "/" .. n)
+            local a = lfs.attributes(dir .. "/" .. n)
+            if a and a.mode == "directory" then if not (d.skip and d.skip[r]) then walk(r) end
+            elseif a then
+              count = count + 1; bytes = bytes + a.size; if a.modification > newest then newest = a.modification end
+              lines[#lines + 1] = ("%s %d %d"):format(r, a.size, a.modification)
+            end
+          end
+        end
+      end
+      walk("")
+      table.sort(lines)
+      out[d.name] = { files = count, bytes = bytes, newest = os.date("%Y-%m-%d %H:%M:%S", newest), list_hash = hash_text(table.concat(lines, "\n")) }
+    end
+  end
+  return out
+end
+local function project_root() return (git("rev-parse --show-toplevel"):gsub("%s+$", "")) end
 local function header(paths, label)
   local bins = {}
   for _, p in ipairs(paths) do bins[#bins + 1] = binary(p) end
@@ -122,6 +169,7 @@ local function header(paths, label)
     exe = bins[1],
     binaries = bins,
     head = (git("rev-parse HEAD"):gsub("%s+$", "")),
+    data = data_identity(project_root()),
     program = {
       paths = PROGRAM_PATHS, exclude = EXCLUDE,
       committed = committed,
@@ -159,10 +207,14 @@ if mode == "write" then
   print(("program: %d of %d paths, %d uncommitted changes%s"):format(#PROGRAM_PATHS, #PROGRAM_PATHS, #h.program.changed,
     #h.program.changed == 0 and " (clean)" or ":"))
   for _, line in ipairs(h.program.changed) do print("  " .. line) end
+  for _, d in ipairs(DATA_DIRS) do
+    local x = h.data[d.name]
+    print(x.absent and ("data %s: absent"):format(d.name) or ("data %s: %d files, %d bytes, newest %s"):format(d.name, x.files, x.bytes, x.newest))
+  end
 elseif mode == "check" then
   local a, b = read(arg[2] or ""), read(arg[3] or "")
   if not a or not b then print("MISSING: a batch without batch_header.json cannot be compared with another"); os.exit(2) end
-  if not a.program or not b.program then
+  if not a.program or not b.program or not a.data or not b.data then
     print("OLD header: written by the whole-tree version (a Docs commit changed it). Write it again with this version;")
     print("if the tree has not changed since, that is the same batch, not a new one."); os.exit(3)
   end
@@ -185,12 +237,21 @@ elseif mode == "check" then
   for _, k in ipairs({ "status_hash", "diff_hash" }) do
     if a.program[k] ~= b.program[k] then diffs[#diffs + 1] = ("uncommitted %s: %s vs %s"):format(k, a.program[k], b.program[k]) end
   end
+  local dnames = {}
+  for n in pairs(a.data) do dnames[#dnames + 1] = n end
+  for n in pairs(b.data) do if a.data[n] == nil then dnames[#dnames + 1] = n end end
+  table.sort(dnames)
+  local function dsum(x) return not x and "missing" or x.absent and "absent" or ("%d files %d bytes newest %s list %s"):format(x.files, x.bytes, x.newest, x.list_hash:sub(1, 9)) end
+  for _, n in ipairs(dnames) do
+    local x, y = a.data[n], b.data[n]
+    if dsum(x) ~= dsum(y) or (x and y and x.list_hash ~= y.list_hash) then diffs[#diffs + 1] = ("data %s: %s vs %s"):format(n, dsum(x), dsum(y)) end
+  end
   -- A count with its denominator: "0 differ" alone cannot be told from "nothing was compared".
   local nbin = 0
   for _ in pairs(ba) do nbin = nbin + 1 end
   for p in pairs(bb) do if not ba[p] then nbin = nbin + 1 end end
-  local compared = nbin + #paths + 2
-  print(("compared %d items (%d binaries, %d committed program paths, 2 uncommitted hashes): %d differ"):format(compared, nbin, #paths, #diffs))
+  local compared = nbin + #paths + 2 + #dnames
+  print(("compared %d items (%d binaries, %d committed program paths, 2 uncommitted hashes, %d data folders): %d differ"):format(compared, nbin, #paths, #dnames, #diffs))
   if a.head ~= b.head then print(("  HEAD %s vs %s (not compared: a commit outside the program paths moves it)"):format(a.head:sub(1, 9), b.head:sub(1, 9))) end
   if #diffs == 0 then print("SAME build: the two batches can be compared") else
     print("DIFFERENT build: do not compare these batches")
