@@ -5624,3 +5624,45 @@ if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
   「銷毀 vs 重用 vs 從未常駐」當場分開，不必再猜；
 - **不再故障 ⇒ 這一格沒有讀數**（不是修好）。那時改用 60 張協定多跑幾趟確認是不是真的被壓掉，
   而不是把它當成修復。
+
+# 追蹤開啟後的報告：故障位址落在「最近 100 幀內已釋放」的貼圖與它背後的 64 MB PoolAllocator Heap 裡
+
+**趟 1 乾淨（60 張全開）、趟 2 與趟 3 故障**（138.2 s 第 16 張、139.3 s 第 15 張，在基線帶 138.6–140.1 內）。
+所以「儀器一開就不發生、故障對時序敏感」那條判讀**作廢**——1/3 乾淨只是既有的趟間變異，
+而我沒有把它寫成結論。三趟的 `tracking_arrived=1`、身分與基線相同
+（`dll=11-19_16:25:48`、`cards=ec4082d53b456b86`）。
+
+完整報告存在 `Saved/Reports/card-reader-dreamgui/track-allocations-trip2.txt` 與 `-trip3.txt`。只列事實：
+
+```
+PageFault: PageFault at VA GPUAddress "0x2606A01000" (GPU 0)
+PageFault: Last completed frame ID: -1 (cached: 20795) - Current frame ID: 20798
+PageFault: Logging all resource enabled: Yes
+PageFault: Found 0 active tracked resources in 16.00 MB range of page fault address
+PageFault: Found 0 active heaps containing page fault address
+PageFault: Found 2 released resources containing the page fault address during last 100 frames
+	GPU Address: [0x2602E00000 .. 0x2606E00000] - Size: 67108864 bytes, 64.00 MB - FrameID: 20777 - DefragFree: 0 - Transient: 0 - Heap: 1 - Name: PoolAllocator Heap - Desc: Unknown
+	GPU Address: [0x2606680000 .. 0x2606BE0000] - Size: 5636096 bytes, 5.38 MB - FrameID: 20754 - DefragFree: 0 - Transient: 0 - Heap: 0 - Name: Texture2D_1003 - Desc: Texture 1024x1024x1 DXGI_FORMAT_B8G8R8A8_TYPELESS
+[2026.11.19-12.22.49:259][798]LogD3D12RHI: Error:
+```
+
+```
+PageFault: PageFault at VA GPUAddress "0x260FF71000" (GPU 0)
+PageFault: Last completed frame ID: -1 (cached: 20052) - Current frame ID: 20055
+PageFault: Logging all resource enabled: Yes
+PageFault: Found 0 active tracked resources in 16.00 MB range of page fault address
+PageFault: Found 0 active heaps containing page fault address
+PageFault: Found 2 released resources containing the page fault address during last 100 frames
+	GPU Address: [0x260C800000 .. 0x2610800000] - Size: 67108864 bytes, 64.00 MB - FrameID: 20017 - DefragFree: 0 - Transient: 0 - Heap: 1 - Name: PoolAllocator Heap - Desc: Unknown
+	GPU Address: [0x260FDF0000 .. 0x26100A0000] - Size: 2818048 bytes, 2.69 MB - FrameID: 19995 - DefragFree: 0 - Transient: 0 - Heap: 0 - Name: Texture2D_978 - Desc: Texture 1024x512x1 DXGI_FORMAT_B8G8R8A8_TYPELESS
+[2026.11.19-12.26.22:289][ 55]LogD3D12RHI: Error:
+```
+
+DRED 兩趟字面相同：`Commandlist "FD3D12CommandList 29 (GPU 0)" on CommandQueue "3D Queue (GPU 0)", 138 completed of 244`，
+其後是交替的 `DrawIndexedInstanced` / `ResourceBarrier`（Op 38..68），接 `EndEvent`、`WriteBufferImmediate`。
+
+**可直接讀出的數字**（不是解釋）：趟 2 的貼圖釋放於第 20754 幀、heap 於 20777，故障時 current frame 20798
+⇒ 相距 **44 幀**與 **21 幀**；趟 3 的貼圖釋放於 19995、heap 於 20017，故障時 20055 ⇒ 相距 **60 幀**與 **38 幀**。
+兩趟「含故障位址的已釋放資源」都是 2 筆，都是一張 `B8G8R8A8_TYPELESS` 貼圖加上包住它位址區間的 64 MB
+`PoolAllocator Heap`；貼圖尺寸與名字兩趟不同（1024x1024 `Texture2D_1003`、1024x512 `Texture2D_978`）。
+**而這一次追蹤是開的，active 資源與 active heap 仍然是 0。**
