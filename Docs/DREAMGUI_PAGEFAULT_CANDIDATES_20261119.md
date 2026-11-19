@@ -2055,3 +2055,78 @@ built-in draw 的那十个 reference 槽不可能把已释放的位址绑进 `Ma
 插桩位置与 §29d 相同：**`DreamUIRenderer.cpp:1017`**，印 12 个槽解出来的 `FRHITexture*`
 （reference 的印 `GetReferencedTexture()`），和 `0x000000256bd01000` 比对；
 **这一步是现在唯一能分开上面两条的量测。**
+
+---
+
+## §31 那两个裸位址的槽：短答三件，加上那把尺的一处事实更正
+
+读的是 E 树与 `E:/PhysX/UE5.8`（只读）。
+
+### 31a 第 1 题：是哪两个、什麼型别、写入与绑定在哪一行
+
+| 槽 | 型别 | 写入 | 绑上 shader |
+|---|---|---|---|
+| `DreamUI_SceneDepthTex` | **`FRHITexture*`**（`DrawBuiltInBatch` 的函式参数，不是 SRV、不是 reference 的裸指标） | pass lambda 内由 RDG 的 `SceneDepthTex` 取得；screen space 没有深度时直接传 `GBlackTexture`（`DreamUIRenderer.cpp:2358-2360`） | `DreamUIRenderer.cpp:1006` |
+| `DreamUI_BackdropTex` | **`FRHITexture*`**（`FDreamUIBuiltInBackdrop::Texture`，`DreamUIRenderer.h:29`，整个 plugin 唯一的裸 `FRHITexture*` 成员） | pass lambda 内 `Backdrop.Texture = InBackdrop->GetRHI();`（`DreamUIRenderer.cpp:2363-2365` 一带，前一行先 `InBackdrop->MarkResourceAsUsed()`） | `DreamUIRenderer.cpp:1015` |
+
+两者的来源都是**宣告在 pass 参数结构里的 RDG 贴图**：
+`RDG_TEXTURE_ACCESS(BackdropTexture, ERHIAccess::SRVGraphics)`（`:1588`，
+`FDreamUIBackdropDrawPassParameters`）、`PassParameters->SceneDepthTex = SceneDepth`（`:1595` 一带）。
+
+### 31b 第 2 题：**没有。鍊子不在这里闭合。**
+
+group 那一支的 `FDreamUICompositeDesc`（`DreamGUIRenderer/Public/DreamUIRender/DreamUICompositor.h:30-76`）
+的成员是：`Role`、`Id`、`BlendMode`、`Opacity`、`WorldBounds`、`CanvasToWorld`、`MaskClipCoordinate`、
+**`FDreamUIBuiltInDrawParams Textures`**、`bExternal`、`CanvasToUV`、`Effect`、`Style`、`StyleRect`。
+
+**那个 `Textures` 就是 `FDreamUIBuiltInDrawParams` 本身，而它没有任何裸 `FRHITexture*` 成员**
+（`DreamUIBaseShaders.h:80-92` 全是 `FTextureReferenceRHIRef`／`FSamplerStateRHIRef`）。
+`SceneDepthTexture` 是函式参数、`FDreamUIBuiltInBackdrop` 是另一个 pass 内的结构，
+**两个都不在 Desc 里，也不在任何 section proxy 里。**
+
+### 31c 第 3 题：它们的清除时机——**不需要清，因为它们每次 pass 重新产生**
+
+- `FDreamUIBuiltInBackdrop Backdrop;` 是**pass lambda 里的堆叠区域变数**（`DreamUIRenderer.cpp:2361`），
+  每次 pass 执行时重新建、填 `GetRHI()`、用完就随 lambda 结束消失；
+- `SceneDepthTexture` 同样是每次 pass 传进来的参数。
+
+RDG 对宣告在 pass 参数里的贴图保证「pass 执行期间已配置且有效」，而 `MarkResourceAsUsed()` 把它钉在
+该 pass 的生命期内。**所以这两个裸位址从不跨帧、从不被保存，也就没有「来源贴图被 GC 时谁去清」这个问题
+——它们的来源不是 `UTexture`，是 RDG 的 render target。**
+
+### 31d 那把尺：一处事实更正（这一句决定整个方向）
+
+协调写「`FTextureReferenceRHIRef` 这种间接物件本身被持有也不会延命底层贴图」。
+**在这一版引擎里这句话是错的**：`Runtime/RHI/Public/RHITextureReference.h:53`
+
+```cpp
+TRefCountPtr<FRHITexture> ReferencedTexture;
+```
+
+**是计数参照**（读写只经 `SetReferencedTexture`，`:48-51`；读经 `GetReferencedTexture`，`:32`）。
+**所以持有一个 texture reference，等於连带持有它当下引用的那张 RHI 贴图。**
+
+**也正因为这样，引擎必须在释放前主动把内层换掉——而它确实这麼做（§30a）**：
+
+> **会清。** `UTexture::BeginFinalReleaseResource`（`Runtime/Engine/Private/Texture.cpp:1332-1347`）
+> 先 `ReleaseResource()`，那条 render command 走到
+> **`FStreamableTextureResource::ReleaseRHI()` 的 `RHIClearTextureReference(TextureReferenceRHI)`
+> ——`Runtime/Engine/Private/Rendering/StreamableTextureResource.cpp:237`，在同一个 render command、
+> 在 `TextureRHI.SafeRelease()`（`:240`）之前、也在引擎放掉自己那一份 reference（`:1339-1342`）之前**；
+> D3D12 把 null 换成全域黑图（`D3D12TextureReference.cpp:112`、`:46-47`），并改写该 reference 的
+> bindless descriptor（`:55-74`）。`ReleaseFence.BeginFence()`（`:1344`）＋`IsReadyForFinishDestroy`
+> 保证 UObject 不会在这些命令跑完前被清掉。清除不是 streamable 独有，八个贴图资源类全都做（§30a 的表）。
+
+**所以照改过的尺重判，结论不变，但理由更紧**：
+
+1. 那十个槽持有的 handle **会**让底层贴图活著（31d）⇒ 配置不可能在它们还指著时被释放；
+2. 而配置**确实**被释放了（你们量到不可达 51209 → 配置释放 51214）⇒ **清除已经发生** ⇒
+   那十个槽此刻解出来的是**全域黑图**；
+3. 那两个裸位址的槽不跨帧、来源是 RDG render target（31a／31c）。
+
+**⇒ 十二个槽没有一个能在故障当下指向已释放的卡片贴图。** 这是程式码层面的否定，
+而它和傾印档（`MainPS`、`1 total`、PC 在那颗 shader 里）并存，所以差的那一步**不在「谁存了什麼」这一层**。
+
+**下一步仍然只有位址比对能分**：`DreamUIRenderer.cpp:1017` 印 12 个槽解出来的 `FRHITexture*`
+（reference 的印 `GetReferencedTexture()`，裸的直接印），与 `0x000000256bd01000` 比对。
+**若 12 个都不是它，取样进来的就不是 shader 绑的那一笔 descriptor，线索就转到 descriptor 表／PSO 那一层。**
