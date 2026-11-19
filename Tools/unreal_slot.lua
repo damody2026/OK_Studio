@@ -467,9 +467,21 @@ local function status()
       tail = held >= MAX_HOLD_MIN and (" [held " .. held .. " min, over the " .. MAX_HOLD_MIN .. " min cap]")
                                    or (" [held " .. held .. " min]")
     end
+    -- Say outright that a [need 60] holder is measuring: who was measuring could not be read off status (2026-11-19).
+    local need = who and tonumber((text or ""):match("%[need (%d+)%]"))
+    if need and need >= EXCLUSIVE_GB then tail = tail .. " [exclusive measurement: builds wait]" end
     print(("slot" .. i .. ": " .. (who and (text:gsub("%s+$", "") .. tail) or "(free)")))
   end
-  io.write("queue: ", table.concat(queued(true), ", "), "\n")
+  -- and likewise for an exclusive claim still waiting (may-build answers wait for it too)
+  local waiting = queued(true)
+  for k, entry in ipairs(waiting) do
+    local need = not entry:find(" (", 1, true) and queued_need(entry) or 0
+    if need >= EXCLUSIVE_GB then
+      local since = queued_since(entry)
+      waiting[k] = entry .. " (exclusive measurement, need " .. need .. " GB" .. (since and (", since " .. os.date("%H:%M:%S", since)) or "") .. "; builds wait)"
+    end
+  end
+  io.write("queue: ", table.concat(waiting, ", "), "\n")
   local held, other = unreal_counts()
   io.write("unreal processes: ", held + other, " (slot holders ", held, ", others ", other, ")\n")
   local busy = busy_unreal()
