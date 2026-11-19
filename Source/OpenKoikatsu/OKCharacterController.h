@@ -166,6 +166,11 @@ public:
  UPROPERTY() TObjectPtr<class UEditableTextBox> PropertySearch;
  TArray<TSharedPtr<FJsonObject>> EditorProperties;
  TArray<TSharedPtr<FJsonObject>> EditorPropertyParents;
+ /// KKEx sections this card carries that ok-extract does not know (its `unknown_plugin_sections`). They are not
+ /// walked — we do not know their shape — but they are named here and in the property panel's status, because a
+ /// section dropped without a word goes unnoticed: that is how KoiSkinOverlayX's `KSOX` stayed unreachable until
+ /// someone read the code (2026-11-19). A key showing up here is the signal to add it to `PLUGIN_SECTIONS`.
+ TArray<FString> EditorUnknownPluginSections;
  TMap<FString,TSharedPtr<FJsonValue>> PendingProperties;
  bool bPropertyBusy=false;
  FString PropertySource;

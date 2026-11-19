@@ -5735,3 +5735,10 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 `ok.Interaction.AsyncShot` 第一版：`OnScreenshotCaptured` 的 lambda 一进来就 `Remove(Handle)`，然后才把捕获的 `File` 复制给背景工作。`Remove` 在广播中会立刻销毁这个 lambda，`File` 已经被释放，读它就是 `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff`（游戏执行绪 memcpy）。stage `EFps1118m` 的 `AsyncShot 1` 那趟在一对一就绪时当掉，量测脚本又没有发现游戏已死，一直等每个指令逾时，独占多占了约 18 分钟。
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
+
+## 2026-11-19：验头发前先确认那张卡的 hair0 真的是头发部件（f-sceneload）
+
+- **要验什么**：`hair.parts.N.pos/rot/scl` 改了画面会不会变（盘点读码的结论是「读进 `CardInfo` 之后没人消费」）。
+- **怎么错的**：拿 `Content/CharacterCards/CrowdAPNG/C000.png` 写入 `pos.1=0.5`、`scl.0=2.0`，再把原卡与改过的卡各抽一份模型比对——69 个档只有 `.ok_stamp` 与 `manifest.json` 的卡片路径不同，看起来正好「证明没套用」。**这个证据不成立**：抽取日志写着 `skip dummy hair id=500 cat=101 nohairB`，这张卡的 `hair.parts` 是 dummy，头发是用饰品做的（`Elysia_Hair` 挂在饰品槽，输出名是 `accessory_…_cf_hair_*`），**输出里根本没有头发网格可比**。本机四张卡（C000、alice、hayase_yuuka、keqing）全是这样。
+- **修正**：验头发相关的东西之前，先看抽取日志有没有 `skip dummy hair`，或确认 `hair_ids[0]` 指到真的头发部件（通常得挑原作卡，mod 卡常把头发做成饰品）。**「卡片没有这个部件」与「程式没套用这个栏位」是两个独立原因，混在一起就会得到假的否定结论。**
+- **这一类的通则**：否定命题（没有消费者、根本没读）用穷举 grep 比跑一趟更强；要主张「确实有套用」才必须实机，而且得先证明那张卡上这个部件存在。

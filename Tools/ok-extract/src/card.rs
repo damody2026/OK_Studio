@@ -131,6 +131,14 @@ pub struct CardInfo {
     pub hl_down_y: f32,
     pub hl_up_x: f32,
     pub hl_down_x: f32,
+    /// ChaFileFace.foregroundEyes / foregroundEyebrow (`ChaControl.SetForegroundEyesAndEyebrow`):
+    /// 0 = follow the player's own config (`EtceteraSystem.ForegroundEyes/Eyebrow`, both `false` in a fresh
+    /// install), 1 = force off, 2 = force on. "On" makes `ChaForegroundComponent.SetForeground` flip the
+    /// `SetRenderQueue_Custom.isSetQueue` of the eye meshes (`cf_O_eyeline`, `cf_O_eyeline_low`,
+    /// `cf_Ohitomi_L/R`, `cf_Ohitomi_L02/R02`, `cf_O_gag_eye_00..02`) or the eyebrow (`cf_O_mayuge`),
+    /// which swaps each material's render queue from `m_queuesBackup` to `m_queues` so they draw over hair.
+    pub foreground_eyes: i32,
+    pub foreground_eyebrow: i32,
     pub detail_id: i32,
     /// ChaFileBody.detailId / detailPower drive Koikano/main_skin's
     /// `_NormalMapDetail` and `_DetailNormalMapScale` (ChaControl.cs:4807).
@@ -1728,6 +1736,10 @@ fn apply_face(face: &Value, info: &mut CardInfo) {
     if let Some(v) = map_get(face, "moleLayout") {
         info.mole_layout = vec4(v);
     }
+    info.foreground_eyes = map_get(face, "foregroundEyes").map(as_i32).unwrap_or(info.foreground_eyes);
+    info.foreground_eyebrow = map_get(face, "foregroundEyebrow")
+        .map(as_i32)
+        .unwrap_or(info.foreground_eyebrow);
     info.hl_up_id = map_get(face, "hlUpId").map(as_i32).unwrap_or(info.hl_up_id);
     info.hl_down_id = map_get(face, "hlDownId").map(as_i32).unwrap_or(info.hl_down_id);
     info.hl_up_x = map_get(face, "hlUpX").map(as_f32).unwrap_or(info.hl_up_x);
@@ -2318,6 +2330,9 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
         hl_up_x: 0.5,
         hl_down_x: 0.5,
         hl_down_y: 0.5,
+        // 0 = the player's own config decides, and a fresh install has both off.
+        foreground_eyes: 0,
+        foreground_eyebrow: 0,
         detail_id: 0,
         body_detail_id: 0,
         // ChaFileBody constructor: detailPower=0, not the slider midpoint.

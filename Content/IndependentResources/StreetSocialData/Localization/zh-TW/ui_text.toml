@@ -2749,3 +2749,27 @@ cannot_pay_note = "（他錢包不夠付車資 {fare, number, ::currency}，沒�
 no_bus_note = "（這段路沒有合適的公車。）"
 no_taxi_note = "（這段路近，不用搭計程車。）"
 judge_ride = "\n他們正一起走一段遠路，可以搭公車或計程車。若他提議或答應搭公車，action 填 take_bus；搭計程車填 take_taxi。"
+
+# 讀卡器屬性編輯：每個 KKEx 外掛區段一個分組名（ok-extract 的 PLUGIN_SECTIONS）。
+[reader.plugin_group]
+material_editor = "材質編輯器"
+hair_accessory = "髮飾進階設定"
+hair_shadow_color = "頭髮陰影色"
+pushup = "內衣塑形"
+dynamic_bone_editor = "骨骼物理"
+more_accessories = "額外飾品"
+accessory_states = "飾品狀態"
+accessory_state_sync = "飾品狀態同步"
+skin_overlay = "膚色覆蓋貼圖"
+clothes_overlay = "衣物覆蓋貼圖"
+eye_control = "眼睛開合"
+eye_shaking = "眼睛高光抖動"
+uncensor_selector = "身體替換"
+
+[reader.unsupported]
+hair_transform_not_applied = "卡片存得下這一項，但現在的渲染還沒用它，改了不會有任何變化。"
+
+[ui.editor_eyes]
+foreground_config = "跟隨遊戲設定"
+foreground_off = "畫在後面"
+foreground_on = "畫在前面"

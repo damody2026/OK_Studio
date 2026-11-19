@@ -107,7 +107,7 @@ pub(crate) fn extract_session_from_info(
     let BaseStage { body_bundle, skin_material_bundle, vanilla_head_bundle, body_meshes, mut body_skel,
         mut body_texs, pv_config, eye_look_config, parsed_head, head_texs, head_main, head_shape_keys,
         mut head_skel, head_meshes, head_mouth_patterns, head_eye_patterns, head_eyebrow_patterns,
-        head_face_settings, head_eye_materials, mut head_fbs_sources, mut body_rest, body_dynamics, body_colliders,
+        head_face_settings, foreground_queues, head_eye_materials, mut head_fbs_sources, mut body_rest, body_dynamics, body_colliders,
         mut clothes_dynamics, head_rest, } =
         crate::view_memo(format!("base_bundles_stage|{}|{}|{base_key}", game_root.display(), mods_dir.display()),
             || base_bundles_stage(game_root, &parsed_card, &vanilla, &guid_index, &mods_dir))?;
@@ -2424,6 +2424,7 @@ pub(crate) fn extract_session_from_info(
         }
     }
     apply_copy_body_material(&mut session_parts, &copy_body_targets);
+    apply_foreground_eyes(&mut session_parts, &foreground_queues, parsed_card.as_ref());
     assign_draw_layers(&mut session_parts);
     Ok(crate::session::OkSession {
         pair_third:None,
@@ -2536,6 +2537,9 @@ struct BaseStage {
     head_eye_patterns: std::collections::HashMap<String, (usize, Vec<(i32, i32)>)>,
     head_eyebrow_patterns: std::collections::HashMap<String, (usize, Vec<(i32, i32)>)>,
     head_face_settings: [f32; 12],
+    /// `SetRenderQueue_Custom.m_queueDatas` of the head prefab, by GameObject name
+    /// (`crate::unity::foreground_render_queues`): what `foregroundEyes`/`foregroundEyebrow` switch between.
+    foreground_queues: Vec<(String, Vec<(i32, i32, i32)>)>,
     head_eye_materials: std::collections::HashMap<String, [f32; 14]>,
     head_fbs_sources: std::collections::HashMap<String, String>,
     body_rest: Option<crate::pose::Skeleton>,
@@ -2710,6 +2714,11 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
         .map(|e| e.info("MainData"))
         .filter(|s| !s.is_empty() && s != "0")
         .unwrap_or_else(|| "p_cf_head_00".to_string());
+    // `ChaForegroundComponent` flips these on the head prefab's eye/eyebrow renderers; the queue numbers are
+    // serialized in the prefab, so they are read here once per head rather than guessed.
+    let foreground_queues = crate::unity::foreground_render_queues(
+        &crate::gamefs::read_source(&head_bundle).unwrap_or_default(), &head_main);
+    eprintln!("ok-extract: foreground render queues renderers={}", foreground_queues.len());
     let head_shape_asset = face_entry
         .as_ref()
         .map(|e| e.info("ShapeAnime"))
@@ -2899,7 +2908,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
     Ok(BaseStage { body_bundle, skin_material_bundle, vanilla_head_bundle, body_meshes, body_skel, body_texs,
         pv_config, eye_look_config, parsed_head, head_texs, head_main, head_shape_keys, head_skel,
         head_meshes, head_mouth_patterns, head_eye_patterns, head_eyebrow_patterns, head_face_settings,
-        head_eye_materials, head_fbs_sources, body_rest, body_dynamics, body_colliders, clothes_dynamics, head_rest, })
+        foreground_queues, head_eye_materials, head_fbs_sources, body_rest, body_dynamics, body_colliders, clothes_dynamics, head_rest, })
 }
 
 /// What the lists stage (OK_PROFILE "lists+mods+guids") hands the rest of the open. The two scopes hold the
@@ -3122,6 +3131,51 @@ fn note_copy_body_targets(out: &mut Vec<(String, Vec<String>, i32)>, meshes: &[E
         if let Some((_, queue)) = targets.iter().find(|(id, _)| mesh.renderer_ids.contains(id)) {
             out.push((property.to_string(), mesh.renderer_names.clone(), *queue));
         }
+    }
+}
+
+/// `ChaControl.SetForegroundEyesAndEyebrow`: the card's `foregroundEyes`/`foregroundEyebrow` are 0 (the player's
+/// own config decides, and a fresh install has both off), 1 (off) or 2 (on). "On" makes
+/// `ChaForegroundComponent.SetForeground` set `SetRenderQueue_Custom.isSetQueue`, which writes the prefab's
+/// `m_queues` into each listed material's render queue instead of `m_queuesBackup`, so the eyes (or the eyebrow)
+/// draw over the hair. Only a card that says 2 changes anything here: 0 and 1 keep what the prefab already gave us.
+/// An OK card sealed before `foreground_render_queues` existed answers an empty list — say so rather than drawing
+/// the eyes behind the hair without a word (`--oklib answers` / `ok_cards.lua reseal` records it).
+fn apply_foreground_eyes(parts: &mut [crate::session::SessionPart],
+    queues: &[(String, Vec<(i32, i32, i32)>)], card: Option<&crate::card::CardInfo>) {
+    let Some(card) = card else { return };
+    let (eyes, eyebrow) = (card.foreground_eyes == 2, card.foreground_eyebrow == 2);
+    if !eyes && !eyebrow { return; }
+    if queues.is_empty() {
+        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} requested but the head prefab's \
+            SetRenderQueue_Custom data is missing (an OK card sealed before this query: reseal it to apply)");
+        return;
+    }
+    let mut applied = 0;
+    for (name, datas) in queues {
+        // A part keeps the source mesh name (`SessionPart::from_mesh`), which is the component's GameObject name;
+        // the `head_` prefix only exists in the OBJ file stems. The component's `id` is a material index.
+        let want = name.clone();
+        let is_eyebrow = name.eq_ignore_ascii_case("cf_O_mayuge");
+        if is_eyebrow && !eyebrow { continue; }
+        if !is_eyebrow && !eyes { continue; }
+        // The component lists one entry per material of that renderer; the eye and eyebrow renderers each carry one
+        // in the vanilla head, and a part does not keep its submesh index, so a renderer with several entries gets
+        // the first one and says so instead of guessing which part is which material.
+        let Some((_, on, off)) = datas.iter().min_by_key(|(id, _, _)| *id) else { continue };
+        if datas.len() > 1 {
+            eprintln!("ok-extract: foreground queue {name} has {} materials; applying the first ({on})", datas.len());
+        }
+        for part in parts.iter_mut().filter(|p| p.role == "head" && p.name.eq_ignore_ascii_case(&want)) {
+            let Some(mat) = part.source_material.as_mut() else { continue };
+            eprintln!("ok-extract: foreground queue {} {} -> {on}", part.name, off);
+            mat.render_queue = *on as _;
+            applied += 1;
+        }
+    }
+    if applied == 0 {
+        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} matched no head part \
+            (prefab renderers: {})", queues.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(","));
     }
 }
 
