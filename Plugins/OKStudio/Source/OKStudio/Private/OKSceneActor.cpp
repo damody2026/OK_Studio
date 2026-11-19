@@ -1720,6 +1720,24 @@ void AOKSceneActor::Sync()
 				World.GetScale3D().X, World.GetScale3D().Z, World.GetScale3D().Y);
 		}
 		const bool bShown = Document->IsShown(Object.Id);
+		// OK_SELFTEST_SYNC_WORLD_SLEEP_MS: instrument self-test (2026-11-19). One injected pause inside the section
+		// sync_world_ms times, once per load, so a known-positive run must move that counter by about this much and a
+		// run without the variable (same executable) must not. Unset, this costs one comparison against a cached 0.
+		if (bDetail)
+		{
+			static const double SelfTestSleepMs = FCString::Atod(*FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SELFTEST_SYNC_WORLD_SLEEP_MS")));
+			// Not the startup Sync of the empty scene: that one runs on frame 0, before the load being measured, and
+			// a one-shot taken there is spent outside the window (seen on 2026-11-19: 2000 ms slept, sync_world_ms
+			// unmoved). The pause has to land in a Sync of the loaded scene.
+			if (SelfTestSleepMs > 0. && !bSelfTestSlept && Document->Objects.Num() > 10)
+			{
+				bSelfTestSlept = true;
+				const double Before = FPlatformTime::Seconds();
+				FPlatformProcess::Sleep(float(SelfTestSleepMs / 1000.));
+				UE_LOG(LogTemp, Display, TEXT("OK selftest sync_world sleep asked=%.0f ms actually=%.0f ms"),
+					SelfTestSleepMs, (FPlatformTime::Seconds() - Before) * 1000.);
+			}
+		}
 		if (bDetail) LoadStats.SyncWorldMs += (FPlatformTime::Seconds() - WorldStart) * 1000.;
 		// Writing the placement every Sync is not what a loading scene spends its time on: of the 63.4 s one 8806
 		// object scene spends in Sync, this is 2.0 s, and a switch that left an object alone when its transform was
