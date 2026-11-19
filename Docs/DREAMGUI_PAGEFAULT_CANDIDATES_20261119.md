@@ -1200,8 +1200,79 @@ GPU rig（`KKRuntimeGpuRig.cpp`）、coating（`CoatingBindings` 是 `TRefCountP
 
 **不谈修法**（按指示）。
 
+## 22. 怎么才能看见 shader／pass 身分：**有一条是免费的，而且可能已经在手上的报告里**
+
+读 `E:/PhysX/UE5.8`（协调指定；§11 已证与 F 位元组相同），只读。**每个名字都从宣告处抄的。**
+
+### 22a. 免费的那一条：**RHI breadcrumb 预设就是开的，而且崩溃时会印出当时活著的 pass**
+
+| 项目 | 值 | 行号 |
+|---|---|---|
+| `r.GPUCrashDebugging.Breadcrumbs` | **预设 1（开）**，`ECVF_ReadOnly` | `Runtime/RHI/Private/RHI.cpp:2133-2138` |
+| 说明原文 | 「a vendor-agnostic method for determining **which passes were active** when a GPU crash occurs」 | 同上 |
+| 崩溃时谁印 | `FD3D12DynamicRHI::DumpActiveBreadcrumbs(...)`：`D3D12Util.cpp:928`（`EVerbosity::Error`）、`D3D12RHI.cpp:910`（`Warning`） | — |
+| 印出来长什么样 | 每个 device／pipeline 一段，表头 `Device %d, Pipeline %s: (In: 0x…, Out: 0x…)`，底下是 breadcrumb 树 | `RHI/Private/RHIBreadcrumbs.cpp:162-200` |
+| 命令列开关 | `-gpubreadcrumbs`；另有总开关 `-gpucrashdebugging`／`-nogpucrashdebugging`（`RHI.cpp:2092-2110`） | — |
+
+**breadcrumb 的名字就是 pass／event 名**（`RDG_EVENT_NAME` 那一类），所以它足以分开
+`DreamUIRender_WorldSpace`／`DreamUIRender_*` 与角色的 base pass——**这正是我们缺的那个身分**。
+**第一步不是跑新趟，是去现有的崩溃报告里找这一段**（关键字 `Device 0, Pipeline`）。零成本。
+
+### 22b. DRED 今天是关的，而「BreadcrumbContext」**不是一个 cvar**
+
+| 项目 | 预设 | 行号 |
+|---|---|---|
+| `r.D3D12.DRED` | **0**，`ECVF_RenderThreadSafe \| ECVF_ReadOnly`（**只能启动时设**） | `D3D12RHI/Private/D3D12Adapter.cpp:156-161` |
+| `r.D3D12.LightweightDRED` | **0**，同上旗标 | `D3D12Adapter.cpp:163-168` |
+
+今天那份报告印的是 `DRED: No PageFault data.`，和 DRED 预设 0 一致。
+**这一版没有 `r.D3D12.DRED.BreadcrumbContext` 这个名字**（grep 零命中）——
+breadcrumb context 在 DRED 打开时就是**无条件强制开**的：
+`DredSettings1/2->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON)`
+（`D3D12Adapter.cpp:602`、`:616`），印出来的路径在 `D3D12Util.cpp:208-215`（`GetBreadcrumbContexts`）。
+**所以只要 `r.D3D12.DRED=1`，那串 `DrawIndexedInstanced` 就会带 context，不需要另一个旗标。**
+
+### 22c. shader 身分：这一版实际存在的三个旗标（都 `ECVF_ReadOnly`，而且都要 shader 重编）
+
+| cvar | 预设 | 作用 | 行号 |
+|---|---:|---|---|
+| **`r.Shaders.SymbolsInfo`** | 0 | 「save out a slimmer **ShaderSymbols.Info which contains shader platform hashes and shader debug info**」——**这就是 hash → shader 的反查表**，而且比完整 PDB 便宜 | `Runtime/Engine/Private/ShaderCompiler/ShaderCompiler.cpp:383-390` |
+| `r.Shaders.ExtraData` | 0 | 「extra shader data that can be used at runtime… includes **shader names**」⇒ Aftermath 会印出 shader 名而不是 `fragment_02`（注册处 `D3D12NvidiaExtensions.cpp:40`、名字来源 `RHIResources.h:848-885`） | `ShaderCompiler.cpp:451-457` |
+| `r.Shaders.Symbols` | 0 | ＝ `GenerateSymbols` ＋ `WriteSymbols`，整套 PDB，最重 | `ShaderCompiler.cpp:374-381` |
+
+- 三个的说明都写著「**This setting can be overriden in any Engine.ini under the `[ShaderCompiler]` section**」，
+  而且 `FShaderSymbolSettingHelper` 读的就是 `[ShaderCompiler]`／`[ShaderCompiler_BuildMachine]`
+  两段加上该 cvar（`RenderCore/Private/ShaderCore.cpp:766-784`）。
+- `ShaderSymbols.Info` 的输出位置：`<Project>/Saved/ShaderSymbols/<ShaderFormat>/`（这里是 `PCD3D_SM6`），
+  可用命令列 `-ShaderSymbolsExport=<路径>` 覆写（`Developer/ShaderCompilerCommon/Private/ShaderSymbolExport.cpp:67-90`）。
+- 另有 `r.Shaders.GenerateSymbols`（0，`:391-396`）与 `r.Shaders.WriteSymbols.Zip`（0，`:443-449`）。
+
+### 22d. 成本排序（最便宜的在前）
+
+1. **翻现有报告找 breadcrumb 段**（§22a）——**不用跑、不用改、不用建置**。若有，pass 身分当场就有。
+2. **`r.D3D12.DRED=1`**（启动时设）再跑一趟——会补上 DRED 的 page-fault 物件清单与带 context 的 breadcrumb。
+3. **`r.Shaders.ExtraData=1`**（`[ShaderCompiler]`）＋ shader 重编——之后**每一次**崩溃档都会直接印出
+   shader type 名。一次成本，长期收益。
+4. **`r.Shaders.SymbolsInfo=1`** ＋ 重编——拿到 hash 反查表，可以把 `E6753E1E…` 对回 shader。
+5. **要改引擎才能做到的**：「印出故障当下 command list 正在绑的材质／PSO」——
+   **这一版没有现成旗标**。`D3D12Util.cpp` 的 `LogPageFaultData` 只印资源与 heap（§12c），
+   breadcrumb 印 pass、DRED 印最后几个操作，**三者都不印「这一笔 draw 用的是哪个 `FMaterialRenderProxy`」**。
+   要那个就得在 D3D12 的 PSO／draw 路径上自己记，属於改引擎（而我被交代不碰引擎程式码）。
+   **按 1–4 的收益，我判断不需要走到这一步。**
+
+### 22e. 顺便把一个教训写成方法（协调要求）
+
+> **一个依据被推翻时，要去搜它的所有引用处，而不是等别人指出。**
+> 今天这把尺（`UPROPERTY` 可达性）被改版时，协调只指了 §19／§20，
+> 但同一个错依据还用在 §14c；是我自己去搜才找到的。
+> 同理，一个**名字**被证明不存在时（`DreamGUI.LogDeferredRelease` 不是 cvar、
+> `r.D3D12.DRED.BreadcrumbContext` 不存在），要把它在计画里的所有出现处一起划掉。
+> 这一条已写进 [MEASUREMENT_STANDARD_20261119.md](MEASUREMENT_STANDARD_20261119.md)。
+
+**不谈修法**（按指示）。
+
 ---
 
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
 §11 的两棵引擎比对、§12–§20 的程式码是我自己读的（§14–§20 的 OK 侧读的是 E 树的副本，只读）；
-§21 是在协调更正那把尺之后，对我自己先前排除的审计。
+§21 是在协调更正那把尺之后对我自己先前排除的审计；§22 读的是 `E:/PhysX/UE5.8`。
