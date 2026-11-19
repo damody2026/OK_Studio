@@ -29,7 +29,7 @@
 2. **非体型的细项（光泽、细节强度、胸部柔软度、痣／彩绘／晒痕／指甲／化妆等）资料端几乎都已经有**，
    因为 `appearance/properties.rs` 是**对卡片解码后的区段做通用走访**：face／body／hair／clothes／accessory／makeup
    里每一个数值、布林、颜色都会被列出来（体型值另走 `shape.*`，被明确跳过）。所以这一块的缺口**主要在 UI**：
-   没有照原作的分类分组、没有原作的范围与预设、标签是通用推出来的。
+   没有照原作的分类分组、没有原作的范围与预设、标签是通用推出来的。**这句只对原作本体那一层成立**：走 KoiSkinOverlayX 的叠图（皮肤／妆容／刺青／晒痕的额外层）资料端完全没有，`relevant()` 把整段跳掉了，见第三之三节。
 3. **真正要注意的一个差异：滑杆范围。** 原作这 96 个滑杆是 **0–1**（画面显示 0–100），我们给的是 **−1–2**
    （ABMX 扩张，`OKCharacterMCPRegistry.cpp` 第 60 行）。要「和原作一样」的话，UI 预设该夹在 0–1，
    另给一个「扩张」开关才放到 −1–2。这是设计决定，不是 bug，但两边不讲清楚会对不起来。
@@ -72,6 +72,68 @@
 
 **两边都缺的目前只有一项候选**：原作「体全体」的骨骼类型（`body.typeBone`，体型骨架切换）我们 `card.rs`
 读得到，但没有当成可编辑项暴露，也没有 UI。要不要做，要先确认它在 OK 卡上改了会不会和已经烘焙进卡的资源冲突。
+
+## 三之二、逐参数 metadata：原作的范围、步进与小数位
+
+f-reader-yvonne 发现读卡器现在所有数值的范围都写死 ±1000000，要改成逐参数 metadata。身体＋脸部这一块的原作值
+如下，**全部查过，没有例外**（`ChaCustom/Cvs*.cs` 顔／体两页的 23 个分类全扫过，`ConvertTextFromRate` 241 处、每一处的参数都是字面的 `(0, 100, …)`，`ConvertValueFromTextLimit`／`ConvertTextFromValue` **0 处**；`CvsUnderhair`／`CvsSunburn` 没有数值滑杆，只有选图＋颜色）：
+
+| 种类 | 内部范围 | 步进 | 画面小数位 | 画面怎么显示 |
+|---|---|---|---|---|
+| 所有数值滑杆（含 96 项体型值） | `0.0`–`1.0` | `0.01` | **0**（整数） | ×100 后取整，`0`–`100` |
+| 颜色 | RGBA 各 `0.0`–`1.0` | 取色器 | － | 原作用取色器，没有数字栏 |
+| 开关 | bool | － | － | 勾选框 |
+| 选图 | 目录 id（int） | － | － | 缩图清单，不是范围 |
+
+来源是 `ChaCustom/CustomBase.cs` 这两个函式，整个身体／脸部编辑器只用它们换算：
+
+```csharp
+public static string ConvertTextFromRate(int min, int max, float value)
+{ return ((int)Mathf.Lerp(min, max, value)).ToString(); }           // 永远是 (0, 100, v) → 整数 0–100
+public static float ConvertRateFromText(int min, int max, string buf)
+{ ... return Mathf.InverseLerp(min, max, result); }                  // 打字进来，InverseLerp 夹回 0–1
+```
+
+要填进 metadata 的，身体／脸部每一项都一样：`min=0`、`max=1`、`step=0.01`、`digits=0`、`display_scale=100`。
+所以**不需要逐项列范围**，逐项要列的是**预设值**，理由见下面三点。
+
+1. **预设不是常数。** 原作每个滑杆旁的「戻す」读的是 `Singleton<CustomBase>.Instance.defChaInfo.custom.…`，
+   也就是**当下性别／人物的预设角色的值**，不是 `0.5`。我们这边对应的是 `OKShapeDefaults::Value`，
+   metadata 的 default 要从那里取，不能照抄一个数字。
+2. **0–1 是 UI 的范围，不是资料的范围。** `ChaControl.SetShapeFaceValue`／`SetShapeBodyValue`
+   **完全不夹值**，任何 float 都写得进卡；ABMX 扩张就是这样来的。所以 metadata 的 `min`／`max` 要当成
+   **软范围**（滑杆走到哪、打字夹到哪），而**卡片里已经超出范围的值必须原样保留**，不能在读进来时夹掉——
+   不然开一张 ABMX 卡再存回去就把人物改坏了。我们现在给的 −1–2 是这个软范围的扩张版，不是 bug。
+3. **两项有额外的 runtime 行为，不是范围限制**：`shape.body.0`（身高）男性会被强制成 `0.6`／`1.0`；
+   `shape.body.13`（乳头突起）实际套用时会和 `status.nipStandRate` 再 lerp 一次。写 metadata 时不要把这
+   两件事当成 min／max。
+
+## 三之三、**真正的资料端缺口：KoiSkinOverlayX（KSOX）整段被跳过**
+
+第二节原本写「非体型细项资料端几乎都有」，这句**要修正**：原作本体的栏位（`face.baseMakeup`、
+`body.sunburnId`、`body.paintId` 等）确实都在，但**外挂叠图那一层完全没有**。
+
+`appearance/properties/plugins.rs` 的 `relevant()` 用子字串筛 KKEx 的区段：
+
+```rust
+["materialeditor","hairaccessorycustomizer","hairshadowcolor","pushup",
+ "dynamicboneeditor","moreaccessories","accessorystates","overlay"]
+```
+
+**KoiSkinOverlayX 在卡片里的键是 `KSOX`**（不是带 `overlay` 的长名），上面没有一个子串命中 `ksox`，
+所以整段被跳过。实地确认过：`heroine_alice.png` 的 KKEx 里有 `KSOX` 这个键，底下是
+`_TextureID_5832` 之类的项目，各自带着 PNG。被跳掉的内容属于我的范围：
+
+| 被跳过的东西 | 影响到的原作分类 |
+|---|---|
+| 皮肤叠图（身体／脸部的 overlay 贴图） | 体全体、顔全体 |
+| 妆容叠图（眼影／腮红／唇的额外层） | メイク |
+| 刺青、晒痕的额外层 | 日焼け、ボディペイント |
+| 内衣／服装叠图 | 不是我的范围（f-reader-yvonne） |
+
+所以上一节表格里「メイク／日焼け／ボディペイント：资料端已有」只对**本体那一层**成立；
+**走 KSOX 的叠图是「资料端缺」**。`relevant()` 是共用判定逻辑，要改先发一则给协调者（已照规则办），
+这里只记缺口，不动程式码。
 
 ## 四、体型滑杆逐项（96 项，脚本产出）
 
@@ -255,5 +317,7 @@
 5. **肤色与附加线条**：颜色类，跟第 3 项一起做也可以。
 6. **滑杆范围的设计决定**（0–1 夹住、另给扩张开关）要先敲定，否则上面每一项的 UI 都要改两次。
 7. `body.typeBone`：先确认影响再决定做不做。
+8. **逐参数 metadata**（`min=0`／`max=1`／`step=0.01`／`digits=0`／`display_scale=100`，预设取`OKShapeDefaults::Value`）：f-reader-yvonne 要的那件事，身体／脸部的值见第三之二节，照抄即可。
+9. **KSOX 叠图**：资料端真的缺，但改的是共用的 `relevant()`，要先经协调者同意再动。
 
-每一项的 UI 侧由 e-fork-2 接，资料端若发现缺口由我补；目前盘下来资料端只有第 7 项是真的没有。
+每一项的 UI 侧由 e-fork-2 接，资料端若发现缺口由我补；目前盘下来资料端缺的是第 7 项与第 9 项（KSOX 叠图）。
