@@ -2654,3 +2654,36 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 
 今天在這條線上花掉的讀碼時間不是白費：它把「EOP 圍欄有沒有洞」這個最容易拿來解釋一切的說法
 **關掉了**，所以後面不准再用它當理由。
+
+### 修正前面那張「兩半的界線」：**沒有發現引擎層的洞**（2026-11-19）
+
+前面那一節把責任分成「外掛那一半」與「引擎那一半（EOP 同步點只涵蓋已送交的工作）」，
+並說引擎那一半要另開獨立紀錄。**後來讀出來那條線是關的，所以那個分法要改：**
+
+- **不要寫成「引擎有個洞還沒修」。** 要留的紀錄是**「這條線為什麼被關掉」**，
+  三件出處放在一起：
+  1. `SubmitPayloads` 把 EOP payload 丟進和一般命令清單**同一個** `PendingPayloadsForSubmission`
+     （`D3D12RHI/Private/D3D12Submission.cpp:297-322`）；
+  2. `Submit_Close`（裡面才 `RHIProcessDeleteQueue()`）由序列的送交 pipe 排在
+     `Submit_SubmitToGPU` **之後**（`RHI/Private/RHICommandList.cpp:1065-1091`、`:1544` 的註解）；
+  3. `EndFlushResourcesRHI` 在 `FRDGBuilder::Execute()` 的 **:2036**，
+     而 pass 派送在 **:2059 之後**，所以那時這張圖自己的 pass 還沒被錄。
+  **結論是：沒有發現引擎層的洞。**
+- **外掛那一半仍然該做，但理由只剩一條**：
+  「**誰把資源交給別人用，誰負責它活到對方用完**」這條契約。
+  **不再有「因為引擎漏了」這個支撐**——這句要留著，免得下一個人在一個不存在的引擎 bug 上蓋房子。
+
+### 跟著重新加權：背景那五格現在是最重的一組（2026-11-19）
+
+如果 RHI refcount ＋ EOP 圍欄這條路是關的，那麼**受害者的記憶體就不可能是經由那條路被放掉的**。
+於是「位址不屬於任何堆」只剩**不走那條路的配置器**能解釋：
+
+| 候選配置器 | 誰在用 | 哪一格會動它 |
+|---|---|---|
+| RDG transient allocator | 背景拷貝（`GraphBuilder.CreateTexture`） | `NoBackdrop=1`／`=2`、B 配置那兩格 |
+| `GRenderTargetPool` | group 目標（`FindFreeElement`） | `Frames.Pooled=240`、`LogPoolReuse` 的數字 |
+
+**所以正在跑的那五格從「順手一格」變成現在最重的一組**，
+`LogPoolReuse` 的 handouts／distinct／reuse gap 也跟著重要起來。
+**報齊時的解讀規則**：哪一格動了，就指向那個**不走圍欄**的配置器；
+五格全不動，則「位址不屬於任何堆」還沒有任何配置器可以解釋，那本身就是下一個要追的事實。
