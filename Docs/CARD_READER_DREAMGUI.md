@@ -837,13 +837,21 @@ e-cardload 對照了時間點：它所有乾淨的趟都是機器上只有它一
 各格必須在**同一種機器狀態**下跑。2026-11-19 就有一次把「機器上多了一個別組的遊戲」誤判成
 「1 對 1 回程有洞」（`Docs/ERROR_LOG.md` 同日那條），救回來靠的是一格「不含那個流程」的對照。
 
-### 排查表：自動化按鈕時的兩個假成功
+### 排查表：自動化按鈕時的假成功（2026-11-19 更新，`81f4ae9b8` 之後重驗）
 
-- **「進入1對1互動場景」要「編輯」分頁（`ok.ReaderScreen tab 0`）＋那張卡的 3D 已載完**
-  （notice 出現「已加载3D」）才按得動。少任何一個條件，`ok.ReaderScreen press` 一樣回
-  `pressed <名字>` 而**什麼都不會發生**：`press` 只看名字對得上，不保證那顆當下在畫面上、也不保證它可按。
-  要確認真的進去了，看 log 的「OK pair 背景載入男性角色」，或 `ui_widgets` 裡有沒有「離開（回到讀卡）」。
-  （已建議 e-fork-2 讓 `press` 在這種情形回 `not_visible`，回 `pressed` 會讓所有自動化拿到假的成功。）
+- **`press` 碰到停用的控制項已經不再回 `pressed`**（`81f4ae9b8`）：回
+  `not pressed: <路徑> is disabled` ＋ `failed`，`controls` 列表也在那一行後面標 `  [disabled]`。
+  實測：`press 動作與表情›眼睛開合›Slider`（當下停用）→ `not pressed: … is disabled`。
+- **但 `[not shown]` 這一支抓不到「在別的分頁」**：DreamGUI 裡別的分頁的控制項 `GetShown()` 仍是 true，
+  所以整份 `controls` 一個 `[not shown]` 都沒有。也就是說「按了一顆不在眼前的按鈕」這種情形，
+  回應仍然會是 `pressed`。
+- **「進入1對1互動場景」的前置條件沒有分頁這一條**（我先前在這裡寫成「要在編輯分頁」是錯的，已更正）：
+  重驗時從「人物卡」分頁按它一樣進得去；而且**卡片還在載入中就按也會成功**——它會記下來、等 3D 載完才進去
+  （`bEnterInteractionAfterLoad`）。真正會被拒的是選到男性卡、已經在 1 對 1 裡、或編輯還沒套用，
+  那時畫面與 notice 會寫「沒有進入 1 對 1：<原因>」、log 有 `OK enter one-on-one refused`（`81f4ae9b8`）。
+  我先前兩趟按了沒反應是 `81f4ae9b8` 之前的舊 build。
+- **所以規矩不變：確認效果，不要相信 `pressed` 這個字。** 進了 1 對 1 要看 log 的
+  「OK pair 背景載入男性角色」或 `ui_widgets` 裡有沒有「離開（回到讀卡）」。
 - 同理，`reader_call` 回 `"status": "applied"` 不等於那張卡真的開了：`load` 吃的是 `path`，而
   `state` 的 `card` 跟著**選取的那一列**走，不是跟著剛才載入的路徑走。一趟開卡配方到底開了幾張，
   看 log 裡 `ok.ReaderScreen notice: 已加载3D` 的次數最準。
