@@ -33,8 +33,10 @@ TArray<FOKStreetHistoryEntry>& AOKStreetSocialScene::HistoryOf(const FString& Id
   const FString Path=HistoryPath(Id);TArray<FString> Lines;OKStreetFlushSaves(); // lines still being appended
   // Read at the save's load in the background (FHistoryPreload) unless the file changed since.
   TArray<FOKStreetHistoryEntry> Loaded;bool Read=false;
-  if(TFuture<FOKStreetSceneState::FHistoryPreload>* Pending=S.HistoryPreload.Find(Id)){FOKStreetSceneState::FHistoryPreload P=Pending->Consume();S.HistoryPreload.Remove(Id);
-   if(P.Path==Path&&P.Stat.bIsValid&&FOKStreetSceneState::OKSameFile(P.Stat,Path)){Loaded=MoveTemp(P.Entries);Read=true;}}
+  if(TFuture<FOKStreetSceneState::FHistoryPreload>* Pending=S.HistoryPreload.Find(Id)){const double WaitStart=FPlatformTime::Seconds();FOKStreetSceneState::FHistoryPreload P=Pending->Consume();S.HistoryPreload.Remove(Id);
+   static int32 Taken=0,Again=0;static double Waited=0;Waited+=(FPlatformTime::Seconds()-WaitStart)*1000.0;
+   if(P.Path==Path&&P.Stat.bIsValid&&FOKStreetSceneState::OKSameFile(P.Stat,Path)){Loaded=MoveTemp(P.Entries);Read=true;++Taken;}else ++Again;
+   if(S.HistoryPreload.IsEmpty()){UE_LOG(LogTemp,Display,TEXT("Street save preload: history of %d heroines taken, %d read again (missing or changed), waited %.1f ms"),Taken,Again,Waited);Taken=Again=0;Waited=0;}}
   if(!Read&&!Path.IsEmpty()&&FFileHelper::LoadFileToStringArray(Lines,*Path)){Read=true;
    for(const FString& Line:Lines){FOKStreetHistoryEntry E;if(OKStreetHistoryParse(Line,E))Loaded.Add(MoveTemp(E));}}
   if(Read){

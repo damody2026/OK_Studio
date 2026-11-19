@@ -978,7 +978,10 @@ void AOKStreetSocialScene::BeginPlay(){
  {TSharedPtr<FJsonObject> M;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M)M->TryGetStringField(TEXT("topic_catalogue"),S.TopicCataloguePath);}
  StartCalendarAndMind();
  // Her history and the free-talk files: read in the background now, taken by the first UI build (FHistoryPreload).
- {OKStreetFlushSaves();
+ // -OKSavePreload=0 (command line only) turns it off, for the before/after comparison on one executable.
+ int32 SavePreload=1;FParse::Value(FCommandLine::Get(),TEXT("OKSavePreload="),SavePreload);
+ UE_LOG(LogTemp,Display,TEXT("Street save preload: %s"),SavePreload?TEXT("on"):TEXT("off (-OKSavePreload=0)"));
+ if(SavePreload){OKStreetFlushSaves();
   for(int32 Index=1;Index<S.Manifest.Characters.Num();++Index){const FString Id=OKStreetStableId(S.Manifest.Characters[Index]),Path=HistoryPath(Id);
    if(Path.IsEmpty()||S.HistoryPreload.Contains(Id))continue;
    S.HistoryPreload.Add(Id,Async(EAsyncExecution::ThreadPool,[Path](){FOKStreetSceneState::FHistoryPreload P;P.Path=Path;P.Stat=IFileManager::Get().GetStatData(*Path);TArray<FString> Lines;
@@ -2334,8 +2337,9 @@ void AOKStreetSocialScene::FreeTalkEnsureLog(){
  auto& S=*State;if(S.FreeTalkLogLoaded)return;S.FreeTalkLogLoaded=true;
  const FString LogFile=FreeTalkFilePath(TEXT("free-talk-log.json")),MemoryFile=FreeTalkFilePath(TEXT("free-talk-memory.json"));
  OKStreetFlushSaves();bool Taken=false;
- if(S.FreeTalkPreload.IsValid()){FOKStreetSceneState::FFreeTalkPreload P=S.FreeTalkPreload.Consume();S.FreeTalkPreload={};
-  if(P.LogFile==LogFile&&P.MemoryFile==MemoryFile&&FOKStreetSceneState::OKSameFile(P.LogStat,LogFile)&&FOKStreetSceneState::OKSameFile(P.MemoryStat,MemoryFile)){S.FreeTalkLog=MoveTemp(P.Log);S.FreeTalkMemory=MoveTemp(P.Memory);Taken=true;}}
+ if(S.FreeTalkPreload.IsValid()){const double WaitStart=FPlatformTime::Seconds();FOKStreetSceneState::FFreeTalkPreload P=S.FreeTalkPreload.Consume();S.FreeTalkPreload={};const double Waited=(FPlatformTime::Seconds()-WaitStart)*1000.0;
+  if(P.LogFile==LogFile&&P.MemoryFile==MemoryFile&&FOKStreetSceneState::OKSameFile(P.LogStat,LogFile)&&FOKStreetSceneState::OKSameFile(P.MemoryStat,MemoryFile)){S.FreeTalkLog=MoveTemp(P.Log);S.FreeTalkMemory=MoveTemp(P.Memory);Taken=true;}
+  UE_LOG(LogTemp,Display,TEXT("Street save preload: free talk %s (%d lines, waited %.1f ms)"),Taken?TEXT("taken"):TEXT("changed since, read again"),S.FreeTalkLog.Num(),Waited);}
  if(!Taken){if(!LogFile.IsEmpty())OKStreetFreeTalkLoadLog(LogFile,S.FreeTalkLog);
   if(!MemoryFile.IsEmpty())OKStreetFreeTalkLoadMemory(MemoryFile,S.FreeTalkMemory);}
  S.MindContextKnown.Reset(); // another save: its mind is asked again
