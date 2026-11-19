@@ -1965,3 +1965,57 @@ fence 比帧數嚴格，而且它補的兩個洞（pooled RT 還池重用、裸 
 **預先登記讀法**：哪一半帶著「活過 30 張」，受害者就在那一半的呼叫點裡；
 兩半都早當 ⇒ 受害者不只一個呼叫點，或 240 那格的第 1 趟只是運氣。
 這是同一條「同一個變數、不同刻度」的做法，今天只有它產生過可用的結論。
+
+### 盲點查完了：`MainPS` **一個 buffer SRV 都沒綁**，所以受害者是貼圖；而背景那張的來源是 `GRenderTargetPool`＋RDG transient（2026-11-19）
+
+**問題**：`MainPS` 會不會其實在讀一個**緩衝區**？那樣一整天的 `ListTextures` 比對就看不到它，
+而 page fault 看起來和「取樣一張死掉的貼圖」一模一樣。
+
+**答案：沒有。** `FDreamUIBasePS::FParameters`（`DreamUIBaseShaders.h:152-184`）裡**每一個資源參數**
+都是 `SHADER_PARAMETER_TEXTURE`（`Texture2D`／`Texture2DArray`）或 `SHADER_PARAMETER_SAMPLER`，
+其餘是純量。整個 `DreamGUIRenderer` 模組 grep
+`SHADER_PARAMETER_SRV`／`SHADER_PARAMETER_RDG_BUFFER`／`StructuredBuffer`／`ByteAddressBuffer`
+**一行都沒有**。per-draw 的 widget／clip／rect block／paint 陣列全部走**資料貼圖**
+（`FDreamUIDataTexture`），這正是那個類別存在的理由。
+**所以這條分支關掉：受害者是一張貼圖**，而且是 `MainPS` 綁的那十張之一。
+
+**順著看下去，背景那張的真實身分比我上一節寫的更有意思**（`DreamUICompositor.cpp:234-241`、`:306-325`）：
+
+```
+GRenderTargetPool.FindFreeElement(..., Frame.Pooled, TEXT("DreamUI_GroupTexture"));
+Frame.Texture    = GraphBuilder.RegisterExternalTexture(Frame.Pooled, ...);
+Frame.TextureRHI = Frame.Pooled->GetRHI();        // 裸 FRHITexture*，存在 frame 結構上
+...
+FRDGTextureRef Copy = GraphBuilder.CreateTexture(Desc, InName);   // 背景「拷貝」是 RDG transient
+...
+FDreamUIDeferredRelease::Hold(Top.Pooled);        // 還池之前先壓住 DelayFrames 帧
+```
+
+有兩件事因此對上：
+
+1. **`Hold(Top.Pooled)` 就在這個隊列裡**，所以 `DelayFrames` 那一格會動到它——
+   這和 240 的結果一致（受害者必須經過這個隊列）。它壓住的是**還池重用**，
+   不是銷毀：`GRenderTargetPool.FindFreeElement` 會把同一個元素交給下一個要求者。
+2. **背景拷貝是 `GraphBuilder.CreateTexture` 建的 RDG transient**，
+   transient allocator 會把它的記憶體**和別的資源疊在同一塊堆上**。
+   這是目前唯一能產生「位址不屬於任何堆」而**不需要 defrag** 的路，
+   而「`Found 0 active heaps containing page fault address`」正是還沒解釋掉的那件事。
+
+（`SceneDepthTex` 仍然出局：它不進這個隊列，而且 `RDG_TEXTURE_ACCESS` 宣告過。
+而 `BackdropTex` 不一樣——它的來源同時在隊列裡、又是被疊記憶體的 transient。）
+
+**引擎自己就有關掉這條路的開關，四個都查過出處、都不是 read-only**
+（`Engine/Source/Runtime/RenderCore/Private/RenderGraphPrivate.cpp`，全部 `ECVF_RenderThreadSafe`）：
+
+| cvar | 行 | 作用 |
+|---|---:|---|
+| `r.RDG.TransientAllocator` | 251 | `0` 整個關掉 transient allocator，所有 transient 資源改走普通池 |
+| `r.RDG.Debug.ExtendResourceLifetimes` | 43 | 圖內資源不得與任何其他資源共用記憶體——引擎自己寫「用來查 transient aliasing 是不是元凶」 |
+| `r.RDG.Debug.DisableTransientResources` | 53 | 把資源從 transient allocator 濾掉 |
+| `r.RDG.Debug.FlushGPU` | 34 | 每個 pass 之後 flush GPU——任何「GPU 還沒跑完」的危害都不可能成立 |
+
+**跑的是第一個**，而且**先把 `DelayFrames` 退回 3**：240 那格的基線是「一趟活、一趟死在第 27 張」，
+拿一個「活過 30 張」去對這種基線讀不出東西；3 那格同配方死在第 7 張（帶診斷的那趟第 4 張），這才是尖的。
+**讀法先登記**：`r.RDG.TransientAllocator=0` 兩趟都活過 30 張 ⇒ 受害者是被 allocator 疊記憶體的 RDG transient
+（`MainPS` 讀到的只有背景拷貝這一個）；還是死在第 4–9 張 ⇒ aliasing 出局，
+隊列裡剩下的就是 `GRenderTargetPool` 那個元素（`Frame.Pooled`）或資料貼圖（`DataTexture.cpp:143`）。
