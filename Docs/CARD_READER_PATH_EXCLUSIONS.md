@@ -582,3 +582,67 @@ if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
 **就會**進 `TrackedHeaps`。本機的 resource heap tier **沒有**出現在 log 裡
 （log 有的是 binding tier 3，是另一回事），所以**我不主張它是哪一層**。
 這題不影響下一格的設計，所以用判別器去問，而不是去猜 tier。
+
+## 第二十五條（2026-11-20）本機是 **TIER_2，而且這件事是故障 log 自己說的**——於是 transient heap 由「缺席不算證據」變成**該出現而沒出現**，三趟不必跑
+
+**零建置、零趟次：一條既有 log 行 ＋ 四處引擎碼。**
+
+### 一、tier 不用猜：那行「追蹤開著」本身就是 TIER_2 的證明
+
+- 傾印裡的 `PageFault: Logging all resource enabled: Yes` 印的是
+  `InAdapter->IsTrackingAllAllocations()`（`D3D12Util.cpp:671`）；
+- 而那個旗標是 `bTrackAllAllocation = (GD3D12TrackAllAllocations || …)
+  && (GetResourceHeapTier() == D3D12_RESOURCE_HEAP_TIER_2)`（`D3D12Adapter.cpp:1532`）。
+
+**TIER_2 是它為真的必要條件，而十份 log 都印 `Yes` ⇒ 本機是 `D3D12_RESOURCE_HEAP_TIER_2`。**
+不是「這台是 NVIDIA 所以大概是」，是**我們一直在用的那個量具只有在 TIER_2 才會開**。
+
+### 二、TIER_2 之下，transient heap **會**被追蹤
+
+1. `FD3D12TransientHeapCache::Create`：`bSupportsAllHeapFlags = (tier == TIER_2)`
+   （`D3D12TransientResourceAllocator.cpp:110`）；
+2. 於是新 heap 以 `ERHITransientHeapFlags::AllowAll` 建立
+   （`RHICoreTransientResourceAllocator.cpp:565/570`）；
+3. 對應 `D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES` = **`0x0`**，**不含** `DENY_BUFFERS`
+   （`D3D12TransientResourceAllocator.cpp:15`）；
+4. 而建立時就是 `Heap->SetHeap(D3DHeap, TEXT("TransientResourceAllocator Backing Heap"), true, true)`
+   （`:81`，`bInTrack=true`、`bForceGetGPUAddress=true`）⇒ 取 GPU 位址並進 `TrackedHeaps`。
+
+**所以在這台機器上，transient heap 是會出現在那份名單裡的那一類。**
+第二十四條改寫時缺的正是這一句，現在補上了，而且方向和它相反。
+
+### 三、heap 的**銷毀**也會進「已釋放」名單，所以連「曾經佔用過」都查得到
+
+`FD3D12Adapter::ReleaseTrackedHeap`（`:2008-2024`）把 heap 寫進
+`ReleasedAllocationData`（`bHeap = true`），保留期由
+`GTrackedReleasedAllocationFrameRetention` 控制。
+
+**而 `retention=400000` 那一趟**（貼圖釋放在幀 16170、故障在幀 20309，
+**保留窗口因此覆蓋了 4139 幀**）**，包住故障位址的已釋放項目只有兩筆**：
+
+```
+[0x25CA400000 .. 0x25CE400000] 64.00 MB  FrameID: 16193  Transient: 0  Heap: 1  Name: PoolAllocator Heap
+[0x25CCC60000 .. 0x25CCDC0000]  1.38 MB  FrameID: 16170  Transient: 0  Heap: 0  Name: Texture2D_647
+```
+
+**沒有任何 transient heap**，不管是活的還是已釋放的。整份 log 裡
+`TransientResourceAllocator Backing Heap` 也是 **0 次**。
+
+### 四、結論與它的邊界
+
+**transient heap 不是那段 VA 的佔用者，既不是故障當下的，也不是前面 4139 幀裡的任何時候。**
+這次是**正面覆蓋**的排除：那一類若存在**會被列出來**（第二點），
+連銷毀都會被列出來（第三點），而名單裡沒有它。
+**和第二十四條那個無效的缺席推論不同類。**
+
+**所以 `r.RDG.TransientAllocator 0` 那三趟不跑**：它要測的機制點已經被一個有正面覆蓋的量具關掉了，
+而在這種情形下一個 `0/3` 也只能讀成配置序被挪動（那個混淆照樣在），**換不到資訊**。
+
+**邊界要寫清楚**：
+- 「覆蓋 4139 幀」只有 `retention=400000` 那一趟成立；其餘九趟是預設的 100 幀窗口。
+  本條的強版本（4139 幀）**依賴那一趟**，弱版本（故障當下）十趟都成立。
+- 覆蓋率限於**被追蹤的** heap。`bForceGetGPUAddress=true` 讓 transient heap 不受
+  `IsTrackingAllAllocations` 影響，但仍受 `DENY_BUFFERS` 那一項限制——
+  而第二點已證明在 TIER_2 之下那一項不會攔住它。
+- 在 TIER_1 的機器上本條不成立（那裡 heap 會以 texture-only 旗標建立而不被追蹤），
+  所以這條**不是**跨機器的結論。
