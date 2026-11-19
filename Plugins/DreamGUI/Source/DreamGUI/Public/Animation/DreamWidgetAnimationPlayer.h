@@ -196,6 +196,7 @@ private:
 	 * sequence can come to have its address while it is kept -- every frame of a wall of widgets asked for it by a weak
 	 * look-up.
 	 */
+	// static-checks: allow(stored-raw-pointer) Compared only, never followed, and forgotten at every stop and Initialize, as the comment above says.
 	const UMovieSceneSequence* DirectEvaluationDecidedFor = nullptr;
 	/**
 	 * The sequence's display rate as of that decision, which the player's own tick asks the clock for the time in (TickLite):

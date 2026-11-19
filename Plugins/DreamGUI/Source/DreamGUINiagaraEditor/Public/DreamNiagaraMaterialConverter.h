@@ -15,7 +15,9 @@ class UMaterialInterface;
 struct FDreamNiagaraMaterialConversion
 {
 	/** The UI material, or null when nothing was made (Error says why). */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the Convert call that returned it: the material is one it just made or was handed.
 	UMaterialInterface* Result = nullptr;
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the Convert call that returned it, as Result above.
 	UMaterialInterface* Source = nullptr;
 	/** Each node replaced, as "ParticleColor -> vertex colour". */
 	TArray<FString> Replaced;

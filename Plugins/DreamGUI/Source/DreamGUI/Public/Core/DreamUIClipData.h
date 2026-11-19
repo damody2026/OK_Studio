@@ -97,6 +97,7 @@ public:
 	{
 		const FDreamUIClipData* Node = nullptr;
 		/** The widget whose frame the level is in: the clipper, or the element below. */
+		// static-checks: allow(stored-raw-pointer) Guaranteed by CollectLevels' caller: a level lives in that call's local array for one point test.
 		const UDreamWidget* Frame = nullptr;
 		/** The frame's centre to world. */
 		FMatrix44d CentreToWorld = FMatrix44d::Identity;
@@ -108,6 +109,7 @@ public:
 		/** A Below level's element. */
 		FDreamClipUnderlay Underlay;
 		/** The texture the level reads, and the slot it reads it from (INDEX_NONE for none, or for a third along the chain). */
+		// static-checks: allow(stored-raw-pointer) Guaranteed by CollectLevels' caller, as Frame above.
 		UTexture* Texture = nullptr;
 		int32 TextureSlot = INDEX_NONE;
 		bool IsMasked() const { return Mask != nullptr || Node->GetKind() == EKind::Below; }

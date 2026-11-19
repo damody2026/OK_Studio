@@ -128,6 +128,7 @@ struct FDreamTextCoverageParams
 	/** The text passed its gate. Off: every item paints from its field quad. */
 	bool bEnabled = false;
 	/** Where coverage glyphs come from: the text's font. Not null while bEnabled; valid for the paint only. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the coverage call's caller, which holds the font for the call these params serve.
 	UDreamUIFontData_BaseObject* Font = nullptr;
 	/**
 	 * S: device pixels per local unit, as the canvas draws them -- in the usual case the canvas scale, times a render

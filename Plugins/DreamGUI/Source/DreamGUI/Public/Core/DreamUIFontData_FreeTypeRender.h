@@ -186,6 +186,7 @@ protected:
 	 * not a UPROPERTY, because a cooked font sits in the disregard-for-GC pool and must not reference unrooted objects
 	 * (a packaged build stops with "breaking Disregard for GC assumptions").
 	 */
+	// static-checks: allow(stored-raw-pointer) Rooted: the atlas is AddToRoot'd before it is retired here, at most four are kept, and a UPROPERTY is impossible in the disregard-for-GC pool.
 	TArray<UTexture2DArray*> RetiredTextures;
 
 	/**

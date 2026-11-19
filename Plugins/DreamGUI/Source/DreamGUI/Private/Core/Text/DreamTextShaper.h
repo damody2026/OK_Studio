@@ -80,6 +80,7 @@ struct FDreamShapeElement
 struct FDreamShapeParams
 {
 	/** The font; its faces and shaping fonts are what runs are shaped with. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by ShapeParagraph's caller, which holds the font for the call these params serve.
 	UDreamUIFontData_BaseObject* Font = nullptr;
 	/** Whether the 'kern' feature is applied. */
 	bool bUseKerning = false;

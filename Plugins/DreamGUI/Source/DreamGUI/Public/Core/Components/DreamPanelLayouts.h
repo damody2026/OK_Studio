@@ -1186,6 +1186,7 @@ private:
 	/** One child's place along the scroll axis: content-space start (offset not applied) and length, slot padding included. */
 	struct FScrollStackSlot
 	{
+		// static-checks: allow(stored-raw-pointer) Guaranteed by PlaceScrollStack's InChildren, which the slot is measured from and never outlives.
 		UDreamWidget* Child = nullptr;
 		float Start = 0.0f;
 		float Length = 0.0f;

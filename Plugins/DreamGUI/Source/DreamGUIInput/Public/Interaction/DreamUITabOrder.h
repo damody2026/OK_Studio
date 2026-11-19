@@ -46,11 +46,13 @@ struct DREAMGUIINPUT_API FDreamUITabDomain
 struct DREAMGUIINPUT_API FDreamUITabStep
 {
 	/** Where the focus goes: a stop, or the entry of a single-stop container. Null when it stays where it is -- no stop, or an end that holds. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the Step call that returned it, as the comment above says.
 	UDreamWidget* Target = nullptr;
 	/**
 	 * The behaviour on Target that receives the move, chosen as DreamUINavigationScan::FindNavigationBehaviour chooses: its
 	 * widget's navigation rules first, then its selectable. Null with Target.
 	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the Step call that returned it, as Target above.
 	UDreamUIBehaviour* Receiver = nullptr;
 	/** The domain the step ended in: after popups closed on the way, the opener's. */
 	FDreamUITabDomain Domain;

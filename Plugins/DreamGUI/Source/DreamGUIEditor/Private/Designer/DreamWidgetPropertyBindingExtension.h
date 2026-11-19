@@ -25,6 +25,7 @@ namespace DreamWidgetPropertyBindingExtension
 	 */
 	struct FBindingSite
 	{
+		// static-checks: allow(stored-raw-pointer) Guaranteed by the details-panel callback that made the site from the object it was given.
 		UDreamWidget* Widget = nullptr;
 		EDreamWidgetBindingTarget Target = EDreamWidgetBindingTarget::Widget;
 		int32 BehaviourIndex = INDEX_NONE;

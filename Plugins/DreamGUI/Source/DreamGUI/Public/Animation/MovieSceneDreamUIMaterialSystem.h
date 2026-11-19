@@ -37,6 +37,7 @@ struct FDreamUIMaterialAccessor
 {
 	using KeyType = FDreamUIMaterialKey;
 
+	// static-checks: allow(stored-raw-pointer) Guaranteed by TMovieSceneMaterialSystem, which makes an accessor from its key for one evaluation and does not keep it.
 	UDreamVisualBatchMesh* Visual;
 	FDreamUIMaterialHandle MaterialHandle;
 

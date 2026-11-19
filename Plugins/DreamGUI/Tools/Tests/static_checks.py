@@ -907,6 +907,7 @@ WRAPPED = re.compile(r'\bT(?:Object|WeakObject|SoftObject|SoftClass|RefCount|Scr
                      r'(?:Ptr|Interface|Ref)?\s*<')
 RAW_UOBJECT = re.compile(r'\b(?:class\s+)?((?:U|A)[A-Z][A-Za-z0-9_]*)\s*\*')
 RAW_GPU = re.compile(r'\b(FRHI[A-Za-z0-9_]+|FMaterialRenderProxy|FTextureResource|FTexture2DResource)\s*\*')
+CONTAINER_OF = re.compile(r'\bT(?:Array|Map|Set|Pair)\s*<')
 NOT_A_MEMBER = re.compile(r'\b(typedef|using|friend|return|delete|new|sizeof|static_cast|operator)\b')
 MEMBER_DECL = re.compile(
     r'(?:^|[;{}])\s*((?:mutable\s+|static\s+|constexpr\s+|inline\s+)*'
@@ -952,6 +953,11 @@ def check_stored_pointers(root, findings, want):
                 if '(' in m.group(0) or ')' in m.group(0):
                     continue
                 if '*' not in decl or NOT_A_MEMBER.search(decl) or WRAPPED.search(decl):
+                    continue
+                # The declared type is a pointer, or a container of them. A star anywhere else is inside
+                # someone else's template argument (TMovieSceneMaterialSystem<..., UObject*, ...>), and the
+                # member it declares is not a pointer at all.
+                if not CONTAINER_OF.search(decl) and not re.search(r'\*\s*(?:const\s*)?$', decl):
                     continue
                 kind = None
                 if RAW_GPU.search(decl):

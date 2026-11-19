@@ -394,6 +394,16 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **Every stored raw pointer the plugin keeps on purpose now says who guarantees it.** The 42 the new
+  `stored-raw-pointer` check reports outside the test module -- a popup's parameters, a tab step, a clip level, a
+  shape or coverage call's font, an arranged child's rect, a scroll slot, a builder node's classes, a resolved
+  binding's functions, a hit container, the preview and designer scenes' components, the retired font atlases, the
+  Blueprint compiler's class and old tree, a pick hit, a details placement, an MCP compile outcome, a Niagara
+  conversion, the wireframe material proxy and the tween manager's tick snapshot -- carry a
+  `// static-checks: allow(stored-raw-pointer)` line that names what keeps the object alive: the call that consumes
+  it, the owner that outlives it, or the root it is held by. The check's rule also learned that a star inside someone
+  else's template argument does not make the member a pointer. Nothing changed in what any of them does.
+
 - **A static check names every stored pointer that is only an address.** `static_checks.py` has a
   `stored-raw-pointer` rule: a member holding a `UObject` or an RHI resource as a raw pointer, where an address cannot
   say the thing has gone and one freed and handed out again compares equal. A member kept beside a count of objects

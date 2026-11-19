@@ -367,6 +367,7 @@ private:
 		 * Not held: FMaterialRenderProxy is not reference counted and has no weak form. Its lifetime is the engine's
 		 * wireframe material (GEngine->WireframeMaterial, rooted), and this is read inside the recording it belongs to.
 		 */
+		// static-checks: allow(stored-raw-pointer) FMaterialRenderProxy has no counted or weak form; guaranteed by GEngine->WireframeMaterial, which is rooted.
 		FMaterialRenderProxy* WireframeMaterialInstance = nullptr;
 		/** The target the UI ends up in, when ScreenColorRenderTargetTexture is a multisampled one resolved into it. */
 		FTextureRHIRef OrignScreenColorRenderTargetTexture;

@@ -303,8 +303,10 @@ struct FDreamUIHitResultContainer
 
 	FVector RayOrigin = FVector(0, 0, 0), RayDirection = FVector(1, 0, 0), RayEnd = FVector(1, 0, 0);
 
+	// static-checks: allow(stored-raw-pointer) Guaranteed by one pointer dispatch in UDreamUIInputUser: what outlives a dispatch, the hit cache, holds its raycaster weakly.
 	UDreamBaseRaycaster* Raycaster = nullptr;
 
+	// static-checks: allow(stored-raw-pointer) Guaranteed by one pointer dispatch in UDreamUIInputUser, which fills this and reads it before the frame ends.
 	TArray<UDreamWidget*> HoverArray;
 
 	/**
@@ -313,5 +315,6 @@ struct FDreamUIHitResultContainer
 	 * ResolveEnabledHitTarget) -- and this is where a tooltip is looked for, as Slate looks for one under the cursor
 	 * including disabled widgets. Null means HitResult.Widget.
 	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by one pointer dispatch in UDreamUIInputUser, as HoverArray above.
 	UDreamWidget* WidgetIgnoringEnabled = nullptr;
 };

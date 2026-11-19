@@ -1144,6 +1144,7 @@ private:
 	 * one every frame -- the update, the submit, a layer's move -- declared together. A world of panels is thousands of
 	 * canvases, and flags spread over each of them were as many reads from memory for each pass.
 	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the manager: AddCanvas sets it, RemoveCanvas and Deinitialize clear it, so while it is set the manager is alive.
 	UDreamUIManagerWorldSubsystem* RegisteredWithManager = nullptr;
 	/**
 	 * RootCanvas as last set, for asking whether this canvas is its own root without a weak look-up: compared with this

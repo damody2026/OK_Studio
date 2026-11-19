@@ -85,6 +85,7 @@ private:
 		 * The objects of a property of InHosted; empty for the objects being customized. Raw: a placement lives inside one
 		 * CustomizeDetails pass, which the panel holds its objects through.
 		 */
+		// static-checks: allow(stored-raw-pointer) Guaranteed by one CustomizeDetails pass, which the details panel holds its objects through.
 		TArray<UObject*> Objects;
 	};
 

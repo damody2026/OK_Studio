@@ -48,6 +48,7 @@ public:
 		FName Name = NAME_None;
 
 		TSubclassOf<class AGameModeBase> DefaultGameMode;
+		// static-checks: allow(stored-raw-pointer) Guaranteed by the game instance that made this scene, which outlives it.
 		class UGameInstance* OwningGameInstance = nullptr;
 
 		ConstructionValues& SetCreateDefaultLighting(const bool bDefault) { bDefaultLighting = bDefault; return *this; }
@@ -113,7 +114,9 @@ public:
 	void LoadSettings(const TCHAR* Section);
 	void SaveSettings(const TCHAR* Section);
 
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the preview world: FPreviewScene owns what it spawns into itself and destroys it with itself.
 	class UDirectionalLightComponent* DirectionalLight;
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the preview world, as DirectionalLight above.
 	class USkyLightComponent* SkyLight;
 
 private:
@@ -123,6 +126,7 @@ private:
 
 protected:
 	TObjectPtr<class UWorld> PreviewWorld = nullptr;
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the preview world, as DirectionalLight above.
 	class ULineBatchComponent* LineBatcher = nullptr;
 
 	/** This controls whether or not all mip levels of textures used by UMeshComponents added to this preview window should be loaded and remain loaded. */
