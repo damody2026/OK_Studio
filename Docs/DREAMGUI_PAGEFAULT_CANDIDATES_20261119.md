@@ -604,7 +604,78 @@ if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
 placed／池化 → 还给池子、heap 留着）。所以要判它，得先知道它放掉的那些贴图走哪一条配置路径——
 换句话说，**问题 4 的答案依赖 12d 里我还没读的那段决策**。
 
+## 13. 有真资料之后：那张 `B8G8R8A8_TYPELESS` 是谁的，以及谁在不持参照地绑它
+
+新事实（协调转述 e-cardload 的两份追踪报告，我未复核报告原文）：故障位址落在一张**已释放**的
+`B8G8R8A8_TYPELESS` 贴图里，趟 2 **1024×1024**、趟 3 **1024×512**；包住它的 64 MB
+`PoolAllocator Heap` 也已释放；贴图在 44／60 帧前释放、heap 在 21／38 帧前。
+
+### 13a. 问题 3（先回报）：**DreamGUI 内部找不到「存位址而不持参照」的绑定**
+
+| 绑定 | 存的是什么 | 档案行号 | 持不持有 |
+|---|---|---|---|
+| 内建绘製的八张贴图（`MainPS`／`MainVS` 的 Main／Font／Mask／四张资料贴图／layer table） | `FTextureReferenceRHIRef` | `DreamUIBaseShaders.h:80-95`，绑定在 `DreamUIRenderer.cpp:989-1000` | **持有 reference 物件**；贴图死时引擎先清 reference 再放贴图 |
+| layer style 的 pattern | `FTextureRHIRef` | `DreamUILayerStyleComposite.h:75`，填在 `.cpp:83-91` | **持有 RHI 贴图本身**（会过期，不会悬空） |
+| backdrop | **裸 `FRHITexture*`** | `DreamUIRenderer.h:29`（**整个外挂里唯一一个裸 `FRHITexture*` 成员**） | 只在 pass lambda 内由 `GetRHI()` 填、且 pass parameters 宣告了 `RDG_TEXTURE_ACCESS`（`DreamUIRenderer.cpp:845`、`:1589-1594`）→ **作用域限於那个 pass** |
+| 材质参数（`DreamUIMaterialProxy`） | **裸 `const UTexture*`**：`TArray<TPair<FName, const UTexture*>> Textures` | `DreamUIMaterialProxy.h:15`、`:19` | **不持有**，注解自己写明「the giver's to keep alive: the proxy holds them as plain pointers」（`:36-40`）。缓解是 `LetGoOfUnreachable()`（`:74`）：GC 的可达性分析之后，每个 proxy 放掉即将被释放的那些 |
+| 材质的 uniform buffer 实际存什么 | **`Value->TextureReference.TextureReferenceRHI`**，也就是 reference | 引擎 `MaterialUniformExpressions.cpp:1712-1729`（注解就写著 reference 由 `UTexture::BeginDestroy` 的 render command 清掉）；而 `FRHIUniformBuffer::ResourceTable` 是 `TArray<TRefCountPtr<FRHIResource>>`（`RHIResources.h:1286-1294`） | **持有 reference** |
+
+**所以问题 3 的答案是：在 DreamGUI 这一侧，我找不到一条把贴图位址存起来、又不持任何参照、而且活过那一个 pass 的路。**
+唯一真正「不持有」的是材质参数里那串裸 `const UTexture*`，但它是 **UObject 层级**的不持有
+（闸门是 GC 可达性），而且送进 uniform buffer 时换成了 reference。
+**这把搜索推到问题 4 的那一侧——我们自己的程式码。**
+
+### 13b. 问题 1：用「尺寸＋格式＋开卡时建立」三条件筛，**DreamGUI 的贴图几乎全被排除**
+
+| 候选 | 判定 | 依据 |
+|---|---|---|
+| 读卡器的卡片缩图 | **排除：尺寸不可能** | 解码上限写死 **288×402**（`OKReaderScreen.cpp:1283`），永远到不了 1024 |
+| `DreamUIDataTexture`／`DreamUIDataAsTexture`（widget data 等） | **排除：格式不符** | 它的格式只有 `PF_R8`／`PF_R16F`／`PF_R32_FLOAT`／**`PF_R8G8B8A8`**／`PF_A16B16G16R16`／`PF_A32B32G32R32F`（`DreamUIDataAsTexture.cpp:49-77`），**没有 `PF_B8G8R8A8`**。（可惜：它长大正是**高度翻倍**（`:92`），512→1024 的形状本来完全对上，但格式把它排除了——这条我差点要当成命中） |
+| render layer table | 排除：格式是 `PF_A32B32G32R32F` | `DreamUIRenderLayerTable.cpp:34` |
+| 字体图集 | 排除：是 `UTexture2DArray`，不是 2D 贴图 | §3、`DreamUIFontData_FreeTypeRender.cpp:3434-3468` |
+| DreamGUI 动态精灵图集页 | **部分排除**：它是**正方形**（`InTextureSize × InTextureSize`，`DreamUIDynamicSpriteAtlasData.cpp:26-48`），所以能是 1024×1024、**不可能是 1024×512** | 同左；格式闸门是 `PF_B8G8R8A8`（`:300`、`:323`） |
+| **卡片自己的贴图（`KKUnityBundle`）** | **三条件全中** | `CreateTransient(W, H, PF_B8G8R8A8)`，尺寸就是来源 mip 的尺寸（`KKTextureRuntime.cpp:96`、`:240-241`）。原作贴图正是 1024×1024／1024×512 这一类；开卡时建立；换卡时上一张的被放掉 |
+| 卡片 PNG／APNG 预览影格 | 可能 | `OKGalleryWidget.cpp:140`、`:1414`，尺寸就是 PNG 自己的尺寸；由 `AnimatedPreviewTextures` 持有（`OKCharacterController.h:740`，`UPROPERTY`） |
+
+**注意一个会误导人的细节**：`PF_B8G8R8A8` 在 D3D12 上的平台格式本来就是 `B8G8R8A8_TYPELESS`
+（UE 要同时开 UNORM 与 UNORM_SRGB 两种 view），**所以 TYPELESS 不代表 sRGB，也不能用来区分谁建的**。
+
+### 13c. 这条筛选的后果：**它把「故障 shader 是 DreamGUI 的 `MainPS`」这个前提又推回台面**
+
+如果故障的那张是**卡片自己的贴图**，那它**根本不是 DreamGUI 的贴图**——DreamGUI 不会去取样角色的身体／衣服贴图。
+那么取样它的就是**角色材质的 pixel shader**，不是 UI 的。
+**而「故障 shader 是哪一颗」从头到尾没有定下来**（§1a：四个 global shader 的进入点都叫 `MainPS`；
+§5a：`fragment_02` 是 Aftermath 自己编的号、hash 是 128-bit 的 DXIL hash、离线比不了）。
+**这两件事现在互相咬住了**：要嘛那张贴图是 UI 的（那 §13b 的筛选错了，请给我报告里那张贴图的 **Name** 栏），
+要嘛 shader 不是 UI 的（那搜索范围要整个换到角色材质那一侧）。
+**报告里 `PageFault: Found ... released resources` 每笔都带 `Name`**（§12c），
+**那个名字能一刀切开这两种情形**，比继续读碼便宜得多。
+
+### 13d. 问题 2（部分答）：卡片贴图的拥有者
+
+- 建立后由 `AKKPreviewActor` 的 **`UPROPERTY()` 容器**持有：
+  `LoadedTextures`（`KKPreviewActor.h:916-917`）、`WornTextures`（`:616`）、`WornBodyMasks`（`:623`），
+  以及材质实例 `CookedRoleMaterials`（`:918`）——**都是 UPROPERTY，所以 GC 层面是有根的**。
+- `KKTextureRuntime` 自己的两个快取用 `TStrongObjectPtr`（虹膜：`:133-148`、`:177`、`:194`，
+  可用 `ok.IrisCacheClear` 清掉），**那是强参照，只会延长寿命、不会提早释放**。
+  PNG 快取（`:262-280`）存的是解码后的像素，不是贴图，而且按预算汰换。
+- **最后一个强参照消失的时机**，因此就是**换卡时 preview actor 与它的材质被拆掉**那一刻——
+  和「贴图在故障前 44／60 帧被释放」同向。
+- **我没有读**：preview actor 换卡时的拆除顺序、以及有没有任何东西（render thread 的结构、快取的 MID）
+  在 actor 死后还握著那些贴图。那是下一步，但按 §13c，**先看那个 Name 栏再决定要不要读**。
+
+### 13e. 问题 4：要找的序列在哪一侧
+
+既然 DreamGUI 都持参照（§13a），放掉最后一个强参照的只能在我们自己的程式码。
+程式码里「建立 → 交给 DreamGUI → 之后释放／覆写／汰换」这个序列，目前只找到一处完整的：
+**`OKReaderScreen` 把 UMG 那边的贴图镜射进 DreamGUI 的 brush**
+（`OKReaderScreen.cpp:179-184`、`:238-244`，清掉在 `:1084`），拥有者留在 UMG 那一侧；
+退场是三秒计时器（§6b、候选 4）。**但这一条的贴图是缩图，已被 §13b 的尺寸排除。**
+卡片贴图那一侧没有「交给 DreamGUI」这一步——**这正是 §13c 那个矛盾的另一面**。
+
+**不谈修法**（按指示）；这一节只钉拥有者与绑定。
+
 ---
 
-调查：f-sceneload（F 树，只读）。现象与 e-cardload 的趟数都是协调 session 转述，崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12 的引擎程式码是我自己读的。
+调查：f-sceneload（F 树，只读）。现象、e-cardload 的趟数与两份追踪报告都是协调 session 转述，
+报告原文与崩溃档我没有自己看过；§11 的两棵引擎比对、§12 与 §13 的程式码是我自己读的。
