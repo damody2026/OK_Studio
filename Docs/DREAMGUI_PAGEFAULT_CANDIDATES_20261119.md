@@ -2649,3 +2649,129 @@ if (bDrawStateStale || !DrawState.IsValid()
 **所以「谁持有」这条路到此为止，三条候选差的都是同一环：「谁把那一页还给系统」。**
 而 **`NoBackdrop=1` 是现在唯一能用一个现成 cvar 把取样者定下来的那一步**——
 它不需要解释 unmap，只需要回答「取样的是不是 backdrop」。
+
+---
+
+## §36 RDG transient／别名：**backdrop 副本确实会走 transient，而且我要推翻自己先前用「0 heaps」做的排除**
+
+读的是 `E:/PhysX/UE5.8` 与 E 树（只读）。**这一节有一条是自我更正，写在 36c。**
+
+### 36a 第 1 题：条件与 cvar 全表，backdrop 副本**符合**
+
+cvar（全部在 `Runtime/RenderCore/Private/RenderGraphPrivate.cpp`）：
+
+| cvar | 预设 | 旗标 | 行 |
+|---|---:|---|---|
+| **`r.RDG.TransientAllocator`** | **1** | **`ECVF_RenderThreadSafe`——不是 ReadOnly，执行期可切** | `:249-256`（0＝关；1＝开；2＝只给 FastVRAM） |
+| `r.RDG.TransientExtractedResources` | 1 | `ECVF_RenderThreadSafe` | `:258-265` |
+| `r.RDG.AsyncComputeTransientAliasing` | 1 | `ECVF_RenderThreadSafe` | `:267-274` |
+| `r.RDG.TransientAllocator.IndirectArgumentBuffers` | **0** | `ECVF_RenderThreadSafe` | `:417-423`，注解：「Fix for random GPU crashes on draw indirects on multiple IHVs. Force all indirect arg buffers as non transient (see UE-115982)」 |
+
+**贴图成为 transient 的条件**（`Runtime/RenderCore/Private/RenderGraphBuilder.cpp:522-535` ＋ `:537-580`）：
+
+1. `bSupportsTransientTextures`——RHI 支持（`:630`，`SupportsResourceType(ERHITransientResourceType::Texture)`）；
+2. **不得有 `ETextureCreateFlags::Shared`**（`:528-531`）；
+3. 不得 `bForceNonTransient`（`:545-548`）；
+4. `GRDGTransientAllocator != 2`（`:542-544`，除非 FastVRAM 且平台支持）；
+5. 若 `bExtracted`，还要 `GRDGTransientExtractedResources != 0` 且 hint 不是 `Disable`（`:550-560`）。
+
+**注意：贴图没有「必须有 UAV」这个要求**——那是 buffer 才有（`:519` `return EnumHasAnyFlags(Buffer->Desc.Usage, BUF_UnorderedAccess);`）。
+
+**backdrop 副本逐条符合**：`CopyFrom` 建的是
+`FRDGTextureDesc::Create2D(Local.Size(), Source.Format, FClearValueBinding::Transparent, SrgbOf(InFrame.Texture) | TexCreate_ShaderResource)`
+→ `GraphBuilder.CreateTexture(Desc, InName)`（`DreamUICompositor.cpp:395-396`；MSAA 那支多 `TexCreate_RenderTargetable`，`:386-388`）。
+**没有 `Shared`、没有 extract、没有 forceNonTransient ⇒ 它会走 transient allocator。**
+
+### 36b 第 2 题：保证是 **fence ＋ aliasing barrier，逐笔重叠一个 acquire fence**；非 RDG 资源不适用也不需要
+
+`Runtime/RHICore/Private/RHICoreTransientResourceAllocator.cpp`：
+
+- `FRHITransientHeapAllocator::Allocate(const FRHITransientAllocationFences& Fences, Size, Alignment, OutAliasingOverlaps)`（`:132`）
+  走空闲范围；**一个范围若仍被 fence 覆盖就跳过**（`:187`
+  `if (!FRHITransientAllocationFences::Contains(Range.Fences, Fences))`），否则记一笔
+  `OutAliasingOverlaps.Emplace(ResourceToOverlap, FRHITransientAllocationFences::GetAcquireFence(Range.Fences, Fences))`（`:232`）；
+- 这些重叠挂到新资源上：`Resource->AddAliasingOverlap(AliasingOverlap.Resource, AliasingOverlap.AcquireFence)`（`:434-438`），
+  由 RDG 发 aliasing barrier／等那个 fence；
+- 归还：`Deallocate(Resource, Fences)`（`:261-290`）把范围连同 `Fences` 放回；
+  `DeallocateMemoryInternal` 先 `Resource->Discard(Fences)`（`:443-446`）。
+
+**所以不是「同一帧内的别名图推论」，是每一笔重叠各带一个 acquire fence。**
+
+**「若 A 不是 RDG 管的资源，这套保证还成立吗？」——不适用，但也不需要**：
+transient 配置**只在它自己的 heap 内别名**，而那些 heap 是 `FD3D12TransientHeap` 自己
+`D3DDevice->CreateHeap(&Desc, …)` 建出来的独立 `ID3D12Heap`
+（`Runtime/D3D12RHI/Private/D3D12TransientResourceAllocator.cpp:34-64`），
+**和 pool／committed 配置用的 heap 是不同的 heap**。一张 `UTexture2D` 的 RHI 贴图不在那些 heap 里，
+**所以它的页不可能被 transient 别名轮用**。要让同一段虚拟位址被重用，必须是**整个 heap 被销毁之后、
+驱动把那段 VA 给了新建的 heap**——那一步在 UE 之外。
+
+### 36c 第 3 题：transient heap 是独立的 heap——**而这里我要推翻自己先前的排除**
+
+事实：
+
+- transient heap ＝ 独立 `ID3D12Heap`，`D3D12_HEAP_TYPE_DEFAULT`，`Desc.SizeInBytes = Initializer.Size`，
+  `Alignment = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT`（`D3D12TransientResourceAllocator.cpp:34-64`）；
+- 包成 `FD3D12Heap` 时：
+  `Heap->SetHeap(D3DHeap, TEXT("TransientResourceAllocator Backing Heap"), /*bInTrack=*/true, /*bForceGetGPUAddress=*/true);`
+  `Heap->SetIsTransient(true); Heap->BeginTrackingResidency(...)`（`:80-83`）；
+- 销毁：`Heap->DeferDelete()`（`~FD3D12TransientHeap`，`:88-101`）——**走 UE 的延迟删除，有 fence**；
+- 回收复用走 `FRHITransientHeapCache::Acquire`（`RHICoreTransientResourceAllocator.cpp:542`），
+  **不经 pool heap 那一侧的 `GetLastUsedFrameFence()`／`InFrameLag`**。
+  **所以 e-cardload 说「那个 fence 只覆盖池子自己知道的配置」是对的，而且 transient 这侧根本是另一条路。**
+
+**自我更正**：`FD3D12Heap::SetHeap`（`Runtime/D3D12RHI/Private/D3D12Resources.cpp`）里，
+进 `TrackedHeaps` 的条件是
+
+```cpp
+if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
+    && !(HeapDesc.Flags & D3D12_HEAP_FLAG_DENY_BUFFERS)
+    && HeapDesc.Properties.Type == D3D12_HEAP_TYPE_DEFAULT)
+{ … #if TRACK_RESOURCE_ALLOCATIONS  if (bTrack) Adapter->TrackHeapAllocation(this); #endif }
+```
+
+（`TRACK_RESOURCE_ALLOCATIONS` ＝ `PLATFORM_WINDOWS && !UE_BUILD_SHIPPING && !UE_BUILD_TEST`，
+`D3D12RHIDefinitions.h:71` ⇒ **Development build 里是开的**。）
+
+而 transient heap 的 `HeapFlags` 来自 `Initializer.Flags`（`D3D12TransientResourceAllocator.cpp:15-32`）：
+`AllowBuffers` ⇒ `ALLOW_ONLY_BUFFERS`、**`AllowTextures` ⇒ `ALLOW_ONLY_NON_RT_DS_TEXTURES`**、
+**`AllowRenderTargets` ⇒ `ALLOW_ONLY_RT_DS_TEXTURES`**、`AllowAll` ⇒ `ALLOW_ALL_BUFFERS_AND_TEXTURES`。
+**后两种 texture-only 的旗标都隐含 `DENY_BUFFERS`** ⇒ 上面那个 `if` 整段被跳过 ⇒
+**这种 transient heap 既不取 `GPUVirtualAddress`、也不进 `TrackedHeaps`。**
+只有 `AllowAll` 会注册，而 `AllowAll` 需要 `bSupportsAllHeapFlags` ＝ `ResourceHeapTier == D3D12_RESOURCE_HEAP_TIER_2`
+（`FD3D12TransientHeapCache::Create`，`:104-110`）。
+
+**⇒ 我在 §12／§26 用「`Found 0 active heaps` ⇒ 不在 transient heap 里」做的排除是错的**，两个独立理由：
+①那三个零在 `Logging all resource enabled: No` 之下不是量测（§9／§10 已记）；
+②即使追踪开著，**纯贴图／纯 RT 的 transient heap 本来就不会被注册**。
+**这一条我自己推翻自己，transient 这条因此回到候选。**
+
+### 36d 第 4 题：没有任何 DreamGUI 路径把「生命期由 GC 决定」的贴图注册进 RDG
+
+十处 `RegisterExternalTexture` 的身分：
+
+| 处 | 注册的东西 |
+|---|---|
+| `DreamUICompositor.cpp:300` | `Frame.Pooled`——**pool element**（§32b） |
+| `DreamUIRenderer.cpp:1234` | `MSAARenderTarget`——**pool element**（§32e） |
+| `DreamUIRenderer.cpp:1241` | 裸 RHI（viewport／MSAA target），**由 `:1234` 的注册解析**（注解明说） |
+| `DreamUIRenderer.cpp:306` | `Staging`（tonemap 后的暂存） |
+| `:502`／`:503`／`:516`／`:517`／`:530`／`:531`／`:554` | `CopyRenderTarget*` 的 `FTextureRHIRef` 多载（`:498-505`、`:513-519`、`:527-533`） |
+
+那组多载的**参数型别本身是持有的 `FTextureRHIRef`**，而呼叫者传的都是 render target 或 RDG 贴图：
+`DreamUIRenderer.cpp:1294`（`ScreenColorRenderTargetTexture`／`MSAARenderTarget->GetRHI()`）、
+`DreamVisualPostProcessRenderProxy.cpp:157`／`:173`／`:185`、
+`Effects/DreamUIBackgroundBlurRenderProxy.cpp:121`／`:135`／`:141`。
+**没有一处传 `UTexture` 的 RHI。这一格可以收掉。**
+
+### 36e 前三名与能否解释 `AddressTranslationError`
+
+| 名次 | 候选 | 行 | 怎麼验（现成 cvar 优先） | 能解释整页不在页表吗 |
+|---|---|---|---|---|
+| 1 | **backdrop 副本走 transient，而 texture-only 的 transient heap 不被注册**（36a ＋ 36c） | `DreamUICompositor.cpp:395-396`；`RenderGraphBuilder.cpp:522-535`；`D3D12TransientResourceAllocator.cpp:15-32`、`:80-83`；`D3D12Resources.cpp` 的 `SetHeap` | **`r.RDG.TransientAllocator 0`——预设 1、`ECVF_RenderThreadSafe`、执行期可切、零建置。** 故障消失 ⇒ 取样者的记忆体来自 transient | **差一环**：transient heap 内的记忆体是已配置、常驻的，取样它不会 translation error。要故障，得是那个 heap 本身已 `DeferDelete` 并真的释放——**而 heap 销毁是整段 VA 一起走，这正好是「整页不在页表」的形状**。所以这一条**最接近**，缺的证据是「故障当下那个 transient heap 是否已销毁」 |
+| 2 | `NoBackdrop=1`（§35） | `DreamUICompositor.cpp:365-368` | 已在 e-cardload 佇列 | 它只判「取样者是不是 backdrop」，**本身不解释 unmap**，但它是第 1 名的前置 |
+| 3 | 群组 target 回 `GRenderTargetPool`（§32b） | `DreamUICompositor.cpp:407`；`RenderTargetPool.cpp:202`、`:400-420` | `LogEntries 1` ＋ `LogPoolReuse 1` ＋ `Frames.Pooled` 调大 | **不能**：pool 元件真正释放时走 UE 的 fenced 删除。差「谁把页还给系统」 |
+
+**次序建议**：`NoBackdrop=1` 若 0/3（取样者是 backdrop），**接下来那一趟就是 `r.RDG.TransientAllocator 0`**
+——两个都是现成 cvar、都不必重编，而且第二个直接判第 1 名。
+若 `NoBackdrop=1` 仍 3/3 故障，则 backdrop 整条（含 transient）一起除名，
+线索回到「每笔 draw 真正绑进去的那一笔」。
