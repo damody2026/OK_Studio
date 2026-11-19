@@ -6973,3 +6973,50 @@ FD3D12Resource*           Resources[SF_NumStandardFrequencies][MAX_SRVS];
      但它是空集合這件事本身要在報告裡講明，而不是默默當成不存在）。
 - **到達行在、報告零次、而故障照舊 ⇒ 下一格就是上面第 1 種**（描述子副本與 descriptor heap 區塊的回收），
   那一格的量具不在狀態快取，而在 `FD3D12OnlineDescriptorManager` 的區塊回收與 EOP 栅欄。
+
+## 2026-11-20（事前登記）下一格：**描述子的副本**——回收的 descriptor heap 區塊是否在 GPU 還讀著的時候被交還
+
+狀態快取那條路兩半都空了（第三十、三十一條），而兩半的量具都**看不到描述子被抄進
+descriptor heap 區塊之後的那份副本**。這一格就量它，**讀法先寫死**。
+
+### 一、機制與它在碼裡的位置
+
+每條 command list 的 view 描述子來自 `FD3D12SubAllocatedOnlineHeap`，它向
+`FD3D12OnlineDescriptorManager` 借一個區塊（`AllocateHeapBlock`，`D3D12Descriptors.cpp:282`），
+用完以 `FreeHeapBlock`（`:304`）交回——而那是走
+`FD3D12DynamicRHI::DeferredDelete(InHeapBlock, this)`，由 **EOP（end of pipe）任務**
+呼叫 `Recycle`（`:315`）把它推回 `FreeBlocks`。
+`BuildSRVTable` 把描述子**抄進**區塊的槽位，`SetSRVTable` 只把那個區塊的 GPU handle
+設成 root descriptor table——**所以 GPU 讀的是區塊裡那份副本，不是狀態快取裡的指標。**
+
+若那個 EOP 栅欄沒有真的涵蓋「這張表被哪條 command list 用到」，
+區塊就可能在 GPU 還在讀的時候被交還、被下一個使用者覆寫，
+**GPU 於是讀到別人的描述子——那個別人可以是一張已經死掉的貼圖。**
+這與量到的事實相容：故障那張從來沒被 DreamGUI 綁過（第二十九條），
+而「故障 − heap 釋放 = 4…4116 幀」那種事件驅動的分布也對得上「要等某個區塊被重用」。
+
+### 二、量具（干預式，一個旋鈕，預設關）
+
+`D3D12.OK.PoisonRecycledDescriptorBlocks`（`ECVF_ReadOnly`，預設 0）：
+在 `FD3D12OnlineDescriptorManager::Recycle(Block)` 把區塊推回 `FreeBlocks` **之前**，
+把整個區塊的描述子寫成 **NullSRV**（下毒）。
+
+- 若栅欄是對的（GPU 早已讀完），下毒不改變任何結果——反正下一個使用者會覆寫它。
+- 若栅欄是錯的（GPU 還在讀），下毒把**懸空的描述子換成 null 描述子**：
+  取樣讀到零，而不是去碰一塊沒有映射的位址。
+
+**到達證據**：每次下毒累加，第一次與每 256 次各印一行（區塊數、累計下毒數、FreeBlocks 大小）。
+**沒有到達行就是量具失敗**，不是乾淨結果（第十一、十四條）。
+
+### 三、讀法，現在寫死
+
+- **開著 0/3（三趟都不故障）⇒ 指認**：GPU 真的在讀已回收的區塊，
+  而這一格的干預就是修法的方向（正確做法是修栅欄，不是長期下毒）。
+- **開著 3/3 ⇒ 這條路除名**，並講明覆蓋範圍：下毒只涵蓋**走 `Recycle` 回到 `FreeBlocks`
+  的那些區塊**，不涵蓋
+  1. `FD3D12LocalOnlineHeap` 的溢出堆（它自己的 `RecycleSlots`／`ReclaimPool`，
+     而歷次故障 log 裡 `OnlineHeap RollOver` 共 **0 次／108 份**，所以這條路在這個場景沒被走到）；
+  2. 全域取樣器堆（`RollOver` 直接 `check(false)`，不會回收）；
+  3. 同一個區塊**還被持有**、而槽位在區塊內被重新發出的情形（`ReserveSlots`／`SetNextSlot`）。
+- **1/3 或 2/3 ⇒ 不套任何一支**：那表示故障率本身在變動，
+  要先把「旋鈕的成本是否改了時序」量出來才有資格讀（這一點在第三十一條已經踩過一次）。
