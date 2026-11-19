@@ -69,6 +69,10 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
         if(Cast<AKKPreviewActor>(A)||Cast<AKKPairedPlayback>(A))A->SetActorTickEnabled(false);
         if(InPlace)continue; // the world goes on around them: its sounds, its sights
         TInlineComponentArray<UAudioComponent*> Audio;A->GetComponents(Audio);for(auto* Component:Audio)if(Component->IsPlaying()){Mode->SourceAudio.Add({Component,Component->bIsPaused!=0});Component->SetPaused(true);}
+        // Input is the mode's own controller. Entered from the card reader (EnterReader) that is the new Shared one, whose
+        // PreviewActor and PartnerActor are still empty here: the reader's own actors (Source's) are hidden like the rest,
+        // with their tick off (above), and given back in Exit. Same-named fields on two controllers were read the wrong way
+        // round three times on 2026-11-19 ("the one-on-one does not hide the reader's character"): it does.
         if(A!=Input->PreviewActor&&A!=Input->PartnerActor){A->SetActorHiddenInGame(true);A->SetActorEnableCollision(false);}
     }
     if(GEngine&&GEngine->GameViewport){
@@ -567,6 +571,9 @@ void AOKInteractionMode::Tick(float Delta){
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerClothes);LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);
         if(FullOff)LoadingFemale->SetClothingHidden(true);}
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerMaterials);if(!LoadingFemale->BeginProgressiveMaterials())return;}
+        // Controller is the mode's own (from the reader: Shared, not the reader's Source). This sets Shared's PreviewActor
+        // to the clone; the reader's Source->PreviewActor is not touched, stays hidden, and is the one the reader shows
+        // again on return. The clone is Destroyed in Exit (OwnController).
         Controller->PreviewActor=LoadingFemale;LoadingFemale=nullptr;Controller->PreviewActor->SetActorTickEnabled(false);Controller->bLoadInFlight=false;
         // Only when they differ from what she was opened with (as ActivateInteraction): the same again was 220 ms of the frame.
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerShapes);auto* Her=Controller->PreviewActor.Get();
