@@ -6064,3 +6064,18 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 自測過：對已經結束的那一趟回「pid 已經不在」，對還沒當機的那一趟回
 `REFUSED: ... does not show a fault yet; it may still be measuring`（exit 3）——
 正是當初出錯的那一種情形。
+
+## 2026-11-19 差一點的第二次：`reader_call` 自己會把不回話的引擎結束掉
+
+想在**正在跑的那一趟**上讀 `DreamUI.Stats`（外掛自己的計數器），直接下了
+`reader_call {"action":"exec","command":"DreamUI.Stats"}`。結果那一趟其實已經當掉、卡在 crash handler，
+而 `ok-game-mcp` 的行為是：**信箱 10 秒不回話就把那個 pid 結束掉**
+（「the card reader mailbox did not answer in 10 s and pid … answers nothing: ended it」）。
+
+這次沒有損失（那一趟的 log 裡故障時間 15:13:19 在我 15:19 的探測之前，表也已經寫完 `# DONE`），
+**但它和早上那次是同一個形狀**：我以為自己只是在「讀」，實際上那個工具在「讀不到就殺」。
+若那一趟當時只是**在載一張比較慢的卡**（10 秒以上並不罕見），我就會殺掉一趟有效的量測。
+
+**規矩**：要對某一趟的引擎做任何事（停它、或向它查詢），**先檢查它的表或 log 裡已經有故障**——
+也就是 `stoptrip.sh` 那三個前置條件，不只用於停，也用於探測。
+想在量測中途讀計數器，要嘛改成由那一趟自己的腳本在固定時點讀，要嘛不要讀。
