@@ -2760,3 +2760,42 @@ f-sceneload 自報 2026-11-19 **15:09:29–15:14:50** 佔機（最重的是 15:1
 看不見「別人的負載改了時序而改了當掉的機率」，所以這是「沒有證據」，不是「保證沒有」。
 
 （最後一格 366 秒的間隔是當掉後 crash handler 卡在那裡等我發現，不是一張卡的耗時。）
+
+### 讀出來的兩件事：背景那張拷貝是 **RDG transient** 的，而且模式 2 **沒有**退化成模式 1
+
+**一、那塊記憶體是哪來的**（`DreamUICompositor.cpp:396-399`）：
+
+```
+const FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(Local.Size(), Source.Format, ...);
+FRDGTextureRef Copy = GraphBuilder.CreateTexture(Desc, InName);
+AddCopyTexturePass(GraphBuilder, InFrame.Texture, Copy, ...);
+```
+
+`GraphBuilder.CreateTexture` ⇒ **RDG 的 transient allocator**。這是目前所有候選裡**唯一**一塊記憶體來自 transient allocator 的，
+而 19 秒那個重現用的旋鈕正好就是 `r.RDG.TransientAllocator=0`；
+`Found 0 active heaps containing page fault address` 也和「那個 transient heap 已經被釋放掉了」對得上
+（還活著的 transient heap 是會被找到的）。
+
+**但不能就這樣接起來，而且方向是反的**：關掉 transient allocator（改走 pooled）之後當得**更快**（19 秒、一張卡都還沒開），
+不是不當了。所以「受害者是一張 transient 貼圖」解釋不了那個重現。**兩個重現先繼續分開放**，等有一個機制同時說明兩邊才合併。
+
+**二、差點把自己的判讀寫錯**（在看到 A2 結果之前先改掉，不是之後）：
+
+我原本登記的讀法是「模式 1 不當 ＋ 模式 2 照樣當 ⇒ 受害者不是那塊記憶體」。
+這會錯，因為模式 2 有可能根本沒配置那塊記憶體：`GRDGCullPasses` 預設 **1**（`RenderGraphPrivate.cpp:231`），
+而 RDG 會把「輸出沒人讀」的 pass 整個剔掉（`RenderGraphBuilder.cpp:2373-2376`）。
+模式 2 只改了 PS 綁什麼（`DreamUIRenderer.cpp:1014-1015` 綁 `GBlackTexture`），
+如果拷貝沒有別的消費者，那個 copy pass 會被剔掉、貼圖根本不會配置，模式 2 就等於模式 1，鑑別力歸零。
+
+**查過了，沒有退化**：那張貼圖本來就以 pass 參數的身分宣告了 SRV 存取——
+`RDG_TEXTURE_ACCESS(BackdropTexture, ERHIAccess::SRVGraphics)`（`:850`）、`PassParameters->BackdropTexture = InBackdrop`（`:1588`），
+而且 `MarkResourceAsUsed()`（`:1618`）與 `GetRHI()`（`:1619`）在模式 2 照樣跑。
+所以模式 2 裡那塊記憶體**照樣配置、照樣被拷進去、照樣轉成 SRVGraphics、RHI 指標照樣被取出**，只有**著色器取樣**讀到黑。
+
+**據此改寫的判讀（仍在看到 A2 之前登記）**：
+
+| A2（模式 2，只綁黑） | 讀法 |
+|---|---|
+| 兩趟都活過 30 張 | 當掉需要 `MainPS` **取樣**那張貼圖 ⇒ 受害者就是它（經由 PS 綁的那個 descriptor） |
+| 兩趟都在基線裡 | 當掉**不需要**取樣：配置＋拷貝＋轉狀態就夠 ⇒ 指向 transient allocator 的 heap 生死，不是綁定 |
+| 又分裂 | 這條線這樣問不出來，要換成不配置／配置但不進 pass 參數的對照 |
