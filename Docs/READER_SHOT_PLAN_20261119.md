@@ -481,3 +481,73 @@ reader_call {"action":"parameters","query":"accessory.parts.12"}
 收尾 `reader_stop {"lane":"f-shot-f"}`。
 
 **两张图的 `camera` 必须一字不差**，否则「看起来不同」可能只是镜头差一点。
+
+## 8. 批次 G：MoreAccessories v2 的第 21 栏以后（lane `f-shot-g`）
+
+f-yvonne 的题目：怀疑 `extra.rs` 改到错的地方。**v2 卡的真资料在原作的 `parts[20..]`，XML 只是副本**，
+所以「改了 XML 但没改到真资料」会表现成：apply 当下看起来变了，重开却变回原样。
+
+**选卡**（窗口里做，别事先假设）：`reader_call {"action":"catalog"}` 列出 targets，
+找 key 形如 `accessory20_<cat>` 的「額外配件欄」；再确认**那一栏真的戴着东西**（`current` 里不是空的）。
+找不到这样的卡就照实写「手上的卡都没有可用的额外配件欄」，**不要为了凑这批去改一张卡**。
+
+```jsonc
+reader_launch {"card":"<选到的卡>","lane":"f-shot-g","no_build":true}
+ui_exec {"command":"ok.ReaderScreen press 載入3D"}
+reader_call {"action":"state"}
+reader_call {"action":"camera", … }                 // 对准那个额外配件，机位记下来，三张都用同一组
+ui_screenshot {}                                    // → extra-acc-before.png
+reader_call {"action":"parameters","query":"MoreAccessories"}   // 当场列出键，记下第 21 栏那几列的实际键名与值
+```
+
+**改颜色 → apply → 再拍**（键名**以上一步列出来的为准**，下面是形状示意，不是可照抄的键）：
+
+```jsonc
+reader_call {"action":"set","edits":[{"key":"plugins.MoreAccessories.….xml.<槽>.color0r","value":<明显不同的值>}]}
+reader_call {"action":"apply"}
+reader_call {"action":"state"}
+reader_call {"action":"camera", … }                 // 和 before 一字不差
+ui_screenshot {}                                    // → extra-acc-applied.png
+```
+
+**关卡重开，第三张**（这一张才是判准所在）：
+
+```jsonc
+ui_exec {"command":"ok.ReaderScreen press 載入3D"}
+reader_call {"action":"state"}
+reader_call {"action":"camera", … }                 // 同上
+ui_screenshot {}                                    // → extra-acc-reopened.png
+reader_call {"action":"parameters","query":"MoreAccessories"}   // 读回那一列的值
+```
+
+**判准**：
+
+- 重开后**颜色变了、值也读得回来** → `extra.rs` 没问题。
+- **apply 当下就没变**，或**重开后变回原样** → **是真 bug**（改到了 XML 副本，没改到 `parts[20..]` 的真资料）。
+  记 `Docs/ERROR_LOG.md` 并回报 f-yvonne，附三张图与两次读回的值。
+- **看起来没差别** → 照实写「没重现」，**不要去调参数凑**。颜色挑**明显不同**的（例如红 ↔ 绿），
+  不要挑差一点点的——差一点点的本来就看不出来，看不出来不等于没写进去，那时候以**读回的值**为准。
+
+收尾 `reader_stop {"lane":"f-shot-g"}`。
+
+## 9. 批次 H：`HairShadowColorControl` 存不存卡（不用拍照，不用自己的 lane）
+
+我们的外挂清单（`PLUGIN_SECTIONS`）有这一列，但反编译里找不到它存卡。**这批不另外开引擎**：
+在 A～G **每一次已经开着的卡**上各做一次，两个读取而已。
+
+```jsonc
+reader_call {"action":"parameters","query":"HairShadowColorControl"}
+reader_call {"action":"state"}        // 看 unknown_plugin_sections 有没有这个键
+```
+
+记一张表：卡片路径 → 有／无（有就记键名与栏位）。涵盖这几张（都是别批已经要开的）：
+`alice.png`、`alice_fg_off2.png`、`alice_fg_on.png`、`Tohru.png`、`KK_110449.png`、`KK_007604.png`、批次 G 那张。
+
+**判准**：
+
+- **有** → 记下键与栏位，回报 f-yvonne。
+- **全都没有** → 照实写「**这几张卡没有**」，**不要推论成「这个外挂不存卡」**，
+  `PLUGIN_SECTIONS` 那一列也**不要删**。
+  （这正是 `Docs/ERROR_LOG.md` 那条通则的第二问：**「查不到」有两种**——真的没有，
+  和这批样本里刚好没有。七张卡答不了「所有卡」，更答不了「这个外挂会不会存卡」；
+  那个问题要去反编译里问它的 `OnCardBeingSaved`，不是去卡里问。）
