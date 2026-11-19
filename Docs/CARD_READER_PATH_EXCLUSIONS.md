@@ -16,7 +16,8 @@ cvar 名字各被推上「主線」一次——第一次以 `D3D12.Bindless.Garb
 | 事實 | 依據 |
 |---|---|
 | 當掉的 shader 是 DreamGUI 自己的基底 pixel shader `FDreamUIBasePS` | dump 的 `Active Shaders:` 只有一個：`Function = MainPS`、`Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF`；`IMPLEMENT_GLOBAL_SHADER(FDreamUIBasePS, "/Plugin/DreamGUI/Private/DreamUIBase.usf", "MainPS", SF_Pixel)` |
-| 錯誤型態是 `Error_DMA_PageFault`，而且**位址不屬於任何 active heap** | `Found 0 active heaps containing page fault address` |
+| 錯誤型態是 `Error_DMA_PageFault` | dump 的 `Device state`；故障位址 `0x25C4061000` |
+| ~~位址不屬於任何 active heap~~ **已撤回（2026-11-19）**：`Found 0 active heaps` 與其餘兩個零都來自沒開的追蹣——同一段報告第三行寫著 `Logging all resource enabled: No`，而 `FindHeapsContainingGPUAddress`（`D3D12Adapter.cpp:2062`）查的 `TrackedHeaps` 只在 `IsTrackingAllAllocations()` 成立時才有東西（`D3D12Resources.cpp:720-744`） | 照 7g：**那是「沒有在找」，不是「找遍了都沒有」** |
 | GPU 故障**不會殺掉程序**：Aftermath 寫 dump、引擎卡在 crash reporter | 多趟觀測；`OKControl` 是獨立執行緒，照樣回應 |
 | 60 張目錄的協定是目前最可靠的重現：**4/4**，138.6／139.2／139.3／140.1 秒，開第 14–17 張 | 四趟 log |
 | 30 張協定是 **4/6 故障＋2 設限**，位置 5–22，`q̂ = 0.0388`（Wilson 95% CI 0.0152–0.0956） | 協定基線六趟 |

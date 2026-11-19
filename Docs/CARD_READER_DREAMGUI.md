@@ -5544,3 +5544,83 @@ section for line 24: [SystemSettings] (at line 15)
   `DreamGUI deferred release frames in effect: texture=%d buffer=%d pooled=%d func=%d`。
 - 程式裡的註解也已經事先寫好這一格的判讀與界線：
   「若仍故障，destructor 不是觸發點」、「**這絕不能出貨：讓當機消失的洩漏是診斷，不是修復**」。
+
+# `Found 0 active heaps` 很可能是「沒有資料」，不是「沒有堆」——而整場「銷毀 vs 重用」都架在這個零上
+
+## 一、那段報告的完整原文（11-18 的 dump，`20261118-194613-6ae05c77.log:4806-4813`）
+
+```
+PageFault: PageFault at VA GPUAddress "0x25C4061000" (GPU 0)
+PageFault: Last completed frame ID: -1 (cached: 32150) - Current frame ID: 32153
+PageFault: Logging all resource enabled: No
+PageFault: Found 0 active tracked resources in 16.00 MB range of page fault address
+PageFault: Found 0 active heaps containing page fault address
+PageFault: Found 0 released resources containing the page fault address during last 100 frames
+DRED: No PageFault data.
+```
+
+**第三行是關鍵，而我們（我、協調、f-sceneload）都跳過了它**：
+`Logging all resource enabled: No`。
+
+## 二、三個零全部來自同一個沒開的追蹤
+
+印出那三行的是 `D3D12Util.cpp:671-716`，它們查的三個清單是
+`FD3D12Adapter::FindResourcesNearGPUAddress`（`D3D12Adapter.cpp:2029`）、
+`FindHeapsContainingGPUAddress`（`:2062`）、`FindReleasedAllocationData`（`:2079`）。
+三個函式的**全部內容**都包在 `#if TRACK_RESOURCE_ALLOCATIONS` 裡，而真正決定清單裡有沒有東西的是
+`IsTrackingAllAllocations()`（`D3D12Adapter.h:458`，由 `D3D12.TrackAllAllocations` 決定，
+`ECVF_ReadOnly`、預設 **off**）：
+
+```cpp
+// D3D12Resources.cpp:720-744，FD3D12Heap::SetHeap
+if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
+    && !(HeapDesc.Flags & D3D12_HEAP_FLAG_DENY_BUFFERS)
+    && HeapDesc.Properties.Type == D3D12_HEAP_TYPE_DEFAULT)
+{
+    ...                                  // 先建一個 placed buffer 才拿得到 heap 的 GPU 位址
+#if TRACK_RESOURCE_ALLOCATIONS
+    if (bTrack) { Adapter->TrackHeapAllocation(this); }   // ← 只有進得了上面那個 if 才會登記
+#endif
+```
+
+**追蹤關著 ⇒ 絕大多數 heap 從來沒進過 `TrackedHeaps`，連 GPU 位址都沒去取** ⇒
+`FindHeapsContainingGPUAddress` 當然回 0。同理，`0 active tracked resources` 與
+`0 released resources ... during last 100 frames` 也都是空清單的 0。
+最後一行 `DRED: No PageFault data.` 更是字面上的「沒有資料」。
+
+## 三、所以要撤回的是什麼
+
+**「出錯的位址落在一塊已經不存在的記憶體裡」這個讀法沒有依據**——
+那個零不是「找遍了都沒有」，是「沒有在找」。照 7g（**不要把缺資料印成一個值**），
+這是今天第二次踩到同一個形狀：上一次是把開卡的非同步 log 行數當成主控台指令的輸出。
+
+**連帶撤回的推論**（之前都寫成「字面一致」）：
+- 「`Found 0 active heaps` 和 descriptor heap 被退掉字面一致」——bindless 那條死路一半來自這個零；
+- 「池化重用解釋不了，所以一定是真正的銷毀」——**兩邊都解釋不了這個零，因為它什麼都沒說**；
+- 「資源記憶體 heap vs descriptor heap」的爭論——**在沒有資料的情況下無法區分**。
+
+**還站得住的**：故障本身（`Error_DMA_PageFault`）、`MainPS` 的身分、位址
+`0x25C4061000`、以及兩個協定的重現率。那些不依賴這三個零。
+
+## 四、下一格因此換成一個儀器，而不是機制旋鈕
+
+`D3D12.TrackAllAllocations=1`（`D3D12Adapter.cpp:191-195`，`ECVF_ReadOnly` ⇒ 必須命令列／ini）。
+開了之後同一份報告會印出：
+
+- 故障位址 16 MB 範圍內**每一個**活著的資源：位址區間、大小、**距離故障位址多遠**、
+  是不是 transient、**名字**、以及 resource desc（`D3D12Util.cpp:682-698`）；
+- **包含**故障位址的每一個 heap：位址、大小、**名字**（`:705-711`）；
+- **最近 100 幀內被釋放**而包含該位址的資源（`:716` 起，照釋放時間倒序）。
+
+**到達證據是現成且在機制點上的**：同一份報告的第三行會從
+`Logging all resource enabled: No` 變成 **`Yes`**。印 `No` 的趟作廢而不是結果。
+**這是今天第一個覆蓋率 2/2 的格子**（旋鈕到達有證據、要觀測的量也正是它產生的）。
+
+**先申報它的風險**：全量追蹤會為每個 DEFAULT heap 多建一個 placed buffer 去取 GPU 位址，
+並記錄每筆配置（可選 callstack），**所以它會改變時間與記憶體行為，可能移動或蓋掉這個重現**。
+事前登記：
+
+- **仍然故障 ⇒ 報告直接點出位址屬於誰**（活著的資源、含它的 heap、或最近釋放的那一筆），
+  「銷毀 vs 重用 vs 從未常駐」當場分開，不必再猜；
+- **不再故障 ⇒ 這一格沒有讀數**（不是修好）。那時改用 60 張協定多跑幾趟確認是不是真的被壓掉，
+  而不是把它當成修復。
