@@ -846,16 +846,21 @@ e-cardload 對照了時間點：它所有乾淨的趟都是機器上只有它一
 - **`press` 碰到停用的控制項已經不再回 `pressed`**（`81f4ae9b8`）：回
   `not pressed: <路徑> is disabled` ＋ `failed`，`controls` 列表也在那一行後面標 `  [disabled]`。
   實測：`press 動作與表情›眼睛開合›Slider`（當下停用）→ `not pressed: … is disabled`。
-- **但 `[not shown]` 這一支抓不到「在別的分頁」**：DreamGUI 裡別的分頁的控制項 `GetShown()` 仍是 true，
-  所以整份 `controls` 一個 `[not shown]` 都沒有。也就是說「按了一顆不在眼前的按鈕」這種情形，
-  回應仍然會是 `pressed`。
+- **`[not shown]` 也補上了**（`dbb0674ba`，我重驗過）：原本只看控制項自己的 `GetShown()`，
+  收起的抽屜裡的控制項因此一個都沒標到；現在連每一層父元件一起看（`IsOnScreen`）。
+  實測整份 `controls` 有 110 行標 `[not shown]`，`press 動作與表情›嘴巴開合›Slider`（收起的抽屜裡）→
+  `not pressed: … is not shown now` ＋ `failed`。
 - **「進入1對1互動場景」的前置條件沒有分頁這一條**（我先前在這裡寫成「要在編輯分頁」是錯的，已更正）：
   重驗時從「人物卡」分頁按它一樣進得去；而且**卡片還在載入中就按也會成功**——它會記下來、等 3D 載完才進去
   （`bEnterInteractionAfterLoad`）。真正會被拒的是選到男性卡、已經在 1 對 1 裡、或編輯還沒套用，
   那時畫面與 notice 會寫「沒有進入 1 對 1：<原因>」、log 有 `OK enter one-on-one refused`（`81f4ae9b8`）。
   我先前兩趟按了沒反應是 `81f4ae9b8` 之前的舊 build。
-- **所以規矩不變：確認效果，不要相信 `pressed` 這個字。** 進了 1 對 1 要看 log 的
-  「OK pair 背景載入男性角色」或 `ui_widgets` 裡有沒有「離開（回到讀卡）」。
+- **所以規矩不變：`pressed` 只表示那顆按鈕真的被按到，按鈕背後的動作有沒有成立要看 notice。**
+  進了 1 對 1 要看 log 的「OK pair 背景載入男性角色」或 `ui_widgets` 裡有沒有「離開（回到讀卡）」，
+  被拒則看 notice 的「沒有進入 1 對 1：<原因>」。實測（`dbb0674ba`）：卡片還在載入中按 → 回 `pressed`、
+  當下什麼都沒發生，**3D 載完才真的進去**；進去之後再按一次 → notice「沒有進入 1 對 1：已經在 1 對 1 裡。」
+  ＋ log `OK enter one-on-one refused`。**查證時要等那一步做完再判斷**——我就差點把「按完立刻查、還沒進去」
+  當成新的靜默失敗回報出去。
 - 同理，`reader_call` 回 `"status": "applied"` 不等於那張卡真的開了：`load` 吃的是 `path`，而
   `state` 的 `card` 跟著**選取的那一列**走，不是跟著剛才載入的路徑走。一趟開卡配方到底開了幾張，
   看 log 裡 `ok.ReaderScreen notice: 已加载3D` 的次數最準。
