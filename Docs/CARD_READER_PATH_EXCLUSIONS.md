@@ -324,3 +324,39 @@ mid=MID_M_ForgeSkin_Flat_72 params=15 _MainTex=Texture2D_3159 _overtex1=Texture2
 
 **什麼會讓它可用**：若 DRED 給出 `PageFault data`（指名哪個資源、哪個操作），那就不靠順序了。
 目前三趟都是 `DRED: No breadcrumb head found.` ／ `DRED: No PageFault data.`，**所以這條路現在沒有讀數**。
+
+## 十七、地基（不是排除）：出錯當下只有一顆 pixel shader 在飛，而三趟是同一顆
+
+Aftermath 的傾印段落（例如 `20261119-222817-6c799c21.log:120960`）給的是**出錯的 warp 執行的 shader**，
+不是「哪些 pass 還沒結束」。**所以它不受第十六條那個尾段選擇效應影響。**
+
+三份當機 log 逐一核過，**完全一致**：
+
+| log | `Active Shaders` | Type | Function | Shader Hash | 故障 VA |
+|---|---|---|---|---|---|
+| `20261119-212848` | **1 total** | Pixel | `MainPS` | `E6753E1EA9F1F20775D8BC0AD963B1EF` | `0x25b0681000` |
+| `20261119-221813` | **1 total** | Pixel | `MainPS` | **同一個** | `0x257b321000` |
+| `20261119-222817` | **1 total** | Pixel | `MainPS` | **同一個** | `0x256bd01000` |
+
+`Aftermath Hash = 7159920291841742735` 三趟也相同；
+`Page Fault Info: Type AddressTranslationError, Access Read, Engine Graphics, Resource: <no info>`。
+
+**三趟是三張不同的貼圖、三個不同的位址、三個不同的卡片位置，而出錯的是同一顆 pixel shader。**
+這是這個調查裡最強的一條：它把「取樣者」從一個集合收到**一個**對象。
+
+**一個一致性檢查，而且它支持 DreamUI 的歸屬**：第二趟有**八個** `DreamUIDraw` 還在飛，
+而 `Active Shaders` 只有 **1**。**八個 draw 共用一顆 pixel shader，正是 UI 繪製的形狀**
+（一個材質、很多個 quad）。若還在飛的工作跨越不同的 pass，`Active Shaders` 就不會是 1。
+
+**它仍然不能給名字**：`E6753E1E…` 是 DXIL 容器的 hash，而那個 hash 在整份 log 裡**只出現一次**
+（沒有 shader map 表可以對回去）。`MainPS` 這個進入點名字本身沒有識別力
+（四個 global shader 都叫它，UE 的材質 pixel shader 也叫它）——**識別力來自 `1 total` ＋ `Type = Pixel`
+＋ 已 `Finished` 的那些 pass 的排除，而不是名字。**
+
+**不要為了名字去重編**：舊的 `.nv-gpudmp` 事後解不了（f-sceneload 查到：符號相關的三個旗標都進
+shader map key，容器一變 hash 就變），所以「開符號再回頭解舊傾印檔」這條路不存在；
+要名字就得重編 shader 再重現一次故障。**現有證據已經夠窄，那個成本現在不值得。**
+
+**什麼會改變這條**：若某趟的 `Shader Hash` 不同，那趟就是**另一個故障**，不能併進同一組算。
+所以每一趟都要抓這個欄位——`-LegacyReader` 那三趟尤其：
+若它照樣故障而 hash 相同，又沒有 DreamUI 在飛，**那就表示這顆 `MainPS` 不是 DreamUI 的**。
