@@ -156,3 +156,7 @@
 - **旧 OK 卡卡内模型没有新查询**：`clothes_option_groups` 是可选查询，卡内的第三方模型转卡时还没有它。`model_flags` 用 `clothes_option_groups_recorded`（`oklib::memo_bytes_recorded`）分辨「没录到」与「合法地全是预设值」：没录到的那件衣服，它的列不标 `available`；有录到的照实标。
 - **乾净 clone 对照的已知差异（不是这次补录造成的）**：`kks-verify` 拿原作卡比游戏模式与基础库模式，差在**每个部件**的 `_OKShaderState`、`_OKShaderCull`、`_OKShaderOutline`、`_OKShaderQueue`、`_OKShaderZWrite` 与 `_GlassRamp`：游戏模式从 shader 读出（`unity.rs`），基础库模式（CLI 的 `kks-verify`／`replay`）不套 `shader_states.json`（`shader_states::complete` 只在 `okmodel_view` 与读卡器背景流程呼叫）。从 `ebd5a5329`／`97985fd99` 那条线起就有。完整库与乾净库两边的 live digest 相同、`gaps=0`、`game_reads=0`，所以补录这件的对照算过。
 - **`C:\portable\OKGameOnly` 不能当乾净基线**：那是 2026-11-04 只靠游戏还原的快照，比现在的程式少很多查询，拿它比一定不同。乾净对照要用当下 HEAD 的 clone 跑 `original_data.lua restore --game`（本机在 `F:\OKCleanYvonne`，还原跑到一半暂停，等量测让出机器再续跑）。
+- **外挂栏位的键是身分式**（`properties/plugins.rs`）：`plugins.<外挂>.<内部路径>`，例如 `plugins.Pushup.a1.@Pushup_BraData.packed.#0.@Firmness`。
+  - 第一段是 `PLUGIN_SECTIONS` 的 `id`（`MaterialEditor`、`Pushup`、`KoiClothesOverlayX`…），不是那个区段在这张卡 KKEx 里的位置。位置是每张卡自己的事实：alice 的第 9 个区段是 MaterialEditor，megumin 的是 Pushup。
+  - 内部路径：字串键的 map 用 `@<名字>`，整数键的 map（按服装编号）用 `#<数字>`，阵列用 `a<索引>`（阵列项是这张卡自己的条目），解码后的二进位是 `packed`，额外饰品的 XML 是 `xml`。只有键不是字串也不是整数、或字串里有 `.` 时才退回 `m<索引>`，alice 与 megumin 两张卡上都没有出现。
+  - 写回时每张卡用名字再查一次位置。这张卡没有那个外挂，就报「這張卡沒有這個模組」，不会退回去写第 N 个区段。测试：`plugin_keys_name_the_plugin_not_its_position`。
