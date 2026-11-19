@@ -6244,3 +6244,53 @@ VA=0x1CA4381000
 
 **不再查的**：換卡 sweep、MID、GC、`ok.RuntimeTextureRelease`（都量過、行為正常），
 以及 backdrop 的讀取側（這三趟）。
+
+# 觀察趟（pool reuse ＋ 延遲釋放 ＋ retention 400000）：group 那整條路**讀卡器根本沒用到**
+
+趟次：一趟一 claim、`FAULTED`、`fault_secs` 略、`shader_hash=E6753E1E…`（同一顆）、
+`fault_texture=Texture2D_869`、`slot_lines=6052`。
+log `Saved\Logs\CardReader\20261120-000336-0c9b04e8.log`。
+
+## 一、`DreamGUI.Experiment.LogPoolReuse` 到達了，而讀數是「這條路沒被走過」
+
+```
+# knob now: DreamGUI.Experiment.LogPoolReuse = "1"   LastSetBy: SystemSettingsIni   ← 到達證據
+DreamGUI group pool        … 0 行
+DreamUI_GroupTexture       … 整份 log 0 次
+```
+
+`Note()` 只在 `DreamUICompositor.cpp:302` 被呼叫，就在
+`GRenderTargetPool.FindFreeElement(…, TEXT("DreamUI_GroupTexture"))` 成功之後（`:296-303`）。
+**0 行 ⇒ `Note()` 從沒被呼叫 ⇒ 讀卡器一次都沒有取得 group render target。**
+
+**所以下面這一整條在讀卡器裡是「機制點不存在」（第 7k 條：作廢，不是陰性）**：
+- group render target 的池子重用（`Frames.Pooled=3`、零 GPU fence、`RenderTargetPool.cpp:202` 只看 `IsFree()`）；
+- `SetGroupSectionComposite` 的 `bSame` 比 `TWeakObjectPtr`（物件死了也和自己相等）那條「沒有新值就不動」的路；
+- `DreamUIRenderer.cpp:1222-1234` 那個已修 bug 所在的同一層（pool element 提早回池）。
+
+**三個候選一次清掉，而且是用一個現成旋鈕、一趟、零建置。**
+**注意這條的可用性取決於「這個場景」**：街區／Studio 若會用到 group（混色模式讀背景），那裡仍要各自量。
+
+## 二、延遲釋放佇列：第二次量到它沒放過卡片貼圖
+
+```
+# frames_in_effect: texture=3 buffer=3 pooled=3 func=3     ← LogEntries 的到達證據
+# letgo_entries=7     # letgo_kinds: 7 kind=texture
+# letgo_names: 4 name=DreamUIDataTexture_4 ; 3 name=DreamUIDataTexture_6
+# letgo_texture2d=0   # fault_texture_in_letgo=0   # held_values: 7 held=3
+```
+
+**七筆全是 `kind=texture`、全是 DreamUI 自己的資料貼圖、全部 `held=3`**；
+`kind=pooled`／`buffer`／`func` **一筆都沒有**——`func` 就是 proxy 的 `delete`，
+**所以這一趟連一個 proxy 都沒經過這個佇列**。
+而故障那張 `Texture2D_869` 在佇列裡出現 **0** 次。**第二次確認：放手它的不是這個佇列。**
+
+## 三、`retention=400000` 第二趟也一致
+
+（第一趟見「retention 那一趟」。）這一趟同樣只列出卡片貼圖與包住它的 heap，沒有更早的住戶。
+
+## 四、所以持有者那一側剩下什麼
+
+`FDreamUIMaterialProxy` 繼承的 **uniform expression cache**（一個 uniform buffer，resource table 持有該材質的貼圖，
+只在三處重建、沒有每幀重建）——**f-sceneload 查完 descriptor 那一層之後唯一剩下的跨幀持有者**。
+下一格就是前人留的判別器 `DreamGUI.Experiment.NeverDeleteProxy=1`。

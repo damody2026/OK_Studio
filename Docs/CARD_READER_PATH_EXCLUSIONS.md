@@ -468,3 +468,38 @@ shader map key，容器一變 hash 就變），所以「開符號再回頭解舊
 
 **什麼會推翻這個限定**：若某趟出現 `referenced_name=` 等於該趟故障那張，
 那就是「有活引用計數還被釋放」，那時九個槽重新回到候選（第二十條的失效條件）。
+
+## 二十三、「heap 比貼圖晚 20 幾幀」是**正常行為**，不是線索（2026-11-20，讀引擎原始碼）
+
+每趟的頁錯誤報告都把兩筆已釋放資源一起列出，而 **64 MB `PoolAllocator Heap` 的 `FrameID` 總是比那張貼圖晚 20 幾幀**
+（量到 22、25、22…）。曾經被當成可疑的時間差。**它是寫死的常數加上一個 fence 條件。**
+
+```cpp
+// D3D12PoolAllocator.cpp:845-856  —— Trim empty allocators if not used in last n frames
+const uint64 CompletedFence = FrameFence.GetCompletedFenceValue(/*bUpdateCachedFenceValue*/ true);
+if (MemoryPool->IsEmpty() && (bForceFree || (MemoryPool->GetLastUsedFrameFence() + InFrameLag <= CompletedFence)))
+{ MemoryPool->Destroy(); delete MemoryPool; }
+```
+
+`InFrameLag` 的兩個呼叫端**都寫死 20，沒有任何 cvar**：
+
+```
+D3D12Allocation.cpp:1910   PoolAllocators[PoolIndex]->CleanUpAllocations(20);   ← 貼圖池
+D3D12Adapter.cpp:1841      uint64 FrameLag = 20;  GetUploadHeapAllocator(GPUIndex).CleanUpAllocations(FrameLag);
+```
+
+**所以那 20 幾幀 = 寫死的 20 ＋ fence 完成時機造成的幾幀浮動。不要再把它當成一條線。**
+
+**而且這一段比「不是線索」更強：它是 fence 背書的。**
+空 heap 只在「最後一次使用那一幀的 fence 已完成，再過 20 幀」才被銷毀——**它等過了 GPU**。
+**所以「整頁從頁表消失」這一側本身沒有 bug**，
+會出事的只能是**在那之後還在用那塊記憶體的人**，也就是持有者那一側。
+**這把故障的兩側從「等重」改成「一側正確、一側有 bug」。**
+
+**延伸出的一條格子取消（照第 7k 條：機制點不存在 ≠ 陰性結果）**：
+曾打算找「延遲釋放空 heap」的旋鈕來判這一側。
+掃過 `D3D12PoolAllocator.cpp`／`D3D12Allocation.cpp`／`D3D12Adapter.cpp` 全部
+`Pool|Heap|Defrag|Release|Empty|Delay|Evict` 的 cvar，只有 `TrackedReleasedAllocationFrameRetention`、
+`EvictAllResidentResourcesInBackground` 與描述符堆大小那幾個，**沒有一個管空 heap 的釋放延遲**。
+**該格作廢，不是陰性。** 要延遲它只能改引擎（`Tools/EnginePatches`），
+**而為一個判別器去打引擎補丁不值得**——那一層動了三棵樹都要跟。
