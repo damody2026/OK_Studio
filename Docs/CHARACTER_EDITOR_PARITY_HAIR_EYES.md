@@ -241,3 +241,61 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
 `CrowdAPNG/` 101 张里的 83 张在 F 树开不了，报的都是第三方 `okLt guids`——同一类，属「卡没自足」，
 要走 seal；F 树基础库本身没问题。另外发现：拿 `properties_apply`（带 `resources` 与游戏根目录）
 **重新输出**一张卡，产物就开得了——那条路顺手把缺的资料封进卡内，效果等同 seal。
+
+## 7. 第二批要做的「一次原子写入」：每个按钮的实际写入集（2026-11-19 从反编译查定）
+
+下面每一列都是**一次使用者动作 → 一次写入**，不是一串独立的滑杆写。常数都抄原作，别自己换。
+来源：`ChaCustom/CvsHair.cs`、`CvsHairEtc.cs`、`CvsEye02.cs`、`ChaCustom/CustomBase.cs`（设定旗标）、
+`ChaFileDefine.HairKind`（`back, front, side, option`，共 4 槽）。
+
+### 7.1 四个设定旗标：**预设全部是 `true`**（`CustomBase.CustomSettingSave`）
+
+| 旗标 | 预设 | 开着的时候，写 `baseColor` 会连带写什么 |
+|---|---|---|
+| `hairSameSetting`（四槽同步） | true | 同一笔值写进 **4 个槽**（不是只写当前页那一槽） |
+| `hairAutoSetting`（自动渐层） | true | `startColor = HSV(H,S,max(V-0.3,0))`、`endColor = HSV(H,S,min(V+0.15,1))` |
+| `hairOutlineSetting` | true | `outlineColor = HSV(H,S,max(V-0.4,0))` |
+| `hairGlossSetting` | true | `glossColor = HSV(H,S,min(V+0.3,1))` |
+
+**所以原作里「拉一下髮色」最多会改 4 槽 × 4 个颜色 ＝ 16 个栏位。**
+我们现在的扁平面板写的是一个 float——这才是头发这页真正的落差，不是「颜色读不到」。
+这四个旗标是玩家设定（存在 `CustomSettingSave`，不在人物卡里），UI 要有四个开关，预设 true。
+
+### 7.2 头发四页的动作
+
+| 动作 | 写入集（一次写完） |
+|---|---|
+| 换髮型 | `hair.parts[N].id`；之后才轮到可见性（`ChangeHairAcsVisible`） |
+| 髮色（主色） | 依 7.1 的四个旗标展开；旗标全开＝ 4 槽 × {base, start, end, outline, gloss} |
+| 渐层起点／终点、外框色、光泽色单独调 | 只写该槽那一个（`hairSameSetting` 开着时写 4 槽） |
+| 「髮色反映到眉／陰毛」 | `face.eyebrowColor = hair.parts[0].baseColor`、`body.underhairColor` 同值（**取第 0 槽**，不是当前页那槽） |
+| 「取眉色當髮色」 | 4 槽都写 `baseColor = face.eyebrowColor`、`startColor = HSV(V-0.2)`、`endColor = HSV(V+0.1)` |
+| 「取陰毛色當髮色」 | 同上，来源换 `body.underhairColor` |
+| 「重設外框色」 | 4 槽各自依**自己的** `baseColor` 算 `HSV(V-0.4)` |
+| 「重設光澤色」 | 4 槽各自依自己的 `baseColor` 算 `HSV(V+0.3)` |
+| 髮飾色 1／2／3 | `hair.parts[N].acsColor[0..2]`，只写当前槽 |
+| 不晃动 | `hair.parts[N].noShake` |
+| 长度 | `hair.parts[N].length` |
+
+**注意两组常数不一样**：自动渐层是 **-0.3／+0.15**，而「取眉色／陰毛色當髮色」是 **-0.2／+0.1**。
+看起来像同一件事，抄错了颜色会偏，而且偏得很难看出来。
+
+### 7.3 「頭髮共通」页
+
+只有一项：`hair.glossId`（光泽遮罩种类）。写完要重载光泽遮罩并套到全部头发
+（原作 `LoadHairGlossMask` ＋ `ChangeSettingHairGlossMaskAll`）。
+
+### 7.4 眼睛两页
+
+| 动作 | 写入集 |
+|---|---|
+| 左右分别调／两眼同调 | 原作是两组 `face.pupil[0]`／`[1]`，没有「同调」旗标；UI 要自己提供「两眼一起」时就写两组 |
+| 「左眼複製到右眼」／反向 | `face.pupil[1].Copy(face.pupil[0])`：**7 个栏位一次**——`id`、`baseColor`、`subColor`、`gradMaskId`、`gradBlend`、`gradOffsetY`、`gradScale`；反向同理 |
+| 14 个眼睛形状滑杆 | `shapeValueFace[24..37]`，存 0–1、显示 0–100（`display_scale` 100、`decimals` 0） |
+
+### 7.5 做法上的两个要求
+
+1. **原子**：上表每一列都要走一次 `properties_apply`／一次 `set`＋`apply`，不是前端连发 16 个 `set`。
+   连发会出现中间状态（改了 base 还没改 start），而且每一发都可能触发一次重开。
+2. **旗标在哪**：`hairSameSetting` 这四个是**玩家设定不是卡片资料**，不要写进人物卡；
+   放读卡器自己的设定（和 `Config/ReaderEditor/` 同一层），预设 true，照原作。
