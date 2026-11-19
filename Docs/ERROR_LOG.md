@@ -5856,3 +5856,13 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **原因**：`Source/OpenKoikatsu/OKGalleryWidget.cpp` 的 `if (bIndependentCards)` 把同目錄 zipmod 掃描掛在**錯的那一邊**——`bIndependentCards==true` 的意思是「這是 OK 卡」，而 `FKKLocalModIndex::BuildForCard` 掃的是卡片旁邊的 `*.zipmod` 與往上找遊戲根目錄。於是對 OK 卡把卡內已錄的 164 項 UAR 逐項拿去比對根本不存在的同目錄 zipmod，全部報缺；原作卡反而不顯示這段。同一頁的「种类 KKS」講的是**來源遊戲**（KK／KKS），不是「OK 卡／原作卡」，兩件事混在一行，使用者自然讀成「這張 OK 卡缺東西」。
 - **修**：那段改成只在 `!bIndependentCards`（原作卡）跑；OK 卡改印「OK 卡：N 項 mod 資源都錄在卡內（okLc／okLt），不需要同目錄 zipmod 或遊戲 mods/」。第一行也分開講清楚：`卡片 OK 卡（资源在卡内）／原作卡` ＋ `来源 KK／KKS`。實測：`alice.png` 不再出現任何「缺少同目錄 zipmod」；原作卡 `kks_Saria.png` 照舊列出缺的 zipmod。
 - **再犯前檢查**：看到 `if (bIndependentCards)` 這種「卡片種類」的條件，先確認**裡面那段程式是為哪一種卡寫的**；掃同目錄 zipmod／遊戲 `mods/` 的程式一律屬於原作卡那一邊。顯示訊息也要把「卡片種類」和「來源遊戲」分開講，不要讓使用者自己猜。
+
+## 2026-11-19：驗證方法本身會騙人——三條同一類的坑（e-cardload-physics 整理，第二條來自 f-sceneload）
+
+三件事看起來無關，犯的是同一個錯：**用一條自己沒確認過真的被走到的路徑，去證明「程式沒套用」或「資料沒有」**。
+
+1. **子字串篩外掛會整段跳過：`KSOX`**。`Tools/ok-extract/src/appearance/properties/plugins.rs` 的 `relevant()` 用子字串清單篩 KKEx 的區段（`materialeditor`／`overlay`／…），而 **KoiSkinOverlayX 在卡片裡的鍵是 `KSOX`**，沒有一個子串命中 `ksox`，所以皮膚／妝容／刺青／晒痕的疊圖層**在 properties 裡根本不會出現**。盤點時若只看 properties 吐出什麼，就會把它記成「原作沒有這個欄位」或「我們已經有了」。實地確認：`heroine_alice.png` 的 KKEx 有 `KSOX` 鍵，底下是 `_TextureID_*` 帶 PNG。（細節寫在 [CHARACTER_EDITOR_PARITY_BODY_FACE.md](CHARACTER_EDITOR_PARITY_BODY_FACE.md) 第三之三節。`relevant()` 是共用判定邏輯，改之前要先經協調者。）
+2. **本機四張卡的頭髮是以飾品實作的，`hair.parts` 是 dummy**（f-sceneload 實證）。所以在這些卡上「改頭髮欄位看畫面有沒有變」**永遠沒反應**，原因不是程式沒套用，而是這張卡的頭髮不在頭髮欄位裡。拿這種卡當驗證素材，會得出「頭髮功能壞了」的假結論。
+3. **認定某份快取是凶手之前，先確認那條路徑真的被走到**。查讀卡器的 GPU PageFault 時，`KKUnityBundle` 也有一份 runtime texture 快取（`ok.RuntimeTextureCache`），但讀卡器實際走的是 `KKRuntimePose` 那一份（`ok.KeptTextures`）；對著沒被走到的那份做實驗，不管結果是什麼都證明不了東西。
+
+**再犯前檢查**：要宣告「這個欄位資料端沒有」或「這個功能沒套用」之前，先證明**觀察管道本身會動**——篩選器真的命中那個鍵（把鍵名印出來，不要相信子字串清單）、那張卡真的有那個部件（印出 parts 數量）、那份快取真的在成長（`ok.KeptTextures` 之類的計數要先看到不是 0）。管道不通的時候，「沒看到」和「沒有」是分不開的。
