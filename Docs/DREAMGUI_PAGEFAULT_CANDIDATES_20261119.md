@@ -2512,3 +2512,140 @@ cache 持有的是间接物件，内层已经被换掉。**§33 的第 1 名除�
 **一句话**：材质这条查完是**否定**，而且它顺手把 §33 的第 1 名推翻。
 **`slot_hits_fault_texture=0` 既然已经选了 (a)，力气应该转到 `NoBackdrop` 那一格**——
 它是现成 cvar、零建置，而且是现在唯一还能解释「整页不在页表」的那一条的入口。
+
+---
+
+## §35 不带 refcount 的裸指标全扫：**只找到一处跨帧的，而它从不解参**；外加一条你那格不空白的更正
+
+读的是 E 树 `Plugins/DreamGUI`（只读）。
+
+### 35a 第 1 题：backdrop 的写入、清除与绑定保证——**它根本不跨帧，所以没有清除者可言**
+
+`FDreamUIBuiltInBackdrop` 在整个 plugin 的**全部**出现（grep，零遗漏）：
+
+| 出现 | 身分 |
+|---|---|
+| `DreamUIRenderer.h:27-34` | 型别定义（`FRHITexture* Texture`、`FIntPoint Origin`、`bool bOpaque`） |
+| `DreamUIRenderer.h:221`、`.cpp:905` | `DrawBuiltInBatch` 的 **函式参数** `const FDreamUIBuiltInBackdrop* InBackdrop` |
+| `DreamUIRenderer.cpp:1615` | **pass lambda 内的堆叠区域变数**（world space） |
+| `DreamUIRenderer.cpp:2361` | **pass lambda 内的堆叠区域变数**（screen space） |
+
+**没有任何一处是成员、static、TMap 或跨帧捕获。** 所以：
+
+- **谁写进去**：pass lambda 自己，`Backdrop.Texture = InBackdrop->GetRHI()`（`:1619`、`:2365`），
+  而前一行先呼叫 `InBackdrop->MarkResourceAsUsed()`；
+- **谁负责清**：**没人需要清**——结构随 lambda 结束消失；
+- **绑定那一刻凭什麼保证它还活著**：`InBackdrop` 是宣告在 pass 参数结构里的 `FRDGTextureRef`
+  （`FDreamUIBackdropDrawPassParameters` 的 `RDG_TEXTURE_ACCESS(BackdropTexture, ERHIAccess::SRVGraphics)`，
+  `DreamUIRenderer.cpp:1588`；world space 在 `:1595` 一带 `PassParameters->BackdropTexture = InBackdrop`），
+  **RDG 保证宣告在 pass 参数里的资源在该 pass 执行期间已配置且有效**，`MarkResourceAsUsed()` 再把它钉在该 pass 内。
+
+**所以第 1 题的答案是：没有任何路径能让它跨帧留著一个来源已走掉的值。** 这一格可以收掉。
+
+### 35b 第 2 题的更正：**那一格不空白——`NoBackdrop=1` 就是「不配置」那一格**
+
+你写「`NoBackdrop=2` 没有否掉它…配置与交接那一侧照旧跑，所以这一格仍然空白」。
+**模式 1 正是为那一侧做的，而且它真的不配置**：
+
+`FDreamUICompositeStack::CopyFrom`（`DreamUICompositor.cpp:363-402`）**第一件事**就是
+
+```cpp
+if (DreamUICompositorExperiment::CVarNoBackdrop.GetValueOnRenderThread() == 1)
+{
+    OutOrigin = FIntPoint::ZeroValue;
+    return nullptr;                 // :365-368，在任何 CreateTexture 之前
+}
+```
+
+cvar 自己的说明也写明两模式的差别（`:348-350`）：
+「**1 = never copy what is behind a group (nothing allocated or sampled, callers take their no-backdrop path)**;
+2 = copy it as usual but bind the global black texture instead, so only the memory the shader reads differs.」
+注解（`:342-346`）还写了它的用意：「is the backdrop copy the resource MainPS faults on? …
+**no backdrop copy is ever allocated**」。
+
+**所以 `NoBackdrop=1` 一趟就把「配置／交接」那一格填掉，零建置。**
+
+**配置／交接的完整步骤，以及哪一步没有 refcount 背书**：
+
+| 步 | 做什麼 | 行 | 背书 |
+|---|---|---|---|
+| 1 | `CopyBackdrop` → `CopyFrom(Frames.Last(), …)` | `:358-361` | — |
+| 2 | 建立副本：`GraphBuilder.CreateTexture(Desc, InName)`（MSAA 走 `:388` ＋ `AddResolvePass`） | `:396`／`:388` | **RDG 图的生命期** |
+| 3 | 从来源拷贝：`AddCopyTexturePass(GraphBuilder, InFrame.Texture, Copy, …)` | `:397` | 来源是 `FFrame::Texture`，由 `Frame.Pooled` 的 `TRefCountPtr` ＋ `RegisterExternalTexture` 双重钉住（§32b） |
+| 4 | 交给 pass：`PassParameters->BackdropTexture = InBackdrop`（`RDG_TEXTURE_ACCESS`） | `:1588`／`:1595` 一带 | **RDG** |
+| 5 | pass 内取裸位址：`Backdrop.Texture = InBackdrop->GetRHI()` | `:1619`／`:2365` | **没有 refcount**，但被第 4 步的 RDG pass 保证覆盖；前一行有 `MarkResourceAsUsed()` |
+| 6 | 绑定：`PSParameters.DreamUI_BackdropTex = …` | `:1014-1015` | 读第 5 步那个值，同一个 pass 内 |
+
+**⇒ 唯一没有 refcount 的是第 5 步，而它落在 RDG 对该 pass 的保证内。**
+**真正「没有 refcount 背书、而且不被 RDG 覆盖」的那一步不在这条链上，而在 §32b**：
+群组 target 被 `FDreamUIDeferredRelease::Hold(Top.Pooled)` 放手之后回到 `GRenderTargetPool`，
+**再发出只看 `Element->IsFree()`（`RenderTargetPool.cpp:202`），没有 GPU fence。**
+
+### 35c 第 3 题：backdrop 的来源不可能是卡片贴图——型别层面的依据
+
+backdrop 的 RHI 只有**两个产地**，两者都不是 `UTexture`：
+
+1. **`GraphBuilder.CreateTexture(Desc, InName)`**（`DreamUICompositor.cpp:396`、MSAA 的 `:388`）——
+   RDG 自己配置的贴图；
+2. 它拷贝的来源 `FFrame::Texture` 是 `FRDGTextureRef`（`DreamUICompositor.h:114`），
+   而 `FFrame::Texture` 只有两个来源：
+   **`GraphBuilder.RegisterExternalTexture(Frame.Pooled, …)`**（`:300`，`Frame.Pooled` 来自
+   `GRenderTargetPool.FindFreeElement`，`:296`）或**画布自己的 target**
+   （`FDreamUICompositeStack` 建构子的 `InTarget`／`InTargetRHI`，`DreamUICompositor.h:139-141`）。
+
+**一张 `UTexture2D` 的 RHI 进不了这两条**：没有任何路径把 `UTexture::TextureReference` 或
+`FTextureResource::TextureRHI` 塞进 `FFrame`，`FFrame` 的两个贴图栏位分别是 `FRDGTextureRef` 与
+`FTextureRHIRef`（`:114`、`:116`），而填它们的只有上面两处。**所以这一格可以收掉。**
+
+**但要记一条反向的可能，它比原假说更能解释你的观测**：
+backdrop 的记忆体可以是**卡片贴图释放之后的「前住户」**——RDG／pool 把那段位址重新配置给 backdrop 副本，
+于是 **故障位址落在卡片贴图的旧区间内，而取样者是 backdrop，没有任何人持有过卡片贴图。**
+这同时解释了「位址属於卡片贴图」与「九个槽 `slot_hits_fault_texture=0`」。
+**它差的一环**：这样取样到的是**已重新配置、有效**的记忆体，不会 `AddressTranslationError`——
+除非该段在「卡片贴图释放」与「backdrop 取得」之间**真的被还给系统**，而那是配置器的事，不是 DreamGUI 的。
+**（而 `NoBackdrop=1` 正好能判这一条：若故障消失，取样者就是 backdrop。）**
+
+### 35d 第 4 题：全 plugin 裸指标扫描——**跨帧的只有一处，而它从不解参**
+
+扫 `FRHITexture*`／`FRHIBuffer*`／`FRHIUnorderedAccessView*`／`FRHIShaderResourceView*`（**裸**）：
+
+| 位置 | 身分 | 跨帧？ | 清理者 |
+|---|---|---|---|
+| **`FDreamUISectionProxy_Mesh::DrawStateVertexBuffer`／`DrawStateIndexBuffer`**（`const FRHIBuffer*`） | `DreamUIMeshComponent.cpp:93-94`，**section proxy 的成员** | **是** | **没有**（`ClearBeforePool`／`Disable` 都不碰，§29c） |
+| `FDreamUIBuiltInBackdrop::Texture` | `DreamUIRenderer.h:29` | 否（35a） | 不需要 |
+| `DrawBuiltInBatch` 的 `FRHITexture* SceneDepthTexture` | `DreamUIRenderer.cpp:903`、`.h:219` | 否（函式参数） | 不需要 |
+| `TextureOrFallback`／`TextureOr`／`TextureOr` 的回传型别 | `DreamUIRenderer.cpp:972-975`、`DreamUICompositor.cpp:520-523`、`Effects/DreamUIBackdropEffects.cpp:574` | 否（lambda 回传） | — |
+| `Named()`／`LogSlot()` 里的 `GetReferencedTexture()` | `DreamUIRenderer.cpp:1023`、`DreamUIBaseShaders.cpp:87` | 否（诊断用区域变数） | — |
+| `DreamUIGroupPoolReuse::Note` 的参数与 `TMap<FRHITexture*, uint32> LastHandedOut` | `DreamUICompositor.cpp:197`、`:205` | **是（static）** | 没有，**但只当键比对、从不解参**，且预设关 |
+| `FDreamUIFontAtlasStagingPool` 相关的 `GetTexture2DArrayRHI()` | `DreamUIFontData_FreeTypeRender.cpp:3178` | 否（区域变数） | — |
+| `SetMaterialShaderParameters`／`SetDepthBlendParameter` 的参数 | `DreamUIShaders.h:37`／`:67`／`:73` | 否 | — |
+| post-process／effects 的 `static_cast<FRHITexture*>(…GetReference())` | `DreamVisualPostProcessRenderProxy.cpp:263/265/267`、`Effects/DreamUIBackdropEffects.cpp:291` | 否（当场由持有的 ref 解出） | — |
+| `IDreamUIRendererPrimitive.h:82-83` `GetVertexBuffer()`／`GetIndexBuffer()` | 回传裸指标 | 否 | 来源 `State->VertexBufferRHI`／`IndexBufferRHI` 是 **`FBufferRHIRef`**（`IDreamUIRendererPrimitive.h:41`、`:47`），由 `TRefCountPtr<const FDreamUISectionDrawState>` 背书 |
+
+**唯一跨帧的那一处（第一列）的实际用法**：`GetDrawState()`（`DreamUIMeshComponent.cpp:96-111`）
+只把它们当**比较键**，判断 buffer 有没有被重建：
+
+```cpp
+if (bDrawStateStale || !DrawState.IsValid()
+    || DrawStateVertexBuffer != DreamUIVertexBuffers.VertexBufferRHI.GetReference()
+    || DrawStateIndexBuffer  != IndexBuffer.IndexBufferRHI.GetReference())
+{ … 重建 DrawState …; DrawStateVertexBuffer = …GetReference(); }
+```
+
+**从不解参。** 所以它不能直接 page fault。**但它有 ABA 风险**：旧 buffer 被释放、新 buffer 恰好配置到同一位址
+⇒ 比较说「没变」⇒ `DrawState` 不重建 ⇒ 那一节沿用**旧的 `BuiltIn`**（旧的 12 个槽的 reference）。
+`FDreamUISectionDrawState` 自己持有 `FBufferRHIRef` 与那组 reference（`IDreamUIRendererPrimitive.h:38-54`），
+**所以后果是「画错参数」，不是悬空。**
+
+### 35e 前三名与能否解释 `AddressTranslationError`
+
+| 名次 | 候选 | 行 | 怎麼验 | 能解释整页不在页表吗 |
+|---|---|---|---|---|
+| 1 | **backdrop 副本的记忆体是卡片贴图的「前住户」**（35c 的反向可能） | `DreamUICompositor.cpp:396`、`:397`；`DreamUIRenderer.cpp:1619`／`:2365` | **`DreamGUI.Experiment.NoBackdrop 1`**（`:347-350`，**真的不配置**，`:365-368`）；故障消失 ⇒ 取样者是 backdrop | **差一环**：重新配置过的记忆体是有效的。要成立，那段必须在两者之间**真的被还给系统**——**责任在配置器，不在 DreamGUI** |
+| 2 | **群组 target 归还只看 `IsFree()`、没有 GPU fence**（§32b，35b 第 5 步之外真正缺背书的那一步） | `DreamUICompositor.cpp:407`；`DreamUIDeferredRelease.cpp:115-133`；`RenderTargetPool.cpp:202`、`:400-420` | `DreamGUI.DeferredRelease.LogEntries 1` ＋ `LogPoolReuse 1` ＋ `Frames.Pooled` 调大 | **差一环**：同上，缺「谁把页还给系统」 |
+| 3 | `DrawStateVertexBuffer`／`DrawStateIndexBuffer` 的 ABA | `DreamUIMeshComponent.cpp:93-94`、`:96-111` | 在 `GetDrawState()` 印一次 `(旧位址, 新位址, 是否重建)`（**要改码**，所以排最后） | **不能**：从不解参。**后果是画错参数，不是 fault** |
+
+**一句话**：裸指标这一类扫完了——**跨帧的只有一处，而它从不解参**；backdrop 本身不跨帧。
+**所以「谁持有」这条路到此为止，三条候选差的都是同一环：「谁把那一页还给系统」。**
+而 **`NoBackdrop=1` 是现在唯一能用一个现成 cvar 把取样者定下来的那一步**——
+它不需要解释 unmap，只需要回答「取样的是不是 backdrop」。
