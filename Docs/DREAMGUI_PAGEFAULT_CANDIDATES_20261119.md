@@ -1397,3 +1397,79 @@ goes back -- one page is a full atlas texture」）。页面的强参照只有 `
 
 材质路径的绑定（`FDreamUIMaterialProxy` 的非持有 `TArray<TPair<FName, const UTexture*>>`，§13）这次没重读：
 breadcrumb 指的是 built-in 路径，故障那一笔不是材质路径的。若日后 breadcrumb 指向材质路径，§13 要重开。
+
+---
+
+## §24 外部 `UTexture2D` 进到 `DreamUI_MainTex` 的入口：就一条，而且读卡器正在用它
+
+读的是 E 树（只读）。
+
+### 24a 裸 `UTexture` 放进 brush，就直接被绑——不经 atlas、也不登记
+
+`DreamGUI/Private/Core/Components/DreamImage.cpp:253-272` `UDreamImage::GetTextureToCreateGeometry()`：
+
+1. `:255-258`——**ResourceObject 是 `UTexture` ⇒ 直接 return 它本身**；
+2. `:259-262`——`ISlateTextureAtlasInterface` ⇒ return `GetSlateAtlasData().AtlasTexture`；
+3. `:263-270`——`UDreamUISpriteData_BaseObject` ⇒ 这里**才**呼叫 `AddUISprite(this)` 登记，再 return 打包后的页面；
+4. `:271`——其余是预设白图。
+
+**第 1 条就是入口。** 它的后果有两件，都重要：
+
+- 该贴图**原封不动**成为 `UIGeometry->Texture` → `DrawCallItem.Texture`（`DreamCanvas.cpp:2817`／`:2937`）→
+  `BuiltIn.MainTexture`（`:4018`）→ `DreamUI_MainTex`（`DreamUIRenderer.cpp:992`）。**没有打包、没有复制、没有格式检查。**
+- **它永远不在任何 `RenderSpriteArray` 里**（登记只在第 3 条分支）。所以 §23d 那条 atlas 的通知链
+  （`NotifyRenderSpritesAtlasChanged`）**对这类元件完全不适用**——它唯一的生存连结是
+  `FDreamUIImageBrush::ResourceObject`（`DreamUIImageBrush.h:54-62`，`UPROPERTY` 强参照）
+  加上 draw call 那一侧的 `TWeakObjectPtr`。
+
+另有一条同形状的：`UDreamUISpriteData::InitSpriteData`（`DreamUISpriteData.cpp`）的
+`else//no need to pack to atlas, so spriteTexture self is the atlas` 分支——**`AtlasTexture = SpriteTexture`**，
+即 sprite 的「页面」就是外部贴图本身。走到这里有两个自动触发：来源格式不是 `PF_B8G8R8A8`（印
+「cannot be packed into the BGRA8 sprite atlas; using it individually」并把 `PackingTag` 清成 `NAME_None`），
+以及 `PackSprite` 失败后同样清 tag。**所以「用了 sprite」不等于「绑的是 atlas 页面」。**
+
+### 24b 读卡器那四处，绑的正是裸 `UTexture2D`
+
+`Source/OpenKoikatsu/OKReaderScreen.cpp` 的四处 `Brush.SetResourceObject(...)` 全部走 24a 第 1 条：
+
+| 行 | 来源 |
+|---|---|
+| `:189-193` | `UOKAppearanceButton::Thumbnail` 的 UMG brush 里的 `UTexture` ——**外观挑选器的缩图** |
+| `:249-254` | 任意 UMG `UImage` 的 brush 里的 `UTexture` |
+| `:1457`（`Show`） | 卡片列表每格的缩图 `UTexture2D` |
+| `:1297` | 同上，清成 `nullptr` |
+
+**外观缩图是这样做出来的**：`Source/OpenKoikatsu/OKGalleryAppearance.cpp:71`——从磁碟读 PNG，
+`UTexture2D::CreateTransient(W, H, PF_B8G8R8A8)`，**上限 2048×2048、非正方**、
+`CreateTransient` 不给名字 ⇒ 名字就是 **`Texture2D_<n>`**，而且它自己呼叫
+`OKLogRuntimeTextureLife(TEXT("created(appearance-thumb)"), ...)`。
+
+**这一条要先讲清楚**：`Texture2D_<n>` ＋ `B8G8R8A8` ＋ 非正方 ＋ 进同一本 runtime 贴图生命日志，
+**外观缩图与卡片 runtime 贴图在追踪报告里长得一模一样**。§16–§18 把故障那张按「名字／格式／尺寸」
+归给 `KKTextureRuntime`／`KKRuntimeMaterial`，**这个判别并不唯一**——外观缩图同样符合，而且**它是会被绑进
+`DreamUI_MainTex` 的那一种**。这正好解掉 §18 留下的矛盾（「取样者是 UI shader」对上「贴图属於卡片 runtime」）。
+
+**判别办法（不必跑新趟）**：故障那张的 owner／建立点。`OKGalleryAppearance.cpp:71` 印的是
+`created(appearance-thumb)`，`KKRuntimeMaterial` 那边印的是别的字串；追踪报告里那一笔的建立事件字串就能分开。
+`AppearanceTextures`（`OKGalleryAppearance.cpp:306`）与 `CachedThumb` 的快取则决定它何时失去最后一个强参照。
+
+### 24c 回答「DreamGUI 会不会去拿当前角色的贴图来画」
+
+**读卡器这四处不会。** 它们绑的是磁碟 PNG 解出来的缩图（`CachedThumb(Path)`）与卡片列表缩图
+（`OKReaderScreen.cpp:1216-1221`，上限 288×402），**都不是活角色的 runtime 贴图**；
+我在 `Source/` 与 `Plugins/{KKRuntimePose,KKUnityBundle,OKStudio}` 里搜 `SetResourceObject`／
+`UDreamUISpriteData`，除上述四处外，命中的只有编辑器的 Slate brush（`OKModelEditorToolkit.cpp:357/:362`）
+与 OK Studio 的两处（`SOKStoryView.cpp:176`、`SOKStudioVngePanels.cpp:324`），**读卡器流程里没有**。
+
+**所以「那张贴图放手时还被新卡用着」与「DreamGUI 在画它」两件事，在程式码上没有共同的站点。**
+要让它们相容，只有两种可能，而且都可以用现有资料判：
+
+1. 故障那张**不是**卡片 runtime 贴图，而是**外观缩图**（24b 的判别）；
+2. 取样者**不是** DreamGUI——这正是 e-cardload 的 `-LegacyReader` 三趟要判的。
+
+### 24d 粒度到此为止之后，剩下的读法
+
+breadcrumb 既然八笔同时 `[Active]`、只印 7 个槽，就不可能靠它指认。**能把范围再收一次的最便宜的事，
+是把漏印的两个槽补进 breadcrumb**（`MaskTex1`、`RenderLayerTable`，`DreamUIRenderer.cpp:1033` 那一行后面
+加一个 `RHI_BREADCRUMB_EVENT_F`），以及 **开 `DreamGUI.LogStaleTextures`（§23c，执行期 cvar、不必重编）**。
+这两件都不是修法，是量测。
