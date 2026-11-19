@@ -544,3 +544,40 @@ KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等
 
 **所以这批的实证边界要先写下来**：MaterialEditor 与 KCOX 可以在本机做到「改前／改后」对照；
 `KSOX` 在拿到卡片之前只能写预期，不能当成做完。
+
+### 12.5 要改的键与写回路径（离线盘点，2026-11-19）
+
+键的形状已经由 f-yvonne 改成身分式（`plugins.<外挂身分>.…`，见它 `plugins.rs` 的
+`plugin_keys_name_the_plugin_not_its_position` 测试，引用的就是本文第 10 节那两张卡的反例）。
+判准用它那套，不要各写一套：**按身分原样比对、不分大小写、缺范围归范围缺**
+（`Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md`）。下面只列贴图这批要动的地方。
+
+**MaterialEditor（`com.deathweasel.bepinex.materialeditor`）**：区段值是 `[版本, 资料]`，
+资料是一个 map，目前已知两个键（`plugins.rs` 的 `packed_material_colors_keep_unknown_fields_and_texture_bytes`）：
+
+| 键 | 内容 | 现在的处理 |
+|---|---|---|
+| `MaterialColorPropertyList` | Binary → packed（阵列，每笔有 `MaterialName`／`RendererName`／`Property`／`Color`） | 颜色已经上清单（alice 284 列） |
+| `MaterialTexturePropertyList` | Binary | **完全没动**，连读都没读（测试只断言它原样保留） |
+
+- 写回路径：`plugins.<身分>.a1.MaterialTexturePropertyList`（packed），**和颜色那条同一个 `packed` 机制**，
+  所以 `plugins.rs` 的 `replace()` 走 `packed` 分支就能写，不需要新的编码路径。
+- **两个未知，要先量不要猜**：(1) 每笔 texture property 里是直接放 PNG bytes，还是放一个指向
+  **贴图字典**的整数 ID（MaterialEditor 的设计是后者，但**没有在我们的卡上验过**）；
+  (2) 若是字典，字典在同一个 map 的哪个键。
+- **怎么定**：读一张真有贴图覆写的卡，把该区段的 map 键名与每个值的型别／bytes 印出来即可
+  （只读，不改）。这要在 `plugins.rs` 那侧加一个只读的 dump，**那是 f-yvonne 的档案**——
+  所以要嘛请它顺手印一次，要嘛我另开一个只读的 bin，不进它的档。
+  alice 只有颜色覆写、没有贴图覆写，所以**连这张卡都量不到**，得先找一张有贴图覆写的卡。
+
+**KCOX（`KoiClothesOverlayX`）**：alice 有 3 笔，走访只各找到**一个 bool**，路径长成
+「`進階設定（Overlays）／1／進階設定（<槽名>）／2`」，槽名是 `ct_bra`／`InnerMask`／`BodyMask`。
+
+- 结构线索：每个 overlay 条目里 bool 落在**索引 2**，所以 PNG bytes 很可能在同一条目的索引 0 或 1；
+  写回路径就是**同一条目的另一个索引**，不必另开区段。
+- 未知：哪一个索引是主图、哪一个是遮罩；bytes 有没有再压一层。同样用上面那个只读 dump 定。
+
+**KSOX**：本机一张卡都没有（第 12.4 节），所以这半**不在这次的离线盘点范围内**，别照外挂常数猜了就写。
+
+**结论（给排程用）**：离线能做到的是上面这些路径与未知清单；**再往下一步需要的不是机器，是一张有贴图覆写的卡**
+（MaterialEditor）与一次只读 dump。两者都不必等 GPU，也不必等 `may-build`。
