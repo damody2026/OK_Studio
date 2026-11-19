@@ -558,17 +558,26 @@ KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等
 | 键 | 内容 | 现在的处理 |
 |---|---|---|
 | `MaterialColorPropertyList` | Binary → packed（阵列，每笔有 `MaterialName`／`RendererName`／`Property`／`Color`） | 颜色已经上清单（alice 284 列） |
-| `MaterialTexturePropertyList` | Binary | **完全没动**，连读都没读（测试只断言它原样保留） |
+| `MaterialTexturePropertyList` | Binary | **开卡时早就读了而且套用了**（见下） |
+
+> **更正（同日，写完上表后查到）**：我原本写「完全没动，连读都没读」，**错了**。
+> `card.rs` 已经把 `MaterialTexturePropertyList` 对着 **`TextureDictionary`** 解成
+> `CardInfo.me_tex`，键是 `(object_type, coordinate, slot, material, property)`，
+> 而且那些 PNG 就是执行时材质真正取样的东西（`SetTexture`，不是 create-RT 的来源）；
+> 另有 `me_color`／`me_shader`／`me_renderer_on/off`／`MaterialCopyList` 一起解。
+> 2026-10-10 那轮还把字典改成 borrowed parser（`Docs/APPEARANCE_SELECTORS_FIX_20261010.md` R70／R75／R76，
+> 测试 `borrowed_material_texture_dictionary_keeps_bindings_and_duplicate_ids`）。
+> **所以这批的落差只在「写」与「界面」**：属性清单没把贴图这一类列出来、没有设定／清除的路径。
+> 教训同一条：**说某件事「没做」之前先 grep 全库**，我差点把一个做好的读取路径重做一遍。
 
 - 写回路径：`plugins.<身分>.a1.MaterialTexturePropertyList`（packed），**和颜色那条同一个 `packed` 机制**，
   所以 `plugins.rs` 的 `replace()` 走 `packed` 分支就能写，不需要新的编码路径。
-- **两个未知，要先量不要猜**：(1) 每笔 texture property 里是直接放 PNG bytes，还是放一个指向
-  **贴图字典**的整数 ID（MaterialEditor 的设计是后者，但**没有在我们的卡上验过**）；
-  (2) 若是字典，字典在同一个 map 的哪个键。
-- **怎么定**：读一张真有贴图覆写的卡，把该区段的 map 键名与每个值的型别／bytes 印出来即可
-  （只读，不改）。这要在 `plugins.rs` 那侧加一个只读的 dump，**那是 f-yvonne 的档案**——
-  所以要嘛请它顺手印一次，要嘛我另开一个只读的 bin，不进它的档。
-  alice 只有颜色覆写、没有贴图覆写，所以**连这张卡都量不到**，得先找一张有贴图覆写的卡。
+- **原本列的两个未知已经由我们自己的程式回答**：每笔 texture property **指向 `TextureDictionary` 的整数 ID**
+  （`card.rs:890` 解字典、`me_tex` 存解好的结果），字典就在同一个资料 map 的 `TextureDictionary` 键。
+- **所以写回要做三件**：把 PNG bytes 加进 `TextureDictionary`（相同内容要重用既有 ID，别每次新增一笔——
+  那个测试的名字就叫 `…keeps_bindings_and_duplicate_ids`）、把该笔 property 指到那个 ID、
+  清除时把 property 移掉并回收不再被引用的字典条目。
+- **还需要的是一张真有贴图覆写的卡**来做端到端对照：alice 只有颜色覆写。这不需要机器，也不需要 `may-build`。
 
 **KCOX（`KoiClothesOverlayX`）**：alice 有 3 笔，走访只各找到**一个 bool**，路径长成
 「`進階設定（Overlays）／1／進階設定（<槽名>）／2`」，槽名是 `ct_bra`／`InnerMask`／`BodyMask`。
