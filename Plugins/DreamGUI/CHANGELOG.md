@@ -404,6 +404,18 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
   it, the owner that outlives it, or the root it is held by. The check's rule also learned that a star inside someone
   else's template argument does not make the member a pointer. Nothing changed in what any of them does.
 
+- **The stored-pointer check reads the `.cpp` files too, and is now an error.** A type declared inside a function
+  body is read only when that function hands an instance of it to another thread (a render command, an async task):
+  such a type cannot be named anywhere else, so an instance of it lives in the call that made it, and `ParallelFor`
+  does not change that because it joins before the call returns. Of the 514 members a first `.cpp` pass reported,
+  511 were exactly that per-call working data; the five that were not now say who guarantees them -- the sprite
+  atlas's two texture resources, which a render command reads after the copy ahead of it (a `UTexture` releases its
+  resource through a later command), the mesh proxy's editor hit-proxy material and the render-target geometry
+  source's surface material, neither of which has a counted or weak form, and the details panel's play-world
+  switch -- each saying who guarantees it and when that would stop being true. The 36 places where a lambda
+  captures one of those local structs by reference are a different hazard, named in [Contributing]
+  (Docs/contributing/index.md): what dangles there is the struct, not the member, so this check says nothing
+  about them. Nothing changed in what any of them does.
 - **A static check names every stored pointer that is only an address.** `static_checks.py` has a
   `stored-raw-pointer` rule: a member holding a `UObject` or an RHI resource as a raw pointer, where an address cannot
   say the thing has gone and one freed and handed out again compares equal. A member kept beside a count of objects

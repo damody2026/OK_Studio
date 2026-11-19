@@ -433,6 +433,7 @@ public:
 
 private:
 	/** The component's material instance, as its render proxy: see the constructor. */
+	// static-checks: allow(stored-raw-pointer) FMaterialRenderProxy has no counted or weak form; guaranteed by the material instance, which the component holds past this proxy (see the constructor).
 	FMaterialRenderProxy* SurfaceMaterialProxy = nullptr;
 	bool bHasRenderTarget = false;
 	EDreamUIRenderTargetGeometryMode GeometryMode = EDreamUIRenderTargetGeometryMode::Plane;

@@ -31,11 +31,10 @@ Rules (--list-rules prints them with their reasons):
                          address cannot say the thing has gone, and one freed and handed out again
                          compares equal. A member kept beside a count of objects gone (DreamUIGone) is
                          taken as guarded. Function parameters and the locals of inline bodies are not
-                         members and are not read. Docs/contributing has the call-site shapes.
-                         KNOWN GAP: headers only. The same code scanned with .cpp as well reports
-                         about 531 more members -- structs declared inside a .cpp, 459 of them in the
-                         test module (12 sampled, all real) -- and that batch has not been done. A
-                         clean run of this rule does not mean the plugin stores no raw pointers
+                         members and are not read. Headers and .cpp files, but a type declared inside
+                         a function body is read only when that function hands an instance of it to
+                         another thread: its type cannot be named elsewhere, so an instance lives in
+                         that call. Docs/contributing has the call-site shapes
   Words and files:
     plan-label           planning vocabulary in comments and string literals (every file of the test
                          module; the other modules' files this branch touched). Identifiers are
@@ -941,20 +940,55 @@ def member_text(code, a, b):
     return ''.join(out)
 
 
+HANDS_OFF_THE_CALL = re.compile(r'\b(?:ENQUEUE_RENDER_COMMAND|AsyncTask|TGraphTask|FFunctionGraphTask'
+                                r'|UE::Tasks::Launch)\b')
+
+
+def declared_in_a_call(code, at):
+    """The text of the function body a type is declared inside, or None when it is declared at file scope.
+
+    A struct declared inside a function body is per-call working data: its type cannot be named anywhere else,
+    so an instance of it lives in that call, and the call is what keeps whatever it points at. ParallelFor does
+    not change that -- it joins before the call returns.
+    """
+    stack = []
+    for i, ch in enumerate(code[:at]):
+        if ch == '{':
+            stack.append((i, 'type' if TYPE_SCOPE.search(code[:i]) else 'code'))
+        elif ch == '}' and stack:
+            stack.pop()
+    calls = [i for i, kind in stack if kind == 'code']
+    if not calls:
+        return None
+    start = calls[0]
+    depth, end = 0, len(code)
+    for i in range(start, len(code)):
+        if code[i] == '{':
+            depth += 1
+        elif code[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    return code[start:end]
+
+
 def check_stored_pointers(root, findings, want):
     """A stored pointer that is an address and nothing else: see Docs/contributing (stored pointers).
 
-    Headers only, which is a known gap and not a judgement: a struct declared inside a .cpp is not read at
-    all. Scanning .cpp as well reports about 531 further members (459 in the test module; 12 sampled, every
-    one a real member), a batch deliberately left for its own pass -- stacking it on top of an unbuilt
-    change makes a failure impossible to attribute. So a clean run here says the headers are clean, not
-    that the plugin keeps no stored raw pointers.
+    Headers and .cpp files, but a type declared inside a function body is read only when that function hands an
+    instance of it to another thread (a render command, an async task): see declared_in_a_call. A lambda that
+    captures such an instance by reference is a different hazard -- the struct itself dangles, and naming one of
+    its members weakly would not fix that.
     """
     if 'stored-raw-pointer' not in want:
         return
-    for sf in [sourcescan.load(root, p) for p in sourcescan.source_files(root, 'Source', ('.h',))]:
+    for sf in [sourcescan.load(root, p) for p in sourcescan.source_files(root, 'Source', ('.h', '.cpp'))]:
         code = sf.code
         for a, b, cname, _base in class_ranges(code):
+            enclosing_call = declared_in_a_call(code, a)
+            if enclosing_call is not None and not HANDS_OFF_THE_CALL.search(enclosing_call):
+                continue
             flat = member_text(code, a, b)
             guarded = re.search(r'\b[A-Za-z_][A-Za-z_0-9]*Gone\b', flat) is not None
             for m in MEMBER_DECL.finditer(flat):

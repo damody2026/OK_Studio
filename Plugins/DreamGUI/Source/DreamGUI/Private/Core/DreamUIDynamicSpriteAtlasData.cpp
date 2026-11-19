@@ -378,7 +378,9 @@ void FDreamUIDynamicSpriteAtlasData::CopySpriteTextureToAtlas(UDreamUISpriteData
 
 	struct FUpdateTextureRegionsData
 	{
+		// static-checks: allow(stored-raw-pointer) Guaranteed by render-thread order: the resource is read on the render thread, and a UTexture releases its resource through a render command enqueued after this one, so the copy ahead of it still has it. This stops holding if a texture is ever made to disappear without going through its own release enqueue -- a resource freed on the game thread, say.
 		FTexture2DResource* SpriteTextureResource;
+		// static-checks: allow(stored-raw-pointer) Guaranteed by render-thread order, as SpriteTextureResource above.
 		FTexture2DResource* AtlasTextureResource;
 		FBox2D SrcRegionBox;
 		FBox2D DstRegionBox;

@@ -109,12 +109,23 @@ So in a struct whose members become weak, read every `->` on them before trustin
 `if (UWorld* World = Ctx.World.Get())` over leaning on `operator->`. Nothing else has to change: a line that only
 calls through the pointer is already correct.
 
-**What the check does not see.** `stored-raw-pointer` reads headers only, so a struct declared inside a `.cpp` is not
-read at all. The same code scanned with `.cpp` as well reports about 531 further members -- 459 of them in the test
-module, the rest spread over the runtime, editor, input, extensions and tween modules; of twelve sampled, every one was
-a real stored member rather than a false positive. That batch has not been done, and is deliberately a pass of its own:
-stacking it on a change that has not been built yet would make any failure impossible to attribute. **A clean run of
-this rule therefore means the headers are clean, not that the plugin stores no raw pointers.**
+**What counts as stored.** `stored-raw-pointer` reads headers and `.cpp` files, but a type declared inside a function
+body is read only when that function hands an instance of it to another thread -- a render command, an async task. Such
+a type cannot be named anywhere else, so an instance of it lives in the call that made it, and the call is what keeps
+whatever it points at; `ParallelFor` does not change that, because it joins before the call returns. Of the 514 members
+a first `.cpp` pass reported, 511 were exactly this per-call working data.
+
+**What this check does not and cannot catch: 36 captured lifetimes.** A lambda that captures one of those local structs
+**by reference** -- bound to a delegate, or handed to `ParallelFor` -- is a different hazard, and the `.cpp` pass found
+36 of them. What dangles there is the struct itself, not the member: naming one of its pointers weakly would not fix
+anything, because the weak pointer would be read through a reference to a frame that has gone. That is a question about
+the lifetime of a capture, not about what a stored pointer may be, so it needs a check of its own and has not been
+done. **A clean `stored-raw-pointer` run says nothing about those 36.**
+
+**An allow says who guarantees it, and when that stops being true.** A reason that names an owner is only half of it:
+the half that rots is the condition. Write both, as the sprite atlas's does -- a `UTexture` releases its resource
+through a render command enqueued after this one, *so a texture made to disappear without going through its own release
+enqueue would break this*. A guarantee whose end you cannot state is one you have not found.
 
 ## What to update with a change
 

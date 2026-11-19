@@ -160,14 +160,15 @@ the suite to its own conventions.
 | `rig-needs-bindtest` | error | An unbound driver rig reports nothing to the test; its steps can fail without the test failing |
 | `plan-label` | error | Planning labels do not belong in the code, the test names or the comments |
 | `eol` | warn | Mixed line endings make every later diff of the file noisy |
-| `stored-raw-pointer` | warn | A member holding a `UObject` or an RHI resource as a raw pointer: an address cannot say the thing has gone, and one freed and handed out again compares equal. A member kept beside a count of objects gone (`DreamUIGone`) is taken as guarded; parameters and the locals of inline bodies are not members. [What a stored pointer may be](../contributing/index.md#changing-what-a-stored-pointer-is) |
+| `stored-raw-pointer` | error | A member holding a `UObject` or an RHI resource as a raw pointer: an address cannot say the thing has gone, and one freed and handed out again compares equal. A member kept beside a count of objects gone (`DreamUIGone`) is taken as guarded; parameters and the locals of inline bodies are not members, and a type declared inside a function body is read only when that function hands an instance of it to another thread. [What a stored pointer may be](../contributing/index.md#changing-what-a-stored-pointer-is) |
 | `layering` | error | A lower layer that includes a higher one cannot be split from it |
 | `layering-stale` | error | The list of edges still to cut only shrinks: an edge that is gone comes off it |
 | `engine-private-path` | error | The engine's `Private` and `Internal` headers change between versions without notice; the plugin reads the engine through its public headers |
 | `preset-names` | error | A screen changes its look by naming another preset, so every preset in `DUI/Presets/` declares the resources and styles `Default.dui` does |
 
 A finding that is right to keep is allowed where it stands (on the line or the line above), or in
-`static-checks-allow.json` with a path glob, an optional regular expression and a reason:
+`static-checks-allow.json` with a path glob, an optional regular expression and a reason. The reason names who
+guarantees it **and when that stops being true** -- a guarantee whose end you cannot state is one you have not found:
 
 ```cpp
 HitContainer.HitResult.Widget = Target;   // static-checks: allow(hand-fed-hit) this test is about the event system's handling of a given hit
