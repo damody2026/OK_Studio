@@ -780,7 +780,11 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
 
 - **#3「目前是…」**：原因是說明讀的是外觀目錄的 `current`。那是讀目錄時卡片上存的值，套用之後不會重讀。▶ 標記讀的則是剛套上的（`AppearanceSelectedKeys`）。資料端的 `current_card_stale` 是同一類問題。現在說明以剛套上的為準，並附上套用前的值。實測：眉毛套用「類型 2」後顯示「目前是「タイプ３」（剛套用，第 1 頁，名稱前標 ▶；套用前是「タイプ１０」）」，和 ▶ 一致（`68036-0003.png`）。格子上的「類型 N」是編號，「タイプ…」是遊戲自己的名字，兩者差 1 是原作命名。
 - **#6b 開卡失敗**：卡片資料夾只放三張卡（`crowd_C001`、`kks_broken_test`、`kks_haruno_chika`）。先開 Alice，再開壞卡：上方紅字「讀不到這張角色卡：kks_broken_test.png／invalid face png length」，卡片牆那格標「開不了」；**名牌、卡片牆的 ▸、模型三者都還是 Alice**，一致（`68036-0004.png`）。壞卡在讀卡階段就失敗，所以選取沒有換，舊模型留著是對的。「卡讀得到但 3D 載入失敗、退掉舊模型」那一支，這三張卡觸發不到，沿用前面「開卡失敗時的畫面」一節的驗證。
-- **e-cardload 回報的 `press` 假成功**：從「人物卡」分頁按「進入1對1互動場景」時，如果 3D 還沒載完，或這張卡的編輯還沒套用（套用要在「編輯」分頁），`AOKInteractionMode::EnterReader` 會直接返回，什麼都不說，`press` 卻回 `pressed`。現在每種拒絕都在畫面上講原因：「沒有進入 1 對 1：…」，會出現在 `notice=` 和 log 的 `OK enter one-on-one refused`。另外，`press`／`set` 碰到當下不在畫面上或停用的控制項，回 `not pressed: … is not shown now／disabled`，不再回 `pressed`；`controls` 列表在這種控制項後面加 `  [not shown]`／`  [disabled]`。實測：3D 載完後從「人物卡」分頁按，正常進入 1 對 1。
+- **e-cardload 回報的 `press` 假成功（2026-11-19 10:00 更正）**：
+  - **可見性**：`81f4ae9b8` 只看控制項自己的 `GetShown()`，抓不到收起的抽屜和別的分頁，因為隱藏是在上層做的。e-cardload 重驗時整份 `controls` 沒有一個 `[not shown]`。現在改看 `UOKDreamControl::IsOnScreen()`：自己和每一層父元件都要顯示、而且在階層裡啟用。實測（stage `EFork1119q`）：166 個控制項中 97 個標 `[not shown]`，都是收起的「動作與表情」「左右手動作」抽屜裡的；對其中一個 `press`／`set` 回 `not pressed: … is not shown now` 加 `failed`。停用的那一支 `81f4ae9b8` 已經有效（e-cardload 驗過）。
+  - **進 1 對 1**：e-cardload 更正了原本的病例。這顆按鈕沒有分頁條件；卡片還在載入時按，會記下來、等 3D 載完才進（`bEnterInteractionAfterLoad`），也算成功。它原本按了沒反應，是 `81f4ae9b8` 之前的 build。現在 `EnterReader` 每種拒絕都講原因。原本「已經在 1 對 1 裡」只看 `InteractionWidget`，從讀卡器進的 1 對 1 用的是另一個 controller，所以一直沒擋到；現在改看場景裡有沒有還在進行的 `AOKInteractionMode`。實測：進 1 對 1 後再按一次，`notice=沒有進入 1 對 1：已經在 1 對 1 裡。`，log 有 `OK enter one-on-one refused`。
+  - **語義**：`press` 回 `pressed` 表示按鈕確實被按到了。按鈕背後的動作有沒有成立，看 `notice=`（拒絕會寫在那裡）或該動作自己的 log；`press` 不會替每顆按鈕判斷結果。
+  - 驗這類 UI 改動要建 `OpenKoikatsuEditor`：`reader_launch` 跑的是 `UnrealEditor.exe`（e-cardload 踩到）。
 - 整趟 log 0 個 Error。
 
 ### PageFault 防護的限制：同一張 GPU 上有第二個 Unreal 遊戲時擋不住（e-cardload 2026-11-19）

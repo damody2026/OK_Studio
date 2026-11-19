@@ -67,6 +67,9 @@ public:
 	bool SetValue(const FString& Value,FString* OutNote=nullptr);
 	// The UMG control behind it takes input (a header always does): press/set say "disabled" instead of doing nothing.
 	bool IsOperable() const;
+	// On screen now: itself and every parent shown and active. GetShown is only its own flag, and a control on a
+	// hidden tab or in a folded drawer keeps it (e-cardload 2026-11-19: no control was ever marked [not shown]).
+	bool IsOnScreen() const;
 	const FString& GetShownText() const { return ShownText; }
 
 protected:

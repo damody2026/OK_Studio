@@ -119,6 +119,8 @@ AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Sour
     // with nothing said, and a script took the press for an entry (e-cardload 2026-11-19).
     auto Refuse=[Source](const TCHAR* Why){Source->ScreenNote(92,8.f,FColor::Yellow,FString(TEXT("沒有進入 1 對 1："))+Why);UE_LOG(LogTemp,Display,TEXT("OK enter one-on-one refused: %s"),Why);return nullptr;};
     if(Source->InteractionWidget)return Refuse(TEXT("已經在 1 對 1 裡。"));
+    // The reader's one-on-one runs on a controller of its own (Shared below), so its InteractionWidget stays empty here.
+    for(TActorIterator<AOKInteractionMode> It(Source->GetWorld());It;++It)if(!It->Finished)return Refuse(TEXT("已經在 1 對 1 裡。"));
     if(Source->bLoadInFlight)return Refuse(TEXT("角色還在載入，載完再按一次。"));
     if(Source->Selected.Sex!=1)return Refuse(TEXT("選的是男性角色，1 對 1 的女方要選女性角色卡。"));
     if(!IsValid(Source->PreviewActor)||!Source->PreviewActor->Session.IsOpen()){

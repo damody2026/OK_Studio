@@ -264,6 +264,12 @@ void UOKDreamControl::HandleClicked()
 static TAutoConsoleVariable<int32> CVarReaderPictures(TEXT("ok.ReaderPictures"),1,TEXT("Pictures in the reader's DreamGUI screen (picker tiles, mirrored images, card list): 1 drawn (default), 0 none (for comparison runs)."));
 bool OKReaderPicturesShown(){return CVarReaderPictures.GetValueOnGameThread()!=0;}
 
+bool UOKDreamControl::IsOnScreen() const
+{
+	if(!GetWidgetActiveInHierarchy())return false;
+	for(const UDreamWidget* At=this;At;At=At->GetParent())if(!At->GetShown())return false;
+	return true;
+}
 bool UOKDreamControl::IsOperable() const
 {
 	UWidget* S=Source.Get();
@@ -272,7 +278,7 @@ bool UOKDreamControl::IsOperable() const
 }
 bool UOKDreamControl::Press()
 {
-	if(!GetShown())return false;
+	if(!IsOnScreen())return false;
 	if(Header){HandleHeader();return true;}
 	if(auto* U=Cast<UCheckBox>(Source.Get()))
 	{
@@ -285,7 +291,7 @@ bool UOKDreamControl::Press()
 bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
 {
 	auto Fail=[OutNote](const FString& Why){if(OutNote)*OutNote=Why;return false;};
-	if(!GetShown())return Fail(TEXT("not shown"));
+	if(!IsOnScreen())return Fail(TEXT("not shown now"));
 	UWidget* S=Source.Get();
 	if(!S||!S->GetIsEnabled())return Fail(TEXT("no enabled control behind it"));
 	if(auto* U=Cast<USlider>(S))
@@ -1805,9 +1811,9 @@ bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutN
 	}
 	else if(Found.Num()>1){if(OutNote)*OutNote=FString::Printf(TEXT("ambiguous: %d controls named %s; give the path or #N:"),Found.Num(),*Text)+List(Found);return false;}
 	// Not shown or disabled: say so instead of "pressed" (Press would do nothing and the caller would take it as done).
-	if(!All[Found[Pick]]->GetShown()||!All[Found[Pick]]->IsOperable())
+	if(!All[Found[Pick]]->IsOnScreen()||!All[Found[Pick]]->IsOperable())
 	{
-		if(OutNote)*OutNote=FString::Printf(TEXT("not pressed: %s is %s"),*Paths[Found[Pick]],All[Found[Pick]]->GetShown()?TEXT("disabled"):TEXT("not shown now"));
+		if(OutNote)*OutNote=FString::Printf(TEXT("not pressed: %s is %s"),*Paths[Found[Pick]],All[Found[Pick]]->IsOnScreen()?TEXT("disabled"):TEXT("not shown now"));
 		return false;
 	}
 	if(OutNote)
@@ -1838,7 +1844,7 @@ void UOKReaderScreen::ListControls(FOutputDevice& Out,const FString& Filter) con
 	// Every control the pages made, shown or not: one not on screen now (another tab, a folded drawer) or disabled is
 	// marked after two spaces, so a script can tell before pressing it (press/set refuse those).
 	for(int32 I=0;I<Paths.Num();++I)if(Filter.IsEmpty()||Paths[I].Contains(Filter))
-		Out.Log(Paths[I]+(!All[I]->GetShown()?TEXT("  [not shown]"):!All[I]->IsOperable()?TEXT("  [disabled]"):TEXT("")));
+		Out.Log(Paths[I]+(!All[I]->IsOnScreen()?TEXT("  [not shown]"):!All[I]->IsOperable()?TEXT("  [disabled]"):TEXT("")));
 }
 
 float UOKReaderScreen::UiScaleOf(const UOKCharacterController* G)
