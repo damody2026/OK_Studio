@@ -1,5 +1,12 @@
 #include "KKRuntimeMaterial.h"
 #include "UObject/StrongObjectPtr.h"
+#include "UObject/ObjectKey.h"
+#include "UObject/UObjectIterator.h"
+#include "Containers/Ticker.h"
+#include "Components/PrimitiveComponent.h"
+#include "GameFramework/Actor.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "MaterialTypes.h"
 #include "KKRuntimeNativeSession.h"
 #include "KKRuntimePoseBankTypes.h"
 #include "Engine/Texture2D.h"
@@ -245,10 +252,124 @@ static void OKLogKeptTextureLife(const TCHAR* Event, const UTexture2D* Tex, int6
  UE_LOG(LogTemp,Display,TEXT("OK kept texture life: %s name=%s %dx%d bytes=%lld frame=%u"),
   Event,*Tex->GetFName().ToString(),Tex->GetSizeX(),Tex->GetSizeY(),Bytes,GFrameNumber);
 }
+// Who was this texture handed to? Recorded at the SetTextureParameterValue that binds it (see
+// OKRecordRuntimeTextureHandoff below), read back at the moment the kept cache lets the texture go. Only populated
+// while ok.LogKeptTextureLife is on, so it costs one cvar read when off.
+struct FOKTextureHandoff{TWeakObjectPtr<UMaterialInstanceDynamic> Material;FName Parameter;uint32 Frame=0;};
+TMap<FObjectKey,TArray<FOKTextureHandoff>> RuntimeTextureHandoffs;
+// Which live primitive component, if any, still has that material in a slot? Built once per sweep so the per-texture
+// lookups below cost a map find instead of another iteration. This is the column that separates the two paths: an
+// ordinary part is DestroyComponent'd at a card switch (its proxy goes with it), while BodyMesh/HeadMesh are
+// persistent and only have their sections cleared, so a material left in one of THEIR slots keeps being drawn.
+// "<no live component>" therefore means the material is not in any component's slot any more.
+TMap<FObjectKey,FString> MidOwners;uint32 MidOwnersFrame=0xFFFFFFFFu;
+// Frame-cached: the sweep lets go of over a thousand textures in one frame and the over-budget path lets go at any
+// time, so the index is rebuilt at most once per frame, by whoever needs it first. Without the cache the first
+// version of this would have iterated every primitive component once per released texture.
+void OKBuildMidOwnerIndex()
+{
+ if(CVarOKLogKeptTextureLife.GetValueOnAnyThread()==0){MidOwners.Reset();MidOwnersFrame=0xFFFFFFFFu;return;}
+ if(MidOwnersFrame==GFrameNumber)return;
+ MidOwnersFrame=GFrameNumber;
+ MidOwners.Reset();
+ for(TObjectIterator<UPrimitiveComponent> It;It;++It)
+ {
+  UPrimitiveComponent* C=*It;
+  if(!C||!IsValid(C))continue;
+  const int32 Num=C->GetNumMaterials();
+  for(int32 Slot=0;Slot<Num;++Slot)
+   if(const UMaterialInterface* M=C->GetMaterial(Slot))
+    MidOwners.Add(FObjectKey(M),FString::Printf(TEXT("%s/%s[%d]"),C->GetOwner()?*C->GetOwner()->GetName():TEXT("noactor"),*C->GetName(),Slot));
+ }
+}
+// Every texture parameter of a material that is still alive when one of its textures is let go. The reason this is
+// worth printing: the handoff log measured that no (mid, param) pair is ever given a second texture on this path, so
+// a parameter never changes after the frame it is set -- which means an old card's material, for as long as it is
+// alive, points at the old card's textures in EVERY slot, not just the one we happened to look up.
+// Deduped per frame, since one sweep looks up thousands of textures across far fewer materials.
+TSet<FObjectKey> ParamDumpDone;uint32 ParamDumpFrame=0xFFFFFFFFu;
+void OKDumpMidTextureParams(const UMaterialInstanceDynamic* M)
+{
+ if(!M)return;
+ if(ParamDumpFrame!=GFrameNumber){ParamDumpFrame=GFrameNumber;ParamDumpDone.Reset();}
+ const FObjectKey Key(M);
+ if(ParamDumpDone.Contains(Key))return;
+ ParamDumpDone.Add(Key);
+ TArray<FMaterialParameterInfo> Infos;TArray<FGuid> Ids;
+ M->GetAllTextureParameterInfo(Infos,Ids);
+ FString Line;
+ for(const FMaterialParameterInfo& Info:Infos)
+ {
+  UTexture* Value=nullptr;
+  if(const_cast<UMaterialInstanceDynamic*>(M)->GetTextureParameterValue(Info,Value))
+   Line+=FString::Printf(TEXT(" %s=%s"),*Info.Name.ToString(),Value?*Value->GetFName().ToString():TEXT("null"));
+ }
+ UE_LOG(LogTemp,Display,TEXT("OK mid params: mid=%s params=%d%s frame=%u"),*M->GetFName().ToString(),Infos.Num(),*Line,GFrameNumber);
+}
+// Printed where the strong reference is dropped. Note what "ALIVE" does and does not mean: the UObject still exists
+// at that moment, but a UObject that is unreachable and merely not collected yet also reads ALIVE. That is why the
+// owner column matters -- ALIVE plus a live component slot is a real reference; ALIVE with no slot is a corpse.
+void OKReportRuntimeTextureHandoff(const UTexture2D* Tex)
+{
+ if(CVarOKLogKeptTextureLife.GetValueOnAnyThread()==0||!Tex)return;
+ const FObjectKey Key(Tex);
+ OKBuildMidOwnerIndex();
+ const TArray<FOKTextureHandoff>* List=RuntimeTextureHandoffs.Find(Key);
+ if(!List||List->Num()==0){UE_LOG(LogTemp,Display,TEXT("OK handoff lookup: tex=%s handoffs=0 frame=%u"),*Tex->GetFName().ToString(),GFrameNumber);RuntimeTextureHandoffs.Remove(Key);return;}
+ for(const FOKTextureHandoff& H:*List)
+ {
+  const UMaterialInstanceDynamic* M=H.Material.Get();
+  if(!M){UE_LOG(LogTemp,Display,TEXT("OK handoff lookup: tex=%s mid=GONE param=%s bound_frame=%u frame=%u"),*Tex->GetFName().ToString(),*H.Parameter.ToString(),H.Frame,GFrameNumber);continue;}
+  UTexture* Now=nullptr;const bool bGot=const_cast<UMaterialInstanceDynamic*>(M)->GetTextureParameterValue(FMaterialParameterInfo(H.Parameter),Now);
+  const FString* Owner=MidOwners.Find(FObjectKey(M));
+  UE_LOG(LogTemp,Display,TEXT("OK handoff lookup: tex=%s mid=%s ALIVE param=%s now=%s same=%d owner=%s outer=%s bound_frame=%u frame=%u"),
+   *Tex->GetFName().ToString(),*M->GetFName().ToString(),*H.Parameter.ToString(),
+   bGot?(Now?*Now->GetFName().ToString():TEXT("null")):TEXT("<absent>"),Now==static_cast<const UTexture*>(Tex)?1:0,
+   Owner?**Owner:TEXT("<no live component>"),M->GetOuter()?*M->GetOuter()->GetName():TEXT("none"),H.Frame,GFrameNumber);
+  OKDumpMidTextureParams(M);
+ }
+ RuntimeTextureHandoffs.Remove(Key);
+}
+// Was the memory freed by GC, or by someone releasing the resource explicitly while the UObject lived on? The
+// exclusion of "a live material still points at it" rests on the first being true, so it is measured, not assumed:
+// watch each texture after its strong reference goes and print the frame it actually becomes unreachable. Compare
+// that against the frame D3D12 reports the allocation released -- if the object outlives the release, it was not GC.
+struct FOKLetGoWatch{TWeakObjectPtr<UTexture2D> Texture;FString Name;uint32 Frame=0;};
+TArray<FOKLetGoWatch> LetGoWatch;
+void OKPollLetGoWatch();
+// Polled every frame, not only during loads. The first version polled from KeepRecentRuntimeTexture and the sweep,
+// which both cluster around a card load, so thousands of frames could pass between two polls and "after=" was only
+// an upper bound -- too coarse to tell whether the allocation was released before or after the object became
+// unreachable, which is exactly what says whether GC did the releasing.
+FTSTicker::FDelegateHandle LetGoTicker;
+void OKEnsureLetGoTicker()
+{
+ if(LetGoTicker.IsValid())return;
+ LetGoTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)->bool{OKPollLetGoWatch();return true;}),0.f);
+}
+void OKWatchLetGo(const UTexture2D* Tex)
+{
+ if(CVarOKLogKeptTextureLife.GetValueOnAnyThread()==0||!Tex)return;
+ OKEnsureLetGoTicker();
+ LetGoWatch.Add(FOKLetGoWatch{TWeakObjectPtr<UTexture2D>(const_cast<UTexture2D*>(Tex)),Tex->GetFName().ToString(),GFrameNumber});
+}
+void OKPollLetGoWatch()
+{
+ if(LetGoWatch.Num()==0)return;
+ if(CVarOKLogKeptTextureLife.GetValueOnAnyThread()==0){LetGoWatch.Reset();return;}
+ for(int32 I=LetGoWatch.Num()-1;I>=0;--I)
+  if(!LetGoWatch[I].Texture.IsValid())
+  {
+   UE_LOG(LogTemp,Display,TEXT("OK let-go watch: name=%s unreachable_at_frame=%u let_go_frame=%u after=%u"),
+    *LetGoWatch[I].Name,GFrameNumber,LetGoWatch[I].Frame,GFrameNumber-LetGoWatch[I].Frame);
+   LetGoWatch.RemoveAt(I);
+  }
+}
 struct FRecentRuntimeTexture{TStrongObjectPtr<UTexture2D> Texture;int64 Bytes=0;bool bTouched=true;};
 TArray<FRecentRuntimeTexture> RecentRuntimeTextures;int64 RecentRuntimeTextureBytes=0;
 void KeepRecentRuntimeTexture(UTexture2D* Tex){
  if(!Tex)return;
+ OKPollLetGoWatch();
  const int32 Index=RecentRuntimeTextures.IndexOfByPredicate([Tex](const FRecentRuntimeTexture& E){return E.Texture.Get()==Tex;});
  if(Index!=INDEX_NONE){auto Entry=MoveTemp(RecentRuntimeTextures[Index]);Entry.bTouched=true;RecentRuntimeTextures.RemoveAt(Index);RecentRuntimeTextures.Add(MoveTemp(Entry));return;}
  const int64 Bytes=int64(Tex->GetSizeX())*Tex->GetSizeY()*4*4/3;
@@ -256,6 +377,8 @@ void KeepRecentRuntimeTexture(UTexture2D* Tex){
  OKLogKeptTextureLife(TEXT("kept"),Tex,Bytes);
  while(RecentRuntimeTextureBytes>512ll*1024*1024&&RecentRuntimeTextures.Num()>1){
   OKLogKeptTextureLife(TEXT("let go(over budget)"),RecentRuntimeTextures[0].Texture.Get(),RecentRuntimeTextures[0].Bytes);
+  OKReportRuntimeTextureHandoff(RecentRuntimeTextures[0].Texture.Get());
+  OKWatchLetGo(RecentRuntimeTextures[0].Texture.Get());
   RecentRuntimeTextureBytes-=RecentRuntimeTextures[0].Bytes;RecentRuntimeTextures.RemoveAt(0);}
 }
 FKKRuntimeTextureCacheStats RuntimeTextureStats;
@@ -275,17 +398,29 @@ FKKRuntimeTextureKeepStats OKRuntimeTextureKeepStats()
  for(const FRecentRuntimeTexture& Entry:RecentRuntimeTextures)if(!Entry.bTouched){++Stats.StaleEntries;Stats.StaleBytes+=Entry.Bytes;}
  return Stats;
 }
+void OKRecordRuntimeTextureHandoff(const UTexture2D* Texture,const UMaterialInstanceDynamic* Material,FName Parameter)
+{
+ if(CVarOKLogKeptTextureLife.GetValueOnAnyThread()==0||!Texture||!Material)return;
+ check(IsInGameThread());
+ RuntimeTextureHandoffs.FindOrAdd(FObjectKey(Texture)).Add(FOKTextureHandoff{TWeakObjectPtr<UMaterialInstanceDynamic>(const_cast<UMaterialInstanceDynamic*>(Material)),Parameter,GFrameNumber});
+ UE_LOG(LogTemp,Display,TEXT("OK handoff: tex=%s -> mid=%s param=%s frame=%u"),
+  *Texture->GetFName().ToString(),*Material->GetFName().ToString(),*Parameter.ToString(),GFrameNumber);
+}
 void OKMarkKeptRuntimeTexturesStale()
 {check(IsInGameThread());for(FRecentRuntimeTexture& Entry:RecentRuntimeTextures)Entry.bTouched=false;}
 int32 OKReleaseStaleKeptRuntimeTextures(int64* OutBytes)
 {
  check(IsInGameThread());int32 Released=0;int64 Bytes=0;
+ OKPollLetGoWatch();
+ OKBuildMidOwnerIndex();
  for(int32 Index=RecentRuntimeTextures.Num()-1;Index>=0;--Index)
  {
   const FRecentRuntimeTexture& Entry=RecentRuntimeTextures[Index];
   if(Entry.bTouched&&Entry.Texture.IsValid())continue;
   // The strong reference goes here: after this the texture is collectable, and the next GC frees its memory.
   OKLogKeptTextureLife(TEXT("let go(stale on card switch)"),Entry.Texture.Get(),Entry.Bytes);
+  OKReportRuntimeTextureHandoff(Entry.Texture.Get());
+  OKWatchLetGo(Entry.Texture.Get());
   Bytes+=Entry.Bytes;RecentRuntimeTextureBytes-=Entry.Bytes;RecentRuntimeTextures.RemoveAt(Index);++Released;
  }
  if(OutBytes)*OutBytes=Bytes;

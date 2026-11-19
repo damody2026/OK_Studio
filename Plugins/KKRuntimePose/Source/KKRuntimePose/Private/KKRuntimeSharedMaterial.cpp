@@ -1,4 +1,5 @@
 #include "KKRuntimeSharedMaterial.h"
+#include "KKRuntimeMaterial.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureCube.h"
 #include "Engine/VolumeTexture.h"
@@ -417,7 +418,7 @@ UMaterialInstanceDynamic* OKCreateRuntimeSharedMaterial(const FKKRuntimeMaterial
  for(const auto& T:Layout->Textures){UTexture* X=nullptr;if(!Parent->GetTextureParameterValue(FMaterialParameterInfo(*T.Name),X)||!X){if(VertexOnly(T.Name)){B.Textures.Remove(*T.Name);continue;}return Fail(TEXT("Shared parent texture/default absent"));}if((T.Dim==2&&!Cast<UTexture2D>(X))||(T.Dim==3&&!Cast<UVolumeTexture>(X))||(T.Dim==4&&!Cast<UTextureCube>(X)))return Fail(TEXT("Shared parent texture dimension differs"));}
  for(const auto& T:B.Textures)if(T.Value>=Textures.Num()||!Textures[T.Value])return Fail(TEXT("Shared material prepared texture absent"));
  auto* M=UMaterialInstanceDynamic::Create(Parent,GetTransientPackage());if(!M)return Fail(TEXT("Runtime material instance allocation failed"));
- for(const auto& V:B.Scalars)M->SetScalarParameterValue(V.Key,V.Value);for(const auto& V:B.Vectors)M->SetVectorParameterValue(V.Key,V.Value);for(const auto& T:B.Textures)M->SetTextureParameterValue(T.Key,Textures[T.Value]);
+ for(const auto& V:B.Scalars)M->SetScalarParameterValue(V.Key,V.Value);for(const auto& V:B.Vectors)M->SetVectorParameterValue(V.Key,V.Value);for(const auto& T:B.Textures){M->SetTextureParameterValue(T.Key,Textures[T.Value]);OKRecordRuntimeTextureHandoff(Textures[T.Value],M,T.Key);}
  // OK_OUTLINE_DUMP=1: each outline instance's width inputs (diagnostic).
  static const bool OutlineDump=!FPlatformMisc::GetEnvironmentVariable(TEXT("OK_OUTLINE_DUMP")).IsEmpty();
  if(Outline&&OutlineDump){FString S;for(const TCHAR* N:{TEXT("__OK_OutlineApprox"),TEXT("_linewidthG"),TEXT("_LineWidthS"),TEXT("__OK_OutlineWidth"),TEXT("__OK_OutlineSkinWidth")}){float X=0;S+=FString::Printf(TEXT(" %s=%s"),N,M->GetScalarParameterValue(FMaterialParameterInfo(N),X)?*FString::SanitizeFloat(X):TEXT("-"));}

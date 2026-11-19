@@ -48,6 +48,12 @@ KKRUNTIMEPOSE_API FKKRuntimeTextureKeepStats OKRuntimeTextureKeepStats();
 KKRUNTIMEPOSE_API void OKMarkKeptRuntimeTexturesStale();
 /** Releases the kept textures nothing has touched since the mark (returns how many, and their bytes). */
 KKRUNTIMEPOSE_API int32 OKReleaseStaleKeptRuntimeTextures(int64* OutBytes=nullptr);
+// Diagnostic (log only, gated by ok.LogKeptTextureLife, default off), for the GPU page fault of 2026-11-19.
+// Records who a card texture was handed to, so that at the moment the kept cache lets the texture go we can ask
+// of every material that ever received it: is that material still here, and what does that parameter point at now?
+// Three answers, three different repairs: still here pointing elsewhere (render-thread copy is stale),
+// still here pointing at this one (the material itself is unreachable), or gone (the holder is not a material).
+KKRUNTIMEPOSE_API void OKRecordRuntimeTextureHandoff(const UTexture2D* Texture,const class UMaterialInstanceDynamic* Material,FName Parameter);
 /** Releases every kept texture. */
 KKRUNTIMEPOSE_API void OKReleaseKeptRuntimeTextures();
 // Low-memory PC (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md): on when the machine has under 48 GB of RAM or under

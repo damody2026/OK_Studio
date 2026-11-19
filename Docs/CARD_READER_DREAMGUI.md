@@ -6036,3 +6036,84 @@ fence 門控一個不是釋放點的地方，擋不到任何東西。**這一趟
    `BodyMesh`／`HeadMesh` 這兩個持久元件上），與 **每幀輪詢的 let-go watch**（把釋放與回收的先後分開）。
 3. 真正要回答的問題已經換了：**不是「誰在 sweep 之後還拿著它」，而是
    「那六個 MID 為什麼到換卡之後還活著、還指著舊貼圖，而它們是誰在畫」。**
+
+# owner／ordering 那一趟：釋放確定是 GC 做的，而故障在釋放之後 244 幀、在 DreamGUI 的 draw 裡
+
+趟次：60 張卡單、`FAULTED after card 50`（`50_apng_C023.png`）、`fault_secs: 387.0`、
+交接 34856 筆、反查 26844 筆、`OK mid params` 11844 行。
+log `Saved\Logs\CardReader\20261119-222817-6c799c21.log`，
+報告 `Saved\Reports\card-reader-dreamgui\handoff-lookup-trip2.txt`、
+breadcrumb `...\breadcrumbs-trip-handoff2.txt`。
+
+## 一、先宣告一件會影響比較的事：這個建置變慢了
+
+故障從上一趟的 **146.8 s／第 15 張**變成 **387.0 s／第 50 張**。量具每趟多印上萬行
+（`OK mid params` 一行就有十幾個參數）。**所以「位置與秒數」在這兩個建置之間不能比**，
+但下面的順序量都是**幀號**，不受這件事影響。
+
+## 二、`ordering`：釋放是 GC 做的，這次是確值不是上界
+
+`Texture2D_2999`（512×512 BGRA，`_overtex1`）：
+
+```
+bound  -> 12 個 MID，frame 48200 / 48468 / 48718 / 49909 / 50139 / 50286
+let go    49061（第一次）與 50748（第二次）
+unreachable          51209   ← 每幀輪詢，確值
+released (allocation) 51214   ← 比不可達晚 5 幀
+released (64 MB heap) 51236   ← 再晚 22 幀
+PageFault             51458   ← 比配置釋放晚 244 幀
+```
+
+**不可達先於釋放 5 幀**，正是 GC → `BeginDestroy` → `ReleaseResource` → fence 刪除那條路的形狀。
+**所以「釋放是 GC 造成的」現在是量到的，不是推測**；上一趟分不出來是因為輪詢只在載入期間，
+改成每幀之後就分開了。
+
+## 三、owner 欄：三分之二的 `ALIVE` 是屍體，三分之一是活元件槽裡的真引用
+
+| | 筆數 |
+|---|---:|
+| `owner=<no live component>`（`ALIVE` 但沒有任何活著的元件材質槽指著它 ⇒ 還沒被收的屍體） | **16121** |
+| `owner=<Actor>/<元件>[槽]`（真引用） | **8557** |
+| `outer=/Engine/Transient` | **24678（全部）** |
+
+活著的那些 owner 長這樣：`KKPreviewActor_70/Skel_0[0]`、`KKPreviewActor_136/Skel_2[0]`、
+`KKPreviewActor_86/Part_14[0]`、`KKPreviewActor_130/SkinOutline_2[0]`——
+**都是當前 actor 的一般部件元件，不是特別落在 `BodyMesh`／`HeadMesh` 上。**
+而 `outer` 100% 是 `/Engine/Transient`，和 `Create(Parent,GetTransientPackage())` 一致：
+**這條路上的 MID 沒有一個是用元件當 Outer 建的**，所以讀卡器自己那七處
+`Create(.., Comp)` 不在這條反查覆蓋的路上（那 4 筆 `same=0` 是它們唯一漏進來的痕跡）。
+
+故障那張的 12 個 MID 裡，**每次放手都有兩個是活元件槽裡的**（49061 時是 `KKPreviewActor_130` 的
+`Skel_2[0]` 與 `SkinOutline_2[0]`，50748 時是 `KKPreviewActor_136` 的那兩個），其餘是屍體。
+**注意這兩個 actor 是不同的卡**——同一張貼圖透過 identity 快取交給了後來那張卡的 MID。
+
+## 四、第 2 欄：舊 MID 的**每一個**槽都還指著舊卡的貼圖
+
+```
+mid=MID_M_ForgeSkin_Flat_72 params=15
+  _MainTex=Texture2D_3159  _overtex1=Texture2D_2999  _overtex2=Texture2D_46
+  _DetailMask=Texture2D_3160  _NormalMap=Texture2D_3161  _NormalMask=Texture2D_2581
+  _liquidmask=Texture2D_2576  _Texture2=Texture2D_370  _Texture3=Texture2D_371
+  _RampG=Texture2D_3152  …（其餘是 T_white／T_black／T_bump 等內建預設）
+```
+
+12 個 MID 的 `_overtex1` **全部**還是 `Texture2D_2999`。這正是「參數設定後就不再變」的後果：
+**舊卡的 MID 只要還活著，它的每個槽都還指著舊卡的貼圖**，不只我們查的那一個。
+（`_RampG` 三個 MID 各不相同——`3152`／`3207`／`3209`——所以這些 MID 不是彼此的複本。）
+
+## 五、breadcrumb：兩趟形狀完全相同
+
+`active_nodes=31`、`texture2d_in_breadcrumbs=0`、
+`active_main_variants: 4 main=DreamUIDynamicSpriteAtlasData_Texture_0  4 main=DreamUIPreset_WhiteSolid`。
+**八個 `DreamUIDraw` 同時 `[Active]`，atlas 與 `WhiteSolid` 各四個**，底下的
+`widget=DreamUIDataTexture_6 clip=DreamUIDataTexture_3`、
+`rect=DreamUIDataTexture_4 paint=DreamUIDataTexture_1 mask0=fallback` 全部相同，
+和第一趟（`0x803542d4/d7/da`）是同一個形狀。**所以 `main=` 不是線索：兩種都在同一段裡同時在飛。**
+
+## 六、因此問題收斂成一句
+
+**GC 回收了那些 MID 與貼圖，配置也依 fence 正常釋放了，而 244 幀之後 DreamGUI 的 draw 還在取樣那個位址。**
+兩個 UObject 都已死，所以**持有者只能是 render thread 上不經 UObject 的結構**——
+而 breadcrumb 指的 pass 就是 DreamGUI 的 view extension。下一步在 DreamGUI 送 draw data 到
+render thread 那條路上（f-sceneload 正在查），而**不在**換卡 sweep、不在 MID、不在貼圖的生命週期上：
+那三者這兩趟都量過了，行為正常。
