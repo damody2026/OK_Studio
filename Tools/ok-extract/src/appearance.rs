@@ -8,6 +8,7 @@ use sha2::{Digest,Sha256};
 mod properties;
 pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
+mod model_flags;
 pub(crate) mod live_head;
 pub(crate) mod timings;
 mod live_head_ffi;
@@ -474,7 +475,14 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
   if text(&r,"action")?=="accessory_slot_add"{extra::append(&mut blocks,outfit)?;}
   let original=write_blocks(&original,blocks)?;
-  if text(&r,"action")?=="properties"{let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).map_err(|e|e.to_string())?;return Ok(json!({"valid":true,"properties":properties::catalog_properties(&original,outfit)?,"parents":parents}));}
+  if text(&r,"action")?=="properties"{let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).map_err(|e|e.to_string())?;
+   // `unknown_plugin_sections`: KKEx sections this build does not know. They are not walked (we do not know their
+   // shape), but they are named, because a section that disappears without a word goes unnoticed for months — that
+   // is exactly how KoiSkinOverlayX's `KSOX` stayed unreachable (2026-11-19).
+   let (mut props,unknown)=properties::catalog_properties_with_unknown(&original,outfit)?;
+   // The worn models' switches (colour layers, options, sleeves, emblems): a failure leaves the rows unmarked.
+   let model=model_flags::annotate(root,cache,&original,outfit,&mut props).unwrap_or_else(|e|json!({"error":e}));
+   return Ok(json!({"valid":true,"properties":props,"parents":parents,"model":model,"unknown_plugin_sections":unknown}));}
   let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
   let raw=if text(&r,"action")?=="accessory_slot_add"{original}else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
   return export_edited(root,&r,&raw,output);

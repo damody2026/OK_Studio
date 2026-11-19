@@ -40,6 +40,11 @@ pub struct CardInfo {
     pub clothes_ids: Vec<i32>,
     /// ChaFileClothes.parts[i].emblemeId / emblemeId2.
     pub clothes_emblem_ids: Vec<[i32; 2]>,
+    /// Options 1／2 hidden, per clothes kind, as `ChaControl.DrawOption` reads them: `parts[i].hideOpt`, but the bra
+    /// from `hideBraOpt` and the shorts from `hideShortsOpt`.
+    pub clothes_hide_opt: Vec<[bool; 2]>,
+    /// ChaFileClothes.parts[0].sleevesType (0..2; `DrawSode` shows `objSleeves0{n+1}` only).
+    pub sleeves_type: i32,
     /// ChaFileClothes.parts[i].colorInfo[0..3].baseColor
     pub clothes_colors: Vec<[[f32; 4]; 4]>,
     /// ChaFileClothes.parts[i].colorInfo[0..3] pattern / patternColor / tiling.
@@ -1634,6 +1639,17 @@ fn apply_coordinate_slot(
             map_get(p, "emblemeId").map(as_i32).unwrap_or(0),
             map_get(p, "emblemeId2").map(as_i32).unwrap_or(0),
         ]).collect();
+        let flags = |v: Option<&Value>| -> [bool; 2] {
+            let a = v.and_then(|v| v.as_array());
+            let at = |i: usize| a.and_then(|a| a.get(i)).and_then(|v| v.as_bool()).unwrap_or(false);
+            [at(0), at(1)]
+        };
+        info.clothes_hide_opt = parts.iter().enumerate().map(|(i, p)| match i {
+            2 => flags(map_get(clothes, "hideBraOpt")),
+            3 => flags(map_get(clothes, "hideShortsOpt")),
+            _ => flags(map_get(p, "hideOpt")),
+        }).collect();
+        info.sleeves_type = parts.first().and_then(|p| map_get(p, "sleevesType")).map(as_i32).unwrap_or(0);
         info.clothes_colors = parts.iter().map(clothes_part_colors4).collect();
         info.clothes_patterns = parts.iter().map(clothes_part_patterns4).collect();
         if let Some(first) = info.clothes_colors.first() {
@@ -2275,6 +2291,8 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
         bust_weight: 0.5,
         clothes_ids: Vec::new(),
         clothes_emblem_ids: Vec::new(),
+        clothes_hide_opt: Vec::new(),
+        sleeves_type: 0,
         clothes_colors: Vec::new(),
         clothes_patterns: Vec::new(),
         sub_parts_id: Vec::new(),

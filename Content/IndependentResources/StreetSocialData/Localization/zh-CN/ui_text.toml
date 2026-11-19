@@ -573,6 +573,13 @@ gift_held_out_note = "（系统说明，不是他说的话：他拿出{item_name
 you_speaker_label = "你："
 your_label = "你的"
 
+[ui.editor_clothes]
+accessory_group_main = "主"
+accessory_group_sub = "副"
+sleeves_1 = "袖子 1"
+sleeves_2 = "袖子 2"
+sleeves_3 = "袖子 3"
+
 [ui.elevator]
 dorm_upstairs_restricted = "女生宿舍的楼上是寝室，男生不能上去。"
 floor_arrived = "{floor_label} 到了。"

@@ -1854,8 +1854,13 @@ pub(crate) fn extract_session_from_info(
                 .map(PathBuf::from)
                 .or_else(|| zip_path.clone());
             let t_part = Instant::now();
-            let (mut meshes, part_skel) = meshes_for_entry(game_root, zip.as_deref(), &entry);
+            let (mut meshes, mut part_skel) = meshes_for_entry(game_root, zip.as_deref(), &entry);
             profile_tick("clothes meshes_for_entry", t_part);
+            if !meshes.is_empty() {
+                let t_part = Instant::now();
+                apply_clothes_options(game_root, zip.as_deref(), &entry, card, kind, &mut meshes, part_skel.as_mut());
+                profile_tick("clothes options", t_part);
+            }
             if kind == 0 { top_prefab_world = part_skel.as_ref().map_or_else(crate::pose::ident, |s| s.root_world()); }
             if meshes.is_empty() {
                 continue;

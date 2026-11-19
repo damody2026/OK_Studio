@@ -5742,3 +5742,10 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **怎么错的**：拿 `Content/CharacterCards/CrowdAPNG/C000.png` 写入 `pos.1=0.5`、`scl.0=2.0`，再把原卡与改过的卡各抽一份模型比对——69 个档只有 `.ok_stamp` 与 `manifest.json` 的卡片路径不同，看起来正好「证明没套用」。**这个证据不成立**：抽取日志写着 `skip dummy hair id=500 cat=101 nohairB`，这张卡的 `hair.parts` 是 dummy，头发是用饰品做的（`Elysia_Hair` 挂在饰品槽，输出名是 `accessory_…_cf_hair_*`），**输出里根本没有头发网格可比**。本机四张卡（C000、alice、hayase_yuuka、keqing）全是这样。
 - **修正**：验头发相关的东西之前，先看抽取日志有没有 `skip dummy hair`，或确认 `hair_ids[0]` 指到真的头发部件（通常得挑原作卡，mod 卡常把头发做成饰品）。**「卡片没有这个部件」与「程式没套用这个栏位」是两个独立原因，混在一起就会得到假的否定结论。**
 - **这一类的通则**：否定命题（没有消费者、根本没读）用穷举 grep 比跑一趟更强；要主张「确实有套用」才必须实机，而且得先证明那张卡上这个部件存在。
+
+## 2026-11-19：新增的模型查询在读卡器上看不到效果，是基础库没录这个查询（f-yvonne）
+
+- **要验什么**：衣服选项 1／2 与袖型（`ChaControl.DrawOption`／`DrawSode`）改了画面会不会变。资料端是新加的 `unity::clothes_option_groups`（`memo_bytes_optional`），由 `entries.rs` `apply_clothes_options` 套用。
+- **怎么错的**：在读卡器把原作卡 KK_007604 的上衣换成水手连衣裙（217），再把 `clothes.parts.0.sleevesType` 从 0 改成 1 并套用，改前改后的截图一模一样。差点就判断成「程式没套用」。实际原因是：套用后读卡器把编辑过的卡当 OK 卡重开（日志里是 `OK load3d … root=`，游戏目录为空），上衣模型从基础库 `base_v1` 的 `.okmodel` 读。基础库录制时还没有这个查询，`memo_bytes_optional` 对这种旧 token 按设计回传空值，所以选项与袖型都不生效。同一张输出卡改用 CLI 并指定游戏目录跑（`ok-extract D:/XKoikatuSunshine <out> <卡>`，`OK_DIAG=1`），日志是 `clothes options … sleeves=1 -2 +0`，资料端是对的。
+- **修正**：`oklib_convert.rs` 的衣服段加上这个查询，之后的转换会录进去。现有的 `base_v1` 要补录（`--oklib convert`，可以用 `OKLIB_PREFABS` 只补衣服），补录前在 OK 卡上看不到效果，行为跟改之前一样。补录这件事交给协调 session 裁示。
+- **通则**：新增一个对模型 bundle 的查询时，要同时加进 `oklib_convert.rs` 的预录清单。读卡器验收先看日志里的 `root=`：游戏目录为空就是走基础库，结果取决于基础库有没有录这个查询，不能直接拿来判断程式有没有生效。
