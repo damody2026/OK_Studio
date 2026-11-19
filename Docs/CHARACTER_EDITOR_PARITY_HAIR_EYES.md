@@ -367,3 +367,44 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
   「四页长什么样、按钮按下去画面怎么变」目前只是预期，不是看过的结果。按钮的失败路径
   （忙碌／没角色／有暂存编辑时的 ScreenNote）也还没在画面上看过。拿到窗口后要补：
   四页各一张、瞳页一张、按一次「重設外框色」前后各一张。
+
+## 9. 第三批：主色在套用时变成原作的那个动作（2026-11-19）
+
+### 9.1 四个旗标存在哪
+
+跟读卡器现有的显示设定走同一条路：**`GConfig` ＋ `GGameUserSettingsIni`**（字级就在那里，
+`OKGalleryDisplayControls.cpp` 的 section `OpenKoikatsu.EditorDisplay`），四个旗标只加一个
+sibling section **`OpenKoikatsu.HairEditor`**（键 `HairSameSetting`／`HairAutoSetting`／
+`HairOutlineSetting`／`HairGlossSetting`）。**不开新的设定档**——读卡器的设定散成几个档案，
+之后没人说得清哪个是真的。`GGameUserSettingsIni` 在 `Saved/` 底下，**`Saved/` 是可丢弃的，
+清掉就回预设，而预设是原作新安装的状态：四个全开**。
+
+### 9.2 拉主色 → 套用时跑整个动作
+
+`UOKCharacterController::HairColourOpsForStagedEdits()`（`OKGalleryProperties.cpp`）扫暂存的
+`hair.parts.N.baseColor.*`，有就产生一个 `hair_base_color`（带四个旗标），和 `edits` 一起送进
+`properties_apply`。三件在实作里容易做错的事：
+
+- **颜色要取「套用后那一列会是什么」**：拉过的通道用暂存值，没拉的通道用该列**当前显示值**。
+  只读暂存的那几个通道，会送出一个使用者没选过的颜色（例如只拉了红，绿蓝变成 0）。
+  三个通道凑不齐就不当成动作，暂存那几列照样套用。
+- **只认 `baseColor`**：直接去调渐层／外框／光泽的人就是要改那一个栏位，和原作一致
+  （原作只有主色的 setter 会连带写别的）。
+- **套用后那些列要重读**：动作写了没有列要求过的栏位，所以这种情况把列丢掉、让面板从新卡重读
+  （`bActionApplied`）；沿用「把暂存值补回列」会让面板显示旧值而卡里是新值。
+- **暂存那一列优先**（`expand_with_edits`）：使用者拉的是他看到的那个颜色，套用时若让动作重算的值
+  盖掉它，画面会在他眼前跳掉。
+
+### 9.3 建置注意事项（撞过两次，写下来省得第三次）
+
+**`#include "Dom/JsonObject.h"` 要放在会带到 `OKCharacterController.h` 的 include 之前**
+（`OKReaderScreen.cpp` 与 `OKGalleryProperties.cpp` 各撞一次）：那个标头里的 `NoteAction` 是 inline 的，
+需要 `FJsonObject` 型别完整。平常 unity 建置会由同一个 blob 里的别的档案带进来，所以**只有在
+`-SingleFile` 或改了 include 顺序时才会露出来**。顺带：`-SingleFile=<档案>` 可以在别人的编辑器
+占着 Live Coding 时只检查一个档（最后连结才会被挡），但它会暴露一些平常由 unity 盖住的缺标头
+（例如 `OKReaderScreen.cpp` 的 `FTexture2DMipMap`），那些不是你改坏的。
+
+### 9.4 还没做
+
+- 四个旗标的**画面开关**：现在只能改设定档，预设全开＝原作行为。
+- **实拍**：见 8.4 的清单。第三批还要再加一张「拉主色 → 套用」前后的对照（四槽与渐层是否一起变）。

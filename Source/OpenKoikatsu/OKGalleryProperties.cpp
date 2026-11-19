@@ -1,4 +1,8 @@
+// Before the gallery header, which reaches the controller header, whose inline `NoteAction` builds JSON and so needs
+// the type complete; this file sends composite editor operations (`ops`) the same way.
+#include "Dom/JsonObject.h"
 #include "OKGalleryWidget.h"
+#include "Misc/ConfigCacheIni.h"
 #include "OKComboBox.h"
 #include "OKPropertyInput.h"
 #include "OKAppearanceCardJob.h"
@@ -98,12 +102,82 @@ void UOKCharacterController::OnApplyProperties(){
  auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
  TArray<TSharedPtr<FJsonValue>> Edits;for(auto& E:PendingProperties){auto V=MakeShared<FJsonObject>();V->SetStringField(TEXT("key"),E.Key);V->SetField(TEXT("value"),E.Value);Edits.Add(MakeShared<FJsonValueObject>(V));}
  auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("properties_apply"));R->SetStringField(TEXT("card"),Input);R->SetStringField(TEXT("output"),Output);R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));R->SetNumberField(TEXT("outfit"),OutfitIndex);R->SetArrayField(TEXT("edits"),Edits);
- bPropertyBusy=true;bAppearanceBusy=true;PropertyPanel->SetIsEnabled(false);if(ShapePanel)ShapePanel->SetIsEnabled(false);PropertyStatus->SetText(FText::FromString(TEXT("正在產生外觀與可保存資源…")));const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
- RunAppearanceRequest(R,[Selection,Generation,Outfit,Output,CardJob](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){G->bPropertyBusy=false;G->bAppearanceBusy=false;G->PropertyPanel->SetIsEnabled(true);if(G->ShapePanel)G->ShapePanel->SetIsEnabled(true);if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
+ // A staged hair main colour carries the original's whole action with it (every slot, the gradient, the outline and
+ // the gloss, as the four settings say). The staged rows go along and win over the action's own fields, so the colour
+ // the person is looking at is the colour that lands; the rest of what the original writes comes from the action.
+ LoadHairColourSettings();
+ const TArray<TSharedPtr<FJsonValue>> HairOps=HairColourOpsForStagedEdits();
+ if(!HairOps.IsEmpty())R->SetArrayField(TEXT("ops"),HairOps);
+ bPropertyBusy=true;bAppearanceBusy=true;PropertyPanel->SetIsEnabled(false);if(ShapePanel)ShapePanel->SetIsEnabled(false);PropertyStatus->SetText(FText::FromString(TEXT("正在產生外觀與可保存資源…")));const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;const bool bActionApplied=!HairOps.IsEmpty();
+ RunAppearanceRequest(R,[Selection,Generation,Outfit,Output,CardJob,bActionApplied](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){G->bPropertyBusy=false;G->bAppearanceBusy=false;G->PropertyPanel->SetIsEnabled(true);if(G->ShapePanel)G->ShapePanel->SetIsEnabled(true);if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
   if(!Data){G->PropertyStatus->SetText(FText::FromString(TEXT("外觀更新失敗，保留目前角色與修改：")+Failure));return;}
-  for(auto P:G->EditorProperties)if(auto* V=G->PendingProperties.Find(P->GetStringField(TEXT("key"))))P->SetField(TEXT("value"),*V);G->PendingProperties.Reset();G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->PropertySource=Output;G->bIndependentCards=true;G->PreviewResourceSignature.Empty();G->OnLoad3D();G->PropertyStatus->SetText(FText::FromString(TEXT("已套用並保存外觀，可繼續編輯或另存角色卡。")));
+  if(bActionApplied)G->EditorProperties.Reset();	// the action wrote fields no staged row asked for: read them back rather than show stale ones
+  else for(auto P:G->EditorProperties)if(auto* V=G->PendingProperties.Find(P->GetStringField(TEXT("key"))))P->SetField(TEXT("value"),*V);
+  G->PendingProperties.Reset();G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->PropertySource=Output;G->bIndependentCards=true;G->PreviewResourceSignature.Empty();G->OnLoad3D();G->PropertyStatus->SetText(FText::FromString(TEXT("已套用並保存外觀，可繼續編輯或另存角色卡。")));
  },CardJob);
 }
+namespace { constexpr const TCHAR* HairColourSection=TEXT("OpenKoikatsu.HairEditor"); }
+
+// Where the reader's other display settings live (GConfig, GGameUserSettingsIni under Saved/): one place for the
+// reader's settings, not a file of our own. Saved/ is discardable -- clearing it returns these to the original's
+// defaults, which are all four on.
+void UOKCharacterController::LoadHairColourSettings()
+{
+ for(const TPair<const TCHAR*,bool*> Pair:{TPair<const TCHAR*,bool*>(TEXT("HairSameSetting"),&bHairSameSetting),
+   {TEXT("HairAutoSetting"),&bHairAutoSetting},{TEXT("HairOutlineSetting"),&bHairOutlineSetting},{TEXT("HairGlossSetting"),&bHairGlossSetting}})
+  GConfig->GetBool(HairColourSection,Pair.Key,*Pair.Value,GGameUserSettingsIni);
+}
+
+void UOKCharacterController::SetHairColourSetting(const FString& Name,bool Value)
+{
+ bool* Target=Name==TEXT("same")?&bHairSameSetting:Name==TEXT("auto")?&bHairAutoSetting:Name==TEXT("outline")?&bHairOutlineSetting:Name==TEXT("gloss")?&bHairGlossSetting:nullptr;
+ if(!Target||*Target==Value)return;
+ *Target=Value;
+ const FString Key=FString(TEXT("Hair"))+(Name==TEXT("same")?TEXT("Same"):Name==TEXT("auto")?TEXT("Auto"):Name==TEXT("outline")?TEXT("Outline"):TEXT("Gloss"))+TEXT("Setting");
+ GConfig->SetBool(HairColourSection,*Key,Value,GGameUserSettingsIni);
+ GConfig->Flush(false,GGameUserSettingsIni);
+}
+
+// Dragging the main hair colour is not one field in the original: with the four settings on it writes every slot's
+// base, gradient start and end, outline and gloss (parity doc §7.1). The rows the person dragged stay as they are --
+// they are what is on screen -- and this adds the action those rows imply, so one apply writes the whole thing.
+// Only `baseColor`: a person editing the gradient or the outline directly means that one field, as the original does.
+TArray<TSharedPtr<FJsonValue>> UOKCharacterController::HairColourOpsForStagedEdits() const
+{
+ TArray<TSharedPtr<FJsonValue>> Ops;
+ TSet<int32> Slots;
+ for(const TPair<FString,TSharedPtr<FJsonValue>>& Edit:PendingProperties)
+ {
+  int32 SlotIndex=INDEX_NONE;
+  // `hair.parts.<N>.baseColor.<channel>`: the channel is which of RGBA, so any of them means this slot's main colour.
+  if(!Edit.Key.StartsWith(TEXT("hair.parts."))||!Edit.Key.Contains(TEXT(".baseColor.")))continue;
+  const FString Rest=Edit.Key.RightChop(11);FString Number,Tail;
+  if(!Rest.Split(TEXT("."),&Number,&Tail)||!Number.IsNumeric())continue;
+  SlotIndex=FCString::Atoi(*Number);
+  if(SlotIndex>=0)Slots.Add(SlotIndex);
+ }
+ for(int32 SlotIndex:Slots)
+ {
+  // The colour sent is the one the rows will hold after this apply: the staged channels, and for a channel not
+  // dragged the value the row shows now. Reading only the staged ones would send a colour nobody chose.
+  double Channels[3]={0,0,0};bool Known[3]={false,false,false};
+  for(int32 Channel=0;Channel<3;++Channel)
+  {
+   const FString Key=FString::Printf(TEXT("hair.parts.%d.baseColor.%d"),SlotIndex,Channel);
+   if(const TSharedPtr<FJsonValue>* Staged=PendingProperties.Find(Key)){Channels[Channel]=(*Staged)->AsNumber();Known[Channel]=true;continue;}
+   for(const TSharedPtr<FJsonObject>& Row:EditorProperties)if(Row->GetStringField(TEXT("key"))==Key){Channels[Channel]=Row->GetNumberField(TEXT("value"));Known[Channel]=true;break;}
+  }
+  if(!Known[0]||!Known[1]||!Known[2])continue;	// an incomplete colour is not an action; the staged rows still apply
+  auto Op=MakeShared<FJsonObject>();Op->SetStringField(TEXT("op"),TEXT("hair_base_color"));
+  TArray<TSharedPtr<FJsonValue>> Rgba;for(double V:Channels)Rgba.Add(MakeShared<FJsonValueNumber>(FMath::Clamp(V,0.,1.)));
+  Op->SetArrayField(TEXT("rgba"),Rgba);Op->SetNumberField(TEXT("slot"),SlotIndex);
+  Op->SetBoolField(TEXT("same"),bHairSameSetting);Op->SetBoolField(TEXT("auto"),bHairAutoSetting);
+  Op->SetBoolField(TEXT("outline"),bHairOutlineSetting);Op->SetBoolField(TEXT("gloss"),bHairGlossSetting);
+  Ops.Add(MakeShared<FJsonValueObject>(Op));
+ }
+ return Ops;
+}
+
 // Deliberately beside OnApplyProperties rather than folded into it: that function is being edited by other sessions
 // this week, and the two differ in what they know afterwards. An `edits` apply knows every new value (it sent them,
 // so it patches the rows in place); an `ops` apply does not -- the expansion happens in Rust and can touch fields no

@@ -144,6 +144,16 @@ public:
  void ResetEditorProperty(const FString& Key);
  UFUNCTION() void OnOpenProperties();
  UFUNCTION() void OnApplyProperties();
+ // The original's four hair-colour settings (`CustomBase.CustomSettingSave`), **all true in a fresh install**: the
+ // main colour goes to every slot, and the gradient, outline and gloss follow from it. They are the player's
+ // settings, not the card's, so they live where the reader's other display settings do (GConfig,
+ // GGameUserSettingsIni) and not in the card. Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7.1.
+ bool bHairSameSetting=true,bHairAutoSetting=true,bHairOutlineSetting=true,bHairGlossSetting=true;
+ void LoadHairColourSettings();
+ void SetHairColourSetting(const FString& Name,bool Value);
+ // The staged hair main-colour rows turned into the action they imply, so applying them writes what the original
+ // writes. Empty when nothing staged touches a slot's `baseColor`.
+ TArray<TSharedPtr<FJsonValue>> HairColourOpsForStagedEdits() const;
  // One action of the original editor, applied as one write: the hair colour with its four settings writes every
  // slot's base/gradient/outline/gloss, "copy the left eye" writes seven pupil fields. The expansion is in
  // ok-extract (`appearance/ops.rs`), so the UI, the MCP and the CLI cannot drift apart on what a button means.
