@@ -4417,3 +4417,68 @@ f-sceneload 發現 `OK_STUDIO_FIND_INDEX=0` 這個**環境變數會蓋過同名 
 五趟、兩類、三種程序擾動、兩種負載條件，**全部故障**。
 上面每一項干擾都影響秒數，**沒有一項把「死」變成「不死」**——這正是二元尺該取代秒數尺的理由。
 但**這個 5/5 是 `TransientAllocator=0` 組態的**，協定基線仍要在預設組態上重跑。
+
+## 「每次都死在 C049」是**那個組態**的性質，不是普遍性質——A 段四趟死在四張不同的卡
+
+在排三趟去分辨 C049 的三個候選之前，先查了同一份卡單在**別的組態**下死在哪：
+
+| 趟 | 旋鈕 | 故障卡 | 第幾張 |
+|---|---|---|---:|
+| `bg_A1_1` | `NoBackdrop=1` | `crowd_C055.png` | 7 |
+| `bg_A1_2` | `NoBackdrop=1` | （跑完 30 張未故障） | — |
+| `bg_A2_1` | `NoBackdrop=2` | `crowd_C077.png` | 9 |
+| `bg_A2_2` | `NoBackdrop=2` | `crowd_C006.png` | 2 |
+| `bg_AP_1` | `Frames.Pooled=240` | （跑完 30 張未故障） | — |
+| `bg_AP_2` | `Frames.Pooled=240` | `heroine_jeanne.png` | 15 |
+| **尺 1 趟 1／2／5** | **`TransientAllocator=0`** | **`crowd_C049.png` ×3** | **6、6、6** |
+
+**四張不同的卡、第 2／7／9／15 張，還有兩趟跑完 30 張沒死。**
+所以**「故障固定在某一張卡」只在 `r.RDG.TransientAllocator=0` 這個組態下成立**（3/3），
+在其他三個組態下**完全不成立**。
+
+### 這對 C049 那三個候選的意義：問題要重新表述
+
+原本的三候選（那張卡特別／那個位置特別／兩者都要）預設了「有一張特別的卡」。
+**上表顯示沒有一張普遍特別的卡**，所以正確的問題是：
+
+> **為什麼 `TransientAllocator=0` 會讓故障位置從「隨機散在第 2～15 張、有時不死」
+> 變成「每次都是第 6 張」？**
+
+這比「C049 哪裡特別」更值得問，因為**它問的是那個旋鈕做了什麼**，
+而那個旋鈕的作用是已知的（`RenderGraphBuilder.cpp:591`：沒有暫態配置器，於是沒有暫態堆）。
+一個讓故障變得**位置確定**的旋鈕，比一張卡更像線索。
+
+**但照 10a 這還不能寫成機制**：A 段三個組態各自只有 n=2，尺 1 只有 n=3，
+而且兩邊的旋鈕不同、執行檔也不同（15:05 對 16:25）。**目前只能寫成「值得問的差異」。**
+
+### 排程建議（交給協調者裁定）
+
+C049 的三趟重排**仍然值得跑**，但**要在 `TransientAllocator=0` 組態下跑**，
+因為那是唯一觀察到固定卡號的組態；在預設組態下跑重排，很可能只會看到卡號又散開，
+那回答不了任何候選。優先度仍在協定基線之後、機制格之前，和現在的排程一致。
+
+## 三個機制格的旋鈕輸入盤點（前置第 1 項，零機器時間，已完成）
+
+| 輸入來源 | 查到什麼 |
+|---|---|
+| `Config/DefaultDreamGUI.ini` | **只有輸入政策**（`bUseSlateInputSource=True`、`SlateInputConsumePolicy=WhenOverUI`）。**沒有任何一個 key 碰到這三個旋鈕。** |
+| `Config/DefaultEngine.ini` 的 `[ConsoleVariables]` | 只有 `r.SkyLight…`、`r.MotionBlurQuality`、`r.AntiAliasingMethod`、`r.OK.OpaqueSortPriority`、`r.Nanite.Editor.DrawLists.AsyncUpdates` 等；**沒有 DreamGUI 或暫態配置器相關的 key。** |
+| `[SystemSettings]` | **這個區段不存在。** |
+| 環境變數 | `Source/`、`Plugins/` 裡所有 `GetEnvironmentVariable`／`getenv` 都是 `OK_ALBEDO_*`、`OK_APNG_*`、`OK_PROFILE_*`、`OK_RUNTIME_*`、`OK_EYE_AUDIT_*`、`OK_NO_CLOTH_DYNAMICS` 等**別的功能**；**沒有一個名字對應這三個旋鈕**。 |
+| 命令列 | 啟動器自己會加 `r.RDG.ParallelExecute=0`、`-OKPhysics=verlet`、`-ReaderPages=…`。**這些就是預設協定的一部分**（讀卡器平常就這樣跑），每趟的 log 都記著完整命令列。 |
+
+### `NeverDeleteProxy` 這一格：前置三項**都已經就緒**
+
+`Plugins/DreamGUI/Source/DreamGUIRenderer/Private/DreamUIRender/DreamUIMaterialProxy.cpp:95` 註冊
+`DreamGUI.Experiment.NeverDeleteProxy`，預設 `0`，`ECVF_RenderThreadSafe`。
+
+- **第 1 項（輸入）**：只有 cvar 一條路，預設 `0`，而且是 `GetValueOnAnyThread()` **即時讀取、沒有在啟動時快取**
+  （`:105`），所以不存在「值在物件建構時取樣一次」那個殘差風險。贏的來源仍由 `LastSetBy` 記在表頭。
+- **第 2 項（機制作用點的到達證據）**：**程式自己就會記**——
+  `DreamGUI EXPERIMENT: material proxy leaked on purpose, total=N`（`:112`）。
+  **這一格不需要另外加儀器**：`total=0` 或這行完全沒出現，就代表旋鈕沒有到達那一點，該趟作廢。
+- **第 3 項（事前預測含方向）**：若材質代理的解構是觸發者，開了旋鈕應得 **0/6**；若不是，應得 **6/6**。
+  洩漏量有界（30 張卡是有限次），而 `total=` 和該趟的行程 RAM 要一起讀，證明有界。
+  **這個旋鈕永遠不能出貨**：一個靠洩漏讓當機消失的改動是診斷，不是修法。
+
+`gclrun` 與 retention 兩格的同類盤點等基線跑完再做（都不用機器）。
