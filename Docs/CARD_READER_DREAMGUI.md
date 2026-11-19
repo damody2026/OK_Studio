@@ -2799,3 +2799,28 @@ AddCopyTexturePass(GraphBuilder, InFrame.Texture, Copy, ...);
 | 兩趟都活過 30 張 | 當掉需要 `MainPS` **取樣**那張貼圖 ⇒ 受害者就是它（經由 PS 綁的那個 descriptor） |
 | 兩趟都在基線裡 | 當掉**不需要**取樣：配置＋拷貝＋轉狀態就夠 ⇒ 指向 transient allocator 的 heap 生死，不是綁定 |
 | 又分裂 | 這條線這樣問不出來，要換成不配置／配置但不進 pass 參數的對照 |
+
+### 找到一條和「`Found 0 active heaps`」字面對得上的機制：**transient heap 被 `delete` 掉**
+
+`RHICoreTransientResourceAllocator.cpp`：
+
+- `RHI.TransientAllocator.GarbageCollectLatency` 預設 **16** 個 update cycle（`:41-46`，`ECVF_ReadOnly`，只能啟動時由 ini 設）；
+- 空掉的 heap 先進 `FreeList` 並記下 `LastUsedGarbageCollectCycle`（`Forfeit`，`:583-595`）；
+- `GarbageCollect()` 裡，閒置超過 latency 的 heap 直接 **`delete Heap`**（`:598-626`，第 612 行）。
+
+**`delete` 掉的是那塊記憶體本身（連 D3D12 heap 物件一起）**，所以之後任何還指著它的 descriptor，
+位址就會**不屬於任何還活著的 heap**——這正是故障報告那句 `Found 0 active heaps containing page fault address` 的字面意思。
+而背景那張拷貝（上一節）就住在這種 heap 裡。
+
+這是目前**唯一**一條能把故障報告的那句話照字面解釋完的機制，其他候選都只能解釋「記憶體被放掉」而解釋不了「不屬於任何 heap」。
+
+**下一格（已寫好，等窗口）**：`RHI.TransientAllocator.GarbageCollectLatency` 設成大到整趟都不回收。
+- 兩個重現都活 ⇒ 受害者是**被 `delete` 掉的 transient heap 裡的位址**；
+- 照樣當 ⇒ 不是 heap 回收。
+- **死於 VRAM 不足不算結果**：heap 最小 128 MB 且只進不出，這台只有 8 GB VRAM，所以這格要連 VRAM 一起報，
+  OOM 的趟重跑或換較小的 latency，不能當成「當掉」。
+
+**順帶一個對驗收門檻的影響，先講不要最後才講**：這條機制解釋不了 19 秒那個重現
+（那是 `r.RDG.TransientAllocator=0`，根本沒有 transient heap 可以被 `delete`）。
+所以**兩個重現有可能是兩個洞**。那不是放寬門檻的理由：門檻照舊兩道都要過，
+只是如果某個候選過了一道、過不了另一道，我會照這個事實回報「這裡有兩個洞，兩個都要補」，而不是把過不了的那道說成雜訊。
