@@ -1636,3 +1636,111 @@ historically and some profile tools may depend on that.」
 那麼 §25 的否证就说明「绑进去的贴图」与「故障的贴图」是两张，**问题落在候选 3**；
 若照样故障，取样者与 DreamUI 无关，**而候选 2 只要一行 `r.VT.Dump` 就能判掉**，剩下的还是候选 3。
 **两种结果都指向候选 3，所以我建议把量测力气放在那里，而不是继续读 VT。**
+
+---
+
+## §27 `E6753E1E…` 是什麼、怎麼变成名字：**那串就是 DXIL 容器的 HASH 区块，而最便宜的一步是免费的**
+
+读的是 `E:/PhysX/UE5.8`（只读）。§22 列过三个符号旗标，这一节补的是它们与 Aftermath 的接法，以及那串 hash 的身分。
+
+### 27a 那串 hash 的出处：**是 UE 自己印的，而且它是 DXIL 的 `HASH` 区块**
+
+`Runtime/RHICore/Internal/ShaderBinaryUtilities.h` 的 `GetShaderBinaryDebugHashDXBC` 走 DXBC 区块表，
+三个区块各填一个栏位：
+
+| 区块（四字元反序） | 填进 `FShaderDebugData` 的 | 内容 |
+|---|---|---|
+| `'HSAH'` ＝ `HASH` | **`Hash`** | `DXIL::FShaderHashInfo{ uint32 Flags; uint8 Digest[16]; }` → `BytesToHex(16 bytes)` ⇒ **正好 32 个 hex 字元** |
+| `'0VSP'` ＝ `PSV0` | `FunctionName` | revision ≥ 3 时，从 string table 取 `EntryNameOffset` 处的**进入点名**（`FPSVRevision3Info`） |
+| `'NDLI'` ＝ `ILDN` | `PDBName` | 长度必须是 `32 + strlen(".pdb")` ⇒ **`<同一串 32 hex>.pdb`** |
+
+崩溃时 `AppendGpuCrashShaderBinaryInfo`（`Runtime/RHICore/Private/RHICoreNvidiaAftermath.cpp:384-423`）
+依序印：`Aftermath Binary Hash = %llu`（`:396`）、`DebugName = '%s'`（`:406`）、`Function = %s`（`:411`）、
+`Shader PDB = %s`（`:416`）、**`Shader Hash = %s`（`:420-421`）**。
+
+**所以 `E6753E1EA9F1F20775D8BC0AD963B1EF` 就是 `Shader Hash =` 这一行，来自 DXIL 容器里的 `HASH` 区块**
+——**不需要任何旗标**，它是从 shader 的位元组里当场解出来的。
+
+**这给出一个免费的第一步，比重编早一步**：既然 `Shader Hash =` 印出来了，表示
+(a) 这个 shader **有**被注册（`ShaderBinaryToDebugHash`），(b) 崩溃时**查到了** `Candidate`
+（`:398-403`，查不到会印 `! Failed to associate Aftermath hash`）。
+**所以同一段 log 里 `DebugName =`／`Function =`／`Shader PDB =` 哪几行在、哪几行不在，直接告诉我们缺的是什麼**：
+
+- `Function =` 不在 ⇒ `PSV0` revision < 3，或区块解析提早 `continue`；
+- `Shader PDB =` 不在 ⇒ 容器里没有 `ILDN`（没开符号时 DXC 不写）；
+- **`DebugName =` 不在 ⇒ `r.Shaders.ExtraData` 是 0**（见 27b）。
+
+**先 grep 现有崩溃档这四行，零成本。**
+
+### 27b 第 2 题：是同一条路，而且开了 `ExtraData` 就会直接印出 shader 名
+
+链子每一环都查到了：
+
+1. `Source/Runtime/D3D12RHI/Private/D3D12NvidiaExtensions.cpp:40`
+   `RegisterShaderBinary(Value->Code.GetData(), Value->Code.Num(), Value->HasShaderName() ? Value->GetShaderName() : nullptr)`
+   ——**注册时才决定有没有名字**；
+2. `FRHIShader::HasShaderName()` ＝ `!Debug.ShaderName.IsEmpty()`（`Runtime/RHI/Public/RHIResources.h:857`），
+   而整个 `Debug` 结构只在 `RHI_INCLUDE_SHADER_DEBUG_DATA` 下存在
+   （`:704-708`：`#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)` ⇒ **Development 有，Shipping／Test 没有**，
+   没有时 `HasShaderName()` 直接 `return false`，`:880-881`）；
+3. `Debug.ShaderName` 的唯一填入点：`Source/Runtime/D3D12RHI/Private/D3D12Shaders.cpp:38`
+   `OutShader.Debug.ShaderName = InShaderCode.FindOptionalData(FShaderCodeName::Key)`；
+4. 那笔 optional data 的唯一写入点：
+   `Source/Developer/Windows/ShaderFormatD3D/Private/D3DShaderCompiler.inl:560-563`
+   ——**`if (Input.Environment.CompilerFlags.Contains(CFLAG_ExtraShaderData))` 才写**；
+5. 那个 flag 的设定点：`Source/Runtime/Engine/Private/ShaderCompiler/ShaderCompiler.cpp:3654-3658`
+   `if (ShouldEnableExtraShaderData(ShaderFormatName))`，而
+   `ShouldEnableExtraShaderData`（`Runtime/RenderCore/Private/ShaderCore.cpp:978-982`）就是读
+   **`r.Shaders.ExtraData`**（预设 0，§22）。
+
+**所以：`r.Shaders.ExtraData=1` ＋ 重编之后，崩溃 log 会直接多一行 `DebugName = '<shader type 名>'`**，
+不必解 dump、不必 Nsight。**这正是我们要的那个名字。**
+
+那 1 秒的等待是另一回事，但同一个档：**late shader associations**
+（`RHICoreNvidiaAftermath.cpp:845-885`，`GLateShaderAssociateFunc` ＋ `ShaderDebugInfoLookup` callback），
+上限是 `r.GPUCrashDebugging.Aftermath.LateShaderAssociations.TimeLimit` **预设 7.5 秒**（`:112-117`，`ECVF_Default`）
+与 `...FrameLimit` **预设 10**（`:119-124`）。注册本身的总开关是
+`r.GPUCrashDebugging.Aftermath`（`:98-102`，**预设 1**，`ECVF_ReadOnly`）——**已经是开的**，这也解释了为什麼
+`Shader Hash =` 本来就有。
+
+### 27c 第 3 题：**旧的 `.nv-gpudmp` 事后解不了**
+
+两个独立的理由，都查到了：
+
+1. **三个符号旗标都进 shader map key**：`Runtime/RenderCore/Private/Shader.cpp:1862-1885`
+   ——`ExtraData`、`Symbols`、`SymbolsInfo`、`FullDbg` 各自 `KeyGen.Append`。**key 变 ⇒ DDC 失效 ⇒ 重编。**
+2. **重编出来的容器位元组会不一样**：`Source/Developer/Windows/ShaderFormatD3D/Private/D3DShaderCompilerDXC.cpp:278-279`
+   ——`bStripReflection = !Input.Environment.CompilerFlags.Contains(CFLAG_ExtraShaderData)`，
+   **开了 ExtraData 就不再剥掉 reflection**。容器内容变 ⇒ **`HASH` 区块的 digest 变** ⇒
+   旧 dump 里的 `E6753E1E…` 对不上新符号。
+
+另外，旧 dump 旁边本来就**没有** shader debug info：`.nvdbg` 只在
+`r.GPUCrashDebugging.Aftermath.DumpShaderDebugInfo` ≠ 0 时才写
+（`RHICoreNvidiaAftermath.cpp:105-110`，**预设 0**，`ECVF_ReadOnly`；写出路径
+`FPaths::ProjectLogDir()/<id0>-<id1>.nvdbg`，`:358-382`，并 `FGenericCrashContext::AddFile` 挂进崩溃档）。
+**所以「连重跑都不必」不成立——要名字就得重编一次再跑一趟。**
+
+### 27d 第 4 题：不重编能做到什麼、做不到什麼
+
+**能做到（免费）**：
+
+1. **grep 现有崩溃档的那四行**（27a 末）。`Shader Hash =` 已经在了，所以这一步只是看另外三行哪几行在。
+   **这是最便宜的一步，而且可能 `Function =` 本来就印了进入点名。**
+2. **那 16 个位元组可以在磁碟上的 shader 位元码里直接搜**：`E6753E1E…` 是 `HASH` 区块的 digest，
+   **原封不动躺在容器里**，所以把那 32 hex 转回 16 bytes 去搜 shader library
+   （`.ushaderbytecode`／`ShaderArchive-*`）或 `GlobalShaderCache-*.bin`，就能找到是哪个容器。
+   **这一步定位得到容器，但不保证拿到 UE 的 shader type 名**——容器→type 还要查 archive 的索引表，
+   那张表是用 UE 自己的 output hash（`FShaderHash`）当键，不是 DXIL 的 `HASH`。
+
+**做不到**：**我找不到任何 console 命令会 dump「shader type ↔ hash」的对照。**
+存在的两个相关命令都不印这个：`ListShaderMaps`（`Runtime/RenderCore/Private/ShaderMap.cpp:85-86`，
+还要先开 `:40` 那个追踪 cvar）与 `DumpShaderStats`（`Runtime/RenderCore/Private/Shader.cpp:1468`）。
+**所以第 4 题的答案是：没有现成的离线对照表；最接近的是上面第 2 条的位元组搜寻。**
+
+**成本排序（覆盖 §22 的排序）**：
+① grep 现有崩溃档的 `DebugName =`／`Function =`／`Shader PDB =` 三行（免费）→
+② 把那 32 hex 转 16 bytes 搜 shader 位元码（免费，定位容器）→
+③ `r.Shaders.ExtraData=1` ＋ 重编一次 ＋ 重跑一趟（之后每一份崩溃档都直接印 `DebugName`）→
+④ `r.Shaders.SymbolsInfo=1`／`Symbols=1` 拿完整 PDB（最重，而且 ③ 已经给出名字，通常不必走到）。
+
+**③ 之后旧 dump 全部作废**（27c），所以**①②要在 ③ 之前做完**。
