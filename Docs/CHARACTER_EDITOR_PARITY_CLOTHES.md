@@ -168,3 +168,51 @@
   - `not_read`：这张卡、这套服装的属性还没读，上一张卡留下的清单不显示。
   - `unsupported`：ok-extract 的回覆没有这个栏位，即产生端缺支援。
   - `read`：附 `unknown_plugin_sections` 清单，空清单才是真的 0。
+
+## 9. 第三批（条件显示）：栏位清单与判准（2026-11-19，开工前定稿）
+
+第三批是 UI 依资料端旗标显示或隐藏项目。页面怎么排由 e-fork-2 的 `Config/ReaderEditor/pages.json` 决定。这一节只定资料端：每一列给什么旗标、什么值会被拒。窗口开的时候两边照这份对，不在窗口里临场决定。
+
+### 9.1 三种限制
+
+- **硬界（`limit_min`／`limit_max`，或选项、清单）**：值本身在结构上有界，界外没有意义。会被拒，不夹。
+- **软范围（只有 `min`／`max`，界外标 `out_of_range`）**：原作 UI 滑杆的两端。游戏写进卡时不夹，卡上本来就可能有界外的值（ABMX、slider unlocker、外挂改过的卡）。照收、不夹、不拒。
+- **没有限制（只检查是有限数）**：原作也没有滑杆，或我们判断不出界线。宁可不写，因为写错的那天不会报错，只会悄悄改坏卡。
+
+### 9.2 衣服
+
+| 键 | 种类 | 限制 | 第三批要用的旗标（资料端） |
+|---|---|---|---|
+| `clothes{k}`（`parts[k].id`，选图） | 清单项 | 硬：必须是目录里的项目（appearance 选图） | — |
+| `sub{200..202,210..212}`（`subPartsId`） | 清单项 | 硬：同上 | **待做**：只在上衣 Kind=1（水手服 200–202）或 2（外套 210–212）时显示。资料端已有 `model.clothes.0.top_kind`，UI 按它显示 |
+| `pattern{k}_{i}`、徽章 1／2 | 清单项 | 硬：同上 | 徽章看 `model.clothes.{k}.emblem[0/1]`，已做 |
+| `colorInfo.i.baseColor／patternColor` 分量 | 颜色 | 硬：0..1（结构） | 层可用性看 `available`，已做；初期设定色看 `model.clothes.{k}.default_colors`，已做 |
+| `colorInfo.i.tiling.x/y` | 数值 | 软：0..1（显示 0..100%） | 跟着该层的 `available` |
+| `colorInfo.i.offset.x/y`、`rotate` | 数值 | 软：0..1，预设 0.5 | 同上 |
+| `parts.k.hideOpt.0/1`、`hideBraOpt`、`hideShortsOpt` | 开关 | 结构：bool | `available`（`objOpt01/02`），已做 |
+| `parts.0.sleevesType` | 选项 0..2 | 硬：选项以外拒收 | `available`（有 `objSleeves`），已做；`model.clothes.0.sleeves[0..2]` 给哪几种有物件 |
+| 下装／胸罩／内裤整页 | 页 | — | **待做**：上衣的 `notBot`／`notBra`／`notShorts`，ok-extract 还没输出，第三批资料端要补 |
+| 男性胸罩页 | 页 | — | **待做**：原作只在清单有 `Sex` 不是 3、99 的胸罩时显示（`IsMaleCoordinateBra`），资料端要补一个布林 |
+
+### 9.3 配件
+
+| 键 | 种类 | 限制 | 第三批要用的旗标 |
+|---|---|---|---|
+| `accessory{n}_{type}`（`id`，选图） | 清单项 | 硬：目录项目 | — |
+| `type` | 选项 120..130 | 硬 | — |
+| `parentKey` | 父骨 | 硬：55 个键之一（`editor_accessory_parents.json`） | **待做**：清单 `HideHair==1` 或 `Parent=="null"` 时，父骨与位移整块隐藏 |
+| `addMove` 位置 | 数值 | 软：−100..100，一位小数 | **待做**：第 2 组只在模型有第二个移动节点（`objAcsMove[slot,1]`）时显示 |
+| `addMove` 旋转 | 数值 | wrap 0..360，取整；永远不拒，也不标 `out_of_range` | 同上 |
+| `addMove` 缩放 | 数值 | 软：0.01..100，两位小数。原作输入框不收 0 和负值，但卡上可能有（外挂写的）。照收，不另写 `limit_*` | 同上 |
+| `color[0..3]` 分量 | 颜色 | 硬：0..1 | `available`（`useColor01..03`、`rendAlpha`），已做 |
+| `hideCategory` | 选项 0..1 | 硬 | 原作只在 `Game.isAddH` 时显示，我们照常显示 |
+| `noShake` | 开关 | bool | — |
+
+### 9.4 外挂栏位、身体与脸部
+
+- 外挂栏位（`plugins.<id>.…`）：没有范围中继资料就只检查有限数；颜色依结构 0..1。键是身分式（§8）。
+- `shape.*`：软 0..1，不写 `limit_*`（e-cardload 的身体脸部文件第三之二节）。
+
+### 9.5 `available:false` 的列
+
+`available:false` 的列只代表原作 UI 隐藏它，不代表它会拒收编辑：卡上的值照存，原作换款时也只是不显示。所以资料端对 `available:false` 的编辑照收，UI 依旗标决定隐藏或变灰。不要把 `available` 当成硬界，否则换回有这个物件的款式时，那个值就再也改不回来。
