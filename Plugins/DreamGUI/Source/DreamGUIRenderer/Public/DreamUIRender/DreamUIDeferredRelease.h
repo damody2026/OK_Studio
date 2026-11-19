@@ -1,4 +1,4 @@
-// OpenKoikatsu patch (2026-11-19), not upstream DreamGUI.
+﻿// OpenKoikatsu patch (2026-11-19), not upstream DreamGUI.
 #pragma once
 #include "CoreMinimal.h"
 #include "RHIResources.h"
@@ -15,14 +15,17 @@
 class DREAMGUIRENDERER_API FDreamUIDeferredRelease
 {
 public:
-	// DIAGNOSTIC VALUE, not a fix. 12 is here to answer one question: is three frames too short?
+	// DIAGNOSTIC VALUE, not a fix. 240 is here to answer one question: is the window too short at all?
 	// What this queue must outlive is "the GPU has not run that command list yet", and a frame counter does not
 	// measure that -- a hitch, the RHI thread running ahead, or a blocked present all advance frames while the GPU
-	// stands still. So no constant here is correctness, only "enough on this machine today"; the real fix is to
-	// hold until the RHI frame fence of the frame that handed the resource over has completed, and to put
-	// UDreamCanvas::DrawTextureHolds (which keeps 8 frames) on that same criterion rather than on another number.
-	// Picked as 12 because the canvas already keeps 8: whatever the right answer is, 3 and 8 cannot both be it.
-	static constexpr uint32 DelayFrames = 12;
+	// stands still. So no constant here is correctness, only "enough on this machine today"; a GPU fence on the
+	// handover frame is the strict version of this queue, and it closes two real holes (a pooled target handed back
+	// for reuse, a raw delete) -- but, per the next paragraph, it is probably not what this crash is.
+	// 240 render frames is 1.45 s at the card reader's measured 165 FPS, which no command list the GPU has yet to run
+	// can span -- and it still faulted on one of two trips. So what reads a released resource here is not pending GPU
+	// work but something that cached it and keeps re-submitting it; a larger constant cannot be the answer either.
+	// Left at 240 only while the per-call-site split cell runs, so the source matches the binary being measured.
+	static constexpr uint32 DelayFrames = 240;
 
 	static void Hold(FTextureRHIRef InTexture);
 	static void Hold(FBufferRHIRef InBuffer);
