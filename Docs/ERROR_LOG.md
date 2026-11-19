@@ -6871,3 +6871,41 @@ OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMa
   - 公式預測全部落空，本身就支持「沒接上」：參數沒到材質，任何從公式推出的預測都不會成立。
 - 待修（窗口後那一批）：把皮膚與頭髮的 `ambientRgb` 改成讀 `_ambientshadowG` 向量參數（預設 0.502），讓 setter 真的到達。接好後再用 1c 的三組設定與預測量重拍。
 - 還沒查：Forge 家族（`KKForgeOpaque/Alpha/Item`、`KKMainItemPlus`）的材質圖有 `_ambientshadowG` 參數（R1145 的 uasset 名稱表裡有），但它在圖裡是否影響亮度，要在窗口後加日誌或看圖。
+
+
+## 2026-11-20（第十二次）我把取樣器的輸出丟進 `/dev/null`，然後去 log 裡找它；以及兩個 `.cmd` 的環境坑
+
+### 一、換掉的取樣器還是沒資料，原因是我自己丟掉了它的輸出
+
+第十一條修好了閘門字串（`Total tracked resource size:` 全引擎只有 `rhi.DumpResourceMemory` 會印），
+但五趟下來 `rhi_total_lines=0`、樣本欄位空。**照登記的規則這算量具失敗**，查下去原因在我這邊：
+
+`rhi.DumpResourceMemory` 是 `FAutoConsoleCommandWithWorldArgsAndOutputDevice`，
+**輸出寫進呼叫者給的 output device**，所以透過 `ui_exec` 下指令時，那些行**回在回應裡**，
+不一定進 `Saved/Logs` 的檔案。而我的驅動那一行是：
+
+```bash
+timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2>&1
+```
+
+**我把要量的東西丟進了 `/dev/null`，然後去 log 裡找它。**
+同一支驅動在讀 cvar 時是會接住回應的（`# knob now` 就是那樣來的），所以這不是不會做，是順手寫錯。
+
+**修法**：取樣那一行要把回應接進該趟的 tab 檔，和 `# vram_sample card=` 寫在一起；
+並且**在對照趟就檢查那幾行真的有數字**（閘門看樣本不看計數）。
+更一般的一條：**凡是「下指令取值」的量具，取值與存檔要寫在同一行**，
+不要一行下指令、另一行去別的地方撈——撈錯地方和沒撈到長得一模一樣。
+
+### 二、從 git-bash 用 `cmd /c` 跑 `.cmd`，腳本根本沒執行
+
+`cmd /c CardReaderDevelopment.cmd` 在 git-bash 下只印了 cmd 的橫幅就結束（exit 0），
+**看起來像「跑過了而且成功」**。和 11-19 記過的 `cmd //c` 吃引號同形。
+**修法**：在這個工作區要跑 `.cmd`／`.bat`，一律用 PowerShell（`& 'E:\...\X.cmd'`）或直接叫它底下的 Lua。
+
+### 三、`.cmd` 裡的中文 `rem` 在代碼頁 950 下會噴假錯誤，不要誤記成整合傷
+
+`CardReaderDevelopment.cmd` 跑起來會印
+`'ewest' is not recognized as an internal or external command`、`'與' is not recognized…` 之類。
+那是中文註解在 cp950 下被拆開造成的，**而且四支 launcher 都是 LF 行尾、長期如此**，
+不是這次整合造成的。**真正的失敗原因是底下的 Lua 啟動器回非零**（它判定原始碼比編輯器建置新，要先重建）。
+**修法**：`.cmd` 噴錯時先看它呼叫的那支腳本的回傳值與輸出，不要停在 cmd 自己的噪音上。
