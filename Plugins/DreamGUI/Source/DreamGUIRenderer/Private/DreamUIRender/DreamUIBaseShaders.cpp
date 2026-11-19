@@ -6,6 +6,11 @@
 #include "RenderingThread.h"
 #include "TextureResource.h"
 #include "RHITextureReference.h"
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <d3d12.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 
 #include "HAL/IConsoleManager.h"
 #include "Misc/CoreDelegates.h"
@@ -149,6 +154,15 @@ namespace DreamUIBaseShadersLocal
 		const void* Referenced[BoundFieldCount] = {};
 		/** Read while it is still alive, so the dump never reads freed memory. Matches the page fault dump's names. */
 		FName ReferencedName[BoundFieldCount];
+		/**
+		 * The GPU virtual address of the texture's resource, read at bind time.
+		 * MEASURED, not assumed (2026-11-20): matching the faulting texture by NAME came back negative, and a name is
+		 * not what the page fault report identifies anything by -- an ADDRESS is. With the address here the question
+		 * becomes "is the faulting address inside something this draw actually bound", which the report can answer.
+		 * No size: asking the RHI for a texture's byte size is a device call, and this runs on every field of every
+		 * draw. The fault report prints the dead allocation's own address RANGE, so the comparison is range-to-address.
+		 */
+		uint64 ReferencedVA[BoundFieldCount] = {};
 	};
 
 	/**
@@ -182,6 +196,18 @@ namespace DreamUIBaseShadersLocal
 		}
 		OutEntry.Referenced[InIndex] = Referenced;
 		OutEntry.ReferencedName[InIndex] = Referenced != nullptr ? Referenced->GetName() : NAME_None;
+		OutEntry.ReferencedVA[InIndex] = 0;
+#if PLATFORM_WINDOWS
+		if (Referenced != nullptr)
+		{
+			// GetNativeResource() is the ID3D12Resource on this RHI, and the address is a vtable call, so this needs
+			// the header and no library. Null means "no resource", which the dump prints as 0.
+			if (ID3D12Resource* Native = static_cast<ID3D12Resource*>(Referenced->GetNativeResource()))
+			{
+				OutEntry.ReferencedVA[InIndex] = static_cast<uint64>(Native->GetGPUVirtualAddress());
+			}
+		}
+#endif
 	}
 
 	static void DumpBoundRing(const TCHAR* InWhy)
@@ -221,8 +247,9 @@ namespace DreamUIBaseShadersLocal
 					continue;
 				}
 				++Printed;
-				UE_LOG(LogTemp, Display, TEXT("DreamUI bound: frame=%u draw=%u %s bound=%p referenced=%p name=%s")
+				UE_LOG(LogTemp, Display, TEXT("DreamUI bound: frame=%u draw=%u %s bound=%p referenced=%p va=0x%llX name=%s")
 					, Entry.Frame, Entry.Draw, BoundFieldNames[Field], Entry.Bound[Field], Entry.Referenced[Field]
+					, Entry.ReferencedVA[Field]
 					, *Entry.ReferencedName[Field].ToString());
 			}
 		}
