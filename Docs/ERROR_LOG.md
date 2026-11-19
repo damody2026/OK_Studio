@@ -5901,6 +5901,11 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **补一条判准（协调者裁示）**：规则里没写的例外，就不是例外。「只读、很快」不能拿来豁免 may-build 的 wait。
 - **第二次（同一天，时间留给量测对照）**：2026-11-19 14:17:42（本机时间）起约 9 秒，套用第三批 patch 时同一个指令接着跑了 dev `cargo check`，前面没有先问 gate。14:29 再问 C 那份时它回 `wait`（e-cardload-physics 独占 slot1），所以 14:17 那时多半也是 wait。如果 e-cardload 那段量测在 14:17～14:18 有异常，先对这个时间。协调者裁示：不重跑、不扣分，但规则不放宽，顺手跑一下的习惯本身就是问题。
 - **第三次（2026-11-19 约 14:59:30～14:59:55，本机时间；commit `23984db32` 的时间是 14:59:54）**：不是我下指令跑的，是 **commit hook**。暂存区有 `Localization/*/ui_text.toml` 时，pre-commit 的 `Tools/check_rules_tests.lua` 会跑 ok-rules 的 `cargo test`（这次 305 个测试，3.7 秒，另加编译）。当时 C 的 `may-build` 是 wait（e-cardload-physics 独占 slot1）。**判准**：wait 期间，`git commit` 也算会动 CPU 的指令，要先看暂存区会不会触发 hook 的测试（Localization 的 toml，以及 hook 里列的其他路径）。会的话，那几个档等 go 再提交，不能为此用 `OK_SKIP_RULES_TESTS=1` 跳过 hook。
+- **可执行的检查（协调者采用）**：提交前在 bash 跑下面这行。暂存区碰到 hook 会跑测试的路径时，先问 C 那份 gate，wait 就不提交：
+  ```bash
+  git diff --cached --name-only | grep -qE '^(Tools/ok-rules/|Content/IndependentResources/StreetSocialData/)' && { [ "$(C:/portable/OpenKoikatsu/Tools/lua/lua.exe C:/portable/OpenKoikatsu/Tools/unreal_slot.lua may-build 2>&1 | tail -1)" = go ] || { echo 'WAIT：暂存区会触发 hook 测试，等 go 再提交'; exit 1; }; }; git commit ...
+  ```
+  路径清单以 `Tools/check_rules_tests.lua` 第 21 行为准，那里改了这里也要跟着改。
 
 ## 2026-11-19：在一棵树里找不到，就判成「没人写过」（协调者，f-yvonne 代记）
 
