@@ -646,3 +646,49 @@ if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
   而第二點已證明在 TIER_2 之下那一項不會攔住它。
 - 在 TIER_1 的機器上本條不成立（那裡 heap 會以 texture-only 旗標建立而不被追蹤），
   所以這條**不是**跨機器的結論。
+
+## 第二十六條（2026-11-20）`bound_by_dreamgui=0` 降級：那個量具**在結構上**就看不見懸空的綁定，所以它從來沒能回答它被造出來要回答的那個問題
+
+**四趟一致的 `slot_hits_fault_texture=0`／`bound_by_dreamgui=0` 不是「DreamGUI 從沒綁過那張」的證明。**
+降級後的正確說法是：**在「只印變化＋每 600 幀心跳」且「以名字比對」的量具下，沒有取樣到活的、名字對得上的綁定。**
+
+### 洞一：只印變化＋心跳（真實，但比「幾乎不可見」弱）
+
+`DreamUIBaseShaders.cpp:88-94`：`bChanged` 比對 `Reference`／`Referenced` 兩個指標，
+不變且未到 600 幀心跳就 `return`。
+**所以一個「一直交出同一個位址」的槽，持續期間的證據被稀釋到 1/600。**
+
+**但要寫準**：**進入**那個綁定的那一幀 `bChanged` 為真，會印成 `changed`。
+所以**趟次中途開始的綁定會在它開始的那一刻被抓到**；被稀釋的是「它一直維持著」這件事，不是「它曾發生」。
+（這一點我不照抄協調 session 的敘述：那樣會把這個洞講得比它實際更大。）
+
+### 洞二：比對靠名字（真實）
+
+回查是拿傾印的 `Texture2D_<n>` 去比槽位 log 的 `referenced_name=`
+（取自 `FRHITexture::GetName()`，RHI 端的除錯名，和傾印印的是同一來源）與 `src=`
+（取自 `InTexture->GetFName()`，UObject 名）。**名字對不上就記 0。**
+而 `LogSlot` 取名字之前**沒有**像 `CheckNotStale` 那樣先驗有效性。
+
+### 洞三（我自己找到的，而且比上面兩個致命）：那條路是有參照計數的，所以懸空的綁定**不可能**出現在那裡
+
+九個槽拿到的是 `FTextureReferenceRHIRef`，而 `FRHITextureReference` 持有
+`TRefCountPtr<FRHITexture>`（`RHITextureReference.h:53`）。
+**所以只要某個槽真的綁著那張貼圖，那張貼圖的配置就不會被釋放**——
+也就是說，**這個量具只看得到活著的綁定**。
+而我們要找的是「位址已經歸還、卻還被取樣」的那種綁定，
+**那種東西在定義上不會持有參照計數，於是永遠不會出現在這九個槽的視野裡。**
+
+**結論：`bound_by_dreamgui=0` 與「它被綁過（以一個不計數的方式）」並不互斥。**
+照第十一條（量具的覆蓋率要用另一個量具查），這一格的覆蓋率必須寫成上面那句，
+而**剩下唯一的形狀正好落在它的盲區**——這件事本身就是線索：
+**持有者在那條有參照計數的槽位路徑之外。**
+
+### 順手查掉一個具體嫌疑：讀卡器縮圖的 brush 是 GC 看得見的強參照
+
+協調 session 建議查 `UDreamImage::GetTextureToCreateGeometry()`（`DreamImage.cpp:254-272`）
+那條「裸 `UTexture` 直接進 brush」的路，若 brush 的欄位是裸指標，縮圖被 GC 後 brush 仍會每幀交出它。
+**查了：不是裸指標。** `FDreamUIImageBrush::ResourceObject` 是
+`UPROPERTY(EditAnywhere, BlueprintReadWrite) TObjectPtr<UObject>`
+（`DreamUIImageBrush.h:60-62`），而 `Brush` 本身也是 `UDreamImage` 上的 `UPROPERTY`
+（`DreamImage.h:28-29`）。**兩層都是 GC 看得見的強參照，所以 brush 持有期間那張縮圖不會被回收。**
+那個嫌疑**不成立**，不是「尚未排除」。
