@@ -5754,8 +5754,11 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 - **做了什么**：想知道 `reader_launch` 收哪些参数，下了
   `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call reader_launch '{"help":true}'`。
-- **发生什么**：`call` 就是执行那个工具，**未知栏位会被忽略**，所以它照常启动了读卡器（pid 76860，11:04:59）。
-  当时 e-cardload-physics 正持着两格 slot 做「PageFault 計數格（需獨占 GPU）」，我这 60 秒的编辑器载入可能污染它那一笔。
+- **发生什么**：`call` 就是执行那个工具，而且 `reader_launch` **对不认得的参数不是报错、而是照预设启动**，
+  所以 `{"help":true}` 等于「用预设开一个读卡器」（pid 76860，11:04:59）。
+  要查用法就看 MCP 的工具清单（`tools/list`），或 `call <tool>` 不带 JSON 看它抱怨缺什么，**不要拿真工具名试探**。
+  当时 e-cardload-physics 正持着两格 slot 做「PageFault 計數格（需獨占 GPU）」，我这 46 秒的编辑器载入落在它 clear 格的第 9～13 列，
+  那几列由对方按自己的规矩作废（它的结论「笔数爬升再掉回、不是单调增长」在窗口外也成立，所以主结论没被我毁掉）。
   看到回传里有 `pid` 就立刻 `reader_stop {"pid":…}`，并用 `Win32_Process` 按命令列确认 F 树 Unreal 行程归零，之后通知对方重跑那一格。
 - **两层错**：
   1. **把会产生副作用的呼叫当成查询**。`ok-game-mcp call <tool>` 没有 help 模式；要看参数就读 `Tools/ok-game-mcp/src/*.rs`
