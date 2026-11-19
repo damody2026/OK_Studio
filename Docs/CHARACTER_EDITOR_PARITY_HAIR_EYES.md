@@ -219,3 +219,25 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
 - 「扁平清单」指的是属性面板现在呈现 `hair.parts.0.baseColor.r` 这种 key 的样子；
   我没有实际开读卡器截图确认它当下长什么样，所以第 2、3 节的「UI」栏是按程式与读写表推出来的，
   要动手做之前应该先开一次读卡器拍一张现况图。
+
+## 6.1 判准：「CLI 开得了、读卡器开不了」不等于读卡器有 bug（2026-11-19）
+
+这轮两次踩到同一件事，写成判准省得下一个人再查一遍：
+
+- **两条路要的东西不一样。** `ok-appearance`／`ok-extract` 这类 CLI **给了游戏根目录**（例如
+  `D:\XKoikatuSunshine`）就能从该安装的 `mods/` 现场补齐卡片指名的 zipmod；读卡器开的是 **OK 卡**，
+  没有游戏可退，缺的东西必须已经封在卡内（`okLc`）或存在于基础库。所以同一张卡
+  **CLI 开得了、读卡器开不了是正常的**，不能据此推论读卡器或 `oklib` 有 bug。
+- **先看报缺的是第三方 mod 还是共用资源。** 严格开卡的讯息会点名缺什么
+  （现在写成 `okLt guids (20): AntY.gloves,…`）：
+  - 点到的是 `Tools/base_library_shared_mods.txt` **以外**的第三方 mod → **卡没自足**，
+    该用 `ok-extract … --oklib seal` 把资料补进卡内，`okId` 不变；不是我们这边的程式问题。
+  - 点到的是共用资源（原作转出的模型、清单内的全域 mod）→ **本机基础库缺东西**，
+    该用 `Tools/original_data.lua restore` 补，才是我们这边要修的。
+- 外层讯息过去写成「lacks N thing(s)」，N 其实是**没答案的问题数**不是缺件数（一个问题可以点名 20 个 mod）；
+  已改成 `has N unanswered question(s)`（E 树 `722738590`）。看到旧讯息时别照字面去找「那一个」东西。
+
+实例（F 树，2026-11-19）：`Content/CharacterCards/StreetHeroines/` 全 18 张与
+`CrowdAPNG/` 101 张里的 83 张在 F 树开不了，报的都是第三方 `okLt guids`——同一类，属「卡没自足」，
+要走 seal；F 树基础库本身没问题。另外发现：拿 `properties_apply`（带 `resources` 与游戏根目录）
+**重新输出**一张卡，产物就开得了——那条路顺手把缺的资料封进卡内，效果等同 seal。
