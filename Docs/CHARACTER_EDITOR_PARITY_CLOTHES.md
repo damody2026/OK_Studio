@@ -298,7 +298,7 @@
 
 ### 10.6 我接下来要做的（B 类，照优先）
 
-1. `apply` 换上衣时写 `sleevesType=0`；换配件时，新配件 `HideHair==1` 就把 `parentKey` 清成 `""`。都照原作的 `UpdateSelect…Kind`。
+1. `apply` 换上衣时写 `sleevesType=0`；换配件时，新配件 `HideHair==1` 就把 `parentKey` 清成 `""`。都照原作的 `UpdateSelect…Kind`。**已写**（`appearance.rs` `coordinate`）：只在 id 真的换了时才改，重套同一个 id 不动，所以 `verify` 照样幂等。测试 `new_top_starts_at_sleeve_zero_and_hide_hair_accessory_drops_parent`，尚未编译。
 2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。
 3. 父骨表补 `reverse` 对应（照原作 `ChaAccessoryDefine.GetReverseParent`），给「父骨左右反转」与「左右反转复制」用。
 4. 查清楚：换上衣时子部件回补后，原作写回卡上的值，我们有没有照写。
