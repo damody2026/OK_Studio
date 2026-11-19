@@ -2122,3 +2122,44 @@ f-sceneload 照那個 `go` 做了一次完整建置（兩個 Development 目標�
 **另外確認一件事**：我今天 33 處問 slot／gate 全部用的是 C 那份的絕對路徑
 `/c/portable/OpenKoikatsu/Tools/unreal_slot.lua`（`grep` 查過，沒有一處問樹裡的副本），
 所以我拿到的 `go`／`wait` 都是真仲裁者回的。E 樹那份副本仍是舊的，等 e-fork-2 的窗口把 `9cf1bd7c7` cherry-pick 進來。
+
+### 四個呼叫點的篩選：只有兩個「被放掉之後還跨帧被用」，所以拆 cvar 那格是二選一而不是四選一（2026-11-19，純讀碼）
+
+判準：那個隊列唯一的作用是**延後「放掉／還池」**，所以**能被 `DelayFrames` 影響的受害者，
+必須是「被放掉之後還有人在後面的帧裡繼續用它」**。嚴格在帧內用完的東西，延後釋放對它沒有意義。
+
+| 呼叫點 | 放掉的是什麼 | 跨帧被繼續用？ | 出處 |
+|---|---|---|---|
+| `DreamUIDataTexture.cpp:143` | 資料貼圖長大時**被換掉的舊 RHI** | **否** | 沒有任何結構留著舊的裸 RHI：所有 draw 綁的是**參照**，而 `ReplaceTexture` 當場 `UpdateTextureReference` 指到新的（`:146-148`）。只有「長大之前已經錄好的 draw」還讀舊的，那是**一帧內**的危害，3 帧本來就蓋住 |
+| `DreamUICompositor.cpp:325` | 還給 `GRenderTargetPool` 的 `Frame.Pooled` | **否** | `FDreamUICompositeStack Stack(...)` 是建 pass 那個函式裡的**區域變數**（`DreamUIRenderer.cpp:1571`、`:2227`），整個堆疊活在**一張圖之內** |
+| `DreamUIMaterialProxy.cpp:89`／`:95` | `delete FDreamUIMaterialProxy` | **是** | proxy 本來就是跨帧物件：`LiveProxies()` 記著它、widget 持有 shared ref、`RenderThreadParameters` 存在 proxy 上；最後一個參照消失才 delete |
+| `DreamUIRenderer.cpp:1252` | `CanvasTargetTexture` | **是，定義上就是** | 它是 view extension 的**成員**（`DreamUIRenderer.h:345`），由 `:2800` 從外面設定、`:396` 與 `:1209-1211` 跨帧讀，換回螢幕目標時才放掉 |
+
+**所以拆 cvar 那格從「四選一」變成「二選一」**：material proxy 與 canvas target。
+**但要注意刻度不是一對一的**：`CanvasTargetTexture` 是 `FTextureRHIRef`，和資料貼圖**共用 `Frames.Texture` 這一個刻度**。
+篩選已經把資料貼圖排除，所以讀法可以寫得更緊：
+
+- **`Frames.Texture` 動了當機 ⇒ 受害者是 canvas target**（`Renderer.cpp:1252`），
+  因為同一個刻度下的另一個（資料貼圖舊 RHI）不跨帧；
+- **`Frames.Func` 動了 ⇒ material proxy**（`MaterialProxy.cpp:89/95`）；
+- **`Frames.Pooled` 動了 ⇒ 和這份篩選矛盾**（堆疊是帧內的），那就是篩選錯了，
+  要回去找「被 pop 掉的 frame 還被誰留著」；
+- **四個都不動 ⇒** 240 那個效應不是這個隊列本身，或 240 第 1 趟的存活是運氣。
+
+**canvas target 這一條還有一個額外的理由值得先寫下來**：render-target 類型的 canvas
+（`EDreamUIRendererType::RenderTarget`）畫出來的目標，**會被別的 widget 當成貼圖取樣**——
+那正是 `MainPS` 的 `MainTex`。所以它同時滿足「跨帧持有」與「被 `MainPS` 取樣」兩件事，
+是目前唯一同時滿足的候選。
+
+### 污染這件結清了：那一分鐘的 CPU 測試落在兩格之間的空檔（2026-11-19）
+
+f-sceneload 給了確切時間，兩件都對得上，**而且和我用每卡耗時判出來的結果一致**：
+
+| 它做了什麼 | 時間 | 落在哪 |
+|---|---|---|
+| 515 個 Rust lib 測試、8 執行緒吃滿 CPU | **13:50:31–13:51:35** | **兩格之間的空檔**：`defrag_off` 13:48:01 結束，`d12_pass1` 13:55:31 才開始 |
+| 兩個 Development 目標建置 | 14:14:23–14:16:35 | 我 14:19:49 才 claim slot1；中間我自己在 14:19:44 建置（建置不是量測） |
+| f-yvonne 的 9 秒 `cargo check` | 14:17:42 | 同上，落在我自己的建置時段，不是量測 |
+
+**所以沒有任何一格的量測區間被壓到，一格都不用重跑**，兩種方法（每卡耗時、確切時間窗）互相印證。
+它那個假 `go` 的推論它自己也更正了：當時我還沒 claim，所以那個 `go` 是對的。
