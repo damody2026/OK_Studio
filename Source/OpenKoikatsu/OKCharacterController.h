@@ -171,6 +171,10 @@ public:
  /// section dropped without a word goes unnoticed: that is how KoiSkinOverlayX's `KSOX` stayed unreachable until
  /// someone read the code (2026-11-19). A key showing up here is the signal to add it to `PLUGIN_SECTIONS`.
  TArray<FString> EditorUnknownPluginSections;
+ /// Which card and outfit `EditorUnknownPluginSections` was read for, and whether ok-extract's reply carried the field
+ /// at all. An empty list then means "this build knows every section of this card", never "no card" or "not read":
+ /// a list left over from the previous card is not this card's, and a producer without the field is missing support.
+ FString EditorUnknownPluginSectionsCard;int32 EditorUnknownPluginSectionsOutfit=-1;bool bEditorUnknownPluginSectionsReported=false;
  TMap<FString,TSharedPtr<FJsonValue>> PendingProperties;
  bool bPropertyBusy=false;
  FString PropertySource;
