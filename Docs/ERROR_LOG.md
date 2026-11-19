@@ -6027,3 +6027,13 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   「記憶體提前釋放」「參照改指」「bindless 堆重用」「描述子環 rollover」「資源逐出」「defrag 搬家」
   六條依序排掉，每一條都留著出處（讀碼位置或 log 計數）。
   **把排除寫下來和把結論寫下來一樣重要**：下一個人才不會重走同一條。
+## 2026-11-19：在臨時 worktree 裡 cherry-pick，提交 hook 自己開始編譯，沒先問 may-build（e-fork-2）
+
+- **發生什麼**：為了把窗口裡要做的整串 cherry-pick 先預演，我在臨時 worktree（`E:\OKSimE2`）照順序套 F 的提交。
+  - `ccde34b12` 改到 `ui_text.toml`，`--continue` 時 pre-commit hook（`check_rules_tests`）看到它，就自己跑了 ok-rules 的 `cargo test`。這是一次建置，而我沒有先跑 `may-build`。
+  - 那次測試又因為 worktree 少了本機資料檔（`anchors.rs` 的測試讀不到檔案）而失敗，提交被拒。
+- **錯在哪**：把「cherry-pick」當成只動 git 的操作。在這個倉庫裡，提交會經過 hook，而 hook 會依 staged 的檔案去編譯、跑測試。所以任何會產生提交的 git 指令（commit、cherry-pick --continue、rebase、merge）都可能是一次建置。
+- **再犯前檢查**：
+  - 在這個倉庫做會產生提交的操作前，先看 staged 的檔案會不會觸發 hook 的測試（`Tools/check_rules_tests` 那一類）；會的話先跑 `may-build`。
+  - 拋棄式的預演 worktree 用 `git config --worktree core.hooksPath NUL` 關掉 hook，只影響那個 worktree。真的窗口裡不關，hook 照跑。
+  - 這個 hook 在真的樹上（有本機資料）預期會通過，但它要編譯，所以窗口清單把它算進建置時間。

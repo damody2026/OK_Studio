@@ -161,7 +161,11 @@ local function main()
   args[#args + 1] = "-OKPhysics=" .. physics
   -- The reader screen's pages (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md): a stage has only the Config it was staged with,
   -- so the checkout's file is named; the editor target reads the same file without it.
-  args[#args + 1] = "-ReaderPages=" .. (path.join(root, "Config/ReaderEditor/pages.json"):gsub("\\", "/"))
+  -- A -ReaderPages= given after "--" (reader_launch extra) is the one used: the screen reads the first one on the
+  -- command line, so the default is left out rather than put in front of it.
+  local own_pages = false
+  for _, x in ipairs(o.passthrough) do if x:lower():find("^%-readerpages=") then own_pages = true end end
+  if not own_pages then args[#args + 1] = "-ReaderPages=" .. (path.join(root, "Config/ReaderEditor/pages.json"):gsub("\\", "/")) end
   for _, x in ipairs(o.passthrough) do args[#args + 1] = x end
   local receipt = json.object({ { "project", project }, { "executable", exe }, { "arguments", json.array({ table.unpack(args, 2) }) },
     { "module", module }, { "card_directory", cards }, { "log", log }, { "skinning", gpu and "GPU" or "CPU" } })
