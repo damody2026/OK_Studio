@@ -244,3 +244,29 @@ GC 看得見的材質引用」。交接反查趟量到的是——**放手那一
 
 **怎麼用**：任何「因為量到 X 幀，所以 Y 不可能」的句子，先問「X 在幾趟上成立？」
 答案是 1 就不能用來排除，只能列為待驗。
+
+## 十四、DreamGUI 拆成兩條：釋放端排除，消費端不排除（2026-11-19）
+
+先前寫成一條「DreamGUI 已排除」，**那太寬了**。它其實是兩個互不相干的問題，而兩條的答案相反：
+
+| | 問題 | 答案 | 依據 |
+|---|---|---|---|
+| **釋放端** | 是 DreamGUI 的延遲釋放佇列放掉那張卡片貼圖的嗎？ | **排除** | 那個佇列放掉的全是 `DreamUIDataTexture_N`，沒有一筆 `Texture2D_<數字>`；`kind=func`（proxy delete）一趟都沒觸發 |
+| **消費端** | 故障當下在畫的是 DreamGUI 嗎？ | **不排除，而且很可能是** | 故障後的 `Active GPU breadcrumbs`：`BasePass`／`ShadowDepths`／`RenderDeferredLighting`／`Translucency`／`PostProcessing` 全部 `[Finished]`，唯一還在跑的是 `RenderFinish → ViewFamilyExtension(3) → ViewExtension(0) → DreamUIDraw` |
+
+**我自己的趟獨立證實了這段**（`20261119-221813-716b80e4.log`，故障幀 17772）。而且多出兩個細節：
+
+1. **同時有三個 `DreamUIDraw` 兄弟節點是 `[Active]`**（ID `0x803542d4`／`d7`／`da`），
+   `main=` 在 `DreamUIDynamicSpriteAtlasData_Texture_0` 與 `DreamUIPreset_WhiteSolid` 之間交替，
+   三者的 `DreamUIData widget=DreamUIDataTexture_6 clip=DreamUIDataTexture_3` 與
+   `DreamUIMore rect=DreamUIDataTexture_4 paint=DreamUIDataTexture_1 mask0=fallback` 完全相同。
+   **所以 breadcrumb 給的是「還在飛的一段」，不是單一 draw**——它說得出是哪個 pass，說不出是哪一個 draw。
+2. **那段裡 `Texture2D_` 零命中**：只有 DreamUI 自己的資源（atlas、font、widget、clip、rect、paint、
+   `mask0=fallback`）。**所以那張卡片貼圖綁在 breadcrumb 沒印出來的槽上。**
+
+**什麼會讓「消費端」也被排除**：若某一趟的 `Active` 路徑不在 `ViewExtension` 底下
+（例如落在 `BasePass` 或 `Translucency`），那消費者就不是 DreamGUI 的 draw，這條要改寫。
+**所以每一趟都要把那段存進報告**，不是只存一次——這也是這條的量測要求。
+
+**這條的教訓**：「排除 DreamGUI」把釋放端與消費端混成一件。
+**排除要連同「排除的是哪一個角色」一起寫**——同一個子系統可以在一條路上無罪、在另一條路上正是嫌疑人。
