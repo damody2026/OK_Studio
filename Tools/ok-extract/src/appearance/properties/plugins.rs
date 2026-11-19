@@ -70,14 +70,47 @@ fn xml_rows(xml:&str,outfit:usize)->Result<Vec<(String,String,String,std::ops::R
   }slot+=1;
  }Ok(out)
 }
-fn visit(v:&Value,path:&str,labels:&str,color:bool,outfit:usize,out:&mut Vec<J>){
+fn visit(v:&Value,path:&str,labels:&str,color:bool,outfit:usize,out:&mut Vec<J>){visit_with(v,path,labels,color,outfit,out,None)}
+/// The largest integer anywhere under `v` (a `_state` list of `[start, stop]` pairs), 0 when there is none.
+fn max_int(v:&Value)->i64{match v{Value::Integer(_)=>v.as_i64().unwrap_or(0),Value::Array(a)=>a.iter().map(max_int).max().unwrap_or(0),_=>0}}
+/// Integer fields offered as rows, by name, with their hard bounds `(min, max)`. Only these: the other integers in
+/// plugin data are identities (`ObjectType`, `CoordinateIndex`, `Slot`, texture ids, enum `Property`) — editing one
+/// moves the entry onto another object or breaks a reference, so they stay out.
+/// * Accessory States (`Slotdata`, `KKS_Accessory_States/.../Slotdata.cs`): `_binding` is -1 (none), 0–8 a clothes kind,
+///   9 and up a custom group the card names in `_names`; offered as -1..max(8, stored) so a card's own group stays
+///   valid, a new custom group is not invented here. `_state` holds `[start, stop]` pairs, 0..3 for a clothes binding
+///   (`CoordinateData.cs` 276–291: the max state of a clothes kind is 3), up to the stored max for a custom group.
+///   `_shoetype` is 0 outer, 1 inner, 2 both.
+/// * MaterialEditor `RenderQueue` (`MaterialShader`): Unity's -1 (use the shader's) .. 5000.
+fn int_spec(name:&str,path:&str,v:&Value,binding:Option<i64>)->Option<(i64,i64)>{
+ if path.starts_with("plugins.AccessoryStates.") {
+  return match name {
+   "_binding"=>Some((-1,max_int(v).max(8))),
+   "_state"=>Some((0,if binding.is_some_and(|b|(0..=8).contains(&b)){3}else{max_int(v).max(3)})),
+   "_shoetype"=>Some((0,2)),
+   _=>None,
+  };
+ }
+ (path.starts_with("plugins.MaterialEditor.")&&name=="RenderQueue").then_some((-1,5000))
+}
+fn visit_with(v:&Value,path:&str,labels:&str,color:bool,outfit:usize,out:&mut Vec<J>,int:Option<(i64,i64)>){
  match v{
   // MaterialEditor keeps every outfit's clothes (ObjectType 1) and accessory (2) entries in one list: only the edited
   // outfit's can change the preview, so the others are not offered (an edit there showed no change at all).
   Value::Map(m) if {let int=|key:&str|m.iter().find(|(k,_)|k.as_str()==Some(key)).and_then(|(_,v)|v.as_i64());matches!(int("ObjectType"),Some(1|2))&&int("CoordinateIndex").is_some_and(|c|c!=outfit as i64)}=>{},
-  Value::Map(m)=>{let mut context=labels.to_string();for(key,title)in [("MaterialName","材質"),("RendererName","網格"),("Property","屬性")]{if let Some(s)=m.iter().find(|(k,_)|k.as_str()==Some(key)).and_then(|(_,v)|v.as_str()){context.push_str(&format!("／{title} {s}"));}}for(i,(k,v))in m.iter().enumerate(){let name=k.as_str().map(str::to_string).unwrap_or_else(||k.to_string());if name.to_ascii_lowercase().contains("texture")||name.ends_with("Original") {continue;}visit(v,&format!("{path}.{}",map_step(k,i)),&format!("{context}／{}",label(&name)),color||name.to_ascii_lowercase().contains("color"),outfit,out)}},
-  Value::Array(a)=>for(i,v)in a.iter().enumerate(){visit(v,&format!("{path}.a{i}"),&format!("{labels}／{}",if color&&a.len()==4{["紅","綠","藍","透明度"][i].into()}else{format!("{}",i+1)}),color,outfit,out)},
+  Value::Map(m)=>{let mut context=labels.to_string();for(key,title)in [("MaterialName","材質"),("RendererName","網格"),("Property","屬性")]{if let Some(s)=m.iter().find(|(k,_)|k.as_str()==Some(key)).and_then(|(_,v)|v.as_str()){context.push_str(&format!("／{title} {s}"));}}let binding=m.iter().find(|(k,_)|k.as_str()==Some("_binding")).and_then(|(_,v)|v.as_i64());for(i,(k,v))in m.iter().enumerate(){let name=k.as_str().map(str::to_string).unwrap_or_else(||k.to_string());if name.to_ascii_lowercase().contains("texture")||name.ends_with("Original") {continue;}visit_with(v,&format!("{path}.{}",map_step(k,i)),&format!("{context}／{}",label(&name)),color||name.to_ascii_lowercase().contains("color"),outfit,out,int_spec(&name,path,v,binding))}},
+  // An integer spec reaches into lists (`_state`'s pairs), never into a nested map.
+  Value::Array(a)=>for(i,v)in a.iter().enumerate(){visit_with(v,&format!("{path}.a{i}"),&format!("{labels}／{}",if color&&a.len()==4{["紅","綠","藍","透明度"][i].into()}else{format!("{}",i+1)}),color,outfit,out,int)},
   Value::Binary(b)=>if let Some(v)=unpack(b){visit(&v,&format!("{path}.packed"),labels,color,outfit,out)},
+  Value::Integer(_)=>if let (Some((lo,hi)),Some(n))=(int,v.as_i64()){out.push(json!({"key":path,"label":labels,"kind":"number","integer":true,"decimals":0,"value":n,"min":lo,"max":hi,"limit_min":lo,"limit_max":hi}));},
+  // MaterialEditor stores a float override's `Value` as a string (`MaterialFloatProperty`, MaterialEditorCharaController
+  // 107–140), and a renderer switch as "True"／"False". Offered as the number／bool it holds — never as free text —
+  // and written back as a string (`replace`). Other strings stay out: their type is not known here.
+  Value::String(s) if path.starts_with("plugins.MaterialEditor.")&&path.ends_with(".@Value")=>{
+   let Some(s)=s.as_str() else{return};
+   if let Ok(n)=s.trim().parse::<f64>(){if n.is_finite(){out.push(json!({"key":path,"label":labels,"kind":"number","value":n,"stored_as":"string"}));}}
+   else if s.eq_ignore_ascii_case("true")||s.eq_ignore_ascii_case("false"){out.push(json!({"key":path,"label":labels,"kind":"bool","value":s.eq_ignore_ascii_case("true"),"stored_as":"string"}));}
+  },
   Value::String(s)=>if let Some(xml)=s.as_str().filter(|s|s.trim_start().starts_with('<')){if let Ok(rows)=xml_rows(xml,outfit){for(key,label,raw,_)in rows {let (kind,value)=if key.ends_with("parentKey"){("parent",json!(raw))}else if key.ends_with("noShake"){("bool",json!(raw.eq_ignore_ascii_case("true")))}else{let Ok(n)=raw.parse::<f64>()else{continue};(if key.contains("color"){"color"}else{"number"},json!(n))};out.push(json!({"key":format!("{path}.xml.{key}"),"label":format!("{labels}／{label}"),"kind":kind,"value":value}));}}},
   Value::F32(n)=>out.push(json!({"key":path,"label":labels,"kind":if color{"color"}else{"number"},"value":n})),
   Value::F64(n)=>out.push(json!({"key":path,"label":labels,"kind":if color{"color"}else{"number"},"value":n})),
@@ -106,7 +139,14 @@ pub(super)fn catalog(blocks:&BTreeMap<String,Vec<u8>>,outfit:usize,out:&mut Vec<
  Ok(unknown)
 }
 fn replace(v:&mut Value,path:&str,value:&Value,outfit:usize)->Result<(),String>{
- if path.is_empty(){*v=value.clone();return Ok(());}
+ // A leaf keeps the type the plugin stored: MaterialEditor's float／bool kept as a string stays a string (its loader
+ // parses it; a msgpack float there would not load). The f32 text is the shortest that reads back the same value.
+ if path.is_empty(){*v=match (&*v,value){
+  (Value::String(_),Value::F32(f))=>Value::String(format!("{f}").into()),
+  (Value::String(_),Value::F64(f))=>Value::String(format!("{}",*f as f32).into()),
+  (Value::String(_),Value::Boolean(b))=>Value::String((if *b{"True"}else{"False"}).into()),
+  _=>value.clone(),
+ };return Ok(());}
  let (head,rest)=path.split_once('.').unwrap_or((path,""));
  if head=="packed" {let b=v.as_slice().ok_or("模組二進位格式錯誤")?;let mut decoded=unpack(b).ok_or("模組資料無法解碼")?;replace(&mut decoded,rest,value,outfit)?;*v=Value::Binary(encode(&decoded)?);return Ok(());}
  if head=="xml" {let xml=v.as_str().ok_or("模組 XML 格式錯誤")?;let rows=xml_rows(xml,outfit)?;let (_,_,_,range)=rows.into_iter().find(|r|r.0==rest).ok_or("找不到額外飾品欄位")?;let raw=match value {Value::String(s)=>s.as_str().ok_or("骨架字串錯誤")?.to_string(),Value::Boolean(b)=>b.to_string(),_=>value.to_string()};let escaped=raw.replace('&',"&amp;").replace('<',"&lt;").replace('"',"&quot;").replace('\'',"&apos;");let mut xml=xml.to_string();xml.replace_range(range,&escaped);*v=xml.into();return Ok(());}
@@ -188,6 +228,29 @@ pub(super)fn patch(blocks:&mut BTreeMap<String,Vec<u8>>,changes:&BTreeMap<String
   assert_eq!(rows[1]["key"],"plugins.Pushup.#0.@Firmness");
   patch(&mut c,&BTreeMap::from([("plugins.Pushup.#0.@Firmness".to_string(),Value::F32(0.2))]),0).unwrap();
   assert_eq!(decode(&c["KKEx"]).unwrap(),Value::Map(vec![("com.deathweasel.bepinex.pushup".into(),Value::Map(vec![(Value::from(3),pushup(0.4)),(Value::from(0),pushup(0.2))]))]));
+ }
+ #[test]fn known_integer_and_string_fields_are_offered_with_their_type(){
+  let slot=Value::Map(vec![("_binding".into(),Value::from(2)),("_state".into(),Value::Array(vec![Value::Array(vec![Value::from(0),Value::from(3)])])),("_shoetype".into(),Value::from(2)),("_parented".into(),Value::Boolean(false))]);
+  let states=Value::Map(vec![("Accessory_States".into(),Value::Map(vec![("CoordinateData".into(),Value::Map(vec![(Value::from(0),Value::Map(vec![("_slotinfo".into(),Value::Map(vec![(Value::from(5),slot)]))]))]))]))]);
+  let float=Value::Map(vec![("ObjectType".into(),Value::from(4)),("CoordinateIndex".into(),Value::from(0)),("Slot".into(),Value::from(0)),("Property".into(),"Shininess".into()),("Value".into(),"0.25".into()),("ValueOriginal".into(),"0.5".into())]);
+  let me=Value::Map(vec![("com.deathweasel.bepinex.materialeditor".into(),Value::Map(vec![("MaterialFloatPropertyList".into(),Value::Array(vec![float]))]))]);
+  let mut root=states.as_map().unwrap().clone();root.extend(me.as_map().unwrap().iter().cloned());
+  let mut blocks=BTreeMap::from([("KKEx".into(),encode(&Value::Map(root)).unwrap())]);
+  let mut rows=Vec::new();catalog(&blocks,0,&mut rows).unwrap();
+  let row=|k:&str|rows.iter().find(|p|p["key"]==k).unwrap_or_else(||panic!("{k} not in {rows:?}")).clone();
+  let base="plugins.AccessoryStates.@CoordinateData.#0.@_slotinfo.#5";
+  assert_eq!((row(&format!("{base}.@_binding"))["min"].as_i64(),row(&format!("{base}.@_binding"))["max"].as_i64()),(Some(-1),Some(8)));
+  // A clothes binding: each state bound is 0..3, hard.
+  assert_eq!(row(&format!("{base}.@_state.a0.a1"))["limit_max"],3);assert_eq!(row(&format!("{base}.@_shoetype"))["limit_max"],2);
+  // Identities stay out: ObjectType／CoordinateIndex／Slot are integers too.
+  assert!(rows.iter().all(|p|!p["key"].as_str().unwrap().ends_with("@Slot")&&!p["key"].as_str().unwrap().ends_with("@ObjectType")));
+  // MaterialEditor's float-in-a-string: a number row; written back as a string.
+  let k="plugins.MaterialEditor.@MaterialFloatPropertyList.a0.@Value";assert_eq!(row(k)["kind"],"number");assert_eq!(row(k)["value"],0.25);
+  patch(&mut blocks,&BTreeMap::from([(k.to_string(),Value::F32(0.3))]),0).unwrap();
+
+  let v=decode(&blocks["KKEx"]).unwrap();let me=v.as_map().unwrap().iter().find(|(k,_)|k.as_str()==Some("com.deathweasel.bepinex.materialeditor")).unwrap().1.clone();
+  let entry=&me.as_map().unwrap()[0].1.as_array().unwrap()[0];
+  assert_eq!(entry.as_map().unwrap().iter().find(|(k,_)|k.as_str()==Some("Value")).unwrap().1,&Value::String("0.3".into()));
  }
  #[test]fn extra_accessory_xml_preserves_unknown_attributes_and_other_outfits(){
   let xml="<root><accessorySet type=\"0\"><accessory parentKey=\"a_n_head\" color0r=\"0.5\" addMove01x=\"0\" unknown=\"keep\" /></accessorySet><accessorySet type=\"1\"><accessory color0r=\"0.9\" /></accessorySet></root>";

@@ -343,9 +343,11 @@
 
 **B 类（资料端，我的），照优先：**
 
-1. 让 `visit()` 露出整数，以及有已知型别的字串列：Accessory States 的绑定与区间、MaterialEditor 的浮点（字串存）与渲染器开关。照 §8 的身分式键，限制照上表。
-2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。**已写**（`properties.rs` `refuse_unapplied`，原因文字 id `reader.unsupported.pushup_body_backup`，测试 `pushup_body_backup_is_offered_but_not_editable`）：列照样列出来，MCP 的 `set` 回「Parameter unsupported」；尚未编译。
-3. 查清 MoreAccessories v2 的 XML 副本改了有没有效；若无效，改成编辑 `parts[20..]`。
+1. 让 `visit()` 露出整数，以及有已知型别的字串列：Accessory States 的绑定与区间、MaterialEditor 的浮点（字串存）与渲染器开关。照 §8 的身分式键，限制照上表。**已写**（`plugins.rs` `int_spec`／`visit_with`，测试 `known_integer_and_string_fields_are_offered_with_their_type`，尚未编译）：
+   - 整数只露出白名单。Accessory States 的 `_binding`：硬 −1..max(8, 卡上值)；卡自己的自订组照样合法，但不在这里凭空开新组。`_state` 的每个端点：衣服绑定时硬 0..3，自订组时 0..max(3, 卡上值)。`_shoetype`：硬 0..2。MaterialEditor `RenderQueue`：硬 −1..5000。其他整数是身分（`ObjectType`、`CoordinateIndex`、`Slot`、贴图 id、列举的 `Property`），改了会把整列挪到别的物件上，所以不露出。
+   - 字串只露出 MaterialEditor 的 `Value`：内容是数字的当数字列，`True`／`False` 当布林列，不给自由打字。写回时保持字串（`replace` 照原型别转）。ShadowCastingMode 那种列举字串（`Off`／`On`…）还没露出。
+2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。**已写**（`properties.rs` `refuse_unapplied`，原因文字 id `reader.unsupported.pushup_body_backup`，测试 `pushup_body_backup_is_offered_but_not_editable`）：挡写不挡读，列照样列出来（它是诊断用的事实，也可以看备份值是多少），MCP 的 `set` 回「Parameter unsupported」；尚未编译。**这个入口在 2026-11-19 之前是开着的**（`plugins.Pushup.@Pushup_BodyData…` 可写）。已经从这里改过的卡不迁移、不自动修；那样的卡，Pushup 会用改过的备份重算身体。
+3. **未确认，不动程式**：MoreAccessories v2 的 XML 副本改了有没有效。要等有画面时用真卡核对（清单交给 f-sceneload 的拍照窗口）；若无效，就是 `extra.rs` 改错了地方，改成编辑 `parts[20..]`。`HairShadowColorControl` 那一列同样**未确认**，不删。
 4. KSOX／KCOX 换图：和 f-sceneload 的贴图动作对齐后另开动作。
 5. 低优先：Pushup 范围中继资料；MaterialEditor 换 shader。
 
