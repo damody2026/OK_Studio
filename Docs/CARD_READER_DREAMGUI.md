@@ -1652,3 +1652,67 @@ DRED（基線配方）      13:32:00 – 13:35:56
 **決定性的格子**：`gc=10` ＋ noclear（今天最快當的組合，第 7 張）＋ 關掉 defrag。
 活過 30 張就是 **7 → 30** 的跳動，遠在 6 張的趟間差異之外；還是第 7 張附近當，
 那 defrag 也不是，而且那時整條「釋放 → 某個東西被搬走或歸還」的線就只剩實際拿到名字一條路。
+
+### 拿到名字了：畫面上那條 canvas 綁的是 18 張 288×402 的 transient 卡片縮圖
+
+配最快當的配方（`gc=10` ＋ noclear）＋ `-gpucrashdebugging` ＋ `DreamGUI.LogHeldTextures=1`，
+**第 4 張就當**（今天最快），而且 `Logging all resource enabled: **Yes**`。
+
+`DreamGUI.LogHeldTextures` 印出來的名單（21 行，去重後）——**全部屬於同一條 canvas**
+`WBP_ReaderScreen_C_0.DreamCanvas_0`，也就是讀卡器那片面板：
+
+```
+DreamUIDynamicSpriteAtlasData_Texture_0   Texture2D      2048x2048 mips=1  outer=/Engine/Transient
+DreamUIFontData_DistanceField_Texture_0   Texture2DArray 0x0       mips=0  outer=/Engine/Transient
+DreamUIPreset_WhiteSolid                  Texture2D      4x4       mips=1  outer=/DreamGUI/Textures/...
+Texture2D_7 … Texture2D_24（共 18 張）     Texture2D      288x402   mips=1  outer=/Engine/Transient
+```
+
+**那 18 張 288×402 的 transient 貼圖就是卡片列表的縮圖**，每張約 288×402×4 ≈ 463 KB——
+**大於 4K 池的門檻，所以它們住在唯讀貼圖池，也就是四個池裡唯一開 defrag 的那個**。
+翻卡時這批縮圖被銷毀重建，正是量到的「大批釋放」。
+至此「誰在取樣」「取樣什麼」「住在哪個池」三件都有名字了。
+
+#### 故障位址那三行：追蹤開著，而且**第二次**得到全部為零
+
+```
+PageFault: PageFault at VA GPUAddress "0x257C901000" (GPU 0)
+PageFault: Last completed frame ID: -1 (cached: 7473) - Current frame ID: 7476
+PageFault: Logging all resource enabled: Yes
+PageFault: Found 0 active tracked resources in 16.00 MB range of page fault address
+PageFault: Found 0 active heaps containing page fault address
+PageFault: Found 0 released resources containing the page fault address during last 100 frames
+DRED: Last tracked GPU operations:
+DRED: Commandlist "FD3D12CommandList 16 (GPU 0)" on CommandQueue "3D Queue (GPU 0)", 112 completed of 244
+DRED: No PageFault data.
+```
+
+**`Found 0 active heaps containing page fault address` 是最關鍵的一行**：那個位址
+**不在 RHI 目前擁有的任何堆裡面**。所以不是「記憶體被別人拿去用」（那會讀到垃圾、不會 page fault），
+而是**那塊記憶體已經不屬於這個行程的任何堆**。
+另外 `Last completed frame ID 7473 / Current 7476` 說明 **GPU 落後 CPU 約 3 帧**。
+
+#### 三個「誰把描述子帶過搬家那條線」的答案，其中第三個對我自己的假設不利
+
+1. **defrag 有重建 view，但重建的是 offline 的那一份。** `HandleDefragRequest` →
+   `FD3D12ResourceLocation::OnAllocationMoved` → `Owner->ResourceRenamed(Contexts)` →
+   `FD3D12ShaderResourceView::ResourceRenamed` → `UpdateView` → `UpdateDescriptor`，
+   改的是這個 view 自己的 **offline descriptor**。
+   而 `Contexts` 這個參數**只在 bindless 那條路上被用到**
+   （`FD3D12View::UpdateBindlessSlot`：`if (BindlessHandle.IsValid())`）——
+   **bound 的那條路沒有任何東西去碰「已經複製進 online heap 槽位的那些舊快照」**。
+   所以「描述子被帶過搬家線」在結構上是可能的。
+2. **它等的是帧 fence，不是具體那批命令列表。** `DeallocateResource` 把釋放掛進
+   `FrameFencedOperations`，fence 值取 `FrameFence.GetNextFenceToSignal()`；
+   池子被 trim 的條件是 `IsEmpty() && LastUsedFrameFence + InFrameLag <= CompletedFence`。
+3. **但那個 `InFrameLag` 是 20**（`D3D12Allocation.cpp:1910`：`PoolAllocators[PoolIndex]->CleanUpAllocations(20)`）。
+   **20 帧的餘裕，對「GPU 只落後 3 帧」來說太寬了**——
+   所以「舊塊所在的堆在那條命令列表還沒跑完就被還掉／解除提交」這個情節
+   **很難在 20 帧內發生**。這一條是**對我自己這個假設不利的證據**，要先講。
+
+**所以結論先放在這裡，不要超過證據**：我找到了**唯一一條不是快照、也不被 EOP 圍欄覆蓋的路**
+（defrag 搬家 ＋ bound 路徑不更新已複製的快照），但**它的堆歸還有 20 帧餘裕，而 GPU 只落後 3 帧**，
+所以它要成立還缺一個解釋：**要嘛舊塊被還回池子之後很快被別的配置拿走並且那次配置讓堆重新佈局，
+要嘛根本不是這條**。關掉 defrag 那一格（`gc=10`＋noclear ＋
+`RHIPoolAllocator.DefragSizeFraction=0` ＋ `DefragMaxPoolsToClear=0`）會直接回答：
+**第 4 張附近當 ⇒ 不是 defrag，整條「搬家」線作廢**；**活過 30 張 ⇒ 是它，而且 20 帧那個餘裕有漏洞要查。**
