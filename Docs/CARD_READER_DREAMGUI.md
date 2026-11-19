@@ -2199,3 +2199,35 @@ PageFault: Found 0 active heaps containing page fault address
 **所以 transient allocator 這條線的狀態是**：關掉它會讓同一個故障**更早、更穩**地發生，
 而不是消失——這和「aliasing 是元凶」的方向相反（元凶被關掉應該不當），
 也和我跑之前登記的「預測還是會當」一致，只是當得比預期早得多。
+
+### 自我反證：canvas target 在讀卡器裡**大概根本不會被設定**，所以我自己的最強候選要降級（2026-11-19，純讀碼）
+
+照「別只找支持的證據」做了三個檢查，三個都對 canvas target 不利：
+
+**一、它要有一個 `RenderTarget` 模式的 canvas 才會存在。**
+`CanvasTargetTexture` 只由 `FDreamUIRenderer::UpdateRenderTargetRenderer` 設定
+（`DreamUIRenderer.cpp:2784-2803`），而那條路要走到
+`UDreamCanvas::UpdateRootCanvas` 的 `case EDreamRenderMode::RenderTarget:`
+（`DreamCanvas.cpp:313-320`，`RenderTarget = 2`，要資產自己選）才會建起 RenderTarget 類型的 view extension。
+**查下去找不到任何證據讀卡器用了這個模式**：`Content/UI` 底下沒有一個資產提到 `RenderTarget`，
+讀卡器 log 裡唯一的 `RenderTarget` 字樣是 `Set CVar [[r.RenderTargetPoolMin:400]]`（無關的引擎 cvar）。
+**若讀卡器沒有 RenderTarget 模式的 canvas，`Hold(CanvasTargetTexture)`（`:1252`）就從來不會觸發**，
+那它不可能是受害者。
+（保留一點：對 `.uasset` 做二進位 grep 不完美——預設值可能根本不序列化。所以寫的是「大概不會」。）
+
+**二、它的生命週期和 GC 無關。** 它由 canvas 的繪製週期決定（換回螢幕目標時放掉），
+所以它**完全解釋不了 `gc` 那條軸**——而 `gc=10` 最快當、`gc=300` 整格沒事，是今天重複過的事實。
+
+**三、所以 `Frames.Texture` 那一格的讀法要改**：那個刻度下原本有兩個住戶
+（canvas target 與資料貼圖舊 RHI），我先前排除了資料貼圖、留下 canvas target。
+現在 canvas target 大概根本不觸發，於是：
+
+- **`Frames.Texture=240` 真的活過 30 張 ⇒ 受害者是資料貼圖舊 RHI**（`DataTexture.cpp:143`），
+  **也就是我那份篩選把它排除掉是錯的**——那就要回去找「誰把舊的裸 RHI 留到了下一帧」；
+- **`Frames.Texture` 不動、`Frames.Func` 動 ⇒ material proxy**，它是篩選剩下的另一個，
+  而且它的生命週期**掛在 GC 上**（`PostReachabilityAnalysis`），和 `gc` 那條軸對得上；
+- **兩個都不動 ⇒** 240 那個效應不是這個隊列本身。
+
+**結論**：篩選剩下的兩個候選裡，**canvas target 這一個被我自己推翻了**，
+而 material proxy 是唯一同時能解釋 `DelayFrames`（跨帧物件）與 `gc`（reachability 驅動的刪除）兩條軸的候選。
+這一節寫在那四趟跑完之前，免得事後拿結果去挑一個說法。
