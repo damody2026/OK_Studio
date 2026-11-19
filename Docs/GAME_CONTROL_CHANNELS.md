@@ -45,6 +45,56 @@ MCP 沒載入的 session 用 `Tools/ok-game-mcp/target/release/ok-game-mcp.exe c
 
 讀卡的 `parameters` 含 `shape.*`、`bone.*`、`physics.*`、`pregnancy.*`、`style.*`（角色風格的 `style` 與各比例參數）與卡片屬性。
 
+## 卡住就強制關：逾時與強制結束（2026-11-19）
+
+GPU 卡死（`DXGI_ERROR_DEVICE_HUNG`，2026-11-19 在讀卡器抓到一次）之後，行程還活著、通道還在聽，但永遠不會再回應——等它的工具會一直等下去，自動化跑一輪會看起來「還在跑」。所以每個等待都有期限，到了就**強制結束那一個行程**（`Tools/ok-game-mcp/src/watchdog.rs`）。
+
+| 等什麼 | 預設 | 環境變數 | 逾時會做什麼 |
+|---|---:|---|---|
+| 單次呼叫（`ui_*`、`game_*` 的 HTTP 通道） | 60 s | `OK_MCP_TIMEOUT_CALL`，或 `OK_MCP_TIMEOUT` | 判定後強制結束 |
+| 讀卡器信箱（`reader_call`） | 120 s（`state` 10 s） | `OK_MCP_TIMEOUT_READER`，或呼叫參數 `timeout_s` | 判定後強制結束 |
+| 啟動等待（`reader_launch`、`game_launch`） | 300 s／街區照呼叫參數 | `OK_MCP_TIMEOUT_LAUNCH`，或 `timeout_s` | 結束剛啟動的那個 pid |
+| 健康探測（判斷是「卡死」還是「只是慢」） | 3 s | `OK_MCP_TIMEOUT_HEALTH` | — |
+| `studio_launch` | 120 s | `OK_MCP_TIMEOUT_LAUNCH` | 先解析出**真正的 OK Studio 行程**（先看誰佔著控制埠，再往啟動器的子孫裡找 `UnrealEditor*`／`OpenKoikatsu*`），結束它；真的找不到就在錯誤訊息裡明講「Studio 無逾時保護、沒有結束任何行程、請自己看」，不靜默略過 |
+| 街區控制通道（`game_*` 的每一次呼叫） | 60 s | `OK_MCP_TIMEOUT_CALL` | 判定後強制結束 |
+| OK Studio 的每一次呼叫（載入、存檔、截圖都走這裡） | 180 s | `OK_MCP_TIMEOUT_STUDIO` | 結束**佔著那個埠**的行程（`Get-NetTCPConnection`），一樣只關自己的 |
+
+逾時之後的判斷順序：
+
+1. `OK_MCP_KILL_ON_TIMEOUT=0` 就只回報不結束（要現場看卡死的畫面時用）。
+2. **只關自己的**：pid 必須是呼叫端用 `OK_GAME_PID` 指名的，或這個 session 自己啟動的（`Saved/OKControl/launched/<pid>.json`）。別的 session 的遊戲一律不動，只回報。**絕不按視窗標題或執行檔名稱找行程**。
+3. 再探一次 `/health`（3 s）：還會回應就代表「只是慢」，不結束，並叫你把期限調大。
+4. 確認那個 pid 還是遊戲行程（`UnrealEditor*`／`OpenKoikatsu*`，避免 pid 被別人重用），才
+   `Win32_Process.Terminate`——卡死的遊戲不可能禮貌關閉，要關的那條執行緒就是卡住的那條。
+
+結束之後：錯誤訊息與 stderr 都寫明「等了幾秒、結束了哪個 pid、最後的狀況」，而且**不清任何證據**，遊戲的 log 與 Aftermath／D3D12 的 crash dump 原地保留（`Saved/Logs`、`Saved/Crashes`）。逾時一律是失敗：`ok-game-mcp call` 回非零結束碼，MCP 工具回錯誤，所以自動化那一輪會算失敗，不會看起來跑完。
+
+> **改了 `ok-game-mcp` 之後，還在跑的舊 MCP server 行程仍然是舊版。** 它的執行檔被自己鎖住換不掉（`cargo build` 會停在 os error 5），所以那個 session 的呼叫**不會有逾時強制結束，也不會送 `X-OK-From`**——log 裡記成 `from unknown` 就是這個訊號：那是舊版工具送進來的。要生效就得重啟那個 MCP server（整合時統一做）；想先驗證可以用獨立的 target 目錄建置（`CARGO_TARGET_DIR=<暫存>`）再直接跑那支 exe。
+
+### 手開的視窗：只告訴你，不替你關
+
+`CardReaderDevelopment.cmd`／`StreetSocial.cmd` 開的是**使用者的視窗**，卡死了也不自動關——殺掉連畫面都來不及看。取而代之的是講清楚：啟動器印完 PID／Log 之後多一行 `Stuck? ... ok_hang_check.lua`，而 `Tools\lua\lua.exe Tools\ok_hang_check.lua` 會對每個登記中的遊戲（`Saved/OKControl/<pid>.json`）印一行「正常／沒有回應／行程已經不在」；沒有回應的那個另外印出 log 路徑、GPU crash dump 目錄（`Saved/Crashes`），以及要自己關的話該下的那一行 `ok-game-mcp call reader_stop '{"pid": N}'`。它只看不動，有卡住的回結束碼 2。
+
+**手開的 `.cmd` 本來就會盯著**：`CardReaderDevelopment.cmd`／`SceneEditor.cmd`／`StreetSocial.cmd` 啟動成功後，那個視窗會接著跑 `ok_hang_check.lua --watch-newest`（盯剛登記的那個遊戲）。判斷分兩段：先等它第一次回應（啟動要幾十秒，這段不算卡住；完全沒回應超過 240 s 才算），之後要**連續三次**（約 30 s）探 `/health` 不回才算卡住 —— 一次失敗可能只是它正忙著開一張大卡。卡住就印那幾行（log 是啟動器收據裡記的那一個真檔，不是目錄裡最新的）並以 2 結束，**不碰那個行程**；視窗可以隨時關掉，不影響遊戲。不想要就設 `OK_NO_HANG_WATCH=1`。自動化不受影響：`reader_launch`／`studio_launch` 呼叫的是 `Tools/run_*.lua`，不是 `.cmd`。自己盯別的：`ok_hang_check.lua --watch --pid=N [--every=秒] [--grace=秒]`，或啟動器的 `-Watch`。log 與 dump 請留著，那是查卡死原因的唯一證據。
+
+實測（2026-11-19，手開那條）：真的開一個讀卡器，`--watch` 先報「正常」，用 `NtSuspendProcess` 凍住後**連續 3 次（約 9 秒，`--every=3`）沒有回應 → 印出卡住那幾行、結束碼 2**，而且那個行程**還在**（事後自己 resume 再關）；「從來沒回應過」那條用 `--grace=9` 另外驗過。
+
+實測（2026-11-19）：把自己的讀卡器用 `NtSuspendProcess` 凍住（和 GPU 卡死一樣，通道在但不回應），`OK_MCP_TIMEOUT_CALL=8` 下 `ui_exec` 等 8 s → 探 `/health` 失敗 → `ended it (Win32_Process.Terminate)`，行程確實消失、結束碼非零；沒凍住時同樣的短期限不會誤殺（呼叫 1 s 內就回來了）。
+
+## 每一筆指令都記得是誰送的（2026-11-19）
+
+一台機器上常有好幾個 session 各自開著遊戲，忘了設 `OK_GAME_PID` 的工具會打到別人的遊戲上（2026-11-19 就發生過：別的 session 的驗證腳本在量測中途對另一個讀卡器翻頁、開卡）。所以兩條通道都記來源：
+
+- HTTP 通道（`ui_*`、`game_*`、`studio_*`）：呼叫端送 `X-OK-From: pid=<pid> <lane>`（`ok-game-mcp` 的
+  `game::from_header`，lane 取自 `OK_MCP_FROM` 或 `OK_LANE`），遊戲在分派前記一行
+  `OKControl <path> from <來源>`（`OKControl.cpp` 的 `Drain`）。`/health` 與 `/state` 會被輪詢，不記。
+  沒有這個標頭的呼叫端記成 `unknown`。
+- 讀卡器信箱（`reader_call`）：請求的 JSON 多一個 `from` 欄位（同樣的字串），讀卡器記在
+  `Character MCP operation=… from=…`（`OKCharacterMCP.cpp`）。
+
+查「這個操作是誰送的」就 grep log 的 `OKControl ` 或 `from=`。自己送指令時設 `OK_GAME_PID`
+指定自己的遊戲，並且可以設 `OK_LANE`（或 `OK_MCP_FROM`）讓 log 直接看得出是哪個 session。
+
 ## 不改變一般使用
 
 - 通道開著本身不改變遊戲行為。街區的「滑鼠不鎖、視窗不在前景也讀輸入、跳過開始選單」只給 `-Control`（`-StreetSocialControl`）；沒帶 `-Control` 時，AI 第一次透過 `/key` 送鍵才進入前兩項（`OKVirtualInput().Driven`）。

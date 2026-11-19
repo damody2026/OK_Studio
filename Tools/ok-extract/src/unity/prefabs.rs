@@ -764,7 +764,9 @@ pub(crate) fn decode_bc_banded(data: &[u8], w: usize, h: usize, format: unity_as
         let decoded = match format {
             TextureFormat::DXT1 => { let _seg = crate::unity::segment("banded/decoder bc1"); texture2ddecoder::decode_bc1a(src, w, band_h, &mut texels) }
             TextureFormat::DXT5 => { let _seg = crate::unity::segment("banded/decoder bc3"); texture2ddecoder::decode_bc3(src, w, band_h, &mut texels) }
-            _ => { let _seg = crate::unity::segment("banded/decoder bc7"); texture2ddecoder::decode_bc7(src, w, band_h, &mut texels) }
+            // The biggest single piece of an OK card's cold open; `crate::unity::bc7` reads the block out of one
+            // u128 instead of a memcpy per field, and must produce the same bytes (kill switch OK_SLOW_BC7=1).
+            _ => { let _seg = crate::unity::segment("banded/decoder bc7"); crate::unity::bc7::decode(src, w, band_h, &mut texels) }
         };
         if decoded.is_err() { return false; }
         // One 4-byte store a texel (a slice copy here was a memcpy call per texel).

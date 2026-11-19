@@ -3,6 +3,9 @@
 
 #include "DreamUIRender/DreamUIRenderer.h"
 #include "DreamUIRender/DreamUICompositor.h"
+#include "DreamUIRender/DreamUIDeferredRelease.h"
+#include "RHITextureReference.h"
+#include "RHIBreadcrumbs.h"
 #include "DreamUIRender/DreamUIShaders.h"
 #include "DreamUIRender/DreamUIBaseShaders.h"
 #include "Materials/Material.h"
@@ -243,6 +246,8 @@ void FDreamUIRenderer::PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilde
 }
 void FDreamUIRenderer::PostRenderView_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView)
 {
+	// What DreamGUI let go of three or more frames ago is released now (FDreamUIDeferredRelease).
+	FDreamUIDeferredRelease::Tick_RenderThread();
 #if WITH_EDITOR
 	if (ViewsDrawnAfterTonemap.RemoveSwap(&InView) > 0)
 	{
@@ -1006,9 +1011,29 @@ void FDreamUIRenderer::DrawBuiltInBatch(FRHICommandList& RHICmdList, FGraphicsPi
 	PSParameters.DreamUI_ViewSizeInv = FVector2f(1.0f / FMath::Max(ViewSize.X, 1), 1.0f / FMath::Max(ViewSize.Y, 1));
 	PSParameters.DreamUI_BlendParams = FVector4f(static_cast<float>(BlendMode), bBackdrop && InBackdrop->bOpaque ? 1.0f : 0.0f
 		, bBackdrop ? static_cast<float>(InBackdrop->Origin.X) : 0.0f, bBackdrop ? static_cast<float>(InBackdrop->Origin.Y) : 0.0f);
-	PSParameters.DreamUI_BackdropTex = bBackdrop ? InBackdrop->Texture : GBlackTexture->TextureRHI.GetReference();
+	PSParameters.DreamUI_BackdropTex = bBackdrop && DreamUIExperimentBackdropMode() != 2
+		? InBackdrop->Texture : GBlackTexture->TextureRHI.GetReference();
 	SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PSParameters);
 
+	// OpenKoikatsu (2026-11-19): every built-in draw names the textures it binds in the GPU breadcrumbs, so a page fault
+	// DRED or Aftermath puts on one of these draws says which texture it was (the reader's open GPU page fault,
+	// Docs/CARD_READER_DREAMGUI.md). Only recorded when breadcrumbs are (-gpucrashdebugging, r.GPUCrashDebugging).
+	auto Named = [](FRHITextureReference* InReference) -> FName
+	{
+		FRHITexture* Texture = InReference != nullptr ? InReference->GetReferencedTexture() : nullptr;
+		return Texture != nullptr ? Texture->GetName() : FName(TEXT("fallback"));
+	};
+	// A breadcrumb keeps 128 characters (FRHIBreadcrumb::MaxLength): three nested ones, so no texture name is cut off.
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIDraw", "DreamUIDraw main=%s font=%s",
+		RHI_BREADCRUMB_FIELD("Main", Named(Params.MainTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Font", Named(Params.FontTextureRHI.GetReference())));
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIData", "DreamUIData widget=%s clip=%s",
+		RHI_BREADCRUMB_FIELD("WidgetData", Named(Params.WidgetDataTextureRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("ClipData", Named(Params.ClipDataTextureRHI.GetReference())));
+	RHI_BREADCRUMB_EVENT_F(RHICmdList, "DreamUIMore", "DreamUIMore rect=%s paint=%s mask0=%s",
+		RHI_BREADCRUMB_FIELD("RectBlock", Named(Params.RectBlockDataRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Paint", Named(Params.PaintDataRHI.GetReference())),
+		RHI_BREADCRUMB_FIELD("Mask0", Named(Params.MaskTexture0RHI.GetReference())));
 	RHICmdList.SetStreamSource(0, Batch.GetVertexBuffer(), 0);
 	RHICmdList.DrawIndexedPrimitive(Batch.GetIndexBuffer(), 0, 0, Batch.NumVerts, 0, Mesh.Elements[0].NumPrimitives, Mesh.Elements[0].NumInstances);
 }
@@ -1225,6 +1250,7 @@ bool FDreamUIRenderer::PrepareTargets_RenderThread(FRDGBuilder& GraphBuilder, FS
 					}
 				);
 			}
+			FDreamUIDeferredRelease::Hold(CanvasTargetTexture);
 			CanvasTargetTexture = nullptr;
 
 			ViewRect = FIntRect(0, 0, ScreenColorRenderTargetTexture->GetSizeXYZ().X, ScreenColorRenderTargetTexture->GetSizeXYZ().Y);

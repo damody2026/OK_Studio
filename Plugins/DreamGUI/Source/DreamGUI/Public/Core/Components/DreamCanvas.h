@@ -972,6 +972,14 @@ private:
 	/** What those proxies point at -- their sources and the textures they answer with -- kept from the collector. */
 	UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
 	TArray<TObjectPtr<UObject>> MaterialProxyReferences;
+	/**
+	 * Every texture this canvas's sections were given at a rebuild, through a material proxy or to the built-in shader,
+	 * held from the collector: in use (MAX_uint64), or the frame the rebuild that stopped using it ran, kept a few frames
+	 * longer. The built-in shader's draws keep only weak pointers and the render thread's references, and a texture a
+	 * widget let go of (an image given another picture) was collected while those draws still sampled it: a GPU page fault.
+	 */
+	UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+	TMap<TObjectPtr<UTexture>, uint64> DrawTextureHolds;
 	uint64 NewestDrawCallFrameNumber = 0;
 	FDreamCanvasPendingDrawCallData CurrentDrawCallData;//current drawing draw-call
 	TUniquePtr<FDreamCanvasDrawCallProcessingRunnable> DrawCallProcessingRunnable;

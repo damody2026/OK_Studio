@@ -1,4 +1,11 @@
 #include "OKReaderScreen.h"
+#include "UObject/UObjectIterator.h"
+#include "Engine/Texture.h"
+#include "RHIStats.h"
+#include "DynamicRHI.h"
+#include "Misc/FileHelper.h"
+bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
+#include "DreamUIRender/DreamUIShaderGate.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
 #include "OKMotionComboBox.h"
@@ -55,6 +62,12 @@
 #include "HAL/PlatformFileManager.h"
 #include "HAL/FileManager.h"
 #include "Async/Async.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Misc/ScopeExit.h"
+#include "Containers/Ticker.h"
+#include "OKCharacterMCPRegistry.h"
+#include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
 #include "Engine/Texture2D.h"
 #if PLATFORM_WINDOWS
@@ -173,7 +186,7 @@ void UOKDreamControl::Sync()
 	{
 		SetText((A->bChosen?TEXT("▶ "):TEXT(""))+TextIn(A->Caption));
 		if(Button)Button->SetIsEnabled(A->GetIsEnabled());
-		UTexture* Texture=A->Thumbnail?Cast<UTexture>(A->Thumbnail->GetBrush().GetResourceObject()):nullptr;
+		UTexture* Texture=A->Thumbnail&&OKReaderPicturesShown()?Cast<UTexture>(A->Thumbnail->GetBrush().GetResourceObject()):nullptr;
 		if(Picture&&Texture!=ShownTexture.Get())
 		{
 			ShownTexture=Texture;
@@ -234,7 +247,7 @@ void UOKDreamControl::Sync()
 	}
 	if(auto* U=Cast<UImage>(S))if(Picture)
 	{
-		UTexture* Texture=Cast<UTexture>(U->GetBrush().GetResourceObject());
+		UTexture* Texture=OKReaderPicturesShown()?Cast<UTexture>(U->GetBrush().GetResourceObject()):nullptr;
 		if(Texture!=ShownTexture.Get())
 		{
 			ShownTexture=Texture;
@@ -250,12 +263,74 @@ void UOKDreamControl::HandleClicked()
 	else if(OnPressed)OnPressed();
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
+// ok.ReaderPictures 0: no picture tile or mirrored image draws its texture (a comparison run for the open GPU page
+// fault, Docs/CARD_READER_DREAMGUI.md): the tiles and their captions stay, the pictures do not.
+static TAutoConsoleVariable<int32> CVarReaderPictures(TEXT("ok.ReaderPictures"),1,TEXT("Pictures in the reader's DreamGUI screen (picker tiles, mirrored images, card list): 1 drawn (default), 0 none (for comparison runs)."));
+bool OKReaderPicturesShown(){return CVarReaderPictures.GetValueOnGameThread()!=0;}
+
+bool UOKDreamControl::IsOnScreen() const
+{
+	if(!GetWidgetActiveInHierarchy())return false;
+	for(const UDreamWidget* At=this;At;At=At->GetParent())if(!At->GetShown())return false;
+	return true;
+}
+bool UOKDreamControl::IsOperable() const
+{
+	UWidget* S=Source.Get();
+	if(Header)return true;
+	return !S||S->GetIsEnabled();
+}
 bool UOKDreamControl::Press()
 {
-	if(!GetShown())return false;
+	if(!IsOnScreen())return false;
 	if(Header){HandleHeader();return true;}
+	if(auto* U=Cast<UCheckBox>(Source.Get()))
+	{
+		if(!Toggle||!U->GetIsEnabled())return false;
+		HandleToggle(!U->IsChecked());return true;
+	}
 	if(!Button||!Button->GetIsEnabled())return false;
 	HandleClicked();return true;
+}
+bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
+{
+	auto Fail=[OutNote](const FString& Why){if(OutNote)*OutNote=Why;return false;};
+	if(!IsOnScreen())return Fail(TEXT("not shown now"));
+	UWidget* S=Source.Get();
+	if(!S||!S->GetIsEnabled())return Fail(TEXT("no enabled control behind it"));
+	if(auto* U=Cast<USlider>(S))
+	{
+		if(!Value.IsNumeric())return Fail(TEXT("a slider takes a number"));
+		const float V=FCString::Atof(*Value);
+		if(V<U->GetMinValue()-1e-4f||V>U->GetMaxValue()+1e-4f)return Fail(FString::Printf(TEXT("out of range %g..%g"),U->GetMinValue(),U->GetMaxValue()));
+		HandleSlider(V);return true;
+	}
+	if(Cast<UCheckBox>(S))
+	{
+		const FString L=Value.ToLower();
+		const bool bOn=L==TEXT("1")||L==TEXT("on")||L==TEXT("true");
+		if(!bOn&&L!=TEXT("0")&&L!=TEXT("off")&&L!=TEXT("false"))return Fail(TEXT("a toggle takes on/off/1/0"));
+		HandleToggle(bOn);return true;
+	}
+	if(auto* U=Cast<UComboBoxString>(S))
+	{
+		int32 Index=U->FindOptionIndex(Value);
+		if(Index==INDEX_NONE&&Value.IsNumeric())Index=FCString::Atoi(*Value);
+		if(Index<0||Index>=U->GetOptionCount())return Fail(TEXT("no option ")+Value);
+		const int32 ShownIndex=OptionMap.IsEmpty()?Index:OptionMap.IndexOfByKey(Index);
+		if(ShownIndex==INDEX_NONE)return Fail(TEXT("option hidden by the filter: ")+Value);
+		HandleChoice(ShownIndex);return true;
+	}
+	if(Cast<UEditableTextBox>(S)){HandleInputCommitted(Value);return true;}
+	// A number box (顯示字級): a number in its range, committed as typed.
+	if(auto* U=Cast<USpinBox>(S))
+	{
+		if(!Value.IsNumeric())return Fail(TEXT("a number box takes a number"));
+		const float V=FCString::Atof(*Value);
+		if(V<U->GetMinValue()-1e-4f||V>U->GetMaxValue()+1e-4f)return Fail(FString::Printf(TEXT("out of range %g..%g"),U->GetMinValue(),U->GetMaxValue()));
+		HandleInputCommitted(Value);return true;
+	}
+	return Fail(TEXT("it takes no value"));
 }
 void UOKDreamControl::HandleHeader()
 {
@@ -309,16 +384,43 @@ void UOKDreamControl::HandleInputCommitted(const FString& Text)
 UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 {
 	if(!Controller)return nullptr;
+	// A stage on a base cooked before DreamGUI has none of its global shaders (startup no longer requires them,
+	// DreamUIShaderGate.h): drawing the screen there would fail on the GPU, so the reader says what to rebuild and
+	// keeps its UMG controls instead of stopping.
+	{
+		FString Why;
+		if(!DreamGUIGlobalShadersReady(&Why))
+		{
+			UE_LOG(LogTemp,Error,TEXT("ok.ReaderScreen: %s"),*Why);
+			if(GEngine)GEngine->AddOnScreenDebugMessage(-1,600.f,FColor::Red,Why);
+			return nullptr;
+		}
+	}
 	UClass* Class=LoadClass<UOKReaderScreen>(nullptr,GScreenPath);
 	if(!Class){UE_LOG(LogTemp,Warning,TEXT("Reader screen %s missing: the reader keeps its UMG controls"),GScreenPath);return nullptr;}
+	// D3D12 moves textures to compact its texture pool (after a collection frees many, a card switch); with the reader's
+	// DreamGUI screen up, a draw then sampled a moved texture's old place: a GPU page fault ("DefragFree: 1" on the
+	// released texture in the D3D12 tracking log). 2026-11-19: eight rounds of card loads + source switches + obj gc with
+	// the defrag off, none crashed; with it on, every run crashed in round 1-3. Which draw keeps the stale binding is not
+	// found yet: the defrag stays off while the reader screen runs (the other modes keep it).
+	// That and the serial render graph the launcher gives: ReaderRenderSettings.
+	ReaderRenderSettings();
 	// Design pixels on a 1080-high screen, whatever the window.
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
-		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080));Canvas->SetMatchFromWidthToHeight(1.f);
+		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScaleOf(Controller));Canvas->SetMatchFromWidthToHeight(1.f);
 	}
 	auto* Screen=Cast<UOKReaderScreen>(UDreamUIBPLibrary::AddWidgetOfClassToViewport(Controller,Class,10));
 	if(!Screen)return nullptr;
-	Screen->Controller=Controller;GScreen=Screen;
+	Screen->Controller=Controller;GScreen=Screen;Screen->UiScale=UiScaleOf(Controller);
+	// The one-on-one and the studio collapse the controller's UMG layer, and with it its NativeTick, which is what ticks
+	// this screen: nothing hid it, and it went on drawing under those modes (screenshots 2026-11-19) while press reported
+	// its controls not shown. Its own ticker follows the controller instead (FollowController).
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)](float)
+	{
+		UOKReaderScreen* Self=Weak.Get();if(!IsValid(Self))return false;
+		Self->FollowController();return true;
+	}));
 	// The picker's 前往 設定 › 遊戲目錄 (shown when there is no game folder): the page switch waits for the next frame, as
 	// the switch destroys the very button whose click asked for it.
 	Controller->OnWantGameRootSettings=[Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)]()
@@ -335,7 +437,7 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	};
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
-		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080));Canvas->SetMatchFromWidthToHeight(1.f);
+		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScaleOf(Controller));Canvas->SetMatchFromWidthToHeight(1.f);
 	}
 	return Screen;
 }
@@ -471,7 +573,8 @@ void UOKReaderScreen::Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow)
 		if(bInRow){if(RowWidth>0)C->SetWidth(RowWidth);if(bFill)if(auto* Slot=C->GetPanelSlot())Slot->SetSizeRule(EDreamPanelSizeRule::Fill);}
 	};
 	// The picture picker's items: a tile with the item's thumbnail (the button's own label is only its caption).
-	if(Source->IsA<UOKAppearanceButton>()){if(UOKDreamControl* C=MakeControl(TEXT("PickTile"),Into)){C->Source=Source;if(C->Picture)C->Picture->SetShown(false);C->Sync();}return;}
+	// Every tile the same size (a long caption such as 類型 1806 · 模組 widened its tile, so rows held two or three).
+	if(Source->IsA<UOKAppearanceButton>()){if(UOKDreamControl* C=MakeControl(TEXT("PickTile"),Into)){C->Source=Source;if(C->Picture)C->Picture->SetShown(false);if(UDreamPanelSlot* Slot=C->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(112,150));Slot->SetMaxDesiredSize(FVector2D(112,150));}C->Sync();}return;}
 	if(Source->IsA<UButton>()){UOKDreamControl* C=MakeControl(TEXT("Button"),Into);const FString T=TextIn(Source);Place(C,FMath::Max(56.f,TextWidth(T,20.f)+36.f),false);return;}
 	if(Source->IsA<USlider>()){Place(MakeControl(TEXT("Slider"),Into),0,true);return;}
 	if(Source->IsA<UCheckBox>()){Place(MakeControl(TEXT("Toggle"),Into),FMath::Max(80.f,TextWidth(TextIn(Source),18.f)+56.f),false);return;}
@@ -568,6 +671,8 @@ void UOKReaderScreen::MirrorChildren(UPanelWidget* Source,UDreamWidget* Target,b
 	if(bHorizontal)FitButtonRow(Target);
 }
 
+static UWidget* OKRegistryControl(UOKCharacterController* G,const TSharedPtr<FJsonObject>& P);	// below, with the audit
+
 void UOKReaderScreen::BuildCategories()
 {
 	UOKCharacterController* G=Controller.Get();if(!G)return;
@@ -598,6 +703,26 @@ void UOKReaderScreen::BuildCategories()
 	{
 		if(!Targets.IsEmpty()&&G->AppearancePanel)Into.Sources.Add(G->AppearancePanel.Get());
 		if(!Properties.IsEmpty()&&G->PropertyPanel)Into.Sources.Add(G->PropertyPanel.Get());
+		// Without a character in 3D the picker and the detailed editor have nothing to read (both work on the loaded card):
+		// the page says so, and is built again once a character is in (the signature changes).
+		TFunction<void(UDreamWidget*)> BeforeBuild=MoveTemp(Into.Build);
+		Into.Build=[this,BeforeBuild](UDreamWidget* Page)
+		{
+			if(BeforeBuild)BeforeBuild(Page);
+			UOKCharacterController* C=Controller.Get();
+			if(C&&!C->bModelLayout)if(UOKDreamControl* L=MakeControl(TEXT("Label"),Page))
+			{
+				const FString Say=TEXT("要先在「人物卡總欄」選一張卡並按「載入3D」，這裡才有外觀選擇與詳細編輯。");
+				L->FixedText=Say;L->SetText(Say);
+				if(UDreamPanelSlot* Slot=L->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+			}
+		};
+		TFunction<FString()> BeforeSignature=MoveTemp(Into.Signature);
+		Into.Signature=[this,BeforeSignature]()
+		{
+			const UOKCharacterController* C=Controller.Get();
+			return (C&&C->bModelLayout?TEXT("3d|"):TEXT("none|"))+(BeforeSignature?BeforeSignature():FString());
+		};
 		TFunction<void()> Before=MoveTemp(Into.OnEnter);
 		Into.OnEnter=[this,Targets,Properties,Before]()
 		{
@@ -616,6 +741,270 @@ void UOKReaderScreen::BuildCategories()
 			if(Weak.IsValid()&&Weak->BoneCategoryCombo&&Weak->BoneCategoryCombo->GetSelectedOption()!=Want)Weak->BoneCategoryCombo->SetSelectedOption(Want);
 		});
 	};
+	// 胸部柔軟度／胸部重量 (shown under 原遊戲參數) go with the breast sliders; the bone rows are what follows the last
+	// slider row in the same column (the category drop-down, the X／Y／Z switch, then the rows of the chosen category).
+	TArray<UWidget*> BustRows;
+	for(UOKShapeSlider* S:G->BoneSliders)if(S&&!S->BodyParameter.IsEmpty()&&S->ModRow)BustRows.Add(S->ModRow);
+	TArray<UWidget*> BoneRows;
+	if(G->ShapeBox&&G->ShapeSliders.Num())
+	{
+		const int32 Last=G->ShapeBox->GetChildIndex(G->ShapeSliders.Last()?G->ShapeSliders.Last()->GetParent():nullptr);
+		for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)
+		{
+			UWidget* W=G->ShapeBox->GetChildAt(I);
+			if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox&&W!=G->BoneCategoryCombo&&W!=G->BoneAxesCheck)BoneRows.Add(W);
+		}
+	}
+
+	// The pages from the definition file (Config/ReaderEditor/pages.json). Step 1 of Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md:
+	// the file describes the hand-written pages below one for one (mirrored UMG sources and the screen's own pages), and
+	// the audit must come out the same either way. What the file cannot say right is said in red, never the old screen.
+	// NEVER fall back to the old UMG reader from here (the user, 2026-11-19: the old UI must not appear again). A file
+	// that does not read builds the hand-written pages below with the reason in red; a wrong page is left out and named.
+	// Do not add a "safer" path that gives up this screen on a bad file: say what is wrong instead. The old reader shows
+	// only with -LegacyReader (OKGalleryWidget.cpp). Tools/tests/test_reader_pages.lua checks this in the source.
+	PagesErrors.Reset();PageKeys.Reset();PagesSource=TEXT("builtin");
+	ON_SCOPE_EXIT
+	{
+		for(const FString& E:PagesErrors)UE_LOG(LogTemp,Error,TEXT("ok.ReaderScreen pages: %s"),*E);
+		FString Say;
+		if(PagesErrors.Num())
+		{
+			Say=FString::Printf(TEXT("頁面定義檔有 %d 個問題（ok.ReaderScreen pages 列出全部）："),PagesErrors.Num());
+			for(int32 I=0;I<PagesErrors.Num()&&I<6;++I)Say+=TEXT("\n")+PagesErrors[I];
+		}
+		ShowNotice(7301,1.0e6f,FColor::Red,Say);
+	};
+	if(!bBuiltinPages)
+	{
+		const FString File=PagesFile();
+		FString Text;TSharedPtr<FJsonObject> Root;double Version=0;
+		const TArray<TSharedPtr<FJsonValue>>* CategoryList=nullptr;
+		if(!FFileHelper::LoadFileToString(Text,*File))PagesErrors.Add(FString::Printf(TEXT("讀不到頁面定義檔 %s，暫用內建頁面"),*File));
+		else if(const TSharedRef<TJsonReader<>> Parse=TJsonReaderFactory<>::Create(Text);!FJsonSerializer::Deserialize(Parse,Root)||!Root.IsValid())
+			PagesErrors.Add(FString::Printf(TEXT("頁面定義檔 %s 不是有效的 JSON（%s），暫用內建頁面"),*File,*Parse->GetErrorMessage()));
+		else if(!Root->TryGetNumberField(TEXT("version"),Version)||Version!=1)PagesErrors.Add(FString::Printf(TEXT("頁面定義檔 %s 的 version 不是 1，暫用內建頁面"),*File));
+		else if(!Root->TryGetArrayField(TEXT("categories"),CategoryList))PagesErrors.Add(FString::Printf(TEXT("頁面定義檔 %s 沒有 categories 陣列，暫用內建頁面"),*File));
+		else
+		{
+			PagesSource=TEXT("file ")+File;
+			const TArray<FGroup> FaceShapes=ShapeGroups(false,{}),BodyShapes=ShapeGroups(true,{});
+			TArray<UWidget*> PhysicsRows;
+			for(UWidget* W:{static_cast<UWidget*>(G->PhysicsBackendCombo.Get()),static_cast<UWidget*>(G->PhysicsSoftnessSlider.Get()),static_cast<UWidget*>(G->PhysicsWeightSlider.Get()),static_cast<UWidget*>(G->PhysicsTailSlider.Get())})
+			{
+				if(!W)continue;
+				if(UPanelWidget* P=W->GetParent()){const int32 I=P->GetChildIndex(W);if(I>0&&Cast<UTextBlock>(P->GetChildAt(I-1)))PhysicsRows.Add(P->GetChildAt(I-1));}
+				PhysicsRows.Add(W);
+			}
+			const TWeakObjectPtr<UOKCharacterController> Weak(G);
+			auto BoneSignature=[Weak]()
+			{
+				if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return FString();
+				return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
+			};
+			static const TSet<FString> CategoryFields={TEXT("name"),TEXT("tab"),TEXT("subs")};
+			static const TSet<FString> SubFields={TEXT("name"),TEXT("sources"),TEXT("pickers"),TEXT("bone_category"),TEXT("enter"),TEXT("signature"),TEXT("shown_only"),TEXT("builder"),TEXT("own_buttons"),TEXT("needs"),TEXT("items")};
+			TArray<FCategory> Built;TSet<FString> CategoryNames;
+			TMap<FString,TSharedPtr<FJsonObject>> Registry;	// OKCharacterMCPRegistry::Parameters by key, read when an item first needs it
+			for(int32 CI=0;CI<CategoryList->Num();++CI)
+			{
+				const TSharedPtr<FJsonObject>* CO=nullptr;FCategory Cat;
+				FString CatWhere=FString::Printf(TEXT("categories[%d]"),CI);
+				if(!(*CategoryList)[CI]->TryGetObject(CO)){PagesErrors.Add(CatWhere+TEXT("：不是物件"));continue;}
+				if(!(*CO)->TryGetStringField(TEXT("name"),Cat.Name)||Cat.Name.IsEmpty()){PagesErrors.Add(CatWhere+TEXT("：沒有 name"));continue;}
+				CatWhere=Cat.Name;
+				if(CategoryNames.Contains(Cat.Name)){PagesErrors.Add(CatWhere+TEXT("：分類名稱重複（路徑會重複），略過"));continue;}
+				CategoryNames.Add(Cat.Name);
+				for(const auto& F:(*CO)->Values)if(const FString Field(F.Key);!CategoryFields.Contains(Field))PagesErrors.Add(CatWhere+TEXT("：不認得的欄位 ")+Field);
+				double TabValue=0;
+				if((*CO)->TryGetNumberField(TEXT("tab"),TabValue))
+				{
+					if(TabValue<0||TabValue>3||TabValue!=FMath::FloorToDouble(TabValue))PagesErrors.Add(CatWhere+TEXT("：tab 要是 0–3 的整數"));
+					else Cat.Tab=static_cast<int32>(TabValue);
+				}
+				const TArray<TSharedPtr<FJsonValue>>* SubList=nullptr;
+				if(!(*CO)->TryGetArrayField(TEXT("subs"),SubList))PagesErrors.Add(CatWhere+TEXT("：沒有 subs 陣列"));
+				TSet<FString> SubNames;
+				for(int32 SI=0;SubList&&SI<SubList->Num();++SI)
+				{
+					const TSharedPtr<FJsonObject>* SO=nullptr;FGroup Out;
+					FString Where=FString::Printf(TEXT("%s›subs[%d]"),*CatWhere,SI);
+					if(!(*SubList)[SI]->TryGetObject(SO)){PagesErrors.Add(Where+TEXT("：不是物件"));continue;}
+					const TSharedPtr<FJsonObject>& S=*SO;
+					if(!S->TryGetStringField(TEXT("name"),Out.Name)||Out.Name.IsEmpty()){PagesErrors.Add(Where+TEXT("：沒有 name"));continue;}
+					Where=CatWhere+TEXT("›")+Out.Name;
+					if(SubNames.Contains(Out.Name)){PagesErrors.Add(Where+TEXT("：子頁名稱重複（路徑會重複），略過"));continue;}
+					SubNames.Add(Out.Name);
+					// A wrong entry leaves this page out and says what; the other pages are built.
+					bool bBad=false;
+					auto Bad=[&](const FString& What){PagesErrors.Add(Where+TEXT("：")+What+TEXT("，這頁不建"));bBad=true;};
+					for(const auto& F:S->Values)if(const FString Field(F.Key);!SubFields.Contains(Field))Bad(TEXT("不認得的欄位 ")+Field);
+					TArray<TFunction<void()>> Enter;
+					// A page's rows are one ordered list, shown in the list's order: "items" (step 2), whose entries are a
+					// registry key ({"key": "shape.face.0"}) or any source ({"rows": "bust"}, {"widget": ...}), or the
+					// step-1 "sources". A page has one of the two; with both, nothing would say which comes first.
+					const bool bItems=S->HasField(TEXT("items"));const TCHAR* ListName=bItems?TEXT("items"):TEXT("sources");
+					if(bItems&&S->HasField(TEXT("sources")))Bad(TEXT("sources 與 items 只能有一個（列的順序寫在 items 裡）"));
+					const TArray<TSharedPtr<FJsonValue>>* Sources=nullptr;
+					if(S->HasField(ListName)&&!S->TryGetArrayField(ListName,Sources))Bad(FString(ListName)+TEXT(" 要是陣列"));
+					for(int32 K=0;Sources&&K<Sources->Num();++K)
+					{
+						const TSharedPtr<FJsonObject>* Spec=nullptr;FString Value;double Number=0;
+						if(!(*Sources)[K]->TryGetObject(Spec)){Bad(FString::Printf(TEXT("%s[%d] 不是物件"),ListName,K));continue;}
+						if(bItems&&(*Spec)->HasField(TEXT("key")))
+						{
+							// For now a number item shows the row of the control that carries that key (its mirror, as the
+							// page had), so the page and its audit stay the same while the file names keys instead of
+							// widgets; the screen's own control for a key (range and decimals from the registry's metadata)
+							// replaces the mirror later without the file changing. A key the registry lacks is said in red
+							// and left out; the rest of the page is built.
+							FString Key,Kind;
+							if(!(*Spec)->TryGetStringField(TEXT("key"),Key)||Key.IsEmpty()){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] 的 key 要是字串，這一項不建"),K));continue;}
+							if(!(*Spec)->TryGetStringField(TEXT("kind"),Kind))Kind=TEXT("number");
+							if(Kind!=TEXT("number")){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] %s 的 kind %s 還沒支援（目前只有 number），這一項不建"),K,*Key,*Kind));continue;}
+							if(Registry.IsEmpty())for(const TSharedPtr<FJsonValue>& Row:OKCharacterMCPRegistry::Parameters(G))
+								if(const TSharedPtr<FJsonObject> P=Row.IsValid()?Row->AsObject():nullptr){FString RowKey;if(P->TryGetStringField(TEXT("key"),RowKey))Registry.Add(RowKey,P);}
+							const TSharedPtr<FJsonObject>* P=Registry.Find(Key);
+							if(!P){PagesErrors.Add(Where+TEXT("：登錄裡沒有鍵 ")+Key+TEXT("（資料端缺），這一項不建"));continue;}
+							UWidget* W=OKRegistryControl(G,*P);
+							if(!W){PagesErrors.Add(Where+TEXT("：沒有控制項顯示鍵 ")+Key+TEXT("，這一項不建"));continue;}
+							// A slider's row (caption, slider, number, reset) is what the page mirrored.
+							if(W->IsA<UOKShapeSlider>()&&W->GetParent())W=W->GetParent();
+							Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("shape"),Value))
+						{
+							if(Value!=TEXT("face")&&Value!=TEXT("body")){Bad(TEXT("shape 要是 face 或 body"));continue;}
+							if(!(*Spec)->TryGetNumberField(TEXT("group"),Number)||Number<0){Bad(TEXT("shape 要有 group（0 起）"));continue;}
+							const TArray<FGroup>& Shapes=Value==TEXT("body")?BodyShapes:FaceShapes;
+							if(Shapes.IsValidIndex(static_cast<int32>(Number)))Out.Sources.Append(Shapes[static_cast<int32>(Number)].Sources);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("rows"),Value))
+						{
+							const TArray<UWidget*>* Rows=Value==TEXT("bones")?&BoneRows:Value==TEXT("bust")?&BustRows:Value==TEXT("physics")?&PhysicsRows:nullptr;
+							if(!Rows){Bad(TEXT("不認得的 rows ")+Value+TEXT("（bones／bust／physics）"));continue;}
+							for(UWidget* W:*Rows)Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("widget"),Value))
+						{
+							UWidget* W=nullptr;bool bKnown=true;
+							if(Value==TEXT("bone_category"))W=G->BoneCategoryCombo.Get();
+							else if(Value==TEXT("bone_axes"))W=G->BoneAxesCheck.Get();
+							else if(Value==TEXT("pregnancy_box"))W=G->PregnancyBox.Get();
+							else if(Value==TEXT("style_box"))W=G->StyleBox.Get();
+							else if(Value==TEXT("appearance_panel"))W=G->AppearancePanel.Get();
+							else if(Value==TEXT("property_panel"))W=G->PropertyPanel.Get();
+							else if(Value==TEXT("inspect_col"))W=G->InspectCol.Get();
+							else if(Value==TEXT("card_col"))W=G->CardCol.Get();
+							else if(Value==TEXT("outfit_row"))W=G->OutfitCombo?G->OutfitCombo->GetParent():nullptr;
+							else if(Value==TEXT("outfit_nav"))W=G->OutfitNav.Get();
+							else if(Value==TEXT("font_size_row"))W=G->EditorFontInput?G->EditorFontInput->GetParent():nullptr;
+							else bKnown=false;
+							if(!bKnown){Bad(TEXT("不認得的 widget ")+Value);continue;}
+							if(W)Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("named"),Value))
+						{
+							UWidget* W=Named(*Value);
+							if(!W){Bad(TEXT("找不到名為 ")+Value+TEXT(" 的 UMG 控制項"));continue;}
+							Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("drawer"),Value))
+						{
+							UOKDrawerButton* Found=nullptr;
+							for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==Value){Found=D;break;}
+							// Drawers come with the controller's mode: a missing one leaves its page out, as the hand-written pages do.
+							if(Found){if(Found->Body)Out.Sources.Add(Found->Body.Get());Enter.Add(OpenDrawer(Found));}
+						}
+						else Bad(FString::Printf(TEXT("%s[%d] 要有 %sshape／rows／widget／named／drawer 其中一個"),ListName,K,bItems?TEXT("key／"):TEXT("")));
+					}
+					FString Value;
+					if(S->TryGetStringField(TEXT("bone_category"),Value))Enter.Add(BoneCategory(Value));
+					if(S->TryGetStringField(TEXT("enter"),Value))
+					{
+						if(Value==TEXT("first_bone_category"))Enter.Add([Weak]()
+						{
+							if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return;
+							const FString Now=Weak->BoneCategoryCombo->GetSelectedOption();
+							auto NotBones=[](const FString& O){return O==TEXT("原遊戲參數")||O==TEXT("骨骼調整：全部")||O==TEXT("角色風格")||O==TEXT("腹部形變");};
+							if(!NotBones(Now))return;
+							for(int32 I=0;I<Weak->BoneCategoryCombo->GetOptionCount();++I)
+								if(!NotBones(Weak->BoneCategoryCombo->GetOptionAtIndex(I))){Weak->BoneCategoryCombo->SetSelectedIndex(I);return;}
+						});
+						else if(Value==TEXT("accessory_slot_scope"))Enter.Add([this,Weak](){if(!Weak.IsValid())return;WantedTargets=TArray<FString>{Weak->AccessorySlotScope()};ApplyWantedScopes();});
+						else if(Value==TEXT("all_properties"))Enter.Add([this](){WantedProperties=TArray<FString>();ApplyWantedScopes();});
+						else if(Value==TEXT("show_inspect_col"))Enter.Add([Weak](){if(Weak.IsValid()&&Weak->InspectCol)Weak->InspectCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);});
+						else Bad(TEXT("不認得的 enter ")+Value);
+					}
+					if(Enter.Num()==1)Out.OnEnter=Enter[0];
+					else if(Enter.Num())Out.OnEnter=[Enter](){for(const TFunction<void()>& E:Enter)E();};
+					if(S->TryGetStringField(TEXT("signature"),Value))
+					{
+						if(Value==TEXT("bone_category"))Out.Signature=BoneSignature;
+						else Bad(TEXT("不認得的 signature ")+Value);
+					}
+					if(S->HasField(TEXT("shown_only"))&&!S->TryGetBoolField(TEXT("shown_only"),Out.bShownOnly))Bad(TEXT("shown_only 要是 true／false"));
+					if(S->TryGetStringField(TEXT("builder"),Value))
+					{
+						if(Value==TEXT("eye_overlays"))
+						{
+							Out.Signature=[G](){return FString::Printf(TEXT("%d|%d|%d|%d|%s"),G->bModelLayout?1:0,G->bLoadInFlight?1:0,G->EyeOverlayGeneration,G->bEyeOverlayBusy?1:0,*G->EyeOverlayStatus);};
+							Out.Build=[this](UDreamWidget* Page){BuildEyeOverlayPage(Page);};
+						}
+						else if(Value==TEXT("game_root"))Out.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};
+						else Bad(TEXT("不認得的 builder ")+Value);
+					}
+					const TArray<TSharedPtr<FJsonValue>>* Buttons=nullptr;
+					if(S->TryGetArrayField(TEXT("own_buttons"),Buttons))
+					{
+						TArray<TPair<FString,TFunction<void()>>> Made;
+						for(const TSharedPtr<FJsonValue>& B:*Buttons)
+						{
+							const TSharedPtr<FJsonObject>* BO=nullptr;FString Label,Action;
+							if(!B->TryGetObject(BO)||!(*BO)->TryGetStringField(TEXT("label"),Label)||!(*BO)->TryGetStringField(TEXT("action"),Action)){Bad(TEXT("own_buttons 每項要有 label 與 action"));continue;}
+							if(Action==TEXT("add_accessory_slot"))Made.Emplace(Label,[Weak](){if(Weak.IsValid())Weak->OnAddAccessorySlot();});
+							else Bad(TEXT("不認得的 action ")+Action);
+						}
+						if(Made.Num())
+						{
+							TFunction<void(UDreamWidget*)> Before=MoveTemp(Out.Build);
+							Out.Build=[this,Before,Made](UDreamWidget* Page){if(Before)Before(Page);for(const auto& B:Made)MakeOwnButton(Page,B.Key,B.Value);};
+						}
+					}
+					const TSharedPtr<FJsonObject>* PickerSpec=nullptr;
+					if(S->TryGetObjectField(TEXT("pickers"),PickerSpec))
+					{
+						TArray<FString> Targets,Properties;
+						(*PickerSpec)->TryGetStringArrayField(TEXT("targets"),Targets);(*PickerSpec)->TryGetStringArrayField(TEXT("properties"),Properties);
+						if(Targets.IsEmpty()&&Properties.IsEmpty())Bad(TEXT("pickers 的 targets 與 properties 都是空的"));
+						else Pickers(Out,Targets,Properties);
+					}
+					bool bSkip=false;
+					if(S->TryGetStringField(TEXT("needs"),Value))
+					{
+						if(Value==TEXT("bones"))bSkip=BoneRows.IsEmpty();
+						else Bad(TEXT("不認得的 needs ")+Value);
+					}
+					if(bBad||bSkip)continue;
+					Out.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
+					// Nothing to mirror and no page of its own (a widget this controller does not have): left out.
+					if(Out.Sources.IsEmpty()&&!Out.Build)continue;
+					Cat.Groups.Add(MoveTemp(Out));
+				}
+				Built.Add(MoveTemp(Cat));
+			}
+			// The registry keys the file names anywhere (items bound to data, from step 2 on): the audit checks them.
+			TFunction<void(const TSharedPtr<FJsonValue>&)> Scan=[&](const TSharedPtr<FJsonValue>& V)
+			{
+				if(!V)return;
+				if(V->Type==EJson::Object){for(const auto& F:V->AsObject()->Values){if(FString(F.Key)==TEXT("key")&&F.Value&&F.Value->Type==EJson::String)PageKeys.AddUnique(F.Value->AsString());else Scan(F.Value);}}
+				else if(V->Type==EJson::Array)for(const TSharedPtr<FJsonValue>& E:V->AsArray())Scan(E);
+			};
+			for(const TSharedPtr<FJsonValue>& C:*CategoryList)Scan(C);
+			Categories=MoveTemp(Built);
+			return;
+		}
+	}
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
 	for(FGroup& Each:Face.Groups)
 	{
@@ -625,6 +1014,31 @@ void UOKReaderScreen::BuildCategories()
 		else if(Each.Name==TEXT("臉頰"))Pickers(Each,{TEXT("cheek"),TEXT("mole")},{TEXT("cheek"),TEXT("mole")});
 		else if(Each.Name==TEXT("鼻子"))Pickers(Each,{TEXT("nose")},{});
 		else if(Each.Name==TEXT("嘴巴"))Pickers(Each,{TEXT("lip")},{TEXT("lip")});
+	}
+	// The pupil overlay textures (Material Editor overrides on the eye materials): read with eye_overlays when the page
+	// opens, a tile per candidate under each slot that is drawn, and 無 to clear; a pick writes a new work card.
+	{
+		FGroup Overlays;Overlays.Name=TEXT("瞳孔覆蓋貼圖");Overlays.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		Overlays.Signature=[G](){return FString::Printf(TEXT("%d|%d|%d|%d|%s"),G->bModelLayout?1:0,G->bLoadInFlight?1:0,G->EyeOverlayGeneration,G->bEyeOverlayBusy?1:0,*G->EyeOverlayStatus);};
+		Overlays.Build=[this,G](UDreamWidget* Page){BuildEyeOverlayPage(Page);};
+		int32 After=Face.Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("眼睛");});
+		Face.Groups.Insert(MoveTemp(Overlays),After==INDEX_NONE?Face.Groups.Num():After+1);
+	}
+	// 眼部縮放2: the ABMX eye bones (cf_J_Eye_tz, cf_J_Eye_rz_L/R, cf_J_Eye_tx_L/R …, category FaceEyes2) as the original
+	// game's eye page has them: the bone rows of 骨骼調整：眼球 with the X／Y／Z switch, without the category drop-down.
+	if(BoneRows.Num())
+	{
+		FGroup EyeBones;EyeBones.Name=TEXT("眼部縮放2");EyeBones.bShownOnly=true;
+		EyeBones.OnEnter=BoneCategory(TEXT("骨骼調整：眼球"));
+		EyeBones.Signature=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
+		{
+			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return FString();
+			return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
+		};
+		if(G->BoneAxesCheck)EyeBones.Sources.Add(G->BoneAxesCheck.Get());
+		for(UWidget* W:BoneRows)EyeBones.Sources.Add(W);
+		int32 After=Face.Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("瞳孔覆蓋貼圖");});
+		Face.Groups.Insert(MoveTemp(EyeBones),After==INDEX_NONE?Face.Groups.Num():After+1);
 	}
 	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
 	// page reads the card's catalog).
@@ -645,9 +1059,6 @@ void UOKReaderScreen::BuildCategories()
 
 	FCategory Body;Body.Name=TEXT("身子");Body.Groups=ShapeGroups(true,{TEXT("全身"),TEXT("胸部"),TEXT("軀幹"),TEXT("腰臀"),TEXT("手臂"),TEXT("腿部")});
 	{
-		// 胸部柔軟度／胸部重量 (shown under 原遊戲參數): with the breast sliders.
-		TArray<UWidget*> BustRows;
-		for(UOKShapeSlider* S:G->BoneSliders)if(S&&!S->BodyParameter.IsEmpty()&&S->ModRow)BustRows.Add(S->ModRow);
 		for(FGroup& Each:Body.Groups)
 		{
 			Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
@@ -665,15 +1076,7 @@ void UOKReaderScreen::BuildCategories()
 		};
 		if(G->BoneCategoryCombo)Bones.Sources.Add(G->BoneCategoryCombo.Get());
 		if(G->BoneAxesCheck)Bones.Sources.Add(G->BoneAxesCheck.Get());
-		if(G->ShapeBox&&G->ShapeSliders.Num())
-		{
-			const int32 Last=G->ShapeBox->GetChildIndex(G->ShapeSliders.Last()?G->ShapeSliders.Last()->GetParent():nullptr);
-			for(int32 I=Last+1;Last>=0&&I<G->ShapeBox->GetChildrenCount();++I)
-			{
-				UWidget* W=G->ShapeBox->GetChildAt(I);
-				if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox)Bones.Sources.Add(W);
-			}
-		}
+		for(UWidget* W:BoneRows)Bones.Sources.Add(W);
 		Bones.OnEnter=[Weak=TWeakObjectPtr<UOKCharacterController>(G)]()
 		{
 			if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return;
@@ -755,10 +1158,42 @@ void UOKReaderScreen::BuildCategories()
 		}
 		Settings.Groups.Add(Group(TEXT("物理"),Physics));
 	}
-	// No 介面 page: the UMG panel width and font size (EditorWidthInput, EditorFontInput) only resize the hidden UMG layer.
+	// 介面: 顯示字級 (the font size row, caption and number) scales this screen (UiScaleOf). The UMG panel width has the
+	// screen's own drag handle instead.
+	if(G->EditorFontInput&&G->EditorFontInput->GetParent())Settings.Groups.Add(Group(TEXT("介面"),{static_cast<UWidget*>(G->EditorFontInput->GetParent())}));
 	for(FGroup& Each:Settings.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty()&&!Each.Build;});
 	Categories.Add(MoveTemp(Settings));
+}
+
+FString UOKReaderScreen::PagesFile() const
+{
+	// A packaged stage carries only the Config it was staged with: the launcher names the checkout's file.
+	FString File;
+	if(FParse::Value(FCommandLine::Get(),TEXT("-ReaderPages="),File)&&!File.IsEmpty())return File;
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectConfigDir()/TEXT("ReaderEditor/pages.json"));
+}
+
+void UOKReaderScreen::ShowPagesErrors(UDreamWidget* Page)
+{
+	if(PagesErrors.IsEmpty()||!Page)return;
+	UOKDreamControl* L=MakeControl(TEXT("Label"),Page);if(!L)return;
+	FString Say=FString::Printf(TEXT("頁面定義檔有 %d 個問題："),PagesErrors.Num());
+	for(const FString& E:PagesErrors)Say+=TEXT("\n・")+E;
+	L->FixedText=Say;L->SetText(Say);
+	if(UDreamText* T=TextOf(L->Label.Get()))T->SetColor(FColor(255,70,70));
+	if(UDreamPanelSlot* Slot=L->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+}
+
+void UOKReaderScreen::ReloadPages(const FString& Mode,FOutputDevice& Out)
+{
+	if(Mode==TEXT("builtin"))bBuiltinPages=true;
+	else if(Mode==TEXT("file"))bBuiltinPages=false;
+	else if(!Mode.IsEmpty()){Out.Log(TEXT("pages: builtin | file (empty: report)"));return;}
+	if(!Mode.IsEmpty()){BuildCategories();ShowTab(Tab);}
+	int32 Pages=0;for(const FCategory& C:Categories)Pages+=FMath::Max(1,C.Groups.Num());
+	Out.Logf(TEXT("pages: %s, %d categories, %d pages, %d problems, %d registry keys named"),*PagesSource,Categories.Num(),Pages,PagesErrors.Num(),PageKeys.Num());
+	for(const FString& E:PagesErrors)Out.Log(TEXT("  ")+E);
 }
 
 void UOKReaderScreen::BuildDrawers()
@@ -812,7 +1247,7 @@ void UOKReaderScreen::BuildCameraBar()
 	auto View=[this](float Yaw,float Pitch,float Distance,int32 Focus)
 	{
 		UOKCharacterController* G=Controller.Get();AKKPreviewActor* A=G?G->PreviewActor.Get():nullptr;if(!A)return;
-		A->FrameCurrentPose();
+		A->FrameCurrentPoseRealtime();	// no CPU-skinned readback (a package crashed in CacheVertices)
 		const FVector Base=A->OrbitFocus;const float Full=A->OrbitDistance;
 		// Focus: 0 whole body, 1 upper body, 2 face, 3 legs.
 		if(Focus>0&&A->BodySkel)
@@ -866,7 +1301,7 @@ void UOKReaderScreen::ClearPage()
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
 	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
-	for(UTexture2D* T:CardThumbs)RetireThumb(T);
+	for(UTexture2D* T:CardThumbs)GiveBackThumb(T);
 	CardThumbs.Reset();CardPaths.Reset();CardThumbLoading.Reset();ThumbsInFlight=0;++ThumbGeneration;
 	*ThumbCancel=true;ThumbCancel=MakeShared<FThreadSafeBool>(false);
 	WantedTargets.Reset();WantedProperties.Reset();
@@ -977,10 +1412,11 @@ namespace OKReaderThumbs
 		if(!Wrapper||!Wrapper->SetCompressed(Png.GetData(),Png.Num())||!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return Out;
 		const int32 W=Wrapper->GetWidth(),H=Wrapper->GetHeight();
 		if(W<=0||H<=0||W!=HeadWidth||H!=HeadHeight||Raw.Num()<int64(W)*H*4||*Cancelled)return Out;
-		const float Scale=FMath::Min(1.f,FMath::Min(float(MaxWidth)/W,float(MaxHeight)/H));
-		Out.Width=FMath::Clamp(FMath::RoundToInt(W*Scale),1,W);Out.Height=FMath::Clamp(FMath::RoundToInt(H*Scale),1,H);
+		// Always the tile's picture size (the pool's textures are all that size): a card face has the tile's shape, any
+		// other picture is stretched to it.
+		Out.Width=MaxWidth;Out.Height=MaxHeight;
 		Out.Bgra.SetNumUninitialized(Out.Width*Out.Height*4);
-		// A box filter over the source pixels each output pixel covers.
+		// A box filter over the source pixels each output pixel covers (nearest when the source is smaller).
 		for(int32 Y=0;Y<Out.Height;++Y)for(int32 X=0;X<Out.Width;++X)
 		{
 			const int32 X0=X*W/Out.Width,X1=FMath::Max(X0+1,(X+1)*W/Out.Width),Y0=Y*H/Out.Height,Y1=FMath::Max(Y0+1,(Y+1)*H/Out.Height);
@@ -991,9 +1427,11 @@ namespace OKReaderThumbs
 		}
 		return Out;
 	}
+	constexpr int32 TileWidth=288,TileHeight=402;
+	// A new pool texture holding Thumb.
 	UTexture2D* MakeTexture(const FThumb& Thumb)
 	{
-		if(Thumb.Width<=0||Thumb.Height<=0||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return nullptr;
+		if(Thumb.Width!=TileWidth||Thumb.Height!=TileHeight||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return nullptr;
 		UTexture2D* Texture=UTexture2D::CreateTransient(Thumb.Width,Thumb.Height,PF_B8G8R8A8);
 		if(!Texture)return nullptr;
 		Texture->SRGB=true;
@@ -1003,9 +1441,19 @@ namespace OKReaderThumbs
 		Texture->UpdateResource();
 		return Texture;
 	}
+	// A pool texture given a new picture: the pixels go to the render thread with their own copy.
+	bool Refill(UTexture2D* Texture,const FThumb& Thumb)
+	{
+		if(!IsValid(Texture)||!Texture->GetResource()||Thumb.Width!=Texture->GetSizeX()||Thumb.Height!=Texture->GetSizeY()||Thumb.Bgra.Num()!=Thumb.Width*Thumb.Height*4)return false;
+		uint8* Copy=static_cast<uint8*>(FMemory::Malloc(Thumb.Bgra.Num()));FMemory::Memcpy(Copy,Thumb.Bgra.GetData(),Thumb.Bgra.Num());
+		FUpdateTextureRegion2D* Region=new FUpdateTextureRegion2D(0,0,0,0,Thumb.Width,Thumb.Height);
+		Texture->UpdateTextureRegions(0,1,Region,Thumb.Width*4,4,Copy,[](uint8* Data,const FUpdateTextureRegion2D* Regions){FMemory::Free(Data);delete Regions;});
+		return true;
+	}
 	void Show(UOKDreamControl* Tile,UTexture2D* Texture)
 	{
 		if(!IsValid(Tile)||!Tile->Picture)return;
+		if(!OKReaderPicturesShown())Texture=nullptr;
 		if(auto* Image=Cast<UDreamImage>(Tile->Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(Texture);Image->SetBrush(Brush);}
 		Tile->Picture->SetShown(Texture!=nullptr);
 	}
@@ -1013,21 +1461,289 @@ namespace OKReaderThumbs
 
 // The card list's pictures: decoded on workers for the tiles in or near the scrolled view (a few at a time), dropped
 // again for tiles far out of it, so a folder of hundreds of cards never holds all their pictures.
-void UOKReaderScreen::RetireThumb(UTexture2D* Texture)
+// The pictures live in a pool owned by the screen (ThumbPool, a UPROPERTY) for as long as the screen lives: a tile that
+// lets go of its picture gives the texture back to the pool, the next tile gets it refilled. No picture texture is
+// ever collected while the reader runs, so no DreamGUI draw data built before a brush change can outlive its texture
+// (2026-11-19: switching the card source and scrolling fast ended in a GPU page fault after about a minute).
+static TAutoConsoleVariable<int32> CVarReaderThumbs(TEXT("ok.ReaderThumbs"),1,TEXT("Card list pictures in the reader's DreamGUI screen: 1 decode them (default), 0 none (for comparison runs)."));
+
+void UOKReaderScreen::ListResources(FOutputDevice& Out) const
 {
-	if(!Texture)return;
-	RetiredThumbs.Add(Texture);RetiredThumbTimes.Add(FPlatformTime::Seconds());
+	auto MiB=[](int64 Bytes){return double(Bytes)/(1024.0*1024.0);};
+	auto Size=[](const UTexture* T)->int64{return T&&T->GetResource()?int64(T->CalcTextureMemorySizeEnum(TMC_ResidentMips)):0;};
+	FString Line=FString::Printf(TEXT("screen thumbPool=%d free=%d cardThumbs=%d controls=%d pageWidgets=%d cards=%d"),ThumbPool.Num(),FreeThumbs.Num(),CardThumbs.Num(),Controls.Num(),PageWidgets.Num(),CardButtons.Num());
+	if(const UOKCharacterController* G=Controller.Get())
+	{
+		int64 Bytes=0;for(const auto& Pair:G->AppearanceThumbCache)Bytes+=Size(Pair.Value);
+		Line+=FString::Printf(TEXT(" | controller appearanceCache=%d (%.1f MiB) decodes=%d appearanceTextures=%d"),G->AppearanceThumbCache.Num(),MiB(Bytes),G->AppearanceThumbDecodes,G->AppearanceTextures.Num());
+	}
+	int32 Widgets=0,Mirrors=0;
+	for(TObjectIterator<UDreamWidget> It;It;++It)if(IsValid(*It)){++Widgets;if(It->IsA<UOKDreamControl>())++Mirrors;}
+	Line+=FString::Printf(TEXT(" | live dreamWidgets=%d mirrorControls=%d"),Widgets,Mirrors);
+	// Textures by class, the transient ones (made at run time) apart.
+	TMap<FString,TPair<int32,int64>> ByKind;
+	for(TObjectIterator<UTexture> It;It;++It)
+	{
+		const UTexture* T=*It;if(!IsValid(T)||T->HasAnyFlags(RF_ClassDefaultObject))continue;
+		const bool bTransient=T->GetOutermost()==GetTransientPackage();
+		TPair<int32,int64>& Slot=ByKind.FindOrAdd(T->GetClass()->GetName()+(bTransient?TEXT("(transient)"):TEXT("")));
+		++Slot.Key;Slot.Value+=Size(T);
+	}
+	ByKind.ValueSort([](const TPair<int32,int64>& A,const TPair<int32,int64>& B){return A.Value>B.Value;});
+	Line+=TEXT(" | textures");
+	for(const auto& Pair:ByKind)Line+=FString::Printf(TEXT(" %s=%d/%.1fMiB"),*Pair.Key,Pair.Value.Key,MiB(Pair.Value.Value));
+	FTextureMemoryStats Stats;RHIGetTextureMemoryStats(Stats);
+	Line+=FString::Printf(TEXT(" | rhi streaming=%.1fMiB nonStreaming=%.1fMiB dedicated=%.0fMiB"),MiB(Stats.StreamingMemorySize),MiB(Stats.NonStreamingMemorySize),MiB(Stats.DedicatedVideoMemory));
+	Out.Log(Line);
+	UE_LOG(LogTemp,Display,TEXT("OK reader resources %s"),*Line);
+}
+
+static void OKReaderAllControls(const UOKReaderScreen* S,TArray<UOKDreamControl*>& All,TArray<FString>& Paths,
+	const TArray<TObjectPtr<UOKDreamControl>>& Controls,const TArray<TObjectPtr<UOKDreamControl>>& SubButtons,const TArray<TObjectPtr<UOKDreamControl>>& RailButtons,
+	const TArray<TObjectPtr<UOKDreamControl>>& Drawers,const TArray<TObjectPtr<UOKDreamControl>>& CardButtons);
+// The UMG control that shows a registry parameter (a row of OKCharacterMCPRegistry::Parameters): shape.* its slider,
+// bone.* the bone row of that bone and axis, physics.*／pregnancy.*／style.* their sliders, a property the detailed
+// editor's panel (its rows are made per card and per page when the panel opens).
+static UWidget* OKRegistryControl(UOKCharacterController* G,const TSharedPtr<FJsonObject>& P)
+{
+	if(!G||!P)return nullptr;
+	FString Key,Kind;P->TryGetStringField(TEXT("key"),Key);P->TryGetStringField(TEXT("category"),Kind);
+	// First: a property's key can start like a slider's (physics.hair.back, physics.outfit0.accessory3 are properties).
+	if(Kind==TEXT("properties"))return G->PropertyPanel.Get();
+	if(Key.StartsWith(TEXT("shape.")))
+	{
+		const bool bBody=Key.StartsWith(TEXT("shape.body."));int32 Dot=INDEX_NONE;Key.FindLastChar(TEXT('.'),Dot);const int32 I=FCString::Atoi(*Key.Mid(Dot+1));
+		for(UOKShapeSlider* S:G->ShapeSliders)if(S&&S->bBody==bBody&&S->Index==I)return S;
+	}
+	else if(Key.StartsWith(TEXT("bone.")))
+	{
+		FString Bone;P->TryGetStringField(TEXT("bone"),Bone);int32 Axis=-99;P->TryGetNumberField(TEXT("axis"),Axis);
+		for(UOKShapeSlider* S:G->BoneSliders)if(S&&S->ModAxis==Axis&&(S->ModBone==Bone||S->ModRight==Bone))return S;
+	}
+	else if(Key.StartsWith(TEXT("physics."))){for(UOKShapeSlider* S:G->BoneSliders)if(S&&S->BodyParameter==Key.Mid(8))return S;}
+	else if(Key.StartsWith(TEXT("pregnancy."))){for(UOKShapeSlider* S:G->BoneSliders)if(S&&S->PregnancyParameter==Key.Mid(10))return S;}
+	else if(Key.StartsWith(TEXT("style."))){for(UOKShapeSlider* S:G->StyleSliders)if(S&&S->StyleParameter==Key.Mid(6))return S;}
+	return nullptr;
+}
+
+bool UOKReaderScreen::SetByKey(const FString& Key,const FString& To,FString* OutNote)
+{
+	auto Say=[OutNote](const FString& S){if(OutNote)*OutNote=S;return false;};
+	UOKCharacterController* G=Controller.Get();if(!G)return Say(TEXT("no controller"));
+	TSharedPtr<FJsonObject> Row;
+	for(const TSharedPtr<FJsonValue>& V:OKCharacterMCPRegistry::Parameters(G))
+		if(const TSharedPtr<FJsonObject> P=V.IsValid()?V->AsObject():nullptr){FString K;if(P->TryGetStringField(TEXT("key"),K)&&K==Key){Row=P;break;}}
+	if(!Row)return Say(TEXT("not in the registry: ")+Key);
+	FString Kind;Row->TryGetStringField(TEXT("category"),Kind);
+	if(Kind==TEXT("properties"))return Say(TEXT("not set: property rows are not bound by key yet (open their page and use the path, or reader_call set) ")+Key);
+	UWidget* W=OKRegistryControl(G,Row);
+	if(!W)return Say(TEXT("no control shows ")+Key);
+	// The page whose sources hold the control (itself or a row it is in): the current page first.
+	auto Holds=[W](const FGroup& Group){for(const UWidget* At=W;At;At=At->GetParent())for(const TWeakObjectPtr<UWidget>& S:Group.Sources)if(S.Get()==At)return true;return false;};
+	int32 PageCategory=INDEX_NONE,PageSub=INDEX_NONE;
+	if(Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub)&&Holds(Categories[Category].Groups[Sub])){PageCategory=Category;PageSub=Sub;}
+	for(int32 C=0;C<Categories.Num()&&PageCategory==INDEX_NONE;++C)for(int32 S=0;S<Categories[C].Groups.Num();++S)if(Holds(Categories[C].Groups[S])){PageCategory=C;PageSub=S;break;}
+	if(PageCategory==INDEX_NONE)return Say(TEXT("on no page: ")+Key);
+	if(PageCategory!=Category||PageSub!=Sub){if(Categories[PageCategory].Tab!=Tab)ShowTab(Categories[PageCategory].Tab);ShowCategory(PageCategory,PageSub);}
+	// The mirrored control whose UMG source is that control or inside it (a slider row mirrors its slider and its number).
+	UOKDreamControl* Found=nullptr;
+	for(UOKDreamControl* C:Controls)if(IsValid(C)&&C->Source.IsValid()&&(C->Slider||C->Toggle||C->Choice||C->Input))
+	{
+		for(const UWidget* At=C->Source.Get();At;At=At->GetParent())if(At==W){Found=C;break;}
+		if(Found)break;
+	}
+	const FString Where=Categories[PageCategory].Name+TEXT("›")+Categories[PageCategory].Groups[PageSub].Name;
+	if(!Found)return Say(FString::Printf(TEXT("not set: %s is on %s but not shown there now (a bone row shows under its bone category)"),*Key,*Where));
+	if(!Found->IsOnScreen()||!Found->IsOperable())return Say(FString::Printf(TEXT("not set: %s is %s"),*ControlPath(Found),Found->IsOnScreen()?TEXT("disabled"):TEXT("not shown now")));
+	FString Why;
+	if(!Found->SetValue(To,&Why))return Say(FString::Printf(TEXT("set %s (%s) = %s failed: %s"),*ControlPath(Found),*Key,*To,*Why));
+	if(OutNote)*OutNote=FString::Printf(TEXT("set %s (%s) = %s"),*ControlPath(Found),*Key,*To);
+	return true;
+}
+
+// Experiment switch for the reader's GPU page fault A/B (e-cardload), not a setting. The default hides the reader's editor
+// screen while another mode (the one-on-one, the studio) has the screen: the user's decision of 2026-11-19, and the draws
+// in flight when the reader crashed were all DreamGUI's (mask0=fallback, no character texture bound), the crash most often
+// on the way back from the one-on-one. 1 keeps the old behaviour (drawn underneath) to compare.
+static TAutoConsoleVariable<int32> CVarReaderScreenUnderOtherModes(TEXT("ok.Experiment.ReaderScreenUnderOtherModes"),0,
+	TEXT("Experiment (crash A/B only): 1 = keep drawing the reader's DreamGUI screen under the one-on-one and the studio (the old behaviour); 0 (default) = hide it there."));
+
+void UOKReaderScreen::FollowController()
+{
+	const UOKCharacterController* G=Controller.Get();
+	const bool bOtherMode=!G||G->GetVisibility()==ESlateVisibility::Collapsed;
+	const bool bShow=!bOtherMode||CVarReaderScreenUnderOtherModes.GetValueOnGameThread()!=0;
+	if(GetShown()==bShow)return;
+	SetShown(bShow);
+	UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen %s (%s)"),bShow?TEXT("shown"):TEXT("hidden"),
+		bOtherMode?TEXT("another mode has the screen; ok.Experiment.ReaderScreenUnderOtherModes 1 keeps it drawn"):TEXT("back in the reader"));
+}
+
+void UOKReaderScreen::AuditControls(FOutputDevice& Out)
+{
+	UOKCharacterController* G=Controller.Get();
+	if(!G||!G->WidgetTree){Out.Log(TEXT("audit: no controller"));return;}
+	const int32 WasCategory=Category,WasSub=Sub;
+	// The UMG controls each page mirrors, and the short names shown twice on it.
+	TMap<const UWidget*,FString> Where;
+	TArray<FString> Lines,Ambiguous;
+	int32 Pages=0;
+	auto Note=[&](const FString& Page)
+	{
+		TArray<UOKDreamControl*> All;TArray<FString> Paths;
+		OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
+		TMap<FString,int32> Names;
+		for(UOKDreamControl* C:All)
+		{
+			const FString N=C->GetShownText().TrimStartAndEnd();
+			if(!N.IsEmpty()&&!N.IsNumeric())++Names.FindOrAdd(N);
+		}
+		for(const auto& Pair:Names)if(Pair.Value>1)Ambiguous.AddUnique(FString::Printf(TEXT("%s: \"%s\" x%d"),*Page,*Pair.Key,Pair.Value));
+		// Every control the page made, shown or not (a hidden UMG child is mirrored hidden and shows when it does).
+		auto Take=[&](const TArray<TObjectPtr<UOKDreamControl>>& List){for(UOKDreamControl* C:List)if(IsValid(C)&&C->Source.IsValid()&&!Where.Contains(C->Source.Get()))Where.Add(C->Source.Get(),Page);};
+		Take(Controls);Take(Drawers);
+	};
+	for(int32 C=0;C<Categories.Num();++C)for(int32 S=0;S<FMath::Max(1,Categories[C].Groups.Num());++S)
+	{
+		ShowCategory(C,S);++Pages;
+		const FString Page=Categories[C].Groups.IsValidIndex(S)?Categories[C].Name+TEXT("›")+Categories[C].Groups[S].Name:Categories[C].Name;
+		Note(Page);
+		// A page that shows only the rows of the chosen bone category: the rows of the others are reached by choosing them.
+		if(Categories[C].Groups.IsValidIndex(S)&&Categories[C].Groups[S].bShownOnly)
+			for(const TWeakObjectPtr<UWidget>& Source:Categories[C].Groups[S].Sources)if(Source.IsValid())
+			{
+				TArray<UWidget*> Stack{Source.Get()};
+				while(Stack.Num()){UWidget* W=Stack.Pop();if(!Where.Contains(W))Where.Add(W,Page+TEXT("（切換分類）"));Stack.Append(ChildrenOf(W));}
+			}
+	}
+	ShowCategory(WasCategory,WasSub);
+	// The old screen's operable controls.
+	auto Operable=[](const UWidget* W){return W->IsA<UButton>()||W->IsA<USlider>()||W->IsA<UCheckBox>()||W->IsA<UComboBoxString>()||W->IsA<UEditableTextBox>()||W->IsA<USpinBox>();};
+	int32 Total=0,Covered=0,Replaced=0;
+	TArray<FString> Missing,ReplacedBy;
+	G->WidgetTree->ForEachWidget([&](UWidget* W)
+	{
+		if(!W||!Operable(W))return;
+		++Total;
+		// What the new screen draws itself instead: the drawers' headers, the picker tiles (made per item), the card list.
+		if(W->IsA<UOKDrawerButton>()||W->IsA<UOKAppearanceButton>()||W==G->AppearanceCloseButton){++Replaced;return;}
+		// Old controls whose job the new screen does another way (its own button, a page that opens the panel when entered,
+		// its drag handle): by name or label, with where.
+		{
+			static const TMap<FString,FString> Instead={
+				{TEXT("新增飾品欄位"),TEXT("配件›飾品 的「新增飾品欄位」（畫面自己的按鈕）")},
+				{TEXT("圖片式外觀選擇"),TEXT("選圖頁（臉／頭髮／身子›皮膚／衣服›外觀選擇／配件）進入時自動打開")},
+				{TEXT("顏色／飾品詳細編輯"),TEXT("顏色與設定、飾品顏色與位置、全部屬性頁進入時自動打開")},
+				{TEXT("EditorPanelWidth"),TEXT("左欄右緣的拖曳把手、ok.ReaderScreen width")}};
+			const FString* By=Instead.Find(W->GetName());if(!By)By=Instead.Find(TextIn(W).TrimStartAndEnd());
+			if(By){++Replaced;ReplacedBy.Add(FString::Printf(TEXT("%s（%s）→ %s"),*W->GetName(),*TextIn(W),**By));return;}
+		}
+		for(const UWidget* At=W;At;At=At->GetParent())if(Where.Contains(At)){++Covered;return;}
+		FString Label=TextIn(W);
+		if(Label.IsEmpty())if(UPanelWidget* P=W->GetParent())for(int32 I=0;I<P->GetChildrenCount()&&Label.IsEmpty();++I)if(P->GetChildAt(I)!=W)Label=TextIn(P->GetChildAt(I));
+		FString Top;for(const UWidget* At=W->GetParent();At;At=At->GetParent())if(At->GetFName()!=NAME_None&&!At->GetName().StartsWith(TEXT("HorizontalBox"))&&!At->GetName().StartsWith(TEXT("VerticalBox"))&&!At->GetName().StartsWith(TEXT("SizeBox"))&&!At->GetName().StartsWith(TEXT("Border"))){Top=At->GetName();break;}
+		Missing.Add(FString::Printf(TEXT("%s\t%s\t%s\t%s\tunder=%s"),*W->GetClass()->GetName(),*W->GetName(),*Label.Replace(TEXT("\n"),TEXT(" ")),IsUmgShown(W)?TEXT("visible"):TEXT("hidden"),*Top));
+	});
+	// The registry (OKCharacterMCPRegistry::Parameters, what reader_call get／set reach) against the pages: a key whose
+	// control is on no page is a gap of the UI; a key the definition file names that the registry lacks, a gap of the data.
+	TSet<const UWidget*> GroupSources;
+	for(const FCategory& Each:Categories)for(const FGroup& Group:Each.Groups)for(const TWeakObjectPtr<UWidget>& W:Group.Sources)if(W.IsValid())GroupSources.Add(W.Get());
+	auto OnPage=[&](const UWidget* W)
+	{
+		if(!W)return false;
+		if(GroupSources.Contains(W))return true;
+		for(const UWidget* At=W;At;At=At->GetParent())if(Where.Contains(At))return true;
+		return false;
+	};
+	int32 Keys=0,KeysOnPage=0;TArray<FString> UiGap,DataGap,RangeGap;TSet<FString> RegistryKeys;
+	for(const TSharedPtr<FJsonValue>& Row:OKCharacterMCPRegistry::Parameters(G))
+	{
+		const TSharedPtr<FJsonObject> P=Row.IsValid()?Row->AsObject():nullptr;if(!P)continue;
+		FString Key,Label,Kind;P->TryGetStringField(TEXT("key"),Key);P->TryGetStringField(TEXT("label"),Label);P->TryGetStringField(TEXT("category"),Kind);
+		if(Key.IsEmpty())continue;
+		++Keys;RegistryKeys.Add(Key);
+		// A number the registry gives no range yet (f-yvonne's metadata: range_missing is true, never written false).
+		bool bRangeMissing=false;
+		if(P->TryGetBoolField(TEXT("range_missing"),bRangeMissing)&&bRangeMissing)RangeGap.Add(FString::Printf(TEXT("%s\t%s"),*Key,*Label.Replace(TEXT("\n"),TEXT(" "))));
+		const UWidget* W=OKRegistryControl(G,P);
+		if(OnPage(W))++KeysOnPage;
+		else UiGap.Add(FString::Printf(TEXT("%s\t%s\t%s"),*Key,*Label.Replace(TEXT("\n"),TEXT(" ")),W?TEXT("its control is on no page"):TEXT("no control")));
+	}
+	// The four columns, as Tools/reader_pages.lua audit_cells writes them (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md,
+	// 稽核四欄). Without a card the card's own properties are not in the registry: a page key only a card has is not
+	// judged then, and every column says there is no card, so a run without a card is never read as one with.
+	// "A card" is what unknown_plugin_sections_status calls one: its value, never re-derived here (bad2861df).
+	const FString KkexStatus=G->UnknownPluginSectionsStatus();
+	const bool bCard=KkexStatus!=TEXT("no_card");
+	int32 Unjudged=0;
+	auto CardOnly=[](const FString& K){for(const TCHAR* Prefix:{TEXT("shape."),TEXT("bone."),TEXT("physics."),TEXT("pregnancy."),TEXT("style.")})if(K.StartsWith(Prefix))return false;return true;};
+	for(const FString& K:PageKeys)if(!RegistryKeys.Contains(K)){if(!bCard&&CardOnly(K))++Unjudged;else DataGap.Add(K);}
+	FString UiCell=FString::FromInt(UiGap.Num()),DataCell=FString::FromInt(DataGap.Num()),RangeCell=FString::FromInt(RangeGap.Num()),KkexCell;
+	if(!bCard)
+	{
+		UiCell+=TEXT("（沒有卡：卡的屬性鍵未計）");RangeCell+=TEXT("（沒有卡：卡的屬性鍵未計）");
+		DataCell+=FString::Printf(TEXT("（沒有卡：只有卡才有的鍵 %d 個未判）"),Unjudged);KkexCell=TEXT("沒有卡");
+	}
+	// The four values of unknown_plugin_sections_status, the same call reader_call state makes, so the two never
+	// disagree; "讀取中" only says what not_read is while the read is running.
+	else if(KkexStatus==TEXT("not_read"))KkexCell=G->bPropertyBusy?TEXT("讀取中"):TEXT("未讀（這張卡的屬性還沒讀）");
+	else if(KkexStatus==TEXT("unsupported"))KkexCell=TEXT("缺支援（這個 build 的產生端沒有 unknown_plugin_sections）");
+	else
+	{
+		// Left out of PLUGIN_SECTIONS on purpose by the producer, so they come back on every card and are not a gap:
+		// ABMX is edited through bone.*, the sideloader resolve list is rewritten whole, the last is our provenance.
+		static const TSet<FString> LeftOut={TEXT("kkabmplugin.abmdata"),TEXT("kkabmx.core"),TEXT("com.bepis.sideloader.universalautoresolver"),TEXT("openkoikatsu.appearancesource")};
+		TArray<FString> Unknown,KeptOut;
+		for(const FString& Section:G->EditorUnknownPluginSections)(LeftOut.Contains(Section.ToLower())?KeptOut:Unknown).Add(Section);
+		KkexCell=FString::FromInt(Unknown.Num());
+		if(!Unknown.IsEmpty())KkexCell+=TEXT("：")+FString::Join(Unknown,TEXT("、"));
+		if(!KeptOut.IsEmpty())KkexCell+=FString::Printf(TEXT("；刻意不收 %d（%s）"),KeptOut.Num(),*FString::Join(KeptOut,TEXT("、")));
+	}
+	Lines.Add(FString::Printf(TEXT("audit: %d pages; old screen operable controls %d: mirrored %d, drawn by the new screen itself %d, missing %d; short names shown twice on a page: %d"),Pages,Total,Covered,Replaced,Missing.Num(),Ambiguous.Num()));
+	Lines.Add(FString::Printf(TEXT("registry: %d keys, on a page %d, on no page (UI 缺) %s; keys the definition names %d, not in the registry (資料端缺) %s; numbers without a range (範圍缺, range_missing) %s; card sections this build does not know (KKEx 不認得) %s; pages: %s, %d problems"),
+		Keys,KeysOnPage,*UiCell,PageKeys.Num(),*DataCell,*RangeCell,*KkexCell,*PagesSource,PagesErrors.Num()));
+	Lines.Add(TEXT("done another way by the new screen:"));
+	for(const FString& R:ReplacedBy)Lines.Add(TEXT("  ")+R);
+	Lines.Add(TEXT("missing (class, name, label, visibility, nearest named parent):"));
+	for(const FString& M:Missing)Lines.Add(TEXT("  ")+M);
+	Lines.Add(TEXT("short names shown twice (press by that name is ambiguous there; use the path):"));
+	for(const FString& A:Ambiguous)Lines.Add(TEXT("  ")+A);
+	Lines.Add(TEXT("registry keys on no page (UI 缺: key, label, why):"));
+	for(const FString& U:UiGap)Lines.Add(TEXT("  ")+U);
+	Lines.Add(TEXT("keys the definition file names that the registry lacks (資料端缺):"));
+	for(const FString& D:DataGap)Lines.Add(TEXT("  ")+D);
+	Lines.Add(TEXT("registry numbers without a range (範圍缺: key, label):"));
+	for(const FString& Gap:RangeGap)Lines.Add(TEXT("  ")+Gap);
+	Lines.Add(TEXT("problems in the definition file:"));
+	for(const FString& E:PagesErrors)Lines.Add(TEXT("  ")+E);
+	const FString File=FPaths::ProjectSavedDir()/TEXT("Reports/reader-control-audit.txt");
+	FFileHelper::SaveStringToFile(FString::Join(Lines,TEXT("\n")),*File,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	Out.Log(Lines[0]+TEXT(" -> ")+FPaths::ConvertRelativePathToFull(File));
+	Out.Log(Lines[1]);
+}
+
+void UOKReaderScreen::GiveBackThumb(UTexture2D* Texture)
+{
+	if(Texture&&ThumbPool.Contains(Texture)&&!FreeThumbs.Contains(Texture))FreeThumbs.Add(Texture);
+}
+
+UTexture2D* UOKReaderScreen::PutThumb(int32 Width,int32 Height,const TArray<uint8>& Bgra)
+{
+	OKReaderThumbs::FThumb Thumb;Thumb.Width=Width;Thumb.Height=Height;Thumb.Bgra=Bgra;
+	while(FreeThumbs.Num())
+	{
+		UTexture2D* Texture=FreeThumbs.Pop();
+		if(OKReaderThumbs::Refill(Texture,Thumb))return Texture;
+	}
+	UTexture2D* Texture=OKReaderThumbs::MakeTexture(Thumb);
+	if(Texture)ThumbPool.Add(Texture);
+	return Texture;
 }
 
 void UOKReaderScreen::TickThumbnails()
 {
-	// Retired pictures go after three seconds (DreamGUI has redrawn the tiles without them by then).
-	{
-		const double Now=FPlatformTime::Seconds();int32 Keep=0;
-		while(Keep<RetiredThumbTimes.Num()&&Now-RetiredThumbTimes[Keep]>3.0)++Keep;
-		if(Keep>0){RetiredThumbs.RemoveAt(0,FMath::Min(Keep,RetiredThumbs.Num()));RetiredThumbTimes.RemoveAt(0,Keep);}
-	}
 	if(CardButtons.IsEmpty()||!LeftScroll)return;
+	if(CVarReaderThumbs.GetValueOnGameThread()==0)return;
 	const float Scale=FMath::Max(.01f,float(LeftScroll->GetWorldScale().Z>0?LeftScroll->GetWorldScale().Z:LeftScroll->GetWorldScale().Y));
 	const FVector Center=LeftScroll->GetWorldLocation();
 	const float View=LeftScroll->GetHeight();
@@ -1039,7 +1755,7 @@ void UOKReaderScreen::TickThumbnails()
 	{
 		UOKDreamControl* Tile=CardButtons[I];if(!IsValid(Tile))continue;
 		const float Distance=FVector::Dist(Tile->GetWorldLocation(),Center);
-		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);RetireThumb(CardThumbs[I]);CardThumbs[I]=nullptr;}
+		if(Distance>Far&&CardThumbs.IsValidIndex(I)&&CardThumbs[I]){OKReaderThumbs::Show(Tile,nullptr);GiveBackThumb(CardThumbs[I]);CardThumbs[I]=nullptr;}
 		else if(Distance<=Near&&CardThumbs.IsValidIndex(I)&&!CardThumbs[I]&&!CardThumbLoading[I])Wanted.Add(I);
 	}
 	Wanted.Sort([&](int32 A,int32 B){return FVector::DistSquared(CardButtons[A]->GetWorldLocation(),Center)<FVector::DistSquared(CardButtons[B]->GetWorldLocation(),Center);});
@@ -1058,7 +1774,7 @@ void UOKReaderScreen::TickThumbnails()
 		TWeakObjectPtr<UOKReaderScreen> Weak(this);
 		UE::Tasks::Launch(TEXT("OKReaderThumb"),[Weak,Wrappers,Path,I,Generation,Cancelled]()
 		{
-			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Wrappers,Path,288,402,Cancelled);
+			OKReaderThumbs::FThumb Thumb=OKReaderThumbs::Decode(Wrappers,Path,OKReaderThumbs::TileWidth,OKReaderThumbs::TileHeight,Cancelled);
 			if(*Cancelled)return;
 			AsyncTask(ENamedThreads::GameThread,[Weak,I,Generation,Cancelled,Thumb=MoveTemp(Thumb)]()
 			{
@@ -1066,7 +1782,7 @@ void UOKReaderScreen::TickThumbnails()
 				if(*Cancelled||!IsValid(Self)||Self->ThumbGeneration!=Generation)return;
 				Self->ThumbsInFlight=FMath::Max(0,Self->ThumbsInFlight-1);
 				if(!Self->CardThumbs.IsValidIndex(I)||!Self->CardThumbLoading.IsValidIndex(I)||!Self->CardButtons.IsValidIndex(I))return;
-				UTexture2D* Texture=OKReaderThumbs::MakeTexture(Thumb);
+				UTexture2D* Texture=Self->PutThumb(Thumb.Width,Thumb.Height,Thumb.Bgra);
 				if(!Texture)return;	// unreadable: stays marked loading, so it is not asked for again
 				Self->CardThumbLoading[I]=false;
 				Self->CardThumbs[I]=Texture;OKReaderThumbs::Show(Self->CardButtons[I],Texture);
@@ -1113,6 +1829,74 @@ FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
 // 設定 › 遊戲目錄: where the original game is (its mods/ is where zipmods are looked for) and the local library, each a
 // field, a folder button and what is found there, said as soon as it is typed. Kept as the user's own setting
 // (UKKGameRoot::SetUserRoot: GameUserSettings.ini, writable in a package), read again at each card open.
+void UOKReaderScreen::BuildEyeOverlayPage(UDreamWidget* Page)
+{
+	UOKCharacterController* G=Controller.Get();if(!G||!Page)return;
+	auto Text=[this](UDreamWidget* Into,const FString& Value)
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+		return C;
+	};
+	if(!G->bModelLayout){Text(Page,TEXT("要先在「人物卡總欄」選一張卡並按「載入3D」，這一頁才讀得到它的瞳孔覆蓋貼圖。"));return;}
+	if(G->bLoadInFlight){Text(Page,TEXT("等角色載入完成後讀取瞳孔覆蓋貼圖…"));return;}
+	const FString Card=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();
+	// Read once per card (and again after a pick); a failed read waits for 重新讀取 instead of retrying on every rebuild.
+	if(!G->bEyeOverlayBusy&&G->EyeOverlayStatus.IsEmpty()&&(!G->EyeOverlayData.IsValid()||G->EyeOverlayCard!=Card))
+	{
+		G->EyeOverlayData.Reset();
+		AsyncTask(ENamedThreads::GameThread,[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid())Weak->RequestEyeOverlays();});
+		Text(Page,TEXT("正在讀取這張卡的瞳孔覆蓋貼圖…"));
+		return;
+	}
+	if(!G->EyeOverlayStatus.IsEmpty())Text(Page,G->EyeOverlayStatus);
+	{
+		UDreamWidget* Row=MakePanel(Page,true,6.f);
+		TWeakObjectPtr<UOKCharacterController> Weak(G);
+		MakeOwnButton(Row,TEXT("重新讀取"),[Weak](){if(Weak.IsValid()&&!Weak->bEyeOverlayBusy){Weak->EyeOverlayStatus.Reset();Weak->EyeOverlayData.Reset();Weak->RequestEyeOverlays();}});
+	}
+	const TSharedPtr<FJsonObject> Data=G->EyeOverlayData;
+	if(!Data.IsValid()||G->bEyeOverlayBusy)return;
+	const TArray<TSharedPtr<FJsonValue>>* Slots=nullptr;const TArray<TSharedPtr<FJsonValue>>* Candidates=nullptr;
+	Data->TryGetArrayField(TEXT("slots"),Slots);Data->TryGetArrayField(TEXT("candidates"),Candidates);
+	if(!Slots||Slots->IsEmpty()){Text(Page,TEXT("這張卡的眼睛材質沒有可設定覆蓋貼圖的槽位。"));return;}
+	int32 Unused=0,Other=0;
+	if(Candidates)for(const TSharedPtr<FJsonValue>& V:*Candidates){bool bEye=false;if(V->AsObject())V->AsObject()->TryGetBoolField(TEXT("eye"),bEye);if(!bEye)++Other;}
+	for(const TSharedPtr<FJsonValue>& SlotValue:*Slots)
+	{
+		const TSharedPtr<FJsonObject> Slot=SlotValue->AsObject();if(!Slot)continue;
+		bool bApplies=true;Slot->TryGetBoolField(TEXT("applies"),bApplies);
+		if(!bApplies){++Unused;continue;}
+		FString Label,Material,Property,Current;Slot->TryGetStringField(TEXT("label"),Label);Slot->TryGetStringField(TEXT("material"),Material);Slot->TryGetStringField(TEXT("property"),Property);Slot->TryGetStringField(TEXT("candidate"),Current);
+		bool bPresent=false;Slot->TryGetBoolField(TEXT("present"),bPresent);
+		Text(Page,FString::Printf(TEXT("%s（%s › %s）"),*Label,*Material,*Property));
+		UDreamWidget* Grid=UDreamUIBPLibrary::ConstructWidget(this,TEXT("Grid"),nullptr);
+		if(!Grid)continue;
+		if(auto* Wrap=Grid->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())Wrap->SetSpacing(FVector2D(6,6));
+		Grid->SetSizeDelta(FVector2D::ZeroVector);AddToHost(Page,Grid,false);
+		if(UOKDreamControl* Anchor=Text(Grid,FString::Printf(TEXT("%s（%s › %s）"),*Label,*Material,*Property)))Anchor->SetShown(false);	// names the row for ControlPath
+		TWeakObjectPtr<UOKCharacterController> Weak(G);
+		auto Tile=[this,Grid](const FString& Caption,UTexture2D* Picture,TFunction<void()> Press)
+		{
+			UOKDreamControl* B=MakeControl(TEXT("PickTile"),Grid);if(!B)return;
+			B->FixedText=Caption;B->SetText(Caption);B->OnPressed=MoveTemp(Press);
+			if(UDreamPanelSlot* S=B->GetPanelSlot()){S->SetMinDesiredSize(FVector2D(112,150));S->SetMaxDesiredSize(FVector2D(112,150));}
+			OKReaderThumbs::Show(B,Picture);
+		};
+		Tile(bPresent?TEXT("無"):TEXT("▸ 無"),nullptr,[Weak,Material,Property](){if(Weak.IsValid())Weak->SetEyeOverlay(Material,Property,FString());});
+		if(Candidates)for(const TSharedPtr<FJsonValue>& V:*Candidates)
+		{
+			const TSharedPtr<FJsonObject> C=V->AsObject();if(!C)continue;
+			bool bEye=false;C->TryGetBoolField(TEXT("eye"),bEye);if(!bEye)continue;
+			FString Id,Name,Png;C->TryGetStringField(TEXT("id"),Id);C->TryGetStringField(TEXT("name"),Name);C->TryGetStringField(TEXT("png"),Png);
+			const FString Caption=(Id==Current&&bPresent?TEXT("▸ "):TEXT(""))+(Name.IsEmpty()?Id:Name);
+			Tile(Caption,G->EyeOverlayThumb(Png),[Weak,Material,Property,Id](){if(Weak.IsValid())Weak->SetEyeOverlay(Material,Property,Id);});
+		}
+	}
+	if(Unused)Text(Page,FString::Printf(TEXT("另有 %d 個槽位這條開卡路徑不畫（瞳孔材質上的高光貼圖走「眼睛」頁的高光種類），不列出。"),Unused));
+	if(Other)Text(Page,FString::Printf(TEXT("這張卡另有 %d 張用在衣服或配件上的貼圖，不列在這裡。"),Other));
+}
+
 void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 {
 	auto Text=[this](UDreamWidget* Into,const FString& Value)
@@ -1185,8 +1969,8 @@ void UOKReaderScreen::CheckGameRoot(const FString& Root)
 	{
 		FString Message;
 		const FString Mods=Root/TEXT("mods");
-		if(!FPaths::DirectoryExists(Root))Message=TEXT("✗ 找不到這個資料夾。");
-		else if(!FPaths::DirectoryExists(Mods))Message=TEXT("✗ 這個路徑底下沒有 mods/ 資料夾，找不到 zipmod。");
+		if(!FPaths::DirectoryExists(Root))Message=FString::Printf(TEXT("✗ 設定的遊戲目錄不存在：%s"),*Root);
+		else if(!FPaths::DirectoryExists(Mods))Message=FString::Printf(TEXT("✗ 這個路徑底下沒有 mods/ 資料夾，找不到 zipmod：%s"),*Root);
 		else
 		{
 			TArray<FString> Found;IFileManager::Get().FindFilesRecursive(Found,*Mods,TEXT("*.zipmod"),true,false);
@@ -1216,7 +2000,13 @@ void UOKReaderScreen::ApplyFolderSetting(bool bLibrary,const FString& Folder,boo
 	const FString Now=bLibrary?Game->LocalLibrary:Game->Root;
 	if(UOKDreamControl* Field=(bLibrary?LibraryInput:RootInput).Get())if(Field->Input)Field->Input->SetText(Now);
 	if(bLibrary){if(LibraryStatus.IsValid())CheckLocalLibrary(Now);}
-	else if(RootStatus.IsValid())CheckGameRoot(Now);
+	else
+	{
+		// A new game folder means a new catalogue: forget the one read from the old folder, or the picker pages keep
+		// answering from it and a root that was just corrected looks as if it changed nothing.
+		if(UOKCharacterController* G=GetController())G->AppearanceCatalogPath.Reset();
+		if(RootStatus.IsValid())CheckGameRoot(Now);
+	}
 }
 
 void UOKReaderScreen::CheckLocalLibrary(const FString& Library)
@@ -1231,14 +2021,25 @@ void UOKReaderScreen::CheckLocalLibrary(const FString& Library)
 	if(UOKDreamControl* C=LibraryStatus.Get()){C->FixedText=Message;C->SetText(Message);}
 }
 
+// The current tab takes the .dui's TabOn look (Tab0's), the rest TabOff (Tab1's); before this only Tab0 ever had the
+// raised face, so 編輯 looked chosen on every tab. Both looks come from the same .dui for every reader screen: taken
+// once, before any tab changed. Also used when a page of another tab is opened directly (前往 設定 › 遊戲目錄).
+static TOptional<FDreamButtonStyle> GTabOnStyle,GTabOffStyle;
+static void PaintTabs(UDreamButton* const (&Tabs)[4],int32 Current)
+{
+	if(!GTabOnStyle.IsSet()&&Tabs[0]&&Tabs[1]){GTabOnStyle=Tabs[0]->GetStyle();GTabOffStyle=Tabs[1]->GetStyle();}
+	for(int32 I=0;I<4;++I)if(Tabs[I])
+	{
+		if(GTabOnStyle.IsSet())Tabs[I]->SetStyle(I==Current?GTabOnStyle.GetValue():GTabOffStyle.GetValue());
+		Tabs[I]->SetRenderOpacity(I==Current?1.f:.62f);
+	}
+}
+
 void UOKReaderScreen::ShowTab(int32 Index)
 {
 	Tab=FMath::Clamp(Index,0,3);
 	UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};
-	// The current tab takes the .dui's TabOn look (Tab0's), the rest TabOff (Tab1's); before this only Tab0 ever had the
-	// raised face, so 編輯 looked chosen on every tab.
-	// Both looks come from the same .dui for every reader screen: taken once, before any tab changed.
-	static TOptional<FDreamButtonStyle> TabOnStyle,TabOffStyle;
+	TOptional<FDreamButtonStyle>& TabOnStyle=GTabOnStyle;TOptional<FDreamButtonStyle>& TabOffStyle=GTabOffStyle;
 	if(!TabOnStyle.IsSet()&&Tab0&&Tab1){TabOnStyle=Tab0->GetStyle();TabOffStyle=Tab1->GetStyle();}
 	for(int32 I=0;I<4;++I)if(Tabs[I])
 	{
@@ -1266,7 +2067,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(!Categories.IsValidIndex(Index))return;
 	ClearPage();
 	Category=Index;const FCategory& C=Categories[Index];
-	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[]={Tab0,Tab1,Tab2,Tab3};for(int32 I=0;I<4;++I)if(Tabs[I])Tabs[I]->SetRenderOpacity(I==Tab?1.f:.62f);}
+	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[4]={Tab0,Tab1,Tab2,Tab3};PaintTabs(Tabs,Tab);}
 	for(int32 I=0;I<RailButtons.Num();++I)if(RailButtons[I])RailButtons[I]->SetRenderOpacity(I==Index?1.f:.7f);
 	if(auto* T=TextOf(CategoryTitle))T->SetText(FText::FromString(C.Name));
 	if(C.OnEnter)C.OnEnter();
@@ -1282,7 +2083,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	{
 		if(C.Groups[Sub].OnEnter)C.Groups[Sub].OnEnter();
 		UDreamWidget* Page=MakePanel(nullptr,false,8.f);
-		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);}
+		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);ShowPagesErrors(Page);}
 		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page&&(!C.Groups[Sub].bShownOnly||IsUmgShown(Source.Get())))Mirror(Source.Get(),Page,false);
 		ShownSignature=C.Groups[Sub].Signature?C.Groups[Sub].Signature():FString();
 		if(C.Groups[Sub].Build&&Page)C.Groups[Sub].Build(Page);
@@ -1339,35 +2140,193 @@ void UOKReaderScreen::ApplyWantedScopes()
 	}
 }
 
+FString UOKReaderScreen::PageFit() const
+{
+	if(!LeftScroll||PageWidgets.IsEmpty())return TEXT("pagefit: no page");
+	const UDreamWidget* Page=PageWidgets.Last();
+	const UDreamLayoutContainer* PageLayout=Page?Page->GetLayoutContainer():nullptr;
+	const float Height=PageLayout?PageLayout->GetLayoutPreferredSize().Y:-1.f;
+	const float View=LeftScroll->GetHeight(),End=LeftScroll->GetScrollOffsetOfEnd();
+	// The page's own height less the view is what scrolling must cover; a little slack for the padding round it.
+	const float Need=FMath::Max(0.f,Height-View);
+	const bool bOk=Height>=0&&End+FMath::Max(8.f,Need*.03f)>=Need;
+	const FString Where=Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub)?Categories[Category].Name+TEXT("›")+Categories[Category].Groups[Sub].Name:CurrentCategory();
+	return FString::Printf(TEXT("pagefit %s page=%.0f view=%.0f scroll_end=%.0f need=%.0f view_fraction=%.3f %s"),*Where,Height,View,End,Need,LeftScroll->GetViewFraction(),bOk?TEXT("ok"):TEXT("MISMATCH"));
+}
+
 void UOKReaderScreen::ScrollLeftPage(float Progress){if(LeftScroll)LeftScroll->SetScrollProgress(FMath::Clamp(Progress,0.f,1.f));}
 
-bool UOKReaderScreen::PressControl(const FString& Text,int32 Index)
+namespace OKReaderPaths
 {
-	TArray<UOKDreamControl*> All;
+	// A drawer title without the fold arrow it shows.
+	static FString Title(const UOKDreamControl* D)
+	{
+		FString T=D->FixedText.IsEmpty()?D->GetShownText():D->FixedText;
+		T.TrimStartAndEndInline();
+		while(T.Len()&&FCString::Strchr(TEXT("▸▾►▼▶▲"),T[T.Len()-1]))T.LeftChopInline(1);
+		return T.TrimEnd();
+	}
+	// The kind of control (WBP_OKSlider_C: "Slider").
+	static FString Kind(const UOKDreamControl* C)
+	{
+		FString K=C->GetClass()->GetName();K.RemoveFromStart(TEXT("WBP_OK"));K.RemoveFromEnd(TEXT("_C"));return K;
+	}
+	// What a control is called: the text it shows, unless that is empty or a value (a number, which changes), then its kind.
+	static FString Name(const UOKDreamControl* C)
+	{
+		const FString T=C->GetShownText().TrimStartAndEnd();
+		if(T.IsEmpty())return Kind(C);
+		bool bValue=true;
+		for(TCHAR Ch:T)if(!(FChar::IsDigit(Ch)||Ch==TEXT('.')||Ch==TEXT('-')||Ch==TEXT('+')||Ch==TEXT('%')||Ch==TEXT(' ')||Ch==TEXT(','))){bValue=false;break;}
+		return bValue?Kind(C):T;
+	}
+	// The label of the row a control sits in: the first Label among its siblings (not itself), in a horizontal row only
+	// (a column's labels title the controls under them, not one row).
+	static FString RowLabel(const UOKDreamControl* C)
+	{
+		const UDreamWidget* P=C->GetParent();if(!P||!(Cast<UDreamLayoutContainerHorizontalBox>(P->GetLayoutContainer())||Cast<UDreamLayoutContainerWrapBox>(P->GetLayoutContainer())))return FString();
+		for(const UDreamWidget* W:P->GetChildren())
+			if(const UOKDreamControl* L=Cast<UOKDreamControl>(W);L&&L!=C&&Kind(L)==TEXT("Label"))
+			{
+				const FString N=Name(L);
+				if(N!=TEXT("Label"))return N;
+			}
+		return FString();
+	}
+}
+
+FString UOKReaderScreen::ControlPath(const UOKDreamControl* C) const
+{
+	if(!C)return FString();
+	const FString Caption=OKReaderPaths::Name(C);
+	auto Has=[C](const TArray<TObjectPtr<UOKDreamControl>>& List){for(const UOKDreamControl* X:List)if(X==C)return true;return false;};
+	if(Has(CardButtons))return TEXT("卡片›")+Caption;
+	if(Has(RailButtons))return TEXT("分類›")+Caption;
+	if(Has(SubButtons))return CurrentCategory()+TEXT("›")+Caption;
+	if(Has(Drawers))return TEXT("抽屜›")+OKReaderPaths::Title(C);
+	FString Leaf=Caption;
+	if(OKReaderPaths::Kind(C)!=TEXT("Label")){const FString Row=OKReaderPaths::RowLabel(C);if(!Row.IsEmpty()&&Row!=Caption)Leaf=Row+TEXT("›")+Caption;}
+	for(const UDreamWidget* P=C->GetParent();P;P=P->GetParent())
+	{
+		for(const UOKDreamControl* D:Drawers)if(IsValid(D)&&D->Body==P)return OKReaderPaths::Title(D)+TEXT("›")+Leaf;
+		if(P==CameraBarHost)return TEXT("鏡頭›")+Leaf;
+		if(P==LeftScroll)
+		{
+			FString Where=CurrentCategory();
+			if(Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub))Where+=TEXT("›")+Categories[Category].Groups[Sub].Name;
+			return Where+TEXT("›")+Leaf;
+		}
+	}
+	return Leaf;
+}
+
+// Every shown control and its path; a path two controls would share gets " #2", " #3" ... in screen order.
+static void OKReaderAllControls(const UOKReaderScreen* S,TArray<UOKDreamControl*>& All,TArray<FString>& Paths,
+	const TArray<TObjectPtr<UOKDreamControl>>& Controls,const TArray<TObjectPtr<UOKDreamControl>>& SubButtons,const TArray<TObjectPtr<UOKDreamControl>>& RailButtons,
+	const TArray<TObjectPtr<UOKDreamControl>>& Drawers,const TArray<TObjectPtr<UOKDreamControl>>& CardButtons)
+{
 	for(UOKDreamControl* C:Controls)if(IsValid(C))All.Add(C);
 	for(UOKDreamControl* C:SubButtons)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:RailButtons)if(IsValid(C))All.AddUnique(C);
 	for(UOKDreamControl* C:Drawers)if(IsValid(C))All.AddUnique(C);
-	for(int32 Pass=0;Pass<2;++Pass)
+	for(UOKDreamControl* C:CardButtons)if(IsValid(C))All.AddUnique(C);	// the card list's tiles (by the name they show)
+	All.RemoveAll([](const UOKDreamControl* C){return !C->GetShown();});
+	TMap<FString,int32> Seen;
+	for(const UOKDreamControl* C:All)
 	{
-		int32 Seen=0;
-		for(UOKDreamControl* C:All)
-		{
-			const FString& Caption=C->GetShownText();
-			if(Pass==0?Caption!=Text:!Caption.Contains(Text))continue;
-			if(!C->GetShown())continue;
-			if(Seen++==Index)return C->Press();
-		}
-		if(Seen)return false;
+		const FString P=S->ControlPath(C);
+		const int32 N=++Seen.FindOrAdd(P);
+		Paths.Add(N>1?FString::Printf(TEXT("%s #%d"),*P,N):P);
 	}
-	return false;
+}
+
+bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutNote,const FString* SetTo)
+{
+	TArray<UOKDreamControl*> All;TArray<FString> Paths;
+	OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
+	// A path names one control; a text may name several. Exact first, then containing it.
+	const bool bPath=Text.Contains(TEXT("›"));
+	TArray<int32> Found;
+	for(int32 Pass=0;Pass<2&&Found.IsEmpty();++Pass)
+		for(int32 I=0;I<All.Num();++I)
+		{
+			const FString Name=bPath?Paths[I]:All[I]->GetShownText().TrimStartAndEnd();
+			if(Pass==0?Name==Text:Name.Contains(Text))Found.Add(I);
+		}
+	auto List=[&Paths](const TArray<int32>& Of){FString L;for(int32 I=0;I<Of.Num();++I)L+=FString::Printf(TEXT("\n  #%d %s"),I,*Paths[Of[I]]);return L;};
+	if(Found.IsEmpty()){if(OutNote)*OutNote=TEXT("no shown control named ")+Text;return false;}
+	int32 Pick=0;
+	if(Index>=0)
+	{
+		if(!Found.IsValidIndex(Index)){if(OutNote)*OutNote=FString::Printf(TEXT("only %d control(s) named %s:"),Found.Num(),*Text)+List(Found);return false;}
+		Pick=Index;
+	}
+	else if(Found.Num()>1){if(OutNote)*OutNote=FString::Printf(TEXT("ambiguous: %d controls named %s; give the path or #N:"),Found.Num(),*Text)+List(Found);return false;}
+	// Not shown or disabled: say so instead of "pressed" (Press would do nothing and the caller would take it as done).
+	if(!All[Found[Pick]]->IsOnScreen()||!All[Found[Pick]]->IsOperable())
+	{
+		if(OutNote)*OutNote=FString::Printf(TEXT("not pressed: %s is %s"),*Paths[Found[Pick]],All[Found[Pick]]->IsOnScreen()?TEXT("disabled"):TEXT("not shown now"));
+		return false;
+	}
+	if(OutNote)
+	{
+		*OutNote=(SetTo?FString::Printf(TEXT("set %s = "),*Paths[Found[Pick]])+*SetTo:TEXT("pressed ")+Paths[Found[Pick]]);
+		// A short name matched exactly while other controls contain it: say which, so a caller meaning one of them notices.
+		if(!bPath)
+		{
+			TArray<int32> Also;
+			for(int32 I=0;I<All.Num();++I)if(!Found.Contains(I)&&All[I]->GetShownText().Contains(Text))Also.Add(I);
+			if(Also.Num())*OutNote+=TEXT("\n(also containing it, by path:")+List(Also)+TEXT(")");
+		}
+	}
+	if(SetTo)
+	{
+		FString Why;
+		if(All[Found[Pick]]->SetValue(*SetTo,&Why))return true;
+		if(OutNote)*OutNote+=TEXT(" failed: ")+Why;
+		return false;
+	}
+	return All[Found[Pick]]->Press();
+}
+
+void UOKReaderScreen::ListControls(FOutputDevice& Out,const FString& Filter) const
+{
+	TArray<UOKDreamControl*> All;TArray<FString> Paths;
+	OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
+	// Every control the pages made, shown or not: one not on screen now (another tab, a folded drawer) or disabled is
+	// marked after two spaces, so a script can tell before pressing it (press/set refuse those).
+	for(int32 I=0;I<Paths.Num();++I)if(Filter.IsEmpty()||Paths[I].Contains(Filter))
+		Out.Log(Paths[I]+(!All[I]->IsOnScreen()?TEXT("  [not shown]"):!All[I]->IsOperable()?TEXT("  [disabled]"):TEXT("")));
+}
+
+float UOKReaderScreen::UiScaleOf(const UOKCharacterController* G)
+{
+	// The old screen's 顯示字級 is 8 by default (its UMG drawn at half its 16-point design): 8 draws this screen as
+	// designed; 6 is three quarters, 12 and up one and a half (wider would leave no 3D view between the two panels).
+	const float Size=G&&FMath::IsFinite(G->EditorFontSize)?G->EditorFontSize:8.f;
+	return FMath::Clamp(Size/8.f,.75f,1.5f);
+}
+
+void UOKReaderScreen::ReaderRenderSettings()
+{
+	// The serial render graph (r.RDG.ParallelExecute=0) keeps the reader's GPU page fault away only when it is set before
+	// the first frame: the reader's launcher puts it on the command line (run_card_reader_development.lua). Set while
+	// running it did not (2026-11-19, e-cardload's four cases: set at runtime crashed on card 7; back from the studio,
+	// where it had been given back and taken again, on card 4). So it is never switched here, for the one-on-one and the
+	// studio of this process too; a process started without it (a stage exe run directly, -ParallelRDG) is said so.
+	if(IConsoleVariable* Parallel=IConsoleManager::Get().FindConsoleVariable(TEXT("r.RDG.ParallelExecute")))
+		if(Parallel->GetInt()!=0)
+			UE_LOG(LogTemp,Warning,TEXT("ok.ReaderScreen: r.RDG.ParallelExecute is %d, not 0 from startup: the card reader runs without its GPU page fault mitigation (start it with CardReaderDevelopment.cmd / reader_launch)"),Parallel->GetInt());
+	// The texture pool defrag off while the reader screen runs, and after (as since 2026-11-19 morning).
+	if(IConsoleVariable* Defrag=IConsoleManager::Get().FindConsoleVariable(TEXT("d3d12.VRAMTexturePoolDefrag")))
+		if(Defrag->GetInt()!=0){Defrag->Set(0,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: d3d12.VRAMTexturePoolDefrag 0"));}
 }
 
 bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
 {
 	if(!bBuilt||ViewportSize.X<=0.f||ViewportSize.Y<=0.f)return false;
 	// The screen canvas scales with the viewport height (Open: 1920x1080 reference, matched on height).
-	const float Scale=ViewportSize.Y/1080.f;
+	const float Scale=ViewportSize.Y/1080.f*UiScale;
 	OutLeft=LeftWidth*Scale;OutRight=ViewportSize.X-RightWidth*Scale;
 	// Below the camera bar (12 from the top, 56 high) and a gap.
 	OutTop=(12.f+56.f+8.f)*Scale;
@@ -1407,7 +2366,7 @@ void UOKReaderScreen::TickResize()
 	const UDreamPointerEventData* Pointer=Events?Events->GetPointerEventData(DreamUIPointerIds::Mouse,false):nullptr;
 	if(!Pointer){bResizing=false;bResizeMouseWasDown=false;return;}
 	const float X=Pointer->PointerPosition.X;
-	const float Scale=Size.Y/1080.f;const bool Down=Pointer->bNowIsTriggerPressed;
+	const float Scale=Size.Y/1080.f*UiScale;const bool Down=Pointer->bNowIsTriggerPressed;
 	const bool bJustPressed=Down&&!bResizeMouseWasDown;bResizeMouseWasDown=Down;
 	const float Edge=LeftWidth*Scale;
 	if(bJustPressed)UE_LOG(LogTemp,Verbose,TEXT("ok.ReaderScreen: press at x=%.1f, panel edge %.1f"),X,Edge);
@@ -1483,6 +2442,13 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 		if(bUmgFocus&&!bUmgHadFocus)UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: keyboard focus is in the hidden UMG layer (DreamGUI fields get no keys until the viewport has it)"));
 		bUmgHadFocus=bUmgFocus;
 	}
+	// 顯示字級 changed (its row on 設定／介面›介面, or the setting saved from the old screen): the canvas follows.
+	if(const float Want=UiScaleOf(Controller.Get());!FMath::IsNearlyEqual(Want,UiScale))
+	{
+		UiScale=Want;
+		if(auto* Screens=UDreamScreenUISubsystem::Get(GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(GetOwningPlayer()))
+			Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScale);
+	}
 	TickResize();
 	SyncAll();
 	TickThumbnails();
@@ -1537,14 +2503,14 @@ bool OKReaderScreenUnderCursor()
 	if(auto* Events=UDreamEventSystem::GetDreamEventSystemInstance(S,0))if(Events->IsPointerOverUIByPointerID(0))return true;
 	APlayerController* PC=S->GetOwningPlayer();float X=0,Y=0;if(!PC||!PC->GetMousePosition(X,Y))return false;
 	const FIntPoint Size=GEngine->GameViewport->Viewport->GetSizeXY();if(Size.Y<=0)return false;
-	const float Scale=Size.Y/1080.f;
+	const float Scale=Size.Y/1080.f*S->GetUiScale();
 	return X<=(S->GetLeftWidth()+10.f)*Scale||X>=Size.X-440.f*Scale||Y<=80.f*Scale;
 }
 
 // For the game MCP (ui_exec) and tests: the screen's own navigation, which has no UMG control to set.
 //   ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state
 static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
-	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <text> [#N] | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
+	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <path|text> [#N] | set <path|text> [#N] = <value> | controls [filter] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld*,FOutputDevice& Out)
 	{
 		UOKReaderScreen* S=GScreen.Get();
@@ -1558,11 +2524,64 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		// "press <text> [#N]": the shown control with that text (the N-th of several, from 0) is clicked as the pointer would.
 		else if(Verb==TEXT("press"))
 		{
-			FString Text=Value;int32 Index=0;int32 Hash;
-			if(Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
-			Done=!Text.IsEmpty()&&S->PressControl(Text,Index);
+			FString Text=Value;int32 Index=-1;int32 Hash=INDEX_NONE;
+			if(!Text.Contains(TEXT("›"))&&Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
+			FString Note;
+			Done=!Text.IsEmpty()&&S->PressControl(Text,Index,&Note);
+			if(!Note.IsEmpty())Out.Log(Note);
+		}
+		// "set <path|text> [#N] = <value>": a slider, toggle, drop-down or input set as a person would (the same matching as press).
+		else if(Verb==TEXT("set")&&Value.StartsWith(TEXT("key=")))
+		{
+			int32 Eq=INDEX_NONE;const FString Rest=Value.Mid(4);
+			Done=Rest.FindChar(TEXT('='),Eq);
+			FString Note;
+			if(Done)Done=S->SetByKey(Rest.Left(Eq).TrimStartAndEnd(),Rest.Mid(Eq+1).TrimStartAndEnd(),&Note);
+			if(!Note.IsEmpty())Out.Log(Note);
+		}
+		else if(Verb==TEXT("set"))
+		{
+			int32 Eq=INDEX_NONE;
+			Done=Value.FindChar(TEXT('='),Eq);
+			if(Done)
+			{
+				FString Text=Value.Left(Eq).TrimStartAndEnd();const FString To=Value.Mid(Eq+1).TrimStartAndEnd();int32 Index=-1;int32 Hash=INDEX_NONE;
+				if(!Text.Contains(TEXT("›"))&&Text.FindLastChar(TEXT('#'),Hash)&&Text.Mid(Hash+1).IsNumeric()){Index=FCString::Atoi(*Text.Mid(Hash+1));Text=Text.Left(Hash).TrimEnd();}
+				FString Note;
+				Done=!Text.IsEmpty()&&S->PressControl(Text,Index,&Note,&To);
+				if(!Note.IsEmpty())Out.Log(Note);
+			}
+		}
+		// "controls [filter]": every shown control's path (what press takes), flagging paths two controls share.
+		else if(Verb==TEXT("controls"))S->ListControls(Out,Value);
+		// "resources": counts and sizes that must not grow without bound over a long session (thumbnail pools and caches,
+		// mirrored controls, live textures by kind, the RHI's texture memory).
+		else if(Verb==TEXT("resources"))S->ListResources(Out);
+		// "audit": which of the old screen's controls the new one shows (and on which page), and the short names a page
+		// shows twice (press by short name is ambiguous there; the paths stay unique).
+		else if(Verb==TEXT("audit"))S->AuditControls(Out);
+		// "pages [builtin|file]": where the pages come from (Config/ReaderEditor/pages.json or the hand-written ones) and what
+		// was wrong with the file; with a word, built again from there. "reloadpages": the file read anew.
+		else if(Verb==TEXT("pages"))S->ReloadPages(Value,Out);
+		else if(Verb==TEXT("reloadpages"))S->ReloadPages(TEXT("file"),Out);
+		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
+		else if(Verb==TEXT("card"))
+		{
+			const int32 I=Value.IsNumeric()?FCString::Atoi(*Value):-1;
+			Done=S->PressCard(I);
+			// The tile's press does nothing while a card loads, and keeps the old selection when the file is not a character
+			// card: say so rather than "card=N" (a script then loaded the previous card, 2026-11-19).
+			if(Done)if(UOKCharacterController* G=S->GetController();G&&G->SelectedIndex!=I)
+			{
+				const FString* Why=G->UnopenableCards.Find(S->CardFile(I));
+				Out.Logf(TEXT("not selected: card %d (%s) did not open, the selection stays on card %d: %s"),I,*S->CardFile(I),G->SelectedIndex,
+					Why?**Why:(G->bLoadInFlight||G->bAppearanceBusy?TEXT("busy, a card is loading"):TEXT("unknown")));
+				Done=false;
+			}
+			if(Done)Out.Logf(TEXT("card=%d file=%s"),I,*S->CardFile(I));
 		}
 		// "scroll <0..1>": the left page to that point of its length (screenshots of a long page).
+		else if(Verb==TEXT("pagefit"))Out.Log(S->PageFit());
 		else if(Verb==TEXT("scroll")){Done=Value.IsNumeric();if(Done)S->ScrollLeftPage(FCString::Atof(*Value));}
 		else if(Verb==TEXT("width")){Done=Value.IsNumeric();if(Done)S->SetLeftWidth(FCString::Atof(*Value));}
 		// 設定 › 遊戲目錄: "gameroot <folder>" / "library <folder>" save as the page does ("default" forgets the user's choice);

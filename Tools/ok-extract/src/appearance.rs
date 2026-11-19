@@ -8,6 +8,8 @@ use sha2::{Digest,Sha256};
 mod properties;
 pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
+mod eye_overlay;
+mod model_flags;
 pub(crate) mod live_head;
 pub(crate) mod timings;
 mod live_head_ffi;
@@ -219,16 +221,33 @@ fn custom(raw:&[u8],t:&Target,id:i32)->Result<Vec<u8>,String>{
   let b=encode(&v)?;out.extend((b.len() as u32).to_le_bytes());out.extend(b);pos+=n;i+=1;
  }if !changed{return Err("外觀資料區段不足".into());}Ok(out)
 }
-fn coordinate(raw:&[u8],t:&Target,id:i32,outfit:usize,reset:bool)->Result<Vec<u8>,String>{
+/// Write the picked id into the outfit, plus what the maker changes along with it when the id really changes
+/// (`CvsClothes.UpdateSelectClothes`／`CvsAccessory.UpdateSelectAccessoryKind`): a new top starts at sleeve type 0;
+/// a new accessory whose list says `HideHair==1` drops its parent (`parentKey=""`, the list default), whatever the
+/// maker's "keep parent" setting. Reapplying the same id changes nothing, so `verify` stays idempotent.
+fn coordinate(raw:&[u8],t:&Target,id:i32,outfit:usize,reset:bool,hide_hair:bool)->Result<Vec<u8>,String>{
  let mut v=decode(raw)?;let slot=match &mut v {Value::Array(a)=>a.get_mut(outfit).ok_or("服裝索引超出範圍")?,v=>v};
  let Value::Binary(bin)=slot else{return Err("服裝資料格式不支援".into());};let mut pos=0;let mut out=Vec::new();
  for section in ["clothes","accessory","makeup"]{
   if section=="makeup" {out.push(*bin.get(pos).ok_or("服裝化妝資料截斷")?);pos+=1;}
   let n=u32::from_le_bytes(bin.get(pos..pos+4).ok_or("服裝資料截斷")?.try_into().unwrap()) as usize;pos+=4;
   let bytes=bin.get(pos..pos+n).ok_or("服裝資料截斷")?;let mut data=decode(bytes)?;
-  if section==t.section {*at(&mut data,&t.path)?=id.into();if section=="accessory"{let slot=t.path.split('.').nth(1).ok_or("配件欄位缺少索引")?;*at(&mut data,&format!("parts.{slot}.type"))?=if reset{120}else{t.category}.into();}}
+  if section==t.section {
+   let field=at(&mut data,&t.path)?;let changed=field.as_i64()!=Some(id as i64);*field=id.into();
+   if changed&&section=="clothes"&&t.path=="parts.0.id" {if let Ok(f)=at(&mut data,"parts.0.sleevesType"){*f=0.into();}}
+   if section=="accessory"{let slot=t.path.split('.').nth(1).ok_or("配件欄位缺少索引")?;*at(&mut data,&format!("parts.{slot}.type"))?=if reset{120}else{t.category}.into();
+    if changed&&hide_hair {if let Ok(f)=at(&mut data,&format!("parts.{slot}.parentKey")){*f="".into();}}}}
   let b=encode(&data)?;out.extend((b.len() as u32).to_le_bytes());out.extend(b);pos+=n;
  }out.extend(&bin[pos..]);*bin=out;encode(&v)
+}
+/// `parents` (editor_accessory_parents.json) is the list of parent bones we know, not what a card may hold: a plugin
+/// (KKS_MoreAccessoryParents, a mod's own bones) adds keys the list does not name, and the card keeps them. So a parent
+/// row whose value is not in the list is marked `out_of_range` and still accepted (properties.rs `"parent"` only refuses
+/// control characters or an over-long name). `""` is a real value: the list default (`ChangeAccessory` reads the list's
+/// `Parent` then), the first entry of the list.
+fn mark_unknown_parents(props:&mut [J],parents:&J){
+ let known:std::collections::HashSet<&str>=parents.as_array().into_iter().flatten().filter_map(|p|p["key"].as_str()).collect();
+ for p in props.iter_mut(){if p["kind"]=="parent"{if let Some(v)=p["value"].as_str(){if !known.contains(v){p["out_of_range"]=json!(true);}}}}
 }
 fn resolver(kkex:&[u8],property:&str,item:Option<&Item>)->Result<Vec<u8>,String>{
  let mut v=if kkex.is_empty(){Value::Map(Vec::new())}else{decode(kkex)?};
@@ -363,7 +382,7 @@ fn patch_with_metadata(original:&[u8],t:&Target,item:Option<&Item>,outfit:usize,
  if t.path.starts_with("baseMakeup.") {if let Some(raw)=blocks.get("Coordinate") {let value=decode(raw)?;let slot=match &value{Value::Array(a)=>a.get(outfit),v=>Some(v)};if let Some(Value::Binary(b))=slot{let mut pos=0;for _ in 0..2{let n=u32::from_le_bytes(b.get(pos..pos+4).ok_or("服裝資料截斷")?.try_into().unwrap()) as usize;pos+=4+n;}if b.get(pos).copied().unwrap_or(0)!=0{effective.block="Coordinate".into();effective.section="makeup".into();effective.path=t.path.trim_start_matches("baseMakeup.").into();}}}}
  let t=&effective;
  let id=item.map(|i|i.entry.id).unwrap_or(0);let raw=blocks.get(&t.block).ok_or("角色缺少外觀資料")?;
- let changed=if t.section=="accessory_extra"{extra::patch(raw,t,item,outfit)?}else if t.block=="Custom"{custom(raw,t,id)?}else{coordinate(raw,t,id,outfit,item.is_none())?};blocks.insert(t.block.clone(),Cow::Owned(changed));
+ let changed=if t.section=="accessory_extra"{extra::patch(raw,t,item,outfit)?}else if t.block=="Custom"{custom(raw,t,id)?}else{coordinate(raw,t,id,outfit,item.is_none(),item.is_some_and(|i|i.entry.info("HideHair").trim()=="1"))?};blocks.insert(t.block.clone(),Cow::Owned(changed));
  let property=if t.block=="Custom"{t.property.clone()}else{format!("outfit{outfit}.{}",t.property)};
  let kkex=patch_extended_data(blocks.get("KKEx").map(|b|b.as_ref()).unwrap_or(&[]),&property,item,t,outfit)?;blocks.insert("KKEx".into(),Cow::Owned(kkex));
  let original_rows=at(&mut table,"lstInfo")?.as_array().ok_or("區塊表格式錯誤")?.clone();
@@ -469,12 +488,24 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   std::fs::write(output,&out).map_err(|e|e.to_string())?;
   return Ok(json!({"valid":true,"output":output.to_string_lossy(),"bytes":out.len()}));
  }
+ // The eye pages' Material Editor overlay textures. They are addressed by material and property,
+ // not by a catalogue id, so they take neither the catalogue nor a target (appearance/eye_overlay.rs).
+ if text(&r,"action")?=="eye_overlays"{return eye_overlay::list(root,&r);}
+ if text(&r,"action")?=="eye_overlay_set"{return eye_overlay::apply(root,&r);}
  if matches!(text(&r,"action")?,"properties"|"properties_apply"|"accessory_slot_add"){
   let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
   let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
   if text(&r,"action")?=="accessory_slot_add"{extra::append(&mut blocks,outfit)?;}
   let original=write_blocks(&original,blocks)?;
-  if text(&r,"action")?=="properties"{let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).map_err(|e|e.to_string())?;return Ok(json!({"valid":true,"properties":properties::catalog_properties(&original,outfit)?,"parents":parents}));}
+  if text(&r,"action")?=="properties"{let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).map_err(|e|e.to_string())?;
+   // `unknown_plugin_sections`: KKEx sections this build does not know. They are not walked (we do not know their
+   // shape), but they are named, because a section that disappears without a word goes unnoticed for months — that
+   // is exactly how KoiSkinOverlayX's `KSOX` stayed unreachable (2026-11-19).
+   let (mut props,unknown)=properties::catalog_properties_with_unknown(&original,outfit)?;
+   // The worn models' switches (colour layers, options, sleeves, emblems): a failure leaves the rows unmarked.
+   let model=model_flags::annotate(root,cache,&original,outfit,&mut props).unwrap_or_else(|e|json!({"error":e}));
+   mark_unknown_parents(&mut props,&parents);
+   return Ok(json!({"valid":true,"properties":props,"parents":parents,"model":model,"unknown_plugin_sections":unknown}));}
   let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
   let raw=if text(&r,"action")?=="accessory_slot_add"{original}else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
   return export_edited(root,&r,&raw,output);
@@ -516,6 +547,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   let path=c001();let path=path.as_path();if !path.ok_exists(){return;}
   let mut source=crate::oklib::open_test_card(path,0).unwrap();
   let mut live=crate::session::OkSession::from_cache_bytes(&source.to_cache_bytes().unwrap()).unwrap();
+  // C001 wears a Pushup garment, on purpose: the opened card keeps raw sliders plus `pushup`, the cache round-trip
+  // keeps the pushed sliders and no `pushup`, so this test walks head_texture_changes' Pushup path. Keep a Pushup card.
+  assert!(source.pushup.is_some()&&live.pushup.is_none()&&source.shape_body!=live.shape_body,"C001 must exercise the Pushup comparison");
+  assert_eq!(source.shaping_body(&source.shape_body),live.shaping_body(&live.shape_body));
   let index=source.parts.iter().position(|p|p.name.to_ascii_lowercase().contains("mayuge")).unwrap();
   source.parts[index].png=Some(vec![11,22,33]);
   live.anim_time=42.;let uv=live.parts[index].uvs[0];live.parts[index].uvs[0]=[0.123,0.456];
@@ -802,7 +837,41 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[test]fn resolver_preserves_other_mods_and_unknown_data(){for key in ["com.bepis.sideloader.universalautoresolver","EC.Core.Sideloader.UniversalAutoResolver"]{let row=Value::Map(vec![("Property".into(),"untouched.property".into()),("ModID".into(),"other.mod".into())]);let v=Value::Map(vec![("unknown.plugin".into(),Value::Binary(vec![1,2,3])),(key.into(),Value::Array(vec![1.into(),Value::Map(vec![("info".into(),Value::Array(vec![Value::Binary(encode(&row).unwrap())]))])]))]);let result=decode(&resolver(&encode(&v).unwrap(),"ChaFileFace.eyebrowId",None).unwrap()).unwrap();assert_eq!(v,result);}}
  #[test]#[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]fn sprite_atlas_reads_distinct_original_thumbnails(){let p=&crate::test_support::game_path("/abdata/chara/thumb/mt_eyebrow_00.unity3d");if !p.ok_exists(){return;}let bytes=crate::gamefs::read(p).unwrap();let a=crate::unity::sprite_png_from_bytes(bytes.clone(),"thumb_mayuge_000").expect("first sprite");let b=crate::unity::sprite_png_from_bytes(bytes,"thumb_mayuge_001").expect("second sprite");assert_ne!(a,b);let image=crate::teximg::load_from_memory(&a).unwrap();assert!(image.width()>=100&&image.height()>=100);}
  #[test]fn wrapped_custom_body_and_accessory_reset(){let t=targets().into_iter().find(|t|t.key=="body_detail").unwrap();let v=Value::Map(vec![("body".into(),Value::Map(vec![("detailId".into(),9.into())]))]);let b=encode(&v).unwrap();let mut wrapped=(b.len() as u32).to_le_bytes().to_vec();wrapped.extend(b);let result=custom(&wrapped,&t,2).unwrap();let mut decoded=decode(&result[4..]).unwrap();assert_eq!(at(&mut decoded,"body.detailId").unwrap().as_i64(),Some(2));
- let t=targets().into_iter().find(|t|t.key=="accessory0_123").unwrap();let c=Value::Map(Vec::new());let a=Value::Map(vec![("parts".into(),Value::Array(vec![Value::Map(vec![("id".into(),88.into()),("type".into(),123.into()),("unknown".into(),"keep".into())])]))]);let mut raw=Vec::new();for v in [&c,&a]{let b=encode(v).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);}raw.push(0);let b=encode(&c).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);let result=coordinate(&encode(&Value::Array(vec![Value::Binary(raw)])).unwrap(),&t,0,0,true).unwrap();let v=decode(&result).unwrap();let b=v.as_array().unwrap()[0].as_slice().unwrap();let n=u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;let p=4+n;let n=u32::from_le_bytes(b[p..p+4].try_into().unwrap()) as usize;let mut a=decode(&b[p+4..p+4+n]).unwrap();assert_eq!(at(&mut a,"parts.0.type").unwrap().as_i64(),Some(120));assert_eq!(at(&mut a,"parts.0.unknown").unwrap().as_str(),Some("keep"));}
+ let t=targets().into_iter().find(|t|t.key=="accessory0_123").unwrap();let c=Value::Map(Vec::new());let a=Value::Map(vec![("parts".into(),Value::Array(vec![Value::Map(vec![("id".into(),88.into()),("type".into(),123.into()),("unknown".into(),"keep".into())])]))]);let mut raw=Vec::new();for v in [&c,&a]{let b=encode(v).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);}raw.push(0);let b=encode(&c).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);let result=coordinate(&encode(&Value::Array(vec![Value::Binary(raw)])).unwrap(),&t,0,0,true,false).unwrap();let v=decode(&result).unwrap();let b=v.as_array().unwrap()[0].as_slice().unwrap();let n=u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;let p=4+n;let n=u32::from_le_bytes(b[p..p+4].try_into().unwrap()) as usize;let mut a=decode(&b[p+4..p+4+n]).unwrap();assert_eq!(at(&mut a,"parts.0.type").unwrap().as_i64(),Some(120));assert_eq!(at(&mut a,"parts.0.unknown").unwrap().as_str(),Some("keep"));}
+ #[test]fn new_top_starts_at_sleeve_zero_and_hide_hair_accessory_drops_parent(){
+  // One outfit: clothes (top id 5, sleeve 2), accessory (slot 0: id 88 type 123 parent a_n_head), makeup.
+  let c=Value::Map(vec![("parts".into(),Value::Array(vec![Value::Map(vec![("id".into(),5.into()),("sleevesType".into(),2.into())])]))]);
+  let a=Value::Map(vec![("parts".into(),Value::Array(vec![Value::Map(vec![("id".into(),88.into()),("type".into(),123.into()),("parentKey".into(),"a_n_head".into())])]))]);
+  let mut raw=Vec::new();for v in [&c,&a]{let b=encode(v).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);}raw.push(0);let b=encode(&c).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);
+  let outfit=encode(&Value::Array(vec![Value::Binary(raw)])).unwrap();
+  let read=|bytes:&[u8],section:usize,path:&str|->Value{let v=decode(bytes).unwrap();let Value::Array(o)=v else{panic!()};let Value::Binary(bin)=&o[0] else{panic!()};let mut pos=0;for i in 0..=section{let n=u32::from_le_bytes(bin[pos..pos+4].try_into().unwrap()) as usize;if i==section{let mut d=decode(&bin[pos+4..pos+4+n]).unwrap();return at(&mut d,path).unwrap().clone();}pos+=4+n;}unreachable!()};
+  let top=targets().into_iter().find(|t|t.section=="clothes"&&t.path=="parts.0.id").unwrap();
+  assert_eq!(read(&coordinate(&outfit,&top,6,0,false,false).unwrap(),0,"parts.0.sleevesType").as_i64(),Some(0));
+  // Reapplying the worn top keeps the sleeve type (verify must stay idempotent).
+  assert_eq!(read(&coordinate(&outfit,&top,5,0,false,false).unwrap(),0,"parts.0.sleevesType").as_i64(),Some(2));
+  let acc=targets().into_iter().find(|t|t.key=="accessory0_123").unwrap();
+  assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some(""));
+  assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,false).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
+  assert_eq!(read(&coordinate(&outfit,&acc,88,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
+ }
+ #[test]fn parent_outside_the_known_list_is_marked_not_refused(){
+  let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).unwrap();
+  let mut rows=vec![json!({"kind":"parent","value":"a_n_head"}),json!({"kind":"parent","value":""}),json!({"kind":"parent","value":"a_n_plugin_added_bone"})];
+  mark_unknown_parents(&mut rows,&parents);
+  assert!(rows[0].get("out_of_range").is_none());assert!(rows[1].get("out_of_range").is_none());assert_eq!(rows[2]["out_of_range"],true);
+ }
+ #[test]fn accessory_parent_reverse_pairs_are_symmetric(){
+  // `reverse` mirrors ChaAccessoryDefine.GetReverseParent (18 pairs; `a_n_hair_pin` pairs with `a_n_hair_pin_R`).
+  let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).unwrap();
+  let rows=parents.as_array().unwrap();let rev=|k:&str|rows.iter().find(|r|r["key"]==k).and_then(|r|r["reverse"].as_str()).map(str::to_string);
+  let pairs:Vec<_>=rows.iter().filter_map(|r|Some((r["key"].as_str()?.to_string(),r["reverse"].as_str()?.to_string()))).collect();
+  assert_eq!(pairs.len(),36);
+  for (k,r) in &pairs {assert_eq!(rev(r).as_deref(),Some(k.as_str()),"{k} -> {r}");}
+  assert_eq!(rev("a_n_hair_pin").as_deref(),Some("a_n_hair_pin_R"));assert_eq!(rev("a_n_hair_pin_R").as_deref(),Some("a_n_hair_pin"));assert_eq!(rev("a_n_head"),None);
+  // Swapping `_L`／`_R` in the string is not the mapping: it leaves the left hair pin (no `_L`) unchanged.
+  let naive=|k:&str|if k.ends_with("_L"){format!("{}_R",&k[..k.len()-2])}else if k.ends_with("_R"){format!("{}_L",&k[..k.len()-2])}else{k.to_string()};
+  assert_ne!(naive("a_n_hair_pin"),rev("a_n_hair_pin").unwrap());assert_ne!(naive("a_n_hair_pin_R"),rev("a_n_hair_pin_R").unwrap());
+ }
  #[test]fn legacy_portable_restores_exact_original_mod_metadata(){let root=&crate::test_support::game_path("");let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !root.ok_exists()||!p.ok_exists(){return;}let bytes=crate::gamefs::read(p).unwrap();let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));fs::create_dir_all(cache).unwrap();let metadata=original_metadata(root,cache,&bytes).unwrap().expect("legacy metadata restored");let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let result=patch_with_metadata(&bytes,&t,None,0,Some(metadata)).unwrap();let card=crate::card::parse_card_bytes_mode(&result,0,false).unwrap();assert!(card.resolves.len()>10,"original mod references missing");assert!(!card.me_tex.keys().any(|k|k.3.contains("mayuge")&&k.4=="maintex"),"old eyebrow texture override survived");assert!(card.me_tex.keys().any(|k|k.3.contains("body")),"unrelated body textures were removed");assert_eq!(card.eyebrow_id,0);let data=blocks_from_card(&result).unwrap();let kkex=decode(&data["KKEx"]).unwrap();assert!(kkex.as_map().unwrap().iter().any(|(k,_)|k.as_str()==Some(PROVENANCE)));}
  #[test]fn patch_preserves_other_blocks_and_values(){let path=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !path.ok_exists(){return;}let original=crate::gamefs::read(path).unwrap();let before=crate::card::parse_card_bytes_mode(&original,0,false).unwrap();let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let item=Item{key:"test".into(),guid:String::new(),source:String::new(),entry:crate::list::ListEntry{id:3,category_no:406,..Default::default()}};let patched=patch(&original,&t,Some(&item),0).unwrap();let after=crate::card::parse_card_bytes_mode(&patched,0,false).unwrap();assert_eq!(after.eyebrow_id,3);assert_eq!(after.shape_face,before.shape_face);assert_eq!(after.shape_body,before.shape_body);assert_eq!(after.clothes_ids,before.clothes_ids);assert_eq!(after.hair_ids,before.hair_ids);assert_eq!(after.pupil_ids,before.pupil_ids);}
 }

@@ -220,11 +220,17 @@ fn convert_source(game: &Path, source: &Source, bytes: &[u8], prefab_hints: &BTr
         }
         let _ = parsed.accessory_color_use(name);
         let _ = parsed.accessory_body_binding(name);
+        // `defColor01..04`, for the maker's accessory colour reset (appearance model_flags `default_colors`).
+        let _ = crate::unity::accessory_default_colors(bytes, name);
 
-        // Renderer maps / state nodes are read for clothes only.
+        // Node names: clothes for their state nodes, accessories for `N_move2` (whether the maker offers the second
+        // move group, appearance model_flags).
+        let _ = crate::unity::prefab_node_names(bytes, name);
+        // Renderer maps are read for clothes only.
         if clothes {
             let _ = crate::unity::clothes_renderer_map(bytes, name);
-            let _ = crate::unity::prefab_node_names(bytes, name);
+            // Options／sleeves／colour layers the maker shows (entries.rs apply_clothes_options, appearance model_flags).
+            let _ = crate::unity::clothes_option_groups(bytes, name);
         }
         // Head bundles (whatever list names them): they carry the face mesh.
         if cats.contains(&100) || label.contains("bo_head") || dir.meshes.contains("cf_o_face") {
@@ -241,6 +247,8 @@ fn convert_source(game: &Path, source: &Source, bytes: &[u8], prefab_hints: &BTr
         if prefabs.contains(name) { continue; }
         let _ = parsed.accessory_color_use(name);
         let _ = parsed.accessory_body_binding(name);
+        // `defColor01..04`, for the maker's accessory colour reset (appearance model_flags `default_colors`).
+        let _ = crate::unity::accessory_default_colors(bytes, name);
     }
     if source.entry.is_some() {
         // also without the zip context (as for bodies and overrides)

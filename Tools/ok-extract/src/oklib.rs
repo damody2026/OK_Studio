@@ -479,13 +479,23 @@ impl Store {
     /// The stored result and whether it came from the card pack (which holds complete values: its
     /// sources are not library models, so packed texture references could not be restored).
     pub fn get_raw_src(&self, id: &Id, query: &str, args: &[u8]) -> Option<(Vec<u8>, bool)> {
+        self.lookup(id, query, args, true)
+    }
+
+    /// `get_raw` for a query that may be absent from older records (`memo_bytes_optional`): its absence is not a gap
+    /// of a strict open, since the caller falls back to the default value.
+    pub fn get_raw_optional(&self, id: &Id, query: &str, args: &[u8]) -> Option<Vec<u8>> {
+        self.lookup(id, query, args, false).map(|(raw, _)| raw)
+    }
+
+    fn lookup(&self, id: &Id, query: &str, args: &[u8], gap_if_missing: bool) -> Option<(Vec<u8>, bool)> {
         // An OK card's open reads a model only third-party mods use from its own pack (okstrict.rs): the library's
         // copy is a gap, copied into the card while it is sealed.
         if self.mode == Mode::Replay && crate::okstrict::active().is_some() && !crate::okstrict::library_model(id) {
             if let Some(raw) = self.pack().and_then(|p| p.get_own(id, query, args)) { return Some((raw, true)); }
             let raw = self.get_own(id, query, args)?;
             if crate::okstrict::complete(|a| { a.records.insert((*id, query.to_owned(), args.to_vec()), raw.clone()); }) { return Some((raw, true)); }
-            crate::okstrict::gap(|| format!("model {} {query} {}", hex(id), describe_args(args)));
+            if gap_if_missing { crate::okstrict::gap(|| format!("model {} {query} {}", hex(id), describe_args(args))); }
             return None;
         }
         if let Some(raw) = self.get_own(id, query, args) { return Some((raw, false)); }
@@ -2453,18 +2463,26 @@ where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::Deserialize
 /// without recording a `missing.txt` gap on pre-existing shared `.okmodel` tokens that lack this query.
 pub fn memo_bytes_optional<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) -> R
 where A: serde::Serialize + ?Sized, R: Default + serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
-    if !ACTIVE.load(Ordering::Relaxed) { return f(); }
-    let Some(store) = active() else { return f(); };
+    memo_bytes_recorded(bytes, method, args, f).unwrap_or_default()
+}
+
+/// `memo_bytes_optional` that says when there is no answer: `None` is a shared `.okmodel` token recorded before this
+/// query (its Unity bytes are not here to compute it). A caller that must not act on a guess (the property editor's
+/// model flags) tells "not recorded" from a value that is legitimately all defaults this way, never from the value.
+pub fn memo_bytes_recorded<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) -> Option<R>
+where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
+    if !ACTIVE.load(Ordering::Relaxed) { return Some(f()); }
+    let Some(store) = active() else { return Some(f()); };
     let id = content_id(bytes);
     let arg_bytes = bincode::serialize(args).unwrap_or_default();
-    if let Some(raw) = store.get_raw(&id, method, &arg_bytes) {
+    if let Some(raw) = store.get_raw_optional(&id, method, &arg_bytes) {
         if let Ok(value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
             if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
-            return value;
+            return Some(value);
         }
     }
     if token_id(bytes).is_some() {
-        return R::default();
+        return None;
     }
     let value = f();
     if store.mode == Mode::Record {
@@ -2474,7 +2492,7 @@ where A: serde::Serialize + ?Sized, R: Default + serde::Serialize + serde::de::D
     } else if crate::okstrict::completing_model(&id) {
         if let Ok(raw) = crate::unity::with_texture_plans(|| bincode::serialize(&value)) { crate::okstrict::keep_record(&id, method, &arg_bytes, raw); }
     }
-    value
+    Some(value)
 }
 
 /// A session needed the contents of model `id`, which this checkout does not have.

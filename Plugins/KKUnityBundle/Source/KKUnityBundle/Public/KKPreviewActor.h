@@ -519,6 +519,10 @@ public:
 	void SetupStudioView(bool PreserveWorld=false);
 	UFUNCTION(BlueprintCallable, Category = "OpenKoikatsu")
 	void FrameCurrentPose();
+	// The same framing from the current pose's joints and the meshes' bounds, without reading the skinned vertices back
+	// (GetCPUSkinnedVertices flushes the render thread and CPU-skins every mesh; in a package that crashed reading freed
+	// memory in FSkeletalMeshObjectCPUSkin::CacheVertices, 2026-11-19). For interactive camera buttons.
+	void FrameCurrentPoseRealtime();
 	void FramePairedPose(AKKPreviewActor* Partner);
 	/** World transform of the component that draws the skeleton (not a rigid item that follows a bone). */
 	FTransform SkeletonWorldTransform() const;

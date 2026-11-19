@@ -1,6 +1,7 @@
-// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #include "DreamUIRender/DreamUIMaterialProxy.h"
+#include "DreamUIRender/DreamUIDeferredRelease.h"
 
 #include "Engine/Texture.h"
 #include "MaterialDomain.h"
@@ -8,6 +9,8 @@
 #include "Materials/MaterialInterface.h"
 #include "RenderGraphBuilder.h"
 #include "RenderingThread.h"
+#include "HAL/IConsoleManager.h"
+#include "HAL/ThreadSafeCounter.h"
 #include "UObject/UObjectGlobals.h"
 
 namespace DreamUIMaterialProxyLocal
@@ -73,6 +76,45 @@ bool FDreamUIMaterialParameters::operator==(const FDreamUIMaterialParameters& In
 	return Textures == InOther.Textures && Vectors == InOther.Vectors && Scalars == InOther.Scalars;
 }
 
+namespace DreamUIMaterialProxyExperiment
+{
+	// EXPERIMENT (default off), and NOT a fix candidate: when on, a proxy that has lost its last reference is never
+	// deleted at all -- it is deliberately leaked. The point is to separate two things that FDreamUIDeferredRelease
+	// cannot: "the destructor runs" from "the destructor runs 240 frames later". Frames.Func=240 only moved the
+	// crash from card 4/7 to 19/15, so a count cannot say whether the destructor is the trigger. Never running it
+	// can.
+	//
+	// Reading registered before the run: if the crash disappears in BOTH reproductions, the trigger is the proxy's
+	// destructor itself (which lets go of the texture refcounts its uniform buffer holds for the material, and
+	// MainPS binds the same textures). If it still faults, the destructor is not the trigger and the delay seen at
+	// Frames.Func=240 is some other timing effect.
+	//
+	// The leak is bounded and measured, not assumed: 30 card loads is a finite number of proxies, so the counter
+	// below is logged and the trip's process RAM is read alongside it. It must never ship: a leak that makes a
+	// crash disappear is a diagnostic, not a repair.
+	static TAutoConsoleVariable<int32> CVarNeverDeleteProxy(
+		TEXT("DreamGUI.Experiment.NeverDeleteProxy"), 0,
+		TEXT("Experiment: never delete a material proxy that lost its last reference (deliberate leak, diagnostic only)."),
+		ECVF_RenderThreadSafe);
+
+	static FThreadSafeCounter Leaked;
+
+	/** True when this proxy is to be leaked on purpose; logs how many have been, so the leak can be seen to be bounded. */
+	static bool LeakInsteadOfDeleting()
+	{
+		if (CVarNeverDeleteProxy.GetValueOnAnyThread() == 0)
+		{
+			return false;
+		}
+		const int32 Count = Leaked.Increment();
+		if (Count <= 10 || (Count % 50) == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("DreamGUI EXPERIMENT: material proxy leaked on purpose, total=%d"), Count);
+		}
+		return true;
+	}
+}
+
 TSharedRef<FDreamUIMaterialProxy, ESPMode::ThreadSafe> FDreamUIMaterialProxy::Create(UMaterialInterface* InSource)
 {
 	check(IsInGameThread());
@@ -82,15 +124,20 @@ TSharedRef<FDreamUIMaterialProxy, ESPMode::ThreadSafe> FDreamUIMaterialProxy::Cr
 	// thread, and a frame the render thread has yet to record may still draw with it.
 	TSharedRef<FDreamUIMaterialProxy, ESPMode::ThreadSafe> Proxy = MakeShareable(new FDreamUIMaterialProxy(InSource), [](FDreamUIMaterialProxy* InProxy)
 	{
+		if (DreamUIMaterialProxyExperiment::LeakInsteadOfDeleting())
+		{
+			return;
+		}
+		// Deleted a few frames later still (FDreamUIDeferredRelease): a graph already recorded may read its uniform buffer.
 		if (IsInRenderingThread())
 		{
-			delete InProxy;
+			FDreamUIDeferredRelease::Later([InProxy]() { delete InProxy; });
 			return;
 		}
 		ENQUEUE_RENDER_COMMAND(FDreamUIMaterialProxyDelete)(
 			[InProxy](FRHICommandListImmediate& RHICmdList)
 			{
-				delete InProxy;
+				FDreamUIDeferredRelease::Later([InProxy]() { delete InProxy; });
 			});
 	});
 	DreamUIMaterialProxyLocal::LiveProxies().Add(Proxy);

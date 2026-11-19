@@ -51,14 +51,40 @@ impl Game {
     /// GET (body None) or POST JSON to the control channel; the reply is JSON.
     pub fn call(&self, path: &str, body: Option<&Value>) -> Result<Value> {
         let port = self.live_port()?;
-        http(port, path, body, Duration::from_secs(60), || {
+        // A hung game keeps the socket open and never replies: wait only so long, then end it (watchdog.rs).
+        let deadline = crate::watchdog::secs("call", 60.);
+        let began = Instant::now();
+        match http(port, path, body, Duration::from_secs_f64(deadline.max(1.)), || {
             format!("the game's control channel is not up on 127.0.0.1:{port} (start it with game_launch)")
-        })
+        }) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let waited = began.elapsed().as_secs_f64();
+                if waited < deadline * 0.9 {
+                    return Err(e);
+                }
+                let pid = crate::control::acting_pid();
+                anyhow::bail!("{e}\n{}", crate::watchdog::timed_out(&self.root, pid, waited, &format!("the street control channel {path}")));
+            }
+        }
     }
 
     pub fn up(&self) -> bool {
         self.call("/health", None).is_ok()
     }
+}
+
+/// `X-OK-From:` for every control request, ending in CRLF (empty if there is nothing to say): this process's pid, and
+/// the lane or session name from `OK_MCP_FROM` / `OK_LANE` when the caller set one. The game logs it per request.
+pub fn from_header() -> String {
+    format!("X-OK-From: {}\r\n", from_who())
+}
+
+/// The same identity as plain text, for the card reader's mailbox (its requests are files, not HTTP).
+pub fn from_who() -> String {
+    let who = std::env::var("OK_MCP_FROM").or_else(|_| std::env::var("OK_LANE")).unwrap_or_default();
+    let who = who.chars().filter(|c| !c.is_control()).take(64).collect::<String>();
+    if who.is_empty() { format!("pid={}", std::process::id()) } else { format!("pid={} {who}", std::process::id()) }
 }
 
 /// GET (body None) or POST JSON to a local HTTP control server; the reply is JSON. down: the error when nothing listens.
@@ -73,13 +99,17 @@ pub fn http_text(port: u16, path: &str, body: Option<&Value>, timeout: Duration,
         let mut stream = TcpStream::connect(("127.0.0.1", port)).with_context(down)?;
         stream.set_read_timeout(Some(timeout))?;
         let payload = body.map(|b| b.to_string()).unwrap_or_default();
+        // Who is asking, for the game's log. Several sessions drive games on one machine and a tool that forgets
+        // OK_GAME_PID lands on someone else's game; without this the log cannot say whose command a page turn was
+        // (2026-11-19: another session's script paged through a reader in the middle of a measurement).
+        let from = from_header();
         let head = if body.is_some() {
             format!(
-                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json; charset=utf-8\r\n{from}Content-Length: {}\r\nConnection: close\r\n\r\n",
                 payload.len()
             )
         } else {
-            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{from}Connection: close\r\n\r\n")
         };
         stream.write_all(head.as_bytes())?;
         stream.write_all(payload.as_bytes())?;
@@ -206,7 +236,13 @@ impl Game {
             }
             std::thread::sleep(Duration::from_secs(2));
         }
-        bail!("the control channel did not come up in {}s; launcher log:\n{}", timeout.as_secs(), self.launch_log_tail())
+        // Started but never answered (a hang during load, a GPU device hang): end that pid rather than leave it
+        // sitting there for ever. Only the game this call started (watchdog.rs).
+        let hung = self.launched_pid().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+        bail!("the control channel did not come up in {}s; launcher log:
+{}
+{}", timeout.as_secs(), self.launch_log_tail(),
+            crate::watchdog::launch_timed_out(&self.root, hung, timeout.as_secs_f64(), "the street game"))
     }
 
     /// One per control port: games of other sessions in this checkout start at the same time.

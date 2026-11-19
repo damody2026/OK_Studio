@@ -27,15 +27,33 @@ local ROOT = os.getenv("OK_UNREAL_SLOTS") or "C:/portable/OpenKoikatsu/Saved/Unr
 -- Slot arbitration runs only from the C checkout's copy: E:/F: carry their own copies of this script, and an older copy
 -- does not take the claim lock or know the lending rules (2026-11-18: E/F claims stayed blocked by rules they lacked).
 local ARBITER = "C:/portable/OpenKoikatsu/Tools/unreal_slot.lua"
+local ARBITER_LUA = "C:/portable/OpenKoikatsu/Tools/lua/lua.exe"
 local SELF = path.abs(arg[0] or "")
 -- The lane (-OKLane / ok-game-mcp's `lane`) the holder launches its Unreal under, recorded as " [lane=<name>]" on the
 -- owner line by `claim --lane`. ok-game-mcp's launch guard compares the caller's lane with it, so the agent that holds
 -- the slot can start its own game while everyone else is refused: without it the guard could only infer exclusivity
 -- from "one agent holds two slots" and so refused the measurer itself (2026-11-19).
 local LANE
+-- A copy that is not the arbiter FORWARDS and never answers. It used to print a warning and then answer anyway, which
+-- is worse than refusing: the caller got an answer, so nobody read the warning, and an out-of-date copy's answer looks
+-- exactly like the arbiter's (2026-11-19: `may-build` was asked through the F copy for days). Exit code and output are
+-- the arbiter's own, so `claim`'s exit 2 (queued) and `yield`'s exit 3 keep working through the forward; exit 4 means
+-- the arbiter could not be reached, which is NOT "go".
 if not os.getenv("OK_UNREAL_SLOTS") and SELF:lower() ~= ARBITER:lower() then
-  io.stderr:write("warning: slots are arbitrated by " .. ARBITER .. "; this copy (" .. SELF .. ") may be out of date. Run:\n"
-    .. "  C:\\portable\\OpenKoikatsu\\Tools\\lua\\lua.exe C:\\portable\\OpenKoikatsu\\Tools\\unreal_slot.lua " .. table.concat(arg, " ") .. "\n")
+  if not path.is_file(ARBITER) or not path.is_file(ARBITER_LUA) then
+    io.stderr:write("error: slots are arbitrated by " .. ARBITER .. ", which this machine does not have"
+      .. " (this copy: " .. SELF .. "). Not answering from an out-of-date copy.\n")
+    os.exit(4)
+  end
+  local argv = { ARBITER_LUA, ARBITER }
+  for i = 1, #arg do argv[#argv + 1] = arg[i] end
+  -- No capture: the arbiter's stdout/stderr go straight to this caller's, so the answer is byte for byte its own.
+  local forwarded = proc.run(argv)
+  if not forwarded.code or forwarded.code < 0 then
+    io.stderr:write("error: cannot run " .. ARBITER .. ": " .. tostring(forwarded.error) .. "\n")
+    os.exit(4)
+  end
+  os.exit(forwarded.code)
 end
 local SLOTS = 2
 -- claim also waits until this much commit is free; pass --need-gb 105 before opening the editor on UniversityCityWP.

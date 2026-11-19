@@ -481,6 +481,13 @@ static UTexture2D* TextureFromPngFile(const FString& Path, bool bClamp = false)
 // (2026-11-17, the Studio package on a 16 GB laptop).
 static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
 {
+	// Kept per file: the camera setup asks for the same LUT on every card open (the StudioCam's own settings and the
+	// studio post-process volume), and a fresh 256x16 transient texture each time piled up two per open -- the volume's
+	// FPostProcessSettings keeps the one it was given, so GC could not take them (2026-11-19: 12 alive after 12 opens,
+	// the first one still reachable through APostProcessVolume::Settings). Rooted rather than a static strong pointer,
+	// which would outlive UObject shutdown (as OKLoadRenderRamp does it).
+	static TMap<FString, UTexture2D*> Kept;
+	if (UTexture2D* const* Hit = Kept.Find(Path)) if (*Hit) return *Hit;
 	TArray<uint8> Png;
 	if (!FFileHelper::LoadFileToArray(Png, *Path) || Png.Num() < 16) return nullptr;
 	IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
@@ -491,6 +498,7 @@ static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
 	if (W <= 0 || H <= 0 || Raw.Num() != W * H * 4) return nullptr;
 	UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
 	if (!Tex || !Tex->GetPlatformData() || Tex->GetPlatformData()->Mips.IsEmpty()) return nullptr;
+	OKLogRuntimeTextureLife(TEXT("created(png)"), Tex, Raw.Num());
 	FTexture2DMipMap& Mip = Tex->GetPlatformData()->Mips[0];
 	FMemory::Memcpy(Mip.BulkData.Lock(LOCK_READ_WRITE), Raw.GetData(), Raw.Num());
 	Mip.BulkData.Unlock();
@@ -501,6 +509,8 @@ static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
 	Tex->AddressY = TA_Clamp;
 	Tex->NeverStream = true;
 	Tex->UpdateResource();
+	Tex->AddToRoot();
+	Kept.Add(Path, Tex);
 	return Tex;
 }
 
@@ -7812,6 +7822,11 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 	SessionLoadSeenHead.Reset(); SessionLoadTranslucentDepth.Reset();
 	if(!bPreserveSourceWorld)OKDisableRealtimeSky(GetWorld());
 	DestroyAllParts();
+	// The textures kept for a switch back hold a refcount, so GC cannot take them. Mark them untouched here:
+	// what this load uses itself gets touched again, and the rest (the card just left) is released below, on
+	// the game thread at a point we choose, instead of surviving until some later frame's GC.
+	OKMarkRecentRuntimeTexturesStale();
+	OKMarkKeptRuntimeTexturesStale();
 	ProfileAfterDestroy = FPlatformTime::Seconds();
 
 	if (!Session.IsOpen())
@@ -8099,6 +8114,18 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 		GOkCardLoadProfile.bActive = false;
 	}
 	bSessionLoadComplete = true;
+	{
+		int64 ReleasedBytes = 0;
+		const int32 Released = OKReleaseStaleRecentRuntimeTextures(&ReleasedBytes);
+		int64 KeptBytes = 0;
+		const int32 KeptReleased = OKReleaseStaleKeptRuntimeTextures(&KeptBytes);
+		const FKKRuntimeTextureKeepStats Keep = OKRuntimeTextureKeepStats();
+		const FOKRecentTextureCacheStats Kept = OKRecentRuntimeTextureCacheStats();
+		if (Released + KeptReleased > 0 || Kept.Entries + Keep.Entries > 0)
+			UE_LOG(LogTemp, Display, TEXT("OK kept GPU textures: released %d (%.1f MB) from the card just left, keeping %d (%.1f MB)"),
+				Released + KeptReleased, double(ReleasedBytes + KeptBytes) / 1048576.0,
+				Kept.Entries + Keep.Entries, double(Kept.Bytes + Keep.Bytes) / 1048576.0);
+	}
 	if (!MaterialOverrides.IsEmpty()) ApplyMaterialOverrides();
 	return true;
 }
@@ -12475,6 +12502,16 @@ void AKKPreviewActor::FrameCurrentPose()
 	FOkCamRig Rig = GStudioRig;
 	Rig.BodyRot = StudioCam->GetActorRotation();
 	OkFitCaptureRig(this, Rig);
+	ResetOrbit(Rig.BodyCenter, Rig.BodyLoc);
+	StudioCam->SetActorLocationAndRotation(Rig.BodyLoc, Rig.BodyRot);
+}
+
+void AKKPreviewActor::FrameCurrentPoseRealtime()
+{
+	if (!StudioCam) { return; }
+	FOkCamRig Rig = GStudioRig;
+	Rig.BodyRot = StudioCam->GetActorRotation();
+	OkFitCaptureRig(this, Rig, nullptr, true);
 	ResetOrbit(Rig.BodyCenter, Rig.BodyLoc);
 	StudioCam->SetActorLocationAndRotation(Rig.BodyLoc, Rig.BodyRot);
 }

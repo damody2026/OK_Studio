@@ -654,9 +654,33 @@ pub fn accessory_color_use(bytes: &[u8], prefab_name: &str) -> Option<AccessoryC
 }
 /// Shared by the byte entry point above and the cached parsed bundle.
 pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::SerializedFile], prefab_name: &str) -> Option<AccessoryColorUse> {
+    accessory_component_in(files, prefab_name).0
+}
+/// `ChaAccessoryComponent.defColor01..04` of the named accessory prefab: what the maker's colour reset
+/// (`CvsAccessory.btnInitColor`) writes back. Only for that reset — never a default for reading a card, which would
+/// make a card that never set a colour look edited. Its own query (not a field of [`AccessoryColorUse`]): query results
+/// are stored with bincode, so a new field would make every model recorded before it unreadable.
+pub fn accessory_default_colors(bytes: &[u8], prefab_name: &str) -> Option<[[f32; 4]; 4]> {
+    crate::oklib::memo_bytes(bytes, "accessory_default_colors", prefab_name, || accessory_default_colors_unity(bytes, prefab_name))
+}
+/// [`accessory_default_colors`]; the outer `None` when the model was recorded before this query.
+pub fn accessory_default_colors_recorded(bytes: &[u8], prefab_name: &str) -> Option<Option<[[f32; 4]; 4]>> {
+    crate::oklib::memo_bytes_recorded(bytes, "accessory_default_colors", prefab_name, || accessory_default_colors_unity(bytes, prefab_name))
+}
+fn accessory_default_colors_unity(bytes: &[u8], prefab_name: &str) -> Option<[[f32; 4]; 4]> {
+    let bundle = load_bundle_unbounded(bytes.to_vec()).ok()?;
+    let _ = bundle.data_checked();
+    let files: Vec<_> = bundle.files.iter().filter_map(|file| bundle.extract_file_data(file).ok())
+        .filter_map(|fb| parse_serialized_file(fb).ok()).collect();
+    accessory_component_in(&files, prefab_name).1
+}
+/// The prefab's `ChaAccessoryComponent`: colour use and renderer groups, and its `defColor01..04`, picked by the same
+/// subtree association (the component in the prefab's tree, else the first one in the bundle).
+fn accessory_component_in(files: &[unity_asset_binary::asset::SerializedFile], prefab_name: &str) -> (Option<AccessoryColorUse>, Option<[[f32; 4]; 4]>) {
     let want = prefab_name.to_ascii_lowercase();
     let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
     let mut fallback: Option<AccessoryColorUse> = None;
+    let mut fallback_def: Option<[[f32; 4]; 4]> = None;
     for ser in files {
         let mut scripts: HashMap<i64, String> = HashMap::new();
         for info in ser.objects_of_type(115) {
@@ -724,6 +748,7 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
         // A different prefab's component is never a default for this asset.
         if !prefab_name.is_empty() && subtree.is_empty() { continue; }
         let mut found: Option<AccessoryColorUse> = None;
+        let mut found_def: Option<[[f32; 4]; 4]> = None;
         for info in ser.objects_of_type(114) {
             let Ok(obj) = ser.scene_object(&info) else {
                 continue;
@@ -790,6 +815,13 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
             if !class.contains("ChaAccessoryComponent") {
                 continue;
             }
+            let color = |k: &str| -> [f32; 4] {
+                props.get(k).and_then(|v| v.as_object()).map(|c| {
+                    let f = |n: &str, d: f64| c.get(n).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
+                    [f("r", 1.0), f("g", 1.0), f("b", 1.0), f("a", 1.0)]
+                }).unwrap_or([1.0; 4])
+            };
+            let def = [color("defColor01"), color("defColor02"), color("defColor03"), color("defColor04")];
             let use_cfg = AccessoryColorUse {
                 has_accessory_component: true,
                 use01: b("useColor01"),
@@ -801,6 +833,7 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
                 ..AccessoryColorUse::default()
             };
             if in_tree {
+                found_def = Some(def);
                 if let Some(prev) = found.as_mut() {
                     prev.has_accessory_component = true;
                     prev.use01 = use_cfg.use01;
@@ -814,13 +847,14 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
                 }
             } else if fallback.is_none() {
                 fallback = Some(use_cfg);
+                fallback_def = Some(def);
             }
         }
         if found.is_some() {
-            return found;
+            return (found, found_def);
         }
     }
-    fallback
+    (fallback, fallback_def)
 }
 
 /// `ChaClothesComponent` renderer groups. `ChangeCustomClothes`
@@ -962,6 +996,125 @@ fn clothes_renderer_map_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &
     None
 }
 
+/// The clothes prefab's `ChaClothesComponent` switches and defaults the maker shows (`CvsClothes.CheckUseColor`) and
+/// `ChaControl.DrawOption`／`DrawSode` apply: the renderers under each `objOpt01/02` and `objSleeves01..03` GameObject
+/// (SetActive of the object hides its whole subtree), the colour layers the item uses and its default colours.
+/// A group the prefab lacks is empty; the maker then hides that option.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ClothesOptionGroups {
+    /// Renderers under `objOpt01`, `objOpt02`.
+    pub opt: [Vec<i64>; 2],
+    /// Renderers under `objSleeves01..03`.
+    pub sleeves: [Vec<i64>; 3],
+    /// Whether each `objOpt0x`／`objSleeves0x` array names any object (the maker shows the toggle then).
+    pub opt_present: [bool; 2],
+    pub sleeves_present: [bool; 3],
+    /// `useColorN01..03`.
+    pub use_color: [bool; 3],
+    /// `rendAccessory` is set (the 4th colour layer of a sailor／jacket sub-part).
+    pub has_accessory_renderer: bool,
+    /// `defMainColor01..03` (the maker's 初期設定).
+    pub def_colors: [[f32; 4]; 3],
+    /// Emblem 1／2 has a renderer (`ChaControl.IsEmblem`: `rendEmblem01` or `exRendEmblem01`; `exRendEmblem02`).
+    pub emblem: [bool; 2],
+}
+
+/// Read [`ClothesOptionGroups`] for the named prefab (same subtree association as [`clothes_renderer_map`]). Optional
+/// query: a shared `.okmodel` recorded before it answers the default (no groups), which leaves the prefab as it was.
+pub fn clothes_option_groups<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> ClothesOptionGroups {
+    clothes_option_groups_recorded(bytes, prefab_name).unwrap_or_default()
+}
+/// [`clothes_option_groups`], `None` when the model was recorded before this query (the answer is unknown, not empty).
+pub fn clothes_option_groups_recorded<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesOptionGroups> {
+    crate::oklib::memo_bytes_recorded(bytes.bundle_bytes(), "clothes_option_groups", prefab_name, || clothes_option_groups_unity(bytes, prefab_name).unwrap_or_default())
+}
+fn clothes_option_groups_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesOptionGroups> {
+    let bundle = Arc::new(load_bundle_source(bytes.to_source(), false).ok()?);
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+                scripts.insert(info.path_id, class.to_string());
+            }
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+        }
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_children: HashMap<i64, Vec<i64>> = HashMap::new();
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+                if let Some(unity_asset_core::UnityValue::Array(ch)) = props.get("m_Children") {
+                    tf_children.insert(info.path_id, ch.iter().filter_map(pptr_path_id).collect());
+                }
+            }
+        }
+        let go_tf: HashMap<i64, i64> = tf_go.iter().map(|(tf, go)| (*go, *tf)).collect();
+        let subtree = |roots: &[i64]| -> std::collections::HashSet<i64> {
+            let mut seen = std::collections::HashSet::new();
+            let mut stack = roots.to_vec();
+            while let Some(go) = stack.pop() {
+                if !seen.insert(go) { continue; }
+                if let Some(kids) = go_tf.get(&go).and_then(|tf| tf_children.get(tf)) {
+                    stack.extend(kids.iter().filter_map(|t| tf_go.get(t)));
+                }
+            }
+            seen
+        };
+        let prefab_roots: Vec<i64> = go_names.iter()
+            .filter(|(_, n)| { let l = n.to_ascii_lowercase(); l == want || (!want_trim.is_empty() && l == want_trim) })
+            .map(|(id, _)| *id).collect();
+        let prefab = subtree(&prefab_roots);
+        let mut renderer_go: Vec<(i64, i64)> = Vec::new();
+        for info in ser.objects_of_type(23).into_iter().chain(ser.objects_of_type(137)) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                if let Some(go) = obj.class.properties().get("m_GameObject").and_then(pptr_path_id) { renderer_go.push((info.path_id, go)); }
+            }
+        }
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else { continue };
+            let props = obj.class.properties();
+            let class = props.get("m_Script").and_then(pptr_path_id).and_then(|id| scripts.get(&id)).cloned().unwrap_or_default();
+            if !class.contains("ChaClothesComponent") { continue; }
+            if !props.get("m_GameObject").and_then(pptr_path_id).is_some_and(|g| prefab.contains(&g)) { continue; }
+            let objects = |k: &str| -> Vec<i64> { props.get(k).map(uv_arr).unwrap_or_default().iter().filter_map(pptr_path_id).filter(|id| *id != 0).collect() };
+            let renderers = |k: &str| -> Vec<i64> {
+                let gos = subtree(&objects(k));
+                let mut ids: Vec<i64> = renderer_go.iter().filter(|(_, go)| gos.contains(go)).map(|(r, _)| *r).collect();
+                ids.sort_unstable();
+                ids
+            };
+            let color = |k: &str| -> [f32; 4] {
+                props.get(k).and_then(|v| v.as_object()).map(|c| {
+                    let f = |n: &str, d: f64| c.get(n).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
+                    [f("r", 1.0), f("g", 1.0), f("b", 1.0), f("a", 1.0)]
+                }).unwrap_or([1.0; 4])
+            };
+            let b = |k: &str| props.get(k).map(uv_bool).unwrap_or(false);
+            return Some(ClothesOptionGroups {
+                opt: [renderers("objOpt01"), renderers("objOpt02")],
+                sleeves: [renderers("objSleeves01"), renderers("objSleeves02"), renderers("objSleeves03")],
+                opt_present: [!objects("objOpt01").is_empty(), !objects("objOpt02").is_empty()],
+                sleeves_present: [!objects("objSleeves01").is_empty(), !objects("objSleeves02").is_empty(), !objects("objSleeves03").is_empty()],
+                use_color: [b("useColorN01"), b("useColorN02"), b("useColorN03")],
+                has_accessory_renderer: props.get("rendAccessory").and_then(pptr_path_id).is_some_and(|id| id != 0),
+                def_colors: [color("defMainColor01"), color("defMainColor02"), color("defMainColor03")],
+                emblem: [props.get("rendEmblem01").and_then(pptr_path_id).is_some_and(|id| id != 0) || !objects("exRendEmblem01").is_empty(), !objects("exRendEmblem02").is_empty()],
+            });
+        }
+    }
+    None
+}
+
 /// `KK_CopyChaBodyMat.ChaCopyBodyMaterial` components inside the named prefab subtree: the renderers of `rendTarget`
 /// (path ids) with the component's `customRenderQueue`. The plugin assigns `ChaControl.customMatBody` to them, sets
 /// `_alpha_a`/`_alpha_b` to 0 and, for a queue in 0..=5000, that render queue (ChaCopyBodyMaterial.CopyMaterial):
@@ -1025,6 +1178,85 @@ fn copy_body_material_targets_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_n
             for id in props.get("rendTarget").map(uv_arr).unwrap_or_default().iter().filter_map(pptr_path_id).filter(|id| *id != 0) {
                 out.push((id, queue));
             }
+        }
+        if !out.is_empty() { break; }
+    }
+    out
+}
+
+/// `SetRenderQueue_Custom` components inside the named prefab subtree: the GameObject's own name with its
+/// `m_queueDatas` as (material index, queue while on, queue while off). `ChaForegroundComponent.SetForeground`
+/// flips `isSetQueue` on the eye meshes (and the eyebrow) from `ChaControl.SetForegroundEyesAndEyebrow`, and
+/// `SetRenderQueue_Custom.ChangeRendererQueue` then writes `m_queues` (on) or `m_queuesBackup` (off) into each
+/// listed material's render queue — that is the whole of the original's "draw the eyes in front" option.
+/// The numbers live in the prefab, not in code (the class only defaults both to 3000), so they have to be read.
+/// Keyed by GameObject name because the head's renderers are rebuilt per card; the renderer path ids of the
+/// prefab do not survive into our parts.
+/// Optional query: an OK card sealed before this existed records nothing and answers an empty list. Callers must
+/// say so instead of silently drawing the eyes behind the hair (`--oklib answers` / `ok_cards.lua reseal` fix it).
+pub fn foreground_render_queues<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(String, Vec<(i32, i32, i32)>)> {
+    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "foreground_render_queues", prefab_name, || foreground_render_queues_unity(bytes, prefab_name))
+}
+fn foreground_render_queues_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(String, Vec<(i32, i32, i32)>)> {
+    let Ok(bundle) = load_bundle_source(bytes.to_source(), false) else { return Vec::new() };
+    let bundle = Arc::new(bundle);
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    let mut out: Vec<(String, Vec<(i32, i32, i32)>)> = Vec::new();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+                scripts.insert(info.path_id, class.to_string());
+            }
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let mut parent_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_father: HashMap<i64, i64> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+        }
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+                if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
+            }
+        }
+        for (tf, go) in &tf_go {
+            if let Some(pgo) = tf_father.get(tf).and_then(|f| tf_go.get(f)) { parent_go.insert(*go, *pgo); }
+        }
+        let in_prefab = |mut go: i64| {
+            for _ in 0..=parent_go.len() {
+                let l = go_names.get(&go).map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+                if l == want || (!want_trim.is_empty() && l == want_trim) { return true; }
+                let Some(p) = parent_go.get(&go) else { return false };
+                go = *p;
+            }
+            false
+        };
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else { continue };
+            let props = obj.class.properties();
+            let class = props.get("m_Script").and_then(pptr_path_id).and_then(|id| scripts.get(&id)).cloned().unwrap_or_default();
+            // The script may live in another serialized file; its one serialized field identifies it then.
+            if class != "SetRenderQueue_Custom" && !(class.is_empty() && props.contains_key("m_queueDatas")) { continue; }
+            let Some(go) = props.get("m_GameObject").and_then(pptr_path_id) else { continue };
+            if !in_prefab(go) { continue; }
+            let Some(name) = go_names.get(&go).cloned() else { continue };
+            let mut queues = Vec::new();
+            for data in props.get("m_queueDatas").map(uv_arr).unwrap_or_default() {
+                let Some(d) = data.as_object() else { continue };
+                let n = |k: &str, fallback: i32| d.get(k).map(uv_i32).unwrap_or(fallback);
+                queues.push((n("id", 0), n("m_queues", 3000), n("m_queuesBackup", 3000)));
+            }
+            if queues.is_empty() { continue; }
+            out.push((name, queues));
         }
         if !out.is_empty() { break; }
     }
@@ -1172,6 +1404,12 @@ fn clothes_blend_shape_defs_unity<B: BundleInput + ?Sized>(
 
 pub fn prefab_node_names(bytes: &[u8], prefab_name: &str) -> std::collections::HashSet<String> {
     crate::oklib::memo_bytes(bytes,"prefab_node_names",prefab_name,||prefab_node_names_unity(bytes,prefab_name))
+}
+/// [`prefab_node_names`] for a caller that must not guess: the same query and key, `None` when the model was recorded
+/// without it (accessory models before 2026-11-19 only had it for clothes). The property editor asks this for an
+/// accessory's `N_move2` (`ChaControl` `objAcsMove[slot,1] = FindLoop("N_move2")`).
+pub fn prefab_node_names_recorded(bytes: &[u8], prefab_name: &str) -> Option<std::collections::HashSet<String>> {
+    crate::oklib::memo_bytes_recorded(bytes,"prefab_node_names",prefab_name,||prefab_node_names_unity(bytes,prefab_name))
 }
 fn prefab_node_names_unity(bytes: &[u8], prefab_name: &str) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
@@ -1458,7 +1696,7 @@ fn cubemap_atlas(tex: &unity_asset_decode::texture::Texture2D) -> Option<(u32, u
             let mut px = vec![0u32; w * w];
             let decoded = match tex.format {
                 TextureFormat::BC6H => texture2ddecoder::decode_bc6(src, w, w, &mut px, false).is_ok(),
-                TextureFormat::BC7 => texture2ddecoder::decode_bc7(src, w, w, &mut px).is_ok(),
+                TextureFormat::BC7 => crate::unity::bc7::decode(src, w, w, &mut px).is_ok(),
                 TextureFormat::DXT5 => texture2ddecoder::decode_bc3(src, w, w, &mut px).is_ok(),
                 TextureFormat::DXT1 => texture2ddecoder::decode_bc1(src, w, w, &mut px).is_ok(),
                 _ => {
@@ -3916,6 +4154,15 @@ impl ParsedBundle {
         self.meshes_for_maindata_with_renderer_state(main_data, true)
     }
 
+    /// [`Self::meshes_for_maindata_including_disabled`] with the worn clothes state of that category applied.
+    pub fn meshes_for_maindata_including_disabled_with_category(
+        &self,
+        main_data: &str,
+        clothes_category: i32,
+    ) -> (Vec<ExtractedMesh>, Option<crate::pose::Skeleton>) {
+        self.meshes_for_maindata_with_clothes_kind(main_data, true, Some(clothes_category))
+    }
+
     fn meshes_for_maindata_with_renderer_state(
         &self,
         main_data: &str,
@@ -5463,6 +5710,8 @@ pub use tints::*;
 
 mod prefabs;
 pub use prefabs::*;
+
+mod bc7;
 
 #[cfg(test)]
 mod tests;

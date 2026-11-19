@@ -33,9 +33,24 @@ impl Studio {
 
     /// POST /studio/<op>; the reply as it came (ok true or false). Loading, saving and capturing can take a while.
     pub fn call(&self, op: &str, body: &Value) -> Result<Value> {
-        http(self.port, &format!("/studio/{op}"), Some(body), Duration::from_secs(180), || {
+        // Loading, saving and capturing can take a while, but not for ever: a hung OK Studio (GPU device hang) never
+        // replies. OK_MCP_TIMEOUT_STUDIO / OK_MCP_TIMEOUT override it; the process on the port is the one ended, and
+        // only when it is this session's (watchdog.rs).
+        let deadline = crate::watchdog::secs("studio", 180.);
+        let began = Instant::now();
+        match http(self.port, &format!("/studio/{op}"), Some(body), Duration::from_secs_f64(deadline.max(1.)), || {
             format!("OK Studio is not running on 127.0.0.1:{} (start it with studio_launch or SceneEditor.cmd)", self.port)
-        })
+        }) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let waited = began.elapsed().as_secs_f64();
+                if waited < deadline * 0.9 {
+                    return Err(e);
+                }
+                let pid = self.owner().unwrap_or_else(crate::control::acting_pid);
+                anyhow::bail!("{e}\n{}", crate::watchdog::timed_out(&self.root, pid, waited, &format!("OK Studio /studio/{op}")));
+            }
+        }
     }
 
     /// The process listening on this studio's port (Get-NetTCPConnection), or None.
@@ -45,6 +60,22 @@ impl Studio {
             self.port
         );
         let out = Command::new("powershell").args(["-NoProfile", "-Command", &script]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok().filter(|p| *p != 0)
+    }
+
+    /// OK Studio's own process, not the launcher's: the one listening on the control port, else a game process the
+    /// launcher started (`Tools/lua/lua.exe` spawns it, so it is a descendant). Without this the launch wait only knew
+    /// the launcher's pid and a hung OK Studio had no deadline at all (2026-11-19).
+    fn game_pid(&self, launcher: u32) -> Option<u32> {
+        if let Some(pid) = self.owner() {
+            return Some(pid);
+        }
+        let script = format!(
+            "$seen=@({launcher}); for($i=0;$i -lt 4;$i++){{ $seen += (Get-CimInstance Win32_Process | Where-Object {{ $seen -contains $_.ParentProcessId }} | ForEach-Object {{ $_.ProcessId }}) }} \
+             Get-CimInstance Win32_Process | Where-Object {{ ($seen -contains $_.ProcessId) -and ($_.Name -like 'UnrealEditor*' -or $_.Name -like 'OpenKoikatsu*') }} | \
+             Select-Object -First 1 -ExpandProperty ProcessId"
+        );
+        let out = Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().ok()?;
         String::from_utf8_lossy(&out.stdout).trim().parse().ok().filter(|p| *p != 0)
     }
 
@@ -154,7 +185,10 @@ impl Studio {
         }
         let mut child = cmd.spawn().context("could not start Tools/run_scene_editor.lua")?;
         let pid = child.id();
-        let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or(120.0));
+        // OK_MCP_TIMEOUT_LAUNCH / OK_MCP_TIMEOUT override it. On a timeout the OK Studio process itself is ended --
+        // `game_pid` resolves it from the control port or from the launcher's descendants, never by name alone; when it
+        // cannot be found the reply says so instead of silently leaving it without a deadline (watchdog.rs).
+        let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or_else(|| crate::watchdog::secs("launch", 120.0)));
         let start = Instant::now();
         while start.elapsed() < timeout {
             if let Some(status) = child.try_wait()? {
@@ -163,12 +197,23 @@ impl Studio {
                 }
             }
             if self.up() {
-                return Ok(json!({"ok": true, "pid": pid, "port": self.port, "seconds": start.elapsed().as_secs()}));
+                // `pid` is OK Studio's own process (the port's owner); the launcher leaves once it has started it.
+                let studio = self.game_pid(pid).unwrap_or(pid);
+                return Ok(json!({"ok": true, "pid": studio, "launcher_pid": pid, "port": self.port, "seconds": start.elapsed().as_secs()}));
             }
             std::thread::sleep(Duration::from_secs(2));
         }
+        let waited = timeout.as_secs_f64();
+        let note = match self.game_pid(pid) {
+            Some(studio) => crate::watchdog::launch_timed_out(&self.root, studio, waited, "OK Studio"),
+            None => format!(
+                "OK Studio has no timeout protection this time: its process could not be found (nothing listens on port {} \
+                 and the launcher pid {pid} has no game process under it), so nothing was ended. Check it by hand.",
+                self.port
+            ),
+        };
         bail!(
-            "OK Studio did not answer on port {} in {}s (launcher pid {pid} keeps running; studio_state later, or see {}):\n{}",
+            "OK Studio did not answer on port {} in {}s (launcher pid {pid}; studio_state later, or see {}):\n{}\n{note}",
             self.port,
             timeout.as_secs(),
             self.log_file().display(),

@@ -565,6 +565,24 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Fixed
 
+- **GPU resources DreamGUI lets go of wait three render frames before they are released** (`FDreamUIDeferredRelease`).
+  A data texture replaced when it grows, a composite group's pooled render target, a canvas's target texture and a
+  material proxy's delete now go through a render-thread queue and are released `DelayFrames` (3) frames later, so a
+  graph recorded or translated before the change never reads freed memory. `DreamGUI.LogDeferredRelease` logs how many
+  wait. A safeguard: it did not stop the page fault it was added for (the first draw of the view extension, cause still
+  open).
+
+- **A font atlas that grows no longer leaves its old texture to the collector while it is still drawn.** Growing the
+  atlas by a slice makes a new texture; the old one was unrooted at once, and draw data built before the change (a text
+  outside the render list, a canvas not rebatched yet) could still sample it after a collection, a GPU page fault. The
+  last four replaced atlases stay rooted (`RetiredTextures`), as the current one is: not a property, because a cooked
+  font sits in the disregard-for-GC pool, and a reference from it to an unrooted texture stops a packaged build at the
+  first collection ("breaking Disregard for GC assumptions").
+- **A texture a canvas draws with is no longer collected under the draw.** A draw call keeps weak pointers, and the
+  built-in shader's draws only the render thread's references: an image given another picture let its old texture go to
+  the collector while the canvas's sections still sampled it, a GPU page fault (seen as `PageFault` on a released
+  `Texture2D`). A canvas now holds every texture its sections were given, through a material proxy or the built-in
+  shader, while in use and eight frames after the rebuild that stopped using it (`DrawTextureHolds`).
 - **The first letter typed into a field no longer goes in twice under DreamGameViewportClient.** A field learned that the
   host delivers real characters from the first character to arrive, and the key table guessed the keystroke before it
   as well (a key comes before its character). A world whose game viewport is a `UDreamGameViewportClient` is known to

@@ -91,7 +91,7 @@ pub fn mutates(name: &str, a: &Value) -> bool {
         "game_instances" | "game_select" | "game_launch" | "game_stop" | "image_stats" | "image_diff" => false,
         "game_state" | "game_buttons" | "game_screenshot" | "game_log" => false,
         "ui_state" | "ui_widgets" | "ui_screenshot" | "ui_focus" => false,
-        "reader_call" => !matches!(a["action"].as_str().unwrap_or(""), "state" | "cards" | "parameters" | "get" | "controls" | "views" | "measure" | "catalog" | "screenshot" | "snapshot"),
+        "reader_call" => !matches!(a["action"].as_str().unwrap_or(""), "state" | "cards" | "parameters" | "get" | "controls" | "views" | "measure" | "catalog" | "screenshot" | "snapshot" | "eye_page" | "appearance_page" | "thumbnails"),
         "pair_call" => !a["path"].as_str().is_some_and(|p| p.starts_with("/stats") || p.starts_with("/pose")),
         "studio_launch" => false,
         "reader_launch" | "reader_stop" => false,
@@ -130,6 +130,32 @@ fn is_mine(root: &Path, pid: u64) -> bool {
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')).ok())
         .is_some_and(|v| v["session"].as_str() == Some(me))
+}
+
+/// The pid this call is acting on: the one the caller named with `OK_GAME_PID` or game_select, else the one the last
+/// lookup on this thread chose, else this session's own game. 0 when there is none (nothing to end on a timeout).
+pub fn acting_pid() -> u32 {
+    if let Some(pid) = std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()).filter(|p| *p != 0) {
+        return pid;
+    }
+    let selected = SELECTED.load(Ordering::Relaxed);
+    if selected != 0 {
+        return selected;
+    }
+    let default = default_target();
+    if default != 0 {
+        return default;
+    }
+    OWN.load(Ordering::Relaxed)
+}
+
+/// Whether this session may end that game when it hangs: the caller named it with `OK_GAME_PID`, or this session
+/// started it. Nothing else is ever ended -- another session's game on the same machine is not ours to kill.
+pub fn owned(root: &Path, pid: u32) -> bool {
+    if std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()) == Some(pid) {
+        return true;
+    }
+    is_mine(root, u64::from(pid))
 }
 
 /// The games listed for a caller that has to pick one.
@@ -190,7 +216,24 @@ fn base(root: &Path) -> u16 {
 
 fn ui(root: &Path, path: &str, body: Option<&Value>) -> Result<Value> {
     let port = port(root, "ui", base(root) + 12)?;
-    let r = http(port, path, body, Duration::from_secs(60), || format!("no game answers on the UI channel 127.0.0.1:{port} (game_instances lists what runs)"))?;
+    // A hung game (GPU device hang) keeps its socket open and never replies: wait only so long, then end it
+    // (watchdog.rs). The deadline is OK_MCP_TIMEOUT_CALL / OK_MCP_TIMEOUT.
+    let deadline = crate::watchdog::secs("call", 60.);
+    let began = std::time::Instant::now();
+    let r = match http(port, path, body, Duration::from_secs_f64(deadline.max(1.)), || {
+        format!("no game answers on the UI channel 127.0.0.1:{port} (game_instances lists what runs)")
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            // Only a wait that actually ran out is a hang; a refused connection or a bad reply comes back at once.
+            let waited = began.elapsed().as_secs_f64();
+            if waited < deadline * 0.9 {
+                return Err(e);
+            }
+            let pid = acting_pid();
+            bail!("{e}\n{}", crate::watchdog::timed_out(root, pid, waited, &format!("the UI channel {path}")));
+        }
+    };
     if r["ok"] == false {
         bail!("{}", r["error"].as_str().unwrap_or("failed"));
     }
@@ -216,22 +259,26 @@ fn reader(root: &Path, a: &Value) -> Result<Value> {
     };
     let mut body = a.clone();
     if action != "state" && body["session"].is_null() {
-        let state = mailbox_call(Path::new(&mailbox), &json!({"action": "state"}), 10.)?;
+        let state = mailbox_call(root, Path::new(&mailbox), &json!({"action": "state"}), 10.)?;
         body["session"] = state["session"].clone();
         if body["revision"].is_null() {
             body["revision"] = state["revision"].clone();
         }
     }
-    let timeout = a["timeout_s"].as_f64().unwrap_or(if action == "state" { 10. } else { 120. });
-    mailbox_call(Path::new(&mailbox), &body, timeout)
+    let timeout = a["timeout_s"].as_f64().unwrap_or_else(|| crate::watchdog::secs("reader", if action == "state" { 10. } else { 120. }));
+    mailbox_call(root, Path::new(&mailbox), &body, timeout)
 }
 
-fn mailbox_call(root: &Path, body: &Value, timeout: f64) -> Result<Value> {
+/// `checkout` is the tree the game runs from (for the watchdog); `root` is that reader's mailbox folder.
+fn mailbox_call(checkout: &Path, root: &Path, body: &Value, timeout: f64) -> Result<Value> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
     let id = format!("{:032x}", now.as_nanos() + u128::from(LAST_ID.fetch_add(1, Ordering::Relaxed)));
     let name = format!("{id}.json");
     let mut payload = body.clone();
     payload["deadline"] = (now.as_secs_f64() + timeout).into();
+    // Who is asking (the HTTP channel sends the same as X-OK-From): the reader logs it with the operation, so a
+    // command from a tool that forgot OK_GAME_PID can be told apart from this session's own (2026-11-19).
+    payload["from"] = crate::game::from_who().into();
     let request = root.join("requests").join(&name);
     let temp = root.join("requests").join(format!("{id}.tmp"));
     std::fs::write(&temp, payload.to_string())?;
@@ -256,7 +303,13 @@ fn mailbox_call(root: &Path, body: &Value, timeout: f64) -> Result<Value> {
         std::thread::sleep(Duration::from_millis(25));
     }
     let _ = std::fs::remove_file(&request);
-    bail!("the card reader did not answer in {timeout} s")
+    // The mailbox is answered from the reader's own tick: a hung game (GPU device hang) never gets back to it. End it
+    // rather than leave it stuck for ever -- only if it is this session's and answers nothing (watchdog.rs).
+    let pid = acting_pid();
+    bail!(
+        "the card reader did not answer in {timeout} s\n{}",
+        crate::watchdog::timed_out(checkout, pid, timeout, "the card reader mailbox")
+    )
 }
 
 pub fn tools() -> Vec<Value> {
@@ -283,7 +336,7 @@ pub fn tools() -> Vec<Value> {
         t("ui_camera", "Any mode with a free camera (the crowd room): place it.", json!({"location": {"type": "array", "items": {"type": "number"}}, "rotation": {"type": "array", "items": {"type": "number"}}}), &["location", "rotation"]),
         t("ui_exec", "Any mode: run an engine console command and return what it printed.", json!({"command": {"type": "string"}}), &["command"]),
         t("ui_screenshot", "Any mode: a screenshot of the window (ui=false leaves the UI out).", json!({"ui": {"type": "boolean"}}), &[]),
-        t("reader_call", "The card reader through its mailbox. action: state, cards (the card wall: offset, limit, query), select (index), load (path), parameters (query; shape.*, bone.*, physics.*, pregnancy.*, style.* and properties), get (keys), set (edits [{key, value}]), reset (keys), apply, controls, control_set (key, value), action (command), camera, screenshot, views, measure, catalog, appearance, snapshot, restore, save, studio, video_import, partner. session and revision are filled in. Docs/CHARACTER_EDITOR_MCP_USAGE.md.",
+        t("reader_call", "The card reader through its mailbox. action: state, cards (the card wall: offset, limit, query), select (index), load (path), parameters (query; shape.*, bone.*, physics.*, pregnancy.*, style.* and properties), eye_page (page: eye_scale2 | eyes -- one eye detail page in one answer), appearance_page (page: eyebrow | hair | accessory -- one picker page's kinds, slots and counts), thumbnails (keys: 1-48 item keys from catalog -- each one's picture as a local PNG path), get (keys), set (edits [{key, value}]), reset (keys), apply, controls, control_set (key, value), action (command), camera, screenshot, views, measure, catalog, appearance, snapshot, restore, save, studio, video_import, partner. session and revision are filled in. Docs/CHARACTER_EDITOR_MCP_USAGE.md.",
           json!({"action": {"type": "string"}, "timeout_s": {"type": "number"}}), &["action"]),
         t("pair_call", "The 1-on-1 interaction scene's channel: /stats, /reset, /exec?cmd=<url-encoded command>, /pose?filter=<text>. Returns its text.", json!({"path": {"type": "string"}}), &["path"]),
     ]

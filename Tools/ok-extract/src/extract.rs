@@ -48,6 +48,7 @@ pub(crate) fn extract_session_from_info(
     let _view_memo = crate::ViewMemoScope::begin();
     crate::unity::references::begin_load(game_root);
     let t_all = Instant::now();
+    crate::profile_mark_open_start(t_all);
     // OK_PROFILE: the per-slot stage timings (appearance::timings) of this open too.
     let stages = std::env::var_os("OK_PROFILE").map(|_| crate::appearance::timings::Capture::begin());
     let mut t = Instant::now();
@@ -107,7 +108,7 @@ pub(crate) fn extract_session_from_info(
     let BaseStage { body_bundle, skin_material_bundle, vanilla_head_bundle, body_meshes, mut body_skel,
         mut body_texs, pv_config, eye_look_config, parsed_head, head_texs, head_main, head_shape_keys,
         mut head_skel, head_meshes, head_mouth_patterns, head_eye_patterns, head_eyebrow_patterns,
-        head_face_settings, head_eye_materials, mut head_fbs_sources, mut body_rest, body_dynamics, body_colliders,
+        head_face_settings, foreground_queues, head_eye_materials, mut head_fbs_sources, mut body_rest, body_dynamics, body_colliders,
         mut clothes_dynamics, head_rest, } =
         crate::view_memo(format!("base_bundles_stage|{}|{}|{base_key}", game_root.display(), mods_dir.display()),
             || base_bundles_stage(game_root, &parsed_card, &vanilla, &guid_index, &mods_dir))?;
@@ -1186,6 +1187,13 @@ pub(crate) fn extract_session_from_info(
     // An OK Studio eyes pattern whose eye set shows a gag eye (ChaControl.ChangeEyesPtn): that object is built, with
     // the set's texture.
     let studio_eyes = crate::studio_status::current().and_then(|o| o.eyes_ptn).and_then(|p| crate::eye_set::eye_set(game_root, p));
+    // Three passes, because the middle one is the expensive one and it is the only one that can run anywhere:
+    // (1) pick the head details this card shows (needs `parsed_head` for each part's skeleton, and the dedup is
+    // order-dependent), (2) give each its textures and rig — 63 of this stage's 70 ms at one thread, and nothing in
+    // it touches another part — then (3) the eyeline shadow (needs `parsed_head` again) and the emit, in the
+    // original order, because that order *is* the session's part order (`batch: emit (serial)` for the same reason).
+    // Kill switch OK_SERIAL_HEAD_DETAIL=1 runs pass 2 one at a time, so the A/B differs only in the iterator.
+    let mut head_jobs: Vec<(ExtractedMesh, Option<crate::pose::Skeleton>, String)> = Vec::new();
     for mut mesh in head_meshes.iter().cloned() {
         let key = mesh.name.to_ascii_lowercase();
         // FBS target references are authoritative, including inactive tears
@@ -1274,77 +1282,127 @@ pub(crate) fn extract_session_from_info(
                 mesh.normals.len()
             );
         }
-        let key = mesh.name.to_ascii_lowercase();
+        let mesh_key = mesh.name.to_ascii_lowercase();
+        head_jobs.push((mesh, part_skel, mesh_key));
+    }
+
+    // Pass 2. A memo hit is taken here on the open's own thread, because `view_memo` is thread-local (its IN_VIEW
+    // flag is only set on this one): doing it on a worker would quietly stop memoising and make every later garment
+    // state of this outfit pay the textures again. So only the misses are handed out, and they are stored back here
+    // under the same keys as before — including the rule that a value made while the strict open met a gap is not
+    // kept (the worker reports its own `gaps_on_thread`, which is what that rule has always compared).
+    let mesh_keys: Vec<String> = head_jobs.iter().map(|(_, _, key)| key.clone()).collect();
+    let memo_keys: Vec<Option<String>> = head_jobs
+        .iter()
+        .map(|(mesh, _, _)| {
+            parsed_card.as_ref().filter(|_| studio_eyes.is_none()).map(|card| {
+                format!("head_detail|{:016x}|{outfit}|{}|{}", card.source_digest, mesh.name, mesh.path_id)
+            })
+        })
+        .collect();
+    let mut prepared: Vec<Option<ExtractedMesh>> = memo_keys
+        .iter()
+        .map(|key| key.as_ref().and_then(|key| crate::entries::view_memo_get::<ExtractedMesh>(key)))
+        .collect();
+    let mut slots: Vec<Option<(ExtractedMesh, Option<crate::pose::Skeleton>, String)>> =
+        head_jobs.into_iter().map(Some).collect();
+    let _ = &mesh_keys;
+    let todo: Vec<(usize, (ExtractedMesh, Option<crate::pose::Skeleton>, String))> = slots
+        .iter_mut()
+        .enumerate()
+        .filter(|(i, _)| prepared[*i].is_none())
+        .filter_map(|(i, slot)| slot.take().map(|job| (i, job)))
+        .collect();
+    // Textures and rig of one head detail: what `resolve_head_detail_texture` and `rig_mesh` do to that mesh alone.
+    let prepare_one = |mesh: ExtractedMesh, part_skel: Option<crate::pose::Skeleton>, key: &str| {
+        let _seg = crate::unity::segment("head_detail/prepare");
         let authored_fbs = HeadFbsInput {
-            mouth:head_mouth_patterns.get(&key).map(|(_,p)|p.as_slice()),
-            eyes:head_eye_patterns.get(&key).map(|(_,p)|p.as_slice()),
-            eyebrow:head_eyebrow_patterns.get(&key).map(|(_,p)|p.as_slice()),
+            mouth: head_mouth_patterns.get(key).map(|(_, p)| p.as_slice()),
+            eyes: head_eye_patterns.get(key).map(|(_, p)| p.as_slice()),
+            eyebrow: head_eyebrow_patterns.get(key).map(|(_, p)| p.as_slice()),
         };
-        let prepare = |mut mesh: ExtractedMesh| {
-            crate::card_plugins::apply_edit_fangs(
-                &mut mesh,
-                parsed_card.as_ref().and_then(|c| c.edit_fangs),
-            );
-            rig_mesh(
-                &mut mesh,
-                "head",
-                body_skel.as_ref(),
-                head_skel.as_ref(),
-                None,
-                part_skel.as_ref(),
-                None,
-                Some(&authored_fbs),
-                None,
-            );
-            if let Some(card) = parsed_card.as_ref() {
-                resolve_head_detail_texture(
-                    game_root,
-                    &vanilla,
-                    &mod_catalog,
-                    card,
-                    &guid_index,
-                    outfit,
-                    &mut mesh,
-                    &head_texs,
-                    &body_texs,
-                );
-            }
-            if mesh.texture_png.is_none() {
-                let ln = mesh.name.to_ascii_lowercase();
-                if ln.contains("hitomi") {
-                    mesh.texture_png = simple_iris_png();
-                } else if ln.contains("noseline") || ln.contains("nose") {
-                    mesh.texture_png = crate::unity::solid_png([0.04, 0.03, 0.04, 0.35], 32, 32);
-                } else if ln.contains("eyeline") || ln.contains("mayuge") {
-                    // A missing line texture must not become an opaque dark quad
-                    // over the eyes. The game simply has no texture on that pass.
-                    mesh.texture_png = crate::unity::solid_png([0.0, 0.0, 0.0, 0.0], 32, 32);
-                } else if ln.contains("tooth") || ln.contains("canine") || ln.contains("tang") {
-                    // A missing source MainTex uses the shader's white default.
-                    mesh.texture_png = crate::unity::solid_png([1.0; 4], 8, 8);
-                }
-            }
-            // Unity draws extra materials on the last submesh. rendEyelineUp has
-            // materials[1]=EyelineShadowTex * skinMainColor (ChaControl.cs:4046/4073).
+        let gaps_before = crate::okstrict::gaps_on_thread();
+        let mut mesh = mesh;
+        crate::card_plugins::apply_edit_fangs(&mut mesh, parsed_card.as_ref().and_then(|c| c.edit_fangs));
+        {
+            let _seg = crate::unity::segment("head_detail/prepare/rig");
+            rig_mesh(&mut mesh, "head", body_skel.as_ref(), head_skel.as_ref(), None, part_skel.as_ref(), None,
+                Some(&authored_fbs), None);
+        }
+        // OK_SKIP_HDET_TEX=1 is a measurement switch: it leaves every head detail (eyes, brows, lines, teeth,
+        // tongue) **without its texture**, so the output is wrong. It exists to price this call — 63 of the 70 ms
+        // at one thread — by asking what making it free would buy: 8 threads −0.015 s, 2 threads −0.135 s
+        // (2026-11-19, `Docs/CARD_OPEN_PERF_20261117.md` 第四节). Never set it outside an A/B.
+        if let Some(card) = parsed_card.as_ref().filter(|_| std::env::var_os("OK_SKIP_HDET_TEX").is_none()) {
+            let _seg = crate::unity::segment("head_detail/prepare/texture");
+            resolve_head_detail_texture(game_root, &vanilla, &mod_catalog, card, &guid_index, outfit, &mut mesh,
+                &head_texs, &body_texs);
+        }
+        if mesh.texture_png.is_none() {
             let ln = mesh.name.to_ascii_lowercase();
-            let kage = parsed_card.as_ref().filter(|_| ln.contains("eyeline") && !ln.contains("low")).map(|card| {
-                // ChaControl.ChangeSettingEyelineUp assigns slot0 and slot1
-                // separately. Preserve slot1 identity before looking up ME
-                // MainTex/Color; the stroke's replacement belongs only to slot0.
-                let mut kage = eyeline_shadow_mesh(&parsed_head,&mesh);
-                resolve_head_detail_texture(game_root,&vanilla,&mod_catalog,card,&guid_index,
-                    outfit,&mut kage,&head_texs,&body_texs);
-                kage
-            });
-            (mesh, kage)
+            if ln.contains("hitomi") {
+                mesh.texture_png = simple_iris_png();
+            } else if ln.contains("noseline") || ln.contains("nose") {
+                mesh.texture_png = crate::unity::solid_png([0.04, 0.03, 0.04, 0.35], 32, 32);
+            } else if ln.contains("eyeline") || ln.contains("mayuge") {
+                // A missing line texture must not become an opaque dark quad over the eyes. The game simply has
+                // no texture on that pass.
+                mesh.texture_png = crate::unity::solid_png([0.0, 0.0, 0.0, 0.0], 32, 32);
+            } else if ln.contains("tooth") || ln.contains("canine") || ln.contains("tang") {
+                // A missing source MainTex uses the shader's white default.
+                mesh.texture_png = crate::unity::solid_png([1.0; 4], 8, 8);
+            }
+        }
+        (mesh, crate::okstrict::gaps_on_thread() == gaps_before)
+    };
+    let made: Vec<(usize, ExtractedMesh, bool)> = {
+        static SERIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let run_one = |(i, (mesh, part_skel, key)): (usize, (ExtractedMesh, Option<crate::pose::Skeleton>, String))| {
+            let (mesh, keep) = prepare_one(mesh, part_skel, &key);
+            (i, mesh, keep)
         };
-        // Rigged and textured the same in every garment state of an outfit (crate::view_memo), keyed by the card data;
-        // an OK Studio eye set changes the meshes before this, so it is done afresh.
-        let (mesh, kage) = match parsed_card.as_ref().filter(|_| studio_eyes.is_none()) {
-            Some(card) => crate::view_memo(format!("head_detail|{:016x}|{outfit}|{}|{}", card.source_digest, mesh.name,
-                mesh.path_id), || prepare(mesh)),
-            None => prepare(mesh),
+        if *SERIAL.get_or_init(|| std::env::var_os("OK_SERIAL_HEAD_DETAIL").is_some()) {
+            todo.into_iter().map(run_one).collect()
+        } else {
+            use rayon::prelude::*;
+            todo.into_par_iter().map(run_one).collect()
+        }
+    };
+    for (i, mesh, keep) in made {
+        if keep {
+            if let Some(key) = &memo_keys[i] {
+                crate::entries::view_memo_put(key.clone(), mesh.clone());
+            }
+        }
+        prepared[i] = Some(mesh);
+    }
+
+    // Pass 3. The eyeline shadow needs `parsed_head` (a ParsedBundle is !Send, second节 BUNDLE_CACHE), and it is
+    // only 4 ms, so it stays here; the emit order is the session's part order.
+    for (i, mesh) in prepared.into_iter().enumerate() {
+        let Some(mesh) = mesh else { continue };
+        let key = memo_keys[i].clone();
+        // Unity draws extra materials on the last submesh. rendEyelineUp has
+        // materials[1]=EyelineShadowTex * skinMainColor (ChaControl.cs:4046/4073).
+        let ln = mesh.name.to_ascii_lowercase();
+        let kage = {
+            let _seg = crate::unity::segment("head_detail/prepare/kage");
+            parsed_card.as_ref().filter(|_| ln.contains("eyeline") && !ln.contains("low")).and_then(|card| {
+                let make = || {
+                    // ChaControl.ChangeSettingEyelineUp assigns slot0 and slot1 separately. Preserve slot1
+                    // identity before looking up ME MainTex/Color; the stroke's replacement belongs only to slot0.
+                    let mut kage = eyeline_shadow_mesh(&parsed_head, &mesh);
+                    resolve_head_detail_texture(game_root, &vanilla, &mod_catalog, card, &guid_index, outfit,
+                        &mut kage, &head_texs, &body_texs);
+                    kage
+                };
+                match key.as_ref() {
+                    Some(key) => Some(crate::entries::view_memo(format!("{key}|kage"), make)),
+                    None => Some(make()),
+                }
+            })
         };
+        let key = mesh_keys[i].clone();
         let stem = format!("head_{}", sanitize(&mesh.name));
         seen_meshes.insert(mesh.name.to_ascii_lowercase());
         let (blend, unlit) = blend_for_mesh("head", &mesh);
@@ -1381,7 +1439,8 @@ pub(crate) fn extract_session_from_info(
                 ..Default::default()
             });
         }
-        let (p, tex) = emit_part(out_dir, &mut session_parts, &stem, "head", &mesh, &blend, unlit)?;
+        let (p, tex) = { let _seg = crate::unity::segment("head_detail/emit");
+            emit_part(out_dir, &mut session_parts, &stem, "head", &mesh, &blend, unlit)? };
         parts.push(ManifestPart {
             role: "head".into(),
             path: p,
@@ -1854,8 +1913,13 @@ pub(crate) fn extract_session_from_info(
                 .map(PathBuf::from)
                 .or_else(|| zip_path.clone());
             let t_part = Instant::now();
-            let (mut meshes, part_skel) = meshes_for_entry(game_root, zip.as_deref(), &entry);
+            let (mut meshes, mut part_skel) = meshes_for_entry(game_root, zip.as_deref(), &entry);
             profile_tick("clothes meshes_for_entry", t_part);
+            if !meshes.is_empty() {
+                let t_part = Instant::now();
+                apply_clothes_options(game_root, zip.as_deref(), &entry, card, kind, &mut meshes, part_skel.as_mut());
+                profile_tick("clothes options", t_part);
+            }
             if kind == 0 { top_prefab_world = part_skel.as_ref().map_or_else(crate::pose::ident, |s| s.root_world()); }
             if meshes.is_empty() {
                 continue;
@@ -2424,6 +2488,7 @@ pub(crate) fn extract_session_from_info(
         }
     }
     apply_copy_body_material(&mut session_parts, &copy_body_targets);
+    apply_foreground_eyes(&mut session_parts, &foreground_queues, parsed_card.as_ref());
     assign_draw_layers(&mut session_parts);
     Ok(crate::session::OkSession {
         pair_third:None,
@@ -2536,6 +2601,9 @@ struct BaseStage {
     head_eye_patterns: std::collections::HashMap<String, (usize, Vec<(i32, i32)>)>,
     head_eyebrow_patterns: std::collections::HashMap<String, (usize, Vec<(i32, i32)>)>,
     head_face_settings: [f32; 12],
+    /// `SetRenderQueue_Custom.m_queueDatas` of the head prefab, by GameObject name
+    /// (`crate::unity::foreground_render_queues`): what `foregroundEyes`/`foregroundEyebrow` switch between.
+    foreground_queues: Vec<(String, Vec<(i32, i32, i32)>)>,
     head_eye_materials: std::collections::HashMap<String, [f32; 14]>,
     head_fbs_sources: std::collections::HashMap<String, String>,
     body_rest: Option<crate::pose::Skeleton>,
@@ -2710,6 +2778,11 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
         .map(|e| e.info("MainData"))
         .filter(|s| !s.is_empty() && s != "0")
         .unwrap_or_else(|| "p_cf_head_00".to_string());
+    // `ChaForegroundComponent` flips these on the head prefab's eye/eyebrow renderers; the queue numbers are
+    // serialized in the prefab, so they are read here once per head rather than guessed.
+    let foreground_queues = crate::unity::foreground_render_queues(
+        &crate::gamefs::read_source(&head_bundle).unwrap_or_default(), &head_main);
+    eprintln!("ok-extract: foreground render queues renderers={}", foreground_queues.len());
     let head_shape_asset = face_entry
         .as_ref()
         .map(|e| e.info("ShapeAnime"))
@@ -2899,7 +2972,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
     Ok(BaseStage { body_bundle, skin_material_bundle, vanilla_head_bundle, body_meshes, body_skel, body_texs,
         pv_config, eye_look_config, parsed_head, head_texs, head_main, head_shape_keys, head_skel,
         head_meshes, head_mouth_patterns, head_eye_patterns, head_eyebrow_patterns, head_face_settings,
-        head_eye_materials, head_fbs_sources, body_rest, body_dynamics, body_colliders, clothes_dynamics, head_rest, })
+        foreground_queues, head_eye_materials, head_fbs_sources, body_rest, body_dynamics, body_colliders, clothes_dynamics, head_rest, })
 }
 
 /// What the lists stage (OK_PROFILE "lists+mods+guids") hands the rest of the open. The two scopes hold the
@@ -2942,28 +3015,6 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     eprintln!("ok-extract: global toon ramp bytes={}", ramp_png.as_ref().map_or(0, Vec::len));
     let mods_dir = game_root.join("mods");
     let t_sub = Instant::now();
-    // The card's own zipmods first, the whole tree only if a lookup misses them (list.rs `ChaListCatalog::deferred`).
-    // Merging the catalogues of every archive under mods/ costs about 1.3 s of every original-card open on this
-    // machine, with the sqlite cache or without it, and a card's questions are nearly all about the archives it names
-    // (2026-11-18, the user: reading an original card should not read every mod, only the mods it uses). Answers do
-    // not change: a miss still reaches the whole tree. OK_WHOLE_MODS_CATALOGUE=1 goes back to building it up front.
-    let card_mods: Option<Vec<PathBuf>> = (std::env::var_os("OK_WHOLE_MODS_CATALOGUE").is_none()).then(|| {
-        parsed_card.as_ref().map(|c| {
-            let wanted: std::collections::HashSet<String> = c.resolves.iter().map(|r| r.mod_id.clone())
-                .chain([&c.body_guid, &c.penis_guid, &c.balls_guid].into_iter().flatten().cloned())
-                .filter(|g| !g.is_empty()).collect();
-            if wanted.is_empty() { return Vec::new(); }
-            let mut zips: Vec<PathBuf> = crate::mods::find_guids(&mods_dir, Some(&wanted)).into_values().collect();
-            zips.sort(); zips.dedup(); zips
-        }).unwrap_or_default()
-    });
-    let mod_catalog_shared = match &card_mods {
-        Some(zips) => crate::list::card_mods_catalog(&mods_dir, zips),
-        None => crate::list::load_mods_catalog_shared(&mods_dir),
-    };
-    let mod_catalog = &*mod_catalog_shared;
-    profile_tick("lists: mods catalog", t_sub);
-    let t_sub = Instant::now();
     let guid_index: std::collections::HashMap<String, PathBuf> = parsed_card
         .as_ref()
         .map(|c| {
@@ -2980,6 +3031,30 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     // variants. The game derives state availability and linked clothing from
     // these entries before DrawClothes, including for clothes later hidden.
     profile_tick("lists: guids", t_sub);
+    let t_sub = Instant::now();
+    // The card's own zipmods first, the whole tree only if a lookup misses them (list.rs `ChaListCatalog::deferred`).
+    // Merging the catalogues of every archive under mods/ costs about 1.3 s of every original-card open on this
+    // machine, with the sqlite cache or without it, and a card's questions are nearly all about the archives it names
+    // (2026-11-18, the user: reading an original card should not read every mod, only the mods it uses). Answers do
+    // not change: a miss still reaches the whole tree. OK_WHOLE_MODS_CATALOGUE=1 goes back to building it up front.
+    //
+    // The archives are `guid_index` above, never a lookup of its own: an OK card answers only the questions its
+    // conversion recorded (okstrict / tree_answers), so asking `find_guids` with a different GUID set -- the
+    // body/penis/balls uncensor GUIDs added to the resolve list -- was a question no card had an answer for, and
+    // every OK card that names a mod stopped opening with "okLt guids ..." (2026-11-19, crowd_C090 in the reader).
+    // Only an original card: an OK card's open reads nothing of the mods tree at all (okstrict.rs), and its
+    // catalogue is its own recorded answers -- reading even the archives it names is a gap ("GAMEFS zip mods/...").
+    let mod_catalog_shared = if std::env::var_os("OK_WHOLE_MODS_CATALOGUE").is_none()
+        && parsed_card.is_some() && crate::okstrict::active().is_none() {
+        let mut zips: Vec<PathBuf> = guid_index.values().cloned().collect();
+        zips.sort();
+        zips.dedup();
+        crate::list::card_mods_catalog(&mods_dir, &zips)
+    } else {
+        crate::list::load_mods_catalog_shared(&mods_dir)
+    };
+    let mod_catalog = &*mod_catalog_shared;
+    profile_tick("lists: mods catalog", t_sub);
     let t_sub = Instant::now();
     let selected_clothes = parsed_card.as_ref().map(|card|
         select_card_clothes(card, outfit, &vanilla, &mod_catalog, &guid_index));
@@ -3122,6 +3197,51 @@ fn note_copy_body_targets(out: &mut Vec<(String, Vec<String>, i32)>, meshes: &[E
         if let Some((_, queue)) = targets.iter().find(|(id, _)| mesh.renderer_ids.contains(id)) {
             out.push((property.to_string(), mesh.renderer_names.clone(), *queue));
         }
+    }
+}
+
+/// `ChaControl.SetForegroundEyesAndEyebrow`: the card's `foregroundEyes`/`foregroundEyebrow` are 0 (the player's
+/// own config decides, and a fresh install has both off), 1 (off) or 2 (on). "On" makes
+/// `ChaForegroundComponent.SetForeground` set `SetRenderQueue_Custom.isSetQueue`, which writes the prefab's
+/// `m_queues` into each listed material's render queue instead of `m_queuesBackup`, so the eyes (or the eyebrow)
+/// draw over the hair. Only a card that says 2 changes anything here: 0 and 1 keep what the prefab already gave us.
+/// An OK card sealed before `foreground_render_queues` existed answers an empty list — say so rather than drawing
+/// the eyes behind the hair without a word (`--oklib answers` / `ok_cards.lua reseal` records it).
+fn apply_foreground_eyes(parts: &mut [crate::session::SessionPart],
+    queues: &[(String, Vec<(i32, i32, i32)>)], card: Option<&crate::card::CardInfo>) {
+    let Some(card) = card else { return };
+    let (eyes, eyebrow) = (card.foreground_eyes == 2, card.foreground_eyebrow == 2);
+    if !eyes && !eyebrow { return; }
+    if queues.is_empty() {
+        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} requested but the head prefab's \
+            SetRenderQueue_Custom data is missing (an OK card sealed before this query: reseal it to apply)");
+        return;
+    }
+    let mut applied = 0;
+    for (name, datas) in queues {
+        // A part keeps the source mesh name (`SessionPart::from_mesh`), which is the component's GameObject name;
+        // the `head_` prefix only exists in the OBJ file stems. The component's `id` is a material index.
+        let want = name.clone();
+        let is_eyebrow = name.eq_ignore_ascii_case("cf_O_mayuge");
+        if is_eyebrow && !eyebrow { continue; }
+        if !is_eyebrow && !eyes { continue; }
+        // The component lists one entry per material of that renderer; the eye and eyebrow renderers each carry one
+        // in the vanilla head, and a part does not keep its submesh index, so a renderer with several entries gets
+        // the first one and says so instead of guessing which part is which material.
+        let Some((_, on, off)) = datas.iter().min_by_key(|(id, _, _)| *id) else { continue };
+        if datas.len() > 1 {
+            eprintln!("ok-extract: foreground queue {name} has {} materials; applying the first ({on})", datas.len());
+        }
+        for part in parts.iter_mut().filter(|p| p.role == "head" && p.name.eq_ignore_ascii_case(&want)) {
+            let Some(mat) = part.source_material.as_mut() else { continue };
+            eprintln!("ok-extract: foreground queue {} {} -> {on}", part.name, off);
+            mat.render_queue = *on as _;
+            applied += 1;
+        }
+    }
+    if applied == 0 {
+        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} matched no head part \
+            (prefab renderers: {})", queues.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(","));
     }
 }
 

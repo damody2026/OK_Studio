@@ -40,6 +40,22 @@ KKRUNTIMEPOSE_API bool OKDescribeRuntimeMaterialPart(OkSession*,int32 NativePart
 // Returned textures are immutable and may be shared across characters. A caller
 // needing editable pixels must create a private texture rather than mutate these.
 KKRUNTIMEPOSE_API UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture&,FString& Error);
+
+/** The character textures kept for a switch back; they hold a refcount, so GC cannot take them. */
+struct FKKRuntimeTextureKeepStats {int32 Entries=0,StaleEntries=0;int64 Bytes=0,StaleBytes=0;};
+KKRUNTIMEPOSE_API FKKRuntimeTextureKeepStats OKRuntimeTextureKeepStats();
+/** Marks every kept texture as untouched; the load that follows touches the ones it uses itself. */
+KKRUNTIMEPOSE_API void OKMarkKeptRuntimeTexturesStale();
+/** Releases the kept textures nothing has touched since the mark (returns how many, and their bytes). */
+KKRUNTIMEPOSE_API int32 OKReleaseStaleKeptRuntimeTextures(int64* OutBytes=nullptr);
+// Diagnostic (log only, gated by ok.LogKeptTextureLife, default off), for the GPU page fault of 2026-11-19.
+// Records who a card texture was handed to, so that at the moment the kept cache lets the texture go we can ask
+// of every material that ever received it: is that material still here, and what does that parameter point at now?
+// Three answers, three different repairs: still here pointing elsewhere (render-thread copy is stale),
+// still here pointing at this one (the material itself is unreachable), or gone (the holder is not a material).
+KKRUNTIMEPOSE_API void OKRecordRuntimeTextureHandoff(const UTexture2D* Texture,const class UMaterialInstanceDynamic* Material,FName Parameter);
+/** Releases every kept texture. */
+KKRUNTIMEPOSE_API void OKReleaseKeptRuntimeTextures();
 // Low-memory PC (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md): on when the machine has under 48 GB of RAM or under
 // 20 GB of VRAM (the city took 12-13 GB of VRAM at full quality, so a 16 GB card counts too), or with -OKLowMemory; -OKNoLowMemory turns it off. Runtime character textures are then capped to
 // kk.RuntimeTextureLowMemoryMaxSize (512) and their CPU copy is dropped once uploaded.

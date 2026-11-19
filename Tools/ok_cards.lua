@@ -4,10 +4,11 @@
 --   Tools\lua\lua.exe Tools\ok_cards.lua convert <card list> <out dir> [--zipmods DIR] [--workers N]
 --     ok-extract --oklib cards: worker processes each set up the library once, then convert their share (one pass per
 --     card, okstrict.rs). Zipmods come from DIR only (default D:/KoikatuSunshine/mods), never from a game.
---   Tools\lua\lua.exe Tools\ok_cards.lua verify <card dir|list> [--jobs N] [--report FILE]
+--   Tools\lua\lua.exe Tools\ok_cards.lua verify <card dir|list> [--jobs N] [--report FILE] [--sample N]
 --     Every card in a new process with an empty temporary folder and no disk cache: every outfit must open strictly
 --     (okLc/okLt and shared resources only). A gap is a conversion bug. Do not run conversions meanwhile. Also lists the
 --     outfits that name items nothing provides (outfit_gaps.rs: severe or minor); those do not fail it.
+--     --sample N takes every Nth card: the quick check to run after touching anything the open asks of the mods tree.
 --   Tools\lua\lua.exe Tools\ok_cards.lua reseal <card dir|list> [--jobs N] [--report FILE] [--dry-run 1]
 --     Strict-opens every card and re-seals in place the ones that do not open (okLt recorded again, library data
 --     copied in; okId, voice and preview kept), then opens them again. The repair for cards older than the code:
@@ -115,6 +116,17 @@ if cmd == "convert" and pos[2] then
 elseif cmd == "verify" and pos[1] then
   local cards, rows, failed = cards_of(pos[1]), {}, 0
   local jobs = tonumber(opts.jobs) or 8
+  -- --sample N: every Nth card (the first one always), so the check after touching the open path costs a minute
+  -- instead of the whole local library. Deterministic, never random: the same cards every run, so a pass means the
+  -- same thing twice. A release still runs it without --sample (2026-11-19: a changed question key broke every OK
+  -- card that names a mod and nobody noticed, because nothing cheap enough had been run, see Docs/ERROR_LOG.md).
+  local sample = tonumber(opts.sample)
+  if sample and sample > 1 then
+    local picked = {}
+    for i = 1, #cards, sample do picked[#picked + 1] = cards[i] end
+    print(("verify: --sample %d, %d of %d cards"):format(sample, #picked, #cards))
+    cards = picked
+  end
   each(cards, jobs, function(card) return { opts.exe, "X:/NoGame", "--oklib", "strict-check", lib, card } end, function(card, text)
     local line = text:match("OKSTRICT [^\n]*") or ("OKSTRICT error\t" .. card .. "\tno result")
     local passed = line:find("^OKSTRICT ok") ~= nil

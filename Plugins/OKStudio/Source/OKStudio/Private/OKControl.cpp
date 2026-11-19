@@ -340,6 +340,19 @@ namespace
 				// Each request named in an Insights trace: a low-memory walk had 70-85 ms game-thread hitches inside this ticker
 				// with nothing under them (2026-11-18), and the route was not to be told.
 				TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(TEXT("OKControl ") + Request.Http->RelativePath.GetPath()));
+				// Who sent it. Several sessions drive games on one machine, and a tool that forgets OK_GAME_PID lands on
+				// someone else's game: without this line the log cannot say whose command a page turn or a console
+				// command was (2026-11-19). The caller says so in X-OK-From (ok-game-mcp: pid and lane); anything else
+				// is "unknown". /health and /state are polled, so they stay out of the log.
+				{
+					const FString Path = Request.Http->RelativePath.GetPath();
+					if (Path != TEXT("/health") && Path != TEXT("/state"))
+					{
+						const TArray<FString>* From = Request.Http->Headers.Find(TEXT("x-ok-from"));
+						UE_LOG(LogTemp, Display, TEXT("OKControl %s from %s"), *Path,
+							From && From->Num() ? *(*From)[0] : TEXT("unknown"));
+					}
+				}
 				const FRoute* Route = Port ? Port->Find(Request.Http->RelativePath.GetPath()) : nullptr;
 				if (Route && EnumHasAnyFlags(Route->Verbs, Request.Http->Verb)) Route->Handler(*Request.Http, Done);
 				else

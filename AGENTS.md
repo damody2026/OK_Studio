@@ -597,7 +597,7 @@ Get-ChildItem 'Content/IndependentResources' -Directory | ForEach-Object {
 - Unreal Engine **5.8.4**（PhysX 5.11 分支），本機路徑預設 `E:\PhysX\UE5.8`；腳本一律透過 `Tools\ok_engine.lua` 取得，可用環境變數 `OK_ENGINE_ROOT` 或 `Tools\engine.local.json` 覆寫。引擎需帶的補丁見 `Tools\EnginePatches\README.md`。
 - Visual Studio 的 C++ 遊戲開發工具及 Windows SDK，版本須符合 UE 5.8 工具鏈要求。
 - Rust／Cargo，使用 Windows MSVC 工具鏈；`cargo` 須在 PATH，或位於 `%USERPROFILE%\.cargo\bin\cargo.exe`。
-- 使用者自己的 Koikatsu Sunshine 安裝及卡片需要的 mods。本機遊戲根目錄是 `C:\portable\KoikatuSunshine`，注意資料夾拼字。
+- 使用者自己的 Koikatsu Sunshine 安裝及卡片需要的 mods。**遊戲根目錄是本機設定，這份文件與 `Config/DefaultGame.ini` 裡的路徑都只是範例，不保證在你這台機器上存在**（E 這台 2026-11-19 當時是 `D:\XKoikatuSunshine`，版控的 ini 還寫著已經不存在的 `D:/KoikatuSunshine`）。實際路徑用讀卡器「設定 › 遊戲目錄」設，它覆寫 ini；不要為了自己的機器去改版控那行。指到不存在的資料夾時讀卡器會在畫面與 log 講明，見 [Docs/ERROR_LOG.md](Docs/ERROR_LOG.md) 2026-11-19 那條。注意資料夾拼字。
 
 以下命令以本機路徑為例，請依安裝位置調整。`.uproject` 的 `EngineAssociation` 目前留空，可直接指定 UE 5.8 Editor 開啟。
 
@@ -704,7 +704,7 @@ cargo test --release --manifest-path .\Tools\ok-extract\Cargo.toml --lib
 - [多層動畫](Docs/UNREAL_ANIMATOR_MULTILAYER.md)、[圖層時鐘](Docs/UNREAL_ANIMATOR_LAYER_CLOCK.md)、[Trigger re-entry](Docs/UNREAL_ANIMATOR_TRIGGER_REENTRY.md)、[基底 CrossFade](Docs/UNREAL_ANIMATOR_CROSSFADE.md)、[圖層 CrossFade](Docs/UNREAL_ANIMATOR_LAYER_CROSSFADE.md)。
 - [原始卡匯入](Docs/CARD_IMPORTER_NATIVE365.md)、[原生基礎資源](Docs/NATIVE_RESOURCE_COPY368.md)、[完整部件動畫](Docs/COMPLETE_CHARACTER_ANIMATION372.md)、[共用動畫切換](Docs/SHARED_ANIMATION_SWITCH378.md)。
 - [全服裝 APNG](Docs/APNG_ALL_OUTFITS.md)、[卡片載入 identity](Docs/CARD_LOAD_SELECTION380.md)、[Gallery 背景重開](Docs/GALLERY_ASYNC_RELOAD381.md)、[效能與快取](Docs/ANIMATION_PERFORMANCE389.md)、[相機輸入](Docs/CAMERA_INPUT390.md)。
-- [開卡效能優化（2026-11-17）](Docs/CARD_OPEN_PERF_20261117.md)：冷開的量測方法、做了什麼各省多少、**量過之後回退或放棄的與原因**（別重走一遍）。
+- [開卡效能優化（2026-11-17）](Docs/CARD_OPEN_PERF_20261117.md)：冷開的量測方法、做了什麼各省多少、**量過之後回退或放棄的與原因**（別重走一遍）。**改到開卡路徑（`Tools/ok-extract` 的 `extract`／`entries`／`push`／貼圖合成／`oklib`，或讀卡器的載入流程）之後，跑一次標準冷開基準並和上次比**：`.\Tools\lua\lua.exe Tools\card_open_baseline.lua -Compare latest`（固定六張代表卡、丟一輪暖機、總計超過約 3% 才算真的變化，`work from scratch` 是和機器忙不忙無關的那個數；跑之前確認機器上只有一個 Unreal）。
 - [百人房間](Docs/CROWD_ROOM.md)、[百人房間環境](Docs/CROWD_ROOM_ENVIRONMENT.md)、[完整服裝 APNG（百人）](Docs/CROWD_APNG.md)、[人群 GPU 動畫](Docs/CROWD_GPU_ANIMATION_SCENE_CONTROL.md)、[人群品質 120 FPS](Docs/CROWD_QUALITY_120FPS.md)。
 - [街區交流操作](Docs/STREET_SOCIAL_PLAY_GUIDE.md)、[街區交流完成狀態](Docs/STREET_SOCIAL_COMPLETION_PLAN.md)、[街區功能清單](Docs/STREET_SOCIAL_FUNCTIONAL_CHECKLIST.md)、[街區語音對話](Docs/STREET_SOCIAL_VOICED_CONVERSATION.md)。
 - [人物編輯 MCP 使用說明](Docs/CHARACTER_EDITOR_MCP_USAGE.md)、[人物編輯 MCP 計畫](Docs/CHARACTER_EDITOR_MCP_PLAN.md)、[白色油漆水槍](Docs/PAINT_SPRAY396.md)、[Tripo 頭髮 APNG](Docs/TRIPO_HAIR_APNG.md)、[Minimalist 無陰影角色](Docs/CHARACTER_MINIMALIST_NO_SHADOW.md)。

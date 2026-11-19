@@ -28,6 +28,9 @@
 #include "UnrealClient.h"
 #include "UObject/UObjectIterator.h"
 #include "Blueprint/UserWidget.h"
+#include "Core/DreamScreenUISubsystem.h"
+#include "Core/Components/DreamWidget.h"
+#include "HAL/FileManager.h"
 #include "Blueprint/WidgetTree.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/SWindow.h"
@@ -167,7 +170,21 @@ void Routes()
  Bind(TEXT("/screenshot"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   bool Ui=true;Body(Req)->TryGetBoolField(TEXT("ui"),Ui);
   const FString File=OKControl::Checkout()/FString::Printf(TEXT("Saved/OKControl/shots/%u-%04d.png"),FPlatformProcess::GetCurrentProcessId(),++GShots);
-  FScreenshotRequest::RequestScreenshot(File,Ui,false);FObject O=Result(true);O->SetStringField(TEXT("path"),File);Reply(Done,O);});
+  // ui=false: the request leaves Slate's UI (UMG) out, but DreamGUI draws its screen into the scene, so the reader's panels
+  // came along (2026-11-19, f-yvonne's before／after shots). Its screen roots are hidden for the capture -- a frame first,
+  // for the hidden screen to reach the render thread -- and shown again once the file is written (or after 5 s).
+  TArray<TWeakObjectPtr<UDreamWidget>> Hidden;
+  if(!Ui)if(UWorld* W=World())if(UDreamScreenUISubsystem* Screens=UDreamScreenUISubsystem::Get(W))
+   for(const int32 I:Screens->GetScreenPlayerIndices())if(UDreamWidget* Root=Screens->GetOrCreateScreenRootForUserIndex(I))if(Root->GetShown()){Root->SetShown(false);Hidden.Add(Root);}
+  if(Hidden.IsEmpty())FScreenshotRequest::RequestScreenshot(File,Ui,false);
+  else FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([File,Hidden,Until=FPlatformTime::Seconds()+5.,Frames=0,bRequested=false](float) mutable
+  {
+   if(!bRequested){if(++Frames<2)return true;FScreenshotRequest::RequestScreenshot(File,false,false);bRequested=true;return true;}
+   if(IFileManager::Get().FileSize(*File)<=0&&FPlatformTime::Seconds()<Until)return true;
+   for(const TWeakObjectPtr<UDreamWidget>& Root:Hidden)if(Root.IsValid())Root->SetShown(true);
+   return false;
+  }));
+  FObject O=Result(true);O->SetStringField(TEXT("path"),File);O->SetNumberField(TEXT("dream_screens_hidden"),Hidden.Num());Reply(Done,O);});
  // {key, seconds}: straight into the player controller's input (APlayerController::InputKey), pressed and released after
  // that long. Past every UI -- Slate, UMG, DreamGUI never see it: for game input. What a UI takes: /type.
  Bind(TEXT("/key"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){

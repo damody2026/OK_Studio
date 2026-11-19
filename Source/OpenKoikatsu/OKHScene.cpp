@@ -1,4 +1,5 @@
 #include "OKHScene.h"
+#include "KKTextureLifetimeLog.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Camera/CameraActor.h"
 #include "Camera/PlayerCameraManager.h"
@@ -4719,7 +4720,7 @@ void UOKHScenePanel::TickCoordinates(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCo
     const double Now=FPlatformTime::Seconds();if(Now-CoordShown<.2)return;CoordShown=Now;
     FOKCoordPicture Picture;
     for(int32 N=0;N<16&&CoordLoad->Done.Dequeue(Picture);++N){--CoordLoad->Waiting;
-        UTexture2D* Texture=CoordImages.IsValidIndex(Picture.Index)?UTexture2D::CreateTransient(Picture.Width,Picture.Height,PF_B8G8R8A8):nullptr;if(!Texture)continue;
+        UTexture2D* Texture=CoordImages.IsValidIndex(Picture.Index)?UTexture2D::CreateTransient(Picture.Width,Picture.Height,PF_B8G8R8A8):nullptr;if(!Texture)continue;OKLogRuntimeTextureLife(TEXT("created(hscene-coord)"),Texture,0);
         FByteBulkData& Bulk=Texture->GetPlatformData()->Mips[0].BulkData;FMemory::Memcpy(Bulk.Lock(LOCK_READ_WRITE),Picture.Pixels.GetData(),Picture.Pixels.Num());Bulk.Unlock();Texture->UpdateResource();
         CoordTextures.Add(Texture);CoordImages[Picture.Index]->SetColorAndOpacity(FLinearColor::White);CoordImages[Picture.Index]->SetBrushFromTexture(Texture);}
 }

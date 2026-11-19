@@ -3430,6 +3430,14 @@ void UDreamUIFontData_FreeTypeRender::ReleaseFontTexture()
 		Texture->RemoveFromRoot();
 	}
 	Texture = nullptr;
+	for (UTexture2DArray* Retired : RetiredTextures)
+	{
+		if (IsValid(Retired) && Retired->IsRooted())
+		{
+			Retired->RemoveFromRoot();
+		}
+	}
+	RetiredTextures.Reset();
 }
 void UDreamUIFontData_FreeTypeRender::RenewFontTexture()
 {
@@ -3452,9 +3460,22 @@ void UDreamUIFontData_FreeTypeRender::RenewFontTexture()
 
 	if (OldTexture)
 	{
-		if (OldTexture->IsRooted())
+		// Kept rooted a while: draw data built before this change may still point at it (RetiredTextures). Only the
+		// last few; an older one has long been replaced everywhere.
+		if (!OldTexture->IsRooted())
 		{
-			OldTexture->RemoveFromRoot();
+			OldTexture->AddToRoot();
+		}
+		RetiredTextures.Add(OldTexture);
+		constexpr int32 MaxRetiredTextures = 4;
+		while (RetiredTextures.Num() > MaxRetiredTextures)
+		{
+			UTexture2DArray* Oldest = RetiredTextures[0];
+			RetiredTextures.RemoveAt(0);
+			if (IsValid(Oldest) && Oldest->IsRooted())
+			{
+				Oldest->RemoveFromRoot();
+			}
 		}
 	}
 

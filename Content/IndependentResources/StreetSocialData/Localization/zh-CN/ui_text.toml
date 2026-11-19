@@ -573,6 +573,13 @@ gift_held_out_note = "（系统说明，不是他说的话：他拿出{item_name
 you_speaker_label = "你："
 your_label = "你的"
 
+[ui.editor_clothes]
+accessory_group_main = "主"
+accessory_group_sub = "副"
+sleeves_1 = "袖子 1"
+sleeves_2 = "袖子 2"
+sleeves_3 = "袖子 3"
+
 [ui.elevator]
 dorm_upstairs_restricted = "女生宿舍的楼上是寝室，男生不能上去。"
 floor_arrived = "{floor_label} 到了。"
@@ -2748,3 +2755,27 @@ cannot_pay_note = "（他钱包不够付车资 {fare, number, ::currency}，没�
 no_bus_note = "（这段路没有合适的公车。）"
 no_taxi_note = "（这段路近，不用搭计程车。）"
 judge_ride = "\n他们正一起走一段远路，可以搭公车或计程车。若他提议或答应搭公车，action 填 take_bus；搭计程车填 take_taxi。"
+
+# 读卡器属性编辑：每个 KKEx 外挂区段一个分组名（ok-extract 的 PLUGIN_SECTIONS）。
+[reader.plugin_group]
+material_editor = "材质编辑器"
+hair_accessory = "发饰进阶设定"
+hair_shadow_color = "头发阴影色"
+pushup = "内衣塑形"
+dynamic_bone_editor = "骨骼物理"
+more_accessories = "额外饰品"
+accessory_states = "饰品状态"
+accessory_state_sync = "饰品状态同步"
+skin_overlay = "肤色覆盖贴图"
+clothes_overlay = "衣物覆盖贴图"
+eye_control = "眼睛开合"
+eye_shaking = "眼睛高光抖动"
+uncensor_selector = "身体替换"
+
+[reader.unsupported]
+hair_transform_not_applied = "卡片存得下这一项，但现在的渲染还没用它，改了不会有任何变化。"
+
+[ui.editor_eyes]
+foreground_config = "跟随游戏设定"
+foreground_off = "画在后面"
+foreground_on = "画在前面"

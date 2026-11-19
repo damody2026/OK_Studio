@@ -1,6 +1,7 @@
 ﻿// Copyright 2019-Present LexLiu. All Rights Reserved.
 
 #include "Utils/DreamUIUtils.h"
+#include "HAL/IConsoleManager.h"
 #include "Core/DreamGUISettings.h"
 #include "Sound/SoundBase.h"
 #include "TextureResource.h"
@@ -16,6 +17,15 @@
 #endif
 
 
+
+// Diagnostic (log only, default off), for the GPU page fault of 2026-11-19: this is one of the few places
+// that makes an auto-named UTexture2D ("Texture2D_<n>") in B8G8R8A8, which is what the page-fault report
+// named. It carries its own cvar because this module must not depend on KKUnityBundle.
+static TAutoConsoleVariable<int32> CVarDreamUILogTextureCreate(
+	TEXT("DreamGUI.LogTextureCreate"), 0,
+	TEXT("Log textures created by FDreamUIUtils::CreateTexture (diagnostic, off by default)."),
+	ECVF_Default);
+
 #define LOCTEXT_NAMESPACE "DreamUIUtils"
 
 UTexture2D* FDreamUIUtils::CreateTexture(int32 InSize, FColor InDefaultColor, UObject* InOuter, FName InDefaultName)
@@ -25,6 +35,11 @@ UTexture2D* FDreamUIUtils::CreateTexture(int32 InSize, FColor InDefaultColor, UO
 		InDefaultName,
 		RF_Transient
 		);
+	if (CVarDreamUILogTextureCreate.GetValueOnAnyThread() != 0 && ResultTexture)
+	{
+		UE_LOG(LogTemp, Display, TEXT("DreamGUI texture create: name=%s %dx%d frame=%u"),
+			*ResultTexture->GetFName().ToString(), InSize, InSize, GFrameNumber);
+	}
 	auto PlatformData = new FTexturePlatformData();
 	PlatformData->SizeX = InSize;
 	PlatformData->SizeY = InSize;

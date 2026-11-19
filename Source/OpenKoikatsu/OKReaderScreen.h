@@ -59,8 +59,17 @@ public:
 	bool IsOpen() const { return bOpen; }
 	// Copy the UMG control's state into this one. Cheap when nothing changed.
 	void Sync();
-	// A click on it, as the pointer would (ok.ReaderScreen press): false when it is not a shown, enabled button.
+	// A click on it, as the pointer would (ok.ReaderScreen press): false when it is not a shown, enabled button or toggle
+	// (a toggle flips).
 	bool Press();
+	// Set its value as a person would (ok.ReaderScreen set): a slider's number, a toggle's on／off／1／0, a drop-down's
+	// option text or index, an input's text. False when it is not shown, enabled, or the value does not fit.
+	bool SetValue(const FString& Value,FString* OutNote=nullptr);
+	// The UMG control behind it takes input (a header always does): press/set say "disabled" instead of doing nothing.
+	bool IsOperable() const;
+	// On screen now: itself and every parent shown and active. GetShown is only its own flag, and a control on a
+	// hidden tab or in a folded drawer keeps it (e-cardload 2026-11-19: no control was ever marked [not shown]).
+	bool IsOnScreen() const;
 	const FString& GetShownText() const { return ShownText; }
 
 protected:
@@ -132,9 +141,36 @@ public:
 	FString CurrentCategory() const;
 	bool SelectCategory(const FString& Name);
 	bool SelectSub(const FString& Name);
-	// Press the shown control with this text (the Index-th of several; exact text first, then containing it).
-	bool PressControl(const FString& Text,int32 Index);
+	// Press the shown control named by Text: its path ("動作與表情›眼睛：面向前方", ControlPath) or its text. A text
+	// several shown controls have (exactly, or failing that, containing it) is ambiguous: nothing is pressed unless
+	// Index (>=0, "#N") picks one, and OutNote lists the candidates' paths.
+	bool PressControl(const FString& Text,int32 Index,FString* OutNote=nullptr,const FString* SetTo=nullptr);
+	// "set key=<registry key> = <value>": the control showing that key (OKCharacterMCPRegistry::Parameters), on whatever
+	// page has it (the page is opened first), set as a person would. Property rows (paged, per card) are not reached yet.
+	bool SetByKey(const FString& Key,const FString& To,FString* OutNote=nullptr);
+	// Where a control is: region or drawer or category›sub, then the text it shows. Stable while the layout is.
+	FString ControlPath(const UOKDreamControl* C) const;
+	// Every shown control, path per line (ok.ReaderScreen controls).
+	void ListControls(FOutputDevice& Out,const FString& Filter) const;
+	// One line of what the screen and the controller hold and of the live textures (ok.ReaderScreen resources): run it
+	// after each card of a long session to see whether anything only grows.
+	void ListResources(FOutputDevice& Out) const;
+	// The control audit (ok.ReaderScreen audit): every page shown in turn, then each operable UMG control of the old
+	// screen said to be mirrored on some page or not, and the short names a page shows twice. Written to
+	// Saved/Reports/reader-control-audit.txt too. Returns to the page it was on.
+	void AuditControls(FOutputDevice& Out);
+	// Shown only while the controller's UMG layer is (the one-on-one and the studio collapse it): see Open.
+	void FollowController();
+	// "pages": where the pages come from and what was wrong; "pages builtin|file" / "reloadpages": build them again from
+	// there (the file read anew) and show the first tab.
+	void ReloadPages(const FString& Mode,FOutputDevice& Out);
+	// The card list: its N-th tile clicked as the pointer would, and that card's file (ok.ReaderScreen card).
+	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
+	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}
 	void ScrollLeftPage(float Progress);
+	// "pagefit": the shown page's height against the left scroll box (its view, how far it lets you scroll): a page
+	// taller than the view must scroll to its end (MISMATCH otherwise). Read a few frames after the page opens.
+	FString PageFit() const;
 	void ShowTabPublic(int32 Index){ShowTab(Index);}
 	void SetLeftWidth(float Width);
 	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
@@ -148,6 +184,12 @@ public:
 	// The card list's pictures held now, of how many tiles ("12/101"; "-" with no card list shown).
 	FString ThumbState() const;
 	float GetLeftWidth() const { return LeftWidth; }
+	// 顯示字級 (the controller's EditorFontSize, 設定／介面›介面): the whole screen drawn this much larger, 1 at the default 8.
+	float GetUiScale() const { return UiScale; }
+	static float UiScaleOf(const class UOKCharacterController* Controller);
+	// The render settings that keep the reader's GPU fault away (Docs/CARD_READER_DREAMGUI.md, PageFault), for the whole
+	// process from Open on: never given back (switching them while running was measured not to protect).
+	static void ReaderRenderSettings();
 	class UOKCharacterController* GetController() const;
 	// The 3D view between the two panels in viewport pixels (the screen canvas is 1080 design pixels high): what the HUD
 	// draws there (the height ruler) stays clear of the panels. False before the screen is laid out.
@@ -176,6 +218,7 @@ private:
 	int32 Sub=0;
 	float LeftWidth=560.f;
 	float RightWidth=440.f;
+	float UiScale=1.f;
 	// The camera bar's buttons at their natural widths, plus its padding: the 3D view between the panels keeps this much.
 	float CameraBarWidth=0.f;
 	bool bBuilt=false;
@@ -212,11 +255,12 @@ private:
 	// Raised when the list is rebuilt: decodes still on workers stop and never report back (a destroyed screen is caught by
 	// the weak pointer the report holds).
 	TSharedRef<FThreadSafeBool> ThumbCancel=MakeShared<FThreadSafeBool>(false);
-	// Pictures a tile has just let go of (scrolled far away, list rebuilt) stay referenced a few seconds before the
-	// collector may free them: DreamGUI's draw data built before the brush changed must not outlive its texture.
-	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> RetiredThumbs;
-	TArray<double> RetiredThumbTimes;
-	void RetireThumb(class UTexture2D* Texture);
+	// Every picture texture the list ever made, kept for the screen's life and reused (FreeThumbs: the ones no tile shows):
+	// none is collected while DreamGUI may still draw it.
+	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> ThumbPool;
+	TArray<class UTexture2D*> FreeThumbs;
+	void GiveBackThumb(class UTexture2D* Texture);
+	class UTexture2D* PutThumb(int32 Width,int32 Height,const TArray<uint8>& Bgra);
 	// The 遊戲目錄 page's fields and what they report (the folder count runs on a worker).
 	TWeakObjectPtr<UOKDreamControl> RootInput,RootStatus,LibraryInput,LibraryStatus;
 	int32 RootCheckGeneration=0;
@@ -228,6 +272,18 @@ private:
 	TOptional<TArray<FString>> WantedTargets,WantedProperties;
 
 	void BuildCategories();
+	// The pages from Config/ReaderEditor/pages.json (-ReaderPages=<file> overrides; Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md).
+	// A file that cannot be read keeps the built-in pages (BuildCategories' own) with the error in red; a bad entry is
+	// left out and named. Never the old UMG screen.
+	FString PagesFile() const;
+	// "file <path>" or "builtin"; what was wrong with the file (shown in red on every page and in the notice).
+	FString PagesSource;
+	TArray<FString> PagesErrors;
+	// The registry keys the definition file names (items' "key"): the audit's data-side column.
+	TArray<FString> PageKeys;
+	// ok.ReaderScreen pages builtin: build the hand-written pages even when the file reads (to compare audits).
+	bool bBuiltinPages=false;
+	void ShowPagesErrors(UDreamWidget* Page);
 	void BuildDrawers();
 	void BuildCameraBar();
 	void BuildPluginTools();
@@ -236,6 +292,7 @@ private:
 	void ClearPage();
 	void MarkCurrentCard();
 	void TickThumbnails();
+	void BuildEyeOverlayPage(UDreamWidget* Page);
 	void BuildGameRootPage(UDreamWidget* Page);
 	void CheckGameRoot(const FString& Root);
 	void CheckLocalLibrary(const FString& Library);

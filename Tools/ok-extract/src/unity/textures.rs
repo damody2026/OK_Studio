@@ -245,7 +245,7 @@ pub(crate) fn png_from_payload_uncached(tex: unity_asset_decode::texture::Textur
     } else if tex.format == TextureFormat::BC7 {
         // unity-asset-decode's validate() rejects BC7; decode it directly.
         let mut output = vec![0u32; (w as usize) * (h as usize)];
-        texture2ddecoder::decode_bc7(&tex.image_data, w as usize, h as usize, &mut output).ok()?;
+        crate::unity::bc7::decode(&tex.image_data, w as usize, h as usize, &mut output).ok()?;
         let rgba: Vec<u8> = output
             .iter()
             .flat_map(|&p| {

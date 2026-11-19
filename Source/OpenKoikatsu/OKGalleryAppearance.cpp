@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "KKTextureLifetimeLog.h"
 #include "OKComboBox.h"
 #include "OKAppearanceButton.h"
 #include "OKAppearanceCardJob.h"
@@ -67,7 +68,7 @@ void CopyPendingHeadEdits(const FKKCharacterFile& Source,FKKCharacterFile& Desti
  Destination.Face.ShapeValueFace=Source.Face.ShapeValueFace;Destination.Body=Source.Body;
 }
 UButton* Button(UWidgetTree* Tree,UHorizontalBox* Row,const TCHAR* Label){auto* B=Tree->ConstructWidget<UButton>();auto* T=Tree->ConstructWidget<UTextBlock>();T->SetText(FText::FromString(Label));T->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));B->SetContent(T);Row->AddChildToHorizontalBox(B)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));return B;}
-UTexture2D* Thumbnail(const FString& Path){TArray<uint8> Bytes;if(!FFileHelper::LoadFileToArray(Bytes,*Path))return nullptr;auto& Module=FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));auto Wrapper=Module.CreateImageWrapper(EImageFormat::PNG);if(!Wrapper||!Wrapper->SetCompressed(Bytes.GetData(),Bytes.Num())||Wrapper->GetWidth()>2048||Wrapper->GetHeight()>2048)return nullptr;TArray64<uint8> Raw;if(!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return nullptr;auto* Texture=UTexture2D::CreateTransient(Wrapper->GetWidth(),Wrapper->GetHeight(),PF_B8G8R8A8);if(!Texture)return nullptr;void* Data=Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);FMemory::Memcpy(Data,Raw.GetData(),Raw.Num());Texture->GetPlatformData()->Mips[0].BulkData.Unlock();Texture->UpdateResource();return Texture;}
+UTexture2D* Thumbnail(const FString& Path){TArray<uint8> Bytes;if(!FFileHelper::LoadFileToArray(Bytes,*Path))return nullptr;auto& Module=FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));auto Wrapper=Module.CreateImageWrapper(EImageFormat::PNG);if(!Wrapper||!Wrapper->SetCompressed(Bytes.GetData(),Bytes.Num())||Wrapper->GetWidth()>2048||Wrapper->GetHeight()>2048)return nullptr;TArray64<uint8> Raw;if(!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return nullptr;auto* Texture=UTexture2D::CreateTransient(Wrapper->GetWidth(),Wrapper->GetHeight(),PF_B8G8R8A8);if(!Texture)return nullptr;OKLogRuntimeTextureLife(TEXT("created(appearance-thumb)"),Texture,0);void* Data=Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);FMemory::Memcpy(Data,Raw.GetData(),Raw.Num());Texture->GetPlatformData()->Mips[0].BulkData.Unlock();Texture->UpdateResource();return Texture;}
 }
 void UOKAppearanceButton::SelectItem(){if(Owner)Owner->ApplyAppearanceItem(ItemKey);}
 void UOKCharacterController::BuildAppearanceControls(UVerticalBox* Parent){auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,Row,TEXT("圖片式外觀選擇"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnOpenAppearance);Button(WidgetTree,Row,TEXT("新增飾品欄位"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAddAccessorySlot);Parent->AddChild(Row);BuildPropertyControls(Parent);}
@@ -167,10 +168,24 @@ void UOKCharacterController::RefreshAccessorySlots(){
 }
 // The status line's word on what the card has for the shown target: where it is, or that its mod is not here.
 FString UOKCharacterController::CurrentAppearanceNote() const{
- const TSharedPtr<FJsonObject>* Current=AppearanceCurrent.Find(AppearanceTargetKey);if(!Current||!Current->IsValid())return FString();
- FString Item,Name,Guid;(*Current)->TryGetStringField(TEXT("item"),Item);(*Current)->TryGetStringField(TEXT("name"),Name);(*Current)->TryGetStringField(TEXT("guid"),Guid);
+ const TSharedPtr<FJsonObject>* Current=AppearanceCurrent.Find(AppearanceTargetKey);
+ FString Item,Name,Guid;if(Current&&Current->IsValid()){(*Current)->TryGetStringField(TEXT("item"),Item);(*Current)->TryGetStringField(TEXT("name"),Name);(*Current)->TryGetStringField(TEXT("guid"),Guid);}
+ // An item applied since the catalogue was read (AppearanceSelectedKeys, what the ▶ marks): the working card has it,
+ // and the catalogue's current is what the card had before. Say what is on her now, and what the card had.
+ if(const FString* Applied=AppearanceSelectedKeys.Find(AppearanceTargetKey);Applied&&!Applied->IsEmpty()&&*Applied!=Item)
+ {
+  auto Shown=[](const TSharedPtr<FJsonObject>& Row){const TSharedPtr<FJsonObject>* E=nullptr;FString N;
+   if(Row->TryGetObjectField(TEXT("entry"),E)&&E->IsValid()){(*E)->TryGetStringField(TEXT("name"),N);if(N.IsEmpty())N=FString::Printf(TEXT("類型 %d"),int32((*E)->GetNumberField(TEXT("id"))));}
+   return N;};
+  const FString Before=Name.IsEmpty()?FString():FString::Printf(TEXT("；套用前是「%s」"),*Name);
+  for(int32 I=0;I<AppearanceFiltered.Num();++I){const TSharedPtr<FJsonObject>& Row=AppearanceItems[AppearanceFiltered[I]];
+   if(Row->GetStringField(TEXT("key"))==*Applied)return FString::Printf(TEXT("\n目前是「%s」（剛套用，第 %d 頁，名稱前標 ▶%s）。"),*Shown(Row),I/32+1,*Before);}
+  for(const TSharedPtr<FJsonObject>& Row:AppearanceItems)if(Row->GetStringField(TEXT("key"))==*Applied)return FString::Printf(TEXT("\n目前是「%s」（剛套用，不在搜尋結果裡%s）。"),*Shown(Row),*Before);
+  return FString::Printf(TEXT("\n目前是剛套用的項目（不在這一類的清單裡%s）。"),*Before);
+ }
+ if(!Current||!Current->IsValid())return FString();
  if(Item.IsEmpty())return FString::Printf(TEXT("\n目前是「%s」：來源缺失，這台沒裝 mod %s。"),*Name,Guid.IsEmpty()?TEXT("（無 GUID）"):*Guid);
- for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Item)return FString::Printf(TEXT("\n目前是「%s」（第 %d 頁，標 ▸）。"),*Name,I/32+1);
+ for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Item)return FString::Printf(TEXT("\n目前是「%s」（第 %d 頁，名稱前標 ▶）。"),*Name,I/32+1);
  return FString::Printf(TEXT("\n目前是「%s」（不在搜尋結果裡）。"),*Name);
 }
 void UOKCharacterController::OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type){
@@ -213,15 +228,32 @@ void UOKCharacterController::TickAppearanceCatalogStatus(){
  const int32 Second=int32(FPlatformTime::Seconds()-AppearanceCatalogStarted);if(Second==AppearanceCatalogShownSecond)return;AppearanceCatalogShownSecond=Second;
  AppearanceStatus->SetText(FText::FromString(FString::Printf(TEXT("正在建立外觀目錄（讀遊戲的 abdata 與 mods），第一次約需數分鐘，之後會快取…已 %d 秒"),Second)));
 }
+// A path that was set but is not there must not read as "nothing is set": the folder can be renamed or on a
+// drive that is not mounted, and then every picker page is simply empty with nothing said (2026-11-19: the
+// version-controlled Root pointed at a folder that no longer existed, and the pages were blank in silence).
+FString UOKCharacterController::GameRootProblem() const
+{
+ auto* Root=UKKGameRoot::Get();const FString Dir=Root?Root->Root:FString();
+ if(Dir.IsEmpty())return TEXT("沒有設定遊戲資料夾");
+ if(!IFileManager::Get().DirectoryExists(*Dir))return FString::Printf(TEXT("設定的遊戲資料夾不存在：%s"),*Dir);
+ if(!IFileManager::Get().DirectoryExists(*(Dir/TEXT("abdata"))))return FString::Printf(TEXT("設定的資料夾底下沒有 abdata/：%s"),*Dir);
+ if(!IFileManager::Get().DirectoryExists(*(Dir/TEXT("mods"))))return FString::Printf(TEXT("設定的資料夾底下沒有 mods/：%s"),*Dir);
+ return FString();
+}
 void UOKCharacterController::RefreshAppearanceCatalog(bool bSelectNewestSlot){
  if(MaterializeAppearance([bSelectNewestSlot](UOKCharacterController* G){G->RefreshAppearanceCatalog(bSelectNewestSlot);}))return;
  auto* Root=UKKGameRoot::Get();AppearanceRoot=Root?Root->Root:FString();
- if(AppearanceRoot.IsEmpty()||!IFileManager::Get().DirectoryExists(*(AppearanceRoot/TEXT("abdata"))))
+ const FString Problem=GameRootProblem();
+ if(!Problem.IsEmpty())
  {
   // Nothing to list without the game's abdata/ and mods/: say where to set it instead of leaving the pickers blank.
   AppearanceTargets.Reset();AppearanceItems.Reset();AppearanceFiltered.Reset();AppearanceCurrent.Reset();AppearanceCatalogPath.Reset();
   if(AppearanceTarget)AppearanceTarget->ClearOptions();if(AppearanceGrid)AppearanceGrid->ClearChildren();
-  const FString Where=AppearanceRoot.IsEmpty()?TEXT("目前沒有設定。"):FString::Printf(TEXT("目前的「%s」底下沒有 abdata/。"),*AppearanceRoot);
+  const FString Where=Problem+TEXT("。");
+  UE_LOG(LogTemp,Warning,TEXT("OK appearance catalogue unavailable: %s"),*Problem);
+  // Loud on the reader's own screen too, not only on the Gallery's status line: a Root that was set but is not
+  // there used to leave every picker page blank with nothing said.
+  ScreenNote(7,20.f,FColor::Red,Problem+TEXT("\n到「設定 › 遊戲目錄」重新指定含 abdata/ 與 mods/ 的原作資料夾。"));
   AppearanceStatus->SetText(FText::FromString(TEXT("要先在「設定 › 遊戲目錄」指定遊戲資料夾（含 abdata/ 與 mods/ 的原作資料夾）才有選項；")+Where));
   if(AppearanceRootButton)AppearanceRootButton->SetVisibility(ESlateVisibility::Visible);
   return;
@@ -271,7 +303,7 @@ void UOKCharacterController::RebuildAppearancePage(){
 void UOKCharacterController::LoadAppearanceThumbnails(){
  if(bAppearanceThumbBusy||AppearanceButtons.IsEmpty())return;const int32 Generation=AppearancePageGeneration;bAppearanceThumbBusy=true;auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("thumbnails"));TArray<TSharedPtr<FJsonValue>> Keys;for(UOKAppearanceButton* B:AppearanceButtons)Keys.Add(MakeShared<FJsonValueString>(B->ItemKey));R->SetArrayField(TEXT("keys"),Keys);
  RunAppearanceRequest(R,[Generation](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bAppearanceThumbBusy=false;if(Generation!=G->AppearancePageGeneration){G->LoadAppearanceThumbnails();return;}if(!Data){G->AppearanceStatus->SetText(FText::FromString(TEXT("縮圖讀取失敗：")+Error));return;}
-  for(auto V:Data->GetArrayField(TEXT("thumbnails"))){auto Row=V->AsObject();FString Path;Row->TryGetStringField(TEXT("path"),Path);for(UOKAppearanceButton* B:G->AppearanceButtons)if(B->ItemKey==Row->GetStringField(TEXT("key"))){if(auto* T=Thumbnail(Path)){G->AppearanceTextures.Add(T);B->Thumbnail->SetBrushFromTexture(T);B->ThumbnailStatus->SetVisibility(ESlateVisibility::Collapsed);}else B->ThumbnailStatus->SetText(FText::FromString(TEXT("素材未提供縮圖")));}}
+  for(auto V:Data->GetArrayField(TEXT("thumbnails"))){auto Row=V->AsObject();FString Path;Row->TryGetStringField(TEXT("path"),Path);for(UOKAppearanceButton* B:G->AppearanceButtons)if(B->ItemKey==Row->GetStringField(TEXT("key"))){UTexture2D* T=nullptr;T=G->CachedThumb(Path);if(T){G->AppearanceTextures.Add(T);B->Thumbnail->SetBrushFromTexture(T);B->ThumbnailStatus->SetVisibility(ESlateVisibility::Collapsed);}else B->ThumbnailStatus->SetText(FText::FromString(TEXT("素材未提供縮圖")));}}
  });
 }
 bool UOKCharacterController::MaterializeAppearance(TFunction<void(UOKCharacterController*)> Complete){
@@ -443,4 +475,69 @@ void UOKCharacterController::ApplyAppearanceItem(const FString& Key){
    G->RebuildAppearancePage();
   }
  },CardJob);
+}
+
+// The pupil overlay page: Material Editor texture overrides on the eye materials (eye_overlays / eye_overlay_set,
+// Docs/READER_UI_APPEARANCE_API.md 9.3). Read from the card as it is now (the edit snapshot), written to a new work card.
+void UOKCharacterController::RequestEyeOverlays(){
+ if(bEyeOverlayBusy||bAppearanceBusy||bLoadInFlight||!Entries.IsValidIndex(SelectedIndex))return;
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png"));IFileManager::Get().MakeDirectory(*Folder,true);
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("eye_overlays"));R->SetStringField(TEXT("card"),Input);R->SetNumberField(TEXT("outfit"),OutfitIndex);
+ if(auto* GameRoot=UKKGameRoot::Get())AppearanceRoot=GameRoot->Root;	// as the catalog: the request reads the game's abdata
+ bEyeOverlayBusy=true;EyeOverlayStatus=TEXT("正在讀取這張卡的瞳孔覆蓋貼圖…");++EyeOverlayGeneration;
+ const int32 Selection=SelectedIndex;
+ RunAppearanceRequest(R,[Selection](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+  G->bEyeOverlayBusy=false;++G->EyeOverlayGeneration;
+  if(Selection!=G->SelectedIndex)return;
+  bool bValid=false;if(Data)Data->TryGetBoolField(TEXT("valid"),bValid);
+  G->EyeOverlayStatus.Reset();
+  if(!Data||!bValid){G->EyeOverlayData.Reset();FString Why=Failure;if(Data)Data->TryGetStringField(TEXT("error"),Why);G->EyeOverlayStatus=TEXT("讀不到瞳孔覆蓋貼圖：")+Why;return;}
+  G->EyeOverlayData=Data;G->EyeOverlayCard=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();G->EyeOverlayStatus.Reset();
+  UE_LOG(LogTemp,Display,TEXT("Eye overlays read: slots=%d candidates=%d"),Data->GetArrayField(TEXT("slots")).Num(),Data->GetArrayField(TEXT("candidates")).Num());
+ },CardJob);
+}
+void UOKCharacterController::SetEyeOverlay(const FString& Material,const FString& Property,const FString& Candidate){
+ if(bEyeOverlayBusy||bAppearanceBusy||bLoadInFlight||!Entries.IsValidIndex(SelectedIndex)||Material.IsEmpty()||Property.IsEmpty())return;
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));IFileManager::Get().MakeDirectory(*Folder,true);
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("eye_overlay_set"));R->SetStringField(TEXT("card"),Input);R->SetStringField(TEXT("output"),Output);
+ R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));R->SetNumberField(TEXT("outfit"),OutfitIndex);
+ R->SetStringField(TEXT("material"),Material);R->SetStringField(TEXT("property"),Property);if(!Candidate.IsEmpty())R->SetStringField(TEXT("candidate"),Candidate);
+ if(auto* GameRoot=UKKGameRoot::Get())AppearanceRoot=GameRoot->Root;
+ bEyeOverlayBusy=true;EyeOverlayStatus=Candidate.IsEmpty()?TEXT("正在清掉這個槽位的覆蓋貼圖…"):TEXT("正在套用覆蓋貼圖，完成後更新角色…");++EyeOverlayGeneration;
+ UE_LOG(LogTemp,Display,TEXT("Eye overlay set material=%s property=%s candidate=%s"),*Material,*Property,Candidate.IsEmpty()?TEXT("(clear)"):*Candidate);
+ const int32 Selection=SelectedIndex,Generation=LoadGeneration;
+ RunAppearanceRequest(R,[Selection,Generation,Output,CardJob](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+  G->bEyeOverlayBusy=false;++G->EyeOverlayGeneration;
+  if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration)return;
+  bool bValid=false;if(Data)Data->TryGetBoolField(TEXT("valid"),bValid);
+  if(!Data||!bValid){FString Why=Failure;if(Data)Data->TryGetStringField(TEXT("error"),Why);G->EyeOverlayStatus=TEXT("覆蓋貼圖套用失敗，保留目前角色：")+Why;return;}
+  // As an appearance item: the new work card becomes the selection, the head textures follow it.
+  G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->bIndependentCards=true;
+  FString UpdateError;const bool Incremental=CardJob->AppearanceSession&&IsValid(G->PreviewActor.Get())&&G->PreviewActor->ApplyHeadTextureSession(*CardJob->AppearanceSession,UpdateError);
+  G->PreviewResourceSignature.Empty();
+  if(Incremental)G->PreviewCardPath=Output;else G->StartLoad3D(false);
+  // Read again from the new card: the page asks once the reload is done (it waits while a load is in flight).
+  G->EyeOverlayStatus.Reset();G->EyeOverlayData.Reset();G->EyeOverlayCard.Reset();
+ },CardJob);
+}
+UTexture2D* UOKCharacterController::EyeOverlayThumb(const FString& Png){
+ if(Png.IsEmpty())return nullptr;
+ return CachedThumb(Png);
+}
+// A limit for the picker thumbnail cache: kept by file path, it only grew (88 thumbnails after the first card, 448 and
+// 102 MiB after thirty, 2026-11-19). 128 is four picker pages of 32. An evicted texture is only dropped from the cache:
+// tiles still showing it keep it (their brushes, DreamGUI's draw holds), and the next request for that file makes a new
+// one.
+static TAutoConsoleVariable<int32> CVarAppearanceThumbCacheMax(TEXT("ok.AppearanceThumbCacheMax"),128,TEXT("Picker thumbnails kept in the cache: N the N most recently used (default 128, four pages), 0 no limit."));
+UTexture2D* UOKCharacterController::CachedThumb(const FString& Path){
+ UTexture2D* T=nullptr;
+ if(TObjectPtr<UTexture2D>* Cached=AppearanceThumbCache.Find(Path))T=Cached->Get();
+ if(!T&&(T=Thumbnail(Path))!=nullptr){AppearanceThumbCache.Add(Path,T);++AppearanceThumbDecodes;}
+ if(!T)return nullptr;
+ AppearanceThumbOrder.Remove(Path);AppearanceThumbOrder.Add(Path);
+ const int32 Max=CVarAppearanceThumbCacheMax.GetValueOnGameThread();
+ while(Max>0&&AppearanceThumbOrder.Num()>Max){AppearanceThumbCache.Remove(AppearanceThumbOrder[0]);AppearanceThumbOrder.RemoveAt(0);}
+ return T;
 }

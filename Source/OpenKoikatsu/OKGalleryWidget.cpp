@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "KKTextureLifetimeLog.h"
 #include "OKHScene.h"
 #include "OKComboBox.h"
 #include "HAL/IConsoleManager.h"
@@ -137,7 +138,7 @@ namespace
 		{
 			return nullptr;
 		}
-		UTexture2D* Tex = UTexture2D::CreateTransient(Wrapper->GetWidth(), Wrapper->GetHeight(), PF_B8G8R8A8);
+		UTexture2D* Tex = UTexture2D::CreateTransient(Wrapper->GetWidth(), Wrapper->GetHeight(), PF_B8G8R8A8);OKLogRuntimeTextureLife(TEXT("created(gallery-png)"),Tex,0);
 		if (!Tex)
 		{
 			return nullptr;
@@ -1048,8 +1049,10 @@ void UOKGalleryWidget::NativeConstruct()
 		}
 	}
 	// The DreamGUI screen (DUI/Reader/ReaderScreen.dui) shows the controls; these UMG ones stay as its model, see-through
-	// and letting the pointer through. Opt-in with -OKDreamReader until it has been checked on screen (2026-11-18).
-	if(FParse::Param(FCommandLine::Get(),TEXT("OKDreamReader")))if((ReaderScreen=UOKReaderScreen::Open(this))!=nullptr)
+	// and letting the pointer through. It is the reader's interface from every entry (CardReaderDevelopment.cmd, MCP
+	// reader_launch, a stage exe run directly); -LegacyReader shows the old UMG gallery instead, kept for comparison
+	// until the new screen is complete (the user, 2026-11-19: the old UI is not to show up again).
+	if(!FParse::Param(FCommandLine::Get(),TEXT("LegacyReader")))if((ReaderScreen=UOKReaderScreen::Open(this))!=nullptr)
 	{
 		SetRenderOpacity(0.f);SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
@@ -1342,14 +1345,29 @@ void UOKCharacterController::SelectIndex(int32 Index)
 	RefreshOutfitList();
 	FString Body;
 	Body += FString::Printf(TEXT("%s %s (%s)\n"), *Selected.LastName, *Selected.FirstName, *Selected.Nickname);
-	Body += FString::Printf(TEXT("种类 %s  性别 %d  性格 %d\n"), *KindName(Selected.Header.Kind), Selected.Sex, Selected.Personality);
+	// Which kind of card this is, in the two senses the page used to blur into one: an OK card (its resources are inside
+	// it) or an original card, and which game it came from. "种类 KKS" alone read as if an OK card were an original one,
+	// which is why the list of missing sibling zipmods under it looked like a defect in the card (2026-11-19).
+	Body += FString::Printf(TEXT("卡片 %s  来源 %s  性别 %d  性格 %d\n"),
+		bIndependentCards ? TEXT("OK 卡（资源在卡内）") : TEXT("原作卡"),
+		*KindName(Selected.Header.Kind), Selected.Sex, Selected.Personality);
 	Body += FString::Printf(TEXT("头 %d  头发前/后/侧/扩 %d/%d/%d/%d\n"),
 		Selected.Face.HeadId, Selected.Hair.Front.Id, Selected.Hair.Back.Id, Selected.Hair.Side.Id, Selected.Hair.Extension.Id);
 	Body += FString::Printf(TEXT("脸滑杆 %d  身体滑杆 %d  服装0 %d\n"),
 		Selected.Face.ShapeValueFace.Num(), Selected.Body.ShapeValueBody.Num(),
 		Selected.Outfits.Num() > 0 ? Selected.Outfits[0].Clothes.Num() : 0);
 	Body += FString::Printf(TEXT("UAR %d  服装 %d\n"), Selected.Resolves.Num(), OutfitIndex);
+	// An OK card is self-contained: it opens from its own okLc/okLt plus the shared resources and never looks for a
+	// zipmod again (AGENTS.md「OK 卡自足」). So the sibling-zipmod scan belongs to original cards only — run on an OK
+	// card it listed every recorded mod as "缺少同目錄 zipmod", which is not something an OK card can lack. A gap in an
+	// OK card's own resources shows up as an error when it is opened, not as a missing-zipmod note on this page.
 	if (bIndependentCards)
+	{
+		Body += FString::Printf(TEXT("OK 卡：%d 项 mod 资源都录在卡内（okLc／okLt），不需要同目录 zipmod 或游戏 mods/。\n"),
+			Selected.Resolves.Num());
+		Body += TEXT("可編輯身材；載入 3D 後另存 APNG：原卡圖 3 秒＋T-pose 三視圖各 1 秒。\n");
+	}
+	else
 	{
 		LocalMods.BuildForCard(Entries[Index].Path);
 		for (const FKKLocalModRequirement& Item : LocalMods.Resolve(Selected.Resolves))
@@ -1411,7 +1429,7 @@ void UOKCharacterController::SelectIndex(int32 Index)
 							G->PendingPreviewFrames.Reset();
 							for(int32 I=0;I<Raw.Num();++I)
 							{
-								UTexture2D* Tex=UTexture2D::CreateTransient(Sizes[I].X,Sizes[I].Y,PF_B8G8R8A8);if(!Tex)break;
+								UTexture2D* Tex=UTexture2D::CreateTransient(Sizes[I].X,Sizes[I].Y,PF_B8G8R8A8);if(!Tex)break;OKLogRuntimeTextureLife(TEXT("created(gallery-apng)"),Tex,0);
 								FMemory::Memcpy(Tex->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE),Raw[I].GetData(),Raw[I].Num());
 								Tex->GetPlatformData()->Mips[0].BulkData.Unlock();Tex->UpdateResource();G->AnimatedPreviewTextures.Add(Tex);
 							}
@@ -2022,7 +2040,7 @@ void UOKCharacterController::FinishLoad3D(int32 Generation, FOkSession Session, 
  UWorld* World=GetWorld();
  const bool KeepView=AppearanceGeometryLoadGeneration==Generation&&IsValid(StalePreview)&&IsValid(StalePreview->StudioCam);
  AKKPreviewActor* Actor=World?World->SpawnActor<AKKPreviewActor>(KeepView?StalePreview->GetActorLocation():FVector(0,0,100),KeepView?StalePreview->GetActorRotation():FRotator::ZeroRotator):nullptr;
- if(!Actor){SetLoadBusy(false);PreviewActor=IsValid(StalePreview)?StalePreview.Get():nullptr;StalePreview=nullptr;if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("載入立體角色失敗：無法建立預覽")));return;}
+ if(!Actor){SetLoadBusy(false);RestoreStaleAfterFailedLoad(KeepView);if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("載入立體角色失敗：無法建立預覽")));return;}
  Actor->SetActorHiddenInGame(true);Actor->SetActorTickEnabled(false);
  Actor->Session=MoveTemp(Session);
  Actor->UseGalleryPhysics();
@@ -2033,6 +2051,22 @@ void UOKCharacterController::FinishLoad3D(int32 Generation, FOkSession Session, 
  if(bOk)bOk=Actor->BeginSessionLoad(Error);
  if(!bOk){FinishPreparedPreview(Actor,false,Error);return;}
  PreparingPreview=Actor;PreparingPreviewGeneration=Generation;
+}
+
+// A failed load leaves the selection, name plate and sliders on the card that failed. The previous character may come
+// back only when it is that same card (an outfit or appearance reload): another card's model driven by this card's
+// shape values is the stretched, wrong body users saw. Otherwise it goes, and the error is all that shows.
+void UOKCharacterController::RestoreStaleAfterFailedLoad(bool bSameCharacter)
+{
+ if(!StalePreview)return;
+ const FString Selecting=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();
+ const bool Same=bSameCharacter||(!Selecting.IsEmpty()&&FPaths::IsSamePath(PreviewCardPath,Selecting));
+ if(Same&&IsValid(StalePreview)){PreviewActor=StalePreview.Get();StalePreview=nullptr;return;}
+ if(IsValid(StalePreview)){
+  UE_LOG(LogTemp,Display,TEXT("OK load3d failed: previous character %s retired (selection is %s)"),*PreviewCardPath,*Selecting);
+  OKRetireActor(StalePreview);
+ }
+ StalePreview=nullptr;PreviewActor=nullptr;PreviewCardPath.Reset();PreviewResourceSignature.Reset();
 }
 
 void UOKCharacterController::TickPreviewPreparation()
@@ -2233,12 +2267,7 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	else
 	{
 		Actor->Destroy();
-		// The previous character comes back only if nothing retired it meanwhile.
-		if (StalePreview)
-		{
-			PreviewActor = IsValid(StalePreview) ? StalePreview.Get() : nullptr;
-			StalePreview = nullptr;
-		}
+		RestoreStaleAfterFailedLoad(GeometryOnly);
 		Report = LocalErr.IsEmpty() ? TEXT("加載3D失败") : LocalErr;
 		FMemory::Memcpy(ClothesStates,LoadedClothesStates,sizeof(ClothesStates));
 		RefreshClothesStateLabels();
@@ -2518,7 +2547,15 @@ void UOKCharacterController::TickEyeMode()
     FVector2D Pixel=EyeMousePixel;
     if(Pixel.X<0){const TSharedPtr<SViewport> Widget=Client->GetGameViewportWidget();FVector2D Size;Client->GetViewportSize(Size);if(!Widget||!FSlateApplication::IsInitialized())return;
         const FGeometry& Geo=Widget->GetCachedGeometry();if(Geo.GetLocalSize().X<=0||Geo.GetLocalSize().Y<=0)return;
-        Pixel=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos())*Size/Geo.GetLocalSize();}
+        Pixel=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos())*Size/Geo.GetLocalSize();
+        // Only while the cursor is on the 3D view itself. The real cursor is read from Slate, so over the panels,
+        // off the window or on another monitor her eyes kept turning to a cursor nobody was pointing at her with --
+        // which reads as "something on screen follows my mouse" (使用者 2026-11-19). She holds her last look instead;
+        // the explicit pixel (MCP, 眼睛審核) still goes through. ViewSpan is the DreamGUI screen's 3D rect; without it
+        // (舊版介面, -LegacyReader) the window itself is the bound.
+        if(Pixel.X<0.f||Pixel.Y<0.f||Pixel.X>Size.X||Pixel.Y>Size.Y)return;
+        float Left=0.f,Right=Size.X,Top=0.f;
+        if(ReaderScreen&&ReaderScreen->ViewSpan(Size,Left,Right,Top)&&(Pixel.X<Left||Pixel.X>Right||Pixel.Y<Top))return;}
     FVector Origin,Direction;if(!UGameplayStatics::DeprojectScreenToWorld(PC,Pixel,Origin,Direction))return;
     // Halfway to her along the cursor's ray: on her own plane a cursor over her eyes would sit inside them.
     const float Distance=FVector::Dist(Origin,PreviewActor->OrbitFocus);
@@ -3132,6 +3169,8 @@ void UOKCharacterController::FinishAnimationPreparation(TSharedRef<FOKAnimationM
    ShowAnimationStatus(Error,true);if(InspectorText)InspectorText->SetText(FText::FromString(Error));
    // The failed source was never committed: keep its prior list and selector consistent.
    if(Job->Kind==0&&GameSourceCombo){bSuppressClipCombo=true;GameSourceCombo->SetSelectedOption(SelectedGameSource.IsEmpty()?TEXT("基本動作"):GameSourceLabel(SelectedGameSource));bSuppressClipCombo=false;}
+   // A clip or studio motion that failed: the menu goes back to what still plays, not left on the one that did not load.
+   if((Job->Kind==1||Job->Kind==2)&&GameClipCombo){const FString Playing=AnimationOptionForSelection();bSuppressClipCombo=true;if(Playing.IsEmpty())GameClipCombo->ClearSelection();else GameClipCombo->SetSelectedOption(Playing);bSuppressClipCombo=false;}
    UE_LOG(LogTemp,Warning,TEXT("OK animation menu ready=0 kind=%d source=%s error=%s"),Job->Kind,*Job->Source,*Error);
   }
  }else {

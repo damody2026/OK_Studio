@@ -13,7 +13,7 @@ pub fn tools() -> Vec<Value> {
         json!({"name": name, "description": description, "inputSchema": {"type": "object", "properties": properties, "required": required}})
     };
     vec![
-        t("reader_launch", "Start the card reader (Tools/run_card_reader_development.lua, what CardReaderDevelopment.cmd runs) and wait until its control channels answer (its UI channel and card reader mailbox in Saved/OKControl), then make it the game the tools act on. root: a package directory to run its staged OpenKoikatsu.exe (default this checkout: the editor build, rebuilt first when stale unless no_build). card: a PNG to open; card_directory: the cards listed. lane: put -OKLane=<lane> on its command line (reader_stop finds it by that). extra: more arguments for the game itself (after --), e.g. [\"-OKDreamReader\"]. env: environment variables for it. Returns pid, log, lane, seconds waited.",
+        t("reader_launch", "Start the card reader (Tools/run_card_reader_development.lua, what CardReaderDevelopment.cmd runs) and wait until its control channels answer (its UI channel and card reader mailbox in Saved/OKControl), then make it the game the tools act on. root: a package directory to run its staged OpenKoikatsu.exe (default this checkout: the editor build, rebuilt first when stale unless no_build). card: a PNG to open; card_directory: the cards listed. lane: put -OKLane=<lane> on its command line (reader_stop finds it by that). extra: more arguments for the game itself (after --), e.g. [\"-LegacyReader\"] (the old UMG gallery; the DreamGUI screen is the default). env: environment variables for it. Returns pid, log, lane, seconds waited.",
           json!({"root": {"type": "string"}, "card": {"type": "string"}, "card_directory": {"type": "string"}, "lane": {"type": "string"}, "extra": {"type": "array", "items": {"type": "string"}}, "env": {"type": "object", "additionalProperties": {"type": "string"}}, "no_build": {"type": "boolean"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "timeout_s": {"type": "number"}}), &[]),
         t("reader_stop", "Stop card readers: by pid, or by lane (every game process whose command line has -OKLane=<lane>). Ends each process with Win32_Process.Terminate (taskkill can report success and leave it running) and waits until it is gone. Only game processes (UnrealEditor, OpenKoikatsu) are stopped.",
           json!({"pid": {"type": "integer"}, "lane": {"type": "string"}, "timeout_s": {"type": "number"}}), &[]),
@@ -123,7 +123,7 @@ pub fn launch(checkout: &Path, a: &Value) -> Result<Value> {
     let log = stdout.lines().find_map(|l| l.strip_prefix("Log: ").map(|s| s.trim().to_string())).unwrap_or_default();
     // Ready: the reader registered its channels (Saved/OKControl/<pid>.json, under the root it runs from) with the UI
     // channel and the card reader mailbox.
-    let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or(300.0));
+    let timeout = Duration::from_secs_f64(a["timeout_s"].as_f64().unwrap_or_else(|| crate::watchdog::secs("launch", 300.0)));
     let start = Instant::now();
     loop {
         let ready = crate::control::instances(&root)
@@ -141,7 +141,12 @@ pub fn launch(checkout: &Path, a: &Value) -> Result<Value> {
             bail!("the reader (pid {pid}) exited before its channels came up; see its log {log}");
         }
         if start.elapsed() > timeout {
-            bail!("the reader (pid {pid}) runs but its channels did not come up within {:.0} s; see its log {log}", timeout.as_secs_f64());
+            // It started but never came up (a hang during load, a GPU device hang): end it rather than leave it
+            // sitting there, and say so. Only this pid, which we started ourselves (watchdog.rs).
+            bail!("the reader (pid {pid}) runs but its channels did not come up within {:.0} s; see its log {log}
+{}",
+                timeout.as_secs_f64(),
+                crate::watchdog::launch_timed_out(&root, pid, timeout.as_secs_f64(), "the card reader"));
         }
         std::thread::sleep(Duration::from_millis(500));
     }

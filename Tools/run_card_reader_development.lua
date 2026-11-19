@@ -21,7 +21,7 @@ local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
-local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true }
+local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true, parallelrdg = true, watch = true }
 local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true, physics = true }
 
 -- -Physics <模式>（或環境變數 OK_READER_PHYSICS，選項優先：reader_launch 的 env 傳得進來）：讀卡器的
@@ -130,11 +130,25 @@ local function main()
     extra, stage_env = street_stage.packaged_launch(root, stage_exe)
     for _, x in ipairs(extra) do args[#args + 1] = x end
   end
-  -- The DreamGUI reader screen is the reader's interface; -LegacyReader goes back to the old UMG gallery.
-  -- Passing -OKDreamReader after -- stays allowed (it is the same flag) and is not added twice.
-  local wants_dream = not o.legacyreader
-  for _, x in ipairs(o.passthrough) do if x:lower():match("^%-ok?dreamreader$") or x:lower() == "-dreamgui" then wants_dream = false end end
-  if wants_dream then args[#args + 1] = "-OKDreamReader" end
+  -- The game shows the DreamGUI reader screen by default; -LegacyReader goes back to the old UMG gallery (kept for
+  -- comparison until the new screen is complete). Passing -LegacyReader after -- works the same and is not added twice.
+  if o.legacyreader then
+    local given = false
+    for _, x in ipairs(o.passthrough) do if x:lower() == "-legacyreader" then given = true end end
+    if not given then args[#args + 1] = "-LegacyReader" end
+  end
+  -- The DreamGUI screen runs with RDG's parallel pass execution off from startup (2026-11-19, the reader's open GPU page
+  -- fault, Docs/CARD_READER_DREAMGUI.md): opening different cards with a few seconds between crashed within 5-17 cards
+  -- every time it was on; off from the command line, three runs of 40, 60 and 60 cards did not. Turned off from code when
+  -- the reader screen opened instead, it still crashed (card 6), so it has to be set before the engine renders.
+  -- It holds for the whole process and is never given back: the one-on-one and the studio entered from the reader run
+  -- serially too (set back and taken again while running, the reader crashed on card 4). -ParallelRDG keeps the
+  -- engine's default.
+  local legacy = o.legacyreader
+  for _, x in ipairs(o.passthrough) do if x:lower() == "-legacyreader" then legacy = true end end
+  if not legacy and not o.parallelrdg then
+    args[#args + 1] = "-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0"
+  end
   -- 物理：旗標由遊戲在建立物理選單之前套用（OKCharacterController::ApplyStartupPhysicsBackend），選單才會顯示
   -- 真正在跑的那一項。用 -ExecCmds 不行：指令在選單建好之後才跑，解算器已是 Verlet 而選單還寫著「依元件」。
   local physics = (o.physics or os.getenv("OK_READER_PHYSICS") or "verlet"):lower()
@@ -145,6 +159,13 @@ local function main()
     error(("-Physics must be one of: %s"):format(table.concat(names, ", ")), 0)
   end
   args[#args + 1] = "-OKPhysics=" .. physics
+  -- The reader screen's pages (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md): a stage has only the Config it was staged with,
+  -- so the checkout's file is named; the editor target reads the same file without it.
+  -- A -ReaderPages= given after "--" (reader_launch extra) is the one used: the screen reads the first one on the
+  -- command line, so the default is left out rather than put in front of it.
+  local own_pages = false
+  for _, x in ipairs(o.passthrough) do if x:lower():find("^%-readerpages=") then own_pages = true end end
+  if not own_pages then args[#args + 1] = "-ReaderPages=" .. (path.join(root, "Config/ReaderEditor/pages.json"):gsub("\\", "/")) end
   for _, x in ipairs(o.passthrough) do args[#args + 1] = x end
   local receipt = json.object({ { "project", project }, { "executable", exe }, { "arguments", json.array({ table.unpack(args, 2) }) },
     { "module", module }, { "card_directory", cards }, { "log", log }, { "skinning", gpu and "GPU" or "CPU" } })
@@ -206,6 +227,15 @@ local function main()
   -- No background warm-up of the open-card cache (ok-card-warm): the reader builds each card when it opens it.
   path.write_text(path.join(log_root, tag .. ".json"), json.encode(receipt, { indent = 2, ensure_ascii = false }))
   io.write("Card reader started. PID=", tostring(pid), "\nLog: ", log, "\n")
+  -- GPU 卡死（DXGI_ERROR_DEVICE_HUNG）之後視窗還在、通道還在聽，但不會再回應。這個啟動器照使用者的決定不自動
+  -- 關任何東西（那是你的視窗），只告訴你怎麼看：ok_hang_check 會印出沒回應的行程、log 與 GPU dump 在哪、怎麼自己關。
+  io.write("Stuck? Tools\\lua\\lua.exe Tools\\ok_hang_check.lua (or launch with -Watch to keep this window watching)\n")
+  if o.watch then
+    io.write("\n")
+    local checker = { path.join(root, "Tools", "lua", "lua.exe"), path.join(root, "Tools", "ok_hang_check.lua"),
+      "--watch", "--pid=" .. tostring(pid) }
+    os.exit(proc.run(checker, { cwd = root, check = false }).code or 0)
+  end
 end
 
 ok.main(main)

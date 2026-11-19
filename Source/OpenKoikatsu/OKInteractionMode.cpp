@@ -69,6 +69,10 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
         if(Cast<AKKPreviewActor>(A)||Cast<AKKPairedPlayback>(A))A->SetActorTickEnabled(false);
         if(InPlace)continue; // the world goes on around them: its sounds, its sights
         TInlineComponentArray<UAudioComponent*> Audio;A->GetComponents(Audio);for(auto* Component:Audio)if(Component->IsPlaying()){Mode->SourceAudio.Add({Component,Component->bIsPaused!=0});Component->SetPaused(true);}
+        // Input is the mode's own controller. Entered from the card reader (EnterReader) that is the new Shared one, whose
+        // PreviewActor and PartnerActor are still empty here: the reader's own actors (Source's) are hidden like the rest,
+        // with their tick off (above), and given back in Exit. Same-named fields on two controllers were read the wrong way
+        // round three times on 2026-11-19 ("the one-on-one does not hide the reader's character"): it does.
         if(A!=Input->PreviewActor&&A!=Input->PartnerActor){A->SetActorHiddenInGame(true);A->SetActorEnableCollision(false);}
     }
     if(GEngine&&GEngine->GameViewport){
@@ -114,11 +118,19 @@ static TSharedPtr<FJsonObject> ReaderExperience(const UOKCharacterController* So
     return X;
 }
 AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Source){
-    if(!Source||Source->InteractionWidget||Source->bLoadInFlight||Source->Selected.Sex!=1)return nullptr;
+    if(!Source)return nullptr;
+    // Every refusal said on screen (and so in the reader's notices): pressed from the card wall it used to do nothing
+    // with nothing said, and a script took the press for an entry (e-cardload 2026-11-19).
+    auto Refuse=[Source](const TCHAR* Why){Source->ScreenNote(92,8.f,FColor::Yellow,FString(TEXT("沒有進入 1 對 1："))+Why);UE_LOG(LogTemp,Display,TEXT("OK enter one-on-one refused: %s"),Why);return nullptr;};
+    if(Source->InteractionWidget)return Refuse(TEXT("已經在 1 對 1 裡。"));
+    // The reader's one-on-one runs on a controller of its own (Shared below), so its InteractionWidget stays empty here.
+    for(TActorIterator<AOKInteractionMode> It(Source->GetWorld());It;++It)if(!It->Finished)return Refuse(TEXT("已經在 1 對 1 裡。"));
+    if(Source->bLoadInFlight)return Refuse(TEXT("角色還在載入，載完再按一次。"));
+    if(Source->Selected.Sex!=1)return Refuse(TEXT("選的是男性角色，1 對 1 的女方要選女性角色卡。"));
     if(!IsValid(Source->PreviewActor)||!Source->PreviewActor->Session.IsOpen()){
         Source->bEnterInteractionAfterLoad=true;Source->OnLoad3D();return nullptr;
     }
-    Source->ApplyPendingEditorMods();if(Source->bEditorModsDirty)return nullptr;
+    Source->ApplyPendingEditorMods();if(Source->bEditorModsDirty)return Refuse(Source->bModelLayout?TEXT("角色的編輯還沒套用完，稍後再按一次。"):TEXT("先切到「編輯」分頁（這張卡的編輯要在那裡套用），再按一次。"));
     auto* Shared=CreateWidget<UOKCharacterController>(Source->GetOwningPlayer());if(!Shared)return nullptr;
     Shared->bInteractionOnly=true;Shared->bIndependentCards=Source->bIndependentCards;Shared->Selected=Source->Selected;
     // Only her card, as the street's (EnterCards): the wardrobe and outfit change take Entries[0] as the card she came from
@@ -559,6 +571,9 @@ void AOKInteractionMode::Tick(float Delta){
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerClothes);LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);
         if(FullOff)LoadingFemale->SetClothingHidden(true);}
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerMaterials);if(!LoadingFemale->BeginProgressiveMaterials())return;}
+        // Controller is the mode's own (from the reader: Shared, not the reader's Source). This sets Shared's PreviewActor
+        // to the clone; the reader's Source->PreviewActor is not touched, stays hidden, and is the one the reader shows
+        // again on return. The clone is Destroyed in Exit (OwnController).
         Controller->PreviewActor=LoadingFemale;LoadingFemale=nullptr;Controller->PreviewActor->SetActorTickEnabled(false);Controller->bLoadInFlight=false;
         // Only when they differ from what she was opened with (as ActivateInteraction): the same again was 220 ms of the frame.
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerShapes);auto* Her=Controller->PreviewActor.Get();

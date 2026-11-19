@@ -166,6 +166,23 @@ public:
  UPROPERTY() TObjectPtr<class UEditableTextBox> PropertySearch;
  TArray<TSharedPtr<FJsonObject>> EditorProperties;
  TArray<TSharedPtr<FJsonObject>> EditorPropertyParents;
+ /// KKEx sections this card carries that ok-extract does not know (its `unknown_plugin_sections`). They are not
+ /// walked — we do not know their shape — but they are named here and in the property panel's status, because a
+ /// section dropped without a word goes unnoticed: that is how KoiSkinOverlayX's `KSOX` stayed unreachable until
+ /// someone read the code (2026-11-19). A key showing up here is the signal to add it to `PLUGIN_SECTIONS`.
+ TArray<FString> EditorUnknownPluginSections;
+ /// Which card and outfit `EditorUnknownPluginSections` was read for, and whether ok-extract's reply carried the field
+ /// at all. An empty list then means "this build knows every section of this card", never "no card" or "not read":
+ /// a list left over from the previous card is not this card's, and a producer without the field is missing support.
+ FString EditorUnknownPluginSectionsCard;int32 EditorUnknownPluginSectionsOutfit=-1;bool bEditorUnknownPluginSectionsReported=false;
+ /// `unknown_plugin_sections_status`, in one place for everyone who shows it (reader_call state, the reader audit's
+ /// KKEx column): no_card, not_read, unsupported, read. Only on "read" is EditorUnknownPluginSections this card's.
+ const TCHAR* UnknownPluginSectionsStatus() const
+ {
+  if(!Entries.IsValidIndex(SelectedIndex))return TEXT("no_card");
+  if(EditorUnknownPluginSectionsCard!=Entries[SelectedIndex].Path||EditorUnknownPluginSectionsOutfit!=OutfitIndex)return TEXT("not_read");
+  return bEditorUnknownPluginSectionsReported?TEXT("read"):TEXT("unsupported");
+ }
  TMap<FString,TSharedPtr<FJsonValue>> PendingProperties;
  bool bPropertyBusy=false;
  FString PropertySource;
@@ -175,6 +192,11 @@ public:
  void RebuildAppearancePage();
  void LoadAppearanceThumbnails();
  void ApplyAppearanceItem(const FString& Key);
+ // The pupil overlay page (eye_overlays / eye_overlay_set): what the card has, read on request; set writes a new work card.
+ TSharedPtr<class FJsonObject> EyeOverlayData; FString EyeOverlayStatus,EyeOverlayCard; int32 EyeOverlayGeneration=0; bool bEyeOverlayBusy=false;
+ void RequestEyeOverlays();
+ void SetEyeOverlay(const FString& Material,const FString& Property,const FString& Candidate);
+ class UTexture2D* EyeOverlayThumb(const FString& Png);
  void RunAppearanceRequest(TSharedRef<FJsonObject> Request,TFunction<void(UOKCharacterController*,TSharedPtr<FJsonObject>,const FString&)> Complete,TSharedPtr<FOKAppearanceCardJob,ESPMode::ThreadSafe> CardJob=nullptr);
  UFUNCTION() void OnOpenAppearance();
  UFUNCTION() void OnCloseAppearance();
@@ -194,6 +216,17 @@ public:
  UPROPERTY() TObjectPtr<class UTextBlock> AppearancePageText;
  UPROPERTY() TArray<TObjectPtr<class UOKAppearanceButton>> AppearanceButtons;
  UPROPERTY() TArray<TObjectPtr<class UTexture2D>> AppearanceTextures;
+ // Every picker thumbnail made so far, by file: kept while the controller lives (the DreamGUI reader draws them through
+ // its own tiles, whose draw data may outlive a page change), so turning pages or targets reuses them instead of
+ // leaving the collector to free textures still drawn.
+ UPROPERTY() TMap<FString,TObjectPtr<class UTexture2D>> AppearanceThumbCache;
+ // Least recently used first; ok.AppearanceThumbCacheMax > 0 keeps at most that many (0: no limit).
+ TArray<FString> AppearanceThumbOrder;
+ // Thumbnails decoded from their files (cache misses), for ok.ReaderScreen resources: a limit too small shows here as
+ // pages decoded again on every visit.
+ int32 AppearanceThumbDecodes=0;
+ // The thumbnail for Path from the cache, made and cached when missing.
+ class UTexture2D* CachedThumb(const FString& Path);
  TArray<TSharedPtr<FJsonObject>> AppearanceTargets,AppearanceItems;
  TSharedPtr<FJsonObject> AppearanceLastTiming;
  TArray<int32> AppearanceFiltered;
@@ -223,6 +256,9 @@ public:
  FString CurrentAppearanceNote() const;
  FString AccessorySlotScope() const {return FString::Printf(TEXT("accessory%d_"),AccessorySlot);}
  void RefreshAccessorySlots();
+ /** Empty when the source game folder is usable; otherwise which of the four cases it is, for the status line
+  *  and for the picker pages' unsupported_reason: not set, set but absent, no abdata/, no mods/. */
+ FString GameRootProblem() const;
  UFUNCTION() void OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type);
  // The picker's 關閉 (the reader's pages show the picker as part of the page: it is not mirrored there).
  UPROPERTY() TObjectPtr<class UButton> AppearanceCloseButton;
@@ -725,6 +761,7 @@ public:
   *  beside it. Saved/AppearanceEditor itself when the card has none. */
  static FString AppearanceWorkFolder(const FString& CardPath);
 	FString PreviewCardPath;
+	void RestoreStaleAfterFailedLoad(bool bSameCharacter);
 	FString PreviewResourceSignature,PendingPreviewResourceSignature;
 	int32 PreviewOutfitIndex = INDEX_NONE;
 

@@ -7,6 +7,8 @@
 #include "RHICommandList.h"
 #include "RHIStaticStates.h"
 #include "TextureResource.h"
+#include "RenderGraphBuilder.h"
+#include "DreamUIRender/DreamUIDeferredRelease.h"
 
 namespace DreamUIDataTextureLocal
 {
@@ -65,6 +67,10 @@ namespace DreamUIDataTextureLocal
 			Pixels.SetNumZeroed(RowPitch() * Height);
 			if (TextureRHI.IsValid())
 			{
+				// A graph still executing asynchronously may be translating draws that bind this texture's reference:
+				// it finishes before the reference is pointed elsewhere (as FDreamUIMaterialProxy::FollowSource_RenderThread).
+				FRDGBuilder::WaitForAsyncExecuteTask();
+				UE_LOG(DreamGUI, Log, TEXT("DreamUIDataTexture %s grows to %d rows"), *Name.ToString(), Height);
 				ReplaceTexture(RHICmdList);
 			}
 		}
@@ -131,6 +137,11 @@ namespace DreamUIDataTextureLocal
 			FTextureRHIRef Texture = RHICmdList.CreateTexture(Desc);
 			Texture->SetName(Name);
 			RHICmdList.UpdateTexture2D(Texture, 0, FUpdateTextureRegion2D(0, 0, 0, 0, Width, Height), RowPitch(), Pixels.GetData());
+			// The texture it replaces may still be read by draws recorded before the growth: kept a few frames.
+			if (TextureRHI.IsValid() && IsInRenderingThread())
+			{
+				FDreamUIDeferredRelease::Hold(TextureRHI);
+			}
 			TextureRHI = Texture;
 			if (TextureReferenceRHI.IsValid())
 			{

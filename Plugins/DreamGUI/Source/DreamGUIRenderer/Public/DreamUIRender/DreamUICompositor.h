@@ -1,4 +1,4 @@
-// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #pragma once
 
@@ -94,6 +94,18 @@ struct DREAMGUIRENDERER_API FDreamUICompositor
  * Every texture is in the bottom target's pixels shifted by its Origin: a pass drawing into a group's texture draws through
  * the view's rect moved by minus the texture's origin, and lands where it would have landed on the target.
  */
+/**
+ * EXPERIMENT (0 = off, the default): what to do about the copy of what is behind a group.
+ *   1 = never copy it. No backdrop texture is allocated or sampled, and every caller takes its existing
+ *       "no backdrop" path, so a mode that reads one is drawn Alpha. Two things change at once: the memory
+ *       is gone AND the draws, permutations and sample counts change, so a pass with this on has two readings.
+ *   2 = copy it exactly as usual, but bind the global black texture in its place. The draws, the blend modes,
+ *       the permutations and the number of samples are identical to the default; the ONLY difference is which
+ *       memory the shader reads. That makes it the single-variable version of the same question.
+ * Read on the render thread.
+ */
+DREAMGUIRENDERER_API int32 DreamUIExperimentBackdropMode();
+
 class DREAMGUIRENDERER_API FDreamUICompositeStack
 {
 public:
