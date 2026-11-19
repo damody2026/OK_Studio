@@ -10,7 +10,7 @@ Lua 脚本发不出去。只有「把截图改名搬到交付资料夹」那一�
 **每一批的第一个步骤**，在**建置之后、`reader_launch` 之前**跑这一行（只跑 git，不占机器）：
 
 ```powershell
-F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua write --editor F:/OpenKoikatsu --out F:\OpenKoikatsu\Saved\Reports\reader-shots-2026-11-19\<批次资料夹> --label <批次名>
+F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua write --purpose shots --editor F:/OpenKoikatsu --out F:\OpenKoikatsu\Saved\Reports\reader-shots-2026-11-19\<批次资料夹> --label <批次名>
 ```
 
 | 批次 | `--out` 的 `<批次资料夹>` | `--label` |
@@ -628,3 +628,19 @@ reader_call {"action":"state"}        // 看 unknown_plugin_sections 有没有�
 **f-yvonne 手上也没有确定符合的卡**（2026-11-19 问过：它这条线一直在读程式与反编译，
 没有在任何一张卡上实际看到第 21 栏戴着东西）。所以选卡维持「窗口里现找」，
 **找不到就记「手上的卡都没有」**，不要因为某条线在做配件就假设它有一张。
+
+### 0.0.1 `--purpose` 是必填的（第四版 `dfc7aafd5` 起）
+
+`write` 一定要给 `--purpose`，**拍照 A～H 一律 `--purpose shots`**：它**排除 `base_v1/h/voice` 的音档**
+（`base_v1` 这样算 15 370 档；算进音档是 136 935 档）。读卡器的画面不吃语音档，把它们算进指纹只会让
+「别人重录了语音」也把两批照片判成不可比。
+
+**场景卡载入耗时那条线要用 `--purpose load`**（音档要算进去），见
+[OK_STUDIO_SCENE_LOAD_PERF_20261117.md](OK_STUDIO_SCENE_LOAD_PERF_20261117.md)。
+
+表头会记整份**指纹规则**（版本、资料夹、排除项、用途）。**用途或规则不同的两批，`check` 回 `RULES`、exit 3**，
+不会回 `SAME`——实测 `shots` 对 `load` 得到
+`RULES differ: v2 shots vs v2 load — … are not compared`。
+
+**所以 exit 3 现在有两个意思**：`OLD`（旧版写的表头）与 `RULES`（规则／用途不同），**都代表「没比」**。
+判准不变也更简单：**只有 exit 0 可以比**。旧版写的表头一律回 `OLD`，用新版重写即可。

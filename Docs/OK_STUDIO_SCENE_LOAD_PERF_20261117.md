@@ -476,8 +476,9 @@ E 组今天付了四次代价定出来的量测标准（见 `Docs/ERROR_LOG.md` 
 
 ### 还要补的（等机器窗口）
 
-1. 量测脚本接 `Tools/shot_batch_header.lua --editor F:/OpenKoikatsu`，**每趟**写 `batch_header.json`，
-   比完再 `check`（结束码 0 SAME／1 DIFFERENT／2 MISSING／3 OLD，**只有 0 可比**，别接管线）。
+1. 量测脚本接 `Tools/shot_batch_header.lua write --purpose load --editor F:/OpenKoikatsu`（**`load` 不是 `shots`**：音档要算进去，`base_v1` 是 136 935 档而不是 15 370），**每趟**写 `batch_header.json`，
+   比完再 `check`（结束码 0 SAME／1 DIFFERENT／2 MISSING／3 OLD 或 RULES，**只有 0 可比**，别接管线）。
+   `RULES` 是「用途或指纹规则不同」——例如拿 `shots` 的表头去跟 `load` 的比，它会拒绝而不是回 `SAME`。
    它第三版连 `base_v1` 等**不进版控的原作衍生资料**也记——场景卡载入耗时直接吃基础库内容，
    这条对这边比读卡器更要紧。
 2. **量具自测**：已知为正＝在被量的区段里人为塞一段 sleep，看对应的 `*_ms` 有没有跟着涨
