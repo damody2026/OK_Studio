@@ -2163,3 +2163,39 @@ f-sceneload 給了確切時間，兩件都對得上，**而且和我用每卡耗
 
 **所以沒有任何一格的量測區間被壓到，一格都不用重跑**，兩種方法（每卡耗時、確切時間窗）互相印證。
 它那個假 `go` 的推論它自己也更正了：當時我還沒 claim，所以那個 `go` 是對的。
+
+### `r.RDG.TransientAllocator=0`：兩趟都在**開第一張卡之前**就當，而且是**一模一樣的簽章**——這一格讀不出張數，但給出今天最便宜的重現（2026-11-19 14:19–14:35）
+
+兩趟都沒跑到第一張卡：`STOP at card 1 ... no card reader mailbox yet`、`unreal=0`。
+第 2 趟的 log 把事情說清楚了（`20261119-143243-7d0fdb96.log`）：
+
+```
+SecondsSinceStart 19        <CrashType>GPUCrash</CrashType>
+Active Shaders: Function = MainPS   Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF
+"Device state": "Error_DMA_PageFault"      "Shader name": "fragment_02"
+PageFault at VA GPUAddress "0x2E87F9000"   Current frame ID: 2132
+PageFault: Logging all resource enabled: No
+PageFault: Found 0 active heaps containing page fault address
+```
+
+**簽章和整天那幾次完全一樣**（同一個 `MainPS`、同一個 shader hash、同樣的 `fragment_02`、
+同樣「位址不屬於任何堆」，而且 `Logging all resource enabled: No`，所以那幾個 0 仍然是 artifact）。
+差別是**它發生在第 19 秒、第 2132 帧，一張卡都還沒開**。
+
+**先照登記的讀法判定：這一格對「死在第幾張」是不可讀的**（旋鈕副作用太大），**不是 aliasing 的證據**。
+判準是：今天在預設配置下跑過 19 趟，**沒有一趟在啟動階段當過**，
+所以「啟動就當」是這個旋鈕自己足以造成的，不能拿它去支持或反對 aliasing 那個假設。
+
+**但它有兩個獨立的價值：**
+
+1. **這是今天最便宜、最穩的重現**：**19–25 秒、兩趟兩中**，相對於原本要翻 4–30 張卡的擲骰。
+   任何候選修法都可以先拿它篩一遍（**過不了就一定不對；過了也只是必要條件**）。
+2. **它證明這個外掛可以在「一張卡都沒開」的情況下讓 `MainPS` page fault**，
+   也就是沒有角色貼圖被釋放、沒有卡片資料被 GC purge。
+   所以**受害者可以完全只在 UI／外掛自己這條路上**。
+   這沒有推翻「釋放事件＝GC purge」那條在**預設配置**下的相關性（那是另一個配置），
+   但它把「受害者必須是被卡片流程釋放的東西」這個隱含前提拿掉了。
+
+**所以 transient allocator 這條線的狀態是**：關掉它會讓同一個故障**更早、更穩**地發生，
+而不是消失——這和「aliasing 是元凶」的方向相反（元凶被關掉應該不當），
+也和我跑之前登記的「預測還是會當」一致，只是當得比預期早得多。
