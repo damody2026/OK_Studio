@@ -18,10 +18,10 @@ fn source(root:&Path,item:&Item)->Option<std::sync::Arc<(crate::unity::SourceByt
 fn garment(root:&Path,item:&Item)->Option<Garment>{
  if item.entry.main_data.is_empty()||item.entry.main_data.eq_ignore_ascii_case("p_dummy"){return None}
  let shared=source(root,item)?;
- let groups=crate::unity::clothes_option_groups(&shared.0,&item.entry.main_data);
- // All-default groups: no ChaClothesComponent found, or an older OK card's model recorded before this query (zero
- // defMainColor alpha never comes from a real component). Leave the rows as they are rather than hide every layer.
- if groups==ClothesOptionGroups::default(){return None}
+ // None: a model recorded before this query (an older OK card's own model), so its switches are unknown. The rows stay
+ // as they were. Told by the store saying "not recorded", never from the value: a garment whose groups are legitimately
+ // all defaults (no option, no sleeves, no colour layer) must still have its rows marked.
+ let groups=crate::unity::clothes_option_groups_recorded(&shared.0,&item.entry.main_data)?;
  Some(Garment{groups,top_kind:item.entry.info("Kind").trim().parse().unwrap_or(0)})
 }
 

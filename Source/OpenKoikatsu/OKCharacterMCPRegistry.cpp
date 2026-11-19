@@ -28,7 +28,10 @@ static const TCHAR* AxisName(int32 Axis)
 static FObject Number(const FString& Key,const FString& Label,double Value,double Min,double Max,double Default)
 {
  auto P=MakeShared<FJsonObject>();P->SetStringField(TEXT("key"),Key);P->SetStringField(TEXT("label"),Label.IsEmpty()?Key:Label);P->SetStringField(TEXT("kind"),TEXT("number"));
- P->SetNumberField(TEXT("value"),Value);P->SetNumberField(TEXT("min"),Min);P->SetNumberField(TEXT("max"),Max);P->SetNumberField(TEXT("default"),Default);P->SetBoolField(TEXT("supported"),true);P->SetBoolField(TEXT("requires_apply"),false);return P;
+ P->SetNumberField(TEXT("value"),Value);P->SetNumberField(TEXT("min"),Min);P->SetNumberField(TEXT("max"),Max);P->SetNumberField(TEXT("default"),Default);P->SetBoolField(TEXT("supported"),true);P->SetBoolField(TEXT("requires_apply"),false);
+ // min／max are the slider's ends. limit_min／limit_max are what Validate refuses outside; these rows (bones, physics,
+ // pregnancy, style) keep the hard limit they always had. A row whose data the game does not bound drops them (shape.*).
+ P->SetNumberField(TEXT("limit_min"),Min);P->SetNumberField(TEXT("limit_max"),Max);return P;
 }
 FString Label(UWidget* W)
 {
@@ -59,9 +62,12 @@ FRows Parameters(UOKCharacterController* G)
   for(int32 I=0;I<(Body?44:52);++I){FString L;for(auto S:G->ShapeSliders)if(S&&S->bBody==Body&&S->Index==I){L=Label(S);break;}
    auto P=Number(FString::Printf(TEXT("shape.%s.%d"),Body?TEXT("body"):TEXT("face"),I),L,Values.IsValidIndex(I)?Values[I]:.5,0,1,OKShapeDefaults::Value(G->Selected.Sex,Body,I));
    // The maker's range for every body／face slider (ConvertTextFromRate(0,100,…) on all 241): the API value is 0..1,
-   // shown 0..100 in whole points. display_scale／unit are for the screen only; validation uses min／max. The default
-   // is the reset target of this character's sex (OKShapeDefaults, ill_Default_Female／Male).
+   // shown 0..100 in whole points. display_scale／unit are for the screen only. 0..1 is the slider, not the data:
+   // ChaControl.SetShapeBodyValue／SetShapeFaceValue never clamp, and ABMX／slider unlocker cards hold values outside.
+   // So no limit_min／limit_max here: any finite value is accepted and kept as sent (never clamped), and a value outside
+   // 0..1 is marked out_of_range below. The default is the reset target of this character's sex (OKShapeDefaults).
    P->SetNumberField(TEXT("step"),0.01);P->SetNumberField(TEXT("decimals"),2);P->SetNumberField(TEXT("display_scale"),100);P->SetStringField(TEXT("unit"),TEXT("%"));
+   P->RemoveField(TEXT("limit_min"));P->RemoveField(TEXT("limit_max"));
    P->SetStringField(TEXT("category"),Body?TEXT("body"):TEXT("face"));Add(P);}
  }
  const auto M=Mods(G);TSet<FString> Available;
@@ -84,10 +90,12 @@ FRows Parameters(UOKCharacterController* G)
  for(auto P:G->EditorProperties){auto Copy=MakeShared<FJsonObject>(*P);const FString Key=P->GetStringField(TEXT("key"));
   if(auto* Pending=G->PendingProperties.Find(Key))Copy->SetField(TEXT("value"),*Pending);
   // Range metadata comes with the row (min／max／step／decimals／wrap／default, ok-extract properties.rs). A colour is
-  // 0..1. A number without it is marked range_missing and gets no min／max here: Validate still holds it to the old
-  // wide limit, but the audit can count which rows have no real range yet.
+  // 0..1. A number without it is marked range_missing and gets no min／max here (Validate then only asks for a finite
+  // number); the audit can count which rows have no real range yet.
   const FString Kind=P->GetStringField(TEXT("kind"));
-  if(Kind==TEXT("color")){if(!Copy->HasField(TEXT("min")))Copy->SetNumberField(TEXT("min"),0);if(!Copy->HasField(TEXT("max")))Copy->SetNumberField(TEXT("max"),1);}
+  // A colour component is 0..1 by structure: that is both its slider and its limit.
+  if(Kind==TEXT("color")){if(!Copy->HasField(TEXT("min")))Copy->SetNumberField(TEXT("min"),0);if(!Copy->HasField(TEXT("max")))Copy->SetNumberField(TEXT("max"),1);
+   if(!Copy->HasField(TEXT("limit_min")))Copy->SetNumberField(TEXT("limit_min"),0);if(!Copy->HasField(TEXT("limit_max")))Copy->SetNumberField(TEXT("limit_max"),1);}
   else if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")&&!(Copy->HasField(TEXT("min"))&&Copy->HasField(TEXT("max"))))Copy->SetBoolField(TEXT("range_missing"),true);
   // A row may arrive already marked unsupported: the card stores that field and we parse it, but nothing applies it,
   // so an edit would change the saved card and nothing else (ok-extract `refuse_unapplied`, e.g. the hair slot
@@ -96,19 +104,27 @@ FRows Parameters(UOKCharacterController* G)
   bool RowSupported=true;P->TryGetBoolField(TEXT("supported"),RowSupported);
   Copy->SetBoolField(TEXT("supported"),RowSupported);Copy->SetBoolField(TEXT("requires_apply"),true);Copy->SetStringField(TEXT("category"),TEXT("properties"));Add(Copy);
  }
+ // A value outside its slider range (an ABMX card, or one set past the slider through the API) is shown as it is and
+ // marked, the way the maker shows it with slider unlocker; it is never clamped. Recomputed here because a pending
+ // property value replaces the one the row came with.
+ for(auto& R:Rows){auto O=R->AsObject();double V,Lo,Hi;bool Wrap=false;O->TryGetBoolField(TEXT("wrap"),Wrap);O->RemoveField(TEXT("out_of_range"));
+  if(!Wrap&&O->GetStringField(TEXT("kind"))==TEXT("number")&&O->TryGetNumberField(TEXT("value"),V)&&O->TryGetNumberField(TEXT("min"),Lo)&&O->TryGetNumberField(TEXT("max"),Hi)&&(V<Lo||V>Hi))
+   O->SetBoolField(TEXT("out_of_range"),true);}
  return Rows;
 }
 // A number edit under the row's range metadata: round to `decimals` first, then take a `wrap` value modulo [min,max)
-// (359.6 rounds to 360 and wraps to 0), then check [min,max]. A wrapped parameter is therefore never refused for its
-// range: that is intended, not a missing check. A row without min／max keeps the old ±1000000 limit. A refusal names
-// the value sent and, when rounding changed it, the rounded one. A `choice` takes only one of its options' values.
+// (359.6 rounds to 360 and wraps to 0). min／max are the slider (a soft range): a value outside is accepted and kept as
+// sent, never clamped (the row then says out_of_range); refusing it would make a card's own ABMX value impossible to
+// write back. Refused only: a value that is not finite, one outside limit_min／limit_max when the row has them (the
+// message names the value sent and, when rounding changed it, the rounded one), and a `choice` value outside its options.
 static bool NormalizeNumber(const FObject& P,double N,double& Out,FString& Error)
 {
  if(!FMath::IsFinite(N)){Error=TEXT("Value is not a finite number");return false;}
- double Min=-1000000,Max=1000000;P->TryGetNumberField(TEXT("min"),Min);P->TryGetNumberField(TEXT("max"),Max);
  double V=N;int32 Decimals=-1;if(P->TryGetNumberField(TEXT("decimals"),Decimals)&&Decimals>=0){const double K=FMath::Pow(10.0,(double)FMath::Min(Decimals,9));V=FMath::RoundHalfFromZero(V*K)/K;}
- bool Wrap=false;if(P->TryGetBoolField(TEXT("wrap"),Wrap)&&Wrap&&Max>Min){V=Min+FMath::Fmod(FMath::Fmod(V-Min,Max-Min)+(Max-Min),Max-Min);}
- if(V<Min||V>Max){Error=V==N?FString::Printf(TEXT("Value %g outside range %g..%g"),N,Min,Max):FString::Printf(TEXT("Value %g (rounded to %g) outside range %g..%g"),N,V,Min,Max);return false;}
+ double Min=0,Max=0;bool Wrap=false;
+ if(P->TryGetBoolField(TEXT("wrap"),Wrap)&&Wrap&&P->TryGetNumberField(TEXT("min"),Min)&&P->TryGetNumberField(TEXT("max"),Max)&&Max>Min){V=Min+FMath::Fmod(FMath::Fmod(V-Min,Max-Min)+(Max-Min),Max-Min);}
+ double Lo=-TNumericLimits<double>::Max(),Hi=TNumericLimits<double>::Max();P->TryGetNumberField(TEXT("limit_min"),Lo);P->TryGetNumberField(TEXT("limit_max"),Hi);
+ if(V<Lo||V>Hi){Error=V==N?FString::Printf(TEXT("Value %g outside allowed range %g..%g"),N,Lo,Hi):FString::Printf(TEXT("Value %g (rounded to %g) outside allowed range %g..%g"),N,V,Lo,Hi);return false;}
  const FRows* Options=nullptr;
  if(P->GetStringField(TEXT("kind"))==TEXT("choice")&&P->TryGetArrayField(TEXT("options"),Options)&&!Options->ContainsByPredicate([&](const TSharedPtr<FJsonValue>& O){double X;return O->AsObject()&&O->AsObject()->TryGetNumberField(TEXT("value"),X)&&X==N;}))
  {Error=FString::Printf(TEXT("Value %g is not one of the options"),N);return false;}
