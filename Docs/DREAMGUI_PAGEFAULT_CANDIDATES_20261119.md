@@ -700,7 +700,97 @@ layer style 持的是计数参照（它若还握著，那张贴图根本不会�
 
 **不谈修法**（按指示）；这一节只钉拥有者与绑定。
 
+## 14. 「UI 绘製绑了卡片角色贴图」—— **程式码不支持这个猜测**（2026-11-19 晚，e-cardload 的线索之后）
+
+### 14a. 先讲一个版本差：这几个档 **F 树落后 E 树**，所以本节读的是 E 的副本
+
+e-cardload 给的 `OKReleaseStaleRecentRuntimeTextures`／`OKReleaseStaleKeptRuntimeTextures`
+**在 F 树里一个都不存在**（全树 grep 零命中）。md5 与行数：
+
+| 档案 | F | E |
+|---|---:|---:|
+| `Plugins/KKUnityBundle/Source/KKUnityBundle/Private/KKTextureRuntime.cpp` | 414 行 | **461 行** |
+| `Plugins/KKUnityBundle/Source/KKUnityBundle/Private/KKPreviewActor.cpp` | 14049 行 | **14085 行** |
+
+两个都 DIFFER。这是共用程式码，所以**崩溃的那一版是 E 的**；本节凡是 `KKTextureRuntime`／
+`OKGalleryWidget`／`OKReaderScreen` 的行号都标明读的是 **`E:\OpenKoikatsu`**（只读，没有改动）。
+§13 之前那些 OK 侧的行号是 F 的副本，**对不上 E 的报告**，看的时候要换算。
+
+### 14b. 所有把贴图交给 DreamGUI 的地方，只有三处，而且都不是卡片角色贴图
+
+E 树 `Source/OpenKoikatsu` 里 `SetResourceObject` 全部命中：
+
+| 行 | 交出去的是什么 |
+|---|---|
+| `OKReaderScreen.cpp:193` | `Cast<UTexture>(A->Thumbnail->GetBrush().GetResourceObject())` —— **镜射 UMG 那边 `UOKAppearanceButton::Thumbnail` 的贴图** |
+| `OKReaderScreen.cpp:254` | 同上，镜射一个 `UImage` 的贴图 |
+| `OKReaderScreen.cpp:1297`／`:1457` | 卡片列表格子的缩图（清成 nullptr／设定） |
+
+再往上游追「那个 UMG 影像里装的是什么」（E 树 `Source/OpenKoikatsu`，`SetBrushFromTexture` 全部命中）：
+
+- `OKGalleryWidget.cpp:1446` ＝ 卡片 PNG 预览（`CreateTransient`，尺寸是 PNG 自己的）
+- `OKGalleryWidget.cpp:1773` ＝ APNG 影格 `AnimatedPreviewTextures[Frame]`（`UPROPERTY`，`OKCharacterController.h:740`）
+- `OKReaderScreen.cpp:1457` ＝ 清单缩图，**固定 288×402**
+- `OKGalleryAppearance.cpp:305` ＝ `CachedThumb(Path)`，自己解码的缩图（`:70`，上限 2048）
+- `OKHScene.cpp:4724` ＝ H 场景的服装图，不在读卡器画面
+
+**`KKTextureRuntime` 的卡片角色贴图一次都没有出现在这些路上**。
+它们唯一的去处是角色材质：`AKKPreviewActor` 的 `LoadedTextures`／`WornTextures`／`CookedRoleMaterials`
+与 `SetSharedTextureParameter`（F 树 `KKPreviewActor.h:616`、`:623`、`:916-918`、`:925`）。
+**所以「UI 绘製绑了卡片角色贴图」这个猜测，在程式码里找不到对应的那一段。**
+
+### 14c. 而且就算绑上了也不会悬空：DreamGUI 的 brush 是**强参照**
+
+```cpp
+// F:\OpenKoikatsu\Plugins\DreamGUI\Source\DreamGUI\Public\Core\DreamUIImageBrush.h:54-62
+USTRUCT(BlueprintType)
+struct DREAMGUI_API FDreamUIImageBrush
+{
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, ...)
+    TObjectPtr<UObject> ResourceObject;      // ← UPROPERTY，GC 看得到
+```
+
+`UDreamImage::Brush` 也是成员（`DreamImage.h:29`）。**所以一张贴图只要还在某个 DreamGUI brush 里，
+GC 就不会收它**——这条路的失误形状是**泄漏**，不是**悬空**。
+（这也顺手否掉我自己想到的一个情节：镜射只在 `Texture != ShownTexture.Get()` 时才更新，
+而 `ShownTexture` 是 `TWeakObjectPtr`（`OKReaderScreen.h:88` 一带），
+看起来可以「两边都变 null 所以不更新、brush 继续指著死贴图」——
+但因为 brush 是强参照，那张贴图不会死，所以这个情节产生的是泄漏。）
+
+### 14d. 释放端真正的形状：**放掉的是 UObject 参照，死亡在下一次 GC**
+
+E 树 `KKTextureRuntime.cpp:350-400`：卡片角色贴图被 `RecentTextures`
+（`TArray<FRecentTexture>`，`FRecentTexture::Texture` 是 **`TStrongObjectPtr<UTexture2D>`**）按 768 MB 预算留著，
+而且注解明写它们**只靠 refcount 活著、不靠可达性**：
+「They hold a refcount (TStrongObjectPtr), so GC cannot take them: a reference chain search reads
+*not currently reachable but it does have 1 refcount set*」。
+
+`OKReleaseStaleRecentRuntimeTextures`（E 树 `:389-400`）做的事就是**把那个 `TStrongObjectPtr` 从阵列里移掉**，
+`RemoveAt` 而已——**它不释放资源、不销毁 UObject**。真正的死亡发生在**下一次 GC**：
+`BeginDestroy` → `ReleaseResource` → RHI 贴图被放掉 → 池子把区块还掉（整池空了才还 heap，§12d）。
+
+**这正好解释那四十秒**：释放呼叫与销毁之间隔著一次 GC，所以「释放到故障」的距离不受任何
+per-frame 机制的约束，也不该拿 `Frames.*` 那种帧数旋钮去对。
+（**反过来说**：这同时意味著「释放」那行 log 印出来的时刻**不是**贴图死亡的时刻。
+要定位死亡时刻，得看 GC，不是看那行 log。）
+
+### 14e. 于是矛盾更紧了，而且可以用一个读数切开
+
+- 贴图侧的三条线索（名字、格式、尺寸随卡片变）都指向 `KKTextureRuntime` 的卡片角色贴图。
+- 绑定侧：卡片角色贴图**没有**任何路径进到 UI 绘製；而 UI 这一侧每一条绑定都持参照（§13a）。
+- 两者只能有一个成立。**如果贴图侧对，那取样它的就不是 UI 的 shader**——
+  而「故障 shader 是 `FDreamUIBasePS`」**至今只来自进入点名称**，而那个名字四颗 shader 共用（§1a、§5a）。
+
+**能切开的读数（都不用再读碼）**：
+1. 把 `r.Shaders.ExtraData=1` 打开重编一次 shader，**崩溃档会直接印出 shader type 名**（§5d）——
+   这是唯一能证明「是不是 UI 的 shader」的读数。
+2. 追踪报告里那张贴图的 **`Desc`** 栏（`MakeResourceDescDebugString`，§12c）：
+   卡片角色贴图有完整 mip 链、UI 预览贴图没有（`CreateTransient` 预设单一 mip）——
+   **mip 数能把「卡片贴图」和「UI 预览贴图」分开**，而且那一栏已经在档里了。
+
+**不谈修法**（按指示）。
+
 ---
 
-调查：f-sceneload（F 树，只读）。现象、e-cardload 的趟数与两份追踪报告都是协调 session 转述，
-报告原文与崩溃档我没有自己看过；§11 的两棵引擎比对、§12 与 §13 的程式码是我自己读的。
+调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
+§11 的两棵引擎比对、§12–§14 的程式码是我自己读的（§14 读的是 E 树的副本，只读）。
