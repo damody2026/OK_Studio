@@ -11,6 +11,7 @@
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RenderTargetPool.h"
+#include "RenderingThread.h"
 #include "RHIStaticStates.h"
 #include "ShaderParameterStruct.h"
 #include "DreamUIRender/DreamUIRenderer.h"
@@ -170,6 +171,58 @@ FIntRect FDreamUICompositor::ProjectBounds(const FBox& InWorldBox, const FMatrix
 	return DreamUICompositorLocal::Intersect(Covered, InViewRect);
 }
 
+namespace DreamUIGroupPoolReuse
+{
+	// MEASUREMENT (default off), to say what the "timing" in "DelayFrames changes some timing" actually is.
+	// A group's target comes from GRenderTargetPool, and FDreamUIDeferredRelease postpones handing it back. If a
+	// larger Frames.Pooled makes the pool keep MORE distinct elements and hand the same one out FURTHER APART, then
+	// the queue's effect is simply "memory is reused later" -- which is the same variable as turning the transient
+	// allocator off, and the two reproductions would finally have a reason to be one. If the reuse distance does not
+	// move, that timing is something else.
+	//
+	// Reported once every ReportEveryFrames render frames: how many handouts, how many distinct elements have ever
+	// been handed out, and the smallest/largest gap in render frames between two handouts of the SAME element.
+	static TAutoConsoleVariable<int32> CVarLogPoolReuse(
+		TEXT("DreamGUI.Experiment.LogPoolReuse"), 0,
+		TEXT("Measurement: log how many group targets the render target pool holds and how far apart the same element is handed out again."),
+		ECVF_RenderThreadSafe);
+
+	static constexpr uint32 ReportEveryFrames = 600;
+
+	/** Render thread (graph setup), which is also the only place a group target is taken. */
+	static void Note(FRHITexture* InTexture)
+	{
+		if (InTexture == nullptr || CVarLogPoolReuse.GetValueOnRenderThread() == 0)
+		{
+			return;
+		}
+		static TMap<FRHITexture*, uint32> LastHandedOut;
+		static uint32 Handouts = 0;
+		static uint32 MinGap = MAX_uint32;
+		static uint32 MaxGap = 0;
+		static uint32 NextReport = 0;
+		const uint32 Now = GFrameNumberRenderThread;
+		++Handouts;
+		if (const uint32* Last = LastHandedOut.Find(InTexture))
+		{
+			const uint32 Gap = Now - *Last;
+			MinGap = FMath::Min(MinGap, Gap);
+			MaxGap = FMath::Max(MaxGap, Gap);
+		}
+		LastHandedOut.Add(InTexture, Now);
+		if (NextReport == 0)
+		{
+			NextReport = Now + ReportEveryFrames;
+		}
+		if (Now >= NextReport)
+		{
+			NextReport = Now + ReportEveryFrames;
+			UE_LOG(LogTemp, Log, TEXT("DreamGUI group pool: frame=%u handouts=%u distinct=%d reuse gap min=%u max=%u")
+				, Now, Handouts, LastHandedOut.Num(), MinGap == MAX_uint32 ? 0u : MinGap, MaxGap);
+		}
+	}
+}
+
 FDreamUICompositeStack::FDreamUICompositeStack(FRDGBuilder& InGraphBuilder, FDreamUIRenderer* InRenderer, FRDGTextureRef InTarget, FTextureRHIRef InTargetRHI,
 	const FIntRect& InViewRect, uint8 InNumSamples, const FMatrix& InWorldToClip, bool bInOpaqueBackdrop, bool bInLinearTarget,
 	ERHIFeatureLevel::Type InFeatureLevel)
@@ -240,6 +293,7 @@ void FDreamUICompositeStack::Begin(const FDreamUICompositeDesc& InDesc)
 			// The pool's element itself, so that it is not handed out again before the passes recorded here have run.
 			Frame.Texture = GraphBuilder.RegisterExternalTexture(Frame.Pooled, TEXT("DreamUI_GroupTexture"));
 			Frame.TextureRHI = Frame.Pooled->GetRHI();
+			DreamUIGroupPoolReuse::Note(Frame.TextureRHI);
 			Frame.Origin = Frame.Rect.Min;
 			Frame.NumSamples = 1;
 			AddClearRenderTargetPass(GraphBuilder, Frame.Texture, FLinearColor::Transparent);
