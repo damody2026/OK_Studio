@@ -933,16 +933,20 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   assert_eq!(top_sub_parts_plan(2,[false,false,true]),[Some(0),Some(1),None]);
   assert_eq!(top_sub_parts_plan(2,[true;3]),[None;3]);
  }
- #[test]fn reapplying_the_worn_top_writes_nothing_more(){
+ // An ignored game oracle, not an early `return`: a test that returns when its data is missing prints "ok" exactly like
+ // one that ran and passed, so nobody sees it was skipped (the first run of this test, 2026-11-19, was such a pass).
+ // Ignored shows up as ignored; run with `OK_TEST_GAME_ROOT=<game> cargo test -- --ignored`, and missing data fails.
+ #[test]#[ignore="game oracle: needs OK_TEST_GAME_ROOT (catalog) and Content/CharacterCards/CrowdAPNG/C000.png"]
+ fn reapplying_the_worn_top_writes_nothing_more(){
   // apply must not quietly change a card: the worn top again leaves the card as `patch` alone would (no sub-part
-  // settling). Needs the game (catalog) and a local card; skipped without them.
+  // settling).
   let root=&crate::test_support::game_path("");let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
-  if !root.ok_exists()||!p.ok_exists(){return;}
+  assert!(root.ok_exists(),"OK_TEST_GAME_ROOT is not set or does not exist: {}",root.display());assert!(p.ok_exists(),"missing local card {}",p.display());
   let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));fs::create_dir_all(cache).unwrap();
   let items=catalog(root,cache).unwrap();let original=crate::gamefs::read(p).unwrap();
   let t=targets().into_iter().find(|t|t.key=="clothes0").unwrap();
   let sel=current_selection(&original,0,std::slice::from_ref(&t),&items).unwrap();
-  let Some(key)=sel["clothes0"]["item"].as_str() else{return};let worn=items.iter().find(|i|i.key==key).unwrap();
+  let key=sel["clothes0"]["item"].as_str().expect("C000's outfit 0 top is not in the catalog: pick another card");let worn=items.iter().find(|i|i.key==key).unwrap();
   assert_eq!(apply_item(&original,&t,Some(worn),0,None,&items).unwrap(),patch(&original,&t,Some(worn),0).unwrap());
  }
  #[test]fn parent_outside_the_known_list_is_marked_not_refused(){
