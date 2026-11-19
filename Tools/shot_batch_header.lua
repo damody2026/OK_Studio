@@ -28,6 +28,11 @@
 -- Binaries/Win64/UnrealEditor-*.dll and every Plugins/KK*/Binaries/Win64/UnrealEditor-*.dll. A packaged run records its
 -- own OpenKoikatsu.exe with `--exe`; the two ways of running are never compared with each other.
 --
+-- mtime + size, not a content hash, on purpose: a relink that leaves the bytes the same still gives DIFFERENT, and a
+-- batch gets shot again for nothing. That errs the right way (one extra batch beats two batches from different
+-- programs side by side), and hashing nine modules of hundreds of MB for every batch is not worth it. So a DIFFERENT
+-- after a no-op rebuild is the tool doing its job, not a bug.
+--
 -- Run it right after the build that produced the exe and before shooting — the tree may change while you shoot. It
 -- runs git only (no build, no cargo), so it is fine while `may-build` says wait.
 local lfs = require("lfs")
