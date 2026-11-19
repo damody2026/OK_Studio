@@ -156,3 +156,37 @@ UMG 的控制項在第二步之後漸漸不再被新版畫面用到，但舊版�
   - 一個子頁寫了不認得的 widget、另一個寫了不認得的 builder：只少那兩頁（35 頁），兩個錯都用紅字列出。
   - 都沒有出現舊版 UMG 畫面。
 - **按鍵設定**：`shape.face.0`、`shape.body.3`、`physics.bustSoftness`、`bone.cf_J_Eye_tz.scale.uniform` 都開到正確的頁並設好；不存在的鍵回 `not in the registry`。
+
+## 第二步（逐頁換成綁鍵）與離線檢查（2026-11-19，e-fork-2）
+
+### 做法
+
+- 頁面可以寫 `items`：`[{"key": "shape.face.0"}, …]`，`kind` 目前只有 `number`（不寫就是 `number`）。
+- 這一步的 `number` 先**鏡像那個鍵的控制列**：依登錄找出顯示該鍵的控制項（`OKRegistryControl`），滑桿就取它所在的那一列。所以畫面和稽核不變，而定義檔寫的已經是鍵。
+- 之後換成畫面自己的控制項時，範圍、小數位、顯示單位都讀登錄的 metadata（`min`／`max`、`step`、`decimals`、`range_missing`…），`pages.json` 不寫範圍。
+- 登錄沒有的鍵：紅字列出、那一項不建（其他照建），也算進稽核的「資料端缺」。
+- 換頁的順序與判準：一次換一頁，建置後跑 `ok.ReaderScreen pages builtin／file` 對照稽核，差異 0 才提交，再換下一頁。
+
+### 離線檢查（不用開遊戲）：`Tools/reader_pages.lua`
+
+```
+Tools\lua\lua.exe Tools\reader_pages.lua --new <新的 pages.json>     （在專案根目錄）
+```
+
+- 逐頁列出新增、刪除、移動的頁。對兩邊都有的頁，比較它「顯示的列」：shape 群組展開成那組的鍵，`items` 就是它的鍵，其他來源照原樣。不一樣就列 `changed`。
+- 每個 `items` 的鍵對照不用遊戲就知道的登錄鍵：`shape.*` 來自 `KKShapeRows.cpp`，`bone.*` 來自 `OKBoneControls.h`，加上 `physics.bustSoftness／bustWeight`。打錯就列 `unknown key`。只有遊戲執行時才有的鍵（`pregnancy.*`、`style.*`、卡片的屬性）列出來，交給遊戲內稽核判斷。
+- 有差異或未知的鍵就 exit 1。測試：`Tools\lua\lua.exe Tools\tests\test_reader_pages.lua`。
+- 目前樹外的第二步版本（臉 8 頁、身子 5 頁換成 `items`；「胸部」因為還接著胸部柔軟度／重量兩列，順序要先支援才換）檢查結果是：同樣的頁、同樣的列、每個鍵都認得。
+
+### 稽核第四欄「KKEx 不認得（`unknown_plugin_sections`）」的判準
+
+- **什麼算 unknown**：這張卡 KKEx 區塊裡，這個 build 的認得表（`appearance/properties/plugins.rs` 的 `PLUGIN_SECTIONS`）沒有的**區段鍵**。
+  - 區段鍵是外掛的身分（BepInEx GUID 或外掛自己的名字，例如 `com.deathweasel.bepinex.materialeditor`、`KSOX`），原樣比對、不分大小寫。
+  - 刻意不列為認得、也不算 unknown 的兩個：ABMX（由 `bone.*` 編輯）與 sideloader 的 `com.bepis.sideloader.universalautoresolver`（來源解析，不是外觀資料）。
+- **什麼不算 unknown**：
+  - 認得的區段只是沒填值，或填的值這張卡用不到 → 不是 unknown，不列。
+  - 沒有 KKEx 區塊 → 空陣列，不是缺欄。
+  - 認得的外掛裡某個欄位缺範圍 → 那是「範圍缺（`range_missing`）」欄，不混進這欄。
+- **一律按身分，不按位置**：外掛欄位的鍵是位置式的，同一個位置在不同卡上是不同外掛（alice 的 `m8` 是 MaterialEditor、megumin 的 `m8` 是 Pushup）。所以稽核按區段鍵（身分）數，不按位置、不跨卡沿用位置；否則同一個 build 在不同卡上會數出不同結論。
+- **它的意思**：「這個 build 缺支援」，不是「這張卡有問題」。換一個認得表更新的 build，同一張卡就會變空。所以歸在「我們缺支援」那一類，不要讓使用者去改卡。
+- **接線**：等 C++ 側的 `EditorUnknownPluginSections`（F 樹 `ccde34b12`）在建置窗口進 E 樹後，`ok.ReaderScreen audit` 的 registry 行與報告加這一欄。內容是目前載入的這張卡的清單；沒有載入卡時寫「沒有卡」，不是 0。

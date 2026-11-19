@@ -757,6 +757,10 @@ void UOKReaderScreen::BuildCategories()
 	// The pages from the definition file (Config/ReaderEditor/pages.json). Step 1 of Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md:
 	// the file describes the hand-written pages below one for one (mirrored UMG sources and the screen's own pages), and
 	// the audit must come out the same either way. What the file cannot say right is said in red, never the old screen.
+	// NEVER fall back to the old UMG reader from here (the user, 2026-11-19: the old UI must not appear again). A file
+	// that does not read builds the hand-written pages below with the reason in red; a wrong page is left out and named.
+	// Do not add a "safer" path that gives up this screen on a bad file: say what is wrong instead. The old reader shows
+	// only with -LegacyReader (OKGalleryWidget.cpp). Tools/tests/test_reader_pages.lua checks this in the source.
 	PagesErrors.Reset();PageKeys.Reset();PagesSource=TEXT("builtin");
 	ON_SCOPE_EXIT
 	{
