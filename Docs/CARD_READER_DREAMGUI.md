@@ -496,3 +496,23 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
 **為什麼查這條**：引擎 `BaseWindowsEngine.ini` 把描述子堆的起始大小設成 32768（引擎程式預設是 100 萬），滿了會翻倍並換一個 GPU 堆（`FD3D12BindlessDescriptorAllocator::ResizeGrowAndAllocate`），而「開過幾套不同資源」正好會讓描述子數量越過界。**結果不成立**：起始就是 100 萬、不會擴張，照樣在第 10 張當。
 
 **當時 GPU 上的狀態（不改設定那趟）**：DreamGUI 這一幀前 47 個 draw 已完成，第 48、49 個（精靈圖集、白底）在跑，後面 49 個還沒開始；98 個 draw 綁的是同一組貼圖（資料貼圖四張、字型圖集、精靈圖集或白底）。載入在 8 秒前完成，中間 log 沒有任何 DreamGUI 的變大、擴張或重建紀錄。DreamGUI 的著色器只綁固定的幾張貼圖，沒有動態描述子索引。所以出錯的位址比較像來自這兩個 draw 自己讀到的東西（頂點資料、或資料貼圖裡的列內容），而不是綁定換了。
+
+### 2026-11-19 07:13–08:05 e-fork-2：RDG 並行執行是必要條件，讀卡器啟動時關掉
+
+同一個短配方（新版 UI、`TestCards-20261118`、逐張開不同的卡、每張停 6 秒；`dwell.sh` 只開卡），每趟最多 40 或 60 張：
+
+| 條件 | stage | 結果 |
+|---|---|---|
+| 預設（`r.RDG.ParallelExecute=2`） | `EFork1119u` | 第 9 張當（前一節） |
+| 啟動參數 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0` | `EFork1119u` | **40 張不當**（482 秒） |
+| 同上，第二趟 | `EFork1119u` | **60 張不當**（724 秒） |
+| `r.RDG.ParallelExecute=1`（並行、但等所有工作做完） | `EFork1119u` | 第 5 張當（57 秒） |
+| DreamGUI 自己的 RDG pass 全加 `ERDGPassFlags::NeverParallel`，其餘預設 | `EFork1119v` | 第 17 張當（359 秒）；改動已撤回 |
+| 讀卡器畫面開啟時由程式設 `r.RDG.ParallelExecute 0`（log 確認 `LastSetBy: Code`、frame 0） | `EFork1119w` | 第 6 張當（241 秒）；改動已撤回 |
+| 同一個 `EFork1119w`，改用啟動參數設 0 | `EFork1119w` | **60 張不當**（741 秒） |
+
+**結論**：引擎的 RDG 並行執行是必要條件；只讓 DreamGUI 自己的 pass 不並行不夠，並行的是畫面其他 pass。從啟動參數就關掉的三趟共 160 次開卡都沒當；同樣的值改成讀卡器開啟時由程式設，照樣當。引擎每建一個 graph 都重讀這個值（`RenderGraphBuilder.cpp`），兩者的差別應該在讀卡器開啟前就已經跑過的幾幀（例如 D3D12 並行命令 context 在那時建好），還沒查證。哪一個並行 pass 和 DreamGUI 的繪製互相干擾，仍未找到。
+
+**修正（暫時的防護，不是根因）**：`Tools/run_card_reader_development.lua`（`CardReaderDevelopment.cmd` 與 ok-game-mcp 的 `reader_launch` 都走它）開新版畫面時加上 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`；`-LegacyReader`（不論放在 `--` 前後）不加，`-ParallelRDG` 保留引擎預設（重現與追根因用）。讀卡器只有一個角色，關掉並行執行的成本小。
+
+資料：`E:\OpenKoikatsu\Saved\Reports\reader-dwell-noparallel-20261119\`、`reader-dwell-pe0b-20261119\`、`reader-dwell-pe1-20261119\`、`reader-dwell-neverparallel-20261119\`、`reader-dwell-fix-20261119\`、`reader-dwell-fixini-20261119\`。

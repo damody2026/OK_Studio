@@ -21,7 +21,7 @@ local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
-local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true, watch = true }
+local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true, parallelrdg = true, watch = true }
 local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true, physics = true }
 
 -- -Physics <模式>（或環境變數 OK_READER_PHYSICS，選項優先：reader_launch 的 env 傳得進來）：讀卡器的
@@ -136,6 +136,16 @@ local function main()
     local given = false
     for _, x in ipairs(o.passthrough) do if x:lower() == "-legacyreader" then given = true end end
     if not given then args[#args + 1] = "-LegacyReader" end
+  end
+  -- The DreamGUI screen runs with RDG's parallel pass execution off from startup (2026-11-19, the reader's open GPU page
+  -- fault, Docs/CARD_READER_DREAMGUI.md): opening different cards with a few seconds between crashed within 5-17 cards
+  -- every time it was on; off from the command line, three runs of 40, 60 and 60 cards did not. Turned off from code when
+  -- the reader screen opened instead, it still crashed (card 6), so it has to be set before the engine renders.
+  -- -ParallelRDG keeps the engine's default.
+  local legacy = o.legacyreader
+  for _, x in ipairs(o.passthrough) do if x:lower() == "-legacyreader" then legacy = true end end
+  if not legacy and not o.parallelrdg then
+    args[#args + 1] = "-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0"
   end
   -- 物理：旗標由遊戲在建立物理選單之前套用（OKCharacterController::ApplyStartupPhysicsBackend），選單才會顯示
   -- 真正在跑的那一項。用 -ExecCmds 不行：指令在選單建好之後才跑，解算器已是 Verlet 而選單還寫著「依元件」。
