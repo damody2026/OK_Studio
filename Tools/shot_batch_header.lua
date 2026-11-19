@@ -4,6 +4,10 @@
 --   Tools\lua\lua.exe Tools\shot_batch_header.lua write (--editor <project root> | --exe <binary> [--exe <binary>...]) --out <batch dir> [--label <name>]
 --   Tools\lua\lua.exe Tools\shot_batch_header.lua check <batch dir A> <batch dir B>
 --
+-- `check` exit codes, each answer its own: 0 SAME (comparable), 1 DIFFERENT, 2 MISSING (a folder has no header),
+-- 3 OLD (a header from the whole-tree version: not compared at all). Only 0 means "compare them". Read the code of
+-- this command itself — in `check … | tee log` the shell reports tee's 0, which is how an OLD once looked like a pass.
+--
 -- What is compared, because each alone has misled us (2026-11-19, E group): the binaries' mtime and size (two runs
 -- without them had to be thrown away as a baseline), and a fingerprint of the PROGRAM content only — the paths that end
 -- up in the reader (`PROGRAM_PATHS`): their committed ids at HEAD plus `git status --porcelain` and `git diff HEAD`
@@ -34,7 +38,8 @@
 --   * an untracked file added under Docs/ between the writes → SAME (0 of 17) — a docs change no longer voids a batch;
 --   * HEAD changed in one header → SAME, with the HEAD line printed as "not compared";
 --   * an untracked file added under Tools/ → DIFFERENT (1 of 17: uncommitted status_hash), exit 1 — known negative;
---   * a header from the whole-tree version → OLD (exit 2); no header → MISSING (exit 2).
+--   * a header from the whole-tree version → OLD (exit 3, its own code since 2026-11-19: it shared 2 with MISSING, and
+--     one run piped through a pager read as exit 0); no header → MISSING (exit 2).
 --
 -- Which binaries: the card reader runs the ENGINE's UnrealEditor.exe with the project (run_card_reader_development.lua),
 -- and the engine is never rebuilt — its mtime says nothing. What our builds change are the project's editor modules, and
@@ -159,7 +164,7 @@ elseif mode == "check" then
   if not a or not b then print("MISSING: a batch without batch_header.json cannot be compared with another"); os.exit(2) end
   if not a.program or not b.program then
     print("OLD header: written by the whole-tree version (a Docs commit changed it). Write it again with this version;")
-    print("if the tree has not changed since, that is the same batch, not a new one."); os.exit(2)
+    print("if the tree has not changed since, that is the same batch, not a new one."); os.exit(3)
   end
   -- Every recorded binary, by path: one module rebuilt is a different build.
   local function bins(h) local t = {} for _, x in ipairs(h.binaries or { h.exe }) do t[x.path] = x end return t end
