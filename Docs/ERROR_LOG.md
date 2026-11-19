@@ -6165,3 +6165,14 @@ OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMa
 - 所以是「到達了、指標夠靈敏、卻沒動」的真正沒效果。上一條的門檻解釋錯了，預測對不上的 3 張就是證據。
 - 原因未查：主光亮度走同一個函式卻有效，懷疑環境光那幾個參數沒接到材質圖的輸出。窗口後查。
 - 教訓：從一個著色器（頭髮）讀來的公式，套到整個角色之前要先實測；先寫預測量，才看得出解釋錯了。
+
+## 2026-11-19 17:20 追到了：環境光參數沒接到皮膚與頭髮的材質圖（第 10 條附則 a 的第一種，不是第三種；F 組 f-yvonne）
+- 協調更正分類：日誌 `scaled>0` 只證明讀卡器的 setter 跑了，「到達」要看參數有沒有進到材質圖。
+- 讀程式（`KKPreviewActor.cpp`，零機器）：
+  - 皮膚（Koikano/main_skin，`bSkinShader`）：自訂 HLSL 裡寫死 `float3 ambientRgb = float3(0.5019608, …)`（2139 行；外框 3343 行同樣寫死），不讀任何參數。
+  - 頭髮（Sun hair）：`Ambient` 輸入接的是 `UMaterialExpressionConstant3Vector`，建材質時把 `Shadow->AmbientRgb` 烤成常數（2499–2516 行），也不是參數。
+  - `ApplyLightingScales` 寫的是 MID 上名為 `_ambientshadowG`／`unity_AmbientSky`／`unity_SHA*` 的向量參數。這兩個材質圖裡的環境光不從那裡讀，所以寫了也到不了畫面。
+- 所以分類是第一種「干預沒到達」：功能沒接線，是壞掉的功能，要接線，不是拿掉滑桿。1c 的「真正沒效果」寫錯了，上一條的門檻公式解釋也一起作廢。
+  - 公式預測全部落空，本身就支持「沒接上」：參數沒到材質，任何從公式推出的預測都不會成立。
+- 待修（窗口後那一批）：把皮膚與頭髮的 `ambientRgb` 改成讀 `_ambientshadowG` 向量參數（預設 0.502），讓 setter 真的到達。接好後再用 1c 的三組設定與預測量重拍。
+- 還沒查：Forge 家族（`KKForgeOpaque/Alpha/Item`、`KKMainItemPlus`）的材質圖有 `_ambientshadowG` 參數（R1145 的 uasset 名稱表裡有），但它在圖裡是否影響亮度，要在窗口後加日誌或看圖。
