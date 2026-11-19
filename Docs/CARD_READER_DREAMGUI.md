@@ -6294,3 +6294,40 @@ DreamUI_GroupTexture       … 整份 log 0 次
 `FDreamUIMaterialProxy` 繼承的 **uniform expression cache**（一個 uniform buffer，resource table 持有該材質的貼圖，
 只在三處重建、沒有每幀重建）——**f-sceneload 查完 descriptor 那一層之後唯一剩下的跨幀持有者**。
 下一格就是前人留的判別器 `DreamGUI.Experiment.NeverDeleteProxy=1`。
+
+# `NeverDeleteProxy=1` 三趟：3/3 故障，**但它不是「解構無害」，而是「解構從沒跑過」**
+
+| | 趟 1 | 趟 2 | 趟 3 |
+|---|---|---|---|
+| `# knob now` | `NeverDeleteProxy = "1"` `SystemSettingsIni` | 同 | 同 |
+| `cmdline_has_neverdelete` | 1 | 1 | 1 |
+| `faults` | **1** | **1** | **1** |
+| `Shader Hash` | `E6753E1E…` | 同一顆 | 同一顆 |
+| **`leak_lines`（洩漏計數器印了幾行）** | **0** | **0** | **0** |
+| `cards`／`fault_secs` | 14／140.6 | 14／140.0 | 14／142.1 |
+| `kept_created`／`kept_letgo` | 863／1035 | 864／1036 | 864／1036 |
+| `last_local_used` | 2648.98 MB | 2576.54 MB | 2645.46 MB |
+
+## 關鍵在 `leak_lines=0`：那個旋鈕沒有東西可以阻止
+
+`LeakInsteadOfDeleting()` 就在 proxy 的自訂 deleter 裡（`DreamUIMaterialProxy.cpp:127`），
+緊接著才是 `FDreamUIDeferredRelease::Later([InProxy]{ delete InProxy; })`（`:134`／`:140`）。
+它開著時**每一次**被呼叫都會計數並印 log（前 10 筆、之後每 50 筆）。
+**三趟 `leaked on purpose` 都是 0 行 ⇒ 那個 deleter 一次都沒被呼叫 ⇒ 整趟沒有任何 proxy 失去最後一個參照。**
+
+**所以這一格對那個旋鈕來說是「機制點沒被走到」（第 7k 條），不是陰性結果。**
+而對那個**假說**來說，結論比 3/3 更強：**proxy 的解構在讀卡器裡根本不會發生**，
+所以它不可能是觸發者——**是「從不發生」而不是「發生但無害」**。
+
+**兩個獨立量具同時說同一件事**（這正是第十一條要的交叉查核）：
+- 這一格的 `leak_lines=0`（從 deleter 那一側看）；
+- 觀察趟的 `kind=func` **0 筆**（從延遲釋放佇列那一側看——`func` 就是那個 `delete InProxy`）。
+**兩者原理不同、資料不同，結論一致。**
+
+**復活條件**：若哪天讀卡器的材質會被換掉或釋放（例如換主題、換 skin、關閉畫布後重開），
+proxy 就會失去最後一個參照，這條就要重測。
+
+## 同時排除：顯存不足不是終局
+
+`last_local_used` 三趟都在 2.6 GB 左右（預算 31.4 GB），而且真正的 OOM 字樣 **0 筆**——
+**所以「洩漏把趟次跑掉」這個風險沒有發生**（事前登記的那個作廢條件沒有觸發），三趟都是正常故障。
