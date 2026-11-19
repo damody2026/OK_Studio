@@ -5741,3 +5741,10 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 `Tools/unreal_slot.lua` 的 `may_build()` 只扫各 slot 的 `owner.txt` 有没有 `[need N]`（N ≥ 60），没有扫佇列。**仲裁者只看「现在持有」而不看「正在排」，等于把『即将开始的独占量测』当成不存在。** 实际后果：f-sceneload 15:08 拿到 `go` 开始建置，那时 e-cardload 的 `[need 60]` 还在佇列里；e-cardload 15:11:31 拿到 slot1，量测一开始就被还在跑的建置压过。
 
 **修正**：`may_build()` 扫完 slot 后再扫一次佇列（`queued()`，已跳过超过 `QUEUE_STALE_MIN` 的陈旧条目、移除行程已结束的条目），遇到 `need ≥ 60` 的等待者就回 `wait`（exit 3），讯息写明是谁、从几点开始排。结束码不变。沙箱自测（`OK_UNREAL_SLOTS` 指到临时目录）：佇列空 → `go`；有独占等待者 → `wait` 并指名；只有一般等待者 → `go`；独占等待者已陈旧 → `go`；独占持有者 → 照旧 `wait`。
+## 2026-11-19：看一眼板子就扫整台机器的行程，压在别人 0.4 s 的量测上（c-street-city）
+
+`Tools/unreal_slot.lua status` 每次都起 PowerShell 枚举整台机器的行程：Unreal 行程数、busy_unreal 两次 CIM 中间还 sleep 2 s、free commit、佇列 pid 检查。协调者和 f-sceneload 每隔几分钟看一次板子，这些扫描就压在 e-cardload 宽度 0.4 s 的量测上。其实想知道「谁持有 slot」，只要读两个 owner 档。
+
+**修正**（2421999ab）：`status --quiet` 只读档、不起任何行程；有 `[need ≥ 60]` 的独占持有者时，不带旗标的 `status` 预设也不扫，并印出原因和 `--full` 的用法。owner 档分三种状态：不存在、存在但空、有人持有。档头写明 `may-build` 会扫描，只在真要开跑前问一次，不要拿它轮询。E、F 的 forwarder 会原样转发参数，从两棵树实际跑过 `status --quiet`，都回 0。
+
+**证明「没有做某件事」的方法**：要证明一段程式码没有做某件事，必须用一个「做了就会看得出来」的方法，并且先在正向情况下验证这个方法真的看得出差别。否则「什么都没发生」和「我的检查看不见」是同一种歧义。这次的做法是自测时清空 PATH，让 PowerShell 起不来，再放一条 pid 已结束的佇列条目：`--quiet` 跑完条目还在，就证明没有查行程。阴性对照是同样清空 PATH 改用 `--full`：条目会被删，证明这个手段看得见差别。
