@@ -2480,6 +2480,15 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		{
 			const int32 I=Value.IsNumeric()?FCString::Atoi(*Value):-1;
 			Done=S->PressCard(I);
+			// The tile's press does nothing while a card loads, and keeps the old selection when the file is not a character
+			// card: say so rather than "card=N" (a script then loaded the previous card, 2026-11-19).
+			if(Done)if(UOKCharacterController* G=S->GetController();G&&G->SelectedIndex!=I)
+			{
+				const FString* Why=G->UnopenableCards.Find(S->CardFile(I));
+				Out.Logf(TEXT("not selected: card %d (%s) did not open, the selection stays on card %d: %s"),I,*S->CardFile(I),G->SelectedIndex,
+					Why?**Why:(G->bLoadInFlight||G->bAppearanceBusy?TEXT("busy, a card is loading"):TEXT("unknown")));
+				Done=false;
+			}
 			if(Done)Out.Logf(TEXT("card=%d file=%s"),I,*S->CardFile(I));
 		}
 		// "scroll <0..1>": the left page to that point of its length (screenshots of a long page).

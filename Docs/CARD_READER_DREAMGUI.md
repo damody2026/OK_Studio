@@ -1037,3 +1037,14 @@ e-cardload 給的條件：
   - Studio：`ui:false` 只剩角色，Studio 工具列、gizmo、讀卡器面板都沒有。
   - 拍完再 `ui:true`，面板都回來了。
 - **順便看到（另一件，未修）**：`ui:true` 的 1 對 1 與 Studio 畫面裡，讀卡器的 DreamGUI 面板（左欄、相機列、右欄）整段都畫在底下。之前記過「1 對 1 期間讀卡器畫面沒藏起來」，Studio 也一樣。
+
+## `reader_call select N` ＋ 載入3D 載入了上一張（2026-11-19，e-fork-2）
+
+- **f-sceneload 撞到的那次**：真因是 `ok-game-mcp` 的啟動守衛把 `index` 當成未知欄位擋掉，請求沒送到遊戲（f-sceneload 已在 63318f926／b08e9be8b 修好）。讀卡器沒有錯。
+- **讀卡器這邊確實有的假成功**：`SelectIndex` 遇到讀不成角色卡的檔案（例如資料夾裡的場景 PNG）時，選取留在原來那張，卻沒有回報。所以 MCP `select` 會回成功，下一次「載入3D」開的是上一張。`ok.ReaderScreen card N` 的格子在忙時按下也一樣。
+  - 現在 `select` 會比對選取有沒有真的換：沒換就回 `load_failed`，寫出那張卡為什麼開不了、選取還停在第幾張。
+  - `card N` 沒換就回 `not selected: …`（原因或「busy」），不再印 `card=N`。
+- **驗收**（stage `EFork1119r`，資料夾三張 OK 卡＋一個非角色卡 PNG）：
+  - 非角色卡的 PNG 本來就不進卡片列表（`cards_total 3`）。
+  - `select 2 → 1 → 0 → 2`，每次之後 `press 人物編輯›載入3D`，log 的 `OK load3d card=` 都是剛選的那張，`result ok=1`。
+- **附帶**：新版畫面下，`ui_press {"label":"載入3D"}` 回 `no such button on screen`（那顆 UMG 按鈕在收起的抽屜裡）。在新版讀卡器裡按「載入3D」，請用 `ok.ReaderScreen press 人物編輯›載入3D`。
