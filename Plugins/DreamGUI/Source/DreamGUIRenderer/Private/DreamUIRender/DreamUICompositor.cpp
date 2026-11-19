@@ -1,8 +1,9 @@
-// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
+﻿// Copyright 2026-Present TypeDreamMoon. All Rights Reserved.
 
 #include "DreamUIRender/DreamUICompositor.h"
 #include "DreamUIRender/DreamUIShaderGate.h"
 #include "DreamUIRender/DreamUIDeferredRelease.h"
+#include "HAL/IConsoleManager.h"
 
 #include "CommonRenderResources.h"
 #include "GlobalShader.h"
@@ -277,6 +278,18 @@ void FDreamUICompositeStack::EndAll()
 	}
 }
 
+namespace DreamUICompositorExperiment
+{
+	// EXPERIMENT (default off), to ask one question in 25 seconds instead of 30 card loads: is the backdrop copy the
+	// resource MainPS faults on? With this on, CopyFrom returns nothing, every caller takes its existing
+	// "no backdrop" path (bReadBackdrop = false, and a mode that reads one is drawn Alpha), and no backdrop copy is
+	// ever allocated. Blend modes that read what is behind look wrong while it is on; nothing else changes.
+	static TAutoConsoleVariable<int32> CVarNoBackdrop(
+		TEXT("DreamGUI.Experiment.NoBackdrop"), 0,
+		TEXT("Experiment: never copy what is behind a group, so no backdrop texture is allocated or sampled."),
+		ECVF_RenderThreadSafe);
+}
+
 FRDGTextureRef FDreamUICompositeStack::CopyBackdrop(const FIntRect& InRect, FIntPoint& OutOrigin, const TCHAR* InName)
 {
 	return CopyFrom(Frames.Last(), InRect, OutOrigin, InName);
@@ -284,6 +297,11 @@ FRDGTextureRef FDreamUICompositeStack::CopyBackdrop(const FIntRect& InRect, FInt
 
 FRDGTextureRef FDreamUICompositeStack::CopyFrom(const FFrame& InFrame, const FIntRect& InRect, FIntPoint& OutOrigin, const TCHAR* InName)
 {
+	if (DreamUICompositorExperiment::CVarNoBackdrop.GetValueOnRenderThread() != 0)
+	{
+		OutOrigin = FIntPoint::ZeroValue;
+		return nullptr;
+	}
 	using namespace DreamUICompositorLocal;
 	OutOrigin = FIntPoint::ZeroValue;
 	if (InFrame.bCulled || InFrame.Texture == nullptr)

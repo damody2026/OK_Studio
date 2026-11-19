@@ -2231,3 +2231,34 @@ PageFault: Found 0 active heaps containing page fault address
 **結論**：篩選剩下的兩個候選裡，**canvas target 這一個被我自己推翻了**，
 而 material proxy 是唯一同時能解釋 `DelayFrames`（跨帧物件）與 `gc`（reachability 驅動的刪除）兩條軸的候選。
 這一節寫在那四趟跑完之前，免得事後拿結果去挑一個說法。
+
+### 把 19 秒重現當工具：改成「切功能」而不是「轉旋鈕」（2026-11-19）
+
+單格成本從「翻 4–30 張卡擲骰」變成「19–25 秒、兩趟兩中」之後，該問的不再是旋鈕，而是
+**畫面上有什麼**，一項一項拿掉。**先更正兩件會影響設計的事**：
+
+1. **`ok.Experiment.ReaderScreenUnderOtherModes` 不是「不畫面板」的開關**，
+   它管的是其他模式底下要不要顯示讀卡器畫面（整天每一格都讀回 `0`）。
+2. **外掛裡沒有任何現成的 cvar 可以關掉 DreamGUI 的繪製或背景合成。**
+   全樹只有這些 `DreamGUI.*`：`DeferredRelease.Frames.{Texture,Buffer,Pooled,Func}`、
+   `LogDeferredRelease`、`LogHeldTextures`、`LogStaleTextures`、`Memory`、`Text.*`、
+   `Debug.PermanentSpriteOnStaticAtlas`、`Diag.FindTreeBridges`、`Scroll.SnapToDevicePixels`、
+   `LayerSection.*`、`GeneratedAssets.ForgetFullPaths`、`OldAssetFixtures.*`。
+   **所以「切功能」那幾格要自己加 gate**，不是設定現成開關。
+
+**第一個 gate 已經寫好（兩棵樹都有）**：`DreamGUI.Experiment.NoBackdrop`（預設 0），
+加在 `FDreamUICompositeStack::CopyFrom` 的最前面（`DreamUICompositor.cpp:298-304`）：
+開著時 `CopyFrom` 直接回 `nullptr`，**所有呼叫者都走它們本來就有的「沒有背景」那條路**
+（`bReadBackdrop = false`，而會讀背景的混合模式照既有邏輯改畫 Alpha），
+**一張背景拷貝都不會被配置或取樣**。開著時讀背景的混合模式會長得不對，其餘不變。
+選 `CopyFrom` 這一點是因為它是**唯一**產生背景拷貝的地方，合成與內建兩條路都經過它。
+
+**跑之前登記的讀法**：
+- **拿掉背景就不當（兩趟）⇒ 受害者就是背景拷貝**，而且修法的形狀是
+  「那張拷貝的生命週期要由持有者保證，不靠配置器的語意」；
+- **拿掉背景照樣當 ⇒ 背景出局**，接著往下切（字型圖集、遮罩、資料貼圖）。
+
+**一條硬規矩，先寫下來**：**這個 19 秒重現不能單獨當驗收。**
+它是另一個配置（`TransientAllocator=0`），任何候選修法要**同時**過兩關：
+19 秒重現兩趟不當，**而且**預設配置下最凶配方（`gc=10`＋noclear，今天死在第 4／7 張）
+兩趟活過 30 張。只過前者就宣告修好，等於拿只在非預設配置下成立的證據當結論。
