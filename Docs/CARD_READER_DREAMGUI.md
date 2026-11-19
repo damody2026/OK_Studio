@@ -1088,3 +1088,27 @@ clear 格逐張：`341/215 416/290 481/355` → GC → `331/212 403/284 466/347 
 還是要跑，但量的是**它能不能解釋當機**，不是「要不要這樣做」。
 
 **工作假設（標明是假設，等 DreamGUI 開關那格的結果）**：讀卡器的 DreamGUI 面板在 1 對 1／Studio 期間**整段還在畫**（e-fork-2 的 `ui:true` 截圖），每帧都要綁貼圖；換卡釋放的那批 transient 貼圖若還沒被 GC 收走、仍掛在 UObject 上，面板綁到的就可能是「已放掉但還沒真刪」的那一份——`mask0=fallback` 正是這個樣子。Studio 期間面板雖然也在畫，但**換卡的釋放不在那條路上**，所以 Studio 回程不當。這是目前唯一能同時容納正反兩面證據的說法。
+
+
+### 不對稱檢驗：兩條線索衝突時，「Studio 回程不當」當場判勝負（2026-11-19，讀碼核過）
+
+| | Studio 進場 | 1 對 1 進場 |
+|---|---|---|
+| 讀卡器畫面 | Collapsed | Collapsed |
+| **PreviewActor／PartnerActor** | **`SetActorHiddenInGame(true)`**（`OKGalleryOkStudio.cpp:29`，離場 48 還原） | **不藏**——`OKInteractionMode.cpp:72` 是「除了 PreviewActor 與 PartnerActor 以外都藏」，574 行還明確 `SetActorHiddenInGame(false)` |
+
+- **DreamGUI 面板那條過不了這個檢驗**：面板在兩個模式底下都在畫（e-fork-2 的 `ui:true` 截圖 11172-0003／0005），
+  但只有 1 對 1 回程會當。**兩邊都有的東西解釋不了只有一邊當。**
+- **角色 actor 的可見性正好是那個差集**：Studio 藏、1 對 1 不藏；Studio 回程不當、1 對 1 回程當。而留下來的那批
+  transient 貼圖的持有者就是讀卡器現存的 `KKPreviewActor` 的 `Parts`，它們在之後的開卡裡陸續被放掉——
+  「沒藏起來的 actor 的貼圖被提交進 draw、稍後被放掉」和 page fault ＋ 唯一 Active Shader 是 `MainPS` ＋
+  `mask0=fallback` 的簽章吻合，也和上一節「峰值越高越容易當」一致（活著的 transient 越多，綁到已放掉那一份的機會越大）。
+
+**所以下一格應該是：照 Studio 的做法，在 1 對 1 進場也把那兩個 actor hidden、離場還原，再跑 30 張。** 過不了就排除，
+過了就同時拿到根因與修法。（改的是 `OKInteractionMode.cpp` 的 `EnterReader`／`Exit`，不是我的檔案，等協調者裁示。）
+
+**沒核到的一項**：f-sceneload 提到「1 對 1 期間多 4 個 `SceneCaptureComponent2D`」，但 `OKInteraction*.cpp` 裡
+grep 不到這個字，所以那部分未經證實，要當證據得先指出是哪個檔案建的。
+
+**這一節本身也是個方法**：手上有兩條都「說得通」的線索時，先找一個**兩條預測不同**的現成觀察（這裡是 Studio 回程），
+不必等新實驗就能砍掉一條。
