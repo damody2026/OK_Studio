@@ -6659,3 +6659,61 @@ Active Shaders:
 而第二十六條已經說明：我那九個槽的量具看的是 `FTextureReferenceRHIRef` 那一側，
 **結構上只看得到活著的綁定**。
 **所以下一步要問的是：這十一個參數分別從哪裡取值，哪些不是經過那九個槽。**
+
+
+# 那顆著色器的貼圖參數盤完了：**十一個全部有擔保人**，而且懷疑的那個缺口不是缺口
+
+純讀碼，零趟次。綁定點在 `DreamUIRenderer.cpp:981-1014`。
+
+| 參數 | 值從哪裡來 | 繫結那一刻誰擔保 | 可能是卡片 runtime 貼圖嗎 |
+|---|---|---|---|
+| `DreamUI_MainTex` | `Params.MainTextureRHI`（槽 0） | `FTextureReferenceRHIRef`，由 draw params 持有 | **可能**（卡片縮圖／預覽就走這裡） |
+| `DreamUI_FontTex` | `FontTextureRHI`（槽 1） | 同上 | 否：`Texture2DArray`，字型圖集 |
+| `DreamUI_WidgetDataTex` | `WidgetDataTextureRHI`（槽 2） | 同上 | 否：DreamGUI 自建的資料貼圖 |
+| `DreamUI_ClipDataTex` | `ClipDataTextureRHI`（槽 3） | 同上 | 否：同上 |
+| `DreamUI_RectBlockDataTex` | `RectBlockDataRHI`（槽 5） | 同上 | 否：同上 |
+| `DreamUI_PaintDataTex` | `PaintDataRHI`（槽 6） | 同上 | 否：同上 |
+| `DreamUI_MaskTex0/1` | `MaskTexture0/1RHI`（槽 7、8） | 同上 | 可能（遮罩可以是任意 `UTexture`） |
+| `DreamUI_SceneDepthTex` | 傳進來的 `SceneDepthTexture`，否則 `GBlackTexture` | pass 之內取值，RDG 保證 | 否：場景深度 |
+| `DreamUI_BackdropTex` | 當幀的 backdrop 副本，否則 `GBlackTexture` | 同上；**且兩個方向都已除名** | 否 |
+| `DreamUI_RenderLayerTable`（VS） | `RenderLayerTableRHI`（槽 4） | `FTextureReferenceRHIRef` | 否 |
+| `DreamUI_RenderLayerWidgetData`（VS） | **`WidgetDataTextureRHI`（槽 2）** | 同上 | 否 |
+
+## 一、懷疑的那個缺口不成立：`RenderLayerWidgetData` 沒有自己的來源
+
+協調 session 推測 `RenderLayerWidgetData` 既不在九個槽裡也沒被排除過。**不是這樣**：
+`DreamUIRenderer.cpp:982` 是
+
+```cpp
+VSParameters.DreamUI_RenderLayerWidgetData = TextureOrFallback(Params.WidgetDataTextureRHI.GetReference(), GBlackTexture);
+```
+
+**它和 `DreamUI_WidgetDataTex` 讀的是同一個槽（槽 2 `WidgetData`）**，所以它在量具視野內，
+而且它是**頂點著色器**的參數——**故障的是 pixel shader**（`Type = Pixel`），
+所以那兩個 VS 參數本來就不會是這次被取樣的那一張。
+
+## 二、十一個都有擔保人，所以照事前登記的讀法，矛盾落在量具那一側
+
+九個走 `FTextureReferenceRHIRef`（draw params 持有，計數有效）、
+`SceneDepthTex` 與 `BackdropTex` 在 pass 之內取值。**沒有一個是「沒有擔保人的裸值」。**
+而第二十六條的三個洞說那個量具**結構上看不到懸空的綁定**。
+**兩者正面矛盾 ⇒ 東西藏在洞裡 ⇒ 下一步要把量具補到「每一筆 draw 真正綁出去的那個值」。**
+
+## 三、補量具時要量什麼：綁出去的是**參照物件本身**，不是被參照的貼圖
+
+`TextureOrFallback(Params.MainTextureRHI.GetReference(), …)` 交給
+`SHADER_PARAMETER_TEXTURE` 的是 **`FRHITextureReference` 這個物件**（它本身就是一種 `FRHITexture`）。
+**GPU 真正取樣的是它當下所指的那一張**，而那層指向可以在繫結之後改變：
+
+- `FD3D12RHITextureReference::SwitchToNewTexture`（`D3D12TextureReference.cpp:43-79`）最後一行是
+  `SetReferencedTexture(InNewTexture)`——**傳進來的原值**；
+  `NewTexture`（在 null 時退回 `GetDefaultTexture()`）只用在 bindless 那一段。
+  所以清掉參照時，`ReferencedTexture` 變成 **nullptr**，不是黑貼圖。
+- `FRHITextureReference::ReferencedTexture` 是 `TRefCountPtr`（`RHITextureReference.h:53`），
+  **所以「參照指著它」與「它的配置被釋放」不能同時成立**——
+  這正是第二十六條第三個洞說的：**量具只看得到活著的那一半**。
+
+**所以樁要下在每一筆 draw 繫結的那一刻，記錄「參照物件 ⇒ 它當下指向的貼圖 ⇒ 那張貼圖的名字與位址」，
+並且在貼圖已經不在時也要印得出來**（不能靠讀它的名字，因為那時讀的就是已釋放的記憶體）。
+這就是交接文件第 7 節那個樁要解決的問題，而這次盤點把它的規格講清楚了：
+**量的對象是「參照 → 被參照」那一跳，不是槽位解析那一刻。**
