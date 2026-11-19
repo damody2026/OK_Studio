@@ -205,6 +205,9 @@ public:
  UPROPERTY() TMap<FString,TObjectPtr<class UTexture2D>> AppearanceThumbCache;
  // Least recently used first; ok.AppearanceThumbCacheMax > 0 keeps at most that many (0: no limit).
  TArray<FString> AppearanceThumbOrder;
+ // Thumbnails decoded from their files (cache misses), for ok.ReaderScreen resources: a limit too small shows here as
+ // pages decoded again on every visit.
+ int32 AppearanceThumbDecodes=0;
  // The thumbnail for Path from the cache, made and cached when missing.
  class UTexture2D* CachedThumb(const FString& Path);
  TArray<TSharedPtr<FJsonObject>> AppearanceTargets,AppearanceItems;

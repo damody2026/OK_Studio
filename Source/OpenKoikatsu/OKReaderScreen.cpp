@@ -1169,7 +1169,7 @@ void UOKReaderScreen::ListResources(FOutputDevice& Out) const
 	if(const UOKCharacterController* G=Controller.Get())
 	{
 		int64 Bytes=0;for(const auto& Pair:G->AppearanceThumbCache)Bytes+=Size(Pair.Value);
-		Line+=FString::Printf(TEXT(" | controller appearanceCache=%d (%.1f MiB) appearanceTextures=%d"),G->AppearanceThumbCache.Num(),MiB(Bytes),G->AppearanceTextures.Num());
+		Line+=FString::Printf(TEXT(" | controller appearanceCache=%d (%.1f MiB) decodes=%d appearanceTextures=%d"),G->AppearanceThumbCache.Num(),MiB(Bytes),G->AppearanceThumbDecodes,G->AppearanceTextures.Num());
 	}
 	int32 Widgets=0,Mirrors=0;
 	for(TObjectIterator<UDreamWidget> It;It;++It)if(IsValid(*It)){++Widgets;if(It->IsA<UOKDreamControl>())++Mirrors;}

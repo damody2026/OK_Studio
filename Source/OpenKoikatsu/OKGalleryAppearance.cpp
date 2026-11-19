@@ -511,14 +511,15 @@ UTexture2D* UOKCharacterController::EyeOverlayThumb(const FString& Png){
  if(Png.IsEmpty())return nullptr;
  return CachedThumb(Png);
 }
-// A limit for the picker thumbnail cache (2026-11-19, the reader's open GPU page fault: a comparison run with the cache
-// bounded). An evicted texture is only dropped from the cache: tiles still showing it keep it (their brushes, DreamGUI's
-// draw holds), and the next request for that file makes a new one.
-static TAutoConsoleVariable<int32> CVarAppearanceThumbCacheMax(TEXT("ok.AppearanceThumbCacheMax"),0,TEXT("Picker thumbnails kept in the cache: 0 no limit (default), N the N most recently used."));
+// A limit for the picker thumbnail cache: kept by file path, it only grew (88 thumbnails after the first card, 448 and
+// 102 MiB after thirty, 2026-11-19). 128 is four picker pages of 32. An evicted texture is only dropped from the cache:
+// tiles still showing it keep it (their brushes, DreamGUI's draw holds), and the next request for that file makes a new
+// one.
+static TAutoConsoleVariable<int32> CVarAppearanceThumbCacheMax(TEXT("ok.AppearanceThumbCacheMax"),128,TEXT("Picker thumbnails kept in the cache: N the N most recently used (default 128, four pages), 0 no limit."));
 UTexture2D* UOKCharacterController::CachedThumb(const FString& Path){
  UTexture2D* T=nullptr;
  if(TObjectPtr<UTexture2D>* Cached=AppearanceThumbCache.Find(Path))T=Cached->Get();
- if(!T&&(T=Thumbnail(Path))!=nullptr)AppearanceThumbCache.Add(Path,T);
+ if(!T&&(T=Thumbnail(Path))!=nullptr){AppearanceThumbCache.Add(Path,T);++AppearanceThumbDecodes;}
  if(!T)return nullptr;
  AppearanceThumbOrder.Remove(Path);AppearanceThumbOrder.Add(Path);
  const int32 Max=CVarAppearanceThumbCacheMax.GetValueOnGameThread();
