@@ -2472,3 +2472,31 @@ D3D12 那一層把真正的記憶體釋放推到 EOP（`FD3D12DynamicRHI::Enqueu
 **還有一個刻度共用的細節要記住**：`Frames.Texture` 這個刻度同時管
 資料貼圖（`DataTexture.cpp:143`）與 canvas target（`Renderer.cpp:1253`），
 而它兩趟都沒效果，**所以這兩個一起出局**，不必再各測一次。
+
+### EOP 同步點**只涵蓋「enqueue 當下已經送交」的工作**——協調猜的那一步結構上成立（2026-11-19，純讀碼）
+
+`FD3D12DynamicRHI::EnqueueEndOfPipeTask`（`D3D12RHI/Private/D3D12RHI.cpp:320-361`）的做法是：
+**當下**為每個佇列 `new FD3D12Payload`、在裡面放一個新的
+`FD3D12SyncPoint::Create(ED3D12SyncPointType::GPUAndCPU, ...)`，然後 **`SubmitPayloads(...)` 當場送交**，
+最後把那些同步點的 graph event 當成 EOP 任務的 prereq。
+
+**所以那個屏障的語意是「在 enqueue 那一刻之前已經送交的工作跑完」，不是「已經錄好的工作跑完」**：
+payload 被插在佇列裡**已送交工作的後面**，而**之後才送交**的命令清單排在這個 payload **後面**，
+同步點對它們一無所知。**協調猜的那一步，結構上確實是這樣。**
+
+排空點也查到了：`RHIProcessDeleteQueue()` 由
+`FRHICommandListExecutor::FSubmitState::Submit_Close`（`RHI/Private/RHICommandList.cpp:1442`）呼叫，
+就在那個 `while(true)` 的 delete 迴圈（`:1414-1437`）之後，**也就是送交的時點**。
+
+**所以破口的形狀是**：若有一次帶 `ERHISubmitFlags::DeleteResources` 的送交，
+發生在「DreamGUI 錄完它那批 draw」與「那批 draw 真的被送交」**之間**，
+那麼這一輪釋放的 EOP 同步點不涵蓋那批 draw——
+記憶體可以在那批 draw 還沒開始跑之前就被放掉，取樣到的就是不屬於任何堆的位址。
+
+**還缺的最後一塊（不要當成已查）**：DreamGUI 在 `PostRenderView_RenderThread` 錄的那批 draw，
+在這一帧**實際是什麼時候被送交**的，以及那之間有沒有一次帶 `DeleteResources` 的送交。
+RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交，所以這個窗口**可能存在**，
+但「可能存在」不是「存在」。**在量到或讀到那個順序之前，破口仍然沒有被證實。**
+
+**若破口證實**，修法就不是常數、也不只是給 `Later` 掛 fence，而是
+**要等到「包含那批 draw 的送交」完成之後才允許這一輪釋放**。
