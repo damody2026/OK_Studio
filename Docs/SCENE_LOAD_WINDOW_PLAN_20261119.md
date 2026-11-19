@@ -167,6 +167,13 @@ git ls-files -s 的索引  → 5a880719bda34dafbd391f435efc0b031c3ca306
   （`OKSceneDocument.cpp:127`，**=0 时盖过 cvar**）。查过了：`Config/*.ini` 没有任何 `ok.Studio` 设定，
   `Saved/Config` 没有它，使用者层与机器层的环境变数都没有，启动脚本也没有带。
   runner 仍然明确把那个环境变数清掉——**不是因为现在有，而是因为它若出现就无声地毁掉整题**。
+- **一趟算不算完成，由程序判定（不是由数字判定）**：runner 在趟末检查
+  `sync_world_ms`、`find_index_builds`、`ready_ms` **三栏齐全**才算这趟成立；缺任何一栏就作废**并记明缺哪一栏**
+  （7g：缺资料判失败，不能拿 0 去填）。这是依程序剔除，合规；依结果剔除（数字不合意就重跑）不合规。
+- **挂钟上限**：runner 第四个参数，预设 600 秒，超时自己收掉并标记。
+  **不要用「游戏 MCP 还答得出话」判断一趟还活着**——`OKControl` 在独立执行绪，
+  **算绘装置死了它照样回应**；真正的死讯是 crash reporter 行程出现、或 log 的时戳不再前进、
+  或上面那三栏没写出来。
 - **判读三分，每一种都明确（不依结果剔除趟）**：
   | 看到 | 读成 | 接下来 |
   |---|---|---|
@@ -183,7 +190,7 @@ git ls-files -s 的索引  → 5a880719bda34dafbd391f435efc0b031c3ca306
 - **开跑前先量 `sync_world_ms` 自己的地板**（第 11 条）：同设定连跑两趟，差值就是地板；
   0 与 1 的差没有明显大于它就写「**判不出来**」。这两趟并进交错两轮里，不另外花趟数。
   **地板用 `sync_world_ms` 量，不是 `ready_ms`**（后者自己的抖动就超过 1.7 秒）。
-  **runner 冻结**：`scratchpad/q1_trip.lua`，`git hash-object` **88fb0f3f2fe1bd39e9fcb495aa3e2f508577fc9f**
+  **runner 冻结**：`scratchpad/q1_trip.lua`，`git hash-object` **95a6eacef1bd31c761625830e10914086e2e409a**
   （记进段 A 的纪录；它在 scratchpad 所以手动记）。它清掉 `OK_SELFTEST_SYNC_WORLD_SLEEP_MS`
   与 `OK_STUDIO_FIND_INDEX`，并在设 cvar 后回显一次（只排除打错名字，不当阳性样本）。
   **按 11d 检查这个地板，但要有第三趟**：「每次都是同一个数」在 n=2 看不出来——
