@@ -2262,3 +2262,52 @@ PageFault: Found 0 active heaps containing page fault address
 它是另一個配置（`TransientAllocator=0`），任何候選修法要**同時**過兩關：
 19 秒重現兩趟不當，**而且**預設配置下最凶配方（`gc=10`＋noclear，今天死在第 4／7 張）
 兩趟活過 30 張。只過前者就宣告修好，等於拿只在非預設配置下成立的證據當結論。
+
+### 關鍵的一問：delete 一個 proxy 會放掉任何 `MainPS` 綁的東西嗎？**不會。**（2026-11-19，純讀碼）
+
+`FDreamUIMaterialProxy`（`DreamUIMaterialProxy.h:42-78`）私有的全部狀態是：
+`GameThreadSource`／`RenderThreadSource`（`UMaterialInterface*`，裸指標）與
+`GameThreadParameters`／`RenderThreadParameters`，而 `FDreamUIMaterialParameters` 只有三個陣列：
+`TArray<TPair<FName, const UTexture*>> Textures`、`Vectors`、`Scalars`——**全是裸指標與數值，沒有任何擁有權**。
+它另外從 `FMaterialRenderProxy` 繼承的是**材質自己的** uniform expression 快取／uniform buffer，
+那只有材質那條 draw 會綁。
+**所以 delete 一個 proxy 不會釋放任何 `MainPS` 綁的資源。**
+
+於是把兩個篩選並起來看，**它們沒有乾淨的交集**：
+
+| 呼叫點 | ①放掉的東西跨帧被繼續用？ | ②放掉的是 `MainPS` 綁的東西？ |
+|---|---|---|
+| `DataTexture.cpp:143` | **否**（draw 綁參照，當場 re-point） | **是**——資料貼圖就是 `WidgetDataTex`／`ClipDataTex`／`RectBlockDataTex`／`PaintDataTex` |
+| `Compositor.cpp:325` | **否**（堆疊是建 pass 那個函式的區域變數） | **間接**：`Frame.Pooled` 是 group 的目標，`MainPS` 綁的是從它**拷貝**出來的那張 |
+| `MaterialProxy.cpp:89/95` | **是**（跨帧物件、GC 驅動 delete） | **否**（上面這一段） |
+| `Renderer.cpp:1252` | **是**（view extension 的成員） | **原則上是**，但讀卡器大概沒有 `RenderTarget` 模式的 canvas，所以大概不觸發 |
+
+**所以四個呼叫點沒有一個同時滿足兩個條件。** 照協調登記的分支，這表示
+**`DelayFrames` 的效應大概不是「保護了受害者」，而是改變了某種時序**，
+而主力工具要換成那個 19 秒重現（切功能那條路）。
+
+### 兩個重現要分開記，目前只有簽章是共同的（2026-11-19）
+
+| | A：預設配置 | B：`r.RDG.TransientAllocator=0` |
+|---|---|---|
+| 何時當 | 翻到第 4–30 張卡 | **第 19 秒，一張卡都沒開** |
+| 穩定度 | 擲骰（同配方同建置會差 4→15） | **兩趟兩中** |
+| 和 `gc` 那條軸的關係 | 對得上（`gc=10` 最快、`gc=300` 沒事） | **對不上**（沒有卡片、幾乎沒有 purge） |
+| 共同點 | `MainPS`、`Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF`、`fragment_02`、`Error_DMA_PageFault`、位址不在任何堆 | 同左 |
+
+**在有一個機制能同時解釋兩邊之前，紀錄寫成「兩個重現、一個共同簽章」，不假設是同一個 bug。**
+任何修法仍然要兩關都過。
+
+### `Frames.Texture=240` 第 1 趟：第 6 張就當（2026-11-19 14:38–14:40）
+
+**首先，cvar 確認接上了**——協調要的那行 in-effect log 正是為此：
+`DreamGUI deferred release frames in effect: texture=240 buffer=3 pooled=3 func=3`。
+只抬 Texture 這一個刻度，其餘留 3。
+
+結果：**當在第 6 張**（表裡最後一張是 5），簽章一樣
+（`MainPS`／同 hash／`fragment_02`／`PageFault at VA 0xDFDD21000`／`Found 0 active heaps`）。
+第 4–15 張是 `DelayFrames=3` 同配方的範圍，**所以只抬 Texture 沒有救到它**。
+**`DreamGUI.LogStaleTextures` 在這一趟 0 次命中**，與登記的預測一致。
+
+照登記的讀法，這一趟指向：受害者不在 Texture 這個刻度裡（資料貼圖、canvas target 都不是）。
+等第 2 趟與 `Func` 那兩趟跑完再定案。
