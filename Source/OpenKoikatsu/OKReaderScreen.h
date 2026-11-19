@@ -243,6 +243,11 @@ private:
 	void CheckGameRoot(const FString& Root);
 	void CheckLocalLibrary(const FString& Library);
 	static FString PickFolder(const FString& Title,const FString& Start);
+	// 同一个系统对话框，挑一个 PNG（材質貼圖那页用）。
+	static FString PickFile(const FString& Title,const FString& Start);
+	static FString PickPath(const FString& Title,const FString& Start,bool bFolder);
+	// 材質貼圖那页输入框里的路径，页面重建时留着（非同步读回来会重建一次）。
+	FString TexturePath;
 	void Layout();
 	void TickResize();
 	void SyncAll();

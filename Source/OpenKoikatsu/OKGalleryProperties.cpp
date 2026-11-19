@@ -219,3 +219,55 @@ void UOKCharacterController::SetPropertyScope(const TArray<FString>& Tokens){
  if(PropertyPanel&&PropertyPanel->GetVisibility()!=ESlateVisibility::Collapsed&&!EditorProperties.IsEmpty()&&Entries.IsValidIndex(SelectedIndex)&&PropertySource==Entries[SelectedIndex].Path&&PropertyOutfit==OutfitIndex)RebuildPropertyControls();
  else{if(PropertyPanel&&PropertyPanel->GetVisibility()!=ESlateVisibility::Collapsed)PropertyPanel->SetVisibility(ESlateVisibility::Collapsed);OnOpenProperties();}
 }
+
+// 材質貼圖（MaterialEditor 的 TextureDictionary／MaterialTexturePropertyList）。和 EditorProperties 分开，因为
+// 一张 PNG 不是属性值：ok-extract 那边也是另外两个动作（Docs/READER_UI_APPEARANCE_API.md §11）。
+// 一列的身分是 5 个栏位（object／coordinate／slot／material／property），不是列号 —— 清单的顺序是每张卡自己的事，
+// 所以界面拿到什么就送回什么，从不自己记「第几列」。
+void UOKCharacterController::LoadTextureRows(){
+ if(bTextureBusy||bPropertyBusy||bAppearanceBusy||bLoadInFlight||!Entries.IsValidIndex(SelectedIndex))return;
+ const FString Card=Entries[SelectedIndex].Path;
+ if(TextureSource==Card&&TextureOutfit==OutfitIndex)return;	// 已经是这张卡这套服装的，别重读
+ const FString Folder=AppearanceWorkFolder(Card),Input=Folder/(FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".textures.png"));
+ IFileManager::Get().MakeDirectory(*Folder,true);
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ if(auto* Root=UKKGameRoot::Get())AppearanceRoot=Root->Root;
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("textures"));R->SetStringField(TEXT("card"),Input);R->SetNumberField(TEXT("outfit"),OutfitIndex);
+ bTextureBusy=true;EditorTextures.Reset();TextureSource=Card;TextureOutfit=OutfitIndex;TextureNote=TEXT("讀取這張卡的材質貼圖…");++TextureGeneration;
+ const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
+ RunAppearanceRequest(R,[Selection,Generation,Outfit](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){
+  G->bTextureBusy=false;++G->TextureGeneration;
+  if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
+  if(!Data){G->TextureSource.Empty();G->TextureOutfit=INDEX_NONE;G->TextureNote=TEXT("貼圖清單讀取失敗：")+Error;return;}
+  for(auto V:Data->GetArrayField(TEXT("textures")))G->EditorTextures.Add(V->AsObject());
+  G->TextureNote=G->EditorTextures.IsEmpty()?TEXT("這張卡（這套服裝）沒有任何材質貼圖覆寫。")
+   :FString::Printf(TEXT("%d 筆材質貼圖覆寫。"),G->EditorTextures.Num());
+ },CardJob);
+}
+// 一批修改一次送出，和 ApplyPropertyOps 同一个理由：卡片不会停在半套用的状态，开卡也只发生一次。
+FString UOKCharacterController::ApplyTextureChanges(const TArray<TSharedPtr<FJsonValue>>& Changes){
+ if(Changes.IsEmpty())return TEXT("No texture change given");
+ if(bTextureBusy||bPropertyBusy||bAppearanceBusy||bLoadInFlight||bAnimationPreparing)return TEXT("Busy; retry when the current work finishes");
+ if(!Entries.IsValidIndex(SelectedIndex))return TEXT("No character loaded");
+ if(!PendingProperties.IsEmpty())return TEXT("Apply or discard the staged property edits first");
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),
+  Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));
+ auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
+ auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("textures_apply"));R->SetStringField(TEXT("card"),Input);
+ R->SetStringField(TEXT("output"),Output);R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));
+ R->SetNumberField(TEXT("outfit"),OutfitIndex);R->SetArrayField(TEXT("changes"),Changes);
+ bTextureBusy=true;bAppearanceBusy=true;if(PropertyPanel)PropertyPanel->SetIsEnabled(false);
+ TextureNote=TEXT("正在寫入貼圖並產生外觀…");++TextureGeneration;
+ const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
+ RunAppearanceRequest(R,[Selection,Generation,Outfit,Output,CardJob](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+  G->bTextureBusy=false;G->bAppearanceBusy=false;++G->TextureGeneration;if(G->PropertyPanel)G->PropertyPanel->SetIsEnabled(true);
+  if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
+  if(!Data){G->TextureNote=TEXT("貼圖沒有寫入，角色保持原樣：")+Failure;return;}
+  // 清单与属性都已经不是这张卡的了（purge 会丢掉没人引用的字典项），重读而不是猜。
+  G->EditorTextures.Reset();G->TextureSource.Empty();G->TextureOutfit=INDEX_NONE;G->EditorProperties.Reset();
+  G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->PropertySource=Output;G->bIndependentCards=true;
+  G->PreviewResourceSignature.Empty();G->OnLoad3D();
+  G->TextureNote=TEXT("已寫入貼圖並保存外觀。");
+ },CardJob);
+ return FString();
+}

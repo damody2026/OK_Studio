@@ -159,6 +159,18 @@ public:
  // ok-extract (`appearance/ops.rs`), so the UI, the MCP and the CLI cannot drift apart on what a button means.
  // Returns the reason it did not start, or an empty string. Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7.
  FString ApplyPropertyOps(const TArray<TSharedPtr<FJsonValue>>& Ops);
+ // 材質貼圖（MaterialEditor）。和 EditorProperties 分开：一张 PNG 不是属性值，ok-extract 那边也是另外两个动作
+ // （`textures`／`textures_apply`，Docs/READER_UI_APPEARANCE_API.md §11）。每一列带着自己的 5 个身分栏位
+ // （object／coordinate／slot／material／property），界面不记列号 —— 清单的顺序是每张卡自己的事。
+ TArray<TSharedPtr<FJsonObject>> EditorTextures;
+ FString TextureSource,TextureNote;
+ int32 TextureOutfit=INDEX_NONE;
+ // 读完、写完都 ++：读卡器的页面用它当 Signature，所以非同步读回来之后页面会自己重建。
+ int32 TextureGeneration=0;
+ bool bTextureBusy=false;
+ void LoadTextureRows();
+ // 一批贴图修改一次写回（指派／清除／偏移／缩放）。回传没有开始的理由，或空字串。
+ FString ApplyTextureChanges(const TArray<TSharedPtr<FJsonValue>>& Changes);
  UFUNCTION() void OnResetProperties();
  UFUNCTION() void OnPropertySearch(const FText& Value);
  UFUNCTION() void OnPropertyPrev();

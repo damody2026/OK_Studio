@@ -694,3 +694,33 @@ plugins.MaterialEditor.a1.@MaterialColorPropertyList.packed.a<i>.@Value.a0
 ```
 
 对照第 10 节那两个 `plugins.m…`：那是**反例**，留着只为说明位置式长什么样，不可照抄。
+
+### 12.9 偏移／缩放的形状定了，界面也接上了（2026-11-19）
+
+**更正 12.7 的「还没验」那段**：我把「量到的三张卡都没有偏移／缩放」当成形状未知，于是写成「照卡片自己既有的
+那一笔的形状写，整张卡没有就拒绝」。那是错的 —— **权威在反编译里，不在某张卡里**。
+`D:\XKoikatuSunshine\kks_decomp\Managed\KoikatsuSunshine_Data\Assembly-CSharp-firstpass\MessagePack.Unity\Vector2Formatter.cs`
+的 `Serialize` 就是答案：`WriteFixedArrayHeaderUnsafe(…, 2)` 加两个 `WriteSingle`，也就是**两个 float32 的
+定长阵列**，不是 `{x,y}`、也不是 float64。（`Deserialize` 碰到 nil 直接 throw，所以 `Vector2?` 的 nil 由
+Nullable 格式器写，读到 nil 不会进那支。）
+
+**而且这家族真的就是在用的那支，有实卡可证**：同一个 resolver 下的 `ColorFormatter.cs` 写 4 个 float32，
+而 alice 的 `MaterialColorPropertyList` 里 `Value` 正是 4 元素 float32 阵列（f-yvonne 的键例 `….@Value.a0`）。
+测试 `unity_structs_are_float32_arrays_on_a_real_card` 把这件事钉在实卡上（`#[ignore]`，卡片不进版控）。
+所以写入不再拒绝，`vec2_shape` 整个拿掉。**教训**：样本缺一笔不代表形状未知；等资料会把事情卡到不知道哪天。
+
+**界面接上了**（读卡器多一个分类「材質貼圖」）：
+
+- `OnEnter` 读这张卡这套服装的贴图列；`Signature` 带读取世代，所以非同步读回来之后页面会自己重建
+  （沿用骨架分类那套机制，不另开刷新路径）。
+- 每一列一行：`<种类> 欄 <槽>／<材质>／<属性>（<宽>×<高>, <KB>）`，底下「指派」「清除」。
+- 一页一个 PNG 路径输入框加「選 PNG…」（系统对话框，只给 PNG；`PickFolder` 拆成共用的 `PickPath`）。
+- 送回去的永远是那一列**读到的 5 个身分栏位**，界面不记「第几列」。
+- 同一条路也开给 MCP（`reader_call` 的 `textures`／`textures_apply`），所以按钮、MCP 与 CLI 不可能对
+  「指派／清除做了什么」有不同看法。
+
+`OpenKoikatsuEditor` 与 `OpenKoikatsu` 两个 Development 目标都建置成功（共用程式的规矩）。
+
+**还没拍照**：这一节的界面描述是**预期**，不是已验证。截图等机器窗口，和积着的那几组一起拍：
+四页头发、瞳、「重設外框色」前后、主色拖完 apply 前后、`foregroundEyes` 一对，加这次的「材質貼圖」页
+（Tohru 6 列那张最适合，看得到不同种类与槽号）。

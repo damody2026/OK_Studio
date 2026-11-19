@@ -739,6 +739,77 @@ void UOKReaderScreen::BuildCategories()
 		FGroup Common;Common.Name=TEXT("頭髮共通");Pickers(Common,{TEXT("hair_gloss")},{TEXT("glossId")});Hair.Groups.Add(MoveTemp(Common));
 		Categories.Add(MoveTemp(Hair));
 	}
+	// 材質貼圖: the PNGs MaterialEditor assigned to material properties. Not a property page -- a texture is a file,
+	// not a number -- so it goes through `textures`/`textures_apply` (Docs/READER_UI_APPEARANCE_API.md §11) and each
+	// row carries its own five identity fields; the page never remembers "row N", because the list's order is each
+	// card's own fact. The rows arrive asynchronously, so `Signature` carries the read generation and the page is
+	// built again by itself once they are in.
+	{
+		FCategory Tex;Tex.Name=TEXT("材質貼圖");
+		FGroup Page;Page.Name=TEXT("材質貼圖");
+		TWeakObjectPtr<UOKCharacterController> Weak(G);
+		Page.OnEnter=[Weak](){if(Weak.IsValid())Weak->LoadTextureRows();};
+		Page.Signature=[Weak](){return Weak.IsValid()?FString::Printf(TEXT("tex:%d:%d"),Weak->TextureGeneration,Weak->EditorTextures.Num()):FString();};
+		Page.Build=[this,Weak](UDreamWidget* Into)
+		{
+			auto Label=[this](UDreamWidget* Host,const FString& Text)
+			{
+				UOKDreamControl* C=MakeControl(TEXT("Label"),Host);
+				if(C){C->FixedText=Text;C->SetText(Text);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+			};
+			if(!Weak.IsValid())return;
+			Label(Into,Weak->TextureNote.IsEmpty()?TEXT("按一下這一頁會讀取這張卡的材質貼圖。"):Weak->TextureNote);
+			// One path field for the whole page: 指派 sends it with the row's identity. Kept on the screen, so the
+			// rebuild that follows a read does not clear what was typed.
+			UOKDreamControl* Input=MakeControl(TEXT("Input"),Into);
+			if(Input&&Input->Input)
+			{
+				Input->Input->SetText(TexturePath);
+				Input->Input->SetPlaceholder(FText::FromString(TEXT("要指派的 PNG 路徑")));
+				Input->Input->GetOnTextChangedEvent().AddWeakLambda(this,[this](const FString& Typed){TexturePath=Typed.TrimStartAndEnd();});
+				Input->Input->GetOnTextCommittedEvent().AddWeakLambda(this,[this](const FString& Typed){TexturePath=Typed.TrimStartAndEnd();});
+			}
+			TWeakObjectPtr<UOKDreamControl> WeakInput(Input);
+			MakeOwnButton(Into,TEXT("選 PNG…"),[this,WeakInput]()
+			{
+				const FString Chosen=PickFile(TEXT("選擇要指派的貼圖"),TexturePath);
+				UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: texture dialog %s%s"),Chosen.IsEmpty()?TEXT("cancelled"):TEXT("picked "),*Chosen);
+				if(Chosen.IsEmpty())return;
+				TexturePath=Chosen;if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Chosen);
+			});
+			// 指派／清除 both send the row's five identity fields back exactly as they were read.
+			auto Send=[Weak](const TSharedPtr<FJsonObject>& Row,const FString& Png,bool bClear)
+			{
+				if(!Weak.IsValid())return;
+				auto C=MakeShared<FJsonObject>();
+				for(const TCHAR* Field:{TEXT("object"),TEXT("coordinate"),TEXT("slot")})C->SetNumberField(Field,Row->GetNumberField(Field));
+				for(const TCHAR* Field:{TEXT("material"),TEXT("property")})C->SetStringField(Field,Row->GetStringField(Field));
+				if(bClear)C->SetBoolField(TEXT("clear"),true);else C->SetStringField(TEXT("png"),Png);
+				const FString Refused=Weak->ApplyTextureChanges({MakeShared<FJsonValueObject>(C)});
+				if(!Refused.IsEmpty())Weak->ScreenNote(72,6.f,FColor::Orange,Refused);
+			};
+			for(const TSharedPtr<FJsonObject>& Row:Weak->EditorTextures)
+			{
+				const FString Kind=Row->GetStringField(TEXT("kind")),Material=Row->GetStringField(TEXT("material")),Property=Row->GetStringField(TEXT("property"));
+				FString Size;const TArray<TSharedPtr<FJsonValue>>* Wh=nullptr;
+				if(Row->TryGetArrayField(TEXT("size"),Wh)&&Wh->Num()==2)
+					Size=FString::Printf(TEXT("%d×%d, %.0f KB"),int32((*Wh)[0]->AsNumber()),int32((*Wh)[1]->AsNumber()),Row->GetNumberField(TEXT("bytes"))/1024.);
+				else Size=TEXT("沒有貼圖");
+				Label(Into,FString::Printf(TEXT("%s 欄 %d／%s／%s（%s）"),*Kind,int32(Row->GetNumberField(TEXT("slot"))),*Material,*Property,*Size));
+				UDreamWidget* Buttons=MakePanel(Into,true,6.f);
+				MakeOwnButton(Buttons,TEXT("指派"),[this,Send,Row]()
+				{
+					if(TexturePath.IsEmpty()){if(UOKCharacterController* C=Controller.Get())C->ScreenNote(72,6.f,FColor::Orange,TEXT("先選一個 PNG"));return;}
+					Send(Row,TexturePath,false);
+				});
+				// 清除 is the original's RemoveMaterialTexture: the row keeps its offset and scale if it has any,
+				// and the card's texture dictionary drops whatever nothing points at any more.
+				MakeOwnButton(Buttons,TEXT("清除"),[Send,Row](){Send(Row,FString(),true);});
+			}
+		};
+		Tex.Groups.Add(MoveTemp(Page));
+		Categories.Add(MoveTemp(Tex));
+	}
 
 	FCategory Body;Body.Name=TEXT("身子");Body.Groups=ShapeGroups(true,{TEXT("全身"),TEXT("胸部"),TEXT("軀幹"),TEXT("腰臀"),TEXT("手臂"),TEXT("腿部")});
 	{
@@ -1173,7 +1244,10 @@ void UOKReaderScreen::TickThumbnails()
 }
 
 // A folder through the system's own folder picker (Windows: IFileOpenDialog with FOS_PICKFOLDERS). Empty when cancelled.
-FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
+FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start){return PickPath(Title,Start,true);}
+// A PNG through the same dialog, for the texture a material property is set to.
+FString UOKReaderScreen::PickFile(const FString& Title,const FString& Start){return PickPath(Title,Start,false);}
+FString UOKReaderScreen::PickPath(const FString& Title,const FString& Start,bool bFolder)
 {
 	FString Result;
 #if PLATFORM_WINDOWS
@@ -1181,11 +1255,21 @@ FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
 	IFileOpenDialog* Dialog=nullptr;
 	if(SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&Dialog))))
 	{
-		DWORD Options=0;Dialog->GetOptions(&Options);Dialog->SetOptions(Options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST);
+		DWORD Options=0;Dialog->GetOptions(&Options);
+		Dialog->SetOptions(Options|(bFolder?FOS_PICKFOLDERS:FOS_FILEMUSTEXIST)|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST);
 		Dialog->SetTitle(*Title);
-		if(!Start.IsEmpty()&&FPaths::DirectoryExists(Start))
+		if(!bFolder)
 		{
-			IShellItem* Folder=nullptr;const FString Native=FPaths::ConvertRelativePathToFull(Start).Replace(TEXT("/"),TEXT("\\"));
+			// PNG only: MaterialEditor 存进卡里的是档案的 bytes 原封不动，游戏那边再交给 Unity 的贴图载入，
+			// 所以这里挑的必须是它读得懂的图（原作 SetMaterialTextureFromFile 也只是 File.ReadAllBytes）。
+			const COMDLG_FILTERSPEC Filter[]={{L"PNG",L"*.png"}};
+			Dialog->SetFileTypes(1,Filter);Dialog->SetDefaultExtension(L"png");
+		}
+		// 给档案时 Start 可能是档案本身，开在它所在的资料夹。
+		const FString StartFolder=Start.IsEmpty()||FPaths::DirectoryExists(Start)?Start:FPaths::GetPath(Start);
+		if(!StartFolder.IsEmpty()&&FPaths::DirectoryExists(StartFolder))
+		{
+			IShellItem* Folder=nullptr;const FString Native=FPaths::ConvertRelativePathToFull(StartFolder).Replace(TEXT("/"),TEXT("\\"));
 			if(SUCCEEDED(SHCreateItemFromParsingName(*Native,nullptr,IID_PPV_ARGS(&Folder)))){Dialog->SetFolder(Folder);Folder->Release();}
 		}
 		const HWND Owner=GEngine&&GEngine->GameViewport&&GEngine->GameViewport->GetWindow().IsValid()&&GEngine->GameViewport->GetWindow()->GetNativeWindow().IsValid()

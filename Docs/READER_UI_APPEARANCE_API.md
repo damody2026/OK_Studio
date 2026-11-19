@@ -371,7 +371,12 @@ MaterialEditor 把作者指派的 PNG 存在 `TextureDictionary`（id → bytes�
 | `RemoveMaterialTexture`（2166） | 只把 `TexID` 设 nil；**只有** `NullCheck()`（TexID／Offset／Scale 都没有）才删整列 | 「清除就删列」会把同一列上的偏移与缩放一起弄丢 |
 | `PurgeUnusedTextures`（2512） | 存档前把没有任何列引用的字典项丢掉 | 卡片带着改过好几轮的死图，白白几 MB |
 
+**偏移／缩放的形状**：`Vector2` 写成**两个 float32 的定长阵列**，不是 `{x,y}`、也不是 float64。权威出处是原作
+自己带的格式器 `Managed\KoikatsuSunshine_Data\Assembly-CSharp-firstpass\MessagePack.Unity\Vector2Formatter.cs`
+的 `Serialize`（`WriteFixedArrayHeaderUnsafe(…, 2)` 加两个 `WriteSingle`）。同一家族的 `ColorFormatter.cs` 写
+4 个 float32，而 alice 的 `MaterialColorPropertyList` 里 `Value` 正是 4 元素 float32 阵列（键 `….@Value.a0`）
+—— 只有这支格式器会写成那样，所以这家族确实就是在用的那支。读的时候仍兼容 `{x,y}`（Studio 场景那边见过）。
+**「卡上没有偏移所以形状未知」是错的**：样本缺一笔不代表形状未知，权威在反编译里。
+
 **边界（没做，不是漏）**：新增一列需要那个材质属性真的存在于模型上，那是原作界面照着 live renderer 列出来的，
-CLI 看不到模型；所以这里只改既有的列，以及对**已经给了身分**的属性指派。偏移／缩放的 `Vector2?` 在不同
-MessagePack resolver 下存成 `[x,y]` 或 `{x,y}`，两种原作都读得到，所以写的时候照这张卡自己既有的那一笔的形状写；
-**整张卡一笔都没有就拒绝，不猜**（量到的 3 张卡都没有任何偏移／缩放，所以这条路还没被真实资料走过）。
+CLI 看不到模型；所以这里只改既有的列，以及对**已经给了身分**的属性指派。

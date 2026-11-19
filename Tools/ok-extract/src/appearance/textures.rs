@@ -62,19 +62,18 @@ fn vec2(v: Option<&Value>) -> Option<[f64; 2]> {
     if let Some(a) = v.as_array() { return Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?]) }
     Some([mget(v, "x")?.as_f64()?, mget(v, "y")?.as_f64()?])
 }
-/// 写的时候**不猜形状**：照这张卡自己既有的那一笔的形状写。整张卡一笔都没有就拒绝，
-/// 因为两种形状在原作里都读得到，猜错不会报错、只会让游戏读到 nil。
-fn vec2_shape(rows: &[Value]) -> Option<bool> {
-    for row in rows {
-        for k in ["Offset", "OffsetOriginal", "Scale", "ScaleOriginal"] {
-            if let Some(v) = mget(row, k).filter(|v| !v.is_nil()) { return Some(v.as_array().is_some()) }
-        }
-    }
-    None
-}
-fn vec2_value(xy: [f64; 2], array: bool) -> Value {
-    if array { Value::Array(vec![xy[0].into(), xy[1].into()]) }
-    else { Value::Map(vec![("x".into(), xy[0].into()), ("y".into(), xy[1].into())]) }
+/// 写出 `Vector2`。形状的权威出处是**原作带的 MessagePack 格式器**，不是某张卡：
+/// `D:\XKoikatuSunshine\kks_decomp\Managed\KoikatsuSunshine_Data\Assembly-CSharp-firstpass\
+/// MessagePack.Unity\Vector2Formatter.cs` 的 `Serialize`：
+/// `WriteFixedArrayHeaderUnsafe(…, 2)` 加两个 `WriteSingle` —— 也就是**两个 float32 的阵列**，
+/// 不是 `{x,y}` map，也不是 float64。（`Deserialize` 碰到 nil 直接 throw，所以 `Vector2?` 的 nil
+/// 是 Nullable 格式器写的，读到 nil 不会进这支。）
+///
+/// 这个格式器真的就是在用的那支，有实卡可证：同一家族的 `ColorFormatter.cs` 写的是 4 个 float32 的阵列，
+/// 而 alice 的 `MaterialColorPropertyList` 里 `Value` 正是 4 元素阵列（键 `….@Value.a0`）——只有这支格式器
+/// 会写成那样。所以「卡上没有偏移所以形状未知」是错的：样本缺一笔不代表形状未知。
+fn vec2_value(xy: [f64; 2]) -> Value {
+    Value::Array(vec![Value::F32(xy[0] as f32), Value::F32(xy[1] as f32)])
 }
 fn png_size(b: &[u8]) -> Option<[u32; 2]> {
     if b.len() < 24 || !b.starts_with(b"\x89PNG") { return None }
@@ -146,7 +145,6 @@ pub(super) fn apply(original: &[u8], outfit: usize, changes: &[J]) -> Result<Vec
     let mut v = decode(blocks.get("KKEx").ok_or("缺少模组资料")?)?;
     let data = section_data(&mut v)?;
     let (mut rows, mut dict) = (packed(data, LIST), packed_map(data, DICT));
-    let shape = vec2_shape(&rows);
     for c in changes {
         let want = Row::from_request(c, outfit)?;
         let at = rows.iter().position(|r| Row::of(r).as_ref() == Some(&want));
@@ -179,8 +177,7 @@ pub(super) fn apply(original: &[u8], outfit: usize, changes: &[J]) -> Result<Vec
                 Some(xy) => {
                     let xy = [xy.first().and_then(J::as_f64).ok_or("偏移／缩放要两个数")?,
                         xy.get(1).and_then(J::as_f64).ok_or("偏移／缩放要两个数")?];
-                    let array = shape.ok_or("这张卡没有任何偏移／缩放可以照着写格式，不猜")?;
-                    mset(&mut rows[i], key, vec2_value(xy, array))?
+                    mset(&mut rows[i], key, vec2_value(xy))?
                 }
                 None => mset(&mut rows[i], key, Value::Nil)?,
             }
@@ -212,6 +209,29 @@ mod tests {
         0x0d, 0x0a, 0x2d, 0xb4,
         0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82,
     ];
+
+    /// `Vector2`／`Color` 在这个游戏的 MessagePack 里是**float32 的定长阵列**，不是 `{x,y}` map。
+    /// 格式器出处写在 `vec2_value` 上；这支测试用实卡把同一家族的 `Color` 钉住，因为目前没有任何一张卡
+    /// 带 `Offset`／`Scale`，而 `Color` 与 `Vector2` 是同一支 resolver 下的同一种写法。
+    /// 卡片只在本机（不进版控），所以 `#[ignore]`：
+    /// `cargo test --release --lib textures::tests -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要本机的卡片（Content/CharacterCards/ 不进版控）"]
+    fn unity_structs_are_float32_arrays_on_a_real_card() {
+        let card = fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Content/CharacterCards/StreetHeroines/alice.png"))
+            .expect("读 alice");
+        let blocks = blocks_from_card(&card).expect("blocks");
+        let mut v = decode(blocks.get("KKEx").expect("KKEx")).expect("decode");
+        let data = section_data(&mut v).expect("MaterialEditor");
+        let rows = packed(data, "MaterialColorPropertyList");
+        assert!(!rows.is_empty(), "alice 应该有颜色覆写");
+        let value = mget(&rows[0], "Value").expect("Value");
+        let a = value.as_array().expect("Color 应该是阵列，不是 map");
+        assert_eq!(a.len(), 4, "ColorFormatter 写 4 个分量：{value}");
+        assert!(a.iter().all(|x| matches!(x, Value::F32(_))), "WriteSingle 写 float32：{value}");
+        // 同一个 resolver 的 Vector2Formatter 写 2 个 float32，所以我们也这样写。
+        assert_eq!(vec2_value([0.25, -0.5]), Value::Array(vec![Value::F32(0.25), Value::F32(-0.5)]));
+    }
 
     /// 一张真有贴图覆写的卡上的来回：读 → 清除 → 指派 → 同 bytes 重用 id。
     /// 卡片不进版控，所以要卡：`OK_TEX_CARD=<卡片> cargo test --release --lib textures::tests -- --ignored --nocapture`
