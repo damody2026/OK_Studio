@@ -1025,7 +1025,73 @@ e-cardload 的交接 log 判准（**它自己定的，我同意**）：**同一�
 
 **不谈修法**（按指示）。
 
+## 19. 持久元件那条也被排除了——**而排除它的是协调自己给的那把尺**
+
+三题照问，E 树为准；引擎行号读 `F:/UE5.8`（§11 已证同一份）。
+
+### 19a. 第 2 题先答，因为它决定另外两题：**`ClearAllMeshSections` 会 `MarkRenderStateDirty`**
+
+`UKKAffineProceduralMeshComponent` 继承 `UProceduralMeshComponent`
+（`KKAffineProceduralMeshComponent.h:28`），而那是引擎外挂的实作：
+
+```cpp
+// F:\UE5.8\Engine\Plugins\Runtime\ProceduralMeshComponent\...\ProceduralMeshComponent.cpp:784-790
+void UProceduralMeshComponent::ClearAllMeshSections()
+{
+    ProcMeshSections.Empty();
+    UpdateLocalBounds();
+    UpdateCollision();
+    MarkRenderStateDirty();     // ← 有
+}
+```
+
+**所以「只清 section、旧 proxy 继续带著旧 `FMaterialRenderProxy` 每帧重送」不成立**：
+render state 被标脏 ⇒ proxy 重建，旧 proxy 连它的 section 与材质指标一起在 render thread 上销毁。
+`SetMaterial` 也一样会换掉 `OverrideMaterials[i]` 并 invalidate（`MeshComponent.cpp:63-100`）。
+
+### 19b. 第 1、3 题：换卡时这两个槽会被 `SetMaterial` 换成新 MID
+
+载入路径上对元件设材质的点（E 树 `KKPreviewActor.cpp`）：`:3666`、`:3673`、`:3680`、`:3711`、
+`:5190`、`:5244`、`:5274`、`:7051`、`:7065`、`:7087`。
+`:5190`／`:5244`／`:5274` 是「槽里不是 MID 才包一层」，其余是**直接换成这次载入建的材质**。
+**每一条都走 `UMeshComponent::SetMaterial`，所以每一条都会通知 render state。**
+
+### 19c. 用那把尺检查：**两个分支都和事实矛盾，所以这条线整个排除**
+
+协调给的约束：**放手后 3 帧记忆体就真的被释放**，所以任何「某个 `UPROPERTY` 还指著那张贴图」的解释都不成立。
+
+| 分支 | 结果 |
+|---|---|
+| 旧 MID **留在**持久元件的槽里（有参数没被覆写） | `OverrideMaterials` 是 `UPROPERTY` ⇒ MID 活著 ⇒ 它的 `TextureParameterValues` 也是 `UPROPERTY` ⇒ **那张贴图不可能被 GC** ⇒ **和「3 帧後真的释放」矛盾** |
+| 旧 MID **被换掉** | `SetMaterial` 标脏 ⇒ proxy 重建 ⇒ **没有活著的 proxy 还指著旧 MID** ⇒ 旧 MID 之后被 GC 时没有人在用它 |
+
+**两边都不成立，所以 §16d／§18c 那个残余形状（MID 被 GC 而 proxy 的裸指标还指著它）到此排除**——
+**而且是用协调自己定的尺排除的，不是我放弃。** 顺带：那把尺也把「未覆写参数」这个解释整类排除，
+因为它必然伴随一个活著的 `UPROPERTY` 参照。
+
+### 19d. 于是我们自己的程式码**全部**排除过一遍了
+
+| 侧 | 结论 |
+|---|---|
+| DreamGUI 的所有贴图绑定 | §13a：全部持参照；§14b：卡片贴图没有路径进 UI；§14c：brush 是强参照 |
+| 3D 预览的容器 | §15a／§15b：没有裸 `FRHITexture*` 成员；proxy 不存贴图；贴图到 GPU 存的是 texture reference |
+| MID 这条 | §16c：覆写会盖掉旧裸指标；§19c：两个分支都和 3 帧的事实矛盾 |
+
+**与全部事实相容的，只剩不在我们程式码里的东西**：
+
+1. **建立者不在我们插的那些点上** —— e-cardload 九个建立点、三趟 48／48／93 笔，故障那张**一次都没出现**。
+   这件事本身就说明建立者在别处。**我建议普查时不要漏掉 `OKGalleryWidget.cpp:140` 与 `:1431`**
+   （卡片 PNG 与 APNG 影格，`CreateTransient` 不给名字、尺寸随 PNG 变，三条线索全符合，
+   而且它们由 `AnimatedPreviewTextures` 持有、换卡时 `Reset()`）。
+2. **消费者是引擎自己的常驻结构**（streaming／pool／descriptor 一类），这一类我没有读。
+3. **故障 shader 的身分仍未定**（§1a、§5a）：四颗 global shader 共用 `MainPS` 这个进入点名，
+   而我们从头到尾只有那个名字。`r.Shaders.ExtraData=1` 重编一次就能让崩溃档自己印出 type 名。
+
+**这三件里，第 3 件最便宜，而且它决定另外两件要往哪个方向找。**
+
+**不谈修法**（按指示）。
+
 ---
 
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12–§18 的程式码是我自己读的（§14–§18 的 OK 侧读的是 E 树的副本，只读）。
+§11 的两棵引擎比对、§12–§19 的程式码是我自己读的（§14–§19 的 OK 侧读的是 E 树的副本，只读）。
