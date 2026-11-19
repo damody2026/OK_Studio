@@ -9,6 +9,7 @@
 #include "Compression/lz4.h"
 #include "Misc/ScopeLock.h"
 #include "UObject/ObjectKey.h"
+#include "UObject/UObjectIterator.h"
 #include "ok_raw_texture.h"
 #include "KKRustExtract.h"
 #include "RenderingThread.h"
@@ -31,6 +32,14 @@ static void ExtendEncodedMipChain(TArray<FOKEncodedMip>& Mips);
 static TAutoConsoleVariable<int32> CVarOKLogTextureLifetime(
     TEXT("ok.LogTextureLifetime"), 0,
     TEXT("Log runtime card textures as they are created and as the card switch releases them (diagnostic, off by default)."),
+    ECVF_Default);
+
+// Diagnostic knob (default 1 = today's behaviour). 0 stops the card-switch sweep AND the over-budget eviction,
+// so a card's textures are never let go: a deliberate leak, for one question only -- does the GPU page fault
+// need this release path? It must never ship at 0; see the registered reading in the cell that uses it.
+static TAutoConsoleVariable<int32> CVarOKRuntimeTextureRelease(
+    TEXT("ok.RuntimeTextureRelease"), 1,
+    TEXT("1 (default) releases a card's unused runtime textures at a card switch and over budget; 0 keeps every one (diagnostic leak)."),
     ECVF_Default);
 KKUNITYBUNDLE_API void OKLogRuntimeTextureLife(const TCHAR* Event, const UTexture2D* Tex, int64 Bytes)
 {
@@ -388,7 +397,7 @@ void KeepRecentTexture(UTexture2D* Tex)
     if(Index!=INDEX_NONE){auto Entry=MoveTemp(RecentTextures[Index]);Entry.bTouched=true;RecentTextures.RemoveAt(Index);RecentTextures.Add(MoveTemp(Entry));return;}
     const int64 Bytes=int64(Tex->GetSizeX())*Tex->GetSizeY()*4*4/3;
     RecentTextures.Add(FRecentTexture{TStrongObjectPtr<UTexture2D>(Tex),Bytes,true});RecentTextureBytes+=Bytes;
-    while(RecentTextureBytes>RecentTextureBudget&&RecentTextures.Num()>1){
+    while(CVarOKRuntimeTextureRelease.GetValueOnAnyThread()!=0&&RecentTextureBytes>RecentTextureBudget&&RecentTextures.Num()>1){
         OKLogRuntimeTextureLife(TEXT("released(over budget)"), RecentTextures[0].Texture.Get(), RecentTextures[0].Bytes);
         RecentTextureBytes-=RecentTextures[0].Bytes;RecentTextures.RemoveAt(0);}
 }
@@ -410,11 +419,40 @@ FOKRecentTextureCacheStats OKRecentRuntimeTextureCacheStats()
     for(const FRecentTexture& Entry:RecentTextures)if(!Entry.bTouched){++Stats.StaleEntries;Stats.StaleBytes+=Entry.Bytes;}
     return Stats;
 }
+
+// ok.LogTextureLifetime=2 adds a census: every live UTexture2D with its identity, written where a card switch
+// releases textures. The point is the OUTER: a CreateTransient texture sits in the transient package, while one
+// made by NewObject(SomeOuter) names its owner, so a faulting name can be traced even when no creation site we
+// instrumented printed it. Game thread only, and it walks every texture object, so it is for diagnosis runs.
+void OKCensusRuntimeTextures(const TCHAR* When)
+{
+    if (CVarOKLogTextureLifetime.GetValueOnAnyThread() < 2) return;
+    int32 Count = 0;
+    for (TObjectIterator<UTexture2D> It; It; ++It)
+    {
+        const UTexture2D* Tex = *It;
+        if (!Tex) continue;
+        const FTexturePlatformData* Data = Tex->GetPlatformData();
+        const int32 W = Data && Data->Mips.Num() ? Data->Mips[0].SizeX : 0;
+        const int32 H = Data && Data->Mips.Num() ? Data->Mips[0].SizeY : 0;
+        const UObject* Outer = Tex->GetOuter();
+        UE_LOG(LogTemp, Display, TEXT("OK texture census(%s): name=%s %dx%d fmt=%d outer=%s outerclass=%s flags=%x frame=%u"),
+            When, *Tex->GetFName().ToString(), W, H,
+            int32(Data ? Data->PixelFormat : PF_Unknown),
+            Outer ? *Outer->GetName() : TEXT("-"),
+            Outer ? *Outer->GetClass()->GetName() : TEXT("-"),
+            uint32(Tex->GetFlags()), GFrameNumber);
+        ++Count;
+    }
+    UE_LOG(LogTemp, Display, TEXT("OK texture census(%s): %d live UTexture2D, frame=%u"), When, Count, GFrameNumber);
+}
 void OKMarkRecentRuntimeTexturesStale()
 {check(IsInGameThread());for(FRecentTexture& Entry:RecentTextures)Entry.bTouched=false;}
 int32 OKReleaseStaleRecentRuntimeTextures(int64* OutBytes)
 {
     check(IsInGameThread());int32 Released=0;int64 Bytes=0;
+    OKCensusRuntimeTextures(TEXT("before release"));
+    if(CVarOKRuntimeTextureRelease.GetValueOnAnyThread()==0){if(OutBytes)*OutBytes=0;return 0;}
     for(int32 Index=RecentTextures.Num()-1;Index>=0;--Index)
     {
         const FRecentTexture& Entry=RecentTextures[Index];

@@ -5810,3 +5810,61 @@ Found 2 released resources containing the page fault address during last 100 fra
 一趟約 8 秒開一張卡、約 70 幀／秒 ⇒ **2854 幀約等於 5 張卡之前**。
 也就是說，**被釋放的那張貼圖不是「剛離開的那張卡」的，而是更早幾張卡的**；
 而每次換卡都會跑一次上面那個整批釋放。這一段是從兩個數字相除得來的，不是機制結論。
+
+# 完整的生命週期鍊量到了：換卡 sweep 放掉強參照、3 幀後記憶體被釋放、105 幀後 GPU 還在取樣那個位址
+
+## 一、同一張貼圖的六個時間點（全部來自同一趟的 log，不是推論）
+
+```
+frame 22948   created                      Texture2D_1407 256x256 BGRA8      ← KKRuntimeMaterial.cpp:378（KKRuntimePose）
+frame 22948   kept                         進入 512 MB 的 TStrongObjectPtr 快取（bytes=349525）
+frame 22955   census: alive
+frame 23322   census: alive
+frame 24298   census: alive（同一幀最後一次）
+frame 24298   let go(stale on card switch)  ← OKReleaseStaleKeptRuntimeTextures 把強參照移出陣列
+frame 24301   D3D12 released the allocation（報告的 FrameID，比放手晚 3 幀）
+frame 24326   64 MB PoolAllocator Heap released（比貼圖晚 25 幀）
+frame 24406   PageFault at 0x2588DC1000，落在 [0x2588DA0000 .. 0x2588E00000] 之內
+```
+
+**所以：強參照在換卡 sweep 被移出 → 3 幀後記憶體真的被釋放 → 再過 105 幀，GPU 仍然在取樣那個位址。**
+這是 use-after-free，而擁有者、釋放點、時間差三件現在都是量到的。
+
+## 二、這一趟的其他數字
+
+| 項目 | 值 |
+|---|---|
+| 終局 | `DEAD after card 22`、`fault_secs: 202.1` |
+| 建立紀錄 | **1300 筆**（`OK kept texture life: created`） |
+| 放手紀錄 | **1537 筆**＝換卡 sweep **1421** ＋ 超 512 MB 淘汰 **116** |
+| 故障那張 | `Texture2D_1407` 256×256 `B8G8R8A8_TYPELESS`、0.38 MB |
+| 放手 → 記憶體釋放 | **3 幀** |
+| 貼圖釋放 → heap 釋放 | **25 幀** |
+| 記憶體釋放 → 故障 | **105 幀** |
+
+**對照先前四趟的「相距」**（44／60／2854／1148 幀）：那些是用**報告的 FrameID** 減故障幀，
+而現在知道**放手與釋放只差 3 幀**，所以那些差距量的其實是「**釋放之後又畫了多久才撞上**」。
+**而它每趟都不同（105～2854 幀），這正是「位置與秒數會變」的來源。**
+
+## 三、前面兩趟我找錯模組，這是這一天最大的量測錯誤
+
+我一路只 grep `KKUnityBundle` 與 `Source/OpenKoikatsu`，而**真正的建立與釋放都在 `KKRuntimePose`**：
+
+- 建立：`KKRuntimeMaterial.cpp:378`，`CreateTransient(T.Mips[First].Width, T.Mips[First].Height, PF_B8G8R8A8)`；
+- **釋放：`OKReleaseStaleKeptRuntimeTextures` 本身就在同一個檔**（`:265`），管一個
+  **512 MB、以 `TStrongObjectPtr` 持有**的快取（`:236`），`KKPreviewActor` 換卡時呼叫；
+- 另有 `:227` 的 `TMap<FString, TWeakObjectPtr<UTexture2D>> RuntimeTextureCache`（**弱**參照，不持有）。
+
+**所以先前「`life_released=1`」不是「幾乎沒有釋放」，而是我插在另一個模組的另一條 sweep 上。**
+而揭穿它的是**普查與建立紀錄的差集**：1439 張活著的 transient 貼圖對上我只印出的 87 筆。
+**量具自己的覆蓋率要用另一個量具去查**——這是今天第三次「量了旁邊的東西」，也是最貴的一次（兩次建置、三趟）。
+
+## 四、現在缺的只有一件：誰在釋放之後還拿著那個位址
+
+已知的反面事實：
+- 我們的程式**沒有長期保存裸 `FRHITexture*`**（`KKTextureRuntime` 只有兩處，都在 render command 內當場用完）；
+- 快取持的是 `TStrongObjectPtr`（移出即可回收）、identity 快取持的是 `TWeakObjectPtr`（不延命）；
+- DreamGUI 的延遲釋放佇列放掉的都是 `DreamUIDataTexture_N`，**不是**這些 `Texture2D_<數字>`。
+
+所以剩下的是：**在 sweep 之後 105～2854 幀之間，每幀都還在畫的那個綁定裡，存的是這張貼圖的位址。**
+下一步要查的是材質／MID／uniform buffer／shader binding 這一側——那是修法要動的地方。

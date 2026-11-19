@@ -233,6 +233,18 @@ TMap<FString,TWeakObjectPtr<UTexture2D>> RuntimeTextureCache;
 // (measured 2026-11-19: 91 MB at the card wall, 1376 MB by the seventh card). Another card never hits them -- a
 // different card means different pixels, so a different identity -- so a card switch releases the ones its own load
 // did not touch, at a point we choose on the game thread. Switching outfit inside one card still hits them.
+
+// Diagnostic (log only, default off), for the GPU page fault of 2026-11-19: the page-fault report names the
+// released allocation by its UObject name, and these are the textures that name belongs to. Prints at creation,
+// at entry into the kept cache, and at every point the cache lets one go. Visible on a clean run too.
+static TAutoConsoleVariable<int32> CVarOKLogKeptTextureLife(TEXT("ok.LogKeptTextureLife"), 0,
+ TEXT("Log character textures as they are created, kept, and let go (diagnostic, off by default)."), ECVF_Default);
+static void OKLogKeptTextureLife(const TCHAR* Event, const UTexture2D* Tex, int64 Bytes)
+{
+ if(CVarOKLogKeptTextureLife.GetValueOnAnyThread()==0||Tex==nullptr)return;
+ UE_LOG(LogTemp,Display,TEXT("OK kept texture life: %s name=%s %dx%d bytes=%lld frame=%u"),
+  Event,*Tex->GetFName().ToString(),Tex->GetSizeX(),Tex->GetSizeY(),Bytes,GFrameNumber);
+}
 struct FRecentRuntimeTexture{TStrongObjectPtr<UTexture2D> Texture;int64 Bytes=0;bool bTouched=true;};
 TArray<FRecentRuntimeTexture> RecentRuntimeTextures;int64 RecentRuntimeTextureBytes=0;
 void KeepRecentRuntimeTexture(UTexture2D* Tex){
@@ -241,7 +253,10 @@ void KeepRecentRuntimeTexture(UTexture2D* Tex){
  if(Index!=INDEX_NONE){auto Entry=MoveTemp(RecentRuntimeTextures[Index]);Entry.bTouched=true;RecentRuntimeTextures.RemoveAt(Index);RecentRuntimeTextures.Add(MoveTemp(Entry));return;}
  const int64 Bytes=int64(Tex->GetSizeX())*Tex->GetSizeY()*4*4/3;
  RecentRuntimeTextures.Add(FRecentRuntimeTexture{TStrongObjectPtr<UTexture2D>(Tex),Bytes,true});RecentRuntimeTextureBytes+=Bytes;
- while(RecentRuntimeTextureBytes>512ll*1024*1024&&RecentRuntimeTextures.Num()>1){RecentRuntimeTextureBytes-=RecentRuntimeTextures[0].Bytes;RecentRuntimeTextures.RemoveAt(0);}
+ OKLogKeptTextureLife(TEXT("kept"),Tex,Bytes);
+ while(RecentRuntimeTextureBytes>512ll*1024*1024&&RecentRuntimeTextures.Num()>1){
+  OKLogKeptTextureLife(TEXT("let go(over budget)"),RecentRuntimeTextures[0].Texture.Get(),RecentRuntimeTextures[0].Bytes);
+  RecentRuntimeTextureBytes-=RecentRuntimeTextures[0].Bytes;RecentRuntimeTextures.RemoveAt(0);}
 }
 FKKRuntimeTextureCacheStats RuntimeTextureStats;
 FString RuntimeTextureIdentity(const FKKRuntimePreparedTexture& T){
@@ -269,13 +284,17 @@ int32 OKReleaseStaleKeptRuntimeTextures(int64* OutBytes)
  {
   const FRecentRuntimeTexture& Entry=RecentRuntimeTextures[Index];
   if(Entry.bTouched&&Entry.Texture.IsValid())continue;
+  // The strong reference goes here: after this the texture is collectable, and the next GC frees its memory.
+  OKLogKeptTextureLife(TEXT("let go(stale on card switch)"),Entry.Texture.Get(),Entry.Bytes);
   Bytes+=Entry.Bytes;RecentRuntimeTextureBytes-=Entry.Bytes;RecentRuntimeTextures.RemoveAt(Index);++Released;
  }
  if(OutBytes)*OutBytes=Bytes;
  return Released;
 }
 void OKReleaseKeptRuntimeTextures()
-{check(IsInGameThread());RecentRuntimeTextures.Reset();RecentRuntimeTextureBytes=0;}
+{check(IsInGameThread());
+ for(const FRecentRuntimeTexture& Entry:RecentRuntimeTextures)OKLogKeptTextureLife(TEXT("let go(cache cleared)"),Entry.Texture.Get(),Entry.Bytes);
+ RecentRuntimeTextures.Reset();RecentRuntimeTextureBytes=0;}
 static FAutoConsoleCommand GOKKeptRuntimeTextureReport(TEXT("ok.KeptTextures"),
  TEXT("Report the character textures kept for a switch back (they hold a refcount, so GC cannot take them)"),
  FConsoleCommandDelegate::CreateLambda([]
@@ -376,6 +395,7 @@ UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture& T,FS
  const bool Low=OKRuntimeLowMemory();int32 First=0;
  if(Low){const int32 Cap=FMath::Max(16,CVarOKRuntimeTextureLowMemoryMaxSize.GetValueOnGameThread());while(First+1<T.Mips.Num()&&FMath::Max(T.Mips[First].Width,T.Mips[First].Height)>Cap)++First;}
  auto* Tex=UTexture2D::CreateTransient(T.Mips[First].Width,T.Mips[First].Height,PF_B8G8R8A8);if(!Tex){Error=TEXT("Runtime texture allocation failed");return nullptr;}
+ OKLogKeptTextureLife(TEXT("created"),Tex,0);
  for(int32 I=First;I<T.Mips.Num();++I){auto* M=I>First?new FTexture2DMipMap():&Tex->GetPlatformData()->Mips[0];if(I>First)Tex->GetPlatformData()->Mips.Add(M);M->SizeX=T.Mips[I].Width;M->SizeY=T.Mips[I].Height;M->SizeZ=1;M->BulkData.Lock(LOCK_READ_WRITE);void* Bytes=M->BulkData.Realloc(T.Mips[I].BGRA.Num());FMemory::Memcpy(Bytes,T.Mips[I].BGRA.GetData(),T.Mips[I].BGRA.Num());M->BulkData.Unlock();
  }
  auto Wrap=[](int32 V){return V==1?TA_Clamp:V==2?TA_Mirror:TA_Wrap;};Tex->SRGB=T.Settings.SRGB;Tex->Filter=T.Settings.Filter==0?TF_Nearest:T.Settings.Filter==2?TF_Trilinear:TF_Bilinear;Tex->AddressX=Wrap(T.Settings.WrapU);Tex->AddressY=Wrap(T.Settings.WrapV);
