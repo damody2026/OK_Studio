@@ -1744,3 +1744,112 @@ historically and some profile tools may depend on that.」
 ④ `r.Shaders.SymbolsInfo=1`／`Symbols=1` 拿完整 PDB（最重，而且 ③ 已经给出名字，通常不必走到）。
 
 **③ 之后旧 dump 全部作废**（27c），所以**①②要在 ③ 之前做完**。
+
+---
+
+## §28 绑定那一侧：现场绑、每个槽每笔都写、而 texture reference **持有** RHI 贴图——所以那十个槽结构上做不到这件事
+
+读的是 E 树与 `E:/PhysX/UE5.8`（只读）。
+
+### 28a 第 1 题：现场绑，没有槽阵列、没有 descriptor table
+
+`FDreamUIRenderer::DrawBuiltInBatch`（`DreamGUIRenderer/Private/DreamUIRender/DreamUIRenderer.cpp:900`）
+每一笔 draw：
+
+- `FDreamUIBaseVS::FParameters VSParameters;`（`:981`）与 `FDreamUIBasePS::FParameters PSParameters;`（`:988`）
+  都是**函式区域变数**，每笔 draw 重新建；
+- **12 个贴图槽每一个都无条件赋值**（`:983-984`、`:992-1015`），没有「这个槽这次不写」的分支；
+- 一次 `SetShaderParameters`（`:985` VS、`:1016` PS）送出去，**DreamGUI 这一侧不保留任何 descriptor**。
+
+唯一的跨 draw 快取是 `FDreamUIBuiltInDrawCache`，而它**只存 shader 与 pipeline 身分**：
+`InOutCache->VertexShader`／`PixelShaders[Permutation]`（`:921-938`）与
+`InOutCache->Pipeline.Matches/Remember(BlendMode, bIsDepthValid, ReverseCulling, Permutation, NumSamples)`
+（`:951-968`）。**没有贴图。**
+
+**所以第 3 题的形状（shader 无条件读 N 个槽、某些没被写入有效值 ⇒ 读到上一次的 descriptor）在这里不成立**：
+每个槽每笔都被写。
+
+### 28b fallback 的语义：只在「从没设过」，不在「设过但死了」——但这不重要
+
+`TextureOrFallback`（`:970-974`）：
+
+```
+return InReference != nullptr ? static_cast<FRHITexture*>(InReference) : Fallback->TextureRHI.GetReference();
+```
+
+判的是**那个 reference 指标是不是 null**，而 reference 在 `ResolveTextures_RenderThread`
+（`DreamUIBaseShaders.cpp:86-110`）里只有在「解参当时 `UTexture` 是 null」才会是空的。
+**所以 `mask0=fallback` 的意思是「这笔 draw 的元素没有一个读遮罩」，不是「它死了所以换成白图」。**
+
+**但这件事不重要**，因为下面这条把整类都关掉了。
+
+### 28c 硬结论：texture reference **持有** RHI 贴图，所以绑着它不可能读到已释放的记忆体
+
+`Runtime/RHI/Public/RHITextureReference.h` 的 `FRHITextureReference`：
+
+- 成员是 **`TRefCountPtr<FRHITexture> ReferencedTexture;`**——**计数参照，不是裸指标**；
+- 唯一的改写入口是 `SetReferencedTexture`，注解写明「Called only from
+  `FDynamicRHI::RHIUpdateTextureReference`」；
+- 还有一个 `static TRefCountPtr<FRHITexture> DefaultTexture;`，注解说明它是给
+  「reference 为 nullptr 时使用的全域黑图」。
+
+D3D12 那一侧（`Runtime/D3D12RHI/Private/D3D12TextureReference.cpp`）：
+
+- `FD3D12DynamicRHI::RHIUpdateTextureReference`（`:109-122`）**先把 null 换成 `GetDefaultTexture()`**
+  （`:112`），再 enqueue 到 RHI 执行绪，而且为了「FRHITextureReferences 在这个命令执行前就被删掉」的
+  旧崩溃 bug，**额外对 reference 本身取了一个 refcount**（`:111`，注解写明）；
+- `SwitchToNewTexture`（`:44-78`）同样 `NewTexture = InNewTexture ? InNewTexture : GetDefaultTexture()`（`:46-47`）。
+
+**把这两件合起来**：
+一个被 DreamGUI 持有（`FTextureReferenceRHIRef`，§23b）的 texture reference，
+**它所引用的 RHI 贴图也被它计数持有** ⇒ 那块配置**不可能**在 reference 还指着它的时候被释放；
+要释放，必须先经 `RHIUpdateTextureReference` 把它换成**全域黑图**。
+**所以：绑一个 texture reference，解出来的只会是「还活着的那张」或「全域黑图」，不会是已释放的位址。**
+
+这和 e-cardload 量到的次序也一致（不可达 51209 → **配置释放 51214**）：配置能释放，正说明当时已经没有
+任何 reference 持有它。
+
+**结论：`MainTex`、`FontTex`、`WidgetData`、`ClipData`、`RectBlockData`、`PaintData`、`MaskTex0`、`MaskTex1`、
+`RenderLayerTable`、`RenderLayerWidgetData` 这十个 reference 背书的槽，结构上做不到「读已释放的位址」。**
+
+### 28d 第 2 题：没有以索引／handle 为键的贴图注册表
+
+除了 §23d 的动态 sprite atlas，整个 DreamGUI 里我只找到一处以位址为键的表：
+`DreamGUIRenderer/Private/DreamUIRender/DreamUICompositor.cpp:205`
+`static TMap<FRHITexture*, uint32> LastHandedOut;`——那是 `DreamGUI.Experiment.LogPoolReuse`
+（`:186-189`，**预设 0**）的量测用，**只把位址当键比对，从不解参**。不是候选。
+
+`FDreamUIMaskTextures::Slots`（`DreamGUI/Public/Core/DreamUIClipMask.h:237`）是
+`TWeakObjectPtr<UTexture> Slots[2]`——**weak，不是 handle**，而且注销与 UObject 死亡同步（weak 失效即 null）。
+
+### 28e 第 4 题的答案：**在 reference 那十个槽上「找不到路」**，而剩下的两个是裸位址
+
+12 个槽里**只有两个不是 reference**：
+
+| 槽 | 绑定行 | 存的是 | 生命週期 |
+|---|---|---|---|
+| `DreamUI_SceneDepthTex` | `:1006` | 函式参数 `FRHITexture* SceneDepthTexture`（**裸指标**） | 由呼叫端在 pass 内传入；screen space 时是 `GBlackTexture`（`:2358-2360`） |
+| `DreamUI_BackdropTex` | `:1015` | `InBackdrop->Texture`，型别 `FRHITexture*`（`DreamUIRenderer.h:29`，**裸指标**，plugin 内唯一的裸 `FRHITexture*` 成员） | pass 内由 RDG 产生（`:845`、`:1589-1594`） |
+
+**这两个是 built-in draw 里唯一「只存位址」的绑定**，而且两者都是 DreamGUI 自己的 render target／黑图，
+**不是卡片的 runtime 贴图**。所以冲突没有消失，反而更尖锐了：
+
+> 傾印档说出错的是一颗 pixel shader、PC 在那颗 shader 里（`fragment_02 ＠ 0x00045f90`）、
+> 而唯一还在飞的绘製是 DreamUI 的 draw；但那颗 PS 能读的 12 个槽里，10 个结构上不可能、
+> 2 个绑的不是那张贴图。
+
+**所以照协调的要求，我明确说：这一侧找不到路。** 并且把「下一步该插哪里」讲到行：
+
+1. **插桩点：`DreamUIRenderer.cpp:1017`**（`SetShaderParameters` 之后、`RHI_BREADCRUMB_EVENT_F` 之前）。
+   那里已经有现成的 `Named()` lambda（`:1021-1026`）可以照抄形状，把 **12 个槽解出来的
+   `FRHITexture*` 位址**印出来（reference 的要印 `GetReferencedTexture()`，不是 reference 自己的位址），
+   和 `0x000000256bd01000` 比对。**这一步会直接判掉「是不是这 12 个槽之一」。**
+2. **顺手补 §23a 漏印的两个 breadcrumb 槽**（`MaskTex1`、`RenderLayerTable`），同一笔改动。
+3. **若 12 个位址都对不上**，那么取样的就不是 shader 绑的那一笔 descriptor，而是 descriptor 表／PSO
+   那一层（§25c 第 2 条、§26e 候选 3）——**那层我没读，而且它不是「某个 C++ 成员存了裸位址」的形状，
+   那把尺找不到它。**
+
+**另外一个可以免费核对的线索**：`0x000000256bd01000` **是页对齐的**（低 12 位全 0），
+而 `Type = AddressTranslationError` 正是「整页已经不在页表里」的样子——
+这与「那张贴图的配置被释放、页被还给系统」一致，但**它对「是哪个槽带进来的」没有分辨力**，
+所以还是要靠第 1 步的位址比对。
