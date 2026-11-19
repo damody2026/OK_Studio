@@ -5981,3 +5981,18 @@ AGENTS.md 的「雙線開發」写 E 树在 `duo2`。**实际上 E 的 `duo2` �
 对着 `duo2` 做的预演全部没有意义——这是 2026-11-19 第一份移植清单作废的另一半原因。
 **使用者的 AGENTS.md 不由我们改**，这里留一条纪录，让下一个人别再对着 `duo2` 预演一遍：
 要知道 E 在哪条分支，`git -C E:\OpenKoikatsu rev-parse --abbrev-ref HEAD` 问它自己，不要照文件猜。
+
+### `-SingleFile` 编不了 `OKReaderScreen.cpp`：unity build 遮住的缺 include（2026-11-19，回报，未改）
+
+`Build.bat … -SingleFile=Source/OpenKoikatsu/OKReaderScreen.cpp` 会失败：
+
+```
+OKReaderScreen.cpp(1222,48): error C2027: 使用未定义型别 'FTexture2DMipMap'
+OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMap'
+```
+
+那两行是缩图解码（`Texture->GetPlatformData()->Mips[0].BulkData.Lock/Unlock`，来自 `e609716ef`）。
+整体建置是 unity build，同一个 blob 里别的档带进了 `FTexture2DMipMap` 的定义，所以平常看不出来。
+**不是谁刚弄坏的**，也不影响正常建置；影响的是 **`-SingleFile` 这条快速验证的路对这个档不能用**。
+要修就是补一个 include（`Engine/Texture2D.h` 一类）。**没有顺手补**：那是共用档，
+改它要连带重编所有引用的目标，而当下在别组的量测窗口旁边，不该为了一条验证捷径去动它。
