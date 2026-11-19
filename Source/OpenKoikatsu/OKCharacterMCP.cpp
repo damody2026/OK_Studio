@@ -168,7 +168,13 @@ static FMCPObject State(UOKCharacterController* G,FOKCharacterMCPState& S,bool b
  if(G->PropertyStatus)R->SetStringField(TEXT("property_status"),G->PropertyStatus->GetText().ToString());if(G->AppearanceStatus)R->SetStringField(TEXT("appearance_status"),G->AppearanceStatus->GetText().ToString());
  // What this card carries that the property editor cannot reach yet: KKEx sections ok-extract does not know. An
  // audit reads this instead of having to diff the card by hand, and a new one shows up on the first card that has it.
- if(!G->EditorUnknownPluginSections.IsEmpty()){FMCPRows Unknown;for(const FString& S2:G->EditorUnknownPluginSections)Unknown.Add(MakeShared<FJsonValueString>(S2));R->SetArrayField(TEXT("unknown_plugin_sections"),Unknown);}
+ // `unknown_plugin_sections_status`: no_card (nothing selected), not_read (this card／outfit's properties were not read
+ // yet; a list from the previous card is not shown), unsupported (ok-extract's reply had no such field: this build lacks
+ // the producer), read. Only "read" carries the list, and there an empty list is a real 0.
+ {const bool HasCard=G->Entries.IsValidIndex(G->SelectedIndex);
+  const bool ThisCard=HasCard&&G->EditorUnknownPluginSectionsCard==G->Entries[G->SelectedIndex].Path&&G->EditorUnknownPluginSectionsOutfit==G->OutfitIndex;
+  R->SetStringField(TEXT("unknown_plugin_sections_status"),!HasCard?TEXT("no_card"):!ThisCard?TEXT("not_read"):!G->bEditorUnknownPluginSectionsReported?TEXT("unsupported"):TEXT("read"));
+  if(ThisCard&&G->bEditorUnknownPluginSectionsReported){FMCPRows Unknown;for(const FString& S2:G->EditorUnknownPluginSections)Unknown.Add(MakeShared<FJsonValueString>(S2));R->SetArrayField(TEXT("unknown_plugin_sections"),Unknown);}}
  FMCPRows States;for(int32 I=0;I<9;++I)States.Add(MakeShared<FJsonValueNumber>(G->ClothesStates[I]));R->SetArrayField(TEXT("clothing_states"),States);
  if(auto* V=G->GetWorld()->GetGameViewport())if(V->Viewport){auto Size=V->Viewport->GetSizeXY();R->SetNumberField(TEXT("viewport_width"),Size.X);R->SetNumberField(TEXT("viewport_height"),Size.Y);}
  if(UOKReaderScreen* Screen=G->ReaderScreen){auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("tab"),Screen->CurrentTab());O->SetStringField(TEXT("category"),Screen->CurrentCategory());O->SetNumberField(TEXT("left_width"),Screen->GetLeftWidth());R->SetObjectField(TEXT("screen"),O);}

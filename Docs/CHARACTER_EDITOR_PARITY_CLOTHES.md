@@ -161,3 +161,10 @@
   - 第一段是 `PLUGIN_SECTIONS` 的 `id`（`MaterialEditor`、`Pushup`、`KoiClothesOverlayX`…），不是那个区段在这张卡 KKEx 里的位置。位置是每张卡自己的事实：alice 的第 9 个区段是 MaterialEditor，megumin 的是 Pushup。
   - 内部路径：字串键的 map 用 `@<名字>`，整数键的 map（按服装编号）用 `#<数字>`，阵列用 `a<索引>`（阵列项是这张卡自己的条目），解码后的二进位是 `packed`，额外饰品的 XML 是 `xml`。只有键不是字串也不是整数、或字串里有 `.` 时才退回 `m<索引>`，alice 与 megumin 两张卡上都没有出现。
   - 写回时每张卡用名字再查一次位置。这张卡没有那个外挂，就报「這張卡沒有這個模組」，不会退回去写第 N 个区段。测试：`plugin_keys_name_the_plugin_not_its_position`。
+  - 「找不到外挂」是**错误**，不是空值，也不是 0：键指名的外挂这张卡没有，`set`／`apply` 就整笔拒绝。拿一张卡的外挂键去改另一张卡时，这正是挡住误写的那一道。
+  - 位置式的键（`plugins.m21.a1.m0`）不准外露、不准跨卡复用：MCP 的 `get`／`set`、`pages.json`、文件例子一律用身分式。读卡当下每张卡各解析一次，不缓存跨卡的位置表。
+- **`unknown_plugin_sections`**：这张卡 KKEx 里，`PLUGIN_SECTIONS` 没有的区段键（比对原样、不分大小写，不按位置）。认得但没填、卡上没有 KKEx、缺范围都不算。意思是「这个 build 缺支援」，不是卡有问题。读卡器 MCP `state` 另给 `unknown_plugin_sections_status`：
+  - `no_card`：没有选卡。
+  - `not_read`：这张卡、这套服装的属性还没读，上一张卡留下的清单不显示。
+  - `unsupported`：ok-extract 的回覆没有这个栏位，即产生端缺支援。
+  - `read`：附 `unknown_plugin_sections` 清单，空清单才是真的 0。

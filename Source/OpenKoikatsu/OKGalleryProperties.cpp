@@ -55,7 +55,9 @@ void UOKCharacterController::OnOpenProperties(){
  RunAppearanceRequest(R,[Selection,Generation,Outfit](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Error){G->bPropertyBusy=false;if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;if(!Data){G->PropertyStatus->SetText(FText::FromString(TEXT("設定讀取失敗：")+Error));return;}for(auto V:Data->GetArrayField(TEXT("properties")))G->EditorProperties.Add(V->AsObject());G->EditorPropertyParents.Reset();for(auto V:Data->GetArrayField(TEXT("parents")))G->EditorPropertyParents.Add(V->AsObject());
   // Sections ok-extract does not know: named, never silently dropped (see EditorUnknownPluginSections).
   G->EditorUnknownPluginSections.Reset();const TArray<TSharedPtr<FJsonValue>>* Unknown=nullptr;
-  if(Data->TryGetArrayField(TEXT("unknown_plugin_sections"),Unknown))for(auto V:*Unknown){const FString S=V->AsString();if(!S.IsEmpty())G->EditorUnknownPluginSections.Add(S);}
+  G->bEditorUnknownPluginSectionsReported=Data->TryGetArrayField(TEXT("unknown_plugin_sections"),Unknown);
+  G->EditorUnknownPluginSectionsCard=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();G->EditorUnknownPluginSectionsOutfit=G->OutfitIndex;
+  if(Unknown)for(auto V:*Unknown){const FString S=V->AsString();if(!S.IsEmpty())G->EditorUnknownPluginSections.Add(S);}
   G->RebuildPropertyControls();
   if(!G->EditorUnknownPluginSections.IsEmpty())G->PropertyStatus->SetText(FText::FromString(FString::Printf(
    TEXT("這張卡有 %d 個尚未支援的外掛區段，內容不會顯示也不會被改到：%s"),
