@@ -2569,3 +2569,28 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 **給 `Later` 掛一個 GPU fence 不等於修好**——fence 等的是「GPU 跑到某個點」，
 而這裡的問題是「**哪一批工作被那個同步點涵蓋**」。
 正確的條件是**等到「包含那批 draw 的送交」完成之後**才允許這一輪釋放。
+
+### 兩半的界線（先定下來，免得結果出來時才爭）
+
+協調的分層我接受，而且它把「只能做一半」改寫成「**分層正確**」：
+
+| 誰的責任 | 是什麼 | 修在哪 |
+|---|---|---|
+| **外掛** | `RenderThreadParameters.Textures` 是外掛**自己設進材質的**，所以在 proxy 失去最後一個參照之前先 `Hold()` 那幾張（押住 `FRHITextureReference` 也押住被參照的那張，`RHITextureReference.h:53`），是外掛自己的契約：**誰把資源交給別人用，誰負責它活到對方用完**。與 GC 節奏、帧數、配置器全無關。 | DreamGUI |
+| **引擎** | `ResourceTable` 裡**外掛枚舉不到**的那些（材質自己取樣的）。它們會被放掉是因為「EOP 同步點只涵蓋 enqueue 當下已送交的工作」，而帶 `DeleteResources` 的三處送交裡有兩處不 flush RHI 執行緒。 | 引擎分支或上游 UE，**不是 DreamGUI** |
+
+**所以文件與注解都要寫明：外掛押住自己那幾張不是這個 crash 的通解。**
+下一次中獎的是材質自己取樣的貼圖時，不能讓人以為已經修過了。
+
+**實作上有一個會咬人的細節先記下來**：那個 deleter 有兩條路
+（`DreamUIMaterialProxy.cpp:84-97`）——在繪製執行緒上直接 `Later(delete)`，
+否則 `ENQUEUE_RENDER_COMMAND` 再 `Later(delete)`。
+而 `RenderThreadParameters` 只能在繪製執行緒上讀，
+`TextureReference.TextureReferenceRHI` 也是（`DreamUIBaseShaders.cpp:26-31` 的註解寫明）。
+**所以 `Hold()` 那幾張必須做在繪製執行緒那一側**，不能放在 deleter 的入口。
+
+**驗收與立案**：若「故意不 delete」兩種重現都不當 ⇒ 先做外掛那一半，
+最凶配方兩趟 ＋ 19 秒重現兩趟驗收；**驗收過也要同時把引擎那一半寫成獨立紀錄**
+（含 `EnqueueEndOfPipeTask`／`Submit_Close`／三處 `DeleteResources` 的出處），標明還沒修。
+若外掛那一半驗收**不過** ⇒ 直接證明受害者是材質自己取樣的東西，
+這個 crash 只能靠引擎那一半修掉。
