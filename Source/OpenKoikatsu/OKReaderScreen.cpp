@@ -3,6 +3,7 @@
 #include "Engine/Texture.h"
 #include "RHIStats.h"
 #include "DynamicRHI.h"
+#include "Misc/FileHelper.h"
 bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "DreamUIRender/DreamUIShaderGate.h"
 #include "OKCharacterController.h"
@@ -1183,6 +1184,86 @@ void UOKReaderScreen::ListResources(FOutputDevice& Out) const
 	UE_LOG(LogTemp,Display,TEXT("OK reader resources %s"),*Line);
 }
 
+static void OKReaderAllControls(const UOKReaderScreen* S,TArray<UOKDreamControl*>& All,TArray<FString>& Paths,
+	const TArray<TObjectPtr<UOKDreamControl>>& Controls,const TArray<TObjectPtr<UOKDreamControl>>& SubButtons,const TArray<TObjectPtr<UOKDreamControl>>& RailButtons,
+	const TArray<TObjectPtr<UOKDreamControl>>& Drawers,const TArray<TObjectPtr<UOKDreamControl>>& CardButtons);
+void UOKReaderScreen::AuditControls(FOutputDevice& Out)
+{
+	UOKCharacterController* G=Controller.Get();
+	if(!G||!G->WidgetTree){Out.Log(TEXT("audit: no controller"));return;}
+	const int32 WasCategory=Category,WasSub=Sub;
+	// The UMG controls each page mirrors, and the short names shown twice on it.
+	TMap<const UWidget*,FString> Where;
+	TArray<FString> Lines,Ambiguous;
+	int32 Pages=0;
+	auto Note=[&](const FString& Page)
+	{
+		TArray<UOKDreamControl*> All;TArray<FString> Paths;
+		OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
+		TMap<FString,int32> Names;
+		for(UOKDreamControl* C:All)
+		{
+			const FString N=C->GetShownText().TrimStartAndEnd();
+			if(!N.IsEmpty()&&!N.IsNumeric())++Names.FindOrAdd(N);
+		}
+		for(const auto& Pair:Names)if(Pair.Value>1)Ambiguous.AddUnique(FString::Printf(TEXT("%s: \"%s\" x%d"),*Page,*Pair.Key,Pair.Value));
+		// Every control the page made, shown or not (a hidden UMG child is mirrored hidden and shows when it does).
+		auto Take=[&](const TArray<TObjectPtr<UOKDreamControl>>& List){for(UOKDreamControl* C:List)if(IsValid(C)&&C->Source.IsValid()&&!Where.Contains(C->Source.Get()))Where.Add(C->Source.Get(),Page);};
+		Take(Controls);Take(Drawers);
+	};
+	for(int32 C=0;C<Categories.Num();++C)for(int32 S=0;S<FMath::Max(1,Categories[C].Groups.Num());++S)
+	{
+		ShowCategory(C,S);++Pages;
+		const FString Page=Categories[C].Groups.IsValidIndex(S)?Categories[C].Name+TEXT("›")+Categories[C].Groups[S].Name:Categories[C].Name;
+		Note(Page);
+		// A page that shows only the rows of the chosen bone category: the rows of the others are reached by choosing them.
+		if(Categories[C].Groups.IsValidIndex(S)&&Categories[C].Groups[S].bShownOnly)
+			for(const TWeakObjectPtr<UWidget>& Source:Categories[C].Groups[S].Sources)if(Source.IsValid())
+			{
+				TArray<UWidget*> Stack{Source.Get()};
+				while(Stack.Num()){UWidget* W=Stack.Pop();if(!Where.Contains(W))Where.Add(W,Page+TEXT("（切換分類）"));Stack.Append(ChildrenOf(W));}
+			}
+	}
+	ShowCategory(WasCategory,WasSub);
+	// The old screen's operable controls.
+	auto Operable=[](const UWidget* W){return W->IsA<UButton>()||W->IsA<USlider>()||W->IsA<UCheckBox>()||W->IsA<UComboBoxString>()||W->IsA<UEditableTextBox>()||W->IsA<USpinBox>();};
+	int32 Total=0,Covered=0,Replaced=0;
+	TArray<FString> Missing,ReplacedBy;
+	G->WidgetTree->ForEachWidget([&](UWidget* W)
+	{
+		if(!W||!Operable(W))return;
+		++Total;
+		// What the new screen draws itself instead: the drawers' headers, the picker tiles (made per item), the card list.
+		if(W->IsA<UOKDrawerButton>()||W->IsA<UOKAppearanceButton>()||W==G->AppearanceCloseButton){++Replaced;return;}
+		// Old controls whose job the new screen does another way (its own button, a page that opens the panel when entered,
+		// its drag handle): by name or label, with where.
+		{
+			static const TMap<FString,FString> Instead={
+				{TEXT("新增飾品欄位"),TEXT("配件›飾品 的「新增飾品欄位」（畫面自己的按鈕）")},
+				{TEXT("圖片式外觀選擇"),TEXT("選圖頁（臉／頭髮／身子›皮膚／衣服›外觀選擇／配件）進入時自動打開")},
+				{TEXT("顏色／飾品詳細編輯"),TEXT("顏色與設定、飾品顏色與位置、全部屬性頁進入時自動打開")},
+				{TEXT("EditorPanelWidth"),TEXT("左欄右緣的拖曳把手、ok.ReaderScreen width")}};
+			const FString* By=Instead.Find(W->GetName());if(!By)By=Instead.Find(TextIn(W).TrimStartAndEnd());
+			if(By){++Replaced;ReplacedBy.Add(FString::Printf(TEXT("%s（%s）→ %s"),*W->GetName(),*TextIn(W),**By));return;}
+		}
+		for(const UWidget* At=W;At;At=At->GetParent())if(Where.Contains(At)){++Covered;return;}
+		FString Label=TextIn(W);
+		if(Label.IsEmpty())if(UPanelWidget* P=W->GetParent())for(int32 I=0;I<P->GetChildrenCount()&&Label.IsEmpty();++I)if(P->GetChildAt(I)!=W)Label=TextIn(P->GetChildAt(I));
+		FString Top;for(const UWidget* At=W->GetParent();At;At=At->GetParent())if(At->GetFName()!=NAME_None&&!At->GetName().StartsWith(TEXT("HorizontalBox"))&&!At->GetName().StartsWith(TEXT("VerticalBox"))&&!At->GetName().StartsWith(TEXT("SizeBox"))&&!At->GetName().StartsWith(TEXT("Border"))){Top=At->GetName();break;}
+		Missing.Add(FString::Printf(TEXT("%s\t%s\t%s\t%s\tunder=%s"),*W->GetClass()->GetName(),*W->GetName(),*Label.Replace(TEXT("\n"),TEXT(" ")),IsUmgShown(W)?TEXT("visible"):TEXT("hidden"),*Top));
+	});
+	Lines.Add(FString::Printf(TEXT("audit: %d pages; old screen operable controls %d: mirrored %d, drawn by the new screen itself %d, missing %d; short names shown twice on a page: %d"),Pages,Total,Covered,Replaced,Missing.Num(),Ambiguous.Num()));
+	Lines.Add(TEXT("done another way by the new screen:"));
+	for(const FString& R:ReplacedBy)Lines.Add(TEXT("  ")+R);
+	Lines.Add(TEXT("missing (class, name, label, visibility, nearest named parent):"));
+	for(const FString& M:Missing)Lines.Add(TEXT("  ")+M);
+	Lines.Add(TEXT("short names shown twice (press by that name is ambiguous there; use the path):"));
+	for(const FString& A:Ambiguous)Lines.Add(TEXT("  ")+A);
+	const FString File=FPaths::ProjectSavedDir()/TEXT("Reports/reader-control-audit.txt");
+	FFileHelper::SaveStringToFile(FString::Join(Lines,TEXT("\n")),*File,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	Out.Log(Lines[0]+TEXT(" -> ")+FPaths::ConvertRelativePathToFull(File));
+}
+
 void UOKReaderScreen::GiveBackThumb(UTexture2D* Texture)
 {
 	if(Texture&&ThumbPool.Contains(Texture)&&!FreeThumbs.Contains(Texture))FreeThumbs.Add(Texture);
@@ -1957,6 +2038,9 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		// "resources": counts and sizes that must not grow without bound over a long session (thumbnail pools and caches,
 		// mirrored controls, live textures by kind, the RHI's texture memory).
 		else if(Verb==TEXT("resources"))S->ListResources(Out);
+		// "audit": which of the old screen's controls the new one shows (and on which page), and the short names a page
+		// shows twice (press by short name is ambiguous there; the paths stay unique).
+		else if(Verb==TEXT("audit"))S->AuditControls(Out);
 		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
 		else if(Verb==TEXT("card"))
 		{

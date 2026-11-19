@@ -147,6 +147,10 @@ public:
 	// One line of what the screen and the controller hold and of the live textures (ok.ReaderScreen resources): run it
 	// after each card of a long session to see whether anything only grows.
 	void ListResources(FOutputDevice& Out) const;
+	// The control audit (ok.ReaderScreen audit): every page shown in turn, then each operable UMG control of the old
+	// screen said to be mirrored on some page or not, and the short names a page shows twice. Written to
+	// Saved/Reports/reader-control-audit.txt too. Returns to the page it was on.
+	void AuditControls(FOutputDevice& Out);
 	// The card list: its N-th tile clicked as the pointer would, and that card's file (ok.ReaderScreen card).
 	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
 	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}

@@ -185,6 +185,31 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - 符合的超過一個時不按，回報 `ambiguous` 並列出各候選的路徑；要指定其中一個，用路徑或 `#N`。
 - 只有一個完全相同、但另有控制項包含這段文字時，照樣按下那一個，並列出另外那些的路徑。例如 `press 眼睛` 按的是「臉›眼睛」，同時列出 `動作與表情›眼睛：面向前方`。
 
+### 控制稽核：舊版 UMG 的每個控制項新版有沒有（2026-11-19）
+
+`ok.ReaderScreen audit`：逐頁打開新版畫面的 36 頁，記下每頁鏡像的 UMG 控制項，再把舊版 controller 的 UMG 樹裡每個能操作的控制項（按鈕、滑桿、勾選、下拉、輸入框、數字框）對一遍；結果也寫到 `Saved/Reports/reader-control-audit.txt`。骨骼頁只畫目前選的骨骼分類，其他分類的列算「切換分類可達」。打包 stage `EFork1119y`、開了一張卡之後跑（`E:\OpenKoikatsu\Saved\Reports\reader-control-audit-20261119.txt`）：
+
+| 結果 | 數量 |
+|---|---|
+| 舊版能操作的控制項 | 4877 |
+| 新版有鏡像（都能用路徑按到、`set` 設值） | 4866 |
+| 新版自己畫（抽屜標題、選圖格、選圖面板的「關閉」、卡片牆） | 6 |
+| 新版用別的方式做 | 4 |
+| **缺口** | **1** |
+
+新版用別的方式做的四個：
+
+| 舊版 | 新版 |
+|---|---|
+| 新增飾品欄位 | 配件›飾品 頁上畫面自己的「新增飾品欄位」按鈕 |
+| 圖片式外觀選擇 | 選圖頁（臉、頭髮、身子›皮膚、衣服›外觀選擇、配件）進入時自動打開 |
+| 顏色／飾品詳細編輯 | 顏色與設定、飾品顏色與位置、全部屬性頁進入時自動打開 |
+| 編輯欄寬度（`EditorPanelWidth`） | 左欄右緣的拖曳把手、`ok.ReaderScreen width` |
+
+**唯一的缺口：顯示字級（`EditorFontSize`，6–24）**。這是舊版 UMG 介面的字級設定，新版 DreamGUI 畫面用固定的設計字級，沒有對應的設定。要不要補由協調者決定。
+
+**同一頁有兩個以上同名的短名（57 組）**：用短名 `press` 會回報 ambiguous 並列出路徑，路徑一律唯一，所以都能操作。大多是預期的（每列各自的「重置」、選圖與屬性兩組「上一頁／下一頁」、遊戲目錄與卡片資料夾各一組「選資料夾…／還原預設」）。值得記的兩個：鏡頭列的「全身」「腿部」和 身子 的二級選單同名；卡片牆有兩張都叫 Alice 的卡（用 `ok.ReaderScreen card <N>` 或路徑的 ` #2`）。
+
 ## 臉›眼部縮放2（2026-11-19）
 
 原遊戲 ABMX 的眼球骨骼頁（`FaceEyes2`：`cf_J_Eye_tz` 雙眼球、`cf_J_Eye_rz_L／R` 眼球 縮放 1、`cf_J_Eye_tx_L／R` 眼球 縮放 2）。內容就是「身子›骨骼」選「骨骼調整：眼球」時的那幾列，但頁面固定在這個分類、不顯示分類下拉：一般模式 3 列（縮放＋左右選擇＋重置），勾「進階：X／Y／Z、位置與旋轉」後 27 列（各軸縮放、位移、旋轉）。寫入走原本的骨骼滑桿（`OnBoneChanged`），和讀卡器其他骨骼頁相同。
@@ -234,9 +259,37 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - **資料貼圖變大**：`DreamUIDataTexture` 變大時記一行 log（`DreamUIDataTexture <名稱> grows to <列數> rows`），並先等 RDG 非同步執行完成才換貼圖與更新參照，供下次當機時對時間點。
 - **Aftermath dump**：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`。要用 Nsight Graphics 打開才看得到出錯的著色器與綁定的資源；這台機器只有 Nsight Compute／Systems／VS Edition，沒有 Nsight Graphics。
 
-## 未結案：讀卡器第三條 GPU PageFault（2026-11-19，追查中）
+## 未結案：讀卡器第三條 GPU PageFault（2026-11-19，已加防護，根因未找到）
 
-**當前假設：累積型資源成長**（協調者與 e-cardload 提出，正在量）。2026-11-19 05:45 那次量測先排除了它的「VRAM 吃緊、常駐資源被逐出」這條機制，見下方「連開 30 張的量測」。
+**現況（2026-11-19 08:30）**：讀卡器新版畫面啟動時關掉 RDG 並行執行（`804306bad`，`run_card_reader_development.lua` 加 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`）。用下面的重現配方，關掉後三趟共 160 次開卡不當；開著時每趟第 5–17 張就當。e-cardload 用它定稿的配方再驗兩趟：兩趟乾淨就降級為「未再重現，但未證明根因消除」。
+
+**三個必要條件**（各有對照，其他條件不動）：
+
+1. 新版 DreamGUI 畫面：同一個 build 帶 `-LegacyReader` 開 30 張不當（e-cardload）。
+2. 真的載入 3D：只在卡片牆點卡（不重開 3D）＋捲動，360 次點卡、60 次捲動不當（e-cardload）。
+3. 載入後停幾秒：不停、一張接一張開 30 張不當；每張停 6 秒，第 6–13 張就當（e-cardload）。
+
+再加上這輪量到的：**RDG 並行執行開著**（引擎預設 2；設 1 也當；只把 DreamGUI 自己的 pass 設 `NeverParallel` 也當；要從啟動參數關掉才不當，讀卡器開啟時由程式關掉照當）。
+
+**重現配方**（e-cardload 定稿）：新版 UI（不帶 `-LegacyReader`）、`-CardDirectory=E:\OKPackage\TestCards-20261118`、逐張開**不同**的卡（`reader_call load` 或卡片牆點卡＋「載入3D」，看 `state.session` 換了才算真的重開）、每張開完停 6 秒。通常第 6–13 張、1–4 分鐘內 `DXGI_ERROR_DEVICE_HUNG`＋PageFault。驗防護時帶 `-ParallelRDG`（保留引擎預設）就能重現。
+
+**已排除的七條**：
+
+| # | 假設 | 怎麼排除 |
+|---|---|---|
+| 1 | GPU 資源提前釋放 | `r.D3D12.TrackAllAllocations=1`：故障位址不屬於存活資源，也不屬於最近 100 幀內釋放的資源；加了 `FDreamUIDeferredRelease`（晚 3 幀放）照樣當 |
+| 2 | 延遲釋放佇列積壓 | 每張卡記一次，佇列都是 0；每幀放掉所有到期的，沒有上限 |
+| 3 | 字型圖集 `Texture2DArray` slice 越界 | `Sample` 會夾 index、`Load` 越界回 0、上傳端檢查 slice 數；圖集擴張都在當機前 1.5–14 分鐘 |
+| 4 | 跨幀懸空描述子 | 繪製參數在 render command 才解析成 `TextureReference`（引用計數持有）；GBV 下約 250 次開卡、0 個 D3D12 錯誤 |
+| 5 | NeverStream／串流器搬動 transient 貼圖 | `ListTextures`：所有 transient 貼圖都是 `Streaming=NO` |
+| 6 | GC use-after-free | 每幀 GC（`gc.CollectGarbageEveryFrame 1`）照樣第 12 張當；三條 GC 驗證（`gc.VerifyUObjectsAreNotFGCObjects`、`gc.VerifyAssumptions`、`gc.VerifyNoUnreachableObjects`）0 個報告；`DrawTextureHolds` 是 `UPROPERTY`（強引用） |
+| 7 | VRAM 吃緊或 bindless 描述子堆擴張 | 當機時 `Local Used` 2.0–2.7 GB／預算 31.4 GB；描述子堆起始設成 100 萬（不會擴張）照樣第 10 張當 |
+
+另外不是必要條件的：外觀縮圖快取（當機時它是 0；上限 128 照當）、卡片牆縮圖與所有圖片（`ok.ReaderThumbs 0`＋`ok.ReaderPictures 0` 照當）、角色貼圖累積（e-cardload 修掉 `RecentRuntimeTextures` 與色彩分級 LUT 兩個成長源後照當）。
+
+**防護擋的是哪一類**：RDG 把畫面的 pass 分到多個工作執行緒並行錄製命令時，有東西和 DreamGUI 的繪製在 GPU 上讀到失效的記憶體。關掉並行執行後所有 pass 在 render thread 依序錄製，這一類時序問題就不會發生。還不知道是哪一個 pass、讀到哪一塊；從啟動參數關才有效，表示讀卡器開啟前已經跑過的那幾幀也有關（例如 D3D12 的並行命令 context 在那時建好），尚未查證。breadcrumb 取證保留，萬一再發生，那是最有用的資料。
+
+以下是追查過程的紀錄。
 
 | 項目 | 內容 |
 |---|---|
