@@ -428,7 +428,8 @@ sibling section **`OpenKoikatsu.HairEditor`**（键 `HairSameSetting`／`HairAut
 
 查 `KSOX`／MaterialEditor 贴图要怎么读写时，先撞到一个比贴图更要紧的问题。
 
-**事实**：外挂那些列的键长成 `plugins.m21.a1.m0.packed.m0.m1.a1`。`m<N>`／`a<N>` 是**按位置**取——
+**事实**（以下两个 `plugins.m…` 是**反例，不可照抄**，列出来只为说明位置式长什么样）：
+外挂那些列的键长成 `plugins.m21.a1.m0.packed.m0.m1.a1`。`m<N>`／`a<N>` 是**按位置**取——
 `plugins.rs` 的 `replace()`：`Value::Map(m) if kind=="m" => m.get_mut(index)`，也就是「KKEx 这个 map 的第 N 个条目」，
 **不是**用区段键（外挂的 BepInEx GUID）去找。
 
@@ -507,6 +508,10 @@ KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等
 2. **MCP 给绝对路径**：`reader_call {"action":"texture_set","slot":"…","path":"<PNG>"}`，给自动化与外部
    编辑流程用（画完直接套）。
 3. 两者都要：UI 走第 1 条，MCP 走第 2 条——**同一条写入路径，不同的来源**，和 `ops` 的做法一致。
+
+**贴图的 op 一律按外挂身分带参数**，例如
+`{"op":"texture_set","plugin":"com.deathweasel.bepinex.materialeditor","material":"mf_m_primmaterial","property":"MainTex","path":"<PNG>"}`——
+**不接受位置式的键**（第 10 节的规则）。位置在读卡当下解析，不进请求、不进 `pages.json`、不进文件。
 
 ### 12.2 怎么存回卡片（体积）
 
