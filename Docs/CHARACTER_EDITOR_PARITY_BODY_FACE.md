@@ -167,6 +167,19 @@ if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")){
 
 超范围的旧值按上面第 2 点处理：**读进来原样保留、照实显示**（滑杆顶到底、数字栏显示真值），只有使用者动了那一项才夹。
 
+**落地之后要盯的一件（2026-11-19，f-yvonne `562d60281`，当时还没进 E 树）**：那笔把 `shape.body/face.N` 的范围从
+−1..2 改成 0..1 并加上显示栏位，六个值都对，但 `min`／`max` 同时被 `Validate()` 当成**硬限制**：
+
+```cpp
+if(!FMath::IsFinite(N)||N<Min||N>Max){Error=TEXT("Value outside allowed range");return false;}
+```
+
+于是 **MCP 再也设不进 ABMX 扩张值**，而且一张本来就有 1.4 的卡经过 set／apply 可能被夹回 1.0——人物被悄悄
+改坏、没有任何错误讯息。建议的修法是**验证与显示分开**：`min`／`max` 留给 UI 当软范围，验证另看一组硬界
+（`limit_min=-1`／`limit_max=2`，查不到才退回宽范围）；或加 `clamp: false`，或 `Validate()` 对 `shape.*`
+只检查有限性。决定性的实测是开一张 ABMX／slider-unlocker 的卡读 `shape.*`，看有没有值落在 0..1 之外。
+
+
 两件落地之后的补充（2026-11-19）：
 
 - **顺序是先取整、后 wrap**。身体／脸部**每一项 `wrap` 都是 `false`**，所以这条对我这一块没有影响；记在这里是为了提醒后来的人**不要给这些项目加 wrap**——它们不是角度，0 和 100 不该接起来。
