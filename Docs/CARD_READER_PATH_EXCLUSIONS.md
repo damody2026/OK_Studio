@@ -270,3 +270,30 @@ GC 看得見的材質引用」。交接反查趟量到的是——**放手那一
 
 **這條的教訓**：「排除 DreamGUI」把釋放端與消費端混成一件。
 **排除要連同「排除的是哪一個角色」一起寫**——同一個子系統可以在一條路上無罪、在另一條路上正是嫌疑人。
+
+## 十五、歸屬：名字與格式不唯一，材質參數名才是（2026-11-19）
+
+**f-sceneload 提的保留是對的**：外觀縮圖也叫 `Texture2D_<數字>`、也是 `B8G8R8A8_TYPELESS`、
+也會進 `OK kept texture life` 這本生命日誌。**所以單憑「名字長這樣、格式是 BGRA8」，
+把故障那張歸給卡片 runtime 貼圖並不唯一**——那只是「符合這一類」，不是「就是這一個」。
+
+**解掉它的是交接反查，而不是名字**：故障那張被交給 12 個 MID，每一條都帶著**材質參數名**：
+
+```
+tex=Texture2D_2999 -> mid=MID_M_KoikanoSkin_Flat_56      param=_overtex1
+tex=Texture2D_2999 -> mid=MID_M_ForgeSkin_Outline_Flat_72 param=_overtex1
+…（12 條，全部 _overtex1）
+mid=MID_M_ForgeSkin_Flat_72 params=15 _MainTex=Texture2D_3159 _overtex1=Texture2D_2999 …
+```
+
+**外觀縮圖不會被 `SetTextureParameterValue` 設成 `_overtex1`**，也不會出現在
+`M_KoikanoSkin`／`M_ForgeSkin` 這些角色材質的參數表裡。**所以歸屬是量到的。**
+
+**這條可以直接套用的部分**：故障報告給的是「名字 ＋ 大小 ＋ 格式」，而這三樣在一個專案裡**通常不唯一**
+（UE 的 `Texture2D_<n>` 是自動編號，任何 `CreateTransient` 都長這樣）。
+**要把一個位址歸給某個子系統，得靠那個子系統獨有的語意**——這裡是材質參數名與母材質名；
+在別的故障裡可能是 Outer、擁有元件、或建立時的呼叫站點。
+**在拿到那種語意之前，「名字符合」只能寫成「符合這一類」。**
+
+**什麼會讓這條的結論失效**：若某處把外觀縮圖當成角色材質的 `_overtex1`／`_MainTex` 餵進去
+（目前沒有這種站點），歸屬就要重新判。
