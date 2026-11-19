@@ -1946,3 +1946,112 @@ D3D12 那一侧（`Runtime/D3D12RHI/Private/D3D12TextureReference.cpp`）：
 - **次位置：同一行顺手补 §23a 漏印的 `MaskTex1` 与 `RenderLayerTable` 两个 breadcrumb 槽。**
 
 **若 12 个位址都对不上，这条线就该转到 descriptor／PSO 那一层，而那层不能用这把尺读——要量。**
+
+---
+
+## §30 引擎那一半：**引擎会清掉，而且前提本身也不成立**——这一支否证
+
+读的是 `E:/PhysX/UE5.8`（只读）。协调的假设有两个支点，两个都查了，两个都不成立。
+
+### 30a 第 1／2 题：引擎确实会把内层指标换掉，位置与次序如下
+
+`UTexture::BeginFinalReleaseResource()`（`Runtime/Engine/Private/Texture.cpp:1332-1347`）依序做三件事：
+
+1. **`ReleaseResource()`**（`:1335-1338`）→ `UTexture::ReleaseResource()` 把资源交给一个 render command
+   （`ENQUEUE_RENDER_COMMAND(DeleteResource)`，内含 `ToDelete->ReleaseResource(); delete ToDelete;`）
+   → **`FStreamableTextureResource::ReleaseRHI()`**
+   （`Runtime/Engine/Private/Rendering/StreamableTextureResource.cpp`）：
+
+   ```cpp
+   if (ensure(TextureReferenceRHI.IsValid()))
+   {
+       RHIClearTextureReference(TextureReferenceRHI);   // :237
+   }
+   TextureRHI.SafeRelease();                            // :240
+   ```
+
+   **清除在 `:237`，在同一个 render command、render thread 上，而且在 `TextureRHI.SafeRelease()`（`:240`）之前。**
+2. **然后**才 `TextureReference.BeginRelease_GameThread()`（`:1339-1342`）→
+   `FTextureReference::ReleaseRHI()`（`Runtime/RenderCore/Private/RenderResource.cpp:535-538`）
+   ＝ **只有 `TextureReferenceRHI.SafeRelease();`**（放掉引擎自己那一份计数，**不碰内层**）。
+3. `ReleaseFence.BeginFence()`（`:1344`），而 `UTexture::IsReadyForFinishDestroy` 等这个 fence
+   ⇒ **UObject 不会在这两个 render command 跑完之前被清掉。**
+
+`RHIClearTextureReference` ＝ `UpdateTextureReference(ref, nullptr)`
+（`Runtime/RHI/Public/RHICommandList.h:5334-5337`），D3D12 侧把 null **换成 `GetDefaultTexture()`**
+（`Runtime/D3D12RHI/Private/D3D12TextureReference.cpp:112`，`SwitchToNewTexture` 再确认一次 `:46-47`），
+并且**连带改写那个 reference 自己的 bindless descriptor**（`:55-74`）。
+
+**而且不只 streamable 这一类。** 基底 `FTexture::ReleaseRHI`（`RenderResource.cpp`）
+**不**清 reference（它只 `SafeRelease` 三个 RHI handle），清除是各衍生类自己做的，而它们**全都做**：
+
+| 资源类 | 清除行 |
+|---|---|
+| `FStreamableTextureResource`（`FTexture2DResource` 的基底，**`CreateTransient` 走这条**） | `Rendering/StreamableTextureResource.cpp:237` |
+| `FTexture2DDynamicResource` | `Texture2DDynamic.cpp:82` |
+| `FTextureCubeResource` | `TextureCube.cpp:513` |
+| `FTextureCubeArrayResource` | `TextureCubeArray.cpp:187` |
+| `FTextureRenderTarget2DResource` | `TextureRenderTarget2D.cpp:605` |
+| 2DArray／Cube／Volume render target | `:297`／`:363`／`:297` |
+| `FWebBrowserTextureResource` | `WebBrowserTextureResource.cpp:138` |
+
+**所以照协调的第 2 题：引擎会清掉，清除在 `Rendering/StreamableTextureResource.cpp:237`——这一支不要追。**
+
+### 30b 而且那个前提本身是错的：**间接物件确实持有底层贴图**
+
+协调写「持有那个间接物件会让间接物件活著，但间接物件本身不持有底层贴图」。
+`Runtime/RHI/Public/RHITextureReference.h` 的 `FRHITextureReference`：
+
+```cpp
+protected:
+    TRefCountPtr<FRHITexture> ReferencedTexture;   // 计数参照，不是裸指标
+```
+
+**是 `TRefCountPtr`。** （§28c 已记过，这里再钉一次，因为整个假设压在这句话上。）
+于是只有两条分支，而**两条都不可能产生「已释放的位址」**：
+
+1. **清除有跑**（30a 证明它会跑）⇒ 内层变成**全域黑图** ⇒ 取样黑图，不会故障；
+2. **清除没跑**（假设某条路漏了）⇒ 内层**仍然计数持有那张 RHI 贴图** ⇒ **那块配置根本不可能被释放**
+   ⇒ 结果是滞留／洩漏，**不是 page fault**。
+
+**而 e-cardload 量到配置确实被释放了（不可达 51209 → 配置释放 51214），这本身就证明分支 1 发生了。**
+所以这个机制在两个独立的理由上都被否证。
+
+至于 `LogStaleTextures` 命中 0：协调说它检查的是 game thread 物件的状态——**这点说得对**
+（`DreamUIBaseShaders.cpp:32-51` 的 `CheckNotStale` 只看 `IsValid`／`IsUnreachable`）。
+**但那不是盲点，因为内层指标按 30a／30b 不会悬空。**
+
+### 30c 第 4 题：那组 `*RHI` 成员**会跨帧沿用**，但这正是它被设计成 reference 的原因
+
+`ResolveTextures_RenderThread` 只在 `SetMeshSectionBuiltIn` 送出的那个 render command 里跑
+（`DreamGUI/Private/Core/DreamUIMesh/DreamUIMeshComponent.cpp:2597-2624`，以及 group／desc 的
+`:697`、`:1529`、`:1597`、`:2613`），而 `SetMeshSectionBuiltIn` 只在画布重建 draw call 时被呼叫
+（`DreamCanvas.cpp:4011-4035`）。**画布没重建的帧，那组 `*RHI` 就是上一次解参的结果，原样沿用。**
+
+**但沿用不构成问题，而且文件里本来就写明了这是目的**
+（`DreamGUIRenderer/Public/DreamUIRender/DreamUIBaseShaders.h:40-46`）：
+「A reference follows its texture through every rebuild of the texture's resource -- a font atlas repacked,
+a data texture grown, an UpdateResource -- and **outlives the texture, pointing at a black one once it is gone.
+The resource pointers they replace were kept across frames and left dangling by each of those**…」
+——**换成 reference 这件事，就是为了修掉「跨帧保存资源指标会悬空」这个旧 bug。**
+
+顺带：`Sampler(InTextures.Main)` 存的是 `FSamplerStateRHIRef`（同档 `:81` 起），**也是持有**，
+而且 sampler state 在 UE 是共用的静态物件，不随贴图死亡。
+
+### 30d 所以现在的位置
+
+**这一侧（DreamGUI 存什麼 ＋ 引擎怎麼清）两边都查到底，结论是一致的否定**：
+built-in draw 的那十个 reference 槽不可能把已释放的位址绑进 `MainPS`。
+加上 §28e／§29d 的盘点（没有槽阵列、没有 handle 注册表、入池残留留的是持有 handle、
+裸 `FRHITexture*` 只有两个 RDG 产物），**「DreamGUI 存了一个裸位址」这条假设可以关掉了。**
+
+**而 `-LegacyReader` 0/3 ＋ 基线 6/6 仍然成立**，所以 Dream 读卡器画面路径确实是必要条件——
+**但它成为必要条件的方式不在这十二个槽里。** 剩两条，两条都要位址比对：
+
+1. **绑进去的 descriptor 与 shader 实际取样的不是同一个**（descriptor 表／PSO 那一层）；
+2. **故障的不是这十二个槽的任何一个**，而是 Dream 画面路径同时让别的东西进入某个状态
+   （角色预览的 render target、toon shadow 的 capture、群组 pool 的 target）。
+
+插桩位置与 §29d 相同：**`DreamUIRenderer.cpp:1017`**，印 12 个槽解出来的 `FRHITexture*`
+（reference 的印 `GetReferencedTexture()`），和 `0x000000256bd01000` 比对；
+**这一步是现在唯一能分开上面两条的量测。**
