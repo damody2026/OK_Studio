@@ -65,6 +65,7 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
 #include "Misc/ScopeExit.h"
+#include "Containers/Ticker.h"
 #include "OKCharacterMCPRegistry.h"
 #include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
@@ -412,6 +413,14 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	auto* Screen=Cast<UOKReaderScreen>(UDreamUIBPLibrary::AddWidgetOfClassToViewport(Controller,Class,10));
 	if(!Screen)return nullptr;
 	Screen->Controller=Controller;GScreen=Screen;Screen->UiScale=UiScaleOf(Controller);
+	// The one-on-one and the studio collapse the controller's UMG layer, and with it its NativeTick, which is what ticks
+	// this screen: nothing hid it, and it went on drawing under those modes (screenshots 2026-11-19) while press reported
+	// its controls not shown. Its own ticker follows the controller instead (FollowController).
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)](float)
+	{
+		UOKReaderScreen* Self=Weak.Get();if(!IsValid(Self))return false;
+		Self->FollowController();return true;
+	}));
 	// The picker's 前往 設定 › 遊戲目錄 (shown when there is no game folder): the page switch waits for the next frame, as
 	// the switch destroys the very button whose click asked for it.
 	Controller->OnWantGameRootSettings=[Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)]()
@@ -1517,6 +1526,24 @@ bool UOKReaderScreen::SetByKey(const FString& Key,const FString& To,FString* Out
 	if(!Found->SetValue(To,&Why))return Say(FString::Printf(TEXT("set %s (%s) = %s failed: %s"),*ControlPath(Found),*Key,*To,*Why));
 	if(OutNote)*OutNote=FString::Printf(TEXT("set %s (%s) = %s"),*ControlPath(Found),*Key,*To);
 	return true;
+}
+
+// Experiment switch for the reader's GPU page fault A/B (e-cardload), not a setting. The default hides the reader's editor
+// screen while another mode (the one-on-one, the studio) has the screen: the user's decision of 2026-11-19, and the draws
+// in flight when the reader crashed were all DreamGUI's (mask0=fallback, no character texture bound), the crash most often
+// on the way back from the one-on-one. 1 keeps the old behaviour (drawn underneath) to compare.
+static TAutoConsoleVariable<int32> CVarReaderScreenUnderOtherModes(TEXT("ok.Experiment.ReaderScreenUnderOtherModes"),0,
+	TEXT("Experiment (crash A/B only): 1 = keep drawing the reader's DreamGUI screen under the one-on-one and the studio (the old behaviour); 0 (default) = hide it there."));
+
+void UOKReaderScreen::FollowController()
+{
+	const UOKCharacterController* G=Controller.Get();
+	const bool bOtherMode=!G||G->GetVisibility()==ESlateVisibility::Collapsed;
+	const bool bShow=!bOtherMode||CVarReaderScreenUnderOtherModes.GetValueOnGameThread()!=0;
+	if(GetShown()==bShow)return;
+	SetShown(bShow);
+	UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen %s (%s)"),bShow?TEXT("shown"):TEXT("hidden"),
+		bOtherMode?TEXT("another mode has the screen; ok.Experiment.ReaderScreenUnderOtherModes 1 keeps it drawn"):TEXT("back in the reader"));
 }
 
 void UOKReaderScreen::AuditControls(FOutputDevice& Out)

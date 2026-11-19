@@ -159,6 +159,8 @@ public:
 	// screen said to be mirrored on some page or not, and the short names a page shows twice. Written to
 	// Saved/Reports/reader-control-audit.txt too. Returns to the page it was on.
 	void AuditControls(FOutputDevice& Out);
+	// Shown only while the controller's UMG layer is (the one-on-one and the studio collapse it): see Open.
+	void FollowController();
 	// "pages": where the pages come from and what was wrong; "pages builtin|file" / "reloadpages": build them again from
 	// there (the file read anew) and show the first tab.
 	void ReloadPages(const FString& Mode,FOutputDevice& Out);

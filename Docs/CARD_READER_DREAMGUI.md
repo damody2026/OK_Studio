@@ -1112,3 +1112,22 @@ grep 不到這個字，所以那部分未經證實，要當證據得先指出是
 
 **這一節本身也是個方法**：手上有兩條都「說得通」的線索時，先找一個**兩條預測不同**的現成觀察（這裡是 Studio 回程），
 不必等新實驗就能砍掉一條。
+
+## 1 對 1／Studio 期間讀卡器畫面照畫：改成藏起（2026-11-19，e-fork-2）
+
+- **現象**：進 1 對 1 或 Studio 後，讀卡器的 DreamGUI 面板（左欄、相機列、右欄）整段都畫在那個畫面底下（`E:\OpenKoikatsu\Saved\OKControl\shots\11172-0003.png`、`11172-0005.png`）。但 `press` 與 `controls` 回報它們是 `[not shown]`：**可見性回報和實際繪製不一致**。
+- **原因**：兩種模式都把讀卡器的 UMG 控制器設為 `Collapsed`（`OKInteractionMode.cpp` 的 `Source->SetVisibility(Collapsed)`、`OKGalleryOkStudio.cpp` 的 `SetVisibility(Collapsed)`）。`Collapsed` 的 UMG 不跑 `NativeTick`，而讀卡器畫面的 `Tick` 是從那裡呼叫的，所以沒有東西去藏 DreamGUI 畫面。
+  - 鏡像控制項的來源是 UMG，UMG 是 `Collapsed`，所以 `IsOnScreen` 回報不顯示；DreamGUI 本身照畫。
+- **改法**：讀卡器畫面自己掛一個 ticker，每幀跟著控制器（`UOKReaderScreen::FollowController`）：
+  - 控制器 `Collapsed`（別的模式占了畫面）時，整個畫面 `SetShown(false)`，不送繪製；
+  - 回到讀卡器時再顯示。log 會印 `ok.ReaderScreen hidden／shown`。
+  - **預設就是藏起**（使用者 2026-11-19 裁定：進 1 對 1 時原本的編輯器 UI 就該隱藏）。
+- **實驗開關**：`ok.Experiment.ReaderScreenUnderOtherModes`，預設 0（藏）；1 還原舊行為（照畫）。只給當機 A／B 用，不是設定。
+  - 執行中下主控台指令就生效。
+  - 啟動時設：`-ini:Engine:[ConsoleVariables]:ok.Experiment.ReaderScreenUnderOtherModes=1`。
+- **驗收**（stage `EFork1119r`，`E:\OpenKoikatsu\Saved\OKControl\shots\65124-0001.png`～`0003.png`）：
+  - 預設進 1 對 1：`ui:true` 截圖底下沒有讀卡器面板，`controls` 全部 `[not shown]`，log `hidden`。
+  - 離開：log `shown`，`controls` 不再標 `[not shown]`。
+  - 開關設 1 再進 1 對 1：面板照畫，`controls` 也回報顯示中，兩者一致。
+  - 開關回 0 進 Studio：底下沒有讀卡器面板，`controls` `[not shown]`。
+- **和當機的關係（待 e-cardload 量）**：當機那一刻在飛的 draw 全是 DreamGUI 自己的（`mask0=fallback`），最容易當的是 1 對 1 回程，所以這是嫌疑之一。反證是 Studio 期間也照畫、Studio 回程卻不當。f-sceneload 另提一條：Studio 會把讀卡器的 `PreviewActor` 藏起，1 對 1 不會。開關 0／1 各跑 30 張，交給 e-cardload。
