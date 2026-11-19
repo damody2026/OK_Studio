@@ -5864,3 +5864,27 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   那是**否定命题**，穷举搜索就是它的强证据；「这个东西没有在画」不是那种命题，它有现成的开关可验。
 - **连带影响**：错的更正会变成别人的指示（协调据此叫 e-fork-2 别动 DreamGUI）。所以更正被推翻后要**收回到纸面上**，
   不能只在对话里改口；这一笔就是那个收回。
+
+## 2026-11-19：修好开卡之后露出 11-09 就有的 Pushup 比对冲突，被当成新回归（f-yvonne）
+
+- **症状**：F 树 `appearance::tests::head_texture_commit_preserves_live_state_and_rejects_geometry` 变红，第一次 `head_texture_changes` 就回 `appearance changed model layout or shape`。三个 session 互相指认是对方的改动。
+- **原因**：`b98a5edcb`（11-09）让快取（`SessionBlob`）存套过 Pushup 的滑杆、`pushup: None`，开卡的 session 则存原始滑杆加 `pushup`。`head_texture_changes` 直接比 `shape_body`，有 Pushup 的卡（C001）一定不同。这个测试之前因为 C001 在 F 树开不了（`60c0aaea3` 的 okLt guids 缺口）走不到这一行，cherry-pick `4a17979ad` 修好开卡后才露出来。
+- **修法**：两边都比 `shaping_body(&shape_body)`，每边只套自己的 Pushup（快取那边是 None，不会推两次）。注解写在那一行旁边；测试断言 C001 真的走到 Pushup 路径（`source.pushup` 有、`live.pushup` 无、存的 `shape_body` 不同），卡不换。
+- **判准**：修掉一层之后露出的下一层，不等于新的回归。先看那段程式最后一次改动的日期，和露出它的那个修法比一比。
+
+## 2026-11-19：同一天第二次把别人的改动一起提交——这次是只看 `--stat` 的数字没读 diff（f-sceneload）
+
+- **做了什么**：只想给 `properties.rs` 的 `refuse_unapplied` 加 7 行注释，却用
+  `git add Tools/ok-extract/src/appearance/properties.rs` **整档 stage**；接着看到
+  `git diff --cached --stat` 写「35 insertions, 12 deletions」，**没有逐行读就提交**（`199028e49`）。
+  于是 f-yvonne 正在做的软限制（`with_range` 重写、`ranged()` 改成只用 `limit_min`／`limit_max` 挡、
+  `wrap` 顺序、对应测试断言）被我的 commit 讯息带走了。
+- **我早上才记过这条**（`30c0152ca`：挑完 hunk 还要逐档看一次 `git diff --cached`），所以这不是新教训，
+  是**同一个教训没落实成动作**。
+- **讯号我看到了却没停**：35 增 12 删，而我的改动是 7 行注释、0 删。**数字和自己的改动不符本身就是停下来的理由**。
+- **收紧成可以照做的规则**（不是「要小心」）：
+  1. 共用树里**不要整档 `git add`**；用 `git add -p` 或把补丁切出来 `git apply --cached`（今天 ERROR_LOG 那两笔就是这样做的）。
+  2. 真的整档 stage 了，**提交前必读 `git diff --cached <档案>` 的每一行**，不是 `--stat`。
+  3. **先核对增删行数**：和自己改的行数不符就当成「混到别人的」处理，先查再提交。
+- **处理**：没有改历史（共用树、对方可能正在上面继续改），立刻告知 f-yvonne 并说明哪些被带进去、
+  建议它下一笔在讯息里指回 `199028e49`；同时跑 `cargo test --lib appearance::properties` 确认那个提交点不是红的。
