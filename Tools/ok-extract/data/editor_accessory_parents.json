@@ -9,19 +9,23 @@
   },
   {
     "key": "a_n_hair_twin_L",
-    "label": "左雙馬尾"
+    "label": "左雙馬尾",
+    "reverse": "a_n_hair_twin_R"
   },
   {
     "key": "a_n_hair_twin_R",
-    "label": "右雙馬尾"
+    "label": "右雙馬尾",
+    "reverse": "a_n_hair_twin_L"
   },
   {
     "key": "a_n_hair_pin",
-    "label": "左髮夾"
+    "label": "左髮夾",
+    "reverse": "a_n_hair_pin_R"
   },
   {
     "key": "a_n_hair_pin_R",
-    "label": "右髮夾"
+    "label": "右髮夾",
+    "reverse": "a_n_hair_pin"
   },
   {
     "key": "a_n_headtop",
@@ -41,11 +45,13 @@
   },
   {
     "key": "a_n_earrings_L",
-    "label": "左耳環"
+    "label": "左耳環",
+    "reverse": "a_n_earrings_R"
   },
   {
     "key": "a_n_earrings_R",
-    "label": "右耳環"
+    "label": "右耳環",
+    "reverse": "a_n_earrings_L"
   },
   {
     "key": "a_n_megane",
@@ -73,11 +79,13 @@
   },
   {
     "key": "a_n_nip_L",
-    "label": "左胸"
+    "label": "左胸",
+    "reverse": "a_n_nip_R"
   },
   {
     "key": "a_n_nip_R",
-    "label": "右胸"
+    "label": "右胸",
+    "reverse": "a_n_nip_L"
   },
   {
     "key": "a_n_back",
@@ -85,11 +93,13 @@
   },
   {
     "key": "a_n_back_L",
-    "label": "左背"
+    "label": "左背",
+    "reverse": "a_n_back_R"
   },
   {
     "key": "a_n_back_R",
-    "label": "右背"
+    "label": "右背",
+    "reverse": "a_n_back_L"
   },
   {
     "key": "a_n_waist",
@@ -105,107 +115,133 @@
   },
   {
     "key": "a_n_waist_L",
-    "label": "左腰"
+    "label": "左腰",
+    "reverse": "a_n_waist_R"
   },
   {
     "key": "a_n_waist_R",
-    "label": "右腰"
+    "label": "右腰",
+    "reverse": "a_n_waist_L"
   },
   {
     "key": "a_n_leg_L",
-    "label": "左大腿"
+    "label": "左大腿",
+    "reverse": "a_n_leg_R"
   },
   {
     "key": "a_n_knee_L",
-    "label": "左膝"
+    "label": "左膝",
+    "reverse": "a_n_knee_R"
   },
   {
     "key": "a_n_ankle_L",
-    "label": "左腳踝"
+    "label": "左腳踝",
+    "reverse": "a_n_ankle_R"
   },
   {
     "key": "a_n_heel_L",
-    "label": "左腳跟"
+    "label": "左腳跟",
+    "reverse": "a_n_heel_R"
   },
   {
     "key": "a_n_leg_R",
-    "label": "右大腿"
+    "label": "右大腿",
+    "reverse": "a_n_leg_L"
   },
   {
     "key": "a_n_knee_R",
-    "label": "右膝"
+    "label": "右膝",
+    "reverse": "a_n_knee_L"
   },
   {
     "key": "a_n_ankle_R",
-    "label": "右腳踝"
+    "label": "右腳踝",
+    "reverse": "a_n_ankle_L"
   },
   {
     "key": "a_n_heel_R",
-    "label": "右腳跟"
+    "label": "右腳跟",
+    "reverse": "a_n_heel_L"
   },
   {
     "key": "a_n_shoulder_L",
-    "label": "左肩"
+    "label": "左肩",
+    "reverse": "a_n_shoulder_R"
   },
   {
     "key": "a_n_elbo_L",
-    "label": "左肘"
+    "label": "左肘",
+    "reverse": "a_n_elbo_R"
   },
   {
     "key": "a_n_arm_L",
-    "label": "左上臂"
+    "label": "左上臂",
+    "reverse": "a_n_arm_R"
   },
   {
     "key": "a_n_wrist_L",
-    "label": "左手腕"
+    "label": "左手腕",
+    "reverse": "a_n_wrist_R"
   },
   {
     "key": "a_n_shoulder_R",
-    "label": "右肩"
+    "label": "右肩",
+    "reverse": "a_n_shoulder_L"
   },
   {
     "key": "a_n_elbo_R",
-    "label": "右肘"
+    "label": "右肘",
+    "reverse": "a_n_elbo_L"
   },
   {
     "key": "a_n_arm_R",
-    "label": "右上臂"
+    "label": "右上臂",
+    "reverse": "a_n_arm_L"
   },
   {
     "key": "a_n_wrist_R",
-    "label": "右手腕"
+    "label": "右手腕",
+    "reverse": "a_n_wrist_L"
   },
   {
     "key": "a_n_hand_L",
-    "label": "左手"
+    "label": "左手",
+    "reverse": "a_n_hand_R"
   },
   {
     "key": "a_n_ind_L",
-    "label": "左食指"
+    "label": "左食指",
+    "reverse": "a_n_ind_R"
   },
   {
     "key": "a_n_mid_L",
-    "label": "左中指"
+    "label": "左中指",
+    "reverse": "a_n_mid_R"
   },
   {
     "key": "a_n_ring_L",
-    "label": "左無名指"
+    "label": "左無名指",
+    "reverse": "a_n_ring_R"
   },
   {
     "key": "a_n_hand_R",
-    "label": "右手"
+    "label": "右手",
+    "reverse": "a_n_hand_L"
   },
   {
     "key": "a_n_ind_R",
-    "label": "右食指"
+    "label": "右食指",
+    "reverse": "a_n_ind_L"
   },
   {
     "key": "a_n_mid_R",
-    "label": "右中指"
+    "label": "右中指",
+    "reverse": "a_n_mid_L"
   },
   {
     "key": "a_n_ring_R",
-    "label": "右無名指"
+    "label": "右無名指",
+    "reverse": "a_n_ring_L"
   },
   {
     "key": "a_n_dan",
