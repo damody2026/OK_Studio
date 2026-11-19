@@ -5468,3 +5468,79 @@ section for line 24: [SystemSettings] (at line 15)
 而第一次取消它的理由就足以否掉第二次。所以排除改成一份獨立清單，每條三欄：
 **排除的是哪條程式路徑、依據是哪一行、什麼觀測會讓它復活**。
 **沒有第三欄的排除不算排除**，因為那是不可反駁的。提出任何一格之前先查那份清單。
+
+# residency：引擎自己用來「暴露漏掉的 UpdateResidency」的工具，一點都沒動到這個故障
+
+## 一、儀器檢查一趟（`D3D12.ResidencyDebugBudgetMB=128`）
+
+| 項目 | 值 |
+|---|---|
+| 旋鈕讀回 | `D3D12.ResidencyDebugBudgetMB = "128"`（預設 -1 ＝停用） |
+| 終局 | `DEAD after card 16 (16_heroine_keqing.png)`、`faults=1` |
+| 秒數 | **139.3 s** |
+| 對照（60 張協定基線 4/4） | 138.6／139.2／139.3／140.1 s，開第 14／16／17／17 張 |
+| `residency_off_log` / `forced_resident_log` | 0 / 0（所以常駐管理開著、資源真的從 evicted 開始） |
+| 峰值保留 | 509.3 MB |
+
+**把常駐預算壓到 128 MB，故障的秒數落在基線四趟的正中間（139.3，全距 1%）、位置也在基線的 14–17 內。**
+往早、往晚都沒有移動。
+
+## 二、為什麼這是對 residency 不利的證據，而不只是「沒差」
+
+這個旋鈕不是我挑的方向，是**引擎作者寫給這件事用的**（`D3D12Adapter.cpp:204-212`）：
+
+> 「用小值（例如 128）強迫積極的 eviction／MakeResident 來回，**暴露漏掉的 UpdateResidency 呼叫**
+> ——那些呼叫平常被驅動的隱式分頁掩蓋住。」
+
+漏掉 `UpdateResidency` 的資源會被當成「沒在用」而被逐出，所以**預算壓小應該讓它更早故障**。
+結果是**完全沒有移動**。照事前登記的判讀，這落在
+「秒數不變 ⇒ 預算覆寫在這裡什麼都沒改：要嘛沒到達那條路徑，要嘛逐出壓力不是這個故障的時鐘」。
+
+**覆蓋率照 7j 申報**：旋鈕到達是**有**證據的（cvar 以 `FAutoConsoleVariableRef` 綁定
+`GD3D12ResidencyDebugBudgetMB`，而 `D3D12Adapter.cpp:1930` 每次讀的就是它，不是 init 快照）；
+**「逐出真的變積極了」沒有觀測**（沒有對應的 log 或統計）。所以這一趟是 **1/2 覆蓋、n=1**，
+不能寫成「residency 已排除」，只能寫成
+**「引擎指定用來暴露這類漏洞的壓力工具，對這個故障的時間沒有任何影響」**。
+
+因此 `D3D12.ResourcesStartResident=1` 那一格（判別格，腳本已寫好）**降級**：
+它測的是「初始常駐狀態」，而上面的壓力測試已經說了逐出壓力不是時鐘。要跑的話它仍然有效，
+但不該排在前面。
+
+## 三、順手查完我自己標為缺口的那一條：DreamGUI 的釋放走不走 RHI 的圍欄
+
+查了 `FDreamUIDeferredRelease` 的全部呼叫點：
+
+| 種類 | 呼叫點 | 到期時發生什麼 |
+|---|---|---|
+| `Hold(FTextureRHIRef)` | `DreamUIDataTexture.cpp:143`、`DreamUIRenderer.cpp:1253` | 丟掉一個 RHI 貼圖參照 ⇒ **走 RHI 的延遲刪除（EOP sync point 圍欄）** |
+| `Hold(TRefCountPtr<IPooledRenderTarget>)` | `DreamUICompositor.cpp:408` | 還給 render target 池 ⇒ heap 留著 |
+| `Later(TUniqueFunction)` | **只有兩處**：`DreamUIMaterialProxy.cpp:134` 與 `:140`，都是 `delete InProxy` | 直接 `delete` 一個 material proxy |
+
+**所以 DreamGUI 裡唯一不是「丟 RHI 參照」的銷毀，就是 material proxy 的 `delete`。**
+而 `DreamUIMaterialProxy.cpp:88-90` 的註解寫的正是這個假設：
+
+> 「……destructor 本身（它放掉其 uniform buffer 為材質持有的那些貼圖 refcount，
+> **而 `MainPS` 綁的是同一批貼圖**）。」
+
+**但這裡有一個我必須講明的矛盾**：`delete InProxy` 的 destructor 放掉的也是 **RHI 參照**
+（uniform buffer、貼圖），而那些一樣走 `FD3D12DeferredDeleteObject` 的圍欄。
+**所以在排除清單第二條成立的前提下，DreamGUI 的任何一條路都不可能在 GPU 用完之前真的釋放記憶體。**
+兩者不能同時為真，所以下一步必須先決定哪一個錯：
+
+1. **排除清單第二條錯**（例如那個 sync point 沒覆蓋到相關佇列，或某樣東西不走 `FD3D12DeferredDeleteObject`）；或
+2. **故障不是「記憶體被釋放」**，而是別的東西指到一個失效位址（繪製資料裡的指標、
+   非 RHI 的配置、或 Aftermath 那句 "heaps" 根本是另一個意思）。
+
+**這個分叉比再轉一個旋鈕重要**，而且兩邊都用讀程式碼就能推進。
+
+## 四、`NeverDeleteProxy` 這一格的前置已齊（含到達證據）
+
+- 旋鈕：`DreamGUI.Experiment.NeverDeleteProxy`（`DreamUIMaterialProxy.cpp:95`，預設 0，
+  `ECVF_RenderThreadSafe`、`GetValueOnAnyThread()` ⇒ **主控台設即生效，不是 init 快照**）。
+- **到達證據**：`:112` 印 `DreamGUI EXPERIMENT: material proxy leaked on purpose, total=N`
+  （前 10 個每個都印，之後每 50 個印一次）。**那個計數沒有成長的趟＝旋鈕沒到達，作廢而不是結果。**
+- 另有兩個現成的量具：`DreamGUI.LogDeferredRelease` 印 `deferred release: %d waiting`
+  （`DreamUIDeferredRelease.cpp:146-153`），以及隊列第一次 tick 時印的
+  `DreamGUI deferred release frames in effect: texture=%d buffer=%d pooled=%d func=%d`。
+- 程式裡的註解也已經事先寫好這一格的判讀與界線：
+  「若仍故障，destructor 不是觸發點」、「**這絕不能出貨：讓當機消失的洩漏是診斷，不是修復**」。

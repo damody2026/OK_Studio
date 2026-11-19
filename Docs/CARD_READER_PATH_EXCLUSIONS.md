@@ -109,8 +109,8 @@ cvar 名字各被推上「主線」一次——第一次以 `D3D12.Bindless.Garb
 | 候選 | 為什麼還活著 | 缺什麼 |
 |---|---|---|
 | **真正的銷毀**（某塊資源記憶體被 destroy 而 GPU 還在用） | 這是 `Found 0 active heaps` 的字面讀法：**池化重用解釋不了頁錯誤**——池子留著 heap，位址仍屬 active heap，內容變了只會畫出壞東西 | Aftermath 那句 "heaps" 到底指資源記憶體 heap 還是 descriptor heap（協調已請 f-sceneload 確認）；以及引擎裡哪些配置器真的銷毀、哪些只回收 |
-| **DreamGUI 的 `FDreamUIDeferredRelease`：「幀數不夠就真的刪」那一支** | 若上面的重讀成立，方向就從「重用太早」轉成「刪得太早」；`DreamGUI.DeferredRelease.Frames.{Texture,Buffer,Pooled,Func}` 預設 3，`DreamUIDeferredRelease.cpp:54-55` 已經在印四個值 | 先找到到達證據：`DreamGUI.Experiment.NeverDeleteProxy`（`DreamUIMaterialProxy.cpp:95`，預設 0，`:112` 印 `material proxy leaked on purpose, total=N`）——開了之後那個計數要成長，不成長就是沒到達 |
-| **residency：資源預設 start EVICTED，漏掉的 `UpdateResidency`** | `D3D12.ResourcesStartResident` 預設 0，說明文字自己寫「所有資源 start EVICTED」；兩條 opt-out 的 log（`residency management is disabled`、`CREATE_NOT_RESIDENT is not supported ... forcing resources to start resident`）在所有讀卡器 log 裡都**沒有出現** ⇒ 這台機器上資源真的從 evicted 開始。被畫到而沒常駐 ⇒ 位址不在任何常駐堆裡 | 判別格已寫好（`ResourcesStartResident=1` × 3 對 4/4 基線）。到達證據強：cvar 以 `FAutoConsoleVariableRef` **綁定** `GD3D12StartResourceResident`，而那正是 `D3D12Allocation.cpp:303`、`D3D12PoolAllocator.cpp:86/:493`、`D3D12Resources.cpp:813`、`D3D12TransientResourceAllocator.cpp:51`、`D3D12Residency.h:63` 讀的變數 ⇒ 讀回即真值 |
+| **DreamGUI 的 material proxy `delete`**（`FDreamUIDeferredRelease::Later` 的唯一兩個使用者：`DreamUIMaterialProxy.cpp:134`／`:140`；`Hold()` 的三處到期時只是丟 RHI 參照或還給池子） | 若上面的重讀成立，方向就從「重用太早」轉成「刪得太早」；`DreamGUI.DeferredRelease.Frames.{Texture,Buffer,Pooled,Func}` 預設 3，`DreamUIDeferredRelease.cpp:54-55` 已經在印四個值 | 先找到到達證據：`DreamGUI.Experiment.NeverDeleteProxy`（`DreamUIMaterialProxy.cpp:95`，預設 0，`:112` 印 `material proxy leaked on purpose, total=N`）——開了之後那個計數要成長，不成長就是沒到達 |
+| **residency：資源預設 start EVICTED，漏掉的 `UpdateResidency`**（**2026-11-19 降級**：`D3D12.ResidencyDebugBudgetMB=128` 一趟故障在 139.3 s／第 16 張，落在基線 4/4 的 138.6–140.1 正中間，往早往晚都沒動——而這個旋鈕正是引擎寫來暴露漏掉的 `UpdateResidency` 的。n=1、覆蓋 1/2，所以是降級不是排除） | `D3D12.ResourcesStartResident` 預設 0，說明文字自己寫「所有資源 start EVICTED」；兩條 opt-out 的 log（`residency management is disabled`、`CREATE_NOT_RESIDENT is not supported ... forcing resources to start resident`）在所有讀卡器 log 裡都**沒有出現** ⇒ 這台機器上資源真的從 evicted 開始。被畫到而沒常駐 ⇒ 位址不在任何常駐堆裡 | 判別格已寫好（`ResourcesStartResident=1` × 3 對 4/4 基線）。到達證據強：cvar 以 `FAutoConsoleVariableRef` **綁定** `GD3D12StartResourceResident`，而那正是 `D3D12Allocation.cpp:303`、`D3D12PoolAllocator.cpp:86/:493`、`D3D12Resources.cpp:813`、`D3D12TransientResourceAllocator.cpp:51`、`D3D12Residency.h:63` 讀的變數 ⇒ 讀回即真值 |
 | **`ok.Experiment.ReaderScreenUnderOtherModes` 的趟間差異** | 那個 cvar 管的是 1 對 1／Studio 期間讀卡器畫不畫，**回到讀卡器之後兩邊應該一樣**，但兩組的結果不同 | 可能只是趟間差異；需要重複才知道是不是真的 |
 
 ## 七、這份清單怎麼用
@@ -119,3 +119,17 @@ cvar 名字各被推上「主線」一次——第一次以 `D3D12.Bindless.Garb
    找到了就回答「什麼觀測會讓它復活」——答不出來就不要跑。
 2. **換旋鈕名字不算換路徑。** 同一個 manager、同一條釋放路線、同一個作用點，就是同一條。
 3. **排除可以被推翻**，但要用第三欄說的那個觀測推翻，不是用新的猜測推翻。
+
+## 八、一個必須先解決的矛盾（2026-11-19）
+
+`delete InProxy` 的 destructor 放掉的也是 **RHI 參照**（uniform buffer、貼圖），
+一樣走 `FD3D12DeferredDeleteObject` 的 EOP 圍欄。
+**所以在第二節第 2 條成立的前提下，DreamGUI 沒有任何一條路能在 GPU 用完之前真的釋放記憶體。**
+兩者不能同時為真，下一步必須先決定哪一個錯：
+
+1. **第二節第 2 條錯**：那個 sync point 沒覆蓋到相關佇列，或有東西**不走** `FD3D12DeferredDeleteObject`
+   （外掛自己 `Release`、第三方配置器、非 RHI 配置）。
+2. **故障不是「記憶體被釋放」**：而是別的東西指到一個失效位址——繪製資料裡的指標、
+   非 RHI 的配置，或 Aftermath 那句 "heaps" 根本是另一個意思。
+
+**這個分叉比再轉一個旋鈕重要，而且兩邊都用讀程式碼就能推進。**
