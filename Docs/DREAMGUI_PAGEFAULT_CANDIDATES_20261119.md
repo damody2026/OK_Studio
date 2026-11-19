@@ -2130,3 +2130,134 @@ TRefCountPtr<FRHITexture> ReferencedTexture;
 **下一步仍然只有位址比对能分**：`DreamUIRenderer.cpp:1017` 印 12 个槽解出来的 `FRHITexture*`
 （reference 的印 `GetReferencedTexture()`，裸的直接印），与 `0x000000256bd01000` 比对。
 **若 12 个都不是它，取样进来的就不是 shader 绑的那一笔 descriptor，线索就转到 descriptor 表／PSO 那一层。**
+
+---
+
+## §32 DreamGUI 内「归还／重用而指标还在用」的清查：五处，前三名与检验方式
+
+前提照使用者定调：**错在 DreamGUI 里**。读的是 E 树 `Plugins/DreamGUI` 与 `E:/PhysX/UE5.8`（只读）。
+判准照协调放宽：**凡是「资源被归还／释放／重用，而某个指向它的东西之后还会被拿去画」的形状都列**，
+不要求符合「故障时没有任何参照」。
+
+### 32a 先讲一件历史线索：**前人已经怀疑过同一件事，而且留了半个结论**
+
+`DreamGUIRenderer/Private/DreamUIRender/DreamUICompositor.cpp:176-191` 的注解（`DreamUIGroupPoolReuse`）：
+
+> 「MEASUREMENT (default off), to say what the "**DelayFrames changes some timing**" actually is.
+> A group's target comes from `GRenderTargetPool`, and `FDreamUIDeferredRelease` postpones handing it back.
+> If a larger `Frames.Pooled` makes the pool keep MORE distinct elements and hand the same one out FURTHER
+> APART, then the queue's effect is simply "memory is reused later" … If the reuse distance does not move,
+> that timing is something else.」
+
+**也就是说：已经有人量到「改 DelayFrames 会影响重现」，但还没判定那个 timing 是什麼。**
+`Note(FRHITexture*)`（`:197`）与 `static TMap<FRHITexture*, uint32> LastHandedOut`（`:205`）就是为这件事埋的桩
+（`DreamGUI.Experiment.LogPoolReuse`，`:186-189`，预设 0），**而它只把位址当键比对、从不解参，所以它本身不是 bug。**
+**这段是今天最该先翻的历史线索。**
+
+### 32b 候选一（最像）：群组 render target 归还后**立刻**可被再发出，门槛是帧不是 fence
+
+鍊子：
+
+1. 取得：`GRenderTargetPool.FindFreeElement(...)` → `Frame.Pooled`（`DreamUICompositor.cpp:296`），
+   **注册的是 pool element 本身**（`:300`，注解写明「so that it is not handed out again before the passes
+   recorded here have run」），`Frame.TextureRHI = Frame.Pooled->GetRHI()`（`:302`，型别是
+   `FTextureRHIRef`，`DreamUICompositor.h:116`，**持有**）。
+2. 归还：`FDreamUICompositeStack::PopAndComposite()` → **`FDreamUIDeferredRelease::Hold(Top.Pooled)`**
+   （`:407-408`，注解「Back to the pool only after the frames that may still read it」）。
+3. 放手：`FDreamUIDeferredRelease::Tick_RenderThread()`（`DreamUIDeferredRelease.cpp:115-153`）的判准是
+   **`Now - Entry.Frame >= FramesFor(Entry)`，其中 `Now = GFrameNumberRenderThread`**，
+   而 `Frames.Pooled` **预设 3**（`:19-22`）。**三个 render frame，不是三个 GPU 完成。**
+   到期的 entry 被移进 `Due`，**而 texture／buffer／pooled 三种都没有任何呼叫——它们是靠 `Due` 离开作用域
+   时掉参照**（`:134-152`，只有 `Entry.Release` 那种会被呼叫）。
+4. 掉的是 `TRefCountPtr<IPooledRenderTarget>` 的最后一份 ⇒ 元件回到 `GRenderTargetPool`；
+   再发出的条件只有 **`Element->IsFree()`**（`Runtime/RenderCore/Private/RenderTargetPool.cpp:202`，
+   加上 desc hash 与 desc 相等比对），**没有 GPU fence**。
+
+**缺什麼证据**：这条本身只能造成「内容被下一个使用者写坏」，**不会 unmap 记忆体**，
+所以不能直接解释 `AddressTranslationError`。要变成 page fault，还需要那个元件**后来被池子真正释放**——
+`FRenderTargetPool::TickPoolElements()` 在 `AllocationLevelInKB > MinimumPoolSizeInKB` 时释放
+`UnusedForNFrames > 2` 的最旧元件（`:400-420`），**而那条走 UE 自己的延迟删除（有 fence）**。
+**所以这条要嘛需要第三个环节，要嘛真正的问题是「归还太早」造成的别的後果。**
+
+**检验方式（零成本，两个桩都已经在、都是执行期 cvar、不必重编）**：
+
+- **`DreamGUI.DeferredRelease.LogEntries 1`**（`DreamUIDeferredRelease.cpp:40-43`）——印每一笔放手的
+  `kind=` `name=` `WxH` `held=` 帧数 `now=`，注解写明它就是为这次 page fault 埋的
+  （「the only way to answer whether a texture the GPU faulted on was released by THIS queue」）。
+  **拿 `name=`／`WxH` 对故障那张。**
+- **`DreamGUI.Experiment.LogPoolReuse 1`**（`DreamUICompositor.cpp:186-189`）——印 handouts／distinct／
+  reuse gap min-max，**直接回答 32a 那个没判完的问题**。
+- 两者併跑，再把 `DreamGUI.DeferredRelease.Frames.Pooled` 调大（例如 16）看重用间隔与故障率一起动不动。
+- **另外，`Tick_RenderThread` 第一次跑时会印一行 `DreamGUI deferred release frames in effect: texture=… pooled=…`**
+  （`:51-62`，`LogScalesOnce`）——**现有的 log 里就能确认旗标到位，不必重跑。**
+
+### 32c 候选二：font atlas staging 池，归还与再发出之间**没有任何延迟**
+
+`FDreamUIFontAtlasStagingPool`（`DreamGUI/Private/Core/DreamUIFontData_FreeTypeRender.cpp:2955-3032`）：
+
+- `Release(FTextureRHIRef&&)`（`:3016-3031`）——**直接 `FreeTextures.FindOrAdd(Size).Add(MoveTemp(InTexture))`**，
+  没有帧延迟、没有 fence；超过 `AtlasStagingPoolByteBudget` 才整个放手（`:3025-3028`），
+  **那条才走 UE 的 fenced 删除**；
+- `Acquire(...)`（`:2989-3014`）——**立刻 `Bucket->Pop()`** 拿同一张回来，当 region 上传的中介
+  （建立时 `SetInitialState(ERHIAccess::CopySrc)`，`:3010-3013`）；
+- 格式换掉时 `FreeTextures.Empty()`（`:2995-3000`）——那是整批掉参照。
+
+**缺什麼证据**：同样只造成「上传内容错乱」，不 unmap。而且它只在 font atlas 有 dirty region 时动。
+**检验方式**：先用现有 log 确认开卡当下 font atlas 有没有在成长／有 dirty slice；
+**不改码就只能看这个**（这个池子没有 cvar）。**所以它排第二：形状符合，但触发条件还没证据。**
+
+### 32d 候选三：`DreamUIDataTexture::ReplaceTexture` 的换图次序
+
+`DreamGUI/Private/Core/DreamUIDataTexture.cpp:132-149`：
+
+```cpp
+FTextureRHIRef Texture = RHICmdList.CreateTexture(Desc);
+RHICmdList.UpdateTexture2D(Texture, ...);
+if (TextureRHI.IsValid() && IsInRenderingThread()) { FDreamUIDeferredRelease::Hold(TextureRHI); }  // :143
+TextureRHI = Texture;                                                                              // :145
+if (TextureReferenceRHI.IsValid()) { RHICmdList.UpdateTextureReference(TextureReferenceRHI, TextureRHI); }  // :147-148
+```
+
+`UpdateTextureReference` 是**入队**的（§30a），所以在它执行之前 reference 仍指著旧的那张。
+**但旧的那张同时被 deferred queue 的 `FTextureRHIRef` 与 reference 自己的 `TRefCountPtr` 持有
+（§31d）⇒ 活著。** 所以**这一条我判安全**；列出来是因为它是「换新的、旧的只 Hold 三帧」的形状，
+而三帧门槛是帧不是 fence（候选一的同一个弱点）。
+**检验方式与候选一相同：`LogEntries` 会把这些 `name=DreamUIDataTexture` 的放手一併印出来。**
+
+### 32e 另两项的结论
+
+**第 4 项（dynamic sprite atlas 与 font atlas 本体）**：两者的页面都是 `UTexture2D`／`UTexture2DArray`
+（§23d、`DreamUIDynamicSpriteAtlasData.cpp` 的 `CreateAtlasTexture`），**走 GC ＋ 引擎的 fenced 释放
+（§30a），不是「归还重用」形状**。重用那一半在 32c 的 staging 池里，已列。
+
+**第 5 项（RDG 外部资源）**：`RegisterExternalTexture` 共 10 处——`DreamUICompositor.cpp:300`、
+`DreamUIRenderer.cpp:306`、`:502`、`:503`、`:516`、`:517`、`:530`、`:531`、`:554`、`:1234`、`:1241`。
+两件事：
+
+1. **`DreamUIRenderer.cpp:1222-1234` 的注解记录了一个「已修的、形状完全相同的 bug」**，值得整段引用：
+   > 「Registering the raw texture wraps it in a throw-away `FPooledRenderTarget` that keeps the texture
+   > alive but **not the POOL ELEMENT**, so the element went back to `GRenderTargetPool` the moment this
+   > function returned -- which is **before `GraphBuilder.Execute()` runs a single one of the passes
+   > recorded below**. The next `FindFreeElement` of the same description in the same frame … then got the
+   > very same texture.」
+   **修法是改成注册 pooled target（`:1234`）。这证明这个 code base 曾经真的有这个 bug，而且是在 pool 这一层。**
+2. **`:1241` 我查完了：安全，而且是设计如此。** 它注册的是裸 RHI 贴图，但那张贴图正是
+   `:1241` 前四行刚从 `GRenderTargetPool.FindFreeElement` 取得的 `MSAARenderTarget`（`:1218`）的 RHI
+   （`:1236` `ScreenColorRenderTargetTexture = MSAARenderTarget->GetRHI()`），
+   而 `:1234` **已经注册过那个 pool element**，上面那段注解的最后一句就说明了后果：
+   「every later `RegisterExternalTexture` of the same RHI texture **resolves to it**」
+   ——所以 `:1241` 解析到同一个已经持有 pool 强参照的 RDG 贴图。
+   另外 `MSAARenderTarget` 是 renderer 的成员（`DreamUIRenderer.h:369`，`TRefCountPtr<IPooledRenderTarget>`），
+   **跨帧持有那个元件**，所以它根本不会在帧之间回到池子。**这一条排除。**
+
+### 32f 前三名与一句话检验
+
+| 名次 | 候选 | 行 | 一句话检验 |
+|---|---|---|---|
+| 1 | 群组 target 归还只等 3 个 render frame、再发出只看 `IsFree()` | `DreamUICompositor.cpp:407`、`DreamUIDeferredRelease.cpp:19-22`／`:115-133`、`RenderTargetPool.cpp:202` | **`DreamGUI.DeferredRelease.LogEntries 1` ＋ `DreamGUI.Experiment.LogPoolReuse 1`，两个现成 cvar，不必重编** |
+| 2 | font atlas staging 池零延迟重用 | `DreamUIFontData_FreeTypeRender.cpp:3016-3031`／`:2989-3014` | **先确认开卡当下 font atlas 有 dirty region**（现有 log） |
+| 3 | `DreamUIDataTexture::ReplaceTexture` 的 3 帧门槛 | `DreamUIDataTexture.cpp:143-148` | **同候选一的 `LogEntries`，`name=DreamUIDataTexture` 那几笔** |
+
+**三条共同的缺口都一样**：它们解释「资源被别人覆写」，不解释「整页不在页表」。
+**所以若 e-cardload 的 mode 2 失败，下一步不是直接挑这三条去改，而是先用候选一那两个现成 cvar
+把「故障那张是不是这个队列放手的」问掉——那是零成本，而且注解说那个桩就是为这件事埋的。**
