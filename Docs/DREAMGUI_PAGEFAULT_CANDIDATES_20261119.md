@@ -975,7 +975,57 @@ if(Target && Target!=Current)M->SetTextureParameterValue(Name,Target);
 
 **不谈修法**（按指示）。
 
+## 18. 更正我自己那句，并补上元件的生命周期
+
+### 18a. 「MID 沿用、只重新指向」那句的依据，以及它**不足以**支撑我给它的标签
+
+**依据是真程式码，不是从引擎一般行为推的，也不是 `OKCrowdRuntimeScene.cpp:798`：**
+E 树 `Plugins/KKUnityBundle/.../KKPreviewActor.cpp:5241-5246`（§17a 已逐字引用），
+在 `SetSharedTextureParameter` 这条路上。
+
+**但它证明的只是「沿用槽里现有的那个 MID」，不是「跨卡沿用」。**
+槽里那一个是不是上一张卡的，取决于元件有没有活过换卡——**这一点我当时没查就写成了「跨卡沿用」，
+那是我多讲的一步**。查了之后（18b）结论是：**对持久元件成立，对其余部件不成立**。
+
+### 18b. 换卡时元件：**部件的元件整批销毁，身体与头是持久的**
+
+E 树 `KKPreviewActor.cpp:5341-5359`：
+
+```cpp
+for (FKKLoadedPart& Part : Parts)
+    if (Part.Comp && Part.Comp != BodyMesh && Part.Comp != HeadMesh)
+        Part.Comp->DestroyComponent();
+Parts.Reset();
+// BodyMesh/HeadMesh are persistent: just clear their sections so the next
+// outfit refills them instead of stacking new sections.
+if (BodyMesh) BodyMesh->ClearAllMeshSections();
+if (HeadMesh) { HeadMesh->ClearAllMeshSections(); ... }
+```
+
+| | 换卡时 | 对 MID 的后果 |
+|---|---|---|
+| 一般部件的元件 | **`DestroyComponent()`** | 槽位连元件一起消失 ⇒ 那些 MID 失去这一份强参照；加上 `CookedRoleMaterials.Reset()` ⇒ **可被 GC**。而元件销毁会一起拆掉它的 render state 与 proxy，**所以这些部件不会留下活著的旧 proxy** |
+| `BodyMesh`／`HeadMesh` | **持久**，只 `ClearAllMeshSections()`（清 section，**不清 `OverrideMaterials`**） | 槽里仍是上一张卡的 MID，直到新载入 `SetMaterial` 覆写 ⇒ **这才是我那句「沿用」真正成立的地方**；而只要 MID 还在槽里，它与它的贴图都还有强参照（**所以这条路留下的是泄漏，不是悬空**） |
+
+**所以两种读法在同一个档里都成立**：per-load 的那批（`KKRuntimeSharedMaterial.cpp:419`）**跨卡重建**，
+身体／头的材质槽**跨卡沿用**。
+
+### 18c. 这对残余形状的影响：**它变窄了，但没有被排除**
+
+- 部件元件销毁时 proxy 一起拆 ⇒ **「旧 proxy 指著死 MID」不可能来自那些部件**。
+- 持久元件的槽持著旧 MID ⇒ 那些 MID 不会死 ⇒ **也不会悬空**。
+- **剩下的只有一种**：一个 MID 既**不在**持久元件的槽里，也**不随元件销毁一起拆 proxy**——
+  也就是**持久元件的 section 材质被覆写、而 proxy 的旧 section 还活著**的那个窗口
+  （`ClearAllMeshSections` → 重新填 → `SetMaterial`，三步的先后与 proxy 重建的先后）。
+  **这正是我上一节说静态读不出来的那一步**，而且现在范围只剩 `BodyMesh`／`HeadMesh` 这两个元件。
+
+e-cardload 的交接 log 判准（**它自己定的，我同意**）：**同一个 MID 名字跨两张卡出现 ＝ 沿用，
+不同 ＝ 重建**。按 18b，两者会同时看到——**身体／头的槽是同一个名字，部件的是新名字**；
+若量到的是这个样子，那就不是谁读错，而是这两批本来就不同。
+
+**不谈修法**（按指示）。
+
 ---
 
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12–§17 的程式码是我自己读的（§14–§17 的 OK 侧读的是 E 树的副本，只读）。
+§11 的两棵引擎比对、§12–§18 的程式码是我自己读的（§14–§18 的 OK 侧读的是 E 树的副本，只读）。
