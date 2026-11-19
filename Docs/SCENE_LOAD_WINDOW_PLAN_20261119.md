@@ -62,29 +62,24 @@ F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua wr
 
 **（以下是修之前的病因，留着当判准的由来）`shot_batch_header` 的「未提交杂凑」不能拿 `git diff` 的文字去算**：同一个档在不同 git filter
 状态下会给出不同杂凑，`check` 于是回 DIFFERENT 而其实什么都没变 —— 又一个「会因为与量测无关的原因
-而变动的指纹」，这次噪声来自行尾（CRLF↔LF）。**f-yvonne 正在改这支工具，我用她改好的版本，不自己再写一套。**
+而变动的指纹」，这次噪声来自行尾（CRLF↔LF）。**这支工具由 f-yvonne 修，我用她改好的版本，不自己再写一套。**
 
-**v3 还不够，要等 v4（含未追踪档）**：v3 只算「`git hash-object` 与 HEAD 不同的路径」，
-若枚举只走已追踪档，那么**一个还没 `git add` 的新 `.cpp`／`.rs`／`.lua` 完全不在清单里**——
-它会被编进执行档，而指纹看不到，`check` 回 SAME。f-yvonne 会加 `git ls-files --others --exclude-standard`
-并自测「新增一个未追踪 `.cpp` 必须回 DIFFERENT」。**优先用 v4。**
+**未追踪档的事：v3 本来就涵盖，不用等 v4。** 曾经担心「只算 `hash-object` 与 HEAD 不同的路径」会漏掉
+一个还没 `git add` 的新 `.cpp`／`.rs`／`.lua`（会被编进执行档而指纹看不到）。查清了：
+**v3 的路径清单来自 `git status --porcelain --untracked-files=all`，不是 `git ls-files`**，
+所以未被 ignore 的未追踪档本来就全部列入、各自按 `hash-object` 计，而且它们在 HEAD 没有 id、**必定算进指纹**。
+f-yvonne 已补上自测并记进工具（`732dbabde`）：在 `Source/OpenKoikatsu` 下新增一个未追踪 `.cpp`
+→ `check` 回 DIFFERENT（1 of 21，exit 1），删掉 → SAME。**工具收工，用 rules v3。**
 
-等不到 v4 的便宜替代（已经先跑过一次，2026-11-19，F 树）：
+所以「窗口开始时自己跑一次 `git ls-files --others --exclude-standard`」**不必做**（我先前跑过一次，F 树回空）。
+想留痕迹的话，**把 `check` 的「21 项、N 项不同」那一行贴进窗口纪录就够了**——它已经涵盖未追踪档。
 
-```powershell
-git ls-files --others --exclude-standard -- Source Plugins Tools Config Content
-```
-
-**本次输出为空（0 个）** —— 受监看路径下没有未追踪的源码档，所以这个漏洞这次咬不到我。
-**窗口开始时要再跑一次并把输出贴进纪录**（现在为空不代表开窗口时还是空）；
-有东西就先弄清楚那是谁的、会不会编进执行档，再决定能不能开量测。
-
-开窗口前确认三件事，没确认就不写表头：
+开窗口前确认这三件（`rules v3` 全部满足，等于已确认）：
 
 - 工具已改成**比 blob 杂凑**（`git hash-object <档>` 对 `git ls-files -s <档>` 的索引杂凑），
   或直接用走仓库 filter 的 `git diff --exit-code` 结束码。
 - 它的自测含这一条：**只换行尾（内容不变）必须仍回 SAME，真改一个字元才回 DIFFERENT。**
-- **它看得到未追踪的源码档**（v4），或我自己跑过上面那个 `ls-files --others` 并把输出贴进纪录。
+- 它**看得到未追踪的源码档**（v3 经由 `--untracked-files=all` 已涵盖，自测在 `732dbabde`）。
 
 顺带把本机这个实例记一下，因为它正好出现在我这棵树：`Tools/ok-extract/src/entries.rs` 的
 `git status` 回 `M`，看起来像有别人的未提交改动混进验证。实查：
