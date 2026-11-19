@@ -79,11 +79,17 @@ pub fn check_launch(name: &str, a: &Value) -> Result<Option<String>> {
     let forced = a[FORCE].as_bool() == Some(true);
     let owners = slot_owners();
     // An exclusive claim (`--need-gb 60`, recorded as `[need N]`) means: nobody else's engine, not even for a minute.
-    // Two slots held by the same agent is the same thing in practice.
-    let exclusive = owners.iter().find(|(_, line)| line.contains("[need "));
-    let both = owners.len() == 2 && owners[0].1.split_whitespace().next() == owners[1].1.split_whitespace().next();
-    let busy = exclusive.map(|(i, line)| format!("slot{i} is held exclusively: {line}"))
-        .or_else(|| both.then(|| format!("one agent holds both slots: {}", owners[0].1)));
+    // "Nobody else" includes the holder, who claimed the machine in order to start its own game — so the lane the
+    // claim recorded (`unreal_slot.lua claim --lane`) lets it through. Inferring exclusivity from "one agent holds two
+    // slots" is gone: the measurer expressed it that way, the guard read it as someone else's claim, and the
+    // measurement was refused its own engine until it passed force (2026-11-19). A claim with no `[lane=]` still
+    // refuses everyone, including whoever made it: say which lane you are and the guard can tell you apart.
+    let lane = a["lane"].as_str().map(str::to_string)
+        .or_else(|| std::env::var("OK_LANE").ok())
+        .filter(|s| !s.trim().is_empty());
+    let mine = |line: &str| lane.as_deref().is_some_and(|l| line.contains(&format!("[lane={}]", l.trim())));
+    let exclusive = owners.iter().find(|(_, line)| line.contains("[need ") && !mine(line));
+    let busy = exclusive.map(|(i, line)| format!("slot{i} is held exclusively: {line}"));
     let running = unreal_processes();
     let too_many = running.filter(|n| *n >= 2).map(|n| format!("{n} Unreal processes already run (the machine's limit is 2)"));
     let Some(reason) = busy.or(too_many) else { return Ok(None) };
