@@ -5905,6 +5905,10 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 - **经过**：e-fork-2 在 E 树找不到 `unknown_plugin_sections` 的产生端，协调者就判给 f-yvonne「去写产生端」。其实产生端早在 F 树的 `136e791f5`／`a8211e6a8`，只是还没进 E 树。真正缺的只有 MCP 那一端（分不出「没有卡」和「0」），补在 `bad2861df`。
 - **判准**：三棵树并行时，缺档不等于没写。先问它在哪棵树，再判工：`git log --all -S<识别字>`，或到另外两棵树各查一次 `git cat-file -e <commit>`、`merge-base --is-ancestor`。
+## 2026-11-19：不要往已录进 `.okmodel` 的 bincode 结构加栏位（f-yvonne，协调者定为通则）
+
+- **经过**：配件预设色 `defColor01..04` 最省事的写法，是在 `unity::AccessoryColorUse` 加一个栏位。但 `accessory_color_use` 的结果已经以 bincode 录进基础库与每张 OK 卡的 `.okmodel`。bincode 没有栏位名，结构一变，旧记录就对不上：可能读不回来，也可能被当成新格式解析成错的值，而且不会报错。改成另开 `accessory_default_colors` 查询（有 `_recorded` 版，没录到回 `None`），旧查询原样不动（`0bf68df3a`）。
+- **判准**：已经有记录在档案里的查询，它的结果型别不改。要多存东西就另开一个查询名，读的地方用 `memo_bytes_recorded` 分辨「没录到」，再排一次补录。补录会生成整个基础库的资料，错了是静默的坏资料，所以没过 `cargo test` 和两套 check 的提交不进补录用的 exe。
 
 ## 2026-11-19：共用工具的副本只要能自己回答，就会有人拿到过期答案
 
