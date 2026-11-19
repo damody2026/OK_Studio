@@ -296,3 +296,39 @@ ApplyAppearanceItem(key)
 两条都**不覆写原始卡片**，成功后 `Selected` 换成新的工作卡片、`bIndependentCards=true`、
 `AppearanceSelectedKeys[target]=key`。期间 `bAppearanceBusy=true`，UI 要把这三页设成不可用；
 有未套用的 properties 时会被拒绝（先 `OnApplyProperties()` 或重置）。
+
+## 10. `ops`：一个动作一次写入（2026-11-19 新增，已实测）
+
+`properties_apply` 除了 `edits`（一个栏位一笔）之外，现在收 `ops`——**原作编辑器里的一个动作**，由
+`appearance/ops.rs` 展开成它实际写的那一整组栏位，再**交给 `patch_properties` 一次写完**。
+`ops` 与 `edits` 只能给一个（同时给会报错）。为什么要这样：原作拉一下髮色会写 4 槽 × 5 色（见
+[对照文件](CHARACTER_EDITOR_PARITY_HAIR_EYES.md) §7），前端连发 60 笔 `set` 会出现中间状态
+（base 改了、start 还没改），而且每一笔都触发一次重开。
+
+```jsonc
+{"action":"properties_apply","card":"<卡>","outfit":0,"cache":"<快取>",
+ "resources":"<v1 共用资源>","output":"<输出卡>",
+ "ops":[{"op":"hair_base_color","rgba":[0.2,0.6,0.9]}]}
+```
+
+| `op` | 参数 | 写什么 |
+|---|---|---|
+| `hair_base_color` | `rgba`（3 或 4 个 0..1）、`slot`（`same:false` 时才看）、`same`／`auto`／`outline`／`gloss` | 预设四个旗标**全部 true**（原作新安装的状态）：每个槽的 `baseColor`，再加 `startColor`（明度 -0.3）、`endColor`（+0.15）、`outlineColor`（-0.4）、`glossColor`（+0.3） |
+| `hair_color_to_eyebrow_and_underhair` | — | `face.eyebrowColor` 与 `body.underhairColor` ← **第 0 槽**的 `baseColor`（原作取第 0 槽，不是当前页那槽） |
+| `hair_from_eyebrow`／`hair_from_underhair` | — | 所有槽的 `baseColor` ← 该颜色，`startColor` -0.2、`endColor` +0.1（**和自动渐层的 -0.3／+0.15 不是同一组常数**） |
+| `hair_reset_outline`／`hair_reset_gloss` | — | 每个槽依**自己的** `baseColor` 重算（-0.4／+0.3） |
+| `eye_copy` | `from`：0 或 1 | 另一眼的 7 个栏位一次写完（`id`、`baseColor`、`subColor`、`gradMaskId`、`gradBlend`、`gradOffsetY`、`gradScale`） |
+
+两件实作上的事：
+
+- **明度位移是原作的 HSV**（保留色相与饱和，只移明度并夹在 0..1），不是 `properties::restyle` 给街区美容院用的
+  「通道乘系数」——非灰色上两者给的颜色不同。黑色没有色相，变亮得到灰，和原作 `HSVToRGB(h, 0, v)` 一致。
+- **只写卡片真的有的通道**，`alpha` 不动（原作头发的取色窗是 `_useAlpha: false`）；槽位数问卡片而不是写死 4，
+  所以部件比原作多的卡会整头染到，不是只染前四槽。
+
+**实测（2026-11-19）**：`StreetHeroines/alice.png`，`ops:[{"op":"hair_base_color","rgba":[0.2,0.6,0.9]}]`。
+对照卡走同一条管线（只写一个无关栏位），两张读回来比对：**差异正好 60 个栏位＝4 槽 × 5 色 × 3 通道**，
+其余 5747 个可编辑栏位与 `alpha` 都没动；数值与手算一致（base 0.2/0.6/0.9、start 0.133/0.400/0.600、
+end 与 gloss 0.222/0.667/1.000、outline 0.111/0.333/0.500，色相比例保持）。
+**注意对照要同卡型同读法**：先前拿「读 OK 卡」比「读剥过 OK 区块的输出卡」，diff 里会混进
+`accessory.parts.N.hideCategory`、`clothes.parts.0.sleevesType`、`physics.*` 等读法差异，不是写入差异。

@@ -299,3 +299,54 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
    连发会出现中间状态（改了 base 还没改 start），而且每一发都可能触发一次重开。
 2. **旗标在哪**：`hairSameSetting` 这四个是**玩家设定不是卡片资料**，不要写进人物卡；
    放读卡器自己的设定（和 `Config/ReaderEditor/` 同一层），预设 true，照原作。
+
+## 8. 第二批的页面定义草案（给 `Config/ReaderEditor/pages.json`）
+
+读卡器新版画面由定义档描述（e-fork-2，`Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md`，型别 `number`／`color`／
+`bool`／`choice`／`picker`／`button`／`bones`／`custom`／`mirror`）。**那个档目前只在 E 树**
+（`E:/OpenKoikatsu/Config/ReaderEditor/pages.json`，v1 只是把手写页面原样描述一次），F 树还没有，
+所以下面是草案：等它进 F（或由它的主人贴）再生效。头发现在只有两页（「髮型」「髮色與設定」），
+要变成原作的四页＋共通页。
+
+**每一页一个槽位，`button` 的 `action` 就是第 7 节那些原子写入**（走 `properties_apply` 的 `ops`，
+见 [API 第 10 节](READER_UI_APPEARANCE_API.md)）：
+
+```jsonc
+{ "name": "後髮",                                  // 前髮／側髮／附加髮同形，只换 slot 与 picker target
+  "pickers": { "targets": ["hair0"], "properties": [] },
+  "controls": [
+    { "key": "prop:hair.parts.0.baseColor",    "kind": "color",  "label": "主色" },
+    { "key": "prop:hair.parts.0.startColor",   "kind": "color",  "label": "髮根色" },
+    { "key": "prop:hair.parts.0.endColor",     "kind": "color",  "label": "髮尾色" },
+    { "key": "prop:hair.parts.0.outlineColor", "kind": "color",  "label": "外框色" },
+    { "key": "prop:hair.parts.0.glossColor",   "kind": "color",  "label": "光澤色" },
+    { "key": "prop:hair.parts.0.acsColor.0",   "kind": "color",  "label": "髮飾色 1" },
+    { "key": "prop:hair.parts.0.acsColor.1",   "kind": "color",  "label": "髮飾色 2" },
+    { "key": "prop:hair.parts.0.acsColor.2",   "kind": "color",  "label": "髮飾色 3" },
+    { "key": "prop:hair.parts.0.length",       "kind": "number", "label": "長度" },
+    { "key": "prop:hair.parts.0.noShake",      "kind": "bool",   "label": "不晃動" },
+    { "kind": "button", "label": "重設外框色", "action": "hair_reset_outline" },
+    { "kind": "button", "label": "重設光澤色", "action": "hair_reset_gloss" },
+    { "kind": "button", "label": "髮色反映到眉／陰毛", "action": "hair_color_to_eyebrow_and_underhair" },
+    { "kind": "button", "label": "取眉色當髮色", "action": "hair_from_eyebrow" },
+    { "kind": "button", "label": "取陰毛色當髮色", "action": "hair_from_underhair" }
+  ],
+  "settings": [                                    // 玩家设定，不是卡片资料；预设全部 true（原作新安装）
+    { "key": "setting:hairSameSetting",    "kind": "bool", "label": "四槽同步" },
+    { "key": "setting:hairAutoSetting",    "kind": "bool", "label": "自動渐层" },
+    { "key": "setting:hairOutlineSetting", "kind": "bool", "label": "連帶外框色" },
+    { "key": "setting:hairGlossSetting",   "kind": "bool", "label": "連帶光澤色" }
+  ]
+}
+```
+
+- 「主色」这个 `color` **不能走一般的单栏位写入**：它要带着四个设定展开成 `hair_base_color` 这个 op
+  （旗标全开时一次写 4 槽 × 5 色）。所以 `color` 这一型要能指定 `op`，或由画面把主色这一列接到 op 上——
+  这是第二批唯一需要改 C++ 的地方，其余都只是 JSON。
+- 「頭髮共通」页只有一项：`{ "key": "prop:hair.glossId", "kind": "choice", "label": "光澤種類" }`。
+- 眼睛两页：`目`是 `shapeValueFace[24..37]` 共 14 个 `number`（`display_scale` 100、`decimals` 0）加眼线
+  `picker`；`瞳`是左右各一组 `color`／`choice`／`number`，外加
+  `{ "kind": "button", "label": "左眼複製到右眼", "action": "eye_copy", "arg": { "from": 0 } }` 与反向。
+- **范围 metadata 照新定案**：`min`／`max` 是原作 UI 的范围（配 `display_scale`／`unit`），`Validate()` 不拿它挡；
+  要挡才写 `limit_min`／`limit_max`。**髮飾長度、眼球缩放／位移这几项不写 `limit_*`**——没有证据证明引擎自己会夹，
+  写错的那天不会报错，只会悄悄改坏卡。`wrap` 只给真的循环的量（这两页没有）。

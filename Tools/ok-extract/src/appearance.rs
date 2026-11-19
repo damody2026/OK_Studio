@@ -8,6 +8,7 @@ use sha2::{Digest,Sha256};
 mod properties;
 pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
+mod ops;
 mod model_flags;
 pub(crate) mod live_head;
 pub(crate) mod timings;
@@ -484,7 +485,13 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
    let model=model_flags::annotate(root,cache,&original,outfit,&mut props).unwrap_or_else(|e|json!({"error":e}));
    return Ok(json!({"valid":true,"properties":props,"parents":parents,"model":model,"unknown_plugin_sections":unknown}));}
   let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
-  let raw=if text(&r,"action")?=="accessory_slot_add"{original}else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
+  // `ops`: one action of the original editor (a hair colour with its four settings, "reflect to eyebrow", a reset
+  // button, copying one eye to the other) expanded into the fields it writes, then patched in ONE call -- so the
+  // card never holds a half-applied action and the open happens once. `edits` is still the plain per-field list.
+  let raw=if text(&r,"action")?=="accessory_slot_add"{original}
+   else if let Some(list)=r["ops"].as_array(){if r["edits"].is_array(){return Err("ops 與 edits 只能給一個".into());}
+    properties::patch_properties(&original,outfit,&ops::expand(&original,outfit,list)?)?}
+   else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
   return export_edited(root,&r,&raw,output);
  }
  let cache=Path::new(text(&r,"cache")?);let items=catalog(root,cache)?;
