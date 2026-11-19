@@ -437,6 +437,63 @@ heap 的 GPU 记忆体用量。**开卡时 descriptor 数有没有逼近 32768�
   建议把原本要给 bindless 的两格实验改到这里。
 - 候选 1（RDG transient 叠用）与候选 2（资料贴图 `ReplaceTexture`）不受这一轮影响。
 
+## 11. 引擎身分比对：**两棵引擎在这些档上位元组相同，§9 的结论直接适用**（2026-11-19）
+
+协调指出我读的是 `F:/UE5.8`、而 e-cardload 跑的是 `E:/PhysX/UE5.8`，要求先排除身分问题。比完了：
+
+### 11a. 两棵 checkout
+
+| 项目 | 结果 |
+|---|---|
+| `git rev-parse HEAD` | **两边同一个 commit**：`11576da863ff7a31b0e6763e06f49180a2696023` |
+| `git status --porcelain`（E 那棵） | **干净**，没有未提交改动 |
+| 我引用过的 **21 个档**的 md5 | **全部 SAME**（下表） |
+
+逐档（`Engine/` 起算，F:/UE5.8 vs E:/PhysX/UE5.8，md5 相同）：
+`Config/Windows/BaseWindowsEngine.ini`、
+`Source/Runtime/D3D12RHI/Private/` 的 `D3D12BindlessDescriptors.cpp`／`.h`／`D3D12StateCache.cpp`／
+`D3D12Adapter.cpp`／`D3D12RHI.cpp`／`D3D12View.cpp`／`D3D12DescriptorCache.cpp`／
+`D3D12TextureReference.cpp`／`D3D12NvidiaExtensions.cpp`／`D3D12Stats.h`、
+`Source/Runtime/RHI/` 的 `Public/RHIDefinitions.h`／`Private/RHI.cpp`／`Private/RHIStrings.cpp`／`Public/RHIResources.h`、
+`Source/Runtime/RenderCore/Private/` 的 `ShaderPlatformConfig.cpp`／`ShaderCore.cpp`、
+`Source/Runtime/Engine/Private/` 的 `Rendering/StreamableTextureResource.cpp`／`Texture.cpp`／
+`ShaderCompiler/ShaderCompiler.cpp`／`ShaderCompiler/ShaderCompilerJobCache.cpp`。
+
+**所以 §9 的三个结论（bindless 在 RayTracing 级不覆盖图形 descriptor、释放是 fence 门控不是帧数、
+预设配置等级与 32768 的来源）对 e-cardload 的趟次同样成立。**
+
+### 11b. 哪一棵是谁在用（读设定档，不是推测）
+
+- `Tools/lua/ok/init.lua:62-68`：顺序是 `OK_ENGINE_ROOT` → `Tools/engine.local.json` → **预设 `E:/PhysX/UE5.8`**。
+- F 树有 `Tools/engine.local.json` ＝ `{"engine": "F:/UE5.8"}` → F 用 F:。
+- **E 树没有 `Tools/engine.local.json`**，环境变数也没设 → **E 用预设 `E:/PhysX/UE5.8`**。
+- 两棵树的 `Tools/ok_engine.lua` 本身 md5 相同。
+
+### 11c. 更强的一条证据：**E 自己那一趟的日志**
+
+`E:\OpenKoikatsu\Saved\Logs\CardReader\20261119-195124-29f15007.log:1071`
+
+```
+LogD3D12RHI: Bindless is enabled (Configuration=RayTracing). Initializing allocators with 262144 Resource and 2048 Sampler descriptors
+```
+
+- **配置等级在它那边也是 `RayTracing`**（不是 Minimal／All），所以 §9a 的判断在它的趟次上成立。
+- 它的旋钮**确实到达**（命令列同时打了 `[ConsoleVariables]` 与 `[SystemSettings]` 两个，init 印 262144）。
+- 但按 §9a，**到达的是一个 `MainPS` 不使用的机制**：
+  `IsBindlessEnabledForAnyGraphics(RayTracing) == false`，图形不从 bindless GPU heap 读 descriptor。
+  **这正是「旋钮到达了，但到达点不是机制作用的那一点」**——旋钮回读正确，不代表这趟能回答那个问题。
+- 附带注意：它那趟还打了 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`。
+  那是**另一个旋钮**，和候选 1 要推的 `r.RDG.TransientAllocator` 不是同一件事，别混成一个差值。
+
+### 11d. 这次比对**没有**覆盖什么
+
+- 只比了**原始码与引擎 ini**。两棵树的**建置产物是各自编的**（`F:/UE5.8/Engine/Binaries/...` 与
+  `E:/PhysX/UE5.8/Engine/Binaries/...`），我没有比 exe／dll，也没有比各自的建置设定。
+  同 commit ＋ 同源码 ⇒ 行为应当相同，但这是**推论**，不是量到的。
+- E 的专案 `Config/` 与 `Saved/Config/` 里**没有**任何 `Bindless`／`D3D12.` 覆写（这次读的时点）；
+  它的 262144 是走命令列。**只有 `BindlessConfiguration=` 被改才会翻掉 §9a**，而没人改它。
+
 ---
 
-调查：f-sceneload（F 树，只读）。现象与 e-cardload 的趟数都是协调 session 转述，崩溃档我没有自己看过。
+调查：f-sceneload（F 树，只读）。现象与 e-cardload 的趟数都是协调 session 转述，崩溃档我没有自己看过；
+§11 的两棵引擎比对与 E 那条日志是我自己读的。
