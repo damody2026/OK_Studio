@@ -2311,3 +2311,36 @@ PageFault: Found 0 active heaps containing page fault address
 
 照登記的讀法，這一趟指向：受害者不在 Texture 這個刻度裡（資料貼圖、canvas target 都不是）。
 等第 2 趟與 `Func` 那兩趟跑完再定案。
+
+### `Frames.Texture=240` 兩趟：第 6、第 7 張，斷言 0 次命中（2026-11-19 14:38–14:47）
+
+兩趟的 in-effect log 都確認只抬了一個刻度：
+`DreamGUI deferred release frames in effect: texture=240 buffer=3 pooled=3 func=3`。
+
+| 趟 | 當在第幾張 | `LogStaleTextures` 命中 | 簽章 |
+|---|---:|---:|---|
+| 1 | **6** | **0** | `MainPS`／`PageFault at VA 0xDFDD21000`／`Found 0 active heaps` |
+| 2 | **7** | **0** | 同上（`0x25BC871000`） |
+
+`DelayFrames=3` 同配方是第 4／7 張，**6 與 7 完全落在裡面，所以 Texture 這個刻度沒救到它**——
+資料貼圖（`DataTexture.cpp:143`）與 canvas target（`Renderer.cpp:1252`）一起出局，
+和「兩個篩選沒有交集」那張表的推論一致。
+**斷言兩趟都 0 次命中，與登記的預測相符**：內建路徑沒有在解析一個已經被放掉的 `UTexture`。
+
+### reuse 量測要比的是同一個 frame 區間，不是「整趟 vs 啟動」（2026-11-19，跑之前登記）
+
+B 配置（`TransientAllocator=0`）在**第 19 秒、一張卡都沒開**就當，
+所以它的 reuse 數字只涵蓋啟動畫面；A 配置的數字會涵蓋翻了好幾張卡。
+**卡片流程本身就會改變 group 合成的密度**，所以「B 的 gap 比 A 短」可能只是兩邊在量不同的畫面。
+
+**控住的辦法**：`LogPoolReuse` 每 600 個 render frame 報一行，而 min／max 是從啟動累計的，
+所以**對同一個 frame 區間讀**——A 在 frame ≈1800／2400 那兩行，對 B 在同一區間那兩行
+（B 在第 2132 帧當掉，約有三行可讀）。
+
+**讀法**：同一區間下 B 的 gap 明顯短、distinct 明顯少 ⇒「同一個薄弱點、重用間距不同」成立，
+A／B 第一次有合併的理由；兩邊差不多 ⇒ 池子周轉不是共同變數；
+**只有在不同區間下才看得出差別 ⇒ 那是工作量差異，不是機制，不准拿來合併兩個重現。**
+
+另記一條這一格的額外價值：B 配置下背景拷貝**不走 transient、改從池子配置**，
+所以若模式 2（拷貝照做、綁黑）讓 19 秒的當機消失，
+那同時證明「那張拷貝確實是從池子來的」與「綁的那塊記憶體就是受害者」兩件事。
