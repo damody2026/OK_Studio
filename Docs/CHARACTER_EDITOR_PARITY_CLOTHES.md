@@ -201,7 +201,7 @@
 |---|---|---|---|
 | `accessory{n}_{type}`（`id`，选图） | 清单项 | 硬：目录项目 | — |
 | `type` | 选项 120..130 | 硬 | — |
-| `parentKey` | 父骨 | 软：55 键（`editor_accessory_parents.json`）是已知清单，不是限制。清单外的键照收，标 `out_of_range`；只拒控制字元与超过 256 字（更正：先前写成「硬」是错的，读卡器与资料端本来就收自由输入） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
+| `parentKey` | 父骨 | 软：55 键（`editor_accessory_parents.json`）是已知清单，不是限制。清单外的键照收，标 `out_of_range`；只拒控制字元与超过 256 字。**`""` 不是无效值**：它是「素材预设」（用清单的 `Parent`），原作换配件时自己也会写 `""`（`CvsAccessory.UpdateSelectAccessoryKind`），所以不拒也不标（更正：先前写成「硬」是错的，读卡器与资料端本来就收自由输入） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
 | `addMove` 位置 | 数值 | 软：−100..100，一位小数 | 显示：第 2 组（`addMove.2.3..5`）另看 `model.accessories.{槽}.move2`：模型有 `N_move2` 节点（`objAcsMove[slot,1] = FindLoop("N_move2")`）才为 `true`。`null` = 这个模型录的时候还没存配件的节点名（2026-11-19 前的基础库与 OK 卡），那几列不标，等重录 |
 | `addMove` 旋转 | 数值 | wrap 0..360，取整；永远不拒，也不标 `out_of_range` | 同上 |
 | `addMove` 缩放 | 数值 | 软：0.01..100，两位小数。原作输入框不收 0 和负值，但卡上可能有（外挂写的）。照收，不另写 `limit_*` | 同上 |
@@ -268,7 +268,7 @@
 | 配件选图 `tglAcsKind` | `accessory{n}_{cat}`（`id`） | 有 | 有 | 硬：目录项目 | — |
 | 颜色 1..4 `btnAcsColor01..04` | `accessory.parts.n.color.c.*` | 有，`available`（`useColor`、`rendAlpha`）已有 | 通用列 | 硬：0..1 | A |
 | **颜色初期化 `btnInitColor`**（改回 `ChaAccessoryComponent.defColor01..04`） | — | **没有**：配件的预设色没输出（衣服有 `default_colors`，配件没有） | 没有 | — | **B**：`model.accessories.n` 补 `default_colors` |
-| 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有，自由输入加 55 键选单（`editor_accessory_parents.json`），`parent_editable` 已有；清单外的键标 `out_of_range` | 通用列（输入框＋选单） | 软：清单外照收 | A |
+| 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有，自由输入加 55 键选单（`editor_accessory_parents.json`），`parent_editable` 已有；清单外的键标 `out_of_range` | 通用列（输入框＋选单） | 软：清单外照收；`""` 是素材预设，不是无效值，不拒不标 | A |
 | **父骨初期化 `btnInitParent`**（`parentKey=""`，用清单 `Parent`） | `parentKey` | 值 `""` 在选项里（「素材预设」） | 没有专用钮 | — | A |
 | **父骨左右反转 `btnReverseParent`** | `parentKey` | **没有左右对应表**。命名不规则，例如 `a_n_hair_pin` ↔ `a_n_hair_pin_R`，UI 不能只换 `_L`／`_R` | 没有 | — | **B**：父骨表补 `reverse` 栏，照原作 `ChaAccessoryDefine.GetReverseParent` 的对应 |
 | 位移第 1／2 组 `tglAcsMove01/02` → `CustomAcsMoveWindow`：位置／旋转／缩放 XYZ 输入 | `accessory.parts.n.addMove.2.{0..5}.{x,y,z}` | 有，`parent_editable`／`move2` 已有 | 通用列 | 位置 软 −100..100；旋转 wrap 0..360；缩放 软 0.01..100 | A |
