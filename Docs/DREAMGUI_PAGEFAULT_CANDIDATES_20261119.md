@@ -493,7 +493,106 @@ LogD3D12RHI: Bindless is enabled (Configuration=RayTracing). Initializing alloca
 - E 的专案 `Config/` 与 `Saved/Config/` 里**没有**任何 `Bindless`／`D3D12.` 覆写（这次读的时点）；
   它的 262144 是走命令列。**只有 `BindlessConfiguration=` 被改才会翻掉 §9a**，而没人改它。
 
+## 12. `Found 0 active heaps containing page fault address` 到底在说什么
+
+**这句话是 UE 自己印的，不是 Aftermath。** 出处：
+
+```cpp
+// F:\UE5.8\Engine\Source\Runtime\D3D12RHI\Private\D3D12Util.cpp:703-710
+TArray<FD3D12Heap*> OverlappingHeaps;
+InAdapter->FindHeapsContainingGPUAddress(InPageFaultAddress, OverlappingHeaps);
+UE_LOGF(LogD3D12RHI, Error, "PageFault: Found %d active heaps containing page fault address", OverlappingHeaps.Num());
+```
+
+### 12a. 它列举的是哪一种物件（问题 1）
+
+`FD3D12Heap`，也就是 **D3D12 的记忆体 heap（`ID3D12Heap`）**——**协调的猜测是对的，不是 descriptor heap。**
+比对方式是纯位址区间（`D3D12Adapter.cpp:2062-2077`）：
+
+```cpp
+for (FD3D12Heap* AllocatedHeap : TrackedHeaps) {
+    FInt64Range HeapRange(VA, VA + AllocatedHeap->GetHeapDesc().SizeInBytes);
+    if (HeapRange.Contains(InGPUVirtualAddress)) OutHeaps.Add(AllocatedHeap);
+}
+```
+
+清单是 UE 自己的登记簿 `TrackedHeaps`（`TrackHeapAllocation`／`ReleaseTrackedHeap`，`D3D12Adapter.cpp:1999-2026`），
+不是向驱动或 Aftermath 查询。
+
+### 12b. 「0 个」有多少推论力（问题 2）——**比看起来弱很多，有四个独立的理由**
+
+登记的闸门在 `FD3D12Heap::SetHeap`（`D3D12Resources.cpp:703-745`）：
+
+```cpp
+if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
+    && !(HeapDesc.Flags & D3D12_HEAP_FLAG_DENY_BUFFERS)
+    && HeapDesc.Properties.Type == D3D12_HEAP_TYPE_DEFAULT)
+{   ... GPUVirtualAddress = TempResource->GetGPUVirtualAddress();
+    if (bTrack) Adapter->TrackHeapAllocation(this); }
+```
+
+1. **没取到 GPU 位址的 heap 根本不会进登记簿。** 条件是
+   `bForceGetGPUAddress || IsTrackingAllAllocations()`。而**池化配置器建 backing heap 时没有传
+   `bForceGetGPUAddress`**（预设 false：`D3D12PoolAllocator.cpp:106`、`:503`、`D3D12Allocation.cpp:325`）；
+   只有 `D3D12Resources.cpp:527` 与 `D3D12TransientResourceAllocator.cpp:81` 传了 true。
+   **所以在「没开全追踪」时，一般贴图所在的那些池子的 heap 是看不见的，0 几乎是空话。**
+2. **「有没有开全追踪」这件事，崩溃档在前两行就印了**：
+   `PageFault: Logging all resource enabled: Yes/No`（`D3D12Util.cpp:670`）。
+   它的值是 `bTrackAllAllocation = (D3D12.TrackAllAllocations || UE::RHI::UseGPUCrashDebugging() || memtrace)
+   && GetResourceHeapTier() == TIER_2`（`D3D12Adapter.cpp:1532`，cvar 在 `:189-192`）。
+   **拿这个 0 推论之前，先看那一行是 Yes 还是 No。**
+3. **committed resource 不是 heap。** 独立配置的贴图走 `CreateCommittedResource`，没有独立的 `ID3D12Heap`
+   登记项；它被销毁后页错误落在那里，**就算全追踪开着也会印 0 active heaps**。
+   这类情形该看的是另外两行（12c）。
+4. **UPLOAD／READBACK 型别的 heap 永远不登记**（上面条件写死 `HEAP_TYPE_DEFAULT`）。
+
+**所以这句话的正确读法是：「这个位址不在任何一个**有登记的 DEFAULT 型别 heap** 的区间里」，
+不是「有一整个 heap 不见了」。** 它**不能**单独支撑「整个 heap 被销毁」这个结论。
+
+### 12c. 真正会指名凶手的是同一个函式印的另外两行——**而且已经在档里了，零机器成本**
+
+`LogPageFaultData` 一共印三组。请把这三组**原文**拿来（不要只转述其中一行）：
+
+| 行 | 程式 | 它说什么 |
+|---|---|---|
+| `PageFault: Found %d active tracked resources in 16.00 MB range of page fault address` | `D3D12Util.cpp:675-700` | 附近还活着的资源，每笔带 **Name／Desc／Size／距离／`Transient:` 旗标** |
+| `PageFault: Found %d active heaps containing page fault address` | `:703-710` | 就是这次讨论的那一行 |
+| **`PageFault: Found %d released resources containing the page fault address during last 100 frames`** | **`:712-737`** | **近 100 帧内被释放、而且区间含这个位址的资源**，每笔带 **Name／Desc／Size／`FrameID`（哪一帧释放的）／`DefragFree`／`Transient`／`Heap`** |
+
+最后那一行是整件事里**唯一会直接指名**的读数（资料来自 `FindReleasedAllocationData`，`D3D12Adapter.cpp:2079-2092`）。
+另外若 DRED 开着，还会有 `DRED: Recent freed objects with VA ranges that match the faulting VA:`（`:602-615`）。
+**在跑任何新实验之前，先把这几行读出来**——它比任何一格旗标实验都便宜。
+
+### 12d. 哪些配置器真的销毁、哪些只是回收重用（问题 3）
+
+协调那个推理**成立**：池化重用不会页错误（位址还在活著的 heap 里，只是内容变了），**只有真的销毁才会**。
+分类如下：
+
+| 路径 | 销毁 or 重用 | 程式 | 对「0 active heaps」的意义 |
+|---|---|---|---|
+| **committed／standalone 资源**（独立配置的贴图） | **真销毁**：记忆体还给驱动 | `CreateCommittedResource`（`D3D12Texture.cpp:111` 一带的注解） | **最符合**：位址不属于任何 heap，也不属于任何登记项 |
+| **`FD3D12PoolAllocator`（placed，一般贴图／缓冲区）** | **重用**：区块还给池子，heap 留着 | 释放是 **frame fence 门控**（`D3D12PoolAllocator.cpp:788-812`）；**整池空掉**才 `MemoryPool->Destroy()`，而且还要等 `LastUsedFrameFence + FrameLag <= CompletedFence`（`:850-855`） | 重用时位址仍在 heap 内 → 会印 ≥1（前提是那个 heap 有登记，见 12b.1）。只有整池销毁才会变 0 |
+| **upload heap allocator** | 重用 | `CleanUpAllocations(FrameLag)`，`FrameLag = 20` 写死（`D3D12Adapter.cpp:1841-1842`） | upload 型别本来就不登记 |
+| **RDG transient allocator（候选 1）** | **重用／叠用**，backing heap 一直活着 | `D3D12TransientResourceAllocator.cpp:81` 建 heap 时传了 **`bForceGetGPUAddress = true`** → **一定有登记** | **所以 transient 叠用造成的页错误会印 ≥1 active heap，不是 0。这一行反过来压低了候选 1。** |
+| **pooled RT（`GRenderTargetPool`）** | 重用 | — | 同上，位址仍属活着的配置 |
+
+**结论：候选从「重用太早」收窄到「真的删太早」，而真删的主要形状是 committed 资源。**
+（**我没有读**「UE 什么时候把贴图配成 committed、什么时候配成 placed」那段决策，
+所以**不能**替它断定缩图或卡片贴图属于哪一类——那是下一步要读的。）
+
+### 12e. `FDreamUIDeferredRelease` 属于哪一类（问题 4）——**在 F 这份副本里读不到**
+
+`FDreamUIDeferredRelease`、`Frames.Texture`、`NeverDeleteProxy` 在
+`F:\OpenKoikatsu\Plugins\DreamGUI\Source` 里**一个都没有**（§1b 已查）。那是 E 树自己加的诊断，
+按指示我没有读 E 树那份，**所以这一题我答不出来**，要由能读 E 那份 DreamGUI 的人回答。
+
+能从引擎这边说的是：**延后几帧本身不决定「销毁 or 重用」。**
+到期之后它放掉的是 RHI 物件的参考，之后走 UE 的延迟删除（end-of-pipe、**fence 门控**，§9c），
+而那条路最后是**真销毁还是还给池子，取决于这个资源当初是怎么配置的**（committed → 真销毁；
+placed／池化 → 还给池子、heap 留着）。所以要判它，得先知道它放掉的那些贴图走哪一条配置路径——
+换句话说，**问题 4 的答案依赖 12d 里我还没读的那段决策**。
+
 ---
 
 调查：f-sceneload（F 树，只读）。现象与 e-cardload 的趟数都是协调 session 转述，崩溃档我没有自己看过；
-§11 的两棵引擎比对与 E 那条日志是我自己读的。
+§11 的两棵引擎比对、§12 的引擎程式码是我自己读的。
