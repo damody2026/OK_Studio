@@ -5978,3 +5978,25 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 這和上面「能讓當機消失的旋鈕不等於修好了」是同一條的鏡像：那條講的是別把旋鈕當修法，
 這條講的是**別把自己的修法當成不需要被旋鈕檢驗的東西**。
+
+## 2026-11-19：把當機的「結果」當成了當機的「線索」（e-cardload-physics）
+
+- **做錯的事**：`Created late shader associations, took 10ms` 在故障前約 25 ms 出現，我把它當成一條線索，
+  還在每張卡的量測行裡加了 `lsa=` 計數，並且觀察到「硬當的那兩格各出現 2 次、另外兩格 0 次」，
+  差點把它寫成「bindless 描述子那條線索還活著的證據」。
+- **真相**：那是 **NVIDIA Aftermath 在產生 crash dump 時**為了讓 dump 裡能解析 shader 名字而去註冊
+  shader binary（`D3D12NvidiaExtensions.cpp:62`，由 `RHICoreNvidiaAftermath.cpp:851` 在組
+  `Active Shaders:` 那一段時呼叫，engine 的註解就寫著 **"Allow association after a fault"**）。
+  **它在故障前出現，是因為故障已經發生了。** 而「硬當的格子有、沒硬當的格子沒有」這個相關性，
+  正是「只有真的當掉才會產 dump」——我量到的是當機本身，不是風險因子。
+- **為什麼會發生**：時間上緊鄰 ＋ 名字看起來像渲染機制（shader、associations），
+  我沒有去查那行 log 是誰印的就把它放進假設空間。
+- **再犯前檢查**：**一條 log 要當線索之前，先查它是誰印的。** 一行 `grep` 就能從引擎原始碼找到
+  `UE_LOG` 的位置與它的呼叫者。尤其是**崩潰報告子系統印的東西**（Aftermath、DRED、crash context），
+  它們的出現時間一定緊貼故障，所以**天生就會和當機完全相關，卻沒有任何因果**。
+  通則一句：**診斷工具自己的輸出，和它要診斷的事情永遠高度相關。**
+
+同一天還有一個相反的坑要一起記：`PageFault: Found 0 released resources ... during last 100 frames`
+這三行，在**追蹤沒開**（`Logging all resource enabled: No`）的那幾格裡是**假的零**；
+只有 11-18 那份（`-gpucrashdebugging`，顯示 `Yes`）的零才算證據。
+**同一句 log 在兩種設定下，一次是證據、一次是雜訊**——所以引用它之前要先看它旁邊那句前提。
