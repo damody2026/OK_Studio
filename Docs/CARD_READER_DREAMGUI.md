@@ -1829,3 +1829,40 @@ LogConfig: Set CVar [[RHIPoolAllocator.DefragMaxPoolsToClear:0]]
 **附帶一個對機制有用的觀察**：這兩趟的釋放次／卡是 **0.44 與 0.47**，
 和 `gc=10` 的其他趟（0.47、0.57）一致，而 transient 存量峰值只有 289／304——
 **再一次：水位低、釋放密，照樣當。** 釋放密度這條軸在這兩趟裡又被複製了一次。
+
+### 那 18 張縮圖走哪一支：**它們就是 `DrawTextureHolds` 的名單**，而被取樣的集合比被保護的集合大
+
+**直接答案**：`DreamGUI.LogHeldTextures` 那行 log **就印在登記進 `DrawTextureHolds` 的那個迴圈裡**
+（`DreamCanvas.cpp`：`if (LogHeld->GetInt() != 0 && !DrawTextureHolds.Contains(Texture)) UE_LOG(...)`
+緊接著 `DrawTextureHolds.Add(Texture, InUse);`）。
+**所以那份名單就是 `DrawTextureHolds` 的內容**——那 18 張縮圖**確實在 8 帧的 UObject 窗口裡**，
+不是「被取樣但沒進任何窗口」。
+
+**於是按第二個分支推下去：它們本該是安全的**（8 帧 UObject hold ＋ 銷毀後 RHI 那側有 EOP 圍欄），
+**所以受害者很可能不是那 18 張之一**。而查下去會看到一件更根本的事：
+
+**`MainPS` 綁的貼圖比 `DrawTextureHolds` 收的多。** `DrawTextureHolds` 的 `Now` 集合只收
+`MaterialProxyReferences` 裡的貼圖，加上每個 draw call 的 `Texture`／`FontTexture`／
+`MaskTextures.Slots[0]`／`Slots[1]`。而 `DrawBuiltInBatch` 實際綁進 pixel shader 的是：
+
+| 綁進 `MainPS` 的 | 在 `DrawTextureHolds`（8 帧 UObject）裡嗎 | 它的保護是什麼 |
+|---|---|---|
+| `MainTex`／`FontTex`／`MaskTex` | **在** | 8 帧 UObject hold |
+| `WidgetDataTex`／`ClipDataTex`／`RectBlockDataTex`／`PaintDataTex` | **不可能在**——它們是 `FDreamUIDataTexture` 的裸 `FTextureRHIRef`（`RHICmdList.CreateTexture` 建的），**根本不是 UObject** | 只有長大重建時那 3 帧（`DreamUIDataTexture.cpp:143` 的 `Hold(TextureRHI)`），而且是經 `UpdateTextureReference` 綁的 |
+| `BackdropTex`／`SceneDepthTex` | **不在** | **完全沒有**——它們不是 DreamGUI 的東西，是場景／RDG 那邊的 |
+
+**所以「被取樣的集合」比「被保護的集合」大，而且大出來的部分有兩類**：
+外掛自己的資料貼圖（只有 3 帧，長大就重建），以及**根本不屬於外掛的場景貼圖**
+（`SceneDepthTex`、`BackdropTex`，由 RDG／場景那邊管生命週期，DreamGUI 對它們沒有任何窗口）。
+
+**這一條也解釋了為什麼 3→12 沒有用**：12 只放寬了外掛自己那個隊列，
+而**場景那兩張完全不在這個隊列裡**，放寬多少都不會動到它們。
+
+**所以 240 那格的結果要這樣讀**（先登記，免得事後拿它解釋任何結果）：
+- **240 活過 30 張 ⇒** 受害者在外掛自己握的那幾支裡，fence 修法直接對症；
+- **240 還是當 ⇒ 受害者很可能是 `SceneDepthTex`／`BackdropTex` 那一類**，
+  也就是**外掛綁了一張它不擁有、也沒有任何窗口保護的貼圖**。
+  那麼 fence 那筆仍然該做（它修的是 pooled RT 與裸 `delete` 兩個真實存在的裸洞），
+  **但不准拿它當這個 crash 的修法**——照協調立的標準，那會是「讓當機消失的旋鈕」換成一筆程式。
+  那種情況下該查的是**外掛對這兩張的取用方式**（是否該改成 RDG 的 external texture
+  讓 RDG 管生命週期，或在錄命令那一刻確認它們仍然有效）。
