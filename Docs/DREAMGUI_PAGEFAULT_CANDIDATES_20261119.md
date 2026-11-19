@@ -1473,3 +1473,64 @@ breadcrumb 既然八笔同时 `[Active]`、只印 7 个槽，就不可能靠它�
 是把漏印的两个槽补进 breadcrumb**（`MaskTex1`、`RenderLayerTable`，`DreamUIRenderer.cpp:1033` 那一行后面
 加一个 `RHI_BREADCRUMB_EVENT_F`），以及 **开 `DreamGUI.LogStaleTextures`（§23c，执行期 cvar、不必重编）**。
 这两件都不是修法，是量测。
+
+---
+
+## §25 那四处 brush 实际放进去的是哪些贴图：没有一处是角色 runtime 贴图
+
+读的是 E 树（只读）。**先更正 §24b**：我在那里说「归属判别并不唯一，因为外观缩图同样叫 `Texture2D_<n>`、
+同样 BGRA8」。这个保留**正确但已被更强的证据覆盖**：e-cardload 的交接反查显示故障那张被交给 12 个 MID，
+**而且带着材质参数名**（`_overtex1`、`_MainTex`、`_DetailMask`、`_NormalMap`、`_liquidmask`、`_Texture2/3`），
+跨两个 actor 透过 identity 快取共用。**外观缩图不会被 `SetTextureParameterValue` 设成 `_overtex1`。**
+所以归属是量到的，不是靠名字推的；§24b 那一段只保留「名字／格式不足以分辨」这个事实，
+**不再作为「故障那张可能是外观缩图」的依据**。
+
+### 25a 逐处：放进 brush 的是哪一种贴图
+
+镜射的入口是 `UOKDreamControl::Sync()`（`OKReaderScreen.cpp:163`），镜射控件的建立在 `:629`
+——**`Source->IsA<UImage>()` 就给一个 DreamGUI 镜像**，所以站点 2 的覆盖面是「读卡器镜射树里的每一个 UMG `UImage`」。
+
+| 站点 | 行 | 放进去的物件 | 来源 | 种类 |
+|---|---|---|---|---|
+| 1 | `:189-193` | `A->Thumbnail->GetBrush().GetResourceObject()` | `OKGalleryAppearance.cpp:306` `B->Thumbnail->SetBrushFromTexture(G->CachedThumb(Path))`；`CachedThumb` → `OKGalleryAppearance.cpp:71` 从**磁碟 PNG** 解码 `CreateTransient(W,H,PF_B8G8R8A8)`（上限 2048），日志字串 `created(appearance-thumb)` | **外观素材缩图** |
+| 2 | `:248-254` | 任何被镜射的 UMG `UImage` 的 `GetBrush().GetResourceObject()`（只取 `UTexture`） | 读卡器树里实际有贴图的 `UImage`：`OKGalleryWidget.cpp:1447` `PreviewImage->SetBrushFromTexture(Tex,true)`（`Tex` = `TextureFromPng(Selected.Header.PreviewPng)` 或 `AnimatedPreviewTextures[0]`）、`:1774`（APNG 逐帧换，`AnimatedPreviewTextures[Frame]`，建立在 `:1432`，日志 `created(gallery-apng)`）、`OKHScene.cpp:4725`（`CoordImages`，建立在 `:4724`，日志 `created(hscene-coord)`） | **卡片 PNG 预览／APNG 影格／服装清单缩图** |
+| 3 | `:1457`（`Show`） | `UTexture2D* Texture` 参数 | 清单缩图池，`:1216-1221` `CreateTransient(Thumb.Width,Thumb.Height,PF_B8G8R8A8)`，上限 288×402 | **卡片清单缩图** |
+| 4 | `:1297` | `nullptr` | 同上，退场时清掉 | — |
+
+**四处全部是「CPU 解码出来的像素再 `CreateTransient` 上传」的 UI 缩图／预览**，没有一处读材质参数、
+没有一处拿 `KKRuntimeMaterial` 的输出。
+
+### 25b 「有没有任何一处会拿到当前角色正在用的 runtime 贴图」——没有
+
+`OKCreateRuntimePreparedTexture`（`KKRuntimeMaterial.h:42`，`KKRuntimeMaterial.cpp:517`）是建那种贴图的**唯一**入口。
+全树（`Source/`、`Plugins/KKRuntimePose/Source`、`Plugins/KKUnityBundle/Source`）的呼叫端只有三类：
+
+- `Plugins/KKUnityBundle/Source/KKUnityBundle/Private/KKPreviewRuntimeMaterials.inl:74`
+  ——进 `Role.Textures` 与 `To.Textures`，然后 `SetTextureParameterValue` 到 MID；
+- `Source/OpenKoikatsu/OKCrowdRuntimeScene.cpp:1173`——人群场景，进 `E->Textures`；
+- `Source/OpenKoikatsu/OKCrowdRuntimeGpuProbe.cpp:160/162/165/166/213/277/278`——自我测试。
+
+**没有一处把它交给 UMG `UImage`、`FSlateBrush` 或 `FDreamUIImageBrush`。** 反方向也搜过：
+`Source/` 里 `SetBrushFromTexture`／`SetBrush(` 的全部命中是 `OKGalleryAppearance.cpp:306`、
+`OKGalleryWidget.cpp:1112/1332/1447/1449/1774`、`OKHScene.cpp:4725`，来源都在 25a 表里；
+`SetBrushFromMaterial` 零命中，所以也没有「把角色材质本身当 brush」的路径
+（`KKPreviewActor.cpp:3705` 的 `SetTextureParameterValue(TEXT("KKShadowDepth"), Shadow->Depth)`
+是 render target 进 MID，不进 UI）。读卡器里也没有 `SceneCapture`／`TextureRenderTarget2D` 的角色预览。
+
+**所以链子没有闭合。** 结论照协调给的两分法写：消费端的机制形状在 DreamGUI（§24a 那一条裸 `UTexture` 分支是真的，
+而且读卡器确实在用），**但被绑进去的不是那张贴图**——`_overtex1` 那一张进不了这四个站点。
+**还缺一步**，而且缺的那一步不在这四处。
+
+### 25c 这个否定把范围收到哪里
+
+若 `-LegacyReader` 三趟 0/3 不故障（取样者确实是 DreamGUI），那么 25b 的否定意味着：
+**绑进 `DreamUI_MainTex` 的那张 UI 缩图，与故障的那张角色贴图，是两张不同的贴图**，
+而故障发生在画前者的 draw 里。这只剩两种形状能同时成立：
+
+1. **取样的不是 `MainTex` 这个槽**，而是 §23a 列的、**breadcrumb 没印的那几个**
+   （`MaskTex1`、`RenderLayerTable`）——但这两个在读卡器里也没有角色贴图的来源，所以同样要先量；
+2. **取样的不是 shader 绑的那个 descriptor**，而是 descriptor 表／PSO 这一层把别的位址带进了这一笔 draw
+   ——这一层我没读，而且它不是「某个 C++ 成员存了裸位址」的形状，不能用那把尺找。
+
+**第 1 条可以用一行 breadcrumb 排掉**（§23a 末），**这是现在最便宜的下一步**；
+第 2 条要等第 1 条排掉之后再谈，而且它要的是量测不是阅读。
