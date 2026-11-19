@@ -121,6 +121,10 @@ struct FOKCharacterMCPState
  TWeakObjectPtr<AKKPreviewActor> CaptureActor;
  bool WasTicking=false,AutoLoadAttempted=false;
  float SavedYaw=0,SavedPitch=0;
+ // An answer the appearance server sends back on a later tick (`thumbnails`): the callback cannot Finish the
+ // request itself, so it fills this and the next tick answers with it.
+ struct FAsyncAnswer { bool Done=false; FMCPObject Result; FString Error; };
+ TSharedPtr<FAsyncAnswer,ESPMode::ThreadSafe> Async;
  struct FShapeRamp { int32 Index=INDEX_NONE; float From=0, To=0, Restore=0, Seconds=0; };
  TArray<FShapeRamp> ShapeRamps;
  double ShapeRampOrigin=0;
@@ -261,14 +265,26 @@ static FMCPObject OKEyePage(UOKCharacterController* G,const FString& Page,const 
   // showing empty grids (the shared base library is not a catalogue, see READER_UI_APPEARANCE_API.md section 0).
   int32 Count=0;for(auto Item:G->AppearanceItems)if(MCPAppearanceCategory(Item)==int32(Category))++Count;
   O->SetNumberField(TEXT("items"),Count);O->SetBoolField(TEXT("applies"),Count>0);
-  if(Count==0)O->SetStringField(TEXT("unsupported_reason"),TEXT("No source game catalogue for this kind"));
+  if(Count==0)
+ {
+  const FString Problem=G->GameRootProblem();
+  O->SetStringField(TEXT("unsupported_reason"),Problem.IsEmpty()
+   ?TEXT("No candidates of this kind in the source game catalogue")
+   :FString::Printf(TEXT("No source game catalogue: %s"),*Problem));
+ }
   Targets.Add(MakeShared<FJsonValueObject>(O));
  }
  Out->SetArrayField(TEXT("targets"),Targets);
  // The catalogue is read when the appearance page is first entered; until then there is nothing to draw,
  // and an empty list would read as "no kinds". The UI reads catalog (or enters that page) once, then asks again.
  Out->SetBoolField(TEXT("targets_available"),!G->AppearanceTargets.IsEmpty());
- if(G->AppearanceTargets.IsEmpty())Out->SetStringField(TEXT("targets_reason"),TEXT("Appearance catalogue not read yet; call catalog first"));
+ if(G->AppearanceTargets.IsEmpty())
+ {
+  const FString EyeProblem=G->GameRootProblem();
+  Out->SetStringField(TEXT("targets_reason"),EyeProblem.IsEmpty()
+   ?TEXT("Appearance catalogue not read yet; call catalog first")
+   :FString::Printf(TEXT("No source game catalogue: %s"),*EyeProblem));
+ }
  FMCPRows Properties;
  for(auto P:All)
  {
@@ -278,6 +294,93 @@ static FMCPObject OKEyePage(UOKCharacterController* G,const FString& Page,const 
   Properties.Add(MakeShared<FJsonValueObject>(MakeShared<FJsonObject>(*O)));
  }
  Out->SetArrayField(TEXT("properties"),Properties);
+ return Out;
+}
+// The other picker pages (眉毛／髮型／飾品) read as one page each, the same shape as eye_page: this says which
+// kinds a page has, what the card has in each of them now, and how many cells the grid will hold. The cells
+// themselves stay on the paged `catalog` (target + offset/limit) and their pictures on `thumbnails` (<=48 per
+// call), because one page can hold thousands of candidates and sending them all would be a megabyte of JSON
+// the UI cannot draw at once anyway.
+static FMCPObject OKAppearanceTargetRow(UOKCharacterController* G,const FMCPObject& T)
+{
+ auto O=MakeShared<FJsonObject>(*T);
+ const FString Key=T->GetStringField(TEXT("key"));const int32 Category=T->GetIntegerField(TEXT("category"));
+ int32 Count=0;for(auto Item:G->AppearanceItems)if(MCPAppearanceCategory(Item)==Category)++Count;
+ O->SetNumberField(TEXT("items"),Count);O->SetBoolField(TEXT("applies"),Count>0);
+ // No source game means no catalogue for this kind: say so rather than showing an empty grid (the shared
+ // base library is not a catalogue, see READER_UI_APPEARANCE_API.md section 0).
+ if(Count==0)O->SetStringField(TEXT("unsupported_reason"),TEXT("No source game catalogue for this kind"));
+ if(const FString* Selected=G->AppearanceSelectedKeys.Find(Key))O->SetStringField(TEXT("current"),*Selected);
+ if(const TSharedPtr<FJsonObject>* Card=G->AppearanceCurrent.Find(Key))if(Card->IsValid())O->SetObjectField(TEXT("current_card"),*Card);
+ return O;
+}
+static FMCPObject OKAppearancePage(UOKCharacterController* G,const FString& Page)
+{
+ auto Out=MakeShared<FJsonObject>();Out->SetStringField(TEXT("page"),Page);
+ Out->SetBoolField(TEXT("targets_available"),!G->AppearanceTargets.IsEmpty());
+ if(G->AppearanceTargets.IsEmpty())
+ {
+  const FString Problem=G->GameRootProblem();
+  Out->SetStringField(TEXT("targets_reason"),Problem.IsEmpty()
+   ?TEXT("Appearance catalogue not read yet; call catalog first")
+   :FString::Printf(TEXT("No source game catalogue: %s"),*Problem));
+ }
+ // `current_card` (what the card file holds) comes from the catalogue read, and applying an item makes a new
+ // working card without re-reading it. Say when it is older than the card now open instead of handing the UI
+ // the previous card's value as if it were current; `current` (what was applied) is always up to date.
+ const FString Open=G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();
+ const bool Stale=G->AppearanceCatalogPath!=Open||G->AppearanceCatalogOutfit!=G->OutfitIndex;
+ Out->SetBoolField(TEXT("current_card_stale"),Stale);
+ if(Stale)Out->SetStringField(TEXT("current_card_reason"),TEXT("Catalogue was read for another card or outfit; call catalog to refresh what the card holds"));
+ if(Page==TEXT("accessory"))
+ {
+  // The slots this card really has: the catalogue's accessory targets (the original twenty plus whatever
+  // extra slots the card's KKEx block holds), not a fixed list.
+  TArray<int32> Slots;TMap<int32,FString> Labels;TMap<int32,FMCPRows> Kinds;TMap<int32,FString> Holding;
+  for(auto T:G->AppearanceTargets)
+  {
+   const FString Key=T->GetStringField(TEXT("key"));if(!Key.StartsWith(TEXT("accessory")))continue;
+   int32 Under=INDEX_NONE;if(!Key.FindChar(TEXT('_'),Under))continue;
+   const FString Number=Key.Mid(9,Under-9);if(!Number.IsNumeric())continue;
+   const int32 Slot=FCString::Atoi(*Number);
+   if(!Slots.Contains(Slot))
+   {
+    Slots.Add(Slot);Kinds.Add(Slot,FMCPRows());
+    FString Label=T->GetStringField(TEXT("label"));int32 Colon=INDEX_NONE;
+    if(Label.FindChar(TEXT('：'),Colon))Label=Label.Left(Colon);
+    Labels.Add(Slot,Label);
+   }
+   Kinds[Slot].Add(MakeShared<FJsonValueObject>(OKAppearanceTargetRow(G,T)));
+   if(const TSharedPtr<FJsonObject>* Card=G->AppearanceCurrent.Find(Key))if(Card->IsValid())
+   {
+    FString Name;if((*Card)->TryGetStringField(TEXT("name"),Name)&&!Name.IsEmpty())Holding.Add(Slot,Name);
+   }
+  }
+  Slots.Sort();
+  FMCPRows Rows;
+  for(int32 Slot:Slots)
+  {
+   auto O=MakeShared<FJsonObject>();O->SetNumberField(TEXT("slot"),Slot);
+   O->SetStringField(TEXT("label"),Labels[Slot]);O->SetStringField(TEXT("scope"),FString::Printf(TEXT("accessory%d_"),Slot));
+   const FString* Worn=Holding.Find(Slot);
+   O->SetBoolField(TEXT("used"),Worn!=nullptr);if(Worn)O->SetStringField(TEXT("holding"),*Worn);
+   O->SetArrayField(TEXT("kinds"),Kinds[Slot]);
+   Rows.Add(MakeShared<FJsonValueObject>(O));
+  }
+  Out->SetArrayField(TEXT("slots"),Rows);
+  return Out;
+ }
+ static const TCHAR* Eyebrow[]={TEXT("eyebrow")};
+ static const TCHAR* Hair[]={TEXT("hair0"),TEXT("hair1"),TEXT("hair2"),TEXT("hair3"),TEXT("hair_gloss")};
+ FMCPRows Targets;
+ for(auto T:G->AppearanceTargets)
+ {
+  const FString Key=T->GetStringField(TEXT("key"));bool Wanted=false;
+  if(Page==TEXT("eyebrow"))for(const TCHAR* K:Eyebrow)if(Key==K)Wanted=true;
+  if(Page==TEXT("hair"))for(const TCHAR* K:Hair)if(Key==K)Wanted=true;
+  if(Wanted)Targets.Add(MakeShared<FJsonValueObject>(OKAppearanceTargetRow(G,T)));
+ }
+ Out->SetArrayField(TEXT("targets"),Targets);
  return Out;
 }
 static bool Settled(UOKCharacterController* G,FOKCharacterMCPState& S)
@@ -421,8 +524,45 @@ void UOKCharacterController::TickCharacterMCP()
   FString Error;if(!OKCharacterMCPRegistry::SetParameters(this,Edits,Error)){Finish(S,nullptr,Error);return;}S.Phase=4;S.ReadyAt=0;return;
  }
  if(S.Action==TEXT("apply")){if(PendingProperties.IsEmpty()){Finish(S,State(this,S));return;}OnApplyProperties();if(!bPropertyBusy){Finish(S,nullptr,TEXT("Cannot start apply"));return;}S.Phase=3;S.ReadyAt=0;return;}
- if(S.Action==TEXT("catalog")||S.Action==TEXT("appearance")||S.Action==TEXT("add_accessory")){
-  if(AppearanceTargets.IsEmpty()){if(S.Phase==1){Finish(S,nullptr,TEXT("Appearance catalog unavailable; configure source game"));return;}OnOpenAppearance();S.Phase=1;return;}FString Target;S.Request->TryGetStringField(TEXT("target"),Target);FMCPObject T;for(auto V:AppearanceTargets)if(V->GetStringField(TEXT("key"))==Target){T=V;break;}
+ // `thumbnails`: the picture for each of the keys a page of `catalog` gave, as a local PNG path the UI can read
+ // (the same request the picker's own grid makes). At most 48 per call, because each one is decoded out of the
+ // source game's thumbnail bundles.
+ if(S.Action==TEXT("thumbnails")){
+  if(S.Async&&S.Async->Done){if(!S.Async->Result){const FString Error=S.Async->Error;S.Async.Reset();Finish(S,nullptr,Error.IsEmpty()?TEXT("Thumbnail request failed"):Error);return;}
+   auto Answer=S.Async->Result;S.Async.Reset();auto Out=State(this,S);
+   // The server answers with a project-relative path; the UI and anything outside the game want the full one.
+   FMCPRows Rows;for(auto V:Answer->GetArrayField(TEXT("thumbnails"))){auto Row=MakeShared<FJsonObject>(*V->AsObject());FString Png;
+    if(Row->TryGetStringField(TEXT("path"),Png)&&!Png.IsEmpty())Row->SetStringField(TEXT("path"),FPaths::ConvertRelativePathToFull(Png).Replace(TEXT("\\"),TEXT("/")));
+    Rows.Add(MakeShared<FJsonValueObject>(Row));}
+   Out->SetArrayField(TEXT("thumbnails"),Rows);Finish(S,Out);return;}
+  if(S.Async)return;
+  if(Busy(this)||bAppearanceBusy){FinishBusy();return;}
+  const TArray<TSharedPtr<FJsonValue>>* Keys=nullptr;
+  if(!S.Request->TryGetArrayField(TEXT("keys"),Keys)||Keys->IsEmpty()||Keys->Num()>48){Finish(S,nullptr,TEXT("Provide 1-48 item keys from catalog"),TEXT("bad_request"));return;}
+  auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("thumbnails"));R->SetArrayField(TEXT("keys"),*Keys);
+  auto Answer=MakeShared<FOKCharacterMCPState::FAsyncAnswer,ESPMode::ThreadSafe>();S.Async=Answer;
+  RunAppearanceRequest(R,[Answer](UOKCharacterController*,TSharedPtr<FJsonObject> Data,const FString& Error){Answer->Result=Data;Answer->Error=Error;Answer->Done=true;});
+  return;
+ }
+ if(S.Action==TEXT("catalog")||S.Action==TEXT("appearance")||S.Action==TEXT("add_accessory")||S.Action==TEXT("appearance_page")){
+  if(AppearanceTargets.IsEmpty()){if(S.Phase==1){
+    // A page read answers even with no catalogue: `targets_available=false` plus which of the four game-folder cases
+    // it is, so the UI can say why the grid is empty instead of showing nothing (2026-11-19).
+    FString Which;S.Request->TryGetStringField(TEXT("page"),Which);
+    if(S.Action==TEXT("appearance_page")&&(Which==TEXT("eyebrow")||Which==TEXT("hair")||Which==TEXT("accessory"))){auto Out=State(this,S);
+     // The page object has to be held in a named value: iterating a temporary's Values leaves the loop reading freed memory.
+     const FMCPObject Page=OKAppearancePage(this,Which);for(const auto& P:Page->Values)Out->SetField(P.Key,P.Value);Finish(S,Out);return;}
+    Finish(S,nullptr,TEXT("Appearance catalog unavailable; configure source game"));return;}OnOpenAppearance();S.Phase=1;return;}FString Target;S.Request->TryGetStringField(TEXT("target"),Target);FMCPObject T;for(auto V:AppearanceTargets)if(V->GetStringField(TEXT("key"))==Target){T=V;break;}
+  if(S.Action==TEXT("appearance_page")){
+   FString Which;S.Request->TryGetStringField(TEXT("page"),Which);
+   if(Which!=TEXT("eyebrow")&&Which!=TEXT("hair")&&Which!=TEXT("accessory")){Finish(S,nullptr,TEXT("page must be eyebrow, hair or accessory"),TEXT("bad_request"));return;}
+   // What the card holds is only read with the catalogue, and applying an item makes a new working card. Read it
+   // again here (OnOpenAppearance re-reads when the path or outfit differs) rather than answering with the
+   // previous card's values; if that cannot happen the answer says so with current_card_stale.
+   const FString Open=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();
+   if(S.Phase==0&&(AppearanceCatalogPath!=Open||AppearanceCatalogOutfit!=OutfitIndex)){OnOpenAppearance();S.Phase=1;S.ReadyAt=0;return;}
+   auto R=State(this,S);auto P=OKAppearancePage(this,Which);for(auto Field:P->Values)R->SetField(Field.Key,Field.Value);Finish(S,R);return;
+  }
   if(S.Action==TEXT("catalog")){FMCPRows Items;for(auto V:AppearanceItems)if(!T||MCPAppearanceCategory(V)==T->GetIntegerField(TEXT("category")))Items.Add(MakeShared<FJsonValueObject>(V));Page(this,S,Items,TEXT("items"));return;}
   if(!PendingProperties.IsEmpty()){Finish(S,nullptr,TEXT("Apply or reset pending properties before selecting materials"));return;}if(S.Action==TEXT("appearance")){FString Item;if(!T||!S.Request->TryGetStringField(TEXT("item"),Item)){Finish(S,nullptr,TEXT("Unknown target or missing item"));return;}if(!Item.IsEmpty()&&!AppearanceItems.ContainsByPredicate([&](auto V){return V->GetStringField(TEXT("key"))==Item&&MCPAppearanceCategory(V)==T->GetIntegerField(TEXT("category"));})){Finish(S,nullptr,TEXT("Item does not belong to target category"));return;}AppearanceTargetKey=Target;ApplyAppearanceItem(Item);}else OnAddAccessorySlot();if(!bAppearanceBusy){Finish(S,nullptr,TEXT("Appearance operation did not start"));return;}S.Phase=3;S.ReadyAt=0;return;
  }

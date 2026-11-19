@@ -213,15 +213,32 @@ void UOKCharacterController::TickAppearanceCatalogStatus(){
  const int32 Second=int32(FPlatformTime::Seconds()-AppearanceCatalogStarted);if(Second==AppearanceCatalogShownSecond)return;AppearanceCatalogShownSecond=Second;
  AppearanceStatus->SetText(FText::FromString(FString::Printf(TEXT("正在建立外觀目錄（讀遊戲的 abdata 與 mods），第一次約需數分鐘，之後會快取…已 %d 秒"),Second)));
 }
+// A path that was set but is not there must not read as "nothing is set": the folder can be renamed or on a
+// drive that is not mounted, and then every picker page is simply empty with nothing said (2026-11-19: the
+// version-controlled Root pointed at a folder that no longer existed, and the pages were blank in silence).
+FString UOKCharacterController::GameRootProblem() const
+{
+ auto* Root=UKKGameRoot::Get();const FString Dir=Root?Root->Root:FString();
+ if(Dir.IsEmpty())return TEXT("沒有設定遊戲資料夾");
+ if(!IFileManager::Get().DirectoryExists(*Dir))return FString::Printf(TEXT("設定的遊戲資料夾不存在：%s"),*Dir);
+ if(!IFileManager::Get().DirectoryExists(*(Dir/TEXT("abdata"))))return FString::Printf(TEXT("設定的資料夾底下沒有 abdata/：%s"),*Dir);
+ if(!IFileManager::Get().DirectoryExists(*(Dir/TEXT("mods"))))return FString::Printf(TEXT("設定的資料夾底下沒有 mods/：%s"),*Dir);
+ return FString();
+}
 void UOKCharacterController::RefreshAppearanceCatalog(bool bSelectNewestSlot){
  if(MaterializeAppearance([bSelectNewestSlot](UOKCharacterController* G){G->RefreshAppearanceCatalog(bSelectNewestSlot);}))return;
  auto* Root=UKKGameRoot::Get();AppearanceRoot=Root?Root->Root:FString();
- if(AppearanceRoot.IsEmpty()||!IFileManager::Get().DirectoryExists(*(AppearanceRoot/TEXT("abdata"))))
+ const FString Problem=GameRootProblem();
+ if(!Problem.IsEmpty())
  {
   // Nothing to list without the game's abdata/ and mods/: say where to set it instead of leaving the pickers blank.
   AppearanceTargets.Reset();AppearanceItems.Reset();AppearanceFiltered.Reset();AppearanceCurrent.Reset();AppearanceCatalogPath.Reset();
   if(AppearanceTarget)AppearanceTarget->ClearOptions();if(AppearanceGrid)AppearanceGrid->ClearChildren();
-  const FString Where=AppearanceRoot.IsEmpty()?TEXT("目前沒有設定。"):FString::Printf(TEXT("目前的「%s」底下沒有 abdata/。"),*AppearanceRoot);
+  const FString Where=Problem+TEXT("。");
+  UE_LOG(LogTemp,Warning,TEXT("OK appearance catalogue unavailable: %s"),*Problem);
+  // Loud on the reader's own screen too, not only on the Gallery's status line: a Root that was set but is not
+  // there used to leave every picker page blank with nothing said.
+  ScreenNote(7,20.f,FColor::Red,Problem+TEXT("\n到「設定 › 遊戲目錄」重新指定含 abdata/ 與 mods/ 的原作資料夾。"));
   AppearanceStatus->SetText(FText::FromString(TEXT("要先在「設定 › 遊戲目錄」指定遊戲資料夾（含 abdata/ 與 mods/ 的原作資料夾）才有選項；")+Where));
   if(AppearanceRootButton)AppearanceRootButton->SetVisibility(ESlateVisibility::Visible);
   return;

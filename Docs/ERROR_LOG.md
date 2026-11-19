@@ -5817,3 +5817,16 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **讀卡器本來就一致**：`Tools/ok-extract/src/dbone/game_colliders.rs` 的 `ordinary_colliders` 只在 `component_name=="ct_clothesBot"` 且 `flags.skirt` 時加腿、floor 一律加；`breast_colliders` 的手臂只套 `kind: Some(0|1)`（左右胸）；`freeze_axis` 規則也在。E-058 當初就記過「臂／腿 collider 只處理裙子用 `ct_clothesBot`」。
 - **結論：不要再改。** 長髮／外套穿過手臂在原作也會發生，那不是缺陷；使用者的常駐要求是「和原作一樣」，所以連開關都不做。要「比原作更不穿模」是功能增強，等使用者自己提。
 - **再犯前檢查**：拿到「原作會 X、我們沒做 X」這種保真缺口時，先自己讀原作那段程式確認 X 的**條件**（掛到哪些鏈、有沒有篩選、有沒有反向移除），再決定動不動工；「插件裡有這些資料」不等於「每條鏈都會套用」。
+
+## 2026-11-19：遊戲資料夾指到不存在的路徑，選圖頁一聲不響地空著（e-cardload-physics）
+
+- **現象**：讀卡器的眉毛／髮型／飾品選圖頁全部沒有候選，畫面上什麼都沒講。`appearance_page` 只回 `Appearance catalog unavailable; configure source game`，看不出是哪裡壞。
+- **原因**：版控的 `Config/DefaultGame.ini` 寫的是 `Root=D:/KoikatuSunshine`，這台機器上的原作其實在 `D:/XKoikatuSunshine`（資料夾被改過名）。`RefreshAppearanceCatalog` 只檢查 `Root/abdata` 存不存在，一個不存在的 `Root` 和「沒設定」走同一支，訊息還寫成「目前沒有設定」——**路徑錯被說成沒設定**，而且只寫在舊 Gallery 的狀態列，新的 DreamGUI 讀卡器畫面上根本看不到。
+- **修**（**沒有動版控那行 ini**，實際路徑是本機設定）：
+  - `UOKCharacterController::GameRootProblem()` 把四種分開：沒設定／設了但路徑不存在／底下沒有 `abdata/`／底下沒有 `mods/`，後三種都把那個路徑印出來。
+  - 讀不到目錄時 `UE_LOG(Warning) OK appearance catalogue unavailable: <原因>`，並在讀卡器畫面上發一條紅色 notice（`ScreenNote(7,20s)`）＋「到『設定 › 遊戲目錄』重新指定」。
+  - `appearance_page`／`eye_page` 的 `targets_reason`／`unsupported_reason` 帶上同一個原因，而且**目錄讀不到時頁面照樣回答**（`targets` 空），不是回錯誤，UI 才講得出為什麼是空的。
+  - 設定頁的檢查訊息把路徑印出來（`CheckGameRoot`）。
+  - 換了遊戲資料夾會清掉舊目錄（`ApplyFolderSetting` 重設 `AppearanceCatalogPath`），不然路徑改對了同一個行程還是讀舊的，看起來像沒生效。
+- **量到的**：三種壞路徑都回對應訊息並印出路徑；改回 `D:/XKoikatuSunshine` 之後同一個行程就讀到 257 個眉毛候選。「沒設過」那一支在這個 build 量不到，因為版控的 ini 永遠給一個值。
+- **再犯前檢查**：「設定值存在但指到不存在的東西」要和「沒設定」分開報，並把那個值印出來；版控裡的本機路徑不保證在每台機器上存在，程式要大聲講，不能靜靜地給一個空清單。

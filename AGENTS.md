@@ -597,7 +597,7 @@ Get-ChildItem 'Content/IndependentResources' -Directory | ForEach-Object {
 - Unreal Engine **5.8.4**（PhysX 5.11 分支），本機路徑預設 `E:\PhysX\UE5.8`；腳本一律透過 `Tools\ok_engine.lua` 取得，可用環境變數 `OK_ENGINE_ROOT` 或 `Tools\engine.local.json` 覆寫。引擎需帶的補丁見 `Tools\EnginePatches\README.md`。
 - Visual Studio 的 C++ 遊戲開發工具及 Windows SDK，版本須符合 UE 5.8 工具鏈要求。
 - Rust／Cargo，使用 Windows MSVC 工具鏈；`cargo` 須在 PATH，或位於 `%USERPROFILE%\.cargo\bin\cargo.exe`。
-- 使用者自己的 Koikatsu Sunshine 安裝及卡片需要的 mods。本機遊戲根目錄是 `C:\portable\KoikatuSunshine`，注意資料夾拼字。
+- 使用者自己的 Koikatsu Sunshine 安裝及卡片需要的 mods。**遊戲根目錄是本機設定，這份文件與 `Config/DefaultGame.ini` 裡的路徑都只是範例，不保證在你這台機器上存在**（E 這台 2026-11-19 當時是 `D:\XKoikatuSunshine`，版控的 ini 還寫著已經不存在的 `D:/KoikatuSunshine`）。實際路徑用讀卡器「設定 › 遊戲目錄」設，它覆寫 ini；不要為了自己的機器去改版控那行。指到不存在的資料夾時讀卡器會在畫面與 log 講明，見 [Docs/ERROR_LOG.md](Docs/ERROR_LOG.md) 2026-11-19 那條。注意資料夾拼字。
 
 以下命令以本機路徑為例，請依安裝位置調整。`.uproject` 的 `EngineAssociation` 目前留空，可直接指定 UE 5.8 Editor 開啟。
 

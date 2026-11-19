@@ -153,6 +153,8 @@
    Root=D:/KoikatuSunshine
    ```
 
+   這一行是**範例，不保證在你這台機器上存在**（每台機器的原作資料夾不一樣，也可能被改過名或換了磁碟）。真正會用的是讀卡器「設定 › 遊戲目錄」存下來的本機值，它覆寫這行；版控這行不要為了自己的機器去改。指到不存在的資料夾時，讀卡器會在畫面上講「設定的遊戲資料夾不存在：<路徑>」並在 log 寫一行，選圖頁不會再靜靜地空著。
+
 7. 街區交流 demo（選用）：
    - 遊戲規則 `Tools/ok-rules` 由 `StreetSocial.cmd` 啟動時自動 `cargo build --release`；女角的 AI 對話邏輯另外編譯：`cargo build --release --manifest-path .\Tools\ok-mind\Cargo.toml`。
    - 打包成可執行的版本：`.\Tools\lua\lua.exe Tools\rebuild_street_social_runtime.lua --tag <名稱>`（流程見 [AGENTS.md](AGENTS.md)）。

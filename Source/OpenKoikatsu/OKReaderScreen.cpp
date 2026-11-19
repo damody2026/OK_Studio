@@ -1430,8 +1430,8 @@ void UOKReaderScreen::CheckGameRoot(const FString& Root)
 	{
 		FString Message;
 		const FString Mods=Root/TEXT("mods");
-		if(!FPaths::DirectoryExists(Root))Message=TEXT("✗ 找不到這個資料夾。");
-		else if(!FPaths::DirectoryExists(Mods))Message=TEXT("✗ 這個路徑底下沒有 mods/ 資料夾，找不到 zipmod。");
+		if(!FPaths::DirectoryExists(Root))Message=FString::Printf(TEXT("✗ 設定的遊戲目錄不存在：%s"),*Root);
+		else if(!FPaths::DirectoryExists(Mods))Message=FString::Printf(TEXT("✗ 這個路徑底下沒有 mods/ 資料夾，找不到 zipmod：%s"),*Root);
 		else
 		{
 			TArray<FString> Found;IFileManager::Get().FindFilesRecursive(Found,*Mods,TEXT("*.zipmod"),true,false);
@@ -1461,7 +1461,13 @@ void UOKReaderScreen::ApplyFolderSetting(bool bLibrary,const FString& Folder,boo
 	const FString Now=bLibrary?Game->LocalLibrary:Game->Root;
 	if(UOKDreamControl* Field=(bLibrary?LibraryInput:RootInput).Get())if(Field->Input)Field->Input->SetText(Now);
 	if(bLibrary){if(LibraryStatus.IsValid())CheckLocalLibrary(Now);}
-	else if(RootStatus.IsValid())CheckGameRoot(Now);
+	else
+	{
+		// A new game folder means a new catalogue: forget the one read from the old folder, or the picker pages keep
+		// answering from it and a root that was just corrected looks as if it changed nothing.
+		if(UOKCharacterController* G=GetController())G->AppearanceCatalogPath.Reset();
+		if(RootStatus.IsValid())CheckGameRoot(Now);
+	}
 }
 
 void UOKReaderScreen::CheckLocalLibrary(const FString& Library)

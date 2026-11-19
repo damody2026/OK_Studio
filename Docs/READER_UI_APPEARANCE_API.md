@@ -404,3 +404,60 @@ ApplyAppearanceItem(key)
 两条都**不覆写原始卡片**，成功后 `Selected` 换成新的工作卡片、`bIndependentCards=true`、
 `AppearanceSelectedKeys[target]=key`。期间 `bAppearanceBusy=true`，UI 要把这三页设成不可用；
 有未套用的 properties 时会被拒绝（先 `OnApplyProperties()` 或重置）。
+
+## 10. 眉毛／髮型／飾品三页的资料端：`appearance_page` ＋ `catalog` ＋ `thumbnails`（2026-11-19 已实作）
+
+一页一个回答，和 `eye_page`（9.2.1）同一个模式。`{"action":"appearance_page","page":"eyebrow"|"hair"|"accessory"}`，
+登记为**唯读**。程式在 [`Source/OpenKoikatsu/OKCharacterMCP.cpp`](../Source/OpenKoikatsu/OKCharacterMCP.cpp) 的
+`OKAppearancePage()`／`OKAppearanceTargetRow()`。开卡／换服装之后第一次问时会自己去读外观目录，不用先呼叫 `catalog`。
+
+**`appearance_page` 不带格子。** 一页的候选可能上千个（眉毛 257、後髮 306、飾品每格 10 类各自上千），
+一次全送是几 MB 的 JSON，UI 也画不下。所以：
+
+| 要什么 | 走哪个动作 |
+|---|---|
+| 这一页有哪几类、每类几个候选、这张卡现在是哪一个 | `appearance_page`（一次，不分页） |
+| 某一类的候选清单（id、名称、guid、来源 zipmod） | `catalog`（`target` ＋ `offset`／`limit`，回 `items` 与 `next_offset`） |
+| 候选的缩图（本机绝对 PNG 路径） | `thumbnails`（`keys`：`catalog` 给的 key，**1～48 个**） |
+
+### `page=eyebrow` / `page=hair`
+
+```jsonc
+{"page":"hair","targets_available":true,
+ "targets":[{"key":"hair0","label":"後髮","category":5,"items":306,"applies":true,
+             "current":"<item key>","current_card":{"name":"なし","id":0, ...}}, ...]}
+```
+
+`hair` 五类：`hair0` 後髮、`hair1` 前髮、`hair2` 側髮、`hair3` 附加頭髮、`hair_gloss` 頭髮光澤種類；
+`eyebrow` 一类。`items` 是这一类目录里有几个候选，`current` 是目前选的 key，`current_card` 是**卡片里**记的那一个
+（名称、id 等），两者分开是因为换过之后卡片还没存。
+
+### `page=accessory`
+
+```jsonc
+{"page":"accessory","targets_available":true,
+ "slots":[{"slot":0,"label":"配件欄 1","scope":"accessory0_","used":true,"holding":"アップツイン A",
+           "kinds":[{"key":"accessory0_type","label":"配件欄 1：種類","items":1234,"applies":true, ...}, ...]}]}
+```
+
+**槽位取自开卡后的真资料**（`AppearanceTargets`，原作 20 格加上这张卡 KKEx 里多出来的格），不是写死清单：
+C001 这张卡回 **51 格**，其中 19 格有东西（`used=true`、`holding` 是卡片里那件的名字），每格 10 类。
+
+### 不能用的照实标
+
+- `applies=false` ＋ `unsupported_reason`：这一类在目录里没有候选。
+- `targets_available=false` ＋ `targets_reason`：整个外观目录读不到。原因会讲明是**哪一种**，
+  四种分开（`UOKCharacterController::GameRootProblem()`）：没设过游戏资料夹／设了但路径不存在／底下没有 `abdata/`／底下没有 `mods/`，
+  后三种都会把那个路径印出来。这种时候页面**照样回答**（`targets`／`slots` 为空），不是回一个错误，
+  UI 才有办法说「为什么是空的」。
+
+### 实测（2026-11-19，crowd C001，`D:/XKoikatuSunshine`，7296 个 zipmod）
+
+| 测什么 | 结果 |
+|---|---|
+| 整页一次读回 | `eyebrow` 1 类／257 候选；`hair` 5 类（306／174／22／18／104）；`accessory` 51 格、19 格有东西、每格 10 类 |
+| 候选资料齐不齐 | `catalog` 每列有 `entry.id`、`entry.name`、`guid`、`source`（空＝原作，否则是那个 zipmod 的绝对路径）；`thumbnails` 回 `E:/OpenKoikatsu/Saved/AppearanceEditor/cache/thumbnails/<key>.png`，**实测档案存在** |
+| 换一个→重载→读回一致 | `appearance` 把 `hair2` 换成 mod 的「S03 + F105」→ 产生工作卡 → 重新开那张卡 → `appearance_page` 回 `hair2` = 同一个 key、`current_card.name` = `S03 + F105`，其余四类没变 |
+| 超出范围要拒绝 | `thumbnails` 的 `keys` 空的或超过 48 个回 `Error: bad_request: Provide 1-48 item keys from catalog` |
+| 游戏资料夹四种情况 | 不存在／没有 `abdata/`／没有 `mods/` 三种都回对应的 `targets_reason` 并印出路径；**「没设过」这一支在这个 build 量不到**——版控的 `Config/DefaultGame.ini` 永远给一个 `Root`，所以空字串走不到（这也正是「设了但不存在」那条讯息重要的原因） |
+| 改了游戏资料夹马上生效 | 换 `gameroot` 会清掉旧目录（`ApplyFolderSetting`），所以把路径改对之后同一个行程就读得到，不用重开 |

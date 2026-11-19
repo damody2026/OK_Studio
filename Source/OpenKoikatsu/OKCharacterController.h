@@ -236,6 +236,9 @@ public:
  FString CurrentAppearanceNote() const;
  FString AccessorySlotScope() const {return FString::Printf(TEXT("accessory%d_"),AccessorySlot);}
  void RefreshAccessorySlots();
+ /** Empty when the source game folder is usable; otherwise which of the four cases it is, for the status line
+  *  and for the picker pages' unsupported_reason: not set, set but absent, no abdata/, no mods/. */
+ FString GameRootProblem() const;
  UFUNCTION() void OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type);
  // The picker's 關閉 (the reader's pages show the picker as part of the page: it is not mirrored there).
  UPROPERTY() TObjectPtr<class UButton> AppearanceCloseButton;
