@@ -175,6 +175,14 @@ public:
  /// at all. An empty list then means "this build knows every section of this card", never "no card" or "not read":
  /// a list left over from the previous card is not this card's, and a producer without the field is missing support.
  FString EditorUnknownPluginSectionsCard;int32 EditorUnknownPluginSectionsOutfit=-1;bool bEditorUnknownPluginSectionsReported=false;
+ /// `unknown_plugin_sections_status`, in one place for everyone who shows it (reader_call state, the reader audit's
+ /// KKEx column): no_card, not_read, unsupported, read. Only on "read" is EditorUnknownPluginSections this card's.
+ const TCHAR* UnknownPluginSectionsStatus() const
+ {
+  if(!Entries.IsValidIndex(SelectedIndex))return TEXT("no_card");
+  if(EditorUnknownPluginSectionsCard!=Entries[SelectedIndex].Path||EditorUnknownPluginSectionsOutfit!=OutfitIndex)return TEXT("not_read");
+  return bEditorUnknownPluginSectionsReported?TEXT("read"):TEXT("unsupported");
+ }
  TMap<FString,TSharedPtr<FJsonValue>> PendingProperties;
  bool bPropertyBusy=false;
  FString PropertySource;

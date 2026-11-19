@@ -671,6 +671,8 @@ void UOKReaderScreen::MirrorChildren(UPanelWidget* Source,UDreamWidget* Target,b
 	if(bHorizontal)FitButtonRow(Target);
 }
 
+static UWidget* OKRegistryControl(UOKCharacterController* G,const TSharedPtr<FJsonObject>& P);	// below, with the audit
+
 void UOKReaderScreen::BuildCategories()
 {
 	UOKCharacterController* G=Controller.Get();if(!G)return;
@@ -801,8 +803,9 @@ void UOKReaderScreen::BuildCategories()
 				return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
 			};
 			static const TSet<FString> CategoryFields={TEXT("name"),TEXT("tab"),TEXT("subs")};
-			static const TSet<FString> SubFields={TEXT("name"),TEXT("sources"),TEXT("pickers"),TEXT("bone_category"),TEXT("enter"),TEXT("signature"),TEXT("shown_only"),TEXT("builder"),TEXT("own_buttons"),TEXT("needs")};
+			static const TSet<FString> SubFields={TEXT("name"),TEXT("sources"),TEXT("pickers"),TEXT("bone_category"),TEXT("enter"),TEXT("signature"),TEXT("shown_only"),TEXT("builder"),TEXT("own_buttons"),TEXT("needs"),TEXT("items")};
 			TArray<FCategory> Built;TSet<FString> CategoryNames;
+			TMap<FString,TSharedPtr<FJsonObject>> Registry;	// OKCharacterMCPRegistry::Parameters by key, read when an item first needs it
 			for(int32 CI=0;CI<CategoryList->Num();++CI)
 			{
 				const TSharedPtr<FJsonObject>* CO=nullptr;FCategory Cat;
@@ -837,13 +840,39 @@ void UOKReaderScreen::BuildCategories()
 					auto Bad=[&](const FString& What){PagesErrors.Add(Where+TEXT("：")+What+TEXT("，這頁不建"));bBad=true;};
 					for(const auto& F:S->Values)if(const FString Field(F.Key);!SubFields.Contains(Field))Bad(TEXT("不認得的欄位 ")+Field);
 					TArray<TFunction<void()>> Enter;
+					// A page's rows are one ordered list, shown in the list's order: "items" (step 2), whose entries are a
+					// registry key ({"key": "shape.face.0"}) or any source ({"rows": "bust"}, {"widget": ...}), or the
+					// step-1 "sources". A page has one of the two; with both, nothing would say which comes first.
+					const bool bItems=S->HasField(TEXT("items"));const TCHAR* ListName=bItems?TEXT("items"):TEXT("sources");
+					if(bItems&&S->HasField(TEXT("sources")))Bad(TEXT("sources 與 items 只能有一個（列的順序寫在 items 裡）"));
 					const TArray<TSharedPtr<FJsonValue>>* Sources=nullptr;
-					if(S->HasField(TEXT("sources"))&&!S->TryGetArrayField(TEXT("sources"),Sources))Bad(TEXT("sources 要是陣列"));
+					if(S->HasField(ListName)&&!S->TryGetArrayField(ListName,Sources))Bad(FString(ListName)+TEXT(" 要是陣列"));
 					for(int32 K=0;Sources&&K<Sources->Num();++K)
 					{
 						const TSharedPtr<FJsonObject>* Spec=nullptr;FString Value;double Number=0;
-						if(!(*Sources)[K]->TryGetObject(Spec)){Bad(FString::Printf(TEXT("sources[%d] 不是物件"),K));continue;}
-						if((*Spec)->TryGetStringField(TEXT("shape"),Value))
+						if(!(*Sources)[K]->TryGetObject(Spec)){Bad(FString::Printf(TEXT("%s[%d] 不是物件"),ListName,K));continue;}
+						if(bItems&&(*Spec)->HasField(TEXT("key")))
+						{
+							// For now a number item shows the row of the control that carries that key (its mirror, as the
+							// page had), so the page and its audit stay the same while the file names keys instead of
+							// widgets; the screen's own control for a key (range and decimals from the registry's metadata)
+							// replaces the mirror later without the file changing. A key the registry lacks is said in red
+							// and left out; the rest of the page is built.
+							FString Key,Kind;
+							if(!(*Spec)->TryGetStringField(TEXT("key"),Key)||Key.IsEmpty()){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] 的 key 要是字串，這一項不建"),K));continue;}
+							if(!(*Spec)->TryGetStringField(TEXT("kind"),Kind))Kind=TEXT("number");
+							if(Kind!=TEXT("number")){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] %s 的 kind %s 還沒支援（目前只有 number），這一項不建"),K,*Key,*Kind));continue;}
+							if(Registry.IsEmpty())for(const TSharedPtr<FJsonValue>& Row:OKCharacterMCPRegistry::Parameters(G))
+								if(const TSharedPtr<FJsonObject> P=Row.IsValid()?Row->AsObject():nullptr){FString RowKey;if(P->TryGetStringField(TEXT("key"),RowKey))Registry.Add(RowKey,P);}
+							const TSharedPtr<FJsonObject>* P=Registry.Find(Key);
+							if(!P){PagesErrors.Add(Where+TEXT("：登錄裡沒有鍵 ")+Key+TEXT("（資料端缺），這一項不建"));continue;}
+							UWidget* W=OKRegistryControl(G,*P);
+							if(!W){PagesErrors.Add(Where+TEXT("：沒有控制項顯示鍵 ")+Key+TEXT("，這一項不建"));continue;}
+							// A slider's row (caption, slider, number, reset) is what the page mirrored.
+							if(W->IsA<UOKShapeSlider>()&&W->GetParent())W=W->GetParent();
+							Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("shape"),Value))
 						{
 							if(Value!=TEXT("face")&&Value!=TEXT("body")){Bad(TEXT("shape 要是 face 或 body"));continue;}
 							if(!(*Spec)->TryGetNumberField(TEXT("group"),Number)||Number<0){Bad(TEXT("shape 要有 group（0 起）"));continue;}
@@ -887,7 +916,7 @@ void UOKReaderScreen::BuildCategories()
 							// Drawers come with the controller's mode: a missing one leaves its page out, as the hand-written pages do.
 							if(Found){if(Found->Body)Out.Sources.Add(Found->Body.Get());Enter.Add(OpenDrawer(Found));}
 						}
-						else Bad(FString::Printf(TEXT("sources[%d] 要有 shape／rows／widget／named／drawer 其中一個"),K));
+						else Bad(FString::Printf(TEXT("%s[%d] 要有 %sshape／rows／widget／named／drawer 其中一個"),ListName,K,bItems?TEXT("key／"):TEXT("")));
 					}
 					FString Value;
 					if(S->TryGetStringField(TEXT("bone_category"),Value))Enter.Add(BoneCategory(Value));
@@ -1640,10 +1669,39 @@ void UOKReaderScreen::AuditControls(FOutputDevice& Out)
 		if(OnPage(W))++KeysOnPage;
 		else UiGap.Add(FString::Printf(TEXT("%s\t%s\t%s"),*Key,*Label.Replace(TEXT("\n"),TEXT(" ")),W?TEXT("its control is on no page"):TEXT("no control")));
 	}
-	for(const FString& K:PageKeys)if(!RegistryKeys.Contains(K))DataGap.Add(K);
+	// The four columns, as Tools/reader_pages.lua audit_cells writes them (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md,
+	// 稽核四欄). Without a card the card's own properties are not in the registry: a page key only a card has is not
+	// judged then, and every column says there is no card, so a run without a card is never read as one with.
+	// "A card" is what unknown_plugin_sections_status calls one: its value, never re-derived here (bad2861df).
+	const FString KkexStatus=G->UnknownPluginSectionsStatus();
+	const bool bCard=KkexStatus!=TEXT("no_card");
+	int32 Unjudged=0;
+	auto CardOnly=[](const FString& K){for(const TCHAR* Prefix:{TEXT("shape."),TEXT("bone."),TEXT("physics."),TEXT("pregnancy."),TEXT("style.")})if(K.StartsWith(Prefix))return false;return true;};
+	for(const FString& K:PageKeys)if(!RegistryKeys.Contains(K)){if(!bCard&&CardOnly(K))++Unjudged;else DataGap.Add(K);}
+	FString UiCell=FString::FromInt(UiGap.Num()),DataCell=FString::FromInt(DataGap.Num()),RangeCell=FString::FromInt(RangeGap.Num()),KkexCell;
+	if(!bCard)
+	{
+		UiCell+=TEXT("（沒有卡：卡的屬性鍵未計）");RangeCell+=TEXT("（沒有卡：卡的屬性鍵未計）");
+		DataCell+=FString::Printf(TEXT("（沒有卡：只有卡才有的鍵 %d 個未判）"),Unjudged);KkexCell=TEXT("沒有卡");
+	}
+	// The four values of unknown_plugin_sections_status, the same call reader_call state makes, so the two never
+	// disagree; "讀取中" only says what not_read is while the read is running.
+	else if(KkexStatus==TEXT("not_read"))KkexCell=G->bPropertyBusy?TEXT("讀取中"):TEXT("未讀（這張卡的屬性還沒讀）");
+	else if(KkexStatus==TEXT("unsupported"))KkexCell=TEXT("缺支援（這個 build 的產生端沒有 unknown_plugin_sections）");
+	else
+	{
+		// Left out of PLUGIN_SECTIONS on purpose by the producer, so they come back on every card and are not a gap:
+		// ABMX is edited through bone.*, the sideloader resolve list is rewritten whole, the last is our provenance.
+		static const TSet<FString> LeftOut={TEXT("kkabmplugin.abmdata"),TEXT("kkabmx.core"),TEXT("com.bepis.sideloader.universalautoresolver"),TEXT("openkoikatsu.appearancesource")};
+		TArray<FString> Unknown,KeptOut;
+		for(const FString& Section:G->EditorUnknownPluginSections)(LeftOut.Contains(Section.ToLower())?KeptOut:Unknown).Add(Section);
+		KkexCell=FString::FromInt(Unknown.Num());
+		if(!Unknown.IsEmpty())KkexCell+=TEXT("：")+FString::Join(Unknown,TEXT("、"));
+		if(!KeptOut.IsEmpty())KkexCell+=FString::Printf(TEXT("；刻意不收 %d（%s）"),KeptOut.Num(),*FString::Join(KeptOut,TEXT("、")));
+	}
 	Lines.Add(FString::Printf(TEXT("audit: %d pages; old screen operable controls %d: mirrored %d, drawn by the new screen itself %d, missing %d; short names shown twice on a page: %d"),Pages,Total,Covered,Replaced,Missing.Num(),Ambiguous.Num()));
-	Lines.Add(FString::Printf(TEXT("registry: %d keys, on a page %d, on no page (UI 缺) %d; keys the definition names %d, not in the registry (資料端缺) %d; numbers without a range (範圍缺, range_missing) %d; pages: %s, %d problems"),
-		Keys,KeysOnPage,UiGap.Num(),PageKeys.Num(),DataGap.Num(),RangeGap.Num(),*PagesSource,PagesErrors.Num()));
+	Lines.Add(FString::Printf(TEXT("registry: %d keys, on a page %d, on no page (UI 缺) %s; keys the definition names %d, not in the registry (資料端缺) %s; numbers without a range (範圍缺, range_missing) %s; card sections this build does not know (KKEx 不認得) %s; pages: %s, %d problems"),
+		Keys,KeysOnPage,*UiCell,PageKeys.Num(),*DataCell,*RangeCell,*KkexCell,*PagesSource,PagesErrors.Num()));
 	Lines.Add(TEXT("done another way by the new screen:"));
 	for(const FString& R:ReplacedBy)Lines.Add(TEXT("  ")+R);
 	Lines.Add(TEXT("missing (class, name, label, visibility, nearest named parent):"));
