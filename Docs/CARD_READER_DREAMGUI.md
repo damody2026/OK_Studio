@@ -1522,3 +1522,65 @@ DreamGUI 的保護期是 8 帧（`DrawTextureHolds`）與 3 帧（`FDreamUIDefer
 的 `Reference()` 取 `InTexture->TextureReference.TextureReferenceRHI`），
 也就是**貼圖參照物件**而不是貼圖本身。參照物件的生命週期和它指向的那張貼圖是兩回事，
 這正是「資源本身沒事、取樣卻 page fault」要查的下一個接縫。
+
+### 定案：存量那條軸死了，釋放事件那條軸立起來了（2026-11-19 13:23–13:35）
+
+三格都是同一份 12:34 建置、同一批卡同一順序、clear 配方、獨占機器，**三格全部跑完 30 張且 `faults=0`**。
+釋放事件由 per-card 的 `ListTextures` 名字相減算出。
+
+| 格 | 跑了幾張 | 大批釋放次數 | 次／卡 | 累計釋放 | **存量峰值** | 結果 |
+|---|---:|---:|---:|---:|---:|---|
+| `gc=10` clear | 15 | 7 | **0.47** | 880 | 286 | **第 15 張當** |
+| 預設 61.1 clear（基線） | 23 | 3 | 0.13 | 1486 | 752 | **第 23 張當** |
+| **`gc=300` clear** | **30** | **0** | **0.00** | **0** | **1690（85 個 actor）** | **全過** |
+| `OK_NO_CLOTHING_WARM=1` clear | 30 | 3 | 0.10 | 1300 | 694 | 全過 |
+| `-gpucrashdebugging` ＋ `r.D3D12.DRED=1` clear | 30 | 3 | 0.10 | 1424 | 752 | 全過 |
+
+**一、存量那條軸**可以收掉了，不是「不是唯一」而是**直接被推翻**：`gc=300` 那格活著的角色 actor 到
+**85 個、transient 貼圖 1690 張**——遠高於當掉那趟的 912 張、30 個 actor——**完全沒當**。
+所以「活著的件數多就會當」是錯的，而且錯得很明確。
+
+**二、釋放事件那條軸立起來了**，同一個變數三個刻度、同配方同建置，單調：
+
+```
+0.47 次/卡（gc=10）    → 第 15 張當（noclear 那側第 7 張）
+0.13 次/卡（預設 61.1）→ 第 23 張當
+0.00 次/卡（gc=300）   → 30 張全過，而且是史上最高的存量
+```
+
+**`gc=300` 那格一次大批釋放都沒發生**（300 秒比整格的時長還長），而它正是唯一完全沒事的高水位格。
+**沒有釋放就沒有當機**，不管存量多高。
+
+**三、但釋放不是充分條件。** `OK_NO_CLOTHING_WARM` 與 DRED 兩格各發生 3 次釋放、放掉 1300～1424 張，
+照樣跑完 30 張。它們的次／卡（0.10）和死在第 23 張的基線（0.13）其實差不多——
+**所以在每卡 0.1 次這個量級，過或不過是機率問題，23 對 30 落在趟間差異裡**。
+能拉開差距的是 `gc=10`（0.47）對 `gc=300`（0）這兩端。
+結論要寫成：**每一次大批釋放是一次擲骰，釋放越頻繁就擲越多次**；
+至於單次命中的機率由「那一刻有什麼 draw 在取樣」決定——那正是面板 on／off 那兩格指向的方向。
+
+**四、`OK_NO_CLOTHING_WARM` 這格要講清楚它測不到想測的東西。** 它確實把峰值壓到 694／8 個 actor，
+但它**同時**把累計釋放量從 1486 降到 1300——**少生就少放**，兩條軸綁在一起，
+所以「它全過」不能單獨歸給哪一條。能分開的是 `gc=300`。
+
+**五、DRED 那格沒拿到名字，因為它沒當。** 那份 page-fault 報告只有真的當掉才會產生。
+所以拿名字要**配最容易當的配方**，不是配基線：下一格是
+**`gc=10` ＋ noclear（今天最早當的組合，第 7 張）＋ `-gpucrashdebugging` ＋ `DreamGUI.LogHeldTextures=1`**。
+`-gpucrashdebugging` 一個開關就把 DRED 與 `bTrackAllAllocation` 都打開
+（`RHI.cpp:2092`：命令行開關強制全開；`D3D12Adapter.cpp:1532`：`UseGPUCrashDebugging()` 設
+`bTrackAllAllocation`），所以 `Logging all resource enabled` 應該會是 `Yes`。
+
+#### 同時排除掉的三條：描述子環重用、參照被改指、資源逐出
+
+- **描述子環（online view heap）重用：排除。** 引擎自己在 `CanReserveSlots` 裡把 wrap around 關掉了
+  （`D3D12DescriptorCache.cpp`：`// TEMP: Disable wrap around by not allowing it to reserve slots if the heap is full.`，
+  下面還留著 `// TEMP: Uncomment this code once the heap wrap around is fixed.`），
+  而真的發生 rollover 時 `FD3D12LocalOnlineHeap::RollOver()` 會印一行
+  `OnlineHeap RollOver Detected`。**今天四格與 11-18 那份 dump 全部 grep 不到這行（0 次）**，所以沒發生。
+- **「`FTextureReferenceRHIRef` 被改指，導致已錄好的 draw 讀到新目標」：排除，理由是結構性的。**
+  `FRHITextureReference::ReferencedTexture` 是 **`TRefCountPtr<FRHITexture>`**（`RHITextureReference.h`），
+  改指只是放掉舊的一份 refcount，舊貼圖的銷毀照樣走被圍欄保護的延遲刪除；
+  而 D3D12 的 SRV **描述子是在錄命令時就被複製進 online heap 的槽位**（`FD3D12OnlineHeap::ReserveSlots`），
+  **之後改指動不到已經複製好的描述子**。所以「改指」既不會變成懸空指標，也不會回頭改寫已錄好的 draw。
+  這條和前一條（記憶體被提前釋放）作廢的理由不同，但結論一樣：**不是它。**
+- **資源被逐出、VA 沒映射：排除。** `D3D12.ResidencyManagement` 預設是開的（`D3D12Adapter.cpp`），
+  但今天的 log 裡 `Evict`／`Residency`／`MakeResident` 一次都沒出現（0 次）。
