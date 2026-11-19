@@ -6067,3 +6067,8 @@ OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMa
 - 同一个错也在 `Tools/shot_batch_header.lua`：未提交指纹拿 `git status --porcelain` 的文字算杂凑，这种幻影 M 一出现或消失，两批照片就会被判 DIFFERENT，其实什么都没变。
 - 修正（rules v3）：只把内容 id（`git hash-object`，走仓库自己的 filter）和 HEAD 不同的路径算进指纹。自测：同内容 LF→CRLF 回 SAME，改一个字元回 DIFFERENT，entries.rs 不再列出。v2 的表头和 v3 比会回 RULES（exit 3），要重写。
 - 教训：`git status` 回 M 不是「有改动」的证据，blob 杂凑才是。
+
+## 2026-11-19 阳性对照那张其实没载入，画面是上一张卡的残影（F 组 f-yvonne）
+- 现象：1b 批次（`Saved/Reports/reader-shots-2026-11-19/1b/`）的 S3 要用旧卡 `Saved/CardBackups/20261114-copybodymat/C041.png` 重现大腿破图，结果画面和 S2 一样。
+- 原因：旧卡缺 2～3 项资源（`[Makise]Yvonne` override、`bra_projects_g04n2`、一个 me-shader），读卡器日志是 `OK load3d result ok=0`。载卡失败时读卡器保留上一张的画面，所以 S3 拍到的是新卡加一条红字横幅，根本不是旧卡。
+- 教训：每张照片先在读卡器日志确认对应的 `load3d result ok=1` 才算数；画面看起来正常，不代表载入成功。阳性对照没重现时，先查它是不是真的被画出来。
