@@ -20,8 +20,9 @@
 | 4 | **Q2 加大预算会不会根本开不完**（**两趟拆成两段**，各上限 10 分） | 2×~15 分 | 第二砍 |
 | 5 | **Q3 原作卡那 14 秒在哪** | ~20 分 | **第一砍**（探索性；前面超时就砍掉） |
 
-**顺序的理由**：1b 提到 Q2 前面 —— 拍照是 f-yvonne 那条主线的阻塞点，Q2 是我自己的探索题，
-而且 Q2 最可能吃满时间。**若 f-yvonne 还没就绪**，就先跑 Q2 的第一趟，拍照插在两趟之间。
+**顺序已确认（协调拍板）**：1b 排在 Q2 前面不是「若她就绪才提前」，是定案 —— 她主线两项在
+`26ffc8e81` 就已修好、**只缺有表头的重拍，1b 是她唯一的阻塞点**，优先级高于我自己的探索题；
+Q2 又最可能吃满时间。若到了 1b 她真的还没就绪，才先跑 Q2 第一趟、把拍照插在两趟之间。
 读卡器自己那份 [A～H](READER_SHOT_PLAN_20261119.md) 另排，不挤进这个窗口。
 
 每一趟都：冷开（全新行程、`OK_NOCACHE=1`、该行程的第一个场景）、`RAYON_NUM_THREADS=8`、
@@ -33,6 +34,29 @@ F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua wr
 
 **`--purpose load`，不是 `shots`**：载入耗时吃语音档，音档要算进指纹。比之前先 `check`，
 **只有 exit 0 可比**（1 DIFFERENT／2 MISSING／3 OLD 或 RULES），**别接管线**（`$?` 会读到管线最后那个指令的码）。
+
+## 开窗口前的前置：表头工具要是修好的版本
+
+**`shot_batch_header` 的「未提交杂凑」不能拿 `git diff` 的文字去算**：同一个档在不同 git filter
+状态下会给出不同杂凑，`check` 于是回 DIFFERENT 而其实什么都没变 —— 又一个「会因为与量测无关的原因
+而变动的指纹」，这次噪声来自行尾（CRLF↔LF）。**f-yvonne 正在改这支工具，我用她改好的版本，不自己再写一套。**
+
+开窗口前确认两件事，没确认就不写表头：
+
+- 工具已改成**比 blob 杂凑**（`git hash-object <档>` 对 `git ls-files -s <档>` 的索引杂凑），
+  或直接用走仓库 filter 的 `git diff --exit-code` 结束码。
+- 它的自测含这一条：**只换行尾（内容不变）必须仍回 SAME，真改一个字元才回 DIFFERENT。**
+
+顺带把本机这个实例记一下，因为它正好出现在我这棵树：`Tools/ok-extract/src/entries.rs` 的
+`git status` 回 `M`，看起来像有别人的未提交改动混进验证。实查：
+
+```
+git diff --exit-code -- Tools/ok-extract/src/entries.rs   → 0
+git hash-object        → 5a880719bda34dafbd391f435efc0b031c3ca306
+git ls-files -s 的索引  → 5a880719bda34dafbd391f435efc0b031c3ca306
+```
+
+**完全相同，一个字节都没差。** `git status` 回 `M` 不是「内容变了」的证据，blob 杂凑才是。
 
 ## 0. 量具自测（排最前面，不是最后）
 

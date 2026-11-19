@@ -5974,6 +5974,26 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 用 `--is-ancestor` 重问**一笔都没有**，第一份移植预演整份作废。
 （AGENTS.md 的三树那段本来就写了两个都查；只查了弱的那个。）
 
+### `git status` 回 `M` 不是「内容变了」的证据，blob 杂凑才是（2026-11-19）
+
+同一族的又一个：`Tools/ok-extract/src/entries.rs` 在 F 树 `git status` 回 `M`，
+于是有人以为工作树里有别人的未提交改动混进了验证。实查：
+
+```
+git diff --exit-code -- Tools/ok-extract/src/entries.rs   → 0（走仓库自己的 filter）
+git hash-object Tools/ok-extract/src/entries.rs           → 5a880719bda34dafbd391f435efc0b031c3ca306
+git ls-files -s 同一个档的索引杂凑                          → 5a880719bda34dafbd391f435efc0b031c3ca306
+```
+
+**完全相同，一个字节都没差。** 会看到 `M`（以及「898 行增、898 行删」整个档每行都变）
+是因为绕过仓库自己的 git filter 去比，噪声来自行尾 CRLF↔LF。
+
+**影响到量测**：`shot_batch_header` 的「未提交杂凑」若拿 `git diff` 的文字去算，
+同一个档在不同 filter 状态下会给出不同杂凑，`check` 回 DIFFERENT 而其实什么都没变——
+**又一个会因为与量测无关的原因而变动的指纹**，和「用 `--date=iso` 的时戳当身分」同类。
+改法：比 blob 杂凑（`git hash-object` 对 `git ls-files -s`），或直接用 `git diff --exit-code` 的结束码。
+工具自测要加一条：**只换行尾（内容不变）必须仍回 SAME，真改一个字元才回 DIFFERENT。**
+
 ### 顺带一条文件与实际不符：E 的工作分支是 `master`，不是 `duo2`
 
 AGENTS.md 的「雙線開發」写 E 树在 `duo2`。**实际上 E 的 `duo2` 停在 `0fc3c8989`（2026-11-07）**，
