@@ -5745,6 +5745,13 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
 
+## 2026-11-20：DreamGUI.Driver 的 30 笔失败不是去裸指标造成的，是专案的 CommonUI viewport client（f-sceneload）
+
+- **变更**：DreamGUI 测试模组 39 个成员与 `FDreamUIHitResultContainer` 三个成员从裸指标改成 `TWeakObjectPtr`（`cbbc20a20`、`09cc8bc01`），约 2,290 处呼叫端补 `.Get()`。
+- **症狀**：`OpenKoikatsuEditor` 建置并连结成功後，`Automation RunTests DreamGUI.Driver+DreamGUI.Lifecycle`（NullRHI）**129 通过、30 失败**。log：`F:\OpenKoikatsu\Saved\Logs\dreamgui-weak-tests.log`。
+- **原因状态**：**已证实与指标改动无关**。那 30 笔的错误行只有一种，而且是引擎发的：`LogUIActionRouter: Error: Using CommonUI without a CommonGameViewportClient derived game viewport client`；没有任何一笔有断言失败或空指标解参的讯息。本专案 `Config/DefaultEngine.ini:75` 把`GameViewportClientClassName` 设成 `/Script/DreamGUIInput.DreamGameViewportClient`，它不是从`UCommonGameViewportClient` 衍生的，所以每个开游戏 viewport 的测试都会吃到这条 error，而 automation 框架把 error 级的 log 当成失败。同一条讯息在 11-10／11-17 的`InteractionPair-*.log`、`OpenKoikatsu-backup-*.log` 里就有，`AGENTS.md` 的「验证状态」也早已列为已知 log error。
+- **处置**：**没有回退任何指标**（照规则：改动之後开始失败的测试要另外修，不是把指标改回去）。这一笔是把基准写下来：在修掉 viewport client 之前，`DreamGUI.Driver.GameHost`／`Keys`／`Players` 与`Lifecycle.Smoke` 那 30 笔在这个专案里本来就红。
+- **再试前检查**：要让这 30 笔变绿，得让专案的 viewport client 从 `UCommonGameViewportClient` 衍生（或在测试里换掉 client），那是独立的一件事；在那之前不要把这 30 笔当成某次改动的退步。
 ## 2026-11-19：仲裁者只看「现在持有」不看「正在排」，独占量测还在排队时照样放建置（c-street-city）
 
 `Tools/unreal_slot.lua` 的 `may_build()` 只扫各 slot 的 `owner.txt` 有没有 `[need N]`（N ≥ 60），没有扫佇列。**仲裁者只看「现在持有」而不看「正在排」，等于把『即将开始的独占量测』当成不存在。** 实际后果：f-sceneload 15:08 拿到 `go` 开始建置，那时 e-cardload 的 `[need 60]` 还在佇列里；e-cardload 15:11:31 拿到 slot1，量测一开始就被还在跑的建置压过。
