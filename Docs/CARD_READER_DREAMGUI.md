@@ -3255,3 +3255,32 @@ B1 ＝ `NoBackdrop=1`（拷貝根本不做）＋ `r.RDG.TransientAllocator=0`。
 **順手看到一個可能有用的差異**：`trans_pass2` 的 late shader associations 只有 **11 ms**，
 另外四趟都是 1008–1009 ms。它也正好是最快當掉的那一趟（24.2 秒）。n=2 還不能說什麼，
 但建置後的尺 1 六趟值得把這個數字一起記下來：如果秒數和那 1 秒的著色器工作有關，六趟裡就會看得出來。
+
+### `late shader associations` 那個欄位：**是上限，但它在故障之後才產生**，所以不能當趟的身分
+
+讀出來的兩件事：
+
+**一、是上限，不是耗時**（協調者猜對了這一半）：`CreateShaderAssociations`
+（`D3D12NvidiaExtensions.cpp:62-229`）開頭就是
+`PipelineStateCache::GetPipelineStates(PipelineResources, true, FTimeout(FTimespan::FromSeconds(1)))`，
+註解寫明「allow one second for consolidation to finish」。所以 **1008／1009 ms 就是那個寫死的一秒等滿**，
+而 `trans_pass2` 的 **11 ms** 意思是「PSO 合併早就做完了，不用等」。這個欄位實際上是**二元訊號**（等滿／沒等），不是時間。
+（順帶：`r.GPUCrashDebugging.Aftermath.LateShaderAssociations.TimeLimit` 預設是 **7.5 秒**，不是那個一秒，兩者別混。）
+
+**二、但它是故障之後才跑的，所以不能當「冷趟／暖趟」的身分**：
+`GLateShaderAssociateFunc` 的唯一呼叫點在 Aftermath 的 **GPU crash dump 解碼流程裡**
+（`RHICoreNvidiaAftermath.cpp:848-857`，上面那行註解是 `// Allow association after a fault`，
+緊接著就是把 `Active Shaders:` 接到 `CrashResult.OutputLog`）。
+我自己那份 log 裡 `Active Shaders:` 只出現一次，就在那個位置。
+
+所以這個欄位描述的是**當掉當下與當掉之後**的狀態，不是開跑前的著色器快取冷暖。
+**六趟不可以按它分成冷／暖兩組**——那會把一個下游產物當成上游條件。
+（故障報告裡那句 `"Shader name": "fragment_02"` 也是從這條路來的，所以 Aftermath 在這些趟裡是開著的。）
+
+**它仍然有一個弱訊號，但方向要講對**：四趟等滿一秒＝**當掉當下 PSO 合併還在進行**；
+`trans_pass2` 的 11 ms＝當掉當下合併已經結束。
+不過有一個同樣合理的解釋必須並列：**正在處理 GPU 當機時管線本來就卡住了，合併當然推不動**，
+那樣「等滿一秒」就只是「當機中」的同義詞，和成因無關。
+目前沒有東西能分開這兩種讀法，所以**不改計畫**；只記一條：
+這一點讓先前因為「那個窗口讀成關上的」而放掉的 `r.pso.EnableAsyncCacheConsolidation` 那格值得重開，
+優先序放在尺 1、尺 2 之後。
