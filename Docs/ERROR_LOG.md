@@ -5826,3 +5826,20 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   **一定要再跑一次 `Tools/ok_cards.lua verify <本机 OK 卡清单>`**。我这次只量了原作卡的时间与输出，
   没有重跑 OK 卡的 strict 扫描，所以这个 regression 是使用者在读卡器里先看到的。
   判准很简单：**严格开卡问的问题必须和转卡当时问的一模一样**，多问一个、键不同都算改了契约。
+
+## 2026-11-19：F 树开不了旧 OK 卡，差点改成「把 83 张卡都封一次」（f-yvonne、协调 session）
+
+- **症状**：F 树 `ok_cards.lua verify` 的结果是 CrowdAPNG 83/101、StreetHeroines 17/19 开不了，缺口都是 `okLt guids <卡片用到的第三方 GUID…>`。E 树同一个资料夹全部开得了，所以先被判成「F 的基础库不全」，决定用 E 的基础库把卡 `seal` 一遍。
+- **真正的原因**：`60c0aaea3` 让开卡问的 GUID 问题多了一个 uncensor 的 GUID（例如 `SAC.clit`）。这是改了契约：旧 OK 卡没录过这个问题的答案。E 树一开始在 `4a17979ad` 就修好了，F 树缺的是这一笔。
+- **怎么分辨出来**：(1) 用同一份基础库只换 exe：E 那支 00:40 的会过，F 树现在的不会。(2) 用 `--oklib answers` 看：卡里录的 `guids` 问题是 28 个 GUID，F 的程式问的是同样 28 个加 `SAC.clit`，新问题不是旧问题的子集。(3) `seal` 只加了答案，`model records=0`。真的缺资料的话，seal 会把模型加进去。
+- **两条判准**：
+  1. seal 只加答案、不加模型时，缺的不是资料，是问题变了。修程式，不要改卡。
+  2. 验证前先确认用的那个产物 mtime 晚于要验的 commit。E 树的 `ok-extract.exe` 是 00:40，早于 00:55 的修法；Unreal 连结的 `ok_extract.lib` 是 11:16，含修法。所以在同一棵树用 CLI 验和用读卡器验，验到的是不同版本的程式。「E 的 exe 过、F 的不过」看起来像基础库的差异，其实是程式版本的差异。
+- **处理**：cherry-pick `4a17979ad` 到 F（`d20a6c4b5`）、重编、重跑 verify。封好的卡（`Saved/Reports/editor-parity-clothes/sealed`、`sealed_crowd`）只留作证据，不放回原位，原卡没动。
+
+## 2026-11-19：新加的模型查询 `clothes_option_groups` 让 52 张旧 OK 卡在严格开卡报缺口（f-yvonne）
+
+- **症状**：补录基础库（127 个衣服来源）并 cherry-pick `4a17979ad` 之后，CrowdAPNG 仍有 52/101、StreetHeroines 3/19 开不了。缺口全是 `model <id> clothes_option_groups <prefab>`。
+- **原因**：第三方 mod 的模型只录在卡内（`okLc`），转卡时还没有这个查询。`memo_bytes_optional` 本来就设计成「没有记录就回预设值」。但它查记录走的是 `get_raw`，严格开卡模式下 `get_raw` 找不到会先记一笔 gap。所以「可选」只在非严格模式下成立。基础库补录只能补基础库自己的模型，补不到卡内的模型。
+- **修法**：`oklib.rs` 加 `get_raw_optional`，查不到时不记 gap，`memo_bytes_optional` 改用它。另外三个可选查询（`copy_body_material_targets`、`foreground_render_queues`、`clothes_blend_shape_defs`）同样受益。`model_flags` 把全为预设值的分组当成「没找到模型」，不改那些列。否则旧卡的 mod 衣服会被标成全部颜色层不可用。
+- **判准**：新加 memo 查询时，除了基础库补录，还要想到「卡内模型永远补不到」。可选查询要在严格开卡下也不算缺口；必要查询就得在转卡契约里写明，旧卡要重新封。

@@ -136,3 +136,8 @@
 - **鞋子页编哪一槽**：编的是室外鞋 `shoes_outer`（8）。原作的 `KoikatsuSunshine_Data/level3` 里有 8 个 `CvsClothes`，读出它们的 `typeClothes` 是 0–6 和 8，没有 7。`typeClothes` 是元件的第一个序列化栏位；场景档没有型别树，所以按元件标头之后的位移读取（`entries.rs` 的忽略测试 `clothes_page_kinds`）。KKS 编辑器没有室内鞋的页面。我们两槽都给，多出室内鞋。
 - **20 槽换款式时父骨怎么填**：原作「保留父骨」（`acsTakeOverParent`）预设是开的（`CustomBase.cs`）。换款时父骨照旧，只有新款在清单里标 `HideHair==1` 时才清空，改回用清单预设。读卡器实测：原作卡 KK_007604，槽 16 原本是腕饰、父骨 `a_n_wrist_L`，换成戒指（清单预设父骨 `a_n_ring_L`）后仍是 `a_n_wrist_L`。这和原作的预设行为一致。缺的部分：`HideHair==1` 时清空，以及「保留父骨／保留颜色」两个开关。
 - **男性胸罩页**：原作只有清单里有 `Sex` 不是 3 或 99 的胸罩时，男性才显示胸罩页（`CustomBase.IsMaleCoordinateBra`）。读卡器实测：原作男角卡 KK_224305 的 `clothes2` 选图照样给 1035 项，没有这个条件。归在第 3 批（条件显示）。
+
+## 7. 本机实测环境
+
+- F 树的游戏目录：版控里 `Config/DefaultGame.ini` 写的是 `Root=D:/KoikatuSunshine`，这台机器上没有这个目录；正确的原作目录是 `D:\XKoikatuSunshine`（注意有 **X**）。所以本机的 `Saved/Config/WindowsEditor/GameUserSettings.ini` 加了 `[OKGameRoot] Root=D:/XKoikatuSunshine`。这是本机设定，不进版控；版控那行要不要改，由使用者决定。没有这行时，读卡器开原作卡会读不到任何 bundle，画面是空的。
+- 判定鞋子页编哪一槽的方法（复查时照做）：`KoikatsuSunshine_Data/level*` 没有型别树，所以按 MonoBehaviour 标头的位移读：m_GameObject 12 bytes、m_Enabled 4 bytes、m_Script 12 bytes（fileID i32 ＋ pathID i64）、m_Name（长度 i32 ＋ 字串，补齐到 4 的倍数），之后的第一个 i32 就是 `CvsClothes.typeClothes`。把 MonoBehaviour 按 m_Script 分组，找每组 7–10 个、第一个整数都在 0..8 的组。level3 有一组 8 个元件，每个大小 1936 bytes（第 8 个是 1972），值是 0–6 和 8。程式在 `Tools/ok-extract/src/entries.rs` 的忽略测试 `clothes_page_kinds`，执行：`OK_GAME=D:/XKoikatuSunshine cargo test --lib clothes_page_kinds -- --ignored --nocapture`。
