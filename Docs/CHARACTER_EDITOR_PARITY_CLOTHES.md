@@ -256,7 +256,7 @@
 | 徽章 1／2 `customEmblem[2]` | `emblem{k}_{n}`（`emblemeId`／`emblemeId2`） | 有，可用性 `model.clothes.k.emblem` 已有 | 有（外观选择）；显示条件没接 | 硬：目录项目 | A |
 | **初期设定钮 `btnInitSetting`**：4 层底色改回模型预设色、花纹色改白、花纹归 0，位置／旋转归 0.5、宽高归 0 | 底色预设已有（`model.clothes.k.default_colors`） | 预设值有，但没有一次写回的操作 | 没有 | — | A：UI 照上面的值组一次 `set` 就行，不需要新 API |
 | **换上衣时袖型归 0**（`UpdateSelectClothes`：`sleevesType = 0`） | `clothes.parts.0.sleevesType` | **没有**：appearance `apply` 只写 `id` | — | — | **B**：`apply` 换上衣时同时写 `sleevesType=0`，照原作 |
-| 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **查到了，原作会写回卡**：`CvsClothes.UpdateSelectClothes`（top）先 `FuncUpdateClothesTop` → `ChaControl.ChangeClothesTop`，把执行期的 `nowCoordinate.clothes.subPartsId` 定下来；接着 `setClothes.subPartsId[i] = clothes.subPartsId[i]`，`setClothes` 就是 `chaFile.coordinate[coordinateType].clothes`。定法（`ChangeClothesTopParts`）：新上衣的 Kind 不是 1／2（或没有上衣物件）→ 三格都写 0；是的话，每格查 `(Kind==1?200:210)+格`，查不到就用 `topPartsDefaultId`（水手服 0,0,1；外套 0,1,1，`LoadCharaFbxData` 的 `defaultId`），写入查到的 `Id`。只读卡不换衣服时只改 `nowCoordinate`，不写卡。**我们还没照写**：`apply` 换上衣只写 `id`。要做得把目录传进 `coordinate`，并处理 mod 子部件的 resolver 列，留到能编译测试时写 | — | — | **B（写入，待实作）** |
+| 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **查到了，原作会写回卡**：`CvsClothes.UpdateSelectClothes`（top）先 `FuncUpdateClothesTop` → `ChaControl.ChangeClothesTop`，把执行期的 `nowCoordinate.clothes.subPartsId` 定下来；接着 `setClothes.subPartsId[i] = clothes.subPartsId[i]`，`setClothes` 就是 `chaFile.coordinate[coordinateType].clothes`。定法（`ChangeClothesTopParts`）：新上衣的 Kind 不是 1／2（或没有上衣物件）→ 三格都写 0；是的话，每格查 `(Kind==1?200:210)+格`，查不到就用 `topPartsDefaultId`（水手服 0,0,1；外套 0,1,1，`LoadCharaFbxData` 的 `defaultId`），写入查到的 `Id`。只读卡不换衣服时只改 `nowCoordinate`，不写卡。**已写（尚未编译）**：`appearance.rs` `apply_item` → `settle_top_sub_parts`，规则在纯函式 `top_sub_parts_plan`。目录从 `apply` 传进来；「查得到」与 `current_selection` 用同一套判断（slot／local slot 加 GUID）。每格的写入走 `patch`，mod 子部件的 resolve 列就跟着处理：改成原作 id 的格移除它的列，保留的格列不动。只在上衣真的换了时才做；重套同一件上衣，输出和只写 `id` 的 `patch` 逐位元组相同（测试 `reapplying_the_worn_top_writes_nothing_more`，需要游戏目录与本机卡）。规则测试：`top_sub_parts_follow_change_clothes_top_parts`。**待补**：「子部件查不到、用 `topPartsDefaultId`」这条，还没有用真实 mod 上衣的案例。手边没找到「mod 水手服／外套带着新种类清单里没有的子部件」的卡，不用捏造的资料凑；找到卡再补。另一个原作条件「上衣物件没载入（`objClothes[0]==null`）时也写 0」我们判断不到，不做 | — | — | **B（写入）** |
 | 衣服复制页 `CvsClothesCopy`（从另一套服装复制选定种类；子部件可分开勾） | — | 没有专用操作；读别的服装＋`set` 可以组出来 | 没有 | — | B（低优先：可由 UI 组合） |
 | 页签可点与否（`notBot`／`notBra`／`notShorts`、男性胸罩页） | `model.pages` | 有（第三批） | 没接 | 不限（只影响显示） | A |
 
@@ -301,12 +301,12 @@
 1. `apply` 换上衣时写 `sleevesType=0`；换配件时，新配件 `HideHair==1` 就把 `parentKey` 清成 `""`。都照原作的 `UpdateSelect…Kind`。**已写**（`appearance.rs` `coordinate`）：只在 id 真的换了时才改，重套同一个 id 不动，所以 `verify` 照样幂等。测试 `new_top_starts_at_sleeve_zero_and_hide_hair_accessory_drops_parent`，尚未编译。
 2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。**已写**：不能直接在 `AccessoryColorUse` 加栏位（查询结果以 bincode 存进 `.okmodel`，加了栏位，所有已录的模型都会读不回来），所以另开 `accessory_default_colors` 查询（`unity.rs`，与 `accessory_color_use` 用同一套子树对应；`_recorded` 没录到回 `None`），转换器两处都录。只放在 `model.accessories.n.default_colors`，**不**写进各列的 `default`：读卡永远不拿它补值，否则没设过色的卡读出来会像被改过。旧库要对 ao_ 来源再补录一次才有值；e-fork-2 这次窗口的补录，exe 若含这笔就一起录到。尚未编译。
 3. 父骨表补 `reverse` 对应（照原作 `ChaAccessoryDefine.GetReverseParent`），给「父骨左右反转」与「左右反转复制」用。**已写**：`Tools/ok-extract/data/editor_accessory_parents.json` 的 18 对共 36 列加了 `reverse`，没有对应的列不加（原作 `_ => ""`，反转钮不显示）。随 `properties` 的 `parents` 输出。测试 `accessory_parent_reverse_pairs_are_symmetric`，尚未编译。
-4. 换上衣时子部件回补：查到原作会写回卡（出处见 10.2 那一列），我们要跟着写。还没实作，原因见那一列。
+4. 换上衣时子部件回补：查到原作会写回卡，**已写**（出处、做法与待补的 mod 案例见 10.2 那一列），尚未编译。
 5. （低优先）服装间复制衣服、复制配件、槽位互换：UI 先用「读别套＋`set`」组合；要不要专用操作，等 UI 做过再说。
 6. 外挂父骨键：**已改**。55 键是已知清单不是限制，清单外的键照收、标 `out_of_range`（`mark_unknown_parents`，测试 `parent_outside_the_known_list_is_marked_not_refused`）。`""` 照收不标：它是「素材预设」，原作 `UpdateSelectAccessoryKind` 也会写 `""`，不能当成空值拒。
 
 ### 10.7 写入行为与显示旗标分开看
 
 - **只影响显示**（第三批，§9.6）：`model.pages`、`parent_editable`、`move2`、各列 `available`。它们不改卡，也不挡写入。
-- **写入行为**（这批，会改卡上的栏位）：`apply` 换上衣时 `sleevesType=0`；换上 `HideHair==1` 的配件时 `parentKey=""`；（待实作）换上衣时 `subPartsId` 写回定好的值。出处都是 `UpdateSelectClothes`／`UpdateSelectAccessoryKind`，只在 id 真的换了时才发生。
+- **写入行为**（这批，会改卡上的栏位）：`apply` 换上衣时 `sleevesType=0`；换上 `HideHair==1` 的配件时 `parentKey=""`；换上衣时 `subPartsId` 写回定好的值（`ChangeClothesTopParts` 的定法）。出处都是 `UpdateSelectClothes`／`UpdateSelectAccessoryKind`，只在 id 真的换了时才发生。
 - **重设用的值**（不改卡，等 UI 按钮用）：衣服 `default_colors`、配件 `default_colors`、父骨 `reverse`。

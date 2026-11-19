@@ -366,6 +366,45 @@ fn patch_extended_data(bytes:&[u8],property:&str,item:Option<&Item>,t:&Target,ou
  rmpv::encode::write_value_ref(&mut output,&merged).map_err(|e|e.to_string())?;Ok(output)
 }
 /// Rebuild the block directory, preserving every unrelated block and unknown key.
+/// `ChaFileDefine.topPartsDefaultId`: the sub-part a sailor (row 0) or jacket (row 1) top falls back to when the
+/// stored one is not in the list (`ChaControl.ChangeClothesTopParts` → `LoadCharaFbxData(..., defaultId)`).
+const TOP_PARTS_DEFAULT_ID:[[i32;3];2]=[[0,0,1],[0,1,1]];
+/// What the maker writes to `subPartsId` after a NEW top (`CvsClothes.UpdateSelectClothes`: `FuncUpdateClothesTop`
+/// settles `nowCoordinate.clothes.subPartsId` in `ChangeClothesTopParts`, then `setClothes.subPartsId[i] =
+/// clothes.subPartsId[i]` copies it into `chaFile.coordinate[...]`). A top whose Kind is not 1 (sailor) or 2 (jacket)
+/// gets 0 in all three; otherwise a slot whose stored part is in the new kind's list (`found`) keeps it and the others
+/// get `topPartsDefaultId`. `None` = leave the slot as it is. Reading a card without changing the top writes nothing:
+/// the maker only settles `nowCoordinate` then, never the file (see [`apply_item`]).
+fn top_sub_parts_plan(kind:i32,found:[bool;3])->[Option<i32>;3]{
+ match kind {
+  1|2=>{let row=(kind-1) as usize;std::array::from_fn(|k|if found[k]{None}else{Some(TOP_PARTS_DEFAULT_ID[row][k])})}
+  _=>[Some(0);3],
+ }
+}
+/// Write [`top_sub_parts_plan`] into `raw` (already wearing the new top) through [`patch`], so a mod sub-part's resolve
+/// row goes with it: a slot set to an original id loses its row, a kept slot keeps it.
+fn settle_top_sub_parts(mut raw:Vec<u8>,top:Option<&Item>,outfit:usize,items:&[Item])->Result<Vec<u8>,String>{
+ let kind:i32=top.and_then(|i|i.entry.info("Kind").trim().parse().ok()).unwrap_or(0);
+ let all=targets();let base=if kind==2{210}else{200};
+ let subs:Vec<&Target>=(0..3).map(|k|all.iter().find(|t|t.key==format!("sub{}",base+k))).collect::<Option<_>>().ok_or("找不到上衣子部件欄位")?;
+ let owned:Vec<Target>=subs.iter().map(|t|(*t).clone()).collect();
+ let selection=current_selection(&raw,outfit,&owned,items)?;
+ let found:[bool;3]=std::array::from_fn(|k|selection[&subs[k].key]["item"].is_string());
+ for (k,id) in top_sub_parts_plan(kind,found).into_iter().enumerate(){
+  let Some(id)=id else{continue};
+  let item=if id==0{None}else{Some(items.iter().find(|i|i.entry.category_no==subs[k].category&&i.entry.id==id&&i.guid.is_empty()).ok_or("找不到原作預設的上衣子部件")?)};
+  raw=patch(&raw,subs[k],item,outfit)?;
+ }
+ Ok(raw)
+}
+/// The appearance `apply` write: the picked item, plus what the maker changes with it. A new top (only when it really
+/// changed — the worn top again writes nothing beyond itself, so `verify` stays idempotent) settles `subPartsId`.
+fn apply_item(original:&[u8],t:&Target,item:Option<&Item>,outfit:usize,metadata:Option<Vec<u8>>,items:&[Item])->Result<Vec<u8>,String>{
+ let top=t.section=="clothes"&&t.path=="parts.0.id";
+ let changed=top&&{let sel=current_selection(original,outfit,std::slice::from_ref(t),items)?;sel[&t.key]["item"].as_str()!=item.map(|i|i.key.as_str())};
+ let raw=patch_with_metadata(original,t,item,outfit,metadata)?;
+ if changed {settle_top_sub_parts(raw,item,outfit,items)} else {Ok(raw)}
+}
 fn patch(original:&[u8],t:&Target,item:Option<&Item>,outfit:usize)->Result<Vec<u8>,String>{
  patch_with_metadata(original,t,item,outfit,None)
 }
@@ -550,7 +589,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
    let key=text(&r,"item")?;let item=if key.is_empty(){None}else{Some(items.iter().find(|i|i.key==key&&i.entry.category_no==t.category).ok_or("找不到此外觀素材")?)};
    if item.is_some_and(|i|!i.source.is_empty()&&i.guid.is_empty()){return Err("此模組沒有可辨識的識別碼，無法安全套用素材".into());}
    let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
-   let raw=patch_with_metadata(&original,&t,item,r["outfit"].as_u64().unwrap_or(0) as usize,metadata)?;
+   let raw=apply_item(&original,&t,item,r["outfit"].as_u64().unwrap_or(0) as usize,metadata,&items)?;
    export_edited(root,&r,&raw,output)?;
    Ok(json!({"valid":true,"output":output,"target":target,"item":key}))},
   _=>Err("不支援的圖片選擇請求".into())
@@ -871,6 +910,27 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some(""));
   assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,false).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
   assert_eq!(read(&coordinate(&outfit,&acc,88,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
+ }
+ #[test]fn top_sub_parts_follow_change_clothes_top_parts(){
+  // Not a sailor／jacket: all three slots 0, whatever was there.
+  assert_eq!(top_sub_parts_plan(0,[true,true,true]),[Some(0);3]);
+  // A sailor keeps the parts its list has and falls back to topPartsDefaultId row 0 (0,0,1) for the others.
+  assert_eq!(top_sub_parts_plan(1,[true,false,false]),[None,Some(0),Some(1)]);
+  // A jacket: row 1 (0,1,1).
+  assert_eq!(top_sub_parts_plan(2,[false,false,true]),[Some(0),Some(1),None]);
+  assert_eq!(top_sub_parts_plan(2,[true;3]),[None;3]);
+ }
+ #[test]fn reapplying_the_worn_top_writes_nothing_more(){
+  // apply must not quietly change a card: the worn top again leaves the card as `patch` alone would (no sub-part
+  // settling). Needs the game (catalog) and a local card; skipped without them.
+  let root=&crate::test_support::game_path("");let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
+  if !root.ok_exists()||!p.ok_exists(){return;}
+  let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));fs::create_dir_all(cache).unwrap();
+  let items=catalog(root,cache).unwrap();let original=crate::gamefs::read(p).unwrap();
+  let t=targets().into_iter().find(|t|t.key=="clothes0").unwrap();
+  let sel=current_selection(&original,0,std::slice::from_ref(&t),&items).unwrap();
+  let Some(key)=sel["clothes0"]["item"].as_str() else{return};let worn=items.iter().find(|i|i.key==key).unwrap();
+  assert_eq!(apply_item(&original,&t,Some(worn),0,None,&items).unwrap(),patch(&original,&t,Some(worn),0).unwrap());
  }
  #[test]fn parent_outside_the_known_list_is_marked_not_refused(){
   let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).unwrap();
