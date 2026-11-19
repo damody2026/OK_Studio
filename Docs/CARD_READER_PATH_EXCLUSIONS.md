@@ -692,3 +692,60 @@ if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
 （`DreamUIImageBrush.h:60-62`），而 `Brush` 本身也是 `UDreamImage` 上的 `UPROPERTY`
 （`DreamImage.h:28-29`）。**兩層都是 GC 看得見的強參照，所以 brush 持有期間那張縮圖不會被回收。**
 那個嫌疑**不成立**，不是「尚未排除」。
+
+
+## 第二十七條（2026-11-20）**配置與物件同生共死**（defrag 除外，而 defrag 已被資料排除），所以那九個槽那條路由「降級版」升級成真排除
+
+純讀碼 ＋ 既有 log，零趟次。
+
+### 一、唯一能「物件還活著就歸還配置」的路是 defrag，而十三份故障傾印裡一筆都沒有
+
+`FD3D12Texture` 把配置握在成員 `ResourceLocation` 裡；解構式（`D3D12Texture.cpp:1612`）只做統計，
+歸還是 `FD3D12ResourceLocation` 的解構做的。翻遍 `D3D12Texture.cpp`，**沒有**在物件存活期間清掉或讓出
+自己那塊配置的路（`AliasResources` 是 `FD3D12ResourceLocation::Alias`，共用並加計數，不是讓出；
+`TransferOwnership` 只出現在 buffer、uniform buffer、ray tracing 那幾處）。
+
+**唯一的例外是重整（defrag）**：`FD3D12ResourceLocation::OnAllocationMoved`（`D3D12Resources.cpp:1498`）
+在物件活著時把配置搬到新位置，舊的那塊在同一刻歸還，並以 `Owner->ResourceRenamed(Contexts)`（`:1602`）
+通知依賴者。那種歸還在傾印裡會標 **`DefragFree: 1`**。
+
+**十三份有故障的 log、每一份的「已釋放且包住故障位址」清單，`DefragFree: 1` 合計 0 筆。**
+所以我們這個故障裡的歸還**不是重整造成的** ⇒ 那塊配置是在 `FD3D12Texture` **解構時**歸還的
+⇒ 解構要求參照計數歸零 ⇒ **歸還的那一刻，沒有任何 `FRHITextureReference` 指著它。**
+
+### 二、更正我自己前一條的說法：清掉參照會指向**預設黑貼圖**，不是 nullptr
+
+我先前寫「`SwitchToNewTexture` 清掉時 `ReferencedTexture` 變成 nullptr」。**那是錯的**，
+因為 RHI 的入口在呼叫它之前就把 null 換掉了：
+
+```cpp
+// D3D12TextureReference.cpp:114
+FD3D12Texture* NewTexture = ResourceCast(InNewTexture ? InNewTexture : FRHITextureReference::GetDefaultTexture());
+```
+
+傳進 `SwitchToNewTexture` 的已經是**預設貼圖**，所以 `SetReferencedTexture` 收到的也是它。
+（`SwitchToNewTexture` 內部那個「null 時退回 `GetDefaultTexture()`」只影響 bindless 那一段，
+而本機 bindless 只開給 ray tracing。）
+
+### 三、合起來：九個槽那條路**不可能**產生這個故障
+
+- 參照還指著某張貼圖時，那張貼圖的配置**不會**被歸還（第一點）；
+- 參照被清掉之後，它指向**預設黑貼圖**，所以之後經它取樣讀到的是黑貼圖，**不是野位址**（第二點）；
+- 更新是以命令串流中的 lambda 執行的（`D3D12TextureReference.cpp:116-123`，`EThreadFence::Enabled`），
+  所以更新與同一條串流上先錄下的 draw 之間有順序；而物件的刪除又是延遲且有 fence 的
+  （我們量到的 22–24 幀）。
+
+**所以第二十六條那三個洞不再是「可能藏著東西」**：那條路**在機制上**產不出「配置已歸還、卻仍被取樣」。
+`bound_by_dreamgui=0`／`slot_hits_fault_texture=0` 由「有三個洞的降級版」**升級成真排除**。
+
+**連帶的一句（照此記錄，供夾時間順序用）**：既然清掉參照之後讀到的是黑貼圖，
+**故障是野位址這件事本身就說明：那個綁定不是「參照被清掉之後才取樣」那種**。
+
+### 四、所以下一個樁要換目標
+
+不是量那九個槽，而是量**同一筆 draw 裡還有誰交出裸 `FRHITexture*`**——
+`SHADER_PARAMETER_TEXTURE` 收的就是裸指標，而這一格說明走參照的那幾個都有擔保。
+目前清單上只剩 `SceneDepthTex` 與 `BackdropTex` 走非參照路徑（兩者都另有排除），
+**所以要先確認的是「繫結進去的值是否真的只有這十一個來源」**，
+也就是把樁下在參數結構被填好、送進 RDG pass 的那一刻，記下十一個欄位各自的指標值，
+而不是在槽位解析那一刻。
