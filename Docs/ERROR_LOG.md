@@ -5848,3 +5848,11 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **混淆變數**：我自己補的對照救了這個結論——**完全不進任何模式的純讀卡器，同一時段也當（第 12 次開卡）**。回去對時間才發現：我所有乾淨的趟（08:11、08:18、cell1、Studio 回程 cell2）都在 09:11 之前、機器上只有我一個 Unreal；三趟會當的都在 09:11:11 之後，而那是 e-fork-2 拿 slot2、它的 stage 遊戲開始在同一張 GPU 上跑的時刻。跟著當機走的是「同一張 GPU 上有沒有第二個 Unreal 遊戲」，不是 1 對 1。
 - **為什麼會發生**：前面幾小時機器一直只有我一個 Unreal，我就把「安靜」當成常數不再確認；而 slot 工具一查就知道（`unreal_slot.lua status` 會列出正在吃 CPU 的 Unreal 行程與誰持有 slot）。另一個原因是我為了省時間把三格排在不同時段跑，各格之間的機器狀態就不同了。
 - **再犯前檢查**：這類「會不會當／多久當一次」的實驗，**每一格開跑前後都要記下機器狀態**（`unreal_slot.lua status` 的 unreal processes 與 slot 持有者），而且各格要在**同一種機器狀態**下跑才能互相比較；要宣告「某個流程特別容易當」之前，先跑一格「不含那個流程」的對照。既有的 20 分鐘 slot 上限會讓實驗被迫跨時段，跨時段就要重新確認狀態，不能沿用上一格的假設。
+
+## 2026-11-19：OK 卡的資訊頁跑原作卡那條路，把卡內已錄的 mod 全列成「缺少同目錄 zipmod」（e-cardload-physics）
+
+- **現象**（使用者回報）：讀卡器「角色資訊」頁開 OK 卡 `alice.png`，底下列出一長串 `[缺少同目錄 zipmod] HeadMod`、`moderchan.Nose`…。但 **OK 卡是自足的**，只靠卡內 `okLc`／`okLt` ＋共用資源就該開得起來，不該回頭找 zipmod。
+- **查到的事實**：`alice.png` 確實是 OK 卡（有 `okLb`／`okId`／`okLt`／`okLc` 26 MB），`Tools/ok_cards.lua verify` 也說 `ok alice.png`、`0 failed`、`0 outfits lack items`。**開卡契約沒有被破壞，是資訊頁顯示錯**。
+- **原因**：`Source/OpenKoikatsu/OKGalleryWidget.cpp` 的 `if (bIndependentCards)` 把同目錄 zipmod 掃描掛在**錯的那一邊**——`bIndependentCards==true` 的意思是「這是 OK 卡」，而 `FKKLocalModIndex::BuildForCard` 掃的是卡片旁邊的 `*.zipmod` 與往上找遊戲根目錄。於是對 OK 卡把卡內已錄的 164 項 UAR 逐項拿去比對根本不存在的同目錄 zipmod，全部報缺；原作卡反而不顯示這段。同一頁的「种类 KKS」講的是**來源遊戲**（KK／KKS），不是「OK 卡／原作卡」，兩件事混在一行，使用者自然讀成「這張 OK 卡缺東西」。
+- **修**：那段改成只在 `!bIndependentCards`（原作卡）跑；OK 卡改印「OK 卡：N 項 mod 資源都錄在卡內（okLc／okLt），不需要同目錄 zipmod 或遊戲 mods/」。第一行也分開講清楚：`卡片 OK 卡（资源在卡内）／原作卡` ＋ `来源 KK／KKS`。實測：`alice.png` 不再出現任何「缺少同目錄 zipmod」；原作卡 `kks_Saria.png` 照舊列出缺的 zipmod。
+- **再犯前檢查**：看到 `if (bIndependentCards)` 這種「卡片種類」的條件，先確認**裡面那段程式是為哪一種卡寫的**；掃同目錄 zipmod／遊戲 `mods/` 的程式一律屬於原作卡那一邊。顯示訊息也要把「卡片種類」和「來源遊戲」分開講，不要讓使用者自己猜。

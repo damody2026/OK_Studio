@@ -1344,14 +1344,29 @@ void UOKCharacterController::SelectIndex(int32 Index)
 	RefreshOutfitList();
 	FString Body;
 	Body += FString::Printf(TEXT("%s %s (%s)\n"), *Selected.LastName, *Selected.FirstName, *Selected.Nickname);
-	Body += FString::Printf(TEXT("种类 %s  性别 %d  性格 %d\n"), *KindName(Selected.Header.Kind), Selected.Sex, Selected.Personality);
+	// Which kind of card this is, in the two senses the page used to blur into one: an OK card (its resources are inside
+	// it) or an original card, and which game it came from. "种类 KKS" alone read as if an OK card were an original one,
+	// which is why the list of missing sibling zipmods under it looked like a defect in the card (2026-11-19).
+	Body += FString::Printf(TEXT("卡片 %s  来源 %s  性别 %d  性格 %d\n"),
+		bIndependentCards ? TEXT("OK 卡（资源在卡内）") : TEXT("原作卡"),
+		*KindName(Selected.Header.Kind), Selected.Sex, Selected.Personality);
 	Body += FString::Printf(TEXT("头 %d  头发前/后/侧/扩 %d/%d/%d/%d\n"),
 		Selected.Face.HeadId, Selected.Hair.Front.Id, Selected.Hair.Back.Id, Selected.Hair.Side.Id, Selected.Hair.Extension.Id);
 	Body += FString::Printf(TEXT("脸滑杆 %d  身体滑杆 %d  服装0 %d\n"),
 		Selected.Face.ShapeValueFace.Num(), Selected.Body.ShapeValueBody.Num(),
 		Selected.Outfits.Num() > 0 ? Selected.Outfits[0].Clothes.Num() : 0);
 	Body += FString::Printf(TEXT("UAR %d  服装 %d\n"), Selected.Resolves.Num(), OutfitIndex);
+	// An OK card is self-contained: it opens from its own okLc/okLt plus the shared resources and never looks for a
+	// zipmod again (AGENTS.md「OK 卡自足」). So the sibling-zipmod scan belongs to original cards only — run on an OK
+	// card it listed every recorded mod as "缺少同目錄 zipmod", which is not something an OK card can lack. A gap in an
+	// OK card's own resources shows up as an error when it is opened, not as a missing-zipmod note on this page.
 	if (bIndependentCards)
+	{
+		Body += FString::Printf(TEXT("OK 卡：%d 项 mod 资源都录在卡内（okLc／okLt），不需要同目录 zipmod 或游戏 mods/。\n"),
+			Selected.Resolves.Num());
+		Body += TEXT("可編輯身材；載入 3D 後另存 APNG：原卡圖 3 秒＋T-pose 三視圖各 1 秒。\n");
+	}
+	else
 	{
 		LocalMods.BuildForCard(Entries[Index].Path);
 		for (const FKKLocalModRequirement& Item : LocalMods.Resolve(Selected.Resolves))
