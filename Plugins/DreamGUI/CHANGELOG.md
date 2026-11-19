@@ -394,10 +394,10 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
-- **Every stored raw pointer the plugin keeps on purpose now says who guarantees it.** The 42 the new
+- **Every stored raw pointer the plugin keeps on purpose now says who guarantees it.** The 39 the new
   `stored-raw-pointer` check reports outside the test module -- a popup's parameters, a tab step, a clip level, a
   shape or coverage call's font, an arranged child's rect, a scroll slot, a builder node's classes, a resolved
-  binding's functions, a hit container, the preview and designer scenes' components, the retired font atlases, the
+  binding's functions, the preview and designer scenes' components, the retired font atlases, the
   Blueprint compiler's class and old tree, a pick hit, a details placement, an MCP compile outcome, a Niagara
   conversion, the wireframe material proxy and the tween manager's tick snapshot -- carry a
   `// static-checks: allow(stored-raw-pointer)` line that names what keeps the object alive: the call that consumes
@@ -415,11 +415,28 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 - **The test fixtures that could outlive what they name now name it weakly.** The gallery stage's editor world, the
   world-space lifecycle fixture's two actors, its render-target surface and that surface's canvas root, the package
   load check's loaded package and the canvas-change log's pairs are weak pointers; `GetWorld` still hands back a plain
-  pointer. The driver context and the scoped world, game-instance and asset fixtures stay raw: each already states
-  whose lifetime covers it -- a world owns its actors, the UI manager holds its widgets, the rig outlives every
-  context it hands out, and the PIE rig keeps no strong reference on purpose, so that a play world can be torn down.
-  `FDreamListControlsTestTypes::Children` stays raw and `UPROPERTY`, because its value type is the one
+  pointer. `FDreamListControlsTestTypes::Children` stays raw and `UPROPERTY`, because its value type is the one
   `FDreamTreeGetItemChildren` hands out.
+
+- **Every remaining stored object pointer in the test module is weak as well.** The driver context's eleven (world,
+  event system, input module, manager, raycaster, root, root canvas, game instance, player controller, local player,
+  input actor), both rigs' host actor and the PIE rig's viewport client, the scoped world, game-instance-world,
+  on-disk-package, panel-class, designer-asset, dui-designer and text-blueprint fixtures, the world and surface
+  stages, and the render-target mesh's six are `TWeakObjectPtr`; the fixtures named the same way inside single test
+  files went with them. The PIE rig's policy already asked for this -- it keeps no strong reference into a play world
+  so that the world can be torn down, and said a test keeps between steps weakly -- and weak is what says a world
+  already destroyed has gone instead of handing out its address. Every call site that passes one on resolves it
+  (`.Get()`); dereferences are unchanged. What a fixture creates is still created and destroyed by that fixture: no
+  lifetime moved.
+
+- **A pointer hit says what it hit weakly.** `FDreamUIHitResultContainer`'s raycaster, hover array and
+  widget-ignoring-enabled are weak, matching the trace cache that outlives a dispatch and already held them that way,
+  so a widget or raycaster collected between the trace and the dispatch reads as gone rather than as an address.
+  C++ reading these fields resolves them; what the pointer does is unchanged.
+
+  None of this is a fix for the GPU `PageFault` seen in the card reader on 2026-11-20: it removes a whole shape --
+  holding a UObject or a GPU resource across frames with nothing that can say it has gone -- and the five measurement
+  trips after the renderer round still faulted, 5 of 5.
 
 - **The editor's own stored object pointers are weak, and the ones that stay raw say why.** The sequence editor's
   asset, the hierarchy picker's class filter, a component-reference property's allowed and disallowed class lists and

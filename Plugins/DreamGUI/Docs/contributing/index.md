@@ -109,6 +109,13 @@ So in a struct whose members become weak, read every `->` on them before trustin
 `if (UWorld* World = Ctx.World.Get())` over leaning on `operator->`. Nothing else has to change: a line that only
 calls through the pointer is already correct.
 
+**What the check does not see.** `stored-raw-pointer` reads headers only, so a struct declared inside a `.cpp` is not
+read at all. The same code scanned with `.cpp` as well reports about 531 further members -- 459 of them in the test
+module, the rest spread over the runtime, editor, input, extensions and tween modules; of twelve sampled, every one was
+a real stored member rather than a false positive. That batch has not been done, and is deliberately a pass of its own:
+stacking it on a change that has not been built yet would make any failure impossible to attribute. **A clean run of
+this rule therefore means the headers are clean, not that the plugin stores no raw pointers.**
+
 ## What to update with a change
 
 - The page here that describes the behaviour you changed.

@@ -27,11 +27,15 @@ Rules (--list-rules prints them with their reasons):
     pixels-need-rhi      a test reading pixels without NonNullRHI
     rig-needs-bindtest   a test building FDreamDriverRig::Headless without calling BindTest
   Stored pointers:
-    stored-raw-pointer   (warning) a member holding a UObject or an RHI resource as a raw pointer. An
+    stored-raw-pointer   a member holding a UObject or an RHI resource as a raw pointer. An
                          address cannot say the thing has gone, and one freed and handed out again
                          compares equal. A member kept beside a count of objects gone (DreamUIGone) is
                          taken as guarded. Function parameters and the locals of inline bodies are not
-                         members and are not read. Docs/contributing has the call-site shapes
+                         members and are not read. Docs/contributing has the call-site shapes.
+                         KNOWN GAP: headers only. The same code scanned with .cpp as well reports
+                         about 531 more members -- structs declared inside a .cpp, 459 of them in the
+                         test module (12 sampled, all real) -- and that batch has not been done. A
+                         clean run of this rule does not mean the plugin stores no raw pointers
   Words and files:
     plan-label           planning vocabulary in comments and string literals (every file of the test
                          module; the other modules' files this branch touched). Identifiers are
@@ -122,7 +126,7 @@ RULES = collections.OrderedDict([
     ('stored-raw-pointer', 'A stored address cannot say the thing has gone, and an address freed and handed out again compares equal; see Docs/contributing (stored pointers).'),
     ('preset-names', "A screen changes its look by naming another preset, so every preset has to answer to every name the others declare."),
 ])
-WARNING_RULES = frozenset(['eol', 'stored-raw-pointer'])
+WARNING_RULES = frozenset(['eol'])
 
 
 class Finding(object):
@@ -938,7 +942,14 @@ def member_text(code, a, b):
 
 
 def check_stored_pointers(root, findings, want):
-    """A stored pointer that is an address and nothing else: see Docs/contributing (stored pointers)."""
+    """A stored pointer that is an address and nothing else: see Docs/contributing (stored pointers).
+
+    Headers only, which is a known gap and not a judgement: a struct declared inside a .cpp is not read at
+    all. Scanning .cpp as well reports about 531 further members (459 in the test module; 12 sampled, every
+    one a real member), a batch deliberately left for its own pass -- stacking it on top of an unbuilt
+    change makes a failure impossible to attribute. So a clean run here says the headers are clean, not
+    that the plugin keeps no stored raw pointers.
+    """
     if 'stored-raw-pointer' not in want:
         return
     for sf in [sourcescan.load(root, p) for p in sourcescan.source_files(root, 'Source', ('.h',))]:

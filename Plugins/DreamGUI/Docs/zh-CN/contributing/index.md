@@ -102,6 +102,12 @@ pwsh -NoProfile -File Tools/Tests/Invoke-DreamGUITests.ps1 -Project "<Project>/<
 并且宁可写成显式的 `if (UWorld* World = Ctx.World.Get())`，不要靠 `operator->` 赌。
 其余不必改：只是透过指标呼叫的那些行本来就是对的。
 
+**这项检查看不到什么。** `stored-raw-pointer` 只读头档，所以在 `.cpp` 里宣告的结构它完全不读。
+同一份码若也扫 `.cpp`，会多报约 531 个成员——其中 459 个在测试模组，其余分布在运行时、编辑器、输入、
+扩充与 tween 模组；抽样的十二笔全部是真的储存成员，不是误报。那一批**还没处理**，而且刻意留成独立的一轮：
+把它叠在一个还没建置过的改动上面，出错时无法分辨是哪一批造成的。
+**所以这条规则跑成绿色，意思是头档乾净，不是这个外挂没有存起来的裸指标。**
+
 <a id="what-to-update-with-a-change"></a>
 
 ## 更改时需要更新的内容
