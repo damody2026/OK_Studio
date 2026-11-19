@@ -35,9 +35,16 @@ F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua wr
 **`HEAD` 只记不比**（`check` 会注明 `not compared`）：提交文件会动 HEAD 却不动程式，未提交的 C++ 动了程式却不动 HEAD。
 `write` 会逐行列出未提交的程式档，`check` 会印 `compared N items … M differ`（带分母）。
 
-> **看 `check` 的结果要看字串，不要只看结束码**：`OLD` 目前也是 exit 0，
-> 只认结束码的话会把「这张表头是旧版写的、还没真的比过」当成「`SAME`，可以比」。
-> 已回报 f-yvonne（2026-11-19）。
+**第三版（`6931d5402`）还记了 git 看不到的原作衍生资料**：`base_v1`（排除 `h/voice` 音档）、`RuntimeAnimations`、
+`BodyInteractions`、`KKPreview`，各记档数、总大小、最新 mtime 与档案清单杂凑，分母因此变成 **21**。
+**这对场景卡那条线比读卡器更要紧**：载入耗时直接受基础库内容影响，而基础库**不进版控、git 指纹看不到它**；
+F 树若重录或还原 `base_v1`，前后两批会被判 `DIFFERENT`，不会被误当成可互比。
+
+> **看 `check` 本身的结束码，而且不要接管线**：`0` = `SAME`（**只有 0 可以比**）、`1` = `DIFFERENT`、
+> `2` = `MISSING`、`3` = `OLD`（f-yvonne `0047d05eb` 起四码分开；在那之前 `OLD` 与 `MISSING` 共用 2）。
+> **接了 `| head`／`| tee` 就看不到它**——shell 的 `$?` 是管线最后那个程式的码。
+> 我自己就因为 `check … | head -4` 看到 `exit=0`，以为 `OLD` 回 0、报成工具的 bug；
+> 实际直接跑回的是 3。字串也一起看最稳。
 
 **为什么是 `--editor`，不是某一支 exe**：读卡器（`reader_launch` 的预设 root）跑的是
 `F:\UE5.8\Engine\Binaries\Win64\UnrealEditor.exe` 加这个专案——**那支是引擎，我们从来不重建它**
