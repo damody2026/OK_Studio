@@ -111,3 +111,48 @@ UMG 的控制項在第二步之後漸漸不再被新版畫面用到，但舊版�
 - 標籤要不要一開始就走多語系 id：一開始先寫中文標籤，等多語系一起做時再換成 id。
 - 定義檔要一份還是每個分類一份：先一份，超過一千行再拆。
 - 原作每項的「預設值」以誰為準：以登錄（`OKShapeDefaults` 等）為準，盤點發現不一致時記進缺口清單，不在定義檔裡另寫一份。
+
+## 第一步的實作（2026-11-19，e-fork-2）
+
+`Config/ReaderEditor/pages.json` 已照 `BuildCategories` 手寫的頁面原樣寫好，`UOKReaderScreen::BuildCategories` 先讀它，讀不到才用手寫的那份。這一步沒有改任何頁面；上面「定義檔」一節的 `tabs`／`items` 結構留給第二步，第一步的檔案只有「分類 → 子頁」，子頁的內容用下面這些欄位描述：
+
+| 欄位 | 意思 |
+|---|---|
+| `name` | 子頁名稱（路徑的一段，同一分類內不能重複） |
+| `sources` | 要鏡像的 UMG 控制項，依序：`{"shape":"face\|body","group":N}`（`KKShapeRows` 分隔線切出的第 N 組滑桿）、`{"rows":"bones\|bust\|physics"}`（骨骼列、胸部柔軟度／重量、物理的標題＋控制項）、`{"widget":"…"}`（`bone_category`、`bone_axes`、`pregnancy_box`、`style_box`、`appearance_panel`、`property_panel`、`inspect_col`、`card_col`、`outfit_row`、`outfit_nav`、`font_size_row`）、`{"named":"UMG 名稱"}`、`{"drawer":"Clothes\|Lighting"}`（同時在進頁時打開抽屜） |
+| `pickers` | `{"targets":[…],"properties":[…]}`：這頁的選圖（外觀目錄的目標前綴）與詳細編輯（屬性鍵或標籤裡的字） |
+| `bone_category` | 進頁時把骨骼分類下拉切到這一項 |
+| `enter` | 進頁時做的事：`first_bone_category`、`accessory_slot_scope`、`all_properties`、`show_inspect_col` |
+| `signature` | `bone_category`：骨骼分類或 X／Y／Z 開關變了就重建這頁 |
+| `shown_only` | 只鏡像現在顯示的來源（骨骼列） |
+| `builder` | 畫面自己的頁：`eye_overlays`、`game_root` |
+| `own_buttons` | 畫面自己的按鈕：`[{"label":"…","action":"add_accessory_slot"}]` |
+| `needs` | `bones`：沒有骨骼列就不建這頁 |
+
+分類的欄位是 `name`、`tab`（0 編輯、1 人物卡、2 衣服卡、3 設定）、`subs`。來源全部找不到、又沒有自己的頁的子頁不建（和手寫版一樣，例如沒有懷孕面板時的「懷孕」）。
+
+- **檔案位置**：遊戲讀 `-ReaderPages=<檔案>`，沒給就讀專案的 `Config/ReaderEditor/pages.json`。打包的 stage 只帶打包當時的 Config，所以 `Tools/run_card_reader_development.lua` 一律傳 checkout 裡那份的路徑。
+- **錯誤**：讀不到、不是 JSON、`version` 不是 1、沒有 `categories`：用手寫的頁面，紅字說原因。個別分類或子頁寫錯（不認得的欄位、widget、builder、enter、名稱重複…）：那一頁不建，其他照建。錯誤在畫面右邊的通知列（紅字，一直留著）、每一頁最上面（紅字列出全部），log 是 `ok.ReaderScreen pages:` 開頭的 Error。不會退回舊版 UMG 畫面。
+- **指令**：`ok.ReaderScreen pages` 報告頁面從哪來、幾頁、有什麼問題；`pages builtin`／`pages file` 換來源並重建；`reloadpages` 重讀檔案（改了 JSON 不用重開遊戲）。
+- **稽核的兩欄**：`ok.ReaderScreen audit` 多一行 `registry: …`，報告檔（`Saved/Reports/reader-control-audit.txt`）多三段：
+  - 登錄的鍵（`OKCharacterMCPRegistry::Parameters`）在不在某一頁（UI 缺）；
+  - 定義檔寫到、登錄沒有的鍵（資料端缺，第二步開始有 `key` 才會有數字）；
+  - 定義檔的問題。
+  登錄鍵對控制項：`shape.*` 對滑桿，`bone.*` 對骨骼列（骨名＋軸），`physics.*`／`pregnancy.*`／`style.*` 對各自的滑桿，屬性（`category=properties`）對詳細編輯面板。
+- **按鍵設定**：`ok.ReaderScreen set key=<登錄鍵> = <值>`：找出顯示那個鍵的控制項所在的頁（先找目前這頁），開到那頁再像人一樣設定，回報路徑。例如 `set key=bone.cf_J_Eye_tz.scale.uniform = 1.1` 會開到「臉›眼部縮放2」（進頁時骨骼分類切到眼球）再設。屬性（`category=properties`）的列是每張卡、每頁 64 筆動態生成，第一步還不能按鍵設定，會明講。
+
+### 驗證（2026-11-19，stage `EFork1119r`，機器上只有這一個 Unreal，載入第 1 張測試卡）
+
+- **稽核相同**：同一行程內先用定義檔、再 `pages builtin`、再 `pages file`，各跑 `audit`。
+  - 第一輪：兩邊都是 37 頁、舊畫面可操作控制項 4877、鏡像 4867、新畫面自己畫 10、缺 0、同名短名 57 組。報告檔除了寫來源的那一行，逐字相同。
+  - 之後再跑，總數會變成 5037／4995／42／73：第一輪逛過選圖頁、詳細編輯，生出了選圖格子與屬性列。這是狀態變了，不是頁面不同。在這個狀態下，定義檔、內建、再定義檔三份報告的雜湊一樣。
+  - 比較時要在同一個狀態下比（同一行程連跑兩次再比），不要拿第一輪和第二輪比。
+- **兩欄**：
+  - 剛開卡時，登錄 2067 個鍵全在某一頁上。
+  - 打開過詳細編輯後是 3665 個鍵（屬性讀進來了），也全在頁上。UI 缺 0。
+  - 定義檔還沒有 `key`，所以資料端缺是 0。
+- **壞檔**：
+  - 不是 JSON 的檔：新版畫面照開，用內建頁面，頁首與通知列都是紅字，寫出檔名與 JSON 錯在哪一行哪一字。
+  - 一個子頁寫了不認得的 widget、另一個寫了不認得的 builder：只少那兩頁（35 頁），兩個錯都用紅字列出。
+  - 都沒有出現舊版 UMG 畫面。
+- **按鍵設定**：`shape.face.0`、`shape.body.3`、`physics.bustSoftness`、`bone.cf_J_Eye_tz.scale.uniform` 都開到正確的頁並設好；不存在的鍵回 `not in the registry`。

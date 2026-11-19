@@ -159,6 +159,9 @@ local function main()
     error(("-Physics must be one of: %s"):format(table.concat(names, ", ")), 0)
   end
   args[#args + 1] = "-OKPhysics=" .. physics
+  -- The reader screen's pages (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md): a stage has only the Config it was staged with,
+  -- so the checkout's file is named; the editor target reads the same file without it.
+  args[#args + 1] = "-ReaderPages=" .. (path.join(root, "Config/ReaderEditor/pages.json"):gsub("\\", "/"))
   for _, x in ipairs(o.passthrough) do args[#args + 1] = x end
   local receipt = json.object({ { "project", project }, { "executable", exe }, { "arguments", json.array({ table.unpack(args, 2) }) },
     { "module", module }, { "card_directory", cards }, { "log", log }, { "skinning", gpu and "GPU" or "CPU" } })

@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "about": "讀卡器新版畫面的頁面定義（Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md）。第一步：原樣描述 OKReaderScreen.cpp 手寫的頁面（稽核結果相同），全部是鏡像（sources）與畫面自己的頁（builder）。欄位見該文件「第一步的實作」。",
+  "categories": [
+    {
+      "name": "臉",
+      "subs": [
+        { "name": "臉型", "sources": [{ "shape": "face", "group": 0 }], "bone_category": "原遊戲參數" },
+        { "name": "下巴", "sources": [{ "shape": "face", "group": 1 }], "bone_category": "原遊戲參數" },
+        { "name": "臉頰", "sources": [{ "shape": "face", "group": 2 }], "bone_category": "原遊戲參數",
+          "pickers": { "targets": ["cheek", "mole"], "properties": ["cheek", "mole"] } },
+        { "name": "眉毛", "sources": [{ "shape": "face", "group": 3 }], "bone_category": "原遊戲參數",
+          "pickers": { "targets": ["eyebrow"], "properties": ["eyebrow"] } },
+        { "name": "眼睛", "sources": [{ "shape": "face", "group": 4 }], "bone_category": "原遊戲參數",
+          "pickers": { "targets": ["pupil", "gradation", "eye_white", "eye_hi_", "eyeline_", "eyeshadow"],
+                       "properties": ["pupil", "grad", "white", "hlUp", "hlDown", "eyeline", "eyeshadow"] } },
+        { "name": "瞳孔覆蓋貼圖", "builder": "eye_overlays", "bone_category": "原遊戲參數" },
+        { "name": "眼部縮放2", "sources": [{ "widget": "bone_axes" }, { "rows": "bones" }], "shown_only": true,
+          "bone_category": "骨骼調整：眼球", "signature": "bone_category", "needs": "bones" },
+        { "name": "鼻子", "sources": [{ "shape": "face", "group": 5 }], "bone_category": "原遊戲參數",
+          "pickers": { "targets": ["nose"], "properties": [] } },
+        { "name": "嘴巴", "sources": [{ "shape": "face", "group": 6 }], "bone_category": "原遊戲參數",
+          "pickers": { "targets": ["lip"], "properties": ["lip"] } },
+        { "name": "耳朵", "sources": [{ "shape": "face", "group": 7 }], "bone_category": "原遊戲參數" },
+        { "name": "頭型與膚質", "bone_category": "原遊戲參數",
+          "pickers": { "targets": ["head", "face_detail", "facepaint"], "properties": ["detail", "paint", "skin"] } }
+      ]
+    },
+    {
+      "name": "頭髮",
+      "subs": [
+        { "name": "髮型", "pickers": { "targets": ["hair0", "hair1", "hair2", "hair3", "hair_gloss"], "properties": [] } },
+        { "name": "髮色與設定", "pickers": { "targets": [], "properties": ["hair", "髮"] } }
+      ]
+    },
+    {
+      "name": "身子",
+      "subs": [
+        { "name": "全身", "sources": [{ "shape": "body", "group": 0 }], "bone_category": "原遊戲參數" },
+        { "name": "胸部", "sources": [{ "shape": "body", "group": 1 }, { "rows": "bust" }], "bone_category": "原遊戲參數" },
+        { "name": "軀幹", "sources": [{ "shape": "body", "group": 2 }], "bone_category": "原遊戲參數" },
+        { "name": "腰臀", "sources": [{ "shape": "body", "group": 3 }], "bone_category": "原遊戲參數" },
+        { "name": "手臂", "sources": [{ "shape": "body", "group": 4 }], "bone_category": "原遊戲參數" },
+        { "name": "腿部", "sources": [{ "shape": "body", "group": 5 }], "bone_category": "原遊戲參數" },
+        { "name": "骨骼", "sources": [{ "widget": "bone_category" }, { "widget": "bone_axes" }, { "rows": "bones" }],
+          "shown_only": true, "signature": "bone_category", "enter": "first_bone_category" },
+        { "name": "懷孕", "sources": [{ "widget": "pregnancy_box" }], "bone_category": "腹部形變" },
+        { "name": "皮膚",
+          "pickers": { "targets": ["body_detail", "sunburn", "nipple", "underhair", "bodypaint"],
+                       "properties": ["body.", "sunburn", "nip", "underhair"] } }
+      ]
+    },
+    {
+      "name": "衣服",
+      "subs": [
+        { "name": "穿著狀態", "sources": [{ "drawer": "Clothes" }] },
+        { "name": "服裝", "sources": [{ "widget": "outfit_row" }, { "widget": "outfit_nav" }] },
+        { "name": "外觀選擇", "pickers": { "targets": ["clothes", "pattern", "emblem", "sub"], "properties": [] } },
+        { "name": "顏色與設定", "pickers": { "targets": [], "properties": ["clothes"] } }
+      ]
+    },
+    {
+      "name": "配件",
+      "subs": [
+        { "name": "飾品", "sources": [{ "widget": "appearance_panel" }], "enter": "accessory_slot_scope",
+          "own_buttons": [{ "label": "新增飾品欄位", "action": "add_accessory_slot" }] },
+        { "name": "飾品顏色與位置", "pickers": { "targets": [], "properties": ["accessory", "飾品"] } },
+        { "name": "全部屬性", "sources": [{ "widget": "property_panel" }], "enter": "all_properties" }
+      ]
+    },
+    {
+      "name": "角色資訊",
+      "subs": [
+        { "name": "角色", "sources": [{ "widget": "inspect_col" }], "enter": "show_inspect_col" }
+      ]
+    },
+    {
+      "name": "人物卡總欄", "tab": 1,
+      "subs": [
+        { "name": "人物卡", "sources": [{ "widget": "card_col" }] }
+      ]
+    },
+    {
+      "name": "衣服卡總欄", "tab": 2,
+      "subs": [
+        { "name": "服裝卡", "sources": [{ "named": "OkClothesRow" }] }
+      ]
+    },
+    {
+      "name": "設定／介面", "tab": 3,
+      "subs": [
+        { "name": "遊戲目錄", "builder": "game_root" },
+        { "name": "光影", "sources": [{ "drawer": "Lighting" }] },
+        { "name": "角色風格", "sources": [{ "widget": "style_box" }], "bone_category": "角色風格" },
+        { "name": "物理", "sources": [{ "rows": "physics" }] },
+        { "name": "介面", "sources": [{ "widget": "font_size_row" }] }
+      ]
+    }
+  ]
+}

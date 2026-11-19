@@ -145,6 +145,9 @@ public:
 	// several shown controls have (exactly, or failing that, containing it) is ambiguous: nothing is pressed unless
 	// Index (>=0, "#N") picks one, and OutNote lists the candidates' paths.
 	bool PressControl(const FString& Text,int32 Index,FString* OutNote=nullptr,const FString* SetTo=nullptr);
+	// "set key=<registry key> = <value>": the control showing that key (OKCharacterMCPRegistry::Parameters), on whatever
+	// page has it (the page is opened first), set as a person would. Property rows (paged, per card) are not reached yet.
+	bool SetByKey(const FString& Key,const FString& To,FString* OutNote=nullptr);
 	// Where a control is: region or drawer or category›sub, then the text it shows. Stable while the layout is.
 	FString ControlPath(const UOKDreamControl* C) const;
 	// Every shown control, path per line (ok.ReaderScreen controls).
@@ -156,6 +159,9 @@ public:
 	// screen said to be mirrored on some page or not, and the short names a page shows twice. Written to
 	// Saved/Reports/reader-control-audit.txt too. Returns to the page it was on.
 	void AuditControls(FOutputDevice& Out);
+	// "pages": where the pages come from and what was wrong; "pages builtin|file" / "reloadpages": build them again from
+	// there (the file read anew) and show the first tab.
+	void ReloadPages(const FString& Mode,FOutputDevice& Out);
 	// The card list: its N-th tile clicked as the pointer would, and that card's file (ok.ReaderScreen card).
 	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
 	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}
@@ -261,6 +267,18 @@ private:
 	TOptional<TArray<FString>> WantedTargets,WantedProperties;
 
 	void BuildCategories();
+	// The pages from Config/ReaderEditor/pages.json (-ReaderPages=<file> overrides; Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md).
+	// A file that cannot be read keeps the built-in pages (BuildCategories' own) with the error in red; a bad entry is
+	// left out and named. Never the old UMG screen.
+	FString PagesFile() const;
+	// "file <path>" or "builtin"; what was wrong with the file (shown in red on every page and in the notice).
+	FString PagesSource;
+	TArray<FString> PagesErrors;
+	// The registry keys the definition file names (items' "key"): the audit's data-side column.
+	TArray<FString> PageKeys;
+	// ok.ReaderScreen pages builtin: build the hand-written pages even when the file reads (to compare audits).
+	bool bBuiltinPages=false;
+	void ShowPagesErrors(UDreamWidget* Page);
 	void BuildDrawers();
 	void BuildCameraBar();
 	void BuildPluginTools();

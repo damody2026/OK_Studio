@@ -63,6 +63,9 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "HAL/FileManager.h"
 #include "Async/Async.h"
 #include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Misc/ScopeExit.h"
+#include "OKCharacterMCPRegistry.h"
 #include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
 #include "Engine/Texture2D.h"
@@ -741,6 +744,225 @@ void UOKReaderScreen::BuildCategories()
 			if(!G->ShapeSeparators.Contains(W)&&!BustRows.Contains(W)&&W!=G->PregnancyBox&&W!=G->StyleBox&&W!=G->BoneCategoryCombo&&W!=G->BoneAxesCheck)BoneRows.Add(W);
 		}
 	}
+
+	// The pages from the definition file (Config/ReaderEditor/pages.json). Step 1 of Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md:
+	// the file describes the hand-written pages below one for one (mirrored UMG sources and the screen's own pages), and
+	// the audit must come out the same either way. What the file cannot say right is said in red, never the old screen.
+	PagesErrors.Reset();PageKeys.Reset();PagesSource=TEXT("builtin");
+	ON_SCOPE_EXIT
+	{
+		for(const FString& E:PagesErrors)UE_LOG(LogTemp,Error,TEXT("ok.ReaderScreen pages: %s"),*E);
+		FString Say;
+		if(PagesErrors.Num())
+		{
+			Say=FString::Printf(TEXT("頁面定義檔有 %d 個問題（ok.ReaderScreen pages 列出全部）："),PagesErrors.Num());
+			for(int32 I=0;I<PagesErrors.Num()&&I<6;++I)Say+=TEXT("\n")+PagesErrors[I];
+		}
+		ShowNotice(7301,1.0e6f,FColor::Red,Say);
+	};
+	if(!bBuiltinPages)
+	{
+		const FString File=PagesFile();
+		FString Text;TSharedPtr<FJsonObject> Root;double Version=0;
+		const TArray<TSharedPtr<FJsonValue>>* CategoryList=nullptr;
+		if(!FFileHelper::LoadFileToString(Text,*File))PagesErrors.Add(FString::Printf(TEXT("讀不到頁面定義檔 %s，暫用內建頁面"),*File));
+		else if(const TSharedRef<TJsonReader<>> Parse=TJsonReaderFactory<>::Create(Text);!FJsonSerializer::Deserialize(Parse,Root)||!Root.IsValid())
+			PagesErrors.Add(FString::Printf(TEXT("頁面定義檔 %s 不是有效的 JSON（%s），暫用內建頁面"),*File,*Parse->GetErrorMessage()));
+		else if(!Root->TryGetNumberField(TEXT("version"),Version)||Version!=1)PagesErrors.Add(FString::Printf(TEXT("頁面定義檔 %s 的 version 不是 1，暫用內建頁面"),*File));
+		else if(!Root->TryGetArrayField(TEXT("categories"),CategoryList))PagesErrors.Add(FString::Printf(TEXT("頁面定義檔 %s 沒有 categories 陣列，暫用內建頁面"),*File));
+		else
+		{
+			PagesSource=TEXT("file ")+File;
+			const TArray<FGroup> FaceShapes=ShapeGroups(false,{}),BodyShapes=ShapeGroups(true,{});
+			TArray<UWidget*> PhysicsRows;
+			for(UWidget* W:{static_cast<UWidget*>(G->PhysicsBackendCombo.Get()),static_cast<UWidget*>(G->PhysicsSoftnessSlider.Get()),static_cast<UWidget*>(G->PhysicsWeightSlider.Get()),static_cast<UWidget*>(G->PhysicsTailSlider.Get())})
+			{
+				if(!W)continue;
+				if(UPanelWidget* P=W->GetParent()){const int32 I=P->GetChildIndex(W);if(I>0&&Cast<UTextBlock>(P->GetChildAt(I-1)))PhysicsRows.Add(P->GetChildAt(I-1));}
+				PhysicsRows.Add(W);
+			}
+			const TWeakObjectPtr<UOKCharacterController> Weak(G);
+			auto BoneSignature=[Weak]()
+			{
+				if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return FString();
+				return Weak->BoneCategoryCombo->GetSelectedOption()+(Weak->BoneAxesCheck&&Weak->BoneAxesCheck->IsChecked()?TEXT("|axes"):TEXT(""));
+			};
+			static const TSet<FString> CategoryFields={TEXT("name"),TEXT("tab"),TEXT("subs")};
+			static const TSet<FString> SubFields={TEXT("name"),TEXT("sources"),TEXT("pickers"),TEXT("bone_category"),TEXT("enter"),TEXT("signature"),TEXT("shown_only"),TEXT("builder"),TEXT("own_buttons"),TEXT("needs")};
+			TArray<FCategory> Built;TSet<FString> CategoryNames;
+			for(int32 CI=0;CI<CategoryList->Num();++CI)
+			{
+				const TSharedPtr<FJsonObject>* CO=nullptr;FCategory Cat;
+				FString CatWhere=FString::Printf(TEXT("categories[%d]"),CI);
+				if(!(*CategoryList)[CI]->TryGetObject(CO)){PagesErrors.Add(CatWhere+TEXT("：不是物件"));continue;}
+				if(!(*CO)->TryGetStringField(TEXT("name"),Cat.Name)||Cat.Name.IsEmpty()){PagesErrors.Add(CatWhere+TEXT("：沒有 name"));continue;}
+				CatWhere=Cat.Name;
+				if(CategoryNames.Contains(Cat.Name)){PagesErrors.Add(CatWhere+TEXT("：分類名稱重複（路徑會重複），略過"));continue;}
+				CategoryNames.Add(Cat.Name);
+				for(const auto& F:(*CO)->Values)if(const FString Field(F.Key);!CategoryFields.Contains(Field))PagesErrors.Add(CatWhere+TEXT("：不認得的欄位 ")+Field);
+				double TabValue=0;
+				if((*CO)->TryGetNumberField(TEXT("tab"),TabValue))
+				{
+					if(TabValue<0||TabValue>3||TabValue!=FMath::FloorToDouble(TabValue))PagesErrors.Add(CatWhere+TEXT("：tab 要是 0–3 的整數"));
+					else Cat.Tab=static_cast<int32>(TabValue);
+				}
+				const TArray<TSharedPtr<FJsonValue>>* SubList=nullptr;
+				if(!(*CO)->TryGetArrayField(TEXT("subs"),SubList))PagesErrors.Add(CatWhere+TEXT("：沒有 subs 陣列"));
+				TSet<FString> SubNames;
+				for(int32 SI=0;SubList&&SI<SubList->Num();++SI)
+				{
+					const TSharedPtr<FJsonObject>* SO=nullptr;FGroup Out;
+					FString Where=FString::Printf(TEXT("%s›subs[%d]"),*CatWhere,SI);
+					if(!(*SubList)[SI]->TryGetObject(SO)){PagesErrors.Add(Where+TEXT("：不是物件"));continue;}
+					const TSharedPtr<FJsonObject>& S=*SO;
+					if(!S->TryGetStringField(TEXT("name"),Out.Name)||Out.Name.IsEmpty()){PagesErrors.Add(Where+TEXT("：沒有 name"));continue;}
+					Where=CatWhere+TEXT("›")+Out.Name;
+					if(SubNames.Contains(Out.Name)){PagesErrors.Add(Where+TEXT("：子頁名稱重複（路徑會重複），略過"));continue;}
+					SubNames.Add(Out.Name);
+					// A wrong entry leaves this page out and says what; the other pages are built.
+					bool bBad=false;
+					auto Bad=[&](const FString& What){PagesErrors.Add(Where+TEXT("：")+What+TEXT("，這頁不建"));bBad=true;};
+					for(const auto& F:S->Values)if(const FString Field(F.Key);!SubFields.Contains(Field))Bad(TEXT("不認得的欄位 ")+Field);
+					TArray<TFunction<void()>> Enter;
+					const TArray<TSharedPtr<FJsonValue>>* Sources=nullptr;
+					if(S->HasField(TEXT("sources"))&&!S->TryGetArrayField(TEXT("sources"),Sources))Bad(TEXT("sources 要是陣列"));
+					for(int32 K=0;Sources&&K<Sources->Num();++K)
+					{
+						const TSharedPtr<FJsonObject>* Spec=nullptr;FString Value;double Number=0;
+						if(!(*Sources)[K]->TryGetObject(Spec)){Bad(FString::Printf(TEXT("sources[%d] 不是物件"),K));continue;}
+						if((*Spec)->TryGetStringField(TEXT("shape"),Value))
+						{
+							if(Value!=TEXT("face")&&Value!=TEXT("body")){Bad(TEXT("shape 要是 face 或 body"));continue;}
+							if(!(*Spec)->TryGetNumberField(TEXT("group"),Number)||Number<0){Bad(TEXT("shape 要有 group（0 起）"));continue;}
+							const TArray<FGroup>& Shapes=Value==TEXT("body")?BodyShapes:FaceShapes;
+							if(Shapes.IsValidIndex(static_cast<int32>(Number)))Out.Sources.Append(Shapes[static_cast<int32>(Number)].Sources);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("rows"),Value))
+						{
+							const TArray<UWidget*>* Rows=Value==TEXT("bones")?&BoneRows:Value==TEXT("bust")?&BustRows:Value==TEXT("physics")?&PhysicsRows:nullptr;
+							if(!Rows){Bad(TEXT("不認得的 rows ")+Value+TEXT("（bones／bust／physics）"));continue;}
+							for(UWidget* W:*Rows)Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("widget"),Value))
+						{
+							UWidget* W=nullptr;bool bKnown=true;
+							if(Value==TEXT("bone_category"))W=G->BoneCategoryCombo.Get();
+							else if(Value==TEXT("bone_axes"))W=G->BoneAxesCheck.Get();
+							else if(Value==TEXT("pregnancy_box"))W=G->PregnancyBox.Get();
+							else if(Value==TEXT("style_box"))W=G->StyleBox.Get();
+							else if(Value==TEXT("appearance_panel"))W=G->AppearancePanel.Get();
+							else if(Value==TEXT("property_panel"))W=G->PropertyPanel.Get();
+							else if(Value==TEXT("inspect_col"))W=G->InspectCol.Get();
+							else if(Value==TEXT("card_col"))W=G->CardCol.Get();
+							else if(Value==TEXT("outfit_row"))W=G->OutfitCombo?G->OutfitCombo->GetParent():nullptr;
+							else if(Value==TEXT("outfit_nav"))W=G->OutfitNav.Get();
+							else if(Value==TEXT("font_size_row"))W=G->EditorFontInput?G->EditorFontInput->GetParent():nullptr;
+							else bKnown=false;
+							if(!bKnown){Bad(TEXT("不認得的 widget ")+Value);continue;}
+							if(W)Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("named"),Value))
+						{
+							UWidget* W=Named(*Value);
+							if(!W){Bad(TEXT("找不到名為 ")+Value+TEXT(" 的 UMG 控制項"));continue;}
+							Out.Sources.Add(W);
+						}
+						else if((*Spec)->TryGetStringField(TEXT("drawer"),Value))
+						{
+							UOKDrawerButton* Found=nullptr;
+							for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==Value){Found=D;break;}
+							// Drawers come with the controller's mode: a missing one leaves its page out, as the hand-written pages do.
+							if(Found){if(Found->Body)Out.Sources.Add(Found->Body.Get());Enter.Add(OpenDrawer(Found));}
+						}
+						else Bad(FString::Printf(TEXT("sources[%d] 要有 shape／rows／widget／named／drawer 其中一個"),K));
+					}
+					FString Value;
+					if(S->TryGetStringField(TEXT("bone_category"),Value))Enter.Add(BoneCategory(Value));
+					if(S->TryGetStringField(TEXT("enter"),Value))
+					{
+						if(Value==TEXT("first_bone_category"))Enter.Add([Weak]()
+						{
+							if(!Weak.IsValid()||!Weak->BoneCategoryCombo)return;
+							const FString Now=Weak->BoneCategoryCombo->GetSelectedOption();
+							auto NotBones=[](const FString& O){return O==TEXT("原遊戲參數")||O==TEXT("骨骼調整：全部")||O==TEXT("角色風格")||O==TEXT("腹部形變");};
+							if(!NotBones(Now))return;
+							for(int32 I=0;I<Weak->BoneCategoryCombo->GetOptionCount();++I)
+								if(!NotBones(Weak->BoneCategoryCombo->GetOptionAtIndex(I))){Weak->BoneCategoryCombo->SetSelectedIndex(I);return;}
+						});
+						else if(Value==TEXT("accessory_slot_scope"))Enter.Add([this,Weak](){if(!Weak.IsValid())return;WantedTargets=TArray<FString>{Weak->AccessorySlotScope()};ApplyWantedScopes();});
+						else if(Value==TEXT("all_properties"))Enter.Add([this](){WantedProperties=TArray<FString>();ApplyWantedScopes();});
+						else if(Value==TEXT("show_inspect_col"))Enter.Add([Weak](){if(Weak.IsValid()&&Weak->InspectCol)Weak->InspectCol->SetVisibility(ESlateVisibility::SelfHitTestInvisible);});
+						else Bad(TEXT("不認得的 enter ")+Value);
+					}
+					if(Enter.Num()==1)Out.OnEnter=Enter[0];
+					else if(Enter.Num())Out.OnEnter=[Enter](){for(const TFunction<void()>& E:Enter)E();};
+					if(S->TryGetStringField(TEXT("signature"),Value))
+					{
+						if(Value==TEXT("bone_category"))Out.Signature=BoneSignature;
+						else Bad(TEXT("不認得的 signature ")+Value);
+					}
+					if(S->HasField(TEXT("shown_only"))&&!S->TryGetBoolField(TEXT("shown_only"),Out.bShownOnly))Bad(TEXT("shown_only 要是 true／false"));
+					if(S->TryGetStringField(TEXT("builder"),Value))
+					{
+						if(Value==TEXT("eye_overlays"))
+						{
+							Out.Signature=[G](){return FString::Printf(TEXT("%d|%d|%d|%d|%s"),G->bModelLayout?1:0,G->bLoadInFlight?1:0,G->EyeOverlayGeneration,G->bEyeOverlayBusy?1:0,*G->EyeOverlayStatus);};
+							Out.Build=[this](UDreamWidget* Page){BuildEyeOverlayPage(Page);};
+						}
+						else if(Value==TEXT("game_root"))Out.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};
+						else Bad(TEXT("不認得的 builder ")+Value);
+					}
+					const TArray<TSharedPtr<FJsonValue>>* Buttons=nullptr;
+					if(S->TryGetArrayField(TEXT("own_buttons"),Buttons))
+					{
+						TArray<TPair<FString,TFunction<void()>>> Made;
+						for(const TSharedPtr<FJsonValue>& B:*Buttons)
+						{
+							const TSharedPtr<FJsonObject>* BO=nullptr;FString Label,Action;
+							if(!B->TryGetObject(BO)||!(*BO)->TryGetStringField(TEXT("label"),Label)||!(*BO)->TryGetStringField(TEXT("action"),Action)){Bad(TEXT("own_buttons 每項要有 label 與 action"));continue;}
+							if(Action==TEXT("add_accessory_slot"))Made.Emplace(Label,[Weak](){if(Weak.IsValid())Weak->OnAddAccessorySlot();});
+							else Bad(TEXT("不認得的 action ")+Action);
+						}
+						if(Made.Num())
+						{
+							TFunction<void(UDreamWidget*)> Before=MoveTemp(Out.Build);
+							Out.Build=[this,Before,Made](UDreamWidget* Page){if(Before)Before(Page);for(const auto& B:Made)MakeOwnButton(Page,B.Key,B.Value);};
+						}
+					}
+					const TSharedPtr<FJsonObject>* PickerSpec=nullptr;
+					if(S->TryGetObjectField(TEXT("pickers"),PickerSpec))
+					{
+						TArray<FString> Targets,Properties;
+						(*PickerSpec)->TryGetStringArrayField(TEXT("targets"),Targets);(*PickerSpec)->TryGetStringArrayField(TEXT("properties"),Properties);
+						if(Targets.IsEmpty()&&Properties.IsEmpty())Bad(TEXT("pickers 的 targets 與 properties 都是空的"));
+						else Pickers(Out,Targets,Properties);
+					}
+					bool bSkip=false;
+					if(S->TryGetStringField(TEXT("needs"),Value))
+					{
+						if(Value==TEXT("bones"))bSkip=BoneRows.IsEmpty();
+						else Bad(TEXT("不認得的 needs ")+Value);
+					}
+					if(bBad||bSkip)continue;
+					Out.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
+					// Nothing to mirror and no page of its own (a widget this controller does not have): left out.
+					if(Out.Sources.IsEmpty()&&!Out.Build)continue;
+					Cat.Groups.Add(MoveTemp(Out));
+				}
+				Built.Add(MoveTemp(Cat));
+			}
+			// The registry keys the file names anywhere (items bound to data, from step 2 on): the audit checks them.
+			TFunction<void(const TSharedPtr<FJsonValue>&)> Scan=[&](const TSharedPtr<FJsonValue>& V)
+			{
+				if(!V)return;
+				if(V->Type==EJson::Object){for(const auto& F:V->AsObject()->Values){if(FString(F.Key)==TEXT("key")&&F.Value&&F.Value->Type==EJson::String)PageKeys.AddUnique(F.Value->AsString());else Scan(F.Value);}}
+				else if(V->Type==EJson::Array)for(const TSharedPtr<FJsonValue>& E:V->AsArray())Scan(E);
+			};
+			for(const TSharedPtr<FJsonValue>& C:*CategoryList)Scan(C);
+			Categories=MoveTemp(Built);
+			return;
+		}
+	}
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
 	for(FGroup& Each:Face.Groups)
 	{
@@ -900,6 +1122,36 @@ void UOKReaderScreen::BuildCategories()
 	for(FGroup& Each:Settings.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty()&&!Each.Build;});
 	Categories.Add(MoveTemp(Settings));
+}
+
+FString UOKReaderScreen::PagesFile() const
+{
+	// A packaged stage carries only the Config it was staged with: the launcher names the checkout's file.
+	FString File;
+	if(FParse::Value(FCommandLine::Get(),TEXT("-ReaderPages="),File)&&!File.IsEmpty())return File;
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectConfigDir()/TEXT("ReaderEditor/pages.json"));
+}
+
+void UOKReaderScreen::ShowPagesErrors(UDreamWidget* Page)
+{
+	if(PagesErrors.IsEmpty()||!Page)return;
+	UOKDreamControl* L=MakeControl(TEXT("Label"),Page);if(!L)return;
+	FString Say=FString::Printf(TEXT("頁面定義檔有 %d 個問題："),PagesErrors.Num());
+	for(const FString& E:PagesErrors)Say+=TEXT("\n・")+E;
+	L->FixedText=Say;L->SetText(Say);
+	if(UDreamText* T=TextOf(L->Label.Get()))T->SetColor(FColor(255,70,70));
+	if(UDreamPanelSlot* Slot=L->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+}
+
+void UOKReaderScreen::ReloadPages(const FString& Mode,FOutputDevice& Out)
+{
+	if(Mode==TEXT("builtin"))bBuiltinPages=true;
+	else if(Mode==TEXT("file"))bBuiltinPages=false;
+	else if(!Mode.IsEmpty()){Out.Log(TEXT("pages: builtin | file (empty: report)"));return;}
+	if(!Mode.IsEmpty()){BuildCategories();ShowTab(Tab);}
+	int32 Pages=0;for(const FCategory& C:Categories)Pages+=FMath::Max(1,C.Groups.Num());
+	Out.Logf(TEXT("pages: %s, %d categories, %d pages, %d problems, %d registry keys named"),*PagesSource,Categories.Num(),Pages,PagesErrors.Num(),PageKeys.Num());
+	for(const FString& E:PagesErrors)Out.Log(TEXT("  ")+E);
 }
 
 void UOKReaderScreen::BuildDrawers()
@@ -1207,6 +1459,66 @@ void UOKReaderScreen::ListResources(FOutputDevice& Out) const
 static void OKReaderAllControls(const UOKReaderScreen* S,TArray<UOKDreamControl*>& All,TArray<FString>& Paths,
 	const TArray<TObjectPtr<UOKDreamControl>>& Controls,const TArray<TObjectPtr<UOKDreamControl>>& SubButtons,const TArray<TObjectPtr<UOKDreamControl>>& RailButtons,
 	const TArray<TObjectPtr<UOKDreamControl>>& Drawers,const TArray<TObjectPtr<UOKDreamControl>>& CardButtons);
+// The UMG control that shows a registry parameter (a row of OKCharacterMCPRegistry::Parameters): shape.* its slider,
+// bone.* the bone row of that bone and axis, physics.*／pregnancy.*／style.* their sliders, a property the detailed
+// editor's panel (its rows are made per card and per page when the panel opens).
+static UWidget* OKRegistryControl(UOKCharacterController* G,const TSharedPtr<FJsonObject>& P)
+{
+	if(!G||!P)return nullptr;
+	FString Key,Kind;P->TryGetStringField(TEXT("key"),Key);P->TryGetStringField(TEXT("category"),Kind);
+	// First: a property's key can start like a slider's (physics.hair.back, physics.outfit0.accessory3 are properties).
+	if(Kind==TEXT("properties"))return G->PropertyPanel.Get();
+	if(Key.StartsWith(TEXT("shape.")))
+	{
+		const bool bBody=Key.StartsWith(TEXT("shape.body."));int32 Dot=INDEX_NONE;Key.FindLastChar(TEXT('.'),Dot);const int32 I=FCString::Atoi(*Key.Mid(Dot+1));
+		for(UOKShapeSlider* S:G->ShapeSliders)if(S&&S->bBody==bBody&&S->Index==I)return S;
+	}
+	else if(Key.StartsWith(TEXT("bone.")))
+	{
+		FString Bone;P->TryGetStringField(TEXT("bone"),Bone);int32 Axis=-99;P->TryGetNumberField(TEXT("axis"),Axis);
+		for(UOKShapeSlider* S:G->BoneSliders)if(S&&S->ModAxis==Axis&&(S->ModBone==Bone||S->ModRight==Bone))return S;
+	}
+	else if(Key.StartsWith(TEXT("physics."))){for(UOKShapeSlider* S:G->BoneSliders)if(S&&S->BodyParameter==Key.Mid(8))return S;}
+	else if(Key.StartsWith(TEXT("pregnancy."))){for(UOKShapeSlider* S:G->BoneSliders)if(S&&S->PregnancyParameter==Key.Mid(10))return S;}
+	else if(Key.StartsWith(TEXT("style."))){for(UOKShapeSlider* S:G->StyleSliders)if(S&&S->StyleParameter==Key.Mid(6))return S;}
+	return nullptr;
+}
+
+bool UOKReaderScreen::SetByKey(const FString& Key,const FString& To,FString* OutNote)
+{
+	auto Say=[OutNote](const FString& S){if(OutNote)*OutNote=S;return false;};
+	UOKCharacterController* G=Controller.Get();if(!G)return Say(TEXT("no controller"));
+	TSharedPtr<FJsonObject> Row;
+	for(const TSharedPtr<FJsonValue>& V:OKCharacterMCPRegistry::Parameters(G))
+		if(const TSharedPtr<FJsonObject> P=V.IsValid()?V->AsObject():nullptr){FString K;if(P->TryGetStringField(TEXT("key"),K)&&K==Key){Row=P;break;}}
+	if(!Row)return Say(TEXT("not in the registry: ")+Key);
+	FString Kind;Row->TryGetStringField(TEXT("category"),Kind);
+	if(Kind==TEXT("properties"))return Say(TEXT("not set: property rows are not bound by key yet (open their page and use the path, or reader_call set) ")+Key);
+	UWidget* W=OKRegistryControl(G,Row);
+	if(!W)return Say(TEXT("no control shows ")+Key);
+	// The page whose sources hold the control (itself or a row it is in): the current page first.
+	auto Holds=[W](const FGroup& Group){for(const UWidget* At=W;At;At=At->GetParent())for(const TWeakObjectPtr<UWidget>& S:Group.Sources)if(S.Get()==At)return true;return false;};
+	int32 PageCategory=INDEX_NONE,PageSub=INDEX_NONE;
+	if(Categories.IsValidIndex(Category)&&Categories[Category].Groups.IsValidIndex(Sub)&&Holds(Categories[Category].Groups[Sub])){PageCategory=Category;PageSub=Sub;}
+	for(int32 C=0;C<Categories.Num()&&PageCategory==INDEX_NONE;++C)for(int32 S=0;S<Categories[C].Groups.Num();++S)if(Holds(Categories[C].Groups[S])){PageCategory=C;PageSub=S;break;}
+	if(PageCategory==INDEX_NONE)return Say(TEXT("on no page: ")+Key);
+	if(PageCategory!=Category||PageSub!=Sub){if(Categories[PageCategory].Tab!=Tab)ShowTab(Categories[PageCategory].Tab);ShowCategory(PageCategory,PageSub);}
+	// The mirrored control whose UMG source is that control or inside it (a slider row mirrors its slider and its number).
+	UOKDreamControl* Found=nullptr;
+	for(UOKDreamControl* C:Controls)if(IsValid(C)&&C->Source.IsValid()&&(C->Slider||C->Toggle||C->Choice||C->Input))
+	{
+		for(const UWidget* At=C->Source.Get();At;At=At->GetParent())if(At==W){Found=C;break;}
+		if(Found)break;
+	}
+	const FString Where=Categories[PageCategory].Name+TEXT("›")+Categories[PageCategory].Groups[PageSub].Name;
+	if(!Found)return Say(FString::Printf(TEXT("not set: %s is on %s but not shown there now (a bone row shows under its bone category)"),*Key,*Where));
+	if(!Found->IsOnScreen()||!Found->IsOperable())return Say(FString::Printf(TEXT("not set: %s is %s"),*ControlPath(Found),Found->IsOnScreen()?TEXT("disabled"):TEXT("not shown now")));
+	FString Why;
+	if(!Found->SetValue(To,&Why))return Say(FString::Printf(TEXT("set %s (%s) = %s failed: %s"),*ControlPath(Found),*Key,*To,*Why));
+	if(OutNote)*OutNote=FString::Printf(TEXT("set %s (%s) = %s"),*ControlPath(Found),*Key,*To);
+	return true;
+}
+
 void UOKReaderScreen::AuditControls(FOutputDevice& Out)
 {
 	UOKCharacterController* G=Controller.Get();
@@ -1272,16 +1584,48 @@ void UOKReaderScreen::AuditControls(FOutputDevice& Out)
 		FString Top;for(const UWidget* At=W->GetParent();At;At=At->GetParent())if(At->GetFName()!=NAME_None&&!At->GetName().StartsWith(TEXT("HorizontalBox"))&&!At->GetName().StartsWith(TEXT("VerticalBox"))&&!At->GetName().StartsWith(TEXT("SizeBox"))&&!At->GetName().StartsWith(TEXT("Border"))){Top=At->GetName();break;}
 		Missing.Add(FString::Printf(TEXT("%s\t%s\t%s\t%s\tunder=%s"),*W->GetClass()->GetName(),*W->GetName(),*Label.Replace(TEXT("\n"),TEXT(" ")),IsUmgShown(W)?TEXT("visible"):TEXT("hidden"),*Top));
 	});
+	// The registry (OKCharacterMCPRegistry::Parameters, what reader_call get／set reach) against the pages: a key whose
+	// control is on no page is a gap of the UI; a key the definition file names that the registry lacks, a gap of the data.
+	TSet<const UWidget*> GroupSources;
+	for(const FCategory& Each:Categories)for(const FGroup& Group:Each.Groups)for(const TWeakObjectPtr<UWidget>& W:Group.Sources)if(W.IsValid())GroupSources.Add(W.Get());
+	auto OnPage=[&](const UWidget* W)
+	{
+		if(!W)return false;
+		if(GroupSources.Contains(W))return true;
+		for(const UWidget* At=W;At;At=At->GetParent())if(Where.Contains(At))return true;
+		return false;
+	};
+	int32 Keys=0,KeysOnPage=0;TArray<FString> UiGap,DataGap;TSet<FString> RegistryKeys;
+	for(const TSharedPtr<FJsonValue>& Row:OKCharacterMCPRegistry::Parameters(G))
+	{
+		const TSharedPtr<FJsonObject> P=Row.IsValid()?Row->AsObject():nullptr;if(!P)continue;
+		FString Key,Label,Kind;P->TryGetStringField(TEXT("key"),Key);P->TryGetStringField(TEXT("label"),Label);P->TryGetStringField(TEXT("category"),Kind);
+		if(Key.IsEmpty())continue;
+		++Keys;RegistryKeys.Add(Key);
+		const UWidget* W=OKRegistryControl(G,P);
+		if(OnPage(W))++KeysOnPage;
+		else UiGap.Add(FString::Printf(TEXT("%s\t%s\t%s"),*Key,*Label.Replace(TEXT("\n"),TEXT(" ")),W?TEXT("its control is on no page"):TEXT("no control")));
+	}
+	for(const FString& K:PageKeys)if(!RegistryKeys.Contains(K))DataGap.Add(K);
 	Lines.Add(FString::Printf(TEXT("audit: %d pages; old screen operable controls %d: mirrored %d, drawn by the new screen itself %d, missing %d; short names shown twice on a page: %d"),Pages,Total,Covered,Replaced,Missing.Num(),Ambiguous.Num()));
+	Lines.Add(FString::Printf(TEXT("registry: %d keys, on a page %d, on no page (UI 缺) %d; keys the definition names %d, not in the registry (資料端缺) %d; pages: %s, %d problems"),
+		Keys,KeysOnPage,UiGap.Num(),PageKeys.Num(),DataGap.Num(),*PagesSource,PagesErrors.Num()));
 	Lines.Add(TEXT("done another way by the new screen:"));
 	for(const FString& R:ReplacedBy)Lines.Add(TEXT("  ")+R);
 	Lines.Add(TEXT("missing (class, name, label, visibility, nearest named parent):"));
 	for(const FString& M:Missing)Lines.Add(TEXT("  ")+M);
 	Lines.Add(TEXT("short names shown twice (press by that name is ambiguous there; use the path):"));
 	for(const FString& A:Ambiguous)Lines.Add(TEXT("  ")+A);
+	Lines.Add(TEXT("registry keys on no page (UI 缺: key, label, why):"));
+	for(const FString& U:UiGap)Lines.Add(TEXT("  ")+U);
+	Lines.Add(TEXT("keys the definition file names that the registry lacks (資料端缺):"));
+	for(const FString& D:DataGap)Lines.Add(TEXT("  ")+D);
+	Lines.Add(TEXT("problems in the definition file:"));
+	for(const FString& E:PagesErrors)Lines.Add(TEXT("  ")+E);
 	const FString File=FPaths::ProjectSavedDir()/TEXT("Reports/reader-control-audit.txt");
 	FFileHelper::SaveStringToFile(FString::Join(Lines,TEXT("\n")),*File,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 	Out.Log(Lines[0]+TEXT(" -> ")+FPaths::ConvertRelativePathToFull(File));
+	Out.Log(Lines[1]);
 }
 
 void UOKReaderScreen::GiveBackThumb(UTexture2D* Texture)
@@ -1645,7 +1989,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	{
 		if(C.Groups[Sub].OnEnter)C.Groups[Sub].OnEnter();
 		UDreamWidget* Page=MakePanel(nullptr,false,8.f);
-		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);}
+		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);ShowPagesErrors(Page);}
 		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page&&(!C.Groups[Sub].bShownOnly||IsUmgShown(Source.Get())))Mirror(Source.Get(),Page,false);
 		ShownSignature=C.Groups[Sub].Signature?C.Groups[Sub].Signature():FString();
 		if(C.Groups[Sub].Build&&Page)C.Groups[Sub].Build(Page);
@@ -2079,6 +2423,14 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			if(!Note.IsEmpty())Out.Log(Note);
 		}
 		// "set <path|text> [#N] = <value>": a slider, toggle, drop-down or input set as a person would (the same matching as press).
+		else if(Verb==TEXT("set")&&Value.StartsWith(TEXT("key=")))
+		{
+			int32 Eq=INDEX_NONE;const FString Rest=Value.Mid(4);
+			Done=Rest.FindChar(TEXT('='),Eq);
+			FString Note;
+			if(Done)Done=S->SetByKey(Rest.Left(Eq).TrimStartAndEnd(),Rest.Mid(Eq+1).TrimStartAndEnd(),&Note);
+			if(!Note.IsEmpty())Out.Log(Note);
+		}
 		else if(Verb==TEXT("set"))
 		{
 			int32 Eq=INDEX_NONE;
@@ -2100,6 +2452,10 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		// "audit": which of the old screen's controls the new one shows (and on which page), and the short names a page
 		// shows twice (press by short name is ambiguous there; the paths stay unique).
 		else if(Verb==TEXT("audit"))S->AuditControls(Out);
+		// "pages [builtin|file]": where the pages come from (Config/ReaderEditor/pages.json or the hand-written ones) and what
+		// was wrong with the file; with a word, built again from there. "reloadpages": the file read anew.
+		else if(Verb==TEXT("pages"))S->ReloadPages(Value,Out);
+		else if(Verb==TEXT("reloadpages"))S->ReloadPages(TEXT("file"),Out);
 		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
 		else if(Verb==TEXT("card"))
 		{
