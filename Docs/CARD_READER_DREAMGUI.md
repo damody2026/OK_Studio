@@ -3164,3 +3164,32 @@ B1 ＝ `NoBackdrop=1`（拷貝根本不做）＋ `r.RDG.TransientAllocator=0`。
 所以把兩次查詢各放進尺 2（`loopx`）那個格子的第一趟與一次刻意加的 `TransientAllocator=0` 探針裡，
 同一次 claim 內完成。**在這個自測通過之前不跑 `gclrun`**——照第 7 條，不然它的輸出不能進紀錄。
 （尺 1 的趟只活 25–34 秒，來不及查詢，所以不在那裡做。）
+
+### B1 兩趟都當：**背景拷貝和啟動期零張卡的重現無關**（2/2）
+
+| 趟 | 次旋鈕核對（log 裡的生效值） | 幾秒 | 結果 |
+|---|---|---:|---|
+| B1 趟 1 | `r.RDG.TransientAllocator:0` ✓ | **25.4** | 啟動期當掉，零張卡 |
+| B1 趟 2 | `r.RDG.TransientAllocator:0` ✓ | **25.0** | 啟動期當掉，零張卡 |
+
+`NoBackdrop=1` 是「拷貝根本不做」，所以**把背景整條拿掉，救不了這個重現**，2/2。
+次旋鈕照上次記下的做法逐趟到 log 裡核對過（表頭只回讀主旋鈕）。
+
+兩趟 25.4 與 25.0 秒，和不帶 `NoBackdrop` 的原始兩趟（34.0、24.2）放在一起是 24.2–34.0 秒；
+照第 6 條，原始那兩趟在 **13:54** 的執行檔上、B1 兩趟在 **15:05** 的，
+所以**不能併成一個分布**——尺 1 那六趟就是要在 15:05 這個執行檔上把這件事做對。
+
+### 兩個量具的分母補丁寫好了（`denom.py`），六個錨點都確認唯一
+
+設計照第二條附則改過：**不加強制呼叫的旋鈕**（那是改行為來量行為），改成
+- `Note()` 進入點加 `Reached` 計數（在所有早退之前）；
+- `CheckNotStale` 加 `StaleChecked` 計數（同樣在早退之前）；
+- 兩個數字由**每幀必經**的 `FDreamUIRenderer::PostRenderView_RenderThread` 每 600 幀印一行：
+  `DreamGUI denominators: frames=F note_reached=N stale_checked=M stale_hits=H`。
+
+**那一行印得出來本身就是記錄機制的陽性樣本**，行裡的數字就是分母。
+於是「`note_reached=0` 而 `frames=20000`」才是一個觀測，0 才能歸因到呼叫點。
+
+六個錨點逐一確認在現在的檔案裡各只出現一次（`Note` 簽名、建構式行、`DreamUIExperimentBackdropMode` 宣告行、
+`StaleHits` 宣告、`CheckNotStale` 簽名、`Tick_RenderThread()` 呼叫點）。**尚未套用**：
+尺 1 的六趟要共用現在這個建置指紋，所以等它跑完、交機之前才套用與提交，趕 e-fork-2 那次重建。
