@@ -195,7 +195,7 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 | 新版有鏡像（都能用路徑按到、`set` 設值） | 4866 |
 | 新版自己畫（抽屜標題、選圖格、選圖面板的「關閉」、卡片牆） | 6 |
 | 新版用別的方式做 | 4 |
-| **缺口** | **1** |
+| **缺口** | **1 → 0**（顯示字級，已補） |
 
 新版用別的方式做的四個：
 
@@ -206,7 +206,7 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 | 顏色／飾品詳細編輯 | 顏色與設定、飾品顏色與位置、全部屬性頁進入時自動打開 |
 | 編輯欄寬度（`EditorPanelWidth`） | 左欄右緣的拖曳把手、`ok.ReaderScreen width` |
 
-**唯一的缺口：顯示字級（`EditorFontSize`，6–24）**。這是舊版 UMG 介面的字級設定，新版 DreamGUI 畫面用固定的設計字級，沒有對應的設定。要不要補由協調者決定。
+**唯一的缺口：顯示字級（`EditorFontSize`，6–24），已補（2026-11-19）**。舊版是 UMG 的字級，新版放在 **設定／介面 › 介面**（鏡像同一個數字框，存在同一個 `GameUserSettings.ini` 的 `[OpenKoikatsu.EditorDisplay] PanelFontSize`，兩版共用）。新版把它當成整個畫面的縮放：預設 8 是設計大小，`字級÷8`，夾在 0.75（6）到 1.5（12 以上；再大兩欄之間就沒有 3D 視圖了）。畫布的參考解析度跟著改成 `1920×1080÷縮放`，拖曳把手、HUD 避開兩欄、滑鼠在不在 UI 上的判斷都乘上同一個縮放。MCP：`set 設定／介面›介面：顯示字級 = 10`。
 
 **同一頁有兩個以上同名的短名（57 組）**：用短名 `press` 會回報 ambiguous 並列出路徑，路徑一律唯一，所以都能操作。大多是預期的（每列各自的「重置」、選圖與屬性兩組「上一頁／下一頁」、遊戲目錄與卡片資料夾各一組「選資料夾…／還原預設」）。值得記的兩個：鏡頭列的「全身」「腿部」和 身子 的二級選單同名；卡片牆有兩張都叫 Alice 的卡（用 `ok.ReaderScreen card <N>` 或路徑的 ` #2`）。
 
@@ -259,9 +259,11 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 - **資料貼圖變大**：`DreamUIDataTexture` 變大時記一行 log（`DreamUIDataTexture <名稱> grows to <列數> rows`），並先等 RDG 非同步執行完成才換貼圖與更新參照，供下次當機時對時間點。
 - **Aftermath dump**：`E:\OpenKoikatsu\Saved\Reports\reader-verify-20261119-stage-i1\D3D12.0.2026.11.19-04.02.23.nv-gpudmp`。要用 Nsight Graphics 打開才看得到出錯的著色器與綁定的資源；這台機器只有 Nsight Compute／Systems／VS Edition，沒有 Nsight Graphics。
 
-## 未結案：讀卡器第三條 GPU PageFault（2026-11-19，已加防護，根因未找到）
+## 未結案：讀卡器第三條 GPU PageFault（2026-11-19，真因未找到，目前靠關掉 RDG 並行執行迴避）
 
-**現況（2026-11-19 08:30）**：讀卡器新版畫面啟動時關掉 RDG 並行執行（`804306bad`，`run_card_reader_development.lua` 加 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`）。用下面的重現配方，關掉後三趟共 160 次開卡不當；開著時每趟第 5–17 張就當。e-cardload 用它定稿的配方再驗兩趟：兩趟乾淨就降級為「未再重現，但未證明根因消除」。
+**這不是修好，是迴避。真因未找到。** 若要恢復讀卡器的 RDG 並行執行，必須先找到並解掉真因，不能只是拿掉這個設定。
+
+**現況（2026-11-19 08:30）**：讀卡器新版畫面啟動時關掉 RDG 並行執行（`804306bad`，`run_card_reader_development.lua` 加 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`）。**代價**：讀卡器的渲染少了一層平行，所有 RDG pass 都在 render thread 依序錄製命令。用下面的重現配方，關掉後三趟共 160 次開卡不當；開著時每趟第 5–17 張就當。e-cardload 用它定稿的配方再驗兩趟：兩趟乾淨就降級為「未再重現，但未證明根因消除」。
 
 **三個必要條件**（各有對照，其他條件不動）：
 
@@ -287,7 +289,9 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 另外不是必要條件的：外觀縮圖快取（當機時它是 0；上限 128 照當）、卡片牆縮圖與所有圖片（`ok.ReaderThumbs 0`＋`ok.ReaderPictures 0` 照當）、角色貼圖累積（e-cardload 修掉 `RecentRuntimeTextures` 與色彩分級 LUT 兩個成長源後照當）。
 
-**防護擋的是哪一類**：RDG 把畫面的 pass 分到多個工作執行緒並行錄製命令時，有東西和 DreamGUI 的繪製在 GPU 上讀到失效的記憶體。關掉並行執行後所有 pass 在 render thread 依序錄製，這一類時序問題就不會發生。還不知道是哪一個 pass、讀到哪一塊；從啟動參數關才有效，表示讀卡器開啟前已經跑過的那幾幀也有關（例如 D3D12 的並行命令 context 在那時建好），尚未查證。breadcrumb 取證保留，萬一再發生，那是最有用的資料。
+**作用範圍（只限讀卡器）**：這條只由讀卡器的啟動器（`CardReaderDevelopment.cmd` → `run_card_reader_development.lua`）加，而且只在新版畫面時加（`-LegacyReader` 不加，`-ParallelRDG` 不加）；街區（`StreetSocial.cmd`）、OK Studio（`SceneEditor.cmd`）、百人房間的啟動器都不加，那些程序是引擎預設的 2。讀卡器裡按「進入1對1互動場景」時 `UOKReaderScreen::ReaderRenderSettings(false)` 把它設回引擎預設，貼圖池 defrag 也還原；回到讀卡器時再設回 0（`ok.ReaderScreen: r.RDG.ParallelExecute ...` 會寫進 log）。注意：執行中才設 0 量過擋不住，所以從 1 對 1 回來之後的讀卡器只有「執行中設 0」那一層，沒驗證過；真正量過有效的是啟動時就是 0。
+
+**迴避的是哪一類**：RDG 把畫面的 pass 分到多個工作執行緒並行錄製命令時，有東西和 DreamGUI 的繪製在 GPU 上讀到失效的記憶體。這是一個競態：它跟哪些 pass 恰好同時在飛行中的幀裡錄製有關，所以要停幾秒、跑到第幾張才出現。關掉並行執行後所有 pass 在 render thread 依序錄製，這一類時序問題就不會發生；但被蓋掉的是症狀出現的條件，讀到失效記憶體的那個東西還在。還不知道是哪一個 pass、讀到哪一塊；從啟動參數關才有效，表示讀卡器開啟前已經跑過的那幾幀也有關（例如 D3D12 的並行命令 context 在那時建好），尚未查證。breadcrumb 取證保留，萬一再發生，那是最有用的資料。
 
 以下是追查過程的紀錄。
 
@@ -569,3 +573,46 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
 **修正（暫時的防護，不是根因）**：`Tools/run_card_reader_development.lua`（`CardReaderDevelopment.cmd` 與 ok-game-mcp 的 `reader_launch` 都走它）開新版畫面時加上 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`；`-LegacyReader`（不論放在 `--` 前後）不加，`-ParallelRDG` 保留引擎預設（重現與追根因用）。讀卡器只有一個角色，關掉並行執行的成本小。
 
 資料：`E:\OpenKoikatsu\Saved\Reports\reader-dwell-noparallel-20261119\`、`reader-dwell-pe0b-20261119\`、`reader-dwell-pe1-20261119\`、`reader-dwell-neverparallel-20261119\`、`reader-dwell-fix-20261119\`、`reader-dwell-fixini-20261119\`。
+
+## 防護的驗收與對照（2026-11-19，e-cardload-physics）
+
+**結論：在 `r.RDG.ParallelExecute=0` 的條件下，兩趟 ×30 張未再重現；真因仍未找到。這是迴避措施，不是修復。**
+同一份配方、同一個樹（`804306bad` 之後）把防護拿掉，**第 15 張就當**，崩潰簽章和先前三次一模一樣。
+所以「關掉 RDG 並行執行」確實是迴避成功的原因，不是被別的改動壓掉的——真因還在，只是被繞過。
+
+| 趟 | 條件 | 卡數 | 結果 |
+|---|---|---|---|
+| 先前三次 | 引擎預設並行 | — | 當在第 **6／12／13** 張（1～4 分鐘內） |
+| 1 | `-ini ... r.RDG.ParallelExecute=0`（`reader_launch`，lane `e-pf1`） | 30 | 乾淨 |
+| 2 | 同上（lane `e-pf2`） | 30 | 乾淨 |
+| 對照 | `-ParallelRDG`（引擎預設，lane `e-pf3`） | 15 | **當**：第 15 張開完、停留中 |
+
+兩趟乾淨的那 60 次都是真的開卡：log 裡各 30 次 `ok.ReaderScreen notice: 已加载3D`。
+防護生效的證據：命令列有那個 `-ini`，log 第 0 幀 `LogConfig: Set CVar [[r.RDG.ParallelExecute:0]]`，
+主控台查 `r.RDG.ParallelExecute = "0" LastSetBy: SystemSettingsIni`（引擎預設是 2）。對照那趟 log 裡**沒有**那一行。
+
+### 對照那趟的崩潰細節（給追根因用）
+
+- 日誌 `Saved/Logs/CardReader/20261119-082405-73d69668.log`，Aftermath dump `Saved/Logs/D3D12.0.2026.11.19-08.27.05.nv-gpudmp`。
+- `Status: PageFault`、`Type: AddressTranslationError`、`Access: Read`、`Engine: Graphics`、
+  `Client: GraphicsProcessingCluster`、`GPU VA 0x000000257a8e1000`、`Resource: <no info>`、`Engine Reset: True`。
+- **Active Shaders 只有一個**：`Type = Pixel`、`Function = MainPS`、`Shader Hash E6753E1EA9F1F20775D8BC0AD963B1EF`、
+  Aftermath hash `7159920291841742735`；`Shader GPU PC Address: fragment_02 @ 0x00045f90`（和先前三次同一個位址）。
+- `Found 0 active tracked resources in 16.00 MB range`、`0 active heaps`、
+  `0 released resources containing the page fault address during last 100 frames`、`DRED: No PageFault data.`
+  ——頁錯位址**不在任何還活著或最近釋放的資源裡**，所以不是「用到剛釋放的貼圖」那種單純的 UAF，
+  比較像描述子／bindless 讀到一個從來沒對應過的位址。
+- 飛行中的 breadcrumb 全是 `[Not Started]` 的 DreamGUI 繪製鏈：
+  `DreamUIDraw main=DreamUIDynamicSpriteAtlasData_Texture_0|DreamUIPreset_WhiteSolid font=DreamUIFontData_DistanceField_Texture_0`
+  → `DreamUIData widget=DreamUIDataTexture_6 clip=DreamUIDataTexture_3`
+  → `DreamUIMore rect=DreamUIDataTexture_4 paint=DreamUIDataTexture_1 mask0=fallback`。
+
+### 那條 cvar 誰設的、什麼時機、會不會還原
+
+- **誰**：只有 `Tools/run_card_reader_development.lua:148`。`Config/*.ini` 沒有，C++／Rust 沒有任何地方讀寫它，
+  `SceneEditor.cmd`／`StreetSocial.cmd`／`CrowdRoom100.cmd` 都沒有（全專案另一處是 DreamGUI 自己的 RHI 自動化測試，它自己設組合）。
+- **時機**：行程啟動、第 0 幀的命令列 ini 覆寫，**在引擎開始算圖之前**。這就是它有效、而由程式在開畫面時設無效的原因。
+- **還原**：**不會**，沒有任何程式碼重設它，是那個行程一輩子的值。
+  因此有一個真實的洩漏面：讀卡器行程**自己**可以進 OK Studio（`reader_call studio enter`）與一對一（`bEnterInteractionAfterLoad`），
+  在同一個行程裡那兩個畫面也是在 `ParallelExecute=0` 下跑的。各自用自己的 `.cmd` 啟動時不受影響。
+  要「只關讀卡器畫面」就得離開時設回去，但照上面量到的不對稱，**由程式設回去恐怕也不會讓平行執行真的回來**，要先驗再寫。
