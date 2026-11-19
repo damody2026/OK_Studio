@@ -2344,3 +2344,32 @@ A／B 第一次有合併的理由；兩邊差不多 ⇒ 池子周轉不是共同
 另記一條這一格的額外價值：B 配置下背景拷貝**不走 transient、改從池子配置**，
 所以若模式 2（拷貝照做、綁黑）讓 19 秒的當機消失，
 那同時證明「那張拷貝確實是從池子來的」與「綁的那塊記憶體就是受害者」兩件事。
+
+### `Frames.Func=240` 第 1 趟：第 19 張（基線是第 4／7 張），第 2 趟作廢重跑（2026-11-19 14:52–14:55）
+
+in-effect log 確認只抬了一個刻度：`texture=3 buffer=3 pooled=3 func=240`。
+
+| 刻度 | 第 1 趟 | 第 2 趟 |
+|---|---:|---:|
+| 基線 `DelayFrames=3`（四個刻度都是 3） | 7 | 4 |
+| `Frames.Texture=240` | 6 | 7 |
+| **`Frames.Func=240`** | **19** | 作廢（見下），重跑 |
+
+**第 19 張明顯跳出基線**（同配方同建置，`=3` 與 `Texture=240` 四趟都落在 4–7），
+簽章一樣（`MainPS`／`PageFault at VA 0x25603D1000`／`Found 0 active heaps`），斷言 0 次命中。
+**但它沒有活過 30 張，所以這是「推遲」不是「修掉」。**
+
+**第 2 趟作廢的原因寫在 [ERROR_LOG](ERROR_LOG.md) 2026-11-19 那條**：
+我停「第一個 UnrealEditor pid」時，第 1 趟的引擎已經自己退了，
+拿到的是第 2 趟剛啟動的引擎，於是把它殺在開頭。重跑在**同一個二進位**上做。
+
+**跑第 2 趟之前先登記讀法**（`Func` 這一條本來是被我否掉的，所以要寫清楚兩種結果各代表什麼）：
+- **第 2 趟也明顯晚於基線（比如 ≥15）⇒ `Later()` 這條真的有效**，而它和
+  「delete 一個 proxy 不放掉任何 `MainPS` 綁的東西」矛盾。
+  出路**不是**改口說 proxy 是受害者，而是 `Tick_RenderThread` 自己的註解：
+  「a release may hand something else over (a proxy's delete releasing its resources)」——
+  也就是 **proxy 的 delete 是扣扳機的那一個，真正被放掉的是它跑起來時連帶交出的東西**。
+  那就要去查 `~FDreamUIMaterialProxy` 實際會連帶釋放什麼。
+  這也剛好對上 `gc` 那條軸（proxy 的 delete 是 reachability 驅動的）。
+- **第 2 趟回到 4–7 ⇒ 第 1 趟的 19 是擲骰的上緣**，`Func` 不成立，
+  四個刻度全部沒救到它，`DelayFrames` 的效應就要完全歸給時序（reuse 量測那一格）。
