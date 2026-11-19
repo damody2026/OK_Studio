@@ -1026,3 +1026,14 @@ e-cardload 給的條件：
 **視窗高度本身不改變溢出與否**：畫布以 1080 為設計高度、跟著視窗縮放（`ScaleWithScreenSize`，以高度為準）。所以 700 和 1000 的可視高度在設計單位裡一樣（806／850／894／946，依頁首有沒有子選單而不同），頁面高度也一樣，只是整體縮小。會改變的是「顯示字級」（`EditorFontSize`，canvas 參考解析度除以它）：字級放大時，可視高度的設計單位變小。這條還沒掃。
 
 **之後再有人回報「看不到／捲不到」**：先在那一頁跑 `ok.ReaderScreen pagefit`。`MISMATCH` 才是捲動範圍沒跟上；`ok` 但看不到，就是控制項沒被鏡像或被藏起來，查 `controls` 的 `[not shown]`。
+
+## `ui_screenshot {"ui":false}` 會拍到 DreamGUI 面板（2026-11-19，e-fork-2，已修）
+
+- **原因**：`/screenshot` 用 `FScreenshotRequest::RequestScreenshot(檔名, bShowUI)`，`bShowUI=false` 只去掉 Slate（UMG）。DreamGUI 把畫面畫進場景，所以讀卡器的左右面板、相機列都留在圖裡。
+- **修法**（`OKGameControl.cpp`）：`ui:false` 時，把 DreamGUI 每個玩家的畫面根（`UDreamScreenUISubsystem` 的 screen root）先藏起來，隔一幀再拍，檔案寫出後（最多 5 秒）再顯示回來。回覆多一個 `dream_screens_hidden`。
+- **驗收**（stage `EFork1119r`，同一畫面 `ui:true`／`ui:false` 各一張，`E:\OpenKoikatsu\Saved\OKControl\shots\11172-0001.png`～`0007.png`）：
+  - 讀卡器：`ui:false` 沒有任何面板、相機列、通知。
+  - 1 對 1：`ui:false` 只剩場景與角色，讀卡器面板、H 面板、字幕都沒有。
+  - Studio：`ui:false` 只剩角色，Studio 工具列、gizmo、讀卡器面板都沒有。
+  - 拍完再 `ui:true`，面板都回來了。
+- **順便看到（另一件，未修）**：`ui:true` 的 1 對 1 與 Studio 畫面裡，讀卡器的 DreamGUI 面板（左欄、相機列、右欄）整段都畫在底下。之前記過「1 對 1 期間讀卡器畫面沒藏起來」，Studio 也一樣。
