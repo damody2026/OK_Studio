@@ -6193,3 +6193,54 @@ render thread 那條路上（f-sceneload 正在查），而**不在**換卡 swee
 `FDreamUIBuiltInBackdrop::Texture` 是整個 renderer 裡**唯一的裸 `FRHITexture*`**（`DreamUIRenderer.h:29`，
 寫入點 `DreamUIRenderer.cpp:1619`／`:2365`，綁定點 `:1015`，fallback `GBlackTexture`），
 **既沒有引用計數、不在任何 breadcrumb 裡、也不在那九個槽裡**。下一格（`NoBackdrop=2`）判它的必要性。
+
+# `NoBackdrop=2` 三趟：**3/3 照樣故障**，所以 backdrop 不是必要條件（讀取那一側）
+
+事前預期（協調與我都押 0/3）**被否掉**。
+
+| | 趟 1 | 趟 2 | 趟 3 |
+|---|---|---|---|
+| `# knob now`（驅動回讀主 cvar） | `NoBackdrop = "2"` `LastSetBy: SystemSettingsIni` | 同 | 同 |
+| `cmdline_has_nobackdrop` | **1** | **1** | **1** |
+| `faults` | **1** | **1** | **1** |
+| `Shader Hash` | `E6753E1E…` | **同一顆** | **同一顆** |
+| 故障那張 | `Texture2D_320` | `Texture2D_1007` | `Texture2D_550` |
+| 開到第幾張／秒數（僅附註，不可比） | 4／79.4 s | 17／139.6 s | 15／140.4 s |
+| `slot_named_texture2d` | 927 | 943 | 961 |
+| `kept_created`／`handoffs` | 377／4557 | 945／10391 | 900／9980 |
+| `Backdrop` 出現在 breadcrumb | **0** | **0** | **0** |
+| `[Active]` 總數／其中 DreamUI | 33／24 | 36／27 | 32／24 |
+
+**到達證據兩層都成立**：驅動用 `ui_exec` 回讀主 cvar 得到 `"2"`（`LastSetBy: SystemSettingsIni`），
+加上命令列回音。**這是這一串格子裡第一次到達證據從設計時就在乾淨趟與故障趟都可讀**（實際上三趟都故障）。
+
+## 結論的範圍，照先前標好的限制
+
+mode 2 **複製照做**（`CopyFrom` 正常、pass 結構與配置不變），**只把綁進 `DreamUI_BackdropTex` 的那一張換成全域黑貼圖**。
+所以這三趟排除的是：**「故障需要經由那個槽讀到的那塊記憶體」**——**不成立**。
+**沒有**排除 backdrop 的**配置／歸還**路徑（那條要另一格，而現在沒有理由去設計它）。
+
+## 一個白撿的對照，讓第二十一條更強
+
+趟 3 的報告列了**三筆**已釋放資源，而其中 `SSR.TemporalAA` 的區間**不包含**故障位址：
+
+```
+VA=0x1CA4381000
+  out  [0x1CA0E00000..0x1CA4000000]  SSR.TemporalAA
+  IN   [0x1CA4000000..0x1CA8000000]  PoolAllocator Heap
+  IN   [0x1CA42C0000..0x1CA4420000]  Texture2D_550
+```
+
+**所以報告確實會列出其他已釋放資源，而只有卡片貼圖那一筆的區間包含故障位址。**
+這正是第二十一條的推理要的對照：若懸空的指標屬於別的資源，**那個資源自己的區間**必須包含故障位址。
+加上這三趟，區間檢查累計 **7/7 都落在卡片貼圖自己的區間內**。
+
+## 所以 DreamGUI 這一側還剩什麼
+
+1. **`DreamUI_SceneDepthTex`**（唯一還沒量過的綁定槽）；
+2. **descriptor／綁定表那一層**——第二十二條那個約束指向這裡：九個 reference 槽從沒綁過那張貼圖，
+   所以讀它的人拿的是「它還活著時取得的位址或 descriptor」；
+3. **「有活引用計數還被釋放」**（比原假說更大的那個可能）。
+
+**不再查的**：換卡 sweep、MID、GC、`ok.RuntimeTextureRelease`（都量過、行為正常），
+以及 backdrop 的讀取側（這三趟）。
