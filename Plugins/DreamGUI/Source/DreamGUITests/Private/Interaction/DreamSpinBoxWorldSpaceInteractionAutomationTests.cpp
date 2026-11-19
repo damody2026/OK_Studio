@@ -118,7 +118,7 @@ bool FDreamSpinBoxWorldScrubTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamSpinBox* SpinBox = MakeSpinBox(Rig, Stage.Panel, FVector2D(-40.0, 60.0), 600.0f, StartValue);
+	UDreamSpinBox* SpinBox = MakeSpinBox(Rig, Stage.Panel.Get(), FVector2D(-40.0, 60.0), 600.0f, StartValue);
 	if (!TestNotNull(TEXT("A spin box with a field came up on the panel"), SpinBox))
 	{
 		return false;
@@ -134,7 +134,7 @@ bool FDreamSpinBoxWorldScrubTest::RunTest(const FString& Parameters)
 	// The range over the width the camera sees: SSpinBox's own measure, in the pixels the gesture is written in.
 	const double ValuePerPixel = (SpinBox->GetSliderMaxValue() - SpinBox->GetSliderMinValue()) / FMath::Max(Whole->Max.X - Whole->Min.X, 100.0);
 	const float Expected = StartValue + static_cast<float>(90.0 * ValuePerPixel);
-	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer);
+	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer.Get());
 	TStrongObjectPtr<UDreamDragInteractionProbe> Commits(NewObject<UDreamDragInteractionProbe>());
 	SpinBox->OnValueCommitted.AddDynamic(Commits.Get(), &UDreamDragInteractionProbe::RecordFloat);
 
@@ -184,7 +184,7 @@ bool FDreamSpinBoxWorldCaretTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamSpinBox* SpinBox = MakeSpinBox(Rig, Stage.Panel, FVector2D(-40.0, 60.0), 100000.0f, 1234.0f);
+	UDreamSpinBox* SpinBox = MakeSpinBox(Rig, Stage.Panel.Get(), FVector2D(-40.0, 60.0), 100000.0f, 1234.0f);
 	if (!TestNotNull(TEXT("A spin box with a field came up on the panel"), SpinBox))
 	{
 		return false;
@@ -266,8 +266,8 @@ bool FDreamSpinBoxWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamSpinBox* SpinBox = MakeSpinBox(Rig, Stage.Panel, FVector2D(60.0, 60.0), 400.0f, 100.0f);
-	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Stage.Panel, FVector2D(80.0, 40.0), FVector2D(-200.0, 60.0));
+	UDreamSpinBox* SpinBox = MakeSpinBox(Rig, Stage.Panel.Get(), FVector2D(60.0, 60.0), 400.0f, 100.0f);
+	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Stage.Panel.Get(), FVector2D(80.0, 40.0), FVector2D(-200.0, 60.0));
 	if (!TestTrue(TEXT("A spin box and a button left of it came up on the panel"), SpinBox != nullptr && Left != nullptr && Left->FaceNode != nullptr))
 	{
 		return false;

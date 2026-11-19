@@ -94,7 +94,7 @@ bool FDreamTabViewWorldHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FPlacedTabView Placed = PlaceTabView(Rig, Stage.Panel, FVector2D(-20.0, 20.0));
+	const FPlacedTabView Placed = PlaceTabView(Rig, Stage.Panel.Get(), FVector2D(-20.0, 20.0));
 	if (!TestTrue(TEXT("A tab view with three tabs can be made on the panel"), Placed.IsReady()))
 	{
 		return false;
@@ -152,7 +152,7 @@ bool FDreamTabViewWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FPlacedTabView Placed = PlaceTabView(Rig, Stage.Panel, FVector2D(-20.0, 20.0));
+	const FPlacedTabView Placed = PlaceTabView(Rig, Stage.Panel.Get(), FVector2D(-20.0, 20.0));
 	if (!TestTrue(TEXT("A tab view with three tabs can be made on the panel"), Placed.IsReady())
 		|| !TestTrue(TEXT("The focus goes onto the first tab"), PutFocusOn(Rig, Placed.TabAt(0))))
 	{

@@ -121,11 +121,11 @@ bool FDreamUITextReorderTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_MoveReorder"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 
 	// Third to the front, then First to the back: one order the file has to follow twice.
-	TestTrue(TEXT("the first reorder went through"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint,
+	TestTrue(TEXT("the first reorder went through"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint.Get(),
 		Scoped.FindTemplate(TEXT("Third")), Scoped.FindTemplate(TEXT("Column")), 0));
 	FDreamUIAst Ast;
 	if (!TestTrue(TEXT("the file still parses"), ParseText(Source.Read(), Ast))) return false;
@@ -136,7 +136,7 @@ bool FDreamUITextReorderTest::RunTest(const FString&)
 	// The last place by index: -1 on a widget already in this parent leaves it where it is.
 	UDreamWidget* ColumnNow = Scoped.FindTemplate(TEXT("Column"));
 	if (!TestNotNull(TEXT("the column is still there"), ColumnNow)) return false;
-	TestTrue(TEXT("the second reorder went through"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint,
+	TestTrue(TEXT("the second reorder went through"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint.Get(),
 		Scoped.FindTemplate(TEXT("First")), ColumnNow, ColumnNow->GetChildren().Num() - 1));
 	FDreamUIAst After;
 	if (!TestTrue(TEXT("the file still parses"), ParseText(Source.Read(), After))) return false;
@@ -185,14 +185,14 @@ bool FDreamUITextMoveAcrossTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_MoveAcross"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 	const FString Before = Source.Read();
 
 	{
 		const FScopedTransaction Transaction(NSLOCTEXT("DreamUITextMoveRenameTests", "Move", "Move"));
-		TestTrue(TEXT("the move went through"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint,
+		TestTrue(TEXT("the move went through"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint.Get(),
 			Scoped.FindTemplate(TEXT("Card")), Scoped.FindTemplate(TEXT("Right")), 0));
 	}
 
@@ -248,11 +248,11 @@ bool FDreamUITextRenameTest::RunTest(const FString&)
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_Rename"), Source.FilePath, /*bInOpenDesigner*/true,
 		UDreamUIEventTestUserWidget::StaticClass());
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 
-	TestEqual(TEXT("the rename went through"), DreamWidgetTreeEditing::RenameWidget(Scoped.Blueprint,
+	TestEqual(TEXT("the rename went through"), DreamWidgetTreeEditing::RenameWidget(Scoped.Blueprint.Get(),
 		Scoped.FindTemplate(TEXT("Button")), TEXT("Pusher")), FString(TEXT("Pusher")));
 	FString Text = Source.Read();
 	TestTrue(TEXT("written as a rename, with where it came from"), Text.Contains(TEXT("Widget Pusher (was: Button)")));
@@ -268,7 +268,7 @@ bool FDreamUITextRenameTest::RunTest(const FString&)
 
 	// The route still reaches the handler through the renamed widget, once the class is compiled in full.
 	FCompilerResultsLog Results;
-	FKismetEditorUtilities::CompileBlueprint(Scoped.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+	FKismetEditorUtilities::CompileBlueprint(Scoped.Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection, &Results);
 	TestEqual(TEXT("the renamed file compiles clean"), Results.NumErrors, 0);
 	const UDreamWidgetGeneratedClass* Generated = Cast<UDreamWidgetGeneratedClass>(Scoped.Blueprint->GeneratedClass);
 	if (TestNotNull(TEXT("the class is a widget class"), Generated))
@@ -286,7 +286,7 @@ bool FDreamUITextRenameTest::RunTest(const FString&)
 	}
 
 	// A second rename migrates from where the node STARTED: one hop for everything still pointing at it.
-	TestEqual(TEXT("the second rename went through"), DreamWidgetTreeEditing::RenameWidget(Scoped.Blueprint,
+	TestEqual(TEXT("the second rename went through"), DreamWidgetTreeEditing::RenameWidget(Scoped.Blueprint.Get(),
 		Scoped.FindTemplate(TEXT("Pusher")), TEXT("Presser")), FString(TEXT("Presser")));
 	Text = Source.Read();
 	TestTrue(TEXT("the clause keeps the first name"), Text.Contains(TEXT("Widget Presser (was: Button)")));
@@ -320,7 +320,7 @@ bool FDreamUITextRenameRefusalsTest::RunTest(const FString&)
 	}
 	// Built without a designer: the check reads the file, and only the parse is asked for.
 	FScopedTextBlueprint Scoped(TEXT("BP_RenameRefusals"), Source.FilePath, /*bInOpenDesigner*/false);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 
 	FDreamUIStructuralEdit Rename;
 	Rename.Kind = EDreamUIStructuralEditKind::RenameNode;
@@ -328,7 +328,7 @@ bool FDreamUITextRenameRefusalsTest::RunTest(const FString&)
 	Rename.NewId = TEXT("Renamed");
 	FText Reason;
 	TestFalse(TEXT("renaming a node a timeline drives by name is refused"),
-		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint, Rename, /*bInVerifyBuild*/false, Reason));
+		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint.Get(), Rename, /*bInVerifyBuild*/false, Reason));
 	TestTrue(TEXT("and the reason names the timeline"), Reason.ToString().Contains(TEXT("Pulse")));
 	return true;
 }
@@ -358,17 +358,17 @@ bool FDreamUITextWrapTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_MoveWrap"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	{
 		DreamWidgetTreeEditing::FScopedStructureChangeBatch Batch;
-		UDreamWidget* Wrapper = DreamWidgetTreeEditing::CreateWidget(Scoped.Blueprint, UDreamWidget::StaticClass(),
+		UDreamWidget* Wrapper = DreamWidgetTreeEditing::CreateWidget(Scoped.Blueprint.Get(), UDreamWidget::StaticClass(),
 			Scoped.FindTemplate(TEXT("Root")), 0, TEXT("Wrapper"));
 		if (!TestNotNull(TEXT("the wrapper was made"), Wrapper)) return false;
 		Wrapper->CreateNewLayoutContainer(UDreamLayoutContainerVerticalBox::StaticClass());
-		TestTrue(TEXT("the first moved in"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint,
+		TestTrue(TEXT("the first moved in"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint.Get(),
 			Scoped.FindTemplate(TEXT("Alpha")), Wrapper, -1));
-		TestTrue(TEXT("and the second"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint,
+		TestTrue(TEXT("and the second"), DreamWidgetTreeEditing::ReparentWidget(Scoped.Blueprint.Get(),
 			Scoped.FindTemplate(TEXT("Beta")), Wrapper, -1));
 	}
 

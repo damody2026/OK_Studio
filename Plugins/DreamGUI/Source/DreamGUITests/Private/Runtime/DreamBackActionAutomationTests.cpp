@@ -50,8 +50,8 @@ bool FDreamBackClosesTopScreenTest::RunTest(const FString& Parameters)
 
 	TestFalse(TEXT("With nothing open, Back has nothing to do"), Stack->HandleBack(0));
 
-	UDreamBackHandlingScope* Page = MakeScope(TestWorld.World, TEXT("Page"));
-	UDreamBackHandlingScope* Dialog = MakeScope(TestWorld.World, TEXT("Dialog"));
+	UDreamBackHandlingScope* Page = MakeScope(TestWorld.World.Get(), TEXT("Page"));
+	UDreamBackHandlingScope* Dialog = MakeScope(TestWorld.World.Get(), TEXT("Dialog"));
 	Page->ActivateScope();
 	Dialog->ActivateScope();
 
@@ -81,8 +81,8 @@ bool FDreamBackInterceptionTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	UDreamBackHandlingScope* Page = MakeScope(TestWorld.World, TEXT("Page"));
-	UDreamBackHandlingScope* Dialog = MakeScope(TestWorld.World, TEXT("Dialog"));
+	UDreamBackHandlingScope* Page = MakeScope(TestWorld.World.Get(), TEXT("Page"));
+	UDreamBackHandlingScope* Dialog = MakeScope(TestWorld.World.Get(), TEXT("Dialog"));
 	Page->ActivateScope();
 	Dialog->ActivateScope();
 

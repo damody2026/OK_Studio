@@ -341,7 +341,7 @@ bool FDreamPausedGameHostProjectKeyTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	ADreamDriverEnhancedInputActor* InputActor = Cast<ADreamDriverEnhancedInputActor>(Rig.Context().InputActor);
-	ULocalPlayer* LocalPlayer = Rig.Context().LocalPlayer;
+	ULocalPlayer* LocalPlayer = Rig.Context().LocalPlayer.Get();
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer != nullptr ? LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
 	if (!TestNotNull(*Under(Case, TEXT("The input actor is the Enhanced Input one")), InputActor)
 		|| !TestNotNull(*Under(Case, TEXT("The local player has the Enhanced Input subsystem")), Subsystem))

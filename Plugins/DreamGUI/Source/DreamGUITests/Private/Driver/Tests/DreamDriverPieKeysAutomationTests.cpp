@@ -137,7 +137,7 @@ bool FDreamDriverPieKeyThroughSlateTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("The F9 key fired its binding once"), PlainF9->Count(), 1);
 		TestEqual(TEXT("The F10 key alone did not fire the Ctrl binding, and Ctrl+F10 fired it once"), CtrlF10->Count(), 1);
 		TestFalse(TEXT("Every key went up again in the player's input"),
-			InContext.PlayerController != nullptr && (InContext.PlayerController->IsInputKeyDown(EKeys::F10) || InContext.PlayerController->IsInputKeyDown(EKeys::LeftControl)));
+			InContext.PlayerController.Get() != nullptr && (InContext.PlayerController->IsInputKeyDown(EKeys::F10) || InContext.PlayerController->IsInputKeyDown(EKeys::LeftControl)));
 		const TSharedPtr<FDreamDriverPieRig> Pinned = WeakRig.Pin();
 		TestTrue(TEXT("The keyboard focus is still on the session's viewport"), Pinned.IsValid() && Pinned->IsKeyboardFocusOnViewport());
 	});
@@ -195,8 +195,8 @@ bool FDreamDriverPieTravelTest::RunTest(const FString& Parameters)
 			UWorld* Arrived = Probe->ArrivedWorld.Get();
 			TestTrue(FString::Printf(TEXT("The world arrived in is another world than %s"), *Probe->LeftWorldName),
 				Arrived != nullptr && Arrived != Probe->LeftWorld.Get());
-			TestTrue(TEXT("The rig's context is on the world arrived in"), Arrived != nullptr && InContext.World == Arrived);
-			TestTrue(TEXT("...with its own player controller"), InContext.PlayerController != nullptr && InContext.PlayerController->GetWorld() == Arrived);
+			TestTrue(TEXT("The rig's context is on the world arrived in"), Arrived != nullptr && InContext.World.Get() == Arrived);
+			TestTrue(TEXT("...with its own player controller"), InContext.PlayerController.Get() != nullptr && InContext.PlayerController->GetWorld() == Arrived);
 		})
 		.MoveTo(FDreamBy::Name(TEXT("Play")))
 		.Press()

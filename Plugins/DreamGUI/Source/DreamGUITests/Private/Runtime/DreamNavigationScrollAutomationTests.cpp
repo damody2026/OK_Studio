@@ -64,7 +64,7 @@ bool FDreamNavigationScrollReachabilityTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	UDreamWidget* ScrollWidget = nullptr;
 	TArray<UDreamWidget*> Rows;
-	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World, ScrollWidget, Rows);
+	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World.Get(), ScrollWidget, Rows);
 	TestNotNull(TEXT("ScrollBox created"), ScrollBox);
 
 	// Row 0 occupies 0..100 of a 0..120 viewport: nothing to scroll to, so it is not "reachable by
@@ -76,7 +76,7 @@ bool FDreamNavigationScrollReachabilityTest::RunTest(const FString& Parameters)
 
 	// Nothing scrollable overhead: a widget hidden for any other reason must stay out of reach, or
 	// navigation would happily land focus on something the player cannot see.
-	UDreamWidget* Loose = MakeWidget(TestWorld.World, nullptr, TEXT("Loose"), 50.0f, 50.0f);
+	UDreamWidget* Loose = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Loose"), 50.0f, 50.0f);
 	TestFalse(TEXT("A widget with no scrolling ancestor is unreachable"), FDreamUINavigationScroll::IsReachableByScrolling(Loose));
 
 	Loose->DestroyWidget();
@@ -95,7 +95,7 @@ bool FDreamNavigationScrollRevealTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	UDreamWidget* ScrollWidget = nullptr;
 	TArray<UDreamWidget*> Rows;
-	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World, ScrollWidget, Rows);
+	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World.Get(), ScrollWidget, Rows);
 	TestNotNull(TEXT("ScrollBox created"), ScrollBox);
 	TestEqual(TEXT("Starts at the top"), ScrollBox->GetScrollOffset(), 0.0f);
 
@@ -134,7 +134,7 @@ bool FDreamNavigationScrollPagingTest::RunTest(const FString& Parameters)
 	 */
 	UDreamWidget* ScrollWidget = nullptr;
 	TArray<UDreamWidget*> Rows;
-	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World, ScrollWidget, Rows);
+	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World.Get(), ScrollWidget, Rows);
 	if (!TestNotNull(TEXT("a list to page through"), ScrollBox))
 	{
 		return false;
@@ -174,7 +174,7 @@ bool FDreamNavigationScrollPagingTest::RunTest(const FString& Parameters)
 
 	// A widget in no list at all: the page keys are pressed over plenty of those, and doing nothing
 	// is the answer rather than an error.
-	UDreamWidget* Loose = MakeWidget(TestWorld.World, nullptr, TEXT("Loose"), 50.0f, 50.0f);
+	UDreamWidget* Loose = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Loose"), 50.0f, 50.0f);
 	TestFalse(TEXT("paging a widget with no list does nothing"),
 		FDreamUINavigationScroll::ScrollByPages(Loose, 1.0f, false));
 	TestFalse(TEXT("...and neither does an end key"), FDreamUINavigationScroll::ScrollToExtent(Loose, false));
@@ -202,7 +202,7 @@ bool FDreamNavigationScrollSelfTest::RunTest(const FString& Parameters)
 	 */
 	UDreamWidget* ScrollWidget = nullptr;
 	TArray<UDreamWidget*> Rows;
-	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World, ScrollWidget, Rows);
+	UDreamLayoutContainerScrollBox* ScrollBox = MakeListOfThree(TestWorld.World.Get(), ScrollWidget, Rows);
 	if (!TestNotNull(TEXT("a list to scroll"), ScrollBox))
 	{
 		return false;
@@ -217,18 +217,18 @@ bool FDreamNavigationScrollSelfTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("its own container is still no scrolling ANCESTOR"), FDreamUINavigationScroll::HasScrollableAncestor(ScrollWidget));
 
 	// A control whose scrolling lives on a child while its focus sits on another child, a scroll box's shape.
-	UDreamScrollTargetTestWidget* Control = NewObject<UDreamScrollTargetTestWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamScrollTargetTestWidget* Control = NewObject<UDreamScrollTargetTestWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Control->SetDisplayName(TEXT("Control"));
 	Control->SetWidth(200.0f);
 	Control->SetHeight(120.0f);
 	Control->OnRegister();
-	UDreamWidget* Face = MakeWidget(TestWorld.World, Control, TEXT("Face"), 200.0f, 120.0f);
+	UDreamWidget* Face = MakeWidget(TestWorld.World.Get(), Control, TEXT("Face"), 200.0f, 120.0f);
 	Face->OnRegister();
-	UDreamWidget* Viewport = MakeWidget(TestWorld.World, Control, TEXT("Viewport"), 200.0f, 120.0f);
+	UDreamWidget* Viewport = MakeWidget(TestWorld.World.Get(), Control, TEXT("Viewport"), 200.0f, 120.0f);
 	UDreamLayoutContainerScrollBox* ViewportBox = Viewport->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	for (int32 i = 0; i < 3; i++)
 	{
-		MakeWidget(TestWorld.World, Viewport, *FString::Printf(TEXT("ViewportRow%d"), i), 180.0f, 100.0f);
+		MakeWidget(TestWorld.World.Get(), Viewport, *FString::Printf(TEXT("ViewportRow%d"), i), 180.0f, 100.0f);
 	}
 	Viewport->OnRegister();
 	UDreamWidget::MarkLayoutForRebuild(Viewport);

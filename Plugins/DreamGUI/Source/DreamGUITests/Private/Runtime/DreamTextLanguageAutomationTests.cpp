@@ -80,7 +80,7 @@ bool FDreamTextLanguageChoosesTheFaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLanguageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = MakeCJKFamily(TestWorld.World);
+	UDreamTextTestFont* Font = MakeCJKFamily(TestWorld.World.Get());
 	const float KanjiAdvance = Font->GetCharData(KANJI, 24.0f, false).XAdvance;
 
 	auto FaceOfKanji = [Font](const TCHAR* Language, float& OutAdvance)
@@ -118,7 +118,7 @@ bool FDreamTextLanguageTagTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLanguageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = MakeCJKFamily(TestWorld.World);
+	UDreamTextTestFont* Font = MakeCJKFamily(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("漢<lang=zh-Hans>漢<lang=ja>漢</lang>漢</lang>漢"), TEXT("ja"));
 	In.bRichText = true;
@@ -157,7 +157,7 @@ bool FDreamTextLanguageScaledFaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLanguageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 	Font->MockFaces.SetNum(2);
 	Font->MockFaces[0].Has = { FInt32Interval(0x20, 0x7E) };
@@ -201,7 +201,7 @@ bool FDreamTextLanguageEllipsisTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLanguageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = MakeCJKFamily(TestWorld.World);
+	UDreamTextTestFont* Font = MakeCJKFamily(TestWorld.World.Get());
 
 	auto FaceOfDots = [Font](const TCHAR* Content, bool bRich)
 	{
@@ -241,7 +241,7 @@ bool FDreamTextLanguageGenEiLineBoxTest::RunTest(const FString& Parameters)
 	ON_SCOPE_EXIT { UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1); };
 	auto MakeFont = [&TestWorld](const FString& Path)
 	{
-		UDreamUIFontData_DistanceField* EngineFont = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+		UDreamUIFontData_DistanceField* EngineFont = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 		EngineFont->SetFontFilePath(Path, false);
 		EngineFont->InitFont();
 		return EngineFont;

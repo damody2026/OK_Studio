@@ -86,7 +86,7 @@ namespace DreamRenderScaleBlendTestLocal
 
 		UDreamTexture* AddBlock(FVector2D InPosition, FColor InColour, UDreamWidget*& OutWidget)
 		{
-			OutWidget = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			OutWidget = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			OutWidget->SetWidth(80.0f);
 			OutWidget->SetHeight(80.0f);
 			OutWidget->OnRegister();
@@ -103,7 +103,7 @@ namespace DreamRenderScaleBlendTestLocal
 
 		bool Build(FAutomationTestBase& InTest, bool bInMaterialModulate, EDreamUIBlendMode InBuiltInBlend)
 		{
-			if (!InTest.TestNotNull(TEXT("a world whose render-target canvas draws through a real RHI"), World.World))
+			if (!InTest.TestNotNull(TEXT("a world whose render-target canvas draws through a real RHI"), World.World.Get()))
 			{
 				return false;
 			}
@@ -111,7 +111,7 @@ namespace DreamRenderScaleBlendTestLocal
 			NewTarget->InitCustomFormat(Extent, Extent, PF_B8G8R8A8, false);
 			NewTarget->UpdateResourceImmediate(true);
 			Target.Reset(NewTarget);
-			UDreamWidget* NewRoot = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* NewRoot = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			NewRoot->SetWidth(static_cast<float>(Extent));
 			NewRoot->SetHeight(static_cast<float>(Extent));
 			NewRoot->OnRegister();
@@ -166,7 +166,7 @@ namespace DreamRenderScaleBlendTestLocal
 
 		void Frame()
 		{
-			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World))
+			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get()))
 			{
 				Manager->Tick(1.0f / 30.0f);
 			}

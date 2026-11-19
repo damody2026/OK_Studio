@@ -55,7 +55,7 @@ bool FDreamLifecycleWorldTreesAreNotTransactionalTest::RunTest(const FString& Pa
 	FScopedPanelClass Panel(TEXT("LifecycleUndoFlags"));
 	if (!TestNotNull(TEXT("the panel class compiled"), Panel.GetClass()))return false;
 	FScopedWorld Level(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World, Panel.GetClass());
+	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World.Get(), Panel.GetClass());
 	if (!TestNotNull(TEXT("the panel was placed"), Actor))return false;
 	UDreamWidget* Root = Actor->GetWidgetComponent()->GetLoadedWidget();
 	if (!TestNotNull(TEXT("with its tree"), Root))return false;
@@ -65,14 +65,14 @@ bool FDreamLifecycleWorldTreesAreNotTransactionalTest::RunTest(const FString& Pa
 	TestTrue(FString::Printf(TEXT("no widget of the tree the level editor built for the panel is transactional (found: %s)"), *DescribeTransactional(PanelWidgets)),
 		DescribeTransactional(PanelWidgets) == TEXT("none"));
 
-	UDreamWidget* Made = UDreamUIBPLibrary::ConstructWidget(Level.World, TEXT("Made"), nullptr);
+	UDreamWidget* Made = UDreamUIBPLibrary::ConstructWidget(Level.World.Get(), TEXT("Made"), nullptr);
 	if (!TestNotNull(TEXT("the runtime API makes a widget in the world"), Made))return false;
 	TestFalse(TEXT("which is not transactional either"), Made->HasAnyFlags(RF_Transactional));
 
 	UDreamWidget* Inner = PanelWidgets.Num() > 1 ? PanelWidgets[1] : nullptr;
 	if (TestNotNull(TEXT("the panel has a widget of its class's own"), Inner))
 	{
-		UDreamWidget* Copy = UDreamUIBPLibrary::DuplicateWidget(Level.World, Inner, Inner);
+		UDreamWidget* Copy = UDreamUIBPLibrary::DuplicateWidget(Level.World.Get(), Inner, Inner);
 		if (TestNotNull(TEXT("which duplicates"), Copy))
 		{
 			TestFalse(TEXT("into a widget that is not transactional"), Copy->HasAnyFlags(RF_Transactional));
@@ -93,8 +93,8 @@ bool FDreamLifecycleWorldTreeTeardownLeavesMapCleanTest::RunTest(const FString& 
 	using namespace DreamTests::Lifecycle;
 
 	FScopedWorld Level(EWorldType::Editor);
-	UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(Level.World, TEXT("Root"), nullptr);
-	UDreamWidget* Child = UDreamUIBPLibrary::ConstructWidget(Level.World, TEXT("Child"), nullptr);
+	UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(Level.World.Get(), TEXT("Root"), nullptr);
+	UDreamWidget* Child = UDreamUIBPLibrary::ConstructWidget(Level.World.Get(), TEXT("Child"), nullptr);
 	if (!TestNotNull(TEXT("a root made in the world"), Root) || !TestNotNull(TEXT("and a child"), Child))return false;
 	TestTrue(TEXT("the child joins the root"), Child->TrySetParent(Root, false));
 
@@ -123,7 +123,7 @@ bool FDreamLifecycleUndoBringsBackNoDestroyedTreeTest::RunTest(const FString& Pa
 	FScopedPanelClass After(TEXT("LifecycleUndoAfter"));
 	if (!TestNotNull(TEXT("the first panel class compiled"), Before.GetClass()) || !TestNotNull(TEXT("and the second"), After.GetClass()))return false;
 	FScopedWorld Level(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World, Before.GetClass());
+	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World.Get(), Before.GetClass());
 	if (!TestNotNull(TEXT("the panel was placed"), Actor))return false;
 	UDreamWorldWidgetComponent* Presenter = Actor->GetWidgetComponent();
 	UDreamWidget* OldRoot = Presenter->GetLoadedWidget();

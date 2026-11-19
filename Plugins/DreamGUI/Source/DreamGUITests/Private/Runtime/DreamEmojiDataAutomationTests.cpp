@@ -159,7 +159,7 @@ bool FDreamEmojiDataMigrationTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamEmojiDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontEmojiData* Saved = NewObject<UDreamUIFontEmojiData>(TestWorld.World);
+	UDreamUIFontEmojiData* Saved = NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get());
 	TMap<FDreamUIFontEmojiKey, FDreamUIFontEmojiDataItem>& SavedMap = Saved->GetMutableDataMap();
 	SavedMap.Add(FDreamUIFontEmojiKey(0x1F600), MakeItem(12.0f));
 	SavedMap.Add(FDreamUIFontEmojiKey(0x1F44D), MakeItem(13.0f));
@@ -167,7 +167,7 @@ bool FDreamEmojiDataMigrationTest::RunTest(const FString& Parameters)
 	TArray<uint8> Bytes;
 	FObjectWriter Writer(Saved, Bytes);
 
-	UDreamUIFontEmojiData* Loaded = NewObject<UDreamUIFontEmojiData>(TestWorld.World);
+	UDreamUIFontEmojiData* Loaded = NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get());
 	{
 		FObjectReader Reader(Bytes);
 		Reader.SetCustomVersion(FDreamGUIObjectVersion::GUID, (int32)FDreamGUIObjectVersion::EmojiKeyBySequence - 1, TEXT("DreamGUIObjectVersion"));
@@ -201,7 +201,7 @@ bool FDreamEmojiDataLookupTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamEmojiDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontEmojiData* Data = NewObject<UDreamUIFontEmojiData>(TestWorld.World);
+	UDreamUIFontEmojiData* Data = NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get());
 	TMap<FDreamUIFontEmojiKey, FDreamUIFontEmojiDataItem>& Map = Data->GetMutableDataMap();
 	Map.Add(FDreamUIFontEmojiKey(0x1F44D), MakeItem(1.0f));
 	Map.Add(UDreamUIFontEmojiData::MakeKey(SpellCodepoints({ 0x1F44D, 0x1F3FD })), MakeItem(2.0f));

@@ -342,7 +342,7 @@ bool FDreamDesignerHierarchyReorderTest::RunTest(const FString&)
 	{
 		if (DropPlain(*this, State, TEXT("First"), 0.3, 0.3) && DropPlain(*this, State, TEXT("Second"), 0.5, 0.5) && DropPlain(*this, State, TEXT("Third"), 0.7, 0.7))
 		{
-			*OrderBefore = OrderUnder(DesignerTemplateRoot(State->Asset.Blueprint));
+			*OrderBefore = OrderUnder(DesignerTemplateRoot(State->Asset.Blueprint.Get()));
 		}
 	});
 	EnqueueDesignerUntil(State, this, [State]()
@@ -374,7 +374,7 @@ bool FDreamDesignerHierarchyReorderTest::RunTest(const FString&)
 	EnqueueDesignerFrames(State, 2);
 	EnqueueDesignerAction(State, [this, State, OrderBefore]()
 	{
-		const UDreamWidget* Root = DesignerTemplateRoot(State->Asset.Blueprint);
+		const UDreamWidget* Root = DesignerTemplateRoot(State->Asset.Blueprint.Get());
 		const FString Expected = FString::Printf(TEXT("%s, %s, %s"), *State->Get(TEXT("Third"))->GetDisplayName(),
 			*State->Get(TEXT("First"))->GetDisplayName(), *State->Get(TEXT("Second"))->GetDisplayName());
 		TestEqual(TEXT("In the asset, the dragged widget now stands ahead of the row it was dropped above"), OrderUnder(Root), Expected);
@@ -384,7 +384,7 @@ bool FDreamDesignerHierarchyReorderTest::RunTest(const FString&)
 	EnqueueDesignerFrames(State, 2);
 	EnqueueDesignerAction(State, [this, State, OrderBefore]()
 	{
-		TestEqual(TEXT("One undo puts the order back"), OrderUnder(DesignerTemplateRoot(State->Asset.Blueprint)), *OrderBefore);
+		TestEqual(TEXT("One undo puts the order back"), OrderUnder(DesignerTemplateRoot(State->Asset.Blueprint.Get())), *OrderBefore);
 		AddInfo(FString::Printf(TEXT("The drag went %s; %d frames waited."), *State->Route, State->Frames));
 	});
 	EnqueueDesignerTeardown(State);
@@ -842,7 +842,7 @@ bool FDreamDesignerPaletteDragTest::RunTest(const FString&)
 	{
 		FDreamDesignerDriver& Driver = *State->Driver;
 		UDreamWidget* Made = nullptr;
-		for (UDreamWidget* Child : LiveChildrenOf(DesignerTemplateRoot(State->Asset.Blueprint)))
+		for (UDreamWidget* Child : LiveChildrenOf(DesignerTemplateRoot(State->Asset.Blueprint.Get())))
 		{
 			if (Child->IsA<UDreamButton>())
 			{

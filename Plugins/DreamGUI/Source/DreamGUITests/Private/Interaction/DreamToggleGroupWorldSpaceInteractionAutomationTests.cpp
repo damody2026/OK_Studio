@@ -133,7 +133,7 @@ bool FDreamToggleGroupWorldHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel, FVector2D(-20.0, 80.0));
+	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel.Get(), FVector2D(-20.0, 80.0));
 	if (!TestTrue(TEXT("Three toggles in a group can be made on the panel"), Row.IsReady())
 		|| !TestEqual(TEXT("The first is the group's choice to begin with"), Row.ChoiceIndex(), 0))
 	{
@@ -193,7 +193,7 @@ bool FDreamToggleGroupWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel, FVector2D(-20.0, 80.0));
+	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel.Get(), FVector2D(-20.0, 80.0));
 	if (!TestTrue(TEXT("Three toggles in a group can be made on the panel"), Row.IsReady())
 		|| !TestTrue(TEXT("The focus goes onto the first member"), PutFocusOn(Rig, Row.Toggles[0]->BoxNode.Get())))
 	{

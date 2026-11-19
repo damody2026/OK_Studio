@@ -63,8 +63,8 @@ bool FDreamPaintRowsMadeEagerlyTest::RunTest(const FString& Parameters)
 	using namespace DreamPaintRowsTestLocal;
 	FScopedGameWorld First;
 	FScopedGameWorld Second;
-	UDreamUIManagerWorldSubsystem* FirstManager = UDreamUIManagerWorldSubsystem::GetInstance(First.World);
-	UDreamUIManagerWorldSubsystem* SecondManager = UDreamUIManagerWorldSubsystem::GetInstance(Second.World);
+	UDreamUIManagerWorldSubsystem* FirstManager = UDreamUIManagerWorldSubsystem::GetInstance(First.World.Get());
+	UDreamUIManagerWorldSubsystem* SecondManager = UDreamUIManagerWorldSubsystem::GetInstance(Second.World.Get());
 	if (!TestNotNull(TEXT("a manager"), FirstManager) || !TestNotNull(TEXT("and another"), SecondManager))
 	{
 		return false;
@@ -92,7 +92,7 @@ bool FDreamPaintRowsSharingTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPaintRowsTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("a manager"), Manager))
 	{
 		return false;
@@ -150,7 +150,7 @@ bool FDreamPaintRowsUploadTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPaintRowsTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("a manager"), Manager))
 	{
 		return false;
@@ -182,7 +182,7 @@ bool FDreamPaintRowsTextTableTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPaintRowsTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("a manager"), Manager))
 	{
 		return false;
@@ -248,7 +248,7 @@ bool FDreamPaintRowsGrowthTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPaintRowsTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("a manager"), Manager))
 	{
 		return false;

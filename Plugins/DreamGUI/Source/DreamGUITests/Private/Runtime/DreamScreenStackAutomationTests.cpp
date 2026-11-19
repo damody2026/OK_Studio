@@ -44,7 +44,7 @@ bool FDreamScreenStackCoveredPageStopsRunningTest::RunTest(const FString& Parame
 {
 	using namespace DreamScreenStackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the screen subsystem exists in a game world"), Screen))
 	{
 		return false;
@@ -89,7 +89,7 @@ bool FDreamScreenHiddenPageStopsRunningTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamScreenStackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the screen subsystem exists in a game world"), Screen))
 	{
 		return false;
@@ -122,7 +122,7 @@ bool FDreamScreenDeadEntryIsReclaimedTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamScreenStackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the screen subsystem exists in a game world"), Screen))
 	{
 		return false;
@@ -157,7 +157,7 @@ bool FDreamScreenActiveReentryTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamScreenStackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("Screen subsystem"), Screen)) { return false; }
 	UDreamWidget* Page = Screen->ShowWidgetOfClass(TEXT("Remove"), UDreamUserWidget::StaticClass());
 	if (!TestNotNull(TEXT("Page"), Page)) { return false; }
@@ -208,7 +208,7 @@ bool FDreamScreenVisibilityReentryTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamScreenStackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("Screen subsystem"), Screen)) { return false; }
 	UDreamScreenReentryWidget* Page = Cast<UDreamScreenReentryWidget>(
 		Screen->ShowWidgetOfClass(TEXT("Visibility"), UDreamScreenReentryWidget::StaticClass()));
@@ -234,7 +234,7 @@ bool FDreamScreenRebuildReentryTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamScreenStackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreenSubsystem(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("Screen subsystem"), Screen)) { return false; }
 	const FName Name(TEXT("Rebuild"));
 	UDreamWidget* Page = Screen->ShowWidgetOfClass(Name, UDreamUserWidget::StaticClass());
@@ -265,7 +265,7 @@ bool FDreamScreenMultiPageRebuildReentryTest::RunTest(const FString& Parameters)
 	for (const bool bRefreshDuringInitialize : {false, true})
 	{
 		DreamTests::FScopedGameWorld TestWorld;
-		UDreamScreenUISubsystem* Screen = DreamScreenStackTestLocal::GetScreenSubsystem(TestWorld.World);
+		UDreamScreenUISubsystem* Screen = DreamScreenStackTestLocal::GetScreenSubsystem(TestWorld.World.Get());
 		if (!TestNotNull(TEXT("Screen subsystem"), Screen)) { return false; }
 		const TArray<FName> Names = {TEXT("First"), TEXT("Second"), TEXT("Third")};
 		for (const FName Name : Names)

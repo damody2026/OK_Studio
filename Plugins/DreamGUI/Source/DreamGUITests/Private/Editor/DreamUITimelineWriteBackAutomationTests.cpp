@@ -345,7 +345,7 @@ namespace DreamUITimelineWriteBackTestLocal
 	/** The timeline InName of a compiled text-authored Blueprint: the one on its authoring root, which the editor edits. */
 	UDreamWidgetAnimation* AuthoredTimeline(const DreamUITextStructureFixtures::FScopedTextBlueprint& InScoped, const TCHAR* InName)
 	{
-		UDreamWidget* Root = InScoped.Blueprint != nullptr && IsValid(InScoped.Blueprint->WidgetTree) ? InScoped.Blueprint->WidgetTree->RootWidget.Get() : nullptr;
+		UDreamWidget* Root = InScoped.Blueprint.Get() != nullptr && IsValid(InScoped.Blueprint->WidgetTree) ? InScoped.Blueprint->WidgetTree->RootWidget.Get() : nullptr;
 		UDreamWidgetAnimationComponent* Animator = Root != nullptr ? Root->GetComponent<UDreamWidgetAnimationComponent>() : nullptr;
 		return Animator != nullptr ? Animator->GetSequenceByDisplayName(InName) : nullptr;
 	}
@@ -439,7 +439,7 @@ bool FDreamUITimelineWrittenEditRekeysTest::RunTest(const FString&)
 
 	TestTrue(TEXT("the end of the eased run is dragged to frame 30"), MoveLastKey(Header, FFrameNumber(12000)));
 	FText Reason;
-	TestTrue(*FString::Printf(TEXT("the drag is written (%s)"), *Reason.ToString()), FDreamUITimelineWriteBack::WriteAnimation(Scoped.Blueprint, Animation, Reason));
+	TestTrue(*FString::Printf(TEXT("the drag is written (%s)"), *Reason.ToString()), FDreamUITimelineWriteBack::WriteAnimation(Scoped.Blueprint.Get(), Animation, Reason));
 	const FString Written = File.Read();
 	TestEqual(TEXT("the file says the run ends at 0.50"), LineWith(Written, TEXT("Content/Header")),
 		FString(TEXT("    Content/Header.RenderTranslation      : 0.0 = (-28, 0, 0) ease OutCubic, 0.50 = (0, 0, 0)")));
@@ -459,7 +459,7 @@ bool FDreamUITimelineWrittenEditRekeysTest::RunTest(const FString&)
 	}
 
 	TestTrue(TEXT("the run's end is dragged again, to frame 36"), MoveLastKey(Header, FFrameNumber(14400)));
-	TestTrue(*FString::Printf(TEXT("the second drag is written (%s)"), *Reason.ToString()), FDreamUITimelineWriteBack::WriteAnimation(Scoped.Blueprint, Animation, Reason));
+	TestTrue(*FString::Printf(TEXT("the second drag is written (%s)"), *Reason.ToString()), FDreamUITimelineWriteBack::WriteAnimation(Scoped.Blueprint.Get(), Animation, Reason));
 	TestEqual(TEXT("as its time, the ease still on the run's first key"), LineWith(File.Read(), TEXT("Content/Header")),
 		FString(TEXT("    Content/Header.RenderTranslation      : 0.0 = (-28, 0, 0) ease OutCubic, 0.60 = (0, 0, 0)")));
 	if (HasAnyErrors())

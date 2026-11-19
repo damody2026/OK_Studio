@@ -92,7 +92,7 @@ namespace DreamVirtualCursorWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		// The cursor reads the stick from player 0's controller; made after any world pointer, which asks to come first.
 		Rig.EnsureGameInputHost();
@@ -177,8 +177,8 @@ bool FDreamWorldVirtualCursorStickTest::RunTest(const FString& Parameters)
 	TStrongObjectPtr<UDreamPressInteractionListener> StartListener(NewObject<UDreamPressInteractionListener>());
 	TStrongObjectPtr<UDreamPressInteractionListener> TargetListener(NewObject<UDreamPressInteractionListener>());
 	// 300 cm apart along the panel, the target wide enough to hold the cursor well either side of where its speed takes it.
-	UDreamButton* Start = Rig.MakeControl<UDreamButton>(TEXT("Start"), Stage.Panel, FVector2D(120.0, 60.0), FVector2D(-150.0, 0.0));
-	UDreamButton* Target = Rig.MakeControl<UDreamButton>(TEXT("Target"), Stage.Panel, FVector2D(200.0, 80.0), FVector2D(150.0, 0.0));
+	UDreamButton* Start = Rig.MakeControl<UDreamButton>(TEXT("Start"), Stage.Panel.Get(), FVector2D(120.0, 60.0), FVector2D(-150.0, 0.0));
+	UDreamButton* Target = Rig.MakeControl<UDreamButton>(TEXT("Target"), Stage.Panel.Get(), FVector2D(200.0, 80.0), FVector2D(150.0, 0.0));
 	if (!TestTrue(TEXT("Two buttons came up on the panel"), Start != nullptr && Target != nullptr))
 	{
 		return false;

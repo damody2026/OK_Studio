@@ -125,7 +125,7 @@ bool FDreamTreeViewWorldPressTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamTreeView* Tree = MakeTree(Rig, Stage.Panel, 280.0, FVector2D(-60.0, 0.0));
+	UDreamTreeView* Tree = MakeTree(Rig, Stage.Panel.Get(), 280.0, FVector2D(-60.0, 0.0));
 	if (!TestNotNull(TEXT("A tree came up on the panel"), Tree))
 	{
 		return false;
@@ -189,8 +189,8 @@ bool FDreamTreeViewWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel, FVector2D(160.0, 40.0), FVector2D(0.0, 115.0));
-	UDreamTreeView* Tree = MakeTree(Rig, Stage.Panel, 5.0 * RowHeight, FVector2D(0.0, -40.0));
+	UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel.Get(), FVector2D(160.0, 40.0), FVector2D(0.0, 115.0));
+	UDreamTreeView* Tree = MakeTree(Rig, Stage.Panel.Get(), 5.0 * RowHeight, FVector2D(0.0, -40.0));
 	if (!TestTrue(TEXT("A button and, below it, a tree came up on the panel"), Above != nullptr && Above->FaceNode != nullptr && Tree != nullptr))
 	{
 		return false;

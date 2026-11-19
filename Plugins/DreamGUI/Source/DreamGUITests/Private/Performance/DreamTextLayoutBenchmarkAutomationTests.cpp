@@ -659,9 +659,9 @@ bool FDreamTextLayoutBenchmarkTest::RunTest(const FString& Parameters)
 	const int32 MeasureBefore = GetConsoleInt(TEXT("DreamGUI.Text.IncrementalMeasure"), 1);
 	const int32 InPlaceBefore = GetConsoleInt(TEXT("DreamGUI.Text.InPlaceDisplayList"), 1);
 
-	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	Roboto->SetFallbackFonts({ MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf")) });
-	UDreamTextTestFont* Mock = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	Roboto->SetFallbackFonts({ MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf")) });
+	UDreamTextTestFont* Mock = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	TArray<FSubject> Subjects;
 	for (int32 FontIndex = 0; FontIndex < 2; FontIndex++)

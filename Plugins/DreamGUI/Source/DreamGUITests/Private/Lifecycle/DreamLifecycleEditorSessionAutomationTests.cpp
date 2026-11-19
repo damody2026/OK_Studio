@@ -31,9 +31,9 @@ bool FDreamLifecycleEditorTickPerWorldTest::RunTest(const FString& Parameters)
 	FScopedWorld First(EWorldType::Editor);
 	FScopedWorld Second(EWorldType::Editor);
 	FScopedWorld Game(EWorldType::Game);
-	UDreamUIManagerWorldSubsystem* FirstManager = UDreamUIManagerWorldSubsystem::GetInstance(First.World);
-	UDreamUIManagerWorldSubsystem* SecondManager = UDreamUIManagerWorldSubsystem::GetInstance(Second.World);
-	UDreamUIManagerWorldSubsystem* GameManager = UDreamUIManagerWorldSubsystem::GetInstance(Game.World);
+	UDreamUIManagerWorldSubsystem* FirstManager = UDreamUIManagerWorldSubsystem::GetInstance(First.World.Get());
+	UDreamUIManagerWorldSubsystem* SecondManager = UDreamUIManagerWorldSubsystem::GetInstance(Second.World.Get());
+	UDreamUIManagerWorldSubsystem* GameManager = UDreamUIManagerWorldSubsystem::GetInstance(Game.World.Get());
 	if (!TestNotNull(TEXT("the first editor world has a UI manager"), FirstManager)
 		|| !TestNotNull(TEXT("and the second"), SecondManager)
 		|| !TestNotNull(TEXT("and the game world"), GameManager))

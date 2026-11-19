@@ -227,7 +227,7 @@ bool FDreamPieScrollClipPixelTest::RunTest(const FString& Parameters)
 		FPicture Picture;
 		const UDreamScrollBox* Box = Cast<UDreamScrollBox>(Rig->FindMade(TEXT("ClipBox")));
 		const TOptional<FBox2D> Clip = Box != nullptr ? RectOf(Box->ViewportNode) : TOptional<FBox2D>();
-		if (!TestTrue(TEXT("The play session's viewport reads back"), ReadPlay(InContext.World, Picture))
+		if (!TestTrue(TEXT("The play session's viewport reads back"), ReadPlay(InContext.World.Get(), Picture))
 			|| !TestTrue(TEXT("The scroll box's viewport is on screen"), Clip.IsSet()))
 		{
 			return;
@@ -335,7 +335,7 @@ bool FDreamPieHoverTintPixelTest::RunTest(const FString& Parameters)
 	{
 		FPicture Picture;
 		const TOptional<FVector2D> Centre = FaceCentre();
-		if (!TestTrue(TEXT("The play session's viewport reads back"), ReadPlay(InContext.World, Picture)) || !TestTrue(TEXT("The face is on screen"), Centre.IsSet()))
+		if (!TestTrue(TEXT("The play session's viewport reads back"), ReadPlay(InContext.World.Get(), Picture)) || !TestTrue(TEXT("The face is on screen"), Centre.IsSet()))
 		{
 			return;
 		}
@@ -403,7 +403,7 @@ bool FDreamPiePopupOverPixelTest::RunTest(const FString& Parameters)
 		const TOptional<FBox2D> List = Dropdown != nullptr ? RectOf(Dropdown->ListNode) : TOptional<FBox2D>();
 		const TOptional<FBox2D> Block = RectOf(Rig->FindMade(TEXT("Beneath")));
 		const TOptional<FVector2D> Centre = BlockCentre();
-		if (!TestTrue(TEXT("The play session's viewport reads back"), ReadPlay(InContext.World, Picture))
+		if (!TestTrue(TEXT("The play session's viewport reads back"), ReadPlay(InContext.World.Get(), Picture))
 			|| !TestTrue(TEXT("The list and the block are on screen"), List.IsSet() && Block.IsSet() && Centre.IsSet()))
 		{
 			return;
@@ -484,7 +484,7 @@ bool FDreamPieFocusRingPixelTest::RunTest(const FString& Parameters)
 	Steps.WaitFrames(2);
 	Steps.Then([this, Before](FDreamDriverContext& InContext)
 	{
-		TestTrue(TEXT("The picture with nothing focused reads back"), ReadPlay(InContext.World, *Before));
+		TestTrue(TEXT("The picture with nothing focused reads back"), ReadPlay(InContext.World.Get(), *Before));
 	});
 	// The screen's initial focus, as a page gives it when it opens, to a player on the pad; from here on it is the pad's.
 	// On the pad first: code that moves the focus draws it only for a player last on the keys or the pad, as CSS's
@@ -492,13 +492,13 @@ bool FDreamPieFocusRingPixelTest::RunTest(const FString& Parameters)
 	// mouse put out of the way.
 	Steps.Then([this, FaceOf](FDreamDriverContext& InContext)
 	{
-		UDreamEventSystem* Events = UDreamEventSystem::GetDreamEventSystemInstance(InContext.World, 0);
+		UDreamEventSystem* Events = UDreamEventSystem::GetDreamEventSystemInstance(InContext.World.Get(), 0);
 		TestTrue(TEXT("The player's event system is there to hear the pad"), Events != nullptr);
 		if (Events != nullptr)
 		{
 			Events->ReportInputDevice(EDreamUIInputDevice::Gamepad);
 		}
-		UDreamUIInputServices* Services = UDreamUIInputServices::Get(InContext.World);
+		UDreamUIInputServices* Services = UDreamUIInputServices::Get(InContext.World.Get());
 		TestTrue(TEXT("The first button takes the screen's initial focus"), Services != nullptr && Services->FocusForNavigation(FaceOf(TEXT("RingFirst")), 0));
 	});
 	Steps.Wait(FDreamUntil::Condition([FaceOf, RingSitsOn]() { return RingSitsOn(FaceOf(TEXT("RingFirst"))); }, StateLimit()), StateLimit(),
@@ -513,7 +513,7 @@ bool FDreamPieFocusRingPixelTest::RunTest(const FString& Parameters)
 		FPicture After;
 		const TOptional<FBox2D> Second = RectOf(FaceOf(TEXT("RingSecond")));
 		const TOptional<FBox2D> First = RectOf(FaceOf(TEXT("RingFirst")));
-		if (!TestTrue(TEXT("The picture with the second button focused reads back"), ReadPlay(InContext.World, After))
+		if (!TestTrue(TEXT("The picture with the second button focused reads back"), ReadPlay(InContext.World.Get(), After))
 			|| !TestTrue(TEXT("Both buttons are on screen"), Second.IsSet() && First.IsSet() && Before->Size == After.Size))
 		{
 			return;

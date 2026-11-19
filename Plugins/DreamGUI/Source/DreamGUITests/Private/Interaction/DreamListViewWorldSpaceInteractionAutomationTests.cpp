@@ -92,7 +92,7 @@ bool FDreamListViewWorldTapTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamListView* List = MakeList(Rig, Stage.Panel, FVector2D(300.0, 280.0), FVector2D(-60.0, 0.0), 30);
+	UDreamListView* List = MakeList(Rig, Stage.Panel.Get(), FVector2D(300.0, 280.0), FVector2D(-60.0, 0.0), 30);
 	if (!TestNotNull(TEXT("A list came up on the panel"), List))
 	{
 		return false;
@@ -150,13 +150,13 @@ bool FDreamListViewWorldFingerTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamListView* List = MakeList(Rig, Stage.Panel, FVector2D(300.0, 280.0), FVector2D(-60.0, 0.0), 60);
+	UDreamListView* List = MakeList(Rig, Stage.Panel.Get(), FVector2D(300.0, 280.0), FVector2D(-60.0, 0.0), 60);
 	const TOptional<FBox2D> Window = List != nullptr ? SeenRect(Rig, List->ViewportNode.Get()) : TOptional<FBox2D>();
 	if (!TestTrue(TEXT("A list came up on the panel with its window seen by the camera"), Window.IsSet()))
 	{
 		return false;
 	}
-	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer);
+	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer.Get());
 	const double Travel = 150.0;
 	const FVector2D Landed(Window->GetCenter().X, Window->Max.Y - 30.0);
 
@@ -206,8 +206,8 @@ bool FDreamListViewWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel, FVector2D(160.0, 40.0), FVector2D(0.0, 115.0));
-	UDreamListView* List = MakeList(Rig, Stage.Panel, FVector2D(300.0, 5.0 * RowHeight), FVector2D(0.0, -40.0), 20);
+	UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel.Get(), FVector2D(160.0, 40.0), FVector2D(0.0, 115.0));
+	UDreamListView* List = MakeList(Rig, Stage.Panel.Get(), FVector2D(300.0, 5.0 * RowHeight), FVector2D(0.0, -40.0), 20);
 	const TOptional<FBox2D> Window = List != nullptr ? SeenRect(Rig, List->ViewportNode.Get()) : TOptional<FBox2D>();
 	if (!TestTrue(TEXT("A button and, below it, a list with its window seen by the camera came up on the panel"),
 		Above != nullptr && Above->FaceNode != nullptr && Window.IsSet()))

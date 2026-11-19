@@ -110,7 +110,7 @@ bool FDreamWidgetInstantiationBenchmarkTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetInstantiationBenchmarkLocal;
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("the benchmark needs a world"), TestWorld.World))
+	if (!TestNotNull(TEXT("the benchmark needs a world"), TestWorld.World.Get()))
 	{
 		return false;
 	}
@@ -122,8 +122,8 @@ bool FDreamWidgetInstantiationBenchmarkTest::RunTest(const FString& Parameters)
 
 	int32 SmallInstanced = 0;
 	int32 LargeInstanced = 0;
-	const double SmallMs = MeasureInstancing(TestWorld.World, SmallTemplate.Get(), SmallInstanced);
-	const double LargeMs = MeasureInstancing(TestWorld.World, LargeTemplate.Get(), LargeInstanced);
+	const double SmallMs = MeasureInstancing(TestWorld.World.Get(), SmallTemplate.Get(), SmallInstanced);
+	const double LargeMs = MeasureInstancing(TestWorld.World.Get(), LargeTemplate.Get(), LargeInstanced);
 
 	AddInfo(FString::Printf(TEXT("instancing %d widgets: %.3f ms (%.4f ms/widget)"), SmallCount, SmallMs, SmallMs / SmallCount));
 	AddInfo(FString::Printf(TEXT("instancing %d widgets: %.3f ms (%.4f ms/widget)"), LargeCount, LargeMs, LargeMs / LargeCount));

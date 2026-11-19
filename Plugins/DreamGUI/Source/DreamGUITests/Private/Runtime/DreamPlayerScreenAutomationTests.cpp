@@ -42,7 +42,7 @@ bool FDreamPlayerScreenPerPlayerRootTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPlayerScreenTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreen(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreen(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the screen subsystem exists in a game world"), Screen))
 	{
 		return false;
@@ -67,7 +67,7 @@ bool FDreamPlayerScreenPerPlayerRootTest::RunTest(const FString& Parameters)
 	// A widget already sitting on a player's screen belongs to that player, whatever it is: the
 	// structural answer comes first, so an overlay service placing a tooltip beside a plain widget
 	// lands on the right screen with nobody passing a player around.
-	UDreamWidget* SecondPlayerChild = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* SecondPlayerChild = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	SecondPlayerChild->SetDisplayName(TEXT("OnSecondScreen"));
 	// Parent, THEN register -- the order the name states and the one every production path follows.
 	// SetParentBeforeRegister refuses a registered widget with an ensure, so registering first would
@@ -99,8 +99,8 @@ bool FDreamPlayerScreenOwningPlayerResolutionTest::RunTest(const FString& Parame
 		return false;
 	}
 
-	UDreamUserWidget* Host = NewObject<UDreamUserWidget>(TestWorld.World, UDreamUserWidget::StaticClass());
-	UDreamUserWidget* Nested = NewObject<UDreamUserWidget>(TestWorld.World, UDreamUserWidget::StaticClass());
+	UDreamUserWidget* Host = NewObject<UDreamUserWidget>(TestWorld.World.Get(), UDreamUserWidget::StaticClass());
+	UDreamUserWidget* Nested = NewObject<UDreamUserWidget>(TestWorld.World.Get(), UDreamUserWidget::StaticClass());
 	// Build the hierarchy, then bring it to life, which is what every production path does and what
 	// SetParentBeforeRegister, which refuses a registered widget, demands.
 	Nested->SetParentBeforeRegister(Host);
@@ -132,7 +132,7 @@ bool FDreamPlayerScreenCustomPlacementTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPlayerScreenTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamScreenUISubsystem* Screen = GetScreen(TestWorld.World);
+	UDreamScreenUISubsystem* Screen = GetScreen(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the screen subsystem exists in a game world"), Screen))
 	{
 		return false;
@@ -183,8 +183,8 @@ bool FDreamPlayerScreenKeyBubbleTest::RunTest(const FString& Parameters)
 	using namespace DreamPlayerScreenTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Parent = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Parent = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Parent->SetDisplayName(TEXT("Parent"));
 	Child->SetDisplayName(TEXT("Child"));
 	// Attach first, register the whole thing afterwards. Registering a widget and THEN calling
@@ -205,7 +205,7 @@ bool FDreamPlayerScreenKeyBubbleTest::RunTest(const FString& Parameters)
 
 	// Nobody keeps it: the key reaches the focused widget and everything above it, which is what makes
 	// "my screen has a shortcut" writeable on the screen rather than on every row in it.
-	UDreamKeyEventData* Passing = NewObject<UDreamKeyEventData>(TestWorld.World);
+	UDreamKeyEventData* Passing = NewObject<UDreamKeyEventData>(TestWorld.World.Get());
 	Passing->KeyEventType = EDreamUIKeyEventType::KeyDown;
 	Passing->Key = EKeys::X;
 	Passing->bIsPressed = true;
@@ -219,7 +219,7 @@ bool FDreamPlayerScreenKeyBubbleTest::RunTest(const FString& Parameters)
 	// The child keeps it: the walk stops, and the parent never hears about it. A key somebody took
 	// must not also fire a bound action or move the navigation cursor, which is what the return says.
 	ChildHandler->bKeepTheKey = true;
-	UDreamKeyEventData* Claimed = NewObject<UDreamKeyEventData>(TestWorld.World);
+	UDreamKeyEventData* Claimed = NewObject<UDreamKeyEventData>(TestWorld.World.Get());
 	Claimed->KeyEventType = EDreamUIKeyEventType::KeyDown;
 	Claimed->Key = EKeys::Escape;
 	Claimed->bIsPressed = true;
@@ -228,7 +228,7 @@ bool FDreamPlayerScreenKeyBubbleTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("the one above it did not"), ParentHandler->KeyDownCount, 1);
 
 	// And each channel is its own: a key-down handler is not a character handler.
-	UDreamKeyEventData* Character = NewObject<UDreamKeyEventData>(TestWorld.World);
+	UDreamKeyEventData* Character = NewObject<UDreamKeyEventData>(TestWorld.World.Get());
 	Character->KeyEventType = EDreamUIKeyEventType::KeyChar;
 	Character->Character = TEXT("a");
 	DreamUIKeyDispatch::DispatchBubbling(Child, Character);

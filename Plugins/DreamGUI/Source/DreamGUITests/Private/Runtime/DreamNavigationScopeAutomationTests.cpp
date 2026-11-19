@@ -67,9 +67,9 @@ bool FDreamNavigationScopeStackOrderTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
-	UDreamUINavigationScope* Page = MakeScope(MakeWidget(TestWorld.World, Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f));
-	UDreamUINavigationScope* Dialog = MakeScope(MakeWidget(TestWorld.World, Root, TEXT("Dialog"), 0.0f, 0.0f, 200.0f, 200.0f));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
+	UDreamUINavigationScope* Page = MakeScope(MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f));
+	UDreamUINavigationScope* Dialog = MakeScope(MakeWidget(TestWorld.World.Get(), Root, TEXT("Dialog"), 0.0f, 0.0f, 200.0f, 200.0f));
 
 	TestNull(TEXT("Nothing is active to begin with"), Stack->GetActiveScope(0));
 	Page->ActivateScope();
@@ -114,11 +114,11 @@ bool FDreamNavigationScopeConfinementTest::RunTest(const FString& Parameters)
 	}
 
 	// Two panels side by side, each with one control. Nothing restricts navigation to start with.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 400.0f);
-	UDreamWidget* Left = MakeWidget(TestWorld.World, Root, TEXT("Left"), -200.0f, 0.0f, 300.0f, 300.0f);
-	UDreamWidget* RightPanel = MakeWidget(TestWorld.World, Root, TEXT("Right"), 200.0f, 0.0f, 300.0f, 300.0f);
-	UUISelectable* InLeft = MakeWidget(TestWorld.World, Left, TEXT("LeftButton"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
-	UUISelectable* InRight = MakeWidget(TestWorld.World, RightPanel, TEXT("RightButton"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 400.0f);
+	UDreamWidget* Left = MakeWidget(TestWorld.World.Get(), Root, TEXT("Left"), -200.0f, 0.0f, 300.0f, 300.0f);
+	UDreamWidget* RightPanel = MakeWidget(TestWorld.World.Get(), Root, TEXT("Right"), 200.0f, 0.0f, 300.0f, 300.0f);
+	UUISelectable* InLeft = MakeWidget(TestWorld.World.Get(), Left, TEXT("LeftButton"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* InRight = MakeWidget(TestWorld.World.Get(), RightPanel, TEXT("RightButton"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
 
 	TestEqual(TEXT("Unconfined, right reaches the other panel"), InLeft->FindSelectable(Right, nullptr), InRight);
 
@@ -150,12 +150,12 @@ bool FDreamNavigationScopeFocusMemoryTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamNavigationScopeTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 400.0f);
-	UDreamWidget* Page = MakeWidget(TestWorld.World, Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 400.0f);
+	UDreamWidget* Page = MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f);
 	UDreamUINavigationScope* Scope = MakeScope(Page);
-	UUISelectable* First = MakeWidget(TestWorld.World, Page, TEXT("First"), -60.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
-	UUISelectable* Second = MakeWidget(TestWorld.World, Page, TEXT("Second"), 60.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
-	UUISelectable* Elsewhere = MakeWidget(TestWorld.World, Root, TEXT("Elsewhere"), 300.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* First = MakeWidget(TestWorld.World.Get(), Page, TEXT("First"), -60.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* Second = MakeWidget(TestWorld.World.Get(), Page, TEXT("Second"), 60.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* Elsewhere = MakeWidget(TestWorld.World.Get(), Root, TEXT("Elsewhere"), 300.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
 
 	// Nothing authored, nothing remembered: the first navigable control inside the scope. Note the
 	// "inside" -- the old global default would happily have handed back a control on another screen.
@@ -198,9 +198,9 @@ bool FDreamNavigationScopeCoverageNotificationTest::RunTest(const FString& Param
 		return false;
 	}
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
-	UDreamUINavigationScope* Page = MakeScope(MakeWidget(TestWorld.World, Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f));
-	UDreamUINavigationScope* Dialog = MakeScope(MakeWidget(TestWorld.World, Root, TEXT("Dialog"), 0.0f, 0.0f, 200.0f, 200.0f));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
+	UDreamUINavigationScope* Page = MakeScope(MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f));
+	UDreamUINavigationScope* Dialog = MakeScope(MakeWidget(TestWorld.World.Get(), Root, TEXT("Dialog"), 0.0f, 0.0f, 200.0f, 200.0f));
 
 	TestFalse(TEXT("A scope that has never been pushed is not active"), Page->IsScopeActive());
 
@@ -249,19 +249,19 @@ bool FDreamNavigationScopeFocusNotTakenBackTest::RunTest(const FString& Paramete
 {
 	using namespace DreamNavigationScopeTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIInputServices* Services = UDreamUIInputServices::Get(TestWorld.World);
+	UDreamUIInputServices* Services = UDreamUIInputServices::Get(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has input"), Services))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
-	UDreamWidget* PageWidget = MakeWidget(TestWorld.World, Root, TEXT("Page"), -200.0f, 0.0f, 300.0f, 300.0f);
-	UDreamWidget* DialogWidget = MakeWidget(TestWorld.World, Root, TEXT("Dialog"), 200.0f, 0.0f, 300.0f, 300.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
+	UDreamWidget* PageWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"), -200.0f, 0.0f, 300.0f, 300.0f);
+	UDreamWidget* DialogWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Dialog"), 200.0f, 0.0f, 300.0f, 300.0f);
 	UDreamUINavigationScope* Page = MakeScope(PageWidget);
 	UDreamUINavigationScope* Dialog = MakeScope(DialogWidget);
-	UUISelectable* OnPage = MakeWidget(TestWorld.World, PageWidget, TEXT("OnPage"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
-	UUISelectable* OnDialog = MakeWidget(TestWorld.World, DialogWidget, TEXT("OnDialog"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
-	UUISelectable* Elsewhere = MakeWidget(TestWorld.World, Root, TEXT("Elsewhere"), 0.0f, -250.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* OnPage = MakeWidget(TestWorld.World.Get(), PageWidget, TEXT("OnPage"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* OnDialog = MakeWidget(TestWorld.World.Get(), DialogWidget, TEXT("OnDialog"), 0.0f, 0.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
+	UUISelectable* Elsewhere = MakeWidget(TestWorld.World.Get(), Root, TEXT("Elsewhere"), 0.0f, -250.0f, 80.0f, 40.0f)->AddComponent<UUISelectable>();
 
 	Page->ActivateScope();
 	TestEqual(TEXT("The page took focus"), Services->GetFocusedWidget(0), OnPage->GetWidget());
@@ -302,8 +302,8 @@ bool FDreamNavigationScopeOwnerTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
-	UDreamWidget* PageWidget = MakeWidget(TestWorld.World, Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
+	UDreamWidget* PageWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"), 0.0f, 0.0f, 400.0f, 400.0f);
 	UDreamUINavigationScope* Page = MakeScope(PageWidget);
 
 	TestEqual(TEXT("a scope that names no player answers its widget's player"), Page->GetUserIndex(), PageWidget->GetOwningPlayerIndex());
@@ -344,9 +344,9 @@ bool FDreamNavigationScopeInputModeTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TGuardValue<EDreamUIScopeInputMode> WithoutScope(GetMutableDefault<UDreamGUISettings>()->InputModeWithoutScope, EDreamUIScopeInputMode::All);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
-	UDreamUINavigationScope* Hud = MakeScope(MakeWidget(TestWorld.World, Root, TEXT("Hud"), 0.0f, 0.0f, 400.0f, 400.0f));
-	UDreamUINavigationScope* Menu = MakeScope(MakeWidget(TestWorld.World, Root, TEXT("Menu"), 0.0f, 0.0f, 200.0f, 200.0f));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 0.0f, 0.0f, 800.0f, 600.0f);
+	UDreamUINavigationScope* Hud = MakeScope(MakeWidget(TestWorld.World.Get(), Root, TEXT("Hud"), 0.0f, 0.0f, 400.0f, 400.0f));
+	UDreamUINavigationScope* Menu = MakeScope(MakeWidget(TestWorld.World.Get(), Root, TEXT("Menu"), 0.0f, 0.0f, 200.0f, 200.0f));
 	Hud->SetUserIndex(0);
 	Menu->SetUserIndex(0);
 	Hud->SetConfineNavigation(false);

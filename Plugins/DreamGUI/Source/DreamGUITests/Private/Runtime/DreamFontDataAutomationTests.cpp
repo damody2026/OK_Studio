@@ -307,12 +307,12 @@ bool FDreamFontFallbackOnlyAtlasTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto loads"), Roboto->FaceHasCodepoint(0, 'A')))return false;
 
 	// The missing file is reported when the font first tries to open it.
 	AddExpectedErrorPlain(TEXT("not exist"), EAutomationExpectedErrorFlags::Contains, 0);
-	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	Font->SetFontFilePath(FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("DreamGUITests_NoSuchFont.ttf")), false);
 	Font->SetFallbackFonts({ Roboto });
 	TestFalse(TEXT("the font's own face does not load"), Font->FaceHasCodepoint(0, 'A'));
@@ -361,7 +361,7 @@ bool FDreamFontCollectionFaceTest::RunTest(const FString& Parameters)
 	if (!TestNotNull(TEXT("the face index is a property"), FaceProperty))return false;
 
 	// Any machine: a reset keeps the index, and a load clamps it to the faces the file has.
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	FaceProperty->SetPropertyValue_InContainer(Roboto, 1);
 	Roboto->SetFontFilePath(EngineFont(TEXT("Roboto-Regular.ttf")), false);
 	TestEqual(TEXT("a reset keeps the face index"), FaceProperty->GetPropertyValue_InContainer(Roboto), 1);
@@ -377,7 +377,7 @@ bool FDreamFontCollectionFaceTest::RunTest(const FString& Parameters)
 		return true;
 	}
 #if WITH_FREETYPE
-	UDreamUIFontData_DistanceField* Cambria = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Cambria = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	Cambria->SetFontFilePath(Collection, false);
 	FaceProperty->SetPropertyValue_InContainer(Cambria, 1);
 	Cambria->InitFont();
@@ -413,11 +413,11 @@ bool FDreamFontFallbackSwapTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
-	UDreamUIFontData_DistanceField* Arabic = MakeFieldFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeFieldFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	// The reference: the same Arabic letter made on the spot by a font that never had another fallback.
-	UDreamUIFontData_DistanceField* Reference = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Reference = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	Reference->SetFallbackFonts({ Arabic });
 	for (UDreamUIFontData_DistanceField* Font : { Roboto, Droid, Arabic, Reference })
 	{
@@ -475,7 +475,7 @@ bool FDreamFontBitmapBoldRatioTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Font = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_Bitmap* Font = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("Roboto-Regular.ttf")));
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'm')))return false;
 	const float Size = 32.0f;
 	const FDreamUICharData Regular = Font->GetCharData('m', Size, false);
@@ -502,11 +502,11 @@ bool FDreamFontOldAssetFieldTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Saved = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Saved = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	TArray<uint8> Bytes;
 	FObjectWriter Writer(Saved, Bytes);
 
-	UDreamUIFontData_DistanceField* Loaded = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Loaded = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	AddExpectedMessagePlain(TEXT("resave it"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 	{
 		// Read back as a package of that age is: persistent, and older than the version that added the property.
@@ -521,7 +521,7 @@ bool FDreamFontOldAssetFieldTest::RunTest(const FString& Parameters)
 	// A copy made in memory reads with the versions registered now (a loading archive with none of its own takes them),
 	// so it never looked old, before or after the change. This only shows it stays an outline field and does not warn:
 	// the expected warning above is counted exactly once.
-	UDreamUIFontData_DistanceField* Copy = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Copy = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	{
 		FObjectReader Reader(Copy, Bytes);
 	}
@@ -549,7 +549,7 @@ bool FDreamFontContourWindingTest::RunTest(const FString& Parameters)
 	using namespace DreamFontDataTestLocal;
 #if WITH_FREETYPE
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	FT_FaceRec_* Face = Font->GetFreeTypeFace(0);
 	if (!TestNotNull(TEXT("Roboto loads"), Face))return false;
 	for (const uint32 Codepoint : { uint32('i'), uint32('='), uint32('O'), uint32('8') })
@@ -593,8 +593,8 @@ bool FDreamFontOverlappingContoursTest::RunTest(const FString& Parameters)
 	using namespace DreamFontDataTestLocal;
 #if WITH_FREETYPE
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	FT_FaceRec_* RobotoFace = Roboto->GetFreeTypeFace(0);
 	FT_FaceRec_* DroidFace = Droid->GetFreeTypeFace(0);
 	if (!TestTrue(TEXT("both fonts load"), RobotoFace != nullptr && DroidFace != nullptr))return false;
@@ -627,9 +627,9 @@ bool FDreamFontStyleFaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* RobotoBold = MakeFieldFont(TestWorld.World, TEXT("Roboto-Bold.ttf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* RobotoBold = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Bold.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	Roboto->SetFallbackFonts({ Droid });
 	Roboto->PrepareForLayout(0.0f);
 	const int32 RegularFaces = Roboto->GetFaceCount();
@@ -697,7 +697,7 @@ bool FDreamFontDecorationMetricsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	Roboto->PrepareForLayout(0.0f);
 	const float Size = 32.0f;
 	float UnderlinePosition = 0.0f, UnderlineThickness = 0.0f, StrikePosition = 0.0f, StrikeThickness = 0.0f;
@@ -746,7 +746,7 @@ bool FDreamFontVerticalMetricsTest::RunTest(const FString& Parameters)
 	using namespace DreamFontDataTestLocal;
 #if WITH_FREETYPE
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	FT_FaceRec_* Face = Roboto->GetFreeTypeFace(0);
 	if (!TestNotNull(TEXT("Roboto is open"), Face))return false;
 	const float Size = 32.0f;
@@ -820,8 +820,8 @@ bool FDreamFontEmojiBindingTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontEmojiData* Emoji = NewObject<UDreamUIFontEmojiData>(TestWorld.World);
-	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontEmojiData* Emoji = NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get());
+	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	FObjectProperty* EmojiProperty = FindFProperty<FObjectProperty>(UDreamUIFontData_BaseObject::StaticClass(), TEXT("EmojiData"));
 	if (!TestNotNull(TEXT("the emoji asset is a property"), EmojiProperty))return false;
 	EmojiProperty->SetObjectPropertyValue_InContainer(Font, Emoji);
@@ -849,7 +849,7 @@ bool FDreamFontBitmapFractionalSizeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Font = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_Bitmap* Font = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("Roboto-Regular.ttf")));
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'W')))return false;
 	const FDreamUICharData Whole = Font->GetCharData('W', 16.0f, false);
 	const FDreamUICharData Fraction = Font->GetCharData('W', 16.9f, false);
@@ -889,7 +889,7 @@ bool FDreamFontEngineFontCookTest::RunTest(const FString& Parameters)
 	using namespace DreamFontDataTestLocal;
 #if WITH_EDITOR
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	Font->SetFontType(EDreamUIDynamicFontDataType::EngineFont);
 	Font->SetEngineFont(nullptr);
 	AddExpectedErrorPlain(TEXT("has none set"), EAutomationExpectedErrorFlags::Contains, 1);
@@ -923,7 +923,7 @@ bool FDreamFontAtlasFlushTimingTest::RunTest(const FString& Parameters)
 
 	// A 256x256 atlas packed as a single cell, and glyphs sampled at 120 px with a 40 px spread: an uppercase letter's
 	// field is over 128 texels each way, so every slice holds exactly one.
-	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	SetEnumProperty(Font, TEXT("TextureSizeType"), (int64)EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	SetEnumProperty(Font, TEXT("RectPackCellSizeType"), (int64)EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (FIntProperty* SampleSize = FindFProperty<FIntProperty>(Font->GetClass(), TEXT("SampleFontSize")))
@@ -989,7 +989,7 @@ bool FDreamFontExpandedQuadStaysInItsCellTest::RunTest(const FString& Parameters
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	// At the sample size, where a quad's size is in atlas texels.
 	auto CharAt = [Font](float InExpand)
@@ -1038,7 +1038,7 @@ bool FDreamFontCoverageCellPoolTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	TestTrue(TEXT("and draws small text from coverage"), Font->SupportsCoverageGlyphs());
 	const int32 TextureSize = 512;
@@ -1114,7 +1114,7 @@ bool FDreamFontCoverageFlushTest::RunTest(const FString& Parameters)
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
 	// A 512 atlas of four 256 cells.
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'A')))return false;
 	const int32 TextureSize = 512;
 	const int32 CellSize = 256;
@@ -1204,7 +1204,7 @@ bool FDreamFontCoverageAsyncTest::RunTest(const FString& Parameters)
 		Settings->bAsyncGlyphRasterization = bSavedAsync;
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	// The field glyph on the spot, before the budget goes to 0: only coverage glyphs are on the worker below.
 	const FDreamUICharData FieldH = Font->GetCharData('H', 32.0f, false);
@@ -1276,7 +1276,7 @@ bool FDreamFontAtlasFlushClearsCoverageTest::RunTest(const FString& Parameters)
 		Settings->bAsyncGlyphRasterization = bSavedAsync;
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	const FDreamUICharData FieldH = Font->GetCharData('H', 32.0f, false);
 	const TArray<uint8> Pixels = MakeCoveragePixels(12, 14);
@@ -1325,8 +1325,8 @@ bool FDreamFontColorBucketTest::RunTest(const FString& Parameters)
 		Settings->bAsyncGlyphRasterization = bSavedAsync;
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Emoji = MakeFileFont<UDreamUIFontData_DistanceField>(TestWorld.World, EmojiPath);
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Emoji = MakeFileFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), EmojiPath);
 	Roboto->SetFallbackFonts({ Emoji });
 	Roboto->PrepareForLayout(0.0f);
 	TestFalse(TEXT("Roboto is no colour face"), Roboto->IsColorFace(0));
@@ -1412,7 +1412,7 @@ bool FDreamFontColorStrikeMetricsTest::RunTest(const FString& Parameters)
 		return true;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Emoji = MakeFileFont<UDreamUIFontData_DistanceField>(TestWorld.World, EmojiPath);
+	UDreamUIFontData_DistanceField* Emoji = MakeFileFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), EmojiPath);
 	FT_FaceRec_* Face = Emoji->GetFreeTypeFace(0);
 	if (!TestNotNull(TEXT("Noto Color Emoji is open"), Face))return false;
 	TestFalse(TEXT("it has no outlines"), FT_IS_SCALABLE(Face) != 0);
@@ -1435,7 +1435,7 @@ bool FDreamFontColorStrikeMetricsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("the descent grid-fitted down"), Descent, FMath::CeilToFloat(-Hhea->Descender * Scale), 0.001f);
 	TestEqual(TEXT("a line pitch of 38 at 32 px"), LineHeight, 38.0f, 0.001f);
 
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	Roboto->SetFallbackFonts({ Emoji });
 	Roboto->PrepareForLayout(0.0f);
 	TestTrue(TEXT("as a fallback it gives its line a box"), Roboto->GetFaceMetrics(1, Size, Ascent, Descent, LineHeight) && Ascent > 0.0f && LineHeight > 0.0f);
@@ -1466,7 +1466,7 @@ bool FDreamFontColorStrikeAdvanceTest::RunTest(const FString& Parameters)
 		return true;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Emoji = MakeFileFont<UDreamUIFontData_DistanceField>(TestWorld.World, EmojiPath);
+	UDreamUIFontData_DistanceField* Emoji = MakeFileFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), EmojiPath);
 	Emoji->PrepareForLayout(0.0f);
 	if (!FDreamTextShaper::CanShape(Emoji))
 	{
@@ -1511,7 +1511,7 @@ bool FDreamFontCoverageHeldEpochTest::RunTest(const FString& Parameters)
 	Settings->MaxCoverageCells = 1;
 	ON_SCOPE_EXIT { Settings->MaxCoverageCells = SavedCells; };
 	// A 512 atlas of four 256 cells; the field glyph takes the first.
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'A')))return false;
 	const uint32 GlyphA = Font->GetCharData('A', 64.0f, false).GlyphIndex;
 	const uint32 Epoch = Font->GetCoverageEpoch();
@@ -1560,7 +1560,7 @@ bool FDreamFontCoverageLastHolderTest::RunTest(const FString& Parameters)
 	const int32 SavedCells = Settings->MaxCoverageCells;
 	Settings->MaxCoverageCells = 1;
 	ON_SCOPE_EXIT { Settings->MaxCoverageCells = SavedCells; };
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'A')))return false;
 	const uint32 GlyphA = Font->GetCharData('A', 64.0f, false).GlyphIndex;
 	const uint32 Epoch = Font->GetCoverageEpoch();
@@ -1612,7 +1612,7 @@ bool FDreamFontCoverageCapTest::RunTest(const FString& Parameters)
 	const int32 SavedCells = Settings->MaxCoverageCells;
 	Settings->MaxCoverageCells = 1;
 	ON_SCOPE_EXIT { Settings->MaxCoverageCells = SavedCells; };
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	const uint32 GlyphH = Font->GetCharData('H', 32.0f, false).GlyphIndex;
 	const uint32 GlyphE = Font->GetCharData('e', 32.0f, false).GlyphIndex;
@@ -1689,7 +1689,7 @@ bool FDreamFontUnhintedCoverageGlyphTest::RunTest(const FString& Parameters)
 		Settings->bAsyncGlyphRasterization = bSavedAsync;
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'x')))return false;
 	const uint32 GlyphX = Font->GetCharData('x', 32.0f, false).GlyphIndex;
 	const int32 Size = 12 * 64;
@@ -1752,10 +1752,10 @@ bool FDreamFontBitmapUndoTest::RunTest(const FString& Parameters)
 		return true;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Droid = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("DroidSansFallback.ttf")));
-	UDreamUIFontData_Bitmap* Arabic = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
+	UDreamUIFontData_Bitmap* Droid = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("DroidSansFallback.ttf")));
+	UDreamUIFontData_Bitmap* Arabic = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
 	// Transactional, as an asset the editor edits is.
-	UDreamUIFontData_Bitmap* Font = NewObject<UDreamUIFontData_Bitmap>(TestWorld.World, NAME_None, RF_Transactional);
+	UDreamUIFontData_Bitmap* Font = NewObject<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), NAME_None, RF_Transactional);
 	Font->SetFontFilePath(EngineFont(TEXT("Roboto-Regular.ttf")), false);
 	Font->InitFont();
 	Font->SetFallbackFonts({ Droid });
@@ -1810,15 +1810,15 @@ bool FDreamFontCodepointCacheIdentityTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Droid = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("DroidSansFallback.ttf")));
-	UDreamUIFontData_Bitmap* Arabic = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
+	UDreamUIFontData_Bitmap* Droid = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("DroidSansFallback.ttf")));
+	UDreamUIFontData_Bitmap* Arabic = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
 	const FDreamUIFontFaceIdentity DroidFace = Droid->GetFaceIdentity(0);
 	const FDreamUIFontFaceIdentity ArabicFace = Arabic->GetFaceIdentity(0);
 	if (!TestTrue(TEXT("both faces open"), DroidFace.IsValid() && ArabicFace.IsValid()))return false;
 	if (!TestEqual(TEXT("two fonts opened once have the same face epoch"), DroidFace.Epoch, ArabicFace.Epoch))return false;
 	TestFalse(TEXT("and are not the same face"), DroidFace == ArabicFace);
 
-	UDreamUIFontData_Bitmap* Font = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_Bitmap* Font = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("Roboto-Regular.ttf")));
 	Font->SetFallbackFonts({ Arabic });
 	const uint32 Ideograph = 0x4E16;
 	TestFalse(TEXT("the Arabic fallback has no ideograph, which is kept"), Font->FaceHasCodepoint(1, Ideograph));
@@ -1858,7 +1858,7 @@ bool FDreamFontEmbeddedBytesCookTest::RunTest(const FString& Parameters)
 	// A font pointed at a file and set to embed it, and never opened: it carries what the asset was saved with.
 	auto MakeEmbeddedFont = [&TestWorld, ExternalProperty](const FString& InPath)
 	{
-		UDreamUIFontData_DistanceField* EmbeddedFont = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+		UDreamUIFontData_DistanceField* EmbeddedFont = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 		EmbeddedFont->SetFontFilePath(InPath, false);
 		ExternalProperty->SetPropertyValue_InContainer(EmbeddedFont, false);
 		return EmbeddedFont;
@@ -1904,7 +1904,7 @@ bool FDreamFontMemoryInfoTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontDataTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	const FDreamUICharData FieldA = Font->GetCharData('A', 32.0f, false);
 	const FDreamUICharData FieldH = Font->GetCharData('H', 32.0f, false);
@@ -1930,7 +1930,7 @@ bool FDreamFontMemoryInfoTest::RunTest(const FString& Parameters)
 	const int64 FileSize = IFileManager::Get().FileSize(*EngineFont(TEXT("Roboto-Regular.ttf")));
 	TestTrue(FString::Printf(TEXT("the font holds its file's bytes (%lld bytes, the file %lld)"), Info.FaceBytes, FileSize), FileSize > 0 && Info.FaceBytes >= FileSize);
 
-	UDreamUIFontData_Bitmap* Bitmap = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World, EngineFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_Bitmap* Bitmap = MakeFileFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), EngineFont(TEXT("Roboto-Regular.ttf")));
 	const FDreamUICharData BitmapGlyph = Bitmap->GetCharData('A', 16.0f, false);
 	FDreamUIFontMemoryInfo BitmapInfo;
 	Bitmap->GetMemoryInfo(BitmapInfo);
@@ -1964,7 +1964,7 @@ bool FDreamFontCoverageCountersTest::RunTest(const FString& Parameters)
 		Settings->MaxCoverageCells = SavedCells;
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
-	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* Font = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	const uint32 GlyphH = Font->GetCharData('H', 32.0f, false).GlyphIndex;
 	auto CounterOf = [](const DreamUIRenderStats::FSnapshot& InSnapshot, DreamUIRenderStats::ECounter InCounter)
@@ -2029,8 +2029,8 @@ bool FDreamFontSmallTextConsoleVariablesTest::RunTest(const FString& Parameters)
 	};
 	FScopedGameWorld TestWorld;
 	// One font set On, one that inherits the project's choice and has no size limit of its own.
-	UDreamUIFontData_DistanceField* OnFont = MakeCoverageFont(TestWorld.World, EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
-	UDreamUIFontData_DistanceField* InheritingFont = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* OnFont = MakeCoverageFont(TestWorld.World.Get(), EDreamUIAtlasTextureSizeType::SIZE_512x512, EDreamUIAtlasTextureSizeType::SIZE_256x256);
+	UDreamUIFontData_DistanceField* InheritingFont = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 
 	CoverageVariable->Set(TEXT("0"), ECVF_SetByCode);
 	TestFalse(TEXT("0 turns coverage off for a font set On"), OnFont->SupportsCoverageGlyphs());

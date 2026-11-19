@@ -106,11 +106,11 @@ bool FDreamWidgetRegistrationRootPlacementTest::RunTest(const FString& Parameter
 {
 	using namespace DreamWidgetTransformRegistrationTestLocal;
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("A world to build in"), TestWorld.World))
+	if (!TestNotNull(TEXT("A world to build in"), TestWorld.World.Get()))
 	{
 		return false;
 	}
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 
 	// A live original: a root and one child, placed by the anchor setters, each of which composes the
 	// world transform as it goes -- so the original is right whatever registration does or does not do.
@@ -177,11 +177,11 @@ bool FDreamWidgetRegistrationParentedPlacementTest::RunTest(const FString& Param
 {
 	using namespace DreamWidgetTransformRegistrationTestLocal;
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("A world to build in"), TestWorld.World))
+	if (!TestNotNull(TEXT("A world to build in"), TestWorld.World.Get()))
 	{
 		return false;
 	}
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 
 	// A panel off the origin, placed by its setter, which composes its world transform on the spot.
 	UDreamWidget* Panel = MakePlainWidget(World, TEXT("Panel"));

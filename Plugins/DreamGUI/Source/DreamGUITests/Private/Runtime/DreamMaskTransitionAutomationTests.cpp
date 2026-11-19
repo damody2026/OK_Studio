@@ -139,7 +139,7 @@ namespace DreamMaskTransitionTestLocal
 
 		FStage()
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 			Root = MakeWidget(nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			if (UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>())
 			{
@@ -157,7 +157,7 @@ namespace DreamMaskTransitionTestLocal
 		}
 		UDreamWidget* MakeWidget(UDreamWidget* InParent, const TCHAR* InName, FVector2D InSize, FVector2D InPosition = FVector2D::ZeroVector) const
 		{
-			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			Widget->SetDisplayName(InName);
 			Widget->SetWidth(static_cast<float>(InSize.X));
 			Widget->SetHeight(static_cast<float>(InSize.Y));

@@ -1054,7 +1054,7 @@ bool FDreamUIViewModelGetterTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("a getter is pure: it reads, and checks nothing"), Class->FindFunctionByName(FName(*HealthThunk))->HasAnyFunctionFlags(FUNC_BlueprintPure));
 
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -1146,7 +1146,7 @@ bool FDreamUIViewModelTwoWayTest::RunTest(const FString& Parameters)
 
 	UClass* Class = Fixture.GetClass();
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = Class != nullptr ? CreateDreamWidget(TestWorld.World, Class) : nullptr;
+	UDreamUserWidget* Instance = Class != nullptr ? CreateDreamWidget(TestWorld.World.Get(), Class) : nullptr;
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -1249,7 +1249,7 @@ bool FDreamUIViewModelRouteTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -1348,7 +1348,7 @@ bool FDreamUIViewModelSingleCastTest::RunTest(const FString& Parameters)
 
 	// Fired on a live instance: the delegate's one listener is the route's.
 	FScopedGameWorld TestWorld;
-	UDreamVMCompileTestWidget* Instance = Cast<UDreamVMCompileTestWidget>(CreateDreamWidget(TestWorld.World, Class));
+	UDreamVMCompileTestWidget* Instance = Cast<UDreamVMCompileTestWidget>(CreateDreamWidget(TestWorld.World.Get(), Class));
 	if (TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		UDreamTestPlayerVM* Player = NewObject<UDreamTestPlayerVM>(Instance);

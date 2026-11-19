@@ -207,12 +207,12 @@ bool FDreamLifecycleRendererOutlivesItsCommandsTest::RunTest(const FString& Para
 		return true;
 	}
 	DreamTests::FScopedGameWorld Scoped;
-	if (!TestNotNull(TEXT("a world was created"), Scoped.World))
+	if (!TestNotNull(TEXT("a world was created"), Scoped.World.Get()))
 	{
 		return false;
 	}
 	TSharedPtr<FDreamUIRenderer, ESPMode::ThreadSafe> Owner =
-		FSceneViewExtensions::NewExtension<FDreamUIRenderer>(Scoped.World, EDreamUIRendererType::ScreenSpace_and_WorldSpace);
+		FSceneViewExtensions::NewExtension<FDreamUIRenderer>(Scoped.World.Get(), EDreamUIRendererType::ScreenSpace_and_WorldSpace);
 	const TWeakPtr<FDreamUIRenderer, ESPMode::ThreadSafe> Renderer = Owner;
 
 	// The render thread is held on a command of the test's own, so everything sent after it waits. Nothing between here
@@ -224,7 +224,7 @@ bool FDreamLifecycleRendererOutlivesItsCommandsTest::RunTest(const FString& Para
 		Release->Wait();
 	});
 	Owner->MarkNeedToSortScreenSpacePrimitiveRenderPriority();
-	Owner->SetRenderCanvasDepthParameter(Scoped.World, 0.5f, 1);
+	Owner->SetRenderCanvasDepthParameter(Scoped.World.Get(), 0.5f, 1);
 	ENQUEUE_RENDER_COMMAND(DreamTest_SentAfterTheRenderersCommands)([&bSentAfterRan](FRHICommandListImmediate&)
 	{
 		bSentAfterRan = true;
@@ -268,12 +268,12 @@ bool FDreamLifecycleGizmoOutlivesItsRendererTest::RunTest(const FString& Paramet
 		return true;
 	}
 	DreamTests::FScopedGameWorld Scoped;
-	if (!TestNotNull(TEXT("a world was created"), Scoped.World))
+	if (!TestNotNull(TEXT("a world was created"), Scoped.World.Get()))
 	{
 		return false;
 	}
 	TSharedPtr<FDreamUIRenderer, ESPMode::ThreadSafe> Owner =
-		FSceneViewExtensions::NewExtension<FDreamUIRenderer>(Scoped.World, EDreamUIRendererType::ScreenSpace_and_WorldSpace);
+		FSceneViewExtensions::NewExtension<FDreamUIRenderer>(Scoped.World.Get(), EDreamUIRendererType::ScreenSpace_and_WorldSpace);
 	const TWeakPtr<FDreamUIRenderer, ESPMode::ThreadSafe> Renderer = Owner;
 
 	// The render thread held as in the test above, so it runs what follows in the order it was sent. A command holding

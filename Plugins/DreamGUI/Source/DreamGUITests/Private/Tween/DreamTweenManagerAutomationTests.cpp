@@ -79,13 +79,13 @@ bool FDreamTweenManagerRetiredHandleTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
 		return false;
 	}
 	FTweenedFloat Value;
-	UDreamTweener* Tween = MakeManualTween(TestWorld.World, Value, 1.0f, 0.5f);
+	UDreamTweener* Tween = MakeManualTween(TestWorld.World.Get(), Value, 1.0f, 0.5f);
 	if (!TestNotNull(TEXT("A tween is made"), Tween))
 	{
 		return false;
@@ -128,12 +128,12 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDreamFrameTweenRestartFromCompletionTest,
 bool FDreamFrameTweenRestartFromCompletionTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("Tween manager"), Manager)) { return false; }
 	for (const bool bAutoKill : { true, false })
 	{
 		// A zero-frame delay runs through the actual frame override without advancing the engine's global clock.
-		UDreamTweener* Tween = UDreamTweenManager::DelayFrameCall(TestWorld.World, 0);
+		UDreamTweener* Tween = UDreamTweenManager::DelayFrameCall(TestWorld.World.Get(), 0);
 		if (!TestNotNull(TEXT("Frame tween"), Tween)) { return false; }
 		Tween->SetTickType(EDreamTweenTickType::Manual)->SetAutoKill(bAutoKill);
 		const TSharedRef<int32> Completes = MakeShared<int32>(0);
@@ -171,9 +171,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDreamFrameTweenKilledOnUpdateTest,
 bool FDreamFrameTweenKilledOnUpdateTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("Tween manager"), Manager)) { return false; }
-	UDreamTweener* Tween = UDreamTweenManager::DelayFrameCall(TestWorld.World, 0);
+	UDreamTweener* Tween = UDreamTweenManager::DelayFrameCall(TestWorld.World.Get(), 0);
 	if (!TestNotNull(TEXT("Frame tween"), Tween)) { return false; }
 	Tween->SetTickType(EDreamTweenTickType::Manual)->SetAutoKill(false);
 	const TSharedRef<int32> Completes = MakeShared<int32>(0);
@@ -194,7 +194,7 @@ bool FDreamTweenManagerRestartFromCompletionTest::RunTest(const FString& Paramet
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
 		return false;
@@ -204,7 +204,7 @@ bool FDreamTweenManagerRestartFromCompletionTest::RunTest(const FString& Paramet
 	{
 		const TCHAR* Kind = bAutoKill ? TEXT("auto-killed") : TEXT("held");
 		FTweenedFloat Value;
-		UDreamTweener* Tween = MakeManualTween(TestWorld.World, Value, 1.0f, 0.5f);
+		UDreamTweener* Tween = MakeManualTween(TestWorld.World.Get(), Value, 1.0f, 0.5f);
 		if (!TestNotNull(TEXT("A tween is made"), Tween))
 		{
 			return false;
@@ -244,9 +244,9 @@ bool FDreamTweenManagerRestartFromCompletionTest::RunTest(const FString& Paramet
 	// The same from KillAllTweens, which takes the list out before it kills: a tween its own completion handler
 	// restarts goes back into the list instead of being dropped with the rest.
 	FTweenedFloat Survivor;
-	UDreamTweener* Restarted = MakeManualTween(TestWorld.World, Survivor, 1.0f, 0.5f);
+	UDreamTweener* Restarted = MakeManualTween(TestWorld.World.Get(), Survivor, 1.0f, 0.5f);
 	FTweenedFloat Victim;
-	UDreamTweener* Killed = MakeManualTween(TestWorld.World, Victim, 1.0f, 0.5f);
+	UDreamTweener* Killed = MakeManualTween(TestWorld.World.Get(), Victim, 1.0f, 0.5f);
 	if (!TestNotNull(TEXT("Two tweens are made"), Restarted) || !TestNotNull(TEXT("..."), Killed))
 	{
 		return false;
@@ -270,14 +270,14 @@ bool FDreamTweenManagerGotoTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
 		return false;
 	}
 
 	FTweenedFloat Value;
-	UDreamTweener* Tween = MakeManualTween(TestWorld.World, Value, 1.0f, 1.0f);
+	UDreamTweener* Tween = MakeManualTween(TestWorld.World.Get(), Value, 1.0f, 1.0f);
 	if (!TestNotNull(TEXT("A tween is made"), Tween))
 	{
 		return false;
@@ -296,7 +296,7 @@ bool FDreamTweenManagerGotoTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("it is retired instead"), Manager->IsTweening(Tween));
 
 	FTweenedFloat Scrubbed;
-	UDreamTweener* Paused = MakeManualTween(TestWorld.World, Scrubbed, 1.0f, 1.0f);
+	UDreamTweener* Paused = MakeManualTween(TestWorld.World.Get(), Scrubbed, 1.0f, 1.0f);
 	if (!TestNotNull(TEXT("A second tween is made"), Paused))
 	{
 		return false;
@@ -326,14 +326,14 @@ bool FDreamTweenManagerSpringRetargetTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
 		return false;
 	}
 	FTweenedFloat Value;
 	// Critically damped, so it settles well inside the five seconds stepped below.
-	UDreamTweenerSpring* Spring = UDreamTweenManager::SpringTo(TestWorld.World, Value.Getter(), Value.Setter(), 100.0f, FDreamSpringParams(1.0f, 100.0f, 20.0f));
+	UDreamTweenerSpring* Spring = UDreamTweenManager::SpringTo(TestWorld.World.Get(), Value.Getter(), Value.Setter(), 100.0f, FDreamSpringParams(1.0f, 100.0f, 20.0f));
 	if (!TestNotNull(TEXT("A spring is made"), Spring))
 	{
 		return false;
@@ -358,7 +358,7 @@ bool FDreamTweenManagerSpringRetargetTest::RunTest(const FString& Parameters)
 
 	// Asked to retire at rest, it does.
 	FTweenedFloat Other;
-	UDreamTweenerSpring* Retiring = UDreamTweenManager::SpringTo(TestWorld.World, Other.Getter(), Other.Setter(), 50.0f, FDreamSpringParams(1.0f, 100.0f, 20.0f));
+	UDreamTweenerSpring* Retiring = UDreamTweenManager::SpringTo(TestWorld.World.Get(), Other.Getter(), Other.Setter(), 50.0f, FDreamSpringParams(1.0f, 100.0f, 20.0f));
 	if (!TestNotNull(TEXT("A second spring is made"), Retiring))
 	{
 		return false;
@@ -381,7 +381,7 @@ bool FDreamTweenManagerOwnerGoneTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
 		return false;
@@ -389,7 +389,7 @@ bool FDreamTweenManagerOwnerGoneTest::RunTest(const FString& Parameters)
 
 	// The widget case: an endless colour yoyo on a widget's visual, and the widget destroyed under it.
 	{
-		UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+		UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 		Widget->SetDisplayName(TEXT("Pulsing"));
 		Widget->OnRegister();
 		UDreamVisualEmpty* Visual = Widget->CreateNewVisual<UDreamVisualEmpty>();
@@ -408,7 +408,7 @@ bool FDreamTweenManagerOwnerGoneTest::RunTest(const FString& Parameters)
 
 	// The same for an owner of any kind, destroyed alone: an actor's Destroy marks the actor, not the tweens made
 	// on it, and such a tween went on stepping -- and calling back into its owner's remains -- until the map changed.
-	UCurveFloat* Owner = NewObject<UCurveFloat>(TestWorld.World);
+	UCurveFloat* Owner = NewObject<UCurveFloat>(TestWorld.World.Get());
 	FTweenedFloat Value;
 	UDreamTweener* Tween = MakeManualTween(Owner, Value, 1.0f, 1.0f);
 	if (!TestNotNull(TEXT("A tween made on the owner"), Tween))
@@ -446,7 +446,7 @@ bool FDreamTweenManagerOncePerFrameTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World);
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
@@ -498,7 +498,7 @@ bool FDreamTweenManagerSmallFixesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenManagerTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
 		return false;
@@ -506,8 +506,8 @@ bool FDreamTweenManagerSmallFixesTest::RunTest(const FString& Parameters)
 
 	// RepeatCall with a count of 0 set the same single cycle a count of 1 does, and called the function once.
 	const TSharedRef<int32> Calls = MakeShared<int32>(0);
-	UDreamTweener* None = UDreamTweenBPLibrary::RepeatCall(TestWorld.World, CountInto(Calls), 0.0f, 0.1f, 0);
-	UDreamTweener* Once = UDreamTweenBPLibrary::RepeatCall(TestWorld.World, CountInto(Calls), 0.0f, 0.1f, 1);
+	UDreamTweener* None = UDreamTweenBPLibrary::RepeatCall(TestWorld.World.Get(), CountInto(Calls), 0.0f, 0.1f, 0);
+	UDreamTweener* Once = UDreamTweenBPLibrary::RepeatCall(TestWorld.World.Get(), CountInto(Calls), 0.0f, 0.1f, 1);
 	if (!TestNotNull(TEXT("A repeat of none still hands a tween back"), None) || !TestNotNull(TEXT("..."), Once))
 	{
 		return false;
@@ -521,8 +521,8 @@ bool FDreamTweenManagerSmallFixesTest::RunTest(const FString& Parameters)
 	// A child handed to a sequence with no context of the caller's -- C++ building one by hand passes none -- used
 	// to stay in the manager's list as well, stepped by both.
 	FTweenedFloat Value;
-	UDreamTweener* Child = MakeManualTween(TestWorld.World, Value, 1.0f, 1.0f);
-	UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(TestWorld.World);
+	UDreamTweener* Child = MakeManualTween(TestWorld.World.Get(), Value, 1.0f, 1.0f);
+	UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("A child"), Child) || !TestNotNull(TEXT("and a sequence"), Sequence))
 	{
 		return false;
@@ -565,7 +565,7 @@ bool FDreamTweenManagerMaxStepTest::RunTest(const FString& Parameters)
 		MaxStep->Set(SavedMaxStep, ECVF_SetByCode);
 	};
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World);
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{
@@ -618,7 +618,7 @@ bool FDreamWidgetRenderTweensTest::RunTest(const FString& Parameters)
 	 * anchored position.
 	 */
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World);
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager))
 	{

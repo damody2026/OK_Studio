@@ -99,7 +99,7 @@ bool FDreamExpandableAreaWorldHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FPlacedArea Placed = PlaceArea(Rig, Stage.Panel, FVector2D(-100.0, 140.0));
+	const FPlacedArea Placed = PlaceArea(Rig, Stage.Panel.Get(), FVector2D(-100.0, 140.0));
 	if (!TestTrue(TEXT("An expandable area with a header and a body can be made on the panel"), Placed.IsReady()))
 	{
 		return false;
@@ -163,14 +163,14 @@ bool FDreamExpandableAreaWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FPlacedArea Placed = PlaceArea(Rig, Stage.Panel, FVector2D(80.0, 140.0));
+	const FPlacedArea Placed = PlaceArea(Rig, Stage.Panel.Get(), FVector2D(80.0, 140.0));
 	if (!TestTrue(TEXT("An expandable area with a header and a body can be made on the panel"), Placed.IsReady()))
 	{
 		return false;
 	}
 	// Level with the header, in the panel's units with Y up.
-	const FVector2D HeaderOnPanel = OnPanel(Stage.Panel, Placed.Area->HeaderNode.Get());
-	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Stage.Panel, FVector2D(90.0, 40.0), FVector2D(-180.0, HeaderOnPanel.Y));
+	const FVector2D HeaderOnPanel = OnPanel(Stage.Panel.Get(), Placed.Area->HeaderNode.Get());
+	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Stage.Panel.Get(), FVector2D(90.0, 40.0), FVector2D(-180.0, HeaderOnPanel.Y));
 	if (!TestTrue(TEXT("A button left of the header can be made on the panel"), Left != nullptr && Left->FaceNode != nullptr))
 	{
 		return false;

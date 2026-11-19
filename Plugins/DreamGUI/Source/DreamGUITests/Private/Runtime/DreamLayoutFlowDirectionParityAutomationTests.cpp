@@ -56,14 +56,14 @@ bool FDreamHorizontalBoxMirrorsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFlowDirectionTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 100.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 40.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 80.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 100.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 40.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 80.0f, 40.0f);
 	if (!TestNotNull(TEXT("Horizontal box created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerHorizontalBox>()))
 	{
 		return false;
@@ -103,15 +103,15 @@ bool FDreamWrapBoxLineMirrorsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFlowDirectionTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 40.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 80.0f, 40.0f);
-	UDreamWidget* Wrapped = MakeWidget(TestWorld.World, Root, TEXT("Wrapped"), 200.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 40.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 80.0f, 40.0f);
+	UDreamWidget* Wrapped = MakeWidget(TestWorld.World.Get(), Root, TEXT("Wrapped"), 200.0f, 40.0f);
 	if (!TestNotNull(TEXT("Wrap box created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>()))
 	{
 		return false;
@@ -142,14 +142,14 @@ bool FDreamGridColumnsMirrorTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFlowDirectionTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* ColumnZero = MakeWidget(TestWorld.World, Root, TEXT("ColumnZero"), 80.0f, 40.0f);
-	UDreamWidget* ColumnOne = MakeWidget(TestWorld.World, Root, TEXT("ColumnOne"), 80.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* ColumnZero = MakeWidget(TestWorld.World.Get(), Root, TEXT("ColumnZero"), 80.0f, 40.0f);
+	UDreamWidget* ColumnOne = MakeWidget(TestWorld.World.Get(), Root, TEXT("ColumnOne"), 80.0f, 40.0f);
 	if (!TestNotNull(TEXT("Grid created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerGridPanel>()))
 	{
 		return false;
@@ -188,15 +188,15 @@ bool FDreamAlignmentAndPaddingMirrorTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFlowDirectionTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 100.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 80.0f, 40.0f);
-	UDreamWidget* Mirror = MakeWidget(TestWorld.World, nullptr, TEXT("Mirror"), 300.0f, 100.0f);
-	UDreamWidget* MirrorChild = MakeWidget(TestWorld.World, Mirror, TEXT("MirrorChild"), 80.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 100.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 80.0f, 40.0f);
+	UDreamWidget* Mirror = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Mirror"), 300.0f, 100.0f);
+	UDreamWidget* MirrorChild = MakeWidget(TestWorld.World.Get(), Mirror, TEXT("MirrorChild"), 80.0f, 40.0f);
 	if (!TestNotNull(TEXT("Overlay created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerOverlay>())
 		|| !TestNotNull(TEXT("Comparison overlay created"), Mirror->CreateNewLayoutContainer<UDreamLayoutContainerOverlay>()))
 	{
@@ -238,14 +238,14 @@ bool FDreamVerticalAndCanvasAreNotMirroredTest::RunTest(const FString& Parameter
 {
 	using namespace DreamFlowDirectionTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Column = MakeWidget(TestWorld.World, nullptr, TEXT("Column"), 300.0f, 200.0f);
-	UDreamWidget* Top = MakeWidget(TestWorld.World, Column, TEXT("Top"), 80.0f, 40.0f);
-	UDreamWidget* Bottom = MakeWidget(TestWorld.World, Column, TEXT("Bottom"), 80.0f, 40.0f);
+	UDreamWidget* Column = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Column"), 300.0f, 200.0f);
+	UDreamWidget* Top = MakeWidget(TestWorld.World.Get(), Column, TEXT("Top"), 80.0f, 40.0f);
+	UDreamWidget* Bottom = MakeWidget(TestWorld.World.Get(), Column, TEXT("Bottom"), 80.0f, 40.0f);
 	if (!TestNotNull(TEXT("Vertical box created"), Column->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>()))
 	{
 		return false;
@@ -262,8 +262,8 @@ bool FDreamVerticalAndCanvasAreNotMirroredTest::RunTest(const FString& Parameter
 
 	// A canvas child states its own rect through its anchors and is never arranged horizontally by the
 	// panel, so there is nothing for a mirror to act on -- Slate says the same about SConstraintCanvas.
-	UDreamWidget* Canvas = MakeWidget(TestWorld.World, nullptr, TEXT("Canvas"), 300.0f, 200.0f);
-	UDreamWidget* Placed = MakeWidget(TestWorld.World, Canvas, TEXT("Placed"), 80.0f, 40.0f);
+	UDreamWidget* Canvas = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Canvas"), 300.0f, 200.0f);
+	UDreamWidget* Placed = MakeWidget(TestWorld.World.Get(), Canvas, TEXT("Placed"), 80.0f, 40.0f);
 	if (!TestNotNull(TEXT("Canvas created"), Canvas->CreateNewLayoutContainer<UDreamLayoutContainerCanvasPanel>()))
 	{
 		return false;

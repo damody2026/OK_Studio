@@ -73,7 +73,7 @@ bool FDreamLifecycleLevelCopyRhiTest::RunTest(const FString& Parameters)
 	FLeakLogWatch Watch;
 	{
 		FScopedWorld Level(EWorldType::Editor);
-		const FWorldSpaceKinds Kinds = PlaceEveryWorldSpaceKind(Level.World, Panel.GetClass());
+		const FWorldSpaceKinds Kinds = PlaceEveryWorldSpaceKind(Level.World.Get(), Panel.GetClass());
 		if (!TestEqual(TEXT("One of every world-space kind was placed"), Kinds.Actors().Num(), 3))
 		{
 			return false;
@@ -83,7 +83,7 @@ bool FDreamLifecycleLevelCopyRhiTest::RunTest(const FString& Parameters)
 		const int32 CopiesBefore = DreamUI::GetCopiedIntoPlaySessionCount();
 
 		// For play, as a session begins.
-		UWorld* PlayCopy = DuplicateWorldForPlayInEditor(Level.World);
+		UWorld* PlayCopy = DuplicateWorldForPlayInEditor(Level.World.Get());
 		FlushRenderingCommands();
 		if (TestNotNull(TEXT("The level was duplicated for play"), PlayCopy))
 		{
@@ -96,7 +96,7 @@ bool FDreamLifecycleLevelCopyRhiTest::RunTest(const FString& Parameters)
 
 		// As an asset, as the content browser's Duplicate does.
 		UPackage* AssetPackage = CreatePackage(TEXT("/Temp/DreamGUITests/LevelCopyRhiDuplicate"));
-		UWorld* AssetCopy = Cast<UWorld>(StaticDuplicateObject(Level.World, AssetPackage, Level.World->GetFName()));
+		UWorld* AssetCopy = Cast<UWorld>(StaticDuplicateObject(Level.World.Get(), AssetPackage, Level.World->GetFName()));
 		FlushRenderingCommands();
 		if (TestNotNull(TEXT("The level was duplicated as an asset"), AssetCopy))
 		{

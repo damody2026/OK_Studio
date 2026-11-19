@@ -452,7 +452,7 @@ bool FDreamTextIncrementalLayoutFuzzMockTest::RunTest(const FString& Parameters)
 	using namespace DreamTextIncrementalLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	struct FCase
 	{
@@ -537,7 +537,7 @@ bool FDreamTextIncrementalLayoutFuzzShapedTest::RunTest(const FString& Parameter
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
 	FScopedConsoleInt ShapeCache(TEXT("DreamGUI.Text.ShapeCache"), 1);
-	UDreamUIFontData_DistanceField* Font = MakeMixedScriptFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = MakeMixedScriptFont(TestWorld.World.Get());
 
 	struct FCase
 	{
@@ -616,7 +616,7 @@ bool FDreamTextIncrementalLayoutKeystrokeTest::RunTest(const FString& Parameters
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
 	FScopedConsoleInt ShapeCache(TEXT("DreamGUI.Text.ShapeCache"), 1);
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 
 	FDreamTextLayoutInput In = MakeInput(Font, MakeEnglish(7, 2000), 600.0f);
 	FDreamTextLayoutState State;
@@ -661,8 +661,8 @@ bool FDreamTextIncrementalLayoutOneOfTwentyTest::RunTest(const FString& Paramete
 	using namespace DreamTextIncrementalLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
-	UDreamTextTestFont* Mock = NewObject<UDreamTextTestFont>(TestWorld.World);
-	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamTextTestFont* Mock = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
+	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 
 	FString Content;
 	for (int32 p = 0; p < 20; p++)
@@ -718,9 +718,9 @@ bool FDreamTextIncrementalLayoutInvalidationTest::RunTest(const FString& Paramet
 	using namespace DreamTextIncrementalLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
-	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	Roboto->SetFallbackFonts({ Arabic, Droid });
 
 	FDreamTextLayoutInput In = MakeInput(Roboto, TEXT("A first paragraph \u65E5\u672C\u8A9E and \u0645\u0631\u062D\u0628\u0627.\nA second one, 12345.\nA third."), 300.0f);
@@ -786,7 +786,7 @@ bool FDreamTextIncrementalLayoutCacheTest::RunTest(const FString& Parameters)
 	using namespace DreamTextIncrementalLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// Asked for: from the first layout on.
 	{
@@ -887,7 +887,7 @@ bool FDreamTextIncrementalLayoutWindowTest::RunTest(const FString& Parameters)
 	using namespace DreamTextIncrementalLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	FString Content;
 	for (int32 p = 0; p < 20; p++)
 	{
@@ -966,7 +966,7 @@ bool FDreamTextIncrementalLayoutStateOracleTest::RunTest(const FString& Paramete
 	using namespace DreamTextIncrementalLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	FDreamTextLayoutInput In = MakeInput(Font, MakeEnglish(21, 300) + TEXT("\n") + MakeEnglish(22, 120), 300.0f);
 	FDreamTextLayoutState Kept;
 	FDreamTextDisplayList KeptList;
@@ -1017,7 +1017,7 @@ bool FDreamTextIncrementalLayoutVerifyTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	FScopedConsoleInt Verify(TEXT("DreamGUI.Text.VerifyIncremental"), 1);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	FDreamTextLayoutInput In = MakeInput(Font, MakeEnglish(31, 400) + TEXT("\n") + MakeEnglish(32, 200), 300.0f);
 	FDreamTextLayoutState State;
 	FDreamTextDisplayList List;
@@ -1135,7 +1135,7 @@ bool FDreamTextIncrementalLayoutLeadingNeutralWindowTest::RunTest(const FString&
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
 	FScopedConsoleInt ShapeCache(TEXT("DreamGUI.Text.ShapeCache"), 1);
 	FScopedIncrementalSwitches Switches(SwitchMatrix[0]);
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 
 	struct FOpening
 	{
@@ -1191,7 +1191,7 @@ bool FDreamTextIncrementalLayoutWindowAfterImageTest::RunTest(const FString& Par
 	FScopedConsoleInt Incremental(TEXT("DreamGUI.Text.IncrementalLayout"), 1);
 	FScopedConsoleInt ShapeCache(TEXT("DreamGUI.Text.ShapeCache"), 1);
 	FScopedIncrementalSwitches Switches(SwitchMatrix[0]);
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 
 	FDreamTextLayoutInput In = MakeInput(Font, FString());
 	In.bRichText = true;

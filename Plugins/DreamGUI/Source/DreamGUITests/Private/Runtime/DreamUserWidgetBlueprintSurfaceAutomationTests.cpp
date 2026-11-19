@@ -50,9 +50,9 @@ namespace DreamUserWidgetBlueprintSurfaceTestLocal
 
 	struct FScopedEditorWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		FScopedEditorWorld() { World = UWorld::CreateWorld(EWorldType::Editor, false); }
-		~FScopedEditorWorld() { if (World) { World->DestroyWorld(false); } }
+		~FScopedEditorWorld() { if (UWorld* Owned = World.Get()) { Owned->DestroyWorld(false); } }
 	};
 
 	/** Production order: Initialize (which attaches the bridge in a game world), then register. */
@@ -187,11 +187,11 @@ bool FDreamUserWidgetBridgeAttachmentTest::RunTest(const FString& Parameters)
 	// Game world: exactly one bridge, however often Initialize is asked.
 	{
 		FScopedGameWorld Scope;
-		if (!TestNotNull(TEXT("a game world"), Scope.World))
+		if (!TestNotNull(TEXT("a game world"), Scope.World.Get()))
 		{
 			return false;
 		}
-		UDreamUserWidget* Widget = NewObject<UDreamUserWidget>(Scope.World);
+		UDreamUserWidget* Widget = NewObject<UDreamUserWidget>(Scope.World.Get());
 		Widget->Initialize();
 		Widget->Initialize();
 		TestEqual(TEXT("one bridge, not zero, not two"),
@@ -259,9 +259,9 @@ bool FDreamUserWidgetBridgeAttachmentTest::RunTest(const FString& Parameters)
 	// list must contain exactly what the author put there.
 	{
 		FScopedEditorWorld Scope;
-		if (TestNotNull(TEXT("an editor world"), Scope.World))
+		if (TestNotNull(TEXT("an editor world"), Scope.World.Get()))
 		{
-			UDreamUserWidget* Widget = NewObject<UDreamUserWidget>(Scope.World);
+			UDreamUserWidget* Widget = NewObject<UDreamUserWidget>(Scope.World.Get());
 			Widget->Initialize();
 			TestNull(TEXT("an edit-world widget gets no bridge"),
 				Widget->GetComponent(UDreamUserWidgetEventBridge::StaticClass()));
@@ -281,12 +281,12 @@ bool FDreamUserWidgetLifecycleSeamsTest::RunTest(const FString& Parameters)
 	using namespace DreamUserWidgetBlueprintSurfaceTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("a game world"), Scope.World))
+	if (!TestNotNull(TEXT("a game world"), Scope.World.Get()))
 	{
 		return false;
 	}
 
-	UDreamUserWidget* Widget = MakeUserWidget(Scope.World, nullptr, TEXT("Screen"));
+	UDreamUserWidget* Widget = MakeUserWidget(Scope.World.Get(), nullptr, TEXT("Screen"));
 	UDreamUserWidgetEventBridge* Bridge = Cast<UDreamUserWidgetEventBridge>(
 		Widget->GetComponent(UDreamUserWidgetEventBridge::StaticClass()));
 	if (!TestNotNull(TEXT("the bridge exists"), Bridge))
@@ -335,11 +335,11 @@ bool FDreamUserWidgetTickOptInTest::RunTest(const FString& Parameters)
 	using namespace DreamUserWidgetBlueprintSurfaceTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("a game world"), Scope.World))
+	if (!TestNotNull(TEXT("a game world"), Scope.World.Get()))
 	{
 		return false;
 	}
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Scope.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Scope.World.Get());
 	if (!TestNotNull(TEXT("the manager subsystem exists"), Manager))
 	{
 		return false;
@@ -347,8 +347,8 @@ bool FDreamUserWidgetTickOptInTest::RunTest(const FString& Parameters)
 
 	// One widget that wants to tick, one that never asked. The second is the cost claim: opting out
 	// means the manager never visits it.
-	UDreamUserWidget* Ticking = MakeUserWidget(Scope.World, nullptr, TEXT("Ticking"));
-	UDreamUserWidget* Silent = MakeUserWidget(Scope.World, nullptr, TEXT("Silent"));
+	UDreamUserWidget* Ticking = MakeUserWidget(Scope.World.Get(), nullptr, TEXT("Ticking"));
+	UDreamUserWidget* Silent = MakeUserWidget(Scope.World.Get(), nullptr, TEXT("Silent"));
 	Ticking->SetWantsTick(true);
 
 	UDreamUserWidgetEventBridge* TickingBridge = Cast<UDreamUserWidgetEventBridge>(
@@ -495,12 +495,12 @@ bool FDreamUserWidgetNavigationOptInTest::RunTest(const FString& Parameters)
 	using namespace DreamUserWidgetBlueprintSurfaceTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("a game world"), Scope.World))
+	if (!TestNotNull(TEXT("a game world"), Scope.World.Get()))
 	{
 		return false;
 	}
 
-	UDreamUserWidget* Widget = MakeUserWidget(Scope.World, nullptr, TEXT("Panel"));
+	UDreamUserWidget* Widget = MakeUserWidget(Scope.World.Get(), nullptr, TEXT("Panel"));
 	UDreamUserWidgetEventBridge* Bridge = Cast<UDreamUserWidgetEventBridge>(
 		Widget->GetComponent(UDreamUserWidgetEventBridge::StaticClass()));
 	if (!TestNotNull(TEXT("the bridge exists"), Bridge))

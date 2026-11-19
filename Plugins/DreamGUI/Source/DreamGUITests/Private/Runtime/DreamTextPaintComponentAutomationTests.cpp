@@ -582,9 +582,9 @@ bool FDreamTextPaintBaseColourTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextPaintComponentTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamWidget* Parent = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Parent = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Parent->OnRegister();
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Child->OnRegister();
 	UDreamText* Text = Child->TrySetParent(Parent, false) ? Child->CreateNewVisual<UDreamText>() : nullptr;
 	if (!TestNotNull(TEXT("A text under a parent"), Text))
@@ -592,7 +592,7 @@ bool FDreamTextPaintBaseColourTest::RunTest(const FString& Parameters)
 		Parent->DestroyWidget();
 		return false;
 	}
-	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World));
+	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World.Get()));
 	TestEqual(TEXT("Untinted, a painted face is white"), UDreamText::MakePaintParams(Text).PaintBaseColor, FColor::White);
 	TestEqual(TEXT("...and its effects drawn opaque"), UDreamText::MakePaintParams(Text).EffectOpacity, 1.0f, 1.0e-6f);
 

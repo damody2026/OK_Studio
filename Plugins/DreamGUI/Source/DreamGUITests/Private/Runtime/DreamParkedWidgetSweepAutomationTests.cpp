@@ -51,7 +51,7 @@ bool FDreamParkedSweepIsOffByDefaultTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamParkedSweepTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
@@ -61,7 +61,7 @@ bool FDreamParkedSweepIsOffByDefaultTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("The setting ships off"), GetDefault<UDreamUISettings>()->ParkedWidgetLifetimeSeconds, 0.0f);
 
 	FScopedParkedLifetime Lifetime(0.0f);
-	UDreamWidget* Waiting = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Waiting"), nullptr);
+	UDreamWidget* Waiting = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Waiting"), nullptr);
 	if (!TestNotNull(TEXT("ConstructWidget returns a widget"), Waiting))return false;
 
 	// A caller waiting on an async load looks exactly like a leak from here. With the check off --
@@ -81,7 +81,7 @@ bool FDreamParkedSweepDestroysTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamParkedSweepTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
@@ -91,7 +91,7 @@ bool FDreamParkedSweepDestroysTest::RunTest(const FString& Parameters)
 	// Nothing ticks a test world, so age it by hand rather than waiting: park at the current time,
 	// then move the clock past the lifetime.
 	FScopedParkedLifetime Lifetime(1.0f);
-	UDreamWidget* Forgotten = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Forgotten"), nullptr);
+	UDreamWidget* Forgotten = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Forgotten"), nullptr);
 	if (!TestNotNull(TEXT("ConstructWidget returns a widget"), Forgotten))return false;
 	TestEqual(TEXT("Nothing is swept before the lifetime is up"), Manager->SweepExpiredParkedWidgets(), 0);
 	TestWorld.World->TimeSeconds += 5.0;
@@ -118,7 +118,7 @@ bool FDreamParkedSweepSparesAddedTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamParkedSweepTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
@@ -128,12 +128,12 @@ bool FDreamParkedSweepSparesAddedTest::RunTest(const FString& Parameters)
 
 	// A host that was never created through the new verbs, so it is never a sweep candidate itself
 	// and cannot take its children down with it.
-	UDreamWidget* Host = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Host = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Host->SetDisplayName(TEXT("Host"));
 	Host->OnRegister();
 
-	UDreamWidget* Added = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Added"), nullptr);
-	UDreamWidget* Forgotten = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Forgotten"), nullptr);
+	UDreamWidget* Added = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Added"), nullptr);
+	UDreamWidget* Forgotten = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Forgotten"), nullptr);
 	if (!TestNotNull(TEXT("Added"), Added) || !TestNotNull(TEXT("Forgotten"), Forgotten))return false;
 
 	// Adding is what takes a widget out of the held set, so a widget in use can never be swept --
@@ -160,7 +160,7 @@ bool FDreamParkedSweepTakesSubtreeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamParkedSweepTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
@@ -173,9 +173,9 @@ bool FDreamParkedSweepTakesSubtreeTest::RunTest(const FString& Parameters)
 	// them -- and destroying it takes the whole subtree. Worth pinning because the alternative
 	// reading, "only the root is destroyed", would leave the children alive with nobody holding
 	// them, which is precisely the leak this is here to prevent.
-	UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Root"), nullptr);
-	UDreamWidget* Child = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Child"), nullptr);
-	UDreamWidget* Grandchild = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Grandchild"), nullptr);
+	UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Root"), nullptr);
+	UDreamWidget* Child = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Child"), nullptr);
+	UDreamWidget* Grandchild = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Grandchild"), nullptr);
 	if (!TestNotNull(TEXT("Root"), Root) || !TestNotNull(TEXT("Child"), Child)
 		|| !TestNotNull(TEXT("Grandchild"), Grandchild))return false;
 	Root->AddChild(Child);

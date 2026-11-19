@@ -25,7 +25,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FDreamImageSetBrushFromMaterialTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Widget->SetWidth(64.0f);
 	Widget->SetHeight(64.0f);
 	Widget->OnRegister();

@@ -262,7 +262,7 @@ bool FDreamUITextBehaviourGesturesTest::RunTest(const FString&)
 	AddExpectedError(TEXT("Refusing to remove the behaviour 'UIButton'.*Components\\.dui"), EAutomationExpectedErrorFlags::Contains, 0);
 
 	FScopedTextBlueprint Scoped(TEXT("BP_Components"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 

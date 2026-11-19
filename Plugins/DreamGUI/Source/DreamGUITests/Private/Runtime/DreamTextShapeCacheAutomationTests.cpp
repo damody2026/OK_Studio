@@ -196,7 +196,7 @@ bool FDreamTextShapeCacheSameRunsTest::RunTest(const FString& Parameters)
 	using namespace DreamTextShapeCacheTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedShapeCacheSettings Settings;
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 	UDreamUIFontData_DistanceField* Roboto = MakeFont(World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
 	UDreamUIFontData_DistanceField* Naskh = MakeFont(World, RuntimeFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
 	UDreamUIFontData_DistanceField* LatinArabic = MakeFont(World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
@@ -275,7 +275,7 @@ bool FDreamTextShapeCacheReuseTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	FScopedShapeCacheSettings Settings;
 	Settings.SetEnabled(true);
-	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 	FDreamTextShapeCache::Flush();
 	FDreamTextShapeCache::ResetStats();
@@ -332,8 +332,8 @@ bool FDreamTextShapeCacheWholeRunTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	FScopedShapeCacheSettings Settings;
 	Settings.SetEnabled(true);
-	UDreamUIFontData_DistanceField* Devanagari = MakeFont(TestWorld.World, EditorFont(TEXT("NotoSansDevanagari-Regular.ttf")));
-	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Devanagari = MakeFont(TestWorld.World.Get(), EditorFont(TEXT("NotoSansDevanagari-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
 	if (!TestTrue(TEXT("Noto Sans Devanagari shapes"), FDreamTextShaper::CanShape(Devanagari)))return false;
 	FDreamTextShapeCache::Flush();
 	FDreamTextShapeCache::ResetStats();
@@ -363,7 +363,7 @@ bool FDreamTextShapeCacheBudgetTest::RunTest(const FString& Parameters)
 	using namespace DreamTextShapeCacheTestLocal;
 	FScopedGameWorld TestWorld;
 	FScopedShapeCacheSettings Settings;
-	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 	const FParagraph Alphabet = MakeParagraph(TEXT("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa"));
 	Settings.SetEnabled(false);
@@ -406,7 +406,7 @@ bool FDreamTextShapeCacheEpochTest::RunTest(const FString& Parameters)
 	FScopedShapeCacheSettings Settings;
 	Settings.SetEnabled(true);
 	const FString Path = RuntimeFont(TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World, Path);
+	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World.Get(), Path);
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 	FDreamTextShapeCache::Flush();
 	const FParagraph Word = MakeParagraph(TEXT("epoch"));
@@ -442,7 +442,7 @@ bool FDreamTextShapeCacheFlushTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	FScopedShapeCacheSettings Settings;
 	Settings.SetEnabled(true);
-	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 	FDreamTextShapeCache::ResetStats();
 	MakeParagraph(TEXT("flush me")).Shape(Roboto);

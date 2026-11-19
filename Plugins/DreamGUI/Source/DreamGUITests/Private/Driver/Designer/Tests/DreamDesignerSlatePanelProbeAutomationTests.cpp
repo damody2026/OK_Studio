@@ -83,7 +83,7 @@ namespace DreamDesignerSlatePanelProbeLocal
 			State->bAlive = false;
 			return State;
 		}
-		State->Driver = FDreamDesignerDriver::Open(State->Asset.Blueprint);
+		State->Driver = FDreamDesignerDriver::Open(State->Asset.Blueprint.Get());
 		if (!State->Driver.IsValid())
 		{
 			State->bAlive = false;

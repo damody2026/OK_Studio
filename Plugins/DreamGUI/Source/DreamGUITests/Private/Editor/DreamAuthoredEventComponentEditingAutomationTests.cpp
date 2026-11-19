@@ -210,7 +210,7 @@ bool FDreamAuthoredEventComponentUndoAndSaveTest::RunTest(const FString& Paramet
 	using namespace DreamAuthoredEventComponentEditingTestLocal;
 	if (!HasEditor(*this)) return false;
 	DreamOnDiskFixture::FScopedOnDiskPackage Package(TEXT("AuthoredEventComponentTargets"));
-	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(Package.Package, TEXT("AuthoredEventComponentTargets"), RF_Public | RF_Standalone | RF_Transactional);
+	UDreamWidgetTree* Tree = NewObject<UDreamWidgetTree>(Package.Package.Get(), TEXT("AuthoredEventComponentTargets"), RF_Public | RF_Standalone | RF_Transactional);
 	Tree->RootWidget = Tree->ConstructWidget<UDreamWidget>();
 	Tree->RootWidget->SetDisplayName(TEXT("Root"));
 	FSample Sample = BuildSample(Tree->RootWidget);
@@ -309,7 +309,7 @@ bool FDreamAuthoredEventLevelComponentPanelTest::RunTest(const FString& Paramete
 	using namespace DreamAuthoredEventComponentEditingTestLocal;
 	if (!HasEditor(*this) || !TestTrue(TEXT("Slate is initialized"), FSlateApplication::IsInitialized())) return false;
 	DreamTests::FScopedGameWorld World(EWorldType::Editor);
-	TStrongObjectPtr<UDreamWidget> Root(NewObject<UDreamWidget>(World.World, NAME_None, RF_Public | RF_Transactional));
+	TStrongObjectPtr<UDreamWidget> Root(NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Public | RF_Transactional));
 	FSample Sample = BuildSample(Root.Get());
 	{
 		// This is the in-place primitive the level component panel's reorder calls.

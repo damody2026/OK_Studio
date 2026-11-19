@@ -94,7 +94,7 @@ bool FDreamWidgetTreeDuplicateCarriesHierarchyTest::RunTest(const FString& Param
 	using namespace DreamWidgetTreeObjectGraphTestLocal;
 	FScopedGameWorld TestWorld;
 
-	const FSampleTree Source = BuildSampleTree(TestWorld.World);
+	const FSampleTree Source = BuildSampleTree(TestWorld.World.Get());
 	TArray<FString> SourcePaths;
 	CollectPaths(Source.Root, FString(), SourcePaths);
 	TestEqual(TEXT("the sample tree is four widgets deep enough to matter"), SourcePaths.Num(), 4);
@@ -136,7 +136,7 @@ bool FDreamWidgetTreeParentLinksRebuildTest::RunTest(const FString& Parameters)
 	using namespace DreamWidgetTreeObjectGraphTestLocal;
 	FScopedGameWorld TestWorld;
 
-	const FSampleTree Source = BuildSampleTree(TestWorld.World);
+	const FSampleTree Source = BuildSampleTree(TestWorld.World.Get());
 
 	// A duplicate is the honest stand-in for a tree that arrived without going through the attach path.
 	// Parent is DuplicateTransient precisely so this happens: the copy is handed the structure with
@@ -195,7 +195,7 @@ bool FDreamWidgetTreeInstancesFromATemplateTest::RunTest(const FString& Paramete
 
 	FObjectInstancingGraph InstancingGraph;
 	TStrongObjectPtr<UDreamWidgetTree> Instance(NewObject<UDreamWidgetTree>(
-		TestWorld.World, Template.Tree->GetClass(), NAME_None, RF_Transactional,
+		TestWorld.World.Get(), Template.Tree->GetClass(), NAME_None, RF_Transactional,
 		Template.Tree, /*bCopyTransientsFromClassDefaults*/false, &InstancingGraph));
 
 	if (!TestNotNull(TEXT("instancing produced a tree"), Instance.Get()))
@@ -220,8 +220,8 @@ bool FDreamWidgetTreeInstancesFromATemplateTest::RunTest(const FString& Paramete
 	TestEqual(TEXT("instancing did not disturb the template"), TemplatePathsAfter, TemplatePaths);
 
 	// The instance lives in a world, so unlike the template its widgets can resolve one.
-	TestEqual(TEXT("the instanced tree resolves the world it was outered into"), Instance->GetWorld(), TestWorld.World);
-	TestEqual(TEXT("and so do the widgets inside it"), Instance->RootWidget->GetWorld(), TestWorld.World);
+	TestEqual(TEXT("the instanced tree resolves the world it was outered into"), Instance->GetWorld(), TestWorld.World.Get());
+	TestEqual(TEXT("and so do the widgets inside it"), Instance->RootWidget->GetWorld(), TestWorld.World.Get());
 
 	return true;
 }
@@ -265,15 +265,15 @@ bool FDreamWidgetDuplicateHierarchyTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 
 	// A live, registered subtree -- what every caller of this actually passes.
-	UDreamWidget* Host = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transactional);
+	UDreamWidget* Host = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transactional);
 	Host->SetDisplayName(TEXT("Host"));
 	Host->OnRegister();
 
-	UDreamWidget* Source = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transactional);
+	UDreamWidget* Source = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transactional);
 	Source->SetDisplayName(TEXT("Cell"));
 	Source->TrySetParent(Host, false);
 	UDreamText* SourceVisual = Source->CreateNewVisual<UDreamText>();
-	UDreamWidget* SourceChild = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transactional);
+	UDreamWidget* SourceChild = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transactional);
 	SourceChild->SetDisplayName(TEXT("Label"));
 	SourceChild->TrySetParent(Source, false);
 	RegisterDreamWidgetHierarchy(Source);
@@ -327,7 +327,7 @@ bool FDreamWidgetIdentityTest::RunTest(const FString& Parameters)
 	using namespace DreamWidgetTreeObjectGraphTestLocal;
 	FScopedGameWorld TestWorld;
 
-	const FSampleTree Sample = BuildSampleTree(TestWorld.World);
+	const FSampleTree Sample = BuildSampleTree(TestWorld.World.Get());
 	TSet<FGuid> Ids;
 	for (const UDreamWidget* Widget : { Sample.Root, Sample.A, Sample.B, Sample.C })
 	{
@@ -373,7 +373,7 @@ bool FDreamWidgetBackfilledIdTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetTreeObjectGraphTestLocal;
 	FScopedGameWorld TestWorld;
-	const FSampleTree Sample = BuildSampleTree(TestWorld.World);
+	const FSampleTree Sample = BuildSampleTree(TestWorld.World.Get());
 
 	// A widget saved before ids existed, or by something that built it without one, comes off disk with
 	// none, and PostLoad backfills it through EnsureWidgetGuid. A random backfill meant a different id on
@@ -415,7 +415,7 @@ bool FDreamWidgetSubtreeCopyBindingsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetTreeObjectGraphTestLocal;
 	FScopedGameWorld TestWorld;
-	const FSampleTree Sample = BuildSampleTree(TestWorld.World);
+	const FSampleTree Sample = BuildSampleTree(TestWorld.World.Get());
 
 	// A toggle group on A whose value-changed binding calls a behaviour of C, inside the subtree to copy.
 	UUIToggleGroup* Group = Sample.A->AddComponent<UUIToggleGroup>();

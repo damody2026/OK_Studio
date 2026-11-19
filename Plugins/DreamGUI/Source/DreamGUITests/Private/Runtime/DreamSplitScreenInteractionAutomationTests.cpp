@@ -529,11 +529,11 @@ bool FDreamSplitScreenPictureTest::RunTest(const FString& Parameters)
 	Steps.WaitFrames(8);
 	Steps.Then([this, Joined, BlockHeight](FDreamDriverContext& InContext)
 	{
-		const ULocalPlayer* First = InContext.LocalPlayer;
+		const ULocalPlayer* First = InContext.LocalPlayer.Get();
 		const ULocalPlayer* Second = Joined->Get();
 		TArray<FColor> Pixels;
 		FIntPoint Size = FIntPoint::ZeroValue;
-		FViewport* Viewport = UDreamUICaptureLibrary::FindViewportOf(InContext.World);
+		FViewport* Viewport = UDreamUICaptureLibrary::FindViewportOf(InContext.World.Get());
 		if (!TestNotNull(TEXT("The play session's first player is known"), First)
 			|| !TestNotNull(TEXT("The second player is still in the session"), Second)
 			|| !TestTrue(TEXT("The play session's viewport reads back"), UDreamUICaptureLibrary::ReadViewportPixels(Viewport, Pixels, Size)))
@@ -568,7 +568,7 @@ bool FDreamSplitScreenPictureTest::RunTest(const FString& Parameters)
 		TestTrue(FString::Printf(TEXT("The block is its full %.0f pixels tall in player 0's part (it is %d)"), BlockHeight, Column),
 			FMath::Abs(Column - FMath::RoundToInt32(BlockHeight)) <= 4);
 
-		if (UGameInstance* GameInstance = InContext.World != nullptr ? InContext.World->GetGameInstance() : nullptr)
+		if (UGameInstance* GameInstance = InContext.World.Get() != nullptr ? InContext.World->GetGameInstance() : nullptr)
 		{
 			GameInstance->RemoveLocalPlayer(const_cast<ULocalPlayer*>(Second));
 		}

@@ -65,8 +65,8 @@ namespace DreamDuiGeneratedControlsTestLocal
 	/** A .dui-backed Blueprint in /Temp, its package rooted for the test, pointed at InFilePath and compiled. */
 	struct FScopedTextBlueprint
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		FCompilerResultsLog Results;
 
 		FScopedTextBlueprint(const TCHAR* InName, const FString& InFilePath)
@@ -74,7 +74,7 @@ namespace DreamDuiGeneratedControlsTestLocal
 			Package = CreatePackage(*FString::Printf(TEXT("/Temp/DreamGUITests/%s"), InName));
 			Package->AddToRoot();
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				UDreamTextUserWidget::StaticClass(), Package, FName(InName), BPTYPE_Normal,
+				UDreamTextUserWidget::StaticClass(), Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			UDreamTextUserWidget* Defaults = Blueprint != nullptr && Blueprint->GeneratedClass != nullptr
 				? Cast<UDreamTextUserWidget>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
@@ -84,7 +84,7 @@ namespace DreamDuiGeneratedControlsTestLocal
 				return;
 			}
 			Defaults->SourceFile.FilePath = InFilePath;
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection, &Results);
 		}
 		~FScopedTextBlueprint()
 		{

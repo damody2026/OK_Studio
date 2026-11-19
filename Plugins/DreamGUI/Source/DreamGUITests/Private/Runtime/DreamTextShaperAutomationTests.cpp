@@ -132,7 +132,7 @@ bool FDreamTextShaperKerningTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	TArray<FDreamShapedRun> Kerned, Unkerned;
@@ -161,7 +161,7 @@ bool FDreamTextShaperArabicTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	// "مرحبا": five letters; in a word the meem, ra, ha, ba take joined forms.
@@ -199,8 +199,8 @@ bool FDreamTextShaperFallbackTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	Roboto->SetFallbackFonts({ Droid });
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 	TestEqual(TEXT("two faces"), Roboto->GetFaceCount(), 2);
@@ -254,8 +254,8 @@ bool FDreamTextShaperLayoutTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	Font->SetFallbackFonts({ Arabic });
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
@@ -325,7 +325,7 @@ bool FDreamTextMtsdfGlyphTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'H')))return false;
 	TestEqual(TEXT("a new font is an outline field"), (int32)Font->GetSdfSource(), (int32)EDreamUISdfSource::OutlineMultiChannel);
 	TestEqual(TEXT("and says so through its mark"), (int32)Font->GetFontTextureMark(), (int32)EDreamUIFontTextureMark::Mtsdf);
@@ -383,7 +383,7 @@ bool FDreamTextMtsdfCjkBoundsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	if (!TestTrue(TEXT("Droid loads"), Droid->FaceHasCodepoint(0, 0x4E16)))return false;
 	// Glyphs seen on screen with wildly wrong quads; every one must rasterize to a few dozen pixels at 48px.
 	const TCHAR* Sample = TEXT("逐字渐变填充辉光描边投影模糊你好世界");
@@ -412,7 +412,7 @@ bool FDreamTextAsyncGlyphsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'W')))return false;
 	// No synchronous budget from here on: every new glyph goes to the worker.
 	UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(0);
@@ -482,7 +482,7 @@ bool FDreamTextShaperForcedDirectionTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	// "123" has no strong character at all, so the bidi algorithm has nothing to read and answers
@@ -497,7 +497,7 @@ bool FDreamTextShaperForcedDirectionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("forcing right-to-left says so"), bRTL);
 
 	// And forcing the other way survives a string that WOULD have read right to left.
-	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	if (TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Arabic)))
 	{
 		const FString Word = TEXT("مرحبا");
@@ -518,8 +518,8 @@ bool FDreamTextFallbackFaceLineBoxTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	Roboto->SetFallbackFonts({ Droid });
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 
@@ -581,7 +581,7 @@ bool FDreamTextRightToLeftEllipsisTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Arabic)))return false;
 
 	auto Layout = [&](EDreamUITextOverflowType Overflow, float Width, FDreamTextDisplayList& Out)
@@ -642,7 +642,7 @@ bool FDreamTextRightToLeftEllipsisTest::RunTest(const FString& Parameters)
 	// A wrapped right-to-left paragraph that runs past the bottom of its box ends its last visible line in an ellipsis
 	// too -- and on that line's left, where it ends, rather than appended on its right, where it starts. Roboto stands in
 	// front of the Arabic face for the ellipsis glyph, which the Arabic face does not have.
-	UDreamUIFontData_DistanceField* LatinArabic = MakeLatinArabicFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* LatinArabic = MakeLatinArabicFont(TestWorld.World.Get());
 	FDreamTextLayoutInput Wrapped = MakeInput(LatinArabic, TEXT("مرحبا بالعالم مرحبا بالعالم مرحبا بالعالم مرحبا بالعالم"), 200.0f, 100.0f);
 	Wrapped.OverflowType = EDreamUITextOverflowType::Ellipsis;
 	Wrapped.bAutoWrapText = true;
@@ -685,7 +685,7 @@ bool FDreamTextBidiAcrossRunsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeLatinArabicFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = MakeLatinArabicFont(TestWorld.World.Get());
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	// g0 o1 _2 [meem3 ra4 ha5 ba6 alef7] _8 1-9 2-10 _11 [ain12 alef13 lam14 meem15] _16 n17 o18 w19
@@ -730,7 +730,7 @@ bool FDreamTextPendingStrokeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto loads"), Font->FaceHasCodepoint(0, 'a')))return false;
 	// The letters are in the atlas; the '_' is not.
 	Font->GetCharData('a', 32.0f, false);
@@ -776,7 +776,7 @@ bool FDreamTextBoldClusterAdvanceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto has the combining acute"), Font->FaceHasCodepoint(0, 0x0301)))return false;
 
 	auto Width = [Font](const TCHAR* Content, EDreamUITextFontStyle Style)
@@ -809,7 +809,7 @@ bool FDreamTextNegativeSpacingInkTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	auto InkExtent = [](const FDreamTextDisplayList& DL, float& OutLeft, float& OutRight)
@@ -861,7 +861,7 @@ bool FDreamTextCursiveSpacingTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	auto Pens = [Font](float Spacing)
@@ -902,7 +902,7 @@ bool FDreamTextLigatureTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	auto CountGlyphs = [](const FDreamTextDisplayList& DL)
@@ -958,7 +958,7 @@ bool FDreamTextConjunctTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeEditorFileFont(TestWorld.World, TEXT("NotoSansDevanagari-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeEditorFileFont(TestWorld.World.Get(), TEXT("NotoSansDevanagari-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Sans Devanagari shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	// kssa (0..2), tra (3..5), jnya (6..8)
@@ -991,7 +991,7 @@ bool FDreamTextFontUnderlineTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("ab"));
@@ -1028,7 +1028,7 @@ bool FDreamTextRightToLeftStartTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Arabic)))return false;
 
 	FDreamTextLayoutInput In = MakeInput(Arabic, TEXT("مرحبا"), 400.0f);
@@ -1050,7 +1050,7 @@ bool FDreamTextRightToLeftStartTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("on its leading edge, the right"), First->CaretPosition.X, BoxRight, 0.01f);
 	}
 
-	UDreamUIFontData_DistanceField* LatinArabic = MakeLatinArabicFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* LatinArabic = MakeLatinArabicFont(TestWorld.World.Get());
 	FDreamTextDisplayList Mixed;
 	FDreamTextLayoutEngine::Layout(MakeInput(LatinArabic, TEXT("ab مرحبا cd")), Mixed);
 	if (TestEqual(TEXT("three runs: left to right, right to left, left to right"), Mixed.VisualRuns.Num(), 3))
@@ -1082,8 +1082,8 @@ bool FDreamTextStyledFaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Regular = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Bold = MakeFileFont(TestWorld.World, TEXT("Roboto-Bold.ttf"));
+	UDreamUIFontData_DistanceField* Regular = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Bold = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Bold.ttf"));
 	Regular->SetStyleFonts(Bold, nullptr, nullptr);
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Regular)))return false;
 
@@ -1127,7 +1127,7 @@ bool FDreamTextShaperJoinsAcrossRunsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	// The glyph that draws an element: of the glyphs of its cluster, the one that advances, since a joiner riding with a
@@ -1225,7 +1225,7 @@ bool FDreamTextShapedMarkOnASpaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 	if (!TestTrue(TEXT("Roboto has the combining acute"), Font->FaceHasCodepoint(0, 0x0301)))return false;
 
@@ -1345,7 +1345,7 @@ bool FDreamTextShaperEmojiSequenceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World.Get());
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 	if (!TestTrue(TEXT("the emoji font is a colour face"), Font->IsColorFace(1)))return false;
 
@@ -1399,7 +1399,7 @@ bool FDreamTextShaperBareHeartTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World.Get());
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 	TestFalse(TEXT("Roboto has no heart"), Font->FaceHasCodepoint(0, 0x2764));
 	TestFalse(TEXT("and the emoji font no U+FE0F"), Font->FaceHasCodepoint(1, 0xFE0F));
@@ -1441,7 +1441,7 @@ bool FDreamTextShaperSplitClusterTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World.Get());
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 	TestFalse(TEXT("no face has the whole cluster"), ResolveCluster(Font, { 'a', 0x1F3FD }).bCoversCluster);
 
@@ -1487,8 +1487,8 @@ bool FDreamTextShaperTextPresentationTest::RunTest(const FString& Parameters)
 		return true;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Symbol = MakeFontFromPath(TestWorld.World, SymbolPath);
-	Symbol->SetFallbackFonts({ MakeEmojiFont(TestWorld.World) });
+	UDreamUIFontData_DistanceField* Symbol = MakeFontFromPath(TestWorld.World.Get(), SymbolPath);
+	Symbol->SetFallbackFonts({ MakeEmojiFont(TestWorld.World.Get()) });
 	if (!TestTrue(TEXT("Segoe UI Symbol shapes"), FDreamTextShaper::CanShape(Symbol)))return false;
 	TestFalse(TEXT("it is no colour face"), Symbol->IsColorFace(0));
 	TestTrue(TEXT("and has the heart"), Symbol->FaceHasCodepoint(0, 0x2764));
@@ -1524,9 +1524,9 @@ bool FDreamTextShaperLanguageFacesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* GenEi = MakeEditorFileFont(TestWorld.World, TEXT("GenEiGothicPro-Regular.otf"));
-	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* GenEi = MakeEditorFileFont(TestWorld.World.Get(), TEXT("GenEiGothicPro-Regular.otf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	TArray<FDreamUIFontFallback> Fallbacks;
 	Fallbacks.AddDefaulted();
 	Fallbacks[0].Font = GenEi;
@@ -1593,10 +1593,10 @@ bool FDreamTextShaperScaledFaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Droid = MakeFileFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
 	auto MakeFamily = [&TestWorld, Droid](float Scale)
 	{
-		UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+		UDreamUIFontData_DistanceField* Roboto = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 		TArray<FDreamUIFontFallback> Fallbacks;
 		Fallbacks.AddDefaulted();
 		Fallbacks[0].Font = Droid;
@@ -1636,7 +1636,7 @@ bool FDreamTextShaperColorBoldTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = MakeLatinEmojiFont(TestWorld.World.Get());
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 
 	FSequenceParagraph Bold;
@@ -1680,7 +1680,7 @@ bool FDreamTextShaperHiddenSelectorTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextShaperTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Font = MakeFileFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Font)))return false;
 	TestFalse(TEXT("Roboto has no variation selector"), Font->FaceHasCodepoint(0, 0xFE0F));
 

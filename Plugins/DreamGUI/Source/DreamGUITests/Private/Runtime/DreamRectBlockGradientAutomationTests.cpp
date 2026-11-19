@@ -45,8 +45,8 @@ namespace DreamRectBlockGradientTestLocal
 
 		FStage()
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-			Root = MakeWidget(World.World, nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+			Root = MakeWidget(World.World.Get(), nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			Canvas = Root->AddComponent<UDreamCanvas>();
 			if (Canvas != nullptr)
 			{
@@ -177,7 +177,7 @@ bool FDreamRectBlockEffectiveGradientTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Stage.World.World, Stage.Root, TEXT("Block"), FVector2D(200.0, 100.0));
+	UDreamWidget* Widget = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Block"), FVector2D(200.0, 100.0));
 	UDreamRectBlock* Block = Widget->CreateNewVisual<UDreamRectBlock>();
 	if (!TestNotNull(TEXT("a rect block"), Block))
 	{
@@ -216,7 +216,7 @@ bool FDreamRectBlockEffectiveGradientTest::RunTest(const FString& Parameters)
 	Stage.Frames();
 	TestTrue(TEXT("it holds a gradient row"), Block->GetBodyGradientRow() != INDEX_NONE);
 	TestEqual(TEXT("one more than before"), Stage.CountGradientRows(), RowsBefore + 1);
-	UDreamWidget* Twin = MakeWidget(Stage.World.World, Stage.Root, TEXT("Twin"), FVector2D(100.0, 100.0));
+	UDreamWidget* Twin = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Twin"), FVector2D(100.0, 100.0));
 	UDreamRectBlock* TwinBlock = Twin->CreateNewVisual<UDreamRectBlock>();
 	TwinBlock->SetEnableBodyGradient(true);
 	TwinBlock->SetBodyGradient(Written);
@@ -244,7 +244,7 @@ bool FDreamRectBlockOldSettersTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Stage.World.World, Stage.Root, TEXT("Block"), FVector2D(200.0, 100.0));
+	UDreamWidget* Widget = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Block"), FVector2D(200.0, 100.0));
 	UDreamRectBlock* Block = Widget->CreateNewVisual<UDreamRectBlock>();
 	FDreamGradient Written;
 	FDreamGradient::ParseCss(TEXT("radial-gradient(#fff, #000)"), Written);
@@ -282,7 +282,7 @@ bool FDreamRectBlockGradientAsLayerStyleTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Stage.World.World, Stage.Root, TEXT("Block"), FVector2D(200.0, 100.0));
+	UDreamWidget* Widget = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Block"), FVector2D(200.0, 100.0));
 	UDreamRectBlock* Block = Widget->CreateNewVisual<UDreamRectBlock>();
 	FDreamGradient Written;
 	FDreamGradient::ParseCss(TEXT("diamond-gradient(#ff0000, #00ff0080 50%, #0000ff)"), Written);
@@ -300,7 +300,7 @@ bool FDreamRectBlockGradientAsLayerStyleTest::RunTest(const FString& Parameters)
 		&& FMath::IsNearlyEqual(Fill.Gradient.OpacityStops[1].Opacity, 128.0f / 255.0f));
 
 	// Back: the style's stops, as the rect block's own.
-	UDreamWidget* Other = MakeWidget(Stage.World.World, Stage.Root, TEXT("Other"), FVector2D(200.0, 100.0));
+	UDreamWidget* Other = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Other"), FVector2D(200.0, 100.0));
 	UDreamRectBlock* OtherBlock = Other->CreateNewVisual<UDreamRectBlock>();
 	OtherBlock->SetEffectsFromLayerStyle(Style);
 	TestTrue(TEXT("its body gradient on"), OtherBlock->GetEnableBodyGradient());

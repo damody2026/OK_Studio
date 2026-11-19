@@ -37,24 +37,24 @@ bool FDreamLifecycleVisualFollowsItsCanvasTest::RunTest(const FString& Parameter
 	FScopedPanelClass Panel(TEXT("LifecycleCanvasSwitch"));
 	if (!TestNotNull(TEXT("the panel class compiled"), Panel.GetClass()))return false;
 	FScopedWorld Level(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World, Panel.GetClass());
+	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World.Get(), Panel.GetClass());
 	if (!TestNotNull(TEXT("the panel was placed"), Actor))return false;
 	UDreamWidget* Root = Actor->GetWidgetComponent()->GetLoadedWidget();
 	UDreamCanvas* PanelCanvas = Actor->GetWidgetComponent()->GetLoadedCanvas();
 	if (!TestNotNull(TEXT("with its tree"), Root) || !TestNotNull(TEXT("and its canvas"), PanelCanvas))return false;
 
-	UDreamWidget* Probe = UDreamUIBPLibrary::ConstructWidget(Level.World, TEXT("Probe"), UDreamWidgetCanvasProbeVisual::StaticClass());
+	UDreamWidget* Probe = UDreamUIBPLibrary::ConstructWidget(Level.World.Get(), TEXT("Probe"), UDreamWidgetCanvasProbeVisual::StaticClass());
 	UDreamWidgetCanvasProbeVisual* Visual = Probe != nullptr ? Cast<UDreamWidgetCanvasProbeVisual>(Probe->GetVisual()) : nullptr;
 	if (!TestNotNull(TEXT("a widget that records its visual's canvas"), Visual))return false;
 	TestTrue(TEXT("joins the panel"), Probe->TrySetParent(Root, false));
-	DrawFrames(Level.World, 2);
+	DrawFrames(Level.World.Get(), 2);
 	TestTrue(TEXT("and draws in the panel's canvas"), Probe->GetRenderCanvas() == PanelCanvas);
 
 	Visual->CanvasChanges.Reset();
 	Visual->MarkAllDirtyCount = 0;
 	UDreamCanvas* OwnCanvas = Probe->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("the widget is given a canvas of its own"), OwnCanvas))return false;
-	DrawFrames(Level.World, 1);
+	DrawFrames(Level.World.Get(), 1);
 	TestTrue(TEXT("and draws in it"), Probe->GetRenderCanvas() == OwnCanvas);
 	TestTrue(TEXT("its visual was told it moved from the panel's canvas to that one"),
 		Visual->CanvasChanges.Contains(TPair<TWeakObjectPtr<const UDreamCanvas>, TWeakObjectPtr<const UDreamCanvas>>(PanelCanvas, OwnCanvas)));
@@ -63,7 +63,7 @@ bool FDreamLifecycleVisualFollowsItsCanvasTest::RunTest(const FString& Parameter
 	Visual->CanvasChanges.Reset();
 	Visual->MarkAllDirtyCount = 0;
 	Probe->RemoveComponent(OwnCanvas);
-	DrawFrames(Level.World, 1);
+	DrawFrames(Level.World.Get(), 1);
 	TestTrue(TEXT("without its own canvas the widget draws in the panel's again"), Probe->GetRenderCanvas() == PanelCanvas);
 	TestTrue(TEXT("its visual was told it moved back"),
 		Visual->CanvasChanges.Contains(TPair<TWeakObjectPtr<const UDreamCanvas>, TWeakObjectPtr<const UDreamCanvas>>(OwnCanvas, PanelCanvas)));
@@ -96,7 +96,7 @@ bool FDreamLifecycleCanvasRegisteredMidUpdateTest::RunTest(const FString& Parame
 	TArray<UDreamWidget*> Roots;
 	auto MakeRoot = [&Roots, &Level, Anchor](const TCHAR* InName) -> UDreamWidget*
 	{
-		UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(Level.World, InName, nullptr);
+		UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(Level.World.Get(), InName, nullptr);
 		if (Root != nullptr)
 		{
 			UDreamUIBPLibrary::AttachWidgetToSceneComponent(Root, Anchor);
@@ -131,9 +131,9 @@ bool FDreamLifecycleCanvasRegisteredMidUpdateTest::RunTest(const FString& Parame
 		}
 	});
 	const TWeakObjectPtr<UDreamCanvas> WeakSecondCanvas(SecondCanvas);
-	DrawFrames(Level.World, 2);
+	DrawFrames(Level.World.Get(), 2);
 
-	const UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Level.World);
+	const UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Level.World.Get());
 	if (TestNotNull(TEXT("the world has a manager"), Manager))
 	{
 		TestTrue(TEXT("the listener ran, in the middle of the manager's pass"), Broadcasts > 0);

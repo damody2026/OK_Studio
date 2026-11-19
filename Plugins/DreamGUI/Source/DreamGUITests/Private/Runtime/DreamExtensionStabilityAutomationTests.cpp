@@ -402,7 +402,7 @@ bool FDreamStabilityCylinderWithoutTargetTest::RunTest(const FString& Parameters
 	{
 		return false;
 	}
-	UDreamUIRenderTargetGeometrySource* Surface = Screen.Surface;
+	UDreamUIRenderTargetGeometrySource* Surface = Screen.Surface.Get();
 	Surface->SetGeometryMode(EDreamUIRenderTargetGeometryMode::Cylinder);
 
 	// Off the middle, which on an even number of segments is a seam between two of them.
@@ -449,7 +449,7 @@ bool FDreamStabilityCylinderArcTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamUIRenderTargetGeometrySource* Surface = Screen.Surface;
+	UDreamUIRenderTargetGeometrySource* Surface = Screen.Surface.Get();
 	Surface->SetGeometryMode(EDreamUIRenderTargetGeometryMode::Cylinder);
 
 	Surface->SetCylinderArcAngle(0.0f);
@@ -500,8 +500,8 @@ bool FDreamStabilityInteractionFollowsCanvasTest::RunTest(const FString& Paramet
 	}
 	// Twice the canvas each way, so the middle of the canvas is under it wherever it is anchored.
 	const FVector2D CoverCanvas(2.0 * TargetSize.X, 2.0 * TargetSize.Y);
-	UDreamWidget* OnA = Rig.MakeWidget(TEXT("OnA"), ScreenA.CanvasRoot, CoverCanvas);
-	UDreamWidget* OnB = Rig.MakeWidget(TEXT("OnB"), ScreenB.CanvasRoot, CoverCanvas);
+	UDreamWidget* OnA = Rig.MakeWidget(TEXT("OnA"), ScreenA.CanvasRoot.Get(), CoverCanvas);
+	UDreamWidget* OnB = Rig.MakeWidget(TEXT("OnB"), ScreenB.CanvasRoot.Get(), CoverCanvas);
 	if (!TestNotNull(TEXT("A widget filling the first canvas"), OnA) || !TestNotNull(TEXT("and one filling the second"), OnB))
 	{
 		return false;
@@ -510,15 +510,15 @@ bool FDreamStabilityInteractionFollowsCanvasTest::RunTest(const FString& Paramet
 
 	UDreamPointerEventData* Pointer = NewObject<UDreamPointerEventData>(GetTransientPackage());
 	FDreamUIHitResultContainer Inner;
-	TestTrue(TEXT("A ray on the first surface reaches a canvas"), ScreenA.Interaction->ResolveNestedHit(HitOnMiddleOf(ScreenA.Surface), Pointer, Inner));
+	TestTrue(TEXT("A ray on the first surface reaches a canvas"), ScreenA.Interaction->ResolveNestedHit(HitOnMiddleOf(ScreenA.Surface.Get()), Pointer, Inner));
 	TestTrue(TEXT("the one it shows"), Inner.HitResult.Widget.Get() == OnA);
 
 	// The first canvas stays alive; the surface shows the second now.
-	ScreenA.Surface->SetCanvas(ScreenB.Canvas);
+	ScreenA.Surface->SetCanvas(ScreenB.Canvas.Get());
 	FDreamUIHitResultContainer InnerAfter;
-	TestTrue(TEXT("Shown another canvas, the surface still answers"), ScreenA.Interaction->ResolveNestedHit(HitOnMiddleOf(ScreenA.Surface), Pointer, InnerAfter));
+	TestTrue(TEXT("Shown another canvas, the surface still answers"), ScreenA.Interaction->ResolveNestedHit(HitOnMiddleOf(ScreenA.Surface.Get()), Pointer, InnerAfter));
 	TestTrue(TEXT("with a widget of the canvas it shows now"), InnerAfter.HitResult.Widget.Get() == OnB);
-	TestTrue(TEXT("whose canvas is the one the interaction reports"), ScreenA.Interaction->GetSurfaceCanvas() == ScreenB.Canvas);
+	TestTrue(TEXT("whose canvas is the one the interaction reports"), ScreenA.Interaction->GetSurfaceCanvas() == ScreenB.Canvas.Get());
 	return true;
 }
 
@@ -736,17 +736,17 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FDreamStabilityRetainerBoxEditorWorldTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameWorld EditorWorld(EWorldType::Editor);
-	if (!TestNotNull(TEXT("An editor world"), EditorWorld.World))
+	if (!TestNotNull(TEXT("An editor world"), EditorWorld.World.Get()))
 	{
 		return false;
 	}
-	UDreamWidget* Root = NewObject<UDreamWidget>(EditorWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(EditorWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetDisplayName(TEXT("Root"));
 	Root->SetWidth(400.0f);
 	Root->SetHeight(300.0f);
 	Root->OnRegister();
 	Root->AddComponent<UDreamCanvas>();
-	UDreamWidget* Panel = NewObject<UDreamWidget>(EditorWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Panel = NewObject<UDreamWidget>(EditorWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Panel->SetDisplayName(TEXT("Panel"));
 	Panel->SetWidth(200.0f);
 	Panel->SetHeight(100.0f);

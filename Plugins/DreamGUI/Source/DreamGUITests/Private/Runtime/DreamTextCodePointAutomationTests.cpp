@@ -337,7 +337,7 @@ bool FDreamTextCodePointEscapedSequenceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCodePointTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	auto Layout = [Font](const FString& Content, FDreamTextDisplayList& OutDL)
 	{

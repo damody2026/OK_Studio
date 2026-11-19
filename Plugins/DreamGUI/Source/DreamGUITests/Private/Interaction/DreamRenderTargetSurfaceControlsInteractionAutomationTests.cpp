@@ -45,10 +45,10 @@ namespace DreamRenderTargetSurfaceControlsTestLocal
 
 	struct FSurfaceStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
 		DreamDriverWorld::FDreamRenderTargetMesh Screen;
 
-		bool IsReady() const { return Pointer != nullptr && Screen.IsComplete(); }
+		bool IsReady() const { return Pointer.IsValid() && Screen.IsComplete(); }
 	};
 
 	FSurfaceStage SetUpStage(FAutomationTestBase& InTest, FDreamDriverRig& InRig)
@@ -57,7 +57,7 @@ namespace DreamRenderTargetSurfaceControlsTestLocal
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig,
 			DreamDriverWorld::MakeView(FVector::ZeroVector, FRotator::ZeroRotator, 90.0f, ViewportSize), EDreamWorldPointerSource::Mouse);
 		Stage.Screen = DreamDriverWorld::MakeRenderTargetMesh(InRig, TEXT("Screen"), FTransform(FVector(300.0, 0.0, 0.0)), TargetSize);
-		if (InTest.TestNotNull(TEXT("A world pointer"), Stage.Pointer))
+		if (InTest.TestNotNull(TEXT("A world pointer"), Stage.Pointer.Get()))
 		{
 			// The only way a world pointer's trace meets a surface at all: the surface is a blocking body.
 			Stage.Pointer->SetOccludeByWorld(true);
@@ -106,7 +106,7 @@ bool FDreamSurfaceScrollBoxDragTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Screen.CanvasRoot, FVector2D(300.0, 240.0));
+	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Screen.CanvasRoot.Get(), FVector2D(300.0, 240.0));
 	if (!TestTrue(TEXT("The box came up on the surface's canvas with a viewport and a content node"),
 		Box != nullptr && Box->ViewportNode != nullptr && Box->GetContentNode() != nullptr))
 	{
@@ -181,7 +181,7 @@ bool FDreamSurfaceTextInputTypingTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamTextInput* Field = Rig.MakeControl<UDreamTextInput>(TEXT("Username"), Stage.Screen.CanvasRoot, FVector2D(320.0, 40.0), FVector2D(0.0, 60.0));
+	UDreamTextInput* Field = Rig.MakeControl<UDreamTextInput>(TEXT("Username"), Stage.Screen.CanvasRoot.Get(), FVector2D(320.0, 40.0), FVector2D(0.0, 60.0));
 	if (!TestNotNull(TEXT("A text field on the surface's canvas"), Field))
 	{
 		return false;
@@ -232,7 +232,7 @@ bool FDreamSurfaceListClickTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamListView* List = Rig.MakeControl<UDreamListView>(TEXT("List"), Stage.Screen.CanvasRoot, FVector2D(300.0, 240.0));
+	UDreamListView* List = Rig.MakeControl<UDreamListView>(TEXT("List"), Stage.Screen.CanvasRoot.Get(), FVector2D(300.0, 240.0));
 	if (!TestNotNull(TEXT("A list on the surface's canvas"), List))
 	{
 		return false;

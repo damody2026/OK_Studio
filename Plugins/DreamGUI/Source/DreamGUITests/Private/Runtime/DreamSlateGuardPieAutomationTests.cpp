@@ -91,7 +91,7 @@ bool FDreamSlateGuardPieTest::RunTest(const FString& Parameters)
 	Steps.Then([this, State](FDreamDriverContext& InContext)
 	{
 		// DreamGUI has the keys -- its first button focused -- and Slate's keyboard focus is on the bare viewport.
-		UDreamUIInputServices* Services = UDreamUIInputServices::Get(InContext.World);
+		UDreamUIInputServices* Services = UDreamUIInputServices::Get(InContext.World.Get());
 		TestTrue(TEXT("DreamGUI's first button takes the focus"), Services != nullptr && Services->FocusForNavigation(FaceOf(State->First), 0));
 		TestTrue(TEXT("A focusable Slate widget is on the viewport"), State->SlateButton.IsValid() && State->Client.IsValid());
 		const UGameViewportClient* Client = State->Client.Get();
@@ -115,7 +115,7 @@ bool FDreamSlateGuardPieTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("After Tab, Slate's keyboard focus is still on the bare viewport"), ViewportWidgetOf(*State) != nullptr && Focused == ViewportWidgetOf(*State));
 		TestFalse(TEXT("...not on the focusable Slate widget its own Tab would have moved it to"),
 			State->SlateButton.IsValid() && Focused == State->SlateButton.Get());
-		const UDreamUIInputServices* Services = UDreamUIInputServices::Get(InContext.World);
+		const UDreamUIInputServices* Services = UDreamUIInputServices::Get(InContext.World.Get());
 		TestTrue(TEXT("DreamGUI's own Tab moved its focus on to the second button"),
 			Services != nullptr && Services->GetFocusedWidget(0) == FaceOf(State->Second));
 	});
@@ -125,19 +125,19 @@ bool FDreamSlateGuardPieTest::RunTest(const FString& Parameters)
 		UDreamGUISettings* Settings = GetMutableDefault<UDreamGUISettings>();
 		const bool bHideBefore = Settings->bHideCursorOnGamepad;
 		Settings->bHideCursorOnGamepad = true;
-		APlayerController* Controller = InContext.PlayerController;
-		UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InContext.World);
+		APlayerController* Controller = InContext.PlayerController.Get();
+		UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InContext.World.Get());
 		UDreamUIInputUser* User = Input != nullptr ? Input->GetUser(0) : nullptr;
 		if (TestTrue(TEXT("A player and its controller"), Controller != nullptr && User != nullptr))
 		{
 			User->ReportInputDevice(EDreamUIInputDevice::MouseAndKeyboard);
-			UDreamUIInputModeLibrary::SetInputModeUIOnly(InContext.World, nullptr, 0);
+			UDreamUIInputModeLibrary::SetInputModeUIOnly(InContext.World.Get(), nullptr, 0);
 			TestTrue(TEXT("DreamGUI's UI-only mode shows the cursor for the mouse"), Controller->bShowMouseCursor != 0);
 			User->ReportInputDevice(EDreamUIInputDevice::Gamepad);
 			TestFalse(TEXT("A pad hides it"), Controller->bShowMouseCursor != 0);
 			User->ReportInputDevice(EDreamUIInputDevice::MouseAndKeyboard);
 			TestTrue(TEXT("The mouse brings it back"), Controller->bShowMouseCursor != 0);
-			UDreamUIInputModeLibrary::SetInputModeGameAndUI(InContext.World, nullptr, 0);
+			UDreamUIInputModeLibrary::SetInputModeGameAndUI(InContext.World.Get(), nullptr, 0);
 			User->ReportInputDevice(EDreamUIInputDevice::Gamepad);
 			TestTrue(TEXT("Outside DreamGUI's UI-only mode the cursor is the game's: a pad leaves it shown"), Controller->bShowMouseCursor != 0);
 			User->ReportInputDevice(EDreamUIInputDevice::MouseAndKeyboard);

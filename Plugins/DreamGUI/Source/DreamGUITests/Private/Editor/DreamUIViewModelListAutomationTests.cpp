@@ -187,8 +187,8 @@ namespace DreamUIViewModelListTestLocal
 	/** A .dui-backed Blueprint in /Temp, deriving from InParentClass, pointed at InFilePath and compiled. */
 	struct FScopedTextBlueprint
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		FCompilerResultsLog Results;
 
 		FScopedTextBlueprint(const TCHAR* InName, UClass* InParentClass, const FString& InFilePath)
@@ -197,7 +197,7 @@ namespace DreamUIViewModelListTestLocal
 			Package = CreatePackage(*PackageName);
 			Package->AddToRoot();
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				InParentClass, Package, FName(InName), BPTYPE_Normal,
+				InParentClass, Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			UDreamTextUserWidget* Defaults = Blueprint != nullptr && Blueprint->GeneratedClass != nullptr
 				? Cast<UDreamTextUserWidget>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
@@ -207,7 +207,7 @@ namespace DreamUIViewModelListTestLocal
 				return;
 			}
 			Defaults->SourceFile.FilePath = InFilePath;
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection, &Results);
 		}
 		~FScopedTextBlueprint()
 		{
@@ -259,7 +259,7 @@ bool FDreamUIViewModelListPathSourceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIViewModelListTestLocal;
 	FScopedGameWorld TestWorld;
-	FListTree Tree(TestWorld.World);
+	FListTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()) || !TestNotNull(TEXT("owned by a list host"), Tree.ListHost()))
 	{
 		return false;
@@ -323,7 +323,7 @@ bool FDreamUIViewModelListForWatchTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIViewModelListTestLocal;
 	FScopedGameWorld TestWorld;
-	FListTree Tree(TestWorld.World);
+	FListTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()) || !TestNotNull(TEXT("owned by a list host"), Tree.ListHost()))
 	{
 		return false;
@@ -388,7 +388,7 @@ bool FDreamUIViewModelListForWatchTest::RunTest(const FString& Parameters)
 
 	// Items whose class announces nothing get no watcher at all: a plain object on the old one-segment source costs what
 	// a row cost before watching existed.
-	FListTree PlainTree(TestWorld.World, UDreamForLoopTestHost::StaticClass());
+	FListTree PlainTree(TestWorld.World.Get(), UDreamForLoopTestHost::StaticClass());
 	UDreamForLoopTestHost* PlainOwner = Cast<UDreamForLoopTestHost>(PlainTree.Owner);
 	if (!TestTrue(TEXT("the plain fixture was assembled"), PlainTree.IsValidFixture() && PlainOwner != nullptr))
 	{
@@ -425,7 +425,7 @@ bool FDreamUIViewModelListForRoutesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIViewModelListTestLocal;
 	FScopedGameWorld TestWorld;
-	FListTree Tree(TestWorld.World);
+	FListTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()) || !TestNotNull(TEXT("owned by a list host"), Tree.ListHost()))
 	{
 		return false;
@@ -526,7 +526,7 @@ bool FDreamUIViewModelListEachRecycleTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIViewModelListTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTestListHost* Owner = CreateDreamWidget<UDreamTestListHost>(TestWorld.World);
+	UDreamTestListHost* Owner = CreateDreamWidget<UDreamTestListHost>(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the owner was made"), Owner))
 	{
 		return false;
@@ -553,12 +553,12 @@ bool FDreamUIViewModelListEachRecycleTest::RunTest(const FString& Parameters)
 	Adapter->Initialize(Owner, Binding, nullptr);
 	TestEqual(TEXT("the items are read through the path"), Adapter->GetItems().Num(), 6);
 
-	UDreamWidget* Content = MakeWidget(TestWorld.World, Owner, TEXT("Content"));
+	UDreamWidget* Content = MakeWidget(TestWorld.World.Get(), Owner, TEXT("Content"));
 	UDreamTestRouteWidget* Cells[2] = { nullptr, nullptr };
 	for (int32 CellIndex = 0; CellIndex < 2; ++CellIndex)
 	{
-		Cells[CellIndex] = Cast<UDreamTestRouteWidget>(MakeWidget(TestWorld.World, Content, TEXT("Entry"), UDreamTestRouteWidget::StaticClass()));
-		MakeWidget(TestWorld.World, Cells[CellIndex], TEXT("Inner"));
+		Cells[CellIndex] = Cast<UDreamTestRouteWidget>(MakeWidget(TestWorld.World.Get(), Content, TEXT("Entry"), UDreamTestRouteWidget::StaticClass()));
+		MakeWidget(TestWorld.World.Get(), Cells[CellIndex], TEXT("Inner"));
 	}
 	RegisterDreamWidgetHierarchy(Content);
 	UUIListEntry* Entries[2] = { Cells[0]->AddComponent<UUIListEntry>(), Cells[1]->AddComponent<UUIListEntry>() };
@@ -665,7 +665,7 @@ bool FDreamUIViewModelListOneRowTest::RunTest(const FString& Parameters)
 	using namespace DreamUIViewModelListTestLocal;
 	constexpr int32 RowCount = 1000;
 	FScopedGameWorld TestWorld;
-	FListTree Tree(TestWorld.World);
+	FListTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()) || !TestNotNull(TEXT("owned by a list host"), Tree.ListHost()))
 	{
 		return false;
@@ -818,7 +818,7 @@ bool FDreamUIViewModelListCompiledForTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Fixture.GetClass());
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Fixture.GetClass());
 	if (!TestNotNull(TEXT("the widget instantiates"), Instance))
 	{
 		return false;

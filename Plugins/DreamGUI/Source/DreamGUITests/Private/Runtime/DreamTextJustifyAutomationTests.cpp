@@ -116,7 +116,7 @@ bool FDreamTextJustifyWidthTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextJustifyTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	FDreamTextLayoutInput In = MakeInput(Font, Sentence, 200.0f);
@@ -177,7 +177,7 @@ bool FDreamTextJustifyEqualRoomTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextJustifyTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	FDreamTextLayoutInput In = MakeInput(Font, Sentence, 200.0f);
@@ -249,7 +249,7 @@ bool FDreamTextJustifyCJKTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextJustifyTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	const FString Content = TEXT("漢字仮名交じり文の行を両端に揃える組版の規則を確かめる");
@@ -310,7 +310,7 @@ bool FDreamTextJustifyCursiveTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextJustifyTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("سلام abc سلام abc سلام abc سلام abc"), 260.0f);
@@ -357,7 +357,7 @@ bool FDreamTextJustifyCaretsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextJustifyTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	FDreamTextLayoutInput In = MakeInput(Font, Sentence, 200.0f);
@@ -401,7 +401,7 @@ bool FDreamTextJustifyLastLineTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextJustifyTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	// Two paragraphs: "ab cd" ends with a newline, "ef gh" ends the text. Neither wraps.
@@ -459,7 +459,7 @@ bool FDreamTextJustifyRightToLeftTest::RunTest(const FString& Parameters)
 	// Glyphs are read back right away, so they are rasterized on the spot whatever the frame budget says.
 	UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(MAX_int32);
 	ON_SCOPE_EXIT { UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1); };
-	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	Font->SetFontFilePath(FPaths::Combine(FPaths::EngineContentDir(), TEXT("Slate/Fonts/NotoNaskhArabicUI-Regular.ttf")), false);
 	Font->InitFont();
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Font)))return false;

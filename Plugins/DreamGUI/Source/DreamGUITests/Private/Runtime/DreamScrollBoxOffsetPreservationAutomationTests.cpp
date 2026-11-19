@@ -52,7 +52,7 @@ bool FDreamScrollBoxOffsetSurvivesTransientRangeCollapseTest::RunTest(const FStr
 	using namespace DreamScrollBoxOffsetPreservationTestLocal;
 	FScopedGameWorld TestWorld;
 	// Viewport 120 tall, content 3 x 100 => range 180.
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, 200.0f, 120.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, 200.0f, 120.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	if (!TestNotNull(TEXT("ScrollBox created"), ScrollBox))
 	{
@@ -60,7 +60,7 @@ bool FDreamScrollBoxOffsetSurvivesTransientRangeCollapseTest::RunTest(const FStr
 	}
 	for (int32 I = 0; I < 3; ++I)
 	{
-		MakeWidget(TestWorld.World, ScrollWidget, 180.0f, 100.0f);
+		MakeWidget(TestWorld.World.Get(), ScrollWidget, 180.0f, 100.0f);
 	}
 	ScrollWidget->OnRegister();
 	UDreamWidget::MarkLayoutForRebuild(ScrollWidget);
@@ -99,7 +99,7 @@ bool FDreamScrollBoxExplicitScrollStillWinsTest::RunTest(const FString& Paramete
 {
 	using namespace DreamScrollBoxOffsetPreservationTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, 200.0f, 120.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, 200.0f, 120.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	if (!TestNotNull(TEXT("ScrollBox created"), ScrollBox))
 	{
@@ -107,7 +107,7 @@ bool FDreamScrollBoxExplicitScrollStillWinsTest::RunTest(const FString& Paramete
 	}
 	for (int32 I = 0; I < 3; ++I)
 	{
-		MakeWidget(TestWorld.World, ScrollWidget, 180.0f, 100.0f);
+		MakeWidget(TestWorld.World.Get(), ScrollWidget, 180.0f, 100.0f);
 	}
 	ScrollWidget->OnRegister();
 	UDreamWidget::MarkLayoutForRebuild(ScrollWidget);
@@ -145,7 +145,7 @@ bool FDreamScrollBoxGenuineShrinkStillClampsTest::RunTest(const FString& Paramet
 {
 	using namespace DreamScrollBoxOffsetPreservationTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, 200.0f, 120.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, 200.0f, 120.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	if (!TestNotNull(TEXT("ScrollBox created"), ScrollBox))
 	{
@@ -154,7 +154,7 @@ bool FDreamScrollBoxGenuineShrinkStillClampsTest::RunTest(const FString& Paramet
 	TArray<UDreamWidget*> Blocks;
 	for (int32 I = 0; I < 3; ++I)
 	{
-		Blocks.Add(MakeWidget(TestWorld.World, ScrollWidget, 180.0f, 100.0f));
+		Blocks.Add(MakeWidget(TestWorld.World.Get(), ScrollWidget, 180.0f, 100.0f));
 	}
 	ScrollWidget->OnRegister();
 	UDreamWidget::MarkLayoutForRebuild(ScrollWidget);

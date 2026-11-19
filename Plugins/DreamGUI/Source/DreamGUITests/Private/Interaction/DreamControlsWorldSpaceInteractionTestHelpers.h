@@ -68,10 +68,10 @@ namespace DreamControlsWorldTest
 	/** The world pointer, and the panel it looks at. */
 	struct FWorldStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
-		UDreamWidget* Panel = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
+		TWeakObjectPtr<UDreamWidget> Panel;
 
-		bool IsReady() const { return Pointer != nullptr && Panel != nullptr; }
+		bool IsReady() const { return Pointer.IsValid() && Panel.IsValid(); }
 	};
 
 	/**
@@ -85,8 +85,8 @@ namespace DreamControlsWorldTest
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig,
 			DreamDriverWorld::MakeView(FVector::ZeroVector, FRotator::ZeroRotator, 90.0f, ViewportSize()), EDreamWorldPointerSource::Mouse);
 		Stage.Panel = DreamDriverWorld::MakeWorldPanel(InRig, TEXT("Panel"), FTransform(FVector(PanelDistance, 0.0, 0.0)), InPanelSize);
-		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer);
-		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel);
+		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer.Get());
+		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel.Get());
 		return Stage;
 	}
 

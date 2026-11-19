@@ -66,7 +66,7 @@ bool FDreamScrollBoxWorldFingerTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Panel, FVector2D(300.0, 240.0), FVector2D(-60.0, 0.0));
+	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Panel.Get(), FVector2D(300.0, 240.0), FVector2D(-60.0, 0.0));
 	if (!TestTrue(TEXT("A box with a viewport came up on the panel"), Box != nullptr && Box->ViewportNode != nullptr && Box->GetContentNode() != nullptr))
 	{
 		return false;
@@ -86,7 +86,7 @@ bool FDreamScrollBoxWorldFingerTest::RunTest(const FString& Parameters)
 		static_cast<double>(Box->ViewportNode->GetHeight()) * PixelsPerUnit(), 1.5);
 	TStrongObjectPtr<UDreamDragInteractionProbe> UserScrolled(NewObject<UDreamDragInteractionProbe>());
 	Box->OnUserScrolled.AddDynamic(UserScrolled.Get(), &UDreamDragInteractionProbe::RecordFloat);
-	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer);
+	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer.Get());
 	const double Travel = 150.0;
 	const FVector2D Landed(Window->GetCenter().X, Window->Max.Y - 30.0);
 
@@ -138,7 +138,7 @@ bool FDreamScrollBoxWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Panel, FVector2D(320.0, 200.0), FVector2D(40.0, 0.0));
+	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Panel.Get(), FVector2D(320.0, 200.0), FVector2D(40.0, 0.0));
 	if (!TestTrue(TEXT("A box with a viewport came up on the panel"), Box != nullptr && Box->ViewportNode != nullptr && Box->GetContentNode() != nullptr))
 	{
 		return false;

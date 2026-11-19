@@ -58,13 +58,13 @@ bool FDreamLifecycleStepTableTest::RunTest(const FString& Parameters)
 
 	// A game world that has not begun play: behaviours wake only in one, and nothing begins on its own.
 	DreamTests::FScopedGameWorld Scope;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Scope.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Scope.World.Get());
 	if (!TestNotNull(TEXT("The world has a UI manager"), Manager))
 	{
 		return false;
 	}
 	const TSharedPtr<TArray<FString>> Log = MakeShared<TArray<FString>>();
-	UDreamWidget* Widget = MakeRecordedWidget(Scope.World, TEXT("W"), Log);
+	UDreamWidget* Widget = MakeRecordedWidget(Scope.World.Get(), TEXT("W"), Log);
 	TestEqual(TEXT("A new widget is constructed"), StateOf(Widget), FString(TEXT("Constructed")));
 
 	Widget->EndPlay();
@@ -132,9 +132,9 @@ bool FDreamLifecycleTreeExitOrderTest::RunTest(const FString& Parameters)
 
 	DreamTests::FScopedGameWorld Scope;
 	const TSharedPtr<TArray<FString>> Log = MakeShared<TArray<FString>>();
-	UDreamWidget* Root = MakeRecordedWidget(Scope.World, TEXT("Root"), Log);
-	UDreamWidget* Child = MakeRecordedWidget(Scope.World, TEXT("Child"), Log);
-	UDreamWidget* Grandchild = MakeRecordedWidget(Scope.World, TEXT("Grandchild"), Log);
+	UDreamWidget* Root = MakeRecordedWidget(Scope.World.Get(), TEXT("Root"), Log);
+	UDreamWidget* Child = MakeRecordedWidget(Scope.World.Get(), TEXT("Child"), Log);
+	UDreamWidget* Grandchild = MakeRecordedWidget(Scope.World.Get(), TEXT("Grandchild"), Log);
 	Child->SetParentBeforeRegister(Root);
 	Grandchild->SetParentBeforeRegister(Child);
 	RegisterDreamWidgetHierarchy(Root);
@@ -171,7 +171,7 @@ bool FDreamLifecycleEarlyWakeTest::RunTest(const FString& Parameters)
 
 	DreamTests::FScopedGameWorld Scope;
 	const TSharedPtr<TArray<FString>> Log = MakeShared<TArray<FString>>();
-	UDreamWidget* Widget = MakeRecordedWidget(Scope.World, TEXT("W"), Log);
+	UDreamWidget* Widget = MakeRecordedWidget(Scope.World.Get(), TEXT("W"), Log);
 	Widget->OnRegister();
 
 	// Made active in a game world before it began play -- a screen built during a level's load, say -- a
@@ -191,7 +191,7 @@ bool FDreamLifecycleEarlyWakeTest::RunTest(const FString& Parameters)
 
 	// Woken early and destroyed without ever beginning play: nothing ends a play that never began, so the
 	// behaviour is put to rest as its widget unregisters.
-	UDreamWidget* NeverBegun = MakeRecordedWidget(Scope.World, TEXT("N"), Log);
+	UDreamWidget* NeverBegun = MakeRecordedWidget(Scope.World.Get(), TEXT("N"), Log);
 	NeverBegun->OnRegister();
 	NeverBegun->SetWidgetActive(false);
 	NeverBegun->SetWidgetActive(true);

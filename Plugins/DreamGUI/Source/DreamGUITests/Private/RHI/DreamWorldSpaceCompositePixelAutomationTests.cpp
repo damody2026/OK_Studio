@@ -424,7 +424,7 @@ bool FDreamWorldSpaceGroupsAndModesPixelTest::RunTest(const FString& Parameters)
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
 		TArray<FColor> Pixels;
-		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World, *State, Pixels))
+		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World.Get(), *State, Pixels))
 		{
 			return;
 		}
@@ -521,7 +521,7 @@ bool FDreamWorldSpaceBackdropDepthPixelTest::RunTest(const FString& Parameters)
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
 		TArray<FColor> Pixels;
-		if (!ReadPanel(*this, Context.World, *State, Pixels))
+		if (!ReadPanel(*this, Context.World.Get(), *State, Pixels))
 		{
 			return;
 		}
@@ -653,7 +653,7 @@ bool FDreamWorldSpaceLayerStylePixelTest::RunTest(const FString& Parameters)
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
 		TArray<FColor> Pixels;
-		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World, *State, Pixels))
+		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World.Get(), *State, Pixels))
 		{
 			return;
 		}
@@ -769,7 +769,7 @@ bool FDreamWorldSpaceParticlesPixelTest::RunTest(const FString& Parameters)
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
 		TArray<FColor> Pixels;
-		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World, *State, Pixels))
+		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World.Get(), *State, Pixels))
 		{
 			return;
 		}
@@ -882,13 +882,13 @@ bool FDreamWorldSpacePsdImportPixelTest::RunTest(const FString& Parameters)
 			return;
 		}
 		AddBlock(*Rig, Panel, TEXT("Backdrop"), FVector2D(DocumentSize), FVector2D::ZeroVector, DreamGalleryStage::Backdrop);
-		TestNotNull(TEXT("the import comes to life on the panel"), DuplicateDreamWidgetHierarchy(Context.World, Tree->RootWidget.Get(), Panel));
+		TestNotNull(TEXT("the import comes to life on the panel"), DuplicateDreamWidgetHierarchy(Context.World.Get(), Tree->RootWidget.Get(), Panel));
 	});
 	Steps.WaitFrames(16);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
 		TArray<FColor> Pixels;
-		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World, *State, Pixels))
+		if (!State->Panel.IsValid() || !ReadPanel(*this, Context.World.Get(), *State, Pixels))
 		{
 			return;
 		}

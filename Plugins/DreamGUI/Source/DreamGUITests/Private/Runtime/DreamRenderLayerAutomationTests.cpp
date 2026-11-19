@@ -103,7 +103,7 @@ namespace DreamRenderLayerTestLocal
 
 		bool Build(FAutomationTestBase& InTest, EDreamRenderMode InRenderMode = EDreamRenderMode::WorldSpace_DreamUI)
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 			if (!InTest.TestNotNull(TEXT("A game world with a UI manager"), Manager))
 			{
 				return false;
@@ -129,7 +129,7 @@ namespace DreamRenderLayerTestLocal
 
 		UDreamWidget* MakeWidget(UDreamWidget* InParent, float InWidth, float InHeight, const FVector2D& InPosition)
 		{
-			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			Widget->SetWidth(InWidth);
 			Widget->SetHeight(InHeight);
 			Widget->OnRegister();
@@ -208,8 +208,8 @@ bool FDreamRenderLayerBatchingTest::RunTest(const FString& Parameters)
 	using namespace DreamRenderLayerTestLocal;
 	// Two widgets that stand only for keys: the batching compares them and never looks at them.
 	DreamTests::Lifecycle::FScopedWorld World(EWorldType::Game);
-	const TStrongObjectPtr<UDreamWidget> LayerA(NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient));
-	const TStrongObjectPtr<UDreamWidget> LayerB(NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient));
+	const TStrongObjectPtr<UDreamWidget> LayerA(NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient));
+	const TStrongObjectPtr<UDreamWidget> LayerB(NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient));
 	constexpr int32 RowA = 3;
 	constexpr int32 RowB = 7;
 

@@ -48,7 +48,7 @@ bool FDreamUITextStructureCreateTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_StructureCreate"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 	const int32 CountBefore = Scoped.TemplateCount();
@@ -104,7 +104,7 @@ bool FDreamUITextStructureDeleteTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_StructureDelete"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 
@@ -146,7 +146,7 @@ bool FDreamUITextStructureRefusalsTest::RunTest(const FString&)
 	AddExpectedError(TEXT("Refusing to delete 'Root'.*StructureRefusals\\.dui"), EAutomationExpectedErrorFlags::Contains, 0);
 
 	FScopedTextBlueprint Scoped(TEXT("BP_StructureRefusals"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	const FString Before = Source.Read();
 
@@ -154,7 +154,7 @@ bool FDreamUITextStructureRefusalsTest::RunTest(const FString&)
 		// The refusal is logged, and matched by the expected error above in the English it is written in.
 		const DreamTests::FScopedEnglish English;
 		TestFalse(TEXT("deleting the root is refused"),
-			DreamWidgetTreeEditing::DeleteWidget(Scoped.Blueprint, Scoped.FindTemplate(TEXT("Root"))));
+			DreamWidgetTreeEditing::DeleteWidget(Scoped.Blueprint.Get(), Scoped.FindTemplate(TEXT("Root"))));
 	}
 
 	TestEqual(TEXT("the file is untouched"), Source.Read(), Before);
@@ -167,7 +167,7 @@ bool FDreamUITextStructureRefusalsTest::RunTest(const FString&)
 	RemoveRoot.Kind = EDreamUIStructuralEditKind::RemoveNode;
 	RemoveRoot.NodeId = TEXT("Root");
 	TestFalse(TEXT("the check refuses removing the root"),
-		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint, RemoveRoot, /*bInVerifyBuild*/true, Reason));
+		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint.Get(), RemoveRoot, /*bInVerifyBuild*/true, Reason));
 	TestTrue(TEXT("and says why"), Reason.ToString().Contains(TEXT("root")));
 
 	FDreamUIStructuralEdit IntoNothing;
@@ -176,7 +176,7 @@ bool FDreamUITextStructureRefusalsTest::RunTest(const FString&)
 	IntoNothing.NewId = TEXT("Orphan");
 	IntoNothing.TypeName = TEXT("Widget");
 	TestFalse(TEXT("an insert under a node the file does not write is refused"),
-		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint, IntoNothing, /*bInVerifyBuild*/false, Reason));
+		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint.Get(), IntoNothing, /*bInVerifyBuild*/false, Reason));
 
 	FDreamUIStructuralEdit Fine;
 	Fine.Kind = EDreamUIStructuralEditKind::InsertNode;
@@ -184,7 +184,7 @@ bool FDreamUITextStructureRefusalsTest::RunTest(const FString&)
 	Fine.NewId = TEXT("Inside");
 	Fine.TypeName = TEXT("Widget");
 	TestTrue(TEXT("and one under a node it writes is not"),
-		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint, Fine, /*bInVerifyBuild*/true, Reason));
+		DreamUITextAuthoring::CheckStructuralEdit(Scoped.Blueprint.Get(), Fine, /*bInVerifyBuild*/true, Reason));
 	TestEqual(TEXT("a check writes nothing"), Source.Read(), Before);
 	return true;
 }
@@ -215,7 +215,7 @@ bool FDreamUITextStructureDuplicateTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_StructureDuplicate"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 
@@ -269,7 +269,7 @@ bool FDreamUITextStructurePasteTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_StructurePaste"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 
@@ -315,7 +315,7 @@ bool FDreamUITextStructureNamesTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_StructureNames"), Source.FilePath);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 	TestNull(TEXT("no widget in the tree is called Added"), Scoped.FindTemplate(TEXT("Added")));
@@ -349,10 +349,10 @@ bool FDreamUITextStructureNoDesignerTest::RunTest(const FString&)
 	// A script, a tool menu, a commandlet: the tree edited directly, with no designer and no write-back
 	// of its own to lean on.
 	FScopedTextBlueprint Scoped(TEXT("BP_StructureNoDesigner"), Source.FilePath, /*bInOpenDesigner*/false);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 
-	TestNotNull(TEXT("the create went through"), DreamWidgetTreeEditing::CreateWidget(Scoped.Blueprint,
+	TestNotNull(TEXT("the create went through"), DreamWidgetTreeEditing::CreateWidget(Scoped.Blueprint.Get(),
 		UDreamWidget::StaticClass(), Scoped.FindTemplate(TEXT("Root")), -1, TEXT("Scripted")));
 	TestTrue(TEXT("it was written into the file"), Source.Read().Contains(TEXT("Widget Scripted")));
 	TestNotNull(TEXT("and the compiled tree has it"), Scoped.FindTemplate(TEXT("Scripted")));

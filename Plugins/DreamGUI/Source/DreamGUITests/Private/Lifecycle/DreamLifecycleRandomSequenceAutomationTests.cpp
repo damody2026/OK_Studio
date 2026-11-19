@@ -295,10 +295,10 @@ bool FDreamLifecycleRandomSequenceTest::RunTest(const FString& Parameters)
 	// objects of worlds long gone.
 	GEditor->ResetTransaction(FText::FromString(TEXT("A random walk begins")));
 	FWalk Walk;
-	Walk.Level = Level.World;
-	Walk.Game = Game.World;
+	Walk.Level = Level.World.Get();
+	Walk.Game = Game.World.Get();
 	Walk.PanelClass = Panel.GetClass();
-	Walk.Blueprint = Panel.Blueprint;
+	Walk.Blueprint = Panel.Blueprint.Get();
 
 	TMap<EStep, int32> Taken;
 	for (int32 Step = 0; Step < Steps; ++Step)

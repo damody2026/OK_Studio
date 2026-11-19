@@ -52,9 +52,9 @@ namespace DreamTextLayoutInvalidationTestLocal
 {
 	struct FScopedTestWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		FScopedTestWorld() { World = UWorld::CreateWorld(EWorldType::Game, false); }
-		~FScopedTestWorld() { if (World) { World->DestroyWorld(false); } }
+		~FScopedTestWorld() { if (UWorld* Owned = World.Get()) { Owned->DestroyWorld(false); } }
 	};
 
 	/** Root(counting overlay) -> Child(UDreamText, deliberately no LayoutSelf). */
@@ -243,9 +243,9 @@ bool FDreamTextSetTextReflowsPanelWithoutLayoutSelfTest::RunTest(const FString& 
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	FTextInPanelFixture Fixture;
-	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World))
+	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World.Get()))
 	{
 		return false;
 	}
@@ -271,9 +271,9 @@ bool FDreamTextMetricSettersReflowPanelTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	FTextInPanelFixture Fixture;
-	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World))
+	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World.Get()))
 	{
 		return false;
 	}
@@ -315,9 +315,9 @@ bool FDreamTextSetFontReflowsPanelTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	FTextInPanelFixture Fixture;
-	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World))
+	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World.Get()))
 	{
 		return false;
 	}
@@ -351,9 +351,9 @@ bool FDreamTextCaretQueriesSurviveNoLayoutTest::RunTest(const FString& Parameter
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	FTextInPanelFixture Fixture;
-	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World))
+	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World.Get()))
 	{
 		return false;
 	}
@@ -396,9 +396,9 @@ bool FDreamTextTransformIsPresentationOnlyTest::RunTest(const FString& Parameter
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	FTextInPanelFixture Fixture;
-	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World))
+	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager) || !Fixture.Build(TestWorld.World.Get()))
 	{
 		return false;
 	}
@@ -445,7 +445,7 @@ bool FDreamTextTransformFollowsUnicodeCaseMappingTest::RunTest(const FString& Pa
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
 	FTextInPanelFixture Fixture;
-	if (!TestTrue(TEXT("The text came up"), Fixture.Build(TestWorld.World)))
+	if (!TestTrue(TEXT("The text came up"), Fixture.Build(TestWorld.World.Get())))
 	{
 		return false;
 	}
@@ -487,7 +487,7 @@ bool FDreamTextPaintOnlySettersCostNoLayoutTest::RunTest(const FString& Paramete
 	DreamTests::FScopedGameWorld TestWorld;
 	FTextOnCanvasFixture Fixture;
 	if (!TestTrue(TEXT("The text is on a canvas"),
-		Fixture.Build(TestWorld.World, NewObject<UDreamTextTestFont>(TestWorld.World), FVector2D(160.0, 60.0))))
+		Fixture.Build(TestWorld.World.Get(), NewObject<UDreamTextTestFont>(TestWorld.World.Get()), FVector2D(160.0, 60.0))))
 	{
 		return false;
 	}
@@ -553,7 +553,7 @@ bool FDreamTextAnimationFramesCostNoLayoutTest::RunTest(const FString& Parameter
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
@@ -561,7 +561,7 @@ bool FDreamTextAnimationFramesCostNoLayoutTest::RunTest(const FString& Parameter
 	FScopedSynchronousGlyphs SynchronousGlyphs;
 	FTextOnCanvasFixture Fixture;
 	if (!TestTrue(TEXT("The text is on a canvas"),
-		Fixture.Build(TestWorld.World, MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("Roboto-Regular.ttf")), FVector2D(400.0, 80.0))))
+		Fixture.Build(TestWorld.World.Get(), MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf")), FVector2D(400.0, 80.0))))
 	{
 		return false;
 	}
@@ -693,11 +693,11 @@ bool FDreamTextCaretHitTestSearchesTheWholeLineTest::RunTest(const FString& Para
 	};
 
 	// Both directions on one line, the Arabic through a fallback face.
-	UDreamUIFontData_DistanceField* Latin = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Latin = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	Latin->SetFallbackFonts({ Arabic });
 	FTextOnCanvasFixture Mixed;
-	if (!TestTrue(TEXT("The mixed-direction text is on a canvas"), Mixed.Build(TestWorld.World, Latin, FVector2D(600.0, 80.0))))
+	if (!TestTrue(TEXT("The mixed-direction text is on a canvas"), Mixed.Build(TestWorld.World.Get(), Latin, FVector2D(600.0, 80.0))))
 	{
 		return false;
 	}
@@ -707,7 +707,7 @@ bool FDreamTextCaretHitTestSearchesTheWholeLineTest::RunTest(const FString& Para
 	// Glyphs that overlap: a letter spacing of -5 takes the space's whole advance and more, so the pen goes back.
 	FTextOnCanvasFixture Overlapping;
 	if (!TestTrue(TEXT("The tightly spaced text is on a canvas"),
-		Overlapping.Build(TestWorld.World, NewObject<UDreamTextTestFont>(TestWorld.World), FVector2D(200.0, 40.0))))
+		Overlapping.Build(TestWorld.World.Get(), NewObject<UDreamTextTestFont>(TestWorld.World.Get()), FVector2D(200.0, 40.0))))
 	{
 		return false;
 	}
@@ -735,7 +735,7 @@ bool FDreamTextCaretMovesDownToTheNearestCaretTest::RunTest(const FString& Param
 	DreamTests::FScopedGameWorld TestWorld;
 	FTextOnCanvasFixture Fixture;
 	if (!TestTrue(TEXT("The text is on a canvas"),
-		Fixture.Build(TestWorld.World, NewObject<UDreamTextTestFont>(TestWorld.World), FVector2D(200.0, 80.0))))
+		Fixture.Build(TestWorld.World.Get(), NewObject<UDreamTextTestFont>(TestWorld.World.Get()), FVector2D(200.0, 80.0))))
 	{
 		return false;
 	}
@@ -776,14 +776,14 @@ bool FDreamTextFontSwitchRewritesTheFontMarkTest::RunTest(const FString& Paramet
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
 	FScopedSynchronousGlyphs SynchronousGlyphs;
-	UDreamUIFontData_Bitmap* Bitmap = MakeEngineFont<UDreamUIFontData_Bitmap>(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Field = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Bitmap = MakeEngineFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Field = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
 	if (!TestEqual(TEXT("The bitmap font is marked a bitmap"), (int32)static_cast<UDreamUIFontData_BaseObject*>(Bitmap)->GetFontTextureMark(), (int32)EDreamUIFontTextureMark::Bitmap)
 		|| !TestEqual(TEXT("The field font is marked MTSDF"), (int32)static_cast<UDreamUIFontData_BaseObject*>(Field)->GetFontTextureMark(), (int32)EDreamUIFontTextureMark::Mtsdf))
 	{
@@ -791,7 +791,7 @@ bool FDreamTextFontSwitchRewritesTheFontMarkTest::RunTest(const FString& Paramet
 	}
 
 	FTextOnCanvasFixture Fixture;
-	if (!TestTrue(TEXT("The text is on a canvas"), Fixture.Build(TestWorld.World, Bitmap, FVector2D(300.0, 80.0))))
+	if (!TestTrue(TEXT("The text is on a canvas"), Fixture.Build(TestWorld.World.Get(), Bitmap, FVector2D(300.0, 80.0))))
 	{
 		return false;
 	}
@@ -840,11 +840,11 @@ bool FDreamTextBidiSelectionIsHighlightedRunByRunTest::RunTest(const FString& Pa
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
 	FScopedSynchronousGlyphs SynchronousGlyphs;
-	UDreamUIFontData_DistanceField* Latin = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Latin = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	Latin->SetFallbackFonts({ Arabic });
 	FTextOnCanvasFixture Fixture;
-	if (!TestTrue(TEXT("The text is on a canvas"), Fixture.Build(TestWorld.World, Latin, FVector2D(600.0, 80.0))))
+	if (!TestTrue(TEXT("The text is on a canvas"), Fixture.Build(TestWorld.World.Get(), Latin, FVector2D(600.0, 80.0))))
 	{
 		return false;
 	}
@@ -915,9 +915,9 @@ bool FDreamTextRightToLeftSelectionOverLinesTest::RunTest(const FString& Paramet
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
 	FScopedSynchronousGlyphs SynchronousGlyphs;
-	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	FTextOnCanvasFixture Fixture;
-	if (!TestTrue(TEXT("The text is on a canvas"), Fixture.Build(TestWorld.World, Arabic, FVector2D(150.0, 200.0))))
+	if (!TestTrue(TEXT("The text is on a canvas"), Fixture.Build(TestWorld.World.Get(), Arabic, FVector2D(150.0, 200.0))))
 	{
 		return false;
 	}
@@ -961,7 +961,7 @@ bool FDreamTextLigaturesYieldToPerCharacterAnimationTest::RunTest(const FString&
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	FScopedTestWorld TestWorld;
 	FTextInPanelFixture Fixture;
-	if (!TestTrue(TEXT("The text came up"), Fixture.Build(TestWorld.World)))
+	if (!TestTrue(TEXT("The text came up"), Fixture.Build(TestWorld.World.Get())))
 	{
 		return false;
 	}
@@ -973,7 +973,7 @@ bool FDreamTextLigaturesYieldToPerCharacterAnimationTest::RunTest(const FString&
 	TestTrue(TEXT("and the layout is allowed them"), AllowsLigatures());
 
 	// What TextAnimation registers as while it animates this text.
-	UDreamMeshModifierTextAnimation* Animator = NewObject<UDreamMeshModifierTextAnimation>(TestWorld.World);
+	UDreamMeshModifierTextAnimation* Animator = NewObject<UDreamMeshModifierTextAnimation>(TestWorld.World.Get());
 	Text->RegisterPerCharacterAnimation(Animator);
 	Text->RegisterPerCharacterAnimation(Animator);
 	TestTrue(TEXT("Something animates the characters"), Text->HasPerCharacterAnimation());
@@ -1006,7 +1006,7 @@ bool FDreamTextTagColourOverrideStaysWithItsTagTest::RunTest(const FString& Para
 	DreamTests::FScopedGameWorld TestWorld;
 	FTextOnCanvasFixture Fixture;
 	if (!TestTrue(TEXT("The text is on a canvas"),
-		Fixture.Build(TestWorld.World, NewObject<UDreamTextTestFont>(TestWorld.World), FVector2D(400.0, 80.0))))
+		Fixture.Build(TestWorld.World.Get(), NewObject<UDreamTextTestFont>(TestWorld.World.Get()), FVector2D(400.0, 80.0))))
 	{
 		return false;
 	}
@@ -1054,17 +1054,17 @@ bool FDreamAutoWrapTextInAFillSlotSettlesTest::RunTest(const FString& Parameters
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeSizedWidget(TestWorld.World, nullptr, TEXT("Root"), 600.0f, 400.0f);
+	UDreamWidget* Root = MakeSizedWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 600.0f, 400.0f);
 	Root->AddComponent<UDreamCanvas>();
-	UDreamWidget* Row = MakeSizedWidget(TestWorld.World, Root, TEXT("Row"), 50.0f, 20.0f);
-	MakeSizedWidget(TestWorld.World, Row, TEXT("Icon"), 100.0f, 40.0f);
-	UDreamWidget* Label = MakeSizedWidget(TestWorld.World, Row, TEXT("Label"), 10.0f, 40.0f);
-	UDreamText* Text = MakeAutoWrapText(TestWorld.World, Label);
+	UDreamWidget* Row = MakeSizedWidget(TestWorld.World.Get(), Root, TEXT("Row"), 50.0f, 20.0f);
+	MakeSizedWidget(TestWorld.World.Get(), Row, TEXT("Icon"), 100.0f, 40.0f);
+	UDreamWidget* Label = MakeSizedWidget(TestWorld.World.Get(), Row, TEXT("Label"), 10.0f, 40.0f);
+	UDreamText* Text = MakeAutoWrapText(TestWorld.World.Get(), Label);
 	if (!TestNotNull(TEXT("The label has its text"), Text)
 		|| !TestNotNull(TEXT("Row created"), Row->CreateNewLayoutContainer<UDreamLayoutContainerHorizontalBox>())
 		|| !TestNotNull(TEXT("Column created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>()))
@@ -1118,15 +1118,15 @@ bool FDreamAutoWrapTextIsMeasuredAgainOnceItsGridNarrowsTest::RunTest(const FStr
 {
 	using namespace DreamTextLayoutInvalidationTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeSizedWidget(TestWorld.World, nullptr, TEXT("Root"), 600.0f, 400.0f);
+	UDreamWidget* Root = MakeSizedWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 600.0f, 400.0f);
 	Root->AddComponent<UDreamCanvas>();
-	UDreamWidget* Label = MakeSizedWidget(TestWorld.World, Root, TEXT("Label"), 10.0f, 40.0f);
-	UDreamText* Text = MakeAutoWrapText(TestWorld.World, Label);
+	UDreamWidget* Label = MakeSizedWidget(TestWorld.World.Get(), Root, TEXT("Label"), 10.0f, 40.0f);
+	UDreamText* Text = MakeAutoWrapText(TestWorld.World.Get(), Label);
 	UDreamLayoutContainerGridPanel* Grid = Root->CreateNewLayoutContainer<UDreamLayoutContainerGridPanel>();
 	if (!TestNotNull(TEXT("The label has its text"), Text) || !TestNotNull(TEXT("Grid created"), Grid))
 	{
@@ -1180,7 +1180,7 @@ bool FDreamTextLanguageTabsAndJustificationAreLayoutInputsTest::RunTest(const FS
 	DreamTests::FScopedGameWorld TestWorld;
 	FTextOnCanvasFixture Fixture;
 	if (!TestTrue(TEXT("The text is on a canvas"),
-		Fixture.Build(TestWorld.World, NewObject<UDreamTextTestFont>(TestWorld.World), FVector2D(300.0, 60.0))))
+		Fixture.Build(TestWorld.World.Get(), NewObject<UDreamTextTestFont>(TestWorld.World.Get()), FVector2D(300.0, 60.0))))
 	{
 		return false;
 	}
@@ -1244,7 +1244,7 @@ bool FDreamTextCultureSwitchThroughTheInputTest::RunTest(const FString& Paramete
 	DreamTests::FScopedGameWorld TestWorld;
 	FTextOnCanvasFixture Fixture;
 	if (!TestTrue(TEXT("The text is on a canvas"),
-		Fixture.Build(TestWorld.World, NewObject<UDreamTextTestFont>(TestWorld.World), FVector2D(300.0, 60.0))))
+		Fixture.Build(TestWorld.World.Get(), NewObject<UDreamTextTestFont>(TestWorld.World.Get()), FVector2D(300.0, 60.0))))
 	{
 		return false;
 	}

@@ -58,8 +58,8 @@ namespace DreamDialogWorldTestLocal
 		{
 			return Placed;
 		}
-		Placed.Behind = InRig.MakeControl<UDreamButton>(TEXT("Behind"), Stage.Panel, FVector2D(50.0, 30.0), FVector2D(-245.0, 130.0));
-		Placed.Dialog = InRig.MakeControl<UDreamDialog>(TEXT("Ask"), Stage.Panel, PanelSize());
+		Placed.Behind = InRig.MakeControl<UDreamButton>(TEXT("Behind"), Stage.Panel.Get(), FVector2D(50.0, 30.0), FVector2D(-245.0, 130.0));
+		Placed.Dialog = InRig.MakeControl<UDreamDialog>(TEXT("Ask"), Stage.Panel.Get(), PanelSize());
 		if (!InTest.TestNotNull(TEXT("A button behind where the dialog will be"), Placed.Behind)
 			|| !InTest.TestNotNull(TEXT("A dialog on the panel"), Placed.Dialog))
 		{

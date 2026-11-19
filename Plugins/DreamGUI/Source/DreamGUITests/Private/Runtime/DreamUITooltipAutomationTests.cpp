@@ -159,7 +159,7 @@ bool FDreamUITooltipOutlivesItsSourceTest::RunTest(const FString& Parameters)
 	// going stale IS the bug rather than a symptom of it.
 	auto Bubble = [Tooltip]() { return Tooltip->GetBubbleForUser(0); };
 
-	UDreamWidget* Source = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Source = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Source->SetDisplayName(TEXT("TooltipSource"));
 	Source->SetWidth(120.0f);
 	Source->SetHeight(40.0f);
@@ -212,7 +212,7 @@ bool FDreamUITooltipWorldSpaceHostTest::RunTest(const FString& Parameters)
 	 */
 	DreamTests::FScopedGameWorld TestWorld;
 
-	UDreamWidget* ScreenRoot = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* ScreenRoot = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	ScreenRoot->SetDisplayName(TEXT("ScreenRootStandIn"));
 	ScreenRoot->OnRegister();
 
@@ -221,7 +221,7 @@ bool FDreamUITooltipWorldSpaceHostTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("with no source, the screen root hosts"),
 		DreamUITooltipPolicy::ResolveTooltipHost(nullptr, ScreenRoot), ScreenRoot);
 
-	UDreamWidget* WorldRoot = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* WorldRoot = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	WorldRoot->SetDisplayName(TEXT("WorldCanvas"));
 	WorldRoot->SetWidth(400.0f);
 	WorldRoot->SetHeight(300.0f);
@@ -233,7 +233,7 @@ bool FDreamUITooltipWorldSpaceHostTest::RunTest(const FString& Parameters)
 	}
 	Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
 
-	UDreamWidget* Panel = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Panel = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Panel->SetDisplayName(TEXT("Panel"));
 	Panel->SetWidth(120.0f);
 	Panel->SetHeight(60.0f);

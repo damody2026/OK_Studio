@@ -29,15 +29,15 @@ bool FDreamLayoutPassContextPerWorldTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameWorld First;
 	DreamTests::FScopedGameWorld Second;
-	UDreamUIManagerWorldSubsystem* FirstManager = UDreamUIManagerWorldSubsystem::GetInstance(First.World);
-	UDreamUIManagerWorldSubsystem* SecondManager = UDreamUIManagerWorldSubsystem::GetInstance(Second.World);
+	UDreamUIManagerWorldSubsystem* FirstManager = UDreamUIManagerWorldSubsystem::GetInstance(First.World.Get());
+	UDreamUIManagerWorldSubsystem* SecondManager = UDreamUIManagerWorldSubsystem::GetInstance(Second.World.Get());
 	if (!TestNotNull(TEXT("The first world has a UI manager"), FirstManager)
 		|| !TestNotNull(TEXT("The second world has a UI manager"), SecondManager))
 	{
 		return false;
 	}
-	UDreamWidget* InFirst = NewObject<UDreamWidget>(First.World, NAME_None, RF_Transient);
-	UDreamWidget* InSecond = NewObject<UDreamWidget>(Second.World, NAME_None, RF_Transient);
+	UDreamWidget* InFirst = NewObject<UDreamWidget>(First.World.Get(), NAME_None, RF_Transient);
+	UDreamWidget* InSecond = NewObject<UDreamWidget>(Second.World.Get(), NAME_None, RF_Transient);
 	TestTrue(TEXT("A widget in a world uses its world's layout state"), &InFirst->GetLayoutPassContext() == &FirstManager->GetLayoutPassContext());
 	TestTrue(TEXT("...and a widget in another world uses that one's"), &InSecond->GetLayoutPassContext() == &SecondManager->GetLayoutPassContext());
 	{

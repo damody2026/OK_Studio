@@ -57,13 +57,13 @@ bool FDreamBorderAlignsItsContentItselfTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Border"), 300.0f, 200.0f);
-	UDreamWidget* Content = MakeWidget(TestWorld.World, BorderWidget, TEXT("Content"), 100.0f, 50.0f);
+	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Border"), 300.0f, 200.0f);
+	UDreamWidget* Content = MakeWidget(TestWorld.World.Get(), BorderWidget, TEXT("Content"), 100.0f, 50.0f);
 	UDreamLayoutContainerBorder* Border = BorderWidget->CreateNewLayoutContainer<UDreamLayoutContainerBorder>();
 	if (!TestNotNull(TEXT("Border created"), Border))
 	{
@@ -113,8 +113,8 @@ bool FDreamBorderPaddingAndDesiredSizeScaleTest::RunTest(const FString& Paramete
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Border"), 300.0f, 200.0f);
-	MakeWidget(TestWorld.World, BorderWidget, TEXT("Content"), 100.0f, 50.0f);
+	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Border"), 300.0f, 200.0f);
+	MakeWidget(TestWorld.World.Get(), BorderWidget, TEXT("Content"), 100.0f, 50.0f);
 	UDreamLayoutContainerBorder* Border = BorderWidget->CreateNewLayoutContainer<UDreamLayoutContainerBorder>();
 	if (!TestNotNull(TEXT("Border created"), Border))
 	{
@@ -147,7 +147,7 @@ bool FDreamBorderBrushColorReachesTheVisualTest::RunTest(const FString& Paramete
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Border"), 300.0f, 200.0f);
+	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Border"), 300.0f, 200.0f);
 	UDreamRectBlock* Background = BorderWidget->CreateNewVisual<UDreamRectBlock>();
 	if (!TestNotNull(TEXT("Background visual created"), Background))
 	{
@@ -194,9 +194,9 @@ bool FDreamBorderContentColourTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Border"), 300.0f, 200.0f);
-	UDreamWidget* Content = MakeWidget(TestWorld.World, BorderWidget, TEXT("Content"), 100.0f, 50.0f);
-	UDreamWidget* Inner = MakeWidget(TestWorld.World, Content, TEXT("Inner"), 20.0f, 20.0f);
+	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Border"), 300.0f, 200.0f);
+	UDreamWidget* Content = MakeWidget(TestWorld.World.Get(), BorderWidget, TEXT("Content"), 100.0f, 50.0f);
+	UDreamWidget* Inner = MakeWidget(TestWorld.World.Get(), Content, TEXT("Inner"), 20.0f, 20.0f);
 	UDreamRectBlock* Background = BorderWidget->CreateNewVisual<UDreamRectBlock>();
 	UDreamRectBlock* ContentArt = Content->CreateNewVisual<UDreamRectBlock>();
 	UDreamRectBlock* InnerArt = Inner->CreateNewVisual<UDreamRectBlock>();
@@ -244,9 +244,9 @@ bool FDreamBorderDisabledEffectTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World, Root, TEXT("Border"), 300.0f, 200.0f);
-	UDreamWidget* Content = MakeWidget(TestWorld.World, BorderWidget, TEXT("Content"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Border"), 300.0f, 200.0f);
+	UDreamWidget* Content = MakeWidget(TestWorld.World.Get(), BorderWidget, TEXT("Content"), 100.0f, 50.0f);
 	UDreamRectBlock* Background = BorderWidget->CreateNewVisual<UDreamRectBlock>();
 	UDreamRectBlock* ContentArt = Content->CreateNewVisual<UDreamRectBlock>();
 	UDreamLayoutContainerBorder* Border = BorderWidget->CreateNewLayoutContainer<UDreamLayoutContainerBorder>();
@@ -325,13 +325,13 @@ bool FDreamBorderFlipForRightToLeftTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Border"), 300.0f, 200.0f);
-	UDreamWidget* Content = MakeWidget(TestWorld.World, BorderWidget, TEXT("Content"), 100.0f, 50.0f);
+	UDreamWidget* BorderWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Border"), 300.0f, 200.0f);
+	UDreamWidget* Content = MakeWidget(TestWorld.World.Get(), BorderWidget, TEXT("Content"), 100.0f, 50.0f);
 	UDreamRectBlock* Background = BorderWidget->CreateNewVisual<UDreamRectBlock>();
 	UDreamLayoutContainerBorder* Border = BorderWidget->CreateNewLayoutContainer<UDreamLayoutContainerBorder>();
 	if (!TestNotNull(TEXT("Background visual created"), Background) || !TestNotNull(TEXT("Border created"), Border))
@@ -457,15 +457,15 @@ bool FDreamMenuAnchorPlacesAndCollapsesItsMenuTest::RunTest(const FString& Param
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 1000.0f, 600.0f);
-	UDreamWidget* AnchorWidget = MakeWidget(TestWorld.World, Root, TEXT("Anchor"), 200.0f, 40.0f);
-	UDreamWidget* Face = MakeWidget(TestWorld.World, AnchorWidget, TEXT("Face"), 200.0f, 40.0f);
-	UDreamWidget* Menu = MakeWidget(TestWorld.World, AnchorWidget, TEXT("Menu"), 90.0f, 150.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 1000.0f, 600.0f);
+	UDreamWidget* AnchorWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Anchor"), 200.0f, 40.0f);
+	UDreamWidget* Face = MakeWidget(TestWorld.World.Get(), AnchorWidget, TEXT("Face"), 200.0f, 40.0f);
+	UDreamWidget* Menu = MakeWidget(TestWorld.World.Get(), AnchorWidget, TEXT("Menu"), 90.0f, 150.0f);
 	UDreamLayoutContainerMenuAnchor* MenuAnchor = AnchorWidget->CreateNewLayoutContainer<UDreamLayoutContainerMenuAnchor>();
 	if (!TestNotNull(TEXT("Menu anchor created"), MenuAnchor))
 	{
@@ -528,14 +528,14 @@ bool FDreamMenuAnchorBuildsItsMenuFromItsClassTest::RunTest(const FString& Param
 {
 	using namespace DreamBorderMenuAnchorTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 1000.0f, 600.0f);
-	UDreamWidget* AnchorWidget = MakeWidget(TestWorld.World, Root, TEXT("Anchor"), 200.0f, 40.0f);
-	UDreamWidget* Face = MakeWidget(TestWorld.World, AnchorWidget, TEXT("Face"), 200.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 1000.0f, 600.0f);
+	UDreamWidget* AnchorWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Anchor"), 200.0f, 40.0f);
+	UDreamWidget* Face = MakeWidget(TestWorld.World.Get(), AnchorWidget, TEXT("Face"), 200.0f, 40.0f);
 	UDreamLayoutContainerMenuAnchor* MenuAnchor = AnchorWidget->CreateNewLayoutContainer<UDreamLayoutContainerMenuAnchor>();
 	if (!TestNotNull(TEXT("Menu anchor created"), MenuAnchor))
 	{
@@ -570,7 +570,7 @@ bool FDreamMenuAnchorBuildsItsMenuFromItsClassTest::RunTest(const FString& Param
 	MenuAnchor->SetIsOpen(false);
 
 	// An authored menu is the anchor's own: shown in place of a built one, and only hidden on close.
-	UDreamWidget* Authored = MakeWidget(TestWorld.World, AnchorWidget, TEXT("Authored"), 90.0f, 150.0f);
+	UDreamWidget* Authored = MakeWidget(TestWorld.World.Get(), AnchorWidget, TEXT("Authored"), 90.0f, 150.0f);
 	MenuAnchor->SetIsOpen(true);
 	TestTrue(TEXT("A menu authored under the anchor wins over its class"), MenuAnchor->GetMenuContent() == Authored);
 	MenuAnchor->SetIsOpen(false);

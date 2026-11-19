@@ -65,7 +65,7 @@ bool FDreamDriverPieViewportPictureTest::RunTest(const FString& Parameters)
 	{
 		TArray<FColor> Pixels;
 		FIntPoint Size = FIntPoint::ZeroValue;
-		FViewport* Viewport = UDreamUICaptureLibrary::FindViewportOf(InContext.World);
+		FViewport* Viewport = UDreamUICaptureLibrary::FindViewportOf(InContext.World.Get());
 		if (!TestTrue(TEXT("The play session's viewport reads back"), UDreamUICaptureLibrary::ReadViewportPixels(Viewport, Pixels, Size)))
 		{
 			return;

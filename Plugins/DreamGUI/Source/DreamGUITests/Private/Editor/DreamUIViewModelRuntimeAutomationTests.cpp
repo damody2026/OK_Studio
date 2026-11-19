@@ -248,8 +248,8 @@ bool FDreamUIViewModelRuntimeSubscribedTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -305,8 +305,8 @@ bool FDreamUIViewModelRuntimePolledTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -358,7 +358,7 @@ bool FDreamUIViewModelRuntimeSwapTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -415,7 +415,7 @@ bool FDreamUIViewModelRuntimeDestroyTest::RunTest(const FString& Parameters)
 	const TStrongObjectPtr<UDreamTestCountingPlayerVM> Player = MakePlayer(TEXT("Outlives"));
 	TWeakObjectPtr<UDreamUserWidget> Weak;
 	{
-		UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+		UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 		if (!TestNotNull(TEXT("the class instantiates"), Instance))
 		{
 			return false;
@@ -465,7 +465,7 @@ bool FDreamUIViewModelRuntimeNewTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamTestViewModelWidgetBase* Instance = Cast<UDreamTestViewModelWidgetBase>(CreateDreamWidget(TestWorld.World, Class));
+	UDreamTestViewModelWidgetBase* Instance = Cast<UDreamTestViewModelWidgetBase>(CreateDreamWidget(TestWorld.World.Get(), Class));
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -478,14 +478,14 @@ bool FDreamUIViewModelRuntimeNewTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("outered to the widget"), Made->GetOuter() == Instance);
 	TestTrue(TEXT("made before On Initialized ran"), Instance->SeenAtInitialized == Made);
 	TestFalse(TEXT("not a design-time instance in a game world"), Made->IsDesignTimeInstance());
-	TestTrue(TEXT("with the widget's world"), Made->GetWorld() == TestWorld.World);
+	TestTrue(TEXT("with the widget's world"), Made->GetWorld() == TestWorld.World.Get());
 	TestEqual(TEXT("its binding is subscribed"), Instance->GetBindingCounts().Subscribed, 1);
 	Made->SetName(FText::FromString(TEXT("Made")));
 	TestEqual(TEXT("and follows it"), TextOf(Instance, TEXT("Title")), FString(TEXT("Made")));
 
 	// Handed one before Initialize: that one stands, and On Initialized sees it.
 	const TStrongObjectPtr<UDreamTestCountingPlayerVM> Given = MakePlayer(TEXT("Given"));
-	UDreamTestViewModelWidgetBase* Manual = NewObject<UDreamTestViewModelWidgetBase>(TestWorld.World, Class);
+	UDreamTestViewModelWidgetBase* Manual = NewObject<UDreamTestViewModelWidgetBase>(TestWorld.World.Get(), Class);
 	TestTrue(TEXT("SetViewModel works before Initialize"), Manual->SetViewModel(TEXT("Settings"), Given.Get()));
 	Manual->Initialize();
 	TestTrue(TEXT("a given object is not replaced"), Manual->GetViewModel(TEXT("Settings")) == Given.Get());
@@ -531,17 +531,17 @@ bool FDreamUIViewModelRuntimeGlobalTest::RunTest(const FString& Parameters)
 	}
 
 	DreamTests::FScopedGameInstanceWorld Game;
-	UDreamViewModelSubsystem* Registry = UDreamViewModelSubsystem::Get(Game.World);
+	UDreamViewModelSubsystem* Registry = UDreamViewModelSubsystem::Get(Game.World.Get());
 	if (!TestNotNull(TEXT("the game instance has a registry"), Registry))
 	{
 		return false;
 	}
-	UDreamTestCountingPlayerVM* Shared = NewObject<UDreamTestCountingPlayerVM>(Game.GameInstance);
+	UDreamTestCountingPlayerVM* Shared = NewObject<UDreamTestCountingPlayerVM>(Game.GameInstance.Get());
 	Shared->SetName(FText::FromString(TEXT("Shared")));
 	Registry->Register(Shared);
 
 	// Registered first: found at Initialize.
-	UDreamUserWidget* Early = CreateDreamWidget(Game.World, ByClass);
+	UDreamUserWidget* Early = CreateDreamWidget(Game.World.Get(), ByClass);
 	if (!TestNotNull(TEXT("the by-class widget instantiates"), Early))
 	{
 		return false;
@@ -550,7 +550,7 @@ bool FDreamUIViewModelRuntimeGlobalTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("and shows it"), TextOf(Early, TEXT("Title")), FString(TEXT("Shared")));
 
 	// Registered later: the widget waits, then fills.
-	UDreamUserWidget* Waiting = CreateDreamWidget(Game.World, ByName);
+	UDreamUserWidget* Waiting = CreateDreamWidget(Game.World.Get(), ByName);
 	if (!TestNotNull(TEXT("the by-name widget instantiates"), Waiting))
 	{
 		return false;
@@ -558,7 +558,7 @@ bool FDreamUIViewModelRuntimeGlobalTest::RunTest(const FString& Parameters)
 	TestNull(TEXT("an unnamed object does not fill a named entry"), Waiting->GetViewModel(TEXT("Stash")));
 	TestEqual(TEXT("its text keeps what was authored"), TextOf(Waiting, TEXT("Title")), AuthoredTextOf(ByName, TEXT("Title")));
 
-	UDreamTestCountingPlayerVM* Late = NewObject<UDreamTestCountingPlayerVM>(Game.GameInstance);
+	UDreamTestCountingPlayerVM* Late = NewObject<UDreamTestCountingPlayerVM>(Game.GameInstance.Get());
 	Late->SetName(FText::FromString(TEXT("Late")));
 	Registry->Register(Late, TEXT("Stash"));
 	TestTrue(TEXT("registering one under its name fills the entry"), Waiting->GetViewModel(TEXT("Stash")) == Late);
@@ -567,7 +567,7 @@ bool FDreamUIViewModelRuntimeGlobalTest::RunTest(const FString& Parameters)
 	Late->SetName(FText::FromString(TEXT("Later")));
 	TestEqual(TEXT("and it is subscribed like any other"), TextOf(Waiting, TEXT("Title")), FString(TEXT("Later")));
 
-	UDreamTestCountingPlayerVM* Swapped = NewObject<UDreamTestCountingPlayerVM>(Game.GameInstance);
+	UDreamTestCountingPlayerVM* Swapped = NewObject<UDreamTestCountingPlayerVM>(Game.GameInstance.Get());
 	Registry->Register(Swapped, TEXT("Stash"));
 	TestTrue(TEXT("a filled entry stops waiting: a later swap in the registry is not followed"), Waiting->GetViewModel(TEXT("Stash")) == Late);
 	return true;
@@ -619,7 +619,7 @@ bool FDreamUIViewModelRuntimeParentTest::RunTest(const FString& Parameters)
 	}
 
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Host = CreateDreamWidget(TestWorld.World, HostClass);
+	UDreamUserWidget* Host = CreateDreamWidget(TestWorld.World.Get(), HostClass);
 	if (!TestNotNull(TEXT("the host instantiates"), Host))
 	{
 		return false;
@@ -680,7 +680,7 @@ bool FDreamUIViewModelRuntimeForcePollTest::RunTest(const FString& Parameters)
 	};
 
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -726,8 +726,8 @@ bool FDreamUIViewModelRuntimeConstantTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -772,7 +772,7 @@ bool FDreamUIViewModelRuntimeNativeFieldTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamTestNativeNotifyWidget* Instance = Cast<UDreamTestNativeNotifyWidget>(CreateDreamWidget(TestWorld.World, Class));
+	UDreamTestNativeNotifyWidget* Instance = Cast<UDreamTestNativeNotifyWidget>(CreateDreamWidget(TestWorld.World.Get(), Class));
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -814,7 +814,7 @@ bool FDreamUIViewModelRuntimeWidgetVariableTest::RunTest(const FString& Paramete
 		return false;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -879,7 +879,7 @@ bool FDreamUIViewModelRuntimeLegacyTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("with no dependencies recorded"), Class->GetPropertyBindings()[0].bDependenciesRecorded);
 
 	FScopedGameWorld TestWorld;
-	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World, Class);
+	UDreamUserWidget* Instance = CreateDreamWidget(TestWorld.World.Get(), Class);
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;
@@ -945,7 +945,7 @@ bool FDreamUIViewModelRuntimeAssignRouteTest::RunTest(const FString& Parameters)
 	Class->SetEventBindings({ Route });
 
 	FScopedGameWorld TestWorld;
-	UDreamTestRouteHostWidget* Instance = Cast<UDreamTestRouteHostWidget>(CreateDreamWidget(TestWorld.World, Class));
+	UDreamTestRouteHostWidget* Instance = Cast<UDreamTestRouteHostWidget>(CreateDreamWidget(TestWorld.World.Get(), Class));
 	if (!TestNotNull(TEXT("the class instantiates"), Instance))
 	{
 		return false;

@@ -116,12 +116,12 @@ bool FDreamSplitScreenSharedPictureTest::RunTest(const FString& Parameters)
 	Steps.Then([this, State](FDreamDriverContext& InContext)
 	{
 		FIntPoint ReferenceSize;
-		if (!ReadPicture(*this, InContext.World, State->ReferencePixels, ReferenceSize)
+		if (!ReadPicture(*this, InContext.World.Get(), State->ReferencePixels, ReferenceSize)
 			|| !TestEqual(TEXT("The single-player reference has the canvas's viewport size"), ReferenceSize, State->Size))
 		{
 			return;
 		}
-		UGameInstance* GameInstance = InContext.World != nullptr ? InContext.World->GetGameInstance() : nullptr;
+		UGameInstance* GameInstance = InContext.World.Get() != nullptr ? InContext.World->GetGameInstance() : nullptr;
 		if (!TestNotNull(TEXT("The play session has a game instance"), GameInstance))
 		{
 			return;
@@ -136,7 +136,7 @@ bool FDreamSplitScreenSharedPictureTest::RunTest(const FString& Parameters)
 		for (int32 PlayerIndex = 0; PlayerIndex < 2; ++PlayerIndex)
 		{
 			// Registered free roots are held by the world's UI manager and released at PIE teardown.
-			UDreamWidget* Root = NewObject<UDreamWidget>(InContext.World, NAME_None, RF_Transient);
+			UDreamWidget* Root = NewObject<UDreamWidget>(InContext.World.Get(), NAME_None, RF_Transient);
 			Root->SetDisplayName(FString::Printf(TEXT("Player%dScreen"), PlayerIndex));
 			Root->OnRegister();
 			State->PlayerRoots[PlayerIndex] = Root;
@@ -168,15 +168,15 @@ bool FDreamSplitScreenSharedPictureTest::RunTest(const FString& Parameters)
 		TArray<FColor> Pixels;
 		FIntPoint Size;
 		const ULocalPlayer* Second = State->SecondPlayer.Get();
-		if (!TestNotNull(TEXT("Player 0 is still in the session"), InContext.LocalPlayer)
+		if (!TestNotNull(TEXT("Player 0 is still in the session"), InContext.LocalPlayer.Get())
 			|| !TestNotNull(TEXT("Player 1 is still in the session"), Second)
-			|| !ReadPicture(*this, InContext.World, Pixels, Size)
+			|| !ReadPicture(*this, InContext.World.Get(), Pixels, Size)
 			|| !TestEqual(TEXT("Splitting preserves the viewport size"), Size, State->Size)
 			|| !TestEqual(TEXT("The blend reference has every pixel"), State->ReferencePixels.Num(), Size.X * Size.Y))
 		{
 			return;
 		}
-		const FIntRect LeftPart = PlayerRect(*InContext.LocalPlayer, Size);
+		const FIntRect LeftPart = PlayerRect(*InContext.LocalPlayer.Get(), Size);
 		const FIntRect RightPart = PlayerRect(*Second, Size);
 		if (!TestTrue(TEXT("Two different views occupy the left and right parts of the viewport"),
 			LeftPart.Min == FIntPoint::ZeroValue && LeftPart.Max.X == RightPart.Min.X
@@ -231,7 +231,7 @@ bool FDreamSplitScreenSharedPictureTest::RunTest(const FString& Parameters)
 	{
 		TArray<FColor> Pixels;
 		FIntPoint Size;
-		if (ReadPicture(*this, InContext.World, Pixels, Size) && TestEqual(TEXT("A shared-only split keeps the viewport size"), Size, State->Size))
+		if (ReadPicture(*this, InContext.World.Get(), Pixels, Size) && TestEqual(TEXT("A shared-only split keeps the viewport size"), Size, State->Size))
 		{
 			FDreamPixelProbe::ExpectColorAt(*this, Pixels, Size,
 				FIntPoint(FMath::RoundToInt32(Size.X * 0.2), FMath::RoundToInt32(Size.Y * 0.25)), FColor::Red, 8, TEXT("the left shared block with no player roots"));

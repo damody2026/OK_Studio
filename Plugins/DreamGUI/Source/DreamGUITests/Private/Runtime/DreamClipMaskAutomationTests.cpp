@@ -119,8 +119,8 @@ namespace DreamClipMaskTestLocal
 
 		FStage()
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-			Root = MakeWidget(World.World, nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+			Root = MakeWidget(World.World.Get(), nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			if (UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>())
 			{
 				Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
@@ -435,7 +435,7 @@ bool FDreamClipMaskUploadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Clipper = MakeWidget(Stage.World.World, Stage.Root, TEXT("Clipper"), FVector2D(200.0, 100.0));
+	UDreamWidget* Clipper = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Clipper"), FVector2D(200.0, 100.0));
 	Clipper->SetClipping(EDreamWidgetClipping::ClipToBounds);
 	UDreamUIDataAsTexture* Rows = NewObject<UDreamUIDataAsTexture>(GetTransientPackage(), NAME_None, RF_Transient);
 	Rows->Init(FDreamUIClipData::BlockSizeInBytes, EDreamUIDataAsTexturePixelFormat::R32G32B32A32, 4);
@@ -522,7 +522,7 @@ bool FDreamClipMaskSlotsTest::RunTest(const FString& Parameters)
 	UDreamWidget* Parent = Stage.Root;
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
-		UDreamWidget* Clipper = MakeWidget(Stage.World.World, Parent, *FString::Printf(TEXT("Clipper%d"), Index), FVector2D(300.0 - Index * 50.0, 200.0));
+		UDreamWidget* Clipper = MakeWidget(Stage.World.World.Get(), Parent, *FString::Printf(TEXT("Clipper%d"), Index), FVector2D(300.0 - Index * 50.0, 200.0));
 		Clipper->SetClipping(EDreamWidgetClipping::ClipToBounds);
 		FDreamClipMask Mask;
 		Mask.Source = EDreamClipMaskSource::Texture;
@@ -530,7 +530,7 @@ bool FDreamClipMaskSlotsTest::RunTest(const FString& Parameters)
 		Clipper->SetClipMask(Mask);
 		Parent = Clipper;
 	}
-	UDreamWidget* Content = MakeBlock(Stage.World.World, Parent, TEXT("Content"), FVector2D(100.0, 100.0));
+	UDreamWidget* Content = MakeBlock(Stage.World.World.Get(), Parent, TEXT("Content"), FVector2D(100.0, 100.0));
 	Stage.Frames(3);
 	const UDreamVisualBatchMesh* Visual = Cast<UDreamVisualBatchMesh>(Content->GetVisual());
 	const FDreamUIGeometry* Geometry = Visual != nullptr ? Visual->GetGeometry() : nullptr;
@@ -568,9 +568,9 @@ bool FDreamClipMaskHitTestTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Clipper = MakeWidget(Stage.World.World, Stage.Root, TEXT("Clipper"), FVector2D(200.0, 100.0), FVector2D(40.0, -20.0));
+	UDreamWidget* Clipper = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Clipper"), FVector2D(200.0, 100.0), FVector2D(40.0, -20.0));
 	Clipper->SetClipping(EDreamWidgetClipping::ClipToBounds);
-	UDreamWidget* Content = MakeBlock(Stage.World.World, Clipper, TEXT("Content"), FVector2D(400.0, 300.0));
+	UDreamWidget* Content = MakeBlock(Stage.World.World.Get(), Clipper, TEXT("Content"), FVector2D(400.0, 300.0));
 	FDreamClipMask Ellipse;
 	Ellipse.Shape = EDreamClipMaskShape::Ellipse;
 	Clipper->SetClipMask(Ellipse);
@@ -609,10 +609,10 @@ bool FDreamClipCentreScaleTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Scaled = MakeWidget(Stage.World.World, Stage.Root, TEXT("Scaled"), FVector2D(400.0, 300.0));
+	UDreamWidget* Scaled = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Scaled"), FVector2D(400.0, 300.0));
 	Scaled->SetRelativeScale(FVector(1.0, 2.0, 2.0));
 	Scaled->SetRelativeRotationEuler(FRotator(0.0, 0.0, 20.0));
-	UDreamWidget* Clipper = MakeWidget(Stage.World.World, Scaled, TEXT("Clipper"), FVector2D(120.0, 80.0));
+	UDreamWidget* Clipper = MakeWidget(Stage.World.World.Get(), Scaled, TEXT("Clipper"), FVector2D(120.0, 80.0));
 	Clipper->SetPivot(FVector2D(0.0, 1.0));
 	Clipper->SetClipping(EDreamWidgetClipping::ClipToBounds);
 	Stage.Frames();
@@ -647,7 +647,7 @@ bool FDreamClipToBelowUnderlayTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* First = MakeBlock(World, Stage.Root, TEXT("First"), FVector2D(50.0, 50.0));
 	UDreamWidget* Base = MakeBlock(World, Stage.Root, TEXT("Base"), FVector2D(50.0, 50.0));
 	UDreamWidget* ClippedA = MakeBlock(World, Stage.Root, TEXT("ClippedA"), FVector2D(50.0, 50.0));
@@ -684,7 +684,7 @@ bool FDreamClipToBelowHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Base = MakeBlock(World, Stage.Root, TEXT("Base"), FVector2D(100.0, 100.0), FVector2D(-100.0, 0.0));
 	UDreamWidget* Clipped = MakeBlock(World, Stage.Root, TEXT("Clipped"), FVector2D(400.0, 300.0));
 	Clipped->SetClipToBelow(true);
@@ -739,7 +739,7 @@ bool FDreamClipToBelowUnsupportedTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	AddExpectedMessagePlain(TEXT("clips to the layer below"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Label = MakeWidget(World, Stage.Root, TEXT("Label"), FVector2D(100.0, 30.0));
 	if (UDreamText* Text = Label->CreateNewVisual<UDreamText>())
 	{
@@ -768,7 +768,7 @@ bool FDreamClipToBelowNineSliceTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Frame = MakeWidget(World, Stage.Root, TEXT("Frame"), FVector2D(200.0, 120.0));
 	UDreamTexture* Sliced = Frame->CreateNewVisual<UDreamTexture>();
 	UTexture2D* Texture = UTexture2D::CreateTransient(32, 32, PF_B8G8R8A8);

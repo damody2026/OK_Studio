@@ -88,8 +88,8 @@ namespace DreamNiagaraSystemTestLocal
 
 		FStage(FAutomationTestBase& InTest, const TCHAR* InSystemPath = TestSystemPath)
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-			Root = MakeWidget(World.World, nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+			Root = MakeWidget(World.World.Get(), nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			Canvas = Root->AddComponent<UDreamCanvas>();
 			if (Canvas != nullptr)
 			{
@@ -100,7 +100,7 @@ namespace DreamNiagaraSystemTestLocal
 			// A simulation runs only where the application can render (FApp::CanEverRender): the tests that read particles are
 			// the Rhi preset's, and ask for it; the rest need the system described, not run.
 			UNiagaraSystem* System = LoadSystem(InTest, InSystemPath, FApp::CanEverRender());
-			Holder = MakeWidget(World.World, Root, TEXT("Particles"), FVector2D(200.0, 160.0), FVector2D(100.0, 50.0));
+			Holder = MakeWidget(World.World.Get(), Root, TEXT("Particles"), FVector2D(200.0, 160.0), FVector2D(100.0, 50.0));
 			Visual = Holder->CreateNewVisual<UDreamNiagaraSystem>();
 			if (Visual != nullptr)
 			{
@@ -458,20 +458,20 @@ bool FDreamNiagaraLifetimeTest::RunTest(const FString& Parameters)
 		{
 			return false;
 		}
-		WorldSeen = Stage.World.World;
+		WorldSeen = Stage.World.World.Get();
 		Stage.Frames(2);
 		UNiagaraComponent* Component = Stage.Visual->GetNiagaraComponent();
 		Weak = Component;
-		TestTrue(TEXT("The component is registered with the widget's world"), Component->IsRegistered() && Component->GetWorld() == Stage.World.World);
+		TestTrue(TEXT("The component is registered with the widget's world"), Component->IsRegistered() && Component->GetWorld() == Stage.World.World.Get());
 		TestNull(TEXT("...attached to nothing"), Component->GetAttachParent());
 		// Not its rendering turned off, which Niagara hands its proxy only as it ticks: no proxy at all. Under -nullrhi nothing
 		// activates and nothing would have one; the play-session test of the effects sample holds the scene to it on a GPU.
 		TestNull(TEXT("...given no proxy by the scene"), Component->SceneProxy);
 		TestFalse(TEXT("...and out of the scalability's reach"), Component->GetAllowScalability());
-		TestEqual(TEXT("One simulation in the world"), CountLiveComponents(Stage.World.World), 1);
+		TestEqual(TEXT("One simulation in the world"), CountLiveComponents(Stage.World.World.Get()), 1);
 
 		// Another canvas: the same simulation, its segments supplied by the new canvas.
-		UDreamWidget* OtherRoot = MakeWidget(Stage.World.World, nullptr, TEXT("OtherRoot"), FVector2D(400.0, 300.0));
+		UDreamWidget* OtherRoot = MakeWidget(Stage.World.World.Get(), nullptr, TEXT("OtherRoot"), FVector2D(400.0, 300.0));
 		UDreamCanvas* Other = OtherRoot->AddComponent<UDreamCanvas>();
 		// In the world: a second screen-space root of the same layer is a mistake the manager reports.
 		Other->SetRenderMode(EDreamRenderMode::WorldSpace_DreamUI);
@@ -498,7 +498,7 @@ bool FDreamNiagaraLifetimeTest::RunTest(const FString& Parameters)
 		Stage.Holder->DestroyWidget();
 		Stage.Frames(1);
 		TestTrue(TEXT("The component is destroyed with the widget"), !Weak.IsValid() || !Weak->IsRegistered());
-		TestEqual(TEXT("No simulation left in the world"), CountLiveComponents(Stage.World.World), 0);
+		TestEqual(TEXT("No simulation left in the world"), CountLiveComponents(Stage.World.World.Get()), 0);
 	}
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 	TestFalse(TEXT("Nothing of it outlives its world"), Weak.IsValid());

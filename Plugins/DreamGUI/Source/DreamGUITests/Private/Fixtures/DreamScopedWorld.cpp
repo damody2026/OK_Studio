@@ -16,9 +16,9 @@ namespace DreamTests
 
 	FScopedGameWorld::~FScopedGameWorld()
 	{
-		if (World)
+		if (UWorld* OwnedWorld = World.Get())
 		{
-			World->DestroyWorld(false);
+			OwnedWorld->DestroyWorld(false);
 		}
 	}
 }

@@ -309,7 +309,7 @@ bool FDreamPostProcessFullSizeBoundsTest::RunTest(const FString& Parameters)
 	// disappeared when the little widget left the frustum, and drew in the wrong order against
 	// everything it actually overlapped.
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetDisplayName(TEXT("CanvasRoot"));
 	Root->SetWidth(1600.0f);
 	Root->SetHeight(900.0f);
@@ -320,7 +320,7 @@ bool FDreamPostProcessFullSizeBoundsTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Child->SetDisplayName(TEXT("Blur"));
 	Child->OnRegister();
 	Child->TrySetParent(Root, false);
@@ -869,7 +869,7 @@ bool FDreamDirectMeshRaycastTest::RunTest(const FString& Parameters)
 	// has to test against live in CANVAS space -- the supplier transforms by ItemToCanvas before
 	// writing them -- which is why this fixture needs a canvas even though the arithmetic does not.
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetDisplayName(TEXT("CanvasRoot"));
 	Root->SetWidth(1000.0f);
 	Root->SetHeight(1000.0f);
@@ -880,7 +880,7 @@ bool FDreamDirectMeshRaycastTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Child->SetDisplayName(TEXT("Mesh"));
 	Child->OnRegister();
 	Child->TrySetParent(Root, false);

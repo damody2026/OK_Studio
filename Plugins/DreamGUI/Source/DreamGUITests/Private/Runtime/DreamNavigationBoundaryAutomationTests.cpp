@@ -78,7 +78,7 @@ bool FDreamNavigationBoundaryStopTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamNavigationBoundaryTestLocal;
 	FScopedGameWorld TestWorld;
-	FColumnFixture Fixture(TestWorld.World);
+	FColumnFixture Fixture(TestWorld.World.Get());
 
 	TestEqual(TEXT("An authored area defaults to Stop"),
 		Fixture.Area->GetNavigationBoundaryRule(), EDreamUINavigationBoundaryRule::Stop);
@@ -101,7 +101,7 @@ bool FDreamNavigationBoundaryWrapTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamNavigationBoundaryTestLocal;
 	FScopedGameWorld TestWorld;
-	FColumnFixture Fixture(TestWorld.World);
+	FColumnFixture Fixture(TestWorld.World.Get());
 	Fixture.Area->SetNavigationBoundaryRule(EDreamUINavigationBoundaryRule::Wrap);
 
 	// Off the bottom of the column comes back on at the top -- and specifically at the row that
@@ -126,7 +126,7 @@ bool FDreamNavigationBoundaryEscapeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamNavigationBoundaryTestLocal;
 	FScopedGameWorld TestWorld;
-	FColumnFixture Fixture(TestWorld.World);
+	FColumnFixture Fixture(TestWorld.World.Get());
 	Fixture.Area->SetNavigationBoundaryRule(EDreamUINavigationBoundaryRule::Escape);
 
 	// Nothing below inside the area, so the move is re-run without it and finds what is below outside.

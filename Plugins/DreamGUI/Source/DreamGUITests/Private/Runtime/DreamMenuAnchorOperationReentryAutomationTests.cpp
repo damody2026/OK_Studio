@@ -51,13 +51,13 @@ bool FDreamMenuAnchorProviderNestedOpenTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamMenuAnchorOperationReentryTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World));
-	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World, Root.Get());
+	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World.Get()));
+	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World.Get(), Root.Get());
 	if (Anchor == nullptr)return false;
-	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World));
+	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World.Get()));
 	Probe->Anchor = Anchor;
-	Probe->FirstContent = MakeContent(TestWorld.World, Root.Get());
-	Probe->NestedContent = MakeContent(TestWorld.World, Root.Get());
+	Probe->FirstContent = MakeContent(TestWorld.World.Get(), Root.Get());
+	Probe->NestedContent = MakeContent(TestWorld.World.Get(), Root.Get());
 	Anchor->OnGetUserMenuContentEvent.BindDynamic(Probe.Get(), &UDreamMenuAnchorOperationReentryProbe::ProvideContent);
 	Anchor->OnMenuOpenChanged.AddDynamic(Probe.Get(), &UDreamMenuAnchorOperationReentryProbe::RecordOpenChanged);
 	Anchor->Open(false);
@@ -88,10 +88,10 @@ bool FDreamMenuAnchorProviderDestroysAnchorTest::RunTest(const FString& Paramete
 {
 	using namespace DreamMenuAnchorOperationReentryTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World));
-	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World, Root.Get());
+	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World.Get()));
+	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World.Get(), Root.Get());
 	if (Anchor == nullptr)return false;
-	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World));
+	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World.Get()));
 	Probe->Anchor = Anchor;
 	Probe->bDestroyInProvider = true;
 	const TWeakObjectPtr<UDreamMenuAnchor> DestroyedAnchor(Anchor);
@@ -115,10 +115,10 @@ bool FDreamMenuAnchorWakeNestedOpenTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamMenuAnchorOperationReentryTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World));
-	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World, Root.Get());
+	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World.Get()));
+	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World.Get(), Root.Get());
 	if (Anchor == nullptr)return false;
-	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World));
+	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World.Get()));
 	Anchor->OnMenuOpenChanged.AddDynamic(Probe.Get(), &UDreamMenuAnchorOperationReentryProbe::RecordOpenChanged);
 	int32 ReopenCount = 0;
 	const FDelegateHandle Handler = Anchor->PopupNode->GetWidgetActiveChangedEvent().AddLambda([Anchor, &ReopenCount](bool bActive)
@@ -149,10 +149,10 @@ bool FDreamMenuAnchorSleepNestedOpenTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamMenuAnchorOperationReentryTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World));
-	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World, Root.Get());
+	TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World.Get()));
+	UDreamMenuAnchor* Anchor = MakeAnchor(*this, TestWorld.World.Get(), Root.Get());
 	if (Anchor == nullptr)return false;
-	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World));
+	TStrongObjectPtr<UDreamMenuAnchorOperationReentryProbe> Probe(NewObject<UDreamMenuAnchorOperationReentryProbe>(TestWorld.World.Get()));
 	Anchor->OnMenuOpenChanged.AddDynamic(Probe.Get(), &UDreamMenuAnchorOperationReentryProbe::RecordOpenChanged);
 	Anchor->Open(false);
 	int32 ReopenCount = 0;

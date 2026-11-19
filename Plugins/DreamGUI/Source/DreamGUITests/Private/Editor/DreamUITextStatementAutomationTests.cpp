@@ -279,9 +279,9 @@ bool FDreamUIStatementDesignerTest::RunTest(const FString&)
 	// No designer: a script or a commandlet writes the same lines a click does.
 	FScopedTextBlueprint Scoped(TEXT("BP_StatementDesigner"), Source.FilePath, /*bInOpenDesigner*/false,
 		UDreamTextUserWidgetBindingBase::StaticClass());
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
-	UDreamWidgetBlueprint* Blueprint = Scoped.Blueprint;
+	UDreamWidgetBlueprint* Blueprint = Scoped.Blueprint.Get();
 	FString Errors;
 
 	// ---- `<-`: bind, compile, read back
@@ -423,7 +423,7 @@ bool FDreamUIStatementUndoTest::RunTest(const FString&)
 	const FString Before = Source.Read();
 	FScopedTextBlueprint Scoped(TEXT("BP_StatementUndo"), Source.FilePath, /*bInOpenDesigner*/true,
 		UDreamTextUserWidgetBindingBase::StaticClass());
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
 	if (!TestNotNull(TEXT("the designer opened"), Scoped.Designer)) return false;
 
@@ -438,7 +438,7 @@ bool FDreamUIStatementUndoTest::RunTest(const FString&)
 	const FBindingSite Site = SiteOf(Title->GetVisual());
 	{
 		const FScopedTransaction Transaction(NSLOCTEXT("DreamGUITests", "StatementUndoBind", "Bind from the panel"));
-		TestTrue(TEXT("a binding is written with the designer open"), SetBinding(Scoped.Blueprint, Site, TEXT("Text"), TEXT("GetTitleText")));
+		TestTrue(TEXT("a binding is written with the designer open"), SetBinding(Scoped.Blueprint.Get(), Site, TEXT("Text"), TEXT("GetTitleText")));
 	}
 	const FString Bound = Source.Read();
 	TestTrue(TEXT("into the file"), Bound.Contains(TEXT("        Text <- GetTitleText()")));

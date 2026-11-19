@@ -37,14 +37,14 @@ bool FDreamManagerNetModeTest::RunTest(const FString& Parameters)
 	// The predicate behind the subsystem collection's question, asked the way the collection asks it: of the class default,
 	// with the world being made as the outer. This process is no dedicated server and the world is standalone.
 	DreamTests::FScopedGameWorld Scoped;
-	if (!TestNotNull(TEXT("A game world was made"), Scoped.World))
+	if (!TestNotNull(TEXT("A game world was made"), Scoped.World.Get()))
 	{
 		return false;
 	}
 	TestEqual(TEXT("The test world is standalone"), (int32)Scoped.World->GetNetMode(), (int32)NM_Standalone);
 	TestTrue(TEXT("The class default says a standalone game world gets a UI manager"),
-		GetDefault<UDreamUIManagerWorldSubsystem>()->ShouldCreateSubsystem(Scoped.World));
-	TestNotNull(TEXT("...and the world has one"), UDreamUIManagerWorldSubsystem::GetInstance(Scoped.World));
+		GetDefault<UDreamUIManagerWorldSubsystem>()->ShouldCreateSubsystem(Scoped.World.Get()));
+	TestNotNull(TEXT("...and the world has one"), UDreamUIManagerWorldSubsystem::GetInstance(Scoped.World.Get()));
 	return true;
 }
 

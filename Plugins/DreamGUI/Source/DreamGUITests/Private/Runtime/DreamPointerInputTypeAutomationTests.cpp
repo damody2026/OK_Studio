@@ -54,11 +54,11 @@ bool FDreamPointerMoveClaimsPointerInputTypeTest::RunTest(const FString& Paramet
 	using namespace DreamPointerInputTypeTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The module registered to the event system"),
 		Rig.EventSystem != nullptr && Rig.EventSystem->GetCurrentInputModule() == Rig.Module))
 	{
@@ -105,7 +105,7 @@ bool FDreamPointerMoveWithoutEventSystemTest::RunTest(const FString& Parameters)
 	using namespace DreamPointerInputTypeTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the module"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the module"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}

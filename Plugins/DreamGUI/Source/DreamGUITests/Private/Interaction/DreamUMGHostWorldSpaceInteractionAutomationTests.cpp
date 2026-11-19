@@ -95,7 +95,7 @@ bool FDreamWorldUMGHostPressTest::RunTest(const FString& Parameters)
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
 	UDreamWidget* Surface = nullptr;
-	UDreamUMGDragInteractionProbe* Probe = Stage.IsReady() ? MakeHostedSurface(*this, Rig, Stage.Panel, FVector2D(-100.0, 0.0), Surface) : nullptr;
+	UDreamUMGDragInteractionProbe* Probe = Stage.IsReady() ? MakeHostedSurface(*this, Rig, Stage.Panel.Get(), FVector2D(-100.0, 0.0), Surface) : nullptr;
 	if (!TestNotNull(TEXT("A hosting surface came up on the panel"), Probe))
 	{
 		return false;

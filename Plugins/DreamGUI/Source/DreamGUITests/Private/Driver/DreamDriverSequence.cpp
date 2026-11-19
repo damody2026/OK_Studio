@@ -234,10 +234,10 @@ TArray<UClass*> FDreamDriverContext::GetPumpedTickableWorldSubsystems()
 bool FDreamDriverContext::IsUsable() const
 {
 	return World != nullptr
-		&& IsValid(EventSystem)
-		&& IsValid(InputModule)
-		&& IsValid(Manager)
-		&& IsValid(Root);
+		&& IsValid(EventSystem.Get())
+		&& IsValid(InputModule.Get())
+		&& IsValid(Manager.Get())
+		&& IsValid(Root.Get());
 }
 
 FDreamDriverContext* FDreamDriverContext::FindPlayer(int32 InPlayerIndex)
@@ -334,7 +334,7 @@ void FDreamDriverContext::PumpOneFrame(float InDeltaSeconds)
 		{
 			for (FDreamDriverContext* Player : Players)
 			{
-				if (Player != nullptr && Player->PlayerController != nullptr)
+				if (Player != nullptr && Player->PlayerController.Get() != nullptr)
 				{
 					DreamDriverGameHost::TickPlayerInput(*Player, InDeltaSeconds);
 				}
@@ -343,10 +343,10 @@ void FDreamDriverContext::PumpOneFrame(float InDeltaSeconds)
 	}
 
 	UDreamTweenManager* TweenManager = GameInstance != nullptr ? GameInstance->GetSubsystem<UDreamTweenManager>() : nullptr;
-	TickTweens(TweenManager, World, EDreamTweenTickType::PrePhysics);
-	TickTweens(TweenManager, World, EDreamTweenTickType::DuringPhysics);
+	TickTweens(TweenManager, World.Get(), EDreamTweenTickType::PrePhysics);
+	TickTweens(TweenManager, World.Get(), EDreamTweenTickType::DuringPhysics);
 
-	if (UDreamUIInputSubsystem* InputSubsystem = World != nullptr ? UDreamUIInputSubsystem::Get(World) : nullptr)
+	if (UDreamUIInputSubsystem* InputSubsystem = World.Get() != nullptr ? UDreamUIInputSubsystem::Get(World.Get()) : nullptr)
 	{
 		/*
 		 * The world's input frame, as the input subsystem's tick function runs it: every player in
@@ -358,7 +358,7 @@ void FDreamDriverContext::PumpOneFrame(float InDeltaSeconds)
 		InputSubsystem->ProcessFrame(InDeltaSeconds);
 	}
 
-	TickTweens(TweenManager, World, EDreamTweenTickType::PostPhysics);
+	TickTweens(TweenManager, World.Get(), EDreamTweenTickType::PostPhysics);
 
 	if (World != nullptr)
 	{
@@ -403,9 +403,9 @@ void FDreamDriverContext::PumpOneFrame(float InDeltaSeconds)
 	 * put on PostUpdateWork, which nothing in the plugin does (no DreamGUI code calls SetTickType);
 	 * everything the controls start is a DuringPhysics tween, at its engine position above.
 	 */
-	TickTweens(TweenManager, World, EDreamTweenTickType::PostUpdateWork);
+	TickTweens(TweenManager, World.Get(), EDreamTweenTickType::PostUpdateWork);
 
-	if (IsValid(Manager))
+	if (IsValid(Manager.Get()))
 	{
 		/*
 		 * LAST: the UI manager is one more tickable world subsystem in the same TickObjects pass, and
@@ -460,7 +460,7 @@ void FDreamDriverContext::PumpFrames(int32 InFrameCount)
 
 UDreamPointerEventData* FDreamDriverContext::GetPointerEventData(int32 InPointerID) const
 {
-	if (!IsValid(EventSystem))
+	if (!IsValid(EventSystem.Get()))
 	{
 		return nullptr;
 	}
@@ -480,7 +480,7 @@ double FDreamDriverContext::GetDragThresholdPixels(const UDreamPointerEventData*
 	{
 		return FMath::Sqrt((double)WorldRaycaster->GetDragThresholdSquare());
 	}
-	if (IsValid(Raycaster))
+	if (IsValid(Raycaster.Get()))
 	{
 		return FMath::Sqrt((double)Raycaster->GetScaledDragThresholdSquare());
 	}
@@ -489,12 +489,12 @@ double FDreamDriverContext::GetDragThresholdPixels(const UDreamPointerEventData*
 
 UDreamWidget* FDreamDriverContext::FindOne(const FDreamLocatorRef& InLocator) const
 {
-	if (!IsValid(Root))
+	if (!IsValid(Root.Get()))
 	{
 		return nullptr;
 	}
 	TArray<UDreamWidget*> Found;
-	InLocator->Locate(Root, Found);
+	InLocator->Locate(Root.Get(), Found);
 	// Exactly one. Several is as much a failure as none: a driver that silently took the first of
 	// three would act on whichever the tree happened to sort first, and the test would pass or fail
 	// on child order rather than on the thing it is about.
@@ -503,7 +503,7 @@ UDreamWidget* FDreamDriverContext::FindOne(const FDreamLocatorRef& InLocator) co
 
 UUITextInput* FDreamDriverContext::FindEditingTextInput(FString& OutWhyNot) const
 {
-	if (!IsValid(EventSystem))
+	if (!IsValid(EventSystem.Get()))
 	{
 		OutWhyNot = TEXT("the driver has no event system");
 		return nullptr;
@@ -533,12 +533,12 @@ UUITextInput* FDreamDriverContext::FindEditingTextInput(FString& OutWhyNot) cons
 
 UDreamInputKeySelector* FDreamDriverContext::FindListeningKeySelector() const
 {
-	if (!IsValid(Root))
+	if (!IsValid(Root.Get()))
 	{
 		return nullptr;
 	}
 	TArray<UDreamWidget*> AllWidgets;
-	UDreamWidget::CollectChildrenWidgets(Root, AllWidgets, false);
+	UDreamWidget::CollectChildrenWidgets(Root.Get(), AllWidgets, false);
 	for (UDreamWidget* Candidate : AllWidgets)
 	{
 		UDreamInputKeySelector* Selector = Cast<UDreamInputKeySelector>(Candidate);
@@ -613,7 +613,7 @@ namespace DreamDriverSequenceLocal
 	/** The player whose keyboard the context's keys and characters are typed on: its event system's, else the context's own. */
 	int32 KeyboardPlayerOf(const FDreamDriverContext& InContext)
 	{
-		return IsValid(InContext.EventSystem) ? InContext.EventSystem->GetUserIndex() : InContext.PlayerIndex;
+		return IsValid(InContext.EventSystem.Get()) ? InContext.EventSystem->GetUserIndex() : InContext.PlayerIndex;
 	}
 
 	/**
@@ -625,7 +625,7 @@ namespace DreamDriverSequenceLocal
 	 */
 	bool RouteKeyForPlayer(FDreamDriverContext& InContext, const FKey& InKey, EDreamDriverModifierKeys InModifiers, bool bInPressed, FString& OutFailureReason)
 	{
-		UDreamUIInputUser* User = IsValid(InContext.EventSystem) ? InContext.EventSystem->GetInputUser() : nullptr;
+		UDreamUIInputUser* User = IsValid(InContext.EventSystem.Get()) ? InContext.EventSystem->GetInputUser() : nullptr;
 		if (User == nullptr)
 		{
 			OutFailureReason = TEXT("the event system speaks for no player, so the key has nobody to be routed for: it was never registered with the world's input (UDreamUIInputSubsystem::AddEventSystem), which the rig does as it opens its begin-play gate");
@@ -644,7 +644,7 @@ namespace DreamDriverSequenceLocal
 	 */
 	void TypeViewportCharacter(const FDreamDriverContext& InContext, TCHAR InCharacter)
 	{
-		UDreamUIInputSubsystem* Input = InContext.World != nullptr ? UDreamUIInputSubsystem::Get(InContext.World) : nullptr;
+		UDreamUIInputSubsystem* Input = InContext.World.Get() != nullptr ? UDreamUIInputSubsystem::Get(InContext.World.Get()) : nullptr;
 		if (Input != nullptr)
 		{
 			Input->HandleViewportCharacter(KeyboardPlayerOf(InContext), InCharacter);
@@ -1040,7 +1040,7 @@ namespace DreamDriverSequenceLocal
 		// bound to exactly this call, which is where an edit in progress gets cancelled.
 		if (InKey == EKeys::Escape)
 		{
-			UDreamUINavigationStack* Stack = UDreamUINavigationStack::Get(InContext.World);
+			UDreamUINavigationStack* Stack = UDreamUINavigationStack::Get(InContext.World.Get());
 			if (Stack == nullptr)
 			{
 				OutFailureReason = TEXT("Escape is Back, and this world has no navigation stack to send it down");
@@ -1678,7 +1678,7 @@ namespace DreamDriverSequenceLocal
 	/** The world's virtual cursor, or null with the reason why there is none to drive. */
 	UDreamUIVirtualCursorSubsystem* FindVirtualCursor(const FDreamDriverContext& InContext, FString& OutWhyNot)
 	{
-		UDreamUIVirtualCursorSubsystem* Cursor = UDreamUIVirtualCursorSubsystem::Get(InContext.World);
+		UDreamUIVirtualCursorSubsystem* Cursor = UDreamUIVirtualCursorSubsystem::Get(InContext.World.Get());
 		if (Cursor == nullptr)
 		{
 			OutWhyNot = TEXT("this world has no virtual cursor subsystem (it is only made for Game and PIE worlds)");
@@ -1693,15 +1693,15 @@ namespace DreamDriverSequenceLocal
 	 */
 	APlayerController* FindStickController(const FDreamDriverContext& InContext)
 	{
-		if (IsValid(InContext.PlayerController))
+		if (IsValid(InContext.PlayerController.Get()))
 		{
-			return InContext.PlayerController;
+			return InContext.PlayerController.Get();
 		}
 		if (KeyboardPlayerOf(InContext) != 0)
 		{
 			return nullptr;
 		}
-		return InContext.World != nullptr ? InContext.World->GetFirstPlayerController() : nullptr;
+		return InContext.World.Get() != nullptr ? InContext.World->GetFirstPlayerController() : nullptr;
 	}
 
 	/**
@@ -1719,7 +1719,7 @@ namespace DreamDriverSequenceLocal
 		InController.InputKey(FInputKeyEventArgs::CreateSimulated(EKeys::Gamepad_LeftY, IE_Axis, (float)InStick.Y, 1));
 		if (!IsActorHost(InContext) && InController.PlayerInput != nullptr)
 		{
-			const bool bPaused = InContext.World != nullptr && InContext.World->IsPaused();
+			const bool bPaused = InContext.World.Get() != nullptr && InContext.World->IsPaused();
 			InController.PlayerInput->ProcessInputStack(TArray<UInputComponent*>(), InDeltaSeconds, bPaused);
 		}
 	}

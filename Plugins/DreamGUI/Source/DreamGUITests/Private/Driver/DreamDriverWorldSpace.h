@@ -161,15 +161,15 @@ namespace DreamDriverWorld
 	struct FDreamRenderTargetMesh
 	{
 		/** The canvas's root widget. Controls go under it with MakeControl / MakeWidget, like a panel's. */
-		UDreamWidget* CanvasRoot = nullptr;
-		UDreamCanvas* Canvas = nullptr;
+		TWeakObjectPtr<UDreamWidget> CanvasRoot;
+		TWeakObjectPtr<UDreamCanvas> Canvas;
 		/** The texture the canvas draws into and the surface shows. One texel is one canvas unit is one centimetre of surface. */
-		UTextureRenderTarget2D* RenderTarget = nullptr;
+		TWeakObjectPtr<UTextureRenderTarget2D> RenderTarget;
 		/** The plane that shows the texture, and the actor's root, and what the tree follows. */
-		UDreamUIRenderTargetGeometrySource* Surface = nullptr;
+		TWeakObjectPtr<UDreamUIRenderTargetGeometrySource> Surface;
 		/** The nested surface that carries a world pointer's hit on the surface into the canvas. */
-		UDreamUIRenderTargetInteraction* Interaction = nullptr;
-		AActor* Actor = nullptr;
+		TWeakObjectPtr<UDreamUIRenderTargetInteraction> Interaction;
+		TWeakObjectPtr<AActor> Actor;
 
 		bool IsComplete() const;
 	};

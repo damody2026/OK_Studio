@@ -50,14 +50,14 @@ bool FDreamConstructWidgetParksTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamAddChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
 		return false;
 	}
 
-	UDreamWidget* Made = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Made"), UDreamVisualEmpty::StaticClass());
+	UDreamWidget* Made = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Made"), UDreamVisualEmpty::StaticClass());
 	if (!TestNotNull(TEXT("ConstructWidget returns a widget"), Made))return false;
 
 	TestEqual(TEXT("It is named as asked"), Made->GetDisplayName(), FString(TEXT("Made")));
@@ -68,7 +68,7 @@ bool FDreamConstructWidgetParksTest::RunTest(const FString& Parameters)
 
 	// Adding it is what brings it to life, and is also what stops the manager holding it: a widget
 	// with a parent is reachable through that parent and no longer needs its own anchor.
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 300.0f, 300.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 300.0f, 300.0f);
 	Panel->OnRegister();
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	TestNotNull(TEXT("Adding it returns a slot"), Panel->AddChild(Made));
@@ -90,16 +90,16 @@ bool FDreamConstructWidgetKeepsAuthoredInactiveTest::RunTest(const FString& Para
 	// Parking borrows the active flag to mean "not added yet", so it has to give back exactly what it
 	// took. A prefab deliberately saved hidden must still be hidden once it is added -- otherwise the
 	// mechanism that keeps a widget off screen before adding would switch on things nobody asked for.
-	UDreamWidget* Hidden = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Hidden"), nullptr);
+	UDreamWidget* Hidden = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Hidden"), nullptr);
 	if (!TestNotNull(TEXT("ConstructWidget returns a widget"), Hidden))return false;
 	Hidden->SetWidgetActive(false);//as if authored hidden, while parked
 
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 300.0f, 300.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 300.0f, 300.0f);
 	Panel->OnRegister();
 	Panel->AddChild(Hidden);
 	TestFalse(TEXT("A widget switched off before being added stays off"), Hidden->GetWidgetActive());
 
-	UDreamWidget* Shown = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Shown"), nullptr);
+	UDreamWidget* Shown = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Shown"), nullptr);
 	if (!TestNotNull(TEXT("ConstructWidget returns a widget"), Shown))return false;
 	Panel->AddChild(Shown);
 	TestTrue(TEXT("An ordinary widget is switched on when added"), Shown->GetWidgetActive());
@@ -115,10 +115,10 @@ bool FDreamAddChildReorderTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamAddChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 300.0f, 300.0f);
-	UDreamWidget* A = MakeWidget(TestWorld.World, Panel, TEXT("A"), 100.0f, 40.0f);
-	UDreamWidget* B = MakeWidget(TestWorld.World, Panel, TEXT("B"), 100.0f, 40.0f);
-	UDreamWidget* C = MakeWidget(TestWorld.World, Panel, TEXT("C"), 100.0f, 40.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 300.0f, 300.0f);
+	UDreamWidget* A = MakeWidget(TestWorld.World.Get(), Panel, TEXT("A"), 100.0f, 40.0f);
+	UDreamWidget* B = MakeWidget(TestWorld.World.Get(), Panel, TEXT("B"), 100.0f, 40.0f);
+	UDreamWidget* C = MakeWidget(TestWorld.World.Get(), Panel, TEXT("C"), 100.0f, 40.0f);
 	Panel->OnRegister();
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 
@@ -160,13 +160,13 @@ bool FDreamAddChildInsertTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamAddChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 300.0f, 300.0f);
-	UDreamWidget* A = MakeWidget(TestWorld.World, Panel, TEXT("A"), 100.0f, 40.0f);
-	UDreamWidget* B = MakeWidget(TestWorld.World, Panel, TEXT("B"), 100.0f, 40.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 300.0f, 300.0f);
+	UDreamWidget* A = MakeWidget(TestWorld.World.Get(), Panel, TEXT("A"), 100.0f, 40.0f);
+	UDreamWidget* B = MakeWidget(TestWorld.World.Get(), Panel, TEXT("B"), 100.0f, 40.0f);
 	Panel->OnRegister();
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 
-	UDreamWidget* C = MakeWidget(TestWorld.World, nullptr, TEXT("C"), 100.0f, 40.0f);
+	UDreamWidget* C = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("C"), 100.0f, 40.0f);
 	C->OnRegister();
 	UDreamPanelSlot* Slot = Panel->AddChild(C, 1);
 	TestNotNull(TEXT("Adding under a panel yields a slot"), Slot);
@@ -177,7 +177,7 @@ bool FDreamAddChildInsertTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("B's sibling index follows the displacement"), B->GetSiblingIndex(), 2);
 
 	// Default index appends, like UMG.
-	UDreamWidget* D = MakeWidget(TestWorld.World, nullptr, TEXT("D"), 100.0f, 40.0f);
+	UDreamWidget* D = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("D"), 100.0f, 40.0f);
 	D->OnRegister();
 	Panel->AddChild(D);
 	TestEqual(TEXT("No index means the end"), Panel->GetChildren().IndexOfByKey(D), 3);
@@ -193,14 +193,14 @@ bool FDreamAddChildRefusalTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamAddChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* SizeBox = MakeWidget(TestWorld.World, nullptr, TEXT("SizeBox"), 300.0f, 300.0f);
-	UDreamWidget* Occupant = MakeWidget(TestWorld.World, SizeBox, TEXT("Occupant"), 100.0f, 40.0f);
+	UDreamWidget* SizeBox = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("SizeBox"), 300.0f, 300.0f);
+	UDreamWidget* Occupant = MakeWidget(TestWorld.World.Get(), SizeBox, TEXT("Occupant"), 100.0f, 40.0f);
 	SizeBox->OnRegister();
 	SizeBox->CreateNewLayoutContainer<UDreamLayoutContainerSizeBox>();
 	UDreamPanelSlot* OccupantSlot = Occupant->GetPanelSlot();
 
-	UDreamWidget* OtherPanel = MakeWidget(TestWorld.World, nullptr, TEXT("OtherPanel"), 300.0f, 300.0f);
-	UDreamWidget* Rejected = MakeWidget(TestWorld.World, OtherPanel, TEXT("Rejected"), 100.0f, 40.0f);
+	UDreamWidget* OtherPanel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("OtherPanel"), 300.0f, 300.0f);
+	UDreamWidget* Rejected = MakeWidget(TestWorld.World.Get(), OtherPanel, TEXT("Rejected"), 100.0f, 40.0f);
 	OtherPanel->OnRegister();
 	OtherPanel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 
@@ -235,9 +235,9 @@ bool FDreamAddChildNoPanelTest::RunTest(const FString& Parameters)
 	// layout container is the ordinary case, and it holds children that are positioned by their own
 	// anchors. A null return therefore means "no slots here", not "refused" -- the child really was
 	// added, and that is why the doc comment tells callers to check the parent to tell them apart.
-	UDreamWidget* Plain = MakeWidget(TestWorld.World, nullptr, TEXT("Plain"), 300.0f, 300.0f);
+	UDreamWidget* Plain = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Plain"), 300.0f, 300.0f);
 	Plain->OnRegister();
-	UDreamWidget* Child = MakeWidget(TestWorld.World, nullptr, TEXT("Child"), 100.0f, 40.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Child"), 100.0f, 40.0f);
 	Child->OnRegister();
 
 	TestNull(TEXT("No panel means no slot to return"), Plain->AddChild(Child));

@@ -51,15 +51,15 @@ bool FDreamScrollBoxDesiredSizeExcludesContentTest::RunTest(const FString& Param
 {
 	using namespace DreamScrollBoxScrollingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Outer = MakeWidget(TestWorld.World, nullptr, TEXT("Outer"), 300.0f, 400.0f);
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, Outer, TEXT("Scroll"), 200.0f, 120.0f);
+	UDreamWidget* Outer = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Outer"), 300.0f, 400.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), Outer, TEXT("Scroll"), 200.0f, 120.0f);
 	UDreamPanelLayoutBase* OuterPanel = Outer->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	TestNotNull(TEXT("Outer panel created"), OuterPanel);
 	TestNotNull(TEXT("ScrollBox created"), ScrollBox);
 	for (int32 i = 0; i < 3; i++)
 	{
-		MakeWidget(TestWorld.World, ScrollWidget, *FString::Printf(TEXT("Block%d"), i), 180.0f, 100.0f);
+		MakeWidget(TestWorld.World.Get(), ScrollWidget, *FString::Printf(TEXT("Block%d"), i), 180.0f, 100.0f);
 	}
 	Outer->OnRegister();
 	ScrollWidget->OnRegister();
@@ -88,12 +88,12 @@ bool FDreamScrollBoxScrollRangeTest::RunTest(const FString& Parameters)
 	using namespace DreamScrollBoxScrollingTestLocal;
 	FScopedGameWorld TestWorld;
 	// Viewport authored at 120 tall, content 3 x 100: scrollable range must be exactly 180.
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 120.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 120.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	TestNotNull(TEXT("ScrollBox created"), ScrollBox);
 	for (int32 i = 0; i < 3; i++)
 	{
-		MakeWidget(TestWorld.World, ScrollWidget, *FString::Printf(TEXT("Block%d"), i), 180.0f, 100.0f);
+		MakeWidget(TestWorld.World.Get(), ScrollWidget, *FString::Printf(TEXT("Block%d"), i), 180.0f, 100.0f);
 	}
 	ScrollWidget->OnRegister();
 	UDreamWidget::MarkLayoutForRebuild(ScrollWidget);
@@ -124,11 +124,11 @@ namespace DreamScrollBoxScrollingTestLocal
 
 		FScrollFixture()
 		{
-			ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 120.0f);
+			ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 120.0f);
 			ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 			for (int32 i = 0; i < 3; i++)
 			{
-				Blocks.Add(MakeWidget(TestWorld.World, ScrollWidget, *FString::Printf(TEXT("Block%d"), i), 180.0f, 100.0f));
+				Blocks.Add(MakeWidget(TestWorld.World.Get(), ScrollWidget, *FString::Printf(TEXT("Block%d"), i), 180.0f, 100.0f));
 			}
 		}
 		void Arrange()
@@ -220,7 +220,7 @@ bool FDreamScrollBoxScrollIntoViewTest::RunTest(const FString& Parameters)
 	// falls back to measuring its content -- so the content extent, and with it the target offset, is
 	// no longer 180. Pinning that number would be asserting the fixture rather than the behaviour, so
 	// what is checked is the invariant: descendant and owning child scroll to the same place.
-	UDreamWidget* Nested = MakeWidget(Fixture.TestWorld.World, Fixture.Blocks[2], TEXT("Nested"), 40.0f, 20.0f);
+	UDreamWidget* Nested = MakeWidget(Fixture.TestWorld.World.Get(), Fixture.Blocks[2], TEXT("Nested"), 40.0f, 20.0f);
 	Fixture.Arrange();
 	Fixture.ScrollBox->ScrollToStart();
 	Fixture.ScrollBox->ScrollWidgetIntoView(Fixture.Blocks[2], false);
@@ -398,9 +398,9 @@ bool FDreamScrollBoxBarFractionsTest::RunTest(const FString& Parameters)
 	// zero and its drag maths divides by it, so the clamp the sync applies is worth pinning here
 	// where it can be checked without a bar, a handle hierarchy or a pointer.
 	FScopedGameWorld TestWorld;
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 400.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 400.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
-	MakeWidget(TestWorld.World, ScrollWidget, TEXT("Small"), 180.0f, 100.0f);
+	MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("Small"), 180.0f, 100.0f);
 	ScrollWidget->OnRegister();
 	UDreamWidget::MarkLayoutForRebuild(ScrollWidget);
 	UDreamWidget::RebuildLayoutImmediately(ScrollWidget);
@@ -579,7 +579,7 @@ bool FDreamScrollBoxLinkedBarTest::RunTest(const FString& Parameters)
 
 	// The bar can sit anywhere in the hierarchy; a widget of its own is enough. The box names it through
 	// IDreamUIScrollbarInterface, so this is also the test that the control library's bar still answers.
-	UDreamWidget* BarWidget = MakeWidget(Fixture.TestWorld.World, nullptr, TEXT("Bar"), 20.0f, 120.0f);
+	UDreamWidget* BarWidget = MakeWidget(Fixture.TestWorld.World.Get(), nullptr, TEXT("Bar"), 20.0f, 120.0f);
 	ON_SCOPE_EXIT
 	{
 		BarWidget->DestroyWidget();
@@ -626,13 +626,13 @@ bool FDreamScrollBoxScrollArrangesOnlyItselfTest::RunTest(const FString& Paramet
 {
 	using namespace DreamScrollBoxScrollingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 200.0f, 120.0f);
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, Root, TEXT("Scroll"), 200.0f, 120.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 200.0f, 120.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Scroll"), 200.0f, 120.0f);
 	UDreamLayoutPassCountingOverlay* Overlay = Cast<UDreamLayoutPassCountingOverlay>(
 		Root->CreateNewLayoutContainer(UDreamLayoutPassCountingOverlay::StaticClass()));
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
@@ -644,7 +644,7 @@ bool FDreamScrollBoxScrollArrangesOnlyItselfTest::RunTest(const FString& Paramet
 	TArray<UDreamWidget*> Rows;
 	for (int32 i = 0; i < 3; i++)
 	{
-		Rows.Add(MakeWidget(TestWorld.World, ScrollWidget, *FString::Printf(TEXT("Row%d"), i), 180.0f, 100.0f));
+		Rows.Add(MakeWidget(TestWorld.World.Get(), ScrollWidget, *FString::Printf(TEXT("Row%d"), i), 180.0f, 100.0f));
 	}
 	Root->OnRegister();
 	ScrollWidget->OnRegister();
@@ -688,11 +688,11 @@ bool FDreamScrollBoxRevealMeasuresAsArrangedTest::RunTest(const FString& Paramet
 {
 	using namespace DreamScrollBoxScrollingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 120.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 120.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
-	UDreamWidget* Scaled = MakeWidget(TestWorld.World, ScrollWidget, TEXT("Scaled"), 100.0f, 50.0f);
-	UDreamWidget* Art = MakeWidget(TestWorld.World, Scaled, TEXT("Art"), 100.0f, 50.0f);
-	UDreamWidget* Target = MakeWidget(TestWorld.World, ScrollWidget, TEXT("Target"), 180.0f, 100.0f);
+	UDreamWidget* Scaled = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("Scaled"), 100.0f, 50.0f);
+	UDreamWidget* Art = MakeWidget(TestWorld.World.Get(), Scaled, TEXT("Art"), 100.0f, 50.0f);
+	UDreamWidget* Target = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("Target"), 180.0f, 100.0f);
 	UDreamLayoutContainerScaleBox* ScaleBox = Scaled->CreateNewLayoutContainer<UDreamLayoutContainerScaleBox>();
 	if (!TestNotNull(TEXT("ScrollBox created"), ScrollBox) || !TestNotNull(TEXT("Scale box created"), ScaleBox))
 	{
@@ -764,10 +764,10 @@ bool FDreamScrollBoxFillStretchesShortContentTest::RunTest(const FString& Parame
 {
 	using namespace DreamScrollBoxScrollingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 400.0f);
-	UDreamWidget* AutoRow = MakeWidget(TestWorld.World, ScrollWidget, TEXT("Auto"), 180.0f, 100.0f);
-	UDreamWidget* LightRow = MakeWidget(TestWorld.World, ScrollWidget, TEXT("FillOne"), 180.0f, 50.0f);
-	UDreamWidget* HeavyRow = MakeWidget(TestWorld.World, ScrollWidget, TEXT("FillThree"), 180.0f, 50.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 400.0f);
+	UDreamWidget* AutoRow = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("Auto"), 180.0f, 100.0f);
+	UDreamWidget* LightRow = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("FillOne"), 180.0f, 50.0f);
+	UDreamWidget* HeavyRow = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("FillThree"), 180.0f, 50.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	UDreamPanelSlot* LightSlot = LightRow->GetPanelSlot();
 	UDreamPanelSlot* HeavySlot = HeavyRow->GetPanelSlot();
@@ -816,10 +816,10 @@ bool FDreamScrollBoxOverflowingFillTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamScrollBoxScrollingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 200.0f);
-	UDreamWidget* AutoRow = MakeWidget(TestWorld.World, ScrollWidget, TEXT("Auto"), 180.0f, 300.0f);
-	UDreamWidget* LightRow = MakeWidget(TestWorld.World, ScrollWidget, TEXT("FillOne"), 180.0f, 60.0f);
-	UDreamWidget* HeavyRow = MakeWidget(TestWorld.World, ScrollWidget, TEXT("FillThree"), 180.0f, 20.0f);
+	UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 200.0f);
+	UDreamWidget* AutoRow = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("Auto"), 180.0f, 300.0f);
+	UDreamWidget* LightRow = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("FillOne"), 180.0f, 60.0f);
+	UDreamWidget* HeavyRow = MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("FillThree"), 180.0f, 20.0f);
 	UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
 	UDreamPanelSlot* LightSlot = LightRow->GetPanelSlot();
 	UDreamPanelSlot* HeavySlot = HeavyRow->GetPanelSlot();
@@ -906,9 +906,9 @@ bool FDreamScrollBoxFittingContentHoldsStillTest::RunTest(const FString& Paramet
 	using namespace DreamScrollBoxScrollingTestLocal;
 	{
 		FScopedGameWorld TestWorld;
-		UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Scroll"), 200.0f, 400.0f);
+		UDreamWidget* ScrollWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Scroll"), 200.0f, 400.0f);
 		UDreamLayoutContainerScrollBox* ScrollBox = ScrollWidget->CreateNewLayoutContainer<UDreamLayoutContainerScrollBox>();
-		MakeWidget(TestWorld.World, ScrollWidget, TEXT("Row"), 180.0f, 100.0f);
+		MakeWidget(TestWorld.World.Get(), ScrollWidget, TEXT("Row"), 180.0f, 100.0f);
 		if (!TestNotNull(TEXT("ScrollBox created"), ScrollBox))
 		{
 			ScrollWidget->DestroyWidget();

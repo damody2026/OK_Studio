@@ -66,7 +66,7 @@ namespace DreamOnDiskFixture
 		FString PackageName;
 		FString AssetName;
 		FString FileName;
-		UPackage* Package = nullptr;
+		TWeakObjectPtr<UPackage> Package;
 	};
 }
 

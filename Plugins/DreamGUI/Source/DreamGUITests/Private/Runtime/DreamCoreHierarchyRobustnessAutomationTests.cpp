@@ -74,9 +74,9 @@ bool FDreamSiblingIndexReinsertStaysInRangeTest::RunTest(const FString& Paramete
 	// COLLECTOR emptied, and producing those needs a CollectGarbage that would also sweep up whatever
 	// earlier tests in the run left behind. Garbage-but-not-yet-swept hits the same predicate through
 	// the same IsValid, one step earlier.
-	TStrongObjectPtr<UDreamWidget> Root(MakeWidget(TestWorld.World, nullptr, TEXT("Root")));
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root.Get(), TEXT("First"));
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root.Get(), TEXT("Second"));
+	TStrongObjectPtr<UDreamWidget> Root(MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root")));
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root.Get(), TEXT("First"));
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root.Get(), TEXT("Second"));
 	if (!TestEqual(TEXT("Both children attached"), Root->GetChildrenCount(), 2))
 	{
 		return false;
@@ -105,15 +105,15 @@ bool FDreamPreRegisterAttachStatesItsSiblingIndexTest::RunTest(const FString& Pa
 {
 	using namespace DreamCoreHierarchyRobustnessTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Page = MakeWidget(TestWorld.World, Root, TEXT("Page"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Page = MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"));
 
 	// The modal dim, the tooltip, the drag visual and the virtual cursor all attach this way, and all of
 	// them mean "on top". SetParentBeforeRegister appended to Children -- which IS on top, last drawn --
 	// but left SiblingIndex at INDEX_NONE, so the array and the index disagreed about the same widget.
 	// Nothing read the index until something re-sorted the parent, which a preview rebuild or an undo in
 	// the designer does routinely; then -1 sorted FIRST and the overlay went to the bottom of the stack.
-	UDreamWidget* Overlay = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Overlay = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Overlay->SetDisplayName(TEXT("Overlay"));
 	Overlay->SetParentBeforeRegister(Root);
 
@@ -144,8 +144,8 @@ bool FDreamRenderTransformFollowsAResizeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamCoreHierarchyRobustnessTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Root, TEXT("Card"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Root, TEXT("Card"), 100.0f, 50.0f);
 
 	// A render transform turns about a point resolved from the CURRENT size:
 	// GetLocalSpaceLeft() + GetWidth() * RenderTransformPivot.X. Pivot at the widget's left/bottom
@@ -184,10 +184,10 @@ bool FDreamDestroyedWidgetStopsBeingValidTest::RunTest(const FString& Parameters
 {
 	using namespace DreamCoreHierarchyRobustnessTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Doomed = MakeWidget(TestWorld.World, Root, TEXT("Doomed"));
-	UDreamWidget* Under = MakeWidget(TestWorld.World, Doomed, TEXT("Under"));
-	UDreamWidget* Survivor = MakeWidget(TestWorld.World, Root, TEXT("Survivor"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Doomed = MakeWidget(TestWorld.World.Get(), Root, TEXT("Doomed"));
+	UDreamWidget* Under = MakeWidget(TestWorld.World.Get(), Doomed, TEXT("Under"));
+	UDreamWidget* Survivor = MakeWidget(TestWorld.World.Get(), Root, TEXT("Survivor"));
 
 	// "Destroy" used to mean "unregister and detach", so IsValid() went on answering true and every
 	// IsValid check in the plugin -- all of them written to mean "is this still there" -- said yes.
@@ -217,8 +217,8 @@ bool FDreamDestroyLeavesRootedWidgetsAloneTest::RunTest(const FString& Parameter
 {
 	using namespace DreamCoreHierarchyRobustnessTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Rooted = MakeWidget(TestWorld.World, Root, TEXT("Rooted"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Rooted = MakeWidget(TestWorld.World.Get(), Root, TEXT("Rooted"));
 
 	// UObjectBaseUtility::MarkAsGarbage check()s that the object is not rooted, so the teardown has to
 	// skip those rather than assert in a build that has checks. It still unregisters them.
@@ -250,10 +250,10 @@ bool FDreamDetailsRenderOpacitySurvivesADeadChildTest::RunTest(const FString& Pa
 	//
 	// COVERAGE BOUNDARY, as in the sibling-index test above: a literal null needs a collection, so this
 	// pins the same IsValid predicate on a child that is garbage but not yet swept.
-	TStrongObjectPtr<UDreamWidget> Root(MakeWidget(TestWorld.World, nullptr, TEXT("Root")));
-	UDreamWidget* Live = MakeWidget(TestWorld.World, Root.Get(), TEXT("Live"));
-	UDreamWidget* Dead = MakeWidget(TestWorld.World, Root.Get(), TEXT("Dead"));
-	UDreamWidget* UnderDead = MakeWidget(TestWorld.World, Dead, TEXT("UnderDead"));
+	TStrongObjectPtr<UDreamWidget> Root(MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root")));
+	UDreamWidget* Live = MakeWidget(TestWorld.World.Get(), Root.Get(), TEXT("Live"));
+	UDreamWidget* Dead = MakeWidget(TestWorld.World.Get(), Root.Get(), TEXT("Dead"));
+	UDreamWidget* UnderDead = MakeWidget(TestWorld.World.Get(), Dead, TEXT("UnderDead"));
 	Dead->MarkAsGarbage();
 
 	if (!EditAsDetailsPanel<float>(*this, Root.Get(), TEXT("RenderOpacity"), 0.25f))

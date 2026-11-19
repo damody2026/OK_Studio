@@ -31,8 +31,8 @@ namespace DreamTests
 	 */
 	struct FScopedGameInstanceWorld
 	{
-		UGameInstance* GameInstance = nullptr;
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UGameInstance> GameInstance;
+		TWeakObjectPtr<UWorld> World;
 
 		FScopedGameInstanceWorld();
 		~FScopedGameInstanceWorld();

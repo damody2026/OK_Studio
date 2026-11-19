@@ -105,8 +105,8 @@ namespace DreamBlendGroupTestLocal
 
 		explicit FStage(EDreamRenderMode InMode = EDreamRenderMode::ScreenSpaceOverlay)
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-			Root = MakeWidget(World.World, nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+			Root = MakeWidget(World.World.Get(), nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			Canvas = Root->AddComponent<UDreamCanvas>();
 			if (Canvas != nullptr)
 			{
@@ -546,7 +546,7 @@ bool FDreamGroupMarkersTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	MakeBlock(World, Stage.Root, TEXT("Before"), FVector2D(40.0, 40.0), FVector2D(-200.0, 0.0));
 	UDreamWidget* Container = MakeWidget(World, Stage.Root, TEXT("Container"), FVector2D(200.0, 200.0));
 	MakeBlock(World, Container, TEXT("A"), FVector2D(60.0, 60.0), FVector2D(-20.0, 0.0));
@@ -606,7 +606,7 @@ bool FDreamGroupNestingTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Outer = MakeWidget(World, Stage.Root, TEXT("Outer"), FVector2D(300.0, 300.0));
 	MakeBlock(World, Outer, TEXT("OuterBlock"), FVector2D(280.0, 280.0));
 	UDreamWidget* Middle = MakeWidget(World, Outer, TEXT("Middle"), FVector2D(200.0, 200.0));
@@ -658,7 +658,7 @@ bool FDreamGroupClipBelowTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	// The layer below is a container: the layer its children make, which no clip level follows.
 	UDreamWidget* Base = MakeWidget(World, Stage.Root, TEXT("Base"), FVector2D(100.0, 100.0));
 	MakeBlock(World, Base, TEXT("BaseLeft"), FVector2D(60.0, 60.0), FVector2D(-40.0, 0.0));
@@ -718,7 +718,7 @@ bool FDreamGroupOfOneTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Plain = MakeBlock(World, Stage.Root, TEXT("Plain"), FVector2D(40.0, 40.0), FVector2D(-100.0, 0.0), EDreamUIBlendMode::Screen);
 	UDreamWidget* WithMaterial = MakeBlock(World, Stage.Root, TEXT("WithMaterial"), FVector2D(40.0, 40.0), FVector2D(100.0, 0.0), EDreamUIBlendMode::Screen);
 	if (UDreamTexture* Visual = Cast<UDreamTexture>(WithMaterial->GetVisual()))
@@ -754,7 +754,7 @@ bool FDreamGroupWorldSpaceTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Container = MakeWidget(World, Stage.Root, TEXT("Container"), FVector2D(200.0, 200.0));
 	MakeBlock(World, Container, TEXT("A"), FVector2D(60.0, 60.0));
 	MakeBlock(World, Container, TEXT("B"), FVector2D(60.0, 60.0), FVector2D(30.0, 0.0), EDreamUIBlendMode::Overlay);
@@ -780,7 +780,7 @@ bool FDreamGroupWorldSpaceDreamRendererTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Container = MakeWidget(World, Stage.Root, TEXT("Container"), FVector2D(200.0, 200.0));
 	MakeBlock(World, Container, TEXT("A"), FVector2D(60.0, 60.0));
 	Container->AddComponent<UDreamLayerGroup>()->SetGroupOpacity(0.5f);
@@ -803,7 +803,7 @@ bool FDreamGroupMaskTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Container = MakeWidget(World, Stage.Root, TEXT("Container"), FVector2D(200.0, 200.0));
 	UDreamWidget* Child = MakeBlock(World, Container, TEXT("Child"), FVector2D(160.0, 160.0));
 	UDreamLayerGroup* Group = Container->AddComponent<UDreamLayerGroup>();

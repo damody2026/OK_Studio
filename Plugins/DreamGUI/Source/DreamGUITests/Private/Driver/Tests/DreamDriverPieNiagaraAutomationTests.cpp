@@ -118,7 +118,7 @@ namespace DreamPieNiagaraTestLocal
 
 	bool ReadViewport(const FDreamDriverContext& InContext, TArray<FColor>& OutPixels, FIntPoint& OutSize)
 	{
-		return UDreamUICaptureLibrary::ReadViewportPixels(UDreamUICaptureLibrary::FindViewportOf(InContext.World), OutPixels, OutSize);
+		return UDreamUICaptureLibrary::ReadViewportPixels(UDreamUICaptureLibrary::FindViewportOf(InContext.World.Get()), OutPixels, OutSize);
 	}
 
 	/** The pixels of InRect whose channels moved by more than InTolerance between the pictures, and the box round them. */
@@ -189,7 +189,7 @@ namespace DreamPieNiagaraTestLocal
 	{
 		MoveToResolved(InSteps, [](FDreamDriverContext& InContext) -> TOptional<FVector2D>
 		{
-			UGameViewportClient* Client = InContext.World != nullptr ? InContext.World->GetGameViewport() : nullptr;
+			UGameViewportClient* Client = InContext.World.Get() != nullptr ? InContext.World->GetGameViewport() : nullptr;
 			const FIntPoint Size = Client != nullptr && Client->Viewport != nullptr ? Client->Viewport->GetSizeXY() : FIntPoint::ZeroValue;
 			return FVector2D(Size.X - 6, Size.Y - 6);
 		}, TEXT("the viewport's bottom right corner"));

@@ -128,8 +128,8 @@ namespace DreamEnhancedPresetAssetTestLocal
 
 		explicit FPresetHost(UClass* InPresetClass)
 		{
-			UWorld* World = Scope.World;
-			UGameInstance* GameInstance = Scope.GameInstance;
+			UWorld* World = Scope.World.Get();
+			UGameInstance* GameInstance = Scope.GameInstance.Get();
 			if (World == nullptr || GameInstance == nullptr || GEngine == nullptr)
 			{
 				WhyNot = TEXT("there is no game-instance world to spawn the preset in");
@@ -231,7 +231,7 @@ namespace DreamEnhancedPresetAssetTestLocal
 			{
 				Preset->Destroy();
 			}
-			UGameInstance* GameInstance = Scope.GameInstance;
+			UGameInstance* GameInstance = Scope.GameInstance.Get();
 			if (IsValid(LocalPlayer) && IsValid(GameInstance) && GameInstance->GetLocalPlayers().Contains(LocalPlayer))
 			{
 				GameInstance->RemoveLocalPlayer(LocalPlayer);
@@ -263,7 +263,7 @@ namespace DreamEnhancedPresetAssetTestLocal
 		 */
 		void RunFrame() const
 		{
-			UWorld* World = Scope.World;
+			UWorld* World = Scope.World.Get();
 			constexpr float DeltaSeconds = 1.0f / 60.0f;
 			const bool bPaused = World->IsPaused();
 			World->RealTimeSeconds += DeltaSeconds;
@@ -385,7 +385,7 @@ bool FDreamEnhancedPresetAssetIsTheNativeActorTest::RunTest(const FString& Param
 	// Spawned, it is exactly the native class's actor: one module, the one the class's InputModule
 	// names and by the name the class gives it, one event system, and the class's root.
 	DreamTests::FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world to spawn it in"), Scope.World))
+	if (!TestNotNull(TEXT("A world to spawn it in"), Scope.World.Get()))
 	{
 		return false;
 	}
@@ -522,7 +522,7 @@ bool FDreamEnhancedPresetAssetNavigationTest::RunTest(const FString& Parameters)
 	Host.RunFrame();
 
 	// Something focused: a widget with nothing on it to press, so the press stays navigation's trigger.
-	UWorld* World = Host.Scope.World;
+	UWorld* World = Host.Scope.World.Get();
 	UDreamWidget* Focused = NewObject<UDreamWidget>(World, NAME_None, RF_Transient);
 	Focused->OnRegister();
 	ON_SCOPE_EXIT
@@ -589,7 +589,7 @@ bool FDreamEnhancedPresetAssetPausedClickTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("The shipped action triggers while paused"), ShippedTrigger->bTriggerWhenPaused);
 	TestTrue(TEXT("...and it is the action the preset holds"), LeftAction == ShippedTrigger);
 
-	UWorld* World = Host.Scope.World;
+	UWorld* World = Host.Scope.World.Get();
 	AWorldSettings* WorldSettings = World->GetWorldSettings();
 	APlayerState* Pauser = World->SpawnActor<APlayerState>();
 	if (!TestNotNull(TEXT("The world has settings to pause"), WorldSettings) || !TestNotNull(TEXT("and a player state to pause it"), Pauser))

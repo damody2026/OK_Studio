@@ -51,9 +51,9 @@ bool FDreamEventBindingAddressesBehavioursByPositionTest::RunTest(const FString&
 {
 	using namespace DreamEventBindingTestLocal;
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("a world to host the widget"), Scope.World != nullptr))return true;
+	if (!TestTrue(TEXT("a world to host the widget"), Scope.World.Get() != nullptr))return true;
 
-	UDreamWidget* Widget = MakeWidget(Scope.World, TEXT("Host"));
+	UDreamWidget* Widget = MakeWidget(Scope.World.Get(), TEXT("Host"));
 	// TWO of the same class. With one, every key agrees and the test would pass on nothing.
 	UDreamEventBindingTestBehaviour* First = Widget->AddComponent<UDreamEventBindingTestBehaviour>();
 	UDreamEventBindingTestBehaviour* Second = Widget->AddComponent<UDreamEventBindingTestBehaviour>();
@@ -105,9 +105,9 @@ bool FDreamEventBindingCarriesAnyStructTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamEventBindingTestLocal;
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("a world to host the widget"), Scope.World != nullptr))return true;
+	if (!TestTrue(TEXT("a world to host the widget"), Scope.World.Get() != nullptr))return true;
 
-	UDreamWidget* Widget = MakeWidget(Scope.World, TEXT("Host"));
+	UDreamWidget* Widget = MakeWidget(Scope.World.Get(), TEXT("Host"));
 	UDreamEventBindingTestBehaviour* Receiver = Widget->AddComponent<UDreamEventBindingTestBehaviour>();
 	if (!TestNotNull(TEXT("a behaviour to be called"), Receiver))return true;
 

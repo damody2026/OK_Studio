@@ -77,15 +77,15 @@ namespace DreamUISourceWatcherTestLocal
 
 	struct FScopedTextBlueprint
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 
 		explicit FScopedTextBlueprint(const TCHAR* InName)
 		{
 			Package = CreatePackage(*FString::Printf(TEXT("/Temp/DreamGUITests/%s"), InName));
 			Package->AddToRoot();
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				UDreamTextUserWidget::StaticClass(), Package, FName(InName), BPTYPE_Normal,
+				UDreamTextUserWidget::StaticClass(), Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 		}
 
@@ -135,9 +135,9 @@ bool FDreamUIWatcherSavedSourceRebuildsItsClassTest::RunTest(const FString&)
 	}
 
 	FScopedTextBlueprint Fixture(TEXT("WatcherRebuild"));
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
 		|| !TestTrue(TEXT("and points at the file"),
-			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint, File.FilePath)))
+			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint.Get(), File.FilePath)))
 	{
 		return false;
 	}
@@ -152,7 +152,7 @@ bool FDreamUIWatcherSavedSourceRebuildsItsClassTest::RunTest(const FString&)
 	// the class happened to name its file.
 	TArray<UDreamWidgetBlueprint*> Found;
 	FDreamUISourceWatcher::FindBlueprintsForSource(File.FilePath, Found);
-	TestTrue(TEXT("the file finds its class"), Found.Contains(Fixture.Blueprint));
+	TestTrue(TEXT("the file finds its class"), Found.Contains(Fixture.Blueprint.Get()));
 
 	// The save.
 	if (!TestTrue(TEXT("the file was rewritten"), File.WriteWith(TEXT("Renamed"))))
@@ -191,9 +191,9 @@ bool FDreamUIWatcherOwnWriteDoesNotRebuildTest::RunTest(const FString&)
 	}
 
 	FScopedTextBlueprint Fixture(TEXT("WatcherOwnWrite"));
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
 		|| !TestTrue(TEXT("and points at the file"),
-			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint, File.FilePath)))
+			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint.Get(), File.FilePath)))
 	{
 		return false;
 	}
@@ -251,9 +251,9 @@ bool FDreamUIWatcherDeletedSourceIsReportedTest::RunTest(const FString&)
 	}
 
 	FScopedTextBlueprint Fixture(TEXT("WatcherRemoved"));
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
 		|| !TestTrue(TEXT("and points at the file"),
-			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint, File.FilePath)))
+			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint.Get(), File.FilePath)))
 	{
 		return false;
 	}
@@ -305,9 +305,9 @@ bool FDreamUIWatcherWaitsForAnEditInProgressTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Fixture(TEXT("WatcherWaitsForEdit"));
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
 		|| !TestTrue(TEXT("and points at the file"),
-			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint, File.FilePath))
+			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint.Get(), File.FilePath))
 		|| !TestNotNull(TEXT("which built the file's hierarchy"), Fixture.FindTemplate(TEXT("Title"))))
 	{
 		return false;
@@ -446,9 +446,9 @@ bool FDreamUIWatcherSkipsTextItAlreadyBuiltTest::RunTest(const FString&)
 		return false;
 	}
 	FScopedTextBlueprint Fixture(TEXT("WatcherUnchanged"));
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
 		|| !TestTrue(TEXT("and points at the file"),
-			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint, File.FilePath))
+			DreamUITextAuthoring::SetAuthoredSourcePath(Fixture.Blueprint.Get(), File.FilePath))
 		|| !TestNotNull(TEXT("which built the file's hierarchy"), Fixture.FindTemplate(TEXT("Title"))))
 	{
 		return false;
@@ -488,7 +488,7 @@ bool FDreamUIWatcherSkipsTextItAlreadyBuiltTest::RunTest(const FString&)
 	}
 
 	// Somebody else compiled the class: what the watcher remembered no longer says what the class was built from.
-	FKismetEditorUtilities::CompileBlueprint(Fixture.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+	FKismetEditorUtilities::CompileBlueprint(Fixture.Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 	UDreamWidget* Recompiled = Fixture.FindTemplate(TEXT("Renamed"));
 	if (!TestNotNull(TEXT("a manual compile rebuilt the hierarchy"), Recompiled))
 	{
@@ -531,8 +531,8 @@ bool FDreamUIWatcherCutsUndoOnlyWhereItReachesTheDocumentTest::RunTest(const FSt
 		return false;
 	}
 	FScopedTextBlueprint Fixture(*Name);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
-		|| !TestTrue(TEXT("and built from the file"), AssignSourceWithoutTransaction(Fixture.Blueprint, File.FilePath))
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
+		|| !TestTrue(TEXT("and built from the file"), AssignSourceWithoutTransaction(Fixture.Blueprint.Get(), File.FilePath))
 		|| !TestNotNull(TEXT("with its hierarchy"), Fixture.FindTemplate(TEXT("Title"))))
 	{
 		return false;
@@ -609,8 +609,8 @@ bool FDreamUIWatcherKeepsDesignerEditsAnOutsideSaveReplacesTest::RunTest(const F
 		return false;
 	}
 	FScopedTextBlueprint Fixture(*Name);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
-		|| !TestTrue(TEXT("and built from the file"), AssignSourceWithoutTransaction(Fixture.Blueprint, File.FilePath)))
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
+		|| !TestTrue(TEXT("and built from the file"), AssignSourceWithoutTransaction(Fixture.Blueprint.Get(), File.FilePath)))
 	{
 		return false;
 	}
@@ -808,8 +808,8 @@ bool FDreamUIWatcherBridgeCompileLeavesAQueuedFileToTheQueueTest::RunTest(const 
 		return false;
 	}
 	FScopedTextBlueprint Fixture(*Name);
-	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint)
-		|| !TestTrue(TEXT("and built from the file"), AssignSourceWithoutTransaction(Fixture.Blueprint, File.FilePath))
+	if (!TestNotNull(TEXT("the Blueprint was created"), Fixture.Blueprint.Get())
+		|| !TestTrue(TEXT("and built from the file"), AssignSourceWithoutTransaction(Fixture.Blueprint.Get(), File.FilePath))
 		|| !TestNotNull(TEXT("with its hierarchy"), Fixture.FindTemplate(TEXT("Title"))))
 	{
 		return false;

@@ -77,7 +77,7 @@ bool FDreamActionBarRefreshTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	UDreamWidget* BarWidget = MakeWidget(TestWorld.World, nullptr);
+	UDreamWidget* BarWidget = MakeWidget(TestWorld.World.Get(), nullptr);
 	UDreamCountingActionBar* Bar = BarWidget->AddComponent<UDreamCountingActionBar>();
 	Bar->ForceEnable();
 	const int32 AfterEnable = Bar->RebuildCount;
@@ -114,12 +114,12 @@ bool FDreamActionBarEntryTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamActionBarTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr);
-	UDreamWidget* LabelWidget = MakeWidget(TestWorld.World, Root);
-	UDreamWidget* KeyWidget = MakeWidget(TestWorld.World, Root);
-	UDreamWidget* IconWidget = MakeWidget(TestWorld.World, Root);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr);
+	UDreamWidget* LabelWidget = MakeWidget(TestWorld.World.Get(), Root);
+	UDreamWidget* KeyWidget = MakeWidget(TestWorld.World.Get(), Root);
+	UDreamWidget* IconWidget = MakeWidget(TestWorld.World.Get(), Root);
 
 	UDreamText* Label = LabelWidget->CreateNewVisual<UDreamText>();
 	Label->SetFont(Font);
@@ -144,7 +144,7 @@ bool FDreamActionBarEntryTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("...while the empty glyph is not"), IconWidget->GetVisibility(), EDreamWidgetVisibility::Collapsed);
 
 	// With a glyph the two swap. Printing the key's name beside its own picture says it twice.
-	Binding.Icon = NewObject<UTexture2D>(TestWorld.World);
+	Binding.Icon = NewObject<UTexture2D>(TestWorld.World.Get());
 	Entry->SetBinding(Binding);
 	TestEqual(TEXT("The glyph is shown"), IconWidget->GetVisibility(), EDreamWidgetVisibility::Visible);
 	TestEqual(TEXT("...and the key name is not"), KeyWidget->GetVisibility(), EDreamWidgetVisibility::Collapsed);

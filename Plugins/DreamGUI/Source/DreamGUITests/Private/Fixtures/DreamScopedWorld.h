@@ -25,7 +25,7 @@ namespace DreamTests
 	 */
 	struct FScopedGameWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 
 		explicit FScopedGameWorld(EWorldType::Type InType = EWorldType::Game);
 		~FScopedGameWorld();

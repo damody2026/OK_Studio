@@ -158,14 +158,14 @@ bool FDreamWorldRaycastHitsWorldCanvasesTest::RunTest(const FString& Parameters)
 	using namespace DreamWorldRaycastTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World.Get()))
 	{
 		return false;
 	}
 	UDreamCanvas* NearCanvas = nullptr;
 	UDreamCanvas* FarCanvas = nullptr;
-	UDreamWidget* Near = MakeWorldPanel(Scope.World, TEXT("Near"), FVector(300.0, 0.0, 0.0), 200.0f, NearCanvas);
-	UDreamWidget* Far = MakeWorldPanel(Scope.World, TEXT("Far"), FVector(800.0, 0.0, 0.0), 200.0f, FarCanvas);
+	UDreamWidget* Near = MakeWorldPanel(Scope.World.Get(), TEXT("Near"), FVector(300.0, 0.0, 0.0), 200.0f, NearCanvas);
+	UDreamWidget* Far = MakeWorldPanel(Scope.World.Get(), TEXT("Far"), FVector(800.0, 0.0, 0.0), 200.0f, FarCanvas);
 	if (!TestNotNull(TEXT("The near panel"), Near) || !TestNotNull(TEXT("The far panel"), Far))
 	{
 		return false;
@@ -178,7 +178,7 @@ bool FDreamWorldRaycastHitsWorldCanvasesTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World.Get());
 	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
 	if (!TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
 	{
@@ -213,15 +213,15 @@ bool FDreamWorldRaycastTraceChannelFiltersTest::RunTest(const FString& Parameter
 	using namespace DreamWorldRaycastTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World.Get()))
 	{
 		return false;
 	}
 	UDreamCanvas* NearCanvas = nullptr;
 	UDreamCanvas* FarCanvas = nullptr;
-	UDreamWidget* Near = MakeWorldPanel(Scope.World, TEXT("Near"), FVector(300.0, 0.0, 0.0), 200.0f, NearCanvas);
-	UDreamWidget* Far = MakeWorldPanel(Scope.World, TEXT("Far"), FVector(800.0, 0.0, 0.0), 200.0f, FarCanvas);
-	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamWidget* Near = MakeWorldPanel(Scope.World.Get(), TEXT("Near"), FVector(300.0, 0.0, 0.0), 200.0f, NearCanvas);
+	UDreamWidget* Far = MakeWorldPanel(Scope.World.Get(), TEXT("Far"), FVector(800.0, 0.0, 0.0), 200.0f, FarCanvas);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World.Get());
 	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
 	if (!TestNotNull(TEXT("The near panel"), Near) || !TestNotNull(TEXT("The far panel"), Far)
 		|| !TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
@@ -266,13 +266,13 @@ bool FDreamWorldRaycastWorldBlockerOccludesTest::RunTest(const FString& Paramete
 	using namespace DreamWorldRaycastTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World.Get()))
 	{
 		return false;
 	}
 	UDreamCanvas* PanelCanvas = nullptr;
-	UDreamWidget* Panel = MakeWorldPanel(Scope.World, TEXT("Panel"), FVector(300.0, 0.0, 0.0), 200.0f, PanelCanvas);
-	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamWidget* Panel = MakeWorldPanel(Scope.World.Get(), TEXT("Panel"), FVector(300.0, 0.0, 0.0), 200.0f, PanelCanvas);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World.Get());
 	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
 	if (!TestNotNull(TEXT("A panel"), Panel) || !TestNotNull(TEXT("A raycaster"), Raycaster)
 		|| !TestNotNull(TEXT("A pointer"), EventData))
@@ -282,7 +282,7 @@ bool FDreamWorldRaycastWorldBlockerOccludesTest::RunTest(const FString& Paramete
 	// A box 150 units down the ray, half a hundred across: its near face is at 100, in front of the
 	// panel at 300.
 	if (!TestNotNull(TEXT("A blocker between the pointer and the panel"),
-		MakeBlocker(Scope.World, FVector(150.0, 0.0, 0.0))))
+		MakeBlocker(Scope.World.Get(), FVector(150.0, 0.0, 0.0))))
 	{
 		return false;
 	}
@@ -315,7 +315,7 @@ bool FDreamWorldRaycastWorldBlockerOccludesTest::RunTest(const FString& Paramete
 
 	// An overlap-only volume is not a wall. A multi trace would have reported it as one, which is how
 	// a trigger meant to detect a player walking through it would have started eating clicks.
-	UBoxComponent* Overlapper = MakeBlocker(Scope.World, FVector(50.0, 0.0, 0.0), 10.0f);
+	UBoxComponent* Overlapper = MakeBlocker(Scope.World.Get(), FVector(50.0, 0.0, 0.0), 10.0f);
 	if (TestNotNull(TEXT("An overlap-only volume in front of everything"), Overlapper))
 	{
 		Overlapper->SetCollisionResponseToAllChannels(ECR_Overlap);
@@ -340,16 +340,16 @@ bool FDreamWorldRaycastEnsureInteractionIsIdempotentTest::RunTest(const FString&
 	using namespace DreamWorldRaycastTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world"), Scope.World))
+	if (!TestNotNull(TEXT("A world"), Scope.World.Get()))
 	{
 		return false;
 	}
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World.Get());
 	if (!TestNotNull(TEXT("An input subsystem for it"), InputSubsystem))
 	{
 		return false;
 	}
-	if (!TestNotNull(TEXT("An event system this player already has"), PlaceEventSystem(Scope.World, 0)))
+	if (!TestNotNull(TEXT("An event system this player already has"), PlaceEventSystem(Scope.World.Get(), 0)))
 	{
 		return false;
 	}
@@ -382,7 +382,7 @@ bool FDreamWorldRaycastEnsureInteractionIsIdempotentTest::RunTest(const FString&
 	// Their event system is placed by hand for the same reason as the first player's, and because a
 	// non-first player never gets one spawned for them in any case -- two copies of the default actor
 	// would carry the same index and make each player read the other's input.
-	PlaceEventSystem(Scope.World, 1);
+	PlaceEventSystem(Scope.World.Get(), 1);
 	InputSubsystem->EnsureInteractionForPlayer(1, EDreamInteractionKind::World);
 	AActor* SecondHost = InputSubsystem->GetInteractionHost(1);
 	if (TestNotNull(TEXT("A host actor for player 1"), SecondHost))
@@ -404,16 +404,16 @@ bool FDreamWorldRaycastAuthoredRaycasterWinsTest::RunTest(const FString& Paramet
 	using namespace DreamWorldRaycastTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world"), Scope.World))
+	if (!TestNotNull(TEXT("A world"), Scope.World.Get()))
 	{
 		return false;
 	}
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World.Get());
 	if (!TestNotNull(TEXT("An input subsystem for it"), InputSubsystem))
 	{
 		return false;
 	}
-	if (!TestNotNull(TEXT("An event system this player already has"), PlaceEventSystem(Scope.World, 0)))
+	if (!TestNotNull(TEXT("An event system this player already has"), PlaceEventSystem(Scope.World.Get(), 0)))
 	{
 		return false;
 	}
@@ -463,7 +463,7 @@ bool FDreamWorldRaycastParallelTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWorldRaycastTestLocal;
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World.Get()))
 	{
 		return false;
 	}
@@ -473,12 +473,12 @@ bool FDreamWorldRaycastParallelTest::RunTest(const FString& Parameters)
 	{
 		UDreamCanvas* Canvas = nullptr;
 		const FVector Location(300.0 + 20.0 * Index, Index % 2 == 0 ? 0.0 : 5000.0, 0.0);
-		if (!TestNotNull(TEXT("A panel"), MakeWorldPanel(Scope.World, FString::Printf(TEXT("Panel%d"), Index), Location, 200.0f, Canvas)))
+		if (!TestNotNull(TEXT("A panel"), MakeWorldPanel(Scope.World.Get(), FString::Printf(TEXT("Panel%d"), Index), Location, 200.0f, Canvas)))
 		{
 			return false;
 		}
 	}
-	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World.Get());
 	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
 	if (!TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
 	{
@@ -517,12 +517,12 @@ bool FDreamRaycastParallelVisualsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWorldRaycastTestLocal;
 	FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world to trace in"), Scope.World))
+	if (!TestNotNull(TEXT("A world to trace in"), Scope.World.Get()))
 	{
 		return false;
 	}
 	UDreamCanvas* Canvas = nullptr;
-	UDreamWidget* Panel = MakeWorldPanel(Scope.World, TEXT("Panel"), FVector(300.0, 0.0, 0.0), 400.0f, Canvas);
+	UDreamWidget* Panel = MakeWorldPanel(Scope.World.Get(), TEXT("Panel"), FVector(300.0, 0.0, 0.0), 400.0f, Canvas);
 	if (!TestNotNull(TEXT("A panel"), Panel))
 	{
 		return false;
@@ -532,8 +532,8 @@ bool FDreamRaycastParallelVisualsTest::RunTest(const FString& Parameters)
 	TArray<UDreamWidget*> Cards;
 	for (int32 Index = 0; Index < 25; ++Index)
 	{
-		UDreamWidget* Card = UDreamUIBPLibrary::ConstructWidget(Scope.World, FString::Printf(TEXT("Card%d"), Index), UDreamVisualEmpty::StaticClass());
-		UDreamWidget* Face = UDreamUIBPLibrary::ConstructWidget(Scope.World, FString::Printf(TEXT("Face%d"), Index), UDreamVisualEmpty::StaticClass());
+		UDreamWidget* Card = UDreamUIBPLibrary::ConstructWidget(Scope.World.Get(), FString::Printf(TEXT("Card%d"), Index), UDreamVisualEmpty::StaticClass());
+		UDreamWidget* Face = UDreamUIBPLibrary::ConstructWidget(Scope.World.Get(), FString::Printf(TEXT("Face%d"), Index), UDreamVisualEmpty::StaticClass());
 		if (!TestTrue(TEXT("A card and its face"), Card != nullptr && Face != nullptr))
 		{
 			return false;
@@ -547,7 +547,7 @@ bool FDreamRaycastParallelVisualsTest::RunTest(const FString& Parameters)
 		Face->TrySetParent(Card, false);
 		Cards.Add(Card);
 	}
-	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World);
+	UDreamWorldSpaceRaycasterFixedRay* Raycaster = MakeFixedRayRaycaster(Scope.World.Get());
 	UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>();
 	if (!TestNotNull(TEXT("A raycaster"), Raycaster) || !TestNotNull(TEXT("A pointer"), EventData))
 	{

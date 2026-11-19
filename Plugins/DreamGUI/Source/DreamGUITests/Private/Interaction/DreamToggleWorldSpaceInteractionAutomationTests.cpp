@@ -106,7 +106,7 @@ bool FDreamToggleWorldHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel, 80.0);
+	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel.Get(), 80.0);
 	if (!TestTrue(TEXT("Three toggles with boxes can be made on the panel"), Row.IsReady()))
 	{
 		return false;
@@ -169,7 +169,7 @@ bool FDreamToggleWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel, 80.0);
+	const FToggleRow Row = MakeToggleRow(Rig, Stage.Panel.Get(), 80.0);
 	if (!TestTrue(TEXT("Three toggles with boxes can be made on the panel"), Row.IsReady())
 		|| !TestTrue(TEXT("The focus goes onto the first toggle"), PutFocusOn(Rig, Row.Toggles[0]->BoxNode.Get())))
 	{

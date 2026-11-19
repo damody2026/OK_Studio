@@ -179,7 +179,7 @@ namespace DreamTests
 			State->bAlive = false;
 			return State;
 		}
-		State->Driver = FDreamDesignerDriver::Open(State->Asset.Blueprint);
+		State->Driver = FDreamDesignerDriver::Open(State->Asset.Blueprint.Get());
 		if (!State->Driver.IsValid())
 		{
 			InTest.AddError(TEXT("The designer did not open, or opened without a viewport (see LogDreamDesignerDriver)."));

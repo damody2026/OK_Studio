@@ -89,7 +89,7 @@ bool FDreamLifecyclePieRecompileTest::RunTest(const FString& Parameters)
 		.Then([this, Panel, Placed](FDreamDriverContext& InContext)
 		{
 			UDreamGUIEditorSubsystem* EditorSubsystem = UDreamGUIEditorSubsystem::Get();
-			UDreamScreenUISubsystem* Screen = InContext.World != nullptr ? InContext.World->GetSubsystem<UDreamScreenUISubsystem>() : nullptr;
+			UDreamScreenUISubsystem* Screen = InContext.World.Get() != nullptr ? InContext.World->GetSubsystem<UDreamScreenUISubsystem>() : nullptr;
 			if (!TestNotNull(TEXT("the editor's DreamGUI subsystem"), EditorSubsystem)
 				|| !TestNotNull(TEXT("the play world's screen"), Screen)
 				|| !TestTrue(TEXT("the panel was placed in the play world"), Placed->Host.IsValid())
@@ -104,7 +104,7 @@ bool FDreamLifecyclePieRecompileTest::RunTest(const FString& Parameters)
 				const TWeakObjectPtr<UDreamWidget> TreeBefore = Placed->Host->GetLoadedWidget();
 				const TWeakObjectPtr<UDreamWidget> PageBefore = Screen->GetUI(PageName);
 
-				FKismetEditorUtilities::CompileBlueprint(Panel->Blueprint,
+				FKismetEditorUtilities::CompileBlueprint(Panel->Blueprint.Get(),
 					bCollectInCompile ? EBlueprintCompileOptions::None : EBlueprintCompileOptions::SkipGarbageCollection);
 
 				TestFalse(FString::Printf(TEXT("%s: the compile is over"), *Round), EditorSubsystem->IsRecompiling());
@@ -125,7 +125,7 @@ bool FDreamLifecyclePieRecompileTest::RunTest(const FString& Parameters)
 					Page != nullptr && Page->GetClass() == Panel->GetClass() && Page->HasRegistered());
 				TestTrue(FString::Printf(TEXT("%s: and showing, as it was"), *Round), Screen->IsUIShowing(PageName));
 				TestEqual(FString::Printf(TEXT("%s: nothing registered in the play world is of a retired class"), *Round),
-					CountStaleRegistered(InContext.World), 0);
+					CountStaleRegistered(InContext.World.Get()), 0);
 			}
 			Screen->RemoveUI(PageName);
 		})

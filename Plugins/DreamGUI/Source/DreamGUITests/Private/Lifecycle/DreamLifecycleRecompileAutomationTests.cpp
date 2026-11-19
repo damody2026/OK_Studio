@@ -105,16 +105,16 @@ namespace DreamLifecycleRecompileTestLocal
 		// A level with two placed panels, one of which has had an instance of the class added inside its
 		// tree at run time, and a tree nobody hosts.
 		FScopedWorld Level(EWorldType::Editor);
-		ADreamWorldWidgetActor* FirstActor = PlacePanel(Level.World, PanelClass);
-		ADreamWorldWidgetActor* SecondActor = PlacePanel(Level.World, PanelClass);
+		ADreamWorldWidgetActor* FirstActor = PlacePanel(Level.World.Get(), PanelClass);
+		ADreamWorldWidgetActor* SecondActor = PlacePanel(Level.World.Get(), PanelClass);
 		if (!InTest.TestNotNull(TEXT("the first panel was placed"), FirstActor) || !InTest.TestNotNull(TEXT("and the second"), SecondActor))
 		{
 			return false;
 		}
 		UDreamWorldWidgetComponent* FirstHost = FirstActor->GetWidgetComponent();
 		UDreamWorldWidgetComponent* SecondHost = SecondActor->GetWidgetComponent();
-		const TWeakObjectPtr<UDreamWidget> Nested = CreateDreamWidget(Level.World, PanelClass, FirstHost->GetLoadedWidget());
-		const TWeakObjectPtr<UDreamWidget> Free = CreateDreamWidget(Level.World, PanelClass);
+		const TWeakObjectPtr<UDreamWidget> Nested = CreateDreamWidget(Level.World.Get(), PanelClass, FirstHost->GetLoadedWidget());
+		const TWeakObjectPtr<UDreamWidget> Free = CreateDreamWidget(Level.World.Get(), PanelClass);
 		InTest.TestTrue(TEXT("an instance was added inside the first panel's tree"), Nested.IsValid() && Nested->HasRegistered());
 		InTest.TestTrue(TEXT("and one made with no host"), Free.IsValid() && Free->HasRegistered());
 
@@ -143,7 +143,7 @@ namespace DreamLifecycleRecompileTestLocal
 			const TWeakObjectPtr<UDreamWidget> BottomBefore = Screen->GetUI(TEXT("Bottom"));
 			const TWeakObjectPtr<UDreamWidget> TopBefore = Screen->GetUI(TEXT("Top"));
 
-			FKismetEditorUtilities::CompileBlueprint(Panel.Blueprint,
+			FKismetEditorUtilities::CompileBlueprint(Panel.Blueprint.Get(),
 				bCollectInCompile ? EBlueprintCompileOptions::None : EBlueprintCompileOptions::SkipGarbageCollection);
 
 			InTest.TestFalse(FString::Printf(TEXT("%s: the compile is over"), *Round), EditorSubsystem->IsRecompiling());
@@ -166,7 +166,7 @@ namespace DreamLifecycleRecompileTestLocal
 					Rebuilt != nullptr && Rebuilt->GetClass() == PanelClass && Rebuilt->HasRegistered()
 					&& Rebuilt != FirstBefore.Get() && Rebuilt != SecondBefore.Get());
 				InTest.TestEqual(FString::Printf(TEXT("%s: %s holds exactly one tree"), *Round, *Host->GetOwner()->GetName()),
-					CountTreesHeldBy(Level.World, Host), 1);
+					CountTreesHeldBy(Level.World.Get(), Host), 1);
 			}
 			UDreamWidget* Bottom = Screen->GetUI(TEXT("Bottom"));
 			UDreamWidget* Top = Screen->GetUI(TEXT("Top"));
@@ -177,12 +177,12 @@ namespace DreamLifecycleRecompileTestLocal
 			InTest.TestTrue(FString::Printf(TEXT("%s: the top one showing, the covered one not"), *Round),
 				Screen->IsUIShowing(TEXT("Top")) && !Screen->IsUIShowing(TEXT("Bottom")));
 			InTest.TestEqual(FString::Printf(TEXT("%s: nothing registered in the level is of a retired class"), *Round),
-				JoinLines(FindStaleRegistered(Level.World)), FString(TEXT("none")));
+				JoinLines(FindStaleRegistered(Level.World.Get())), FString(TEXT("none")));
 			InTest.TestEqual(FString::Printf(TEXT("%s: nor in the game"), *Round),
-				JoinLines(FindStaleRegistered(Game.World)), FString(TEXT("none")));
+				JoinLines(FindStaleRegistered(Game.World.Get())), FString(TEXT("none")));
 
-			DrawFrames(Level.World, 2);
-			DrawFrames(Game.World, 2);
+			DrawFrames(Level.World.Get(), 2);
+			DrawFrames(Game.World.Get(), 2);
 			Settle(bInFlush);
 			InTest.TestTrue(FString::Printf(TEXT("%s: a collection leaves the rebuilt trees with their hosts"), *Round),
 				IsValid(FirstHost->GetLoadedWidget()) && IsValid(SecondHost->GetLoadedWidget()));

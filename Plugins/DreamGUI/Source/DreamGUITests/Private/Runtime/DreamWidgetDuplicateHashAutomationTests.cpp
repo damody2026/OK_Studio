@@ -59,7 +59,7 @@ bool FDreamWidgetDuplicateNestedHashKeysTest::RunTest(const FString& Parameters)
 	// Public duplication leaves the copy detached and lets callers attach it. The existing copying
 	// policy preserves map/set key identities (including direct widget keys), while plain values
 	// point into the new subtree. Wrapping that same key in a struct must not change this policy.
-	TStrongObjectPtr<UDreamWidgetTree> CopyTree(NewObject<UDreamWidgetTree>(TestWorld.World));
+	TStrongObjectPtr<UDreamWidgetTree> CopyTree(NewObject<UDreamWidgetTree>(TestWorld.World.Get()));
 	CopyTree->RootWidget = UDreamWidget::DuplicateSubtree(CopyTree.Get(), Root);
 	UDreamWidget* CopyRoot = CopyTree->RootWidget;
 	if (!TestNotNull(TEXT("the public subtree duplication produced a root"), CopyRoot)) return false;
@@ -71,7 +71,7 @@ bool FDreamWidgetDuplicateNestedHashKeysTest::RunTest(const FString& Parameters)
 
 	// The generated-class path independently defines the same key policy. This control rules out
 	// expecting a different semantic for DuplicateSubtree merely because the key is a struct.
-	TStrongObjectPtr<UDreamUserWidget> Instance(NewObject<UDreamUserWidget>(TestWorld.World));
+	TStrongObjectPtr<UDreamUserWidget> Instance(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(Instance.Get(), Instance->GetClass(), SourceTree.Get());
 	UDreamWidgetTree* InstanceTree = Instance->GetWidgetTree();
 	UDreamWidget* InstanceRoot = InstanceTree != nullptr ? InstanceTree->FindWidgetByVariableName(TEXT("Root")) : nullptr;

@@ -50,10 +50,10 @@ bool FDreamPanelAnswersTheChildQuestionsItsWidgetAnswersTest::RunTest(const FStr
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 30.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 80.0f, 30.0f);
-	UDreamWidget* Stranger = MakeWidget(TestWorld.World, nullptr, TEXT("Stranger"), 10.0f, 10.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 30.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 80.0f, 30.0f);
+	UDreamWidget* Stranger = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Stranger"), 10.0f, 10.0f);
 	UDreamLayoutContainerVerticalBox* Box = Root->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	if (!TestNotNull(TEXT("Vertical box created"), Box))
 	{
@@ -93,11 +93,11 @@ bool FDreamPanelReplaceChildAtKeepsThePlaceTest::RunTest(const FString& Paramete
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 30.0f);
-	UDreamWidget* Middle = MakeWidget(TestWorld.World, Root, TEXT("Middle"), 80.0f, 30.0f);
-	UDreamWidget* Last = MakeWidget(TestWorld.World, Root, TEXT("Last"), 80.0f, 30.0f);
-	UDreamWidget* Replacement = MakeWidget(TestWorld.World, nullptr, TEXT("Replacement"), 80.0f, 30.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 30.0f);
+	UDreamWidget* Middle = MakeWidget(TestWorld.World.Get(), Root, TEXT("Middle"), 80.0f, 30.0f);
+	UDreamWidget* Last = MakeWidget(TestWorld.World.Get(), Root, TEXT("Last"), 80.0f, 30.0f);
+	UDreamWidget* Replacement = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Replacement"), 80.0f, 30.0f);
 	UDreamLayoutContainerOverlay* Overlay = Root->CreateNewLayoutContainer<UDreamLayoutContainerOverlay>();
 	if (!TestNotNull(TEXT("Overlay created"), Overlay))
 	{
@@ -128,8 +128,8 @@ bool FDreamContentWidgetHandsBackItsChildsSlotTest::RunTest(const FString& Param
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 80.0f, 30.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 80.0f, 30.0f);
 	if (!TestNotNull(TEXT("Size box created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerSizeBox>()))
 	{
 		return false;
@@ -157,16 +157,16 @@ bool FDreamWrapBoxVerticalOrientationTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 60.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 80.0f, 60.0f);
-	UDreamWidget* Third = MakeWidget(TestWorld.World, Root, TEXT("Third"), 80.0f, 60.0f);
-	UDreamWidget* Fourth = MakeWidget(TestWorld.World, Root, TEXT("Fourth"), 80.0f, 60.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 60.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 80.0f, 60.0f);
+	UDreamWidget* Third = MakeWidget(TestWorld.World.Get(), Root, TEXT("Third"), 80.0f, 60.0f);
+	UDreamWidget* Fourth = MakeWidget(TestWorld.World.Get(), Root, TEXT("Fourth"), 80.0f, 60.0f);
 	UDreamLayoutContainerWrapBox* Box = Root->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>();
 	if (!TestNotNull(TEXT("Wrap box created"), Box))
 	{
@@ -212,14 +212,14 @@ bool FDreamWrapBoxLineAlignmentTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 30.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 80.0f, 30.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 30.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 80.0f, 30.0f);
 	UDreamLayoutContainerWrapBox* Box = Root->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>();
 	if (!TestNotNull(TEXT("Wrap box created"), Box))
 	{
@@ -258,13 +258,13 @@ bool FDreamUniformGridSlotPaddingTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* Cell = MakeWidget(TestWorld.World, Root, TEXT("Cell"), 80.0f, 30.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* Cell = MakeWidget(TestWorld.World.Get(), Root, TEXT("Cell"), 80.0f, 30.0f);
 	UDreamLayoutContainerUniformGridPanel* Grid = Root->CreateNewLayoutContainer<UDreamLayoutContainerUniformGridPanel>();
 	if (!TestNotNull(TEXT("Uniform grid created"), Grid))
 	{
@@ -295,8 +295,8 @@ bool FDreamScaleBoxStretchDirectionTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 	UDreamLayoutContainerScaleBox* ScaleBox = Root->CreateNewLayoutContainer<UDreamLayoutContainerScaleBox>();
 	if (!TestNotNull(TEXT("Scale box created"), ScaleBox))
 	{
@@ -347,15 +347,15 @@ bool FDreamScaleBoxStretchDirectionMeasureTest::RunTest(const FString& Parameter
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 600.0f);
-	UDreamWidget* BoxWidget = MakeWidget(TestWorld.World, Root, TEXT("ScaleBox"), 50.0f, 50.0f);
-	UDreamWidget* Art = MakeWidget(TestWorld.World, BoxWidget, TEXT("Art"), 100.0f, 50.0f);
-	UDreamWidget* Below = MakeWidget(TestWorld.World, Root, TEXT("Below"), 100.0f, 30.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 600.0f);
+	UDreamWidget* BoxWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("ScaleBox"), 50.0f, 50.0f);
+	UDreamWidget* Art = MakeWidget(TestWorld.World.Get(), BoxWidget, TEXT("Art"), 100.0f, 50.0f);
+	UDreamWidget* Below = MakeWidget(TestWorld.World.Get(), Root, TEXT("Below"), 100.0f, 30.0f);
 	UDreamLayoutContainerScaleBox* ScaleBox = BoxWidget->CreateNewLayoutContainer<UDreamLayoutContainerScaleBox>();
 	if (!TestNotNull(TEXT("Scale box created"), ScaleBox)
 		|| !TestNotNull(TEXT("Column created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>()))
@@ -406,7 +406,7 @@ bool FDreamGridColumnsIndependentOfChildOrderTest::RunTest(const FString& Parame
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
@@ -417,20 +417,20 @@ bool FDreamGridColumnsIndependentOfChildOrderTest::RunTest(const FString& Parame
 	for (const bool bSpanningFirst : { true, false })
 	{
 		const FString Order = bSpanningFirst ? TEXT("spanning child first") : TEXT("spanning child second");
-		UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 200.0f);
+		UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 200.0f);
 		UDreamWidget* Spanning = nullptr;
 		UDreamWidget* First = nullptr;
 		if (bSpanningFirst)
 		{
-			Spanning = MakeWidget(TestWorld.World, Root, TEXT("Spanning"), 200.0f, 40.0f);
-			First = MakeWidget(TestWorld.World, Root, TEXT("First"), 150.0f, 40.0f);
+			Spanning = MakeWidget(TestWorld.World.Get(), Root, TEXT("Spanning"), 200.0f, 40.0f);
+			First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 150.0f, 40.0f);
 		}
 		else
 		{
-			First = MakeWidget(TestWorld.World, Root, TEXT("First"), 150.0f, 40.0f);
-			Spanning = MakeWidget(TestWorld.World, Root, TEXT("Spanning"), 200.0f, 40.0f);
+			First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 150.0f, 40.0f);
+			Spanning = MakeWidget(TestWorld.World.Get(), Root, TEXT("Spanning"), 200.0f, 40.0f);
 		}
-		UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 20.0f, 40.0f);
+		UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 20.0f, 40.0f);
 		if (!TestNotNull(*FString::Printf(TEXT("%s: grid created"), *Order), Root->CreateNewLayoutContainer<UDreamLayoutContainerGridPanel>()))
 		{
 			Root->DestroyWidget();
@@ -509,13 +509,13 @@ bool FDreamSizeBoxAspectRatioArrangesContentTest::RunTest(const FString& Paramet
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 200.0f, 100.0f);
-	UDreamWidget* Content = MakeWidget(TestWorld.World, Root, TEXT("Content"), 40.0f, 20.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 200.0f, 100.0f);
+	UDreamWidget* Content = MakeWidget(TestWorld.World.Get(), Root, TEXT("Content"), 40.0f, 20.0f);
 	UDreamLayoutContainerSizeBox* Box = Root->CreateNewLayoutContainer<UDreamLayoutContainerSizeBox>();
 	if (!TestNotNull(TEXT("Size box created"), Box))
 	{
@@ -553,7 +553,7 @@ bool FDreamSizeBoxPerAxisAccessorsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 200.0f, 100.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 200.0f, 100.0f);
 	UDreamLayoutContainerSizeBox* Box = Root->CreateNewLayoutContainer<UDreamLayoutContainerSizeBox>();
 	if (!TestNotNull(TEXT("Size box created"), Box))
 	{
@@ -599,7 +599,7 @@ bool FDreamGridFillPerTrackTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
 	UDreamLayoutContainerGridPanel* Grid = Root->CreateNewLayoutContainer<UDreamLayoutContainerGridPanel>();
 	if (!TestNotNull(TEXT("Grid panel created"), Grid))
 	{
@@ -637,7 +637,7 @@ bool FDreamSafeZoneSidesToPadTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
 	UDreamLayoutContainerSafeZone* Zone = Root->CreateNewLayoutContainer<UDreamLayoutContainerSafeZone>();
 	if (!TestNotNull(TEXT("Safe zone created"), Zone))
 	{
@@ -703,7 +703,7 @@ bool FDreamSafeZoneScalesThePlatformMarginTest::RunTest(const FString& Parameter
 	// A 2560 x 1440 screen under a canvas that scales a 1280 x 720 reference resolution up to it: every unit of the
 	// canvas is two pixels.
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 100.0f, 100.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 100.0f, 100.0f);
 	UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("A canvas on the root"), Canvas))
 	{
@@ -722,8 +722,8 @@ bool FDreamSafeZoneScalesThePlatformMarginTest::RunTest(const FString& Parameter
 		Root->DestroyWidget();
 		return false;
 	}
-	UDreamWidget* Plain = MakeWidget(TestWorld.World, Root, TEXT("Plain"), 300.0f, 200.0f);
-	UDreamWidget* Halved = MakeWidget(TestWorld.World, Root, TEXT("Halved"), 300.0f, 200.0f);
+	UDreamWidget* Plain = MakeWidget(TestWorld.World.Get(), Root, TEXT("Plain"), 300.0f, 200.0f);
+	UDreamWidget* Halved = MakeWidget(TestWorld.World.Get(), Root, TEXT("Halved"), 300.0f, 200.0f);
 	Halved->SetRelativeScale(FVector(1.0, 0.5, 0.25));
 
 	TestTrue(TEXT("A unit of a widget straight under the canvas is two pixels across and down"),
@@ -754,16 +754,16 @@ bool FDreamWrapBoxFillAlignmentTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Root, TEXT("First"), 80.0f, 30.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Root, TEXT("Second"), 40.0f, 30.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Root, TEXT("First"), 80.0f, 30.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Root, TEXT("Second"), 40.0f, 30.0f);
 	// Wider than the box, so it always takes a line of its own and leaves the first line to the two above.
-	UDreamWidget* Wide = MakeWidget(TestWorld.World, Root, TEXT("Wide"), 400.0f, 30.0f);
+	UDreamWidget* Wide = MakeWidget(TestWorld.World.Get(), Root, TEXT("Wide"), 400.0f, 30.0f);
 	UDreamLayoutContainerWrapBox* Box = Root->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>();
 	UDreamPanelSlot* WideSlot = Wide->GetPanelSlot();
 	if (!TestNotNull(TEXT("Wrap box created"), Box) || !TestNotNull(TEXT("The wide child has a slot"), WideSlot))
@@ -830,8 +830,8 @@ bool FDreamScaleBoxSafeZoneScaleTest::RunTest(const FString& Parameters)
 		Box::ComputeSafeZoneScale(FMargin(4000.0f, 0.0f, 0.0f, 0.0f), FVector2D(1920.0, 1080.0)), 0.0f);
 
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 200.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 200.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 	UDreamLayoutContainerScaleBox* ScaleBox = Root->CreateNewLayoutContainer<UDreamLayoutContainerScaleBox>();
 	if (!TestNotNull(TEXT("Scale box created"), ScaleBox))
 	{
@@ -882,9 +882,9 @@ bool FDreamScaleBoxIgnoringInheritedScaleMeasureTest::RunTest(const FString& Par
 {
 	using namespace DreamPanelWidgetParityTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 400.0f);
-	UDreamWidget* BoxWidget = MakeWidget(TestWorld.World, Root, TEXT("ScaleBox"), 300.0f, 200.0f);
-	UDreamWidget* Art = MakeWidget(TestWorld.World, BoxWidget, TEXT("Art"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 400.0f);
+	UDreamWidget* BoxWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("ScaleBox"), 300.0f, 200.0f);
+	UDreamWidget* Art = MakeWidget(TestWorld.World.Get(), BoxWidget, TEXT("Art"), 100.0f, 50.0f);
 	UDreamLayoutContainerScaleBox* ScaleBox = BoxWidget->CreateNewLayoutContainer<UDreamLayoutContainerScaleBox>();
 	if (!TestNotNull(TEXT("Scale box created"), ScaleBox))
 	{

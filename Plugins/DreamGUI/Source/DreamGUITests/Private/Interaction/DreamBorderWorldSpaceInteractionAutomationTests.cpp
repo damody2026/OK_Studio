@@ -64,7 +64,7 @@ bool FDreamBorderWorldHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamBorder* Border = Rig.MakeControl<UDreamBorder>(TEXT("Frame"), Stage.Panel, BorderSize, BorderPosition);
+	UDreamBorder* Border = Rig.MakeControl<UDreamBorder>(TEXT("Frame"), Stage.Panel.Get(), BorderSize, BorderPosition);
 	if (!TestTrue(TEXT("A border with a face can be made on the panel"), Border != nullptr && Border->FaceNode != nullptr))
 	{
 		return false;

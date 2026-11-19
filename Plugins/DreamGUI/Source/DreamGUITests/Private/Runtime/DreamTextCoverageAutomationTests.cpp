@@ -258,7 +258,7 @@ bool FDreamTextCoverageQuadsOnPixelsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -341,7 +341,7 @@ bool FDreamTextCoveragePhaseCarryTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -398,7 +398,7 @@ bool FDreamTextCoveragePerItemThresholdTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -496,7 +496,7 @@ bool FDreamTextCoveragePendingFallsBackTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests, TSet<uint32>{ (uint32)'b' }, TSet<uint32>{ (uint32)'c' });
 
@@ -559,7 +559,7 @@ bool FDreamTextCoverageDrawsPendingFieldGlyphTest::RunTest(const FString& Parame
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 
 	FDreamTextDisplayList DL;
@@ -636,7 +636,7 @@ bool FDreamTextCoverageStrokesSnapTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -738,7 +738,7 @@ bool FDreamTextCoverageSyntheticStylesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -795,7 +795,7 @@ bool FDreamTextCoverageOffIsUnchangedTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -892,7 +892,7 @@ bool FDreamTextCoverageFillTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -967,7 +967,7 @@ bool FDreamTextCoverageEffectsHybridTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -1063,7 +1063,7 @@ bool FDreamTextCoverageEffectFaceFlagsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -1127,7 +1127,7 @@ bool FDreamTextCoverageHybridPendingTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests, TSet<uint32>{ (uint32)'c', (uint32)'d' });
 
@@ -1202,7 +1202,7 @@ bool FDreamTextCoveragePaintedQuadTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 
@@ -1273,7 +1273,7 @@ bool FDreamTextCoverageCountersTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextCoverageTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	TArray<FCoverageRequest> Requests;
 	MockCoverage(Font, Requests);
 

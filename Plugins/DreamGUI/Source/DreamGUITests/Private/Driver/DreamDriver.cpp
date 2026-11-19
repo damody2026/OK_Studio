@@ -17,12 +17,12 @@ FDreamElementRef FDreamDriver::Find(const FDreamLocatorRef& InLocator)
 TArray<FDreamElementRef> FDreamDriver::FindAll(const FDreamLocatorRef& InLocator)
 {
 	TArray<FDreamElementRef> Elements;
-	if (Context == nullptr || !IsValid(Context->Root))
+	if (Context == nullptr || !IsValid(Context->Root.Get()))
 	{
 		return Elements;
 	}
 	TArray<UDreamWidget*> Found;
-	InLocator->Locate(Context->Root, Found);
+	InLocator->Locate(Context->Root.Get(), Found);
 	Elements.Reserve(Found.Num());
 	for (UDreamWidget* Widget : Found)
 	{

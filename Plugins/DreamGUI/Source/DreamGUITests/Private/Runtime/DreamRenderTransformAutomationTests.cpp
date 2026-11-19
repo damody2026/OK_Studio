@@ -50,9 +50,9 @@ bool FDreamRenderTransformIsInvisibleToLayoutTest::RunTest(const FString& Parame
 {
 	using namespace DreamRenderTransformTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 400.0f, 400.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Panel, TEXT("First"), 100.0f, 40.0f);
-	UDreamWidget* Sliding = MakeWidget(TestWorld.World, Panel, TEXT("Sliding"), 100.0f, 40.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 400.0f, 400.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Panel, TEXT("First"), 100.0f, 40.0f);
+	UDreamWidget* Sliding = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Sliding"), 100.0f, 40.0f);
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	UDreamWidget::MarkLayoutForRebuild(Panel);
 	UDreamWidget::RebuildLayoutImmediately(Panel);
@@ -104,9 +104,9 @@ bool FDreamRenderTransformPropagatesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRenderTransformTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 400.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 40.0f);
-	UDreamWidget* Grandchild = MakeWidget(TestWorld.World, Child, TEXT("Grandchild"), 50.0f, 20.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 400.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 40.0f);
+	UDreamWidget* Grandchild = MakeWidget(TestWorld.World.Get(), Child, TEXT("Grandchild"), 50.0f, 20.0f);
 
 	const FVector ChildBefore = Child->GetWorldTransform().GetLocation();
 	const FVector GrandchildBefore = Grandchild->GetWorldTransform().GetLocation();
@@ -135,10 +135,10 @@ bool FDreamRenderTransformPivotTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRenderTransformTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 400.0f);
-	UDreamWidget* Popping = MakeWidget(TestWorld.World, Root, TEXT("Popping"), 100.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 400.0f);
+	UDreamWidget* Popping = MakeWidget(TestWorld.World.Get(), Root, TEXT("Popping"), 100.0f, 40.0f);
 	// A child at the widget's own right edge, so a scale about the centre visibly moves it.
-	UDreamWidget* Edge = MakeWidget(TestWorld.World, Popping, TEXT("Edge"), 10.0f, 10.0f);
+	UDreamWidget* Edge = MakeWidget(TestWorld.World.Get(), Popping, TEXT("Edge"), 10.0f, 10.0f);
 	Edge->SetRelativeLocation(FVector(0.0, 50.0, 0.0));
 
 	const FVector PoppingCentre = Popping->GetWorldTransform().GetLocation();
@@ -186,10 +186,10 @@ bool FDreamRenderTransformDoesNotLeakOnReparentTest::RunTest(const FString& Para
 {
 	using namespace DreamRenderTransformTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Origin = MakeWidget(TestWorld.World, nullptr, TEXT("Origin"), 400.0f, 400.0f);
-	UDreamWidget* Animating = MakeWidget(TestWorld.World, Origin, TEXT("Animating"), 200.0f, 200.0f);
-	UDreamWidget* Passenger = MakeWidget(TestWorld.World, Animating, TEXT("Passenger"), 50.0f, 50.0f);
-	UDreamWidget* Destination = MakeWidget(TestWorld.World, nullptr, TEXT("Destination"), 400.0f, 400.0f);
+	UDreamWidget* Origin = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Origin"), 400.0f, 400.0f);
+	UDreamWidget* Animating = MakeWidget(TestWorld.World.Get(), Origin, TEXT("Animating"), 200.0f, 200.0f);
+	UDreamWidget* Passenger = MakeWidget(TestWorld.World.Get(), Animating, TEXT("Passenger"), 50.0f, 50.0f);
+	UDreamWidget* Destination = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Destination"), 400.0f, 400.0f);
 
 	// An ancestor is part-way through a slide-in. Anything that converts a world transform back into
 	// authored data now has two candidate answers, and only one of them is layout's.
@@ -205,7 +205,7 @@ bool FDreamRenderTransformDoesNotLeakOnReparentTest::RunTest(const FString& Para
 		FMath::Abs(Passenger->GetRelativeLocation().Y - PassengerAuthoredBefore.Y) < 299.0);
 
 	// SetWorldTransform is the other conversion back into authored data.
-	UDreamWidget* Direct = MakeWidget(TestWorld.World, Animating, TEXT("Direct"), 50.0f, 50.0f);
+	UDreamWidget* Direct = MakeWidget(TestWorld.World.Get(), Animating, TEXT("Direct"), 50.0f, 50.0f);
 	const FTransform LayoutWorld = Direct->GetLayoutWorldTransform();
 	Direct->SetWorldTransform(LayoutWorld);
 	TestTrue(TEXT("Round-tripping through the layout world transform is a no-op on authored data"),
@@ -266,9 +266,9 @@ bool FDreamRenderTransformFlipTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRenderTransformTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 400.0f, 400.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Panel, TEXT("Card"), 100.0f, 140.0f);
-	UDreamWidget* Corner = MakeWidget(TestWorld.World, Card, TEXT("Corner"), 10.0f, 10.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 400.0f, 400.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Corner = MakeWidget(TestWorld.World.Get(), Card, TEXT("Corner"), 10.0f, 10.0f);
 	Corner->SetRelativeLocation(FVector(0.0, 40.0, 0.0));
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	UDreamWidget::MarkLayoutForRebuild(Panel);
@@ -322,13 +322,13 @@ bool FDreamRenderTransformSurvivesLoadTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRenderTransformTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	Root->OnRegister();
 
 	// The exact sequence the prefab loader runs: create the object, write the property into memory
 	// with no setter and no notification, then register. Every behaviour test that calls the setter
 	// is blind to this path, which is how "works in the designer, dead in PIE" shipped.
-	UDreamWidget* Loaded = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Loaded = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Loaded->SetDisplayName(TEXT("Loaded"));
 	Loaded->SetWidth(100.0f);
 	Loaded->SetHeight(100.0f);

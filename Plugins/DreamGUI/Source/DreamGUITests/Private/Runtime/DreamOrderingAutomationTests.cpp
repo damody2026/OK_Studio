@@ -58,14 +58,14 @@ bool FDreamOverlayHonorsZOrderTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamOrderingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetWidth(200.0f);
 	Root->SetHeight(100.0f);
 	// Authored like the project's page stack: sibling order Prompt, Round, Resolution with DESCENDING
 	// ZOrder — the authored intent is Resolution lowest, Prompt on top.
-	UDreamWidget* Prompt = MakeChild(TestWorld.World, Root, TEXT("Prompt"));
-	UDreamWidget* Round = MakeChild(TestWorld.World, Root, TEXT("Round"));
-	UDreamWidget* Resolution = MakeChild(TestWorld.World, Root, TEXT("Resolution"));
+	UDreamWidget* Prompt = MakeChild(TestWorld.World.Get(), Root, TEXT("Prompt"));
+	UDreamWidget* Round = MakeChild(TestWorld.World.Get(), Root, TEXT("Round"));
+	UDreamWidget* Resolution = MakeChild(TestWorld.World.Get(), Root, TEXT("Resolution"));
 	TestNotNull(TEXT("Overlay created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerOverlay>());
 	Prompt->GetPanelSlot()->SetZOrder(100);
 	Round->GetPanelSlot()->SetZOrder(90);
@@ -105,11 +105,11 @@ bool FDreamChildrenSortIsStableTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamOrderingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
-	UDreamWidget* A = MakeChild(TestWorld.World, Root, TEXT("A"));
-	UDreamWidget* B = MakeChild(TestWorld.World, Root, TEXT("B"));
-	UDreamWidget* C = MakeChild(TestWorld.World, Root, TEXT("C"));
-	UDreamWidget* D = MakeChild(TestWorld.World, Root, TEXT("D"));
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* A = MakeChild(TestWorld.World.Get(), Root, TEXT("A"));
+	UDreamWidget* B = MakeChild(TestWorld.World.Get(), Root, TEXT("B"));
+	UDreamWidget* C = MakeChild(TestWorld.World.Get(), Root, TEXT("C"));
+	UDreamWidget* D = MakeChild(TestWorld.World.Get(), Root, TEXT("D"));
 
 	// Force the duplicate-key state legacy assets can carry (C and D both claim index 2) through the
 	// prefab-facing raw setter, then sort repeatedly: the order must settle once and never oscillate
@@ -117,7 +117,7 @@ bool FDreamChildrenSortIsStableTest::RunTest(const FString& Parameters)
 	D->RestoreSiblingIndex(2);
 	const TArray<FString> FirstPass = ChildNames(Root);
 	const TArray<FString> SecondPass = ChildNames(Root);
-	UDreamWidget* Dummy = MakeChild(TestWorld.World, Root, TEXT("E"));
+	UDreamWidget* Dummy = MakeChild(TestWorld.World.Get(), Root, TEXT("E"));
 	Dummy->RestoreSiblingIndex(99);
 	const TArray<FString> ThirdPass = ChildNames(Root);
 
@@ -138,7 +138,7 @@ bool FDreamWidgetSwitcherKeepsRequestedIndexTest::RunTest(const FString& Paramet
 {
 	using namespace DreamOrderingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetWidth(100.0f);
 	Root->SetHeight(100.0f);
 	UDreamLayoutContainerWidgetSwitcher* Switcher = Root->CreateNewLayoutContainer<UDreamLayoutContainerWidgetSwitcher>();
@@ -148,9 +148,9 @@ bool FDreamWidgetSwitcherKeepsRequestedIndexTest::RunTest(const FString& Paramet
 	// Request page 2 while no pages exist — the old clamp collapsed this to 0 permanently.
 	Switcher->SetActiveWidgetIndex(2);
 
-	UDreamWidget* Page0 = MakeChild(TestWorld.World, Root, TEXT("Page0"));
-	UDreamWidget* Page1 = MakeChild(TestWorld.World, Root, TEXT("Page1"));
-	UDreamWidget* Page2 = MakeChild(TestWorld.World, Root, TEXT("Page2"));
+	UDreamWidget* Page0 = MakeChild(TestWorld.World.Get(), Root, TEXT("Page0"));
+	UDreamWidget* Page1 = MakeChild(TestWorld.World.Get(), Root, TEXT("Page1"));
+	UDreamWidget* Page2 = MakeChild(TestWorld.World.Get(), Root, TEXT("Page2"));
 	Page0->OnRegister();
 	Page1->OnRegister();
 	Page2->OnRegister();
@@ -173,9 +173,9 @@ bool FDreamToggleGroupTracksHierarchyOrderTest::RunTest(const FString& Parameter
 {
 	using namespace DreamOrderingTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
-	UDreamWidget* First = MakeChild(TestWorld.World, Root, TEXT("First"));
-	UDreamWidget* Second = MakeChild(TestWorld.World, Root, TEXT("Second"));
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* First = MakeChild(TestWorld.World.Get(), Root, TEXT("First"));
+	UDreamWidget* Second = MakeChild(TestWorld.World.Get(), Root, TEXT("Second"));
 	Root->OnRegister();
 	First->OnRegister();
 	Second->OnRegister();

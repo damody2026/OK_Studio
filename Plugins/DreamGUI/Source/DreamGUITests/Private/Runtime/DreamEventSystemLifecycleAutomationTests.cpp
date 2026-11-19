@@ -85,11 +85,11 @@ bool FDreamEventSystemPointerQueryTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
 	{
 		return false;
@@ -140,18 +140,18 @@ bool FDreamEventSystemStaleRegistrationTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the event systems"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the event systems"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World.Get());
 	if (!TestNotNull(TEXT("The input subsystem exists"), InputSubsystem))
 	{
 		return false;
 	}
 
-	UDreamEventSystem* First = MakeEventSystem(Scope.World);
-	UDreamEventSystem* Second = MakeEventSystem(Scope.World);
+	UDreamEventSystem* First = MakeEventSystem(Scope.World.Get());
+	UDreamEventSystem* Second = MakeEventSystem(Scope.World.Get());
 	if (!TestTrue(TEXT("Two event systems for the same player"), First != nullptr && Second != nullptr))
 	{
 		return false;
@@ -189,11 +189,11 @@ bool FDreamEventSystemNavigationIdleTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
 	{
 		return false;
@@ -273,11 +273,11 @@ bool FDreamEventSystemTouchRetirementTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
 	{
 		return false;
@@ -319,12 +319,12 @@ bool FDreamEventSystemUserIndexPipelineTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
-	FScopedInputRig Rig(Scope.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World.Get());
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable() && InputSubsystem != nullptr))
 	{
 		return false;
@@ -347,7 +347,7 @@ bool FDreamEventSystemUserIndexPipelineTest::RunTest(const FString& Parameters)
 	TestNull(TEXT("...and is no longer what player 0 finds"), InputSubsystem->GetEventSystemByUserIndex(0));
 	TestEqual(TEXT("...and is what player 1 finds"), InputSubsystem->GetEventSystemByUserIndex(1), Rig.EventSystem);
 	TestEqual(TEXT("...which is also what the world-context lookup answers"),
-		UDreamEventSystem::GetDreamEventSystemInstance(Scope.World, 1), Rig.EventSystem);
+		UDreamEventSystem::GetDreamEventSystemInstance(Scope.World.Get(), 1), Rig.EventSystem);
 
 	// Pointers belong to the player who was using them. Keeping them would hand player 1 a pointer that
 	// is still hovering whatever player 0 left it on.
@@ -398,11 +398,11 @@ bool FDreamEventSystemGamepadModelTest::RunTest(const FString& Parameters)
 		UDreamEventSystem::GetGamepadModelForDeviceName(TEXT("SomeVendorHID"), TEXT("Model9000")), EDreamUIGamepadModel::Generic);
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
 	{
 		return false;
@@ -445,11 +445,11 @@ bool FDreamEventSystemHoverCursorTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
 	{
 		return false;
@@ -501,15 +501,15 @@ bool FDreamEventSystemHoverCursorTest::RunTest(const FString& Parameters)
 	// The input-mode wrapper addresses the same player by the same index. Only the cursor flag is
 	// observable without a viewport client -- SetInputMode itself needs a local player, and there is
 	// none in a headless world -- but that is the half a project reads back.
-	UDreamUIInputModeLibrary::SetShowMouseCursor(Scope.World, true, 0);
+	UDreamUIInputModeLibrary::SetShowMouseCursor(Scope.World.Get(), true, 0);
 	TestTrue(TEXT("The input mode library shows the cursor for user 0"),
-		UDreamUIInputModeLibrary::GetShowMouseCursor(Scope.World, 0));
-	UDreamUIInputModeLibrary::SetInputModeGameOnly(Scope.World, 0);
-	TestFalse(TEXT("Game-only input hides it"), UDreamUIInputModeLibrary::GetShowMouseCursor(Scope.World, 0));
-	UDreamUIInputModeLibrary::SetInputModeUIOnly(Scope.World, nullptr, 0);
-	TestTrue(TEXT("UI-only input shows it again"), UDreamUIInputModeLibrary::GetShowMouseCursor(Scope.World, 0));
+		UDreamUIInputModeLibrary::GetShowMouseCursor(Scope.World.Get(), 0));
+	UDreamUIInputModeLibrary::SetInputModeGameOnly(Scope.World.Get(), 0);
+	TestFalse(TEXT("Game-only input hides it"), UDreamUIInputModeLibrary::GetShowMouseCursor(Scope.World.Get(), 0));
+	UDreamUIInputModeLibrary::SetInputModeUIOnly(Scope.World.Get(), nullptr, 0);
+	TestTrue(TEXT("UI-only input shows it again"), UDreamUIInputModeLibrary::GetShowMouseCursor(Scope.World.Get(), 0));
 	TestEqual(TEXT("...and the library resolves the same controller the event system does"),
-		UDreamUIInputModeLibrary::GetPlayerControllerForUser(Scope.World, 0), PlayerController);
+		UDreamUIInputModeLibrary::GetPlayerControllerForUser(Scope.World.Get(), 0), PlayerController);
 	return true;
 }
 
@@ -523,17 +523,17 @@ bool FDreamEventSystemPinchGestureTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	if (!TestTrue(TEXT("The rig came up"), Rig.IsUsable()))
 	{
 		return false;
 	}
 
-	UDreamWidget* Map = NewObject<UDreamWidget>(Scope.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Map = NewObject<UDreamWidget>(Scope.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Map->SetDisplayName(TEXT("Map"));
 	Map->SetWidth(400.0f);
 	Map->SetHeight(400.0f);
@@ -605,11 +605,11 @@ bool FDreamEventSystemCursorIsTheMousesTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the rig"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the rig"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	FScopedInputRig Rig(Scope.World);
+	FScopedInputRig Rig(Scope.World.Get());
 	UDreamUIInputUser* User = Rig.IsUsable() ? Rig.EventSystem->GetInputUser() : nullptr;
 	if (!TestTrue(TEXT("The rig came up, with a player"), User != nullptr))
 	{
@@ -660,7 +660,7 @@ bool FDreamEventSystemPresetPlayerIndexTest::RunTest(const FString& Parameters)
 	using namespace DreamEventSystemLifecycleTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to spawn the preset in"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to spawn the preset in"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}

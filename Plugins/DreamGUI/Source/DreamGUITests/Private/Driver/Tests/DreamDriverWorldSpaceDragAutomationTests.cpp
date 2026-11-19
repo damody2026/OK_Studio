@@ -75,10 +75,10 @@ namespace DreamDriverWorldSpaceDragTestLocal
 	/** The world pointer and a panel facing it. */
 	struct FWorldStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
-		UDreamWidget* Panel = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
+		TWeakObjectPtr<UDreamWidget> Panel;
 
-		bool IsReady() const { return Pointer != nullptr && Panel != nullptr; }
+		bool IsReady() const { return Pointer.IsValid() && Panel.IsValid(); }
 	};
 
 	FWorldStage SetUpStage(FAutomationTestBase& InTest, FDreamDriverRig& InRig)
@@ -86,8 +86,8 @@ namespace DreamDriverWorldSpaceDragTestLocal
 		FWorldStage Stage;
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig, EyeAtTheOrigin(), EDreamWorldPointerSource::Mouse);
 		Stage.Panel = DreamDriverWorld::MakeWorldPanel(InRig, TEXT("Panel"), FTransform(FVector(300.0, 0.0, 0.0)), FVector2D(400.0, 300.0));
-		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer);
-		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel);
+		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer.Get());
+		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel.Get());
 		return Stage;
 	}
 
@@ -130,7 +130,7 @@ bool FDreamDriverWorldSpaceSliderDragTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Stage.Panel, FVector2D(300.0, 40.0));
+	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Stage.Panel.Get(), FVector2D(300.0, 40.0));
 	// Two frames, as for a slider on the screen: the first lays the control out, the second lets the
 	// behaviour place the handle against the handle area the first resolved.
 	Rig.PumpFrames(2);
@@ -174,7 +174,7 @@ bool FDreamDriverWorldSpaceSliderDragTest::RunTest(const FString& Parameters)
 	// raycaster's current ray against the plane it was pressed on.
 	const UDreamPointerEventData* EventData = Rig.Context().GetPointerEventData(0);
 	TestTrue(TEXT("The drag was carried by the world pointer"),
-		EventData != nullptr && EventData->PressRaycaster.Get() == static_cast<UDreamBaseRaycaster*>(Stage.Pointer));
+		EventData != nullptr && EventData->PressRaycaster.Get() == static_cast<UDreamBaseRaycaster*>(Stage.Pointer.Get()));
 	return true;
 }
 
@@ -204,7 +204,7 @@ bool FDreamDriverWorldSpaceDragThresholdTest::RunTest(const FString& Parameters)
 
 	// One card in the world, dead ahead; one on the screen overlay, far to the left of anything on the
 	// panel, so each gesture below is judged by one raycaster only.
-	UDreamWidget* WorldCard = Rig.MakeWidget(TEXT("WorldCard"), Stage.Panel, FVector2D(100.0, 60.0), FVector2D::ZeroVector);
+	UDreamWidget* WorldCard = Rig.MakeWidget(TEXT("WorldCard"), Stage.Panel.Get(), FVector2D(100.0, 60.0), FVector2D::ZeroVector);
 	UDreamWidget* ScreenCard = Rig.MakeWidget(TEXT("ScreenCard"), nullptr, FVector2D(160.0, 100.0), FVector2D(-400.0, 0.0));
 	if (!TestNotNull(TEXT("A card on the world panel"), WorldCard) || !TestNotNull(TEXT("A card on the screen"), ScreenCard))
 	{
@@ -271,7 +271,7 @@ bool FDreamDriverWorldSpaceHoldToDragOnTest::RunTest(const FString& Parameters)
 	// nothing else is competing for it.
 	Stage.Pointer->SetHoldToDragTime(0.25f);
 
-	UDreamWidget* Card = Rig.MakeWidget(TEXT("Card"), Stage.Panel, FVector2D(100.0, 60.0), FVector2D::ZeroVector);
+	UDreamWidget* Card = Rig.MakeWidget(TEXT("Card"), Stage.Panel.Get(), FVector2D(100.0, 60.0), FVector2D::ZeroVector);
 	if (!TestNotNull(TEXT("A card on the world panel"), Card))
 	{
 		return false;
@@ -327,7 +327,7 @@ bool FDreamDriverWorldSpaceHoldToDragOffTest::RunTest(const FString& Parameters)
 	Stage.Pointer->SetHoldToDrag(false);
 	Stage.Pointer->SetHoldToDragTime(0.25f);
 
-	UDreamWidget* Card = Rig.MakeWidget(TEXT("Card"), Stage.Panel, FVector2D(100.0, 60.0), FVector2D::ZeroVector);
+	UDreamWidget* Card = Rig.MakeWidget(TEXT("Card"), Stage.Panel.Get(), FVector2D(100.0, 60.0), FVector2D::ZeroVector);
 	if (!TestNotNull(TEXT("A card on the world panel"), Card))
 	{
 		return false;

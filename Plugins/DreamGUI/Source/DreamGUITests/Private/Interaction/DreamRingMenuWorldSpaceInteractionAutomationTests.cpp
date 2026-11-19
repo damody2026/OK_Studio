@@ -170,7 +170,7 @@ bool FDreamRingMenuWorldPressTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamRingMenu* Wheel = PlaceWheel(*this, Rig, Stage.Panel, FVector2D(-40.0, 0.0), Listener.Get());
+	UDreamRingMenu* Wheel = PlaceWheel(*this, Rig, Stage.Panel.Get(), FVector2D(-40.0, 0.0), Listener.Get());
 	if (!TestNotNull(TEXT("An open four-item wheel came up on the panel"), Wheel))
 	{
 		return false;
@@ -239,7 +239,7 @@ bool FDreamRingMenuWorldCursorTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamRingMenu* Wheel = PlaceWheel(*this, Rig, Stage.Panel, FVector2D(-40.0, 0.0), Listener.Get());
+	UDreamRingMenu* Wheel = PlaceWheel(*this, Rig, Stage.Panel.Get(), FVector2D(-40.0, 0.0), Listener.Get());
 	if (!TestNotNull(TEXT("An open four-item wheel came up on the panel"), Wheel))
 	{
 		return false;

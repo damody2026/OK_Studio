@@ -72,7 +72,7 @@ namespace DreamInputKeySelectorWorldTestLocal
 			{
 				return false;
 			}
-			OutScene.Parent = Stage.Panel;
+			OutScene.Parent = Stage.Panel.Get();
 		}
 		OutScene.Selector = MakeObservedSelector(InRig, OutScene.Parent, InListener);
 		if (!InTest.TestNotNull(TEXT("The selector came up"), OutScene.Selector))

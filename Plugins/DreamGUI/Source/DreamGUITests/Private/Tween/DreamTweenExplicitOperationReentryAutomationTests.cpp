@@ -64,10 +64,10 @@ bool FDreamTweenGetterCancellationTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenExplicitReentryTestLocal;
 	DreamTests::FScopedGameInstanceWorld World;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 	if (!TestNotNull(TEXT("the world has a manager"), Manager))return false;
 	const TSharedRef<FState> State = MakeShared<FState>();
-	UDreamTweener* Tween = MakeTween(World.World, State, [State] { State->Tween->Kill(false); });
+	UDreamTweener* Tween = MakeTween(World.World.Get(), State, [State] { State->Tween->Kill(false); });
 	if (!TestNotNull(TEXT("the value tween was created"), Tween))return false;
 	Manager->ManualTick(0.25f);
 	TestEqual(TEXT("a getter that cancelled owes no cycle-start event"), State->Cycles, 0);
@@ -89,7 +89,7 @@ bool FDreamTweenForceCompleteReentryTest::RunTest(const FString& Parameters)
 	for (bool bFromSetter : { false, true })
 	{
 		DreamTests::FScopedGameInstanceWorld World;
-		UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+		UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 		if (!TestNotNull(TEXT("the world has a manager"), Manager))return false;
 		const TSharedRef<FState> State = MakeShared<FState>();
 		const TFunction<void()> RestartOnce = [State]
@@ -100,7 +100,7 @@ bool FDreamTweenForceCompleteReentryTest::RunTest(const FString& Parameters)
 				State->Tween->Restart();
 			}
 		};
-		UDreamTweener* Tween = MakeTween(World.World, State, {}, [bFromSetter, RestartOnce](float)
+		UDreamTweener* Tween = MakeTween(World.World.Get(), State, {}, [bFromSetter, RestartOnce](float)
 		{
 			if (bFromSetter)RestartOnce();
 		});
@@ -134,7 +134,7 @@ bool FDreamTweenGotoZeroReentryTest::RunTest(const FString& Parameters)
 	using namespace DreamTweenExplicitReentryTestLocal;
 	DreamTests::FScopedGameInstanceWorld World;
 	const TSharedRef<FState> State = MakeShared<FState>();
-	UDreamTweener* Tween = MakeTween(World.World, State, {}, [State](float)
+	UDreamTweener* Tween = MakeTween(World.World.Get(), State, {}, [State](float)
 	{
 		if (State->bArmed)
 		{
@@ -165,10 +165,10 @@ bool FDreamTweenSequenceRewindReentryTest::RunTest(const FString& Parameters)
 	for (bool bRestart : { false, true })
 	{
 		DreamTests::FScopedGameInstanceWorld World;
-		UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+		UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 		if (!TestNotNull(TEXT("the world has a manager"), Manager))return false;
 		const TSharedRef<FState> State = MakeShared<FState>();
-		UDreamTweener* Child = MakeTween(World.World, State, {}, [State](float)
+		UDreamTweener* Child = MakeTween(World.World.Get(), State, {}, [State](float)
 		{
 			if (State->bArmed)
 			{
@@ -176,14 +176,14 @@ bool FDreamTweenSequenceRewindReentryTest::RunTest(const FString& Parameters)
 				static_cast<UDreamTweener*>(State->Sequence.Get())->Goto(0.75f);
 			}
 		});
-		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(World.World);
+		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(World.World.Get());
 		if (!TestNotNull(TEXT("the child exists"), Child) || !TestNotNull(TEXT("the sequence exists"), Sequence))return false;
 		State->Sequence = Sequence;
 		Sequence->SetTickType(EDreamTweenTickType::Manual)->SetEase(EDreamTweenEase::Linear)->SetAutoKill(false);
 		UDreamTweener* DirectChild = Child;
 		if (bNested)
 		{
-			UDreamTweenerSequence* Nested = UDreamTweenManager::CreateSequence(World.World);
+			UDreamTweenerSequence* Nested = UDreamTweenManager::CreateSequence(World.World.Get());
 			if (!TestNotNull(TEXT("the nested sequence exists"), Nested))return false;
 			Nested->SetEase(EDreamTweenEase::Linear)->SetAutoKill(false);
 			Nested->Append(nullptr, Child);
@@ -217,10 +217,10 @@ bool FDreamTweenSequenceLoopResetReentryTest::RunTest(const FString& Parameters)
 	for (EDreamTweenLoop Loop : { EDreamTweenLoop::Restart, EDreamTweenLoop::Incremental })
 	{
 		DreamTests::FScopedGameInstanceWorld World;
-		UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+		UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 		if (!TestNotNull(TEXT("the world has a manager"), Manager))return false;
 		const TSharedRef<FState> State = MakeShared<FState>();
-		UDreamTweener* Child = MakeTween(World.World, State, {}, [State](float)
+		UDreamTweener* Child = MakeTween(World.World.Get(), State, {}, [State](float)
 		{
 			// The leaf's completion precedes the parent's loop reset. Seek from the reset's setter,
 			// rather than from the end-value setter that completed the leaf a few calls earlier.
@@ -230,14 +230,14 @@ bool FDreamTweenSequenceLoopResetReentryTest::RunTest(const FString& Parameters)
 				static_cast<UDreamTweener*>(State->Sequence.Get())->Goto(0.75f);
 			}
 		});
-		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(World.World);
+		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(World.World.Get());
 		if (!TestNotNull(TEXT("the child exists"), Child) || !TestNotNull(TEXT("the looping sequence exists"), Sequence))return false;
 		State->Sequence = Sequence;
 		Sequence->SetTickType(EDreamTweenTickType::Manual)->SetEase(EDreamTweenEase::Linear)->SetAutoKill(false)->SetLoop(Loop, 2);
 		UDreamTweener* DirectChild = Child;
 		if (bNested)
 		{
-			UDreamTweenerSequence* Nested = UDreamTweenManager::CreateSequence(World.World);
+			UDreamTweenerSequence* Nested = UDreamTweenManager::CreateSequence(World.World.Get());
 			if (!TestNotNull(TEXT("the nested sequence exists"), Nested))return false;
 			Nested->SetEase(EDreamTweenEase::Linear)->SetAutoKill(false);
 			Nested->Append(nullptr, Child);

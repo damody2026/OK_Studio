@@ -181,7 +181,7 @@ namespace DreamActionBarWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		if (!MakeBar(InTest, Rig, Parent, TArray<FString>{ TEXT("Confirm"), TEXT("Delete") }, FVector2D(0.0, -60.0), Scene))
 		{
@@ -230,7 +230,7 @@ namespace DreamActionBarWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Parent, EntrySize, FVector2D(0.0, 110.0));
 		if (!InTest.TestTrue(TEXT("A button above the bar came up"), Above != nullptr && Above->FaceNode != nullptr)

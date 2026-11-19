@@ -182,7 +182,7 @@ namespace DreamRichTextWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		TStrongObjectPtr<UDreamPressInteractionListener> BelowListener(NewObject<UDreamPressInteractionListener>());
 		UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Parent, FVector2D(160.0, 40.0), FVector2D(0.0, 120.0));
@@ -245,7 +245,7 @@ bool FDreamWorldRichTextLinkPressTest::RunTest(const FString& Parameters)
 	ON_SCOPE_EXIT { UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1); };
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
 	FLinkedBlock Linked;
-	if (!Stage.IsReady() || !MakeLinkedBlock(*this, Rig, Stage.Panel, Linked))
+	if (!Stage.IsReady() || !MakeLinkedBlock(*this, Rig, Stage.Panel.Get(), Linked))
 	{
 		return false;
 	}

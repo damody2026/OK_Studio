@@ -25,10 +25,10 @@ namespace DreamTests
 	 */
 	struct FDesignerTestAsset
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 
-		bool IsValid() const { return Package != nullptr && Blueprint != nullptr; }
+		bool IsValid() const { return Package.IsValid() && Blueprint.IsValid(); }
 	};
 
 	/**
@@ -90,8 +90,8 @@ namespace DreamTests
 		const FString& GetFailure() const { return Failure; }
 
 		FDreamDesignerDriver& GetDriver() const { return *Driver; }
-		UDreamWidgetBlueprint* GetBlueprint() const { return Asset.Blueprint; }
-		UDreamWidget* GetTemplateRoot() const { return DesignerTemplateRoot(Asset.Blueprint); }
+		UDreamWidgetBlueprint* GetBlueprint() const { return Asset.Blueprint.Get(); }
+		UDreamWidget* GetTemplateRoot() const { return DesignerTemplateRoot(Asset.Blueprint.Get()); }
 
 	private:
 		FDesignerTestAsset Asset;

@@ -35,20 +35,21 @@ enum class EDreamUINavigationDirection : uint8;
  * Everything a driver step needs in order to happen: the world it happens in, the pieces that carry
  * input through it, and the tree it is aimed at.
  *
- * The pointers are raw and not kept alive from here. What keeps them alive is what would keep them
- * alive in a game: actors belong to the world, widgets are held by the UI manager's registered-widget
- * list, and the rig that built all of it outlives every context it hands out. A second owner here
- * would only disagree with those.
+ * The pointers are weak: nothing here keeps anything alive, and something the world has taken reads as
+ * gone rather than as an address. What keeps them alive is what would keep them alive in a game: actors
+ * belong to the world, widgets are held by the UI manager's registered-widget list, and the rig that
+ * built all of it outlives every context it hands out. A second owner here would only disagree with
+ * those.
  */
 struct FDreamDriverContext
 {
-	UWorld* World = nullptr;
-	UDreamEventSystem* EventSystem = nullptr;
-	UDreamDriverInputModule* InputModule = nullptr;
-	UDreamUIManagerWorldSubsystem* Manager = nullptr;
-	UDreamScreenSpaceRaycaster* Raycaster = nullptr;
-	UDreamWidget* Root = nullptr;
-	UDreamCanvas* RootCanvas = nullptr;
+	TWeakObjectPtr<UWorld> World;
+	TWeakObjectPtr<UDreamEventSystem> EventSystem;
+	TWeakObjectPtr<UDreamDriverInputModule> InputModule;
+	TWeakObjectPtr<UDreamUIManagerWorldSubsystem> Manager;
+	TWeakObjectPtr<UDreamScreenSpaceRaycaster> Raycaster;
+	TWeakObjectPtr<UDreamWidget> Root;
+	TWeakObjectPtr<UDreamCanvas> RootCanvas;
 
 	/*
 	 * The game side of the world, for a rig that has one. All of these are optional: a bare-world
@@ -57,12 +58,12 @@ struct FDreamDriverContext
 	 * and the steps only ever see the context.
 	 */
 	/** The GameInstance that owns World. Null for a bare UWorld::CreateWorld world. */
-	UGameInstance* GameInstance = nullptr;
+	TWeakObjectPtr<UGameInstance> GameInstance;
 	/** The world's player 0, once something has made or found one. EnsureGameInputHost reuses it rather than spawning a second. */
-	APlayerController* PlayerController = nullptr;
-	ULocalPlayer* LocalPlayer = nullptr;
+	TWeakObjectPtr<APlayerController> PlayerController;
+	TWeakObjectPtr<ULocalPlayer> LocalPlayer;
 	/** The ADream*InputEventSystemActor the input goes through, when the input host is an actor. */
-	AActor* InputActor = nullptr;
+	TWeakObjectPtr<AActor> InputActor;
 	/**
 	 * Where input enters. The two actor hosts route buttons, wheel, navigation, keys and touch through the game host
 	 * (DreamDriverGameHost); SlateSource sends them to the world's Slate input source as Slate's events

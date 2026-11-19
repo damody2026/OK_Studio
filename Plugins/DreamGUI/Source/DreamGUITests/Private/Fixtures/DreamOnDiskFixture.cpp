@@ -36,7 +36,7 @@ namespace DreamOnDiskFixture
 			// A reloaded package still holds its linker, and the linker still holds the file open, so
 			// deleting without this leaves the .uasset behind in Saved/ -- and the next run then reads
 			// a file this run wrote.
-			ResetLoaders(Package);
+			ResetLoaders(Package.Get());
 			Package->RemoveFromRoot();
 		}
 		else if (UPackage* LoadedByName = FindObject<UPackage>(nullptr, *PackageName))
@@ -60,7 +60,7 @@ namespace DreamOnDiskFixture
 			OutError = TEXT("nothing to save");
 			return false;
 		}
-		if (!InAsset->IsIn(Package))
+		if (!InAsset->IsIn(Package.Get()))
 		{
 			OutError = FString::Printf(TEXT("'%s' is not in the package being saved"), *InAsset->GetPathName());
 			return false;
@@ -81,7 +81,7 @@ namespace DreamOnDiskFixture
 		Args.Error = GWarn;
 		// A test is not a slow task; the progress dialog it would push has no frame to draw in.
 		Args.bSlowTask = false;
-		const FSavePackageResultStruct Result = UPackage::Save(Package, InAsset, *FileName, Args);
+		const FSavePackageResultStruct Result = UPackage::Save(Package.Get(), InAsset, *FileName, Args);
 		if (!Result.IsSuccessful())
 		{
 			OutError = FString::Printf(TEXT("saving '%s' failed with ESavePackageResult %d"), *FileName, (int32)Result.Result);
@@ -103,7 +103,7 @@ namespace DreamOnDiskFixture
 		}
 		// LoadPackage answers from memory when a package of that name is loaded, so leaving this in place
 		// makes every load of the name a no-op that still passes every assertion.
-		UPackage* Vacated = Package;
+		UPackage* Vacated = Package.Get();
 		Package = nullptr;
 		Vacated->RemoveFromRoot();
 		Vacated->ClearFlags(RF_Standalone);

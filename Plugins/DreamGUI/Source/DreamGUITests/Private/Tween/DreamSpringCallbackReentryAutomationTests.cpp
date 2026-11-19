@@ -14,7 +14,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDreamSpringCancellationCallbackTest,
 bool FDreamSpringCancellationCallbackTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameInstanceWorld World;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager)) return false;
 	const TArray<FName> Phases = { TEXT("Getter"), TEXT("CycleStart"), TEXT("Start"), TEXT("Setter"), TEXT("Update"), TEXT("CycleComplete"), TEXT("Complete") };
 	for (const FName Phase : Phases)
@@ -26,7 +26,7 @@ bool FDreamSpringCancellationCallbackTest::RunTest(const FString& Parameters)
 			Trace->Add(Event);
 			if (Event == Phase && Handle->IsValid()) Handle->Get()->Kill(false);
 		};
-		UDreamTweenerSpring* Spring = UDreamTweenManager::SpringTo(World.World,
+		UDreamTweenerSpring* Spring = UDreamTweenManager::SpringTo(World.World.Get(),
 			FDreamTweenFloatGetterFunction::CreateLambda([Record] { Record(TEXT("Getter")); return 0.0f; }),
 			FDreamTweenFloatSetterFunction::CreateLambda([Record](float) { Record(TEXT("Setter")); }),
 			0.0f, FDreamSpringParams(1.0f, 100.0f, 20.0f));
@@ -55,13 +55,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDreamSpringRestartCallbackTest,
 bool FDreamSpringRestartCallbackTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameInstanceWorld World;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager)) return false;
 	for (bool bAutoKill : { false, true })
 	{
 		for (int32 Phase = 0; Phase < 3; ++Phase)
 		{
-			UDreamTweenerSpring* Spring = UDreamTweenManager::SpringTo(World.World,
+			UDreamTweenerSpring* Spring = UDreamTweenManager::SpringTo(World.World.Get(),
 				FDreamTweenFloatGetterFunction::CreateLambda([] { return 0.0f; }),
 				FDreamTweenFloatSetterFunction(), 0.0f, FDreamSpringParams(1.0f, 100.0f, 20.0f));
 			Spring->SetTickType(EDreamTweenTickType::Manual)->SetAutoKill(bAutoKill);

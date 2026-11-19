@@ -170,8 +170,8 @@ bool FDreamRectBlockGradientDetailsTest::RunTest(const FString& Parameters)
 	using namespace DreamRectBlockGradientEditorTestLocal;
 	// On a widget: a rect block's setters and its edit hooks tell its widget.
 	DreamTests::Lifecycle::FScopedWorld World{ EWorldType::Editor };
-	UDreamRectBlock* Block = MakeBlock(World.World, TEXT("Block"));
-	UDreamRectBlock* Other = MakeBlock(World.World, TEXT("Other"));
+	UDreamRectBlock* Block = MakeBlock(World.World.Get(), TEXT("Block"));
+	UDreamRectBlock* Other = MakeBlock(World.World.Get(), TEXT("Other"));
 	if (!TestTrue(TEXT("two rect blocks"), Block != nullptr && Other != nullptr))
 	{
 		return false;

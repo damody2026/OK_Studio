@@ -43,22 +43,22 @@ bool FDreamAttachWidgetToSceneComponentTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWorldSpaceAttachTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
 		return false;
 	}
-	USceneComponent* Host = MakeHost(TestWorld.World, FVector(100.0f, 200.0f, 300.0f));
+	USceneComponent* Host = MakeHost(TestWorld.World.Get(), FVector(100.0f, 200.0f, 300.0f));
 	if (!TestNotNull(TEXT("host component"), Host))return false;
 
 	// A root without a canvas is refused and left alone.
-	UDreamWidget* NoCanvas = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("NoCanvas"), nullptr);
+	UDreamWidget* NoCanvas = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("NoCanvas"), nullptr);
 	AddExpectedError(TEXT("has no DreamCanvas"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("refused without a canvas"), UDreamUIBPLibrary::AttachWidgetToSceneComponent(NoCanvas, Host));
 	TestTrue(TEXT("still parked"), Manager->IsWidgetParked(NoCanvas));
 
-	UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Root"), nullptr);
+	UDreamWidget* Root = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Root"), nullptr);
 	UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("canvas"), Canvas))return false;
 	Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
@@ -75,7 +75,7 @@ bool FDreamAttachWidgetToSceneComponentTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("follows the host"), Root->GetWorldLocation().Equals(FVector(-50.0f, 10.0f, 900.0f), 0.01f));
 
 	// A child widget keeps its offset inside the moved tree.
-	UDreamWidget* Child = UDreamUIBPLibrary::ConstructWidget(TestWorld.World, TEXT("Child"), nullptr);
+	UDreamWidget* Child = UDreamUIBPLibrary::ConstructWidget(TestWorld.World.Get(), TEXT("Child"), nullptr);
 	Root->AddChild(Child);
 	Child->SetAnchoredPosition(FVector2D(30.0f, 0.0f));
 	const FVector ChildBefore = Child->GetWorldLocation();
@@ -84,7 +84,7 @@ bool FDreamAttachWidgetToSceneComponentTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("child moved by the host's delta"), (ChildAfter - ChildBefore).Equals(FVector(0.0f, 0.0f, 100.0f), 0.01f));
 
 	// Re-attaching to another host unbinds the first one.
-	USceneComponent* Other = MakeHost(TestWorld.World, FVector::ZeroVector);
+	USceneComponent* Other = MakeHost(TestWorld.World.Get(), FVector::ZeroVector);
 	Canvas->AttachToSceneComponent(Other);
 	Host->SetWorldLocation(FVector(5000.0f, 0.0f, 0.0f));
 	TestTrue(TEXT("old host no longer drives the tree"), Root->GetWorldLocation().Equals(FVector::ZeroVector, 0.01f));
