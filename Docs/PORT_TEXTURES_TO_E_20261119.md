@@ -136,5 +136,27 @@ cargo test --release --manifest-path .\Tools\ok-extract\Cargo.toml --lib -j 8
 做了第二层的话，再建置 `OpenKoikatsuEditor` 与 `OpenKoikatsu` 两个 Development 目标（共用程式的规矩），
 并在读卡器看到「材質貼圖」分类。
 
-**F 树这边还欠一笔验证**：`fe5d80d11`（偏移／缩放控件）**没有编译过**——`may-build` 一直是 `wait`。
-套的人要知道：**那一笔在 F 树也还没编译验证过**，不要以为它在 F 上是绿的。
+**F 树这边已经验过了**（2026-11-19 15:0x，`may-build` 回 `go` 之后）：
+`fe5d80d11`（偏移／缩放控件）**编译过了** —— `OpenKoikatsuEditor` 与 `OpenKoikatsu` 两个 Development 目标
+都 `Result: Succeeded`，全 lib **523 passed／0 failed**（f-yvonne 同期补了 8 支测试，所以从 515 变 523）。
+
+证据取得的方式写一下，因为第一次差点拿错的当证据：第一次建置回的是 `Target is up to date`、
+**编译了 0 个档**——f-yvonne 同一棵树刚建过，所以「成功」不是我这次编的。
+`-SingleFile` 单独编那个档又会踩到 unity build 遮住的缺 include（见下），也不算。
+最后是 `touch Source/OpenKoikatsu/OKReaderScreen.cpp` 之后重建，看到
+`[14/17] Compile [x64] Module.OpenKoikatsu.5.cpp`（含这个档的 unity blob）真的重编、`Result: Succeeded`，
+这才算数。**「建置成功」与「我的改动被编译过」是两个问题。**
+
+### 顺带回报一个本来就有的问题（不是这批造成的，我没改）
+
+`-SingleFile=Source/OpenKoikatsu/OKReaderScreen.cpp` 单独编这个档会失败：
+
+```
+OKReaderScreen.cpp(1222,48): error C2027: 使用未定义型别 'FTexture2DMipMap'
+OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMap'
+```
+
+那两行是缩图解码（`Texture->GetPlatformData()->Mips[0].BulkData`，来自 `e609716ef`，不是这批）。
+unity build 时别的档带进了那个型别的定义，所以整体建置看不出来。
+影响：**平常不会坏，但 `-SingleFile` 这条快速验证的路对这个档不能用**。
+要修就是补一个 include（`Engine/Texture2D.h` 一类）——**共用档，不在这批范围内，留给要动它的人**。
