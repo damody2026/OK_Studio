@@ -108,6 +108,20 @@ public static float ConvertRateFromText(int min, int max, string buf)
    `shape.body.13`（乳头突起）实际套用时会和 `status.nipStandRate` 再 lerp 一次。写 metadata 时不要把这
    两件事当成 min／max。
 
+**那个 ±1000000 是哪来的**：`Source/OpenKoikatsu/OKCharacterMCPRegistry.cpp` 的 `Parameters()` 最后一段，
+把 `G->EditorProperties`（也就是 `properties.rs` 通用走访吐出来的那些列）照抄出去时写死：
+
+```cpp
+if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")){
+  Copy->SetNumberField(TEXT("min"),Kind==TEXT("color")?0:-1000000);
+  Copy->SetNumberField(TEXT("max"),Kind==TEXT("color")?1:1000000);}
+```
+
+所以：**颜色那一种刚好是对的（0–1），其他每一个数值都是 ±1000000**，而身体／脸部的非体型细项**全部**走这一条。
+逐参数 metadata 要放的就是这里：按 key 查一张表，查不到再退回现在的宽范围。另外 `Validate()` 也读同一组
+`min`／`max`，所以范围一夹紧，**MCP 写入超范围的 ABMX 值就会被挡掉**——这就是上面第 2 点说的，范围要当软范围，
+夹的是滑杆与打字，不是夹资料。
+
 ## 三之三、**真正的资料端缺口：KoiSkinOverlayX（KSOX）整段被跳过**
 
 第二节原本写「非体型细项资料端几乎都有」，这句**要修正**：原作本体的栏位（`face.baseMakeup`、
