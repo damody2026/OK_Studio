@@ -5373,3 +5373,44 @@ OK kept GPU textures: released 12 (38.7 MB) from the card just left, keeping 107
 但照 `:1758` 的程式，縮圖**只在捲動視窗附近**才常駐（遠的會 `GiveBackThumb` 設回 null），
 **所以縮圖數不隨目錄張數線性成長**——我先前那個「61 個檔就翻倍」的說法要收窄：
 翻倍的是 `CardThumbs`／`CardPaths` 這些**指標陣列**與卡片按鈕數，不是常駐紋理。
+
+## 縮圖那一格作廢：卡片清單在這個協定裡根本沒建起來
+
+趟 1 確實故障（140.1 秒、第 14 張），但**到達證據不成立**：
+
+```
+screen thumbPool=0 free=0 cardThumbs=0 controls=167 pageWidgets=1 cards=0
+```
+
+**`cards=0` 表示卡片清單根本沒建起來。** 這個協定是進 1 對 1 互動場景之後在那裡開卡，
+**卡片清單畫面從來不是作用中的 UI**，所以 `ok.ReaderThumbs` 在這個協定裡沒有作用點。
+另外表裡的旋鈕讀回是空的（`# knob now: ok.ReaderThumbs =`），而先前每一格都會印出
+`= "0"  LastSetBy: SystemSettingsIni`——所以連「旋鈕有生效」都沒有證據。
+
+照自己的規矩，那一趟是 **7k 作廢而不是結果**；剩下兩趟停掉，省約 7 分鐘機器時間。
+附帶價值：它是 60 張協定的**第 4 次故障**（140.1 秒，對照 138.6／139.2／139.3），
+所以那個重現現在是 **4/4、秒數全距約 1%**。
+
+**這也削弱「縮圖占 descriptor 所以 61 張目錄更早當」那個解釋**：卡片清單沒顯示，縮圖就沒解碼。
+目錄大小的**觀察**仍然成立，但它的**機制解釋目前沒有依據**。
+
+## bindless descriptor heap：引擎原始碼查核與 32768 的真正來源
+
+ 在配置器滿時呼叫 `ResizeGrowAndAllocate`；
+`:230-257` 把容量**翻倍**（`CurrentNumDescriptors * 2`，上限 `MaxResourceHeapSize`）並 `GrowCPUHeap`，
+配合 `bCPUHeapResized`／`ActiveGpuHeapIndex`／`FinalizeHeapOnState` 在舊新 heap 之間切換。
+**所以成長會建新 heap 並退掉舊的**，而還在飛的繪製若引用退掉那份裡的 descriptor，
+正好就是 pixel shader 的頁錯誤——和 `Found 0 active heaps containing page fault address` 字面一致。
+
+**更正 32768 的來源**：不是這個專案設的，是**引擎自己的**
+`Engine/Config/Windows/BaseWindowsEngine.ini:24` 覆寫了 C++ 預設 `1000000`；
+硬體回報 `MaxNonSamplerDescriptors: 1000000`。所以取 **262144（8 倍）**仍遠低於兩者。
+
+### 到達證據與其限制（先申報，照 7j）
+
+- **可驗**：`:155` 在 init 印 `Initializing allocators with %d Resource and %d Sampler descriptors`。
+  **log 沒印 262144 的趟作廢。** 而且這個值在 init 被讀，**必須用命令列／ini 設**——
+  主控台設會是無聲失效（和 `RHI.TransientAllocator.GarbageCollectLatency` 同一個陷阱）。
+- **不可得**：**成功成長完全不印日誌**（`:248` 只在無法再成長時 `Fatal`）。
+  所以**這一格無法顯示成長有沒有發生**，對機制點的覆蓋率是 **1/2**。
+  照 7j，若 3/3 仍故障，**不得寫成「heap 成長不是成因」**，只能寫成「在 262144 之下故障仍發生」。
