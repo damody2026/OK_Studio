@@ -3131,3 +3131,36 @@ B1 ＝ `NoBackdrop=1`（拷貝根本不做）＋ `r.RDG.TransientAllocator=0`。
 **提交會改掉 `HEAD` 與建置相關的 diff，而尺 1 的六趟正要用現在這個指紋。**
 所以：**程式碼現在寫好但不套用、不提交**；等尺 1 六趟跑完、交機之前才套用與提交。
 這樣它一樣趕得上 e-fork-2 的重建（基線只作廢一次），而尺 1 的六趟仍共用同一個指紋。
+
+### 第 7 條第二條附則：**每一個計數都要帶分母**
+
+> 回報「某事發生了 N 次」時，同時回報「有幾次機會發生」。
+> **沒有分母的 0 不是觀測結果**，它和「量具沒跑」無法區分；
+> 有分母的 0（`checked=40000, hits=0`）本身就自帶陽性樣本，不必另外造假資料。
+
+並把今天所有空刻度的共同教訓抄進標準：
+**「只看『沒當掉』不算，那正好是旋鈕沒生效時的樣子。」**
+
+據此**改掉 `LogPoolReuse` 的補法**：原本打算加一個旋鈕強制呼叫一次 `Note()`，
+改成在 `Note()` 的呼叫點加一個**到達次數**計數，輸出 `reached=N, reused=M`。
+更安全（不改任何行為、不塞假資料）、少改一處，而且一次就把這一類攔掉。
+`LogStaleTextures` 同樣改成 `checked=N, hits=M`。
+
+### `gclrun` 的直接讀數找到了，**不必靠 VRAM 推**
+
+引擎自己就有，而且不用改一行程式：
+
+- `stat RHITransientMemory`（`RHICoreTransientResourceAllocator.cpp:69-78`）：
+  Memory Used／Aliased／Requested，外加 Resources／Textures／Buffers 三個計數。
+- `rhi.DumpResourceMemory ... Transient=yes`（`RHI/Private/RHI.cpp:1037-1039`）：直接把 transient 資源列出來。
+
+常駐 heap 數（`LiveList.Num()`）本身只有 trace 計數（`TransientAllocator/MemoryRangeCount`，`:64`），只有 Insights 看得到；
+但 `Memory Used` 是配置器自己報的數字，retention 調大之後它應該只升不降——這比用 VRAM 推一層好。
+
+**而這個量具的自測不花額外機器時間**，因為兩個樣本都已經在排程裡：
+- **陰性**：`TransientAllocator=0` 的組態下沒有 transient allocator，這個 stat 應該是 0／缺席；
+- **陽性**：預設組態下應該 > 0。
+
+所以把兩次查詢各放進尺 2（`loopx`）那個格子的第一趟與一次刻意加的 `TransientAllocator=0` 探針裡，
+同一次 claim 內完成。**在這個自測通過之前不跑 `gclrun`**——照第 7 條，不然它的輸出不能進紀錄。
+（尺 1 的趟只活 25–34 秒，來不及查詢，所以不在那裡做。）
