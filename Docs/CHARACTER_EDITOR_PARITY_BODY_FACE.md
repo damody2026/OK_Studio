@@ -73,6 +73,22 @@
 **两边都缺的目前只有一项候选**：原作「体全体」的骨骼类型（`body.typeBone`，体型骨架切换）我们 `card.rs`
 读得到，但没有当成可编辑项暴露，也没有 UI。要不要做，要先确认它在 OK 卡上改了会不会和已经烘焙进卡的资源冲突。
 
+**「在不在资料端」是照这两条规则判的，不是看感觉**（读 `appearance/properties.rs` 的 `walk()` 与 `appearance.rs` 的 `targets()`）：
+
+1. **`walk()` 只吐 `F32`／`F64`／`Boolean`，以及 `parentKey` 那个字串**；`shapeValueBody`／`shapeValueFace`／`version` 明确跳过，
+   其余落到 `_=>{}`。所以**所有整数栏位（各种 `*Id`、`typeBone`）都不会出现在 properties 里**——
+   不是没人接，是这条通道只走浮点与布林。键名就是卡片里 MessagePack 的成员名加区段前缀（`format!("{path}.{k}")`），
+   所以上面表格里的 `face.detailPower`、`body.bustSoftness` 就是真的键，不是我照原作 C# 名字抄的。
+2. **整数的选图要靠 `appearance.rs` 的 `targets()`**。身体／脸部相关的 target 有
+   `head`／`face_detail`／`eyebrow`／`eyeline_up`／`eyeline_down`／`eye_white`／`eye_hi_up`／`eye_hi_down`／`nose`／
+   `lipline`／`mole`／`eyeshadow`／`cheek`／`lip`／`body_detail`／`sunburn`／`nipple`／`underhair`，彩绘另有
+   `facepaint{i}`（`baseMakeup.paintId.{i}`）与 `bodypaint{i}`（`paintId.{i}`）。**所以彩绘的选图是有的**，
+   走的是 appearance 不是 properties。
+
+两条合起来就得到那个唯一的缺口：**`body.typeBone` 是整数（`as_i32`），`walk()` 不吐它，`targets()` 也没有它**，
+所以两条通道都看不到。颜色另外注意：`walk()` 把颜色摊成**四列各一个分量**（kind `color`、0–1、标签 紅／綠／藍／透明度），
+原作那边是一个取色器——UI 要自己把四列合回一个控制项。
+
 ## 三之二、逐参数 metadata：原作的范围、步进与小数位
 
 f-reader-yvonne 发现读卡器现在所有数值的范围都写死 ±1000000，要改成逐参数 metadata。身体＋脸部这一块的原作值
