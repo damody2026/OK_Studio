@@ -5745,6 +5745,13 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
 
+## 2026-11-20：量测行程空转十几分钟没人发现，清场又按行程名杀掉了别人的等待器（f-sceneload）
+
+- **变更**：要量 `ok.Studio.SyncPlaceIndex`（Sync 的摆位改成一次由上而下）在 8806 物件场景上的 A/B，用 `Saved/Reports/scene-load-f/ab-place.lua` 跑交错四趟。
+- **症狀与证据**：四趟一趟都没量到（0/4）。`Saved/Logs/SceneLoadProfile/heavy-place-place1-r1.log` 第 1901 行：`OKStudio.ProfileSceneLoad: OK_SCENE_PROFILE_LIST must name a readable list of scenes (Saved/Reports/scene-load-f/cold-heavy-only.txt)`；之後那个行程**活着但什么都没量**，每 30 秒印一次 `OKMem: commit 3.55 GB ... characters 0`，直到 21 分钟後我硬停。清场时我又用 `Get-Process lua | Stop-Process` 关「自己的」lua——那是**按名称**杀，连带杀掉 PID 41068，`unreal_slot status` 随即显示 `queue: e-cardload-physics (stale: process 41068 ended)`，e-cardload 的排队等待器被我弄掉了，已告知并请它重排。
+- **原因状态（三条都已证实）**：（1）清单传的是相对路径，而编辑器的工作目录不是那个 shell 的，所以 `OK_SCENE_PROFILE_LIST` 读不到；（2）**量具没有存活讯号**：`ab.lua` 只 `os.execute` 等子行程结束，不看它有没有真的开始量，也没有上限，所以「拒绝执行＋空转」和「正在量」在外面看起来一样；（3）`Get-Process <名称>` 不是「我的行程」，PID 才是。
+- **处置**：那一趟量测整个作废，不取任何数字（照预先登记的读法：中途停掉的整趟作废）。`ab-place.lua` 改了三处：清单在跑之前解成绝对路径**并读一次确认可读**（读不到就 1 秒内 exit 2）；每趟改成用 PowerShell `Start-Process -PassThru` 取 **pid** 启动、轮询该趟自己的 log，看到 `OKStudio.ProfileSceneLoad:` 的拒绝讯息立刻失败，`START_CAP=300 s` 内没看到起跑标记（`N scenes x N passes ->`）就杀掉并失败，`RUN_CAP=1200 s` 没写出报告也一样，**要杀只按 pid（`taskkill /T /F /PID`）**；任何一趟没量到就 `os.exit(3)` 终止整个量测，不再「印个 `!!` 继续跑」然後拿剩下的取中位数。另外把它印成 `SyncFindIndex` 的标签改对（命令行一直是对的，只有印出来的字是旧的，这种不一致会让日後读 log 的人以为翻错了开关）。
+- **再试前检查**：跑任何量测前先确认（a）清单是绝对路径且 `ab.lua` 开头印出了它与第一个场景；（b）前几十秒内出现「measuring after N s」；（c）清场只按 pid，先 `Get-CimInstance Win32_Process` 看 `CommandLine` 确认那是自己的那趟，再杀。**槽上的每一分钟都要换到数字**：行程活着不等于在量。
 ## 2026-11-20：DreamGUI.Driver 的 30 笔失败不是去裸指标造成的，是专案的 CommonUI viewport client（f-sceneload）
 
 - **变更**：DreamGUI 测试模组 39 个成员与 `FDreamUIHitResultContainer` 三个成员从裸指标改成 `TWeakObjectPtr`（`cbbc20a20`、`09cc8bc01`），约 2,290 处呼叫端补 `.Get()`。
