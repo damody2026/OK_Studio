@@ -65,6 +65,8 @@ public:
 	// Set its value as a person would (ok.ReaderScreen set): a slider's number, a toggle's on／off／1／0, a drop-down's
 	// option text or index, an input's text. False when it is not shown, enabled, or the value does not fit.
 	bool SetValue(const FString& Value,FString* OutNote=nullptr);
+	// The UMG control behind it takes input (a header always does): press/set say "disabled" instead of doing nothing.
+	bool IsOperable() const;
 	const FString& GetShownText() const { return ShownText; }
 
 protected:

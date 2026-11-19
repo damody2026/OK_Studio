@@ -264,6 +264,12 @@ void UOKDreamControl::HandleClicked()
 static TAutoConsoleVariable<int32> CVarReaderPictures(TEXT("ok.ReaderPictures"),1,TEXT("Pictures in the reader's DreamGUI screen (picker tiles, mirrored images, card list): 1 drawn (default), 0 none (for comparison runs)."));
 bool OKReaderPicturesShown(){return CVarReaderPictures.GetValueOnGameThread()!=0;}
 
+bool UOKDreamControl::IsOperable() const
+{
+	UWidget* S=Source.Get();
+	if(Header)return true;
+	return !S||S->GetIsEnabled();
+}
 bool UOKDreamControl::Press()
 {
 	if(!GetShown())return false;
@@ -1798,6 +1804,12 @@ bool UOKReaderScreen::PressControl(const FString& Text,int32 Index,FString* OutN
 		Pick=Index;
 	}
 	else if(Found.Num()>1){if(OutNote)*OutNote=FString::Printf(TEXT("ambiguous: %d controls named %s; give the path or #N:"),Found.Num(),*Text)+List(Found);return false;}
+	// Not shown or disabled: say so instead of "pressed" (Press would do nothing and the caller would take it as done).
+	if(!All[Found[Pick]]->GetShown()||!All[Found[Pick]]->IsOperable())
+	{
+		if(OutNote)*OutNote=FString::Printf(TEXT("not pressed: %s is %s"),*Paths[Found[Pick]],All[Found[Pick]]->GetShown()?TEXT("disabled"):TEXT("not shown now"));
+		return false;
+	}
 	if(OutNote)
 	{
 		*OutNote=(SetTo?FString::Printf(TEXT("set %s = "),*Paths[Found[Pick]])+*SetTo:TEXT("pressed ")+Paths[Found[Pick]]);
@@ -1823,7 +1835,10 @@ void UOKReaderScreen::ListControls(FOutputDevice& Out,const FString& Filter) con
 {
 	TArray<UOKDreamControl*> All;TArray<FString> Paths;
 	OKReaderAllControls(this,All,Paths,Controls,SubButtons,RailButtons,Drawers,CardButtons);
-	for(const FString& P:Paths)if(Filter.IsEmpty()||P.Contains(Filter))Out.Log(P);
+	// Every control the pages made, shown or not: one not on screen now (another tab, a folded drawer) or disabled is
+	// marked after two spaces, so a script can tell before pressing it (press/set refuse those).
+	for(int32 I=0;I<Paths.Num();++I)if(Filter.IsEmpty()||Paths[I].Contains(Filter))
+		Out.Log(Paths[I]+(!All[I]->GetShown()?TEXT("  [not shown]"):!All[I]->IsOperable()?TEXT("  [disabled]"):TEXT("")));
 }
 
 float UOKReaderScreen::UiScaleOf(const UOKCharacterController* G)

@@ -167,8 +167,22 @@ void UOKCharacterController::RefreshAccessorySlots(){
 }
 // The status line's word on what the card has for the shown target: where it is, or that its mod is not here.
 FString UOKCharacterController::CurrentAppearanceNote() const{
- const TSharedPtr<FJsonObject>* Current=AppearanceCurrent.Find(AppearanceTargetKey);if(!Current||!Current->IsValid())return FString();
- FString Item,Name,Guid;(*Current)->TryGetStringField(TEXT("item"),Item);(*Current)->TryGetStringField(TEXT("name"),Name);(*Current)->TryGetStringField(TEXT("guid"),Guid);
+ const TSharedPtr<FJsonObject>* Current=AppearanceCurrent.Find(AppearanceTargetKey);
+ FString Item,Name,Guid;if(Current&&Current->IsValid()){(*Current)->TryGetStringField(TEXT("item"),Item);(*Current)->TryGetStringField(TEXT("name"),Name);(*Current)->TryGetStringField(TEXT("guid"),Guid);}
+ // An item applied since the catalogue was read (AppearanceSelectedKeys, what the ▶ marks): the working card has it,
+ // and the catalogue's current is what the card had before. Say what is on her now, and what the card had.
+ if(const FString* Applied=AppearanceSelectedKeys.Find(AppearanceTargetKey);Applied&&!Applied->IsEmpty()&&*Applied!=Item)
+ {
+  auto Shown=[](const TSharedPtr<FJsonObject>& Row){const TSharedPtr<FJsonObject>* E=nullptr;FString N;
+   if(Row->TryGetObjectField(TEXT("entry"),E)&&E->IsValid()){(*E)->TryGetStringField(TEXT("name"),N);if(N.IsEmpty())N=FString::Printf(TEXT("類型 %d"),int32((*E)->GetNumberField(TEXT("id"))));}
+   return N;};
+  const FString Before=Name.IsEmpty()?FString():FString::Printf(TEXT("；套用前是「%s」"),*Name);
+  for(int32 I=0;I<AppearanceFiltered.Num();++I){const TSharedPtr<FJsonObject>& Row=AppearanceItems[AppearanceFiltered[I]];
+   if(Row->GetStringField(TEXT("key"))==*Applied)return FString::Printf(TEXT("\n目前是「%s」（剛套用，第 %d 頁，名稱前標 ▶%s）。"),*Shown(Row),I/32+1,*Before);}
+  for(const TSharedPtr<FJsonObject>& Row:AppearanceItems)if(Row->GetStringField(TEXT("key"))==*Applied)return FString::Printf(TEXT("\n目前是「%s」（剛套用，不在搜尋結果裡%s）。"),*Shown(Row),*Before);
+  return FString::Printf(TEXT("\n目前是剛套用的項目（不在這一類的清單裡%s）。"),*Before);
+ }
+ if(!Current||!Current->IsValid())return FString();
  if(Item.IsEmpty())return FString::Printf(TEXT("\n目前是「%s」：來源缺失，這台沒裝 mod %s。"),*Name,Guid.IsEmpty()?TEXT("（無 GUID）"):*Guid);
  for(int32 I=0;I<AppearanceFiltered.Num();++I)if(AppearanceItems[AppearanceFiltered[I]]->GetStringField(TEXT("key"))==Item)return FString::Printf(TEXT("\n目前是「%s」（第 %d 頁，名稱前標 ▶）。"),*Name,I/32+1);
  return FString::Printf(TEXT("\n目前是「%s」（不在搜尋結果裡）。"),*Name);

@@ -114,11 +114,17 @@ static TSharedPtr<FJsonObject> ReaderExperience(const UOKCharacterController* So
     return X;
 }
 AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Source){
-    if(!Source||Source->InteractionWidget||Source->bLoadInFlight||Source->Selected.Sex!=1)return nullptr;
+    if(!Source)return nullptr;
+    // Every refusal said on screen (and so in the reader's notices): pressed from the card wall it used to do nothing
+    // with nothing said, and a script took the press for an entry (e-cardload 2026-11-19).
+    auto Refuse=[Source](const TCHAR* Why){Source->ScreenNote(92,8.f,FColor::Yellow,FString(TEXT("沒有進入 1 對 1："))+Why);UE_LOG(LogTemp,Display,TEXT("OK enter one-on-one refused: %s"),Why);return nullptr;};
+    if(Source->InteractionWidget)return Refuse(TEXT("已經在 1 對 1 裡。"));
+    if(Source->bLoadInFlight)return Refuse(TEXT("角色還在載入，載完再按一次。"));
+    if(Source->Selected.Sex!=1)return Refuse(TEXT("選的是男性角色，1 對 1 的女方要選女性角色卡。"));
     if(!IsValid(Source->PreviewActor)||!Source->PreviewActor->Session.IsOpen()){
         Source->bEnterInteractionAfterLoad=true;Source->OnLoad3D();return nullptr;
     }
-    Source->ApplyPendingEditorMods();if(Source->bEditorModsDirty)return nullptr;
+    Source->ApplyPendingEditorMods();if(Source->bEditorModsDirty)return Refuse(Source->bModelLayout?TEXT("角色的編輯還沒套用完，稍後再按一次。"):TEXT("先切到「編輯」分頁（這張卡的編輯要在那裡套用），再按一次。"));
     auto* Shared=CreateWidget<UOKCharacterController>(Source->GetOwningPlayer());if(!Shared)return nullptr;
     Shared->bInteractionOnly=true;Shared->bIndependentCards=Source->bIndependentCards;Shared->Selected=Source->Selected;
     // Only her card, as the street's (EnterCards): the wardrobe and outfit change take Entries[0] as the card she came from
