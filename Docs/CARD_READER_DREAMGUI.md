@@ -4709,3 +4709,62 @@ f-yvonne 那條離線分析產出的是一個**否定結果**（靜態特徵不�
 3. **基礎率寫成分數，不寫「必死」。** 目前故障位置分散，所以尺的輸出是
    **「每趟故障機率接近 1」**，不是「第 N 張必死」。這兩種說法對「要跑幾趟才算修好」
    的要求差很多——前者需要的趟數由機率算，後者會讓人誤以為一趟就能判。
+
+## `gclrun` 與 retention 兩格的輸入盤點（前置第 1 項，純讀碼完成）
+
+### retention／`DeferredRelease`：乾淨，而且到達證據已內建
+
+`Plugins/DreamGUI/Source/DreamGUIRenderer/Private/DreamUIRender/DreamUIDeferredRelease.cpp:11-24`
+四個 cvar，**預設值都是 3**（不是 0——先前以為要和 0 比的那三個「都沒排除任何東西」的推論，
+基準點是 3 不是 0）：
+
+| cvar | 預設 |
+|---|---:|
+| `DreamGUI.DeferredRelease.Frames.Texture` | 3 |
+| `DreamGUI.DeferredRelease.Frames.Buffer` | 3 |
+| `DreamGUI.DeferredRelease.Frames.Pooled` | 3 |
+| `DreamGUI.DeferredRelease.Frames.Func` | 3 |
+
+- **輸入**：只有 cvar；`Config/` 無對應 key、無同名環境變數。
+- **讀法**：`GetValueOnRenderThread()`（`:54-55`、`:62-63`），**即時讀取、沒有快取**。
+- **到達證據**：`:54-55` 已經把四個值一起記進 log，**不必另外加儀器**。
+
+### `gclrun`：**值在 RHI 初始化時被快取進 `Initializer`，`LastSetBy` 抓不到這個洞**
+
+`/e/PhysX/UE5.8/Engine/Source/Runtime/RHICore/Private/RHICoreTransientResourceAllocator.cpp`：
+
+```
+41:  static int32 GRHITransientAllocatorGarbageCollectLatency = 16;
+42:  FAutoConsoleVariableRef CVarRHITransientAllocatorGarbageCollectLatency(...)
+528: Initializer.GarbageCollectLatency = GRHITransientAllocatorGarbageCollectLatency;  // FRHITransientHeapCache::FInitializer::CreateDefault()
+1280:Initializer.GarbageCollectLatency = GRHITransientAllocatorGarbageCollectLatency;  // FRHITransientPagePoolCache::FInitializer::CreateDefault()
+607: if (Heap->GetLastUsedGarbageCollectCycle() + Initializer.GarbageCollectLatency <= GarbageCollectCycle)
+1372:if (PagePool->GetLastUsedGarbageCollectCycle() + Initializer.GarbageCollectLatency <= GarbageCollectCycle)
+```
+
+**驅逐判斷讀的是 `Initializer.GarbageCollectLatency`，而那是 `CreateDefault()` 在建構 cache 時
+從全域變數抄過去的一份快照。** cache 在 RHI 初始化時建立一次，所以：
+
+> **在主控台（`game_exec`）設這個 cvar 會讀回成功、`LastSetBy: Console`，
+> 但配置器仍用初始化時那份舊值——一個 `LastSetBy` 完全看不見的無聲失效。**
+
+這正是前置清單第 1 項要防的那一類，而且**`LastSetBy` 這個半自動解在這裡失效**
+（先前寫「對 cvar 已經有一半的自動解」，範圍要收窄成「只對**多來源互相覆蓋**有效，
+對**啟動時快照**無效」）。
+
+**所以 `gclrun` 必須用命令列設**（`-ini:Engine:[ConsoleVariables]:` → `SystemSettingsIni`，
+在第一帧之前生效，也就是在 RHI 初始化之前）。我的驅動本來就是這個形式，**方法是對的**，
+但這條必須寫下來，否則將來有人想「現場調一下看看」就會得到一個乾淨的假陰性。
+
+### 這一格的到達證據比較弱，照 7j 申報
+
+沒有任何 log 會印出配置器實際使用的 latency。能申報的只有：
+
+1. **「設定在初始化之前」**——log 開頭的 `LogConfig: Set CVar [[RHI.TransientAllocator.GarbageCollectLatency:N]]`
+   與命令列那一行；這證明值進了 cvar 系統且在 init 前，**不證明 cache 用了它**。
+2. **行為代理**：latency 加大 ⇒ 閒置堆更晚被 `delete`（`:612`）⇒ 若「0 active heaps」來自堆被刪，
+   故障該變晚或消失。這是**預測**，不是到達證據。
+
+**覆蓋率申報：`gclrun` 的到達證據 = 1/2（只有「設定時機」，沒有「機制點使用」）。**
+照 7j，這一格的**陰性結果不能當排除**——若它 6/6 照樣當，只能寫成
+「在這個 latency 下故障仍發生」，不能寫成「堆回收不是成因」。
