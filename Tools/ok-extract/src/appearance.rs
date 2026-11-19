@@ -489,8 +489,11 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   // button, copying one eye to the other) expanded into the fields it writes, then patched in ONE call -- so the
   // card never holds a half-applied action and the open happens once. `edits` is still the plain per-field list.
   let raw=if text(&r,"action")?=="accessory_slot_add"{original}
-   else if let Some(list)=r["ops"].as_array(){if r["edits"].is_array(){return Err("ops 與 edits 只能給一個".into());}
-    properties::patch_properties(&original,outfit,&ops::expand(&original,outfit,list)?)?}
+   else if let Some(list)=r["ops"].as_array(){
+    // Both together is the editor's normal case, not a mistake: the person drags the main hair colour (a staged
+    // `edits` row, which is what they see) and applying it runs the action that colour implies. The staged row wins.
+    let edits=r["edits"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    properties::patch_properties(&original,outfit,&ops::expand_with_edits(&original,outfit,list,edits)?)?}
    else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
   return export_edited(root,&r,&raw,output);
  }

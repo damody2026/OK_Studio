@@ -73,6 +73,20 @@ impl Now {
     }
 }
 
+/// The operations plus the caller's own per-field edits, as one list for one patch. An edit wins over an operation's
+/// field: the editor stages a colour row while the person drags it, and the action is what that staged value means
+/// (drag the main colour, then apply: the colour is the edit, the gradient and outline come from the operation), so
+/// the value the person is looking at must not be overwritten by the expansion of their own drag.
+pub(super) fn expand_with_edits(original: &[u8], outfit: usize, ops: &[J], edits: &[J]) -> Result<Vec<J>, String> {
+    let mut out: BTreeMap<String, J> = expand(original, outfit, ops)?.into_iter()
+        .filter_map(|e| Some((e["key"].as_str()?.to_string(), e["value"].clone()))).collect();
+    for edit in edits {
+        let key = edit["key"].as_str().ok_or("修改清單缺少欄位名稱")?;
+        out.insert(key.to_string(), edit["value"].clone());
+    }
+    Ok(out.into_iter().map(|(key, value)| json!({"key": key, "value": value})).collect())
+}
+
 /// `{"op": …}` → the edits it writes. The caller patches them in one go; a later op in the same list overwrites an
 /// earlier one's field, in list order, exactly as clicking twice would.
 pub(super) fn expand(original: &[u8], outfit: usize, ops: &[J]) -> Result<Vec<J>, String> {
@@ -190,5 +204,31 @@ mod tests {
     fn black_lightens_to_grey() {
         let grey = shift_value([0.0, 0.0, 0.0], 0.3);
         assert!((grey[0] - 0.3).abs() < 1e-9 && grey[0] == grey[1] && grey[1] == grey[2], "{grey:?}");
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The staged row wins over the same field coming out of an operation: the person is looking at the colour they
+    /// dragged, and an expansion of their own drag must not replace it with a recomputed one. Skipped where the card
+    /// is absent -- cards are not in version control, so this runs on a machine that has one.
+    #[test]
+    fn a_staged_edit_wins_over_the_operations_field() {
+        let card = std::path::Path::new("../../Content/CharacterCards/StreetHeroines/alice.png");
+        if !card.exists() { return }
+        let bytes = std::fs::read(card).unwrap();
+        let rows = expand_with_edits(&bytes, 0,
+            &[json!({"op": "hair_base_color", "rgba": [0.2, 0.6, 0.9]})],
+            &[json!({"key": "hair.parts.0.baseColor.0", "value": 0.9})]).unwrap();
+        let at = |key: &str| rows.iter().find(|r| r["key"] == key).map(|r| r["value"].as_f64().unwrap());
+        // The dragged channel keeps the staged value; the fields only the operation writes come from the operation
+        // (gradient start at value -0.3, so 0.6 on the blue channel), and the whole set is still one list.
+        assert_eq!(at("hair.parts.0.baseColor.0"), Some(0.9));
+        assert_eq!(at("hair.parts.0.baseColor.2"), Some(0.9));
+        assert_eq!(at("hair.parts.0.startColor.2").map(|v| (v * 1000.).round()), Some(600.));
+        assert!(rows.len() >= 60, "one write, every field the action touches: {}", rows.len());
     }
 }
