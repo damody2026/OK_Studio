@@ -324,8 +324,19 @@ reader_call {"action":"textures"}      // 数值版的 after，贴进文件
 
 ### D2 偏移 `Offset [0.5, 0]`
 
-**界面目前没有偏移／缩放的控件**（`材質貼圖` 页只做了指派与清除），所以这两张只能走 `reader_call`。
-这是已知的缺口，不是这次拍照要解决的事；要补就是另外一批工作。
+**走界面**：`材質貼圖` 页每一列底下有一行「偏移 x y 縮放 x y」加「套用偏移／縮放」按钮，
+四个格子一开始填着这一列现在的值；**两格都清空＝移除那一笔**（原作的 `RemoveMaterialTextureOffset`／`Scale`）。
+窗口里拍的要是**使用者真的会按的那条路**，所以 D2／D3 走按钮；底下的 `reader_call` 版留着当对照，
+两条走出来的结果必须一样（它们本来就是同一支写入：按钮也走 `textures_apply`）。
+
+```jsonc
+// 走界面：先把四个格子填好，再按按钮。#N 是同文字控件的第几个（从 0），
+// 所以 cf_m_top_02／MainTex 是第几行就填几 —— 先用 assign-page-after.png 数，不要按印象猜。
+ui_exec {"command":"ok.ReaderScreen press 套用偏移／縮放 #<那一行>"}
+```
+
+格子里的文字要先用 `ui_mouse` 点进去再 `ui_type`（DreamGUI 的输入框收不到 `ui_press`）；
+嫌麻烦就用下面的 `reader_call` 版，两者写进卡里的东西一模一样。
 
 ```jsonc
 reader_call {"action":"textures"}      // 先重读：上一次 apply 之后清单已经重建
@@ -376,7 +387,7 @@ f-yvonne 的题目，画面验证：CLI 已确认 `clothes.parts.0.sleevesType` 
 拍到一半才发现等于整批重来。
 
 ```jsonc
-reader_launch {"card":"<KK_007604 的完整路径>","lane":"f-shot-e","no_build":true}
+reader_launch {"card":"D:/XKoikatuSunshine/UserData/chara/female/KK_007604.png","lane":"f-shot-e","no_build":true}
 ui_exec {"command":"ok.ReaderScreen press 載入3D"}
 reader_call {"action":"state"}
 ```
@@ -420,14 +431,14 @@ reader_call {"action":"get","keys":["clothes.parts.0.sleevesType"]}             
 （两次导出的网格清单相同）。所以**每张图都要配当时的数值**——这组图单看没有意义。
 
 ```jsonc
-reader_launch {"card":"<KK_007604 的完整路径>","lane":"f-shot-f","no_build":true}
+reader_launch {"card":"D:/XKoikatuSunshine/UserData/chara/female/KK_007604.png","lane":"f-shot-f","no_build":true}
 ui_exec {"command":"ok.ReaderScreen press 載入3D"}
 reader_call {"action":"state"}
 // 切到服装 1（同批次 E 的做法）
 reader_call {"action":"camera","yaw":0,"pitch":0,"distance":90,"focus":[0,0,135]}   // 领口特写
 ui_screenshot {}                                                                    // → collar-first-open.png
 reader_call {"action":"parameters","query":"clothes.parts.0.hideOpt"}               // 记下 .0 与 .1
-reader_call {"action":"parameters","query":"accessory"}                             // 找槽 12（o_necktie_yure_long）的显示状态
+reader_call {"action":"parameters","query":"accessory.parts.12"}                    // type／id／hideCategory／parentKey，照实记
 ```
 
 **重新载入，再拍一次同一个画面**：
@@ -438,20 +449,29 @@ reader_call {"action":"state"}
 reader_call {"action":"camera","yaw":0,"pitch":0,"distance":90,"focus":[0,0,135]}   // 和上面一字不差
 ui_screenshot {}                                                                    // → collar-reloaded.png
 reader_call {"action":"parameters","query":"clothes.parts.0.hideOpt"}
-reader_call {"action":"parameters","query":"accessory"}
+reader_call {"action":"parameters","query":"accessory.parts.12"}
 ```
 
 **判准**（这组特别容易得出错的结论，所以写死）：
 
-- 两张图**看起来不同**，而两次的**网格清单相同**，而 `hideOpt` 或槽 12 的显示状态**不同**
+**先说清楚能读到什么，免得写出不存在的东西**（f-yvonne 2026-11-19 更正）：
+**「配件显示状态」不是卡上的栏位。** 原作的配件显示开关是执行期的 `ChaFileStatus.showAccessory`，
+**不进卡**，所以 `parameters` 里不知道有没有对应的键，而且从来没人读过它 —— **不要写成有**。
+这一槽能读到的是 `accessory.parts.12.type` 与 `id`（这一槽戴着什么，`catalog` 的 `current` 也看得到）、
+`accessory.parts.12.hideCategory`、`accessory.parts.12.parentKey`。槽号**从 0 起算**，
+读卡器 UI 上显示为「配件欄 13」—— 写进文件时两个都写，免得下一个人对不上。
+另外窗口里用 `reader_call {"action":"controls"}` 看有没有配件显示开关：有就记**当场的值与控件 key**，
+找不到就照实写「读卡器没有配件显示开关，只记卡上旗标」。
+
+- 两张图**看起来不同**，而两次的**网格清单相同**，而 `hideOpt` 或上面那几个键**不同**
   → 结论成立：是旗标。
-- 两张图看起来不同，但 `hideOpt` 与槽 12 的显示状态**也相同** → **结论不成立**，
+- 两张图看起来不同，但 `hideOpt` 与那几个键**也相同** → **结论不成立**，
   差异来自别的东西（材质、动态骨、载入时序都可能）。这时候**不要**把它写成「旗标问题」，
   记进 `Docs/ERROR_LOG.md` 说「两次不同但已知旗标相同，原因未定」。
 - 两张图**看起来一样** → 这次没重现，照实写「没重现」，不要去调参数直到它重现为止
   ——那是在制造证据，不是在找证据。
-- 槽 12 的显示状态**用 `parameters` 列出来的那个键的实际名字写进文件**，不要写成
-  「o_necktie_yure_long 开着」——配件槽与模型名是两件事，混着写下一个人会以为是同一件。
+- 写进文件时**用 `parameters` 列出来的键的实际名字**，不要写成「`o_necktie_yure_long` 开着」——
+  配件槽与模型名是两件事，混着写下一个人会以为是同一件。
 
 收尾 `reader_stop {"lane":"f-shot-f"}`。
 

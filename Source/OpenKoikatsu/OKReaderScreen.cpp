@@ -777,16 +777,37 @@ void UOKReaderScreen::BuildCategories()
 				if(Chosen.IsEmpty())return;
 				TexturePath=Chosen;if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Chosen);
 			});
-			// 指派／清除 both send the row's five identity fields back exactly as they were read.
-			auto Send=[Weak](const TSharedPtr<FJsonObject>& Row,const FString& Png,bool bClear)
+			// A row's identity: the five fields, sent back exactly as they were read. The page never remembers
+			// "row N" -- the list's order is each card's own fact.
+			auto Ident=[](const TSharedPtr<FJsonObject>& Row)
 			{
-				if(!Weak.IsValid())return;
 				auto C=MakeShared<FJsonObject>();
 				for(const TCHAR* Field:{TEXT("object"),TEXT("coordinate"),TEXT("slot")})C->SetNumberField(Field,Row->GetNumberField(Field));
 				for(const TCHAR* Field:{TEXT("material"),TEXT("property")})C->SetStringField(Field,Row->GetStringField(Field));
-				if(bClear)C->SetBoolField(TEXT("clear"),true);else C->SetStringField(TEXT("png"),Png);
-				const FString Refused=Weak->ApplyTextureChanges({MakeShared<FJsonValueObject>(C)});
+				return C;
+			};
+			// Every button here goes through the same write as the CLI and the MCP
+			// (UOKCharacterController::ApplyTextureChanges -> ok-extract `textures_apply`). A second write path
+			// for the UI would drift from it, and the drift would show up as "the button does something else".
+			auto Send=[Weak](TSharedRef<FJsonObject> Change)
+			{
+				if(!Weak.IsValid())return;
+				const FString Refused=Weak->ApplyTextureChanges({MakeShared<FJsonValueObject>(Change)});
 				if(!Refused.IsEmpty())Weak->ScreenNote(72,6.f,FColor::Orange,Refused);
+			};
+			// One number field. The typed text lives in a shared string, so the four of a row can be read together
+			// when the button is pressed.
+			auto Number=[this](UDreamWidget* Host,const FString& Hint,TSharedRef<FString> Held)
+			{
+				UOKDreamControl* C=MakeControl(TEXT("Input"),Host);
+				if(C&&C->Input)
+				{
+					C->Input->SetText(*Held);C->Input->SetPlaceholder(FText::FromString(Hint));
+					C->Input->GetOnTextChangedEvent().AddWeakLambda(this,[Held](const FString& T){*Held=T.TrimStartAndEnd();});
+					C->Input->GetOnTextCommittedEvent().AddWeakLambda(this,[Held](const FString& T){*Held=T.TrimStartAndEnd();});
+				}
+				if(C)C->SetWidth(72);
+				return C;
 			};
 			for(const TSharedPtr<FJsonObject>& Row:Weak->EditorTextures)
 			{
@@ -797,14 +818,47 @@ void UOKReaderScreen::BuildCategories()
 				else Size=TEXT("沒有貼圖");
 				Label(Into,FString::Printf(TEXT("%s 欄 %d／%s／%s（%s）"),*Kind,int32(Row->GetNumberField(TEXT("slot"))),*Material,*Property,*Size));
 				UDreamWidget* Buttons=MakePanel(Into,true,6.f);
-				MakeOwnButton(Buttons,TEXT("指派"),[this,Send,Row]()
+				MakeOwnButton(Buttons,TEXT("指派"),[this,Send,Ident,Row]()
 				{
 					if(TexturePath.IsEmpty()){if(UOKCharacterController* C=Controller.Get())C->ScreenNote(72,6.f,FColor::Orange,TEXT("先選一個 PNG"));return;}
-					Send(Row,TexturePath,false);
+					auto Change=Ident(Row);Change->SetStringField(TEXT("png"),TexturePath);Send(Change);
 				});
 				// 清除 is the original's RemoveMaterialTexture: the row keeps its offset and scale if it has any,
 				// and the card's texture dictionary drops whatever nothing points at any more.
-				MakeOwnButton(Buttons,TEXT("清除"),[Send,Row](){Send(Row,FString(),true);});
+				MakeOwnButton(Buttons,TEXT("清除"),[Send,Ident,Row](){auto C=Ident(Row);C->SetBoolField(TEXT("clear"),true);Send(C);});
+				// 偏移與縮放（原作的 SetMaterialTextureOffset／Scale 與它們的 Remove）。四個欄位先填這一列現在的值；
+				// 兩個都清空＝移除那一筆，這就是原作「還原」那一步。卡上整張都沒有過偏移／縮放也寫得進去：
+				// 形狀的權威是原作的 `Vector2Formatter`（兩個 float32 的定長陣列），不是這張卡有沒有樣本。
+				UDreamWidget* Vectors=MakePanel(Into,true,6.f);
+				TArray<TSharedRef<FString>> Held;for(int32 I=0;I<4;++I)Held.Add(MakeShared<FString>());
+				for(int32 Pair=0;Pair<2;++Pair)
+				{
+					const TArray<TSharedPtr<FJsonValue>>* Cur=nullptr;
+					if(Row->TryGetArrayField(Pair==0?TEXT("offset"):TEXT("scale"),Cur)&&Cur->Num()==2)
+						for(int32 I=0;I<2;++I)*Held[Pair*2+I]=FString::SanitizeFloat((*Cur)[I]->AsNumber());
+					Label(Vectors,Pair==0?TEXT("偏移"):TEXT("縮放"));
+					Number(Vectors,TEXT("x"),Held[Pair*2]);Number(Vectors,TEXT("y"),Held[Pair*2+1]);
+				}
+				MakeOwnButton(Vectors,TEXT("套用偏移／縮放"),[Weak,Send,Ident,Row,Held]()
+				{
+					auto C=Ident(Row);
+					for(int32 Pair=0;Pair<2;++Pair)
+					{
+						const FString& X=*Held[Pair*2];const FString& Y=*Held[Pair*2+1];
+						const TCHAR* Name=Pair==0?TEXT("offset"):TEXT("scale");
+						if(X.IsEmpty()&&Y.IsEmpty()){C->SetField(Name,MakeShared<FJsonValueNull>());continue;}
+						// 一格填了一格沒填，或填了不是數字：寧可整批不送，也不要默默當成 0 寫進卡裡
+						// （默默當成 0 正是「介面照常回應，所以沒人去查」那一族）。
+						if(!X.IsNumeric()||!Y.IsNumeric())
+						{
+							if(Weak.IsValid())Weak->ScreenNote(72,6.f,FColor::Orange,
+								FString::Printf(TEXT("%s 要兩個數字，或兩格都清空代表移除"),Pair==0?TEXT("偏移"):TEXT("縮放")));
+							return;
+						}
+						C->SetArrayField(Name,{MakeShared<FJsonValueNumber>(FCString::Atod(*X)),MakeShared<FJsonValueNumber>(FCString::Atod(*Y))});
+					}
+					Send(C);
+				});
 			}
 		};
 		Tex.Groups.Add(MoveTemp(Page));
