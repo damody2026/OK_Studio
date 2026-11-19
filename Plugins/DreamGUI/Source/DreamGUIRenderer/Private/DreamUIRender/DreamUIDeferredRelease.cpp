@@ -34,6 +34,13 @@ namespace DreamUIDeferredReleaseLocal
 	};
 	// Handed over on the render thread or its graph setup tasks, hence the lock. Never destroyed: what still waits at
 	// exit is left, not released after the RHI.
+	/** Diagnostic (log only, default off), for the GPU page fault of 2026-11-19: the only way to answer whether a
+	 *  texture the GPU faulted on was released by THIS queue. Until now this queue logged nothing per entry -- no
+	 *  name, no address, no frame -- so "is it ours?" was unanswerable. Render thread. */
+	static TAutoConsoleVariable<int32> CVarLogEntries(
+		TEXT("DreamGUI.DeferredRelease.LogEntries"), 0,
+		TEXT("Log every resource this queue lets go of, as it lets go (diagnostic, off by default)."),
+		ECVF_RenderThreadSafe);
 	static FCriticalSection Lock;
 	static TArray<FEntry>& Entries()
 	{
@@ -127,8 +134,19 @@ void FDreamUIDeferredRelease::Tick_RenderThread()
 		}
 	}
 	Scope.Unlock();
+	const bool bLog = DreamUIDeferredReleaseLocal::CVarLogEntries.GetValueOnRenderThread() != 0;
 	for (DreamUIDeferredReleaseLocal::FEntry& Entry : Due)
 	{
+		if (bLog)
+		{
+			// The texture's RHI name is the same key the D3D12 page-fault report prints.
+			const FRHITexture* Texture = Entry.Texture.GetReference();
+			const FIntVector Size = Texture ? Texture->GetSizeXYZ() : FIntVector::ZeroValue;
+			UE_LOG(LogTemp, Display, TEXT("DreamGUI deferred release lets go: kind=%s name=%s %dx%d held=%u frames now=%u"),
+				Entry.Release ? TEXT("func") : Entry.Pooled.IsValid() ? TEXT("pooled") : Entry.Buffer.IsValid() ? TEXT("buffer") : TEXT("texture"),
+				Texture ? *Texture->GetName().ToString() : TEXT("-"),
+				Size.X, Size.Y, Now - Entry.Frame, Now);
+		}
 		if (Entry.Release)
 		{
 			Entry.Release();

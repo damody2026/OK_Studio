@@ -19,6 +19,28 @@
 #include "KKRuntimeMaterial.h"
 
 static void ExtendEncodedMipChain(TArray<FOKEncodedMip>& Mips);
+
+// Diagnostic (log only, default off), for the GPU page fault of 2026-11-19: with D3D12.TrackAllAllocations on,
+// the faulting address landed inside a RELEASED B8G8R8A8 texture named Texture2D_<n> plus the 64 MB
+// "PoolAllocator Heap" behind it, about 2850 frames (~40 s, ~5 cards) before the fault. Those three clues
+// (auto-named UObject, PF_B8G8R8A8, size taken from the card's own mip) fit the textures created here, but the
+// name pattern alone cannot tell them apart from any other CreateTransient caller, so this prints the join key
+// the D3D12 report shows -- the UObject name -- at both ends of the lifetime.
+// Unlike today's other instruments this one is visible on a CLEAN trip too: the creation lines print whether or
+// not anything faults, so a trip with no lines means the knob did not arrive, which is what makes it readable.
+static TAutoConsoleVariable<int32> CVarOKLogTextureLifetime(
+    TEXT("ok.LogTextureLifetime"), 0,
+    TEXT("Log runtime card textures as they are created and as the card switch releases them (diagnostic, off by default)."),
+    ECVF_Default);
+KKUNITYBUNDLE_API void OKLogRuntimeTextureLife(const TCHAR* Event, const UTexture2D* Tex, int64 Bytes)
+{
+    if (CVarOKLogTextureLifetime.GetValueOnAnyThread() == 0 || Tex == nullptr) return;
+    const FTexturePlatformData* Data = Tex->GetPlatformData();
+    const int32 W = Data && Data->Mips.Num() ? Data->Mips[0].SizeX : 0;
+    const int32 H = Data && Data->Mips.Num() ? Data->Mips[0].SizeY : 0;
+    UE_LOG(LogTemp, Display, TEXT("OK texture lifetime: %s name=%s %dx%d mips=%d bytes=%lld frame=%u"),
+        Event, *Tex->GetFName().ToString(), W, H, Data ? Data->Mips.Num() : 0, Bytes, GFrameNumber);
+}
 TArray<FOKEncodedMip> OKBuildEncodedMipChain(const TArray<uint8>& BGRA, int32 Width, int32 Height)
 {
     TArray<FOKEncodedMip> Mips;
@@ -95,6 +117,7 @@ static UTexture2D* CreatePreparedTexture(const TArray<FOKEncodedMip>& Mips,
     const int32 First=OKLowMemoryFirstMip(Mips,[](const FOKEncodedMip& M){return FMath::Max(M.Width,M.Height);});
     UTexture2D* Tex=UTexture2D::CreateTransient(Mips[First].Width,Mips[First].Height,PF_B8G8R8A8);
     if(!Tex)return nullptr;
+    OKLogRuntimeTextureLife(TEXT("created(prepared)"), Tex, 0);
     for (int32 I=First; I<Mips.Num(); ++I) {
         FTexture2DMipMap* Mip=I==First ? &Tex->GetPlatformData()->Mips[0] : new FTexture2DMipMap();
         if (I>First) Tex->GetPlatformData()->Mips.Add(Mip);
@@ -240,6 +263,7 @@ UTexture2D* CreatePackedTexture(const FPreparedPng& Entry,const OkTextureSetting
    ?UTexture2D::CreateTransient(Entry.Mips[0].Width,Entry.Mips[0].Height,PF_B8G8R8A8,NAME_None,TConstArrayView64<uint8>(Entry.Mips[0].Payload.GetData(),Entry.Mips[0].Payload.Num()))
    :UTexture2D::CreateTransient(Entry.Mips[First].Width,Entry.Mips[First].Height,PF_B8G8R8A8);
   if(!Tex)return nullptr;
+  OKLogRuntimeTextureLife(TEXT("created(packed)"), Tex, 0);
   for(int32 I=bDirect?1:First;I<Entry.Mips.Num();++I){
    FTexture2DMipMap* Mip=I==First?&Tex->GetPlatformData()->Mips[0]:new FTexture2DMipMap();
    if(I>First)Tex->GetPlatformData()->Mips.Add(Mip);
@@ -364,7 +388,9 @@ void KeepRecentTexture(UTexture2D* Tex)
     if(Index!=INDEX_NONE){auto Entry=MoveTemp(RecentTextures[Index]);Entry.bTouched=true;RecentTextures.RemoveAt(Index);RecentTextures.Add(MoveTemp(Entry));return;}
     const int64 Bytes=int64(Tex->GetSizeX())*Tex->GetSizeY()*4*4/3;
     RecentTextures.Add(FRecentTexture{TStrongObjectPtr<UTexture2D>(Tex),Bytes,true});RecentTextureBytes+=Bytes;
-    while(RecentTextureBytes>RecentTextureBudget&&RecentTextures.Num()>1){RecentTextureBytes-=RecentTextures[0].Bytes;RecentTextures.RemoveAt(0);}
+    while(RecentTextureBytes>RecentTextureBudget&&RecentTextures.Num()>1){
+        OKLogRuntimeTextureLife(TEXT("released(over budget)"), RecentTextures[0].Texture.Get(), RecentTextures[0].Bytes);
+        RecentTextureBytes-=RecentTextures[0].Bytes;RecentTextures.RemoveAt(0);}
 }
 void TrimReadonlyTextures(int64 IncomingBytes)
 {
@@ -393,13 +419,17 @@ int32 OKReleaseStaleRecentRuntimeTextures(int64* OutBytes)
     {
         const FRecentTexture& Entry=RecentTextures[Index];
         if(Entry.bTouched&&Entry.Texture.IsValid())continue;
+        // The strong reference goes here, so this is where the texture becomes collectable.
+        OKLogRuntimeTextureLife(TEXT("released(stale on card switch)"), Entry.Texture.Get(), Entry.Bytes);
         Bytes+=Entry.Bytes;RecentTextureBytes-=Entry.Bytes;RecentTextures.RemoveAt(Index);++Released;
     }
     if(OutBytes)*OutBytes=Bytes;
     return Released;
 }
 void OKReleaseRecentRuntimeTextures()
-{check(IsInGameThread());RecentTextures.Reset();RecentTextureBytes=0;}
+{check(IsInGameThread());
+ for(const FRecentTexture& Entry:RecentTextures)OKLogRuntimeTextureLife(TEXT("released(cache cleared)"),Entry.Texture.Get(),Entry.Bytes);
+ RecentTextures.Reset();RecentTextureBytes=0;}
 static FAutoConsoleCommand GOKRuntimeTextureCacheReport(TEXT("ok.RuntimeTextureCache"),
     TEXT("Report the runtime texture caches (the kept textures hold a refcount, so GC cannot take them)"),
     FConsoleCommandDelegate::CreateLambda([]

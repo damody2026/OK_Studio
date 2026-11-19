@@ -10,6 +10,7 @@
 //   Saved/Tests/EyeDull/<run>/: result.json (after each card), sheet_NN.png (a row per card: as on the card, 1.1, 1.3).
 //   -ExecCmds="ok.VerifyEyeDull [first count]"   OK_EYE_AUDIT_EXIT=1 quits after.
 #include "OKCharacterController.h"
+#include "KKTextureLifetimeLog.h"
 #include "KKPreviewActor.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
@@ -58,7 +59,7 @@ static TStrongObjectPtr<UTexture2D> GTex[2];
 static UTexture2D* Texture(int32 Index)
 {
     if(GTex[Index])return GTex[Index].Get();
-    const int32 N=256;UTexture2D* T=UTexture2D::CreateTransient(N,N,PF_B8G8R8A8);T->SRGB=false;T->Filter=TF_Bilinear;T->AddressX=T->AddressY=TA_Clamp;
+    const int32 N=256;UTexture2D* T=UTexture2D::CreateTransient(N,N,PF_B8G8R8A8);OKLogRuntimeTextureLife(TEXT("created(eye-dull-audit)"),T,0);T->SRGB=false;T->Filter=TF_Bilinear;T->AddressX=T->AddressY=TA_Clamp;
     FColor* Out=static_cast<FColor*>(T->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE));
     for(int32 Y=0;Y<N;++Y)for(int32 X=0;X<N;++X)Out[Y*N+X]=Index&&FVector2D(X-N/2+.5f,Y-N/2+.5f).Size()<N*.12f?FColor(0,0,0,255):FColor(255,255,255,255);
     T->GetPlatformData()->Mips[0].BulkData.Unlock();T->UpdateResource();GTex[Index].Reset(T);return T;

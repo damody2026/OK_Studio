@@ -498,6 +498,7 @@ static UTexture2D* ColorLookupTextureFromPngFile(const FString& Path)
 	if (W <= 0 || H <= 0 || Raw.Num() != W * H * 4) return nullptr;
 	UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
 	if (!Tex || !Tex->GetPlatformData() || Tex->GetPlatformData()->Mips.IsEmpty()) return nullptr;
+	OKLogRuntimeTextureLife(TEXT("created(png)"), Tex, Raw.Num());
 	FTexture2DMipMap& Mip = Tex->GetPlatformData()->Mips[0];
 	FMemory::Memcpy(Mip.BulkData.Lock(LOCK_READ_WRITE), Raw.GetData(), Raw.Num());
 	Mip.BulkData.Unlock();

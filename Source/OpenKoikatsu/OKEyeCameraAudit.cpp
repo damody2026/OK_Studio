@@ -18,6 +18,7 @@
 // that many outfits; OK_EYE_AUDIT_MAX: the degrees allowed (12); OK_EYE_AUDIT_MODES=1: also try the eye button once;
 // OK_EYE_AUDIT_EXIT=1 quits after.
 #include "OKCharacterController.h"
+#include "KKTextureLifetimeLog.h"
 #include "KKPreviewActor.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
@@ -71,7 +72,7 @@ enum{Following,Straight,FollowingDot,StraightDot,FollowingWhite,StraightWhite,St
 static UTexture2D* DotTexture(int32 Kind)
 {
     if(GDot[Kind])return GDot[Kind].Get();
-    const int32 N=256;UTexture2D* T=UTexture2D::CreateTransient(N,N,PF_B8G8R8A8);T->SRGB=false;T->Filter=TF_Bilinear;T->AddressX=T->AddressY=TA_Clamp;
+    const int32 N=256;UTexture2D* T=UTexture2D::CreateTransient(N,N,PF_B8G8R8A8);OKLogRuntimeTextureLife(TEXT("created(eye-camera-audit)"),T,0);T->SRGB=false;T->Filter=TF_Bilinear;T->AddressX=T->AddressY=TA_Clamp;
     FColor* Out=static_cast<FColor*>(T->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE));
     for(int32 Y=0;Y<N;++Y)for(int32 X=0;X<N;++X)Out[Y*N+X]=FVector2D(X-N/2+.5f,Y-N/2+.5f).Size()<N*.07f&&Kind==1||Kind==2?FColor(0,0,0,255):FColor(255,255,255,255);
     T->GetPlatformData()->Mips[0].BulkData.Unlock();T->UpdateResource();GDot[Kind].Reset(T);return T;

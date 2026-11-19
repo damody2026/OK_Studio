@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "KKTextureLifetimeLog.h"
 #include "OKHScene.h"
 #include "OKComboBox.h"
 #include "HAL/IConsoleManager.h"
@@ -137,7 +138,7 @@ namespace
 		{
 			return nullptr;
 		}
-		UTexture2D* Tex = UTexture2D::CreateTransient(Wrapper->GetWidth(), Wrapper->GetHeight(), PF_B8G8R8A8);
+		UTexture2D* Tex = UTexture2D::CreateTransient(Wrapper->GetWidth(), Wrapper->GetHeight(), PF_B8G8R8A8);OKLogRuntimeTextureLife(TEXT("created(gallery-png)"),Tex,0);
 		if (!Tex)
 		{
 			return nullptr;
@@ -1428,7 +1429,7 @@ void UOKCharacterController::SelectIndex(int32 Index)
 							G->PendingPreviewFrames.Reset();
 							for(int32 I=0;I<Raw.Num();++I)
 							{
-								UTexture2D* Tex=UTexture2D::CreateTransient(Sizes[I].X,Sizes[I].Y,PF_B8G8R8A8);if(!Tex)break;
+								UTexture2D* Tex=UTexture2D::CreateTransient(Sizes[I].X,Sizes[I].Y,PF_B8G8R8A8);if(!Tex)break;OKLogRuntimeTextureLife(TEXT("created(gallery-apng)"),Tex,0);
 								FMemory::Memcpy(Tex->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE),Raw[I].GetData(),Raw[I].Num());
 								Tex->GetPlatformData()->Mips[0].BulkData.Unlock();Tex->UpdateResource();G->AnimatedPreviewTextures.Add(Tex);
 							}

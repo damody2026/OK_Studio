@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "KKTextureLifetimeLog.h"
 #include "OKComboBox.h"
 #include "OKAppearanceButton.h"
 #include "OKAppearanceCardJob.h"
@@ -67,7 +68,7 @@ void CopyPendingHeadEdits(const FKKCharacterFile& Source,FKKCharacterFile& Desti
  Destination.Face.ShapeValueFace=Source.Face.ShapeValueFace;Destination.Body=Source.Body;
 }
 UButton* Button(UWidgetTree* Tree,UHorizontalBox* Row,const TCHAR* Label){auto* B=Tree->ConstructWidget<UButton>();auto* T=Tree->ConstructWidget<UTextBlock>();T->SetText(FText::FromString(Label));T->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));B->SetContent(T);Row->AddChildToHorizontalBox(B)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));return B;}
-UTexture2D* Thumbnail(const FString& Path){TArray<uint8> Bytes;if(!FFileHelper::LoadFileToArray(Bytes,*Path))return nullptr;auto& Module=FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));auto Wrapper=Module.CreateImageWrapper(EImageFormat::PNG);if(!Wrapper||!Wrapper->SetCompressed(Bytes.GetData(),Bytes.Num())||Wrapper->GetWidth()>2048||Wrapper->GetHeight()>2048)return nullptr;TArray64<uint8> Raw;if(!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return nullptr;auto* Texture=UTexture2D::CreateTransient(Wrapper->GetWidth(),Wrapper->GetHeight(),PF_B8G8R8A8);if(!Texture)return nullptr;void* Data=Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);FMemory::Memcpy(Data,Raw.GetData(),Raw.Num());Texture->GetPlatformData()->Mips[0].BulkData.Unlock();Texture->UpdateResource();return Texture;}
+UTexture2D* Thumbnail(const FString& Path){TArray<uint8> Bytes;if(!FFileHelper::LoadFileToArray(Bytes,*Path))return nullptr;auto& Module=FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));auto Wrapper=Module.CreateImageWrapper(EImageFormat::PNG);if(!Wrapper||!Wrapper->SetCompressed(Bytes.GetData(),Bytes.Num())||Wrapper->GetWidth()>2048||Wrapper->GetHeight()>2048)return nullptr;TArray64<uint8> Raw;if(!Wrapper->GetRaw(ERGBFormat::BGRA,8,Raw))return nullptr;auto* Texture=UTexture2D::CreateTransient(Wrapper->GetWidth(),Wrapper->GetHeight(),PF_B8G8R8A8);if(!Texture)return nullptr;OKLogRuntimeTextureLife(TEXT("created(appearance-thumb)"),Texture,0);void* Data=Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);FMemory::Memcpy(Data,Raw.GetData(),Raw.Num());Texture->GetPlatformData()->Mips[0].BulkData.Unlock();Texture->UpdateResource();return Texture;}
 }
 void UOKAppearanceButton::SelectItem(){if(Owner)Owner->ApplyAppearanceItem(ItemKey);}
 void UOKCharacterController::BuildAppearanceControls(UVerticalBox* Parent){auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();Button(WidgetTree,Row,TEXT("圖片式外觀選擇"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnOpenAppearance);Button(WidgetTree,Row,TEXT("新增飾品欄位"))->OnClicked.AddDynamic(this,&UOKCharacterController::OnAddAccessorySlot);Parent->AddChild(Row);BuildPropertyControls(Parent);}

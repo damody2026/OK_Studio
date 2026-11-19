@@ -47,3 +47,4 @@ void OKMarkRecentRuntimeTexturesStale();
 int32 OKReleaseStaleRecentRuntimeTextures(int64* OutBytes=nullptr);
 /** Releases every kept texture. */
 void OKReleaseRecentRuntimeTextures();
+#include "KKTextureLifetimeLog.h"
