@@ -2627,3 +2627,30 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 直接回答「解構這件事發生，是不是扳機」。
 `r.pso.EnableAsyncCacheConsolidation` 那一格仍然值得跑（旋鈕已確認接得上、每帧都走到），
 但它的預測要跟著改：**若兩邊沒差，不代表那一處不是破口，只代表「關掉 RHI 執行緒那次同步」沒有改變結果。**
+
+### 這條線收掉：payload 和一般工作走**同一條佇列**，而且 `Submit_Close` 排在送交之後（2026-11-19，純讀碼）
+
+協調問的是：payload 的同步點建立時，「已經 dispatch 給 RHI 執行緒、但還沒送交給 GPU 佇列」的工作算哪一邊？
+**答案是同一條、而且有順序，所以窗口是關的。**
+
+1. **同一條佇列**：`FD3D12DynamicRHI::SubmitPayloads`（`D3D12RHI/Private/D3D12Submission.cpp:297-322`）
+   把 payload 丟進 `PendingPayloadsForSubmission` 這**一個**佇列，再 `SubmissionThread->Kick()`
+   （沒有送交執行緒時就在呼叫執行緒上加鎖處理）。**EOP 的 payload 和一般命令清單的 payload 走的是同一條路。**
+2. **而且有順序**：`Submit_Close`（裡面才呼叫 `RHIProcessDeleteQueue()` → `EnqueueEndOfPipeTask`）
+   是由 `Dispatch_CloseSubmission` 透過 `EnqueueSubmitTask` 排進**送交 pipe** 的
+   （`RHI/Private/RHICommandList.cpp:1065-1091`），而 `:1544` 的註解寫明
+   「Once all finalized tasks have completed, `FSubmitState::Submit_SubmitToGPU()` called which hands the
+   platform GPU command lists down to the RHI」——**先把命令清單交下去，才跑 close。**
+   送交 pipe 是序列的，所以**這次送交自己的命令清單一定排在 EOP payload 前面**。
+
+**所以我自己提的那個結構破口收掉了**：
+「已 dispatch 未送交」的工作不會排在 payload 後面；
+而上一節已經說明「尚未錄製」的 pass 在 :2036 那時還不存在。
+**兩邊一起關上，這條線到此結束**——不是「還沒證實」，是**讀出來不成立**。
+
+**剩下的候選因此變清楚**（都還沒驗）：
+- **扣扳機的是 proxy 的解構本身**（刻意洩漏那一格直接回答，不需要任何送交順序）；
+- 或者 `Func=240` 的推遲是**別的**時序副作用，那就要回到 reuse 那一格與背景那幾格的數字。
+
+今天在這條線上花掉的讀碼時間不是白費：它把「EOP 圍欄有沒有洞」這個最容易拿來解釋一切的說法
+**關掉了**，所以後面不准再用它當理由。
