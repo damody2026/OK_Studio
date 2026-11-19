@@ -168,7 +168,14 @@ local function queued(all)
       text = okr and text or ""
       if not procs and text:match("\npid %d+") then procs = processes() end
       local dead = queue_dead(text, procs)
-      if dead and dead:match("^process") then pcall(path.remove, queue_file(agent)) end
+      -- Removed only when the waiter's process is really gone (its pid with that start time no longer exists), never
+      -- for age alone. status and may-build both call this outside with_lock (enqueue takes no lock either), so the
+      -- file is read again just before: an entry the same agent rewrote meanwhile (a new claim --wait) is kept. Two
+      -- callers removing the same dead entry is harmless (pcall).
+      if dead and dead:match("^process") then
+        local again_ok, again = pcall(path.read_text, queue_file(agent))
+        if again_ok and again == text then pcall(path.remove, queue_file(agent)) end
+      end
       if all then list[#list + 1] = dead and (agent .. " (stale: " .. dead .. ")") or agent
       elseif not dead then list[#list + 1] = agent end
     end
