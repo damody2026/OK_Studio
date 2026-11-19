@@ -96,7 +96,7 @@ f-reader-yvonne 发现读卡器现在所有数值的范围都写死 ±1000000，
 
 | 种类 | 内部范围 | 步进 | 画面小数位 | 画面怎么显示 |
 |---|---|---|---|---|
-| 所有数值滑杆（含 96 项体型值） | `0.0`–`1.0` | `0.01` | **0**（整数） | ×100 后取整，`0`–`100` |
+| 所有数值滑杆（含 96 项体型值） | `0.0`–`1.0` | `0.01` | 画面 **0** 位（API 值 2 位） | ×100 后取整，`0`–`100` |
 | 颜色 | RGBA 各 `0.0`–`1.0` | 取色器 | － | 原作用取色器，没有数字栏 |
 | 开关 | bool | － | － | 勾选框 |
 | 选图 | 目录 id（int） | － | － | 缩图清单，不是范围 |
@@ -143,20 +143,27 @@ if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")){
 
 | 栏位 | 填什么 | 理由 |
 |---|---|---|
-| `min`／`max` | `0`／`100` | **用画面单位填**，和原作显示一致；存卡时 ÷100。若改成 `0`／`1`，`decimals` 就得是 `2`，两种都行但要全专案统一，不要一半一半 |
-| `step` | `1`（画面单位）＝内部 `0.01` | 原作滑杆就是百分点 |
-| `decimals` | `0` | `(int)Mathf.Lerp(0,100,v)`，原作画面上没有小数 |
-| `wrap` | `false`（全部） | 身体／脸部没有角度类的项目，没有一项该回绕 |
+| `min`／`max` | `0`／`1` | **一律用 API 自己读写的那个单位**（协调者 2026-11-19 裁定）。验证与写入走的是 API 的值，metadata 若讲另一个单位，迟早有人拿 0–100 的上限去挡 0–1 的值，而这种错不当场报错，只会悄悄拒绝或悄悄放行 |
+| `step` | `0.01` | 原作滑杆一格一个百分点，换成 API 单位就是 0.01 |
+| `decimals` | `2` | 跟着 API 单位；画面上的「整数 0–100」由下面两个显示栏位换算出来 |
+| `display_scale` | `100` | 只给 UI 看：值 ×100 后显示 |
+| `unit` | `"%"` | 只给 UI 看：照原作显示 0–100 的整数、一格一个百分点 |
+| `wrap` | `false`（全部） | 身体／脸部没有角度类，没有一项该回绕；`wrap` 只给真的循环的量（饰品旋转 0–360 那种） |
 | `default` | `OKShapeDefaults::Value(sex, body, index)`；非体型项取卡片预设 | 原作「戻す」读 `defChaInfo`，不是常数 |
+| `kind` | 数值＝滑杆；开关＝`bool`；**选图＝`choice` ＋ `options`**（目录 id ＋ 缩图） | 选图不是范围 |
+| `label` | 文字 id（例如 `editor.face.detail_power`），**不要字面字串** | 照 i18n 规矩，翻译在 `Localization/<lang>/*.toml` |
+
+**一个真相给验证，一份换算给显示**：`min`／`max`／`step`／`decimals`／`default` 全都是 API 单位（0–1），
+`display_scale`／`unit` 只负责把它变成原作画面上那个 0–100 的整数。不要留两种单位。
 
 **`default` 不用我另外列数字，树里已经有、而且核过原作**：`Source/OpenKoikatsu/OKShapeDefaults.h` 里四张表
 （`FemaleBody[44]`／`FemaleFace[52]`／`MaleBody[44]`／`MaleFace[52]`）就是原作 reset 的目标值——原作
 `CustomControl.Entry` 从 `abdata/custom/presets_f_00.unity3d`／`presets_m_00.unity3d` 载入
 `ill_Default_Female`／`ill_Default_Male`，`Tools/verify_shape_defaults.lua` 可以对着使用者自己的游戏重核一次。
-值是 **0–1 内部单位**（例如女性身高 `shape.body.0` 是 `0.30`，画面上显示 30），和上面那张表的范围一致，
-所以 metadata 的 `default` 直接取 `OKShapeDefaults::Value(sex, body, index)` 就对，**依性别不同，不是单一常数**。
-| `kind` | 数值＝滑杆；开关＝`bool`；**选图＝`choice` ＋ `options`**（目录 id ＋ 缩图） | 选图不是范围 |
-| `label` | 文字 id（例如 `editor.face.detail_power`），**不要字面字串** | 照 i18n 规矩，翻译在 `Localization/<lang>/*.toml` |
+值是 0–1（例如女性身高 `shape.body.0` 是 `0.30`，画面上显示 30）。
+
+**那四张表依性别不同，所以产生端必须按当前角色的性别选表**，不能固定吐女性那张：重置按钮按下去跑到另一个
+性别的预设，是很难查的 bug（画面上只会看到「重置之后身材不对」，不会有任何错误讯息）。
 
 超范围的旧值按上面第 2 点处理：**读进来原样保留、照实显示**（滑杆顶到底、数字栏显示真值），只有使用者动了那一项才夹。
 
