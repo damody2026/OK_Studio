@@ -2775,3 +2775,118 @@ if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
 ——两个都是现成 cvar、都不必重编，而且第二个直接判第 1 名。
 若 `NoBackdrop=1` 仍 3/3 故障，则 backdrop 整条（含 transient）一起除名，
 线索回到「每笔 draw 真正绑进去的那一笔」。
+
+---
+
+## §37 transient 的量级与 descriptor 命运：**descriptor 不会比资源活得久**，但那个 ABA 形状的键确实存在
+
+读的是 `E:/PhysX/UE5.8`（只读）。**这一节同时把 §36c 的可能性收窄成一个可判的分支。**
+
+### 37a 第 1 题：量级，以及 §36c 的收窄
+
+`Runtime/RHICore/Private/RHICoreTransientResourceAllocator.cpp` 的四个参数（**全部 `ECVF_ReadOnly`**）：
+
+| cvar | 预设 | 行 |
+|---|---:|---|
+| **`RHI.TransientAllocator.MinimumHeapSize`** | **128（MB）** | `:20-25`，说明「Heaps will default to this size and **grow to the maximum based on the first allocation**」 |
+| `RHI.TransientAllocator.TextureCacheSize` | 64（个） | `:34-39` |
+| `RHI.TransientAllocator.BufferCacheSize` | 64（个） | `:27-32` |
+| `RHI.TransientAllocator.GarbageCollectLatency` | 16（update cycles） | `:41-46` |
+
+组装在 `FRHITransientHeapCache::FInitializer::CreateDefault()`（`:521-530`，另 `HeapAlignment = 64 * 1024`）。
+`Acquire(FirstAllocationSize, FirstAllocationHeapFlags)`（`:542-575`）先在 `FreeList` 找
+`IsAllocationSupported` 的，否则新建一个 `GetHeapSize(FirstAllocationSize)` 大的。
+
+**对 §36c 的收窄（重要）**：单 GPU 时
+`HeapInitializer.Flags = Initializer.bSupportsAllHeapFlags ? ERHITransientHeapFlags::AllowAll : FirstAllocationHeapFlags;`
+（`:569-572`），而 `bSupportsAllHeapFlags` ＝ `ResourceHeapTier == D3D12_RESOURCE_HEAP_TIER_2`
+（`FD3D12TransientHeapCache::Create`，`D3D12TransientResourceAllocator.cpp:104-110`）。
+**`AllowAll` ＝ `ALLOW_ALL_BUFFERS_AND_TEXTURES`，不含 `DENY_BUFFERS` ⇒ 在 Tier 2 上 transient heap 会进 `TrackedHeaps`。**
+
+所以 §36c 的更正（「用 0 heaps 排除 transient 的论证无效」）仍然成立，但**可能性收窄成**：
+**只有 Tier 1 硬体才会出现「transient heap 不被注册」。**
+**怎麼验（零成本）**：transient heap 有名字——`SetHeap(..., TEXT("TransientResourceAllocator Backing Heap"), ...)`
+（`D3D12TransientResourceAllocator.cpp:80-81`）。**在现有傾印／log 里搜这个字串**：
+出现 ⇒ Tier 2、heap 有被注册，那麼「傾印没列出 transient heap」就恢复成证据；
+没出现 ⇒ 要嘛没开追踪，要嘛 Tier 1 未注册。
+
+**量级对照**：transient heap **预设 128 MB**（或按首次配置长大），而卡片贴图所在的是 **64 MB 的 pool heap**
+——**不同配置器、不同量级，不会是同一块 heap**。要两者落在同一段 VA，中间必须有
+「那个 64 MB pool heap 被销毁、VA 还给系统、之后新建的 transient heap 拿到含该段的位址」。
+**这不从量级上排除**，但它指明中间必须有「pool heap 被销毁」那一步——
+**而 e-cardload 已经量到 heap 销毁事件，且 `故障−heap` 是 9 到 4116 帧，顺序是自洽的。**
+
+**「读卡器那一帧有哪些 transient 贴图」我无法从阅读列举**（取决於启用的后处理与场景纹理）。
+**现成的量测**：trace counters `TransientAllocator/TextureCount`、`TextureCreateCount`、
+`TextureCacheSize`、`TextureCacheHitPercentage`（`RHICoreTransientResourceAllocator.cpp:48-57` 的
+`TRACE_DECLARE_*`）——在 Unreal Insights 的 counters 里就能看，**不必改码**。
+
+### 37b 第 2 题：`Discard` 与 heap 回收时 descriptor 的命运——**不会悬空，理由是底层物件从不被换**
+
+- `FRHITransientTexture` 带一个**持久的** view cache：`FRHITextureViewCache ViewCache;`，
+  注解原文「**The persistent view cache containing all views created for this texture.**」
+  （`Runtime/RHI/Public/RHITransientResourceAllocator.h:433-434`），`GetOrCreateSRV`／`GetOrCreateUAV`
+  直接转给它（`:425`、`:428`）；
+- **`Discard(const FRHITransientAllocationFences& Fences)` 只翻旗标**：`bAcquired = false;`
+  （`:234-241`，另外设 `bDiscardOnGraphicsWorkaround`）——**不碰 view、不释放 descriptor**；
+  `Acquire(...)`（`:222-232`）也只重设 `Name`／`AcquirePasses`／`DiscardPass`／`AcquireCycle`
+  并 `AliasingOverlaps.Reset()`。
+- **那为什麼不悬空**：底层 RHI 物件**从不被换掉**。`Resource` 只在 `Finish(RHICmdList)` 里由建立 task
+  赋值一次（`:268-277` `Resource = MoveTemp(Result.Resource);`），之后没有任何 setter；
+  而 heap 内同一 `(CreateInfo, Offset)` 命中时
+  `Textures.Acquire(ComputeHash(CreateInfo, Allocation.Offset), …)`
+  （`RHICoreTransientResourceAllocator.cpp:375`）**拿回的是同一个物件**，连带同一份 ViewCache 与同一张底层贴图。
+  **所以快取里的 SRV 永远对应它被建立时那张贴图。**
+- heap 真正回收：`FRHITransientHeapCache` 的 `FreeList`／`LiveList`，解构时 `delete Heap`（`:532-540`），
+  `FD3D12TransientHeap::~FD3D12TransientHeap` → `Heap->DeferDelete()`（`D3D12TransientResourceAllocator.cpp:88-101`，
+  **有 fence**）；heap 死亡会带走它快取的 `FRHITransientTexture`，连带 ViewCache 与那些 SRV。
+
+**⇒ 「descriptor 比资源活得久」在 transient 这一侧不成立。**
+
+### 37c **但那个 ABA 形状的键确实存在**——协调要的东西，记下来
+
+`FRHITextureViewCache`（`Runtime/RHI/Public/RHIResources.h:5883-5902`）的两个阵列：
+
+```cpp
+TArray<TPair<FRHITextureUAVCreateInfo, FUnorderedAccessViewRHIRef>, TInlineAllocator<1>> UAVs;
+TArray<TPair<FRHITextureSRVCreateInfo, FShaderResourceViewRHIRef>, TInlineAllocator<1>> SRVs;
+```
+
+**键只有 `CreateInfo`。传进来的 `FRHITexture* Texture`（`:5887`、`:5890`）不在键里。**
+⇒ **任何把同一个 `FRHITextureViewCache` 实例配上不同贴图使用的地方，都会拿回建在旧贴图上的 SRV。**
+
+全引擎只有**两个**持有者，而两个都把贴图钉死，所以目前无害：
+
+| 持有者 | 为何目前安全 |
+|---|---|
+| `FRHITransientTexture::ViewCache`（`RHITransientResourceAllocator.h:434`） | 底层 `Resource` 只在 `Finish()` 赋值一次（`:273`），永不替换 |
+| `FRDGPooledTexture::ViewCache`（`RenderCore/Public/RenderGraphResources.h:553-561`） | `TRefCountPtr<FRHITexture> Texture` **在建构子固定且持有**（`:544-547`、`:559`） |
+
+**这正是协调描述的 ABA 形状的 descriptor 版**：它不是 C++ 裸指标（所以与我 §35 的裸指标扫描零命中不冲突），
+而是「一个以描述子为键、不含资源身分的 view 快取」。**目前两个用法都安全，但这个键的设计本身是脆的**——
+任何第三个持有者，或任何让这两者换掉底层贴图的改动，都会立刻变成「烘著已死位址的 descriptor」。
+
+### 37d 顺带回报你那条平行线：**D3D12 这一侧的 descriptor 快取不是以指标当键**
+
+`Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp` 里唯一的持久快取是 **sampler table**：
+键是 `FD3D12SamplerArrayDesc{ uint32 Count; uint16 SamplerID[MAX_SAMPLERS]; }`
+（`D3D12DescriptorCache.h:101-105`），hash 由 `SamplerID` 算
+（`D3D12DescriptorCache.cpp:1322-1330`，`HashData((void*)Key.SamplerID, Key.Count * sizeof(...))`），
+填键的地方是 `Desc.SamplerID[SlotIndex] = Samplers[SlotIndex] ? Samplers[SlotIndex]->ID : 0;`（`:356`）。
+**是 ID，不是物件指标 ⇒ 没有 ABA。** SRV／CBV 的 table 每次 draw 依 dirty slot mask 重建，**没有跨帧快取**。
+**所以你那条平行线在 D3D12 这一侧，目前我看不到指标当键的快取。**
+
+### 37e 前三名与能否解释 `AddressTranslationError`
+
+| 名次 | 候选 | 行 | 怎麼验（现成优先） | 能解释整页不在页表吗 |
+|---|---|---|---|---|
+| 1 | **transient heap 落在已销毁的 pool heap 的 VA 上**（37a 的量级链） | `RHICoreTransientResourceAllocator.cpp:521-530`、`:542-575`；`D3D12TransientResourceAllocator.cpp:34-64`、`:88-101` | **`r.RDG.TransientAllocator 0`**（预设 1、`ECVF_RenderThreadSafe`、执行期可切）；另在现有 log 搜 `TransientResourceAllocator Backing Heap` 判 Tier 与注册 | **能，但要串两步**：pool heap 销毁把 VA 还给系统 ⇒ 之后 transient heap 拿到含该段的 VA ⇒ 取样落在**尚未被新 heap 覆盖**的那一段。**缺的证据是「故障当下那段 VA 属於哪个活著的 heap」** |
+| 2 | **`FRHITextureViewCache` 的键不含资源身分**（37c） | `RHIResources.h:5883-5902`；`RHITransientResourceAllocator.h:434`；`RenderGraphResources.h:553-561` | 纯读已判：两个持有者都钉死贴图。**要验只能查有没有第三个持有者**（我扫过，没有） | **不能**（目前）：两个用法都不会换底层贴图。**列出来是因为形状脆，不是因为它现在成立** |
+| 3 | transient 的 `Discard`／heap 回收 | `RHITransientResourceAllocator.h:234-241`、`:222-232`；`RHICoreTransientResourceAllocator.cpp:375`、`:532-540` | — | **不能**：`Discard` 只翻旗标，底层物件不换，heap 死亡走 `DeferDelete`（有 fence） |
+
+**一句话**：transient 这一侧的 descriptor 生命期查完是**乾淨的**——
+`Discard` 不碰 view，底层贴图不换，heap 销毁有 fence。**所以「谁握著一个烘进去的位址跨越数千帧」
+在 UE 的 transient／RDG 程式码里找不到持有者。**
+剩下唯一还站得住的形状是 **37a 的 VA 层**：不是「谁还握著 descriptor」，
+而是**那个 descriptor 里的位址在 heap 销毁后变成无主的 VA**——
+**而这要看「故障当下那段 VA 属於哪个活著的 heap」，那是 `D3D12.TrackAllAllocations` 那一格，不是阅读能答的。**
