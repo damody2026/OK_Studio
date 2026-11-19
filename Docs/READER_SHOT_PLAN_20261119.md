@@ -10,7 +10,7 @@ Lua 脚本发不出去。只有「把截图改名搬到交付资料夹」那一�
 **每一批的第一个步骤**，在**建置之后、`reader_launch` 之前**跑这一行（只跑 git，不占机器）：
 
 ```powershell
-F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua write --exe F:\OpenKoikatsu\Binaries\Win64\UnrealEditor-OpenKoikatsu.dll --out F:\OpenKoikatsu\Saved\Reports\reader-shots-2026-11-19\<批次资料夹> --label <批次名>
+F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua write --editor F:/OpenKoikatsu --out F:\OpenKoikatsu\Saved\Reports\reader-shots-2026-11-19\<批次资料夹> --label <批次名>
 ```
 
 | 批次 | `--out` 的 `<批次资料夹>` | `--label` |
@@ -27,10 +27,17 @@ F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua wr
 两批要并排比之前先 `... check <A 资料夹> <B 资料夹>`：**`SAME` 才能比**；`DIFFERENT`（exit 1）会列出哪一项不同，
 **「修好前」那批作废重拍**；缺表头回 `MISSING`（exit 2）。
 
-**`--exe` 为什么是那个 DLL，不是 exe**：读卡器（`reader_launch` 的预设 root）跑的是
+**为什么是 `--editor`，不是某一支 exe**：读卡器（`reader_launch` 的预设 root）跑的是
 `F:\UE5.8\Engine\Binaries\Win64\UnrealEditor.exe` 加这个专案——**那支是引擎，我们从来不重建它**
-（本机 mtime 停在 10-29），拿它当身分每一批都一样，等于没记。真正会随我们的建置改变的是专案的编辑器模组
-`Binaries\Win64\UnrealEditor-OpenKoikatsu.dll`（这次建置后是 11-19 15:14:49、68,494,848 bytes）。
+（本机 mtime 停在 10-29），拿它当身分每一批都一样，等于没记。
+
+但**只记专案那支 `UnrealEditor-OpenKoikatsu.dll` 也不够**（f-yvonne 2026-11-19 指出的）：
+`ok-extract`（Rust）是连进 `Plugins/KKUnityBundle` 的 `UnrealEditor-KKUnityBundle.dll`，
+**只改 Rust 的建置不会动专案那支 DLL**——两批照片会看起来是「同一份程式」，其实解卡的那一半换过了。
+所以 `--editor` 一次记**九支**：`Binaries/Win64` 与每个 `Plugins/KK*/Binaries/Win64` 底下的全部
+`UnrealEditor-*.dll`（本机现在是 `OpenKoikatsu` 15:14:49；`KKUnityBundle`／`KKRuntimePose`／
+`KKCardImporterEditor`／`OKModelEditor` 15:14:36；`KKCard`／`KKSideloader`／`KKImportedAssets`／
+`KKCrowdGpuPacking` 更早），`check` 逐支比，**哪一支不同就指名**。
 **如果哪一批改用打包版跑**（`reader_launch` 带 `root`），那一批的 `--exe` 要换成
 `<那个 root>\...\OpenKoikatsu.exe`，并在该批注明——两种跑法的身分不能混着比。
 
