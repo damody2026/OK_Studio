@@ -1371,6 +1371,12 @@ fn clothes_blend_shape_defs_unity<B: BundleInput + ?Sized>(
 pub fn prefab_node_names(bytes: &[u8], prefab_name: &str) -> std::collections::HashSet<String> {
     crate::oklib::memo_bytes(bytes,"prefab_node_names",prefab_name,||prefab_node_names_unity(bytes,prefab_name))
 }
+/// [`prefab_node_names`] for a caller that must not guess: the same query and key, `None` when the model was recorded
+/// without it (accessory models before 2026-11-19 only had it for clothes). The property editor asks this for an
+/// accessory's `N_move2` (`ChaControl` `objAcsMove[slot,1] = FindLoop("N_move2")`).
+pub fn prefab_node_names_recorded(bytes: &[u8], prefab_name: &str) -> Option<std::collections::HashSet<String>> {
+    crate::oklib::memo_bytes_recorded(bytes,"prefab_node_names",prefab_name,||prefab_node_names_unity(bytes,prefab_name))
+}
 fn prefab_node_names_unity(bytes: &[u8], prefab_name: &str) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     let Ok(bundle) = load_bundle_unbounded(bytes.to_vec()) else { return names; };

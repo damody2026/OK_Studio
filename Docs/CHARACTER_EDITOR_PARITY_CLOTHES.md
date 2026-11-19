@@ -149,6 +149,7 @@
   - 只有 `limit_min`／`limit_max` 会拒绝，且只写在资料本身有界的地方：颜色分量 0..1。`shape.*`、图样大小／位置／旋转、配件 `addMove` 都不写。骨骼、物理、怀孕、风格这几组沿用原本的硬界（`Number()` 给的 `limit_*`）。
   - 其他硬拒：非有限数、型别不对、`choice` 给了 `options` 以外的值。
   - 读卡、`apply` 都不按范围改值：只写被编辑的键，送来的值只取整（`decimals`）与 `wrap`。
+  - **「现在看不到」不构成写入限制**（一般规则，第三批起适用所有旗标）：`available:false` 的列、原作不能点的页（`model.pages`）、隐藏的父骨与位移，都只决定 UI 显示或变灰，资料端对它们的编辑照收。反例：上衣换成没有选项物件的款式时，`hideOpt` 那列变成 `available:false`；如果这时拒收，卡上存着的值就改不了，换回有那个物件的款式后看到的仍是旧值。原作换款时也只是不显示，值照存。程式注释在 `Tools/ok-extract/src/appearance/model_flags.rs` 开头。
 - **衣服选项与袖型实测**（读卡器 parameters＋截图，`Saved/Reports/editor-parity-clothes/shots/`）：KK_007604 服装 1 换成原作上衣 217 セーラーワンピース。截图里看到的：袖型 0 → 1 时领口的蝴蝶结换成长领带（原因见下，**未确认**）；`hideOpt.0`：蓝绿色水手领消失。旗标：颜色层 1～3 可用、第 4 层不可用，选项 1 可用、选项 2 不可用，和 prefab 一致。
   - **袖型组切换的确实是袖子**（CLI 实测，`Saved/Reports/editor-parity-clothes/armcheck/`，`OK_DIAG=1` 导出两次比网格清单）：袖型 0 是短袖 `cf_sode_sailoronep_01` 加扣子 `cf_sode_sailoronep_01_botan`（|x| 到 0.26），袖型 1 是长袖 `cf_sode_sailoronep_02`（|x| 到 0.52，手腕）。两次导出只差这几个网格。（更正：我先前写「这组是领带／蝴蝶结」是错的，那是从截图推的，没有比网格。）
   - **截图上看不出袖子变，是被手套盖住**：这张卡服装 1 的手套（kind 4）是 `o_gloves_magic`，|x| 0.20～0.52，从前臂到手腕。所以三张截图里手臂的长袖与蓝绿袖口都是手套，不是上衣的袖子，也不是配件（手腕的配件槽 16／17 是小爱心 `o_valletta_heart1`）。要在画面上验袖型，先把手套脱掉。
@@ -184,15 +185,15 @@
 | 键 | 种类 | 限制 | 第三批要用的旗标（资料端） |
 |---|---|---|---|
 | `clothes{k}`（`parts[k].id`，选图） | 清单项 | 硬：必须是目录里的项目（appearance 选图） | — |
-| `sub{200..202,210..212}`（`subPartsId`） | 清单项 | 硬：同上 | **待做**：只在上衣 Kind=1（水手服 200–202）或 2（外套 210–212）时显示。资料端已有 `model.clothes.0.top_kind`，UI 按它显示 |
+| `sub{200..202,210..212}`（`subPartsId`） | 清单项 | 硬：同上 | 显示：只在上衣 Kind=1（水手服 200–202）或 2（外套 210–212）时显示。资料端给 `model.clothes.0.top_kind`（也在 `model.pages.top_kind`），UI 按它显示 |
 | `pattern{k}_{i}`、徽章 1／2 | 清单项 | 硬：同上 | 徽章看 `model.clothes.{k}.emblem[0/1]`，已做 |
 | `colorInfo.i.baseColor／patternColor` 分量 | 颜色 | 硬：0..1（结构） | 层可用性看 `available`，已做；初期设定色看 `model.clothes.{k}.default_colors`，已做 |
 | `colorInfo.i.tiling.x/y` | 数值 | 软：0..1（显示 0..100%） | 跟着该层的 `available` |
 | `colorInfo.i.offset.x/y`、`rotate` | 数值 | 软：0..1，预设 0.5 | 同上 |
 | `parts.k.hideOpt.0/1`、`hideBraOpt`、`hideShortsOpt` | 开关 | 结构：bool | `available`（`objOpt01/02`），已做 |
 | `parts.0.sleevesType` | 选项 0..2 | 硬：选项以外拒收 | `available`（有 `objSleeves`），已做；`model.clothes.0.sleeves[0..2]` 给哪几种有物件 |
-| 下装／胸罩／内裤整页 | 页 | — | **待做**：上衣的 `notBot`／`notBra`／`notShorts`，ok-extract 还没输出，第三批资料端要补 |
-| 男性胸罩页 | 页 | — | **待做**：原作只在清单有 `Sex` 不是 3、99 的胸罩时显示（`IsMaleCoordinateBra`），资料端要补一个布林 |
+| 下装／胸罩／内裤整页 | 页 | 不限（页内各列照各自的限制） | 显示：`model.pages.bot／bra／shorts`（`false` = 原作不能点）。`bot`：上衣清单 `Coordinate==2`（连身）时关（`ChaControl.notBot`）。`bra`：上衣 `NotBra==1` 时关；水手服（Kind 1）改看子部件 a（`sub200`，没有子部件时看上衣），外套（Kind 2）看子部件 a 或 b（`sub210`／`sub211`），照 `ChangeClothesTop`／`ChangeClothesTopParts` 设 `notBra` 的顺序。`shorts`：胸罩清单 `Coordinate=="2"` 时关（`ChangeClothesBra`）。来源 `CustomChangeClothesMenu.InteractableSetting`：只把页签设成不能点，页内的值照存 |
+| 男性胸罩页 | 页 | 不限 | 显示：`model.pages.male_bra`：清单有任何一件胸罩（107）的 `Sex` 不是 3、99 时为 `true`（`CustomBase.IsMaleCoordinateBra`）。原作只在角色是男性时用它（女性永远有胸罩页），所以 UI 要同时看卡的性别 |
 
 ### 9.3 配件
 
@@ -200,8 +201,8 @@
 |---|---|---|---|
 | `accessory{n}_{type}`（`id`，选图） | 清单项 | 硬：目录项目 | — |
 | `type` | 选项 120..130 | 硬 | — |
-| `parentKey` | 父骨 | 硬：55 个键之一（`editor_accessory_parents.json`） | **待做**：清单 `HideHair==1` 或 `Parent=="null"` 时，父骨与位移整块隐藏 |
-| `addMove` 位置 | 数值 | 软：−100..100，一位小数 | **待做**：第 2 组只在模型有第二个移动节点（`objAcsMove[slot,1]`）时显示 |
+| `parentKey` | 父骨 | 硬：55 个键之一（`editor_accessory_parents.json`） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
+| `addMove` 位置 | 数值 | 软：−100..100，一位小数 | 显示：第 2 组（`addMove.2.3..5`）另看 `model.accessories.{槽}.move2`：模型有 `N_move2` 节点（`objAcsMove[slot,1] = FindLoop("N_move2")`）才为 `true`。`null` = 这个模型录的时候还没存配件的节点名（2026-11-19 前的基础库与 OK 卡），那几列不标，等重录 |
 | `addMove` 旋转 | 数值 | wrap 0..360，取整；永远不拒，也不标 `out_of_range` | 同上 |
 | `addMove` 缩放 | 数值 | 软：0.01..100，两位小数。原作输入框不收 0 和负值，但卡上可能有（外挂写的）。照收，不另写 `limit_*` | 同上 |
 | `color[0..3]` 分量 | 颜色 | 硬：0..1 | `available`（`useColor01..03`、`rendAlpha`），已做 |
@@ -215,4 +216,9 @@
 
 ### 9.5 `available:false` 的列
 
-`available:false` 的列只代表原作 UI 隐藏它，不代表它会拒收编辑：卡上的值照存，原作换款时也只是不显示。所以资料端对 `available:false` 的编辑照收，UI 依旗标决定隐藏或变灰。不要把 `available` 当成硬界，否则换回有这个物件的款式时，那个值就再也改不回来。
+已提升成软限制的一般规则，写在 §8「现在看不到不构成写入限制」。这一节的旗标全部只影响显示，没有一个影响写入。
+
+### 9.6 资料端完成状态（2026-11-19）
+
+- 四个旗标都由 `appearance` 输出（`model_flags.rs`）：`model.pages`（衣服页）、`model.accessories.{槽}.parent_editable／move2`。语意都来自反编译（`ChaControl.cs`、`CustomChangeClothesMenu`、`CustomBase`、`CvsAccessory`），不是从截图推的。
+- `move2` 要配件模型的节点名。转换器从这版起对配件也录 `prefab_node_names`（`oklib_convert.rs`）。旧基础库与旧 OK 卡没录到，查询走 `prefab_node_names_recorded`，回 `None`，不猜。要让它有值，基础库得重录配件那一批，这件排在 e-fork-2 的重录之后。
