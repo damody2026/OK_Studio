@@ -6717,3 +6717,34 @@ VSParameters.DreamUI_RenderLayerWidgetData = TextureOrFallback(Params.WidgetData
 並且在貼圖已經不在時也要印得出來**（不能靠讀它的名字，因為那時讀的就是已釋放的記憶體）。
 這就是交接文件第 7 節那個樁要解決的問題，而這次盤點把它的規格講清楚了：
 **量的對象是「參照 → 被參照」那一跳，不是槽位解析那一刻。**
+
+
+## 數清楚了：填 `FDreamUIBasePS::FParameters` 的只有**兩處**，第二處全部是全域貼圖，而且沒有任何一處把參數結構存起來
+
+全樹 grep（`Plugins`、`Source`，排除 `Intermediate`／`Binaries`）：`FDreamUIBasePS`／`FDreamUIBaseVS`
+出現 25 行，其中**宣告與 `IMPLEMENT_GLOBAL_SHADER` 以外，只有兩處建立 `FParameters`**：
+
+| | `DreamUIRenderer.cpp:988`（主路徑） | `DreamUIRenderer.cpp:2883`（編輯器外框，`FPlainColor`） |
+|---|---|---|
+| 十一個貼圖欄位 | 九個走 `TextureOrFallback(Params.*RHI.GetReference(), …)`，即**參照物件本身**；`SceneDepthTex`、`BackdropTex` 走當幀的值或 `GBlackTexture` | **全部是全域**：`GWhiteTexture`／`GBlackTexture`／`GBlackArrayTexture` |
+| 沒填的欄位 | 無 | `DreamUI_BlendParams`、`DreamUI_BackdropTex` |
+| 沒填會是什麼 | — | **`nullptr`**：`SHADER_PARAMETER_TEXTURE` 的巨集帶 `= nullptr` 預設值（`ShaderParameterMacros.h:1637-1638`），所以不是未初始化的堆疊垃圾 |
+| 結構生命期 | 區域變數，當場 `SetShaderParameters(RHICmdList, …)` 消費 | 同左 |
+
+**所以第二處不可能交出一張卡片 runtime 貼圖**（它只交全域貼圖），**而且兩處都沒有把參數結構留到下一幀**
+（`SHADER_PARAMETER_TEXTURE` 存的是裸值，結構若活過一幀就等於裸值活過一幀——這裡沒有）。
+`InOutCache->Pipeline.Remember(...)` 只記 PSO 的組合，不記貼圖。
+
+**permutation 共用同一個參數結構**（第二處的註解自己寫著「the parameter struct is shared」），
+`FBlendDepth`／`FDepthFade`／`FPlainColor`／`FBackdrop` 只換 define，不換結構。
+
+### 讀法：落在第一種分支
+
+**只有一處會交出卡片貼圖，而它交的是參照物件**（`TextureOrFallback` 回的是
+`static_cast<FRHITexture*>(InReference)`，`DreamUIRenderer.cpp:972-975`）。
+所以問題不在「誰填」，而在**填進去之後那一跳（參照 → 被參照）在執行時指向什麼**。
+**這一格不是指認**：第二處存在，但它只交全域貼圖，照 7k 條它是「機制點不可能帶著卡片貼圖」。
+
+**於是那個樁的目標與位置都確定了**：下在 `DreamUIRenderer.cpp:988-1015` 這一段**參數結構填好、
+`SetShaderParameters` 之前**，逐欄位記下指標值；對走參照的那九個，另外記下
+`GetReferencedTexture()` 當下指向誰、以及那張的名字與位址——**並且在它已經不在時也要印得出來**。
