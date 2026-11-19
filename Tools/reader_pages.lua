@@ -167,6 +167,35 @@ function M.compare(old, new, groups, keys)
   return lines, unknown, runtime
 end
 
+-- What each of the audit's four columns says (OKReaderScreen `audit`, its registry line), written once here so the
+-- C++ side and the tests read the same rule (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md, 稽核四欄):
+--   s.card        a card is open (selected and its 3D session open)
+--   s.ui, s.range counts over the registry as it is now; without a card the card's own properties are not in it
+--   s.data        page keys the registry lacks; s.unjudged: of the page keys, those only a card has (not counted
+--                 without a card, as their absence says nothing then)
+--   s.kkex        "busy" (the card's properties are being read), "unread" (not read for this card and outfit yet),
+--                 "absent" (read, but the producer gave no unknown_plugin_sections: this build lacks the support),
+--                 or the list of section keys (empty list: none unknown)
+-- A missing answer is never written as 0: 0 means "counted and none".
+function M.audit_cells(s)
+  local cells = {}
+  if s.card then
+    cells.ui = tostring(s.ui)
+    cells.data = tostring(s.data)
+    cells.range = tostring(s.range)
+    if s.kkex == "busy" then cells.kkex = "讀取中"
+    elseif s.kkex == "unread" or s.kkex == nil then cells.kkex = "未讀（這張卡的屬性還沒讀）"
+    elseif s.kkex == "absent" then cells.kkex = "缺支援（這個 build 的產生端沒有 unknown_plugin_sections）"
+    else cells.kkex = tostring(#s.kkex) .. (#s.kkex > 0 and ("：" .. table.concat(s.kkex, "、")) or "") end
+  else
+    cells.ui = s.ui .. "（沒有卡：卡的屬性鍵未計）"
+    cells.data = s.data .. ("（沒有卡：只有卡才有的鍵 %d 個未判）"):format(s.unjudged or 0)
+    cells.range = s.range .. "（沒有卡：卡的屬性鍵未計）"
+    cells.kkex = "沒有卡"
+  end
+  return cells
+end
+
 function M.main(argv)
   local old_file, new_file = ROOT .. "/Config/ReaderEditor/pages.json", nil
   local i = 1

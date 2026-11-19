@@ -198,4 +198,26 @@ Tools\lua\lua.exe Tools\reader_pages.lua --new <新的 pages.json>     （在專
   - 認得的外掛裡某個欄位缺範圍 → 那是「範圍缺（`range_missing`）」欄，不混進這欄。
 - **一律按身分，不按位置**：外掛欄位的鍵是位置式的，同一個位置在不同卡上是不同外掛（alice 的 `m8` 是 MaterialEditor、megumin 的 `m8` 是 Pushup）。所以稽核按區段鍵（身分）數，不按位置、不跨卡沿用位置；否則同一個 build 在不同卡上會數出不同結論。
 - **它的意思**：「這個 build 缺支援」，不是「這張卡有問題」。換一個認得表更新的 build，同一張卡就會變空。所以歸在「我們缺支援」那一類，不要讓使用者去改卡。
-- **接線**：等 C++ 側的 `EditorUnknownPluginSections`（F 樹 `ccde34b12`）在建置窗口進 E 樹後，`ok.ReaderScreen audit` 的 registry 行與報告加這一欄。內容是目前載入的這張卡的清單；沒有載入卡時寫「沒有卡」，不是 0。
+- **接線**：C++ 側的 `EditorUnknownPluginSections`（F 樹 `ccde34b12`）在建置窗口進 E 樹後，`ok.ReaderScreen audit` 的 registry 行加這一欄。產生端（ok-extract 輸出 `unknown_plugin_sections`、認得表 `PLUGIN_SECTIONS`）**目前還沒有人寫**，由 f-yvonne 做（以它的身分式外掛鍵 `cb5459b1d` 為基礎）。所以接上的第一版，這一欄會照下一節寫「缺支援」。
+
+### 稽核四欄各自顯示什麼（一次寫定，2026-11-19）
+
+規則寫在 `Tools/reader_pages.lua` 的 `audit_cells`（測試：`Tools/tests/test_reader_pages.lua`），C++（`OKReaderScreen` 的 `audit`）照抄同樣的字。**沒有答案的時候，絕不寫 0**：0 的意思是「算過了，一個都沒有」。
+
+「有卡」的意思：選了一張卡，而且它的 3D session 已經開好（`Entries` 有選取、`PreviewActor->Session.IsOpen()`）。
+
+| 欄 | 有卡 | 沒有卡 |
+|---|---|---|
+| UI 缺 | 數字 | 數字＋「（沒有卡：卡的屬性鍵未計）」。卡的屬性只在有卡時才進登錄，所以這個數字不能拿去和有卡的比 |
+| 資料端缺 | 數字 | 數字＋「（沒有卡：只有卡才有的鍵 N 個未判）」。定義檔裡只有卡才有的鍵（不是 `shape.`／`bone.`／`physics.`／`pregnancy.`／`style.` 開頭），沒卡時查不到不代表缺，所以不算進去，只報個數 |
+| 範圍缺 | 數字 | 數字＋「（沒有卡：卡的屬性鍵未計）」 |
+| KKEx 不認得 | 見下 | 「沒有卡」（上一張卡留下的清單一律不顯示） |
+
+KKEx 欄在有卡時分四種：
+
+- 正在讀這張卡的屬性 →「讀取中」；
+- 這張卡（這套服裝）的屬性還沒讀過 →「未讀（這張卡的屬性還沒讀）」；
+- 讀了，但產生端的回覆**沒有 `unknown_plugin_sections` 這個欄位** →「缺支援（這個 build 的產生端沒有 unknown_plugin_sections）」。這是「這個 build 缺支援」，不是 0，也不是空白；
+- 讀了，而且有這個欄位 → 個數，有的話接上清單，例如「2：KSOX、com.x」。空清單才寫「0」。
+
+C++ 怎麼分辨「沒有欄位」和「空清單」：控制器記 `EditorPluginSectionsState`。開始讀時設為 0；收到回覆時，有欄位設 2，沒欄位設 1。只有屬性的來源卡與服裝等於目前的卡與服裝時才採用，否則算「未讀」。

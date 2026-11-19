@@ -96,6 +96,25 @@ T:case("run_time_keys_are_left_to_the_in_game_audit", function(t)
   t:eq(#unknown, 0); t:eq(#runtime, 1)
 end)
 
+T:case("kkex_column_says_missing_support_when_the_producer_has_no_field_never_0", function(t)
+  local c = pages.audit_cells({ card = true, ui = 3, data = 0, range = 2, kkex = "absent" })
+  t:contains(c.kkex, "缺支援")
+  t:falsy(c.kkex:match("^0"), "a missing producer field is not 'none unknown'")
+  t:eq(pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = {} }).kkex, "0")
+  t:eq(pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = { "KSOX", "com.x" } }).kkex, "2：KSOX、com.x")
+  t:contains(pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = "unread" }).kkex, "未讀")
+  t:eq(pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = "busy" }).kkex, "讀取中")
+end)
+
+T:case("without_a_card_every_column_says_so", function(t)
+  local c = pages.audit_cells({ card = false, ui = 4, data = 0, unjudged = 1, range = 2, kkex = { "KSOX" } })
+  t:eq(c.kkex, "沒有卡")	-- whatever a previous card left behind
+  t:contains(c.ui, "沒有卡"); t:contains(c.data, "沒有卡"); t:contains(c.range, "沒有卡")
+  t:contains(c.data, "1 個未判")
+  -- With a card the numbers stand alone, so the two are never compared as if alike.
+  t:eq(pages.audit_cells({ card = true, ui = 4, data = 0, range = 2, kkex = {} }).ui, "4")
+end)
+
 -- The user's rule (2026-11-19): the new reader UI is the only one that appears. A page file that does not read
 -- builds the hand-written pages with the reason in red; nothing on that path opens the old UMG reader, which
 -- shows only when -LegacyReader is given (OKGalleryWidget.cpp). Checked in the source, as the game is not run here.
