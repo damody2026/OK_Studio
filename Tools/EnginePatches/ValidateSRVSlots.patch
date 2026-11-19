@@ -1,8 +1,8 @@
 From 96e10161297868d178f4bf023b41e8c78a6ec171 Mon Sep 17 00:00:00 2001
 From: damody2026 <344874824+damody2026@users.noreply.github.com>
 Date: Fri, 20 Nov 2026 04:50:13 +0800
-Subject: [PATCH] =?UTF-8?q?D3D12=EF=BC=9A=E5=8F=AF=E9=81=B8=E7=9A=84=20SRV?=
- =?UTF-8?q?=20=E6=A7=BD=E4=BD=8D=E6=9C=89=E6=95=88=E6=80=A7=E6=AA=A2?=
+Subject: [PATCH 1/2] =?UTF-8?q?D3D12=EF=BC=9A=E5=8F=AF=E9=81=B8=E7=9A=84?=
+ =?UTF-8?q?=20SRV=20=E6=A7=BD=E4=BD=8D=E6=9C=89=E6=95=88=E6=80=A7=E6=AA=A2?=
  =?UTF-8?q?=E6=9F=A5=EF=BC=88D3D12.OK.ValidateSRVSlots=EF=BC=8C=E9=A0=90?=
  =?UTF-8?q?=E8=A8=AD=200=EF=BC=89?=
 MIME-Version: 1.0
@@ -215,6 +215,136 @@ index 2eb3df130749..695a6e6c6cf2 100644
  class FD3D12ShaderResourceView : public TD3D12View<FD3D12ShaderResourceView, D3D12_SHADER_RESOURCE_VIEW_DESC>
  {
  public:
+-- 
+2.54.0.windows.1
+
+
+From c690e8e569e3d21900d154b165b17f37ecd7d06a Mon Sep 17 00:00:00 2001
+From: damody2026 <344874824+damody2026@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 05:43:10 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?D3D12=EF=BC=9ASRV=20=E6=A7=BD=E4=BD=8D?=
+ =?UTF-8?q?=E6=AA=A2=E6=9F=A5=E8=A3=9C=E4=B8=8A=E7=AC=AC=E4=BA=8C=E5=8D=8A?=
+ =?UTF-8?q?=E2=80=94=E2=80=94view=20=E6=B4=BB=E8=91=97=EF=BC=8C=E4=BD=86?=
+ =?UTF-8?q?=E5=AE=83=E8=A8=98=E7=9A=84=E8=B3=87=E6=BA=90=E4=B8=8D=E6=98=AF?=
+ =?UTF-8?q?=E9=82=A3=E5=BC=B5=E8=B2=BC=E5=9C=96=E7=8F=BE=E5=9C=A8=E7=9A=84?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+同一個旋鈕（D3D12.OK.ValidateSRVSlots，預設 0）。第一半（槽位留著已銷毀的 view 物件）
+三趟三次、七千六百萬個槽位、零次報告、故障照舊，已排除。
+
+第二半問的是配置層級，而且只讀兩個都還活著的物件：槽位的 view 由登記表確認活著，
+它的 FD3D12BaseShaderResource 擁有這個 view（所以 view 活著時它不可能已經沒了）；
+比對 view 當初記下的資源與那張貼圖現在的資源，再看那張貼圖的 ResourceLocation 是否仍有效。
+
+不用 FD3D12Resource 的物件存活來問：池化貼圖的 GetResource() 是共用的 64 MB 池 heap 資源，
+比單張貼圖活得久。也不拿已 free 的指標比對：位址會被重用，ABA 會讓死的看起來像活的。
+
+覆蓋範圍：看不到描述子被抄進 descriptor heap 區塊後的那份副本（窗口是一條 command list），
+也看不到歸還後位址被別人拿去用的情形。
+
+用途與事前登記的讀法：OpenKoikatsu Docs/CARD_READER_DREAMGUI.md（2026-11-20）、
+Docs/CARD_READER_PATH_EXCLUSIONS.md 第三十條。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../D3D12RHI/Private/D3D12DescriptorCache.cpp |  6 ++++
+ .../Runtime/D3D12RHI/Private/D3D12View.cpp    | 36 +++++++++++++++++++
+ .../Runtime/D3D12RHI/Private/D3D12View.h      |  9 +++++
+ 3 files changed, 51 insertions(+)
+
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp
+index 2b1ef9726010..4b7c77e9ae24 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp
+@@ -460,6 +460,12 @@ D3D12_GPU_DESCRIPTOR_HANDLE FD3D12DescriptorCache::BuildSRVTable(EShaderFrequenc
+ 		{
+ 			OKViewLiveness::NoteChecked();
+ 		}
++		if (OKViewLiveness::IsEnabled() && SRVs[SlotIndex] != nullptr && OKViewLiveness::IsLive(SRVs[SlotIndex]))
++		{
++			// The second half: the view is alive, so its texture is safe to read -- ask whether the resource it was
++			// created against is still the one that texture has now.
++			OKViewLiveness::CheckResourceCurrent(static_cast<uint32>(ShaderStage), SlotIndex, SRVs[SlotIndex]);
++		}
+ 		if (OKViewLiveness::IsEnabled() && SRVs[SlotIndex] != nullptr && !OKViewLiveness::IsLive(SRVs[SlotIndex]))
+ 		{
+ 			OKViewLiveness::ReportStale(static_cast<uint32>(ShaderStage), SlotIndex, SRVs[SlotIndex]);
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp
+index 01033fa3f397..947fb14726b4 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp
+@@ -271,6 +271,42 @@ namespace OKViewLiveness
+ 		}
+ 	}
+ 
++	static TSet<const void*> GReportedResource;
++
++	void CheckResourceCurrent(uint32 InShaderStage, uint32 InSlotIndex, const FD3D12ShaderResourceView* InView)
++	{
++		if (InView == nullptr)
++		{
++			return;
++		}
++		// No IsInitialized() guard: it is protected, and it is not needed here. A view only reaches a state cache
++		// slot through FD3D12StateCache::SetShaderResourceView, which itself calls SRV->GetResource() on the way in
++		// (D3D12StateCache.cpp:1573 and :1586), so a view sitting in a slot has necessarily been created.
++		FD3D12BaseShaderResource* Base = InView->GetShaderResource();
++		if (Base == nullptr)
++		{
++			// A location-only view (no owning shader resource): nothing to compare it against.
++			return;
++		}
++		const FD3D12Resource* Recorded = InView->GetResource();
++		const FD3D12Resource* Current = Base->GetResource();
++		const bool bLocationValid = Base->ResourceLocation.IsValid();
++		if (bLocationValid && Recorded == Current)
++		{
++			return;
++		}
++		{
++			FWriteScopeLock Lock(GLock);
++			if (GReportedResource.Contains(InView))
++			{
++				return;
++			}
++			GReportedResource.Add(InView);
++		}
++		UE_LOG(LogD3D12RHI, Warning, TEXT("OK stale SRV resource: stage=%u slot=%u view=%p recorded=%p current=%p locationValid=%d"),
++			InShaderStage, InSlotIndex, InView, Recorded, Current, bLocationValid ? 1 : 0);
++	}
++
+ 	void ReportStale(uint32 InShaderStage, uint32 InSlotIndex, const void* InView)
+ 	{
+ 		{
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h
+index 695a6e6c6cf2..c655fb548d43 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h
+@@ -359,6 +359,8 @@ private:
+  *
+  * It sees "the view object is gone". It does NOT see "the view is alive but its resource is dead".
+  */
++class FD3D12ShaderResourceView;
++
+ namespace OKViewLiveness
+ {
+ 	/** Read once, after the cvar system is up. False means every entry point below is a no-op. */
+@@ -374,6 +376,13 @@ namespace OKViewLiveness
+ 	 * was reported" can be told apart from "the check never ran".
+ 	 */
+ 	D3D12RHI_API void NoteChecked();
++	/**
++	 * The other half: the view is alive, but the resource it was created against is no longer the one its texture
++	 * has now, or that texture's allocation is no longer valid. Reads only live objects (see the header comment of
++	 * the patch and the registration in Docs/CARD_READER_DREAMGUI.md): never compares a freed pointer.
++	 * Call only for a slot whose view IsLive(), since that is what makes the texture safe to read.
++	 */
++	D3D12RHI_API void CheckResourceCurrent(uint32 InShaderStage, uint32 InSlotIndex, const ::FD3D12ShaderResourceView* InView);
+ }
+ 
+ class FD3D12ShaderResourceView : public TD3D12View<FD3D12ShaderResourceView, D3D12_SHADER_RESOURCE_VIEW_DESC>
 -- 
 2.54.0.windows.1
 
