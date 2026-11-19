@@ -6048,3 +6048,9 @@ OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMa
   所以 `go` 回来时看不出排队的那个是「等着量测」还是「只是挂着」。
   e-cardload 之后会把「量测中，别编译」写进 claim 的理由字串（原本写的是量测内容），
   重问的时候就看得到。**在那之前，看到有人排队就当它要量测**，别从 `unreal processes: 0` 推论机器是闲的。
+
+## 2026-11-19 表头工具把「git status 显示 M」当成有改动（F 组 f-yvonne）
+- 现象：`entries.rs` 在 `git status` 显示 M，工作树与索引却是同一个 blob（`5a880719…`）、`git diff` 为空，只是行尾差异。我回报「测试含着一份别人的未提交改动」，是误报（协调者实查更正）。
+- 同一个错也在 `Tools/shot_batch_header.lua`：未提交指纹拿 `git status --porcelain` 的文字算杂凑，这种幻影 M 一出现或消失，两批照片就会被判 DIFFERENT，其实什么都没变。
+- 修正（rules v3）：只把内容 id（`git hash-object`，走仓库自己的 filter）和 HEAD 不同的路径算进指纹。自测：同内容 LF→CRLF 回 SAME，改一个字元回 DIFFERENT，entries.rs 不再列出。v2 的表头和 v3 比会回 RULES（exit 3），要重写。
+- 教训：`git status` 回 M 不是「有改动」的证据，blob 杂凑才是。

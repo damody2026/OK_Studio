@@ -58,6 +58,11 @@
 --     still be caught: the whole rules table is compared, not only the number);
 --   * a header from the version before rules were recorded → OLD, exit 3;
 --   * `write` without --purpose → refuses.
+--   After counting content ids instead of the status text (rules v3, 2026-11-19, F tree):
+--   * entries.rs, shown M by `git status` but the same blob as HEAD (5a880719...) → no longer listed; two writes → SAME;
+--   * an untracked Tools/ file written LF, then CRLF with the same text → SAME (0 of 21), exit 0;
+--   * then one character changed → DIFFERENT (1 of 21: uncommitted status_hash), exit 1.
+--   Run it from the project root: the paths from `git status` are read relative to the current directory.
 --
 -- Which binaries: the card reader runs the ENGINE's UnrealEditor.exe with the project (run_card_reader_development.lua),
 -- and the engine is never rebuilt — its mtime says nothing. What our builds change are the project's editor modules, and
@@ -133,7 +138,7 @@ end
 -- the purpose — are written into the header with RULES_VERSION; two headers made under different rules are not compared
 -- at all (`check` says RULES, exit 3): each may say "nothing changed" by its own rule while they measure different
 -- things. Change RULES_VERSION whenever any of these lists change.
-local RULES_VERSION = 2
+local RULES_VERSION = 3
 local PURPOSE_SKIP = { shots = { ["base_v1"] = { "h/voice" } }, load = {} }
 local DATA_DIRS = {
   { name = "base_v1", path = "Content/IndependentResources/base_v1" },
@@ -172,6 +177,33 @@ local function data_identity(root, purpose)
   return out
 end
 local function project_root() return (git("rev-parse --show-toplevel"):gsub("%s+$", "")) end
+-- `git status` saying M is not evidence of a change: with line-ending filters a file can show M while its content,
+-- filtered the way git stores it, is byte for byte the blob at HEAD (2026-11-19: entries.rs, worktree and index both
+-- 5a880719..., empty `git diff`). Hashing the status text made such a file part of the fingerprint, and it can come and
+-- go for reasons that have nothing to do with the pictures. So each listed path counts only when its content id
+-- (`git hash-object`, which applies the repo's filters) differs from its id at HEAD; the fingerprint is those
+-- "path id" pairs, not the status text. (Since rules v3.)
+local function content_changes(spec)
+  local raw = git("status --porcelain -z --untracked-files=all -- " .. spec)
+  local paths, fields = {}, {}
+  for x in raw:gmatch("([^%z]+)") do fields[#fields + 1] = x end
+  local i = 1
+  while i <= #fields do
+    local e = fields[i]; local xy, p = e:sub(1, 2), e:sub(4)
+    paths[#paths + 1] = p
+    if xy:find("[RC]") then i = i + 1; paths[#paths + 1] = fields[i] end
+    i = i + 1
+  end
+  local out = {}
+  for _, p in ipairs(paths) do
+    local now = lfs.attributes(p, "mode") == "file" and (git('hash-object -- "' .. p .. '"'):gsub("%s+$", "")) or "deleted"
+    local head = (git('rev-parse --verify --quiet "HEAD:' .. p .. '"'):gsub("%s+$", ""))
+    if head == "" then head = "absent" end
+    if now ~= head then out[#out + 1] = ("%s %s"):format(p, now) end
+  end
+  table.sort(out)
+  return out
+end
 local function rules(purpose)
   local dirs = {}
   for _, d in ipairs(DATA_DIRS) do dirs[#dirs + 1] = { name = d.name, path = d.path, skip = PURPOSE_SKIP[purpose][d.name] or {} } end
@@ -181,12 +213,11 @@ local function header(paths, label, purpose)
   local bins = {}
   for _, p in ipairs(paths) do bins[#bins + 1] = binary(p) end
   local spec = pathspec()
-  local porcelain = git("status --porcelain -- " .. spec)
+  local changed = content_changes(spec)
+  local porcelain = table.concat(changed, "\n")
   local diff = git("diff HEAD --no-color -- " .. spec)
   local committed = {}
   for _, p in ipairs(PROGRAM_PATHS) do committed[p] = (git("rev-parse HEAD:" .. p):gsub("%s+$", "")) end
-  local changed = {}
-  for line in porcelain:gmatch("[^\n]+") do changed[#changed + 1] = line end
   return {
     label = label,
     written_at = os.date("%Y-%m-%d %H:%M:%S"),
