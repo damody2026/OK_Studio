@@ -5666,3 +5666,110 @@ DRED 兩趟字面相同：`Commandlist "FD3D12CommandList 29 (GPU 0)" on Command
 兩趟「含故障位址的已釋放資源」都是 2 筆，都是一張 `B8G8R8A8_TYPELESS` 貼圖加上包住它位址區間的 64 MB
 `PoolAllocator Heap`；貼圖尺寸與名字兩趟不同（1024x1024 `Texture2D_1003`、1024x512 `Texture2D_978`）。
 **而這一次追蹤是開的，active 資源與 active heap 仍然是 0。**
+
+# 擁有者那一格：第三趟給出不同的報告（0 筆已釋放），而那可能只是窗口 100 幀太短
+
+## 一、這一趟的事實（`D3D12.TrackAllAllocations=1` ＋ `DreamGUI.LogStaleTextures=1`）
+
+```
+FAULTED after card 7 (07_crowd_C055.png)   fault_secs: 92.2
+PageFault at VA GPUAddress "0x5BF051000" (GPU 0)
+Last completed frame ID: -1 (cached: 10839) - Current frame ID: 10842
+Logging all resource enabled: Yes
+Found 0 active tracked resources in 16.00 MB range of page fault address
+Found 0 active heaps containing page fault address
+Found 0 released resources containing the page fault address during last 100 frames
+DRED: No breadcrumb head found.      ← 這一趟沒開 DRED
+DRED: No PageFault data.
+Video Memory Stats from frame ID 10841:
+    Local Budget: 31419.00 MB    Local Used: 2219.39 MB
+# stale_hits=0
+```
+
+**和前兩趟不同的兩件事**：故障在 **92.2 秒、第 7 張**（前兩趟是 138.2／139.3 秒、第 15–16 張），
+而且**「含故障位址的已釋放資源」是 0 筆**，儘管**追蹤是開的**。
+
+## 二、那個 0 不能直接讀成「沒有東西被釋放」——窗口只有 100 幀
+
+`GTrackedReleasedAllocationFrameRetention = 100`（`D3D12Adapter.cpp:49-55`，
+cvar `D3D12.TrackedReleasedAllocationFrameRetention`，`ECVF_RenderThreadSafe`，以參照綁定）。
+**100 幀在這裡大約只有 1.5 秒**，而前兩趟點到名的那兩筆，釋放距故障是 **21–60 幀**——**已經接近窗口邊緣**。
+所以「0 筆」有兩種可能，而這一趟分不出來：
+
+1. 那個位址的東西**在 100 幀之前**就被釋放了（窗口太短）；
+2. 那個位址**從來不屬於任何被追蹤的配置**。
+
+**這正是前面那個「把缺資料印成一個值」的同一個形狀**，只是這次換成「窗口外」而不是「沒在記錄」。
+所以下一趟把 `D3D12.TrackedReleasedAllocationFrameRetention=4000`（約一分鐘）打開再看。
+
+## 三、`stale_hits=0`，而這個 0 的強度要講清楚
+
+`DreamGUI.LogStaleTextures`（`DreamUIBaseShaders.cpp:25`）在**內建繪製解析每個貼圖槽的那一行**檢查
+`IsValid()`／`IsUnreachable()`。這一趟 0 命中，**和那段程式自己登記的預期一致**
+（`UTexture` 的 `IsReadyForFinishDestroy` 會等資源釋放 fence）。
+
+**但這個 0 不能當成「旋鈕到達」的證據**：那一行只在真的解析到過期貼圖時才印，
+**沒命中與沒生效在 log 上長得一樣**。今天第二次踩到「量具只在壞事發生時才自我證明」。
+
+## 四、`DreamGUI.LogDeferredRelease` 不是旋鈕，而它要的那份紀錄不存在
+
+它是 `FAutoConsoleCommand`（`DreamUIDeferredRelease.cpp:146`），只印一個**數量**
+（`deferred release: %d waiting`）。`FDreamUIDeferredRelease` 對每一筆到期項目**什麼都不印**
+（沒有名字、沒有位址、沒有幀號）。所以**「那張被釋放的貼圖有沒有出現在 DreamGUI 的釋放紀錄裡」做不到**，
+因為那份紀錄不存在。要做得在 `Tick_RenderThread` 的 `Due` 迴圈加一行 log——那是共用外掛的改動，沒有自己動。
+
+## 五、命名線索（交給程式碼那一側，不在這裡往下推論）
+
+報告裡的名字是 `Texture2D_1003`／`Texture2D_978`，**那是 UE 對 runtime 建立的 `UTexture2D` UObject
+自動取名的樣子**；而 `UTexture2D::CreateTransient` 的**預設格式正是 `PF_B8G8R8A8`**，
+與報告的 `B8G8R8A8_TYPELESS` 相符。`CreateTransient` 在本專案的使用檔案有六個，含
+`Source/OpenKoikatsu/OKReaderScreen.cpp`。**建立點與綁定的追查歸程式碼那一側，這裡只記線索。**
+
+## 第四趟（`D3D12.TrackedReleasedAllocationFrameRetention=4000`）：相距不是 21–60 幀，是**兩千八百多幀**
+
+```
+FAULTED after card 27 (27_ref_lan.png)   fault_secs: 213.2
+PageFault at VA GPUAddress "0x260F161000" (GPU 0)
+Last completed frame ID: -1 (cached: 35119) - Current frame ID: 35122
+Logging all resource enabled: Yes
+Found 0 active tracked resources in 16.00 MB range of page fault address
+Found 0 active heaps containing page fault address
+Found 2 released resources containing the page fault address during last 100 frames
+  [0x260B200000 .. 0x260F200000] 67108864 bytes 64.00 MB FrameID: 32290 Heap: 1  Name: PoolAllocator Heap
+  [0x260F140000 .. 0x260F1A0000]   393216 bytes  0.38 MB FrameID: 32268 Heap: 0  Name: Texture2D_1413
+        Desc: Texture 256x256x1 DXGI_FORMAT_B8G8R8A8_TYPELESS
+# stale_hits=0      # tracking_arrived=1
+# retention_logconfig: CVar [[D3D12.TrackedReleasedAllocationFrameRetention:4000]] deferred - dummy variable created
+```
+
+**相距**：貼圖釋放於第 **32268** 幀、heap 於 **32290**，故障時 current frame **35122**
+⇒ **2854 幀**與 **2832 幀**（約 40 秒、約 5 張卡之前）。
+
+### 這一趟推翻了我自己上一節的數字，而且推翻的方式值得記
+
+1. **先前量到的「21–60 幀」是窗口造成的假象。** 預設 `retention=100` 只保留 100 幀內釋放的紀錄，
+   所以**凡是更早釋放的都不會出現**，而出現的那些必然落在 21–60 幀這個靠邊的範圍裡。
+   把窗口開到 4000 之後，真正的相距是**兩千八百多幀**。
+   **「不是圍欄差幾幀，是圍欄沒管到」這個推論的方向沒變，但支撐它的數字從 21–60 換成約 2850。**
+2. **而那句話裡的「last 100 frames」是寫死的字串**
+   （`D3D12Util.cpp:716` 的格式字串裡就是 `100`，不讀 cvar）。
+   所以這一趟的輸出字面上自相矛盾：它說「最近 100 幀」，卻列出 2854 幀前釋放的東西。
+   **到達證據反而是這個矛盾本身**——只有窗口真的變大才可能列出窗口外的紀錄。
+   **這是今天第三個「印出來的數字不是真正的值」**：第一個是 `Found 0`（沒在記錄），
+   第二個是量具只在壞事發生時自我證明，這是第三個（寫死的窗口大小）。
+3. **第三趟那個「0 筆已釋放」因此有了解釋**：那一趟窗口只有 100 幀，而真正的釋放在**兩千多幀前**，
+   所以 0 筆是**窗口外**，不是「沒有東西被釋放」。
+
+### 四趟的共同形狀（事實，不含解釋）
+
+| 趟 | 位置／秒數 | 故障位址 | 已釋放的貼圖 | 相距幀 | 同時被釋放的 heap |
+|---|---|---|---|---|---:|
+| 2 | 第 16 張／138.2 s | `0x2606A01000` | `Texture2D_1003` 1024×1024 BGRA8_TYPELESS | 44 | 64 MB PoolAllocator（21 幀） |
+| 3 | 第 15 張／139.3 s | `0x260FF71000` | `Texture2D_978` 1024×512 BGRA8_TYPELESS | 60 | 64 MB PoolAllocator（38 幀） |
+| 擁有者格 | 第 7 張／92.2 s | `0x5BF051000` | （窗口外，0 筆） | — | — |
+| 保留窗口格 | 第 27 張／213.2 s | `0x260F161000` | `Texture2D_1413` **256×256** BGRA8_TYPELESS | **2854** | 64 MB PoolAllocator（**2832**） |
+
+- **四趟都是 `B8G8R8A8_TYPELESS` 的 `Texture2D_<數字>`**，尺寸每趟不同（1024×1024、1024×512、256×256）。
+- **每一次都伴隨同一種 64 MB `PoolAllocator Heap` 被釋放**，而故障位址落在它的區間內。
+- `stale_hits` 四趟都是 0（而這個 0 不能當到達證據，見上一節）。
+- 那張貼圖的名字在整份 log 裡**只出現一次**，就是故障報告這一行——所以 log 本身不含它的建立或釋放紀錄。
