@@ -4,11 +4,17 @@
 --   Tools\lua\lua.exe Tools\shot_batch_header.lua write (--editor <project root> | --exe <binary> [--exe <binary>...]) --out <batch dir> [--label <name>]
 --   Tools\lua\lua.exe Tools\shot_batch_header.lua check <batch dir A> <batch dir B>
 --
--- Three things, because each alone has misled us (2026-11-19, E group): the exe's mtime and size (two runs without them
--- had to be thrown away as a baseline), HEAD, and a fingerprint of the working tree (`git status --porcelain` plus the
--- full `git diff HEAD`): in a shared tree the same HEAD builds different executables, because other sessions'
--- uncommitted edits get compiled in. A rebuild in the middle of a session makes the earlier "before" shots useless:
--- `check` then says DIFFERENT and those batches must be shot again.
+-- What is compared, because each alone has misled us (2026-11-19, E group): the binaries' mtime and size (two runs
+-- without them had to be thrown away as a baseline), and a fingerprint of the PROGRAM content only — the paths that end
+-- up in the reader (`PROGRAM_PATHS`): their committed ids at HEAD plus `git status --porcelain` and `git diff HEAD`
+-- limited to them. In a shared tree the same HEAD builds different executables (other sessions' uncommitted edits get
+-- compiled in), so the uncommitted part counts. The first version hashed the WHOLE tree, and a commit of a `Docs/`
+-- file made two batches from the same executable DIFFERENT — it threw away good data. So:
+-- * `Docs`, `Saved` and the shot output folders are not part of the fingerprint;
+-- * HEAD is recorded but does not decide: a docs commit moves HEAD and not the program, uncommitted C++ moves the
+--   program and not HEAD. HEAD alone never identifies an executable; the committed ids plus the uncommitted part do.
+-- A rebuild in the middle of a session makes the earlier "before" shots useless: `check` then says DIFFERENT and those
+-- batches must be shot again.
 --
 -- Self-test record (a gauge's output only counts after it was checked on known-positive and known-negative samples;
 -- E group rule 7, 2026-11-19). 2026-11-19, F tree, exe Binaries/Win64/OpenKoikatsu.exe:
@@ -20,6 +26,15 @@
 --   Again after `--editor` (9 editor modules, F tree): SAME (0); the project DLL's mtime changed in one header →
 --   DIFFERENT (1) naming that DLL; no header → MISSING (2). Keep both hashes: `git diff HEAD`
 --   does not see untracked files, `git status --porcelain` does.
+--   Again after narrowing to the program paths (2026-11-19, F tree, `--editor`, 9 binaries; every check prints its
+--   denominator, "compared 17 items … N differ"):
+--   * run on the current tree: it listed 3 uncommitted changes, all program files (OKExtractBuildStamp.h,
+--     ok-extract/src/entries.rs, this tool); untracked UserData/ and Docs/ were not listed — acceptance;
+--   * two writes → SAME (0 of 17 differ);
+--   * an untracked file added under Docs/ between the writes → SAME (0 of 17) — a docs change no longer voids a batch;
+--   * HEAD changed in one header → SAME, with the HEAD line printed as "not compared";
+--   * an untracked file added under Tools/ → DIFFERENT (1 of 17: uncommitted status_hash), exit 1 — known negative;
+--   * a header from the whole-tree version → OLD (exit 2); no header → MISSING (exit 2).
 --
 -- Which binaries: the card reader runs the ENGINE's UnrealEditor.exe with the project (run_card_reader_development.lua),
 -- and the engine is never rebuilt — its mtime says nothing. What our builds change are the project's editor modules, and
@@ -74,22 +89,41 @@ local function editor_binaries(root)
   if #out == 0 then error("no editor modules under " .. root) end
   return out
 end
+-- What is compiled or read into the reader: C++ (Source, Plugins with their .Build.cs), ok-extract and the launch
+-- scripts (Tools, with Cargo.*), runtime config (Config: DefaultGame.ini, ReaderEditor/pages.json), assets and text
+-- (Content: maps, Localization), and the .uproject. Character cards are inputs, not the program; built binaries are
+-- what `binaries` records.
+local PROGRAM_PATHS = { "Source", "Plugins", "Tools", "Config", "Content", "OpenKoikatsu.uproject" }
+local EXCLUDE = { "Content/CharacterCards", "Plugins/*/Binaries", "Plugins/*/Intermediate" }
+local function pathspec()
+  local parts = {}
+  for _, p in ipairs(PROGRAM_PATHS) do parts[#parts + 1] = '"' .. p .. '"' end
+  for _, p in ipairs(EXCLUDE) do parts[#parts + 1] = '":(exclude)' .. p .. '"' end
+  return table.concat(parts, " ")
+end
 local function header(paths, label)
   local bins = {}
   for _, p in ipairs(paths) do bins[#bins + 1] = binary(p) end
-  local porcelain = git("status --porcelain")
-  local diff = git("diff HEAD --no-color")
+  local spec = pathspec()
+  local porcelain = git("status --porcelain -- " .. spec)
+  local diff = git("diff HEAD --no-color -- " .. spec)
+  local committed = {}
+  for _, p in ipairs(PROGRAM_PATHS) do committed[p] = (git("rev-parse HEAD:" .. p):gsub("%s+$", "")) end
+  local changed = {}
+  for line in porcelain:gmatch("[^\n]+") do changed[#changed + 1] = line end
   return {
     label = label,
     written_at = os.date("%Y-%m-%d %H:%M:%S"),
     exe = bins[1],
     binaries = bins,
     head = (git("rev-parse HEAD"):gsub("%s+$", "")),
-    tree = {
+    program = {
+      paths = PROGRAM_PATHS, exclude = EXCLUDE,
+      committed = committed,
       clean = porcelain == "",
       status_hash = hash_text(porcelain),
       diff_hash = hash_text(diff),
-      changed_files = select(2, porcelain:gsub("\n", "")),
+      changed = changed,
     },
   }
 end
@@ -114,11 +148,19 @@ if mode == "write" then
   lfs.mkdir(opts.out)
   local h = header(exes, opts.label)
   local f = assert(io.open(opts.out .. "/batch_header.json", "wb")); f:write(json.encode(h)); f:close()
-  print(("batch header: %d binaries, first %s (%s, %d bytes) HEAD %s tree %s"):format(#h.binaries, h.exe.path, h.exe.mtime, h.exe.size, h.head:sub(1, 9),
-    h.tree.clean and "clean" or (h.tree.changed_files .. " changed files, diff " .. h.tree.diff_hash:sub(1, 9))))
+  print(("batch header: %d binaries, first %s (%s, %d bytes); HEAD %s (recorded, not compared)"):format(#h.binaries, h.exe.path,
+    h.exe.mtime, h.exe.size, h.head:sub(1, 9)))
+  -- The uncommitted program files, every one: whoever reads this sees what was compiled in besides HEAD.
+  print(("program: %d of %d paths, %d uncommitted changes%s"):format(#PROGRAM_PATHS, #PROGRAM_PATHS, #h.program.changed,
+    #h.program.changed == 0 and " (clean)" or ":"))
+  for _, line in ipairs(h.program.changed) do print("  " .. line) end
 elseif mode == "check" then
   local a, b = read(arg[2] or ""), read(arg[3] or "")
   if not a or not b then print("MISSING: a batch without batch_header.json cannot be compared with another"); os.exit(2) end
+  if not a.program or not b.program then
+    print("OLD header: written by the whole-tree version (a Docs commit changed it). Write it again with this version;")
+    print("if the tree has not changed since, that is the same batch, not a new one."); os.exit(2)
+  end
   -- Every recorded binary, by path: one module rebuilt is a different build.
   local function bins(h) local t = {} for _, x in ipairs(h.binaries or { h.exe }) do t[x.path] = x end return t end
   local ba, bb = bins(a), bins(b)
@@ -126,16 +168,28 @@ elseif mode == "check" then
   for p, x in pairs(ba) do local y = bb[p]; if not y or y.mtime_epoch ~= x.mtime_epoch or y.size ~= x.size then bin_diff[#bin_diff + 1] = p end end
   for p in pairs(bb) do if not ba[p] then bin_diff[#bin_diff + 1] = p end end
   table.sort(bin_diff)
-  local same = #bin_diff == 0 and a.head == b.head
-    and a.tree.status_hash == b.tree.status_hash and a.tree.diff_hash == b.tree.diff_hash
-  if same then print("SAME build: the two batches can be compared") else
+  local diffs = {}
+  for _, p in ipairs(bin_diff) do diffs[#diffs + 1] = "binary differs or is missing on one side: " .. p end
+  local paths = {}
+  for p in pairs(a.program.committed) do paths[#paths + 1] = p end
+  for p in pairs(b.program.committed) do if a.program.committed[p] == nil then paths[#paths + 1] = p end end
+  table.sort(paths)
+  for _, p in ipairs(paths) do
+    if a.program.committed[p] ~= b.program.committed[p] then diffs[#diffs + 1] = ("committed %s: %s vs %s"):format(p, tostring(a.program.committed[p]), tostring(b.program.committed[p])) end
+  end
+  for _, k in ipairs({ "status_hash", "diff_hash" }) do
+    if a.program[k] ~= b.program[k] then diffs[#diffs + 1] = ("uncommitted %s: %s vs %s"):format(k, a.program[k], b.program[k]) end
+  end
+  -- A count with its denominator: "0 differ" alone cannot be told from "nothing was compared".
+  local nbin = 0
+  for _ in pairs(ba) do nbin = nbin + 1 end
+  for p in pairs(bb) do if not ba[p] then nbin = nbin + 1 end end
+  local compared = nbin + #paths + 2
+  print(("compared %d items (%d binaries, %d committed program paths, 2 uncommitted hashes): %d differ"):format(compared, nbin, #paths, #diffs))
+  if a.head ~= b.head then print(("  HEAD %s vs %s (not compared: a commit outside the program paths moves it)"):format(a.head:sub(1, 9), b.head:sub(1, 9))) end
+  if #diffs == 0 then print("SAME build: the two batches can be compared") else
     print("DIFFERENT build: do not compare these batches")
-    for _, p in ipairs(bin_diff) do print("  binary differs or is missing on one side: " .. p) end
-    for _, k in ipairs({ "head", "tree.status_hash", "tree.diff_hash" }) do
-      local x, y = a, b
-      for part in k:gmatch("[^.]+") do x = x and x[part]; y = y and y[part] end
-      if x ~= y then print(("  %s: %s vs %s"):format(k, tostring(x), tostring(y))) end
-    end
+    for _, d in ipairs(diffs) do print("  " .. d) end
     os.exit(1)
   end
 else
