@@ -1,11 +1,15 @@
 -- Record which executable a batch of screenshots (or measurements) came from, so two batches are only compared when
 -- they came from the same build. Writes <out>/batch_header.json; `check` compares two headers.
 --
---   Tools\lua\lua.exe Tools\shot_batch_header.lua write (--editor <project root> | --exe <binary> [--exe <binary>...]) --out <batch dir> [--label <name>]
+--   Tools\lua\lua.exe Tools\shot_batch_header.lua write --purpose (shots|load) (--editor <project root> | --exe <binary> [--exe <binary>...]) --out <batch dir> [--label <name>]
+--
+-- `--purpose` is declared by the caller, never assumed: it decides which data counts. `shots` (pictures) leaves out
+-- the base library's voice audio (base_v1/h/voice, 120k files) — it cannot change a picture; `load` (load time
+-- measurements) keeps it — the file count and the scan cost of those files can be in the number being measured.
 --   Tools\lua\lua.exe Tools\shot_batch_header.lua check <batch dir A> <batch dir B>
 --
 -- `check` exit codes, each answer its own: 0 SAME (comparable), 1 DIFFERENT, 2 MISSING (a folder has no header),
--- 3 OLD (a header from the whole-tree version: not compared at all). Only 0 means "compare them". Read the code of
+-- 3 OLD or RULES (written by an older version, or under different rules/purpose: not compared at all). Only 0 means "compare them". Read the code of
 -- this command itself — in `check … | tee log` the shell reports tee's 0, which is how an OLD once looked like a pass.
 --
 -- What is compared, because each alone has misled us (2026-11-19, E group): the binaries' mtime and size (two runs
@@ -47,6 +51,13 @@
 --   * BodyInteractions/manifest.json mtime moved +60 s → DIFFERENT (1 of 21: data BodyInteractions, newest and list
 --     hash), exit 1; mtime restored exactly → SAME again.
 --   Not seen: a data edit that keeps both size and mtime (nothing we run does that), and data outside DATA_DIRS.
+--   After the rules and `--purpose` (rules v2, 2026-11-19, F tree):
+--   * shots vs shots → SAME (0 of 21); `shots` base_v1 = 15370 files, `load` base_v1 = 136935 (voice audio kept);
+--   * shots vs load → RULES, exit 3 — the two purposes are never taken as comparable;
+--   * one header's rules version edited 2 → 1 → RULES, exit 3 (a changed exclusion list without a version bump would
+--     still be caught: the whole rules table is compared, not only the number);
+--   * a header from the version before rules were recorded → OLD, exit 3;
+--   * `write` without --purpose → refuses.
 --
 -- Which binaries: the card reader runs the ENGINE's UnrealEditor.exe with the project (run_card_reader_development.lua),
 -- and the engine is never rebuilt — its mtime says nothing. What our builds change are the project's editor modules, and
@@ -118,16 +129,24 @@ end
 -- base_v1 (`--oklib convert`) rewrites .okmodel files; with only git in the fingerprint, two batches across that would
 -- be SAME while a broken texture may come or go. So each data folder is one compared item: its file count, total
 -- size, newest mtime and a hash of the sorted "path size mtime" list (stat only, no content hash — tens of GB).
--- The voice audio (base_v1/h/voice, 120k files) is left out: it cannot change a picture.
+-- What is left out depends on `--purpose` (PURPOSE_SKIP). The rules — this list, the program paths, the exclusions and
+-- the purpose — are written into the header with RULES_VERSION; two headers made under different rules are not compared
+-- at all (`check` says RULES, exit 3): each may say "nothing changed" by its own rule while they measure different
+-- things. Change RULES_VERSION whenever any of these lists change.
+local RULES_VERSION = 2
+local PURPOSE_SKIP = { shots = { ["base_v1"] = { "h/voice" } }, load = {} }
 local DATA_DIRS = {
-  { name = "base_v1", path = "Content/IndependentResources/base_v1", skip = { ["h/voice"] = true } },
+  { name = "base_v1", path = "Content/IndependentResources/base_v1" },
   { name = "RuntimeAnimations", path = "Content/IndependentResources/RuntimeAnimations" },
   { name = "BodyInteractions", path = "Content/IndependentResources/BodyInteractions" },
   { name = "KKPreview", path = "Content/KKPreview" },
 }
-local function data_identity(root)
+local function data_identity(root, purpose)
   local out = {}
-  for _, d in ipairs(DATA_DIRS) do
+  for _, d0 in ipairs(DATA_DIRS) do
+    local skips = {}
+    for _, p in ipairs(PURPOSE_SKIP[purpose][d0.name] or {}) do skips[p] = true end
+    local d = { name = d0.name, path = d0.path, skip = skips }
     local base = root .. "/" .. d.path
     if lfs.attributes(base, "mode") ~= "directory" then out[d.name] = { absent = true } else
       local lines, count, bytes, newest = {}, 0, 0, 0
@@ -153,7 +172,12 @@ local function data_identity(root)
   return out
 end
 local function project_root() return (git("rev-parse --show-toplevel"):gsub("%s+$", "")) end
-local function header(paths, label)
+local function rules(purpose)
+  local dirs = {}
+  for _, d in ipairs(DATA_DIRS) do dirs[#dirs + 1] = { name = d.name, path = d.path, skip = PURPOSE_SKIP[purpose][d.name] or {} } end
+  return { version = RULES_VERSION, purpose = purpose, data_dirs = dirs, program_paths = PROGRAM_PATHS, program_exclude = EXCLUDE }
+end
+local function header(paths, label, purpose)
   local bins = {}
   for _, p in ipairs(paths) do bins[#bins + 1] = binary(p) end
   local spec = pathspec()
@@ -169,7 +193,8 @@ local function header(paths, label)
     exe = bins[1],
     binaries = bins,
     head = (git("rev-parse HEAD"):gsub("%s+$", "")),
-    data = data_identity(project_root()),
+    rules = rules(purpose),
+    data = data_identity(project_root(), purpose),
     program = {
       paths = PROGRAM_PATHS, exclude = EXCLUDE,
       committed = committed,
@@ -197,10 +222,12 @@ if mode == "write" then
     i = i + 2
   end
   if opts.editor then for _, p in ipairs(editor_binaries(opts.editor)) do exes[#exes + 1] = p end end
-  assert(#exes > 0 and opts.out, "usage: write (--editor <root> | --exe <binary>...) --out <batch dir> [--label <name>]")
+  assert(#exes > 0 and opts.out and opts.purpose, "usage: write --purpose (shots|load) (--editor <root> | --exe <binary>...) --out <batch dir> [--label <name>]")
+  assert(PURPOSE_SKIP[opts.purpose], "--purpose must be shots or load")
   lfs.mkdir(opts.out)
-  local h = header(exes, opts.label)
+  local h = header(exes, opts.label, opts.purpose)
   local f = assert(io.open(opts.out .. "/batch_header.json", "wb")); f:write(json.encode(h)); f:close()
+  print(("rules v%d, purpose %s"):format(RULES_VERSION, opts.purpose))
   print(("batch header: %d binaries, first %s (%s, %d bytes); HEAD %s (recorded, not compared)"):format(#h.binaries, h.exe.path,
     h.exe.mtime, h.exe.size, h.head:sub(1, 9)))
   -- The uncommitted program files, every one: whoever reads this sees what was compiled in besides HEAD.
@@ -214,6 +241,14 @@ if mode == "write" then
 elseif mode == "check" then
   local a, b = read(arg[2] or ""), read(arg[3] or "")
   if not a or not b then print("MISSING: a batch without batch_header.json cannot be compared with another"); os.exit(2) end
+  if (a.program and a.data and not a.rules) or (b.program and b.data and not b.rules) then
+    print("OLD header: written before the rules were recorded. Write it again with this version."); os.exit(3)
+  end
+  if a.rules and b.rules and json.encode(a.rules) ~= json.encode(b.rules) then
+    print(("RULES differ: v%s %s vs v%s %s — the two headers were made under different fingerprint rules and are not compared."):format(
+      tostring(a.rules.version), tostring(a.rules.purpose), tostring(b.rules.version), tostring(b.rules.purpose)))
+    print("Write both again with the same version and --purpose."); os.exit(3)
+  end
   if not a.program or not b.program or not a.data or not b.data then
     print("OLD header: written by the whole-tree version (a Docs commit changed it). Write it again with this version;")
     print("if the tree has not changed since, that is the same batch, not a new one."); os.exit(3)
