@@ -6,6 +6,7 @@
 #include "UObject/StrongObjectPtr.h"
 #include "OKSceneActor.generated.h"
 
+class FQueuedThreadPool;
 class AKKPreviewActor;
 class UCameraComponent;
 class ULightComponent;
@@ -388,6 +389,16 @@ private:
 	 *  cost a 21-character scene 9 of its 37 seconds in OpenOkModelFk on the game thread). */
 	struct FPreparedItem;
 	TMap<int32, TSharedPtr<FPreparedItem>> PreparedItems;
+	/** The threads those opens run on, made when the first item opens and kept until EndPlay. One AsyncThread
+	 *  per item was 11.0 of the 11.6 s of SyncGateMs on the 8806-object scene (1.88 ms a time: the engine
+	 *  creates a 4 MB OS thread and waits for it to start running, which is milliseconds while eight decode
+	 *  workers are on the machine). The pool is ItemOpensAhead threads of that same 4 MB stack, so as many
+	 *  opens run at once as the cap allows; raising ok.Studio.ItemOpensAhead after the first item has opened
+	 *  does not grow it, and the opens past its size queue instead of running. ok.Studio.ItemOpenPool 0 goes
+	 *  back to a thread per item. An open writes into the session it holds, so EndPlay waits for them all
+	 *  before this goes away. */
+	FQueuedThreadPool* ItemOpenPool = nullptr;
+	FQueuedThreadPool* ItemOpenThreads();
 	/** Starts or keeps the item's session opening; true when Build can have it (or should open it itself). */
 	bool PrepareItem(const FOKSceneObject& Object);
 	void DropPreparedItem(int32 Id);

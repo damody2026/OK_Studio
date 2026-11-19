@@ -714,6 +714,27 @@ int32 AOKSceneActor::ItemOpensAhead()
 	return FMath::Clamp(CVarOkStudioItemOpensAhead.GetValueOnGameThread(), 0, 32);
 }
 
+/** 0 opens each item on a thread of its own, the way this worked before 2026-11-20. That cost 1.88 ms of the game
+ *  thread per item -- 11.0 of the 11.6 s SyncGateMs on the 8806-object scene -- because FRunnableThread::Create
+ *  waits for the new thread to start running and eight decode workers were already on the machine. It is here to
+ *  measure that difference again; the open itself is the same work either way. */
+static TAutoConsoleVariable<int32> CVarOkStudioItemOpenPool(TEXT("ok.Studio.ItemOpenPool"), 1,
+	TEXT("Open item sessions on a kept pool of threads (0: a new thread per item, as before 2026-11-20)."));
+
+FQueuedThreadPool* AOKSceneActor::ItemOpenThreads()
+{
+	if (ItemOpenPool) return ItemOpenPool;
+	FQueuedThreadPool* Pool = FQueuedThreadPool::Allocate();
+	// The stack an item open had on its own thread, and as many threads as the cap lets open at once.
+	if (!Pool->Create(FMath::Max(ItemOpensAhead(), 1), 4 * 1024 * 1024, TPri_Normal, TEXT("OKStudioItemOpen")))
+	{
+		delete Pool;
+		return nullptr;
+	}
+	ItemOpenPool = Pool;
+	return ItemOpenPool;
+}
+
 FString AOKSceneActor::ItemPrepareKey(const FOKSceneItem& Item, const FString& Model, const FString& Prefab) const
 {
 	return Model + TEXT("|") + Prefab + TEXT("|") + ItemBuildJson(Item);
@@ -782,7 +803,9 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 		P->bDone = true;
 	};
 	const double SpawnStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
-	P->Opening = AsyncThread(MoveTemp(OpenWork), 4 * 1024 * 1024);
+	// A pool thread where there is one: asking the engine for a thread per item is what SyncGateMs mostly was.
+	FQueuedThreadPool* const Pool = CVarOkStudioItemOpenPool.GetValueOnGameThread() != 0 ? ItemOpenThreads() : nullptr;
+	P->Opening = Pool ? AsyncPool(*Pool, MoveTemp(OpenWork)) : AsyncThread(MoveTemp(OpenWork), 4 * 1024 * 1024);
 	if (bSyncDetailTimers) LoadStats.SyncGateSpawnMs += (FPlatformTime::Seconds() - SpawnStart) * 1000.;
 	PreparedItems.Add(Object.Id, P);
 	if (bSyncDetailTimers) { LoadStats.SyncGateOpenMs += (FPlatformTime::Seconds() - OpenStart) * 1000.; ++LoadStats.GateOpens; }
@@ -3588,6 +3611,17 @@ void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
 	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
 	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
 	Prepared.Reset();
+	// The item opens as well, and only then the threads they run on: a pool must not be destroyed under work
+	// still writing into the session it holds. (Nothing waited for these before the pool, so an item open could
+	// outlive the world it was opened for.)
+	for (const auto& Pair : PreparedItems) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
+	PreparedItems.Reset();
+	if (ItemOpenPool)
+	{
+		ItemOpenPool->Destroy();
+		delete ItemOpenPool;
+		ItemOpenPool = nullptr;
+	}
 	StopMapPrepare();
 	for (const TSharedPtr<FPreparedMap>& M : DroppedMaps) if (M->Opening.IsValid()) M->Opening.Wait();
 	DroppedMaps.Reset();
