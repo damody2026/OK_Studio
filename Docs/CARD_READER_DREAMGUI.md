@@ -2414,3 +2414,33 @@ delete FDreamUIMaterialProxy
 **還沒解釋的**：引擎的 EOP 圍欄本該蓋住「計數歸零 ⇒ 銷毀」這一步
 （`FRHIResource::MarkForDelete` → `PendingDeletes` → `DeleteResources`），
 所以若這條鏈成立，必須找出哪一步繞過了那個圍欄。**在找到之前，這仍是假設，不是結論。**
+
+### 找繞過 EOP 圍欄那一步：**還沒找到**，所以 uniform buffer 那條鏈仍是假設（2026-11-19，純讀碼）
+
+查到的（引擎出處）：
+
+1. **計數歸零從不就地銷毀。** `FRHIResource::Release()`（`RHI/Public/RHIResources.h:80-91`）在歸零時呼叫
+   `MarkForDelete()`，而它（`RHI/Private/RHIResources.cpp:46-59`）只是把資源丟進
+   `PendingDeletes` 或 `PendingDeletesWithLifetimeExtension`。
+2. **排空點在送交時，而且會一直排到空為止。**
+   `FRHICommandListExecutor::FSubmitState::Submit_Close`（`RHI/Private/RHICommandList.cpp:1414-1437`）
+   在 `ERHISubmitFlags::DeleteResources` 之下 `while(true)` 反覆
+   `GatherResourcesToDelete` ＋ `DeleteResources` **直到隊列空**。
+   **這個迴圈正好涵蓋「連鎖釋放」**：uniform buffer 被銷毀時才掉貼圖的計數，
+   那張貼圖於是進 `PendingDeletes`，而同一趟迴圈會把它一起處理掉。
+3. **延長生命週期那條岔路不是破口**：`bIncludeExtendedLifetimeResources` 只在
+   `GRHIResourceLifetimeRefCount == 0` 時才排空擴充隊列（`:1590-1591`），
+   而 `DisableLifetimeExtension()` 全引擎只有 ray tracing geometry 與 `DumpGPU` 在用，
+   和 UI 貼圖無關。
+
+**所以照這幾段讀，引擎這條路是有圍欄的，我沒有找到繞過它的那一步。**
+D3D12 那一層把真正的記憶體釋放推到 EOP（`FD3D12DynamicRHI::EnqueueEndOfPipeTask`，
+`D3D12RHI.cpp:320`，每個佇列一個 `FD3D12SyncPoint(GPUAndCPU)`），
+所以「C++ 物件在送交時被 delete」不等於「GPU 記憶體在送交時被釋放」。
+
+**結論寫成**：uniform buffer 那條鏈**解釋得了四件事實，但還缺一個破口**，
+所以它是**假設**，不是結論；`Func=240` 的「推遲」也還可以只是時序。
+**下一個該讀的兩處**（還沒讀，不要當成已查）：
+`Submit_Close` 裡「先 delete 還是先送交」的實際順序，
+以及 D3D12 的 EOP 任務是否涵蓋**已錄好但當下還沒送交**的命令清單——
+若不涵蓋，那就是破口。
