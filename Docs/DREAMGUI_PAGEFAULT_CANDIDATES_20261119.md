@@ -149,6 +149,147 @@ void UOKReaderScreen::RetireThumb(UTexture2D* Texture) { RetiredThumbs.Add(Textu
 **还缺一个读数**：这三项都没有自己的到达证据（没有 grow／renew／retire 的计数器）。
 要把「旋钮到达了」和「旋钮没效果」分开，得先有计数器，这需要改程式 —— **本回合没有改**。
 
+## 5. shader 身分：离线能做到哪一步（第二轮，仍是只读）
+
+### 5a. `fragment_02` 不是 `.usf` 里的名字，是 Aftermath 自己编的
+
+引擎把 shader 注册给 Aftermath 的地方只有一处
+（`F:\UE5.8\Engine\Source\Runtime\D3D12RHI\Private\D3D12NvidiaExtensions.cpp:40`）：
+
+```cpp
+RegisterShaderBinary(Value->Code.GetData(), Value->Code.Num(),
+                     Value->HasShaderName() ? Value->GetShaderName() : nullptr);
+```
+
+`HasShaderName()` 看的是 `FRHIShader::Debug.ShaderName`（`RHI/Public/RHIResources.h:848-885`），
+那个字串**只有在 shader 编译时带了 extra data 才会有**（`r.Shaders.ExtraData`，
+`RenderCore/Private/ShaderCore.cpp:978-982`，是**编译期**的 shader format 设定，不是执行期开关）。
+我们这次拿到的名字是 `fragment_02`，**完全不像 UE 的命名**（UE 的会是 `檔名.usf/進入點` 这种形状），
+所以几乎确定是**传了 `nullptr`**、由 Aftermath 按「第几个 fragment shader」自己编号。
+
+**所以 `fragment_02` 不含识别力，`MainPS` 也不含（四个 type 共用，见 1a）。**
+
+### 5b. 那个 hash 是哪一种 hash
+
+`E6753E1EA9F1F20775D8BC0AD963B1EF` 是 **32 个 hex ＝ 128 bit**。
+UE 自己的 `FSHAHash` 是 **160 bit（40 hex）**，所以**这不是 UE 的 shader hash**，
+对不进 UE 的任何表；它的长度与 **DXIL container 内嵌的 shader hash** 一致。
+要对上，手里得有**那颗 shader 编出来的 DXIL bytes**。
+
+### 5c. 现在这台机器上**办不到**离线比对，缺的是什么
+
+`F:\OpenKoikatsu\Saved\ShaderDebugInfo\PCD3D_SM6\` 已经存在（28 MB），结构正是按**shader type 名**分目录：
+
+```
+Global/FOKGpuRigSkeletonCS/0/{CompileDXC.bat, DebugCompileArgs.txt, DebugHash_<64hex>, *.usf}
+```
+
+**但里面没有任何 DreamUI 的项目**（`ShaderTypeStats.csv` 里 `dream` 命中 0 次）——
+那是前人某次针对性 dump 留下的，只有两颗 OK 的 compute shader。
+所以**不跑引擎就比不出来**：缺的不是方法，是那四颗 shader 的 bytes。
+
+### 5d. 可执行的下一步（都是旗标，不改程式；按便宜排）
+
+1. **`r.Shaders.ExtraData=1`**（编译期设定，要让 shader 重编一次）→
+   之后**崩溃档会直接印出 shader type 名**，不必再比 hash。这是最干净的一条。
+2. **`r.ShaderDevelopmentMode=1`**：global shader 会自动 dump debug info
+   （`ShaderCompiler.cpp:325-333` 的说明里写明了这一点），
+   产物就会出现 `Global/FDreamUIBasePS/<permutation>/`，含 `CompileDXC.bat`
+   → 用引擎自带的 dxc 重编那一颗，读 DXIL container 的 hash 去比 `E6753E1E…`。
+   **风险要讲明**：UE 会对 container 再加工，重编出来的 hash **不保证**与执行期那颗相同；
+   对不上**不能**当成「不是这颗」。
+3. `r.DumpShaderDebugInfo=1` ＋ `r.DumpShaderOutputCacheHits=true`
+   （`ShaderCompilerJobCache.cpp:109-114`，`ECVF_ReadOnly`，要走 ini／命令列）→
+   **连 DDC 命中的也 dump 出 output bytecode**，这是真正那颗的 bytes，不是重编的。
+4. 就算 type 定下来了，**还剩 permutation**：`FDreamUIBasePS` 有四个 bool 维度
+   （`FBlendDepth`／`FDepthFade`／`FPlainColor`／`FBackdrop`，`DreamUIBaseShaders.h:142-151`）＝ 16 个；
+   `FDreamUIBackdropCompositePS` 有 3×2×2×2 ＝ 24 个（`DreamUIBackdropEffects.cpp:139-144`）；
+   `FDreamUILayerStyleCompositePS` 是 slots 的整数范围（`DreamUILayerStyleComposite.cpp:60`）。
+   hash 指到的是「type ＋ permutation」，所以 type 级的答案只是缩小，不是终点。
+
+**结论照实说：离线区分不了，必须开旗标让它自己说出来。** 这不是猜一个 type，是一个能做的下一步。
+
+## 6. 缩图纹理那条路径——以及一处**和转述不符**的地方
+
+### 6a. 它们在 DreamGUI 这一侧是什么
+
+- `UTexture2D::CreateTransient(W,H,PF_B8G8R8A8)`，一张卡一个 UObject
+  （`Source/OpenKoikatsu/OKReaderScreen.cpp:1216-1221`），SRGB，走一般 `UpdateResource`。
+- 塞进 `UDreamImage` 的 brush（`:183`、`:244`、`:1084`），也就是 `MainPS` 的 `DreamUI_MainTex`，
+  绑定方式是 **texture reference**（第 3 节）。
+- **不是 pooled RT，不是每张一个 draw-call 专属 descriptor**：就是普通 UI 贴图，
+  每张一个 RHI 贴图 ＋ 它的 view。
+
+### 6b. 谁在什么时候释放
+
+`RetireThumb`（`:1238-1242`）→ `RetiredThumbs` 保留 **3.0 秒**（`TickThumbnails`，`:1246-1251`）→ 移出阵列 → GC 收。
+和 `FDreamUIDeferredRelease` 的关系：**没有关系，因为 F 这份副本里没有那个东西**（见 1b）。
+这里唯一的「延后释放」就是上面那个三秒计时器，它在 **OK 自己的程式**里，不在 DreamGUI 里。
+
+### 6c. 和转述不符：**读卡器并不是「为目录里每张卡持有一份缩图」**
+
+程式里是**按视野**持有的（`TickThumbnails`，`:1252-1266`）：
+
+- 距离 > `Far` 的格子**把缩图丢掉**（`:1264`）；只有距离 ≤ `Near` 的才去解码；
+- 同时最多 **3 个解码在飞**（`:1270`）。
+
+所以**活着的缩图张数由卷动视窗决定，不由目录大小决定**。
+61 张 vs 30 张会不会因此翻倍，取决于「30 张是不是已经塞满那个视窗」——
+**这一点我没有量，不能替它断定**。
+
+**真正随目录大小线性成长的是另一样东西：DreamGUI 的 widget 数。**
+卡片列表是**一张卡一个 `CardTile` 控件**（`:1534-1549`，上限 400 张），
+所以 61 个档 ≈ 30 个档的两倍 widget。而 widget 数增加会推到的，是
+**widget data／clip／rect block 这几张资料贴图的列数**→ `Grow` → `ReplaceTexture`（候选 2），
+以及顶点／索引缓冲区的大小。**「累积压力越过门槛」对得上的是这一条，不是缩图张数。**
+
+## 7. 哪一种耗尽最能自然产生 `Found 0 active heaps containing page fault address`
+
+**先回答题目：不是「配额用光」那一类，而是「那块位址所属的 heap 已经不在活着的 heap 清单里」——
+也就是 heap 被释放、或被 residency 逐出。** 理由：这句话说的是 **heap**，
+而配额用光的典型症状是**建立失败／OOM／device removed 带别的理由**，不会是一个
+「取样到一个不属于任何活 heap 的位址」的页错误。
+
+按「最自然 → 最不自然」：
+
+| 耗尽／释放的对象 | 会不会产生这句话 | 今天这台机器上的实际数字 |
+|---|---|---|
+| **bindless resource descriptor 的 GPU heap 被长大后释放** | **最自然**：descriptor heap 本身就是一个 heap；旧 heap 释放后，先前录好的命令列若还指著它，GPU 读到的就是不属于任何活 heap 的位址 | 今天的读卡日志：`Bindless is enabled (Configuration=RayTracing). Initializing allocators with 32768 Resource and 2048 Sampler descriptors`（`Saved/Logs/CardReader/20261119-165632-58ba874e.log:1065`）。长大与释放在 `D3D12BindlessDescriptors.cpp:230-251`（`ResizeGrowAndAllocate`）与 `:420-491`（`GarbageCollect`，`D3D12.Bindless.GarbageCollectLatency` 预设 **600** 个 cycle）。**释放前有 `check(!GpuHeap.bInUse)`**，所以这是候选、不是结论 |
+| **residency 逐出**（记忆体压力下把 heap 逐出 GPU 可见记忆体） | **很自然**：heap 还在、但不 resident，访问它就是「没有活著的 heap 含这个位址」 | `D3D12.ResidencyManagement` 预设 **1**（`D3D12Adapter.cpp:32-35`，`ECVF_ReadOnly`）。引擎还自带一个专门用来复现它的旋钮：`D3D12.ResidencyDebugBudgetMB`，说明里写「Use a small value (e.g. 128) to force aggressive eviction/MakeResident churn」（`D3D12Adapter.cpp:206-209`） |
+| RDG transient 叠用（候选 1） | 自然：叠用的那块记忆体在别人手上，原主人读到的就不属于自己的活 heap | 见候选 1 |
+| descriptor **槽位**用光（不长大、直接回收槽位） | 不自然，而且**数字上排除**：硬体上限 `MaxNonSamplerDescriptors: 1000000`，实际配置 32768；缩图是按视野持有的几十张，单凭缩图推不到 32768 | 同上日志 `:1049`、`:1065` |
+| 贴图记忆体用光 | **不自然**：会是建立失败／OOM，不是页错误 | — |
+| 某个固定大小阵列满了 | 不自然：会是 check／越界，形状不同 | — |
+
+### 7a. 这一条怎么检验（旗标，不改程式）
+
+- **机制点读数（最重要，这是「到达」证据）**：`stat D3D12Bindless` ——
+  stat group 里有 `Resource Heaps Allocated`（`D3D12Stats.h:45`）与 descriptor 配置数。
+  **开卡时 descriptor 数有没有逼近 32768、heap 数有没有变**，是这条候选成立与否的直接读数，
+  不是「设了 cvar 所以应该有效」。
+- 把门槛推开：`D3D12.Bindless.ResourceDescriptorHeapSize` 调大（例如 262144）、
+  `D3D12.Bindless.GarbageCollectLatency` 调到极大（旧 heap 永不释放）。
+  两个都是 `ECVF_ReadOnly`，**要走命令列／ini，执行期 `game_exec` 设不进去**；
+  到达证据就是启动那行 `Initializing allocators with N Resource`。
+- residency 那一轴：`D3D12.ResidencyManagement 0`（关掉）、
+  或反过来 `D3D12.ResidencyDebugBudgetMB 128`（**强迫 churn**）。
+  后者是难得的**阳性方向**实验：如果 4% 跳到接近必然，就指向 residency；
+  如果完全不动，这一轴就可以压低。
+- 趟数照 [CRASH_FIX_EVIDENCE_MATH_20261119.md](CRASH_FIX_EVIDENCE_MATH_20261119.md)：
+  q≈0.04 时「不崩」要约 75 趟才有 95% 信心；**而「强迫 churn 后崩得更凶」只要几趟就有力**，
+  所以**先做阳性方向的那个**。
+
+## 8. 这一轮改了什么判断
+
+- 第 1 节那个「先定 shader 身分」仍然第一，但**方法从「离线比对」改成「开旗标让它自报」**：
+  F 树上没有那四颗 shader 的 bytes，离线比对缺料。
+- 候选 2（资料贴图 `Grow`／`ReplaceTexture`）**上升**：e-cardload 的 61 张三趟（位置 15／16／16、
+  秒数 138.6–139.3，**协调转述，我未复核**）指向累积压力越过门槛，而随目录大小线性成长的是
+  **widget 数**，widget 数正是这几张资料贴图的列数。
+- 新增一条和 DreamGUI 无关、但最合「0 active heaps」字面的候选：
+  **bindless descriptor GPU heap 长大后释放**（§7），它有现成计数器可读、有现成旗标可推门槛。
+- 转述里「读卡器为每张卡持有一份缩图」与程式不符（§6c）：缩图是**按视野**持有的。
+
 ---
 
-调查：f-sceneload（F 树，只读）。现象的转述来自协调 session，崩溃档我没有自己看过。
+调查：f-sceneload（F 树，只读）。现象与 e-cardload 的趟数都是协调 session 转述，崩溃档我没有自己看过。
