@@ -134,3 +134,20 @@ cvar 名字各被推上「主線」一次——第一次以 `D3D12.Bindless.Garb
    非 RHI 的配置，或 Aftermath 那句 "heaps" 根本是另一個意思。
 
 **這個分叉比再轉一個旋鈕重要，而且兩邊都用讀程式碼就能推進。**
+
+## 九、量具的一種失效形狀：只在壞事發生時才自我證明（2026-11-19 立為一條）
+
+今天撞到三次，每次都讓一整格變成不可判讀，所以單獨立條：
+
+| 量具 | 它的到達證據 | 為什麼乾淨的趟不可判讀 |
+|---|---|---|
+| `D3D12.TrackAllAllocations` | 故障報告第三行 `Logging all resource enabled: Yes` | **報告只在故障時印** ⇒ 60 張全開完的那一趟拿不到到達證據（`tracking_arrived=0` 不代表沒到達） |
+| `DreamGUI.LogStaleTextures` | `DreamGUI stale texture at resolve: ...` | 那行**只在真的解析到過期貼圖時**才印 ⇒ `stale_hits=0` 與「旋鈕沒生效」在 log 上長得一樣 |
+| `D3D12.TrackedReleasedAllocationFrameRetention` | 報告列出窗口外的紀錄 | 同上，只在故障時可見；而且報告那句 `during last 100 frames` 的 `100` 是**寫死的字串**（`D3D12Util.cpp:716`），不讀 cvar |
+
+**規則**：挑量具時要先問「**沒出事的那一趟，我憑什麼說它生效了**」。
+到達證據在**啟動時**可見的量具（例如 `r.D3D12.DRED` 的 `[DRED] DRED enabled`）優於只在故障時可見的。
+兩者都只有故障時可見時，**乾淨趟一律記成「無讀數」而不是「陰性結果」**。
+
+**什麼會讓這條失效**：若某個量具另有啟動時或每幀的計數器可讀（例如把配置數印在趟末），
+那它就不屬於這一類，該格的覆蓋率可以寫 2/2。

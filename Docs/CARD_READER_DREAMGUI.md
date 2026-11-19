@@ -5773,3 +5773,40 @@ Found 2 released resources containing the page fault address during last 100 fra
 - **每一次都伴隨同一種 64 MB `PoolAllocator Heap` 被釋放**，而故障位址落在它的區間內。
 - `stale_hits` 四趟都是 0（而這個 0 不能當到達證據，見上一節）。
 - 那張貼圖的名字在整份 log 裡**只出現一次**，就是故障報告這一行——所以 log 本身不含它的建立或釋放紀錄。
+
+## 建立點對上了：故障的那些貼圖是卡片的 runtime 角色貼圖（`KKTextureRuntime`）
+
+**三件事同時對上**（事實，不含機制解釋）：
+
+| 線索 | 報告裡的樣子 | 程式裡的樣子 |
+|---|---|---|
+| 名字 | `Texture2D_1003`／`_978`／`_1413` | `UTexture2D::CreateTransient(..., PF_B8G8R8A8, NAME_None, ...)`（`KKTextureRuntime.cpp:240-241`，另 `:96`）⇒ UObject 自動取名 `Texture2D_<數字>` |
+| 格式 | `DXGI_FORMAT_B8G8R8A8_TYPELESS` | 三個建立點都寫死 `PF_B8G8R8A8` |
+| 尺寸 | 1024×1024、1024×512、256×256（**每趟不同**） | 尺寸來自卡片自己的 mip（`Entry.Mips[First].Width/Height`）⇒ **隨卡片內容而變** |
+
+**而釋放是整批的、發生在換卡時**：`KKPreviewActor.cpp:8116-8126` 在每次卡片載入完成後呼叫
+`OKReleaseStaleRecentRuntimeTextures()` 與 `OKReleaseStaleKeptRuntimeTextures()`
+（`KKTextureRuntime.cpp:389` 起），然後印出那行量具：
+`OK kept GPU textures: released N (X MB) from the card just left, keeping N (Y MB)`。
+
+### 用尺寸排除掉的候選（事實）
+
+| 建立點 | 尺寸 | 對得上嗎 |
+|---|---|---|
+| `KKTextureRuntime.cpp:96/240/241`（卡片角色貼圖） | 依卡片 mip，可變 | **對得上**（名字＋格式＋可變尺寸） |
+| `OKReaderScreen.cpp:1435`（卡片清單縮圖） | **固定 288×402**（`TileWidth/TileHeight`，而且尺寸不符就回 `nullptr`） | **排除**（尺寸不符；且這個協定 `cards=0`，清單沒建起來） |
+| `OKHScene.cpp:4722`（套裝卡圖片） | 依 PNG，可變 | 尺寸可能對上，但要那個面板被打開過才會建 |
+| `OKHScene.cpp:2481` | 固定 128×128 | 排除 |
+| `OKEyeCameraAudit.cpp:74`、`OKEyeDullAudit.cpp:61` | 固定 **256×256** | 第四趟那張是 256×256，所以**尺寸上無法排除**；但這兩個是 audit 工具的路徑 |
+| `OKGalleryWidget.cpp:140/1431`、`OKGalleryAppearance.cpp:70` | 依 PNG／APNG 影格 | 尺寸可能對上 |
+
+**所以尺寸只排除掉兩個，名字樣式對所有 `CreateTransient` 都一樣**——`Texture2D_<數字>` 不足以單獨指認是哪一個建立點。
+要再縮小，需要在建立與釋放兩處印出名字與尺寸（我們自己的程式碼，比改共用外掛影響面小），
+或由程式碼側把「誰把這種貼圖交給 UI 繪製」釘住。
+
+### 相距約 2850 幀這件事與上面的對照
+
+第四趟的貼圖釋放於第 32268 幀、它的 64 MB pool heap 於 32290，故障於 35122。
+一趟約 8 秒開一張卡、約 70 幀／秒 ⇒ **2854 幀約等於 5 張卡之前**。
+也就是說，**被釋放的那張貼圖不是「剛離開的那張卡」的，而是更早幾張卡的**；
+而每次換卡都會跑一次上面那個整批釋放。這一段是從兩個數字相除得來的，不是機制結論。
