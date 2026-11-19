@@ -222,7 +222,7 @@ fn custom(raw:&[u8],t:&Target,id:i32)->Result<Vec<u8>,String>{
  }if !changed{return Err("外觀資料區段不足".into());}Ok(out)
 }
 /// Write the picked id into the outfit, plus what the maker changes along with it when the id really changes
-/// (`CvsClothes.UpdateSelectClothesKind`／`CvsAccessory.UpdateSelectAccessoryKind`): a new top starts at sleeve type 0;
+/// (`CvsClothes.UpdateSelectClothes`／`CvsAccessory.UpdateSelectAccessoryKind`): a new top starts at sleeve type 0;
 /// a new accessory whose list says `HideHair==1` drops its parent (`parentKey=""`, the list default), whatever the
 /// maker's "keep parent" setting. Reapplying the same id changes nothing, so `verify` stays idempotent.
 fn coordinate(raw:&[u8],t:&Target,id:i32,outfit:usize,reset:bool,hide_hair:bool)->Result<Vec<u8>,String>{
@@ -239,6 +239,15 @@ fn coordinate(raw:&[u8],t:&Target,id:i32,outfit:usize,reset:bool,hide_hair:bool)
     if changed&&hide_hair {if let Ok(f)=at(&mut data,&format!("parts.{slot}.parentKey")){*f="".into();}}}}
   let b=encode(&data)?;out.extend((b.len() as u32).to_le_bytes());out.extend(b);pos+=n;
  }out.extend(&bin[pos..]);*bin=out;encode(&v)
+}
+/// `parents` (editor_accessory_parents.json) is the list of parent bones we know, not what a card may hold: a plugin
+/// (KKS_MoreAccessoryParents, a mod's own bones) adds keys the list does not name, and the card keeps them. So a parent
+/// row whose value is not in the list is marked `out_of_range` and still accepted (properties.rs `"parent"` only refuses
+/// control characters or an over-long name). `""` is a real value: the list default (`ChangeAccessory` reads the list's
+/// `Parent` then), the first entry of the list.
+fn mark_unknown_parents(props:&mut [J],parents:&J){
+ let known:std::collections::HashSet<&str>=parents.as_array().into_iter().flatten().filter_map(|p|p["key"].as_str()).collect();
+ for p in props.iter_mut(){if p["kind"]=="parent"{if let Some(v)=p["value"].as_str(){if !known.contains(v){p["out_of_range"]=json!(true);}}}}
 }
 fn resolver(kkex:&[u8],property:&str,item:Option<&Item>)->Result<Vec<u8>,String>{
  let mut v=if kkex.is_empty(){Value::Map(Vec::new())}else{decode(kkex)?};
@@ -495,6 +504,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
    let (mut props,unknown)=properties::catalog_properties_with_unknown(&original,outfit)?;
    // The worn models' switches (colour layers, options, sleeves, emblems): a failure leaves the rows unmarked.
    let model=model_flags::annotate(root,cache,&original,outfit,&mut props).unwrap_or_else(|e|json!({"error":e}));
+   mark_unknown_parents(&mut props,&parents);
    return Ok(json!({"valid":true,"properties":props,"parents":parents,"model":model,"unknown_plugin_sections":unknown}));}
   let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
   let raw=if text(&r,"action")?=="accessory_slot_add"{original}else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
@@ -844,6 +854,12 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,false).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
   assert_eq!(read(&coordinate(&outfit,&acc,88,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
  }
+ #[test]fn parent_outside_the_known_list_is_marked_not_refused(){
+  let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).unwrap();
+  let mut rows=vec![json!({"kind":"parent","value":"a_n_head"}),json!({"kind":"parent","value":""}),json!({"kind":"parent","value":"a_n_plugin_added_bone"})];
+  mark_unknown_parents(&mut rows,&parents);
+  assert!(rows[0].get("out_of_range").is_none());assert!(rows[1].get("out_of_range").is_none());assert_eq!(rows[2]["out_of_range"],true);
+ }
  #[test]fn accessory_parent_reverse_pairs_are_symmetric(){
   // `reverse` mirrors ChaAccessoryDefine.GetReverseParent (18 pairs; `a_n_hair_pin` pairs with `a_n_hair_pin_R`).
   let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).unwrap();
@@ -851,7 +867,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   let pairs:Vec<_>=rows.iter().filter_map(|r|Some((r["key"].as_str()?.to_string(),r["reverse"].as_str()?.to_string()))).collect();
   assert_eq!(pairs.len(),36);
   for (k,r) in &pairs {assert_eq!(rev(r).as_deref(),Some(k.as_str()),"{k} -> {r}");}
-  assert_eq!(rev("a_n_hair_pin").as_deref(),Some("a_n_hair_pin_R"));assert_eq!(rev("a_n_head"),None);
+  assert_eq!(rev("a_n_hair_pin").as_deref(),Some("a_n_hair_pin_R"));assert_eq!(rev("a_n_hair_pin_R").as_deref(),Some("a_n_hair_pin"));assert_eq!(rev("a_n_head"),None);
+  // Swapping `_L`／`_R` in the string is not the mapping: it leaves the left hair pin (no `_L`) unchanged.
+  let naive=|k:&str|if k.ends_with("_L"){format!("{}_R",&k[..k.len()-2])}else if k.ends_with("_R"){format!("{}_L",&k[..k.len()-2])}else{k.to_string()};
+  assert_ne!(naive("a_n_hair_pin"),rev("a_n_hair_pin").unwrap());assert_ne!(naive("a_n_hair_pin_R"),rev("a_n_hair_pin_R").unwrap());
  }
  #[test]fn legacy_portable_restores_exact_original_mod_metadata(){let root=&crate::test_support::game_path("");let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !root.ok_exists()||!p.ok_exists(){return;}let bytes=crate::gamefs::read(p).unwrap();let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));fs::create_dir_all(cache).unwrap();let metadata=original_metadata(root,cache,&bytes).unwrap().expect("legacy metadata restored");let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let result=patch_with_metadata(&bytes,&t,None,0,Some(metadata)).unwrap();let card=crate::card::parse_card_bytes_mode(&result,0,false).unwrap();assert!(card.resolves.len()>10,"original mod references missing");assert!(!card.me_tex.keys().any(|k|k.3.contains("mayuge")&&k.4=="maintex"),"old eyebrow texture override survived");assert!(card.me_tex.keys().any(|k|k.3.contains("body")),"unrelated body textures were removed");assert_eq!(card.eyebrow_id,0);let data=blocks_from_card(&result).unwrap();let kkex=decode(&data["KKEx"]).unwrap();assert!(kkex.as_map().unwrap().iter().any(|(k,_)|k.as_str()==Some(PROVENANCE)));}
  #[test]fn patch_preserves_other_blocks_and_values(){let path=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !path.ok_exists(){return;}let original=crate::gamefs::read(path).unwrap();let before=crate::card::parse_card_bytes_mode(&original,0,false).unwrap();let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let item=Item{key:"test".into(),guid:String::new(),source:String::new(),entry:crate::list::ListEntry{id:3,category_no:406,..Default::default()}};let patched=patch(&original,&t,Some(&item),0).unwrap();let after=crate::card::parse_card_bytes_mode(&patched,0,false).unwrap();assert_eq!(after.eyebrow_id,3);assert_eq!(after.shape_face,before.shape_face);assert_eq!(after.shape_body,before.shape_body);assert_eq!(after.clothes_ids,before.clothes_ids);assert_eq!(after.hair_ids,before.hair_ids);assert_eq!(after.pupil_ids,before.pupil_ids);}

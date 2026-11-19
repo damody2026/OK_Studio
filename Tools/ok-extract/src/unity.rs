@@ -654,9 +654,33 @@ pub fn accessory_color_use(bytes: &[u8], prefab_name: &str) -> Option<AccessoryC
 }
 /// Shared by the byte entry point above and the cached parsed bundle.
 pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::SerializedFile], prefab_name: &str) -> Option<AccessoryColorUse> {
+    accessory_component_in(files, prefab_name).0
+}
+/// `ChaAccessoryComponent.defColor01..04` of the named accessory prefab: what the maker's colour reset
+/// (`CvsAccessory.btnInitColor`) writes back. Only for that reset — never a default for reading a card, which would
+/// make a card that never set a colour look edited. Its own query (not a field of [`AccessoryColorUse`]): query results
+/// are stored with bincode, so a new field would make every model recorded before it unreadable.
+pub fn accessory_default_colors(bytes: &[u8], prefab_name: &str) -> Option<[[f32; 4]; 4]> {
+    crate::oklib::memo_bytes(bytes, "accessory_default_colors", prefab_name, || accessory_default_colors_unity(bytes, prefab_name))
+}
+/// [`accessory_default_colors`]; the outer `None` when the model was recorded before this query.
+pub fn accessory_default_colors_recorded(bytes: &[u8], prefab_name: &str) -> Option<Option<[[f32; 4]; 4]>> {
+    crate::oklib::memo_bytes_recorded(bytes, "accessory_default_colors", prefab_name, || accessory_default_colors_unity(bytes, prefab_name))
+}
+fn accessory_default_colors_unity(bytes: &[u8], prefab_name: &str) -> Option<[[f32; 4]; 4]> {
+    let bundle = load_bundle_unbounded(bytes.to_vec()).ok()?;
+    let _ = bundle.data_checked();
+    let files: Vec<_> = bundle.files.iter().filter_map(|file| bundle.extract_file_data(file).ok())
+        .filter_map(|fb| parse_serialized_file(fb).ok()).collect();
+    accessory_component_in(&files, prefab_name).1
+}
+/// The prefab's `ChaAccessoryComponent`: colour use and renderer groups, and its `defColor01..04`, picked by the same
+/// subtree association (the component in the prefab's tree, else the first one in the bundle).
+fn accessory_component_in(files: &[unity_asset_binary::asset::SerializedFile], prefab_name: &str) -> (Option<AccessoryColorUse>, Option<[[f32; 4]; 4]>) {
     let want = prefab_name.to_ascii_lowercase();
     let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
     let mut fallback: Option<AccessoryColorUse> = None;
+    let mut fallback_def: Option<[[f32; 4]; 4]> = None;
     for ser in files {
         let mut scripts: HashMap<i64, String> = HashMap::new();
         for info in ser.objects_of_type(115) {
@@ -724,6 +748,7 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
         // A different prefab's component is never a default for this asset.
         if !prefab_name.is_empty() && subtree.is_empty() { continue; }
         let mut found: Option<AccessoryColorUse> = None;
+        let mut found_def: Option<[[f32; 4]; 4]> = None;
         for info in ser.objects_of_type(114) {
             let Ok(obj) = ser.scene_object(&info) else {
                 continue;
@@ -790,6 +815,13 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
             if !class.contains("ChaAccessoryComponent") {
                 continue;
             }
+            let color = |k: &str| -> [f32; 4] {
+                props.get(k).and_then(|v| v.as_object()).map(|c| {
+                    let f = |n: &str, d: f64| c.get(n).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
+                    [f("r", 1.0), f("g", 1.0), f("b", 1.0), f("a", 1.0)]
+                }).unwrap_or([1.0; 4])
+            };
+            let def = [color("defColor01"), color("defColor02"), color("defColor03"), color("defColor04")];
             let use_cfg = AccessoryColorUse {
                 has_accessory_component: true,
                 use01: b("useColor01"),
@@ -801,6 +833,7 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
                 ..AccessoryColorUse::default()
             };
             if in_tree {
+                found_def = Some(def);
                 if let Some(prev) = found.as_mut() {
                     prev.has_accessory_component = true;
                     prev.use01 = use_cfg.use01;
@@ -814,13 +847,14 @@ pub(crate) fn accessory_color_use_in(files: &[unity_asset_binary::asset::Seriali
                 }
             } else if fallback.is_none() {
                 fallback = Some(use_cfg);
+                fallback_def = Some(def);
             }
         }
         if found.is_some() {
-            return found;
+            return (found, found_def);
         }
     }
-    fallback
+    (fallback, fallback_def)
 }
 
 /// `ChaClothesComponent` renderer groups. `ChangeCustomClothes`

@@ -201,7 +201,7 @@
 |---|---|---|---|
 | `accessory{n}_{type}`（`id`，选图） | 清单项 | 硬：目录项目 | — |
 | `type` | 选项 120..130 | 硬 | — |
-| `parentKey` | 父骨 | 硬：55 个键之一（`editor_accessory_parents.json`） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
+| `parentKey` | 父骨 | 软：55 键（`editor_accessory_parents.json`）是已知清单，不是限制。清单外的键照收，标 `out_of_range`；只拒控制字元与超过 256 字（更正：先前写成「硬」是错的，读卡器与资料端本来就收自由输入） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
 | `addMove` 位置 | 数值 | 软：−100..100，一位小数 | 显示：第 2 组（`addMove.2.3..5`）另看 `model.accessories.{槽}.move2`：模型有 `N_move2` 节点（`objAcsMove[slot,1] = FindLoop("N_move2")`）才为 `true`。`null` = 这个模型录的时候还没存配件的节点名（2026-11-19 前的基础库与 OK 卡），那几列不标，等重录 |
 | `addMove` 旋转 | 数值 | wrap 0..360，取整；永远不拒，也不标 `out_of_range` | 同上 |
 | `addMove` 缩放 | 数值 | 软：0.01..100，两位小数。原作输入框不收 0 和负值，但卡上可能有（外挂写的）。照收，不另写 `limit_*` | 同上 |
@@ -255,8 +255,8 @@
 | 每条滑杆旁的重设钮 `btnPtn0?OffsetX…Height` | — | 预设值：位置／旋转 0.5、宽高 0（原作 `ChaFileClothes.ColorInfo.MemberInit`）。范围中继资料没有专给「重设」用的预设 | 没有 | — | A（预设值写死在 UI 也行，原作也是写死的） |
 | 徽章 1／2 `customEmblem[2]` | `emblem{k}_{n}`（`emblemeId`／`emblemeId2`） | 有，可用性 `model.clothes.k.emblem` 已有 | 有（外观选择）；显示条件没接 | 硬：目录项目 | A |
 | **初期设定钮 `btnInitSetting`**：4 层底色改回模型预设色、花纹色改白、花纹归 0，位置／旋转归 0.5、宽高归 0 | 底色预设已有（`model.clothes.k.default_colors`） | 预设值有，但没有一次写回的操作 | 没有 | — | A：UI 照上面的值组一次 `set` 就行，不需要新 API |
-| **换上衣时袖型归 0**（`UpdateSelectClothesKind`：`sleevesType = 0`） | `clothes.parts.0.sleevesType` | **没有**：appearance `apply` 只写 `id` | — | — | **B**：`apply` 换上衣时同时写 `sleevesType=0`，照原作 |
-| 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **未确认**：我们的读取有没有同样回补、卡上要不要跟着写回，还没查 | — | — | **B（待查）** |
+| **换上衣时袖型归 0**（`UpdateSelectClothes`：`sleevesType = 0`） | `clothes.parts.0.sleevesType` | **没有**：appearance `apply` 只写 `id` | — | — | **B**：`apply` 换上衣时同时写 `sleevesType=0`，照原作 |
+| 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **查到了，原作会写回卡**：`CvsClothes.UpdateSelectClothes`（top）先 `FuncUpdateClothesTop` → `ChaControl.ChangeClothesTop`，把执行期的 `nowCoordinate.clothes.subPartsId` 定下来；接着 `setClothes.subPartsId[i] = clothes.subPartsId[i]`，`setClothes` 就是 `chaFile.coordinate[coordinateType].clothes`。定法（`ChangeClothesTopParts`）：新上衣的 Kind 不是 1／2（或没有上衣物件）→ 三格都写 0；是的话，每格查 `(Kind==1?200:210)+格`，查不到就用 `topPartsDefaultId`（水手服 0,0,1；外套 0,1,1，`LoadCharaFbxData` 的 `defaultId`），写入查到的 `Id`。只读卡不换衣服时只改 `nowCoordinate`，不写卡。**我们还没照写**：`apply` 换上衣只写 `id`。要做得把目录传进 `coordinate`，并处理 mod 子部件的 resolver 列，留到能编译测试时写 | — | — | **B（写入，待实作）** |
 | 衣服复制页 `CvsClothesCopy`（从另一套服装复制选定种类；子部件可分开勾） | — | 没有专用操作；读别的服装＋`set` 可以组出来 | 没有 | — | B（低优先：可由 UI 组合） |
 | 页签可点与否（`notBot`／`notBra`／`notShorts`、男性胸罩页） | `model.pages` | 有（第三批） | 没接 | 不限（只影响显示） | A |
 
@@ -268,7 +268,7 @@
 | 配件选图 `tglAcsKind` | `accessory{n}_{cat}`（`id`） | 有 | 有 | 硬：目录项目 | — |
 | 颜色 1..4 `btnAcsColor01..04` | `accessory.parts.n.color.c.*` | 有，`available`（`useColor`、`rendAlpha`）已有 | 通用列 | 硬：0..1 | A |
 | **颜色初期化 `btnInitColor`**（改回 `ChaAccessoryComponent.defColor01..04`） | — | **没有**：配件的预设色没输出（衣服有 `default_colors`，配件没有） | 没有 | — | **B**：`model.accessories.n` 补 `default_colors` |
-| 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有（55 个键，`editor_accessory_parents.json`），`parent_editable` 已有 | 通用列（选项） | 硬：55 键之一 | A |
+| 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有，自由输入加 55 键选单（`editor_accessory_parents.json`），`parent_editable` 已有；清单外的键标 `out_of_range` | 通用列（输入框＋选单） | 软：清单外照收 | A |
 | **父骨初期化 `btnInitParent`**（`parentKey=""`，用清单 `Parent`） | `parentKey` | 值 `""` 在选项里（「素材预设」） | 没有专用钮 | — | A |
 | **父骨左右反转 `btnReverseParent`** | `parentKey` | **没有左右对应表**。命名不规则，例如 `a_n_hair_pin` ↔ `a_n_hair_pin_R`，UI 不能只换 `_L`／`_R` | 没有 | — | **B**：父骨表补 `reverse` 栏，照原作 `ChaAccessoryDefine.GetReverseParent` 的对应 |
 | 位移第 1／2 组 `tglAcsMove01/02` → `CustomAcsMoveWindow`：位置／旋转／缩放 XYZ 输入 | `accessory.parts.n.addMove.2.{0..5}.{x,y,z}` | 有，`parent_editable`／`move2` 已有 | 通用列 | 位置 软 −100..100；旋转 wrap 0..360；缩放 软 0.01..100 | A |
@@ -294,13 +294,19 @@
 
 ### 10.5 没盘点的（外挂）
 
-外挂加的衣服／配件栏位，资料端都以 `plugins.<id>.…` 通用列出现，界面在「全部属性」。各外挂原本的专用页（反编译 `plugins\` 下的 `KKS_Accessory_States`、`KKS_OverlayMods`、`KKS_MoreAccessoryParents`、`KKS_ClothingBlendShape`，以及 `KKS_Plugins` 内的 MaterialEditor、HairAccessoryCustomizer、Pushup）这次没有逐页对。其中 `KKS_MoreAccessoryParents` 会加父骨键，我们的 55 键选项不含它们；卡上有那种键时，硬界会挡写入，但读取原值没问题。下一轮要先确认这件。
+外挂加的衣服／配件栏位，资料端都以 `plugins.<id>.…` 通用列出现，界面在「全部属性」。各外挂原本的专用页（反编译 `plugins\` 下的 `KKS_Accessory_States`、`KKS_OverlayMods`、`KKS_MoreAccessoryParents`、`KKS_ClothingBlendShape`，以及 `KKS_Plugins` 内的 MaterialEditor、HairAccessoryCustomizer、Pushup）这次没有逐页对。其中 `KKS_MoreAccessoryParents` 会加父骨键，我们的 55 键选单不含它们；照通则那些键照收、标 `out_of_range`（`appearance.rs` `mark_unknown_parents`），不挡写入。
 
 ### 10.6 我接下来要做的（B 类，照优先）
 
 1. `apply` 换上衣时写 `sleevesType=0`；换配件时，新配件 `HideHair==1` 就把 `parentKey` 清成 `""`。都照原作的 `UpdateSelect…Kind`。**已写**（`appearance.rs` `coordinate`）：只在 id 真的换了时才改，重套同一个 id 不动，所以 `verify` 照样幂等。测试 `new_top_starts_at_sleeve_zero_and_hide_hair_accessory_drops_parent`，尚未编译。
-2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。
+2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。**已写**：不能直接在 `AccessoryColorUse` 加栏位（查询结果以 bincode 存进 `.okmodel`，加了栏位，所有已录的模型都会读不回来），所以另开 `accessory_default_colors` 查询（`unity.rs`，与 `accessory_color_use` 用同一套子树对应；`_recorded` 没录到回 `None`），转换器两处都录。只放在 `model.accessories.n.default_colors`，**不**写进各列的 `default`：读卡永远不拿它补值，否则没设过色的卡读出来会像被改过。旧库要对 ao_ 来源再补录一次才有值；e-fork-2 这次窗口的补录，exe 若含这笔就一起录到。尚未编译。
 3. 父骨表补 `reverse` 对应（照原作 `ChaAccessoryDefine.GetReverseParent`），给「父骨左右反转」与「左右反转复制」用。**已写**：`Tools/ok-extract/data/editor_accessory_parents.json` 的 18 对共 36 列加了 `reverse`，没有对应的列不加（原作 `_ => ""`，反转钮不显示）。随 `properties` 的 `parents` 输出。测试 `accessory_parent_reverse_pairs_are_symmetric`，尚未编译。
-4. 查清楚：换上衣时子部件回补后，原作写回卡上的值，我们有没有照写。
+4. 换上衣时子部件回补：查到原作会写回卡（出处见 10.2 那一列），我们要跟着写。还没实作，原因见那一列。
 5. （低优先）服装间复制衣服、复制配件、槽位互换：UI 先用「读别套＋`set`」组合；要不要专用操作，等 UI 做过再说。
-6. 外挂父骨键（`KKS_MoreAccessoryParents`）和 55 键硬界的冲突。
+6. 外挂父骨键：**已改**。55 键是已知清单不是限制，清单外的键照收、标 `out_of_range`（`mark_unknown_parents`，测试 `parent_outside_the_known_list_is_marked_not_refused`）。`""` 照收不标：它是「素材预设」，原作 `UpdateSelectAccessoryKind` 也会写 `""`，不能当成空值拒。
+
+### 10.7 写入行为与显示旗标分开看
+
+- **只影响显示**（第三批，§9.6）：`model.pages`、`parent_editable`、`move2`、各列 `available`。它们不改卡，也不挡写入。
+- **写入行为**（这批，会改卡上的栏位）：`apply` 换上衣时 `sleevesType=0`；换上 `HideHair==1` 的配件时 `parentKey=""`；（待实作）换上衣时 `subPartsId` 写回定好的值。出处都是 `UpdateSelectClothes`／`UpdateSelectAccessoryKind`，只在 id 真的换了时才发生。
+- **重设用的值**（不改卡，等 UI 按钮用）：衣服 `default_colors`、配件 `default_colors`、父骨 `reverse`。
