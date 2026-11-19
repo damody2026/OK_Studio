@@ -2537,3 +2537,35 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 
 **結論**：第 2 條不是完整修法，但它可能剛好蓋住這個 crash（受害者正是外掛設的 canvas 貼圖）。
 要不要用它，取決於「故意不 delete」那一格的結果，以及受害者到底是哪一張。
+
+### 帶 `DeleteResources` 的送交只有三處，而其中兩處**不 flush RHI 執行緒**（2026-11-19，純讀碼）
+
+全引擎（RHI ＋ RenderCore）帶 `ERHISubmitFlags::DeleteResources` 的只有三處：
+
+| 處 | 形式 | 會不會先 flush RHI 執行緒 |
+|---|---|---|
+| `RHI/Private/RHICommandList.cpp:1731` | `ImmediateFlush(FlushRHIThreadFlushResources)` 時加上這個 flag | **會**（`:1724-1727` 同時加 `FlushRHIThread`） |
+| `RenderCore/Private/RenderGraphBuilder.cpp:383` | `ImmediateFlush(DispatchToRHIThread, DeleteResources)`，在 RDG 的 `EndFlushResourcesRHI` 裡，受 `r.pso.EnableAsyncCacheConsolidation` 控制 | **不會** |
+| `RHI/Private/RHIResources.cpp:98` | `GRHIResourceLifetimeRefCount` 歸零時，`ImmediateFlush(DispatchToRHIThread, DeleteResources)` | **不會** |
+
+**這一條把破口的形狀講清楚了。** 佇列是先進先出：
+帶同步點的 payload 在時刻 T 被送交，**T 之後才送交的工作排在它後面**，
+所以 payload 的同步點發訊（EOP 任務跑、記憶體真的被放掉）時，那些工作**還沒執行**。
+**屏障保護的只有「T 之前已經送交」的工作。**
+
+於是：
+- `FlushRHIThreadFlushResources` 那一處**先 flush RHI 執行緒**，
+  所以已經 dispatch 的命令清單都會先被送交，窗口被關上；
+- 另外兩處只 `DispatchToRHIThread`——**只 dispatch 立即命令列，不等 RHI 執行緒**，
+  所以**當下還沒送交的命令清單會排在 payload 後面**，
+  而它們是在釋放之前就錄好的。**結構上，這兩處可以在「先前錄好、尚未送交」的工作之前放掉記憶體。**
+
+**還沒證實的那一塊（不要當成已查）**：DreamGUI 在 `PostRenderView_RenderThread` 錄的那批 draw，
+是否確實在這兩處之一的**之前錄、之後送交**。
+這一塊由**刻意洩漏那一格**給實證答案（若「永不 delete」讓兩種重現都不當，
+就說明這個形狀在實際執行裡真的發生，不必把每條送交路徑讀完）。
+
+**修法形狀要連著這句一起寫**（免得下一個人把它簡化掉）：
+**給 `Later` 掛一個 GPU fence 不等於修好**——fence 等的是「GPU 跑到某個點」，
+而這裡的問題是「**哪一批工作被那個同步點涵蓋**」。
+正確的條件是**等到「包含那批 draw 的送交」完成之後**才允許這一輪釋放。
