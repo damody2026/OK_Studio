@@ -1,4 +1,7 @@
 #include "OKReaderScreen.h"
+// Before the controller's header, which has inline code building JSON (`NoteAction`) and so needs the type complete;
+// the pages' own buttons here send composite editor operations the same way (`ApplyPropertyOps`).
+#include "Dom/JsonObject.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
 #include "OKMotionComboBox.h"
@@ -621,10 +624,39 @@ void UOKReaderScreen::BuildCategories()
 	{
 		Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
 		if(Each.Name==TEXT("眉毛"))Pickers(Each,{TEXT("eyebrow")},{TEXT("eyebrow")});
-		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_"),TEXT("eyeline_"),TEXT("eyeshadow")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown"),TEXT("eyeline"),TEXT("eyeshadow")});
+		// `foreground`: 目／眉の描画前面 (face.foregroundEyes／foregroundEyebrow). Without it the rows exist in the
+		// property list and show on no page, which is the same as not having them.
+		// The original splits the eyes in two pages: 目 (`CvsEye01`: the eye shape sliders, the eyeline and the shadow,
+		// and 描画前面) and 瞳 (`CvsEye02`: the pupil, its gradient, the white and the highlights). This group is 目; 瞳
+		// is added below, because the two have nothing in common to show on one page but the word "eye".
+		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("eyeline_"),TEXT("eyeshadow")},{TEXT("eyeline"),TEXT("eyeshadow"),TEXT("foreground")});
 		else if(Each.Name==TEXT("臉頰"))Pickers(Each,{TEXT("cheek"),TEXT("mole")},{TEXT("cheek"),TEXT("mole")});
 		else if(Each.Name==TEXT("鼻子"))Pickers(Each,{TEXT("nose")},{});
 		else if(Each.Name==TEXT("嘴巴"))Pickers(Each,{TEXT("lip")},{TEXT("lip")});
+	}
+	// 瞳 (`CvsEye02`): the pupil, gradient, white and highlights, left and right. The two copy buttons are the
+	// original's, and each is ONE write of the seven fields `PupilInfo.Copy` copies -- id, both colours, the gradient
+	// mask and its three numbers -- so "copy the left eye" cannot leave the gradient behind (parity doc §7.4).
+	{
+		FGroup Pupil;Pupil.Name=TEXT("瞳");Pupil.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		Pickers(Pupil,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown")});
+		Pupil.Build=[this](UDreamWidget* Into)
+		{
+			TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+			auto Copy=[this,Weak](UDreamWidget* Page,const FString& Text,int32 From)
+			{
+				MakeOwnButton(Page,Text,[Weak,From]()
+				{
+					if(!Weak.IsValid())return;
+					auto Entry=MakeShared<FJsonObject>();Entry->SetStringField(TEXT("op"),TEXT("eye_copy"));Entry->SetNumberField(TEXT("from"),From);
+					const FString Refused=Weak->ApplyPropertyOps({MakeShared<FJsonValueObject>(Entry)});
+					if(!Refused.IsEmpty())Weak->ScreenNote(71,6.f,FColor::Orange,Refused);
+				});
+			};
+			Copy(Into,TEXT("左眼複製到右眼"),0);
+			Copy(Into,TEXT("右眼複製到左眼"),1);
+		};
+		Face.Groups.Add(MoveTemp(Pupil));
 	}
 	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
 	// page reads the card's catalog).
@@ -635,11 +667,48 @@ void UOKReaderScreen::BuildCategories()
 	}
 	Categories.Add(MoveTemp(Face));
 
-	// Hair: its models (後髮, 前髮, 側髮, 附加頭髮, 光澤) and its colours and settings.
+	// Hair: the original's four pages, one per slot (`ChaFileDefine.HairKind`: back, front, side, option), plus the one
+	// setting they share. Each page shows that slot's model picker and only that slot's rows, as the original does --
+	// before this, every hair colour of every slot was one flat list, so "which slot am I dyeing" was unanswerable.
+	//
+	// The buttons are the original's, and each is ONE write: the reset buttons recompute every slot from its own base
+	// colour, and the three colour-transfer buttons move a colour between the hair, the eyebrows and the underhair.
+	// They go through `ApplyPropertyOps` -> ok-extract `appearance/ops.rs`, so the button, the MCP and the CLI cannot
+	// disagree about what the action writes (Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7).
 	{
 		FCategory Hair;Hair.Name=TEXT("頭髮");
-		FGroup Styles;Styles.Name=TEXT("髮型");Pickers(Styles,{TEXT("hair0"),TEXT("hair1"),TEXT("hair2"),TEXT("hair3"),TEXT("hair_gloss")},{});Hair.Groups.Add(MoveTemp(Styles));
-		FGroup Colours;Colours.Name=TEXT("髮色與設定");Pickers(Colours,{},{TEXT("hair"),TEXT("髮")});Hair.Groups.Add(MoveTemp(Colours));
+		// An op with no argument: the refusal (busy, no character, staged edits) is shown rather than swallowed, because
+		// a button that silently does nothing reads as a broken model, not as a busy editor.
+		auto OpButton=[this](UDreamWidget* Page,const FString& Text,const FString& Op)
+		{
+			TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+			MakeOwnButton(Page,Text,[Weak,Op]()
+			{
+				if(!Weak.IsValid())return;
+				auto Entry=MakeShared<FJsonObject>();Entry->SetStringField(TEXT("op"),Op);
+				const FString Refused=Weak->ApplyPropertyOps({MakeShared<FJsonValueObject>(Entry)});
+				if(!Refused.IsEmpty())Weak->ScreenNote(71,6.f,FColor::Orange,Refused);
+			});
+		};
+		const TCHAR* SlotNames[]={TEXT("後髮"),TEXT("前髮"),TEXT("側髮"),TEXT("附加髮")};
+		for(int32 Slot=0;Slot<4;++Slot)
+		{
+			FGroup Page;Page.Name=SlotNames[Slot];
+			// `hair.parts.N` as the token: the rows of one slot are `hair.parts.N.baseColor.0` and so on, and the token
+			// is matched as a substring, so this is exactly that slot and nothing else.
+			Pickers(Page,{FString::Printf(TEXT("hair%d"),Slot)},{FString::Printf(TEXT("hair.parts.%d"),Slot)});
+			Page.Build=[OpButton](UDreamWidget* Into)
+			{
+				OpButton(Into,TEXT("重設外框色"),TEXT("hair_reset_outline"));
+				OpButton(Into,TEXT("重設光澤色"),TEXT("hair_reset_gloss"));
+				OpButton(Into,TEXT("髮色反映到眉／陰毛"),TEXT("hair_color_to_eyebrow_and_underhair"));
+				OpButton(Into,TEXT("取眉色當髮色"),TEXT("hair_from_eyebrow"));
+				OpButton(Into,TEXT("取陰毛色當髮色"),TEXT("hair_from_underhair"));
+			};
+			Hair.Groups.Add(MoveTemp(Page));
+		}
+		// The original's 頭髮共通: the gloss mask kind (`hair.glossId`), which is per character and not per slot.
+		FGroup Common;Common.Name=TEXT("頭髮共通");Pickers(Common,{TEXT("hair_gloss")},{TEXT("glossId")});Hair.Groups.Add(MoveTemp(Common));
 		Categories.Add(MoveTemp(Hair));
 	}
 
