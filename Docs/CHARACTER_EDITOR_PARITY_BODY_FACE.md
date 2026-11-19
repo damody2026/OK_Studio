@@ -148,6 +148,13 @@ if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")){
 | `decimals` | `0` | `(int)Mathf.Lerp(0,100,v)`，原作画面上没有小数 |
 | `wrap` | `false`（全部） | 身体／脸部没有角度类的项目，没有一项该回绕 |
 | `default` | `OKShapeDefaults::Value(sex, body, index)`；非体型项取卡片预设 | 原作「戻す」读 `defChaInfo`，不是常数 |
+
+**`default` 不用我另外列数字，树里已经有、而且核过原作**：`Source/OpenKoikatsu/OKShapeDefaults.h` 里四张表
+（`FemaleBody[44]`／`FemaleFace[52]`／`MaleBody[44]`／`MaleFace[52]`）就是原作 reset 的目标值——原作
+`CustomControl.Entry` 从 `abdata/custom/presets_f_00.unity3d`／`presets_m_00.unity3d` 载入
+`ill_Default_Female`／`ill_Default_Male`，`Tools/verify_shape_defaults.lua` 可以对着使用者自己的游戏重核一次。
+值是 **0–1 内部单位**（例如女性身高 `shape.body.0` 是 `0.30`，画面上显示 30），和上面那张表的范围一致，
+所以 metadata 的 `default` 直接取 `OKShapeDefaults::Value(sex, body, index)` 就对，**依性别不同，不是单一常数**。
 | `kind` | 数值＝滑杆；开关＝`bool`；**选图＝`choice` ＋ `options`**（目录 id ＋ 缩图） | 选图不是范围 |
 | `label` | 文字 id（例如 `editor.face.detail_power`），**不要字面字串** | 照 i18n 规矩，翻译在 `Localization/<lang>/*.toml` |
 
