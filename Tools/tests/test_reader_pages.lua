@@ -116,6 +116,15 @@ T:case("sections_left_out_on_purpose_are_not_counted_as_unknown", function(t)
   t:eq(only.kkex, "0；刻意不收 1（kkabmplugin.ABMData）")
 end)
 
+-- The audit and reader_call state read the same members (bad2861df), so each status maps to one cell.
+T:case("each_mcp_status_gives_one_cell", function(t)
+  local function cell(k) return pages.audit_cells({ card = true, ui = 0, data = 0, range = 0, kkex = k }).kkex end
+  t:eq(cell("no_card"), "沒有卡")
+  t:contains(cell("not_read"), "未讀")
+  t:contains(cell("unsupported"), "缺支援")
+  t:eq(cell({}), "0")
+end)
+
 T:case("without_a_card_every_column_says_so", function(t)
   local c = pages.audit_cells({ card = false, ui = 4, data = 0, unjudged = 1, range = 2, kkex = { "KSOX" } })
   t:eq(c.kkex, "沒有卡")	-- whatever a previous card left behind

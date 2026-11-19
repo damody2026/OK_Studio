@@ -209,7 +209,7 @@ Tools\lua\lua.exe Tools\reader_pages.lua --new <新的 pages.json>     （在專
 
 規則寫在 `Tools/reader_pages.lua` 的 `audit_cells`（測試：`Tools/tests/test_reader_pages.lua`），C++（`OKReaderScreen` 的 `audit`）照抄同樣的字。**沒有答案的時候，絕不寫 0**：0 的意思是「算過了，一個都沒有」。
 
-「有卡」的意思：選了一張卡，而且它的 3D session 已經開好（`Entries` 有選取、`PreviewActor->Session.IsOpen()`）。
+「有卡」的意思：選了一張卡（`Entries` 有選取）。這和 `reader_call state` 的 `unknown_plugin_sections_status`（F 樹 `bad2861df`）同一個定義。
 
 | 欄 | 有卡 | 沒有卡 |
 |---|---|---|
@@ -225,4 +225,14 @@ KKEx 欄在有卡時分四種：
 - 讀了，但產生端的回覆**沒有 `unknown_plugin_sections` 這個欄位** →「缺支援（這個 build 的產生端沒有 unknown_plugin_sections）」。這是「這個 build 缺支援」，不是 0，也不是空白；
 - 讀了，而且有這個欄位 → 個數，有的話接上清單，例如「2：KSOX、com.x」。空清單才寫「0」。刻意不收的區段不算進個數，接在後面寫，例如「0；刻意不收 1（KKABMX.Core）」。
 
-C++ 怎麼分辨「沒有欄位」和「空清單」：控制器記 `EditorPluginSectionsState`。開始讀時設為 0；收到回覆時，有欄位設 2，沒欄位設 1。只有屬性的來源卡與服裝等於目前的卡與服裝時才採用，否則算「未讀」。
+C++ 怎麼分辨「沒有欄位」和「空清單」：用 f-yvonne 在 `bad2861df` 加的成員 `EditorUnknownPluginSectionsCard`／`EditorUnknownPluginSectionsOutfit`／`bEditorUnknownPluginSectionsReported`。稽核和 `reader_call state` 讀同一組成員，所以兩邊不會說不一樣的話。
+
+| `unknown_plugin_sections_status` | 稽核 KKEx 欄 |
+|---|---|
+| `no_card` | 沒有卡 |
+| `not_read`（讀取中時） | 讀取中 |
+| `not_read` | 未讀（這張卡的屬性還沒讀） |
+| `unsupported` | 缺支援（這個 build 的產生端沒有 unknown_plugin_sections） |
+| `read` | 個數：清單；刻意不收的另列 |
+
+讀屬性的方法：進「全部屬性」頁，或下 MCP 的 `parameters`。

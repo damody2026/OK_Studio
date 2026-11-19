@@ -169,11 +169,13 @@ end
 
 -- What each of the audit's four columns says (OKReaderScreen `audit`, its registry line), written once here so the
 -- C++ side and the tests read the same rule (Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md, 稽核四欄):
---   s.card        a card is open (selected and its 3D session open)
+--   s.card        a card is selected (what reader_call state's unknown_plugin_sections_status calls one)
 --   s.ui, s.range counts over the registry as it is now; without a card the card's own properties are not in it
 --   s.data        page keys the registry lacks; s.unjudged: of the page keys, those only a card has (not counted
 --                 without a card, as their absence says nothing then)
---   s.kkex        "busy" (the card's properties are being read), "unread" (not read for this card and outfit yet),
+--   s.kkex        reader_call state's unknown_plugin_sections_status (bad2861df: "no_card", "not_read",
+--                 "unsupported"; "read" is given as the list itself), or the older names below:
+--                 "busy" (the card's properties are being read), "unread" (not read for this card and outfit yet),
 --                 "absent" (read, but the producer gave no unknown_plugin_sections: this build lacks the support),
 --                 or the list of section keys (empty list: none unknown)
 -- A missing answer is never written as 0: 0 means "counted and none".
@@ -192,9 +194,10 @@ function M.audit_cells(s)
     cells.ui = tostring(s.ui)
     cells.data = tostring(s.data)
     cells.range = tostring(s.range)
-    if s.kkex == "busy" then cells.kkex = "讀取中"
-    elseif s.kkex == "unread" or s.kkex == nil then cells.kkex = "未讀（這張卡的屬性還沒讀）"
-    elseif s.kkex == "absent" then cells.kkex = "缺支援（這個 build 的產生端沒有 unknown_plugin_sections）"
+    if s.kkex == "no_card" then cells.kkex = "沒有卡"
+    elseif s.kkex == "busy" then cells.kkex = "讀取中"
+    elseif s.kkex == "unread" or s.kkex == "not_read" or s.kkex == nil then cells.kkex = "未讀（這張卡的屬性還沒讀）"
+    elseif s.kkex == "absent" or s.kkex == "unsupported" then cells.kkex = "缺支援（這個 build 的產生端沒有 unknown_plugin_sections）"
     else
       local unknown, kept_out = {}, {}
       for _, key in ipairs(s.kkex) do
