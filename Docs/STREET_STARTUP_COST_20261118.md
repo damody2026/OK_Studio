@@ -34,6 +34,11 @@
 
 第 3 幀剩下的大頭是 `TG_EndPhysics` 等物理 314 ms（引擎），街區本身約 153 ms（TickMirrors 47 ms、RebuildUI 39 ms）。
 
+### 第 3 幀的街區部分（2026-11-19）
+
+- **TickMirrors 47 → 9.2 ms**（e8247e52a，c1118i）：開場時已在場的城市分塊原本在同一幀全部佈置（鏡子、燈光等，每塊幾 ms）。改成持久關卡先、每幀最多 4 ms；30 塊共 62.9 ms，分 10 幀，最長一塊 8.4 ms，鏡子 332 面不變。之後串流進來的分塊仍然到了就佈置。
+- **RebuildUI 首次 97.9 ms**（c1118i，`ok.Street.LogUiRebuilds 1`）：shell 19.5、phone 29.9、dialogue 32.3、header 5.1、look 5.2；之後每次 2–4 ms。phone 與 dialogue 主要是第一次在遊戲執行緒讀檔解析：每位女角的 `history/<id>.jsonl`（`HistoryOf`）、`free-talk-log.json`（178 KB）與 `free-talk-memory.json`（251 KB）（`FreeTalkEnsureLog`）。9039742dc 改成讀檔後在執行緒池先讀好，第一次用時取結果；檔案大小或修改時間變了就照舊同步重讀，回滾歸檔與裁剪仍在遊戲執行緒。**已編過（stage c1118j），前後對照尚未量。**
+
 注意：改了 `Tools/ok-mind` 後第一次開場，啟動器會重編 ok-mind（那次「rules / mind / story DLLs」段 40 s），之後是 0.2 s。
 
 ## 下一輪候選（未動）
