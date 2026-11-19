@@ -1771,3 +1771,35 @@ LogConfig: Set CVar [[RHIPoolAllocator.DefragMaxPoolsToClear:0]]
 活過 30 張 ⇒ 保護期太短就是機制，而修法是把兩個保護期統一；
 還是第 4／7 張當 ⇒ 連這條也不是，那就只剩「拿帶除錯資訊的 shader 把 `0x45f90`
 對到 `MainPS` 的哪一行取樣」這條路，而那需要重新 cook。
+
+#### 正式修法的挂点与条件（出处先给，程式等判准格的结果）
+
+**判准**：把「等几帧」换成「等 GPU 跑完」。
+- `FRHIGPUFence`（`RHIResources.h:2397`）的 `Poll()`：当且仅当 fence 已插入**且 GPU 已发讯**才为真，
+  注释自己写明「不要在循环里 poll……回 false 就继续做有用的事，**稍后再查，最好是下一帧**」——
+  正是 `Tick_RenderThread` 的形状。
+- 写入端 `FRHICommandList::WriteGPUFence`（`RHICommandList.h:3163` → `RHIWriteGPUFence_TopOfPipe`）。
+- 队列现在被 tick 的位置是 `FDreamUIRenderer::PostRenderView_RenderThread`
+  （`DreamUIRenderer.cpp:250`），那里手上有 `FRDGBuilder`，所以 fence 用一个极小的 RDG pass 写。
+
+**哪几支真的需要 fence**（条件一，先确认再写，不要给已经安全的那支再加一层）：
+
+| 支 | 现在的行为 | 需要 fence 吗 |
+|---|---|---|
+| `Hold(FTextureRHIRef)` | 放掉一份 refcount | **不需要**。refcount 归零时 `FRHIResource::MarkForDelete` 把它丢进 `PendingDeletes`（`RHIResources.cpp:45`），再由 `DeleteResources` 经 `ImmediateFlush(..., ERHISubmitFlags::DeleteResources)` 在 RHI 执行绪上销毁，而 D3D12 那一层是 EOP sync point 围栏过的。**引擎已经等 GPU 了。** |
+| `Hold(TRefCountPtr<IPooledRenderTarget>)` | 还回 render target 池等着被重用 | **需要**。重用不等于销毁，池子可以在 GPU 还在读的时候把它交给别人。 |
+| `Later(TUniqueFunction)` | 裸 `delete`（例如材质 proxy） | **需要**。完全不经过 RHI 的 refcount 与延迟删除。 |
+
+**条件二（不准有「永远不释放」）**：fence 比帧数严格，代价是**没有下一帧就永远 poll 不到**
+（读卡器关掉、canvas 停止绘制、viewport 拆掉、模组 shutdown）。排水路用
+`SubmitAndBlockUntilGPUIdle()`（`RHICommandList.h:4674`；`BlockUntilGPUIdle()` 在 5.9 标为 deprecated，
+所以用前者）在拆除／shutdown 时一次放干。
+**不用「超过 N 帧就放」当保险**——那等于把这个 bug 原样请回来，这句要写进注释。
+
+**条件三**：fence 用小轮替池重复用，不每帧新配；写 fence 的成本要有数字，不靠「应该可忽略」。
+
+**条件四**：两个窗口都接到同一个判准之后，把 `DelayFrames = 12` 那笔诊断常数**退回去**，
+不要让树里同时留着「诊断值 12」和 fence 判准。诊断那笔留在 git 历史里就够。
+
+**验收**：最凶配方两趟 ＋ 1 对 1 进出 ×3 → 30 张一趟，报「配方／释放事件／水位／张数」，
+并讲明峰值到了多少，而不是只说「没当」。
