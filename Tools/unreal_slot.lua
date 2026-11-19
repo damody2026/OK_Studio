@@ -1,7 +1,8 @@
 -- Machine-wide Unreal slots shared by every agent and checkout (C:, E:, F:): at most two Unreal processes at once.
 -- slotN\owner.txt names who holds a slot (first word = agent), queue\<agent>.txt says who is waiting.
 --
---   Tools\lua\lua.exe Tools\unreal_slot.lua claim <agent> "<what for>" [--wait] [--need-gb N]   take a free slot, else stay queued (exit 2)
+--   Tools\lua\lua.exe Tools\unreal_slot.lua claim <agent> "<what for>" [--wait] [--need-gb N] [--lane <name>]
+--                                                                      take a free slot, else stay queued (exit 2)
 --   Tools\lua\lua.exe Tools\unreal_slot.lua release <agent>                       give back the agent's slots and queue entry
 --   Tools\lua\lua.exe Tools\unreal_slot.lua yield <agent>                         exit 3 when someone of higher priority waits
 --   Tools\lua\lua.exe Tools\unreal_slot.lua status
@@ -23,6 +24,11 @@ local ROOT = os.getenv("OK_UNREAL_SLOTS") or "C:/portable/OpenKoikatsu/Saved/Unr
 -- does not take the claim lock or know the lending rules (2026-11-18: E/F claims stayed blocked by rules they lacked).
 local ARBITER = "C:/portable/OpenKoikatsu/Tools/unreal_slot.lua"
 local SELF = path.abs(arg[0] or "")
+-- The lane (-OKLane / ok-game-mcp's `lane`) the holder launches its Unreal under, recorded as " [lane=<name>]" on the
+-- owner line by `claim --lane`. ok-game-mcp's launch guard compares the caller's lane with it, so the agent that holds
+-- the slot can start its own game while everyone else is refused: without it the guard could only infer exclusivity
+-- from "one agent holds two slots" and so refused the measurer itself (2026-11-19).
+local LANE
 if not os.getenv("OK_UNREAL_SLOTS") and SELF:lower() ~= ARBITER:lower() then
   io.stderr:write("warning: slots are arbitrated by " .. ARBITER .. "; this copy (" .. SELF .. ") may be out of date. Run:\n"
     .. "  C:\\portable\\OpenKoikatsu\\Tools\\lua\\lua.exe C:\\portable\\OpenKoikatsu\\Tools\\unreal_slot.lua " .. table.concat(arg, " ") .. "\n")
@@ -371,7 +377,7 @@ local function try_claim_locked(agent, note, need_gb)
     if not owner(i) then
       path.mkdir(path.parent(owner_file(i)), true)
       path.write_text(owner_file(i), agent .. " " .. note .. " " .. now() .. (need_gb >= EXCLUSIVE_GB and (" [need " .. need_gb .. "]") or "")
-        .. (lend_until and (" [until=" .. lend_until .. "]") or "") .. "\n")
+        .. (lend_until and (" [until=" .. lend_until .. "]") or "") .. (LANE and (" [lane=" .. LANE .. "]") or "") .. "\n")
       if owner(i) == agent then
         -- A claim made by an older copy of this script (another checkout) does not take the lock: if one landed
         -- meanwhile and the two conflict, give the slot back and try again later.
@@ -460,6 +466,8 @@ local function main()
   while i <= #arg do
     if arg[i] == "--wait" then wait = true
     elseif arg[i] == "--need-gb" then i = i + 1; need_gb = tonumber(arg[i]) or error("--need-gb <GB>", 0)
+    elseif arg[i] == "--lane" then i = i + 1
+      LANE = (arg[i] or ""):match("^[%w%-_]+$") or error("--lane <name>: letters, digits, - or _", 0)
     else rest[#rest + 1] = arg[i] end
     i = i + 1
   end
