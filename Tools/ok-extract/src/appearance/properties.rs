@@ -70,18 +70,23 @@ fn range_meta(path:&str)->Option<J>{
  let parts:Vec<&str>=path.split('.').collect();
  match parts.as_slice() {
   // Pattern size, position and rotation: sliders over 0..1 (shown 0..100); defaults tiling 0, offset 0.5, rotate 0.5.
-  ["clothes","parts",_,"colorInfo",_,"tiling",_]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"default":0.0})),
-  ["clothes","parts",_,"colorInfo",_,"offset",_]|["clothes","parts",_,"colorInfo",_,"rotate"]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"default":0.5})),
+  // The range is in the API's unit (0..1); display_scale／unit only tell the screen to show 0..100 like the maker.
+  ["clothes","parts",_,"colorInfo",_,"tiling",_]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"default":0.0,"display_scale":100,"unit":"%"})),
+  ["clothes","parts",_,"colorInfo",_,"offset",_]|["clothes","parts",_,"colorInfo",_,"rotate"]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"default":0.5,"display_scale":100,"unit":"%"})),
   // addMove[group][pos／rot／scl][xyz], flattened by walk as `addMove.2.{group*3+kind}.{axis}`.
   ["accessory","parts",_,"addMove","2",i,_]=>match i.parse::<usize>().ok()?%3 {
    0=>Some(json!({"min":-100.0,"max":100.0,"step":0.1,"decimals":1,"default":0.0})),
    1=>Some(json!({"min":0.0,"max":360.0,"step":1.0,"decimals":0,"wrap":true,"default":0.0})),
    _=>Some(json!({"min":0.01,"max":100.0,"step":0.01,"decimals":2,"default":1.0})),
   },
+  // Every number of the face／body pages is a 0..100 slider on the maker's screen (CustomBase.ConvertTextFromRate(0,100,…),
+  // all 241 uses; Docs/CHARACTER_EDITOR_PARITY_BODY_FACE.md 三之二, e-cardload): 0..1 in the API, no wrap. Colours are
+  // left out by with_range (they are 0..1 already).
+  ["face",..]|["body",..]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"decimals":2,"display_scale":100,"unit":"%"})),
   _=>None,
  }
 }
-fn with_range(mut row:J,path:&str)->J{if let (Some(J::Object(m)),J::Object(r))=(range_meta(path),&mut row){r.extend(m);}row}
+fn with_range(mut row:J,path:&str)->J{if row["kind"]!="number"{return row;}if let (Some(J::Object(m)),J::Object(r))=(range_meta(path),&mut row){r.extend(m);}row}
 /// Apply a row's range metadata to an edit: round to `decimals` first, then take a `wrap` value modulo [min,max)
 /// (359.6 rounds to 360 and wraps to 0, so a wrapped value always lands inside and is never refused for its range).
 /// Keep this order: wrapping first leaves 359.6 as it is (already inside [0,360)), rounding then gives 360, outside
@@ -309,7 +314,8 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   let scl=range_meta("accessory.parts.0.addMove.2.5.0").unwrap();assert!(ranged(&scl,0.004).is_err());assert_eq!(ranged(&scl,0.005).unwrap(),0.01);
   let tiling=range_meta("clothes.parts.0.colorInfo.2.tiling.1").unwrap();assert!(ranged(&tiling,1.2).is_err());assert_eq!(tiling["default"],0.0);
   assert_eq!(range_meta("clothes.parts.0.colorInfo.2.rotate").unwrap()["default"],0.5);
-  assert!(range_meta("face.shapeValueFace.3").is_none());
+  let face=range_meta("face.detailPower").unwrap();assert_eq!((face["max"].as_f64(),face["display_scale"].as_i64(),face.get("wrap")),(Some(1.0),Some(100),None));
+  assert!(range_meta("hair.parts.0.length").is_none());
   assert_eq!(integer_choice("clothes.parts.0.sleevesType").unwrap().0,2);assert!(integer_choice("clothes.parts.1.sleevesType").is_none());
   assert_eq!(integer_choice("accessory.parts.12.hideCategory").unwrap().0,1);
  }

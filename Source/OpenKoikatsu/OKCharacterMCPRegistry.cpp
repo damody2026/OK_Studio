@@ -57,7 +57,12 @@ FRows Parameters(UOKCharacterController* G)
  FRows Rows;auto Add=[&](FObject P){Rows.Add(MakeShared<FJsonValueObject>(P));};
  for(bool Body:{true,false}){const auto& Values=Body?G->Selected.Body.ShapeValueBody:G->Selected.Face.ShapeValueFace;
   for(int32 I=0;I<(Body?44:52);++I){FString L;for(auto S:G->ShapeSliders)if(S&&S->bBody==Body&&S->Index==I){L=Label(S);break;}
-   auto P=Number(FString::Printf(TEXT("shape.%s.%d"),Body?TEXT("body"):TEXT("face"),I),L,Values.IsValidIndex(I)?Values[I]:.5,-1,2,OKShapeDefaults::Value(G->Selected.Sex,Body,I));P->SetStringField(TEXT("category"),Body?TEXT("body"):TEXT("face"));Add(P);}
+   auto P=Number(FString::Printf(TEXT("shape.%s.%d"),Body?TEXT("body"):TEXT("face"),I),L,Values.IsValidIndex(I)?Values[I]:.5,0,1,OKShapeDefaults::Value(G->Selected.Sex,Body,I));
+   // The maker's range for every body／face slider (ConvertTextFromRate(0,100,…) on all 241): the API value is 0..1,
+   // shown 0..100 in whole points. display_scale／unit are for the screen only; validation uses min／max. The default
+   // is the reset target of this character's sex (OKShapeDefaults, ill_Default_Female／Male).
+   P->SetNumberField(TEXT("step"),0.01);P->SetNumberField(TEXT("decimals"),2);P->SetNumberField(TEXT("display_scale"),100);P->SetStringField(TEXT("unit"),TEXT("%"));
+   P->SetStringField(TEXT("category"),Body?TEXT("body"):TEXT("face"));Add(P);}
  }
  const auto M=Mods(G);TSet<FString> Available;
  // Diagnostics: pretend these bones are absent from the skeleton, so the "this character has no such bone"
