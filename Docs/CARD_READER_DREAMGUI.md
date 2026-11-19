@@ -2500,3 +2500,40 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 
 **若破口證實**，修法就不是常數、也不只是給 `Later` 掛 fence，而是
 **要等到「包含那批 draw 的送交」完成之後才允許這一輪釋放**。
+
+### 下一格：**故意不 delete**（刻意洩漏），把「解構發生」和「解構晚 240 帧發生」分開（2026-11-19，gate 已寫好）
+
+`DreamGUI.Experiment.NeverDeleteProxy`（預設 0，`DreamUIMaterialProxy.cpp:95`）：
+開著時，失去最後一個參照的 proxy **完全不被 delete**，而是刻意洩漏
+（`LeakInsteadOfDeleting()` 在那個 deleter 的最前面直接 `return`）。
+`Frames.Func=240` 只能把當機從第 4／7 張推到第 19／15 張，
+所以**一個數字說不出「解構是不是扳機」，而「永遠不跑解構」說得出**。
+
+**跑之前登記的讀法**：
+- **兩種重現都不當 ⇒ 扳機就是 proxy 的解構本身**（它放掉 uniform buffer 替材質持有的貼圖計數，
+  而 `MainPS` 綁的是同一批），而且**不必先搞懂圍欄在哪一步失效**；
+- **還是當 ⇒ 扳機不是解構**，`Func` 那兩趟的推遲是別的時序副作用，整條線重新看。
+
+**洩漏要量出有界，不能只假設**：那一格記 `Leaked` 計數（log 前 10 次與每 50 次）
+與行程 RAM；30 張卡是有限次數，所以應該是線性且小的。
+**註解裡寫明這是診斷、不是修法候選**——
+一個「讓當機消失」的洩漏是診斷，不是修復。
+
+#### 協調提的第二條修法路（把計數先轉移給隊列）只能做一半
+
+那條路是：delete 之前先把那些貼圖的計數交給 `Hold(FTextureRHIRef)`（那一支被引擎的延遲刪除蓋住），
+這樣 proxy 什麼時候 delete 都無所謂，而且**不改任何時序**。
+查下去**部分可行、但不完整**：
+
+- **可行的一半**：外掛知道自己設過哪些貼圖（`RenderThreadParameters.Textures`），
+  而 `InTexture->TextureReference.TextureReferenceRHI` 是
+  `TRefCountPtr<FRHITextureReference>`，`FRHITextureReference` 繼承 `FRHITexture`，
+  所以可以直接 `Hold()` 成 `FTextureRHIRef`；而 `FRHITextureReference::ReferencedTexture`
+  本身是 `TRefCountPtr<FRHITexture>`（`RHITextureReference.h:53`），
+  所以押住參照也押住被參照的那張。
+- **做不到的一半**：uniform buffer 的 `ResourceTable` 裡**不只有外掛設過的參數**——
+  材質自己取樣的任何東西都在裡面，而外掛沒有枚舉它的途徑。
+  所以這條路只蓋得住「外掛設過的那些」，蓋不住其餘。
+
+**結論**：第 2 條不是完整修法，但它可能剛好蓋住這個 crash（受害者正是外掛設的 canvas 貼圖）。
+要不要用它，取決於「故意不 delete」那一格的結果，以及受害者到底是哪一張。
