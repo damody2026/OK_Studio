@@ -106,6 +106,12 @@ pub(super)fn patch(blocks:&mut BTreeMap<String,Vec<u8>>,changes:&BTreeMap<String
  if !changes.keys().any(|k|k.starts_with("plugins.")){return Ok(());}
  let mut v=decode(blocks.get("KKEx").ok_or("缺少模組資料")?)?;for(k,val)in changes{if let Some(path)=k.strip_prefix("plugins."){replace(&mut v,path,val,outfit)?;}}blocks.insert("KKEx".into(),encode(&v)?);Ok(())
 }
+// The KKEx section keys in these tests (`com.deathweasel.bepinex.materialeditor` …) were **read off a real card**,
+// not copied from the decompiled source: the section key is the plugin's BepInEx GUID, while its source calls the
+// data class `KK_Plugins.MaterialEditor`. A table written from the source matched nothing, and the old
+// `name.contains("materialeditor")` whitelist only worked because the GUID happens to contain that word
+// (2026-11-19). So do not "tidy" these keys back into `KK_Plugins.<Name>` — that silently drops MaterialEditor,
+// HairAccessoryCustomizer, Pushup and DynamicBoneEditor. `unknown_plugin_sections` is how a real key gets found.
 #[cfg(test)]mod tests{use super::*;
  #[test]fn material_editor_rows_of_other_outfits_are_not_offered(){
   let entry=|ot:i64,coord:i64,mat:&str|Value::Map(vec![("ObjectType".into(),ot.into()),("CoordinateIndex".into(),coord.into()),("Slot".into(),0.into()),("MaterialName".into(),mat.into()),("Property".into(),"ShadowColor".into()),("Value".into(),Value::Array(vec![Value::F32(0.5),Value::F32(0.5),Value::F32(0.5),Value::F32(1.)]))]);
