@@ -503,3 +503,41 @@ D3D12Adapter.cpp:1841      uint64 FrameLag = 20;  GetUploadHeapAllocator(GPUInde
 `EvictAllResidentResourcesInBackground` 與描述符堆大小那幾個，**沒有一個管空 heap 的釋放延遲**。
 **該格作廢，不是陰性。** 要延遲它只能改引擎（`Tools/EnginePatches`），
 **而為一個判別器去打引擎補丁不值得**——那一層動了三棵樹都要跟。
+
+## 第二十四條（2026-11-20）故障那塊記憶體是**非 transient 的池記憶體**，十趟十次——所以「RDG transient 別名」那一格照原樣登記的讀法不成立
+
+**來源：既有十份故障 log 的 PageFault 傾印，零建置、零趟次。**
+那份傾印每一行都印 `Transient:` 旗標，而十趟十次都是：
+
+| | 包住故障位址的那塊 | 位址所屬的前任房客 |
+|---|---|---|
+| 名稱 | `PoolAllocator Heap`（64.00 MB） | `Texture2D_<n>`（5.38 MB，1024×1024 BGRA） |
+| `Transient` | **0** | **0** |
+| `Heap` | 1 | 0 |
+
+十份 log（`Texture2D_89 / _320 / _550 / _647 / _660 / _869 / _870 / _895 / _901 / _1007`）全部同形。
+
+**推論一（成立）**：GPU 讀到的那塊記憶體來自**池配置器**，不是 `FD3D12TransientHeap`。
+transient 資源有自己專屬的 heap（`D3D12TransientResourceAllocator.cpp:64` 自己 `CreateHeap`、
+`:82 SetIsTransient(true)`、名稱 `TransientResourceAllocator Backing Heap`），
+和卡片貼圖所在的池 heap 是不同的 VA 配置。
+
+**推論二（成立）**：backdrop 副本是 `GraphBuilder.CreateTexture`
+（`DreamUICompositor.cpp` 的 `CopyFrom`），**而 RDG 的紋理在 transient 不適用時會回退到池化路徑**。
+所以「副本落在卡片貼圖剛釋放的那塊上」這個說法要成立，**那個副本必須走池化路徑**，不是 transient 別名。
+
+**推論三（因此那一格的讀法要改）**：事前登記的
+「`r.RDG.TransientAllocator 0` 若 0/3 ⇒ transient 別名是機制的一部分」**不成立**——
+故障現場的記憶體本來就是非 transient 的，**關掉 transient 只會把更多 RDG 紋理推上池化路徑，
+也就是推向故障現場已經成立的那個條件**，方向是反的。一個 0/3 在這個設計下無法讀成那句話。
+照第 7k 條：那一格要測的機制點（transient 別名）在故障現場不存在。
+
+**覆蓋率聲明（第 7j、第十一條）**：上面那個 `Transient: 0` 只覆蓋傾印印出的那兩行，
+**不是整趟的普查**。`D3D12TransientResourceAllocator.cpp:210` 確實會呼叫 `TrackAllocationData`，
+所以追蹤器涵蓋 transient 配置；但「整趟有沒有 transient 資源存在」要用另一個量具查，
+**本條不主張「這個 build 沒用 transient」**，只主張**故障位址所在那兩塊是非 transient 的**。
+
+**改過的判別器方向**：要判的不是「關掉 transient 會不會不故障」，而是
+**那個池化副本有沒有在前任房客等夠之前就被配置到同一塊上**——
+也就是池配置器重用一塊剛釋放的記憶體時，等的是哪個 fence、覆不覆蓋那張貼圖的最後一次使用。
+那條線索在池配置器自己，不在 RDG。
