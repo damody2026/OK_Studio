@@ -5959,3 +5959,80 @@ GC 就**不可能**回收它。它被回收了，所以那一刻**沒有任何 G
 
 `ok.RuntimeTextureRelease=0` 那一格**作廢，協調拍板**：它要證的「故障需要這條釋放路徑」，
 放手→3 幀釋放→105 幀後仍在取樣的鍊子已經證了，再花一次建置加三趟確認已知的事不值得。
+
+# 交接反查這一趟：三個預期全部落空，而落空的方式把候選 A 直接淘汰了
+
+趟次：60 張卡單、`FAULTED after card 15`（`15_heroine_jeanne.png`）、`fault_secs: 146.8`、
+`tracking_arrived=1`、交接 10246 筆、反查 7709 筆。log：
+`E:\OpenKoikatsu\Saved\Logs\CardReader\20261119-221813-716b80e4.log`
+
+## 一、放手那一刻，材質還活著而且**還指著這張貼圖**
+
+| 反查結果 | 筆數 |
+|---|---:|
+| `ALIVE` 且 `same=1`（參數仍指著即將被放手的那張） | **7187** |
+| `ALIVE` 且 `same=0`（參數已指向別張） | **4** |
+| `mid=GONE` | 506 |
+| 沒有交接紀錄 | 12 |
+
+故障那張 `Texture2D_507` 的六條反查**全部**是 `ALIVE same=1`：
+
+```
+created / kept                      frame 9245
+handoff -> MID_M_KoikanoClothesOpaque_55,56  param=_MainTex   frame 9246
+handoff -> ..._62,63                         param=_MainTex   frame 9438
+handoff -> ..._69,70                         param=_MainTex   frame 9568
+let go(stale on card switch)                                  frame 10356
+lookup  x6: ALIVE  param=_MainTex  now=Texture2D_507  same=1  frame 10356
+let-go watch: unreachable_at_frame=16894  (after=6538)
+```
+
+**所以「換卡 sweep 放手 ⇒ 沒有任何材質再指著它」是錯的。** 放手之後那六個 MID 都還在、都還指著它，
+而貼圖一直到 **6538 幀之後**才變成不可達。
+
+## 二、因此**候選 A（在 sweep 上加 fence）不必建置了**
+
+頁錯誤報告說 `Texture2D_507` 的配置在 **FrameID 16815** 釋放，故障在 **frame 17775**；
+而 sweep 放手是 **10356**。**放手與釋放相距 6459 幀**——sweep 的放手根本不是釋放點，
+fence 門控一個不是釋放點的地方，擋不到任何東西。**這一趟省掉了那次建置與三趟驗收。**
+
+## 三、第十二條的那條排除要收回（它自己寫的失效條件被打中）
+
+第十二條用「記憶體在放手後 3 幀真的被釋放」推出「放手那一刻不存在任何 GC 看得見的材質引用」。
+**這一趟直接量到那個前提是錯的**：放手時有 7187 筆 `ALIVE same=1`，而釋放是 6459 幀之後。
+
+**先前那個「3 幀」只是一張貼圖、一趟的巧合，不是定律**——而我把 n=1 的時間差當成了定律，
+**這正是我自己登記過的「單趟不足以下結論」那條規則**。方法（用系統自己的全域判斷當排除依據）照留，
+**但這一次的套用作廢**：GC 回收的時機由那些 MID 何時變成不可達決定，而不是由 sweep 決定。
+
+## 四、MID 的衝突：量測結果是「兩種都有，在不同的站點」
+
+- **同一個 `(mid, param)` 收到多於一張貼圖的次數：`0`。** 所以在 `KKRuntimeSharedMaterial` 這條路上
+  **沒有任何參數被重新指向**，每個 MID 的每個參數只被設定一次。`MID_...Opaque_55` 收到六張貼圖，
+  但是六個**不同的參數**（`_RampG`／`_Texture2`／`_liquidmask`／`_MainTex`／`_DetailMask`／`_NormalMap`），
+  同一幀設定完就不再變——所以我先前統計的 `mids_carrying_multiple_texs=2549` **是個被混淆的指標**
+  （一個 MID 本來就有很多張貼圖參數），**它不能當成重用的證據**，決定性的是 `(mid,param)` 那個 0。
+- **但那 4 筆 `same=0` 證實了 f-sceneload 的站點**：`_AlphaMask` 在四個 MID 上被改成了 `Texture2D_159`，
+  而我的交接 log **沒有裝在**讀卡器自己那七處 `SetTextureParameterValue` 上。
+  所以那 4 筆是「別的站點改了參數」留下的痕跡，正是它指的
+  `KKPreviewActor.cpp:5241-5246` 的 `SetSharedTextureParameter`。**它那條讀法在那個站點上成立。**
+- 而新事實是**兩邊都沒料到的**：舊 MID **不會被銷毀**。frame 9246 建的 MID 到 10356 還活著、還指著舊貼圖。
+
+## 五、這一趟的量測邊界（照 7j 先宣告，不要當成沒有的證據）
+
+- **`after=` 是上界，不是確值**：`OKPollLetGoWatch` 只在 `KeepRecentRuntimeTexture` 與 sweep 開頭輪詢，
+  兩者都集中在載入期間，所以兩次輪詢之間可能隔上千幀。`unreachable_at_frame=16894` 只表示
+  「**到這一幀時已經不可達**」。釋放幀 16815 落在前一次輪詢與 16894 之間，
+  **所以這一趟還分不出「釋放先於回收」或「回收造成釋放」**。要分，輪詢得改成每幀一次。
+- **`ALIVE` 比「可達」弱**：`TWeakObjectPtr::Get()` 對已不可達、只是還沒被收的物件也回傳非 null。
+  要判斷那是真引用還是屍體，需要「那個 MID 在不在某個活著的元件材質槽裡」——
+  **那一欄的程式已經寫好（`OKBuildMidOwnerIndex`，每幀最多建一次），這一趟的執行檔還沒有它。**
+- 交接 log 只覆蓋 `KKRuntimeSharedMaterial` 的綁定（10246 筆）；讀卡器自己的七處沒裝。
+
+## 六、下一步（按這一趟的結果，不是按原計畫）
+
+1. **候選 A 淘汰**，不建置。
+2. 下一次建置帶兩件：已寫好的 **owner 欄**（判 `ALIVE` 是真引用還是屍體，以及是否掛在
+   `BodyMesh`／`HeadMesh` 這兩個持久元件上），與 **每幀輪詢的 let-go watch**（把釋放與回收的先後分開）。
+3. 真正要回答的問題已經換了：**不是「誰在 sweep 之後還拿著它」，而是
+   「那六個 MID 為什麼到換卡之後還活著、還指著舊貼圖，而它們是誰在畫」。**
