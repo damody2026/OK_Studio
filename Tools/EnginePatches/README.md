@@ -1,4 +1,4 @@
-# 引擎補丁清單
+﻿# 引擎補丁清單
 
 本專案使用的引擎是 `E:\PhysX\UE5.8`，分支 `UE5.8-physX-5.11-ok`（[damody2026/UnrealEngineOK](https://github.com/damody2026/UnrealEngineOK/tree/UE5.8-physX-5.11-ok)，需先把 GitHub 帳號綁定 Epic Games 帳號才看得到）（5.8.4 + GameWorks Flex / PhysX 5.11）。
 下列補丁都要以 commit 形式存在於這個分支上。來源是原本 `D:\UE5.8`（分支 `5.8`）的本機 commit，用 `git format-patch` 加 `git am -3` 搬過去。
@@ -16,6 +16,13 @@
 | 新增動畫庫的完整蒙皮矩陣計算著色器 | `../Patches/MatrixBank/` | — |
 | 不透明 base pass 可依 primitive 的 TranslucencySortPriority 排序（`r.OK.OpaqueSortPriority`） | 重合服裝層（Material Editor 複製材質、重複飾品）照 Unity 繪製順序，不再閃爍（`OpaqueSortPriority.patch`，見 [計畫](../../Docs/OPAQUE_DRAW_ORDER_ENGINE_PLAN.md)） | `OKOpaqueSortPriority` |
 | GPU 蒙皮 morph 雙緩衝：目前緩衝尚未寫入時改讀有資料的緩衝，不再 check 失敗 | OK Studio 載入場景時偶發 `Assertion failed: Index == 1`（`FMorphVertexBufferPool::GetReadingIndex`）當機（`MorphDoubleBufferRead.patch`） | — |
+| D3D12：可選的 SRV 槽位有效性檢查（`D3D12.OK.ValidateSRVSlots`，**預設 0**） | 讀卡器的 GPU 頁錯誤診斷與干預（`ValidateSRVSlots.patch`，見 [記錄](../../Docs/CARD_READER_DREAMGUI.md) 與 [排除清單](../../Docs/CARD_READER_PATH_EXCLUSIONS.md) 第二十八、二十九條）。**三棵樹共用同一個引擎 checkout，所以這個補丁三組都會拿到**；關著時只多一個 bool 測試，行為與未套用時相同 | — |
+
+**`ValidateSRVSlots.patch`（2026-11-20，診斷用）**：SRV 狀態快取存的是裸、不持有的指標，建表時整個範圍一起重抄，
+而 `~FD3D12Texture` 完全沒碰狀態快取（`ConditionalClearShaderResource` 只在緩衝區、RT 設定與 UAV 的路上被呼叫）。
+開著時每個 view 向登記表報到，`BuildSRVTable` 在解參照前問「它還活著嗎」，死的就印 stage／slot／指標並換成 null view；
+另有到達證據（第一次檢查與每四百萬次各印一行），所以「沒印出 stale」能和「檢查沒跑」分開。
+**它看得到「view 物件沒了」，看不到「view 活著但資源死了」。** 查完若沒有用，連同這一列一起移除。
 
 不搬的項目：
 - `BitwiseDecodeScopes.patch`：只加 profiler 範圍，D: 也沒有套。

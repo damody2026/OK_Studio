@@ -1,0 +1,220 @@
+From 96e10161297868d178f4bf023b41e8c78a6ec171 Mon Sep 17 00:00:00 2001
+From: damody2026 <344874824+damody2026@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 04:50:13 +0800
+Subject: [PATCH] =?UTF-8?q?D3D12=EF=BC=9A=E5=8F=AF=E9=81=B8=E7=9A=84=20SRV?=
+ =?UTF-8?q?=20=E6=A7=BD=E4=BD=8D=E6=9C=89=E6=95=88=E6=80=A7=E6=AA=A2?=
+ =?UTF-8?q?=E6=9F=A5=EF=BC=88D3D12.OK.ValidateSRVSlots=EF=BC=8C=E9=A0=90?=
+ =?UTF-8?q?=E8=A8=AD=200=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SRV 狀態快取存的是裸、不持有的 FD3D12ShaderResourceView* 與 FD3D12Resource*
+（D3D12StateCachePrivate.h），建表時範圍內有一個髒就整個範圍一起重抄
+（D3D12DescriptorCache.cpp 的 BuildSRVTable），而髒只表示要再抄一次、不表示槽位被清掉；
+每條新 command list 又都 DirtyAll。同時 ConditionalClearShaderResource 只在緩衝區、
+貼圖被設成 render target 與 UAV 的路上被呼叫——~FD3D12Texture 完全沒碰狀態快取。
+所以一個槽位可以留著指向已銷毀 view 的指標，而下一次重抄就會解參照它。
+
+這個補丁在唯一會解參照那些裸指標的地方做檢查：開著時每個 view 向一個登記表報到，
+BuildSRVTable 用指標問「它還活著嗎」，死的就印出 stage／slot／指標並換成 null view。
+另有到達證據（第一次檢查與每四百萬次各印一行、附目前活著的 view 數），
+所以「沒有印出任何 stale」可以和「檢查根本沒跑」分開。
+
+覆蓋範圍：它看得到的是「view 物件已經沒了」，看不到「view 還活著但它的資源死了」。
+
+ECVF_ReadOnly、預設 0；關著時只多一個 bool 測試，行為與未套用時相同。
+
+用途：OpenKoikatsu 讀卡器的 GPU 頁錯誤（Docs/CARD_READER_DREAMGUI.md、
+Docs/CARD_READER_PATH_EXCLUSIONS.md 第二十八、二十九條）。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../D3D12RHI/Private/D3D12DescriptorCache.cpp | 15 +++-
+ .../Runtime/D3D12RHI/Private/D3D12View.cpp    | 77 ++++++++++++++++++-
+ .../Runtime/D3D12RHI/Private/D3D12View.h      | 29 ++++++-
+ 3 files changed, 118 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp
+index b50277a54c70..2b1ef9726010 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ 
+ //-----------------------------------------------------------------------------
+ //	Include Files
+@@ -454,6 +454,19 @@ D3D12_GPU_DESCRIPTOR_HANDLE FD3D12DescriptorCache::BuildSRVTable(EShaderFrequenc
+ 
+ 	for (uint32 SlotIndex = 0; SlotIndex < SlotsNeeded; SlotIndex++)
+ 	{
++		// OpenKoikatsu diagnostic (default off): this array is raw and non-owning, and nothing scrubs it when a
++		// texture is destroyed, so a slot can still point at a freed view. Check before dereferencing.
++		if (OKViewLiveness::IsEnabled() && SRVs[SlotIndex] != nullptr)
++		{
++			OKViewLiveness::NoteChecked();
++		}
++		if (OKViewLiveness::IsEnabled() && SRVs[SlotIndex] != nullptr && !OKViewLiveness::IsLive(SRVs[SlotIndex]))
++		{
++			OKViewLiveness::ReportStale(static_cast<uint32>(ShaderStage), SlotIndex, SRVs[SlotIndex]);
++			SrcDescriptors[SlotIndex] = DefaultViews.NullSRV;
++			check(SrcDescriptors[SlotIndex].ptr != 0);
++			continue;
++		}
+ 		if (FD3D12ShaderResourceView* SRV = SRVs[SlotIndex])
+ 		{
+ 			SrcDescriptors[SlotIndex] = SRV->GetOfflineCpuHandle();
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp
+index ebe968ab3f86..01033fa3f397 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.cpp
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ 
+ #include "D3D12View.h"
+ #include "D3D12RHIPrivate.h"
+@@ -220,6 +220,72 @@ inline bool ViewTypeSupportsBindless(ED3D12ViewType InViewType)
+ }
+ #endif
+ 
++namespace OKViewLiveness
++{
++	static TAutoConsoleVariable<int32> CVarValidateSRVSlots(
++		TEXT("D3D12.OK.ValidateSRVSlots"), 0,
++		TEXT("Check the SRV state cache's raw view pointers before a table rebuild dereferences them (diagnostic)."),
++		ECVF_ReadOnly);
++
++	static FRWLock GLock;
++	static TSet<const void*> GLiveViews;
++	static TSet<const void*> GReported;
++
++	bool IsEnabled()
++	{
++		static int32 Cached = -1;
++		if (Cached < 0)
++		{
++			Cached = CVarValidateSRVSlots.GetValueOnAnyThread() != 0 ? 1 : 0;
++		}
++		return Cached == 1;
++	}
++
++	void Register(const FD3D12View* InView)
++	{
++		FWriteScopeLock Lock(GLock);
++		GLiveViews.Add(InView);
++	}
++
++	void Unregister(const FD3D12View* InView)
++	{
++		FWriteScopeLock Lock(GLock);
++		GLiveViews.Remove(InView);
++	}
++
++	bool IsLive(const void* InView)
++	{
++		FReadScopeLock Lock(GLock);
++		return GLiveViews.Contains(InView);
++	}
++
++	static FThreadSafeCounter64 GChecked;
++
++	void NoteChecked()
++	{
++		const int64 Count = GChecked.Increment();
++		if (Count == 1 || (Count % 4000000) == 0)
++		{
++			UE_LOG(LogD3D12RHI, Display, TEXT("OK SRV slot validation active: %lld slots checked so far, %d views live"),
++				Count, GLiveViews.Num());
++		}
++	}
++
++	void ReportStale(uint32 InShaderStage, uint32 InSlotIndex, const void* InView)
++	{
++		{
++			FWriteScopeLock Lock(GLock);
++			if (GReported.Contains(InView))
++			{
++				return;
++			}
++			GReported.Add(InView);
++		}
++		UE_LOG(LogD3D12RHI, Warning, TEXT("OK stale SRV slot: stage=%u slot=%u view=%p was destroyed and is still in the state cache; substituting the null view"),
++			InShaderStage, InSlotIndex, InView);
++	}
++}
++
+ FD3D12View::FD3D12View(FD3D12Device* InDevice, ERHIDescriptorType InDescriptorType, ERHIDescriptorHeapType InHeapType, FD3D12View* FirstLinkedObject)
+ 	: FD3D12DeviceChild(InDevice)
+ 	, OfflineCpuHandle(InDevice->GetOfflineDescriptorManager(InHeapType).AllocateHeapSlot())
+@@ -228,6 +294,10 @@ FD3D12View::FD3D12View(FD3D12Device* InDevice, ERHIDescriptorType InDescriptorTy
+ #endif
+ 	, HeapType(InHeapType)
+ {
++	if (OKViewLiveness::IsEnabled())
++	{
++		OKViewLiveness::Register(this);
++	}
+ #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+ 	if (InDescriptorType != ERHIDescriptorType::Invalid)
+ 	{
+@@ -239,6 +309,11 @@ FD3D12View::FD3D12View(FD3D12Device* InDevice, ERHIDescriptorType InDescriptorTy
+ 
+ FD3D12View::~FD3D12View()
+ {
++	if (OKViewLiveness::IsEnabled())
++	{
++		OKViewLiveness::Unregister(this);
++	}
++
+ 	// Unregister this view from the underlying resource
+ 	if (ResourceInfo.BaseResource)
+ 	{
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h
+index 2eb3df130749..695a6e6c6cf2 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12View.h
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ 
+ #pragma once
+ 
+@@ -349,6 +349,33 @@ private:
+ 	uint32 Offset;
+ };
+ 
++/**
++ * OpenKoikatsu diagnostic (D3D12.OK.ValidateSRVSlots, read-only cvar, default 0).
++ *
++ * The SRV state cache holds raw, non-owning FD3D12ShaderResourceView pointers and a table rebuild copies every slot
++ * in the current shader's range, while a destroyed texture never scrubs that cache. With the cvar on, every view
++ * registers itself here, and the table builder checks a slot's pointer before dereferencing it: a dead one is
++ * reported (stage, slot, pointer) and replaced by the null view instead of handing the GPU a stale descriptor.
++ *
++ * It sees "the view object is gone". It does NOT see "the view is alive but its resource is dead".
++ */
++namespace OKViewLiveness
++{
++	/** Read once, after the cvar system is up. False means every entry point below is a no-op. */
++	D3D12RHI_API bool IsEnabled();
++	D3D12RHI_API void Register(const FD3D12View* InView);
++	D3D12RHI_API void Unregister(const FD3D12View* InView);
++	D3D12RHI_API bool IsLive(const void* InView);
++	/** Logs the first time each distinct pointer is seen dead, so a hot loop cannot flood the log. */
++	D3D12RHI_API void ReportStale(uint32 InShaderStage, uint32 InSlotIndex, const void* InView);
++	/**
++	 * ARRIVAL EVIDENCE (ERROR_LOG #14: an instrument whose silence looks like a clean result is not an instrument).
++	 * Called on every checked slot; logs once on the first one and again every 4,000,000 checks, so "no stale slot
++	 * was reported" can be told apart from "the check never ran".
++	 */
++	D3D12RHI_API void NoteChecked();
++}
++
+ class FD3D12ShaderResourceView : public TD3D12View<FD3D12ShaderResourceView, D3D12_SHADER_RESOURCE_VIEW_DESC>
+ {
+ public:
+-- 
+2.54.0.windows.1
+
