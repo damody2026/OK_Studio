@@ -202,7 +202,9 @@ fn shared() -> Option<Arc<Shared>> {
 /// The error of a strict open that had gaps.
 pub fn failure(card: &Path, gaps: &[String]) -> String {
     let shown: Vec<&str> = gaps.iter().take(12).map(String::as_str).collect();
-    format!("{}: the OK card lacks {} thing(s) its open needs (neither in its okLc/okLt nor shared resources of the base \
+    // "{n} question(s)", not "{n} thing(s)": one unanswered question can name twenty missing mods, and "1 thing" sent
+    // someone looking for a single one (2026-11-19). Each gap now says its own count.
+    format!("{}: the OK card has {} unanswered question(s) its open needs (neither in its okLc/okLt nor shared resources of the base \
         library; ok-extract X:/NoGame --oklib seal <base library> <card> completes it): {}{}", card.display(), gaps.len(),
         shown.join("; "), if gaps.len() > shown.len() { "; ..." } else { "" })
 }

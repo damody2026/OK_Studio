@@ -91,7 +91,13 @@ pub fn table() -> Option<Arc<Table>> {
 /// as nothing, never from the tree. False otherwise (the caller asks the tree, recording the answer).
 pub fn unanswered(kind: &str, key: &[u8]) -> bool {
     if recording() || crate::okstrict::active().is_none() { return false; }
-    crate::okstrict::gap(|| format!("okLt {kind} {}", String::from_utf8_lossy(key).replace('\n', ",")));
+    // Say how many when the question holds a list: one gap whose text named twenty guids read as "lacks 1 thing(s)"
+    // and sent someone looking for a single missing mod (2026-11-19, C000 in the reader).
+    crate::okstrict::gap(|| {
+        let text = String::from_utf8_lossy(key);
+        let n = text.split('\n').filter(|s| !s.is_empty()).count();
+        if n > 1 { format!("okLt {kind} ({n}): {}", text.replace('\n', ",")) } else { format!("okLt {kind} {}", text.replace('\n', ",")) }
+    });
     true
 }
 
