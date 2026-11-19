@@ -1419,7 +1419,7 @@ bool UDreamUIInputUser::LineTrace(UDreamPointerEventData* InPointerEventData, FD
 		{
 			bool bStillStands = (!Cache->bHit || Cache->Raycaster.IsValid())
 				&& (Cache->WidgetIgnoringEnabled.IsExplicitlyNull() || Cache->WidgetIgnoringEnabled.IsValid());
-			TArray<UDreamWidget*> Hovered;
+			TArray<TWeakObjectPtr<UDreamWidget>> Hovered;
 			Hovered.Reserve(Cache->Hovered.Num());
 			for (const TWeakObjectPtr<UDreamWidget>& Widget : Cache->Hovered)
 			{
@@ -1433,9 +1433,9 @@ bool UDreamUIInputUser::LineTrace(UDreamPointerEventData* InPointerEventData, FD
 			if (bStillStands)
 			{
 				InPointerEventData->HoverComponentArray.Reset();
-				for (UDreamWidget* Widget : Hovered)
+				for (const TWeakObjectPtr<UDreamWidget>& Widget : Hovered)
 				{
-					InPointerEventData->HoverComponentArray.Add(Widget);
+					InPointerEventData->HoverComponentArray.Add(Widget.Get());
 				}
 				if (Cache->bHit)
 				{
@@ -1443,9 +1443,9 @@ bool UDreamUIInputUser::LineTrace(UDreamPointerEventData* InPointerEventData, FD
 					OutDreamHitResult.RayOrigin = Cache->RayOrigin;
 					OutDreamHitResult.RayDirection = Cache->RayDirection;
 					OutDreamHitResult.RayEnd = Cache->RayEnd;
-					OutDreamHitResult.Raycaster = Cache->Raycaster.Get();
+					OutDreamHitResult.Raycaster = Cache->Raycaster;
 					OutDreamHitResult.HoverArray = MoveTemp(Hovered);
-					OutDreamHitResult.WidgetIgnoringEnabled = Cache->WidgetIgnoringEnabled.Get();
+					OutDreamHitResult.WidgetIgnoringEnabled = Cache->WidgetIgnoringEnabled;
 				}
 				return Cache->bHit;
 			}
@@ -1582,9 +1582,9 @@ bool UDreamUIInputUser::LineTrace(UDreamPointerEventData* InPointerEventData, FD
 		}
 		for (const FDreamUIHitResultContainer& HitResultItem : MultiHitResult)
 		{
-			for (UDreamWidget* HoverItem : HitResultItem.HoverArray)
+			for (const TWeakObjectPtr<UDreamWidget>& HoverItem : HitResultItem.HoverArray)
 			{
-				InPointerEventData->HoverComponentArray.Add(HoverItem);
+				InPointerEventData->HoverComponentArray.Add(HoverItem.Get());
 			}
 		}
 		OutDreamHitResult = MultiHitResult[0];
@@ -1592,7 +1592,7 @@ bool UDreamUIInputUser::LineTrace(UDreamPointerEventData* InPointerEventData, FD
 
 		// A world hit on an actor that shows a canvas of its own is carried into that canvas: a widget there is
 		// what the pointer is over, served by this same pipeline (IDreamUINestedSurface).
-		if (OutDreamHitResult.HitResult.Widget == nullptr && IsValid(OutDreamHitResult.Raycaster))
+		if (OutDreamHitResult.HitResult.Widget == nullptr && IsValid(OutDreamHitResult.Raycaster.Get()))
 		{
 			const UPrimitiveComponent* HitComponent = OutDreamHitResult.Raycaster->GetWorldHitComponent(OutDreamHitResult.HitResult);
 			AActor* HitActor = HitComponent != nullptr ? HitComponent->GetOwner() : nullptr;
@@ -1610,16 +1610,16 @@ bool UDreamUIInputUser::LineTrace(UDreamPointerEventData* InPointerEventData, FD
 					if (Surface->ResolveNestedHit(OutDreamHitResult, InPointerEventData, InnerHit))
 					{
 						bOnlyCameraFreeRaycasters = false;
-						if (InnerHit.Raycaster != nullptr && InnerHit.Raycaster == InPointerEventData->PressRaycaster)
+						if (InnerHit.Raycaster.IsValid() && InnerHit.Raycaster.Get() == InPointerEventData->PressRaycaster)
 						{
 							InPointerEventData->SetPressRaycasterRay(InnerHit.RayOrigin, InnerHit.RayDirection);
 						}
 						if (InnerHit.HitResult.Widget.IsValid())
 						{
 							InPointerEventData->HoverComponentArray.Reset();
-							for (UDreamWidget* HoverItem : InnerHit.HoverArray)
+							for (const TWeakObjectPtr<UDreamWidget>& HoverItem : InnerHit.HoverArray)
 							{
-								InPointerEventData->HoverComponentArray.Add(HoverItem);
+								InPointerEventData->HoverComponentArray.Add(HoverItem.Get());
 							}
 							OutDreamHitResult = MoveTemp(InnerHit);
 						}

@@ -218,7 +218,7 @@ UDreamWidget* UDreamPointerInputModule::FindCommonRoot(UDreamWidget* A, UDreamWi
 
 AActor* UDreamPointerInputModule::ResolveWorldTarget(const FDreamUIHitResultContainer& InHit, bool bInHitSomething)
 {
-	if (!bInHitSomething || !IsValid(InHit.Raycaster))
+	if (!bInHitSomething || !IsValid(InHit.Raycaster.Get()))
 	{
 		return nullptr;
 	}
@@ -283,10 +283,10 @@ void UDreamPointerInputModule::PressWorldTarget(UDreamUIInputUser* InUser, UDrea
 	EventData->PressRayDirection = InHit.RayDirection;
 	EventData->PressWorldPoint = Hit.Location;
 	EventData->PressWorldNormal = Hit.Normal;
-	EventData->PressRaycaster = InHit.Raycaster;
+	EventData->PressRaycaster = InHit.Raycaster.Get();
 	EventData->SetPressRaycasterRay(InHit.RayOrigin, InHit.RayDirection);
 	// The primitive's own frame stands in for the widget's: it is the surface the press landed on.
-	const UPrimitiveComponent* HitComponent = IsValid(InHit.Raycaster) ? InHit.Raycaster->GetWorldHitComponent(Hit) : nullptr;
+	const UPrimitiveComponent* HitComponent = IsValid(InHit.Raycaster.Get()) ? InHit.Raycaster->GetWorldHitComponent(Hit) : nullptr;
 	EventData->PressWorldToLocalTransform = HitComponent != nullptr
 		? HitComponent->GetComponentTransform().Inverse()
 		: Target->GetActorTransform().Inverse();
@@ -395,11 +395,11 @@ void UDreamPointerInputModule::ProcessPointerEvent(UDreamUIInputUser* InUser, UD
 	EventData->bIsEndDragFiredAtCurrentFrame = false;
 
 	EventData->FaceIndex = DreamHitResult.HitResult.FaceIndex;
-	EventData->Raycaster = DreamHitResult.Raycaster;
+	EventData->Raycaster = DreamHitResult.Raycaster.Get();
 	// What is drawn on top under the pointer, disabled or not, before anything hears of this frame: a tooltip reads it
 	// from the exits and enters below.
 	EventData->HitWidgetIgnoringEnabled = !bLineTraceHitSomething ? nullptr
-		: DreamHitResult.WidgetIgnoringEnabled != nullptr ? DreamHitResult.WidgetIgnoringEnabled : DreamHitResult.HitResult.Widget.Get();
+		: DreamHitResult.WidgetIgnoringEnabled.IsValid() ? DreamHitResult.WidgetIgnoringEnabled.Get() : DreamHitResult.HitResult.Widget.Get();
 
 	// The actor behind a hit that is not a widget's is hovered, pressed and released alongside the widgets, by their
 	// rules (see FDreamUIPointerWorldTarget). Exits go out before enters across both kinds of target, as they do
@@ -534,7 +534,7 @@ void UDreamPointerInputModule::ProcessPointerEvent(UDreamUIInputUser* InUser, UD
 					EventData->PressRayDirection = DreamHitResult.RayDirection;
 					EventData->PressWorldPoint = OutHitResult.Location;
 					EventData->PressWorldNormal = OutHitResult.Normal;
-					EventData->PressRaycaster = DreamHitResult.Raycaster;
+					EventData->PressRaycaster = DreamHitResult.Raycaster.Get();
 					EventData->SetPressRaycasterRay(DreamHitResult.RayOrigin, DreamHitResult.RayDirection);
 					EventData->PressWorldToLocalTransform = EventData->EnterWidget->GetWorldTransform().Inverse();
 					EventData->PressWidget = EventData->EnterWidget;
