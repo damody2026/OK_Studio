@@ -590,3 +590,15 @@ KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等
 
 **结论（给排程用）**：离线能做到的是上面这些路径与未知清单；**再往下一步需要的不是机器，是一张有贴图覆写的卡**
 （MaterialEditor）与一次只读 dump。两者都不必等 GPU，也不必等 `may-build`。
+
+#### 12.5.1 找「有贴图覆写的卡」时别用这个探测（2026-11-19 试过，无效）
+
+想用二进位 grep 偷懒：msgpack 的 map 键名在卡片里是明文 ASCII，所以 `grep -a 'MaterialTexturePropertyList'`
+看起来可以当讯号。**不行**——扫 `StreetHeroines` 全 18 张，**每一张都有** `MaterialTexturePropertyList`
+与 `TextureDictionary` 这两个键名（外挂总是把这两个清单写进去，即使内容是空的）。
+所以**键名的存在不代表这张卡有覆写**。
+
+要知道有没有，只能解出来数：`CardInfo.me_tex` 是空还是非空（`card.rs` 已经解好，见上）。
+现在没有 CLI 会印这个数（只有 `card.rs` 里一个写死三张卡路径的诊断测试 `probe_handoff2_cards`），
+所以要嘛加一个只读的 bin 印 `me_tex.len()`／`me_color.len()`，要嘛问在 MaterialEditor 这块工作的人
+（f-yvonne）它手上有没有这种卡。**别再重跑这个 grep 探测。**
