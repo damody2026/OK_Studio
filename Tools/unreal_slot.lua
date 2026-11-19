@@ -472,6 +472,11 @@ local function main()
     i = i + 1
   end
   local note = table.concat(rest, " ")
+  -- An agent name starting with "-" is a flag written where the name belongs (`claim --agent f-sceneload --what …`
+  -- queued a phantom "--agent" that nobody would ever claim for, 2026-11-19). The name is positional: say it first.
+  if agent and agent:sub(1, 1) == "-" then
+    error("the agent name comes first and takes no flag: claim <agent> \"<what for>\" [--wait] [--need-gb N] [--lane <name>]", 0)
+  end
   if agent and not agent:match("^[%w%-_]+$") then error("agent name: letters, digits, - or _", 0) end
   if cmd == "claim" and agent then os.exit(claim(agent, note, wait, need_gb))
   elseif cmd == "release" and agent then os.exit(release(agent))
