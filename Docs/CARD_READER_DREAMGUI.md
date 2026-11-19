@@ -5396,7 +5396,7 @@ screen thumbPool=0 free=0 cardThumbs=0 controls=167 pageWidgets=1 cards=0
 
 ## bindless descriptor heap：引擎原始碼查核與 32768 的真正來源
 
- 在配置器滿時呼叫 `ResizeGrowAndAllocate`；
+`D3D12BindlessDescriptors.cpp:203` 在配置器滿時呼叫 `ResizeGrowAndAllocate`；
 `:230-257` 把容量**翻倍**（`CurrentNumDescriptors * 2`，上限 `MaxResourceHeapSize`）並 `GrowCPUHeap`，
 配合 `bCPUHeapResized`／`ActiveGpuHeapIndex`／`FinalizeHeapOnState` 在舊新 heap 之間切換。
 **所以成長會建新 heap 並退掉舊的**，而還在飛的繪製若引用退掉那份裡的 descriptor，
@@ -5414,3 +5414,49 @@ screen thumbPool=0 free=0 cardThumbs=0 controls=167 pageWidgets=1 cards=0
 - **不可得**：**成功成長完全不印日誌**（`:248` 只在無法再成長時 `Fatal`）。
   所以**這一格無法顯示成長有沒有發生**，對機制點的覆蓋率是 **1/2**。
   照 7j，若 3/3 仍故障，**不得寫成「heap 成長不是成因」**，只能寫成「在 262144 之下故障仍發生」。
+
+# bindless heap 格：趟 1 作廢，因為旋鈕打在錯的 ini 區段
+
+## 一、作廢，不是結果
+
+趟 1 的到達證據自己說了不算：
+
+```
+# knob now: D3D12.Bindless.ResourceDescriptorHeapSize = "32768"   LastSetBy: SystemSettingsIni
+# heap_init: Initializing allocators with 32768 Resource and 2048 Sampler descriptors
+# heap_knob_arrived=0
+```
+
+照這一格事前登記的規則（「log 沒印 262144 的趟就作廢」），**這一趟是作廢而不是結果**。
+它跑到第 4 張（`04_crowd_C020.png`）才停，是我中止這一格造成的，不是故障；`# faults=0`。
+停在那裡省下的機器時間約 20 分鐘（三趟）。
+
+## 二、為什麼沒到達：我打在錯的區段
+
+我用的是 `-ini:Engine:[ConsoleVariables]:D3D12.Bindless.ResourceDescriptorHeapSize=262144`，
+但這個值不是從 `[ConsoleVariables]` 來的。查了來源：
+
+```
+/e/PhysX/UE5.8/Engine/Config/Windows/BaseWindowsEngine.ini:24
+  D3D12.Bindless.ResourceDescriptorHeapSize=32768
+section for line 24: [SystemSettings] (at line 15)
+```
+
+`LastSetBy: SystemSettingsIni` 正好指著它。所以要壓過它，**覆寫必須打在同一個區段**
+（`-ini:Engine:[SystemSettings]:…`），不是 `[ConsoleVariables]`。
+
+**這是「旋鈕讀回」這項前置檢查第二次救回一整格**：
+第一次是 `r.RHICmdBypass`（ERROR_LOG 2026-11-19），這次是 bindless heap。
+兩次都不是「設了沒效果」，而是**設的地方不對、而讀回會講出來**。
+
+## 三、連帶：旋鈕來源有三種不同的失效方式，不能混為一談
+
+今天已經撞到三種，每一種的徵狀不同：
+
+| 失效方式 | 例子 | 徵狀 |
+|---|---|---|
+| 值在 init 被讀，主控台設是無聲失效 | `RHI.TransientAllocator.GarbageCollectLatency` | 讀回**是新值**，但程式用的是 init 時的快照 ⇒ 讀回看不出來 |
+| 命令列打在錯的 ini 區段 | `D3D12.Bindless.ResourceDescriptorHeapSize` | 讀回**是舊值**＋`LastSetBy` 指出誰贏 ⇒ 讀回看得出來 |
+| 旋鈕的作用點在這個協定裡不存在 | `ok.ReaderThumbs`（卡片清單沒建起來） | 讀回可能正常，但**機制點的計數器全是 0** ⇒ 只有作用點的量具看得出來 |
+
+所以「讀回等於新值」**不足以**證明到達；要看的是**那個值實際被使用的地方**留下什麼。
