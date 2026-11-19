@@ -1716,3 +1716,58 @@ DRED: No PageFault data.
 要嘛根本不是這條**。關掉 defrag 那一格（`gc=10`＋noclear ＋
 `RHIPoolAllocator.DefragSizeFraction=0` ＋ `DefragMaxPoolsToClear=0`）會直接回答：
 **第 4 張附近當 ⇒ 不是 defrag，整條「搬家」線作廢**；**活過 30 張 ⇒ 是它，而且 20 帧那個餘裕有漏洞要查。**
+
+### 關掉 defrag 還是當 ⇒ 搬家那條線作廢（2026-11-19 13:46）
+
+`gc=10` ＋ noclear ＋ `RHIPoolAllocator.DefragSizeFraction=0` ＋ `DefragMaxPoolsToClear=0`，
+**第 15 張當**。
+
+**兩個旋鈕都確認接上了**（log 是 `Set CVar`，不是 `deferred - dummy variable created`）：
+
+```
+LogConfig: Set CVar [[RHIPoolAllocator.DefragSizeFraction:0]]
+LogConfig: Set CVar [[RHIPoolAllocator.DefragMaxPoolsToClear:0]]
+```
+
+**按跑之前就寫下的判準：還是當 ⇒ 不是 defrag。** 同配方今天另外兩趟當在第 7 張與第 4 張，
+這趟第 15 張雖然晚一些，但**預測是「活過 30 張」，而它當了**。
+15 對 7 可能有部分效果（defrag 也許貢獻一點機率），但**機制不可能只是 defrag**。
+搬家那條線作廢，連同它那個「20 帧餘裕對 3 帧落後太寬」的缺口一起——
+那個缺口本來就是對它不利的證據，現在量測同意了。
+
+**到此，所有「結構性」的候選都被排除過一遍：**
+
+| 候選 | 怎麼排除的 |
+|---|---|
+| 記憶體被提前釋放 | `EnqueueEndOfPipeTask` 每佇列 GPU sync point 圍欄（讀碼） |
+| 貼圖參照被改指 | `TRefCountPtr` ＋ 描述子在錄命令時就複製成快照（讀碼） |
+| bindless 描述子堆重用 | `r.RayTracing=0` 而 bindless 只給光追（log） |
+| 描述子環 rollover | 引擎自己關掉 wrap around ＋ `OnlineHeap RollOver Detected` 0 次（log） |
+| 資源被逐出 | `Evict`／`Residency`／`MakeResident` 0 次（log） |
+| **defrag 搬家** | **兩個旋鈕關掉、確認 `Set CVar`，照樣當（量測）** |
+
+### 剩下最具體的一條：**我們自己外掛裡的 3 帧**
+
+`FDreamUIDeferredRelease::DelayFrames` 是 **`static constexpr uint32 DelayFrames = 3`**
+（`DreamUIDeferredRelease.h:18`），而同一個外掛的 `UDreamCanvas::DrawTextureHolds`
+**留的是 8 帧**（`DreamCanvas.cpp` 的 `constexpr uint64 KeepFrames = 8`）。
+**同一個外掛裡兩個保護期不一致（3 對 8），這本身就是一個味道。**
+
+而 page fault 報告裡的 `Last completed frame ID: -1 (cached: 7473) - Current frame ID: 7476`
+看起來正好是 **GPU 落後 3 帧**——和 `DelayFrames = 3` **一點餘裕都沒有**。
+
+**但這條推論有一個我必須自己標出來的弱點**：那個 `-1` 表示 fence 已經讀不到了（device removed），
+`7473` 是最後一次快取的值。所以「落後 3 帧」是**在裝置已經死掉那一刻量到的**，
+**有可能是當機的結果而不是當機前的常態**——和今天 `late shader associations` 那個坑同一個形狀，
+所以不能拿它當證據，只能拿它當「值得一試」的理由。
+
+真正站得住的理由是另外兩件，都不依賴那個數字：
+1. **3 帧對一個允許多帧延遲的渲染管線本來就薄**，而
+2. **同一個外掛自己在另一處用 8 帧**——哪一個是對的，至少有一個是錯的。
+
+所以下一步要**建置**：把 `DelayFrames` 從 3 調大（例如 12，比 `KeepFrames = 8` 再寬一些），
+用今天最快當的配方（`gc=10` ＋ noclear，第 4／7 張）跑。改一個常數，
+而且**兩邊都要帶**（E 樹的 `Plugins/DreamGUI` 與上游 `damody/DreamGUI` 的 clone）。
+活過 30 張 ⇒ 保護期太短就是機制，而修法是把兩個保護期統一；
+還是第 4／7 張當 ⇒ 連這條也不是，那就只剩「拿帶除錯資訊的 shader 把 `0x45f90`
+對到 `MainPS` 的哪一行取樣」這條路，而那需要重新 cook。
