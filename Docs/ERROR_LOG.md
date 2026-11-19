@@ -6037,3 +6037,23 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   - 在這個倉庫做會產生提交的操作前，先看 staged 的檔案會不會觸發 hook 的測試（`Tools/check_rules_tests` 那一類）；會的話先跑 `may-build`。
   - 拋棄式的預演 worktree 用 `git config --worktree core.hooksPath NUL` 關掉 hook，只影響那個 worktree。真的窗口裡不關，hook 照跑。
   - 這個 hook 在真的樹上（有本機資料）預期會通過，但它要編譯，所以窗口清單把它算進建置時間。
+
+## 2026-11-19 停「第一個 UnrealEditor pid」，殺掉的是剛開始的下一趟
+
+**做錯的事**：PageFault 的 `Frames.Func=240` 第 1 趟報 `DEAD after card 19 ... unreal=1`，
+我照這一天的慣例去停那個「卡在 crash handler 裡不退」的行程，用的是
+`Get-Process -Name UnrealEditor | Select -First 1` 拿到的 pid（7692），結果**那是第 2 趟的引擎**
+（14:56:01 才啟動）——第 1 趟的引擎（27320）在我查之前就已經自己退了。
+**第 2 趟因此在開頭就被我殺掉，它的表不是結果。**
+
+**為什麼會錯**：`unreal=1` 是**偵測那一刻**的狀態，不是我執行命令那一刻的狀態；
+而腳本在上一趟結束後幾秒就會開下一趟，所以「現在唯一的那個 UnrealEditor」已經換人了。
+「停自己的 pid」這條規矩我有遵守（它確實是我自己的行程），
+但**「自己的行程」不等於「該停的那個行程」**。
+
+**修正（程序，不只是這一趟）**：要停一趟的引擎，pid 一律取**那一趟自己的表頭**
+（`knob1x.sh` 會寫 `pid=NNNN`），而且只在**同一趟的表已經顯示它當掉之後**才停。
+**永遠不要用「第一個 UnrealEditor pid」**。被殺掉的那一趟重跑，
+而且在**同一個二進位**上重跑（`func2redo.sh`），不夾在重新建置之間。
+
+**沒有被影響的**：`Texture=240` 兩趟與 `Func=240` 第 1 趟都在這之前跑完，表與 log 完整。
