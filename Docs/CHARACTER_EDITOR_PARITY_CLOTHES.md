@@ -222,3 +222,85 @@
 
 - 四个旗标都由 `appearance` 输出（`model_flags.rs`）：`model.pages`（衣服页）、`model.accessories.{槽}.parent_editable／move2`。语意都来自反编译（`ChaControl.cs`、`CustomChangeClothesMenu`、`CustomBase`、`CvsAccessory`），不是从截图推的。
 - `move2` 要配件模型的节点名。转换器从这版起对配件也录 `prefab_node_names`（`oklib_convert.rs`）。旧基础库与旧 OK 卡没录到，查询走 `prefab_node_names_recorded`，回 `None`，不猜。要让它有值，基础库得重录配件那一批，这件排在 e-fork-2 的重录之后。
+
+## 10. 第四批盘点：原作衣服／配件编辑器还没接的栏位（2026-11-19）
+
+依原作 UI 的分页逐页对。语意来源：反编译 `D:\XKoikatuSunshine\kks_decomp\Assembly-CSharp\ChaCustom\`（`CvsClothes`、`CvsClothesCopy`、`CvsAccessory`、`CustomAcsMoveWindow`、`CustomAcsParentWindow`、`CvsAccessoryChange`、`CvsAccessoryCopy`、`CustomChangeClothesMenu`）和卡结构 `ChaFileClothes`／`ChaFileAccessory`，不是从截图推的。我们这边看的是 `properties.rs`／`appearance.rs` 与 E 树 `Config/ReaderEditor/pages.json`（`1c5dfbea7`）。
+
+先说结论：卡上的衣服／配件栏位，资料端**全部都有**（`ChaFileClothes.PartsInfo` 的 7 个栏位、`ColorInfo` 的 6 个栏位、`subPartsId`／`hideBraOpt`／`hideShortsOpt`，以及 `ChaFileAccessory.PartsInfo` 的 7 个存档栏位）。界面也都能改，但只是「颜色与设定」「饰品颜色与位置」两页的通用列表，没有原作那样逐页排版。还缺的分三类：**原作的「操作」**（重设、复制、左右反转）、**换款时原作会顺手改的栏位**、**只属于原作游戏或编辑器自己的东西**。
+
+### 10.1 栏位怎么分
+
+- **A. 资料端有、界面没专用控件**：e-fork-2 的页面工作。资料端已能读能写，原作的排法、显示条件由 UI 照第三批旗标去做。
+- **B. 资料端没有**：我的。要新的输出或新的写入操作。
+- **C. 原作有、我们刻意不做**：另列理由，不算「还没做」。
+
+限制栏照 §9.1：硬界／软范围／不限。「—」表示这一列是操作或页，本身没有值。
+
+### 10.2 衣服（`CvsClothes`，每个衣服种类一页）
+
+| 原作控件 | 我们的参数 | 资料端 | 界面 | 限制 | 归类 |
+|---|---|---|---|---|---|
+| 种类选图 `customClothes` | `clothes{k}`（`parts[k].id`） | 有（appearance 选图） | 有（外观选择） | 硬：目录项目 | — |
+| 水手服／外套子部件 `customSailor01..03`／`customJacket01..03` | `sub200..202`／`sub210..212`（`subPartsId`） | 有 | 有（外观选择）；按 `top_kind` 显示的条件还没接 | 硬：目录项目 | A |
+| 袖型 `tglSleevesType[3]` | `clothes.parts.0.sleevesType` | 有，`available` 与 `model.clothes.0.sleeves` 已有 | 通用列（数字），不是三选一按钮 | 硬：0..2 | A |
+| 选项开关 `tglOption[2]` | `clothes.parts.k.hideOpt.0/1`、胸罩页 `hideBraOpt`、内裤页 `hideShortsOpt` | 有，`available` 已有 | 通用列 | 结构：bool | A |
+| 颜色 1..4 `btnMainColor01..04` | `clothes.parts.k.colorInfo.i.baseColor.*` | 有，`available`、`default` 已有 | 通用列（分量），没有色票窗口 | 硬：0..1 | A |
+| 花纹选图 `customPtn01..04` | `pattern{k}_{i}`（`colorInfo.i.pattern`） | 有 | 有（外观选择） | 硬：目录项目 | — |
+| 花纹颜色 `btnPtnColor01..04` | `colorInfo.i.patternColor.*` | 有 | 通用列 | 硬：0..1 | A |
+| 花纹位置 X／Y `sldPtn0?OffsetX/Y` | `colorInfo.i.offset.x/y` | 有 | 通用列 | 软：0..1 | A |
+| 花纹旋转 `sldPtn0?Rotate` | `colorInfo.i.rotate` | 有 | 通用列 | 软：0..1 | A |
+| 花纹宽／高 `sldPtn0?Width/Height` | `colorInfo.i.tiling.x/y` | 有 | 通用列 | 软：0..1 | A |
+| 花纹设定区只在选了花纹时显示（`objPtnSetting0?`） | 由 `colorInfo.i.pattern != 0` 判断 | 有（值本身） | 没接 | 不限（只影响显示） | A |
+| 每条滑杆旁的重设钮 `btnPtn0?OffsetX…Height` | — | 预设值：位置／旋转 0.5、宽高 0（原作 `ChaFileClothes.ColorInfo.MemberInit`）。范围中继资料没有专给「重设」用的预设 | 没有 | — | A（预设值写死在 UI 也行，原作也是写死的） |
+| 徽章 1／2 `customEmblem[2]` | `emblem{k}_{n}`（`emblemeId`／`emblemeId2`） | 有，可用性 `model.clothes.k.emblem` 已有 | 有（外观选择）；显示条件没接 | 硬：目录项目 | A |
+| **初期设定钮 `btnInitSetting`**：4 层底色改回模型预设色、花纹色改白、花纹归 0，位置／旋转归 0.5、宽高归 0 | 底色预设已有（`model.clothes.k.default_colors`） | 预设值有，但没有一次写回的操作 | 没有 | — | A：UI 照上面的值组一次 `set` 就行，不需要新 API |
+| **换上衣时袖型归 0**（`UpdateSelectClothesKind`：`sleevesType = 0`） | `clothes.parts.0.sleevesType` | **没有**：appearance `apply` 只写 `id` | — | — | **B**：`apply` 换上衣时同时写 `sleevesType=0`，照原作 |
+| 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **未确认**：我们的读取有没有同样回补、卡上要不要跟着写回，还没查 | — | — | **B（待查）** |
+| 衣服复制页 `CvsClothesCopy`（从另一套服装复制选定种类；子部件可分开勾） | — | 没有专用操作；读别的服装＋`set` 可以组出来 | 没有 | — | B（低优先：可由 UI 组合） |
+| 页签可点与否（`notBot`／`notBra`／`notShorts`、男性胸罩页） | `model.pages` | 有（第三批） | 没接 | 不限（只影响显示） | A |
+
+### 10.3 配件（`CvsAccessory`，每个槽一页）
+
+| 原作控件 | 我们的参数 | 资料端 | 界面 | 限制 | 归类 |
+|---|---|---|---|---|---|
+| 种类下拉 `ddAcsType`（含「无」= 120） | `accessory.parts.n.type` | 有（选图时一起写；选空 = 120） | 有（外观选择） | 硬：120..130 | — |
+| 配件选图 `tglAcsKind` | `accessory{n}_{cat}`（`id`） | 有 | 有 | 硬：目录项目 | — |
+| 颜色 1..4 `btnAcsColor01..04` | `accessory.parts.n.color.c.*` | 有，`available`（`useColor`、`rendAlpha`）已有 | 通用列 | 硬：0..1 | A |
+| **颜色初期化 `btnInitColor`**（改回 `ChaAccessoryComponent.defColor01..04`） | — | **没有**：配件的预设色没输出（衣服有 `default_colors`，配件没有） | 没有 | — | **B**：`model.accessories.n` 补 `default_colors` |
+| 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有（55 个键，`editor_accessory_parents.json`），`parent_editable` 已有 | 通用列（选项） | 硬：55 键之一 | A |
+| **父骨初期化 `btnInitParent`**（`parentKey=""`，用清单 `Parent`） | `parentKey` | 值 `""` 在选项里（「素材预设」） | 没有专用钮 | — | A |
+| **父骨左右反转 `btnReverseParent`** | `parentKey` | **没有左右对应表**。命名不规则，例如 `a_n_hair_pin` ↔ `a_n_hair_pin_R`，UI 不能只换 `_L`／`_R` | 没有 | — | **B**：父骨表补 `reverse` 栏，照原作 `ChaAccessoryDefine.GetReverseParent` 的对应 |
+| 位移第 1／2 组 `tglAcsMove01/02` → `CustomAcsMoveWindow`：位置／旋转／缩放 XYZ 输入 | `accessory.parts.n.addMove.2.{0..5}.{x,y,z}` | 有，`parent_editable`／`move2` 已有 | 通用列 | 位置 软 −100..100；旋转 wrap 0..360；缩放 软 0.01..100 | A |
+| 位移视窗的步进切换 `tglPosRate`／`tglRotRate`／`tglSclRate`（0.1／1／10） | — | 不需要 | 没有 | — | A（纯 UI） |
+| 位移视窗的重设钮（单项与 `btnAllReset`）、复制／贴上 `btnCopy`／`btnPaste` | — | 预设值：位置／旋转 0、缩放 1 | 没有 | — | A（纯 UI） |
+| H 时分组 `tglAcsGroup`（主／副） | `accessory.parts.n.hideCategory` | 有 | 通用列（选项） | 硬：0..1 | A。原作只在 `Game.isAddH` 时显示，我们照常显示（§9.3） |
+| 停止摆动 `tglNoShake` | `accessory.parts.n.noShake` | 有 | 通用列 | bool | A |
+| 换配件时继承父骨／颜色 `tglTakeOverParent`／`tglTakeOverColor`（编辑器设定，不进卡，预设都是开） | — | 我们 `apply` 换配件时保留 `parentKey` 与颜色，等于两个都开 | 没有开关 | — | 有一处 **B**：原作在新配件 `HideHair==1` 时，不管开关都把 `parentKey` 清成 `""`（`UpdateSelectAccessoryKind`），我们没做。开关本身算 C（编辑器偏好，不进卡），见 10.4 |
+| 3D 拖曳控制器 `tglDrawController01/02`、`tglControllerType`、`sldControllerScale`／`Speed` | — | 不需要 | 没有 | — | C（见 10.4） |
+| 槽位互换／复制 `CvsAccessoryChange`（`btnSlotCopy`；复制位移值，可左右或上下反转 `btnCopyRevValueLR/UD`） | — | 没有专用操作。互换可由 UI 读两槽再写；左右反转要父骨对应表（同上） | 没有 | — | B（低优先，依赖父骨反转表） |
+| 从别套服装复制配件 `CvsAccessoryCopy` | — | 没有专用操作，同衣服复制 | 没有 | — | B（低优先） |
+| 第 21 槽以后（MoreAccessories） | `accessory_extra`、`plugins.…` | 有 | 有（新增饰品栏位） | 同上 | — |
+
+### 10.4 刻意不做
+
+| 原作项目 | 理由 |
+|---|---|
+| `ChaFileAccessory.PartsInfo.partsOfHead` | `[IgnoreMember]`，执行时才算，不进卡 |
+| 换配件时继承父骨／颜色的开关（`customSettingSave.acsTakeOverParent/Color`） | 原作编辑器自己的偏好，不进卡。我们固定为原作预设（都开）。若 UI 要做这个开关，资料端只需要在 `apply` 加一个参数 |
+| 3D 拖曳控制器（显示、种类、大小、速度） | 原作视窗内的操作手把。读卡器的 3D 预览没有同样的拖曳框架，数值改动走位移列。要做是 UI／视窗工作，不是栏位 |
+| `hideCategory` 只在 `Game.isAddH` 时显示 | 原作游戏进度条件，读卡器没有游戏进度，照常显示 |
+| `CvsDrawCtrl`（穿着状态预览、姿势、背景等） | 只影响预览、不进卡。我们的「穿着状态」抽屉已经涵盖衣服部分 |
+
+### 10.5 没盘点的（外挂）
+
+外挂加的衣服／配件栏位，资料端都以 `plugins.<id>.…` 通用列出现，界面在「全部属性」。各外挂原本的专用页（反编译 `plugins\` 下的 `KKS_Accessory_States`、`KKS_OverlayMods`、`KKS_MoreAccessoryParents`、`KKS_ClothingBlendShape`，以及 `KKS_Plugins` 内的 MaterialEditor、HairAccessoryCustomizer、Pushup）这次没有逐页对。其中 `KKS_MoreAccessoryParents` 会加父骨键，我们的 55 键选项不含它们；卡上有那种键时，硬界会挡写入，但读取原值没问题。下一轮要先确认这件。
+
+### 10.6 我接下来要做的（B 类，照优先）
+
+1. `apply` 换上衣时写 `sleevesType=0`；换配件时，新配件 `HideHair==1` 就把 `parentKey` 清成 `""`。都照原作的 `UpdateSelect…Kind`。
+2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。
+3. 父骨表补 `reverse` 对应（照原作 `ChaAccessoryDefine.GetReverseParent`），给「父骨左右反转」与「左右反转复制」用。
+4. 查清楚：换上衣时子部件回补后，原作写回卡上的值，我们有没有照写。
+5. （低优先）服装间复制衣服、复制配件、槽位互换：UI 先用「读别套＋`set`」组合；要不要专用操作，等 UI 做过再说。
+6. 外挂父骨键（`KKS_MoreAccessoryParents`）和 55 键硬界的冲突。
