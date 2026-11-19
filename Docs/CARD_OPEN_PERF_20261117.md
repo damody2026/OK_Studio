@@ -673,3 +673,44 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 `StreetHeroines` 目录权限，见 ERROR_LOG 2026-11-17）、`cargo check --release -j 8 --no-default-features`、
 `OpenKoikatsu` 与 `OpenKoikatsuEditor` Win64 Development 连结成功。
 
+
+## 七、标准冷开基准：改到开卡路径之后跑这一条（2026-11-19）
+
+开卡路径已经接近这个架构的下限（第一、四节：整条串行链全做完也只约 −13%，而且要五到六次同等规模的重构），
+所以这条线现在的价值**不在再榨 2%，而在别让它悄悄变慢**。一行命令：
+
+```powershell
+.\Tools\lua\lua.exe Tools\card_open_baseline.lua -Compare latest
+```
+
+```
+Tools\lua\lua.exe Tools\card_open_baseline.lua [-Cards DIR] [-Library DIR] [-Rounds N]
+  [-Warmup N] [-Out FILE] [-Compare FILE|latest] [-NoBuild]
+```
+
+- **固定六张代表卡**：`crowd_C001`／`crowd_C006`／`crowd_C049`／`demo_C050`／`heroine_klara`／`heroine_megumin`
+  （就是第三节正确性比对用的那组）。少任何一张会**报错并列出少哪几张**，不会悄悄跑短一趟——
+  四张卡的基准和六张的不可比，而数字本身不会告诉你。卡片目录预设找 `E:/OKPackage/TestCards-20261118`，
+  其次 `Content/CharacterCards/CrowdAPNG`；都没有就 `-Cards <目录>`。
+- **走读卡器自己的冷路径**：`--sequence` ＋ `OK_BENCH_PREWARM=concurrent`（启动预热跟第一张卡并行），
+  一轮就是一个行程、六张卡依序开，所以第二张之后也量到了前一张留下的东西。不走 plain 模式（第三节说明了为什么）。
+- **一轮丢弃的暖机**：磁碟开卡快取永久关闭，但**作业系统的档案快取没有**。不丢暖机时，连续几次执行会从
+  6.90 → 6.17 → 6.03 s 一路变快，那是 OS 快取在暖，不是程式变快了。`-Warmup 0` 可以关掉（想看 OS 冷的数字时）。
+- **输出**：每张卡与总计的中位数、最慢的八个阶段（`OK_PROFILE` 的 stage 列）、以及
+  `work from scratch N (R repeat)`（`unity::take_work_counts`）。JSON 写到
+  `Saved/Reports/card-open-baseline/<时间>.json`，并覆盖 `latest.json`。
+- **`-Compare latest` 比的是上一次那一份**（在这次覆盖它之前读的），印出每张卡与总计的百分比差，
+  超过 5% 标 `SLOWER`。
+
+**怎么读这些数字（量过的校准，不要凭感觉）**
+
+| 指标 | 可重复性（闲置机器，2026-11-19 实测） | 怎么用 |
+|---|---|---|
+| 总计中位数（有暖机、≥3 轮） | 三次执行 6.01／5.95／6.00 s，约 **1%** | 超过约 **3%** 当成真的变化 |
+| 总计中位数（没暖机、2 轮） | 两次执行差 **7.7%**，单张卡差到 **17%** | 不要这样用 |
+| 每张卡 | 比总计更吵 | 只用来定位，不用来定案 |
+| `work from scratch` | 上面所有执行都落在 **472–475** | **这是该把关的那个数**：它和机器忙不忙无关 |
+
+**跑之前确认机器只有一个 Unreal**（`Tools\lua\lua.exe Tools\unreal_slot.lua status` 的 `unreal processes`），
+否则时间数字不可比——同一天就量到另一个 Unreal 遊戏在同一张 GPU 上跑的时候，读卡器的行为整个变了
+（`Docs/CARD_READER_DREAMGUI.md`：防护失效）。机器吵的时候只看 `work from scratch`。
