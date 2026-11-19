@@ -864,3 +864,48 @@ e-cardload 對照了時間點：它所有乾淨的趟都是機器上只有它一
 - 同理，`reader_call` 回 `"status": "applied"` 不等於那張卡真的開了：`load` 吃的是 `path`，而
   `state` 的 `card` 跟著**選取的那一列**走，不是跟著剛才載入的路徑走。一趟開卡配方到底開了幾張，
   看 log 裡 `ok.ReaderScreen notice: 已加载3D` 的次數最準。
+
+## 1 對 1 回程會當、Studio 回程不會：差集與第一輪盤點（2026-11-19，e-fork-2，進行中）
+
+e-cardload 在安靜機器上量到：讀卡器→Studio→回來，同一行程累計 60 次開卡乾淨；讀卡器→1 對 1→回來，兩趟分別在第 10、第 9 張當。兩條路徑全程 `r.RDG.ParallelExecute` 都是 0。所以「進 1 對 1 有做、進 Studio 沒做的事」就是嫌疑範圍。
+
+### 差集（從程式讀出來的：`AOKInteractionMode::EnterReader`／`Exit` 對 `UOKCharacterController::OnEnterOkStudio`／`OnOkStudioStopped`）
+
+| # | 1 對 1 有、Studio 沒有 | 離開時怎麼收 |
+|---|---|---|
+| 1 | `Session.CloneForInteraction` 複製一份女角 session，生一個新的 `AKKPreviewActor`（`LoadingFemale`）重建她的網格、材質、貼圖 | `Exit`：`LoadingFemale->Destroy()`；`OwnController` 時把共用 controller 的 `PreviewActor` 也 Destroy |
+| 2 | 背景載入男角（`OK pair 背景載入男性角色`），第三個角色的貼圖與材質 | 同上（`OnStopPair`） |
+| 3 | 另建一個 `UOKCharacterController`（`Shared`，UMG）＋ 1 對 1 的 H 面板 UI，疊在讀卡器的 DreamGUI 畫面上；讀卡器的 DreamGUI 畫面**沒有藏起來**，整段都在畫 | Shared 隨 Mode 結束 |
+| 4 | 配對播放（`AKKPairedPlayback`）接管兩個 actor 的 Tick、雙角色接觸求解、`AddPairPhysics` | `RemovePairPhysics`、`OnStopPair` |
+| 5 | H 場景的附加物：油漆水槍 `AOKPaintSprayer`（兩張 render target）、鏡子、水窪、液體、`SceneCaptureComponent2D` 多 4 個 | 隨 Mode／場景物件結束 |
+| 6 | `r.Shadow.DistanceScale` 在 1 對 1 期間改掉 | `Exit` 以 `SetByConsole` 設回 |
+| 7 | 規則 DLL（`ok_rules`）與對話（`FOKReaderTalk`，沒有 API key 時只是錯誤訊息） | `ReaderTalk->End()` |
+
+Studio 這邊：只把讀卡器的 actor 藏起來、在原地開 Studio 場景、加一個角色；關掉時把 actor 顯示回來。
+
+### 第一輪盤點：回來之後還留著什麼（stage `EFork1119q`，機器上只有這一個 Unreal）
+
+每個時點先 `obj gc`，再數物件與 `ok.ReaderScreen resources` 的 transient 貼圖（`E:\OpenKoikatsu\Saved\Reports\reader-leftover-20261119\`、`reader-leftover2-20261119\`）：
+
+| 時點 | KKPreviewActor | OKCharacterController | OKInteractionMode | PaintSprayer | RenderTarget | SceneCapture | Texture2D(transient) |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 讀卡器、卡 2 | 3 | 1 | 0 | 1 | 2 | 3 | 115 張／284.7 MiB |
+| 在 1 對 1 裡 | 5 | 2 | 1 | 2 | 4 | 7 | 162／437.4 MiB |
+| **從 1 對 1 回來** | 3 | 1 | 0 | 1 | 2 | 3 | **158／437.3 MiB** |
+| （另一趟）從 Studio 回來 | — | — | — | — | — | — | 127／238.0 MiB（進 Studio 前 124／237.8） |
+
+- **物件都回到原數，但 transient 貼圖多留了 43 張、約 150 MiB**；Studio 回程只多 3 張、0.2 MiB。
+- 用 `obj refs` 看最新建的幾張：持有者是讀卡器現存的 `KKPreviewActor` 的 `Parts`（refcounted），而且同一張貼圖同時掛在兩個 actor 上（讀卡器目前的角色和另一個常駐的 actor）。也就是說，1 對 1 期間建的貼圖，回來後被讀卡器自己的 actor 接手了，不是沒人要的孤兒。
+- 下一張卡開完，transient 降到 145／352.8 MiB：這些貼圖在之後的開卡中**陸續被放掉**。
+- **同一趟在「從 1 對 1 回來」之後的第 2 張卡就當了**，簽章和其他趟一樣（PageFault、唯一的 Active Shader 是 `MainPS`，Shader Hash `E6753E1EA9F1F20775D8BC0AD963B1EF`）。log `E:\OpenKoikatsu\Saved\Logs\CardReader\leftover-q.log`。這是目前最快的重現：進一次 1 對 1、出來、開兩張卡。
+
+### 下一步（逐項排除）
+
+1. 找出那 43 張是誰建的：第 1 項的複製 session 和讀卡器的 session 共用貼圖快取，最可能。如果是，就是「別的 actor 建的貼圖被讀卡器的 actor 共用，之後隨開卡放掉」。這和 GPU 讀到失效位址的形狀吻合：貼圖放掉時，還在飛行中的幀如果有東西引用它，就會讀到失效位址。
+2. 對照實驗，每格用上面的快速重現（進出 1 對 1 一次、再開 10 張）：
+   - 進 1 對 1 後**馬上**離開（第 2、5 項還沒開始）；
+   - 進去等她載完、不載男角就離開；
+   - 照常進出，但離開時先把讀卡器的 actor 整個重開一次（不接手 1 對 1 期間的貼圖）。
+   哪一格不當，嫌疑就縮到那一項。
+3. 第 3 項（讀卡器的 DreamGUI 畫面在 1 對 1 期間沒藏起來，一直在畫）本身也是 bug，要另外修。Studio 期間它是否也在畫還沒確認；如果 Studio 期間是藏起來的，它也要列進差集。
+
