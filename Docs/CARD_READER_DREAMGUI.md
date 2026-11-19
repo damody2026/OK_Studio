@@ -1866,3 +1866,44 @@ LogConfig: Set CVar [[RHIPoolAllocator.DefragMaxPoolsToClear:0]]
   **但不准拿它當這個 crash 的修法**——照協調立的標準，那會是「讓當機消失的旋鈕」換成一筆程式。
   那種情況下該查的是**外掛對這兩張的取用方式**（是否該改成 RDG 的 external texture
   讓 RDG 管生命週期，或在錄命令那一刻確認它們仍然有效）。
+
+### 那 18 張縮圖**已經是一個固定重複用的池**，所以「改成不銷毀」那一格不用建——它已經是現況
+
+`OKReaderScreen.cpp` 的縮圖是池，不是每翻一張卡 create／destroy：
+`MakeTexture(const FThumb&)` 只在**池要長大**時建一張（`constexpr int32 TileWidth=288,TileHeight=402`），
+而換圖走 `Refill(UTexture2D*, const FThumb&)`——**原地更新同一張貼圖**
+（`FUpdateTextureRegion2D` ＋ 自己一份 pixel 複本交給 render thread）。
+
+而且這件可以用已有的 dump 直接證明，不必建置：`ListTextures` 的每一列都帶尺寸，
+所以把 `288x402` 那些挑出來比名字——**兩個格子、前十二張卡，18 張縮圖的名字一次都沒變**：
+
+```
+gcbase_clear  card 1..12: 18 thumbs, new=0 gone=0（每一張卡都是）
+d12_pass2     card 1..12: 18 thumbs, new=0 gone=0（每一張卡都是）
+```
+
+**結論有三層：**
+
+1. **那一格不用跑**：「把縮圖從每翻一張卡銷毀重建改成不銷毀」**已經是現況**，
+   建了也量不到任何差別。（這是今天第二次「要測的那個狀態已經是現狀」——
+   第一次是面板那條 cvar 的預設已經改掉了。）
+2. **縮圖不可能是受害者**：它們既在 `DrawTextureHolds` 的 8 帧窗口裡（名單就是那個窗口的內容），
+   **又從頭到尾沒有被釋放過**。沒被釋放的東西不會變成「取樣到已經放掉的資源」。
+3. **所以我量到的那些「大批釋放」不是 UI 貼圖，是角色貼圖**——退休的 `KKPreviewActor` 那一批。
+   這把問題推到一個更尖的形狀：**被釋放的東西（角色貼圖）和故障的取樣器（UI 的 `MainPS`）
+   屬於兩個不同的子系統，它們只共用同一個配置器**（唯讀貼圖池）。
+   也就是說，要解釋的不是「DreamGUI 放掉了它還在用的東西」，
+   而是「**別人放掉東西，卻讓 DreamGUI 的 draw 讀到一個不屬於任何堆的位址**」。
+
+**順手再關掉一個候選**：`BackdropTex` 不是裸的——那個 pass 的參數結構用
+`RDG_TEXTURE_ACCESS(BackdropTexture, ERHIAccess::SRVGraphics)` 宣告它（`DreamUIRenderer.cpp:850`），
+所以 RDG 會保證它活過這個 pass。`SceneDepthTex` 同一條路。
+**所以「外掛綁了一張沒人保護的場景貼圖」這個候選也站不住**，
+上一節登記的「240 還是當 ⇒ 受害者是場景那兩張」那條讀法要收回：它們有 RDG 管。
+
+**所以 240 的結果現在只剩兩種讀法**：
+- **活過 30 張 ⇒** 受害者在外掛自己握的那幾支（資料貼圖、圖集）裡，fence 修法對症；
+- **還是當 ⇒** 受害者既不是縮圖（沒被釋放）、也不是場景那兩張（RDG 管），
+  那就只剩**資料貼圖／圖集**（都在外掛手上、都會重建）或**跨子系統的配置器層面**。
+  後者的話，便宜的下一格是**把那 18 張縮圖之外的 UI 貼圖也排除掉**：
+  用 `DreamGUI.LogHeldTextures` 的名單比對當機前最後一次圖集／資料貼圖重建的時間點。
