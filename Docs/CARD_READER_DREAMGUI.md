@@ -1048,3 +1048,36 @@ e-cardload 給的條件：
   - 非角色卡的 PNG 本來就不進卡片列表（`cards_total 3`）。
   - `select 2 → 1 → 0 → 2`，每次之後 `press 人物編輯›載入3D`，log 的 `OK load3d card=` 都是剛選的那張，`result ok=1`。
 - **附帶**：新版畫面下，`ui_press {"label":"載入3D"}` 回 `no such button on screen`（那顆 UMG 按鈕在收起的抽屜裡）。在新版讀卡器裡按「載入3D」，請用 `ok.ReaderScreen press 人物編輯›載入3D`。
+
+### 乾淨基線（獨占、逐張記機器狀態）：當機跟著「峰值」走，而決定峰值的是 GC 有沒有來（2026-11-19 12:21–12:30）
+
+兩格背靠背、同一機器狀態、每張卡都記下機器上的 Unreal 數（全程 `unreal=1`，所以這兩格沒有任何汙染）：
+
+| | GC 掃過幾次 | 峰值 tex／transient2d | 結果 |
+|---|---|---|---|
+| **clear**（回程後 `ok.KeptTexturesClear`） | **一次都沒有**（第 4～15 張連續爬） | **912／793** | **第 17 張當，`faults=1`** |
+| **noclear**（不清） | 3 次（第 14、22、30 張掉回） | 823／704 | **30 張全過，`faults=0`** |
+
+clear 格逐張：`341/215 416/290 481/355` → GC → `331/212 403/284 466/347 503/384 554/435 608/489 650/531 685/566 727/608 818/699 865/746 912/793` → 第 16 張 `tex=0`（`ListTextures` 已經答不出來）→ 第 17 張 `heroine_klara.png` 行程沒了。
+
+**所以「清快取」是害的那一邊，而且機制講得通**：清掉 kept 清單等於放掉一批參照、降低記憶體壓力 ⇒ **GC 被延後** ⇒ transient 貼圖一路累積到 912 ⇒ 當。不清反而讓 GC 按時掃，峰值壓在 823 以下就活下來。**這同時更正上一節那句「不是累積」**：是累積，只是 GC 通常會先掃掉，前幾趟看到的鋸齒就是被掃掉的樣子。
+
+**還沒解的矛盾（下一格要解的）**：早先量過 `gc.CollectGarbageEveryFrame 1` 照樣在第 12 張當。若峰值論對，每帧 GC 應該讓計數一直很低。所以要嘛那趟計數其實沒降（當時沒量），要嘛峰值只是**同一個原因的另一個指標**。下一格把它重跑並**逐張記計數**。
+
+**當機前 6 秒工具就先失靈**：第 16 張（`heroine_keqing.png`）`04:24:04` 載入成功（`OK load3d result ok=1 已加载3D`），但那一張的 `ListTextures` 回 `tex=0`；`04:24:10` 才 fault。當機前一瞬間的 log 是
+
+```
+[04.24.10:177] LogD3D12RHI: Created late shader associations, took 16ms
+[04.24.10:199] LogRHICore: Error: Shader debug data not found (7159920291841742735)   ← 連續十餘行
+[04.24.10:202] LogNvidiaAftermath: Error: Writing Aftermath dump to: …nv-gpudmp
+```
+
+`Created late shader associations` 整趟只出現這一次，就在 fault 前 25 ms。
+
+**bindless 描述子這條（源碼核過，不是憑印象）**：
+- 這台的 log：`Bindless is enabled (Configuration=RayTracing). Initializing allocators with 32768 Resource and 2048 Sampler descriptors`。
+- 32768／2048 是**引擎自己的 Windows 預設**（`Engine/Config/Windows/BaseWindowsEngine.ini` 的 `[SystemSettings]`），不是本專案設的；cvar 本身的預設是 1,000,000（`D3D12BindlessDescriptors.cpp:10`）。
+- **log 裡沒有任何 `ran out of` 或描述子耗盡的警告**，所以不是乾淨的「用光了」，更像是**索引被回收重用**。
+- 貼合的旋鈕不是堆大小，而是 **`D3D12.Bindless.GarbageCollectLatency`**（預設 **600**，`ECVF_ReadOnly`，注解：「heap 被釋放前要經過幾個 update cycle」）——描述子的生命週期旋鈕，兩側都能轉：調大（6000）若 30 張全過、調到 1 若更早當，方向與劑量兩側都對上。三個 cvar 都是 ReadOnly，只能啟動參數設。
+
+**工作假設（標明是假設，等 DreamGUI 開關那格的結果）**：讀卡器的 DreamGUI 面板在 1 對 1／Studio 期間**整段還在畫**（e-fork-2 的 `ui:true` 截圖），每帧都要綁貼圖；換卡釋放的那批 transient 貼圖若還沒被 GC 收走、仍掛在 UObject 上，面板綁到的就可能是「已放掉但還沒真刪」的那一份——`mask0=fallback` 正是這個樣子。Studio 期間面板雖然也在畫，但**換卡的釋放不在那條路上**，所以 Studio 回程不當。這是目前唯一能同時容納正反兩面證據的說法。
