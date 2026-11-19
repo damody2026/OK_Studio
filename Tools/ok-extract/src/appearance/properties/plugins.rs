@@ -12,6 +12,10 @@ fn unpack(b:&[u8])->Option<Value>{if b.len()>16*1024*1024{return None;}let mut c
 struct PluginSection{
  /// The KKEx section key in the card.
  key:&'static str,
+ /// The plugin's name in property keys (`plugins.<id>.…`): one word, no dots, the same on every card. Never the
+ /// section's position in KKEx — that is each card's own fact (alice's 9th section is MaterialEditor, megumin's is
+ /// Pushup), so a positional key copied to another card writes into another plugin without any error.
+ id:&'static str,
  /// Semantic id of the group name shown in the editor; the UI translates it and falls back to the id itself.
  title_id:&'static str,
  /// Plugin name and its BepInEx GUID, for whoever has to find the plugin this data came from. The GUID is often
@@ -28,23 +32,23 @@ struct PluginSection{
 /// confirmed rather than guessed.
 const PLUGIN_SECTIONS:&[PluginSection]=&[
  // card
- PluginSection{key:"com.deathweasel.bepinex.materialeditor",title_id:"reader.plugin_group.material_editor",plugin:"MaterialEditor",guid:"com.deathweasel.bepinex.materialeditor"},
- PluginSection{key:"com.deathweasel.bepinex.hairaccessorycustomizer",title_id:"reader.plugin_group.hair_accessory",plugin:"HairAccessoryCustomizer",guid:"com.deathweasel.bepinex.hairaccessorycustomizer"},
- PluginSection{key:"com.deathweasel.bepinex.pushup",title_id:"reader.plugin_group.pushup",plugin:"Pushup",guid:"com.deathweasel.bepinex.pushup"},
- PluginSection{key:"com.deathweasel.bepinex.dynamicboneeditor",title_id:"reader.plugin_group.dynamic_bone_editor",plugin:"DynamicBoneEditor",guid:"com.deathweasel.bepinex.dynamicboneeditor"},
- PluginSection{key:"moreAccessories",title_id:"reader.plugin_group.more_accessories",plugin:"MoreAccessories",guid:"com.joan6694.illusionplugins.moreaccessories"},
+ PluginSection{key:"com.deathweasel.bepinex.materialeditor",id:"MaterialEditor",title_id:"reader.plugin_group.material_editor",plugin:"MaterialEditor",guid:"com.deathweasel.bepinex.materialeditor"},
+ PluginSection{key:"com.deathweasel.bepinex.hairaccessorycustomizer",id:"HairAccessoryCustomizer",title_id:"reader.plugin_group.hair_accessory",plugin:"HairAccessoryCustomizer",guid:"com.deathweasel.bepinex.hairaccessorycustomizer"},
+ PluginSection{key:"com.deathweasel.bepinex.pushup",id:"Pushup",title_id:"reader.plugin_group.pushup",plugin:"Pushup",guid:"com.deathweasel.bepinex.pushup"},
+ PluginSection{key:"com.deathweasel.bepinex.dynamicboneeditor",id:"DynamicBoneEditor",title_id:"reader.plugin_group.dynamic_bone_editor",plugin:"DynamicBoneEditor",guid:"com.deathweasel.bepinex.dynamicboneeditor"},
+ PluginSection{key:"moreAccessories",id:"MoreAccessories",title_id:"reader.plugin_group.more_accessories",plugin:"MoreAccessories",guid:"com.joan6694.illusionplugins.moreaccessories"},
  // card. Two different plugins keep accessory states, and the old substring whitelist (`accessorystates`) matched
  // neither of them — `Accessory_States` and `madevil.kk.ass` both miss that spelling, so this data was never offered.
- PluginSection{key:"Accessory_States",title_id:"reader.plugin_group.accessory_states",plugin:"KKS_Accessory_States",guid:"Accessory_States"},
- PluginSection{key:"madevil.kk.ass",title_id:"reader.plugin_group.accessory_state_sync",plugin:"Accessory State Sync",guid:"madevil.kk.ass"},
+ PluginSection{key:"Accessory_States",id:"AccessoryStates",title_id:"reader.plugin_group.accessory_states",plugin:"KKS_Accessory_States",guid:"Accessory_States"},
+ PluginSection{key:"madevil.kk.ass",id:"AccessoryStateSync",title_id:"reader.plugin_group.accessory_state_sync",plugin:"Accessory State Sync",guid:"madevil.kk.ass"},
  // source: KoiSkinOverlayX / KoiClothesOverlayX use short ids, which is why `contains("overlay")` dropped them.
- PluginSection{key:"KSOX",title_id:"reader.plugin_group.skin_overlay",plugin:"KoiSkinOverlayX",guid:"KSOX"},
- PluginSection{key:"KCOX",title_id:"reader.plugin_group.clothes_overlay",plugin:"KoiClothesOverlayX",guid:"KCOX"},
+ PluginSection{key:"KSOX",id:"KoiSkinOverlayX",title_id:"reader.plugin_group.skin_overlay",plugin:"KoiSkinOverlayX",guid:"KSOX"},
+ PluginSection{key:"KCOX",id:"KoiClothesOverlayX",title_id:"reader.plugin_group.clothes_overlay",plugin:"KoiClothesOverlayX",guid:"KCOX"},
  // source
- PluginSection{key:"HairShadowColorControl",title_id:"reader.plugin_group.hair_shadow_color",plugin:"HairShadowColorControl",guid:"HairShadowColorControl"},
- PluginSection{key:"com.deathweasel.bepinex.eyecontrol",title_id:"reader.plugin_group.eye_control",plugin:"EyeControl",guid:"com.deathweasel.bepinex.eyecontrol"},
- PluginSection{key:"com.deathweasel.bepinex.eyeshaking",title_id:"reader.plugin_group.eye_shaking",plugin:"EyeShaking",guid:"com.deathweasel.bepinex.eyeshaking"},
- PluginSection{key:"com.deathweasel.bepinex.uncensorselector",title_id:"reader.plugin_group.uncensor_selector",plugin:"UncensorSelector",guid:"com.deathweasel.bepinex.uncensorselector"},
+ PluginSection{key:"HairShadowColorControl",id:"HairShadowColorControl",title_id:"reader.plugin_group.hair_shadow_color",plugin:"HairShadowColorControl",guid:"HairShadowColorControl"},
+ PluginSection{key:"com.deathweasel.bepinex.eyecontrol",id:"EyeControl",title_id:"reader.plugin_group.eye_control",plugin:"EyeControl",guid:"com.deathweasel.bepinex.eyecontrol"},
+ PluginSection{key:"com.deathweasel.bepinex.eyeshaking",id:"EyeShaking",title_id:"reader.plugin_group.eye_shaking",plugin:"EyeShaking",guid:"com.deathweasel.bepinex.eyeshaking"},
+ PluginSection{key:"com.deathweasel.bepinex.uncensorselector",id:"UncensorSelector",title_id:"reader.plugin_group.uncensor_selector",plugin:"UncensorSelector",guid:"com.deathweasel.bepinex.uncensorselector"},
  // Deliberately absent, and they will keep showing up in `unknown_plugin_sections` — that is correct, not a gap:
  // `KKABMPlugin.ABMData` and `KKABMX.Core` are edited through `bone.*` (`EditorModsJson`), and the same data offered
  // in two places means an edit in one is silently ignored by the other; `com.bepis.sideloader.universalautoresolver`
@@ -52,6 +56,12 @@ const PLUGIN_SECTIONS:&[PluginSection]=&[
  // `OpenKoikatsu.AppearanceSource` is our own provenance block.
 ];
 fn section(name:&str)->Option<&'static PluginSection>{PLUGIN_SECTIONS.iter().find(|s|s.key.eq_ignore_ascii_case(name))}
+/// The step of a property key into a map entry, by its key: `@<name>` for a plain string key (no dot, so the property key
+/// splits cleanly), `#<n>` for an integer key (Pushup's and the overlays' per-outfit maps are keyed by outfit number),
+/// else `m<index>`. By key, so a plugin whose entries come in another order on another card (another plugin version,
+/// an outfit missing) still lands on the same field. Array steps stay `a<index>`: a list's entries are this card's own
+/// items (MaterialEditor's per-renderer edits), and the property list is read again for every card.
+fn map_step(k:&Value,i:usize)->String{match (k.as_str(),k.as_i64()){(Some(s),_) if !s.is_empty()&&!s.contains('.')=>format!("@{s}"),(None,Some(n))=>format!("#{n}"),_=>format!("m{i}")}}
 fn xml_rows(xml:&str,outfit:usize)->Result<Vec<(String,String,String,std::ops::Range<usize>)>,String>{
  let doc=roxmltree::Document::parse(xml).map_err(|e|e.to_string())?;let mut out=Vec::new();let mut slot=20;
  for node in doc.descendants().filter(|n|n.has_tag_name("accessory")&&n.ancestors().any(|a|a.has_tag_name("accessorySet")&&a.attribute("type").and_then(|s|s.parse::<usize>().ok())==Some(outfit))){
@@ -65,7 +75,7 @@ fn visit(v:&Value,path:&str,labels:&str,color:bool,outfit:usize,out:&mut Vec<J>)
   // MaterialEditor keeps every outfit's clothes (ObjectType 1) and accessory (2) entries in one list: only the edited
   // outfit's can change the preview, so the others are not offered (an edit there showed no change at all).
   Value::Map(m) if {let int=|key:&str|m.iter().find(|(k,_)|k.as_str()==Some(key)).and_then(|(_,v)|v.as_i64());matches!(int("ObjectType"),Some(1|2))&&int("CoordinateIndex").is_some_and(|c|c!=outfit as i64)}=>{},
-  Value::Map(m)=>{let mut context=labels.to_string();for(key,title)in [("MaterialName","材質"),("RendererName","網格"),("Property","屬性")]{if let Some(s)=m.iter().find(|(k,_)|k.as_str()==Some(key)).and_then(|(_,v)|v.as_str()){context.push_str(&format!("／{title} {s}"));}}for(i,(k,v))in m.iter().enumerate(){let name=k.as_str().map(str::to_string).unwrap_or_else(||k.to_string());if name.to_ascii_lowercase().contains("texture")||name.ends_with("Original") {continue;}visit(v,&format!("{path}.m{i}"),&format!("{context}／{}",label(&name)),color||name.to_ascii_lowercase().contains("color"),outfit,out)}},
+  Value::Map(m)=>{let mut context=labels.to_string();for(key,title)in [("MaterialName","材質"),("RendererName","網格"),("Property","屬性")]{if let Some(s)=m.iter().find(|(k,_)|k.as_str()==Some(key)).and_then(|(_,v)|v.as_str()){context.push_str(&format!("／{title} {s}"));}}for(i,(k,v))in m.iter().enumerate(){let name=k.as_str().map(str::to_string).unwrap_or_else(||k.to_string());if name.to_ascii_lowercase().contains("texture")||name.ends_with("Original") {continue;}visit(v,&format!("{path}.{}",map_step(k,i)),&format!("{context}／{}",label(&name)),color||name.to_ascii_lowercase().contains("color"),outfit,out)}},
   Value::Array(a)=>for(i,v)in a.iter().enumerate(){visit(v,&format!("{path}.a{i}"),&format!("{labels}／{}",if color&&a.len()==4{["紅","綠","藍","透明度"][i].into()}else{format!("{}",i+1)}),color,outfit,out)},
   Value::Binary(b)=>if let Some(v)=unpack(b){visit(&v,&format!("{path}.packed"),labels,color,outfit,out)},
   Value::String(s)=>if let Some(xml)=s.as_str().filter(|s|s.trim_start().starts_with('<')){if let Ok(rows)=xml_rows(xml,outfit){for(key,label,raw,_)in rows {let (kind,value)=if key.ends_with("parentKey"){("parent",json!(raw))}else if key.ends_with("noShake"){("bool",json!(raw.eq_ignore_ascii_case("true")))}else{let Ok(n)=raw.parse::<f64>()else{continue};(if key.contains("color"){"color"}else{"number"},json!(n))};out.push(json!({"key":format!("{path}.xml.{key}"),"label":format!("{labels}／{label}"),"kind":kind,"value":value}));}}},
@@ -80,13 +90,14 @@ fn visit(v:&Value,path:&str,labels:&str,color:bool,outfit:usize,out:&mut Vec<J>)
 /// so the caller shows the key and whoever sees it can add the row to `PLUGIN_SECTIONS`.
 pub(super)fn catalog(blocks:&BTreeMap<String,Vec<u8>>,outfit:usize,out:&mut Vec<J>)->Result<Vec<String>,String>{
  let mut unknown=Vec::new();
- if let Some(b)=blocks.get("KKEx"){let v=decode(b)?;if let Some(m)=v.as_map(){for(i,(k,v))in m.iter().enumerate(){
+ if let Some(b)=blocks.get("KKEx"){let v=decode(b)?;if let Some(m)=v.as_map(){for(k,v)in m.iter(){
   let Some(name)=k.as_str() else{continue};
   let Some(s)=section(name) else{unknown.push(name.to_string());continue};
   // The group name is `title_id`, not part of `label`: one translated prefix for the whole group beats a
   // Chinese literal glued onto every row (which no translation pass would ever find).
   let first=out.len();
-  visit(v,&format!("plugins.m{i}"),"",false,outfit,out);
+  // Keyed by the plugin's identity (`plugins.MaterialEditor.…`), never by where its section sits in this card's KKEx.
+  visit(v,&format!("plugins.{}",s.id),"",false,outfit,out);
   for p in out[first..].iter_mut(){
    p["group_id"]=json!(s.title_id);p["plugin"]=json!(s.plugin);
    if let Some(l)=p["label"].as_str().map(|l|l.trim_start_matches('／').to_string()){p["label"]=json!(l);}
@@ -99,12 +110,30 @@ fn replace(v:&mut Value,path:&str,value:&Value,outfit:usize)->Result<(),String>{
  let (head,rest)=path.split_once('.').unwrap_or((path,""));
  if head=="packed" {let b=v.as_slice().ok_or("模組二進位格式錯誤")?;let mut decoded=unpack(b).ok_or("模組資料無法解碼")?;replace(&mut decoded,rest,value,outfit)?;*v=Value::Binary(encode(&decoded)?);return Ok(());}
  if head=="xml" {let xml=v.as_str().ok_or("模組 XML 格式錯誤")?;let rows=xml_rows(xml,outfit)?;let (_,_,_,range)=rows.into_iter().find(|r|r.0==rest).ok_or("找不到額外飾品欄位")?;let raw=match value {Value::String(s)=>s.as_str().ok_or("骨架字串錯誤")?.to_string(),Value::Boolean(b)=>b.to_string(),_=>value.to_string()};let escaped=raw.replace('&',"&amp;").replace('<',"&lt;").replace('"',"&quot;").replace('\'',"&apos;");let mut xml=xml.to_string();xml.replace_range(range,&escaped);*v=xml.into();return Ok(());}
+ if let Some(name)=head.strip_prefix('@'){
+  let child=match v {Value::Map(m)=>m.iter_mut().find(|(k,_)|k.as_str()==Some(name)).map(|(_,v)|v),_=>None}.ok_or_else(||format!("模組欄位不存在：{name}"))?;
+  return replace(child,rest,value,outfit);
+ }
+ if let Some(n)=head.strip_prefix('#'){
+  let n=n.parse::<i64>().map_err(|_|"模組路徑錯誤")?;
+  let child=match v {Value::Map(m)=>m.iter_mut().find(|(k,_)|k.as_str().is_none()&&k.as_i64()==Some(n)).map(|(_,v)|v),_=>None}.ok_or_else(||format!("模組欄位不存在：{n}"))?;
+  return replace(child,rest,value,outfit);
+ }
  let (kind,index)=head.split_at(1);let index=index.parse::<usize>().map_err(|_|"模組路徑錯誤")?;
  let child=match v {Value::Map(m) if kind=="m"=>m.get_mut(index).map(|(_,v)|v),Value::Array(a) if kind=="a"=>a.get_mut(index),_=>None}.ok_or("模組欄位不存在")?;replace(child,rest,value,outfit)
 }
 pub(super)fn patch(blocks:&mut BTreeMap<String,Vec<u8>>,changes:&BTreeMap<String,Value>,outfit:usize)->Result<(),String>{
  if !changes.keys().any(|k|k.starts_with("plugins.")){return Ok(());}
- let mut v=decode(blocks.get("KKEx").ok_or("缺少模組資料")?)?;for(k,val)in changes{if let Some(path)=k.strip_prefix("plugins."){replace(&mut v,path,val,outfit)?;}}blocks.insert("KKEx".into(),encode(&v)?);Ok(())
+ let mut v=decode(blocks.get("KKEx").ok_or("缺少模組資料")?)?;
+ for(k,val)in changes{let Some(path)=k.strip_prefix("plugins.")else{continue};
+  // The first step names the plugin; its place in KKEx is looked up again on this card. A plugin this card does
+  // not carry is an error, never "the Nth section": that is the write that would land in another plugin.
+  let (id,rest)=path.split_once('.').unwrap_or((path,""));
+  let s=PLUGIN_SECTIONS.iter().find(|s|s.id==id).ok_or_else(||format!("不認得的模組：{id}"))?;
+  let Value::Map(m)=&mut v else{return Err("模組資料格式錯誤".into())};
+  let section=m.iter_mut().find(|(k,_)|k.as_str().is_some_and(|k|k.eq_ignore_ascii_case(s.key))).map(|(_,v)|v).ok_or_else(||format!("這張卡沒有這個模組：{id}"))?;
+  replace(section,rest,val,outfit)?;}
+ blocks.insert("KKEx".into(),encode(&v)?);Ok(())
 }
 // The KKEx section keys in these tests (`com.deathweasel.bepinex.materialeditor` …) were **read off a real card**,
 // not copied from the decompiled source: the section key is the plugin's BepInEx GUID, while its source calls the
@@ -130,6 +159,35 @@ pub(super)fn patch(blocks:&mut BTreeMap<String,Vec<u8>>,changes:&BTreeMap<String
   let data=Value::Map(vec![("MaterialColorPropertyList".into(),Value::Binary(encode(&colors).unwrap())),("MaterialTexturePropertyList".into(),Value::Binary(vec![0,1,2,3]))]);
   let root=Value::Map(vec![("com.deathweasel.bepinex.materialeditor".into(),Value::Array(vec![1.into(),data]))]);let mut blocks=BTreeMap::from([("KKEx".into(),encode(&root).unwrap())]);let mut props=Vec::new();catalog(&blocks,0,&mut props).unwrap();assert_eq!(props.len(),4);let key=props[0]["key"].as_str().unwrap().to_string();patch(&mut blocks,&BTreeMap::from([(key,Value::F32(0.7))]),0).unwrap();
   let next=decode(&blocks["KKEx"]).unwrap();let plugin=&next.as_map().unwrap()[0].1.as_array().unwrap()[1];let m=plugin.as_map().unwrap();assert_eq!(m[1].1,Value::Binary(vec![0,1,2,3]));let decoded=decode(m[0].1.as_slice().unwrap()).unwrap();assert_eq!(decoded.as_array().unwrap()[0].as_map().unwrap()[1].1,Value::from("keep"));assert_eq!(decoded.as_array().unwrap()[0].as_map().unwrap()[0].1.as_array().unwrap()[0],Value::F32(0.7));
+ }
+ /// The same plugin sits at a different place in another card's KKEx (alice: MaterialEditor 9th, Pushup 23rd; megumin:
+ /// Pushup 9th). Keys name the plugin, so a key read off one card edits that plugin on the other — or is refused there
+ /// when the card does not carry it — and never writes into whatever sits at the same position.
+ #[test]fn plugin_keys_name_the_plugin_not_its_position(){
+  let pushup=|v:f32|Value::Map(vec![("Firmness".into(),Value::F32(v))]);
+  let me=Value::Map(vec![("Shininess".into(),Value::F32(0.2))]);
+  let alice=Value::Map(vec![("com.deathweasel.bepinex.materialeditor".into(),me),("com.deathweasel.bepinex.pushup".into(),pushup(0.5))]);
+  let megumin=Value::Map(vec![("com.deathweasel.bepinex.pushup".into(),pushup(0.9))]);
+  let mut a=BTreeMap::from([("KKEx".into(),encode(&alice).unwrap())]);let mut b=BTreeMap::from([("KKEx".into(),encode(&megumin).unwrap())]);
+  let mut props=Vec::new();catalog(&a,0,&mut props).unwrap();
+  let keys:Vec<&str>=props.iter().map(|p|p["key"].as_str().unwrap()).collect();
+  assert_eq!(keys,vec!["plugins.MaterialEditor.@Shininess","plugins.Pushup.@Firmness"]);
+  let mut other=Vec::new();catalog(&b,0,&mut other).unwrap();assert_eq!(other[0]["key"],"plugins.Pushup.@Firmness");
+  // alice's MaterialEditor key on megumin: refused, megumin unchanged (the positional key wrote her Pushup).
+  let err=patch(&mut b,&BTreeMap::from([("plugins.MaterialEditor.@Shininess".to_string(),Value::F32(0.7))]),0).unwrap_err();
+  assert!(err.contains("MaterialEditor"),"{err}");assert_eq!(decode(&b["KKEx"]).unwrap(),megumin);
+  // alice's Pushup key lands on megumin's Pushup, wherever it sits.
+  patch(&mut b,&BTreeMap::from([("plugins.Pushup.@Firmness".to_string(),Value::F32(0.3))]),0).unwrap();
+  assert_eq!(decode(&b["KKEx"]).unwrap(),Value::Map(vec![("com.deathweasel.bepinex.pushup".into(),pushup(0.3))]));
+  patch(&mut a,&BTreeMap::from([("plugins.Pushup.@Firmness".to_string(),Value::F32(0.1))]),0).unwrap();
+  assert_eq!(decode(&a["KKEx"]).unwrap().as_map().unwrap()[1].1,pushup(0.1));
+  assert!(patch(&mut a,&BTreeMap::from([("plugins.Nope.@x".to_string(),Value::F32(0.1))]),0).is_err());
+  // An integer-keyed map (per-outfit data) is stepped into by key, not position: outfit 3 listed first stays `#3`.
+  let per_outfit=Value::Map(vec![("com.deathweasel.bepinex.pushup".into(),Value::Map(vec![(Value::from(3),pushup(0.4)),(Value::from(0),pushup(0.6))]))]);
+  let mut c=BTreeMap::from([("KKEx".into(),encode(&per_outfit).unwrap())]);let mut rows=Vec::new();catalog(&c,0,&mut rows).unwrap();
+  assert_eq!(rows[1]["key"],"plugins.Pushup.#0.@Firmness");
+  patch(&mut c,&BTreeMap::from([("plugins.Pushup.#0.@Firmness".to_string(),Value::F32(0.2))]),0).unwrap();
+  assert_eq!(decode(&c["KKEx"]).unwrap(),Value::Map(vec![("com.deathweasel.bepinex.pushup".into(),Value::Map(vec![(Value::from(3),pushup(0.4)),(Value::from(0),pushup(0.2))]))]));
  }
  #[test]fn extra_accessory_xml_preserves_unknown_attributes_and_other_outfits(){
   let xml="<root><accessorySet type=\"0\"><accessory parentKey=\"a_n_head\" color0r=\"0.5\" addMove01x=\"0\" unknown=\"keep\" /></accessorySet><accessorySet type=\"1\"><accessory color0r=\"0.9\" /></accessorySet></root>";
