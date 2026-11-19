@@ -5591,6 +5591,15 @@ f-studio-ui 检查，并说明可取回的范围。自己的部分重打了。
 提交后用 `git log --oneline -1` 确认 HEAD 真的是自己那笔，而不是只看 `git status` 变干净就算成功：
 别人把我的档带走时，`git status` 一样会变干净。
 
+**2026-11-19 补**：只挑自己的 hunk 送进 index**之后，还要逐档看一次 `git diff --cached`**。
+按标记过滤 hunk 挡不住「同一个 hunk 内混着别人的新增行」——这天我按自己的标记挑完 hunk，staged diff 里
+`appearance.rs`／`appearance/properties.rs`／`appearance/properties/plugins.rs`／`OKCharacterMCPRegistry.cpp`
+四个档都混着 f-reader-yvonne 的 `with_range`／`range_meta`／`integer_choice`／`model_flags::annotate`／
+`NormalizeNumber`（相邻行，分不开），于是把这四个档退出 index、留在工作树，等它整档提交时一并带走
+（`136e791f5`，commit 讯息注明经我同意）。少了「看一次 staged diff」这一步，前几天那次就是这样混进去的。
+另外：分不开时**单独提交反而会让树编不过**（`plugins::catalog` 回传型别变了、`appearance.rs` 会引用尚未提交的
+`model_flags.rs`），所以那种情况本来就不该提，而不是硬挑。
+
 ## 2026-11-18 整合 #17：刪掉別人正在建的 host，讓完整 rebuild 當場失敗（協調 session 的錯）
 
 - **變更**：整合清理後，c-conquest 回報它留下一份「開始準備但沒編完」的 `Saved\Interaction\FreeTalk01Host`。協調者 15:47 直接把該目錄刪掉，想讓 c-street-city 的完整 rebuild 重建一份完整的，**刪完才去通知**。
