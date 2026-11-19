@@ -141,7 +141,9 @@ local function main()
   -- fault, Docs/CARD_READER_DREAMGUI.md): opening different cards with a few seconds between crashed within 5-17 cards
   -- every time it was on; off from the command line, three runs of 40, 60 and 60 cards did not. Turned off from code when
   -- the reader screen opened instead, it still crashed (card 6), so it has to be set before the engine renders.
-  -- -ParallelRDG keeps the engine's default.
+  -- It holds for the whole process and is never given back: the one-on-one and the studio entered from the reader run
+  -- serially too (set back and taken again while running, the reader crashed on card 4). -ParallelRDG keeps the
+  -- engine's default.
   local legacy = o.legacyreader
   for _, x in ipairs(o.passthrough) do if x:lower() == "-legacyreader" then legacy = true end end
   if not legacy and not o.parallelrdg then

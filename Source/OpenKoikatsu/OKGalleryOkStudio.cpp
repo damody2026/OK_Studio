@@ -5,7 +5,6 @@
 #include "OKSceneActor.h"
 #include "OKStudioGame.h"
 #include "OpenKoikatsuPlayerController.h"
-#include "OKReaderScreen.h"
 
 void UOKCharacterController::OnEnterOkStudio()
 {
@@ -21,8 +20,6 @@ void UOKCharacterController::OnEnterOkStudio()
 	UOKStudioGame* Game = Card.IsEmpty() ? nullptr : UOKStudioGame::Start(GetWorld(), FString(), Error);
 	if (!Game) { ShowAnimationStatus(TEXT("無法開啟工作室：") + (Card.IsEmpty() ? FString(TEXT("沒有角色卡")) : Error), true); return; }
 	bOkStudioOpen = true;
-	// The reader's render settings (its serial render graph) are its own: the studio renders as SceneEditor.cmd's does.
-	if (ReaderScreen) UOKReaderScreen::ReaderRenderSettings(false);
 	OnStopPair();
 	// The studio scene stands where the gallery character stood; the gallery hides until the studio closes.
 	const FVector Origin = PreviewActor->GetActorLocation();
@@ -48,7 +45,6 @@ void UOKCharacterController::OnOkStudioStopped()
 {
 	if (!bOkStudioOpen) return;
 	bOkStudioOpen = false;
-	if (ReaderScreen) UOKReaderScreen::ReaderRenderSettings(true);
 	for (AKKPreviewActor* A : { PreviewActor.Get(), PartnerActor.Get() }) if (IsValid(A)) A->SetActorHiddenInGame(false);
 	SetVisibility(VisibilityBeforeOkStudio);
 	SetModelLayout(bModelLayout);

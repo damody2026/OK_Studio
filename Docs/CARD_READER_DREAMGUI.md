@@ -316,17 +316,29 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 另外不是必要條件的：外觀縮圖快取（當機時它是 0；上限 128 照當）、卡片牆縮圖與所有圖片（`ok.ReaderThumbs 0`＋`ok.ReaderPictures 0` 照當）、角色貼圖累積（e-cardload 修掉 `RecentRuntimeTextures` 與色彩分級 LUT 兩個成長源後照當）。
 
-**風險：範圍控制可能擋不住（2026-11-19 09:00，待 e-cardload 的四格實驗）**
+**範圍：以「哪個行程」決定，啟動時設、之後不還原（2026-11-19 09:30 起）**
 
-- 這條 cvar 是迴避措施，真因未找到。
-- **只有啟動時設 0 量過有效**（e-cardload 兩趟 ×30 張乾淨；拿掉就第 14–15 張當）。
-- **執行中才設 0 量過無效**：讀卡器開啟時由程式設 0，第 6 張照當。
-- 下面的「作用範圍」靠的正是執行中切換：進 1 對 1／Studio 設回 2，回讀卡器再設 0。回來之後的讀卡器只剩「執行中設 0」，照上一條很可能擋不住；**不能當作有防護**。
-- 執行中設回 2 會讓平行真的回來（第 11 張當，見下），所以「平行恢復」這一半是真的，壞的是「再關回去」那一半。
-- e-cardload 正在量四格：啟動時設 0、執行中才設 0、經過 1 對 1／Studio 一輪還原再關之後、設回 1 確認當機會回來。
-- 數據回來前不改設計。可能的結論是「只能在行程啟動時決定」：只要行程可能顯示讀卡器就一開始關掉，那個行程裡的 1 對 1／Studio 也一起少一層平行。這和 120 FPS 衝突，但有防護優先；真因沒找到之前沒有第三條路。
+e-cardload 的四格實驗（協調者裁示依據）：
 
-**作用範圍（只限讀卡器）**：這條只由讀卡器的啟動器（`CardReaderDevelopment.cmd` → `run_card_reader_development.lua`）加，而且只在新版畫面時加（`-LegacyReader` 不加，`-ParallelRDG` 不加）；街區（`StreetSocial.cmd`）、OK Studio（`SceneEditor.cmd`）、百人房間的啟動器都不加，那些程序是引擎預設的 2。讀卡器裡按「進入1對1互動場景」或「進入工作室」（OK Studio）時 `UOKReaderScreen::ReaderRenderSettings(false)` 把它設回引擎預設，貼圖池 defrag 也還原；回到讀卡器時再設回 0（`ok.ReaderScreen: r.RDG.ParallelExecute ...` 會寫進 log）。注意：執行中才設 0 量過擋不住，所以從 1 對 1 回來之後的讀卡器只有「執行中設 0」那一層，沒驗證過；真正量過有效的是啟動時就是 0。
+| 格 | 條件 | 結果 |
+|---|---|---|
+| 1 | 啟動時設 0 | 兩趟 ×30 張乾淨 |
+| 2 | 啟動時平行開著、執行中設 0（讀值確認 2→0） | 第 7 張當 |
+| 3 | 從 Studio 回讀卡器（執行中還原再關一輪） | 第 4 張當 |
+| 4 | 以 0 啟動、執行中設回 2（e-fork-2 量） | 第 11 張當 |
+
+**只有算圖開始之前就設好的 0 擋得住**，執行中切換無效。所以先前「進 1 對 1／Studio 還原、回讀卡器再關」那套（`26e7e91e0`、`340b70e56`）已拆掉：
+
+- 讀卡器的啟動器（`run_card_reader_development.lua`）在啟動參數加 `-ini:Engine:[ConsoleVariables]:r.RDG.ParallelExecute=0`，整個行程到結束都是 0，同一個行程裡的 1 對 1 與 OK Studio 也一樣，不還原。
+- 會顯示讀卡器的行程都經過這個啟動器：`CardReaderDevelopment.cmd`（開發樹與打包版都有）、遊戲 MCP 的 `reader_launch`、`Tools/reader_package_sweep.lua`。沒有另外的啟動器程式（讀卡器的「返回啟動器」回到卡片牆）。
+- 獨立行程不設：`StreetSocial.cmd`（街區 stage）、`SceneEditor.cmd`／`OKStudio.cmd`、百人房間，都不會顯示讀卡器，維持引擎預設 2。
+- 漏洞：直接執行 stage 的 `OpenKoikatsu.exe` 不帶地圖時，預設地圖就是讀卡器，但沒有這條。讀卡器開啟時若讀到不是 0，會在 log 寫一行 Warning（`ok.ReaderScreen: r.RDG.ParallelExecute is N, not 0 from startup ...`）。帶 `-ParallelRDG` 的對照趟也會看到這行，是預期的。
+- 代價：同一個行程裡的 1 對 1／Studio 也少一層平行。1 對 1 的 FPS 對照見下。
+- 貼圖池 defrag：讀卡器開啟時由程式關掉，之後也不還原。
+
+以下兩段是拆掉之前的紀錄。
+
+**（已拆）作用範圍（只限讀卡器）**：這條只由讀卡器的啟動器（`CardReaderDevelopment.cmd` → `run_card_reader_development.lua`）加，而且只在新版畫面時加（`-LegacyReader` 不加，`-ParallelRDG` 不加）；街區（`StreetSocial.cmd`）、OK Studio（`SceneEditor.cmd`）、百人房間的啟動器都不加，那些程序是引擎預設的 2。讀卡器裡按「進入1對1互動場景」或「進入工作室」（OK Studio）時 `UOKReaderScreen::ReaderRenderSettings(false)` 把它設回引擎預設，貼圖池 defrag 也還原；回到讀卡器時再設回 0（`ok.ReaderScreen: r.RDG.ParallelExecute ...` 會寫進 log）。注意：執行中才設 0 量過擋不住，所以從 1 對 1 回來之後的讀卡器只有「執行中設 0」那一層，沒驗證過；真正量過有效的是啟動時就是 0。
 
 **設回去是不是真的恢復平行（2026-11-19 08:30 量）**：引擎每建一個 RDG builder 就讀一次這個 cvar（`RenderGraphBuilder.cpp` 604–605 行），照程式設回 2 就會恢復。實測：stage `EFork1119w` 以 0 啟動，執行中 `r.RDG.ParallelExecute 2`，再跑上面的配方，**第 11 張就當**，簽章和對照趟一樣（PageFault、唯一的 Active Shader 是 Pixel `MainPS`，Shader Hash `E6753E1EA9F1F20775D8BC0AD963B1EF`）。所以執行中設回 2 確實讓平行執行回來了，1 對 1 拿回的是真的平行，不只是值寫回去。（`E:\OpenKoikatsu\Saved\Reports\reader-dwell-runtime2-20261119\progress.txt`，log `E:\OpenKoikatsu\Saved\Logs\CardReader\stage-EFork1119w-reader.log`。）來回切換的 log：進 1 對 1 時 `ok.ReaderScreen: r.RDG.ParallelExecute 2 (left the card reader)` 與 `d3d12.VRAMTexturePoolDefrag 1`，回讀卡器時 `... 0 (the card reader)` 與 `... 0`（stage `EFork1119z`）；進出工作室同樣（stage `EFork1119v`，`OKStudio.Stop` 關掉後設回 0）。
 

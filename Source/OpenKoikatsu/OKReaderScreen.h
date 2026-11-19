@@ -171,9 +171,9 @@ public:
 	// 顯示字級 (the controller's EditorFontSize, 設定／介面›介面): the whole screen drawn this much larger, 1 at the default 8.
 	float GetUiScale() const { return UiScale; }
 	static float UiScaleOf(const class UOKCharacterController* Controller);
-	// The render settings that keep the reader's GPU fault away are the reader's only (Docs/CARD_READER_DREAMGUI.md,
-	// PageFault): leaving for the one-on-one gives the engine's back (false), coming back takes them again (true).
-	static void ReaderRenderSettings(bool bReader);
+	// The render settings that keep the reader's GPU fault away (Docs/CARD_READER_DREAMGUI.md, PageFault), for the whole
+	// process from Open on: never given back (switching them while running was measured not to protect).
+	static void ReaderRenderSettings();
 	class UOKCharacterController* GetController() const;
 	// The 3D view between the two panels in viewport pixels (the screen canvas is 1080 design pixels high): what the HUD
 	// draws there (the height ruler) stays clear of the panels. False before the screen is laid out.

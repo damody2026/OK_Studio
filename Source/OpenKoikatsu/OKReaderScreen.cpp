@@ -388,7 +388,7 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	// the defrag off, none crashed; with it on, every run crashed in round 1-3. Which draw keeps the stale binding is not
 	// found yet: the defrag stays off while the reader screen runs (the other modes keep it).
 	// That and the serial render graph the launcher gives: ReaderRenderSettings.
-	ReaderRenderSettings(true);
+	ReaderRenderSettings();
 	// Design pixels on a 1080-high screen, whatever the window.
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
@@ -1834,32 +1834,19 @@ float UOKReaderScreen::UiScaleOf(const UOKCharacterController* G)
 	return FMath::Clamp(Size/8.f,.75f,1.5f);
 }
 
-void UOKReaderScreen::ReaderRenderSettings(bool bReader)
+void UOKReaderScreen::ReaderRenderSettings()
 {
-	// r.RDG.ParallelExecute=0 is given by the reader's launcher at startup (run_card_reader_development.lua: set later it
-	// did not keep the fault away, measured 2026-11-19), so this process runs the render graph serially from its first
-	// frame. That stays the reader's: the one-on-one entered from it gets the engine's value back, and the reader takes 0
-	// again when it comes back (not measured to keep the fault away by itself; the startup value is). The texture pool
-	// defrag Open turns off goes the same way.
-	static bool bKnown=false,bSerialFromStart=false;static int32 DefragBefore=-1;
-	IConsoleVariable* Parallel=IConsoleManager::Get().FindConsoleVariable(TEXT("r.RDG.ParallelExecute"));
-	IConsoleVariable* Defrag=IConsoleManager::Get().FindConsoleVariable(TEXT("d3d12.VRAMTexturePoolDefrag"));
-	if(!bKnown)
-	{
-		bKnown=true;
-		bSerialFromStart=Parallel&&Parallel->GetInt()==0&&FCommandLine::Get()&&FString(FCommandLine::Get()).Contains(TEXT("r.RDG.ParallelExecute=0"));
-		DefragBefore=Defrag?Defrag->GetInt():-1;
-	}
-	if(Parallel&&bSerialFromStart)
-	{
-		const int32 Want=bReader?0:FCString::Atoi(*Parallel->GetDefaultValue());
-		if(Parallel->GetInt()!=Want){Parallel->Set(Want,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: r.RDG.ParallelExecute %d (%s)"),Want,bReader?TEXT("the card reader"):TEXT("left the card reader"));}
-	}
-	if(Defrag&&DefragBefore>0)
-	{
-		const int32 Want=bReader?0:DefragBefore;
-		if(Defrag->GetInt()!=Want){Defrag->Set(Want,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: d3d12.VRAMTexturePoolDefrag %d"),Want);}
-	}
+	// The serial render graph (r.RDG.ParallelExecute=0) keeps the reader's GPU page fault away only when it is set before
+	// the first frame: the reader's launcher puts it on the command line (run_card_reader_development.lua). Set while
+	// running it did not (2026-11-19, e-cardload's four cases: set at runtime crashed on card 7; back from the studio,
+	// where it had been given back and taken again, on card 4). So it is never switched here, for the one-on-one and the
+	// studio of this process too; a process started without it (a stage exe run directly, -ParallelRDG) is said so.
+	if(IConsoleVariable* Parallel=IConsoleManager::Get().FindConsoleVariable(TEXT("r.RDG.ParallelExecute")))
+		if(Parallel->GetInt()!=0)
+			UE_LOG(LogTemp,Warning,TEXT("ok.ReaderScreen: r.RDG.ParallelExecute is %d, not 0 from startup: the card reader runs without its GPU page fault mitigation (start it with CardReaderDevelopment.cmd / reader_launch)"),Parallel->GetInt());
+	// The texture pool defrag off while the reader screen runs, and after (as since 2026-11-19 morning).
+	if(IConsoleVariable* Defrag=IConsoleManager::Get().FindConsoleVariable(TEXT("d3d12.VRAMTexturePoolDefrag")))
+		if(Defrag->GetInt()!=0){Defrag->Set(0,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: d3d12.VRAMTexturePoolDefrag 0"));}
 }
 
 bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
