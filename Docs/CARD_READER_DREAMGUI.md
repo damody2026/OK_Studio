@@ -6400,3 +6400,77 @@ DeleteRequest.FrameFence = FrameFence.GetNextFenceToSignal();      // :650
 
 `Bindless is enabled (Configuration=RayTracing)`（啟動 log）。故障的是 raster pass 的像素著色器 `MainPS`，
 所以**不是 bindless 表**那條路。這條是免費的，但覆蓋率限於這個 build 的這個設定。
+
+# D3D12 descriptor／state cache 這一層：預測的那個 ABA **確實存在於碼裡**，但它的壽命只有一個 command list，所以撐不出 4116 幀
+
+**零建置、零趟次，純讀引擎碼。**
+
+## 一、SRV 的 descriptor table **沒有跨 draw 快取**；唯一有內容鍵的跨 draw 快取是 sampler
+
+`BuildSRVTable`（`D3D12DescriptorCache.cpp:439`）每次都**新保留一段 online heap 槽位**
+（`FirstSlotIndex = HeapSlot; HeapSlot += SlotsNeeded;`），再從各 view 的 offline descriptor
+`CopyDescriptors` 抄一份。**沒有以指標或 hash 判「這段沿用上次」的路徑。**
+
+有跨 draw 快取的是 **sampler**：`FD3D12SamplerMap`／`FD3D12SamplerSet`
+（`D3D12DescriptorCache.h:126/174`），**鍵是 `FD3D12SamplerArrayDesc`，也就是 sampler desc 本身的內容**
+（`:101-123`）——不可變狀態、裡面沒有任何資源位址。**所以 sampler 那層產不出這個故障。**
+
+## 二、但跨 draw 保留的是一個**裸的 view 指標**，而且槽位以**指標相等**判「不必重設」
+
+`D3D12StateCache.cpp:1578`：
+
+```cpp
+if ((CurrentShaderResourceViews[ResourceIndex] != SRV) || GD3D12SkipStateCaching)
+```
+
+`FD3D12ShaderResourceViewCache::Views[Stage][Slot]` 是裸 `FD3D12ShaderResourceView*`（無參照計數），
+`Cache.Resources[..]` 同樣是裸 `FD3D12Resource*`。**這就是預測的那個 ABA 形狀，而且是真的碼**
+（和 `FDreamUISectionProxy_Mesh::DrawStateVertexBuffer` 同族：舊物件死、新物件恰好落在同址 ⇒ 鍵說沒變）。
+
+## 三、**但它的窗口只有一個 command list**，所以它不是那個「持有者」
+
+`DirtyStateForNewCommandList()`（`D3D12StateCache.cpp:196`）最後四行：
+
+```cpp
+PipelineState.Common.SRVCache.DirtyAll();
+PipelineState.Common.UAVCache.DirtyAll();
+PipelineState.Common.CBVCache.DirtyAll();
+PipelineState.Common.SamplerCache.DirtyAll();
+```
+
+**每一條新的 command list 都把所有 view 槽位重新標脏**，下一次 draw 必定重抄 descriptor。
+所以這個快取**無法跨幀、更無法跨四千幀**地留著一段烘死位址的 descriptor。
+照第 7k 條，**「跨幀的 descriptor table 快取」這個機制點在這個後端不存在**；
+它最多只能是**近端讀者**（呼叫端把一個已死的 view 交給它），不是跨數千幀的持有者。
+
+## 四、這一層引擎自己還防了三道
+
+1. `SetShaderResourceView` 開頭：`if (SRV && SRV->GetResource() == nullptr) SRV = nullptr;`
+   （`:1573`）——失去資源的 view 綁成 null，不會綁出一個死位址。
+2. 資源死亡時有失效路徑：`FD3D12CommandContext::ConditionalClearShaderResource`
+   → 逐 frequency `StateCache.ClearResourceViewCaches`（`D3D12CommandContext.cpp:718`），
+   由 `ClearShaderResources(FD3D12BaseShaderResource*)`（`:730`）帶進來。
+3. 資源的配置換位置時，view 的 descriptor 會被同步重寫：`ResourceRenamed`／`UpdateDescriptor`
+   （`D3D12View.cpp:300/367`，`D3D12Resources.cpp:1602`）。
+
+## 五、現成判別器存在，但它是 **exec 指令不是 cvar**；而我認為**不該為它燒趟次**
+
+`TOGGLESTATECACHE`（`D3D12StateCache.cpp:91-104`，`FSelfRegisteringExec`）會翻轉
+`GD3D12SkipStateCaching`，使每個槽位都重設、不吃指標相等那條捷徑。
+**到達證據是它自己回印的那行 `D3D12 State Caching: OFF`**（沒有可回讀的數值，而且它是 toggle 不是 set，
+只能下一次）。它是個 bundle（viewport／scissor／PSO 的比較也一起跳過），
+但那些額外效果只是把冗餘狀態重設一遍，**不會生出也不會消掉一個死位址**。
+
+**不跑的理由**：第三點已經證明這一層的窗口是一個 command list，
+而我們手上的資料是**故障比頁面消失晚 9 到 4116 幀**。
+一個撐不到下一條 command list 的機制，解釋不了四千幀後的取樣——
+**為它跑三趟只能得到一個已經知道答案的格子**。若之後有證據把窗口縮回單一 command list，再回來跑它。
+
+## 六、剩下的形狀
+
+這一層關掉之後，還能同時滿足「跨數千幀、無參照計數、取樣時間任意晚」的只剩：
+**每次那個 UI 元素被畫時，呼叫端都重新交出同一個已死的位址**——
+也就是**呼叫端自己持有的東西**（不是 D3D12 的快取）在每次繪製時提供那個位址。
+而 f-sceneload 掃完 plugin 的裸指標只有一處跨幀且不解參，
+所以下一步要問的是**呼叫端交出去的那個 view／貼圖是從哪個容器取出來的**，
+而不是繼續往 RHI 內部的快取挖。
