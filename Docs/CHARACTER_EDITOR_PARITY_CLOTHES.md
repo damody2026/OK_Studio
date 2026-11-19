@@ -149,9 +149,10 @@
   - 只有 `limit_min`／`limit_max` 会拒绝，且只写在资料本身有界的地方：颜色分量 0..1。`shape.*`、图样大小／位置／旋转、配件 `addMove` 都不写。骨骼、物理、怀孕、风格这几组沿用原本的硬界（`Number()` 给的 `limit_*`）。
   - 其他硬拒：非有限数、型别不对、`choice` 给了 `options` 以外的值。
   - 读卡、`apply` 都不按范围改值：只写被编辑的键，送来的值只取整（`decimals`）与 `wrap`。
-- **衣服选项与袖型实测**（读卡器 parameters＋截图，`Saved/Reports/editor-parity-clothes/shots/`）：KK_007604 服装 1 换成原作上衣 217 セーラーワンピース。袖型 0 → 1：领口的蝴蝶结换成长领带；`hideOpt.0`：蓝绿色水手领消失。旗标：颜色层 1～3 可用、第 4 层不可用，选项 1 可用、选项 2 不可用，和 prefab 一致。
-  - **`objSleeves` 不等于袖长**。它是 prefab 里一组随袖型切换的物件，内容由 prefab 决定。セーラーワンピース的这组是领带／蝴蝶结，所以切袖型时画面上变的是领口。拿这件验袖型、看到领口在变，是对的。
-  - 三张截图里手臂的长袖与蓝绿袖口都没变。是不是卡上的手臂配件盖住了上衣本身的袖子：**未确认**。
+- **衣服选项与袖型实测**（读卡器 parameters＋截图，`Saved/Reports/editor-parity-clothes/shots/`）：KK_007604 服装 1 换成原作上衣 217 セーラーワンピース。截图里看到的：袖型 0 → 1 时领口的蝴蝶结换成长领带（原因见下，**未确认**）；`hideOpt.0`：蓝绿色水手领消失。旗标：颜色层 1～3 可用、第 4 层不可用，选项 1 可用、选项 2 不可用，和 prefab 一致。
+  - **袖型组切换的确实是袖子**（CLI 实测，`Saved/Reports/editor-parity-clothes/armcheck/`，`OK_DIAG=1` 导出两次比网格清单）：袖型 0 是短袖 `cf_sode_sailoronep_01` 加扣子 `cf_sode_sailoronep_01_botan`（|x| 到 0.26），袖型 1 是长袖 `cf_sode_sailoronep_02`（|x| 到 0.52，手腕）。两次导出只差这几个网格。（更正：我先前写「这组是领带／蝴蝶结」是错的，那是从截图推的，没有比网格。）
+  - **截图上看不出袖子变，是被手套盖住**：这张卡服装 1 的手套（kind 4）是 `o_gloves_magic`，|x| 0.20～0.52，从前臂到手腕。所以三张截图里手臂的长袖与蓝绿袖口都是手套，不是上衣的袖子，也不是配件（手腕的配件槽 16／17 是小爱心 `o_valletta_heart1`）。要在画面上验袖型，先把手套脱掉。
+  - 截图 1、2 之间领口从蝴蝶结变长领带：两次 CLI 导出都有同一条领带配件（槽 12 `o_necktie_yure_long`，父骨 `a_n_bust_f`）和蝴蝶结 `cf_top_sailorO_d_ribon`，网格清单没有差别，所以不是袖型组造成的。原因**未确认**（可能是读卡器重载后摆动骨或显示状态不同）。
 - **要验原作服装功能，先确认那张卡穿的是原作衣服**：KK_007604 原本 7 套的上衣都是 mod 衣服（model 摘要里没有 kind 0），所以原卡上找不到可切换的选项。挑法：`entries.rs` 的忽略测试 `clothes_option_survey` 列出有 `objOpt`／`objSleeves` 的原作衣服，再用 appearance 的 `apply` 换上。和「验头发前先确认 hair0 真的是头发部件」是同一类坑。
 - **旧 OK 卡卡内模型没有新查询**：`clothes_option_groups` 是可选查询，卡内的第三方模型转卡时还没有它。`model_flags` 用 `clothes_option_groups_recorded`（`oklib::memo_bytes_recorded`）分辨「没录到」与「合法地全是预设值」：没录到的那件衣服，它的列不标 `available`；有录到的照实标。
 - **乾净 clone 对照的已知差异（不是这次补录造成的）**：`kks-verify` 拿原作卡比游戏模式与基础库模式，差在**每个部件**的 `_OKShaderState`、`_OKShaderCull`、`_OKShaderOutline`、`_OKShaderQueue`、`_OKShaderZWrite` 与 `_GlassRamp`：游戏模式从 shader 读出（`unity.rs`），基础库模式（CLI 的 `kks-verify`／`replay`）不套 `shader_states.json`（`shader_states::complete` 只在 `okmodel_view` 与读卡器背景流程呼叫）。从 `ebd5a5329`／`97985fd99` 那条线起就有。完整库与乾净库两边的 live digest 相同、`gaps=0`、`game_reads=0`，所以补录这件的对照算过。
