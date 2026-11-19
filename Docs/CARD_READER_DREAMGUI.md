@@ -3338,3 +3338,36 @@ e-fork-2 用的是 `git diff HEAD -- <build paths> | git hash-object --stdin`（
 **和它公布的值完全相同**；`dll` 也是 `11-19_16:25:48`。
 所以我接下來量的，確實是它建的那個執行檔配上它建置時的那份原始碼——
 這是第 6 條第一次真的派上用場，而不只是記錄一個欄位。
+
+### 冷暖這個維度：**未受控，也未量到**，而且找過一個候選指標、沒看到差異
+
+原則保留——**同一個執行檔上的冷趟與暖趟不是同一個實驗**——但照實寫明：
+這個量測裡**目前沒有任何可觀察的量能說開跑前的快取是冷是暖**。所以六趟當一組看，
+紀錄裡標明這個維度**未受控、也未量到**；若尺 1 六趟出現無法用別的因素解釋的雙峰，再回來找真指標，
+**不要事後拿崩潰報告的欄位去追認**。
+
+順手把協調者提的候選指標之一查了：**載入過程本身的著色器編譯活動**。
+比對 1008 ms 那趟（`bg_B1_1`）與 11 ms 那趟（`trans_pass2`）的 `LogShaderCompilers` 行——
+**兩趟逐行相同**（同樣是 16 個本機 worker、同樣兩個 autogen 檔「unchanged, skipping write」，沒有編譯批次差異）。
+所以在這個候選指標上也**看不到冷暖差異**，這又多一分支持「那個欄位不是冷暖的代理」。
+（這是一個陰性結果，但它有分母：兩趟的該類日誌行都存在且可比，不是「沒抓到東西」。）
+
+### `r.pso.EnableAsyncCacheConsolidation` 重開前的陽性樣本申報（第 7 條）
+
+先把那個欄位的機制讀乾淨：crash handler 的一秒等待走
+`GetResources` → `WaitAndFinishAsyncCacheConsolidation(Timeout)`（`PipelineStateCache.cpp:1883`、`:2026-2041`），
+而那個函式**在 `RHICompletionEvent` 為空時立刻回 `true`**；一秒被吃掉是因為
+`RHICompletionEvent->FTaskBase::Wait(Timeout)` 等不到完成。
+而那個完成事件只有在 `GEnablePSOAsyncCacheConsolidation` 為真時才會建立（`:1821`）。
+
+**所以陽性樣本是（在跑之前登記）**：把 `r.pso.EnableAsyncCacheConsolidation=0` 之後，
+**`Created late shader associations` 的毫秒數應該從約 1008 ms 掉到很小的值**（11 ms 那種量級）。
+這是一個**行為讀數**，不是旋鈕回讀，而且它在每一趟的表裡本來就有，不必加任何工具。
+- 掉下來 ⇒ 旋鈕真的生效，那一格的結果可以讀；
+- 還是 1008 ms ⇒ 旋鈕沒接上（或那一秒另有來源），**那一格的結果不能進紀錄**，照第 7 條辦。
+
+**兩種讀法仍然並列，而且第二種現在有了明確依據**：`:1882` 的註解寫著
+「Consolidation is predicated on command context completion, allow for a timeout in case it's blocked」——
+合併本來就依賴 command context 完成，而 GPU 當掉時那當然推不動。
+所以「等滿一秒」可能只是「當機中」的同義詞。這一格能分開的是**旋鈕有沒有生效**，
+不是**那一秒的成因**；成因要另外設計。
