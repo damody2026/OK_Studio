@@ -602,3 +602,35 @@ KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等
 现在没有 CLI 会印这个数（只有 `card.rs` 里一个写死三张卡路径的诊断测试 `probe_handoff2_cards`），
 所以要嘛加一个只读的 bin 印 `me_tex.len()`／`me_color.len()`，要嘛问在 MaterialEditor 这块工作的人
 （f-yvonne）它手上有没有这种卡。**别再重跑这个 grep 探测。**
+
+### 12.6 两处更正与落地后的键形状（2026-11-19，f-yvonne 回报后）
+
+**更正一：「alice 只有颜色覆写、没有贴图覆写」是错的。** f-yvonne 用只读普查
+（`card.rs` 的 `material_editor_override_census`，跑法
+`OK_ME_DIR=<资料夹> cargo test --release --lib material_editor_override_census -- --ignored --nocapture`）
+量出 `StreetHeroines` **19 张全部 `me_tex>0`**：alice **154**、march_7th 407、qiu_wuji 31、megumin 26。
+**我错在哪**：我是从属性清单里「没有贴图那一类的列」推论卡片没有覆写——但那份清单**刻意跳过贴图**
+（`plugins.rs` 按名字跳过 texture）。**在一份本来就过滤掉某类的清单里找不到，不等于卡片里没有。**
+这和今天另外两次（把读码当实测、说「没做」之前没 grep）是同一类错：**用错的来源回答存在性问题**。
+
+**适合端到端对照的小卡**（条目少、好比对，f-yvonne 量的）：
+`D:\XKoikatuSunshine\UserData\chara\female\Re：从零开始的异世界生活 雷姆.png`（`me_tex=1`、`me_color=0`）、
+`D:\XKoikatuSunshine\UserData\chara\female\KK_138843.png`（3）、
+`D:\XKoikatuSunshine\UserData\chara\female\KK_110449.png`（9）、
+`D:\XKoikatuSunshine\UserData\chara\female\Tohru.png`（14）。
+
+**更正二：键的形状已落地**（`cb5459b1d`），身分式，具名的 map 键前面加 `@`：
+
+```
+plugins.MaterialEditor.a1.@MaterialColorPropertyList.packed.a<i>.@Value…
+```
+
+所以贴图这批的写回路径是
+**`plugins.MaterialEditor.a1.@MaterialTexturePropertyList.packed.a<i>.…`**，字典是
+**`plugins.MaterialEditor.a1.@TextureDictionary`**；12.5 节里按旧形状写的 `…a1.MaterialTexturePropertyList`
+以这一节为准。op 的参数仍照 12.1 的规则用身分而不是路径。
+
+**顺带回报一件不是我们的垃圾**：那个资料夹里 4 个 `.okremake-*.png`（共约 135 MB）是
+`oklib.rs:1724` 的 `TempCard` 留下的，时间都是 **10-28**（三周前），不是这轮产生的。
+`TempCard` 应该在 Drop 时删掉自己，所以这四个代表**当时那些行程是被杀掉的**（和「`TaskStop` 只杀
+最上层 shell、子行程不会跑收尾」是同一件事的另一面）。它们在使用者的游戏资料夹里，我不自行删除。
