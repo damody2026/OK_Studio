@@ -15,17 +15,19 @@
 class DREAMGUIRENDERER_API FDreamUIDeferredRelease
 {
 public:
-	// DIAGNOSTIC VALUE, not a fix. 240 is here to answer one question: is the window too short at all?
-	// What this queue must outlive is "the GPU has not run that command list yet", and a frame counter does not
-	// measure that -- a hitch, the RHI thread running ahead, or a blocked present all advance frames while the GPU
-	// stands still. So no constant here is correctness, only "enough on this machine today"; a GPU fence on the
-	// handover frame is the strict version of this queue, and it closes two real holes (a pooled target handed back
-	// for reuse, a raw delete) -- but, per the next paragraph, it is probably not what this crash is.
-	// 240 render frames is 1.45 s at the card reader's measured 165 FPS, which no command list the GPU has yet to run
-	// can span -- and it still faulted on one of two trips. So what reads a released resource here is not pending GPU
-	// work but something that cached it and keeps re-submitting it; a larger constant cannot be the answer either.
-	// Left at 240 only while the per-call-site split cell runs, so the source matches the binary being measured.
-	static constexpr uint32 DelayFrames = 240;
+	// DIAGNOSTIC, not a fix. How many render frames each kind waits is a cvar, so a scale can be changed without a
+	// build and the four kinds can be told apart:
+	//   DreamGUI.DeferredRelease.Frames.Texture  -- Hold(FTextureRHIRef)
+	//   DreamGUI.DeferredRelease.Frames.Buffer   -- Hold(FBufferRHIRef)
+	//   DreamGUI.DeferredRelease.Frames.Pooled   -- Hold(TRefCountPtr<IPooledRenderTarget>), a GRenderTargetPool element
+	//                                               handed back for reuse, which is not the same as destroyed
+	//   DreamGUI.DeferredRelease.Frames.Func     -- Later(TUniqueFunction), a raw delete
+	// Each defaults to 3, which is what the whole queue used before they were split.
+	//
+	// A frame count is NOT a correctness criterion and no value here is a fix: 240 frames is 1.45 s at the card
+	// reader's measured 165 FPS, which no command list the GPU has yet to run can span, and it still faulted on one
+	// of two trips. What the counts are for is telling the kinds apart -- whichever kind's scale moves the crash
+	// carries the resource that is read after it is let go.
 
 	static void Hold(FTextureRHIRef InTexture);
 	static void Hold(FBufferRHIRef InBuffer);

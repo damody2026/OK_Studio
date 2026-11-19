@@ -1,10 +1,29 @@
-// OpenKoikatsu patch (2026-11-19), not upstream DreamGUI.
+﻿// OpenKoikatsu patch (2026-11-19), not upstream DreamGUI.
 #include "DreamUIRender/DreamUIDeferredRelease.h"
 #include "RenderingThread.h"
 #include "Misc/ScopeLock.h"
+#include "HAL/IConsoleManager.h"
 
 namespace DreamUIDeferredReleaseLocal
 {
+	// One scale per kind (see the header): a cvar, so a measurement does not need its own build, and read on the
+	// render thread, which is the only thread that ticks the queue.
+	static TAutoConsoleVariable<int32> CVarFramesTexture(
+		TEXT("DreamGUI.DeferredRelease.Frames.Texture"), 3,
+		TEXT("Render frames a texture handed to FDreamUIDeferredRelease waits before it is released."),
+		ECVF_RenderThreadSafe);
+	static TAutoConsoleVariable<int32> CVarFramesBuffer(
+		TEXT("DreamGUI.DeferredRelease.Frames.Buffer"), 3,
+		TEXT("Render frames a buffer handed to FDreamUIDeferredRelease waits before it is released."),
+		ECVF_RenderThreadSafe);
+	static TAutoConsoleVariable<int32> CVarFramesPooled(
+		TEXT("DreamGUI.DeferredRelease.Frames.Pooled"), 3,
+		TEXT("Render frames a pooled render target waits before it goes back to GRenderTargetPool for reuse."),
+		ECVF_RenderThreadSafe);
+	static TAutoConsoleVariable<int32> CVarFramesFunc(
+		TEXT("DreamGUI.DeferredRelease.Frames.Func"), 3,
+		TEXT("Render frames a release function handed to FDreamUIDeferredRelease::Later waits before it runs."),
+		ECVF_RenderThreadSafe);
 	struct FEntry
 	{
 		uint32 Frame = 0;
@@ -20,6 +39,31 @@ namespace DreamUIDeferredReleaseLocal
 	{
 		static TArray<FEntry>* Instance = new TArray<FEntry>();
 		return *Instance;
+	}
+	/** Printed once, the first time the queue ticks: today's two "the knob was never connected" mistakes both came
+	 *  from having no such line. Render thread. */
+	static void LogScalesOnce()
+	{
+		static bool bLogged = false;
+		if (bLogged)
+		{
+			return;
+		}
+		bLogged = true;
+		UE_LOG(LogTemp, Log, TEXT("DreamGUI deferred release frames in effect: texture=%d buffer=%d pooled=%d func=%d")
+			, CVarFramesTexture.GetValueOnRenderThread(), CVarFramesBuffer.GetValueOnRenderThread()
+			, CVarFramesPooled.GetValueOnRenderThread(), CVarFramesFunc.GetValueOnRenderThread());
+	}
+
+	/** The scale of this entry's kind. Render thread. */
+	static uint32 FramesFor(const FEntry& InEntry)
+	{
+		const TAutoConsoleVariable<int32>& Variable =
+			  InEntry.Release           ? CVarFramesFunc
+			: InEntry.Pooled.IsValid()  ? CVarFramesPooled
+			: InEntry.Buffer.IsValid()  ? CVarFramesBuffer
+			:                             CVarFramesTexture;
+		return static_cast<uint32>(FMath::Max(0, Variable.GetValueOnRenderThread()));
 	}
 	static void Add(FEntry&& InEntry)
 	{
@@ -64,6 +108,7 @@ void FDreamUIDeferredRelease::Later(TUniqueFunction<void()> InRelease)
 void FDreamUIDeferredRelease::Tick_RenderThread()
 {
 	check(IsInRenderingThread());
+	DreamUIDeferredReleaseLocal::LogScalesOnce();
 	FScopeLock Scope(&DreamUIDeferredReleaseLocal::Lock);
 	TArray<DreamUIDeferredReleaseLocal::FEntry>& List = DreamUIDeferredReleaseLocal::Entries();
 	const uint32 Now = GFrameNumberRenderThread;
@@ -71,7 +116,7 @@ void FDreamUIDeferredRelease::Tick_RenderThread()
 	TArray<DreamUIDeferredReleaseLocal::FEntry> Due;
 	for (int32 Index = 0; Index < List.Num();)
 	{
-		if (Now - List[Index].Frame >= DelayFrames)
+		if (Now - List[Index].Frame >= DreamUIDeferredReleaseLocal::FramesFor(List[Index]))
 		{
 			Due.Add(MoveTemp(List[Index]));
 			List.RemoveAt(Index, EAllowShrinking::No);

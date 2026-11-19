@@ -2054,3 +2054,35 @@ rebuild of the draw call」——**作者已經為了同一類 bug 把裸資源�
 **同時要承認這條路解釋不了的事**：它完全不解釋 `DelayFrames` 為什麼有效，
 而那是今天唯一控制住其他兩條軸測出來的效應。所以要嘛有兩個洞，
 要嘛 `DelayFrames` 是透過某種時序副作用起作用的，這點目前沒有證據，不要替它編故事。
+
+### aliasing 那格的前提查清了：`BackdropTex` 綁的是 **transient 拷貝**，所以旋鈕接上了——但它**不跨帧**，所以我預測它還是會當（2026-11-19，跑完之前寫）
+
+**前提（跑之前查，不事後補）**：`MainPS` 的 `DreamUI_BackdropTex` 來自 `Backdrop->GetRHI()`
+（`DreamUIRenderer.cpp:1014`／`:1618`），而那個 `FRDGTextureRef` 一路追上去是
+`FDreamUICompositeStack::CopyFrom`（`DreamUICompositor.cpp:285-320`）用
+**`GraphBuilder.CreateTexture`** 建的（MSAA 走 `:306` 的 resolve，其餘走 `:315` 的 copy），
+**不是** `Frame.Pooled->GetRHI()` 那個池子元素。
+**所以 `r.RDG.TransientAllocator=0` 確實動得到它，這一格是可讀的。**
+
+**但同一次追蹤也否掉了這一格的修法前提。** `Backdrop` 是 `PopAndComposite` 裡的**區域** `FRDGTextureRef`，
+`->GetRHI()` 是在 **pass 的 lambda 之內**讀的（`:450` 合成、`:1618` 內建），
+而那個 `FDreamUIBuiltInDrawCache`（`DreamUIRenderer.cpp:860-890`）**只存 shader 與 pipeline 狀態，沒有任何貼圖**，
+而且是 lambda 裡的區域變數（`:1610`／`:2359`）。
+**沒有任何東西把背景拷貝留到下一帧**，所以它的用法正好就是 RDG transient 的語意。
+**因此預測登記成：這一格還是會當。** 若真的活過 30 張，那要先解釋為什麼——
+不能直接當成「aliasing 就是元凶」。
+
+`ERDGTextureFlags::MultiFrame` 確實存在（引擎 `RenderGraphDefinitions.h:191`），
+但它的用途寫的是「survive through frame, that is important for **multi GPU alternate frame rendering**」；
+既然沒有東西跨帧留著那張拷貝，這個旗標也不是修法。
+
+**另記一筆（不是這個 crash 的線）**：`Frame.TextureRHI = Frame.Pooled->GetRHI()`（`DreamUICompositor.cpp:241`）
+是裸指標，但池子元素被交給下一個要求者之後，它仍然指著**一張活著的貼圖**——
+所以它的失效形狀是「畫出別人的內容」，不是 page fault。
+以後若有人報「UI 偶爾閃出別的畫面」，答案在這裡，不要再從當機這條線找。
+
+**還要修正一個把兩條線接起來的猜想**：`Hold(Top.Pooled)` 延後的是**還給 `GRenderTargetPool`**，
+而背景拷貝走的是 **RDG transient allocator**——**在引擎這一層是兩個不同的池**，
+所以 `DelayFrames` 與 `TransientAllocator` 不是同一件事的兩頭。
+它們要到 **D3D12 那一層才共用同一個唯讀貼圖池配置器**，
+這正好是之前記下的「被釋放的子系統和取樣的子系統只共用一個配置器」那個形狀。
