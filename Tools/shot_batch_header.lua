@@ -63,6 +63,13 @@
 --   * an untracked Tools/ file written LF, then CRLF with the same text → SAME (0 of 21), exit 0;
 --   * then one character changed → DIFFERENT (1 of 21: uncommitted status_hash), exit 1.
 --   Run it from the project root: the paths from `git status` are read relative to the current directory.
+--   * an untracked Source/OpenKoikatsu/*.cpp added (not ignored, would be compiled) → DIFFERENT (1 of 21), exit 1; removed
+--     → SAME, exit 0. Untracked files come from `git status --untracked-files=all`, each counted by its `hash-object`
+--     (no id at HEAD); files `.gitignore` hides (Intermediate, Binaries, Saved) are left out.
+--   What can change the binaries and is in the fingerprint: committed changes (ids at HEAD), uncommitted tracked and
+--   untracked files under the program paths, the four data folders, the binaries' own size and mtime. Not recorded:
+--   the compiler and engine version — they change rarely, and a rebuild with a new one rewrites the binaries, whose
+--   mtime and size are compared anyway.
 --
 -- Which binaries: the card reader runs the ENGINE's UnrealEditor.exe with the project (run_card_reader_development.lua),
 -- and the engine is never rebuilt — its mtime says nothing. What our builds change are the project's editor modules, and
