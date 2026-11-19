@@ -64,7 +64,7 @@ F:\OpenKoikatsu\Tools\lua\lua.exe F:\OpenKoikatsu\Tools\shot_batch_header.lua wr
 状态下会给出不同杂凑，`check` 于是回 DIFFERENT 而其实什么都没变 —— 又一个「会因为与量测无关的原因
 而变动的指纹」，这次噪声来自行尾（CRLF↔LF）。**这支工具由 f-yvonne 修，我用她改好的版本，不自己再写一套。**
 
-**未追踪档的事：v3 本来就涵盖，不用等 v4。** 曾经担心「只算 `hash-object` 与 HEAD 不同的路径」会漏掉
+**未追踪档的事：v3 就是最终版，没有 v4、不要等。** 曾经担心「只算 `hash-object` 与 HEAD 不同的路径」会漏掉
 一个还没 `git add` 的新 `.cpp`／`.rs`／`.lua`（会被编进执行档而指纹看不到）。查清了：
 **v3 的路径清单来自 `git status --porcelain --untracked-files=all`，不是 `git ls-files`**，
 所以未被 ignore 的未追踪档本来就全部列入、各自按 `hash-object` 计，而且它们在 HEAD 没有 id、**必定算进指纹**。
