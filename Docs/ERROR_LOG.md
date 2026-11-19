@@ -5835,3 +5835,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **做錯的事**：`UOKDreamControl::SetValue` 只處理滑桿、勾選、下拉、文字框，數字框（`USpinBox`）會回 `it takes no value`；稽核表又把數字框算成「已鏡像、能操作」，兩邊沒有對起來。補「顯示字級」時第一次 `set` 就失敗才發現。
 - **修正**：`SetValue` 加數字框（數字、範圍檢查，照輸入框提交）。
 - **再犯前檢查**：稽核「能操作」的類別清單（`AuditControls` 的 `Operable`）和 `SetValue`／`Press` 處理的類別要一一對上；加一種控制項時兩邊一起改，並實際 `set` 一次。
+
+## 2026-11-19：`git add <檔案>` 把別的 session 還沒提交的 hunk 一起提交了（e-cardload-physics）
+
+- **做錯的事**：`ce81eae52` 要提交的只有我寫的「防護的驗收與對照」一節，但我用 `git add Docs/CARD_READER_DREAMGUI.md` 整個檔案加進去，順便提交了 e-fork-2 當時還沒提交的另一節（`## 未結案：讀卡器第三條 GPU PageFault` 與那 5 行刪除）。這次內容沒問題（對方也確認了），但共用工作樹的規矩是**只提交自己的 hunk**。
+- **為什麼會發生**：我只看了 `git status --porcelain`（檔案層級）就決定要加哪些檔，沒有看 `git diff -- <檔案>` 的每一塊。同一份文件兩個 session 都在改是常態，檔案層級的「這是我改的檔」判斷不成立。
+- **再犯前檢查**：`git add` 之前對每個要加的檔跑一次 `git diff -- <檔>`，確認**每一塊**都是自己寫的；有別人的就只 stage 自己那幾塊（把自己的 hunk 存成 patch，`git apply --cached`），不要整檔加。文件尤其要注意，程式碼衝突會被編譯擋下來，文件不會。
