@@ -92,11 +92,26 @@ public:
 		 *  unbuilt item every Sync), and the per-object loop as a whole. SyncMs minus SyncLoopMs minus SyncMapMs is
 		 *  what Sync spends outside the loop. */
 		double SyncMapMs = 0., SyncGateMs = 0., SyncLoopMs = 0.;
+		/** Where SyncGateMs is, measured on the 8806-object scene (5867 items, ~1200 Syncs, cold, 2026-11-20): of
+		 *  11 590 ms, SyncGateSpawnMs was 11 036 and the rest of SyncGateOpenMs 102, ItemPrepareKey 208 and
+		 *  ItemModel 15. So it is not the gate being asked: 4.32M calls, 4.31M of them turned away by the caps, cost
+		 *  about 0.2 s between them (~50 ns of map lookup each). It is the 5867 opens, at 1.88 ms each, and that is
+		 *  one AsyncThread per item: the engine creates a 4 MB OS thread and waits for it to start running (Async.h,
+		 *  FRunnableThread::Create), which on a machine already running eight decode workers is milliseconds.
+		 *  Before changing any of this, read those five fields again on the build in hand. */
+		double SyncGateModelMs = 0., SyncGateKeyMs = 0.;
+		/** Starting one item's open: the whole block (its build JSON a second time for the worker, the shared state,
+		 *  the thread, the map) and, inside it, only the AsyncThread call. With the count of opens started. */
+		double SyncGateOpenMs = 0., SyncGateSpawnMs = 0.;
+		int32 GateCalls = 0, GateCapped = 0, GateKeys = 0, GateOpens = 0;
 		int32 Characters = 0, Items = 0, Others = 0;
 		/** Syncs in all, and those that built nothing because every character was still opening. */
 		int32 Syncs = 0, StarvedSyncs = 0;
 	};
 	FLoadStats LoadStats;
+	/** What ok.Studio.SyncDetailTimers said when this Sync started: the per-item timers inside the gate read it from
+	 *  here rather than asking the cvar once per item. */
+	bool bSyncDetailTimers = false;
 	/** Instrument self-test (2026-11-19, OK_SELFTEST_SYNC_WORLD_SLEEP_MS): this actor has taken its one injected
 	 *  pause inside the section sync_world_ms times. One per actor, which is one per loaded scene. */
 	bool bSelfTestSlept = false;

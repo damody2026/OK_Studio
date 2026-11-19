@@ -219,6 +219,15 @@ namespace
 				Row->SetNumberField(TEXT("syncs"), S.Syncs);
 				Row->SetNumberField(TEXT("starved_syncs"), S.StarvedSyncs);
 				Row->SetNumberField(TEXT("objects"), Game.Document ? Game.Document->Objects.Num() : 0);
+				// Inside the gate: where its milliseconds are, and how many items reached each part of it.
+				Row->SetNumberField(TEXT("sync_gate_model_ms"), S.SyncGateModelMs);
+				Row->SetNumberField(TEXT("sync_gate_key_ms"), S.SyncGateKeyMs);
+				Row->SetNumberField(TEXT("gate_calls"), S.GateCalls);
+				Row->SetNumberField(TEXT("gate_capped"), S.GateCapped);
+				Row->SetNumberField(TEXT("gate_keys"), S.GateKeys);
+				Row->SetNumberField(TEXT("sync_gate_open_ms"), S.SyncGateOpenMs);
+				Row->SetNumberField(TEXT("sync_gate_spawn_ms"), S.SyncGateSpawnMs);
+				Row->SetNumberField(TEXT("gate_opens"), S.GateOpens);
 				// One per Sync is what the scope costs; many more would mean the saving moved into rebuilding the index.
 				Row->SetNumberField(TEXT("find_index_builds"), Game.Document ? Game.Document->FindIndexBuilds() : 0);
 				Rows.Add(MakeShared<FJsonValueObject>(Row));

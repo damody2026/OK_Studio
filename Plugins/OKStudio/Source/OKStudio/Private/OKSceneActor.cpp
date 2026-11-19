@@ -730,6 +730,7 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 {
 	const int32 Ahead = ItemOpensAhead();
 	if (Ahead <= 0) return true;
+	if (bSyncDetailTimers) ++LoadStats.GateCalls;
 	TSharedPtr<FPreparedItem> P = PreparedItems.FindRef(Object.Id);
 	if (!P)
 	{
@@ -748,17 +749,27 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 			OpeningItems = 0;
 			for (const auto& Pair : PreparedItems) if (!Pair.Value->bDone) ++OpeningItems;
 		}
-		if (OpeningItems >= Ahead || PreparedItems.Num() >= Ahead * 3) return false;
+		if (OpeningItems >= Ahead || PreparedItems.Num() >= Ahead * 3)
+		{
+			if (bSyncDetailTimers) ++LoadStats.GateCapped;
+			return false;
+		}
 	}
 	FString Model, Prefab, ModelError;
 	// Not a model this build can find: Build says why, in the frame, as it did before.
-	if (!ItemModel(Object.Item, Model, Prefab, ModelError)) return true;
+	const double ModelStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
+	const bool bHasModel = ItemModel(Object.Item, Model, Prefab, ModelError);
+	if (bSyncDetailTimers) LoadStats.SyncGateModelMs += (FPlatformTime::Seconds() - ModelStart) * 1000.;
+	if (!bHasModel) return true;
+	const double KeyStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
 	const FString Key = ItemPrepareKey(Object.Item, Model, Prefab);
+	if (bSyncDetailTimers) { LoadStats.SyncGateKeyMs += (FPlatformTime::Seconds() - KeyStart) * 1000.; ++LoadStats.GateKeys; }
 	if (P && P->Key != Key) { DropPreparedItem(Object.Id); P.Reset(); }
 	if (P) return P->bDone;
+	const double OpenStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
 	P = MakeShared<FPreparedItem>();
 	P->Key = Key;
-	P->Opening = AsyncThread([P, Library = LibraryDirectory(), Model, Prefab, Json = ItemBuildJson(Object.Item)]
+	auto OpenWork = [P, Library = LibraryDirectory(), Model, Prefab, Json = ItemBuildJson(Object.Item)]
 	{
 		const double Start = FPlatformTime::Seconds();
 		P->bOpened = P->Session.OpenOkModelFk(Library, Model, Prefab, Json, P->Error);
@@ -769,8 +780,12 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: item materials not prepared: %s"), *MaterialError);
 		P->OpenSeconds = FPlatformTime::Seconds() - Start;
 		P->bDone = true;
-	}, 4 * 1024 * 1024);
+	};
+	const double SpawnStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
+	P->Opening = AsyncThread(MoveTemp(OpenWork), 4 * 1024 * 1024);
+	if (bSyncDetailTimers) LoadStats.SyncGateSpawnMs += (FPlatformTime::Seconds() - SpawnStart) * 1000.;
 	PreparedItems.Add(Object.Id, P);
+	if (bSyncDetailTimers) { LoadStats.SyncGateOpenMs += (FPlatformTime::Seconds() - OpenStart) * 1000.; ++LoadStats.GateOpens; }
 	// This frame's count knows about the open it just started, so the cap still holds within one Sync.
 	if (OpeningItemsFrame == GFrameCounter) ++OpeningItems;
 	return false;
@@ -1534,6 +1549,7 @@ void AOKSceneActor::Sync()
 	// is instrumentation heavy enough to be worth its own measurement, which is what this switch is for: run the same
 	// scene with it on and off and the difference in sync_ms is what the timers themselves cost. 1 keeps the detail.
 	const bool bDetail = CVarOkStudioSyncDetailTimers.GetValueOnGameThread() != 0;
+	bSyncDetailTimers = bDetail;
 	const double LoopStart = FPlatformTime::Seconds();
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
