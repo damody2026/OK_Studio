@@ -10,6 +10,15 @@
 -- uncommitted edits get compiled in. A rebuild in the middle of a session makes the earlier "before" shots useless:
 -- `check` then says DIFFERENT and those batches must be shot again.
 --
+-- Self-test record (a gauge's output only counts after it was checked on known-positive and known-negative samples;
+-- E group rule 7, 2026-11-19). 2026-11-19, F tree, exe Binaries/Win64/OpenKoikatsu.exe:
+--   * two `write`s of the same exe and tree → `check` SAME (exit 0)  — known positive;
+--   * one header's exe.mtime_epoch changed  → `check` DIFFERENT (exit 1), lists `exe.mtime_epoch` — known negative;
+--   * a folder without a header              → `check` MISSING (exit 2).
+--   The first run found a real fault: `os.tmpname()` on Windows gives "\s1n7g." (drive root), and the status hash came
+--   back empty with no error; it now uses %TEMP% and fails when git returns no hash. Keep both hashes: `git diff HEAD`
+--   does not see untracked files, `git status --porcelain` does.
+--
 -- Run it right after the build that produced the exe and before shooting — the tree may change while you shoot. It
 -- runs git only (no build, no cargo), so it is fine while `may-build` says wait.
 local lfs = require("lfs")
