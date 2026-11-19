@@ -5777,6 +5777,21 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **通则**：对任何会启动游戏／编辑器的工具，先确认这次呼叫是读还是写；拿不准就去读它的源码，而不是对着别人的量测窗口试。
 
 
+
+## 2026-11-19：拿 cherry-pick 的「作者日期」和产物 mtime 比，差点判成「还有第二层」（f-sceneload）
+
+- **情况**：读卡器 11:34 开 `StreetHeroines/alice.png` 失败，缺口列了 29 个 GUID，**里面有 `SAC.clit`**——
+  正是 `60c0aaea3` 那个回归多问的 uncensor GUID。我查 `git show d20a6c4b5`（＝从 E 树 cherry-pick 过来的
+  `4a17979ad`）看到 `Date: 11-19 00:55`，而插件 DLL 与 `ok_extract.lib` 是 11:15，**于是推论「产物晚于修法，
+  所以还有第二层」**，差点往这个方向查下去。
+- **错在哪**：`git show` 印的是**作者日期**，而 **cherry-pick 保留作者日期**。那笔真正进 F 树的时间是
+  **committer 日期 11:36**（`git log -1 --format=%cd`）——比 11:15 的产物晚，也刚好落在我那个窗口里。
+  产物没含修法，不是有第二层。
+- **怎么确认的**：重编 CLI（11:55）再 `--oklib strict-check`，**原卡 `alice.png` 直接 `OKSTRICT ok`**；
+  同一份基础库、同一张卡，只换了程式版本。全库 `verify` 也从 f-yvonne 报的 17/19 失败降到 18 张里 2 张。
+- **判准**：要判断「某个产物有没有含某笔 commit」，比的是 **committer 日期（`%cd`）**，不是 `%ad`。
+  凡是 cherry-pick、rebase、`git am` 过来的 commit，作者日期都早于它实际进树的时间，有时早好几小时。
+  （这是上一条「验证前先确认产物 mtime 晚于要验的 commit」的补丁：那条只说要比 mtime，没说和哪个日期比。）
 ## 2026-11-19：修上面那条时加的「未知栏位要报错」，把 `reader_call` 的每一次呼叫都挡掉了（f-sceneload）
 
 - **症状**：`reader_call '{"action":"select","index":1}'` ＋ `ui_press 載入3D` 换不了卡，读卡器的 log 一直在载入第 0 张。
