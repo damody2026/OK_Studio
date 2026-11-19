@@ -5929,3 +5929,33 @@ GC 就**不可能**回收它。它被回收了，所以那一刻**沒有任何 G
 或已錄好的 mesh draw command。**換卡後 105～2854 幀之間每幀都還在畫的那個綁定，就在這裡面。**
 
 這一節是讀碼，沒有新建置、沒有新趟數。
+
+# 交接反查這一格：事前預期（在建置之前寫下）
+
+## 要量的
+
+每張卡片貼圖在 `SetTextureParameterValue` 那一刻記一條「交給了誰」（貼圖名 → MID 名 → 參數名 → 幀），
+然後在 `OKReleaseStaleKeptRuntimeTextures` 把強參照移出的那一刻，對同一張貼圖反查：
+它曾交給哪些 MID、那些 MID 現在還在不在、還在的話那個參數現在指向什麼。
+
+## 事前預期（三種結果，各自指向不同的修法檔案）
+
+| 量到 | 讀法 | 修法會在哪 |
+|---|---|---|
+| **A：MID 還活著，參數已換成新卡的貼圖** | game thread 乾淨，舊位址只留在 render thread 那份 `FMaterialInstanceResource`／已建好的 uniform buffer 裡，直到 uniform expressions 重算 | sweep 之前（或換參數之後）強制 `CacheUniformExpressions`／`MarkRenderStateDirty` |
+| **B：MID 還活著，參數還指著這張**（即將被釋放的那張） | 那就不是「沒人指著」，而是有人指著卻讓它被回收——`UPROPERTY` 本該延命，所以表示那個 MID 自己已經不可達（GC 一起收） | 元件／MID 的擁有關係那一側 |
+| **C：MID 已經不在了** | 消費者不在材質這一層 | 元件或 mesh draw command 的快取那一側 |
+
+協調押 **A**，我也押 A——理由是 GC 成功回收了貼圖，這表示放手那一刻沒有任何 GC 看得見的材質引用，
+而「MID 活著但參數已改」正好同時滿足這兩件（MID 可達、但它不再指向舊貼圖）。
+
+**但 A 有一個我現在就看得出來的內部矛盾，所以要特別注意**：若 MID 還活著且參數已改，
+那 `SetTextureParameterValue` 本身就會走 UE 自己的 `CacheUniformExpressions`／render state 更新路徑
+（它不是只改一個 `TMap`）。若量到 A 而修法「強制重算」又無效，那表示重算有發生、但**舊位址還在別處**——
+那時要回頭看的是 draw command 與 shadow／outline 那幾條另外建的 MID（`KKPreviewActor.cpp` 的七處）。
+**先把量測做出來，不要先寫修法。**
+
+## 這一格不做什麼
+
+`ok.RuntimeTextureRelease=0` 那一格**作廢，協調拍板**：它要證的「故障需要這條釋放路徑」，
+放手→3 幀釋放→105 幀後仍在取樣的鍊子已經證了，再花一次建置加三趟確認已知的事不值得。
