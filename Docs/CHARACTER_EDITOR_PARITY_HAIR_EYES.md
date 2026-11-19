@@ -300,53 +300,61 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
 2. **旗标在哪**：`hairSameSetting` 这四个是**玩家设定不是卡片资料**，不要写进人物卡；
    放读卡器自己的设定（和 `Config/ReaderEditor/` 同一层），预设 true，照原作。
 
-## 8. 第二批的页面定义草案（给 `Config/ReaderEditor/pages.json`）
+## 8. 第二批的页面：F 树改 C++，整合后要同样改 `pages.json`（2026-11-19）
 
-读卡器新版画面由定义档描述（e-fork-2，`Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md`，型别 `number`／`color`／
-`bool`／`choice`／`picker`／`button`／`bones`／`custom`／`mirror`）。**那个档目前只在 E 树**
-（`E:/OpenKoikatsu/Config/ReaderEditor/pages.json`，v1 只是把手写页面原样描述一次），F 树还没有，
-所以下面是草案：等它进 F（或由它的主人贴）再生效。头发现在只有两页（「髮型」「髮色與設定」），
-要变成原作的四页＋共通页。
+**两边都要有，因为两边在不同时机生效。** e-fork-2 的 `BuildCategories` 已经改成**先读
+`Config/ReaderEditor/pages.json`，读得到就照档案建页**，手写那段只在读不到时当备援（它的
+`1c5dfbea7`／`3f897080d`／`79f1d49cc`／`7d9465d39`，目前都只在 E 树，F 树连载入程式与那个档都没有）。
+所以：
 
-**每一页一个槽位，`button` 的 `action` 就是第 7 节那些原子写入**（走 `properties_apply` 的 `ops`，
-见 [API 第 10 节](READER_UI_APPEARANCE_API.md)）：
+- **F 树现在**：手写的 `BuildCategories` 是唯一路径，第二批的四页＋共通页、目／瞳就做在那里（本轮已做）。
+- **整合之后**：预设会走档案，手写那段变备援——那时 `pages.json` 的「頭髮」「臉」两个分类的 `subs`
+  也要照同样的切法改，否则改了 C++ 在预设设定下看不到。稽核用 `ok.ReaderScreen pages builtin／file` 对照。
+
+### 8.1 页面定义（`pages.json` 的 `subs`，栏位照 `Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md`「第一步的實作」）
 
 ```jsonc
-{ "name": "後髮",                                  // 前髮／側髮／附加髮同形，只换 slot 与 picker target
-  "pickers": { "targets": ["hair0"], "properties": [] },
-  "controls": [
-    { "key": "prop:hair.parts.0.baseColor",    "kind": "color",  "label": "主色" },
-    { "key": "prop:hair.parts.0.startColor",   "kind": "color",  "label": "髮根色" },
-    { "key": "prop:hair.parts.0.endColor",     "kind": "color",  "label": "髮尾色" },
-    { "key": "prop:hair.parts.0.outlineColor", "kind": "color",  "label": "外框色" },
-    { "key": "prop:hair.parts.0.glossColor",   "kind": "color",  "label": "光澤色" },
-    { "key": "prop:hair.parts.0.acsColor.0",   "kind": "color",  "label": "髮飾色 1" },
-    { "key": "prop:hair.parts.0.acsColor.1",   "kind": "color",  "label": "髮飾色 2" },
-    { "key": "prop:hair.parts.0.acsColor.2",   "kind": "color",  "label": "髮飾色 3" },
-    { "key": "prop:hair.parts.0.length",       "kind": "number", "label": "長度" },
-    { "key": "prop:hair.parts.0.noShake",      "kind": "bool",   "label": "不晃動" },
-    { "kind": "button", "label": "重設外框色", "action": "hair_reset_outline" },
-    { "kind": "button", "label": "重設光澤色", "action": "hair_reset_gloss" },
-    { "kind": "button", "label": "髮色反映到眉／陰毛", "action": "hair_color_to_eyebrow_and_underhair" },
-    { "kind": "button", "label": "取眉色當髮色", "action": "hair_from_eyebrow" },
-    { "kind": "button", "label": "取陰毛色當髮色", "action": "hair_from_underhair" }
-  ],
-  "settings": [                                    // 玩家设定，不是卡片资料；预设全部 true（原作新安装）
-    { "key": "setting:hairSameSetting",    "kind": "bool", "label": "四槽同步" },
-    { "key": "setting:hairAutoSetting",    "kind": "bool", "label": "自動渐层" },
-    { "key": "setting:hairOutlineSetting", "kind": "bool", "label": "連帶外框色" },
-    { "key": "setting:hairGlossSetting",   "kind": "bool", "label": "連帶光澤色" }
-  ]
-}
+// 「頭髮」分类：四页一槽，最后一页是共通
+{ "name": "後髮", "pickers": { "targets": ["hair0"], "properties": ["hair.parts.0"] },
+  "own_buttons": [
+    { "label": "重設外框色",          "action": "ops", "arg": { "op": "hair_reset_outline" } },
+    { "label": "重設光澤色",          "action": "ops", "arg": { "op": "hair_reset_gloss" } },
+    { "label": "髮色反映到眉／陰毛",  "action": "ops", "arg": { "op": "hair_color_to_eyebrow_and_underhair" } },
+    { "label": "取眉色當髮色",        "action": "ops", "arg": { "op": "hair_from_eyebrow" } },
+    { "label": "取陰毛色當髮色",      "action": "ops", "arg": { "op": "hair_from_underhair" } }
+  ] }
+// 前髮／側髮／附加髮同形，只换 hair1／hair2／hair3 与 hair.parts.1／2／3
+{ "name": "頭髮共通", "pickers": { "targets": ["hair_gloss"], "properties": ["glossId"] } }
+
+// 「臉」分类：原本一页「眼睛」切成原作的两页
+{ "name": "眼睛", "sources": [{ "shape": "face", "group": 4 }], "bone_category": "原遊戲參數",
+  "pickers": { "targets": ["eyeline_", "eyeshadow"], "properties": ["eyeline", "eyeshadow", "foreground"] } }
+{ "name": "瞳", "bone_category": "原遊戲參數",
+  "pickers": { "targets": ["pupil", "gradation", "eye_white", "eye_hi_"],
+               "properties": ["pupil", "grad", "white", "hlUp", "hlDown"] },
+  "own_buttons": [
+    { "label": "左眼複製到右眼", "action": "ops", "arg": { "op": "eye_copy", "from": 0 } },
+    { "label": "右眼複製到左眼", "action": "ops", "arg": { "op": "eye_copy", "from": 1 } }
+  ] }
 ```
 
-- 「主色」这个 `color` **不能走一般的单栏位写入**：它要带着四个设定展开成 `hair_base_color` 这个 op
-  （旗标全开时一次写 4 槽 × 5 色）。所以 `color` 这一型要能指定 `op`，或由画面把主色这一列接到 op 上——
-  这是第二批唯一需要改 C++ 的地方，其余都只是 JSON。
-- 「頭髮共通」页只有一项：`{ "key": "prop:hair.glossId", "kind": "choice", "label": "光澤種類" }`。
-- 眼睛两页：`目`是 `shapeValueFace[24..37]` 共 14 个 `number`（`display_scale` 100、`decimals` 0）加眼线
-  `picker`；`瞳`是左右各一组 `color`／`choice`／`number`，外加
-  `{ "kind": "button", "label": "左眼複製到右眼", "action": "eye_copy", "arg": { "from": 0 } }` 与反向。
+`hair.parts.N` 当 token 是因为属性键长成 `hair.parts.0.baseColor.0`，而 token 是子字串比对，所以**正好是那一槽**。
+
+### 8.2 `own_buttons` 的 `action` 建议只加一个名字：`ops`
+
+载入程式现在只认 `add_accessory_slot`（在那个 `own_buttons` 回圈里），不认得的 action 会红字报错、那页不建。
+**建议加的是一个 `ops`，把 `arg` 原样交给 `ApplyPropertyOps`**，而不是六个 op 各加一个 action 名：
+
+- 以后新增原子动作（第三批的 `hair_base_color`、材质、眼睛叠加贴图）**只改 JSON，不用再动载入程式**；
+- 动作的语义只有一份（ok-extract 的 `appearance/ops.rs`），按钮、MCP `reader_call {"action":"ops"}`、CLI
+  `properties_apply` 的 `ops` 三条路不会各长一套；
+- 被拒的原因（忙碌、没角色、有未套用的暂存编辑）由 `ApplyPropertyOps` 回字串，照现在的做法用 ScreenNote 显示——
+  按钮静静地什么都不做会被读成模型坏了，不是编辑器在忙。
+
+### 8.3 还没做的（第三批）
+
+- **「主色」那一列要接到 `hair_base_color`**（带 `same`／`auto`／`outline`／`gloss` 四个旗标，预设全开），
+  以及四个旗标本身的开关。这要动颜色列的写入路径，不是加一个按钮，所以单独一批。
 - **范围 metadata 照新定案**：`min`／`max` 是原作 UI 的范围（配 `display_scale`／`unit`），`Validate()` 不拿它挡；
-  要挡才写 `limit_min`／`limit_max`。**髮飾長度、眼球缩放／位移这几项不写 `limit_*`**——没有证据证明引擎自己会夹，
+  要挡才写 `limit_min`／`limit_max`。**髮飾長度、眼球缩放／位移不写 `limit_*`**——没有证据证明引擎自己会夹，
   写错的那天不会报错，只会悄悄改坏卡。`wrap` 只给真的循环的量（这两页没有）。
