@@ -718,3 +718,22 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
 **所以「按行程、啟動時設、不還原」的代價只落在「從讀卡器進去的 Studio／1 對 1」**。
 街區那條線的 1 對 1（120 FPS 的目標）與單獨開的 `SceneEditor.cmd` 是不同行程、不設那條 cvar，**完全不受影響**。
 要量代價，量的對象就只有「從讀卡器進 1 對 1／Studio」這一種用法。
+
+## 代價：從讀卡器進的 1 對 1，RDG 串行對平行的 FPS（2026-11-19，e-fork-2）
+
+條件：stage `EFork1119u`（`4dabc065a`）、1600×1000 視窗、RTX 5090、slot 獨佔；同一張卡（`E:\OKPackage\TestCards-20261118` 第 2 張，Ahri）、從讀卡器「進入1對1互動場景」、等 30 秒、按「站立愛撫」、等 15 秒，再 `startfpschart`／`stopfpschart` 20 秒。0 與 2 交錯各跑兩趟，每趟重開行程（只有啟動時的值有意義）。
+
+| 啟動參數 | 趟 | 平均 FPS | 遊戲執行緒 | 算圖執行緒 | GPU | 120 FPS 錯過 |
+|---|---|---:|---:|---:|---:|---:|
+| `r.RDG.ParallelExecute=0`（讀卡器現行） | 1 | 82.46 | 12.11 ms | 5.05 ms | 3.51 ms | 31.3 % |
+| 同上 | 2 | 87.08 | 11.47 ms | 4.60 ms | 3.40 ms | 27.4 % |
+| 不設（引擎預設 2） | 1 | 87.72 | 11.39 ms | 4.26 ms | 3.12 ms | 26.9 % |
+| 同上 | 2 | 84.56 | 11.82 ms | 4.43 ms | 3.48 ms | 29.5 % |
+
+- **平均：0 是 84.8 FPS，2 是 86.1 FPS，差約 1.5 %，比同條件兩趟之間的差（約 5 %）還小**，在雜訊內。遠低於協調者設的 10 % 門檻。
+- 這個場景卡在遊戲執行緒（11.4–12.1 ms），不是算圖。串行讓算圖執行緒多約 0.5 ms（4.3–4.4 → 4.6–5.1 ms）、GPU 多約 0.15 ms，都還在 8.33 ms 預算內。
+- 所以等遊戲執行緒優化到 120 FPS 時，算圖執行緒 5 ms 左右仍不會是瓶頸。但若之後遊戲執行緒降到 5 ms 以下，這 0.5 ms 才會開始算數，到時要重量。
+- 只影響從讀卡器進的 1 對 1／Studio；街區的 1 對 1 與 `SceneEditor.cmd` 是不同行程，不受影響。
+- 原始資料：log `E:\OpenKoikatsu\Saved\Logs\CardReader\fps1on1-p0b.log`、`fps1on1-p0c.log`、`fps1on1-p2b.log`、`fps1on1-p2c.log`（`LogChartCreation` 那段）。
+
+順手看到的（未處理）：從讀卡器進 1 對 1 時，讀卡器的 DreamGUI 畫面沒有藏起來，疊在 1 對 1 的 UMG 介面底下（`OKInteractionMode.cpp` `EnterReader` 只把 UMG controller 設成 Collapsed）。
