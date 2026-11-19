@@ -6603,3 +6603,59 @@ descriptor／state cache、材質 uniform expression、proxy 解構、group RT�
   那個命令的輸出走的是 console 的 output device，**會回在 `ui_exec` 的回應裡，而不是進 log**，
   而我的驅動把那個回應丟進了 `/dev/null`。**所以落點比較這一欄在這一格仍然是空的**，
   不過 `5/5` 的讀法用不到它。
+
+
+# 著色器身分驗了：傾印自己說出那顆是 **`FDreamUIBasePS`**，而且是同一個 `Shader Hash`
+
+## 一、先說為什麼非驗不可：`Function = MainPS` 從來不是指認
+
+`MainPS` 是入口點名，不是身分。**光這個專案就有八顆 pixel shader 用這個入口點，其中七顆在 DreamGUI 裡**：
+`FDreamUIBasePS`、`FDreamUICompositePS`、`FDreamUILayerStyleCompositePS`、
+`FDreamUIScreenRenderPS`／`FDreamUIWorldRenderPS`／`FDreamUIWorldRenderDepthFadePS`、
+`FDreamUIBackdropCompositePS`，外加 `KKCrowdGpuPacking` 的 `FOKSourceMaterialPS`；
+引擎原始碼裡另有 51 個檔案含這個字串。
+**所以那一行連「DreamGUI 內是哪一顆」都分不出來**，更不足以撐起「取樣者在 DreamGUI 的繪製裡」這個前提。
+
+## 二、一趟就問出來了
+
+旋鈕：`r.Shaders.ExtraData=1`（`ShaderCompiler.cpp:451-457`，`ECVF_ReadOnly`，
+由驅動以 `-ini:Engine:[ConsoleVariables]` 在鎖定前設；到達證據是回讀 `= "1"`）。
+它會把著色器名寫進 shader code 的選用資料（`D3D12Shaders.cpp:38`），
+再經 `D3D12NvidiaExtensions.cpp:40` 交給 Aftermath，故障時印成 `DebugName`
+（`RHICoreNvidiaAftermath.cpp:405-408`）。
+
+```
+Active Shaders:
+  Type = Pixel
+  Function = MainPS
+  DebugName = 'Global/FDreamUIBasePS/0:/Plugin/DreamGUI/Private/DreamUIBase.usf|MainPS'
+  Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF
+```
+
+**`Shader Hash` 和先前每一次故障都是同一個值**，所以這次的指認**可以套用到之前所有趟次**
+（同一顆著色器，不是只有這一趟）。`Failed to associate Aftermath hash` 0 筆。
+
+**前提成立：取樣者就是 DreamGUI 的基礎 UI 像素著色器。** 之前的框架不必重排。
+
+## 三、代價與量具的覆蓋率，照實記
+
+- 整趟 **542 秒**（約 9 分鐘）走到故障，`cards=4`。重編著色器的代價在一趟之內，可以接受。
+- **`shader_compile_lines=0`**：我抓編譯行的那組樣式一行都沒命中，**而樣本欄位也是空的**。
+  依第十一條這算那個小量具失敗（樣式不對，或這次走了 DDC），
+  **不能據此宣稱「沒有重編」**；真正的到達證據是另外兩層：旋鈕回讀為 `1`，
+  以及**先前所有趟次都沒有的 `DebugName` 行這次出現了**——那一行只有這個設定開著才可能存在。
+- `shader_pdb` 是空的（沒開符號），本條不需要它。
+
+## 四、這顆著色器的參數長相，下一步的起點
+
+`FDreamUIBasePS::FParameters`（`DreamUIBaseShaders.h:157-187`）的**十一個貼圖參數全部是
+`SHADER_PARAMETER_TEXTURE`**（`DreamUI_MainTex`、`DreamUI_FontTex`、`DreamUI_WidgetDataTex`、
+`DreamUI_ClipDataTex`、`DreamUI_RectBlockDataTex`、`DreamUI_PaintDataTex`、
+`DreamUI_MaskTex0/1`、`DreamUI_SceneDepthTex`、`DreamUI_BackdropTex`，
+以及另一個結構裡的 `DreamUI_RenderLayerTable`／`DreamUI_RenderLayerWidgetData`）。
+
+**`SHADER_PARAMETER_TEXTURE` 收的是裸 `FRHITexture*`，RDG 不會為它延長生命期**
+（那是 `SHADER_PARAMETER_RDG_TEXTURE` 才有的保證）——**繫結期間由呼叫端負責讓它活著**。
+而第二十六條已經說明：我那九個槽的量具看的是 `FTextureReferenceRHIRef` 那一側，
+**結構上只看得到活著的綁定**。
+**所以下一步要問的是：這十一個參數分別從哪裡取值，哪些不是經過那九個槽。**
