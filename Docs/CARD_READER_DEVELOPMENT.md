@@ -492,6 +492,13 @@ best＋C5 下，cooked 路徑還有兩段工作和 cooked 材質已準備好的�
 
 AI 操作：`reader_call controls` 列出 `control.LightingPresetCombo`、`control.LightingRampCombo`、`control.LightingYawSlider`、`control.LightingPitchSlider`、`control.LightingIntensitySlider`、`control.LightingAmbientSlider`，用 `control_set` 改；`ui_widgets`／`ui_set` 的鍵是 `OKGalleryWidget/LightingPresetCombo`、`OKGalleryWidget/LightingAmbient` 等。2026-11-14 以 C041 實測：預設、ramp、角度、環境光都即時生效。
 
+> **2026-11-19 降級（原句與 11-14 的照片保留不刪）**：上面那句的「環境光即時生效」不成立，「預設有效果」只算部分成立。
+> - 根據：原作著色的環境光只出現在 `max(_LightColor0×0.6+0.4, _ambientshadowG.rgb)` 與色相裡（`KKPreviewActor.cpp:2465-2492`）；讀卡器的 `_ambientshadowG.rgb` 是常數 0.502（`KKPreviewActor.cpp:732`），卡片只給 alpha。
+>   所以環境光倍率要 `S > (0.6×主光+0.4)/0.502` 才有作用：主光 1 時要 S > 1.99。調低環境光在任何設定下都看不到變化。
+> - 預設的環境光 0.5（強對比卡通）、0.8（側光）、1.3（逆光）、1.6（柔和卡通）全在門檻以下。這些預設看得到的差異，來自主光角度與亮度、陰影 ramp、衣服陰影深淺，不是環境光。
+> - 11-19 的 1b 批次（`Saved/Reports/reader-shots-2026-11-19/1b/`）實測：環境光 1→0 在身體區域的平均亮度是 148.1→148.1，日誌 `scaled=116`（參數有寫進材質，畫面不變）。
+> - 待修：滑桿改成「提亮量」語義（0 = 不提亮，單調往上），預設值重選到有作用的區間。見 `Docs/ERROR_LOG.md` 2026-11-19「環境光滑桿與預設在讀卡器裡沒有作用」。
+
 ## 拖入角色卡
 
 從檔案總管把角色卡 PNG（原作 KKS 卡或 OK 卡，任何資料夾）拖進 `CardReaderDevelopment.cmd` 開的讀卡器視窗任何位置（卡片牆、3D 預覽、左右面板都可以），左鍵、右鍵拖都行，放開就和按「載入 3D」一樣載入；不在目前清單的卡會加進清單。一次拖多個檔案時只載第一張 PNG。正在載入／套用、還有未套用的修改、在 1 對 1 或工作室畫面時不載入，畫面上方會顯示原因。
