@@ -122,6 +122,21 @@ if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")){
 `min`／`max`，所以范围一夹紧，**MCP 写入超范围的 ABMX 值就会被挡掉**——这就是上面第 2 点说的，范围要当软范围，
 夹的是滑杆与打字，不是夹资料。
 
+**照已批准的 metadata 形状填（`min`／`max`／`step`／`decimals`／`wrap`／`default`，列举类 `kind:"choice"` ＋ `options`，
+`label` 放文字 id）**，身体＋脸部这一块是这样：
+
+| 栏位 | 填什么 | 理由 |
+|---|---|---|
+| `min`／`max` | `0`／`100` | **用画面单位填**，和原作显示一致；存卡时 ÷100。若改成 `0`／`1`，`decimals` 就得是 `2`，两种都行但要全专案统一，不要一半一半 |
+| `step` | `1`（画面单位）＝内部 `0.01` | 原作滑杆就是百分点 |
+| `decimals` | `0` | `(int)Mathf.Lerp(0,100,v)`，原作画面上没有小数 |
+| `wrap` | `false`（全部） | 身体／脸部没有角度类的项目，没有一项该回绕 |
+| `default` | `OKShapeDefaults::Value(sex, body, index)`；非体型项取卡片预设 | 原作「戻す」读 `defChaInfo`，不是常数 |
+| `kind` | 数值＝滑杆；开关＝`bool`；**选图＝`choice` ＋ `options`**（目录 id ＋ 缩图） | 选图不是范围 |
+| `label` | 文字 id（例如 `editor.face.detail_power`），**不要字面字串** | 照 i18n 规矩，翻译在 `Localization/<lang>/*.toml` |
+
+超范围的旧值按上面第 2 点处理：**读进来原样保留、照实显示**（滑杆顶到底、数字栏显示真值），只有使用者动了那一项才夹。
+
 ## 三之三、**真正的资料端缺口：KoiSkinOverlayX（KSOX）整段被跳过**
 
 第二节原本写「非体型细项资料端几乎都有」，这句**要修正**：原作本体的栏位（`face.baseMakeup`、
