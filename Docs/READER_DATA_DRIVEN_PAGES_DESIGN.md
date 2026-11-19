@@ -225,7 +225,7 @@ KKEx 欄在有卡時分四種：
 - 讀了，但產生端的回覆**沒有 `unknown_plugin_sections` 這個欄位** →「缺支援（這個 build 的產生端沒有 unknown_plugin_sections）」。這是「這個 build 缺支援」，不是 0，也不是空白；
 - 讀了，而且有這個欄位 → 個數，有的話接上清單，例如「2：KSOX、com.x」。空清單才寫「0」。刻意不收的區段不算進個數，接在後面寫，例如「0；刻意不收 1（KKABMX.Core）」。
 
-C++ 怎麼分辨「沒有欄位」和「空清單」：用 f-yvonne 在 `bad2861df` 加的成員 `EditorUnknownPluginSectionsCard`／`EditorUnknownPluginSectionsOutfit`／`bEditorUnknownPluginSectionsReported`。稽核和 `reader_call state` 讀同一組成員，所以兩邊不會說不一樣的話。
+C++ 怎麼分辨「沒有欄位」和「空清單」：靠 f-yvonne 在 `bad2861df` 定的 `unknown_plugin_sections_status`。這個狀態由控制器的一個函式 `UnknownPluginSectionsStatus()` 給出，`reader_call state` 和稽核都直接用它回傳的值。稽核**不從「清單在不在」或成員自己反推狀態**，那正是 `bad2861df` 修掉的問題：清單空的時候整個欄位不輸出，分不出「沒有卡」和「0」。
 
 | `unknown_plugin_sections_status` | 稽核 KKEx 欄 |
 |---|---|
