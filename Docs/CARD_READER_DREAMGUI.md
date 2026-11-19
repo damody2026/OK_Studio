@@ -1471,3 +1471,54 @@ log 裡 `Created late shader associations` 剛好各出現 2 次；另外兩格�
 **6000（堆留久）對 1（馬上重用）**，clear 配方 30 張，和死在第 23 張的基線可比。
 6000 活下來而 1 明顯更早當 ⇒ 描述子堆重用就是機制；兩邊沒差 ⇒ 這條也不是，
 那就只能從 DRED 拿到的名字往下追，不要再轉 cvar。
+
+### 不必再轉 cvar：當掉的那個 shader 就是 DreamGUI 自己的 `MainPS`，而兩個旋鈕線都已排除
+
+**一、描述子堆那格不跑，因為旋鈕接不上。** log 第一行就講明了：
+`LogRendererCore: Ray tracing is disabled. Reason: disabled through project setting (r.RayTracing=0)`。
+而這台機器的 bindless 設定是 **`ERHIBindlessConfiguration::RayTracing`**——也就是
+**bindless 只給光追用**，而光追是關的。`FD3D12BindlessResourceManager::GarbageCollect` 的那段
+`ReleaseGPUHeaps()` 又正好只在 `GetConfiguration() == RayTracing` 時走。
+所以讀卡器那些普通 raster draw **根本不碰那個堆**，`D3D12.Bindless.GarbageCollectLatency`
+6000 對 1 會是轉一個與它無關的旋鈕。**那格取消**（腳本留著，若哪天改成 `AllShaders` 再用）。
+
+**二、`Created late shader associations` 要從線索裡撤掉——它是當機的結果，不是前兆。**
+它是 **NVIDIA Aftermath 在產生 crash dump 時**去把 shader binary 註冊起來、好在 dump 裡解析名字
+（`D3D12NvidiaExtensions.cpp:62` `CreateShaderAssociations`，由
+`RHICoreNvidiaAftermath.cpp:851` 在組 `Active Shaders:` 那段時呼叫，engine 自己的註解是
+**"Allow association after a fault"**）。所以「它在 fault 前 25 ms 出現」是**因為 fault 已經發生了**。
+我之前把它當線索、還在每張卡記 `lsa` 計數——**那個計數量的是當機本身**，撤回。
+
+**三、當掉的 shader 身分可以定了：DreamGUI 自己的基底 pixel shader。**
+dump 的 `Active Shaders:` 只有一個：`Type = Pixel`、`Function = MainPS`、
+`Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF`。而
+`IMPLEMENT_GLOBAL_SHADER(FDreamUIBasePS, "/Plugin/DreamGUI/Private/DreamUIBase.usf", "MainPS", SF_Pixel)`
+（`DreamUIBaseShaders.cpp`）——**`MainPS` 就是 `FDreamUIBasePS`**，不是 Slate 也不是角色材質。
+今天四格的 breadcrumb 也一致：`RHIThread → EndDrawingViewport → Frame NNNNN`，
+而 11-18 那份有 DRED 的 dump 更細：
+`BeginEvent [FrameRenderFinish] → [RenderFinish] → [ViewFamilyExtension(5)] → [ViewExtension(0)]`
+之後是一長串 `DrawIndexedInstanced`，停在第 24 個（第 23 個 LAST COMPLETED）。
+**所以是 DreamGUI 的 ViewExtension 在畫它自己那批 UI draw 時，pixel shader 取樣時 page fault。**
+
+**四、「頁錯位址不屬於任何資源」這句要分兩種情況講，否則會互相矛盾。**
+
+| 那一次 | `Logging all resource enabled` | 那三個 `Found 0` 代表 |
+|---|---|---|
+| 11-18 `EFork1119h`（`-gpucrashdebugging`） | **Yes** | **是證據**：位址真的不在任何追蹤到的資源、heap，或**最近 100 帧內**釋放過的資源裡 |
+| 今天這四格（沒給任何 GPU crash 開關） | **No** | **不是證據**：追蹤沒開，當然找不到 |
+
+而「最近 100 帧內」這個限制本身就指出一個完全吻合的可能：
+**一個超過 100 帧前就被放掉的東西，它的描述子還被綁著**。
+DreamGUI 的保護期是 8 帧（`DrawTextureHolds`）與 3 帧（`FDreamUIDeferredRelease`），都遠小於 100——
+所以若有東西逃過那兩層，到當機時早就超出 100 帧的統計窗口了。
+
+**五、下一格因此不是旋鈕，是 DreamGUI 自己為這個問題準備的診斷：`DreamGUI.LogHeldTextures=1`。**
+它就在 `DreamCanvas.cpp` 那段裡，說明寫得很直接：
+「印出每一張 canvas 開始使用的貼圖（名稱、大小、mip、outer），**用來判斷 GPU page fault 取樣到的是哪一張**」。
+配 `-gpucrashdebugging`（讓 `Logging all resource enabled: Yes`）跑同一個配方，
+當機時就有「這條 canvas 綁過哪些貼圖」加上「頁錯位址附近有哪些存活／最近釋放的配置」兩份名單可以對。
+
+另外 `DrawBuiltInBatch` 綁的是 **`FTextureReferenceRHIRef`**（`DreamUIBaseShaders.cpp:30`
+的 `Reference()` 取 `InTexture->TextureReference.TextureReferenceRHI`），
+也就是**貼圖參照物件**而不是貼圖本身。參照物件的生命週期和它指向的那張貼圖是兩回事，
+這正是「資源本身沒事、取樣卻 page fault」要查的下一個接縫。
