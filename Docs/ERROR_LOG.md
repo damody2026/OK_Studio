@@ -5735,3 +5735,9 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 `ok.Interaction.AsyncShot` 第一版：`OnScreenshotCaptured` 的 lambda 一进来就 `Remove(Handle)`，然后才把捕获的 `File` 复制给背景工作。`Remove` 在广播中会立刻销毁这个 lambda，`File` 已经被释放，读它就是 `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff`（游戏执行绪 memcpy）。stage `EFps1118m` 的 `AsyncShot 1` 那趟在一对一就绪时当掉，量测脚本又没有发现游戏已死，一直等每个指令逾时，独占多占了约 18 分钟。
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
+
+## 2026-11-19：仲裁者只看「现在持有」不看「正在排」，独占量测还在排队时照样放建置（c-street-city）
+
+`Tools/unreal_slot.lua` 的 `may_build()` 只扫各 slot 的 `owner.txt` 有没有 `[need N]`（N ≥ 60），没有扫佇列。**仲裁者只看「现在持有」而不看「正在排」，等于把『即将开始的独占量测』当成不存在。** 实际后果：f-sceneload 15:08 拿到 `go` 开始建置，那时 e-cardload 的 `[need 60]` 还在佇列里；e-cardload 15:11:31 拿到 slot1，量测一开始就被还在跑的建置压过。
+
+**修正**：`may_build()` 扫完 slot 后再扫一次佇列（`queued()`，已跳过超过 `QUEUE_STALE_MIN` 的陈旧条目、移除行程已结束的条目），遇到 `need ≥ 60` 的等待者就回 `wait`（exit 3），讯息写明是谁、从几点开始排。结束码不变。沙箱自测（`OK_UNREAL_SLOTS` 指到临时目录）：佇列空 → `go`；有独占等待者 → `wait` 并指名；只有一般等待者 → `go`；独占等待者已陈旧 → `go`；独占持有者 → 照旧 `wait`。

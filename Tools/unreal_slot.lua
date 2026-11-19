@@ -435,6 +435,18 @@ local function may_build()
       return 3
     end
   end
+  -- An exclusive claim still waiting counts too: a build started now is still running when it gets the machine
+  -- (2026-11-19: f-sceneload got "go" at 15:08 while e-cardload's [need 60] was queued; e-cardload took slot1 at
+  -- 15:11:31 with the build still going). Stale entries (queued() skips them) hold no one back.
+  for _, agent in ipairs(queued()) do
+    local need = queued_need(agent)
+    if need >= EXCLUSIVE_GB then
+      local since = queued_since(agent)
+      io.write("wait: ", agent, " is queued for the machine exclusively (need ", need, " GB",
+        since and (", since " .. os.date("%H:%M:%S", since)) or "", "); a build would spoil its measurement\n")
+      return 3
+    end
+  end
   io.write("go\n")
   return 0
 end
