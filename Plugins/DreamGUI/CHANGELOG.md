@@ -394,6 +394,14 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **A static check names every stored pointer that is only an address.** `static_checks.py` has a
+  `stored-raw-pointer` rule: a member holding a `UObject` or an RHI resource as a raw pointer, where an address cannot
+  say the thing has gone and one freed and handed out again compares equal. A member kept beside a count of objects
+  gone (`DreamUIGone`) counts as guarded, because that pair is an identity with a serial; function parameters and the
+  locals of inline bodies are not members and are not read. It is a warning for now -- the plugin still has the
+  findings it was written to find -- and the call-site shapes a change like this produces, including the two the
+  compiler does not report, are on [Contributing](Docs/contributing/index.md).
+
 - **The test fixtures that could outlive what they name now name it weakly.** The gallery stage's editor world, the
   world-space lifecycle fixture's two actors, its render-target surface and that surface's canvas root, the package
   load check's loaded package and the canvas-change log's pairs are weak pointers; `GetWorld` still hands back a plain
