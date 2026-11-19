@@ -46,6 +46,9 @@ public:
 	TWeakObjectPtr<UWidget> Source;
 	// Pressed when there is no UMG source (the screen's own buttons).
 	TFunction<void()> OnPressed;
+	// Switched when there is no UMG source (the screen's own toggles, e.g. the hair colour settings, which are the
+	// player's and belong to no card field, so there is no property row to mirror).
+	TFunction<void(bool)> OnToggled;
 	// Text shown instead of the source's own (a drawer's title, a tab).
 	FString FixedText;
 	// A drop-down: only the options matching this show (a search field above it sets it).
@@ -247,6 +250,8 @@ private:
 
 	UOKDreamControl* MakeControl(const TCHAR* Kind,UDreamWidget* Into);
 	UOKDreamControl* MakeOwnButton(UDreamWidget* Into,const FString& Text,TFunction<void()> Press);
+	// A toggle of the screen's own, for a setting that is the player's and not a field of the card.
+	UOKDreamControl* MakeOwnToggle(UDreamWidget* Into,const FString& Text,bool bOn,TFunction<void(bool)> Switched);
 	UDreamWidget* MakePanel(UDreamWidget* Into,bool bHorizontal,float Spacing);
 	void Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow);
 	bool InPropertyPanel(UWidget* W) const;

@@ -275,6 +275,8 @@ void UOKDreamControl::HandleSlider(float Value)
 void UOKDreamControl::HandleToggle(bool bOn)
 {
 	if(bPushing)return;
+	// The screen's own toggle (no UMG source to mirror): its own handler is the whole behaviour.
+	if(OnToggled){OnToggled(bOn);return;}
 	if(auto* U=Cast<UCheckBox>(Source.Get())){U->SetIsChecked(bOn);U->OnCheckStateChanged.Broadcast(bOn);}
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
@@ -389,6 +391,18 @@ UOKDreamControl* UOKReaderScreen::MakeOwnButton(UDreamWidget* Into,const FString
 	UOKDreamControl* C=MakeControl(TEXT("Button"),Into);if(!C)return nullptr;
 	C->FixedText=Text;C->OnPressed=MoveTemp(Press);C->SetText(Text);
 	C->SetWidth(FMath::Max(64.f,TextWidth(Text,20.f)+36.f));
+	return C;
+}
+
+UOKDreamControl* UOKReaderScreen::MakeOwnToggle(UDreamWidget* Into,const FString& Text,bool bOn,TFunction<void(bool)> Switched)
+{
+	UOKDreamControl* C=MakeControl(TEXT("Toggle"),Into);if(!C)return nullptr;
+	C->FixedText=Text;C->SetText(Text);
+	// The current value is shown BEFORE the handler exists, so being told its state cannot look like the person
+	// switching it (there is nothing to call yet, and the mirror path finds no source).
+	if(C->Toggle)C->Toggle->SetIsOn(bOn);
+	C->OnToggled=MoveTemp(Switched);
+	C->SetWidth(FMath::Max(80.f,TextWidth(Text,18.f)+56.f));
 	return C;
 }
 
@@ -697,8 +711,22 @@ void UOKReaderScreen::BuildCategories()
 			// `hair.parts.N` as the token: the rows of one slot are `hair.parts.N.baseColor.0` and so on, and the token
 			// is matched as a substring, so this is exactly that slot and nothing else.
 			Pickers(Page,{FString::Printf(TEXT("hair%d"),Slot)},{FString::Printf(TEXT("hair.parts.%d"),Slot)});
-			Page.Build=[OpButton](UDreamWidget* Into)
+			Page.Build=[this,OpButton](UDreamWidget* Into)
 			{
+				// The original's four colour settings, on every hair page as they are there, and all on in a fresh
+				// install: they decide how much of the hair one drag of the main colour writes (parity doc §7.1).
+				// They are the player's settings, not the card's, so they are the screen's own toggles and are
+				// saved where the reader's other settings are -- not staged as a card edit.
+				TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+				if(Weak.IsValid())Weak->LoadHairColourSettings();
+				for(const TPair<const TCHAR*,const TCHAR*> Setting:{TPair<const TCHAR*,const TCHAR*>(TEXT("四槽同步"),TEXT("same")),
+					{TEXT("自動漸層"),TEXT("auto")},{TEXT("連帶外框色"),TEXT("outline")},{TEXT("連帶光澤色"),TEXT("gloss")}})
+				{
+					const FString Name=Setting.Value;
+					const bool bOn=!Weak.IsValid()||(Name==TEXT("same")?Weak->bHairSameSetting:Name==TEXT("auto")?Weak->bHairAutoSetting
+						:Name==TEXT("outline")?Weak->bHairOutlineSetting:Weak->bHairGlossSetting);
+					MakeOwnToggle(Into,Setting.Key,bOn,[Weak,Name](bool bNow){if(Weak.IsValid())Weak->SetHairColourSetting(Name,bNow);});
+				}
 				OpButton(Into,TEXT("重設外框色"),TEXT("hair_reset_outline"));
 				OpButton(Into,TEXT("重設光澤色"),TEXT("hair_reset_gloss"));
 				OpButton(Into,TEXT("髮色反映到眉／陰毛"),TEXT("hair_color_to_eyebrow_and_underhair"));
