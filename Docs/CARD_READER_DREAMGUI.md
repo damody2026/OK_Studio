@@ -210,6 +210,33 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 **同一頁有兩個以上同名的短名（57 組）**：用短名 `press` 會回報 ambiguous 並列出路徑，路徑一律唯一，所以都能操作。大多是預期的（每列各自的「重置」、選圖與屬性兩組「上一頁／下一頁」、遊戲目錄與卡片資料夾各一組「選資料夾…／還原預設」）。值得記的兩個：鏡頭列的「全身」「腿部」和 身子 的二級選單同名；卡片牆有兩張都叫 Alice 的卡（用 `ok.ReaderScreen card <N>` 或路徑的 ` #2`）。
 
+### 廢掉舊版 UI 的前置條件（2026-11-19，只列清單，未動手）
+
+稽核缺口已清零（顯示字級補上）。使用者說「以後不要再出現舊版ui」，但**要等 PageFault 有結論才拆**：`-LegacyReader` 是目前唯一的對照組（帶它 30 張不當）。
+
+**先講清楚「舊版 UI」能拆到哪裡**：新版畫面是**鏡像**，不是另寫一套。每個控制項的 `Source` 指向 `UOKCharacterController` 的 UMG 控制項，數值、事件、存檔都走那棵 UMG 樹。所以能拆的是「讓舊版顯示出來的路徑」；UMG 控制項本身是資料層，要留著（隱形、不可點）。把資料層也拿掉，等於做先前否決的「參數快照化」重構，不在這次範圍。
+
+要拆的地方：
+
+| # | 位置 | 現在做什麼 | 拆掉後 |
+|---|---|---|---|
+| 1 | `OKGalleryWidget.cpp` 1050–1054 | 沒帶 `-LegacyReader` 才開新版；帶了就顯示 UMG | 一律開新版 |
+| 2 | `OKReaderScreen.cpp` `Open` 開頭兩個退路 | DreamGUI 全域 shader 不在（舊 base cook 的 stage）、`ReaderScreen.dui` 類別找不到時回 `nullptr`，畫面退回 UMG | 改成顯示錯誤並說要重建什麼，不再退回舊版；先確認所有發佈中的 stage／package 的 base 都有 DreamGUI shader |
+| 3 | `Tools/run_card_reader_development.lua` 24、133–148 行 | `--legacyreader` 開關；`-ParallelRDG` 的判斷也看它 | 移除開關；RDG 那段照 PageFault 的結論改 |
+| 4 | `Tools/ok-game-mcp/src/reader.rs` 16 行 | `reader_launch` 的說明提到 `-LegacyReader` | 改說明（要重編 ok-game-mcp） |
+| 5 | `if(ReaderScreen)` 的分支：`OKGalleryWidget.cpp` 972、1094、1708、2542；`OKHUD.cpp` 67；`OKCharacterMCP.cpp` 176；`OKInteractionMode.cpp`、`OKGalleryOkStudio.cpp` 的 RDG 切換 | 有新版走新版，沒有走 UMG | `ReaderScreen` 必定存在，`else` 那支（`AddOnScreenDebugMessage` 當通知、整個視窗當 3D 範圍、UMG 可點）可刪 |
+| 6 | 文件 | `AGENTS.md`、本文件等提到 `-LegacyReader` 對照 | 改寫 |
+
+**還依賴舊版 gallery 的東西（拆完要確認不壞）**：
+
+- **Automation 測試**：`Source/OpenKoikatsu/Tests` 54 個檔案中，34 個直接用 `UOKGalleryWidget`／`UOKCharacterController`。其中 15 個碰可見性、幾何或 Slate 輸入（例如 `OKCameraControls.spec.cpp`、`OKCardScrollAudit.cpp`、`OKPaintGalleryAudit.cpp`），假設 UMG 在畫面上、可以點；新版下 UMG 是 `HitTestInvisible`。拆之前要逐一跑過，標出哪些要改成走 `ok.ReaderScreen press/set`。
+- **遊戲 MCP 的 `ui_widgets`／`ui_press`／`ui_set`**：對的是 UMG 層，新版下照樣能用（1 對 1 的「離開（回到讀卡）」就是這樣按的）。拆掉 #1 之後行為不變，但「畫面上看到的」和「`ui_widgets` 列出的」是兩棵樹，說明要寫清楚，或改成優先走 `reader_call`／`ok.ReaderScreen`。
+- **Lua 工具**：`Tools/reader_jump_check.lua`、`Tools/reader_package_sweep.lua` 透過 MCP 操作讀卡器，要在新版下跑一次確認。
+- **1 對 1（`bInteractionOnly` 的 `UOKCharacterController`）**：從讀卡器或街區進去，H 面板與互動控制是 UMG。那是 1 對 1 的介面，不是讀卡器舊版 UI，不在這次拆除範圍；若「不要舊版 UI」也包括它，那是另一件事。
+- **OK Studio**：自己的 UI，不依賴讀卡器的 UMG 顯示。
+
+**拆除順序（建議）**：PageFault 結案 → 跑一次 Automation，列出依賴可見 UMG 的測試並改掉 → 處理 #2 的退路 → #1、#3、#4、#5 一次改掉 → 兩個目標建置 → `ok.ReaderScreen audit` 再跑一次，確認仍是 0 缺口。
+
 ## 臉›眼部縮放2（2026-11-19）
 
 原遊戲 ABMX 的眼球骨骼頁（`FaceEyes2`：`cf_J_Eye_tz` 雙眼球、`cf_J_Eye_rz_L／R` 眼球 縮放 1、`cf_J_Eye_tx_L／R` 眼球 縮放 2）。內容就是「身子›骨骼」選「骨骼調整：眼球」時的那幾列，但頁面固定在這個分類、不顯示分類下拉：一般模式 3 列（縮放＋左右選擇＋重置），勾「進階：X／Y／Z、位置與旋轉」後 27 列（各軸縮放、位移、旋轉）。寫入走原本的骨骼滑桿（`OnBoneChanged`），和讀卡器其他骨骼頁相同。
@@ -630,3 +657,34 @@ log 与 dump：`Saved/Logs/CardReader/20261119-065520-5f723fec.log`（第 13 张
   因此有一個真實的洩漏面：讀卡器行程**自己**可以進 OK Studio（`reader_call studio enter`）與一對一（`bEnterInteractionAfterLoad`），
   在同一個行程裡那兩個畫面也是在 `ParallelExecute=0` 下跑的。各自用自己的 `.cmd` 啟動時不受影響。
   要「只關讀卡器畫面」就得離開時設回去，但照上面量到的不對稱，**由程式設回去恐怕也不會讓平行執行真的回來**，要先驗再寫。
+
+### 四格實驗：只有「算圖開始之前就設好的值」擋得住（2026-11-19，e-cardload-physics）
+
+同一份配方（新版畫面、`E:\OKPackage\TestCards-20261118`、逐張開不同的卡、每張開完停 6 秒）跑四種條件：
+
+| 格 | 條件 | 結果 |
+|---|---|---|
+| 1 | **啟動時** `-ini ... r.RDG.ParallelExecute=0` | 兩趟 ×30 張**乾淨** |
+| 2 | 啟動時平行開著（`-ParallelRDG`），**執行中**設 `0`（確認讀回 `2`→`0`） | **當，第 7 張** |
+| 3 | 啟動時 `0` → 進 OK Studio（還原成 `2`）→ 回讀卡器（關回 `0`，每步都讀值確認） | **當，第 4 張** |
+| 4 | 啟動時不設（引擎預設 `2`） | **當，第 15 張** |
+| 4′ | e-fork-2 量的：啟動時 `0`、**執行中**設 `2` | **當，第 11 張** |
+
+四格的崩潰簽章完全一樣：`Pixel MainPS`、`Shader Hash E6753E1EA9F1F20775D8BC0AD963B1EF`、
+`fragment_02 @ 0x00045f90`、`MMU Fault Error` / `AddressTranslationError`。
+
+**結論（兩條，要分開講）**：
+
+1. **執行中關不掉，執行中開得回來。** 設 `2` 在執行中是有效的（4′ 會當），設 `0` 在執行中沒有保護力（格 2、格 3 都當）。
+   所以能擋住的不是「這個 cvar 現在是 0」，而是「**行程開始算圖之前它就是 0**」。
+2. 因此 `26e7e91e0`／`340b70e56` 的「進 1 對 1／Studio 還原、回讀卡器再關」在**回程那一段不是真的防護**：
+   值寫回去了，保護沒回來（格 3，第 4 張就當）。要有保護只能在**行程啟動時**決定。
+
+**還要小心一件事**：格 1 乾淨、格 4 會當，兩者的差別是「啟動時的值」，**不一定**等於「平行執行本身是機制」。
+也可能是那個值在啟動時造成了別的差異（例如並行命令 context／RDG 的 parallel 路徑只在啟動時建起來，
+之後設 0 只擋掉一部分派送），而真正踩記憶體的是那條已經建好的路徑。要分辨得從 `MainPS` 那個 shader
+怎麼綁那幾張 data texture 的 SRV 下手，不是再多跑幾趟開卡。
+
+資料：格 2 `Saved/Logs/CardReader/20261119-084556-7c116d38.log`、
+格 3 `Saved/Logs/CardReader/20261119-084231-097a2ef0.log`、
+格 4 `Saved/Logs/CardReader/20261119-082405-73d69668.log` 與 `Saved/Logs/D3D12.0.2026.11.19-08.27.05.nv-gpudmp`。
