@@ -6814,3 +6814,72 @@ VSParameters.DreamUI_RenderLayerWidgetData = TextureOrFallback(Params.WidgetData
    要成立得走**不經參照的那條**（`SceneDepthTex`／`BackdropTex`，兩者都另有排除）。
 
 **下一步往第 1 種走：同一條 command list 上還有誰綁了東西。**
+
+## 2026-11-20（讀碼）D3D12 的 SRV 狀態快取：**裸指標陣列、整張表一起重抄、而且貼圖銷毀時沒人清它**
+
+接著「同一條 command list 上還有誰綁了東西」那一格，先把這條路在引擎裡的實際形狀讀出來
+（`E:\PhysX\UE5.8`，讀碼，沒有跑任何東西）。
+
+### 一、十一個欄位之外的槽位**不會**讀到別人留下的描述子
+
+`FD3D12DescriptorCache::BuildSRVTable`（`D3D12DescriptorCache.cpp:439-485`）對範圍內每一槽：
+有 SRV 就抄它的 offline handle，**沒有就抄 `DefaultViews.NullSRV`**，且 `check(SrcDescriptors[i].ptr != 0)`。
+**所以「著色器宣告但沒填的槽位讀到上一筆的描述子」這個形狀在這個引擎裡不成立。**
+（也呼應前面量到的：`SHADER_PARAMETER_TEXTURE` 沒填就是 `nullptr`，而 `ValidateShaderParameters`
+對著色器**真的會綁**的 null 參數直接 `EmitNullShaderParameterFatalError`，`ShaderParameterStruct.cpp:542-553`。）
+
+### 二、但整張表是「有一個髒就全部重抄」，而且抄的來源是**裸指標**
+
+`FD3D12ShaderResourceViewCache`（`D3D12StateCachePrivate.h:224-225`）：
+
+```cpp
+FD3D12ShaderResourceView* Views[SF_NumStandardFrequencies][MAX_SRVS];
+FD3D12Resource*           Resources[SF_NumStandardFrequencies][MAX_SRVS];
+```
+
+**兩個都是裸、不持有的指標。** 而 `D3D12StateCache.cpp:705-724`：只有當
+`CurrentShaderDirtySRVSlots[Stage]`（當前著色器暫存器遮罩 ∩ 髒遮罩）不為零時才建表，
+**但建表時是 `for (SlotIndex < SlotsNeeded)` 整個範圍一起抄**，髒不髒都抄。
+**「髒」只表示要再抄一次，不表示槽位被清掉。**
+而 `DirtyStateForNewCommandList()` 每條新 command list 都 `DirtyAll()`，
+所以**每一幀都會把整個範圍重抄一遍**——抄的就是那兩個裸指標陣列裡當下的內容。
+
+### 三、**緩衝區銷毀會清狀態快取，貼圖銷毀不會**
+
+`ConditionalClearShaderResource`（`D3D12CommandContext.cpp:712-717`）會把指到某個
+`FD3D12ResourceLocation` 的槽位清掉。它的呼叫點**全部**是：
+
+| 呼叫點 | 對象 |
+|---|---|
+| `D3D12Buffer.cpp:687`、`:804` | **緩衝區**（lock／rename） |
+| `D3D12ResourceCollection.cpp:119` | 緩衝區 |
+| `D3D12Commands.cpp:904`、`:922` | 貼圖，但**是在它被設成 render target 的時候** |
+| `D3D12RenderTarget.cpp:169`、`:266` | 貼圖，**在 RT 複製的時候** |
+| `D3D12Commands.cpp:451`、`:505`、`D3D12WorkGraph.cpp:1032`、`:1274` | UAV |
+
+**`~FD3D12Texture`（`D3D12Texture.cpp:1612-1618`）只做統計，一個字都沒碰狀態快取。**
+所以一張普通貼圖銷毀之後，指著它的 `Views[]`／`Resources[]` 槽位**留在原地**。
+
+### 四、這條路為什麼還沒被排除，以及它預期的時間形狀
+
+延後刪除會等 GPU 過了才真的放，所以「銷毀當下還在槽位裡」本身不致命；
+**致命的是上面第二點：下一幀整個範圍會被重抄，而重抄會去解參照那個裸 `FD3D12ShaderResourceView*`。**
+它什麼時候會燒，取決於「什麼時候有個 SRV 範圍涵蓋那一槽的著色器來畫」——
+**這正好是「故障 − heap 釋放 = 4…4116 幀」那種事件驅動、不是每幀的分布**（十五趟都是這個形狀）。
+
+**還不是指認**，因為 DreamUI 這一筆 draw 的十一槽**每一筆都自己填滿**，
+所以它自己那張表的範圍內沒有空槽可以留舊東西（第一點也排掉了空槽讀舊值）。
+缺的那一塊是：**故障位址是否落在這一筆 draw 真的綁進去的某張貼圖的記憶體裡**——
+上一趟用「名字」比對是陰性，而**名字不是故障報告用來指認的東西，位址才是**。
+
+### 五、下一格：把環裡的名字比對換成**位址**比對
+
+同一個樁，每個欄位多記兩個值：被指到那張貼圖的 **GPU 虛擬位址與大小**
+（`FRHITexture::GetNativeResource()` → `ID3D12Resource::GetGPUVirtualAddress()` 與 `GetDesc()`）。
+**登記讀法**：
+
+- 故障位址落在環裡某一筆的某個欄位的 [VA, VA+size) 內 ⇒ **那一欄就是入口**，名字對不上只是名字不是同一張；
+- 落不進任何一筆，而窗口又涵蓋這一趟自己的「故障 − heap」距離 ⇒
+  **那個位址從來沒有以「這一筆 draw 綁的貼圖」的身分出現過**，於是第三點那條裸指標路成為主要嫌疑，
+  下一步就是在引擎側補上貼圖的 `ConditionalClearShaderResource`（有 cvar、預設關）並做干預測試；
+- 倒不出來或窗口短於距離 ⇒ 照第十一條，不算結果。
