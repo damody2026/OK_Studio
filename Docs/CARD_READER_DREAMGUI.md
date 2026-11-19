@@ -1131,3 +1131,26 @@ grep 不到這個字，所以那部分未經證實，要當證據得先指出是
   - 開關設 1 再進 1 對 1：面板照畫，`controls` 也回報顯示中，兩者一致。
   - 開關回 0 進 Studio：底下沒有讀卡器面板，`controls` `[not shown]`。
 - **和當機的關係（待 e-cardload 量）**：當機那一刻在飛的 draw 全是 DreamGUI 自己的（`mask0=fallback`），最容易當的是 1 對 1 回程，所以這是嫌疑之一。反證是 Studio 期間也照畫、Studio 回程卻不當。f-sceneload 另提一條：Studio 會把讀卡器的 `PreviewActor` 藏起，1 對 1 不會。開關 0／1 各跑 30 張，交給 e-cardload。
+
+
+### 釘在這裡：**能讓當機消失的旋鈕，不等於修好了**（2026-11-19）
+
+今天有三個旋鈕差點被當成解法：`r.RDG.ParallelExecute=0`、`D3D12.Bindless.GarbageCollectLatency`、
+`ok.ShadowCaptureStagger`／`ok.ShadowCapturesPerFrame`／`ok.ShadowCaptureFullView`。它們都可能讓當機消失，
+但**沒有一個是修法**：
+
+- `r.RDG.ParallelExecute=0` 是用「不並行錄製」換安全，代價是帧時間，而且只在機器上只有一個 Unreal 時成立；
+- `D3D12.Bindless.GarbageCollectLatency` 調大只是讓描述子晚一點被回收重用，窗口還在；
+- `ok.ShadowCapture*` 若能擋住，更可能說明的是**傷害的途徑**（孤兒 actor 每帧跑自己的 capture、綁自己的貼圖），
+  而不是另一個原因——那兩條其實是同一條。
+
+**旋鈕的價值是定位，不是上線。** 這個專案還有 120 FPS 的目標，把全域的刪除／回收調慢是直接付在帧時間上的；
+而且旋鈕擋住的那一天，真正的錯還在，只是要更多張卡才撞到。真修法在交換處：**1 對 1 進場把 controller 的
+`PreviewActor` 換成 clone 時，把舊的那個 actor 退休（`OKRetireActor`）**——前提是下面那格真的數出孤兒。
+
+### 要搭下一輪建置一起上的 dump（條件：那兩格數出孤兒）
+
+`ok.ReaderScreen` 那組加一條，一次印完，免得之後為它再建一次：每個 `KKPreviewActor` 的**名字**、
+`Session.IsOpen()`、`Parts` 數、它持有的貼圖件數與 MB，以及**它是不是現在 controller 的 `PreviewActor`
+或 `StalePreview`**。最後那項才是關鍵——「世界裡有三個 actor」本身不是問題，「有一個誰都不指它」才是問題，
+而現在只能從數量反推。這條是我的檔案，和 e-fork-2 的 `OKRetireActor` 同一輪進去，各自提交自己的 hunk。
