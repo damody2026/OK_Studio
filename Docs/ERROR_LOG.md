@@ -5785,9 +5785,12 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
   但 `reader_call` 是**按 `action` 分派**的转发工具：`select` 要 `index`、`get` 要 `keys`、`set` 要 `values`、
   `cards` 要 `query`／`offset`／`limit`……这些 schema 里一个都没有（只有 `action` 与 `timeout_s`）。
   于是「挡掉打错的栏位」变成「挡掉所有真实呼叫」，而且错误讯息长得像参数写错，不像工具坏了。
-- **修法**：`PASSTHROUGH` 名单（目前只有 `reader_call`）跳过这项检查，legal 栏位由游戏那端的 action 自己判；
-  两个单元测试把两边都钉住：转发工具的 `index`／`keys`／`values` 必须过，有声明的工具（`reader_launch`）
-  收到 `help` 还是要报错并列出合法栏位。
+- **修法**：第一版我开了一张 `PASSTHROUGH` 名单（只有 `reader_call`）；**最后用的是通用规则**——
+  **schema 宣告了 `action` 的工具只检查信封，payload 交给游戏自己拒绝**（协调 session 在 E 树 `b08e9be8b` 的写法，
+  比名单好：以后新增任何按 action 分派的工具都不必记得加名单）。有声明的工具照旧挡拼错的栏位。
+  两个单元测试把两边都钉住：转发工具的 `index`／`keys`／`values` 必须过，`reader_launch` 收到 `help`
+  还是要报错并列出合法栏位。另外查过 `pair_call`／`studio_*`：它们的栏位都如实写在 schema 里（`arg`／`fields`
+  是嵌套的 JSON），没有同一类问题。
 - **判准（这条最该记）**：**加一道「更严格」的检查时，先问它会不会把现有的正常用法一起挡掉**，
   至少把每个会用到它的呼叫形状列一次。我只验了「坏输入会被挡」，没验「好输入还过得去」——
   只测新行为、不测旧行为，等于把回归留给下一个人。

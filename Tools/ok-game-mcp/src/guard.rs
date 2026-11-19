@@ -19,13 +19,6 @@ const ALWAYS: &[&str] = &["session", "revision"];
 /// person's decision, not a parameter a script should learn to pass.
 pub const FORCE: &str = "force";
 
-/// Tools whose legal arguments depend on another argument, and which hand the whole object to the game's mailbox:
-/// `reader_call` takes `index` for `select`, `keys` for `get`, `values` for `set`, `query`/`offset`/`limit` for
-/// `cards`, and so on — a flat `inputSchema` cannot say that, so its schema lists only `action`. Checking those
-/// against the schema rejects every real call (it rejected `{"action":"select","index":1}` the same morning this
-/// file was written). The game answers an action it does not know, so the check belongs there, not here.
-const PASSTHROUGH: &[&str] = &["reader_call"];
-
 /// The arguments this tool declares, from its `inputSchema`.
 fn allowed(tools: &Value, name: &str) -> Option<Vec<String>> {
     let tool = tools.as_array()?.iter().find(|t| t["name"] == name)?;
@@ -35,8 +28,14 @@ fn allowed(tools: &Value, name: &str) -> Option<Vec<String>> {
 /// Refuse an argument the tool does not declare, naming what it does take. Silently ignoring a misspelled field is
 /// worse than failing: the caller believes they set something they did not (and `{"help":true}` quietly launched a game).
 pub fn check_args(tools: &Value, name: &str, a: &Value) -> Result<()> {
-    if PASSTHROUGH.contains(&name) { return Ok(()) }
     let Some(known) = allowed(tools, name) else { return Ok(()) };
+    // A tool that dispatches on `action` checks the envelope only: the fields belong to the action, not to the tool,
+    // so no static schema can list them (`reader_call`'s `select` takes `index`, `get` takes `keys`, `set` takes
+    // `edits`…). Checked against the schema, every documented call is "unknown fields" — which is how this check
+    // stopped a measurement grid on its first card and sent its owner back to the pre-guard exe. **A check that
+    // calls correct usage an error is worse than no check**, because the way around it is to switch the guard off.
+    // The game rejects an action it does not know, so the payload is its business.
+    if known.iter().any(|k| k == "action") { return Ok(()) }
     let Some(given) = a.as_object() else { return Ok(()) };
     let unknown: Vec<&str> = given.keys()
         .map(String::as_str)
@@ -51,6 +50,24 @@ pub fn check_args(tools: &Value, name: &str, a: &Value) -> Result<()> {
 fn slots_root() -> PathBuf {
     std::env::var("OK_UNREAL_SLOTS").map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("C:/portable/OpenKoikatsu/Saved/UnrealSlots"))
+}
+
+/// The lane this call belongs to: the argument the launch already takes (`reader_launch`'s `lane`, which also goes
+/// on the game's command line as `-OKLane=`), else the environment. It is how a slot holder says "this engine is the
+/// one I claimed the machine for".
+fn caller_lane(a: &Value) -> Option<String> {
+    a["lane"].as_str().map(str::to_string)
+        .or_else(|| std::env::var("OK_LANE").ok())
+        .or_else(|| std::env::var("OK_UNREAL_LANE").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// The `[lane=<name>]` an owner line carries (`unreal_slot.lua claim --lane <name>`), when it carries one.
+fn owner_lane(line: &str) -> Option<&str> {
+    let rest = line.split("[lane=").nth(1)?;
+    let lane = rest.split(']').next()?.trim();
+    (!lane.is_empty()).then_some(lane)
 }
 
 /// Each held slot's owner line (agent, what for, since when, and `[need N]` for an exclusive claim).
@@ -80,12 +97,22 @@ pub fn check_launch(name: &str, a: &Value) -> Result<Option<String>> {
     if !name.ends_with("_launch") { return Ok(None) }
     let forced = a[FORCE].as_bool() == Some(true);
     let owners = slot_owners();
-    // An exclusive claim (`--need-gb 60`, recorded as `[need N]`) means: nobody else's engine, not even for a minute.
-    // Two slots held by the same agent is the same thing in practice.
-    let exclusive = owners.iter().find(|(_, line)| line.contains("[need "));
-    let both = owners.len() == 2 && owners[0].1.split_whitespace().next() == owners[1].1.split_whitespace().next();
-    let busy = exclusive.map(|(i, line)| format!("slot{i} is held exclusively: {line}"))
-        .or_else(|| both.then(|| format!("one agent holds both slots: {}", owners[0].1)));
+    let lane = caller_lane(a);
+    // Exclusive means the one explicit mark, `[need N]` (`--need-gb 60`): nobody else's engine, not even for a minute.
+    // Not "one agent holds both slots" — that inference is gone. It was an unwritten second signal for the same thing,
+    // and the two read each other wrong: the agent that held both slots to own the GPU had its own `reader_launch`
+    // refused, which left `force` as the only way through. A guard that the holder has to force is not a guard.
+    //
+    // The holder's own engine is told apart by lane: the claim records `[lane=<name>]` and the call carries the same
+    // name. An exclusive claim with no lane recorded still refuses everyone, the claimant included — say who you are
+    // and the guard can tell; treating "no lane" as "must be you" would mean anyone passes.
+    let busy = owners.iter()
+        .find(|(_, line)| line.contains("[need ") && owner_lane(line) != lane.as_deref())
+        .map(|(i, line)| match (owner_lane(line), lane.as_deref()) {
+            (Some(_), Some(mine)) => format!("slot{i} is held exclusively by another lane (you are \"{mine}\"): {line}"),
+            (Some(theirs), None) => format!("slot{i} is held exclusively by lane \"{theirs}\": {line} — pass \"lane\": \"{theirs}\" if this engine is that claim's"),
+            _ => format!("slot{i} is held exclusively: {line}"),
+        });
     let running = unreal_processes();
     let too_many = running.filter(|n| *n >= 2).map(|n| format!("{n} Unreal processes already run (the machine's limit is 2)"));
     let Some(reason) = busy.or(too_many) else { return Ok(None) };
@@ -123,5 +150,28 @@ mod tests {
         check_args(&tools, "reader_launch", &json!({"card": "x.png"})).unwrap();
         let err = check_args(&tools, "reader_launch", &json!({"help": true})).unwrap_err().to_string();
         assert!(err.contains("help") && err.contains("card") && err.contains("--describe"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The owner line is free text with markers at the end; only an explicit `[lane=…]` counts.
+    #[test]
+    fn a_lane_is_read_from_the_owner_line_only_when_it_is_written_there() {
+        assert_eq!(owner_lane("e-cardload 旋鈕（需獨占） 2026-11-19 11:46 [need 60] [lane=e-knob]"), Some("e-knob"));
+        assert_eq!(owner_lane("e-cardload 旋鈕 2026-11-19 11:46 [need 60]"), None);
+        assert_eq!(owner_lane("f-sceneload 實拍 [lane=]"), None);
+    }
+
+    /// The call says which lane it is, through the argument the launch already takes.
+    #[test]
+    fn the_calls_lane_comes_from_its_own_argument() {
+        assert_eq!(caller_lane(&json!({"lane": "e-knob"})).as_deref(), Some("e-knob"));
+        assert_eq!(caller_lane(&json!({"lane": "  "})), None);
+        assert_eq!(caller_lane(&json!({"card": "x.png"})), std::env::var("OK_LANE").ok()
+            .or_else(|| std::env::var("OK_UNREAL_LANE").ok()));
     }
 }
