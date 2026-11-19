@@ -2392,3 +2392,123 @@ render-target 模式（`RendererType == EDreamUIRendererType::RenderTarget`）**
 **一句话**：这一层查完之后，**唯一跨帧的 descriptor 持有者只有材质 proxy 那一个**，
 而它和 §28／§31 的「不可能」会在同一个检验上碰头——
 **`NeverDeleteProxy` 与 `LogTextureSlots` 两个现成 cvar 併跑一趟，就能同时判掉第 1 与第 2 名。**
+
+---
+
+## §34 材质那条的清理缺口：**查完之后它不是缺口——而且这一节把 §33 自己的第 1 名除名**
+
+读的是 `E:/PhysX/UE5.8` 与 E 树（只读）。**结论先讲：引擎在材质这条用的是同一个 reference 间接物件，
+而且把这个竞态写在注解里并化解了。所以 §33 第 1 名（材质 proxy 的 cache 持有已死贴图）不成立。**
+
+### 34a 第 1 题：重建条件全表，以及「贴图被 GC」会不会触发
+
+`CacheUniformExpressions` 的入口：
+
+| 入口 | 行 |
+|---|---|
+| `CacheUniformExpressions_GameThread` → enqueue render command | `Materials/MaterialRenderProxy.cpp:676-690` |
+| 加入延迟清单 `DeferredUniformExpressionCacheRequests`，由 `UpdateDeferredCachedUniformExpressions` 消化；`GDeferUniformExpressionCaching` 关掉就当场做 | `:664-675` |
+| （`WITH_EDITOR`）async shader compile 结果上传时，扫 `GetMaterialRenderProxyMap()` 全部 proxy 重建 | `Materials/MaterialShared.cpp:5748-5767` |
+| `MaterialShared.cpp:190` | `:190` |
+
+`InvalidateUniformExpressionCache` 的呼叫者：
+
+| 呼叫者 | 行 | 触发事由 |
+|---|---|---|
+| `UMaterialInstance` | `Materials/MaterialInstance.cpp:498`、`:537` | 材质实例的参数变更 |
+| `InvalidateMaterialRenderProxyExpressionCache` | `MaterialRenderProxy.cpp:334-341` | **由 `OnVirtualTextureDestroyedCB` 呼叫——VT producer 被销毁** |
+| `CacheUniformExpressions` 自己 | `:672` | 重建前先失效 |
+| **proxy 的 `ReleaseRHI`／解构** | `:846`（并在 `:836-844` 把自己从延迟清单移除） | proxy 自己要走了 |
+
+**所以第 1 题的答案是：没有任何一条是「因为贴图参数的 UObject 被 GC」而触发的。**
+唯一和贴图死亡相关的是 VT producer 那一条（`:334-341`），**而 §26 已确认本专案的卡片贴图不是 VT**
+（`CreateTransient` 不设 `VirtualTextureStreaming`、没有 `VTData`）。
+
+**引擎不靠「重建 cache」来处理贴图死亡——它靠别的机制，就是 34b。**
+
+### 34b 第 2 题：存的是 reference 不是贴图，**而引擎把这个竞态写明了**
+
+`FUniformExpressionSet::FillUniformBuffer`
+（`Runtime/Engine/Private/Materials/MaterialUniformExpressions.cpp:1698-1750`）：
+
+```cpp
+// :1708-1711 的注解（原文）
+// TextureReference.TextureReferenceRHI is cleared from a render command issued by UTexture::BeginDestroy
+// It's possible for this command to trigger before a given material is cleaned up and removed from deferred update list
+if (Value && Value->GetResource() && Value->TextureReference.TextureReferenceRHI && (Value->GetMaterialType() & ValidTextureTypes) != 0u)
+{
+    …
+    *ResourceTableTexturePtr = Value->TextureReference.TextureReferenceRHI;   // :1729
+    …
+}
+if (!bValueValid)
+{
+    *ResourceTableTexturePtr = GWhiteTexture->TextureRHI;                     // :1744-1748
+}
+```
+
+三件事因此确定：
+
+1. **写进 resource table 的是 `TextureReference.TextureReferenceRHI`——那个间接物件，不是贴图本体**
+   （`:1729`；cube／2DArray／cubeArray／volume 各型别同样，`:1767`／`:1807`／`:1846`／`:1886`）；
+2. **引擎知道并处理这个竞态**：注解讲的正是「贴图的 `BeginDestroy` 发出的 render command 可能比材质被清掉还早」，
+   化解方式是「reference 为 null ⇒ `bValueValid=false` ⇒ 退回 `GWhiteTexture`」；
+3. 持有链：uniform buffer 的 `ResourceTable` 对列出的资源取 refcount ⇒ **持有那个 `FRHITextureReference` 物件**；
+   而那个物件的内层在贴图死亡时被引擎换成全域黑图（§30a，`Rendering/StreamableTextureResource.cpp:237`）。
+
+**所以「贴图死了但 proxy 的 cache 还持有它 RHI 的参照」这句话，在这一版引擎里不成立**：
+cache 持有的是间接物件，内层已经被换掉。**§33 的第 1 名除名。**
+这和你给的 `slot_hits_fault_texture=0` 方向一致——**九个 reference 槽没指名它，而材质这条存的是同一种 reference，
+所以材质这条也不会指名它。**
+
+### 34c 第 3 题：我们这边那组合够不够——**不够，而且理由是 MID 自己就是强参照**
+
+- `OKReleaseStaleKeptRuntimeTextures`（`Plugins/KKRuntimePose/.../KKRuntimeMaterial.cpp:265` 一带）只做
+  `RemoveAt`，掉的是 `FRecentRuntimeTexture` 那份 `TStrongObjectPtr`——**纯 game-thread 记帐，这点你查得对**；
+- 但 MID 对贴图参数本身是**强参照**：`FTextureParameterValue::ParameterValue` 是
+  **`UPROPERTY(EditAnywhere, BlueprintReadWrite) TObjectPtr<class UTexture>`**
+  （`Runtime/Engine/Public/Materials/MaterialInstance.h` 的 `struct FTextureParameterValue`）。
+  **所以只要 MID 还活著，我们这边放手也收不走那张贴图。**
+- 要那张贴图被 GC，**MID 必须也已不可达**——这正是你们量到的（贴图与 12 个 MID 都死）。
+  而 MID 死亡时：`UMaterialInstance` 那侧把 `FMaterialInstanceResource` 交给 render thread 删除，
+  proxy 的解构／`ReleaseRHI` 走 `InvalidateUniformExpressionCache(true)`（`MaterialRenderProxy.cpp:846`）
+  并把自己从延迟清单移除（`:836-844`）。
+
+**所以：这组合不足以让一张被 GC 的贴图留在某个 proxy 的 cache 里。**
+`FMaterialInstanceResource` 存的那些裸 `const UTexture*`（`MaterialInstanceSupport.h:412/454`）确实是裸的，
+**但它们活不过 MID**，而 MID 活著时贴图不会死——两头都没有「只存位址」的出口。
+
+### 34d 第 4 题：接缝在哪、责任面在哪
+
+既然 34b／34c 都是否定，**那条接缝不是「谁忘了清 cache」，也不在 DreamGUI 与我们之间。**
+能同时满足「配置被释放」与「`MainPS` 取样到它」的事实只剩一个：
+
+> **有一条路径释放了那张贴图的 RHI 配置，而没有走 `UTexture::BeginFinalReleaseResource`**
+> ——因此 reference 从未被清、`TRefCountPtr` 从未被尊重。
+
+**这正好就是 `LogTextureSlots` 注解事先登记的 (b)。** 责任面因此分成两句，而且它们互斥：
+
+- **(b) 成立**（有 slot 的 `referenced_name=` 对上故障那张）⇒ 责任在**释放端**：某处绕过了 refcount
+  或绕过了 `BeginFinalReleaseResource`。那一端目前看起来**不是** DreamGUI（它只持有 handle，§28–§31）、
+  **也不是** `OKReleaseStaleKeptRuntimeTextures`（它只 `RemoveAt`，34c）。**那就要往 D3D12 的配置器／pool
+  去找**（§12 的三分类：committed 真销毁、pool 以 fence 回收、transient 在已注册 heap 内别名）。
+- **(a) 成立**（没有任何 slot 指名它，**而 e-cardload 上一趟量到的就是 0**）⇒ `MainPS` 取样的不是任何
+  reference 槽，责任面回到**「每笔 draw 真正绑进去的那一笔」与那两个裸位址槽**（§31a：`SceneDepthTex`、
+  `BackdropTex`，来源都是 RDG render target）。**那就把问题移到 RDG／`GRenderTargetPool`，
+  也就是 §32b 差的那一环「谁把页还给系统」。**
+
+**而你给的 `slot_hits_fault_texture=0` 已经选了 (a)。** 所以依我这一侧读到的东西，
+**下一个该查的不是材质、不是 DreamGUI 的保存，而是「`BackdropTex`／`SceneDepthTex` 这两个 RDG 来源的页，
+在群组 target 归还之后会不会被还给系统」。**
+
+### 34e 前三名与能否解释 `AddressTranslationError`
+
+| 名次 | 候选 | 行 | 怎麼验 | 能解释整页不在页表吗 |
+|---|---|---|---|---|
+| 1 | **`BackdropTex` 的来源：群组 target 归还后那块页的归属**（§32b ＋ §31a 合併） | `DreamUICompositor.cpp:407`、`:296-302`；`RenderTargetPool.cpp:202`、`:400-420` | **`DreamGUI.Experiment.NoBackdrop 1`**（`DreamUICompositor.cpp:348`，现成 cvar）＋ `LogEntries 1` ＋ `LogPoolReuse 1`；若 NoBackdrop 让故障消失，这条就定位了 | **可能能**：若池子释放那条元件走的是 transient／aliased 配置，页会真的被还掉。**差的证据是「那次释放走的是哪一类配置器」** |
+| 2 | **(b) 的可能性：有路径绕过 `BeginFinalReleaseResource`** | 判准在 `MaterialUniformExpressions.cpp:1712`／`StreamableTextureResource.cpp:237` | **`DreamGUI.LogTextureSlots 1`**；e-cardload 已量到 0，**再一趟确认 0 稳定**就除名 | **能**：绕过 refcount 的释放正是「页被还掉」的唯一自洽解释 |
+| 3 | 材质 proxy 的 uniform expression cache | `MaterialRenderProxy.cpp:664-690`／`:846`；`MaterialUniformExpressions.cpp:1729` | `DreamGUI.Experiment.NeverDeleteProxy 1`（已排给 e-cardload） | **不能**：34b 证明它存的是 reference、内层已被换成黑图。**本节将它从第 1 名降到此处**；`NeverDeleteProxy` 那一趟若 3/3 仍故障，就与此一致 |
+
+**一句话**：材质这条查完是**否定**，而且它顺手把 §33 的第 1 名推翻。
+**`slot_hits_fault_texture=0` 既然已经选了 (a)，力气应该转到 `NoBackdrop` 那一格**——
+它是现成 cvar、零建置，而且是现在唯一还能解释「整页不在页表」的那一条的入口。
