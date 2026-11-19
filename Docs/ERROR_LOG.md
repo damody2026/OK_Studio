@@ -5749,3 +5749,17 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **怎么错的**：在读卡器把原作卡 KK_007604 的上衣换成水手连衣裙（217），再把 `clothes.parts.0.sleevesType` 从 0 改成 1 并套用，改前改后的截图一模一样。差点就判断成「程式没套用」。实际原因是：套用后读卡器把编辑过的卡当 OK 卡重开（日志里是 `OK load3d … root=`，游戏目录为空），上衣模型从基础库 `base_v1` 的 `.okmodel` 读。基础库录制时还没有这个查询，`memo_bytes_optional` 对这种旧 token 按设计回传空值，所以选项与袖型都不生效。同一张输出卡改用 CLI 并指定游戏目录跑（`ok-extract D:/XKoikatuSunshine <out> <卡>`，`OK_DIAG=1`），日志是 `clothes options … sleeves=1 -2 +0`，资料端是对的。
 - **修正**：`oklib_convert.rs` 的衣服段加上这个查询，之后的转换会录进去。现有的 `base_v1` 要补录（`--oklib convert`，可以用 `OKLIB_PREFABS` 只补衣服），补录前在 OK 卡上看不到效果，行为跟改之前一样。补录这件事交给协调 session 裁示。
 - **通则**：新增一个对模型 bundle 的查询时，要同时加进 `oklib_convert.rs` 的预录清单。读卡器验收先看日志里的 `root=`：游戏目录为空就是走基础库，结果取决于基础库有没有录这个查询，不能直接拿来判断程式有没有生效。
+
+## 2026-11-19：拿 `help:true` 问 MCP 工具的用法，结果直接把读卡器开起来，还撞进别人的 GPU 独占量测（f-sceneload）
+
+- **做了什么**：想知道 `reader_launch` 收哪些参数，下了
+  `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call reader_launch '{"help":true}'`。
+- **发生什么**：`call` 就是执行那个工具，**未知栏位会被忽略**，所以它照常启动了读卡器（pid 76860，11:04:59）。
+  当时 e-cardload-physics 正持着两格 slot 做「PageFault 計數格（需獨占 GPU）」，我这 60 秒的编辑器载入可能污染它那一笔。
+  看到回传里有 `pid` 就立刻 `reader_stop {"pid":…}`，并用 `Win32_Process` 按命令列确认 F 树 Unreal 行程归零，之后通知对方重跑那一格。
+- **两层错**：
+  1. **把会产生副作用的呼叫当成查询**。`ok-game-mcp call <tool>` 没有 help 模式；要看参数就读 `Tools/ok-game-mcp/src/*.rs`
+     的工具定义，或在载入 MCP 的 session 里看工具 schema，**不要靠传一个假栏位去探**。
+  2. **开引擎前没有先 claim slot**。我当时只是「想问个用法」，心里没把它当成要占机器的动作——但凡一个指令**可能**启动引擎，
+     就先看 `unreal_slot.lua status`、先 claim。
+- **通则**：对任何会启动游戏／编辑器的工具，先确认这次呼叫是读还是写；拿不准就去读它的源码，而不是对着别人的量测窗口试。
