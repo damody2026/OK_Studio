@@ -174,10 +174,13 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
    - ✅ EyeControl 两项、UncensorSelector、`KSOX`／`KCOX`、`Accessory_States`／`madevil.kk.ass`：
      白名单改成精确键名表后都收进来了（C000 上多出 75 项），并且不在表里的区段会报键名出来。
      EyeShaking 这张卡没有，键名照 GUID 填着等实证。
-2. **第二批（UI：把扁平清单变成原作那样的两组分页）**
+2. **第二批（UI 与操作语义）——2026-11-19 做完（a1377c52b、d5d3a8fa3、2e3bdff29），未实拍**
    - 头发四页：髮型、髮长、停止摆动、六个颜色块、髮饰色 ×3 ＋ 同步／反映／初始化按钮。
    - 眼睛两页：目（14 滑杆＋眼线）、瞳（左右切换＋瞳孔／渐层／眼白／高光），含 L→R 复制。
-   - 这批不需要新的资料能力，全部可以用现有 `properties get/set/apply` 与 `appearance` 做。
+   - ✅ 页面切分（四页＋共通页、目／瞳）与原作那几个按钮，每个按钮一次原子写入（走 `ops`）。
+   - ✅ 主色在套用时转成 `hair_base_color`（四槽同步＋自动渐层＋外框＋光泽），四个旗标上画面（第 9 节）。
+   - 这批不需要新的资料能力：`ops` 之外全部用现有 `properties get/set/apply` 与 `appearance`。
+   - ⚠️ **未实拍**：清单在 8.4 与 9.4。
 3. **第三批（贴图与 overlay，工程量最大）**
    - `KSOX` 的眼睛／眼线／眉毛 overlay 贴图读写；MaterialEditor 的 texture 属性。
    - 要先决定「贴图怎么在读卡器里给／存」（档案选择、存回卡片的体积），不是单纯补栏位。
@@ -368,7 +371,9 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
   （忙碌／没角色／有暂存编辑时的 ScreenNote）也还没在画面上看过。拿到窗口后要补：
   四页各一张、瞳页一张、按一次「重設外框色」前后各一张。
 
-## 9. 第三批：主色在套用时变成原作的那个动作（2026-11-19）
+## 9. 第二批的后半：主色在套用时变成原作的那个动作（2026-11-19）
+
+（编号对齐：第 5 节的「第三批」指贴图与 overlay。主色这件属于第二批的操作语义，不是第三批。）
 
 ### 9.1 四个旗标存在哪
 
@@ -408,3 +413,47 @@ sibling section **`OpenKoikatsu.HairEditor`**（键 `HairSameSetting`／`HairAut
 
 - 四个旗标的**画面开关**：现在只能改设定档，预设全开＝原作行为。
 - **实拍**：见 8.4 的清单。第三批还要再加一张「拉主色 → 套用」前后的对照（四槽与渐层是否一起变）。
+
+## 10. 第三批（贴图／overlay）之前先解决：外挂栏位的键是**位置式**的，跨卡会指到别的外挂（2026-11-19 实证）
+
+查 `KSOX`／MaterialEditor 贴图要怎么读写时，先撞到一个比贴图更要紧的问题。
+
+**事实**：外挂那些列的键长成 `plugins.m21.a1.m0.packed.m0.m1.a1`。`m<N>`／`a<N>` 是**按位置**取——
+`plugins.rs` 的 `replace()`：`Value::Map(m) if kind=="m" => m.get_mut(index)`，也就是「KKEx 这个 map 的第 N 个条目」，
+**不是**用区段键（外挂的 BepInEx GUID）去找。
+
+**实证（两张卡，同一支程式）**：
+
+| 外挂 | `StreetHeroines/alice.png` | `StreetHeroines/megumin.png` |
+|---|---|---|
+| KoiClothesOverlayX | `m21` | `m4` |
+| MaterialEditor | `m8` | （这张卡没有） |
+| Pushup | `m22` | **`m8`** |
+
+所以**在 alice 上抄到的 `plugins.m8.…`（MaterialEditor）拿到 megumin 上会写进 Pushup 的资料**。
+`patch_properties` 只检查「这张卡的清单里有这个键」，megumin 的 `m8` 确实存在（只是属于别的外挂），
+型别碰巧相同时就写得进去——**不会报错，卡被悄悄改坏**。
+
+**现在是安全的，因为没人跨卡存键**：UI 是开卡→读清单→改→套用，键的寿命只有这一张卡。
+**所以这是设计债，不是现行 bug**；但下面任何一件会把它变成 bug：
+
+- 预设集／样板（「把这张卡的外挂设定套到另一张」）；
+- 脚本或 MCP 自动化把键写死（`reader_call set` 的 `keys` 来自别处）；
+- 文件里的范例键被人照抄到另一张卡上（本文件以前的范例也该视为不可跨卡）。
+
+**建议的修法（要和 f-yvonne 商定，`properties.rs`／`plugins.rs` 是它的区域）**：第一段改成用**区段键**定位，
+例如 `plugins["com.deathweasel.bepinex.materialeditor"].a1.m0.packed…`，后面的结构内索引才保留位置式。
+区段键是稳定的（就是外挂的 GUID，`PLUGIN_SECTIONS` 已经有表）。这会改键的形状，所以要一起算：
+C++ 的属性面板、MCP 的 `set`／`get`、e-fork-2 的 `pages.json` 若有写死的键。
+
+**在那之前的护栏（现在就该守）**：**外挂栏位的键不可跨卡保存或复用**，只在「同一张卡、同一次开卡」内有效；
+谁要做预设集，先把这条修掉再做。
+
+### 10.1 贴图本体还是缺的
+
+同一批查到的第二件：这些区段**只有 bool／数值上得了清单**（自动走访只收 F32／F64／bool），
+贴图本体（`KSOX`／`KCOX` 的 overlay PNG、MaterialEditor 的 texture 属性）是 byte 阵列，**完全没有读写接口**
+（`Docs/READER_UI_APPEARANCE_API.md` 里的 `eye_overlays`／`eye_overlay_set` 目前只是建议，程式里 grep 不到）。
+这批要先定三件事再动手：**怎么给**（档案选择器还是从资料夹拿）、**怎么存**（存回卡片的体积上限与警告）、
+**怎么看**（导出成本机 PNG 让人确认是哪一张）。手上的卡能验的是 MaterialEditor（alice 有 284 列）与
+KCOX（alice 3 列）；**`KSOX` 这批卡都没有**，所以它的实证要等有那种卡，别照反编译猜了就当验过。
