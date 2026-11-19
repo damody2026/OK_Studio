@@ -290,6 +290,153 @@ Global/FOKGpuRigSkeletonCS/0/{CompileDXC.bat, DebugCompileArgs.txt, DebugHash_<6
   **bindless descriptor GPU heap 长大后释放**（§7），它有现成计数器可读、有现成旗标可推门槛。
 - 转述里「读卡器为每张卡持有一份缩图」与程式不符（§6c）：缩图是**按视野**持有的。
 
+## 9. 把 bindless descriptor heap 读到底（第三轮）——**结论是它解释不了这个故障**
+
+读的是 **F 组自己的引擎 `F:/UE5.8`**（`Tools\ok_engine.lua` 回报的就是这个；协调写的 `E:\PhysX\UE5.8` 是 E 组那份，我没读）。全部只读。
+
+### 9a. 先讲结论，因为它会省掉两格实验
+
+**今天的配置是 `Configuration=RayTracing`，而 `RayTracing` 这一级的 bindless 对「任何图形」都是关的**，
+所以 **DreamGUI 的 `MainPS` 根本不从 bindless heap 读 descriptor**：
+
+```cpp
+enum class ERHIBindlessConfiguration { Disabled, RayTracing, Minimal, All };   // RHIDefinitions.h:1433-1445
+inline bool IsBindlessEnabledForAnyGraphics(ERHIBindlessConfiguration C)
+{ return C >= ERHIBindlessConfiguration::Minimal; }                            // RHIDefinitions.h:1462-1465
+```
+
+`RayTracing < Minimal` → `false`。而 resource manager 的建构子正是用这个判断决定要不要开 GPU heap：
+
+```cpp
+if (IsBindlessEnabledForAnyGraphics(GetConfiguration()))
+{
+    ActiveGpuHeapIndex = AddActiveGPUHeap();   // D3D12BindlessDescriptors.cpp:311-315
+}
+```
+
+所以在这台机器今天的配置下，**bindless 的 GPU heap 只为 ray tracing dispatch 才会实体化**；
+图形的 descriptor 走的是另一条路（online／local view heap，见 9d）。
+**「开大 bindless heap」与「关掉 bindless」这两趟，量的会是 `MainPS` 不使用的东西。**
+这条候选到此为止——**不是因为读不出来，是因为读出来了**。
+
+### 9b. 长大与释放的路径（即使结论如上，纪录下来免得重查）
+
+| 环节 | 程式 | 事实 |
+|---|---|---|
+| 容量从哪来 | `D3D12BindlessDescriptors.cpp:127-178` | 初始容量 ＝ `GBindlessResourceDescriptorHeapSize`；**32768 来自引擎自己的 `F:\UE5.8\Engine\Config\Windows\BaseWindowsEngine.ini:24`**，不是专案设的。上限 `MaxResourceHeapSize` ＝ 装置上限（今天日志 `MaxNonSamplerDescriptors: 1000000`） |
+| 长大 | `:228-260` | 越过容量就 `ResizeGrowAndAllocate`：容量**翻倍**（32768→65536→…，上限 1M），重建 CPU heap 并复制，再 `bRequestNewActiveGpuHeap = true` |
+| 撞到上限 | `:247-250` | `UE_LOGF(..., Fatal, "Hit D3D12 device limits on descriptors...")`——**是会带讯息的 Fatal，不是静默回收**。所以「槽位用光就重用」这个形状在这一版不存在 |
+| 旧 GPU heap 怎么处置 | `:420-491`（`GarbageCollect`） | 不在用的先进 `PooledGpuHeaps`，再等 `GBindlessResourceDescriptorGarbageCollectLatency`（**600** 个 GC cycle）才 `SafeRelease()`。RayTracing 配置另有一条提早路：explicit heap 连 600 cycle 没用过就 `ReleaseGPUHeaps()` 全放 |
+| `ReleaseGPUHeaps` | `:338-371` | `bInUse` 的走 `DeferredFreeHeap`（等 GPU 用完），**不在用的当场 `SafeRelease()`** |
+
+### 9c. 核心问题的答案：**是 fence，不是帧数**
+
+`bInUse` 只在 `Recycle()` 里被清掉（`:494-511`，而且前面有 `check(GpuHeap.bInUse)`），
+而 `Recycle` 的唯一呼叫来源是**延迟删除佇列**：
+
+```cpp
+case FD3D12DeferredDeleteObject::EType::BindlessDescriptorHeap:
+    ...GetBindlessDescriptorManager().Recycle(ObjectToDelete.DescriptorHeap);   // D3D12RHI.cpp:409
+```
+
+而那个佇列是在 `EnqueueEndOfPipeTask` 里跑的（`D3D12RHI.cpp:363-377`），它**对每一条 queue 都建一个
+`ED3D12SyncPointType::GPUAndCPU` 的 sync point，并把全部 sync point 当成这个 task 的 prereq**
+（`D3D12RHI.cpp:319-360`）。也就是：
+
+> **清掉 `bInUse` 要等 GPU fence，不是等帧数。** 600 这个数字是**在 fence 之后再多等的那一段**，
+> 不是唯一的保护。
+
+所以**它和 `FDreamUIDeferredRelease` 不是同一个毛病形状**：那个（在 E 树）是帧数，这个是 fence。
+「一帧很长、GPU 佇列很深」不会让它提早释放——fence 本来就是在等那件事。
+另外 Development 建置里 `check` 是开的，`Recycle` 与 pool 回收各有一个 `check`，
+**真要是顺序错了，会先看到 check 失败，而不是页错误**。这又是一条反对它的证据。
+
+### 9d. 图形真正走的那条，以及「同一帧内配置又释放」在哪
+
+这才是 `MainPS` 的 descriptor 来源：**online／local view heap 的环状配置**。
+它**每条命令列都在配置、而且配完就等 sync point 回收槽位**——
+也就是协调问的「同一帧内配置又释放」，在这条路上是**常态**，不是例外：
+
+```cpp
+void FD3D12LocalOnlineHeap::RecycleSlots()
+{
+    FSyncPointEntry SyncPoint;
+    while (SyncPoints.Peek(SyncPoint) && SyncPoint.SyncPoint->IsComplete())  // D3D12DescriptorCache.cpp:1285-1294
+    { SyncPoints.Dequeue(SyncPoint); FirstUsedSlot = SyncPoint.LastSlotInUse + 1; }
+}
+```
+
+**也是 fence 门控**（`IsComplete()`），不是帧数。环绕用完会 `HeapLoopedAround`／`HeapRolledOver`（`:1265-1283`）。
+所以如果要在「descriptor 被还在飞的绘製读到」这个形状上继续查，**该推的门槛是这一组，不是 bindless 那一组**。
+
+### 9e. 开卡时谁大量配置 descriptor
+
+- **每一个 SRV／UAV view 建立时都会拿一个 bindless handle**，闸门只看 descriptor 型别、**不看配置**
+  （`D3D12View.cpp:215-237`）；`FRHITextureReference` 也各拿一个（`D3D12TextureReference.cpp:8`）。
+  所以开卡（一张卡几百张贴图）＋ 61 张缩图**确实会把 32768 这个水位推高**，`stat D3D12Bindless` 看得到。
+  **但推高的是 CPU 侧的那本帐**；在 RayTracing 配置下它不改变 `MainPS` 读到的东西（9a）。
+- 图形这一侧：每条命令列从 online view heap 取槽位，每帧重来；卡片列表的 widget 愈多，
+  每帧要绑的 view 愈多 → 环绕愈快 → 槽位回收压力愈大。**这一条才和「61 张更早当」同向**。
+
+### 9f. 旗标清单（名称与预设都从这一版原始码抄的，附行号）
+
+**全部 `ECVF_ReadOnly`** —— 只能在**启动时**经命令列或 ini 设定，执行期 `game_exec`／主控台设不进去。
+
+| cvar | 预设 | 宣告 | 备注 |
+|---|---:|---|---|
+| `D3D12.Bindless.ResourceDescriptorHeapSize` | 1000000 | `D3D12BindlessDescriptors.cpp:11-17` | **但 Windows ini 覆写成 32768**（`Engine\Config\Windows\BaseWindowsEngine.ini:24`） |
+| `D3D12.Bindless.SamplerDescriptorHeapSize` | 2048 | `:26-30` | ini 也写了 2048（同档 `:25`） |
+| `D3D12.Bindless.GarbageCollectLatency` | 600 | `:19-24` | 单位是 GC cycle，不是帧 |
+| `D3D12.Bindless.HeapUpdateUniqueUploadThreshold` | 1024 | `:34-40` | |
+| `D3D12.GlobalResourceDescriptorHeapSize` | 1000000 | `D3D12StateCache.cpp:11-17` | **图形这一侧** |
+| `D3D12.GlobalSamplerDescriptorHeapSize` | 2048 | `:19-25` | |
+| `D3D12.LocalViewHeapSize` | 500000 | `:29-35` | **图形这一侧，9d 那条环** |
+| `D3D12.GlobalSamplerHeapSize` | 2048 | `:37-43` | |
+| `D3D12.OnlineDescriptorHeapSize` | 500000 | `:48-54` | **图形这一侧** |
+| `D3D12.OnlineDescriptorHeapBlockSize` | 2000 | `:56-62` | |
+| `D3D12.BindlessOnlineDescriptorHeapSize` | 500000 | `:64-70` | |
+| `D3D12.BindlessOnlineDescriptorHeapBlockSize` | 2000 | `:72-78` | |
+| `D3D12.ResidencyManagement` | 1 | `D3D12Adapter.cpp:32-35` | 关掉它＝不逐出 |
+| `D3D12.ResidencyDebugBudgetMB` | -1（关） | `D3D12Adapter.cpp:206-209` | 说明写明「用小值（例如 128）强迫 eviction／MakeResident churn」——**阳性方向实验** |
+
+**bindless 的开关不是 cvar，是两条路**：
+
+1. **命令列参数**：`-BindlessOff`／`-BindlessRT`／`-BindlessMinimal`／`-BindlessAll`／`-Bindless`（＝Minimal）
+   （`Runtime/RHI/Private/RHI.cpp:1130-1163`）。
+   **重点警告：整段包在 `#if WITH_EDITOR` 里。** 读卡器平常是 `UnrealEditor.exe -game`
+   （`CardReaderDevelopment.cmd` → `Tools/run_card_reader_development.lua`），那是 editor 建置，**旗标有效**；
+   但若是从 package 跑（`Saved\StreetSocial\Build\*.stage` 里的游戏执行档），`WITH_EDITOR=0`，
+   **这个旗标会静默无效**——到达证据就看启动日志有没有那行
+   `Bindless is enabled (Configuration=...)` 跟著变。
+2. **ini 设定 `BindlessConfiguration=`**，在 per-shader-platform 的设定区段里读
+   （`Runtime/RenderCore/Private/ShaderPlatformConfig.cpp:27-67`；值的字串解析在
+   `Runtime/RHI/Private/RHIStrings.cpp:774-801`）。
+   **改它会改 shader 的编译设定 → 会触发 shader 重编**，这不是一个便宜的旋钮。
+
+「不要长大、直接报错」**没有 cvar**：能不能长大是编译期巨集
+`D3D12RHI_BINDLESS_RESOURCE_MANAGER_SUPPORTS_RESIZING`（`D3D12BindlessDescriptors.cpp:227`）。
+撞到装置上限时本来就是 Fatal（9b）。
+
+### 9g. 机制点读数（这些才是「到达」证据）
+
+`stat D3D12Bindless`（stat group `STATGROUP_D3D12Bindless`，`D3D12Stats.h:45` 一带）里有：
+`Resource Heaps Allocated`、`...HeapsActive`、`...HeapsInUseByGPU`、`Bindless Resource Descriptors Allocated`、
+heap 的 GPU 记忆体用量。**开卡时 descriptor 数有没有逼近 32768、heap 数有没有变**，是这条候选的直接读数；
+按 9a，就算读到它长大了，也不等于 `MainPS` 受影响。
+
+## 10. 这一轮之后，候选剩下什么
+
+- **bindless descriptor heap：降到最低**（9a：图形不读它；9c：fence 门控而非帧数；两个 `check` 会先炸）。
+  **请不要拿它去跑那两格实验。**
+- **同形状但图形真的在用的那条**：online／local view heap 的环状槽位回收（9d）。
+  它也是 fence 门控，所以**不是现成的毛病**，但它是「还在飞的绘製读到被重用的 descriptor」这个假说
+  在这台机器上**唯一真的相关**的实作；要推门槛就推 `D3D12.OnlineDescriptorHeapSize`／
+  `D3D12.LocalViewHeapSize`／`D3D12.OnlineDescriptorHeapBlockSize`。
+- **residency 逐出**（§7）：**现在是最合「整个 heap 不在了」而又还没被排除的那一个**，
+  而且 `D3D12.ResidencyDebugBudgetMB 128` 是**少数能往阳性方向推**的实验（强迫 churn 看 4% 会不会跳）。
+  建议把原本要给 bindless 的两格实验改到这里。
+- 候选 1（RDG transient 叠用）与候选 2（资料贴图 `ReplaceTexture`）不受这一轮影响。
+
 ---
 
 调查：f-sceneload（F 树，只读）。现象与 e-cardload 的趟数都是协调 session 转述，崩溃档我没有自己看过。
