@@ -253,10 +253,13 @@ fn overlays_off(card:&[u8],outfit:usize,part:usize)->Result<Vec<u8>,String>{
  if !changed{return Ok(card.to_vec());}
  blocks.insert("KKEx".into(),encode(&root)?);super::write_blocks(card,blocks)
 }
+/// Where an accessory may stay when her clothes change: her hair, head and face. off_the_body() and its test both ask
+/// this one list, so the rule for the twenty slots and for the MoreAccessories slots cannot drift apart.
+const KEEPS:[&str;8]=["a_n_hair","a_n_head","a_n_ear","a_n_megane","a_n_nose","a_n_mouth","a_n_neck","a_n_face"];
 /// Many cards build their outfit from accessories (爱丽丝's pink jacket hangs on her bust): with the shop's dress on she still
 /// wore it. What hangs on her body comes off with her clothes, what is on her head and face stays hers.
 fn off_the_body(card:&[u8],outfit:usize)->Result<Vec<u8>,String>{
- const NONE:i32=120;const KEEPS:[&str;8]=["a_n_hair","a_n_head","a_n_ear","a_n_megane","a_n_nose","a_n_mouth","a_n_neck","a_n_face"];
+ const NONE:i32=120;
  let paths=list_paths(card,outfit)?;let at=|k:String|paths.iter().find(|(p,_)|*p==k).map(|(_,v)|v.trim_matches('"').to_string());
  let mut edits:Vec<(String,J)>=Vec::new();let mut out=card.to_vec();
  for i in 0.. {let Some(kind)=at(format!("accessory.parts.{i}.type"))else{break};if kind==NONE.to_string(){continue;}
@@ -349,19 +352,25 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
  #[test]fn every_heroine_takes_the_dye_even_with_hair_painted_into_its_texture(){
   let dir="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines";if !Path::new(dir).exists(){return;}
   let green=|p:&[u8]|{let i=crate::teximg::load_from_memory(p).unwrap().into_rgba8();let (mut r,mut g,mut n)=(0u64,0u64,0u64);for p in i.pixels(){if p[3]>128{r+=p[0] as u64;g+=p[1] as u64;n+=1;}}n==0||r==g||g>r};
-  for e in fs::read_dir(dir).unwrap(){let path=e.unwrap().path();let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();
+  // Only the cards: a card folder may hold subdirectories (a KKS/ next to the heroines did this), and read_dir
+  // hands those out too — opening one as a card is PermissionDenied (os error 5), not a card-reading failure.
+  for path in fs::read_dir(dir).unwrap().flatten().map(|e|e.path()).filter(|p|p.extension().is_some_and(|e|e=="png")){let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();
    let tmp=std::env::temp_dir().join(format!("ok-dye-{}-{}",std::process::id(),path.file_name().unwrap().to_string_lossy()));fs::write(&tmp,restyle(&card,None,Some([0.2,0.9,0.3])).unwrap()).unwrap();
    let s=crate::oklib::open_test_card(&tmp,0).unwrap();let _=fs::remove_file(&tmp);assert!(crate::hair_dye::dyeable(&s),"{path:?}");
    for i in crate::hair_dye::hair_parts(&s){let p=&s.parts[i];assert!(p.png.as_ref().is_none_or(|p|green(p)),"{path:?} {}",p.name);}}
  }
  #[test]fn dress_takes_off_what_she_wears_as_accessories(){
   let dir="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines";if !Path::new(dir).exists(){return;}
-  for e in fs::read_dir(dir).unwrap(){let path=e.unwrap().path();let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();let mine=list_paths(&card,0).unwrap();let got=list_paths(&dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap(),0).unwrap();
+  let stays=|parent:&str|super::KEEPS.iter().any(|k|parent.starts_with(k));
+  for path in fs::read_dir(dir).unwrap().flatten().map(|e|e.path()).filter(|p|p.extension().is_some_and(|e|e=="png")){let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();let mine=list_paths(&card,0).unwrap();let got=list_paths(&dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap(),0).unwrap();
    let at=|l:&[(String,String)],k:&str|l.iter().find(|(p,_)|p==k).map(|(_,v)|v.trim_matches('"').to_string()).unwrap_or_default();
    for i in 0..20 {let k=format!("accessory.parts.{i}.type");let parent=at(&mine,&format!("accessory.parts.{i}.parentKey"));if at(&mine,&k)=="120"||at(&mine,&k).is_empty(){continue;}
-    assert_eq!(at(&got,&k)=="120",!(parent.starts_with("a_n_hair")||parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_megane")||parent.starts_with("a_n_nose")||parent.starts_with("a_n_mouth")||parent.starts_with("a_n_neck")||parent.starts_with("a_n_face")),"{k} {parent}");}
+    assert_eq!(at(&got,&k)=="120",!stays(&parent),"{k} {parent}");}
    let dressed=dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap();
-   for(i,_,parent)in super::super::extra::worn(&blocks_from_card(&dressed).unwrap(),0).unwrap(){assert!(parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_neck"),"extra slot {i} on {parent} stayed on");}
+   // The extra (MoreAccessories) slots follow the same rule as the twenty: both are asked of super::KEEPS, so
+   // this cannot drift from what dress() does. Spelling a narrower list here once said a mouth accessory had
+   // "stayed on" when keeping it is correct — a change of clothes does not take the things off her face.
+   for(i,_,parent)in super::super::extra::worn(&blocks_from_card(&dressed).unwrap(),0).unwrap(){assert!(stays(&parent),"extra slot {i} on {parent} stayed on");}
    let parsed=crate::card::parse_card_bytes(&dressed,0).unwrap();assert!(!parsed.clothes_masks.keys().any(|k|k.0==0),"the masks painted for her old top go with it");
    assert_eq!(at(&got,"clothes.parts.4.id"),"0","her gloves go with her top");assert_eq!(at(&got,"clothes.parts.5.id"),"0","her tights too");
    for c in 1..3 {assert_eq!(at(&got,&format!("clothes.parts.0.colorInfo.{c}.baseColor.1")).parse::<f32>().unwrap(),1.,"the dress's own colour area {c}");}}
