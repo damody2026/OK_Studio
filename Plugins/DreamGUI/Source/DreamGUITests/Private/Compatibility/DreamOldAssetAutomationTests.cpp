@@ -181,7 +181,7 @@ bool FDreamOldAssetsLoadCleanTest::RunTest(const FString& Parameters)
 	for (const FString& PackageName : PackageNames())
 	{
 		const DreamPackageLoadCheck::FResult Loaded = DreamPackageLoadCheck::LoadAndCompile(PackageName);
-		TestNotNull(*FString::Printf(TEXT("%s loads"), *PackageName), Loaded.Package);
+		TestNotNull(*FString::Printf(TEXT("%s loads"), *PackageName), Loaded.Package.Get());
 		for (const FString& Problem : Loaded.Problems)
 		{
 			AddError(FString::Printf(TEXT("%s: %s"), *PackageName, *Problem));
@@ -230,7 +230,7 @@ bool FDreamOldAssetsMatchSnapshotTest::RunTest(const FString& Parameters)
 			continue;
 		}
 		const FString Expected = ApplyRedirects(*Block);
-		const FString Actual = Describe(DreamPackageLoadCheck::LoadAndCompile(PackageName).Package);
+		const FString Actual = Describe(DreamPackageLoadCheck::LoadAndCompile(PackageName).Package.Get());
 		if (Actual == Expected)
 		{
 			continue;

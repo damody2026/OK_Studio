@@ -78,7 +78,7 @@ bool FDreamLifecycleLevelCopyRhiTest::RunTest(const FString& Parameters)
 		{
 			return false;
 		}
-		TestTrue(TEXT("...the surface showing its canvas"), ShowsItsCanvas(Kinds.Surface));
+		TestTrue(TEXT("...the surface showing its canvas"), ShowsItsCanvas(Kinds.Surface.Get()));
 		FlushRenderingCommands();
 		const int32 CopiesBefore = DreamUI::GetCopiedIntoPlaySessionCount();
 
@@ -106,7 +106,7 @@ bool FDreamLifecycleLevelCopyRhiTest::RunTest(const FString& Parameters)
 		}
 		TestEqual(TEXT("...and no dynamic texture anywhere is without a size"), JoinLines(FindZeroSizeDynamicTextures()), FString(TEXT("none")));
 		Settle();
-		TestTrue(TEXT("The panels drew on through both copies"), ShowsItsCanvas(Kinds.Surface) && Kinds.DreamRendered->GetWidgetComponent()->GetLoadedWidget() != nullptr);
+		TestTrue(TEXT("The panels drew on through both copies"), ShowsItsCanvas(Kinds.Surface.Get()) && Kinds.DreamRendered->GetWidgetComponent()->GetLoadedWidget() != nullptr);
 	}
 	Settle();
 	TestEqual(TEXT("Nothing reached the collector still registered, the world's teardown included"), Watch.Describe(), FString(TEXT("none")));

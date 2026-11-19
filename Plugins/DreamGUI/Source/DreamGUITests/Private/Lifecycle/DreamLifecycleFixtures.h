@@ -108,10 +108,11 @@ namespace DreamTests::Lifecycle
 	 */
 	struct FWorldSpaceKinds
 	{
-		ADreamWorldWidgetActor* DreamRendered = nullptr;
-		ADreamWorldWidgetActor* EngineRendered = nullptr;
-		UDreamUIRenderTargetGeometrySource* Surface = nullptr;
-		UDreamWidget* SurfaceCanvasRoot = nullptr;
+		/** Weak: the actors belong to the world, which the fixture tears down around them. */
+		TWeakObjectPtr<ADreamWorldWidgetActor> DreamRendered;
+		TWeakObjectPtr<ADreamWorldWidgetActor> EngineRendered;
+		TWeakObjectPtr<UDreamUIRenderTargetGeometrySource> Surface;
+		TWeakObjectPtr<UDreamWidget> SurfaceCanvasRoot;
 		/** The actors placed. */
 		TArray<AActor*> Actors() const;
 	};

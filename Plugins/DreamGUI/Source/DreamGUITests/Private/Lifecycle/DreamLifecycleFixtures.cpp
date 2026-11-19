@@ -245,7 +245,7 @@ namespace DreamTests::Lifecycle
 	TArray<AActor*> FWorldSpaceKinds::Actors() const
 	{
 		TArray<AActor*> Placed;
-		for (AActor* Actor : { static_cast<AActor*>(DreamRendered), static_cast<AActor*>(EngineRendered), Surface != nullptr ? Surface->GetOwner() : nullptr })
+		for (AActor* Actor : { static_cast<AActor*>(DreamRendered.Get()), static_cast<AActor*>(EngineRendered.Get()), Surface.IsValid() ? Surface->GetOwner() : nullptr })
 		{
 			if (Actor != nullptr)
 			{
@@ -263,19 +263,21 @@ namespace DreamTests::Lifecycle
 			return Kinds;
 		}
 		Kinds.DreamRendered = PlacePanel(InWorld, InPanelClass);
-		if (Kinds.DreamRendered != nullptr)
+		if (Kinds.DreamRendered.IsValid())
 		{
 			AddBackgroundBlur(InWorld, Kinds.DreamRendered->GetWidgetComponent()->GetLoadedWidget());
 		}
 		Kinds.EngineRendered = InWorld->SpawnActor<ADreamWorldWidgetActor>(FVector(0.0, 400.0, 0.0), FRotator::ZeroRotator);
-		if (Kinds.EngineRendered != nullptr)
+		if (Kinds.EngineRendered.IsValid())
 		{
 			Kinds.EngineRendered->GetWidgetComponent()->SetBackend(EDreamWorldWidgetBackend::UERenderer);
 			Kinds.EngineRendered->GetWidgetComponent()->SetWidgetClass(InPanelClass);
 		}
 		if (bInWithSurface)
 		{
-			Kinds.Surface = PlaceSurface(InWorld, nullptr, Kinds.SurfaceCanvasRoot, /*bInAlsoOnAStaticMesh*/ true);
+			UDreamWidget* SurfaceRoot = nullptr;
+			Kinds.Surface = PlaceSurface(InWorld, nullptr, SurfaceRoot, /*bInAlsoOnAStaticMesh*/ true);
+			Kinds.SurfaceCanvasRoot = SurfaceRoot;
 		}
 		DrawFrames(InWorld, 2);
 		return Kinds;

@@ -394,6 +394,15 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **The test fixtures that could outlive what they name now name it weakly.** The gallery stage's editor world, the
+  world-space lifecycle fixture's two actors, its render-target surface and that surface's canvas root, the package
+  load check's loaded package and the canvas-change log's pairs are weak pointers; `GetWorld` still hands back a plain
+  pointer. The driver context and the scoped world, game-instance and asset fixtures stay raw: each already states
+  whose lifetime covers it -- a world owns its actors, the UI manager holds its widgets, the rig outlives every
+  context it hands out, and the PIE rig keeps no strong reference on purpose, so that a play world can be torn down.
+  `FDreamListControlsTestTypes::Children` stays raw and `UPROPERTY`, because its value type is the one
+  `FDreamTreeGetItemChildren` hands out.
+
 - **The editor's own stored object pointers are weak, and the ones that stay raw say why.** The sequence editor's
   asset, the hierarchy picker's class filter, a component-reference property's allowed and disallowed class lists and
   the layer style dialog's shown struct are weak pointers resolved where they are read; `GetShownStruct` still hands

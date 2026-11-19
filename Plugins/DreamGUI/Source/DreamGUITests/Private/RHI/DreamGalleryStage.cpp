@@ -58,7 +58,7 @@ namespace DreamGalleryStage
 		Target->UpdateResourceImmediate(true);
 		TargetTexture.Reset(Target);
 
-		UDreamWidget* Root = NewObject<UDreamWidget>(World, NAME_None, RF_Transient);
+		UDreamWidget* Root = NewObject<UDreamWidget>(World.Get(), NAME_None, RF_Transient);
 		Root->SetDisplayName(TEXT("DreamRenderGalleryRoot"));
 		Root->SetWidth(static_cast<float>(InSize.X));
 		Root->SetHeight(static_cast<float>(InSize.Y));
@@ -87,12 +87,12 @@ namespace DreamGalleryStage
 
 	bool FGalleryStage::IsUsable() const
 	{
-		return Failure.IsEmpty() && World != nullptr && IsValid(TargetTexture.Get()) && IsValid(RootWidget.Get()) && IsValid(CanvasComponent.Get());
+		return Failure.IsEmpty() && World.IsValid() && IsValid(TargetTexture.Get()) && IsValid(RootWidget.Get()) && IsValid(CanvasComponent.Get());
 	}
 
 	UDreamWidget* FGalleryStage::AddWidget(const TCHAR* InName, FVector2D InSize, FVector2D InPosition, UDreamWidget* InParent)
 	{
-		UDreamWidget* Widget = NewObject<UDreamWidget>(World, NAME_None, RF_Transient);
+		UDreamWidget* Widget = NewObject<UDreamWidget>(World.Get(), NAME_None, RF_Transient);
 		Widget->SetDisplayName(InName);
 		Widget->SetWidth(static_cast<float>(InSize.X));
 		Widget->SetHeight(static_cast<float>(InSize.Y));

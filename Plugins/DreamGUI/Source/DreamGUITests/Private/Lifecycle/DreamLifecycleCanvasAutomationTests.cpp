@@ -57,7 +57,7 @@ bool FDreamLifecycleVisualFollowsItsCanvasTest::RunTest(const FString& Parameter
 	DrawFrames(Level.World, 1);
 	TestTrue(TEXT("and draws in it"), Probe->GetRenderCanvas() == OwnCanvas);
 	TestTrue(TEXT("its visual was told it moved from the panel's canvas to that one"),
-		Visual->CanvasChanges.Contains(TPair<const UDreamCanvas*, const UDreamCanvas*>(PanelCanvas, OwnCanvas)));
+		Visual->CanvasChanges.Contains(TPair<TWeakObjectPtr<const UDreamCanvas>, TWeakObjectPtr<const UDreamCanvas>>(PanelCanvas, OwnCanvas)));
 	TestTrue(TEXT("and was marked to be written whole into it"), Visual->MarkAllDirtyCount > 0);
 
 	Visual->CanvasChanges.Reset();
@@ -66,7 +66,7 @@ bool FDreamLifecycleVisualFollowsItsCanvasTest::RunTest(const FString& Parameter
 	DrawFrames(Level.World, 1);
 	TestTrue(TEXT("without its own canvas the widget draws in the panel's again"), Probe->GetRenderCanvas() == PanelCanvas);
 	TestTrue(TEXT("its visual was told it moved back"),
-		Visual->CanvasChanges.Contains(TPair<const UDreamCanvas*, const UDreamCanvas*>(OwnCanvas, PanelCanvas)));
+		Visual->CanvasChanges.Contains(TPair<TWeakObjectPtr<const UDreamCanvas>, TWeakObjectPtr<const UDreamCanvas>>(OwnCanvas, PanelCanvas)));
 	TestTrue(TEXT("and was marked to be written whole into the panel's canvas again"), Visual->MarkAllDirtyCount > 0);
 
 	Probe->DestroyWidget();
