@@ -46,7 +46,7 @@ protected:
 	TObjectPtr<UDreamUISpriteData_BaseObject> Sprite = nullptr;
 	/** Use a custom material to render this sprite */
 	UPROPERTY(EditAnywhere, Category = "DreamUI")
-	UMaterialInterface* OverrideMaterial = nullptr;
+	TObjectPtr<UMaterialInterface> OverrideMaterial = nullptr;
 
 	virtual void OnBeforeCreateOrUpdateGeometry()override;
 	virtual UTexture* GetTextureToCreateGeometry()override;

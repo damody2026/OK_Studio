@@ -127,7 +127,7 @@ public:
 	void SetUserIndex(int32 Value);
 	/** The entry widgets currently on the bar, in the order they are shown. */
 	UFUNCTION(BlueprintCallable, Category = "DreamGUI-Navigation")
-	const TArray<UDreamWidget*>& GetEntryWidgets()const{ return EntryWidgets; }
+	const TArray<TObjectPtr<UDreamWidget>>& GetEntryWidgets()const{ return EntryWidgets; }
 	/**
 	 * What the last rebuild put on the bar, in order, MaxEntries at most: one prompt per entry -- the same list
 	 * with no entry prefab to draw it, which is how a test or a bar drawn some other way reads it.
@@ -154,7 +154,7 @@ protected:
 	TArray<TObjectPtr<UDreamWidget>> SpawnedEntries;
 	/** Non-owning view of the same widgets, so Blueprint can read the row without a copy per call. */
 	UPROPERTY(Transient)
-	TArray<UDreamWidget*> EntryWidgets;
+	TArray<TObjectPtr<UDreamWidget>> EntryWidgets;
 
 private:
 	void SubscribeToSources();

@@ -144,6 +144,33 @@ public:
  void ResetEditorProperty(const FString& Key);
  UFUNCTION() void OnOpenProperties();
  UFUNCTION() void OnApplyProperties();
+ // The original's four hair-colour settings (`CustomBase.CustomSettingSave`), **all true in a fresh install**: the
+ // main colour goes to every slot, and the gradient, outline and gloss follow from it. They are the player's
+ // settings, not the card's, so they live where the reader's other display settings do (GConfig,
+ // GGameUserSettingsIni) and not in the card. Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7.1.
+ bool bHairSameSetting=true,bHairAutoSetting=true,bHairOutlineSetting=true,bHairGlossSetting=true;
+ void LoadHairColourSettings();
+ void SetHairColourSetting(const FString& Name,bool Value);
+ // The staged hair main-colour rows turned into the action they imply, so applying them writes what the original
+ // writes. Empty when nothing staged touches a slot's `baseColor`.
+ TArray<TSharedPtr<FJsonValue>> HairColourOpsForStagedEdits() const;
+ // One action of the original editor, applied as one write: the hair colour with its four settings writes every
+ // slot's base/gradient/outline/gloss, "copy the left eye" writes seven pupil fields. The expansion is in
+ // ok-extract (`appearance/ops.rs`), so the UI, the MCP and the CLI cannot drift apart on what a button means.
+ // Returns the reason it did not start, or an empty string. Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7.
+ FString ApplyPropertyOps(const TArray<TSharedPtr<FJsonValue>>& Ops);
+ // 材質貼圖（MaterialEditor）。和 EditorProperties 分开：一张 PNG 不是属性值，ok-extract 那边也是另外两个动作
+ // （`textures`／`textures_apply`，Docs/READER_UI_APPEARANCE_API.md §11）。每一列带着自己的 5 个身分栏位
+ // （object／coordinate／slot／material／property），界面不记列号 —— 清单的顺序是每张卡自己的事。
+ TArray<TSharedPtr<FJsonObject>> EditorTextures;
+ FString TextureSource,TextureNote;
+ int32 TextureOutfit=INDEX_NONE;
+ // 读完、写完都 ++：读卡器的页面用它当 Signature，所以非同步读回来之后页面会自己重建。
+ int32 TextureGeneration=0;
+ bool bTextureBusy=false;
+ void LoadTextureRows();
+ // 一批贴图修改一次写回（指派／清除／偏移／缩放）。回传没有开始的理由，或空字串。
+ FString ApplyTextureChanges(const TArray<TSharedPtr<FJsonValue>>& Changes);
  UFUNCTION() void OnResetProperties();
  UFUNCTION() void OnPropertySearch(const FText& Value);
  UFUNCTION() void OnPropertyPrev();

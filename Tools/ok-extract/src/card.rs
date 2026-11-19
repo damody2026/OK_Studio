@@ -2960,6 +2960,22 @@ mod tests {
         }
     }
 
+    /// Which cards really carry MaterialEditor overrides (read only). The key names are in every card that has the
+    /// plugin, even with empty lists, so `grep` cannot tell; this counts the parsed entries (outfit 0):
+    /// `OK_ME_DIR=<card folder> cargo test --release --lib material_editor_override_census -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads every PNG of OK_ME_DIR"]
+    fn material_editor_override_census() {
+        let Some(dir) = std::env::var_os("OK_ME_DIR") else { eprintln!("set OK_ME_DIR"); return };
+        let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("png"))).collect();
+        files.sort();
+        for p in files {
+            let Ok(card) = parse_card_outfit(&p, 0) else { println!("ME skip {}", p.display()); continue };
+            println!("ME me_tex={} me_color={} {}", card.me_tex.len(), card.me_color.len(), p.display());
+        }
+    }
+
     #[test]
     fn probe_handoff2_cards() {
         let cards = [

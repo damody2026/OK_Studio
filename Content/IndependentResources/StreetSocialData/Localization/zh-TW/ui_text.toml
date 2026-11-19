@@ -2775,6 +2775,7 @@ uncensor_selector = "身體替換"
 
 [reader.unsupported]
 hair_transform_not_applied = "卡片存得下這一項，但現在的渲染還沒用它，改了不會有任何變化。"
+pushup_body_backup = "這是 Pushup 存的「推擠前」身體滑桿備份。請改身體滑桿；改這裡會被蓋掉。"
 
 [ui.editor_eyes]
 foreground_config = "跟隨遊戲設定"

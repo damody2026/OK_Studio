@@ -19,18 +19,22 @@ class UTexture;
  * command that carries them is enqueued, and read on the render thread by that command alone. The textures are alive
  * when it is enqueued, and whatever the collector enqueues to release them comes after it, so reading them there is
  * safe -- and nowhere else is.
+ *
+ * Weak, not raw: the order above is what makes the read safe, not the pointer, so the pointer does not have to be one
+ * that cannot say it has nothing left to name. A weak one resolves to null where the texture has gone, and the draw
+ * binds its fallback; a raw one would read freed memory, and an address cannot tell the two apart.
  */
 struct FDreamUIBuiltInTextures
 {
-	const UTexture* Main = nullptr;
-	const UTexture* Font = nullptr;
-	const UTexture* WidgetData = nullptr;
-	const UTexture* ClipData = nullptr;
-	const UTexture* RenderLayerTable = nullptr;
-	const UTexture* RectBlockData = nullptr;
-	const UTexture* PaintData = nullptr;
-	const UTexture* MaskTexture0 = nullptr;
-	const UTexture* MaskTexture1 = nullptr;
+	TWeakObjectPtr<const UTexture> Main;
+	TWeakObjectPtr<const UTexture> Font;
+	TWeakObjectPtr<const UTexture> WidgetData;
+	TWeakObjectPtr<const UTexture> ClipData;
+	TWeakObjectPtr<const UTexture> RenderLayerTable;
+	TWeakObjectPtr<const UTexture> RectBlockData;
+	TWeakObjectPtr<const UTexture> PaintData;
+	TWeakObjectPtr<const UTexture> MaskTexture0;
+	TWeakObjectPtr<const UTexture> MaskTexture1;
 };
 
 /**

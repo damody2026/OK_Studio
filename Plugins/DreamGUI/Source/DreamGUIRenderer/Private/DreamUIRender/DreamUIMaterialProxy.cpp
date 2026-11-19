@@ -58,7 +58,7 @@ namespace DreamUIMaterialProxyLocal
 
 void FDreamUIMaterialParameters::SetTexture(FName InName, const UTexture* InTexture)
 {
-	DreamUIMaterialProxyLocal::SetByName(Textures, InName, InTexture);
+	DreamUIMaterialProxyLocal::SetByName(Textures, InName, TWeakObjectPtr<const UTexture>(InTexture));
 }
 
 void FDreamUIMaterialParameters::SetVector(FName InName, const FLinearColor& InValue)
@@ -167,14 +167,16 @@ void FDreamUIMaterialProxy::SetParameters_GameThread(const FDreamUIMaterialParam
 void FDreamUIMaterialProxy::FollowSource_RenderThread(FRHICommandListBase& RHICmdList, ERHIFeatureLevel::Type InFeatureLevel)
 {
 	const FMaterialRenderProxy* Parent = GetParent();
+	// The source names the parent: GetParent asks it for its proxy, or the default material for its own.
+	const TWeakObjectPtr<UMaterialInterface> Source = RenderThreadSource;
 	// The serial moves whenever the source's own cache is let go of or made again, which is what a parameter set on a
 	// material instance does to it.
 	const int32 Serial = Parent->GetExpressionCacheSerialNumber();
-	if (Parent == FollowedParent && Serial == FollowedSerial)
+	if (Source == FollowedSource && Serial == FollowedSerial)
 	{
 		return;
 	}
-	FollowedParent = Parent;
+	FollowedSource = Source;
 	FollowedSerial = Serial;
 	// What UpdateUniformExpressionCacheIfNeeded reads as out of date, and makes again at once from GetParameterValue --
 	// the source's current values. Not InvalidateUniformExpressionCache, which also waits on the uniform expression
@@ -197,9 +199,9 @@ void FDreamUIMaterialProxy::LetGoOfUnreachable()
 			Proxies.RemoveAtSwap(Index);
 			continue;
 		}
-		const bool bSourceGone = IsGone(Proxy->GameThreadSource);
+		const bool bSourceGone = IsGone(Proxy->GameThreadSource.Get(true));
 		const bool bTextureGone = Proxy->GameThreadParameters.Textures.ContainsByPredicate(
-			[](const TPair<FName, const UTexture*>& InTexture) { return IsGone(InTexture.Value); });
+			[](const TPair<FName, TWeakObjectPtr<const UTexture>>& InTexture) { return IsGone(InTexture.Value.Get(true)); });
 		if (!bSourceGone && !bTextureGone)
 		{
 			continue;
@@ -209,7 +211,7 @@ void FDreamUIMaterialProxy::LetGoOfUnreachable()
 			Proxy->GameThreadSource = nullptr;
 		}
 		Proxy->GameThreadParameters.Textures.RemoveAll(
-			[](const TPair<FName, const UTexture*>& InTexture) { return IsGone(InTexture.Value); });
+			[](const TPair<FName, TWeakObjectPtr<const UTexture>>& InTexture) { return IsGone(InTexture.Value.Get(true)); });
 		// Carried out before the objects are freed: freeing them waits for the render thread to pass their release.
 		ENQUEUE_RENDER_COMMAND(FDreamUIMaterialProxyLetGo)(
 			[Proxy, Source = Proxy->GameThreadSource, Parameters = Proxy->GameThreadParameters](FRHICommandListImmediate& RHICmdList) mutable
@@ -223,9 +225,9 @@ void FDreamUIMaterialProxy::LetGoOfUnreachable()
 
 const FMaterialRenderProxy* FDreamUIMaterialProxy::GetParent() const
 {
-	if (RenderThreadSource != nullptr)
+	if (UMaterialInterface* Source = RenderThreadSource.Get())
 	{
-		if (const FMaterialRenderProxy* Parent = RenderThreadSource->GetRenderProxy())
+		if (const FMaterialRenderProxy* Parent = Source->GetRenderProxy())
 		{
 			return Parent;
 		}
@@ -245,7 +247,7 @@ const FMaterialRenderProxy* FDreamUIMaterialProxy::GetFallback(ERHIFeatureLevel:
 
 UMaterialInterface* FDreamUIMaterialProxy::GetMaterialInterface() const
 {
-	return RenderThreadSource;
+	return RenderThreadSource.Get();
 }
 
 bool FDreamUIMaterialProxy::GetParameterValue(EMaterialParameterType Type, const FHashedMaterialParameterInfo& ParameterInfo, FMaterialParameterValue& OutValue, const FMaterialRenderContext& Context) const
@@ -259,10 +261,14 @@ bool FDreamUIMaterialProxy::GetParameterValue(EMaterialParameterType Type, const
 		{
 		case EMaterialParameterType::Texture:
 			// No texture is no answer, as a material instance ignores one set to none: the material's own default stands.
-			if (const UTexture* const* Texture = FindByName(RenderThreadParameters.Textures, Name); Texture != nullptr && *Texture != nullptr)
+			// Resolved here, not stored as an address: a texture collected since the parameter was set reads as none.
+			if (const TWeakObjectPtr<const UTexture>* Texture = FindByName(RenderThreadParameters.Textures, Name))
 			{
-				OutValue = *Texture;
-				return true;
+				if (const UTexture* Resolved = Texture->Get())
+				{
+					OutValue = Resolved;
+					return true;
+				}
 			}
 			break;
 		case EMaterialParameterType::Vector:

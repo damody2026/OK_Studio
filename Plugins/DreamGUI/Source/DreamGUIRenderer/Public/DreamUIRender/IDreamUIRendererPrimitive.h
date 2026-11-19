@@ -79,6 +79,10 @@ struct FDreamUIMeshBatchContainer
 	FDreamUIMeshBatchContainer() {}
 
 	const FDreamUIBuiltInDrawParams& GetBuiltIn() const { return State->BuiltIn; }
+	/**
+	 * Borrowed from the held state, not kept: the container holds State for as long as the batch is drawn, so what
+	 * these name cannot be released while a caller has it. Nothing stores the result past the draw.
+	 */
 	FRHIBuffer* GetVertexBuffer() const { return State->VertexBufferRHI; }
 	FRHIBuffer* GetIndexBuffer() const { return State->IndexBufferRHI; }
 };

@@ -8,6 +8,7 @@
 #include "RenderGraphFwd.h"
 #include "RHIStaticStates.h"
 #include "TextureResource.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class FTexture2DResource;
 class UTexture;
@@ -64,12 +65,12 @@ struct FDreamUIPostProcessCommonParams
 	 * The canvas's clip data texture. Read on the render thread by the command that carries these, and only there: the
 	 * proxy keeps the texture's reference, which follows it as it grows (see FDreamVisualPostProcessRenderProxy).
 	 */
-	const UTexture* ClipDataTexture = nullptr;
+	TWeakObjectPtr<const UTexture> ClipDataTexture;
 	/**
 	 * The textures the visual's clips read, by slot (FDreamUIMaskTextures), null where none reads one: read on the render
 	 * thread by the same command, as the clip data texture is.
 	 */
-	const UTexture* ClipMaskTextures[2] = { nullptr, nullptr };
+	TWeakObjectPtr<const UTexture> ClipMaskTextures[2];
 	bool bUseFullSize = false;
 	FBox BoundingBox = FBox(EForceInit::ForceInit);
 	/** See FDreamVisualPostProcessRenderProxy::TintColor. */

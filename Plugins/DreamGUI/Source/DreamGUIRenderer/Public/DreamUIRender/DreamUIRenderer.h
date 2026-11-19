@@ -26,7 +26,8 @@ struct FDreamUIBuiltInDrawCache;
  */
 struct FDreamUIBuiltInBackdrop
 {
-	FRHITexture* Texture = nullptr;
+	/** Held, not an address: the copy is released through the deferred queue, and holding it keeps the release behind this draw. */
+	FTextureRHIRef Texture;
 	/** The pixel of the target the copy's first texel was taken from. */
 	FIntPoint Origin = FIntPoint::ZeroValue;
 	/** What is behind is a viewport's picture, whose alpha says nothing: it counts as opaque. */
@@ -362,6 +363,10 @@ private:
 		bool bIsMainViewport = true;
 		bool bRenderWireframe = false;
 		bool bRenderLit = true;
+		/**
+		 * Not held: FMaterialRenderProxy is not reference counted and has no weak form. Its lifetime is the engine's
+		 * wireframe material (GEngine->WireframeMaterial, rooted), and this is read inside the recording it belongs to.
+		 */
 		FMaterialRenderProxy* WireframeMaterialInstance = nullptr;
 		/** The target the UI ends up in, when ScreenColorRenderTargetTexture is a multisampled one resolved into it. */
 		FTextureRHIRef OrignScreenColorRenderTargetTexture;

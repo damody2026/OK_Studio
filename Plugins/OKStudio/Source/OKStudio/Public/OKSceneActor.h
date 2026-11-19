@@ -97,6 +97,9 @@ public:
 		int32 Syncs = 0, StarvedSyncs = 0;
 	};
 	FLoadStats LoadStats;
+	/** Instrument self-test (2026-11-19, OK_SELFTEST_SYNC_WORLD_SLEEP_MS): this actor has taken its one injected
+	 *  pause inside the section sync_world_ms times. One per actor, which is one per loaded scene. */
+	bool bSelfTestSlept = false;
 
 	/** Advances character animations (seconds). */
 	UFUNCTION(BlueprintCallable, Category = "OK Studio")

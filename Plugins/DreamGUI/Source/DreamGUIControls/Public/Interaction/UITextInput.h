@@ -1011,7 +1011,8 @@ private:
 
 	private:
 		FVirtualKeyboardEntry(UUITextInput* InInput);
-		UUITextInput* InputComp;
+		/** The input this entry speaks for. Weak: the virtual keyboard outlives a text input destroyed while it is up. */
+		TWeakObjectPtr<UUITextInput> InputComp;
 	};
 
 private:
@@ -1065,7 +1066,8 @@ private:
 		bool DeprojectScreenPointToUI(const FVector2D& InScreenPosition, FVector& OutWorldPosition);
 		/** Caret index for a source-string offset, which is what the IME counts in. */
 		int32 CaretIndexFromCharIndex(int32 InCharIndex)const;
-		UUITextInput* InputComp;
+		/** The input this context speaks for. Weak: the IME context is held by Slate, which outlives the component. */
+		TWeakObjectPtr<UUITextInput> InputComp;
 		FString OriginString;
 		bool bIsComposing = false;
 		/**

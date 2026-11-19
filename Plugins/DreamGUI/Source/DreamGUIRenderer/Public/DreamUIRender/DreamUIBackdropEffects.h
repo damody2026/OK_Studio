@@ -8,6 +8,7 @@
 #include "RHIResources.h"
 #include "DreamUIRender/DreamUIBlendMode.h"
 #include "DreamUIRender/IDreamUIRendererPrimitive.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class FGlobalShaderMap;
 class UTexture;
@@ -77,7 +78,7 @@ struct FDreamUIAdjustPacked
 	/** TableWidth by MaxOps, a row for each operation that reads one, at its index. */
 	TArray<FFloat16Color> Table;
 	/** The lookup table operation's texture (the engine's colour grading layout), read on the render thread only. */
-	const UTexture* LookupTable = nullptr;
+	TWeakObjectPtr<const UTexture> LookupTable;
 	float Opacity = 1.0f;
 	EDreamUIBlendMode BlendMode = EDreamUIBlendMode::Alpha;
 
@@ -123,7 +124,7 @@ struct FDreamUIBlurStrengthMap
 	int32 Pattern = 0;
 	float Frequency = 4.0f;
 	float Seed = 0.0f;
-	const UTexture* Texture = nullptr;
+	TWeakObjectPtr<const UTexture> Texture;
 	/** The most levels of the pyramid it reaches into: the strongest blur. */
 	int32 MaxLevel = 5;
 };

@@ -6,6 +6,9 @@
 #include "Misc/FileHelper.h"
 bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "DreamUIRender/DreamUIShaderGate.h"
+// Before the controller's header, which has inline code building JSON (`NoteAction`) and so needs the type complete;
+// the pages' own buttons here send composite editor operations the same way (`ApplyPropertyOps`).
+#include "Dom/JsonObject.h"
 #include "OKCharacterController.h"
 #include "OKCardListView.h"
 #include "OKMotionComboBox.h"
@@ -347,6 +350,8 @@ void UOKDreamControl::HandleSlider(float Value)
 void UOKDreamControl::HandleToggle(bool bOn)
 {
 	if(bPushing)return;
+	// The screen's own toggle (no UMG source to mirror): its own handler is the whole behaviour.
+	if(OnToggled){OnToggled(bOn);return;}
 	if(auto* U=Cast<UCheckBox>(Source.Get())){U->SetIsChecked(bOn);U->OnCheckStateChanged.Broadcast(bOn);}
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
@@ -488,6 +493,18 @@ UOKDreamControl* UOKReaderScreen::MakeOwnButton(UDreamWidget* Into,const FString
 	UOKDreamControl* C=MakeControl(TEXT("Button"),Into);if(!C)return nullptr;
 	C->FixedText=Text;C->OnPressed=MoveTemp(Press);C->SetText(Text);
 	C->SetWidth(FMath::Max(64.f,TextWidth(Text,20.f)+36.f));
+	return C;
+}
+
+UOKDreamControl* UOKReaderScreen::MakeOwnToggle(UDreamWidget* Into,const FString& Text,bool bOn,TFunction<void(bool)> Switched)
+{
+	UOKDreamControl* C=MakeControl(TEXT("Toggle"),Into);if(!C)return nullptr;
+	C->FixedText=Text;C->SetText(Text);
+	// The current value is shown BEFORE the handler exists, so being told its state cannot look like the person
+	// switching it (there is nothing to call yet, and the mirror path finds no source).
+	if(C->Toggle)C->Toggle->SetIsOn(bOn);
+	C->OnToggled=MoveTemp(Switched);
+	C->SetWidth(FMath::Max(80.f,TextWidth(Text,18.f)+56.f));
 	return C;
 }
 
@@ -1010,7 +1027,12 @@ void UOKReaderScreen::BuildCategories()
 	{
 		Each.OnEnter=BoneCategory(TEXT("原遊戲參數"));
 		if(Each.Name==TEXT("眉毛"))Pickers(Each,{TEXT("eyebrow")},{TEXT("eyebrow")});
-		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_"),TEXT("eyeline_"),TEXT("eyeshadow")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown"),TEXT("eyeline"),TEXT("eyeshadow")});
+		// `foreground`: 目／眉の描画前面 (face.foregroundEyes／foregroundEyebrow). Without it the rows exist in the
+		// property list and show on no page, which is the same as not having them.
+		// The original splits the eyes in two pages: 目 (`CvsEye01`: the eye shape sliders, the eyeline and the shadow,
+		// and 描画前面) and 瞳 (`CvsEye02`: the pupil, its gradient, the white and the highlights). This group is 目; 瞳
+		// is added below, because the two have nothing in common to show on one page but the word "eye".
+		else if(Each.Name==TEXT("眼睛"))Pickers(Each,{TEXT("eyeline_"),TEXT("eyeshadow")},{TEXT("eyeline"),TEXT("eyeshadow"),TEXT("foreground")});
 		else if(Each.Name==TEXT("臉頰"))Pickers(Each,{TEXT("cheek"),TEXT("mole")},{TEXT("cheek"),TEXT("mole")});
 		else if(Each.Name==TEXT("鼻子"))Pickers(Each,{TEXT("nose")},{});
 		else if(Each.Name==TEXT("嘴巴"))Pickers(Each,{TEXT("lip")},{TEXT("lip")});
@@ -1040,6 +1062,30 @@ void UOKReaderScreen::BuildCategories()
 		int32 After=Face.Groups.IndexOfByPredicate([](const FGroup& Each){return Each.Name==TEXT("瞳孔覆蓋貼圖");});
 		Face.Groups.Insert(MoveTemp(EyeBones),After==INDEX_NONE?Face.Groups.Num():After+1);
 	}
+	// 瞳 (`CvsEye02`): the pupil, gradient, white and highlights, left and right. The two copy buttons are the
+	// original's, and each is ONE write of the seven fields `PupilInfo.Copy` copies -- id, both colours, the gradient
+	// mask and its three numbers -- so "copy the left eye" cannot leave the gradient behind (parity doc §7.4).
+	{
+		FGroup Pupil;Pupil.Name=TEXT("瞳");Pupil.OnEnter=BoneCategory(TEXT("原遊戲參數"));
+		Pickers(Pupil,{TEXT("pupil"),TEXT("gradation"),TEXT("eye_white"),TEXT("eye_hi_")},{TEXT("pupil"),TEXT("grad"),TEXT("white"),TEXT("hlUp"),TEXT("hlDown")});
+		Pupil.Build=[this](UDreamWidget* Into)
+		{
+			TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+			auto Copy=[this,Weak](UDreamWidget* Page,const FString& Text,int32 From)
+			{
+				MakeOwnButton(Page,Text,[Weak,From]()
+				{
+					if(!Weak.IsValid())return;
+					auto Entry=MakeShared<FJsonObject>();Entry->SetStringField(TEXT("op"),TEXT("eye_copy"));Entry->SetNumberField(TEXT("from"),From);
+					const FString Refused=Weak->ApplyPropertyOps({MakeShared<FJsonValueObject>(Entry)});
+					if(!Refused.IsEmpty())Weak->ScreenNote(71,6.f,FColor::Orange,Refused);
+				});
+			};
+			Copy(Into,TEXT("左眼複製到右眼"),0);
+			Copy(Into,TEXT("右眼複製到左眼"),1);
+		};
+		Face.Groups.Add(MoveTemp(Pupil));
+	}
 	// The face's skin: head shape, skin detail and face paint (not on 臉型, the page a card opens on: entering a picker
 	// page reads the card's catalog).
 	{
@@ -1049,12 +1095,188 @@ void UOKReaderScreen::BuildCategories()
 	}
 	Categories.Add(MoveTemp(Face));
 
-	// Hair: its models (後髮, 前髮, 側髮, 附加頭髮, 光澤) and its colours and settings.
+	// Hair: the original's four pages, one per slot (`ChaFileDefine.HairKind`: back, front, side, option), plus the one
+	// setting they share. Each page shows that slot's model picker and only that slot's rows, as the original does --
+	// before this, every hair colour of every slot was one flat list, so "which slot am I dyeing" was unanswerable.
+	//
+	// The buttons are the original's, and each is ONE write: the reset buttons recompute every slot from its own base
+	// colour, and the three colour-transfer buttons move a colour between the hair, the eyebrows and the underhair.
+	// They go through `ApplyPropertyOps` -> ok-extract `appearance/ops.rs`, so the button, the MCP and the CLI cannot
+	// disagree about what the action writes (Docs/CHARACTER_EDITOR_PARITY_HAIR_EYES.md §7).
 	{
 		FCategory Hair;Hair.Name=TEXT("頭髮");
-		FGroup Styles;Styles.Name=TEXT("髮型");Pickers(Styles,{TEXT("hair0"),TEXT("hair1"),TEXT("hair2"),TEXT("hair3"),TEXT("hair_gloss")},{});Hair.Groups.Add(MoveTemp(Styles));
-		FGroup Colours;Colours.Name=TEXT("髮色與設定");Pickers(Colours,{},{TEXT("hair"),TEXT("髮")});Hair.Groups.Add(MoveTemp(Colours));
+		// An op with no argument: the refusal (busy, no character, staged edits) is shown rather than swallowed, because
+		// a button that silently does nothing reads as a broken model, not as a busy editor.
+		auto OpButton=[this](UDreamWidget* Page,const FString& Text,const FString& Op)
+		{
+			TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+			MakeOwnButton(Page,Text,[Weak,Op]()
+			{
+				if(!Weak.IsValid())return;
+				auto Entry=MakeShared<FJsonObject>();Entry->SetStringField(TEXT("op"),Op);
+				const FString Refused=Weak->ApplyPropertyOps({MakeShared<FJsonValueObject>(Entry)});
+				if(!Refused.IsEmpty())Weak->ScreenNote(71,6.f,FColor::Orange,Refused);
+			});
+		};
+		const TCHAR* SlotNames[]={TEXT("後髮"),TEXT("前髮"),TEXT("側髮"),TEXT("附加髮")};
+		for(int32 Slot=0;Slot<4;++Slot)
+		{
+			FGroup Page;Page.Name=SlotNames[Slot];
+			// `hair.parts.N` as the token: the rows of one slot are `hair.parts.N.baseColor.0` and so on, and the token
+			// is matched as a substring, so this is exactly that slot and nothing else.
+			Pickers(Page,{FString::Printf(TEXT("hair%d"),Slot)},{FString::Printf(TEXT("hair.parts.%d"),Slot)});
+			Page.Build=[this,OpButton](UDreamWidget* Into)
+			{
+				// The original's four colour settings, on every hair page as they are there, and all on in a fresh
+				// install: they decide how much of the hair one drag of the main colour writes (parity doc §7.1).
+				// They are the player's settings, not the card's, so they are the screen's own toggles and are
+				// saved where the reader's other settings are -- not staged as a card edit.
+				TWeakObjectPtr<UOKCharacterController> Weak(Controller);
+				if(Weak.IsValid())Weak->LoadHairColourSettings();
+				for(const TPair<const TCHAR*,const TCHAR*> Setting:{TPair<const TCHAR*,const TCHAR*>(TEXT("四槽同步"),TEXT("same")),
+					{TEXT("自動漸層"),TEXT("auto")},{TEXT("連帶外框色"),TEXT("outline")},{TEXT("連帶光澤色"),TEXT("gloss")}})
+				{
+					const FString Name=Setting.Value;
+					const bool bOn=!Weak.IsValid()||(Name==TEXT("same")?Weak->bHairSameSetting:Name==TEXT("auto")?Weak->bHairAutoSetting
+						:Name==TEXT("outline")?Weak->bHairOutlineSetting:Weak->bHairGlossSetting);
+					MakeOwnToggle(Into,Setting.Key,bOn,[Weak,Name](bool bNow){if(Weak.IsValid())Weak->SetHairColourSetting(Name,bNow);});
+				}
+				OpButton(Into,TEXT("重設外框色"),TEXT("hair_reset_outline"));
+				OpButton(Into,TEXT("重設光澤色"),TEXT("hair_reset_gloss"));
+				OpButton(Into,TEXT("髮色反映到眉／陰毛"),TEXT("hair_color_to_eyebrow_and_underhair"));
+				OpButton(Into,TEXT("取眉色當髮色"),TEXT("hair_from_eyebrow"));
+				OpButton(Into,TEXT("取陰毛色當髮色"),TEXT("hair_from_underhair"));
+			};
+			Hair.Groups.Add(MoveTemp(Page));
+		}
+		// The original's 頭髮共通: the gloss mask kind (`hair.glossId`), which is per character and not per slot.
+		FGroup Common;Common.Name=TEXT("頭髮共通");Pickers(Common,{TEXT("hair_gloss")},{TEXT("glossId")});Hair.Groups.Add(MoveTemp(Common));
 		Categories.Add(MoveTemp(Hair));
+	}
+	// 材質貼圖: the PNGs MaterialEditor assigned to material properties. Not a property page -- a texture is a file,
+	// not a number -- so it goes through `textures`/`textures_apply` (Docs/READER_UI_APPEARANCE_API.md §11) and each
+	// row carries its own five identity fields; the page never remembers "row N", because the list's order is each
+	// card's own fact. The rows arrive asynchronously, so `Signature` carries the read generation and the page is
+	// built again by itself once they are in.
+	{
+		FCategory Tex;Tex.Name=TEXT("材質貼圖");
+		FGroup Page;Page.Name=TEXT("材質貼圖");
+		TWeakObjectPtr<UOKCharacterController> Weak(G);
+		Page.OnEnter=[Weak](){if(Weak.IsValid())Weak->LoadTextureRows();};
+		Page.Signature=[Weak](){return Weak.IsValid()?FString::Printf(TEXT("tex:%d:%d"),Weak->TextureGeneration,Weak->EditorTextures.Num()):FString();};
+		Page.Build=[this,Weak](UDreamWidget* Into)
+		{
+			auto Label=[this](UDreamWidget* Host,const FString& Text)
+			{
+				UOKDreamControl* C=MakeControl(TEXT("Label"),Host);
+				if(C){C->FixedText=Text;C->SetText(Text);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+			};
+			if(!Weak.IsValid())return;
+			Label(Into,Weak->TextureNote.IsEmpty()?TEXT("按一下這一頁會讀取這張卡的材質貼圖。"):Weak->TextureNote);
+			// One path field for the whole page: 指派 sends it with the row's identity. Kept on the screen, so the
+			// rebuild that follows a read does not clear what was typed.
+			UOKDreamControl* Input=MakeControl(TEXT("Input"),Into);
+			if(Input&&Input->Input)
+			{
+				Input->Input->SetText(TexturePath);
+				Input->Input->SetPlaceholder(FText::FromString(TEXT("要指派的 PNG 路徑")));
+				Input->Input->GetOnTextChangedEvent().AddWeakLambda(this,[this](const FString& Typed){TexturePath=Typed.TrimStartAndEnd();});
+				Input->Input->GetOnTextCommittedEvent().AddWeakLambda(this,[this](const FString& Typed){TexturePath=Typed.TrimStartAndEnd();});
+			}
+			TWeakObjectPtr<UOKDreamControl> WeakInput(Input);
+			MakeOwnButton(Into,TEXT("選 PNG…"),[this,WeakInput]()
+			{
+				const FString Chosen=PickFile(TEXT("選擇要指派的貼圖"),TexturePath);
+				UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: texture dialog %s%s"),Chosen.IsEmpty()?TEXT("cancelled"):TEXT("picked "),*Chosen);
+				if(Chosen.IsEmpty())return;
+				TexturePath=Chosen;if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Chosen);
+			});
+			// A row's identity: the five fields, sent back exactly as they were read. The page never remembers
+			// "row N" -- the list's order is each card's own fact.
+			auto Ident=[](const TSharedPtr<FJsonObject>& Row)
+			{
+				auto C=MakeShared<FJsonObject>();
+				for(const TCHAR* Field:{TEXT("object"),TEXT("coordinate"),TEXT("slot")})C->SetNumberField(Field,Row->GetNumberField(Field));
+				for(const TCHAR* Field:{TEXT("material"),TEXT("property")})C->SetStringField(Field,Row->GetStringField(Field));
+				return C;
+			};
+			// Every button here goes through the same write as the CLI and the MCP
+			// (UOKCharacterController::ApplyTextureChanges -> ok-extract `textures_apply`). A second write path
+			// for the UI would drift from it, and the drift would show up as "the button does something else".
+			auto Send=[Weak](TSharedRef<FJsonObject> Change)
+			{
+				if(!Weak.IsValid())return;
+				const FString Refused=Weak->ApplyTextureChanges({MakeShared<FJsonValueObject>(Change)});
+				if(!Refused.IsEmpty())Weak->ScreenNote(72,6.f,FColor::Orange,Refused);
+			};
+			// One number field. The typed text lives in a shared string, so the four of a row can be read together
+			// when the button is pressed.
+			auto Number=[this](UDreamWidget* Host,const FString& Hint,TSharedRef<FString> Held)
+			{
+				UOKDreamControl* C=MakeControl(TEXT("Input"),Host);
+				if(C&&C->Input)
+				{
+					C->Input->SetText(*Held);C->Input->SetPlaceholder(FText::FromString(Hint));
+					C->Input->GetOnTextChangedEvent().AddWeakLambda(this,[Held](const FString& T){*Held=T.TrimStartAndEnd();});
+					C->Input->GetOnTextCommittedEvent().AddWeakLambda(this,[Held](const FString& T){*Held=T.TrimStartAndEnd();});
+				}
+				if(C)C->SetWidth(72);
+				return C;
+			};
+			for(const TSharedPtr<FJsonObject>& Row:Weak->EditorTextures)
+			{
+				const FString Kind=Row->GetStringField(TEXT("kind")),Material=Row->GetStringField(TEXT("material")),Property=Row->GetStringField(TEXT("property"));
+				FString Size;const TArray<TSharedPtr<FJsonValue>>* Wh=nullptr;
+				if(Row->TryGetArrayField(TEXT("size"),Wh)&&Wh->Num()==2)
+					Size=FString::Printf(TEXT("%d×%d, %.0f KB"),int32((*Wh)[0]->AsNumber()),int32((*Wh)[1]->AsNumber()),Row->GetNumberField(TEXT("bytes"))/1024.);
+				else Size=TEXT("沒有貼圖");
+				Label(Into,FString::Printf(TEXT("%s 欄 %d／%s／%s（%s）"),*Kind,int32(Row->GetNumberField(TEXT("slot"))),*Material,*Property,*Size));
+				UDreamWidget* Buttons=MakePanel(Into,true,6.f);
+				MakeOwnButton(Buttons,TEXT("指派"),[this,Send,Ident,Row]()
+				{
+					if(TexturePath.IsEmpty()){if(UOKCharacterController* C=Controller.Get())C->ScreenNote(72,6.f,FColor::Orange,TEXT("先選一個 PNG"));return;}
+					auto Change=Ident(Row);Change->SetStringField(TEXT("png"),TexturePath);Send(Change);
+				});
+				// 清除 is the original's RemoveMaterialTexture: the row keeps its offset and scale if it has any,
+				// and the card's texture dictionary drops whatever nothing points at any more.
+				MakeOwnButton(Buttons,TEXT("清除"),[Send,Ident,Row](){auto C=Ident(Row);C->SetBoolField(TEXT("clear"),true);Send(C);});
+				// 偏移與縮放（原作的 SetMaterialTextureOffset／Scale 與它們的 Remove）。四個欄位先填這一列現在的值；
+				// 兩個都清空＝移除那一筆，這就是原作「還原」那一步。卡上整張都沒有過偏移／縮放也寫得進去：
+				// 形狀的權威是原作的 `Vector2Formatter`（兩個 float32 的定長陣列），不是這張卡有沒有樣本。
+				UDreamWidget* Vectors=MakePanel(Into,true,6.f);
+				TArray<TSharedRef<FString>> Held;for(int32 I=0;I<4;++I)Held.Add(MakeShared<FString>());
+				for(int32 Pair=0;Pair<2;++Pair)
+				{
+					const TArray<TSharedPtr<FJsonValue>>* Cur=nullptr;
+					if(Row->TryGetArrayField(Pair==0?TEXT("offset"):TEXT("scale"),Cur)&&Cur->Num()==2)
+						for(int32 I=0;I<2;++I)*Held[Pair*2+I]=FString::SanitizeFloat((*Cur)[I]->AsNumber());
+					Label(Vectors,Pair==0?TEXT("偏移"):TEXT("縮放"));
+					Number(Vectors,TEXT("x"),Held[Pair*2]);Number(Vectors,TEXT("y"),Held[Pair*2+1]);
+				}
+				MakeOwnButton(Vectors,TEXT("套用偏移／縮放"),[Weak,Send,Ident,Row,Held]()
+				{
+					auto C=Ident(Row);
+					for(int32 Pair=0;Pair<2;++Pair)
+					{
+						const FString& X=*Held[Pair*2];const FString& Y=*Held[Pair*2+1];
+						const TCHAR* Name=Pair==0?TEXT("offset"):TEXT("scale");
+						if(X.IsEmpty()&&Y.IsEmpty()){C->SetField(Name,MakeShared<FJsonValueNull>());continue;}
+						// 一格填了一格沒填，或填了不是數字：寧可整批不送，也不要默默當成 0 寫進卡裡
+						// （默默當成 0 正是「介面照常回應，所以沒人去查」那一族）。
+						if(!X.IsNumeric()||!Y.IsNumeric())
+						{
+							if(Weak.IsValid())Weak->ScreenNote(72,6.f,FColor::Orange,
+								FString::Printf(TEXT("%s 要兩個數字，或兩格都清空代表移除"),Pair==0?TEXT("偏移"):TEXT("縮放")));
+							return;
+						}
+						C->SetArrayField(Name,{MakeShared<FJsonValueNumber>(FCString::Atod(*X)),MakeShared<FJsonValueNumber>(FCString::Atod(*Y))});
+					}
+					Send(C);
+				});
+			}
+		};
+		Tex.Groups.Add(MoveTemp(Page));
+		Categories.Add(MoveTemp(Tex));
 	}
 
 	FCategory Body;Body.Name=TEXT("身子");Body.Groups=ShapeGroups(true,{TEXT("全身"),TEXT("胸部"),TEXT("軀幹"),TEXT("腰臀"),TEXT("手臂"),TEXT("腿部")});
@@ -1792,7 +2014,10 @@ void UOKReaderScreen::TickThumbnails()
 }
 
 // A folder through the system's own folder picker (Windows: IFileOpenDialog with FOS_PICKFOLDERS). Empty when cancelled.
-FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
+FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start){return PickPath(Title,Start,true);}
+// A PNG through the same dialog, for the texture a material property is set to.
+FString UOKReaderScreen::PickFile(const FString& Title,const FString& Start){return PickPath(Title,Start,false);}
+FString UOKReaderScreen::PickPath(const FString& Title,const FString& Start,bool bFolder)
 {
 	FString Result;
 #if PLATFORM_WINDOWS
@@ -1800,11 +2025,21 @@ FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start)
 	IFileOpenDialog* Dialog=nullptr;
 	if(SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&Dialog))))
 	{
-		DWORD Options=0;Dialog->GetOptions(&Options);Dialog->SetOptions(Options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST);
+		DWORD Options=0;Dialog->GetOptions(&Options);
+		Dialog->SetOptions(Options|(bFolder?FOS_PICKFOLDERS:FOS_FILEMUSTEXIST)|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST);
 		Dialog->SetTitle(*Title);
-		if(!Start.IsEmpty()&&FPaths::DirectoryExists(Start))
+		if(!bFolder)
 		{
-			IShellItem* Folder=nullptr;const FString Native=FPaths::ConvertRelativePathToFull(Start).Replace(TEXT("/"),TEXT("\\"));
+			// PNG only: MaterialEditor 存进卡里的是档案的 bytes 原封不动，游戏那边再交给 Unity 的贴图载入，
+			// 所以这里挑的必须是它读得懂的图（原作 SetMaterialTextureFromFile 也只是 File.ReadAllBytes）。
+			const COMDLG_FILTERSPEC Filter[]={{L"PNG",L"*.png"}};
+			Dialog->SetFileTypes(1,Filter);Dialog->SetDefaultExtension(L"png");
+		}
+		// 给档案时 Start 可能是档案本身，开在它所在的资料夹。
+		const FString StartFolder=Start.IsEmpty()||FPaths::DirectoryExists(Start)?Start:FPaths::GetPath(Start);
+		if(!StartFolder.IsEmpty()&&FPaths::DirectoryExists(StartFolder))
+		{
+			IShellItem* Folder=nullptr;const FString Native=FPaths::ConvertRelativePathToFull(StartFolder).Replace(TEXT("/"),TEXT("\\"));
 			if(SUCCEEDED(SHCreateItemFromParsingName(*Native,nullptr,IID_PPV_ARGS(&Folder)))){Dialog->SetFolder(Folder);Folder->Release();}
 		}
 		const HWND Owner=GEngine&&GEngine->GameViewport&&GEngine->GameViewport->GetWindow().IsValid()&&GEngine->GameViewport->GetWindow()->GetNativeWindow().IsValid()

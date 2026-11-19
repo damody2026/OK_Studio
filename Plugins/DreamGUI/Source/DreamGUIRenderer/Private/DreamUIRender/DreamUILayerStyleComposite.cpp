@@ -84,7 +84,7 @@ void FDreamUILayerStyleComposite::ResolveTextures_RenderThread() const
 {
 	for (int32 Slot = 0; Slot < MaxPatterns; ++Slot)
 	{
-		const UTexture* Pattern = Record.Patterns[Slot];
+		const UTexture* Pattern = Record.Patterns[Slot].Get();
 		const FTextureResource* Resource = Pattern != nullptr ? Pattern->GetResource() : nullptr;
 		PatternRHI[Slot] = Resource != nullptr ? Resource->TextureRHI : nullptr;
 	}

@@ -46,6 +46,9 @@ public:
 	TWeakObjectPtr<UWidget> Source;
 	// Pressed when there is no UMG source (the screen's own buttons).
 	TFunction<void()> OnPressed;
+	// Switched when there is no UMG source (the screen's own toggles, e.g. the hair colour settings, which are the
+	// player's and belong to no card field, so there is no property row to mirror).
+	TFunction<void(bool)> OnToggled;
 	// Text shown instead of the source's own (a drawer's title, a tab).
 	FString FixedText;
 	// A drop-down: only the options matching this show (a search field above it sets it).
@@ -297,6 +300,11 @@ private:
 	void CheckGameRoot(const FString& Root);
 	void CheckLocalLibrary(const FString& Library);
 	static FString PickFolder(const FString& Title,const FString& Start);
+	// 同一个系统对话框，挑一个 PNG（材質貼圖那页用）。
+	static FString PickFile(const FString& Title,const FString& Start);
+	static FString PickPath(const FString& Title,const FString& Start,bool bFolder);
+	// 材質貼圖那页输入框里的路径，页面重建时留着（非同步读回来会重建一次）。
+	FString TexturePath;
 	void Layout();
 	void TickResize();
 	void SyncAll();
@@ -304,6 +312,8 @@ private:
 
 	UOKDreamControl* MakeControl(const TCHAR* Kind,UDreamWidget* Into);
 	UOKDreamControl* MakeOwnButton(UDreamWidget* Into,const FString& Text,TFunction<void()> Press);
+	// A toggle of the screen's own, for a setting that is the player's and not a field of the card.
+	UOKDreamControl* MakeOwnToggle(UDreamWidget* Into,const FString& Text,bool bOn,TFunction<void(bool)> Switched);
 	UDreamWidget* MakePanel(UDreamWidget* Into,bool bHorizontal,float Spacing);
 	void Mirror(UWidget* Source,UDreamWidget* Into,bool bInRow);
 	bool InPropertyPanel(UWidget* W) const;

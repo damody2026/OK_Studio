@@ -492,12 +492,12 @@ void UOKCharacterController::TickCharacterMCP()
  // (busy first: while an outfit or card loads the preview actor is being replaced, which read as "not in edit mode")
  if(S.Phase==0&&Busy(this)){FinishBusy();return;}
  if(!IsValid(PreviewActor)||(!Interaction&&(!Entries.IsValidIndex(SelectedIndex)||!bModelLayout))){Finish(S,nullptr,TEXT("Open character edit mode and load a 3D character first"),TEXT("wrong_screen"));return;}
- if(S.Phase==0){FString Expected;S.Request->TryGetStringField(TEXT("session"),Expected);if(S.Action!=TEXT("state")&&Expected!=S.Session){Finish(S,nullptr,TEXT("Character changed; obtain a new session"),TEXT("stale"));return;}static const TSet<FString> Mutations={TEXT("set"),TEXT("reset"),TEXT("control_set"),TEXT("apply"),TEXT("appearance"),TEXT("add_accessory"),TEXT("restore"),TEXT("camera"),TEXT("save"),TEXT("action"),TEXT("load"),TEXT("product_sweep")};if(Mutations.Contains(S.Action)){double Revision;if(!S.Request->TryGetNumberField(TEXT("revision"),Revision)||Revision!=S.Revision){Finish(S,nullptr,TEXT("Stale revision; re-query state"),TEXT("stale"));return;}}}
+ if(S.Phase==0){FString Expected;S.Request->TryGetStringField(TEXT("session"),Expected);if(S.Action!=TEXT("state")&&Expected!=S.Session){Finish(S,nullptr,TEXT("Character changed; obtain a new session"),TEXT("stale"));return;}static const TSet<FString> Mutations={TEXT("set"),TEXT("reset"),TEXT("control_set"),TEXT("apply"),TEXT("appearance"),TEXT("add_accessory"),TEXT("restore"),TEXT("camera"),TEXT("save"),TEXT("action"),TEXT("load"),TEXT("product_sweep"),TEXT("ops"),TEXT("textures_apply")};if(Mutations.Contains(S.Action)){double Revision;if(!S.Request->TryGetNumberField(TEXT("revision"),Revision)||Revision!=S.Revision){Finish(S,nullptr,TEXT("Stale revision; re-query state"),TEXT("stale"));return;}}}
  else if(SelectedIndex!=S.Selection||OutfitIndex!=S.Outfit||Source(this)!=S.Source){Finish(S,nullptr,TEXT("Character changed during operation"),TEXT("stale"));return;}
  if(S.Phase==0&&Busy(this)){FinishBusy();return;}if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
  if(S.Phase==4){if(!Settled(this,S))return;Finish(S,State(this,S));return;}
  if(S.Phase==5){Capture(this,S);return;}
- if(S.Phase==3){if(!Settled(this,S))return;FString Target,Item;S.Request->TryGetStringField(TEXT("target"),Target);S.Request->TryGetStringField(TEXT("item"),Item);if((S.Action==TEXT("apply")&&!PendingProperties.IsEmpty())||(S.Action==TEXT("appearance")&&AppearanceSelectedKeys.FindRef(Target)!=Item)||(S.Action==TEXT("add_accessory")&&Entries[SelectedIndex].Path==S.BeforePath)){Finish(S,nullptr,TEXT("Operation failed; inspect editor status"));return;}Finish(S,State(this,S));return;}
+ if(S.Phase==3){if(!Settled(this,S))return;FString Target,Item;S.Request->TryGetStringField(TEXT("target"),Target);S.Request->TryGetStringField(TEXT("item"),Item);if((S.Action==TEXT("apply")&&!PendingProperties.IsEmpty())||(S.Action==TEXT("appearance")&&AppearanceSelectedKeys.FindRef(Target)!=Item)||(S.Action==TEXT("add_accessory")&&Entries[SelectedIndex].Path==S.BeforePath)||(S.Action==TEXT("ops")&&Entries[SelectedIndex].Path==S.BeforePath)||(S.Action==TEXT("textures_apply")&&Entries[SelectedIndex].Path==S.BeforePath)){Finish(S,nullptr,TEXT("Operation failed; inspect editor status"));return;}Finish(S,State(this,S));return;}
  if(S.Phase==2){if(!Settled(this,S))return;if(S.Action==TEXT("views")&&!S.CaptureActor.IsValid()){Refresh(this,S);S.CaptureRevision=S.Revision;S.CaptureActor=PreviewActor;S.WasTicking=PreviewActor->IsActorTickEnabled();S.SavedYaw=PreviewActor->OrbitYaw;S.SavedPitch=PreviewActor->OrbitPitch;PreviewActor->SetActorTickEnabled(false);PreviewActor->OrbitYaw=0;PreviewActor->OrbitPitch=0;PreviewActor->ApplyOrbitCamera();S.View=0;S.ReadyAt=0;return;}Capture(this,S);return;}
  // Video motion panel / partner (Docs/VIDEO_MOTION.md): the same paths as clicks.
  if(S.Action==TEXT("studio")){FString Op;S.Request->TryGetStringField(TEXT("op"),Op);
@@ -575,6 +575,29 @@ void UOKCharacterController::TickCharacterMCP()
    if(S.Phase==0&&(AppearanceCatalogPath!=Open||AppearanceCatalogOutfit!=OutfitIndex)){OnOpenAppearance();S.Phase=1;S.ReadyAt=0;return;}
    auto R=State(this,S);auto P=OKAppearancePage(this,Which);for(auto Field:P->Values)R->SetField(Field.Key,Field.Value);Finish(S,R);return;
   }
+ // `ops`: the original editor's composite actions, each applied as ONE write (hair colour with its four settings,
+ // reflect to eyebrow/underhair, the reset buttons, copying one eye to the other). The list is passed through to
+ // ok-extract's `appearance/ops.rs`, which decides what each one writes, so a button in the reader, a call here and
+ // the CLI cannot disagree. Docs/READER_UI_APPEARANCE_API.md §10 lists the operations and their fields.
+ if(S.Action==TEXT("ops")){const FMCPRows* List=nullptr;if(!S.Request->TryGetArrayField(TEXT("ops"),List)||List->IsEmpty()){Finish(S,nullptr,TEXT("ops requires a non-empty list"));return;}
+  const FString Refused=ApplyPropertyOps(*List);if(!Refused.IsEmpty()){Finish(S,nullptr,Refused);return;}
+  if(!bPropertyBusy){Finish(S,nullptr,TEXT("Cannot start ops"));return;}S.Phase=3;S.ReadyAt=0;return;}
+ // 材質貼圖：`textures` 只读（每一列带自己的 5 个身分栏位），`textures_apply` 一批写回。
+ // 和界面同一条路（UOKCharacterController::ApplyTextureChanges → ok-extract 的 textures_apply），
+ // 所以按钮、MCP 与 CLI 不可能对「指派／清除做了什么」有不同看法。
+ if(S.Action==TEXT("textures")){
+  if(EditorTextures.IsEmpty()&&!bTextureBusy&&(TextureSource.IsEmpty()||TextureOutfit!=OutfitIndex)){
+   if(S.Phase==1){Finish(S,nullptr,TextureNote.IsEmpty()?TEXT("No material textures on this card"):TextureNote);return;}
+   LoadTextureRows();S.Phase=1;return;}
+  if(bTextureBusy){S.Phase=1;return;}
+  FMCPRows Rows;for(const FMCPObject& Row:EditorTextures)Rows.Add(MakeShared<FJsonValueObject>(Row));
+  Page(this,S,Rows,TEXT("textures"));return;}
+ if(S.Action==TEXT("textures_apply")){const FMCPRows* List=nullptr;
+  if(!S.Request->TryGetArrayField(TEXT("changes"),List)||List->IsEmpty()){Finish(S,nullptr,TEXT("textures_apply requires a non-empty changes list"));return;}
+  const FString Refused=ApplyTextureChanges(*List);if(!Refused.IsEmpty()){Finish(S,nullptr,Refused);return;}
+  if(!bTextureBusy){Finish(S,nullptr,TEXT("Cannot start textures_apply"));return;}S.Phase=3;S.ReadyAt=0;return;}
+ if(S.Action==TEXT("catalog")||S.Action==TEXT("appearance")||S.Action==TEXT("add_accessory")){
+  if(AppearanceTargets.IsEmpty()){if(S.Phase==1){Finish(S,nullptr,TEXT("Appearance catalog unavailable; configure source game"));return;}OnOpenAppearance();S.Phase=1;return;}FString Target;S.Request->TryGetStringField(TEXT("target"),Target);FMCPObject T;for(auto V:AppearanceTargets)if(V->GetStringField(TEXT("key"))==Target){T=V;break;}
   if(S.Action==TEXT("catalog")){FMCPRows Items;for(auto V:AppearanceItems)if(!T||MCPAppearanceCategory(V)==T->GetIntegerField(TEXT("category")))Items.Add(MakeShared<FJsonValueObject>(V));Page(this,S,Items,TEXT("items"));return;}
   if(!PendingProperties.IsEmpty()){Finish(S,nullptr,TEXT("Apply or reset pending properties before selecting materials"));return;}if(S.Action==TEXT("appearance")){FString Item;if(!T||!S.Request->TryGetStringField(TEXT("item"),Item)){Finish(S,nullptr,TEXT("Unknown target or missing item"));return;}if(!Item.IsEmpty()&&!AppearanceItems.ContainsByPredicate([&](auto V){return V->GetStringField(TEXT("key"))==Item&&MCPAppearanceCategory(V)==T->GetIntegerField(TEXT("category"));})){Finish(S,nullptr,TEXT("Item does not belong to target category"));return;}AppearanceTargetKey=Target;ApplyAppearanceItem(Item);}else OnAddAccessorySlot();if(!bAppearanceBusy){Finish(S,nullptr,TEXT("Appearance operation did not start"));return;}S.Phase=3;S.ReadyAt=0;return;
  }

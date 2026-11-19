@@ -170,6 +170,8 @@ README 里那句指的是**匯入流程**（Tripo 头髮，`Tools/ok-extract/src
 
 e-fork-2 要做「眼部缩放2 / 眼睛 / 瞳孔覆盖贴图」三页。三页的接口都已经存在（第三页 2026-11-19 补上，见 9.3）。
 前两页共用同一组读写：
+e-fork-2 要做「眼部缩放2 / 眼睛 / 瞳孔覆盖贴图」三页。前两页的接口都已经存在，第三页**还没有接口**，
+要什么说一声我补。三页共用同一组读写：
 
 ```
 reader_call '{"action":"parameters","query":"<子字串>","offset":0,"limit":128}'   // 列出可调参数（分页）
@@ -350,6 +352,33 @@ C++ 侧仍可直接呼叫 `OnBoneChanged`／`OnShapeChanged`（9.4）。
 
 实测（`Alice_keiyuu.png`＋`D:/XKoikatuSunshine`）：8 个槽位、41 个候选（3 个 `eye:true`）；
 以候选 id 写入、以档案路径写入、清空三种都写进去又读得回来，清空不影响其他槽位。
+### 9.3 瞳孔覆盖贴图：**目前没有读写接口**
+
+卡片里这些覆盖贴图是 Material Editor 的 `MaterialTexturePropertyList`（KKEx 区块），按材质＋属性定位
+（`appearance.rs` `clear_material_conflicts`）：
+
+| 这一页的项目 | 材质名含 | 属性（`Property`，去掉开头底线、不分大小写） |
+|---|---|---|
+| 瞳孔本体贴图 | `hitomi`／`pupil` | `maintex` |
+| 瞳孔渐层遮罩 | `hitomi`／`pupil` | `gradmask`／`gradationmask` |
+| 上高光覆盖 | `hitomi`／`pupil` | `overtex`／`overtex1`／`eyehighlight`／`eyehiuptex` |
+| 下高光覆盖 | `hitomi`／`pupil` | `overtex2`／`eyehighlight2`／`eyehidowntex` |
+| 眼白贴图 | `sirome`／`white` | `maintex` |
+
+**缺口**：`properties` 这条路会**跳过**所有名字含 `texture` 的栏位
+（`appearance/properties/plugins.rs`：`if name.to_ascii_lowercase().contains("texture") { continue }`），
+所以这些列根本不会出现在 `parameters`／`get` 里，UI 现在**既读不到也写不了**。
+
+要做这一页需要我在 Rust 侧补两个动作，说一声我就做：
+
+- 列出：`{"action":"eye_overlays"}` → 每一列 `{material, property, slot:"maintex|gradmask|overtex1|overtex2", present:true/false, bytes, png:"<导出的本机路径>"}`，
+  让 UI 显示现在有没有覆盖、长什么样。
+- 设定／清除：`{"action":"eye_overlay_set","slot":"overtex1","path":"<PNG>"}`／`{"slot":"overtex1","path":""}`，
+  比照 `appearance` 另存一张工作卡片（原卡不覆写），写完重开。
+
+已知的交互规则（做 UI 时要知道）：**用 `appearance` 换瞳孔／渐层／高光的种类，会自动清掉会冲突的那几列覆盖贴图**
+（`clear_material_conflicts`：换 410 清 `overtex/overtex1/eyehighlight/eyehiuptex`，换 411 清 `overtex2/…`，
+换 408/409 清 `maintex/gradmask`）。所以 UI 的「覆盖贴图」页在使用者换了种类之后要重新读一次。
 
 ### 9.4 照这个接：每一页的读与写（函式名、参数、回传）
 
@@ -366,6 +395,7 @@ UI 在读卡器行程内，所以**走 C++ 直接呼叫**（下表左栏）；�
 | 目前选的是哪一个 | 同上的 `catalog` 回传里的 `current[<target key>]`（第 3 节） | 同左 |
 | 缩图 | `RunAppearanceRequest({"action":"thumbnails","keys":[...]} , cb)`，一次 ≤48 个；回呼里 `Thumbnail(Path)` 做成 `UTexture2D`（游戏执行绪，>2048² 会被挡掉） | `{"action":"thumbnails","keys":[...]}` → `[{key,path}]` |
 | 瞳孔覆盖贴图现况 | `RunAppearanceRequest({"action":"eye_overlays","card":<卡片>,"outfit":N}, cb)` → `slots`／`candidates`／`current`（9.3） | `{"action":"eye_overlays","card":"…"}` |
+| 瞳孔覆盖贴图现况 | **没有**（`properties` 跳过名字含 `texture` 的栏位），见 9.3 | 同左 |
 
 #### 写
 
@@ -376,6 +406,7 @@ UI 在读卡器行程内，所以**走 C++ 直接呼叫**（下表左栏）；�
 | 换种类（瞳孔／渐层／眼白／高光／眼线／眼影） | `AppearanceTargetKey = <target key>;` 然后 `ApplyAppearanceItem(<item key>)`；空字串＝清空这个槽位 | `{"action":"appearance","target":"pupil0","item":"<item key>"}` |
 | 改颜色等 properties | `SetEditorProperty(Key, Value)` 进 `PendingProperties`，再 `OnApplyProperties()` | `set` → `apply` |
 | 设定／清除瞳孔覆盖贴图 | `RunAppearanceRequest({"action":"eye_overlay_set","card":…,"output":<新工作卡片>,"resources":…,"material":…,"property":…,"candidate"\|"png":…}, cb, CardJob)`；两个都不给＝清空（9.3） | 同左 |
+| 设定／清除瞳孔覆盖贴图 | **要我补**（9.3 列的两个动作） | 同左 |
 
 #### 缩图网格的候选是哪里来的
 
@@ -461,3 +492,86 @@ C001 这张卡回 **51 格**，其中 19 格有东西（`used=true`、`holding` 
 | 超出范围要拒绝 | `thumbnails` 的 `keys` 空的或超过 48 个回 `Error: bad_request: Provide 1-48 item keys from catalog` |
 | 游戏资料夹四种情况 | 不存在／没有 `abdata/`／没有 `mods/` 三种都回对应的 `targets_reason` 并印出路径；**「没设过」这一支在这个 build 量不到**——版控的 `Config/DefaultGame.ini` 永远给一个 `Root`，所以空字串走不到（这也正是「设了但不存在」那条讯息重要的原因） |
 | 改了游戏资料夹马上生效 | 换 `gameroot` 会清掉旧目录（`ApplyFolderSetting`），所以把路径改对之后同一个行程就读得到，不用重开 |
+## 10. `ops`：一个动作一次写入（2026-11-19 新增，已实测）
+
+`properties_apply` 除了 `edits`（一个栏位一笔）之外，现在收 `ops`——**原作编辑器里的一个动作**，由
+`appearance/ops.rs` 展开成它实际写的那一整组栏位，再**交给 `patch_properties` 一次写完**。
+`ops` 与 `edits` 只能给一个（同时给会报错）。为什么要这样：原作拉一下髮色会写 4 槽 × 5 色（见
+[对照文件](CHARACTER_EDITOR_PARITY_HAIR_EYES.md) §7），前端连发 60 笔 `set` 会出现中间状态
+（base 改了、start 还没改），而且每一笔都触发一次重开。
+
+```jsonc
+{"action":"properties_apply","card":"<卡>","outfit":0,"cache":"<快取>",
+ "resources":"<v1 共用资源>","output":"<输出卡>",
+ "ops":[{"op":"hair_base_color","rgba":[0.2,0.6,0.9]}]}
+```
+
+| `op` | 参数 | 写什么 |
+|---|---|---|
+| `hair_base_color` | `rgba`（3 或 4 个 0..1）、`slot`（`same:false` 时才看）、`same`／`auto`／`outline`／`gloss` | 预设四个旗标**全部 true**（原作新安装的状态）：每个槽的 `baseColor`，再加 `startColor`（明度 -0.3）、`endColor`（+0.15）、`outlineColor`（-0.4）、`glossColor`（+0.3） |
+| `hair_color_to_eyebrow_and_underhair` | — | `face.eyebrowColor` 与 `body.underhairColor` ← **第 0 槽**的 `baseColor`（原作取第 0 槽，不是当前页那槽） |
+| `hair_from_eyebrow`／`hair_from_underhair` | — | 所有槽的 `baseColor` ← 该颜色，`startColor` -0.2、`endColor` +0.1（**和自动渐层的 -0.3／+0.15 不是同一组常数**） |
+| `hair_reset_outline`／`hair_reset_gloss` | — | 每个槽依**自己的** `baseColor` 重算（-0.4／+0.3） |
+| `eye_copy` | `from`：0 或 1 | 另一眼的 7 个栏位一次写完（`id`、`baseColor`、`subColor`、`gradMaskId`、`gradBlend`、`gradOffsetY`、`gradScale`） |
+
+两件实作上的事：
+
+- **明度位移是原作的 HSV**（保留色相与饱和，只移明度并夹在 0..1），不是 `properties::restyle` 给街区美容院用的
+  「通道乘系数」——非灰色上两者给的颜色不同。黑色没有色相，变亮得到灰，和原作 `HSVToRGB(h, 0, v)` 一致。
+- **只写卡片真的有的通道**，`alpha` 不动（原作头发的取色窗是 `_useAlpha: false`）；槽位数问卡片而不是写死 4，
+  所以部件比原作多的卡会整头染到，不是只染前四槽。
+
+**实测（2026-11-19）**：`StreetHeroines/alice.png`，`ops:[{"op":"hair_base_color","rgba":[0.2,0.6,0.9]}]`。
+对照卡走同一条管线（只写一个无关栏位），两张读回来比对：**差异正好 60 个栏位＝4 槽 × 5 色 × 3 通道**，
+其余 5747 个可编辑栏位与 `alpha` 都没动；数值与手算一致（base 0.2/0.6/0.9、start 0.133/0.400/0.600、
+end 与 gloss 0.222/0.667/1.000、outline 0.111/0.333/0.500，色相比例保持）。
+**注意对照要同卡型同读法**：先前拿「读 OK 卡」比「读剥过 OK 区块的输出卡」，diff 里会混进
+`accessory.parts.N.hideCategory`、`clothes.parts.0.sleevesType`、`physics.*` 等读法差异，不是写入差异。
+
+## 11. 贴图：`textures` 与 `textures_apply`
+
+MaterialEditor 把作者指派的 PNG 存在 `TextureDictionary`（id → bytes），指派本身是
+`MaterialTexturePropertyList` 的一列。**一张 PNG 不是属性值**，所以它不走第 9／10 节的键／值清单，
+自己两个动作。偏移与缩放也在这里，不在 `plugins.*` 属性键里：同一笔资料两个地方可改，等于一边的修改
+会被另一边无声盖掉（`properties/plugins.rs` 为 ABMX 写下的理由），所以那边按名字跳过 `texture` 的那行
+**要留着**。
+
+```jsonc
+// 读
+{"action":"textures","card":"<卡>","outfit":0,"cache":"<快取>"}
+// → {"valid":true,"textures":[{ "object":4,"kind":"character","coordinate":0,"slot":0,
+//      "material":"cf_m_face_00","property":"DetailMask",
+//      "tex_id":1,"bytes":126358,"size":[1024,1024],"offset":null,"scale":null }]}
+
+// 写（一次一批，和 properties_apply 一样只开卡一次）
+{"action":"textures_apply","card":"<卡>","outfit":0,"cache":"<快取>","output":"<输出>",
+ "changes":[
+  {"object":4,"coordinate":0,"slot":0,"material":"cf_m_face_00","property":"DetailMask",
+   "png":"D:/.../skin.png"},                                   // 指派：整个档案的 bytes
+  {"object":1,"slot":0,"material":"cf_m_top_02","property":"LineMask","clear":true},  // 清掉贴图
+  {"object":1,"slot":0,"material":"cf_m_top_02","property":"MainTex","offset":[0.1,0],"scale":null}
+ ]}
+```
+
+**一列的身分是 5 个栏位** `object`（`ObjectType`：0 unknown／1 clothing／2 accessory／3 hair／4 character）、
+`coordinate`、`slot`、`material`、`property` —— 原作 `FirstOrDefault` 的条件，**不是列号**。清单的顺序是每张
+卡自己的事（和外挂栏位改成身分式键同一个理由）。`coordinate` 可以不给：照原作 `GetCoordinateIndex`，服装与
+饰品补成 `outfit`，其他一律 0。
+
+照原作的三件事，照直觉做都会错：
+
+| 原作 | 行为 | 猜错会怎样 |
+|---|---|---|
+| `SetAndGetTextureID`（1281） | 字典里已有**完全相同的 bytes** 就重用那个 id，否则 `max(id)+1` | 每次指派都多存一份；`KK_110449` 的 `DetailMask` 与 `LineMask` 本来就共用 id 5，两个饰品栏共用 id 1 |
+| `RemoveMaterialTexture`（2166） | 只把 `TexID` 设 nil；**只有** `NullCheck()`（TexID／Offset／Scale 都没有）才删整列 | 「清除就删列」会把同一列上的偏移与缩放一起弄丢 |
+| `PurgeUnusedTextures`（2512） | 存档前把没有任何列引用的字典项丢掉 | 卡片带着改过好几轮的死图，白白几 MB |
+
+**偏移／缩放的形状**：`Vector2` 写成**两个 float32 的定长阵列**，不是 `{x,y}`、也不是 float64。权威出处是原作
+自己带的格式器 `Managed\KoikatsuSunshine_Data\Assembly-CSharp-firstpass\MessagePack.Unity\Vector2Formatter.cs`
+的 `Serialize`（`WriteFixedArrayHeaderUnsafe(…, 2)` 加两个 `WriteSingle`）。同一家族的 `ColorFormatter.cs` 写
+4 个 float32，而 alice 的 `MaterialColorPropertyList` 里 `Value` 正是 4 元素 float32 阵列（键 `….@Value.a0`）
+—— 只有这支格式器会写成那样，所以这家族确实就是在用的那支。读的时候仍兼容 `{x,y}`（Studio 场景那边见过）。
+**「卡上没有偏移所以形状未知」是错的**：样本缺一笔不代表形状未知，权威在反编译里。
+
+**边界（没做，不是漏）**：新增一列需要那个材质属性真的存在于模型上，那是原作界面照着 live renderer 列出来的，
+CLI 看不到模型；所以这里只改既有的列，以及对**已经给了身分**的属性指派。

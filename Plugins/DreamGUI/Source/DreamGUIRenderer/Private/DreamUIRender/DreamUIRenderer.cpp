@@ -912,7 +912,7 @@ void FDreamUIRenderer::DrawBuiltInBatch(FRHICommandList& RHICmdList, FGraphicsPi
 	const bool bDepthFade = bBlendDepth && DepthFade > 0;
 	// A mode that reads what is behind is drawn over the copy it was given, and Normal where it was given none
 	// (FDreamUIBuiltInBackdrop). On a world-space canvas its alpha is the scene's occlusion first, then the blend's.
-	const bool bBackdrop = InBackdrop != nullptr && InBackdrop->Texture != nullptr;
+	const bool bBackdrop = InBackdrop != nullptr && InBackdrop->Texture.IsValid();
 	const EDreamUIBlendMode BlendMode = DreamUIBlend::ReadsBackdrop(Params.BlendMode) && !bBackdrop ? EDreamUIBlendMode::Alpha : Params.BlendMode;
 	const int32 Permutation = (bBlendDepth ? 1 : 0) | (bDepthFade ? 2 : 0) | (bBackdrop ? 4 : 0);
 	TShaderRef<FDreamUIBaseVS> VertexShader;
@@ -1012,7 +1012,7 @@ void FDreamUIRenderer::DrawBuiltInBatch(FRHICommandList& RHICmdList, FGraphicsPi
 	PSParameters.DreamUI_BlendParams = FVector4f(static_cast<float>(BlendMode), bBackdrop && InBackdrop->bOpaque ? 1.0f : 0.0f
 		, bBackdrop ? static_cast<float>(InBackdrop->Origin.X) : 0.0f, bBackdrop ? static_cast<float>(InBackdrop->Origin.Y) : 0.0f);
 	PSParameters.DreamUI_BackdropTex = bBackdrop && DreamUIExperimentBackdropMode() != 2
-		? InBackdrop->Texture : GBlackTexture->TextureRHI.GetReference();
+		? InBackdrop->Texture.GetReference() : GBlackTexture->TextureRHI.GetReference();
 	SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PSParameters);
 
 	// OpenKoikatsu (2026-11-19): every built-in draw names the textures it binds in the GPU breadcrumbs, so a page fault
@@ -1640,7 +1640,7 @@ void FDreamUIRenderer::RecordWorldSpace_RenderThread(FRDGBuilder& GraphBuilder, 
 										DrawBuiltInBatch(RHICmdList, GraphicsPSOInit, *RenderView, ViewRect, MeshBatchContainer
 											, NumSamples, GammaValue, false
 											, true, BlendDepth, DepthFade, SceneDepthTexST, PassParameters->SceneDepthTex->GetRHI(), &BuiltInCache
-											, Backdrop.Texture != nullptr ? &Backdrop : nullptr);
+											, Backdrop.Texture.IsValid() ? &Backdrop : nullptr);
 										// It set a pipeline of its own.
 										PipelineKey.bSet = false;
 										return;
@@ -2383,7 +2383,7 @@ void FDreamUIRenderer::RecordScreenSpaceLayer_RenderThread(FRDGBuilder& GraphBui
 									}
 									DrawBuiltInBatch(RHICmdList, GraphicsPSOInit, *RenderView, ViewRect, MeshBatchContainer
 										, NumSamples, GammaValue, ValidDepth
-										, false, 0.0f, 0, SceneDepthTexST, nullptr, &BuiltInCache, Backdrop.Texture != nullptr ? &Backdrop : nullptr);
+										, false, 0.0f, 0, SceneDepthTexST, nullptr, &BuiltInCache, Backdrop.Texture.IsValid() ? &Backdrop : nullptr);
 									return;
 								}
 								auto MaterialRenderProxy = (bWireframe ? WireframeMaterialInstance : Mesh.MaterialRenderProxy);

@@ -9,6 +9,9 @@ mod properties;
 pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
 mod eye_overlay;
+mod ops;
+mod textures;
+mod overlays;
 mod model_flags;
 pub(crate) mod live_head;
 pub(crate) mod timings;
@@ -365,6 +368,45 @@ fn patch_extended_data(bytes:&[u8],property:&str,item:Option<&Item>,t:&Target,ou
  rmpv::encode::write_value_ref(&mut output,&merged).map_err(|e|e.to_string())?;Ok(output)
 }
 /// Rebuild the block directory, preserving every unrelated block and unknown key.
+/// `ChaFileDefine.topPartsDefaultId`: the sub-part a sailor (row 0) or jacket (row 1) top falls back to when the
+/// stored one is not in the list (`ChaControl.ChangeClothesTopParts` → `LoadCharaFbxData(..., defaultId)`).
+const TOP_PARTS_DEFAULT_ID:[[i32;3];2]=[[0,0,1],[0,1,1]];
+/// What the maker writes to `subPartsId` after a NEW top (`CvsClothes.UpdateSelectClothes`: `FuncUpdateClothesTop`
+/// settles `nowCoordinate.clothes.subPartsId` in `ChangeClothesTopParts`, then `setClothes.subPartsId[i] =
+/// clothes.subPartsId[i]` copies it into `chaFile.coordinate[...]`). A top whose Kind is not 1 (sailor) or 2 (jacket)
+/// gets 0 in all three; otherwise a slot whose stored part is in the new kind's list (`found`) keeps it and the others
+/// get `topPartsDefaultId`. `None` = leave the slot as it is. Reading a card without changing the top writes nothing:
+/// the maker only settles `nowCoordinate` then, never the file (see [`apply_item`]).
+fn top_sub_parts_plan(kind:i32,found:[bool;3])->[Option<i32>;3]{
+ match kind {
+  1|2=>{let row=(kind-1) as usize;std::array::from_fn(|k|if found[k]{None}else{Some(TOP_PARTS_DEFAULT_ID[row][k])})}
+  _=>[Some(0);3],
+ }
+}
+/// Write [`top_sub_parts_plan`] into `raw` (already wearing the new top) through [`patch`], so a mod sub-part's resolve
+/// row goes with it: a slot set to an original id loses its row, a kept slot keeps it.
+fn settle_top_sub_parts(mut raw:Vec<u8>,top:Option<&Item>,outfit:usize,items:&[Item])->Result<Vec<u8>,String>{
+ let kind:i32=top.and_then(|i|i.entry.info("Kind").trim().parse().ok()).unwrap_or(0);
+ let all=targets();let base=if kind==2{210}else{200};
+ let subs:Vec<&Target>=(0..3).map(|k|all.iter().find(|t|t.key==format!("sub{}",base+k))).collect::<Option<_>>().ok_or("找不到上衣子部件欄位")?;
+ let owned:Vec<Target>=subs.iter().map(|t|(*t).clone()).collect();
+ let selection=current_selection(&raw,outfit,&owned,items)?;
+ let found:[bool;3]=std::array::from_fn(|k|selection[&subs[k].key]["item"].is_string());
+ for (k,id) in top_sub_parts_plan(kind,found).into_iter().enumerate(){
+  let Some(id)=id else{continue};
+  let item=if id==0{None}else{Some(items.iter().find(|i|i.entry.category_no==subs[k].category&&i.entry.id==id&&i.guid.is_empty()).ok_or("找不到原作預設的上衣子部件")?)};
+  raw=patch(&raw,subs[k],item,outfit)?;
+ }
+ Ok(raw)
+}
+/// The appearance `apply` write: the picked item, plus what the maker changes with it. A new top (only when it really
+/// changed — the worn top again writes nothing beyond itself, so `verify` stays idempotent) settles `subPartsId`.
+fn apply_item(original:&[u8],t:&Target,item:Option<&Item>,outfit:usize,metadata:Option<Vec<u8>>,items:&[Item])->Result<Vec<u8>,String>{
+ let top=t.section=="clothes"&&t.path=="parts.0.id";
+ let changed=top&&{let sel=current_selection(original,outfit,std::slice::from_ref(t),items)?;sel[&t.key]["item"].as_str()!=item.map(|i|i.key.as_str())};
+ let raw=patch_with_metadata(original,t,item,outfit,metadata)?;
+ if changed {settle_top_sub_parts(raw,item,outfit,items)} else {Ok(raw)}
+}
 fn patch(original:&[u8],t:&Target,item:Option<&Item>,outfit:usize)->Result<Vec<u8>,String>{
  patch_with_metadata(original,t,item,outfit,None)
 }
@@ -492,6 +534,30 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  // not by a catalogue id, so they take neither the catalogue nor a target (appearance/eye_overlay.rs).
  if text(&r,"action")?=="eye_overlays"{return eye_overlay::list(root,&r);}
  if text(&r,"action")?=="eye_overlay_set"{return eye_overlay::apply(root,&r);}
+ // MaterialEditor 的贴图：PNG 不是属性值，所以不走 `properties` 的键／值清单，自己一个动作。
+ // 身分是那一列的 5 个栏位，不是列号 —— 列的顺序是每张卡自己的事（和外挂栏位改成身分式键同一个理由）。
+ if matches!(text(&r,"action")?,"textures"|"textures_apply"){
+  let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
+  let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;
+  let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
+  let original=write_blocks(&original,blocks)?;
+  if text(&r,"action")?=="textures"{return Ok(json!({"valid":true,"textures":textures::list(&original,outfit)?}));}
+  let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
+  let raw=textures::apply(&original,outfit,r["changes"].as_array().ok_or("缺少修改清单")?)?;
+  return export_edited(root,&r,&raw,output);
+ }
+ // KoiSkinOverlayX／KoiClothesOverlayX 的覆盖图：和 MaterialEditor 贴图同一个形状（读一支、写一支），身分是
+ // （外挂, 服装号, 覆盖种类／物件名），不是列号。语意与体积见 `overlays.rs`。
+ if matches!(text(&r,"action")?,"overlays"|"overlays_apply"){
+  let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
+  let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;
+  let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
+  let original=write_blocks(&original,blocks)?;
+  if text(&r,"action")?=="overlays"{let mut out=overlays::list(&original,outfit)?;out["valid"]=json!(true);return Ok(out);}
+  let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
+  let raw=overlays::apply(&original,outfit,r["changes"].as_array().ok_or("缺少修改清单")?)?;
+  return export_edited(root,&r,&raw,output);
+ }
  if matches!(text(&r,"action")?,"properties"|"properties_apply"|"accessory_slot_add"){
   let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
   let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}
@@ -507,7 +573,16 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
    mark_unknown_parents(&mut props,&parents);
    return Ok(json!({"valid":true,"properties":props,"parents":parents,"model":model,"unknown_plugin_sections":unknown}));}
   let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
-  let raw=if text(&r,"action")?=="accessory_slot_add"{original}else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
+  // `ops`: one action of the original editor (a hair colour with its four settings, "reflect to eyebrow", a reset
+  // button, copying one eye to the other) expanded into the fields it writes, then patched in ONE call -- so the
+  // card never holds a half-applied action and the open happens once. `edits` is still the plain per-field list.
+  let raw=if text(&r,"action")?=="accessory_slot_add"{original}
+   else if let Some(list)=r["ops"].as_array(){
+    // Both together is the editor's normal case, not a mistake: the person drags the main hair colour (a staged
+    // `edits` row, which is what they see) and applying it runs the action that colour implies. The staged row wins.
+    let edits=r["edits"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    properties::patch_properties(&original,outfit,&ops::expand_with_edits(&original,outfit,list,edits)?)?}
+   else{properties::patch_properties(&original,outfit,r["edits"].as_array().ok_or("缺少修改清單")?)?};
   return export_edited(root,&r,&raw,output);
  }
  let cache=Path::new(text(&r,"cache")?);let items=catalog(root,cache)?;
@@ -532,7 +607,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
    let key=text(&r,"item")?;let item=if key.is_empty(){None}else{Some(items.iter().find(|i|i.key==key&&i.entry.category_no==t.category).ok_or("找不到此外觀素材")?)};
    if item.is_some_and(|i|!i.source.is_empty()&&i.guid.is_empty()){return Err("此模組沒有可辨識的識別碼，無法安全套用素材".into());}
    let output=Path::new(text(&r,"output")?);if output.ok_exists(){return Err("外觀輸出已存在".into());}
-   let raw=patch_with_metadata(&original,&t,item,r["outfit"].as_u64().unwrap_or(0) as usize,metadata)?;
+   let raw=apply_item(&original,&t,item,r["outfit"].as_u64().unwrap_or(0) as usize,metadata,&items)?;
    export_edited(root,&r,&raw,output)?;
    Ok(json!({"valid":true,"output":output,"target":target,"item":key}))},
   _=>Err("不支援的圖片選擇請求".into())
@@ -853,6 +928,31 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some(""));
   assert_eq!(read(&coordinate(&outfit,&acc,89,0,false,false).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
   assert_eq!(read(&coordinate(&outfit,&acc,88,0,false,true).unwrap(),1,"parts.0.parentKey").as_str(),Some("a_n_head"));
+ }
+ #[test]fn top_sub_parts_follow_change_clothes_top_parts(){
+  // Not a sailor／jacket: all three slots 0, whatever was there.
+  assert_eq!(top_sub_parts_plan(0,[true,true,true]),[Some(0);3]);
+  // A sailor keeps the parts its list has and falls back to topPartsDefaultId row 0 (0,0,1) for the others.
+  assert_eq!(top_sub_parts_plan(1,[true,false,false]),[None,Some(0),Some(1)]);
+  // A jacket: row 1 (0,1,1).
+  assert_eq!(top_sub_parts_plan(2,[false,false,true]),[Some(0),Some(1),None]);
+  assert_eq!(top_sub_parts_plan(2,[true;3]),[None;3]);
+ }
+ // An ignored game oracle, not an early `return`: a test that returns when its data is missing prints "ok" exactly like
+ // one that ran and passed, so nobody sees it was skipped (the first run of this test, 2026-11-19, was such a pass).
+ // Ignored shows up as ignored; run with `OK_TEST_GAME_ROOT=<game> cargo test -- --ignored`, and missing data fails.
+ #[test]#[ignore="game oracle: needs OK_TEST_GAME_ROOT (catalog) and Content/CharacterCards/CrowdAPNG/C000.png"]
+ fn reapplying_the_worn_top_writes_nothing_more(){
+  // apply must not quietly change a card: the worn top again leaves the card as `patch` alone would (no sub-part
+  // settling).
+  let root=&crate::test_support::game_path("");let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
+  assert!(root.ok_exists(),"OK_TEST_GAME_ROOT is not set or does not exist: {}",root.display());assert!(p.ok_exists(),"missing local card {}",p.display());
+  let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));fs::create_dir_all(cache).unwrap();
+  let items=catalog(root,cache).unwrap();let original=crate::gamefs::read(p).unwrap();
+  let t=targets().into_iter().find(|t|t.key=="clothes0").unwrap();
+  let sel=current_selection(&original,0,std::slice::from_ref(&t),&items).unwrap();
+  let key=sel["clothes0"]["item"].as_str().expect("C000's outfit 0 top is not in the catalog: pick another card");let worn=items.iter().find(|i|i.key==key).unwrap();
+  assert_eq!(apply_item(&original,&t,Some(worn),0,None,&items).unwrap(),patch(&original,&t,Some(worn),0).unwrap());
  }
  #[test]fn parent_outside_the_known_list_is_marked_not_refused(){
   let parents:J=serde_json::from_str(include_str!("../data/editor_accessory_parents.json")).unwrap();

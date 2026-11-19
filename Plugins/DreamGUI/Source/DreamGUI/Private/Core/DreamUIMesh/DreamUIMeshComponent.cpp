@@ -54,8 +54,11 @@ struct FDreamUIRenderSectionProxy
 /** Class representing a single section of the DreamUI mesh */
 struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 {
-	/** Material applied to this section */
-	UMaterialInterface* Material = nullptr;
+	/**
+	 * Material applied to this section. Weak: a visual hidden or collected while its section waits in the pool takes
+	 * its material with it, and the render thread would be left reading an address. Resolved as it is drawn.
+	 */
+	TWeakObjectPtr<UMaterialInterface> Material;
 	/** What the section draws through instead of Material's own render proxy, when DreamGUI answers its parameters. */
 	TSharedPtr<FDreamUIMaterialProxy, ESPMode::ThreadSafe> MaterialProxy;
 	FMaterialRenderProxy* GetMaterialRenderProxy() const
@@ -64,7 +67,8 @@ struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 		{
 			return MaterialProxy.Get();
 		}
-		return Material != nullptr ? Material->GetRenderProxy() : nullptr;
+		UMaterialInterface* const Resolved = Material.Get();
+		return Resolved != nullptr ? Resolved->GetRenderProxy() : nullptr;
 	}
 	/**
 	 * Built-in shader parameters; when enabled the material is not used by DreamGUI's renderer. Enabled or not, the widget
@@ -86,12 +90,17 @@ struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 
 	/**
 	 * What a draw of this section binds (FDreamUISectionDrawState), made when it is first asked for after any of it
-	 * changed -- the built-in parameters (bDrawStateStale), the buffers (by their address) -- and shared by every batch
-	 * collected meanwhile.
+	 * changed -- the built-in parameters (bDrawStateStale), the buffers -- and shared by every batch collected meanwhile.
+	 *
+	 * The two buffers below are what the state was made from, held, not their addresses. An address is not an identity:
+	 * a buffer released and another allocated where it was compares equal, and the state would be taken for current
+	 * when it binds the dead one. Held, the buffer the state was made from cannot be released while the state names it,
+	 * so equal means the same buffer. (A serial of DreamGUI's own would do as well, but every place that makes either
+	 * buffer would have to raise it, and one missed would read as unchanged -- which is the failure this removes.)
 	 */
 	TRefCountPtr<const FDreamUISectionDrawState> DrawState;
-	const FRHIBuffer* DrawStateVertexBuffer = nullptr;
-	const FRHIBuffer* DrawStateIndexBuffer = nullptr;
+	FBufferRHIRef DrawStateVertexBuffer;
+	FBufferRHIRef DrawStateIndexBuffer;
 	bool bDrawStateStale = true;
 	const TRefCountPtr<const FDreamUISectionDrawState>& GetDrawState()
 	{
@@ -103,8 +112,8 @@ struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 			State->IndexBufferRHI = IndexBuffer.IndexBufferRHI;
 			State->BuiltIn = BuiltIn;
 			DrawState = State;
-			DrawStateVertexBuffer = DreamUIVertexBuffers.VertexBufferRHI.GetReference();
-			DrawStateIndexBuffer = IndexBuffer.IndexBufferRHI.GetReference();
+			DrawStateVertexBuffer = DreamUIVertexBuffers.VertexBufferRHI;
+			DrawStateIndexBuffer = IndexBuffer.IndexBufferRHI;
 			bDrawStateStale = false;
 		}
 		return DrawState;
@@ -1532,7 +1541,7 @@ FDreamUIRenderSectionProxy* FDreamUIRenderRoot::CreateSectionData(FDreamUIRender
 						NewSectionProxy->bDrawStateStale = true;
 					});
 			}
-			if (NewSectionProxy->Material == nullptr)
+			if (!NewSectionProxy->Material.IsValid())
 			{
 				NewSectionProxy->Material = UMaterial::GetDefaultMaterial(MD_Surface);
 			}
@@ -1975,7 +1984,7 @@ TSharedPtr<FDreamUIRenderSection> UDreamUIMeshComponent::SetupRenderSection(EDre
 				FDreamUIRenderRootRef Root = RenderRoot;
 				ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_EnableMeshSection)(
 					[Root, SectionProxy = MeshSectionPtr->RenderProxy, Material = MeshSectionPtr->Material](FRHICommandListImmediate& RHICmdList) {
-						Root->EnableMeshSection_RenderThread(SectionProxy, Material);
+						Root->EnableMeshSection_RenderThread(SectionProxy, Material.Get());
 					});
 				if (InDrawCallData->bPatchClaimedMeshSection)
 				{
@@ -2067,7 +2076,7 @@ TSharedPtr<FDreamUIRenderSection> UDreamUIMeshComponent::SetupRenderSection(EDre
 				FDreamUIRenderRootRef Root = RenderRoot;
 				ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_EnableDirectMeshSection)(
 					[Root, SectionProxy = DirectMeshSectionPtr->RenderProxy, Material = DirectMeshSectionPtr->Material](FRHICommandListImmediate& RHICmdList) {
-						Root->EnableMeshSection_RenderThread(SectionProxy, Material);
+						Root->EnableMeshSection_RenderThread(SectionProxy, Material.Get());
 					});
 			}
 		}
@@ -2375,7 +2384,7 @@ void UDreamUIMeshComponent::SetDirectMeshRenderSectionMaterial(FDreamUIRenderSec
 			FDreamUIRenderRootRef Root = RenderRoot;
 			ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_SetMeshSectionMaterial)(
 				[Root, UpdateData = MoveTemp(UpdateData)](FRHICommandListImmediate& RHICmdList) {
-					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material);
+					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material.Get());
 				});
 		}
 	}
@@ -2587,7 +2596,7 @@ void UDreamUIMeshComponent::SetMeshSectionMaterial(int32 InSectionIndex, UMateri
 			FDreamUIRenderRootRef Root = RenderRoot;
 			ENQUEUE_RENDER_COMMAND(FDreamUIMeshSectionProxy_SetMeshSectionMaterial)(
 				[Root, UpdateData = MoveTemp(UpdateData)](FRHICommandListImmediate& RHICmdList) {
-					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material);
+					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material.Get());
 				});
 #endif
 		}
@@ -2682,7 +2691,7 @@ void UDreamUIMeshComponent::VerifyMaterials()
 		case EDreamUIRenderSectionType::DirectMesh:
 			{
 				auto MeshSection = static_cast<FDreamUIRenderSection_Mesh*>(RenderSectionItem.Get());
-				SetMaterialForUI(MatIndex++, MeshSection->Material);
+				SetMaterialForUI(MatIndex++, MeshSection->Material.Get());
 			}
 			break;
 		case EDreamUIRenderSectionType::ChildCanvas:
@@ -3162,7 +3171,7 @@ void UDreamUIMeshComponent::FlushRenderCommand()
 			[Root, PendingUpdateMeshSectionMaterialDataArray = MoveTemp(PendingUpdateMeshSectionMaterialDataArray)](FRHICommandListImmediate& RHICmdList) {
 				for (auto& UpdateData : PendingUpdateMeshSectionMaterialDataArray)
 				{
-					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material, UpdateData.MaterialProxy);
+					Root->SetMeshSectionMaterial_RenderThread(UpdateData.SectionProxy, UpdateData.Material.Get(), UpdateData.MaterialProxy);
 				}
 			});
 	}

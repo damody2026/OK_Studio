@@ -153,6 +153,7 @@
 - **衣服选项与袖型实测**（读卡器 parameters＋截图，`Saved/Reports/editor-parity-clothes/shots/`）：KK_007604 服装 1 换成原作上衣 217 セーラーワンピース。截图里看到的：袖型 0 → 1 时领口的蝴蝶结换成长领带（原因见下，**未确认**）；`hideOpt.0`：蓝绿色水手领消失。旗标：颜色层 1～3 可用、第 4 层不可用，选项 1 可用、选项 2 不可用，和 prefab 一致。
   - **袖型组切换的确实是袖子**（CLI 实测，`Saved/Reports/editor-parity-clothes/armcheck/`，`OK_DIAG=1` 导出两次比网格清单）：袖型 0 是短袖 `cf_sode_sailoronep_01` 加扣子 `cf_sode_sailoronep_01_botan`（|x| 到 0.26），袖型 1 是长袖 `cf_sode_sailoronep_02`（|x| 到 0.52，手腕）。两次导出只差这几个网格。（更正：我先前写「这组是领带／蝴蝶结」是错的，那是从截图推的，没有比网格。）
   - **截图上看不出袖子变，是被手套盖住**：这张卡服装 1 的手套（kind 4）是 `o_gloves_magic`，|x| 0.20～0.52，从前臂到手腕。所以三张截图里手臂的长袖与蓝绿袖口都是手套，不是上衣的袖子，也不是配件（手腕的配件槽 16／17 是小爱心 `o_valletta_heart1`）。要在画面上验袖型，先把手套脱掉。
+  - **这几张截图（`Saved/Reports/editor-parity-clothes/shots/`）没有执行档身分，不能当对照用**：拍的时候没记执行档的 mtime、`HEAD` 与工作树指纹，`Tools/shot_batch_header.lua check` 对它们回 MISSING。它们只记得当时看到什么；要比「修好前／修好后」，在拍照窗口（批次 E／F）带表头重拍。
   - 截图 1、2 之间领口从蝴蝶结变长领带：两次 CLI 导出都有同一条领带配件（槽 12 `o_necktie_yure_long`，父骨 `a_n_bust_f`）和蝴蝶结 `cf_top_sailorO_d_ribon`，网格清单没有差别，所以不是袖型组造成的。原因**未确认**（可能是读卡器重载后摆动骨或显示状态不同）。不为它单独开窗口。下次有画面时，顺手查两张截图当下的配件显示旗标（`hideOpt`、各槽是否显示），不必再比网格：两次导出的网格清单相同，所以差别更可能在显不显示，而不在有没有这个物件。
 - **要验原作服装功能，先确认那张卡穿的是原作衣服**：KK_007604 原本 7 套的上衣都是 mod 衣服（model 摘要里没有 kind 0），所以原卡上找不到可切换的选项。挑法：`entries.rs` 的忽略测试 `clothes_option_survey` 列出有 `objOpt`／`objSleeves` 的原作衣服，再用 appearance 的 `apply` 换上。和「验头发前先确认 hair0 真的是头发部件」是同一类坑。
 - **旧 OK 卡卡内模型没有新查询**：`clothes_option_groups` 是可选查询，卡内的第三方模型转卡时还没有它。`model_flags` 用 `clothes_option_groups_recorded`（`oklib::memo_bytes_recorded`）分辨「没录到」与「合法地全是预设值」：没录到的那件衣服，它的列不标 `available`；有录到的照实标。
@@ -202,6 +203,7 @@
 | `accessory{n}_{type}`（`id`，选图） | 清单项 | 硬：目录项目 | — |
 | `type` | 选项 120..130 | 硬 | — |
 | `parentKey` | 父骨 | 软：55 键（`editor_accessory_parents.json`）是已知清单，不是限制。清单外的键照收，标 `out_of_range`；只拒控制字元与超过 256 字（更正：先前写成「硬」是错的，读卡器与资料端本来就收自由输入） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
+| `parentKey` | 父骨 | 软：55 键（`editor_accessory_parents.json`）是已知清单，不是限制。清单外的键照收，标 `out_of_range`；只拒控制字元与超过 256 字。**`""` 不是无效值**：它是「素材预设」（用清单的 `Parent`），原作换配件时自己也会写 `""`（`CvsAccessory.UpdateSelectAccessoryKind`），所以不拒也不标（更正：先前写成「硬」是错的，读卡器与资料端本来就收自由输入） | 显示：`model.accessories.{槽}.parent_editable`，同时标在 `parentKey` 与该槽全部 `addMove` 列的 `available`。空槽（type 120）、清单 `HideHair==1` 或 `Parent=="null"` 时为 `false`（`CvsAccessory.ChangeParentAndMoveSettingVisible`，隐藏父骨、初始化／反转父骨与位移第 1 组） |
 | `addMove` 位置 | 数值 | 软：−100..100，一位小数 | 显示：第 2 组（`addMove.2.3..5`）另看 `model.accessories.{槽}.move2`：模型有 `N_move2` 节点（`objAcsMove[slot,1] = FindLoop("N_move2")`）才为 `true`。`null` = 这个模型录的时候还没存配件的节点名（2026-11-19 前的基础库与 OK 卡），那几列不标，等重录 |
 | `addMove` 旋转 | 数值 | wrap 0..360，取整；永远不拒，也不标 `out_of_range` | 同上 |
 | `addMove` 缩放 | 数值 | 软：0.01..100，两位小数。原作输入框不收 0 和负值，但卡上可能有（外挂写的）。照收，不另写 `limit_*` | 同上 |
@@ -257,6 +259,7 @@
 | **初期设定钮 `btnInitSetting`**：4 层底色改回模型预设色、花纹色改白、花纹归 0，位置／旋转归 0.5、宽高归 0 | 底色预设已有（`model.clothes.k.default_colors`） | 预设值有，但没有一次写回的操作 | 没有 | — | A：UI 照上面的值组一次 `set` 就行，不需要新 API |
 | **换上衣时袖型归 0**（`UpdateSelectClothes`：`sleevesType = 0`） | `clothes.parts.0.sleevesType` | **没有**：appearance `apply` 只写 `id` | — | — | **B**：`apply` 换上衣时同时写 `sleevesType=0`，照原作 |
 | 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **查到了，原作会写回卡**：`CvsClothes.UpdateSelectClothes`（top）先 `FuncUpdateClothesTop` → `ChaControl.ChangeClothesTop`，把执行期的 `nowCoordinate.clothes.subPartsId` 定下来；接着 `setClothes.subPartsId[i] = clothes.subPartsId[i]`，`setClothes` 就是 `chaFile.coordinate[coordinateType].clothes`。定法（`ChangeClothesTopParts`）：新上衣的 Kind 不是 1／2（或没有上衣物件）→ 三格都写 0；是的话，每格查 `(Kind==1?200:210)+格`，查不到就用 `topPartsDefaultId`（水手服 0,0,1；外套 0,1,1，`LoadCharaFbxData` 的 `defaultId`），写入查到的 `Id`。只读卡不换衣服时只改 `nowCoordinate`，不写卡。**我们还没照写**：`apply` 换上衣只写 `id`。要做得把目录传进 `coordinate`，并处理 mod 子部件的 resolver 列，留到能编译测试时写 | — | — | **B（写入，待实作）** |
+| 换上衣时子部件回补（`ChaControl.ChangeClothesTop`：子部件 id 不在新种类的清单里时，读 `topPartsDefaultId`，再写回 `subPartsId`） | `sub200..212` | **查到了，原作会写回卡**：`CvsClothes.UpdateSelectClothes`（top）先 `FuncUpdateClothesTop` → `ChaControl.ChangeClothesTop`，把执行期的 `nowCoordinate.clothes.subPartsId` 定下来；接着 `setClothes.subPartsId[i] = clothes.subPartsId[i]`，`setClothes` 就是 `chaFile.coordinate[coordinateType].clothes`。定法（`ChangeClothesTopParts`）：新上衣的 Kind 不是 1／2（或没有上衣物件）→ 三格都写 0；是的话，每格查 `(Kind==1?200:210)+格`，查不到就用 `topPartsDefaultId`（水手服 0,0,1；外套 0,1,1，`LoadCharaFbxData` 的 `defaultId`），写入查到的 `Id`。只读卡不换衣服时只改 `nowCoordinate`，不写卡。**已写，编译与规则测试已过，「重套不写」测试（ignored，要原作游戏）2026-11-19 以 `OK_TEST_GAME_ROOT=D:/XKoikatuSunshine` 跑过：1 passed**：`appearance.rs` `apply_item` → `settle_top_sub_parts`，规则在纯函式 `top_sub_parts_plan`。目录从 `apply` 传进来；「查得到」与 `current_selection` 用同一套判断（slot／local slot 加 GUID）。每格的写入走 `patch`，mod 子部件的 resolve 列就跟着处理：改成原作 id 的格移除它的列，保留的格列不动。只在上衣真的换了时才做；重套同一件上衣，输出和只写 `id` 的 `patch` 逐位元组相同（测试 `reapplying_the_worn_top_writes_nothing_more`，需要游戏目录与本机卡；2026-11-19 第一次补跑时没设 `OK_TEST_GAME_ROOT`，它提早 return，等于没跑。已改成 `#[ignore]` 的游戏比对测试，缺资料就失败、不再静默通过；要用 `OK_TEST_GAME_ROOT=D:/XKoikatuSunshine cargo test -- --ignored` 跑）。规则测试：`top_sub_parts_follow_change_clothes_top_parts`。**待补**：「子部件查不到、用 `topPartsDefaultId`」这条，还没有用真实 mod 上衣的案例。手边没找到「mod 水手服／外套带着新种类清单里没有的子部件」的卡，不用捏造的资料凑；找到卡再补。另一个原作条件「上衣物件没载入（`objClothes[0]==null`）时也写 0」我们判断不到，不做 | — | — | **B（写入）** |
 | 衣服复制页 `CvsClothesCopy`（从另一套服装复制选定种类；子部件可分开勾） | — | 没有专用操作；读别的服装＋`set` 可以组出来 | 没有 | — | B（低优先：可由 UI 组合） |
 | 页签可点与否（`notBot`／`notBra`／`notShorts`、男性胸罩页） | `model.pages` | 有（第三批） | 没接 | 不限（只影响显示） | A |
 
@@ -269,6 +272,7 @@
 | 颜色 1..4 `btnAcsColor01..04` | `accessory.parts.n.color.c.*` | 有，`available`（`useColor`、`rendAlpha`）已有 | 通用列 | 硬：0..1 | A |
 | **颜色初期化 `btnInitColor`**（改回 `ChaAccessoryComponent.defColor01..04`） | — | **没有**：配件的预设色没输出（衣服有 `default_colors`，配件没有） | 没有 | — | **B**：`model.accessories.n` 补 `default_colors` |
 | 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有，自由输入加 55 键选单（`editor_accessory_parents.json`），`parent_editable` 已有；清单外的键标 `out_of_range` | 通用列（输入框＋选单） | 软：清单外照收 | A |
+| 父骨 `tglAcsParent` → 父骨视窗 `CustomAcsParentWindow` | `accessory.parts.n.parentKey` | 有，自由输入加 55 键选单（`editor_accessory_parents.json`），`parent_editable` 已有；清单外的键标 `out_of_range` | 通用列（输入框＋选单） | 软：清单外照收；`""` 是素材预设，不是无效值，不拒不标 | A |
 | **父骨初期化 `btnInitParent`**（`parentKey=""`，用清单 `Parent`） | `parentKey` | 值 `""` 在选项里（「素材预设」） | 没有专用钮 | — | A |
 | **父骨左右反转 `btnReverseParent`** | `parentKey` | **没有左右对应表**。命名不规则，例如 `a_n_hair_pin` ↔ `a_n_hair_pin_R`，UI 不能只换 `_L`／`_R` | 没有 | — | **B**：父骨表补 `reverse` 栏，照原作 `ChaAccessoryDefine.GetReverseParent` 的对应 |
 | 位移第 1／2 组 `tglAcsMove01/02` → `CustomAcsMoveWindow`：位置／旋转／缩放 XYZ 输入 | `accessory.parts.n.addMove.2.{0..5}.{x,y,z}` | 有，`parent_editable`／`move2` 已有 | 通用列 | 位置 软 −100..100；旋转 wrap 0..360；缩放 软 0.01..100 | A |
@@ -295,6 +299,71 @@
 ### 10.5 没盘点的（外挂）
 
 外挂加的衣服／配件栏位，资料端都以 `plugins.<id>.…` 通用列出现，界面在「全部属性」。各外挂原本的专用页（反编译 `plugins\` 下的 `KKS_Accessory_States`、`KKS_OverlayMods`、`KKS_MoreAccessoryParents`、`KKS_ClothingBlendShape`，以及 `KKS_Plugins` 内的 MaterialEditor、HairAccessoryCustomizer、Pushup）这次没有逐页对。其中 `KKS_MoreAccessoryParents` 会加父骨键，我们的 55 键选单不含它们；照通则那些键照收、标 `out_of_range`（`appearance.rs` `mark_unknown_parents`），不挡写入。
+### 10.5 外挂（2026-11-19 盘点）
+
+语意来源：反编译 `D:\XKoikatuSunshine\kks_decomp\plugins\` 下各外挂自己的存档程式（`OnCardBeingSaved`／`OnCoordinateBeingSaved`）。我们这边看的是 `Tools/ok-extract/src/appearance/properties/plugins.rs`（`PLUGIN_SECTIONS`、`visit()`）与读卡算图那一侧（`card.rs`、`card_plugins.rs`）。
+
+**先讲共通的两件事：**
+
+- **界面**：外挂列全在「全部属性」（`pages.json` 的 `property_panel`），没有专用页，所以下表每个外挂的界面都是 A（e-fork-2 的排版工作），表里不再逐列写。
+- **资料端只露出一部分栏位**，取舍由 `visit()` 决定：
+  - 会露出：浮点数（`F32`／`F64`）、布林、颜色（四个浮点），以及 MoreAccessories 的 XML 字串。
+  - **露不出**：整数、一般字串、PNG／`byte[]`。键名含 `texture` 与结尾是 `Original` 的栏位，`visit()` 刻意跳过。
+  - 这条规则让几个外挂的主要数值没有列可改，见下表标 **B** 的地方。
+  - 「露不露出」是照 `visit()` 规则对外挂存档型别推出来的，还没有逐个外挂拿真卡核对过。
+
+限制一律照 §9.1：外挂没有给范围中继资料的，只检查有限数（「不限」）；颜色依结构 0..1。
+
+| 外挂（区段键，按身分） | 存在哪里 | 栏位 | 资料端 | 算图 | 限制 | 分类 |
+|---|---|---|---|---|---|---|
+| **MaterialEditor**（`com.deathweasel.bepinex.materialeditor`） | 角色卡＋服装卡；一个区段装全部服装，`CoordinateIndex` 分开 | `MaterialColorPropertyList`（`Value` 是 Color） | 有（颜色列；只露出当前服装的衣服与饰品列，`visit()` 第 76 行） | 有 | 硬：颜色 0..1 | A |
+| 同上 | 同上 | `MaterialFloatPropertyList`（`Value` 存成**字串**） | **没有**：字串不露出 | 有 | 原作滑杆预设 0..1，shader 的 `Range` 属性会改写 → 软 | **B** |
+| 同上 | 同上 | `MaterialKeywordPropertyList`（`Value` bool） | 有 | 待查 | bool | A |
+| 同上 | 同上 | `RendererPropertyList`（`Value` 字串：Enabled／ShadowCastingMode／ReceiveShadows／RecalculateNormals） | **没有** | 有（渲染器开关） | 硬：列举值 | **B** |
+| 同上 | 同上 | `MaterialShaderList`（`ShaderName` 字串、`RenderQueue` int?） | **没有** | 有（shader 家族） | 硬：shader 名单；RenderQueue 整数 | **B**（低优先：换 shader 牵涉材质重建） |
+| 同上 | 同上 | `MaterialTexturePropertyList`＋`TextureDictionary`（贴图、偏移、缩放） | **已由 f-sceneload 覆盖**（`7ecd947ff`／`3af999058`／`fe5d80d11`，`appearance/textures.rs`，另开动作，不走 `plugins.*`） | 有 | — | 不重做 |
+| 同上 | 同上 | `MaterialCopyList`（材质复本） | 没有 | 待查 | — | C：会多出一个材质槽，是结构编辑，不是数值；读卡器照卡原样保留 |
+| **KoiSkinOverlayX**（`KSOX`，v2） | 只在角色卡；里面按服装分 | `Lookup`（服装 → 贴图种类 → 贴图 id）＋ `_TextureID_<n>`（PNG） | **没有**：贴图不是属性值 | 有（身体／脸／眼的覆盖贴图） | — | **B**：要像 MaterialEditor 贴图那样另开一个换图动作，与 f-sceneload 的贴图动作同一套做法，做之前先和它对齐 |
+| 同上 | 同上 | `EnableInStudioSkin`／`EnableInStudioIris`（只在 false 时写） | 有（bool） | — | bool | C：只影响 Studio |
+| **KoiClothesOverlayX**（`KCOX`） | 角色卡（按服装分）＋服装卡 | `Overlays`：衣服物件名或遮罩名（`BodyMask`／`InnerMask`／`BraMask`）→ `[PNG, Override]` | `Override`（bool）有；PNG 没有 | 有；换上衣时一起清掉上衣的覆盖与遮罩（`properties.rs` 约 258 行） | bool | 贴图 **B**（同 KSOX）；`Override` A |
+| 同上 | 同上 | `EnableInStudio` | 有 | — | bool | C：只影响 Studio |
+| **Pushup**（`com.deathweasel.bepinex.pushup`） | 角色卡：`Pushup_BraData`／`Pushup_TopData`（以服装号为键）、`Pushup_BodyData`；服装卡：`PushupCoordinate_*` | `ClothData`：Firmness／Lift／PushTogether／Squeeze／CenterNipples（浮点）、EnablePushup／FlattenNipples／UseAdvanced（bool）、进阶 12 项身体值 | 有（浮点与 bool；键用 `#<服装号>`） | 有（`card.rs` `apply_pushup_shape`） | 基本五项：原作滑杆 0..1，软；进阶 12 项：滑杆 −1..2，软；没有范围中继资料时只检查有限数 | A；范围中继资料可补（B，低优先） |
+| 同上 | 同上 | `Pushup_BodyData`（没推挤前的身体） | 有 | 有 | 软 | C：**不该给人改**。它是原作 `shape.*` 的备份，改了会和身体滑杆打架；同一笔资料两个地方能改，正是 ABMX 不进 `plugins.*` 的理由。写入端要挡，**B**：把它标成 `supported:false`（同 `refuse_unapplied`） |
+| **HairAccessoryCustomizer**（`com.deathweasel.bepinex.hairaccessorycustomizer`） | 角色卡 `HairAccessories`（服装 → 饰品栏）；服装卡 `CoordinateHairAccessories` | HairGloss、ColorMatch（bool）；OutlineColor、AccessoryColor、GlossColor（颜色）；HairLength（浮点） | 有 | 有 | 颜色硬 0..1；HairLength 原作 0..1，软 | A。只对有 `ChaCustomHairComponent` 的饰品有效，可用性可从 `model.accessories` 的 `use_color` 那份资料推，UI 要时再补旗标 |
+| **MoreAccessories**（`moreAccessories`，v2） | 第 21 栏以后其实存在原作的 `accessory.parts` 阵列（超过 20 个）；`additionalAccessories` 是旧版相容用的 XML 副本 | XML 里每栏：type、id、parentKey、addMove、color、hideCategory、noShake | 有（`accessory_extra`，XML 列） | 有 | 同原作配件（§9.3） | A。**待查**：v2 卡的真资料在 `parts[20..]`，XML 只是副本。我们改的是 XML 那份，要确认原作读 v2 卡时以 `parts` 为准、不读 XML（反编译 `MoreAccessories.cs` 426–485：v2 忽略 XML），否则我们改了也不会生效 → 可能是 **B** |
+| 同上 | 同上 | `ShowAccessories`（bool[]） | 有 | — | bool | C：只在 Studio 写 |
+| **Accessory States**（`Accessory_States`，v1） | 角色卡 `CoordinateData`（以服装号为键）＋服装卡 | 每个饰品栏：`_binding`（int：0–8 衣服种类，9 以上自订组）、`_state`（`[开始,结束]` 整数区间）、`_shoetype`（byte）、`_parented`（bool）；组名 `_names`（字串） | 只有 `_parented`；**其余都是整数或字串，没露出** | 有（`card_plugins.rs`） | `_binding` 硬（列举）；`_state` 硬 0..3（衣服）或组的最大值 | **B**（原作 UI 是一个下拉加两个 0..3 滑杆，资料端要能露出整数列） |
+| **AccessoryStateSync**（`madevil.kk.ass`，v6） | 角色卡 | `TriggerPropertyList`／`TriggerGroupList` | 部分 | 有 | — | C：Accessory States 存档时会**从自己的资料重写**这份相容副本（`CharaEvent.cs` 568–614），单独改它，下次存档就被盖掉。以 `Accessory_States` 为准 |
+
+**其他会影响衣服／饰品的外挂**（这次没展开，只列区段键，都还不在 `PLUGIN_SECTIONS`，会出现在 `unknown_plugin_sections`）：
+
+- `com.deathweasel.bepinex.clothingunlocker`：`ClothingUnlocked`。
+- `com.deathweasel.bepinex.moreoutfits`：`CoordinateNames`，服装名，字串。
+- `KK_InvisibleBody`：`Visible`。
+- `nakay.kk.ClothingBlendShape`：`ClothesDataSet`。已在 `card_plugins.rs` 算图，属性端没有。
+- `com.deathweasel.bepinex.dynamicboneeditor`：已在 `PLUGIN_SECTIONS`，`AccessoryDynamicBoneData` 是浮点列。
+
+**两件和先前写法不一致、要更正或核对的**：
+
+- `KKS_MoreAccessoryParents` 反编译里**没有卡资料**：它加的父骨直接以字串写进原作的 `parentKey`。这正是 §10.3 改成软限制要放行的情形。
+- `PLUGIN_SECTIONS` 有一列 `HairShadowColorControl`（标「source」），但反编译里这个外挂**找不到卡资料**。那一列可能是空设定，要找一张真卡确认，不要凭推测删。
+
+**B 类（资料端，我的），照优先：**
+
+1. 让 `visit()` 露出整数，以及有已知型别的字串列：Accessory States 的绑定与区间、MaterialEditor 的浮点（字串存）与渲染器开关。照 §8 的身分式键，限制照上表。**已写**（`plugins.rs` `int_spec`／`visit_with`，测试 `known_integer_and_string_fields_are_offered_with_their_type`，尚未编译）：
+   - 整数只露出白名单。Accessory States 的 `_binding`：硬 −1..max(8, 卡上值)；卡自己的自订组照样合法，但不在这里凭空开新组。`_state` 的每个端点：衣服绑定时硬 0..3，自订组时 0..max(3, 卡上值)。`_shoetype`：硬 0..2。MaterialEditor `RenderQueue`：硬 −1..5000。其他整数是身分（`ObjectType`、`CoordinateIndex`、`Slot`、贴图 id、列举的 `Property`），改了会把整列挪到别的物件上，所以不露出。
+   - 字串只露出 MaterialEditor 的 `Value`：内容是数字的当数字列，`True`／`False` 当布林列，不给自由打字。写回时保持字串（`replace` 照原型别转）。ShadowCastingMode 那种列举字串（`Off`／`On`…）还没露出。
+2. `Pushup_BodyData` 标 `supported:false`：它只是身体滑杆的备份，不能有第二个修改入口。**已写**（`properties.rs` `refuse_unapplied`，原因文字 id `reader.unsupported.pushup_body_backup`，测试 `pushup_body_backup_is_offered_but_not_editable`）：挡写不挡读，列照样列出来（它是诊断用的事实，也可以看备份值是多少），MCP 的 `set` 回「Parameter unsupported」；尚未编译。**这个入口在 2026-11-19 之前是开着的**（`plugins.Pushup.@Pushup_BodyData…` 可写）。已经从这里改过的卡不迁移、不自动修；那样的卡，Pushup 会用改过的备份重算身体。
+3. **未确认，不动程式**：MoreAccessories v2 的 XML 副本改了有没有效。要等有画面时用真卡核对（清单交给 f-sceneload 的拍照窗口）；若无效，就是 `extra.rs` 改错了地方，改成编辑 `parts[20..]`。`HairShadowColorControl` 那一列同样**未确认**，不删。
+4. KSOX／KCOX 换图：**资料端已写（尚未编译）**，`appearance/overlays.rs`，动作 `overlays`（读）／`overlays_apply`（写）。和 f-sceneload 的 `textures`／`textures_apply` 同一个形状：读一支、写一支，写入只有这一支；界面、`reader_call`、MCP 要接的是这一个动作，不另立写法。C++ 的 MCP 与控制器还没接。
+   - **身分**（不用列号）：KSOX 是（服装号, `type`＝`TexType` 数值），KCOX 是（服装号, `slot`＝衣服物件名或 `BodyMask`／`InnerMask`／`BraMask`）。和 MaterialEditor 贴图不同：卡上存的就是 PNG bytes，没有共用字典加列的结构。
+   - **换图**：`png` 给档案路径，bytes 原封不动放进卡。**不压缩、不缩图、不重新编码**，那会改使用者的素材。原作两个外挂读图时会 `EncodeToPNG` 重编，所以同一张图被原作再存一次后 bytes 会不同，读回来仍是同一张图。
+   - **清除**（照原作，出处在 `overlays.rs` 开头）：KSOX 的 `SetTexture(type, null)` 是把那一种从这套服装的 `Lookup` **移除**，不是存一张空图；没人引用的 `_TextureID_` 照 `PurgeUnused` 丢掉。KCOX 的清除只把 bytes 设成 null；这时 `Override` 若还开着，项留着，原本的贴图照样隐藏；`Override` 也关了，`CleanupTextureList` 就把整项丢掉。
+   - **原作会顺手做、我们也照做的**：KSOX 的 `EyeOver`／`EyeUnder`（6／5）不写自己，写左右两种（+2、+4）。卡不是「每套服装各自」（`IsPerCoord()==false`，所有服装的表都相同）时，改一套就套到所有服装（GUI 的 `CopyToOtherCoords`）。读的回应带 `skin_per_outfit`，让 UI 能讲清楚。KSOX 新贴图 id 原作取 1000..9989 的乱数，我们取 1000 起第一个没用过的；id 只要不重复都合法。
+   - **体积**：建议大小是身体 2048²、脸 1024²、眼／眉／眼线 512²（`Util.GetRecommendedTexSize`）。一次换图，卡大约多出那个 PNG 档的大小。同一张卡里，KSOX 同样 bytes 只存一份；KCOX 每个物件各存一份。
+   - 旧版 KSOX（v1，PNG 直接以种类名存）不写，回错误请先在原作存一次；读卡端（`card.rs`）照常读得到。
+   - 测试：`ksox_clear_removes_the_kind_and_shared_edits_reach_every_outfit`、`ksox_per_outfit_edit_stays_on_its_outfit_and_reuses_identical_bytes`、`kcox_clear_keeps_an_override_entry_and_drops_an_empty_one`、`stored_bytes_are_the_users_file_unchanged`。
+5. 低优先：Pushup 范围中继资料；MaterialEditor 换 shader。
 
 ### 10.6 我接下来要做的（B 类，照优先）
 
@@ -302,6 +371,7 @@
 2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。**已写**：不能直接在 `AccessoryColorUse` 加栏位（查询结果以 bincode 存进 `.okmodel`，加了栏位，所有已录的模型都会读不回来），所以另开 `accessory_default_colors` 查询（`unity.rs`，与 `accessory_color_use` 用同一套子树对应；`_recorded` 没录到回 `None`），转换器两处都录。只放在 `model.accessories.n.default_colors`，**不**写进各列的 `default`：读卡永远不拿它补值，否则没设过色的卡读出来会像被改过。旧库要对 ao_ 来源再补录一次才有值；e-fork-2 这次窗口的补录，exe 若含这笔就一起录到。尚未编译。
 3. 父骨表补 `reverse` 对应（照原作 `ChaAccessoryDefine.GetReverseParent`），给「父骨左右反转」与「左右反转复制」用。**已写**：`Tools/ok-extract/data/editor_accessory_parents.json` 的 18 对共 36 列加了 `reverse`，没有对应的列不加（原作 `_ => ""`，反转钮不显示）。随 `properties` 的 `parents` 输出。测试 `accessory_parent_reverse_pairs_are_symmetric`，尚未编译。
 4. 换上衣时子部件回补：查到原作会写回卡（出处见 10.2 那一列），我们要跟着写。还没实作，原因见那一列。
+4. 换上衣时子部件回补：查到原作会写回卡，**已写**（出处、做法与待补的 mod 案例见 10.2 那一列），尚未编译。
 5. （低优先）服装间复制衣服、复制配件、槽位互换：UI 先用「读别套＋`set`」组合；要不要专用操作，等 UI 做过再说。
 6. 外挂父骨键：**已改**。55 键是已知清单不是限制，清单外的键照收、标 `out_of_range`（`mark_unknown_parents`，测试 `parent_outside_the_known_list_is_marked_not_refused`）。`""` 照收不标：它是「素材预设」，原作 `UpdateSelectAccessoryKind` 也会写 `""`，不能当成空值拒。
 
@@ -309,4 +379,5 @@
 
 - **只影响显示**（第三批，§9.6）：`model.pages`、`parent_editable`、`move2`、各列 `available`。它们不改卡，也不挡写入。
 - **写入行为**（这批，会改卡上的栏位）：`apply` 换上衣时 `sleevesType=0`；换上 `HideHair==1` 的配件时 `parentKey=""`；（待实作）换上衣时 `subPartsId` 写回定好的值。出处都是 `UpdateSelectClothes`／`UpdateSelectAccessoryKind`，只在 id 真的换了时才发生。
+- **写入行为**（这批，会改卡上的栏位）：`apply` 换上衣时 `sleevesType=0`；换上 `HideHair==1` 的配件时 `parentKey=""`；换上衣时 `subPartsId` 写回定好的值（`ChangeClothesTopParts` 的定法）。出处都是 `UpdateSelectClothes`／`UpdateSelectAccessoryKind`，只在 id 真的换了时才发生。
 - **重设用的值**（不改卡，等 UI 按钮用）：衣服 `default_colors`、配件 `default_colors`、父骨 `reverse`。
