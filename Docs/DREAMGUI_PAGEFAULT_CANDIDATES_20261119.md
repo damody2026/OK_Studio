@@ -1091,7 +1091,66 @@ render state 被标脏 ⇒ proxy 重建，旧 proxy 连它的 section 与材质�
 
 **不谈修法**（按指示）。
 
+## 20. 自製 GPU 提交那一层：**也是干净的，而且连「存贴图」这件事都没有**
+
+E 树、只读。
+
+### 20a. `KKRuntimePose` 与 `KKCrowdGpuPacking` 的 shader 参数**全部是缓冲区，没有一个贴图**
+
+```
+grep -rn "TextureRHI|ShaderResourceView|SHADER_PARAMETER_TEX|SHADER_PARAMETER_SRV|SHADER_PARAMETER_RDG" \
+     Plugins/KKRuntimePose/Source Plugins/KKCrowdGpuPacking/Source
+```
+
+命中的只有 `SHADER_PARAMETER_RDG_BUFFER_SRV`／`_UAV`（`KKCrowdGpuPacking.cpp:15-18`、
+`OKClothCoverGpu.cpp:14-39` 等）——**全是 buffer**。
+`TextureRHI`／`ShaderResourceView` 在这两个外挂的 `Source` 下**零命中**。
+GPU 磁碟快取（`KKRuntimeGpuDiskCache.cpp`）、pose 快取（`KKRuntimePoseCache.cpp`）、
+GPU rig（`KKRuntimeGpuRig.cpp`）、coating（`CoatingBindings` 是 `TRefCountPtr<FRDGPooledBuffer>`）
+**都只经手缓冲区**。
+
+### 20b. 全专案再扫一次：**我们自己的程式码没有任何 render 侧贴图成员**
+
+扫 `Source` ＋ `KKUnityBundle`／`KKRuntimePose`／`KKCrowdGpuPacking`／`OKStudio`／`OKHGShading`／
+`OKAnimation`／`KKImportedAssets` 的 `Source`，`FRHITexture`／`FShaderResourceViewRHIRef`／
+`FTextureRHIRef` 一共**三处，而且三处都是 render command 内的区域变数**：
+`KKTextureRuntime.cpp:149`、`:197`（`ReadSurfaceData`）、`KKRuntimeMaterial.cpp:469`（读 mip）。
+
+### 20c. toon shadow capture：走的是标准 UObject 路径，**按那把尺排除**
+
+| 环节 | 存什么 | 行号 |
+|---|---|---|
+| capture 元件 | `UPROPERTY TObjectPtr<USceneCaptureComponent2D>` | `KKPreviewActor.h:938-939` |
+| 双 render target | `UPROPERTY TArray<TObjectPtr<UTextureRenderTarget2D>>` | `KKPreviewActor.h:940-941` |
+| 材质怎么读到它 | `Dynamic->SetTextureParameterValue(TEXT("KKShadowDepth"), Shadow->Depth)` | `KKPreviewActor.cpp:3705`；用到它的 MID 收在 `ToonShadowMaterials`（`KKPreviewActor.h:990-991`，`UPROPERTY`） |
+
+**它没有自己的 pass 参数去存角色贴图**，而且每一环都是强参照——
+按协调给的尺（放手后 3 帧记忆体就真的释放），**持有参照的一律排除**，所以这条连候选都不是。
+
+### 20d. 把那把尺写成通则，省掉以后重复讨论
+
+> **凡是持有 `FTextureRHIRef`／`FShaderResourceViewRHIRef`／`UPROPERTY` 贴图参照的容器，
+> 都会延命，因此都与「3 帧后真的释放」矛盾，一律不是候选。**
+> 能成立的只有**既不持 UObject 参照、也不持 RHI 参照**的绑定。
+
+照这条尺，到目前为止在我们自己的程式码里找到的「不持有」只有两个，而且都已排除：
+- `FKKStreamProxySection::Material`（裸 `UMaterialInterface*`，每帧读）——§19c 两个分支都矛盾；
+- `FDreamUIMaterialParameters::Textures`（裸 `const UTexture*`）——§13a，GC 可达性分析后就放掉，
+  而且送进 uniform buffer 时换成 reference。
+
+### 20e. 所以这一层也干净，下一层我同意用量测而不是读碼
+
+剩下的是**引擎自己的** cached mesh draw command／GPU Scene／PSO binding 那一层。
+那一层的特点正是「一次建立、每帧重送、而且存的是解析过的绑定」，符合这把尺；
+但它在引擎里、而且与 `MarkRenderStateDirty` 的互动是执行期顺序，**读碼读不出来**。
+协调说的做法（故障时印出正在绑的材质与 PSO）是对的方向。
+
+**而我仍然把 shader 身分列为第一优先**：若那颗 shader 根本不是 UI 的，
+上面十几节的搜索范围有一半是对的、一半白走。`r.Shaders.ExtraData=1` 重编一次就能定下来（§5d）。
+
+**不谈修法**（按指示）。
+
 ---
 
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12–§19 的程式码是我自己读的（§14–§19 的 OK 侧读的是 E 树的副本，只读）。
+§11 的两棵引擎比对、§12–§20 的程式码是我自己读的（§14–§20 的 OK 侧读的是 E 树的副本，只读）。
