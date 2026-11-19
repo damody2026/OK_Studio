@@ -358,3 +358,12 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
 - **范围 metadata 照新定案**：`min`／`max` 是原作 UI 的范围（配 `display_scale`／`unit`），`Validate()` 不拿它挡；
   要挡才写 `limit_min`／`limit_max`。**髮飾長度、眼球缩放／位移不写 `limit_*`**——没有证据证明引擎自己会夹，
   写错的那天不会报错，只会悄悄改坏卡。`wrap` 只给真的循环的量（这两页没有）。
+
+### 8.4 这一批的验证边界（2026-11-19）
+
+- **已验**：`OpenKoikatsuEditor` Win64 Development 建置 `Result: Succeeded`（`a1377c52b`）；
+  资料端的 `ops` 有实测（第 7 节、API 第 10 节：差异正好 60 个栏位）。
+- **未验**：**这几页还没有实机截图**。机器优先给 crash 实验，拍摄窗口要等协调给时段，所以
+  「四页长什么样、按钮按下去画面怎么变」目前只是预期，不是看过的结果。按钮的失败路径
+  （忙碌／没角色／有暂存编辑时的 ScreenNote）也还没在画面上看过。拿到窗口后要补：
+  四页各一张、瞳页一张、按一次「重設外框色」前后各一张。
