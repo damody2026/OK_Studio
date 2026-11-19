@@ -6,7 +6,7 @@
 -- With --new: what the new file changes against the old one (default: the checked-in one), page by page:
 -- pages added, removed or moved, and for each page in both whether what it shows stays the same. A page
 -- that swaps a shape group for the keys of that group ("items") shows the same rows, so its audit must
--- not move; anything else that changes is listed. Every item key is checked against the registry keys
+-- not move; anything else that changes is listed, a changed order included. Every item key is checked against the registry keys
 -- that can be known without the game (shape.*, bone.*, the two bust physics); keys that only exist at
 -- run time (pregnancy.*, style.*, a card's properties) are listed for the in-game audit to settle.
 -- Exit 1 when a page's content changed or a key is unknown, so a typo is found before the build.
@@ -72,21 +72,32 @@ local function source_token(spec, groups)
     for _, k in ipairs(g) do out[#out + 1] = "key " .. k end
     return out
   end
+  -- The bust rows are the rows of the two bust physics keys (OKReaderScreen BustRows, in BoneSliders order).
+  if spec.rows == "bust" then return { "key physics.bustSoftness", "key physics.bustWeight" } end
   for _, field in ipairs({ "rows", "widget", "named", "drawer" }) do
     if spec[field] then return { field .. " " .. tostring(spec[field]) } end
   end
   return { "unknown source" }
 end
 
--- What a page shows, in order: shape groups expanded to their keys, then the items' keys. A page that swaps
--- {"shape": "face", "group": 0} for the six items of that group gives the same list.
+-- What a page shows, in order. A page lists its rows either as "sources" (step 1) or as "items" (step 2), one
+-- ordered list whose entries are a registry key ({"key": ...}) or any source ({"rows": "bust"}, {"widget": ...},
+-- {"shape": ...}): the list's order is the page's order, nothing is put first. Shape groups expand to their keys
+-- and the bust rows to the two bust physics keys, so {"shape": "face", "group": 0} and the six keys of that group
+-- give the same list. The second result is why the page is not valid (nil when it is).
 function M.page_rows(sub, groups)
-  local rows = {}
-  for _, spec in ipairs(sub.sources or {}) do
-    for _, t in ipairs(source_token(spec, groups)) do rows[#rows + 1] = t end
+  local rows, err = {}, nil
+  if sub.sources and sub.items then err = "has both sources and items (one ordered list: items)" end
+  for _, spec in ipairs(sub.items or sub.sources or {}) do
+    if spec.key ~= nil then rows[#rows + 1] = "key " .. tostring(spec.key)
+    else
+      for _, t in ipairs(source_token(spec, groups)) do
+        rows[#rows + 1] = t
+        if t == "unknown source" or t:match("^missing ") then err = err or ("bad entry: " .. t) end
+      end
+    end
   end
-  for _, item in ipairs(sub.items or {}) do rows[#rows + 1] = "key " .. tostring(item.key) end
-  return rows
+  return rows, err
 end
 
 -- Everything else on a page (what it does when entered, its own buttons...), as one comparable string.
@@ -124,7 +135,10 @@ function M.compare(old, new, groups, keys)
   local kept_old, kept_new = {}, {}
   for _, p in ipairs(old_list) do if new_by[p] then kept_old[#kept_old + 1] = p end end
   for _, p in ipairs(new_list) do
-    if not old_by[p] then lines[#lines + 1] = "added    " .. p
+    if not old_by[p] then
+      lines[#lines + 1] = "added    " .. p
+      local _, err = M.page_rows(new_by[p].sub, groups)
+      if err then lines[#lines + 1] = "invalid  " .. p .. "  " .. err end
     else kept_new[#kept_new + 1] = p end
   end
   for i, p in ipairs(kept_new) do
@@ -132,7 +146,9 @@ function M.compare(old, new, groups, keys)
   end
   for _, p in ipairs(kept_new) do
     local a, b = old_by[p], new_by[p]
-    local ra, rb = M.page_rows(a.sub, groups), M.page_rows(b.sub, groups)
+    local ra = M.page_rows(a.sub, groups)
+    local rb, err = M.page_rows(b.sub, groups)
+    if err then lines[#lines + 1] = "invalid  " .. p .. "  " .. err end
     local same = #ra == #rb
     for i = 1, math.max(#ra, #rb) do if ra[i] ~= rb[i] then same = false end end
     if not same then
@@ -142,8 +158,8 @@ function M.compare(old, new, groups, keys)
   end
   for _, p in ipairs(new_list) do
     for _, item in ipairs(new_by[p].sub.items or {}) do
-      local k = tostring(item.key)
-      if keys[k] then
+      local k = item.key ~= nil and tostring(item.key) or nil
+      if k == nil or keys[k] then
       elseif M.runtime_only(k) then runtime[#runtime + 1] = p .. "  " .. k
       else unknown[#unknown + 1] = p .. "  " .. k end
     end

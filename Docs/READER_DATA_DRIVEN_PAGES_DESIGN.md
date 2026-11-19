@@ -161,7 +161,11 @@ UMG 的控制項在第二步之後漸漸不再被新版畫面用到，但舊版�
 
 ### 做法
 
-- 頁面可以寫 `items`：`[{"key": "shape.face.0"}, …]`，`kind` 目前只有 `number`（不寫就是 `number`）。
+- 頁面的列寫成**一個有序的 `items` 清單**，畫面照清單的順序排，沒有「先放 shape、再放鍵」之類的隱含規則。每一項是：
+  - 一個登錄鍵：`{"key": "shape.face.0"}`（`kind` 目前只有 `number`，不寫就是 `number`）；或
+  - 任何第一步的來源：`{"rows": "bust"}`、`{"widget": "bone_axes"}`、`{"shape": "face", "group": 0}`、`{"named": …}`、`{"drawer": …}`。
+  - 鍵與來源可以混排，例如「胸部」是 `shape.body` 那組的鍵、接著 `physics.bustSoftness`、`physics.bustWeight`。
+  - 一頁只能有 `sources`（第一步）或 `items` 其中一個；兩個都寫的頁不建、紅字說明，因為沒有東西說誰在前。
 - 這一步的 `number` 先**鏡像那個鍵的控制列**：依登錄找出顯示該鍵的控制項（`OKRegistryControl`），滑桿就取它所在的那一列。所以畫面和稽核不變，而定義檔寫的已經是鍵。
 - 之後換成畫面自己的控制項時，範圍、小數位、顯示單位都讀登錄的 metadata（`min`／`max`、`step`、`decimals`、`range_missing`…），`pages.json` 不寫範圍。
 - 登錄沒有的鍵：紅字列出、那一項不建（其他照建），也算進稽核的「資料端缺」。
@@ -173,10 +177,11 @@ UMG 的控制項在第二步之後漸漸不再被新版畫面用到，但舊版�
 Tools\lua\lua.exe Tools\reader_pages.lua --new <新的 pages.json>     （在專案根目錄）
 ```
 
-- 逐頁列出新增、刪除、移動的頁。對兩邊都有的頁，比較它「顯示的列」：shape 群組展開成那組的鍵，`items` 就是它的鍵，其他來源照原樣。不一樣就列 `changed`。
+- 逐頁列出新增、刪除、移動的頁。對兩邊都有的頁，比較它「顯示的列」**連同順序**：shape 群組展開成那組的鍵，`{"rows": "bust"}` 展開成兩個胸部物理鍵（`BustRows` 的順序），其他來源照原樣，`items` 照清單順序。內容或順序不一樣就列 `changed`；同時寫了 `sources` 與 `items`、或認不得的項目列 `invalid`。
 - 每個 `items` 的鍵對照不用遊戲就知道的登錄鍵：`shape.*` 來自 `KKShapeRows.cpp`，`bone.*` 來自 `OKBoneControls.h`，加上 `physics.bustSoftness／bustWeight`。打錯就列 `unknown key`。只有遊戲執行時才有的鍵（`pregnancy.*`、`style.*`、卡片的屬性）列出來，交給遊戲內稽核判斷。
 - 有差異或未知的鍵就 exit 1。測試：`Tools\lua\lua.exe Tools\tests\test_reader_pages.lua`。
-- 目前樹外的第二步版本（臉 8 頁、身子 5 頁換成 `items`；「胸部」因為還接著胸部柔軟度／重量兩列，順序要先支援才換）檢查結果是：同樣的頁、同樣的列、每個鍵都認得。
+- 目前樹外的第二步版本：37 頁裡有列的 28 頁全部換成 `items`（臉 8 頁、身子 6 頁含「胸部」的兩列物理寫成鍵；其他頁的來源原樣搬進 `items`）。檢查結果是：同樣的頁、同樣的列、同樣的順序、每個鍵都認得。
+- 「懷孕」「角色風格」這一版還是 `{"widget": "pregnancy_box"}`／`{"widget": "style_box"}`：那兩個框除了鍵的滑桿還有別的控制項，換成 `pregnancy.*`／`style.*` 的鍵會不會少列，只有遊戲內稽核看得出來，所以留到建置窗口後逐頁換、逐頁對稽核。
 
 ### 稽核第四欄「KKEx 不認得（`unknown_plugin_sections`）」的判準
 

@@ -41,6 +41,43 @@ T:case("a_missing_or_reordered_key_is_a_change", function(t)
   t:eq(#lines, 1); t:contains(lines[1], "changed  臉›臉型")
 end)
 
+-- 胸部: its shape keys, then the two bust physics rows, in one ordered list.
+local function bust_items(physics_first)
+  local items = {}
+  for _, k in ipairs(groups.body[2]) do items[#items + 1] = { key = k } end
+  local physics = { { key = "physics.bustSoftness" }, { key = "physics.bustWeight" } }
+  if physics_first then items = { physics[1], physics[2], table.unpack(items) }
+  else items[#items + 1] = physics[1]; items[#items + 1] = physics[2] end
+  return items
+end
+local bust_before = doc({ name = "胸部", sources = { { shape = "body", group = 1 }, { rows = "bust" } } })
+
+T:case("the_bust_page_as_ordered_keys_shows_the_same_rows", function(t)
+  local lines, unknown = pages.compare(bust_before, doc({ name = "胸部", items = bust_items(false) }), groups, keys)
+  t:eq(lines, {}); t:eq(unknown, {})
+end)
+
+T:case("the_list_order_is_the_page_order_nothing_goes_first", function(t)
+  local lines = pages.compare(bust_before, doc({ name = "胸部", items = bust_items(true) }), groups, keys)
+  t:eq(#lines, 1); t:contains(lines[1], "changed  臉›胸部")
+end)
+
+T:case("an_item_can_be_a_source_and_mixes_with_keys", function(t)
+  local before = doc({ name = "眼部縮放2", sources = { { widget = "bone_axes" }, { rows = "bones" } } })
+  local after = doc({ name = "眼部縮放2", items = { { widget = "bone_axes" }, { rows = "bones" } } })
+  local lines, unknown = pages.compare(before, after, groups, keys)
+  t:eq(lines, {}); t:eq(unknown, {})
+  local mixed = doc({ name = "眼部縮放2", items = { { key = "shape.face.0" }, { widget = "bone_axes" } } })
+  local _, err = pages.page_rows(mixed.categories[1].subs[1], groups)
+  t:eq(err, nil)
+end)
+
+T:case("a_page_with_both_sources_and_items_is_refused", function(t)
+  local after = doc({ name = "臉型", sources = { { shape = "face", group = 0 } }, items = { { key = "shape.face.0" } } })
+  local lines = pages.compare(after, after, groups, keys)
+  t:truthy(#lines >= 1); t:contains(lines[1], "invalid  臉›臉型")
+end)
+
 T:case("a_typo_in_a_key_is_found_before_the_build", function(t)
   local after = doc({ name = "臉型", items = { { key = "shape.face.0" }, { key = "shape.fase.1" } } })
   local _, unknown = pages.compare(after, after, groups, keys)
