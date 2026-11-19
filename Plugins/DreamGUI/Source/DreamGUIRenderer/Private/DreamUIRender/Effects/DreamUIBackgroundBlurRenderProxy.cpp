@@ -261,9 +261,11 @@ void DreamUIPostProcessEffects::SetBackgroundBlurStrengthMap_GameThread(const FD
 	ENQUEUE_RENDER_COMMAND(FDreamBackgroundBlur_UpdateStrengthMap)
 		([BackgroundBlurRenderProxy, InMap](FRHICommandListImmediate& RHICmdList)
 		{
-			// The texture was alive when this was enqueued; only its reference and sampler are kept.
-			const FTextureResource* Resource = InMap.Texture != nullptr ? InMap.Texture->GetResource() : nullptr;
-			BackgroundBlurRenderProxy->StrengthMapTexture = InMap.Texture != nullptr ? InMap.Texture->TextureReference.TextureReferenceRHI : FTextureReferenceRHIRef();
+			// The texture was alive when this was enqueued; only its reference and sampler are kept. Resolved weakly:
+			// a texture collected meanwhile reads as none, where an address would read freed memory.
+			const UTexture* MapTexture = InMap.Texture.Get();
+			const FTextureResource* Resource = MapTexture != nullptr ? MapTexture->GetResource() : nullptr;
+			BackgroundBlurRenderProxy->StrengthMapTexture = MapTexture != nullptr ? MapTexture->TextureReference.TextureReferenceRHI : FTextureReferenceRHIRef();
 			BackgroundBlurRenderProxy->StrengthMapSampler = Resource != nullptr ? Resource->SamplerStateRHI : FSamplerStateRHIRef();
 			BackgroundBlurRenderProxy->StrengthMap = InMap;
 			BackgroundBlurRenderProxy->StrengthMap.Texture = nullptr;

@@ -8,18 +8,18 @@
 
 FDreamUIBuiltInTextures FDreamUIBuiltInDrawParams::GetTexturesForRenderCommand() const
 {
-	// Called where the game thread's objects hold still -- the game thread itself, or the end-of-frame update that
-	// builds a proxy -- which is what resolving a weak pointer asks for.
+	// The weak pointers are copied, not resolved: the command that reads them resolves them on the render thread, where
+	// a texture already collected comes back null and its draw binds a fallback.
 	FDreamUIBuiltInTextures Textures;
-	Textures.Main = MainTexture.Get();
-	Textures.Font = FontTexture.Get();
-	Textures.WidgetData = WidgetDataTexture.Get();
-	Textures.ClipData = ClipDataTexture.Get();
-	Textures.RenderLayerTable = RenderLayerTable.Get();
-	Textures.RectBlockData = RectBlockData.Get();
-	Textures.PaintData = PaintData.Get();
-	Textures.MaskTexture0 = MaskTexture0.Get();
-	Textures.MaskTexture1 = MaskTexture1.Get();
+	Textures.Main = MainTexture;
+	Textures.Font = FontTexture;
+	Textures.WidgetData = WidgetDataTexture;
+	Textures.ClipData = ClipDataTexture;
+	Textures.RenderLayerTable = RenderLayerTable;
+	Textures.RectBlockData = RectBlockData;
+	Textures.PaintData = PaintData;
+	Textures.MaskTexture0 = MaskTexture0;
+	Textures.MaskTexture1 = MaskTexture1;
 	return Textures;
 }
 
@@ -28,12 +28,14 @@ void FDreamUIBuiltInDrawParams::ResolveTextures_RenderThread(const FDreamUIBuilt
 	check(IsInRenderingThread());
 	// A texture's reference is made and released on the render thread, and its resource is the render thread's view
 	// of it: both are read here, where they are coherent, and never on the game thread.
-	auto Reference = [](const UTexture* InTexture) -> FTextureReferenceRHIRef
+	auto Reference = [](const TWeakObjectPtr<const UTexture>& InWeak) -> FTextureReferenceRHIRef
 	{
+		const UTexture* InTexture = InWeak.Get();
 		return InTexture != nullptr ? InTexture->TextureReference.TextureReferenceRHI : FTextureReferenceRHIRef();
 	};
-	auto Sampler = [](const UTexture* InTexture) -> FSamplerStateRHIRef
+	auto Sampler = [](const TWeakObjectPtr<const UTexture>& InWeak) -> FSamplerStateRHIRef
 	{
+		const UTexture* InTexture = InWeak.Get();
 		const FTextureResource* Resource = InTexture != nullptr ? InTexture->GetResource() : nullptr;
 		return Resource != nullptr ? Resource->SamplerStateRHI : FSamplerStateRHIRef();
 	};

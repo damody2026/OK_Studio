@@ -58,11 +58,13 @@ void FDreamVisualPostProcessRenderProxy::SetCommonParams_GameThread(const FDream
 				TempRenderProxy->RenderMeshRegionToScreenVertexArray = MoveTemp(Params.MeshRegionToScreenVertices);
 				TempRenderProxy->RectSize = Params.RectSize;
 				TempRenderProxy->ObjectToWorldMatrix = Params.ObjectToWorldMatrix;
-				// The texture was alive when this was enqueued, and anything that releases it is enqueued after.
-				TempRenderProxy->ClipDataTextureRHI = Params.ClipDataTexture != nullptr ? Params.ClipDataTexture->TextureReference.TextureReferenceRHI : FTextureReferenceRHIRef();
+				// The texture was alive when this was enqueued, and anything that releases it is enqueued after; named
+				// weakly all the same, so one collected meanwhile reads as none instead of as an address.
+				const UTexture* ClipData = Params.ClipDataTexture.Get();
+				TempRenderProxy->ClipDataTextureRHI = ClipData != nullptr ? ClipData->TextureReference.TextureReferenceRHI : FTextureReferenceRHIRef();
 				for (int32 Slot = 0; Slot < 2; ++Slot)
 				{
-					const UTexture* Mask = Params.ClipMaskTextures[Slot];
+					const UTexture* Mask = Params.ClipMaskTextures[Slot].Get();
 					const FTextureResource* Resource = Mask != nullptr ? Mask->GetResource() : nullptr;
 					TempRenderProxy->ClipMaskTextureRHI[Slot] = Mask != nullptr ? Mask->TextureReference.TextureReferenceRHI : FTextureReferenceRHIRef();
 					TempRenderProxy->ClipMaskSamplerRHI[Slot] = Resource != nullptr ? Resource->SamplerStateRHI : FSamplerStateRHIRef();

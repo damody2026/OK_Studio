@@ -86,12 +86,17 @@ struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 
 	/**
 	 * What a draw of this section binds (FDreamUISectionDrawState), made when it is first asked for after any of it
-	 * changed -- the built-in parameters (bDrawStateStale), the buffers (by their address) -- and shared by every batch
-	 * collected meanwhile.
+	 * changed -- the built-in parameters (bDrawStateStale), the buffers -- and shared by every batch collected meanwhile.
+	 *
+	 * The two buffers below are what the state was made from, held, not their addresses. An address is not an identity:
+	 * a buffer released and another allocated where it was compares equal, and the state would be taken for current
+	 * when it binds the dead one. Held, the buffer the state was made from cannot be released while the state names it,
+	 * so equal means the same buffer. (A serial of DreamGUI's own would do as well, but every place that makes either
+	 * buffer would have to raise it, and one missed would read as unchanged -- which is the failure this removes.)
 	 */
 	TRefCountPtr<const FDreamUISectionDrawState> DrawState;
-	const FRHIBuffer* DrawStateVertexBuffer = nullptr;
-	const FRHIBuffer* DrawStateIndexBuffer = nullptr;
+	FBufferRHIRef DrawStateVertexBuffer;
+	FBufferRHIRef DrawStateIndexBuffer;
 	bool bDrawStateStale = true;
 	const TRefCountPtr<const FDreamUISectionDrawState>& GetDrawState()
 	{
@@ -103,8 +108,8 @@ struct FDreamUISectionProxy_Mesh : public FDreamUIRenderSectionProxy
 			State->IndexBufferRHI = IndexBuffer.IndexBufferRHI;
 			State->BuiltIn = BuiltIn;
 			DrawState = State;
-			DrawStateVertexBuffer = DreamUIVertexBuffers.VertexBufferRHI.GetReference();
-			DrawStateIndexBuffer = IndexBuffer.IndexBufferRHI.GetReference();
+			DrawStateVertexBuffer = DreamUIVertexBuffers.VertexBufferRHI;
+			DrawStateIndexBuffer = IndexBuffer.IndexBufferRHI;
 			bDrawStateStale = false;
 		}
 		return DrawState;

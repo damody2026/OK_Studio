@@ -394,6 +394,19 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **The renderer's textures and buffers are named by something that can say the thing is gone.** The staging struct a
+  built-in draw's textures travel in (`FDreamUIBuiltInTextures`), a material proxy's own texture parameters and source
+  material (`FDreamUIMaterialParameters`, `FDreamUIMaterialProxy`), a layer style's pattern textures
+  (`FDreamUILayerStyleRecord::Patterns`), an adjustment's lookup table, a progressive blur's strength map, and a post
+  process's clip data and clip mask textures are weak pointers instead of raw ones; each is resolved where it is read,
+  and one whose texture has been collected binds the fallback it binds for a texture never set. The backdrop a draw
+  blends over (`FDreamUIBuiltInBackdrop::Texture`) holds its RHI texture instead of naming its address. A mesh
+  section's draw state compares the buffers it was made from by holding them, not by their addresses: a buffer released
+  and another allocated where it was compared equal, and the state would have been taken for current while it bound
+  the dead one. `FRecordTargets::WireframeMaterialInstance` and `FDreamUIMeshBatchContainer`'s buffer getters stay raw
+  -- neither type has a counted or weak form -- and now say in a comment whose lifetime covers them. C++ reading these
+  fields changes with them; nothing about what is drawn, or when, changes.
+
 - **`Center` where the enum says `Middle` names the right word.** A text's own vertical alignment says `Middle` and a
   slot's says `Center`; DUI4005 for either spelling in the other's place now ends `(did you mean 'Middle'?)` (or
   `'Center'`). The worked example in the manual compiles and lays out as written, and the language pages say which way

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "DreamUIRender/DreamUIBlendMode.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class UTexture;
 
@@ -121,10 +122,10 @@ struct FDreamUILayerStyleRecord
 	EDreamUIBlendMode OuterSlotModes[DreamUILayerStyleLayout::MaxOuterSlots] = { EDreamUIBlendMode::Alpha, EDreamUIBlendMode::Alpha, EDreamUIBlendMode::Alpha };
 	int32 NumOuterSlots = 0;
 	/** The pattern textures its effects read, by slot (E5.z). Read on the render thread only, through their resources. */
-	const UTexture* Patterns[DreamUILayerStyleLayout::MaxPatterns] = { nullptr, nullptr };
+	TWeakObjectPtr<const UTexture> Patterns[DreamUILayerStyleLayout::MaxPatterns];
 
 	bool IsEmpty() const { return Texels.Num() == 0; }
-	bool UsesPatterns() const { return Patterns[0] != nullptr || Patterns[1] != nullptr; }
+	bool UsesPatterns() const { return Patterns[0].IsValid() || Patterns[1].IsValid(); }
 	bool operator==(const FDreamUILayerStyleRecord& Other) const
 	{
 		if (Texels.Num() != Other.Texels.Num() || OuterReach != Other.OuterReach || NumOuterSlots != Other.NumOuterSlots)

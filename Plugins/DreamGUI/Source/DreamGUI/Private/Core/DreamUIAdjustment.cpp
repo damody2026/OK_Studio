@@ -189,9 +189,9 @@ void FDreamUIAdjustMath::Pack(const TArray<FDreamAdjustment>& InAdjustments, flo
 		}
 		case EDreamAdjustmentType::LookupTable:
 			Row[0] = FVector4f(Type, FMath::Clamp(Adjustment.Intensity, 0.0f, 1.0f), 0.0f, 0.0f);
-			if (OutPacked.LookupTable == nullptr)
+			if (!OutPacked.LookupTable.IsValid())
 			{
-				OutPacked.LookupTable = Adjustment.LookupTable;
+				OutPacked.LookupTable = Adjustment.LookupTable.Get();
 			}
 			break;
 		default:

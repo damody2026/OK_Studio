@@ -133,7 +133,7 @@ namespace DreamUILayerStyleMathLocal
 			}
 			for (int32 Slot = 0; Slot < NumPatterns; ++Slot)
 			{
-				if (Record.Patterns[Slot] == InTexture)
+				if (Record.Patterns[Slot].Get() == InTexture)
 				{
 					bPatterns = true;
 					return static_cast<float>(Slot);

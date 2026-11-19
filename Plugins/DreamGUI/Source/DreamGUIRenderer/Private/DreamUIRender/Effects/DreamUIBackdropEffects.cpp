@@ -259,10 +259,10 @@ public:
 	virtual void ResolveTextures_RenderThread() const override
 	{
 		check(IsInRenderingThread());
-		if (PendingLookupTable != nullptr)
+		if (const UTexture* Table = PendingLookupTable.Get())
 		{
-			const FTextureResource* Resource = PendingLookupTable->GetResource();
-			LookupTableRHI = PendingLookupTable->TextureReference.TextureReferenceRHI;
+			const FTextureResource* Resource = Table->GetResource();
+			LookupTableRHI = Table->TextureReference.TextureReferenceRHI;
 			LookupTableSampler = Resource != nullptr ? Resource->SamplerStateRHI : FSamplerStateRHIRef();
 			PendingLookupTable = nullptr;
 		}
@@ -316,7 +316,7 @@ private:
 	}
 
 	FDreamUIAdjustPacked Packed;
-	mutable const UTexture* PendingLookupTable = nullptr;
+	mutable TWeakObjectPtr<const UTexture> PendingLookupTable;
 	mutable FTextureReferenceRHIRef LookupTableRHI;
 	mutable FSamplerStateRHIRef LookupTableSampler;
 	mutable FTextureRHIRef TableRHI;

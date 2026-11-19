@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Materials/MaterialRenderProxy.h"
 #include "Templates/SharedPointer.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class UMaterialInterface;
 class UTexture;
@@ -12,7 +13,7 @@ class UTexture;
 /** The parameters DreamGUI gives a material of its own, by name: what a material instance per draw call used to carry. */
 struct DREAMGUIRENDERER_API FDreamUIMaterialParameters
 {
-	TArray<TPair<FName, const UTexture*>> Textures;
+	TArray<TPair<FName, TWeakObjectPtr<const UTexture>>> Textures;
 	TArray<TPair<FName, FLinearColor>> Vectors;
 	TArray<TPair<FName, float>> Scalars;
 
@@ -34,10 +35,11 @@ struct DREAMGUIRENDERER_API FDreamUIMaterialParameters
  * shared pointer from both threads; whichever lets go last has it deleted on the render thread. Its parameters change
  * by render command (SetParameters_GameThread), which caches its uniform expressions again.
  *
- * The source material and the textures in its parameters are the giver's to keep alive: the proxy holds them as plain
- * pointers, which the render thread reads. When a collection takes one anyway -- an object marked as garbage, or
- * force-deleted in the editor, has every reference to it cleared -- the proxy lets go of it before it can be freed: a
- * source gone leaves the default material, a texture gone the material's own default.
+ * The source material and the textures in its parameters are the giver's to keep alive: the proxy names them weakly,
+ * and the render thread resolves them as it reads them -- what has been collected comes back as nothing, which is the
+ * same answer the proxy gives for a parameter never set. The collector's hook below still runs, so a source or texture
+ * on its way out is let go of while it is still there to name: a source gone leaves the default material, a texture
+ * gone the material's own default.
  */
 class DREAMGUIRENDERER_API FDreamUIMaterialProxy : public FMaterialRenderProxy, public TSharedFromThis<FDreamUIMaterialProxy, ESPMode::ThreadSafe>
 {
@@ -46,7 +48,7 @@ public:
 	static TSharedRef<FDreamUIMaterialProxy, ESPMode::ThreadSafe> Create(UMaterialInterface* InSource);
 
 	/** Game thread: the material the proxy answers for. */
-	UMaterialInterface* GetSource() const { return GameThreadSource; }
+	UMaterialInterface* GetSource() const { return GameThreadSource.Get(); }
 	/** Game thread: the parameters the proxy answers with from the next frame on. The last ones given are kept here too. */
 	void SetParameters_GameThread(const FDreamUIMaterialParameters& InParameters);
 	const FDreamUIMaterialParameters& GetParameters_GameThread() const { return GameThreadParameters; }
@@ -72,11 +74,15 @@ private:
 	/** After the collector's reachability analysis: every proxy lets go of what is about to be freed. */
 	static void LetGoOfUnreachable();
 
-	UMaterialInterface* GameThreadSource = nullptr;
-	UMaterialInterface* RenderThreadSource = nullptr;
+	TWeakObjectPtr<UMaterialInterface> GameThreadSource;
+	TWeakObjectPtr<UMaterialInterface> RenderThreadSource;
 	FDreamUIMaterialParameters GameThreadParameters;
 	FDreamUIMaterialParameters RenderThreadParameters;
-	/** The source's render proxy and its cache's serial number, as FollowSource_RenderThread last saw them. Render thread. */
-	const FMaterialRenderProxy* FollowedParent = nullptr;
+	/**
+	 * The source material the parent proxy was asked of, and its cache's serial number, as FollowSource_RenderThread
+	 * last saw them. The material, not the parent proxy's address: an address that is freed and handed out again names
+	 * something else with the same identity, and a weak pointer cannot. Render thread.
+	 */
+	TWeakObjectPtr<UMaterialInterface> FollowedSource;
 	int32 FollowedSerial = -1;
 };
