@@ -5843,3 +5843,24 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 - **原因**：第三方 mod 的模型只录在卡内（`okLc`），转卡时还没有这个查询。`memo_bytes_optional` 本来就设计成「没有记录就回预设值」。但它查记录走的是 `get_raw`，严格开卡模式下 `get_raw` 找不到会先记一笔 gap。所以「可选」只在非严格模式下成立。基础库补录只能补基础库自己的模型，补不到卡内的模型。
 - **修法**：`oklib.rs` 加 `get_raw_optional`，查不到时不记 gap，`memo_bytes_optional` 改用它。另外三个可选查询（`copy_body_material_targets`、`foreground_render_queues`、`clothes_blend_shape_defs`）同样受益。`model_flags` 把全为预设值的分组当成「没找到模型」，不改那些列。否则旧卡的 mod 衣服会被标成全部颜色层不可用。
 - **判准**：新加 memo 查询时，除了基础库补录，还要想到「卡内模型永远补不到」。可选查询要在严格开卡下也不算缺口；必要查询就得在转卡契约里写明，旧卡要重新封。
+
+## 2026-11-19：拿读码去推翻一个有开关证据的结论，还把两层 UI 混成一层（f-sceneload）
+
+- **我说了什么**：查 1 对 1 回程当机的差集时，我报「读卡器的 DreamGUI 面板在 1 对 1 期间**是** collapse 的，
+  不是整段都在画；`Shared` controller 建的是一般 UMG（ComboBox／Slider／TextBlock），不是 DreamGUI 面板」，
+  依据是 `OKInteractionMode.cpp::EnterReader` 里有 `Source->SetVisibility(ESlateVisibility::Collapsed)`。
+  协调 session 采信后还转告 e-fork-2「别去改 DreamGUI 那边」。
+- **怎么被推翻的**：e-fork-2 的 `7d9465d39` 只做一件事——让 DreamGUI 读卡器画面跟着控制器 `SetShown(false)`——
+  那套左栏／相机列／右栏就消失了（截图 65124-0001），开 `ok.Experiment.ReaderScreenUnderOtherModes=1` 又回来
+  （65124-0002），log 依序印 `ok.ReaderScreen hidden`／`shown`。**改一个东西现象就消失／重现**。
+- **我错在哪**：**UMG 控制器 collapse 是真的，但 DreamGUI 画面是另一层**，原本没跟着藏。我把「控制器 collapse」
+  读成「整个画面都藏了」，两层混成一层。右边那条 H 面板才是 `Shared` 的 UMG，它在前后两张截图里都在——
+  所以我那句「那是一般 UMG 不是 DreamGUI 面板」只对了一半，却被我用来否定整条假设。
+- **判准一（这条最该记）**：**提更正，证据要和被更正的那个同级**。对方有开关＋前后截图＋log，我只有读码；
+  读码在同级证据里很有用，但不该用来推翻一个「动一个变数就能开关现象」的实测。
+  我提之前该先问：**我能不能用一个开关或一次改动让这个现象消失或重现？** 能，就去做那件事再说。
+- **判准二**：读码推论要**标明是读码**（「读码结论、未实机」），别和实测混在一句话里报出去。
+  今天我在 `hair.parts.N.pos/rot/scl` 那条用穷举 grep 证「没有第二处消费」是对的用法——
+  那是**否定命题**，穷举搜索就是它的强证据；「这个东西没有在画」不是那种命题，它有现成的开关可验。
+- **连带影响**：错的更正会变成别人的指示（协调据此叫 e-fork-2 别动 DreamGUI）。所以更正被推翻后要**收回到纸面上**，
+  不能只在对话里改口；这一笔就是那个收回。
