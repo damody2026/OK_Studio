@@ -1,6 +1,7 @@
 #include "OKInteractionMode.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "OKCharacterController.h"
+#include "OKReaderScreen.h"
 #include "OKInteractionScene.h"
 #include "OKHScene.h"
 #include "OKStreetSocialText.h"
@@ -160,7 +161,9 @@ AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Sour
      Mode->ReaderTalk=MakeShared<FOKReaderTalk>(Source->PreviewCardPath,Her,Him,Source->Selected.Personality);
      Mode->BeginHScene(Mode->ReaderTalk->HerName(),TEXT("lover"),ReaderExperience(Source),Mode->ReaderTalk->HisName());}
     const auto SourceVisibility=Source->GetVisibility();Source->SetVisibility(ESlateVisibility::Collapsed);
-    Mode->Returned=[Weak=TWeakObjectPtr<UOKCharacterController>(Source),SourceVisibility](TSharedRef<FJsonObject>){if(Weak.IsValid()){Weak->SetVisibility(SourceVisibility);Weak->ApplyClickInputMode();}};
+    // The reader's render settings (its serial render graph) are its own: the one-on-one renders as the street's does.
+    const bool bReaderScreen=Source->ReaderScreen!=nullptr;if(bReaderScreen)UOKReaderScreen::ReaderRenderSettings(false);
+    Mode->Returned=[Weak=TWeakObjectPtr<UOKCharacterController>(Source),SourceVisibility,bReaderScreen](TSharedRef<FJsonObject>){if(bReaderScreen)UOKReaderScreen::ReaderRenderSettings(true);if(Weak.IsValid()){Weak->SetVisibility(SourceVisibility);Weak->ApplyClickInputMode();}};
     return Mode;
 }
 AOKInteractionMode* AOKInteractionMode::EnterCards(APlayerController* Player,const FString& Female,const FString& Male,int32 FemaleOutfit,const FTransform* InPlace){

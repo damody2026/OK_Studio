@@ -306,6 +306,14 @@ bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
 		HandleChoice(ShownIndex);return true;
 	}
 	if(Cast<UEditableTextBox>(S)){HandleInputCommitted(Value);return true;}
+	// A number box (顯示字級): a number in its range, committed as typed.
+	if(auto* U=Cast<USpinBox>(S))
+	{
+		if(!Value.IsNumeric())return Fail(TEXT("a number box takes a number"));
+		const float V=FCString::Atof(*Value);
+		if(V<U->GetMinValue()-1e-4f||V>U->GetMaxValue()+1e-4f)return Fail(FString::Printf(TEXT("out of range %g..%g"),U->GetMinValue(),U->GetMaxValue()));
+		HandleInputCommitted(Value);return true;
+	}
 	return Fail(TEXT("it takes no value"));
 }
 void UOKDreamControl::HandleHeader()
@@ -379,18 +387,16 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	// released texture in the D3D12 tracking log). 2026-11-19: eight rounds of card loads + source switches + obj gc with
 	// the defrag off, none crashed; with it on, every run crashed in round 1-3. Which draw keeps the stale binding is not
 	// found yet: the defrag stays off while the reader screen runs (the other modes keep it).
-	if(IConsoleVariable* Defrag=IConsoleManager::Get().FindConsoleVariable(TEXT("d3d12.VRAMTexturePoolDefrag")))
-	{
-		if(Defrag->GetInt()!=0){Defrag->Set(0,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: d3d12.VRAMTexturePoolDefrag 0 (texture pool defrag off while the DreamGUI reader runs)"));}
-	}
+	// That and the serial render graph the launcher gives: ReaderRenderSettings.
+	ReaderRenderSettings(true);
 	// Design pixels on a 1080-high screen, whatever the window.
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
-		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080));Canvas->SetMatchFromWidthToHeight(1.f);
+		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScaleOf(Controller));Canvas->SetMatchFromWidthToHeight(1.f);
 	}
 	auto* Screen=Cast<UOKReaderScreen>(UDreamUIBPLibrary::AddWidgetOfClassToViewport(Controller,Class,10));
 	if(!Screen)return nullptr;
-	Screen->Controller=Controller;GScreen=Screen;
+	Screen->Controller=Controller;GScreen=Screen;Screen->UiScale=UiScaleOf(Controller);
 	// The picker's 前往 設定 › 遊戲目錄 (shown when there is no game folder): the page switch waits for the next frame, as
 	// the switch destroys the very button whose click asked for it.
 	Controller->OnWantGameRootSettings=[Weak=TWeakObjectPtr<UOKReaderScreen>(Screen)]()
@@ -407,7 +413,7 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	};
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
-		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080));Canvas->SetMatchFromWidthToHeight(1.f);
+		Canvas->SetScaleMode(EDreamCanvasScaleMode::ScaleWithScreenSize);Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScaleOf(Controller));Canvas->SetMatchFromWidthToHeight(1.f);
 	}
 	return Screen;
 }
@@ -876,7 +882,9 @@ void UOKReaderScreen::BuildCategories()
 		}
 		Settings.Groups.Add(Group(TEXT("物理"),Physics));
 	}
-	// No 介面 page: the UMG panel width and font size (EditorWidthInput, EditorFontInput) only resize the hidden UMG layer.
+	// 介面: 顯示字級 (the font size row, caption and number) scales this screen (UiScaleOf). The UMG panel width has the
+	// screen's own drag handle instead.
+	if(G->EditorFontInput&&G->EditorFontInput->GetParent())Settings.Groups.Add(Group(TEXT("介面"),{static_cast<UWidget*>(G->EditorFontInput->GetParent())}));
 	for(FGroup& Each:Settings.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Settings.Groups.RemoveAll([](const FGroup& Each){return Each.Sources.IsEmpty()&&!Each.Build;});
 	Categories.Add(MoveTemp(Settings));
@@ -1818,11 +1826,47 @@ void UOKReaderScreen::ListControls(FOutputDevice& Out,const FString& Filter) con
 	for(const FString& P:Paths)if(Filter.IsEmpty()||P.Contains(Filter))Out.Log(P);
 }
 
+float UOKReaderScreen::UiScaleOf(const UOKCharacterController* G)
+{
+	// The old screen's 顯示字級 is 8 by default (its UMG drawn at half its 16-point design): 8 draws this screen as
+	// designed; 6 is three quarters, 12 and up one and a half (wider would leave no 3D view between the two panels).
+	const float Size=G&&FMath::IsFinite(G->EditorFontSize)?G->EditorFontSize:8.f;
+	return FMath::Clamp(Size/8.f,.75f,1.5f);
+}
+
+void UOKReaderScreen::ReaderRenderSettings(bool bReader)
+{
+	// r.RDG.ParallelExecute=0 is given by the reader's launcher at startup (run_card_reader_development.lua: set later it
+	// did not keep the fault away, measured 2026-11-19), so this process runs the render graph serially from its first
+	// frame. That stays the reader's: the one-on-one entered from it gets the engine's value back, and the reader takes 0
+	// again when it comes back (not measured to keep the fault away by itself; the startup value is). The texture pool
+	// defrag Open turns off goes the same way.
+	static bool bKnown=false,bSerialFromStart=false;static int32 DefragBefore=-1;
+	IConsoleVariable* Parallel=IConsoleManager::Get().FindConsoleVariable(TEXT("r.RDG.ParallelExecute"));
+	IConsoleVariable* Defrag=IConsoleManager::Get().FindConsoleVariable(TEXT("d3d12.VRAMTexturePoolDefrag"));
+	if(!bKnown)
+	{
+		bKnown=true;
+		bSerialFromStart=Parallel&&Parallel->GetInt()==0&&FCommandLine::Get()&&FString(FCommandLine::Get()).Contains(TEXT("r.RDG.ParallelExecute=0"));
+		DefragBefore=Defrag?Defrag->GetInt():-1;
+	}
+	if(Parallel&&bSerialFromStart)
+	{
+		const int32 Want=bReader?0:FCString::Atoi(*Parallel->GetDefaultValue());
+		if(Parallel->GetInt()!=Want){Parallel->Set(Want,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: r.RDG.ParallelExecute %d (%s)"),Want,bReader?TEXT("the card reader"):TEXT("left the card reader"));}
+	}
+	if(Defrag&&DefragBefore>0)
+	{
+		const int32 Want=bReader?0:DefragBefore;
+		if(Defrag->GetInt()!=Want){Defrag->Set(Want,ECVF_SetByCode);UE_LOG(LogTemp,Display,TEXT("ok.ReaderScreen: d3d12.VRAMTexturePoolDefrag %d"),Want);}
+	}
+}
+
 bool UOKReaderScreen::ViewSpan(const FVector2D& ViewportSize,float& OutLeft,float& OutRight,float& OutTop) const
 {
 	if(!bBuilt||ViewportSize.X<=0.f||ViewportSize.Y<=0.f)return false;
 	// The screen canvas scales with the viewport height (Open: 1920x1080 reference, matched on height).
-	const float Scale=ViewportSize.Y/1080.f;
+	const float Scale=ViewportSize.Y/1080.f*UiScale;
 	OutLeft=LeftWidth*Scale;OutRight=ViewportSize.X-RightWidth*Scale;
 	// Below the camera bar (12 from the top, 56 high) and a gap.
 	OutTop=(12.f+56.f+8.f)*Scale;
@@ -1862,7 +1906,7 @@ void UOKReaderScreen::TickResize()
 	const UDreamPointerEventData* Pointer=Events?Events->GetPointerEventData(DreamUIPointerIds::Mouse,false):nullptr;
 	if(!Pointer){bResizing=false;bResizeMouseWasDown=false;return;}
 	const float X=Pointer->PointerPosition.X;
-	const float Scale=Size.Y/1080.f;const bool Down=Pointer->bNowIsTriggerPressed;
+	const float Scale=Size.Y/1080.f*UiScale;const bool Down=Pointer->bNowIsTriggerPressed;
 	const bool bJustPressed=Down&&!bResizeMouseWasDown;bResizeMouseWasDown=Down;
 	const float Edge=LeftWidth*Scale;
 	if(bJustPressed)UE_LOG(LogTemp,Verbose,TEXT("ok.ReaderScreen: press at x=%.1f, panel edge %.1f"),X,Edge);
@@ -1938,6 +1982,13 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 		if(bUmgFocus&&!bUmgHadFocus)UE_LOG(LogTemp,Log,TEXT("ok.ReaderScreen: keyboard focus is in the hidden UMG layer (DreamGUI fields get no keys until the viewport has it)"));
 		bUmgHadFocus=bUmgFocus;
 	}
+	// 顯示字級 changed (its row on 設定／介面›介面, or the setting saved from the old screen): the canvas follows.
+	if(const float Want=UiScaleOf(Controller.Get());!FMath::IsNearlyEqual(Want,UiScale))
+	{
+		UiScale=Want;
+		if(auto* Screens=UDreamScreenUISubsystem::Get(GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(GetOwningPlayer()))
+			Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScale);
+	}
 	TickResize();
 	SyncAll();
 	TickThumbnails();
@@ -1992,7 +2043,7 @@ bool OKReaderScreenUnderCursor()
 	if(auto* Events=UDreamEventSystem::GetDreamEventSystemInstance(S,0))if(Events->IsPointerOverUIByPointerID(0))return true;
 	APlayerController* PC=S->GetOwningPlayer();float X=0,Y=0;if(!PC||!PC->GetMousePosition(X,Y))return false;
 	const FIntPoint Size=GEngine->GameViewport->Viewport->GetSizeXY();if(Size.Y<=0)return false;
-	const float Scale=Size.Y/1080.f;
+	const float Scale=Size.Y/1080.f*S->GetUiScale();
 	return X<=(S->GetLeftWidth()+10.f)*Scale||X>=Size.X-440.f*Scale||Y<=80.f*Scale;
 }
 

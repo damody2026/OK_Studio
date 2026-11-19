@@ -291,6 +291,10 @@ GPU PageFault 的真正觸發是 D3D12 貼圖池整理（`d3d12.VRAMTexturePoolD
 
 **作用範圍（只限讀卡器）**：這條只由讀卡器的啟動器（`CardReaderDevelopment.cmd` → `run_card_reader_development.lua`）加，而且只在新版畫面時加（`-LegacyReader` 不加，`-ParallelRDG` 不加）；街區（`StreetSocial.cmd`）、OK Studio（`SceneEditor.cmd`）、百人房間的啟動器都不加，那些程序是引擎預設的 2。讀卡器裡按「進入1對1互動場景」時 `UOKReaderScreen::ReaderRenderSettings(false)` 把它設回引擎預設，貼圖池 defrag 也還原；回到讀卡器時再設回 0（`ok.ReaderScreen: r.RDG.ParallelExecute ...` 會寫進 log）。注意：執行中才設 0 量過擋不住，所以從 1 對 1 回來之後的讀卡器只有「執行中設 0」那一層，沒驗證過；真正量過有效的是啟動時就是 0。
 
+**設回去是不是真的恢復平行（2026-11-19 08:30 量）**：引擎每建一個 RDG builder 就讀一次這個 cvar（`RenderGraphBuilder.cpp` 604–605 行），照程式設回 2 就會恢復。實測：stage `EFork1119w` 以 0 啟動，執行中 `r.RDG.ParallelExecute 2`，再跑上面的配方，**第 11 張就當**，簽章和對照趟一樣（PageFault、唯一的 Active Shader 是 Pixel `MainPS`，Shader Hash `E6753E1EA9F1F20775D8BC0AD963B1EF`）。所以執行中設回 2 確實讓平行執行回來了，1 對 1 拿回的是真的平行，不只是值寫回去。（`E:\OpenKoikatsu\Saved\Reports\reader-dwell-runtime2-20261119\progress.txt`，log `E:\OpenKoikatsu\Saved\Logs\CardReader\stage-EFork1119w-reader.log`。）來回切換的 log：進 1 對 1 時 `ok.ReaderScreen: r.RDG.ParallelExecute 2 (left the card reader)` 與 `d3d12.VRAMTexturePoolDefrag 1`，回讀卡器時 `... 0 (the card reader)` 與 `... 0`（stage `EFork1119z`）。
+
+兩個方向不對稱、還沒解釋：執行中設 2 會當，但執行中設 0 擋不住（只有啟動時設 0 才擋得住）。可能是啟動時為 0 讓某個只建一次的東西走了不同的路，尚未查證。
+
 **迴避的是哪一類**：RDG 把畫面的 pass 分到多個工作執行緒並行錄製命令時，有東西和 DreamGUI 的繪製在 GPU 上讀到失效的記憶體。這是一個競態：它跟哪些 pass 恰好同時在飛行中的幀裡錄製有關，所以要停幾秒、跑到第幾張才出現。關掉並行執行後所有 pass 在 render thread 依序錄製，這一類時序問題就不會發生；但被蓋掉的是症狀出現的條件，讀到失效記憶體的那個東西還在。還不知道是哪一個 pass、讀到哪一塊；從啟動參數關才有效，表示讀卡器開啟前已經跑過的那幾幀也有關（例如 D3D12 的並行命令 context 在那時建好），尚未查證。breadcrumb 取證保留，萬一再發生，那是最有用的資料。
 
 以下是追查過程的紀錄。

@@ -168,6 +168,12 @@ public:
 	// The card list's pictures held now, of how many tiles ("12/101"; "-" with no card list shown).
 	FString ThumbState() const;
 	float GetLeftWidth() const { return LeftWidth; }
+	// 顯示字級 (the controller's EditorFontSize, 設定／介面›介面): the whole screen drawn this much larger, 1 at the default 8.
+	float GetUiScale() const { return UiScale; }
+	static float UiScaleOf(const class UOKCharacterController* Controller);
+	// The render settings that keep the reader's GPU fault away are the reader's only (Docs/CARD_READER_DREAMGUI.md,
+	// PageFault): leaving for the one-on-one gives the engine's back (false), coming back takes them again (true).
+	static void ReaderRenderSettings(bool bReader);
 	class UOKCharacterController* GetController() const;
 	// The 3D view between the two panels in viewport pixels (the screen canvas is 1080 design pixels high): what the HUD
 	// draws there (the height ruler) stays clear of the panels. False before the screen is laid out.
@@ -196,6 +202,7 @@ private:
 	int32 Sub=0;
 	float LeftWidth=560.f;
 	float RightWidth=440.f;
+	float UiScale=1.f;
 	// The camera bar's buttons at their natural widths, plus its padding: the 3D view between the panels keeps this much.
 	float CameraBarWidth=0.f;
 	bool bBuilt=false;
