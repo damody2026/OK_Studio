@@ -3003,3 +3003,18 @@ TransientResourceAllocator(GRDGTransientAllocator != 0 && !::IsImmediateMode() ?
   基線組作廢，要在新執行檔上重新量。
 - 這條不是形式要求：這個工作樹是三組共用的，`OKReaderScreen.cpp`（讀卡器畫面本身）此刻就在別人的未提交改動裡，
   任何一次建置都會把它編進去，讀卡器的行為因此可能在兩組趟之間改變。
+
+### B1 趟 1：**19 秒那個重現不需要背景**（而且差點又讀了一個沒驗過的旋鈕）
+
+B1 ＝ `NoBackdrop=1`（拷貝根本不做）＋ `r.RDG.TransientAllocator=0`。趟 1 結果：
+**零張卡、啟動期間就當掉**（`STOP at card 1 ... no card reader mailbox yet`、`faults=1`），和該組態的基線（2/2 當）一樣。
+所以**把背景拷貝整條拿掉，救不了 19 秒那個重現**。等趟 2。
+
+**表格格式的洞，先記下來**：這一格的表頭只回讀**主旋鈕**（`DreamGUI.Experiment.NoBackdrop = "1"`），
+`r.RDG.TransientAllocator=0` 是走附帶的 ini 清單，**表裡沒有它的回讀**。
+我是去翻那趟自己的 log 才確認的（裡面有 `r.RDG.TransientAllocator:0]]` 的生效值）。
+這等於是「沒驗過的旋鈕」那個老問題換了個位置：主旋鈕驗了，次旋鈕沒驗。
+
+**要改的是驅動腳本**：`knob1x.sh` 應該把附帶 ini 清單裡的每一個旋鈕都回讀進表頭，不是只讀主旋鈕。
+這一輪的鏈還在跑，不動正在跑的驅動（改壞了就是一整格重跑），所以**等鏈結束後再改**，
+在那之前每一格的次旋鈕都照這次的做法去 log 裡核對一次，並把核對結果寫進紀錄。
