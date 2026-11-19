@@ -5,7 +5,11 @@
 --                                                                      take a free slot, else stay queued (exit 2)
 --   Tools\lua\lua.exe Tools\unreal_slot.lua release <agent>                       give back the agent's slots and queue entry
 --   Tools\lua\lua.exe Tools\unreal_slot.lua yield <agent>                         exit 3 when someone of higher priority waits
---   Tools\lua\lua.exe Tools\unreal_slot.lua status
+--   Tools\lua\lua.exe Tools\unreal_slot.lua status [--quiet | --full]
+--        --quiet reads the slot and queue files only (no process scan, no PowerShell); without a flag the scan is
+--        skipped while an exclusive measurement ([need >= 60]) holds a slot; --full always scans. Glance with --quiet.
+--   Tools\lua\lua.exe Tools\unreal_slot.lua may-build                             exit 0 go, exit 3 wait
+--        scans the machine: ask it once, right before a build starts. A session that is waiting does not poll it.
 --
 -- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes of
 -- slot holders run (those started since the earliest current claim; an older one, e.g. the user's own game, does not
@@ -156,7 +160,9 @@ end
 
 -- Agents queued and still waiting, in file order. Entries of ended processes are removed (nobody will come back for
 -- them); entries that only aged out are skipped but kept, so status can show them.
-local function queued(all)
+-- noscan (status without a process scan): only the age decides, the waiters' processes are not looked up and nothing
+-- is removed.
+local function queued(all, noscan)
   local list = {}
   local dir = path.join(ROOT, "queue")
   if not path.is_dir(dir) then return list end
@@ -166,8 +172,12 @@ local function queued(all)
     if agent then
       local okr, text = pcall(path.read_text, queue_file(agent))
       text = okr and text or ""
-      if not procs and text:match("\npid %d+") then procs = processes() end
-      local dead = queue_dead(text, procs)
+      if not noscan and not procs and text:match("\npid %d+") then procs = processes() end
+      local dead
+      if noscan then
+        local age = age_min(text)
+        dead = not age and "no timestamp" or (age >= QUEUE_STALE_MIN and ("not refreshed for " .. age .. " min")) or nil
+      else dead = queue_dead(text, procs) end
       -- Removed only when the waiter's process is really gone (its pid with that start time no longer exists), never
       -- for age alone. status and may-build both call this outside with_lock (enqueue takes no lock either), so the
       -- file is read again just before: an entry the same agent rewrote meanwhile (a new claim --wait) is kept. Two
@@ -458,9 +468,21 @@ local function may_build()
   return 0
 end
 
-local function status()
+-- scan: nil = the default (scan unless an exclusive measurement holds a slot), true = --full, false = --quiet.
+-- Without the scan status only reads files and starts no process: each scan runs PowerShell over the whole process
+-- table, and agents glancing at the board every few minutes did that inside a 0.4 s measurement (2026-11-19, e-cardload).
+local function status(scan)
+  local exclusive
   for i = 1, SLOTS do
     local who, text = owner(i)
+    local need = who and tonumber((text or ""):match("%[need (%d+)%]"))
+    if need and need >= EXCLUSIVE_GB then exclusive = who end
+  end
+  if scan == nil then scan = not exclusive end
+  for i = 1, SLOTS do
+    local who, text = owner(i)
+    -- three states: no owner file yet, an empty one (released), a holder; claim treats the first two alike
+    local free = path.is_file(owner_file(i)) and "(free)" or "(free; no owner file yet)"
     local held = who and held_min(i)
     local tail = ""
     if held then
@@ -470,10 +492,10 @@ local function status()
     -- Say outright that a [need 60] holder is measuring: who was measuring could not be read off status (2026-11-19).
     local need = who and tonumber((text or ""):match("%[need (%d+)%]"))
     if need and need >= EXCLUSIVE_GB then tail = tail .. " [exclusive measurement: builds wait]" end
-    print(("slot" .. i .. ": " .. (who and (text:gsub("%s+$", "") .. tail) or "(free)")))
+    print(("slot" .. i .. ": " .. (who and (text:gsub("%s+$", "") .. tail) or free)))
   end
   -- and likewise for an exclusive claim still waiting (may-build answers wait for it too)
-  local waiting = queued(true)
+  local waiting = queued(true, not scan)
   for k, entry in ipairs(waiting) do
     local need = not entry:find(" (", 1, true) and queued_need(entry) or 0
     if need >= EXCLUSIVE_GB then
@@ -482,6 +504,11 @@ local function status()
     end
   end
   io.write("queue: ", table.concat(waiting, ", "), "\n")
+  if not scan then
+    io.write(exclusive and ("process scan skipped: " .. exclusive .. " is measuring exclusively (status --full scans anyway)\n")
+      or "process scan skipped (--quiet); queue entries judged by age only\n")
+    return 0
+  end
   local held, other = unreal_counts()
   io.write("unreal processes: ", held + other, " (slot holders ", held, ", others ", other, ")\n")
   local busy = busy_unreal()
@@ -505,7 +532,7 @@ local function main()
   local note = table.concat(rest, " ")
   -- An agent name starting with "-" is a flag written where the name belongs (`claim --agent f-sceneload --what …`
   -- queued a phantom "--agent" that nobody would ever claim for, 2026-11-19). The name is positional: say it first.
-  if agent and agent:sub(1, 1) == "-" then
+  if agent and cmd ~= "status" and agent:sub(1, 1) == "-" then
     error("the agent name comes first and takes no flag: claim <agent> \"<what for>\" [--wait] [--need-gb N] [--lane <name>]", 0)
   end
   if agent and not agent:match("^[%w%-_]+$") then error("agent name: letters, digits, - or _", 0) end
@@ -540,7 +567,10 @@ local function main()
     end
     io.write("keep\n"); os.exit(0)
   elseif cmd == "may-build" then os.exit(may_build())
-  elseif cmd == "status" or not cmd then os.exit(status())
+  elseif cmd == "status" or not cmd then
+    local scan
+    for k = 2, #arg do if arg[k] == "--quiet" then scan = false elseif arg[k] == "--full" then scan = true end end
+    os.exit(status(scan))
   else error("usage: unreal_slot.lua claim|release|yield <agent> [note] [--wait] | status | may-build", 0) end
 end
 
