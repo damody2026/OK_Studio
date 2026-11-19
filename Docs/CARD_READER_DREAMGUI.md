@@ -2594,3 +2594,36 @@ RDG 的平行錄製會把 pass 錄進各自的 `FRHICommandList` 稍後才送交
 （含 `EnqueueEndOfPipeTask`／`Submit_Close`／三處 `DeleteResources` 的出處），標明還沒修。
 若外掛那一半驗收**不過** ⇒ 直接證明受害者是材質自己取樣的東西，
 這個 crash 只能靠引擎那一半修掉。
+
+### 順序查到了，而且它**削弱**我自己上一節的破口形狀（2026-11-19，純讀碼）
+
+**先做跑格子前的檢查**（今天立的規矩：確認旋鈕真的 gate 住、不是 read-only、知道預設值）：
+
+- `r.pso.EnableAsyncCacheConsolidation`：`GEnablePSOAsyncCacheConsolidation = true`，
+  `ECVF_RenderThreadSafe`（**不是** read-only，可以設），
+  出處 `RHI/Private/PipelineStateCache.cpp:179-186`。
+- 它 gate 的正是 RDG 那一處：`EndFlushResourcesRHI`（`RenderGraphBuilder.cpp:379-392`）
+  在 `GetBool()` 為真時走 `ImmediateFlush(DispatchToRHIThread, DeleteResources)`，
+  **為假時走 `ImmediateFlush(FlushRHIThreadFlushResources)`**——後者會 flush RHI 執行緒。
+  所以 **`r.pso.EnableAsyncCacheConsolidation=0` 正好把那個窗口關上**，是個真的對照旋鈕。
+- 這條路**每帧發生一次**：`SetFlushResourcesRHI()` 只有一個呼叫點，
+  `Renderer/Private/SceneRenderBuilder.cpp:913`，註解寫明
+  「The final graph builder is responsible for flushing resources」，就在 `GraphBuilder.Execute()` 之前。
+
+**但順序一查下去，它削弱了我上一節寫的形狀**：在 `FRDGBuilder::Execute()` 裡，
+`BeginFlushResourcesRHI()` 在 **:1810**、**`EndFlushResourcesRHI()` 在 :2036**，
+而 pass 的派送與執行（`SetupDispatchPassExecute()` 等）在 **:2059 之後**。
+**也就是那次帶 `DeleteResources` 的 flush 跑在「這張圖自己的 pass 被錄之前」**，
+所以「先錄好、尚未送交」這個形狀**對同一張圖自己的 pass 不成立**——那時它們還沒被錄。
+
+**所以要改的是形狀，不是結論**：能和這個順序相容的是
+「**在 :2036 被放掉，然後 :2059 之後的 pass 綁了一個它更早就快取起來的指標**」。
+而外掛確實會跨時點快取 RHI 指標（`FDreamUIBuiltInDrawParams` 的那幾支、`Frame.TextureRHI`）——
+但那幾支存的是 `FTextureReferenceRHIRef`（計數參照，死了指向黑貼圖），
+所以它們不會懸空，這也正是斷言從不命中的原因。
+
+**誠實的狀態**：讀碼到這裡為止，**我沒有把破口讀成立**，而且剛剛那個順序讓上一節的形狀變窄了。
+**所以刻意洩漏那一格現在是決定性的一步**：它不需要先讀懂任何送交順序，
+直接回答「解構這件事發生，是不是扳機」。
+`r.pso.EnableAsyncCacheConsolidation` 那一格仍然值得跑（旋鈕已確認接得上、每帧都走到），
+但它的預測要跟著改：**若兩邊沒差，不代表那一處不是破口，只代表「關掉 RHI 執行緒那次同步」沒有改變結果。**
