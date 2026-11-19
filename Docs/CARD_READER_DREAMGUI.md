@@ -6522,3 +6522,31 @@ PipelineState.Common.SamplerCache.DirtyAll();
   和 11-20 的 Bloom／OOM 同族，但這次方向更糟：**誤放行**。
   修法寫進錯誤紀錄：**閘門要抓它所守護的那個量具獨有的字串**（這裡該抓
   `rhi.DumpMemory` 自己的標題或 `LogD3D12RHI` 的 VRAM 行），不要抓任何別人也會印的子字串。
+
+## 去裸指標那一輪對前面那些格子的影響（在它進 E 樹之前先記下來）
+
+那一輪在 F 樹先改（`F:\OpenKoikatsu\Plugins\DreamGUI`，commit `c9fd56d5d`、`2e0a02bdf`），之後才搬到 E 樹。
+**前面所有量測都在它之前跑完**，但有兩件要先寫進來，否則以後會看不懂。
+
+### 一、`NoBackdrop` 那兩格（mode 2 與 mode 1）**以後要重跑，必須回到 `c9fd56d5d` 之前的碼**
+
+那一輪把 `FDreamUIBuiltInBackdrop::Texture` 從裸 `FRHITexture*` 改成 `FTextureRHIRef`（持有參照）。
+**那會讓 backdrop 的 RHI 貼圖在繪製期間多一份參照，於是那一幀內延遲釋放佇列不可能放掉它**——
+也就是改動本身就改了那兩格要測的東西。
+**mode 2（3/3）與 mode 1（3/3）都在改動之前跑完，所以結論有效**；
+但在改動之後的樹上重跑那兩格**量到的不是同一件事**。
+
+### 二、逐處回退要從哪一處開始退
+
+若改動後當機真的消失，**先退 `FDreamUISectionProxy_Mesh::Material` 那一處**：
+它原本會在 render thread 解一個裸 UObject 位址（`Material->GetRenderProxy()`），
+材質在 section 還在池子裡時被回收就會讀到已死位址，
+**而那是那一輪裡唯一一處原本真的會發生這件事的地方**。
+它本身解釋不了「整頁不在頁表」（那需要整塊 heap 被銷毀），
+但**「當機消失」這件事要指認到某一處，這一處的先驗最高**。
+
+### 三、驗收時那四個診斷 cvar 要還能印，而 `LogTextureSlots` 是搬運正確性的直接證據
+
+九個槽改成 weak 之後，E 樹獨有的 `LogSlot` 印 `src=` 那裡要從 weak 解出來。
+**所以啟動驗收時 `DreamGUI.LogTextureSlots=1` 還能印出 `slot … src=…`，就是搬運沒搬壞的直接證據**；
+印不出來或印成空的，就是那一處沒接好，而不是「量具剛好沒觸發」。
