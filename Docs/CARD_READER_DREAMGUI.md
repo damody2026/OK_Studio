@@ -1201,3 +1201,20 @@ grep 不到這個字，所以那部分未經證實，要當證據得先指出是
 
 這也和上面 472 行那筆舊紀錄（`getall KKPreviewActor` 全程只有 3 個）不衝突：那筆沒有 1 對 1 進出、也沒有連開
 十張卡，**取樣點落在積壓還沒長起來的時候**——又一次「量的區間不對就什麼都看不到」。
+
+#### 為什麼剛好是 25 個：預設的 GC 間隔是 61.1 秒，而讀卡器自己從不收
+
+- `obj list` **數得到已經 `Destroy()`、還沒被 GC 回收的 actor**：它走的是 `FThreadSafeObjectIterator`
+  （`UnrealEngine.cpp:9611` 的 `obj LIST`），預設排除的只有 `Unreachable`／`PendingConstruction`／
+  async loading（`UObjectIterator.h` 的 `GetObjectIteratorDefaultInternalExclusionFlags`），**沒有排除
+  pending kill／garbage**。所以「25 個活著」就是「25 個已銷毀但還沒回收」，這條是去引擎原始碼確認的，不是推論。
+- 引擎預設 `gc.TimeBetweenPurgingPendingKillObjects=61.1`（`BaseEngine.ini:1749`），**本專案的
+  `Config/*.ini` 沒有覆寫**。一張卡開起來約 5～10 秒，所以兩次清掃之間大約開 6～12 張，
+  每張留 2～3 個 → **同時活著 15～30 個**。量到的 25 個與 784 張貼圖正好落在這個區間。
+- 而且**讀卡器的開卡路徑裡一行 GC 都沒有**：全專案 `CollectGarbage`／`ForceGarbageCollection` 的呼叫點只有
+  人群／匯入 commandlet、`OKCardLoadProfile.cpp`（量測用）和 **OK Studio**
+  （`OKSceneActor.cpp:1766`、`OKStudioGame.cpp:930`）。**Studio 會自己收，讀卡器不會**——
+  這也是「Studio 回程不當、1 對 1 回程會當」的另一個差集，和可見性那條各自獨立。
+
+所以峰值不是誰漏了，而是**積壓的上限只由一個 61.1 秒的計時器決定**。在這個數字上，
+「清 kept 貼圖讓當機更容易」也說得通：它推遲的正是這個清掃。
