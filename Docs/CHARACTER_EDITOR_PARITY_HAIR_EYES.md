@@ -60,7 +60,7 @@
 | 髮饰色 1–3（＋第 4 个未用） | 颜色 ×4 | `hair.parts.N.acsColor.0…3` | 预设白 | 有 | 有 | 同上 | UI |
 | 頭髮光泽种类 | 选图 | `hair.glossId` | 目录 id，预设 0 | 有 | 有（`hair_gloss`） | 有 | — |
 | 位置／旋转／缩放 | 数值 ×9 | `hair.parts.N.pos`／`rot`／`scl` | `scl` 预设 1，其余 0 | **读了但没套用** | 有（走访会列出） | 没有 | `card.rs:1969-1977` 把三者读进 `CardInfo.hair_parts`，全仓库没有第二处消费它们（`accessories.rs` 只用颜色与 `length`）。所以现在改这九项**画面不会变**；要给 UI 之前得先让它真的套用 |
-| 整髮型組 | 下拉 | `hair.kind` | 整数 | **没读**（`card.rs` 没有 `kind` 分支） | **没有（整数不列）** | 没有 | 资料端＋UI |
+| 整髮型組 | — | `hair.kind` | 整数 | **没读**（`card.rs` 没有 `kind` 分支） | 没有 | 没有 | **不要收**：原作也只用它做卡片清单的 metadata（`ChaFileInfo.hair`）与上传表单栏位，整份 decomp 没有任何地方写它、也不影响渲染。收了就是又一项「调了没反应」（2026-11-19 查清） |
 | 四槽同步设定 | 开关 | 不在卡片里（`CustomBase.customSettingSave.hairSameSetting`，预设 true） | — | 不适用 | — | 没有 | UI（是编辑器状态，不是卡片资料） |
 | 「反映」把主色套到全部槽 | 按钮 | `btnReflectColor` → 写四槽 | — | 不适用 | 可用现有 set 做 | 没有 | UI |
 | 把髮色套到眉毛／陰毛 | 按钮 ×2 | `btnEyebrowColor`／`btnUnderhairColor` → `face.eyebrowColor`／`body.underhairColor` | — | 有 | 有（两个目标栏位都读写得到） | 没有 | UI |
@@ -118,21 +118,31 @@
 
 ## 4. 外挂扩充栏位（这块最可能根本读不到）
 
-我们的编辑属性只收白名单内的 KKEx 外挂（`appearance/properties/plugins.rs` 的 `relevant()`）：
+> **2026-11-19 更新**：这一节原本写的区段键是从 decomp 的资料类别名推的（ `com.deathweasel.bepinex.materialeditor` 之类），
+> **实证后发现全错**：卡片里的 KKEx 区段键是外挂的 **BepInEx GUID**。拿 `CrowdAPNG/C000.png` dump 出来的真实键是
+> `com.deathweasel.bepinex.materialeditor`、`com.deathweasel.bepinex.hairaccessorycustomizer`、
+> `com.deathweasel.bepinex.pushup`、`com.deathweasel.bepinex.dynamicboneeditor`、`moreAccessories`、
+> `Accessory_States`、`madevil.kk.ass`。旧的子字串白名单之所以「刚好能用」，是因为 GUID 里含 `materialeditor` 这类字样；
+> 也因此 `Accessory_States`／`madevil.kk.ass`（都不含 `accessorystates`）从来没被收过。
+> 现在 `plugins.rs` 改成**精确键名表**（`PLUGIN_SECTIONS`，每项带 `title_id`、外挂名、GUID），
+> 并且**不在表里的区段会把键名报出来**（`unknown_plugin_sections`，进属性面板状态列与 MCP `state`），
+> 不再静默丢掉——`KSOX` 当初就是这样消失的。下表的「区段键」栏已按实证更新。
+
+我们的编辑属性只收精确键名表内的 KKEx 外挂（`appearance/properties/plugins.rs` 的 `PLUGIN_SECTIONS`）：
 `materialeditor`、`hairaccessorycustomizer`、`hairshadowcolor`、`pushup`、`dynamicboneeditor`、
 `moreaccessories`、`accessorystates`、`overlay`。**而且 `visit()` 会跳过名称含 `texture` 的栏位与 `*Original` 栏位。**
 
 | 外挂 | 卡片区段键 | 编辑器多出来的栏位 | 卡片读取 | 编辑读写 | UI | 缺在哪 |
 |---|---|---|---|---|---|---|
-| HairAccessoryCustomizer | `KK_Plugins.HairAccessoryCustomizer`（含 `CoordinateHairAccessories`） | 跟随髮色、頭髮光澤、轮廓色、饰品色、髮长、光澤色（每个饰品槽一组） | 有（`accessories.rs`） | 有（白名单内，已有中文标签） | 扁平清单 | UI |
+| HairAccessoryCustomizer | `com.deathweasel.bepinex.hairaccessorycustomizer`（含 `CoordinateHairAccessories`） | 跟随髮色、頭髮光澤、轮廓色、饰品色、髮长、光澤色（每个饰品槽一组） | 有（`accessories.rs`） | 有（白名单内，已有中文标签） | 扁平清单 | UI |
 | HairShadowColorControl | 实际写在 MaterialEditor 的 `ShadowColor` 属性；自身区段键 `HairShadowColorControl` | 四个髮槽各一个「Hair shadow color」 | 待查 | 有（`hairshadowcolor` 与 `materialeditor` 都在白名单） | 扁平清单 | UI |
-| MaterialEditor | `KK_Plugins.MaterialEditor` | 每个 renderer／material 的 float、color、keyword、**texture**、renderer 属性 | 有 | float、color、**keyword 都读写得到**（`MaterialKeywordProperty.Value` 是 bool，`visit()` 收 bool）；**texture 被跳过**（名称含 `texture`）；**RendererProperty 也读写不到**（它的 `Value` 是字串 `"0"`／`"True"`，`visit()` 只收长得像 XML 的字串） | 扁平清单 | 贴图：资料端＋UI；renderer 开关（Enabled／ShadowCastingMode／ReceiveShadows／RecalculateNormals）：资料端＋UI |
+| MaterialEditor |  `com.deathweasel.bepinex.materialeditor` | 每个 renderer／material 的 float、color、keyword、**texture**、renderer 属性 | 有 | float、color、**keyword 都读写得到**（`MaterialKeywordProperty.Value` 是 bool，`visit()` 收 bool）；**texture 被跳过**（名称含 `texture`）；**RendererProperty 也读写不到**（它的 `Value` 是字串 `"0"`／`"True"`，`visit()` 只收长得像 XML 的字串） | 扁平清单 | 贴图：资料端＋UI；renderer 开关（Enabled／ShadowCastingMode／ReceiveShadows／RecalculateNormals）：资料端＋UI |
 | ABMX（KKSABMX / `KKABMX.Core`） | `KKABMX.Core` | 眉毛／双眼球／眼球缩放 1–2／上睫毛 1–5／下睫毛 1–3（本文第 1 节） | 有（`abmx.rs`） | 有（`bone.*`，经 `EditorModsJson`） | 有（骨骼滑杆） | 部分：`BoneData` 只取 `location<10`，**饰品本地骨（location≥10）的修改读不到** |
-| KoiSkinOverlayX | **`KSOX`** | 脸／身体 under/over 贴图，**`EyeUnderL/R`、`EyeOverL/R`、`EyelineUnder`、`EyebrowUnder`** | 有（`card.rs` 认 `KSOX`） | **没有**：`relevant("KSOX")` 不含 `overlay` 字样，整段不收 | 没有 | 资料端＋UI（眼睛这块的重点漏项） |
+| KoiSkinOverlayX | **`KSOX`** | 脸／身体 under/over 贴图，**`EyeUnderL/R`、`EyeOverL/R`、`EyelineUnder`、`EyebrowUnder`** | 有（`card.rs` 认 `KSOX`） | **2026-11-19 起收进表**（非贴图栏位可编辑；贴图仍被 `visit()` 跳过） | 没有 | 贴图：资料端＋UI（眼睛这块的重点漏项） |
 | KoiClothesOverlayX | **`KCOX`** | 衣物贴图层、BodyMask／BraMask／InnerMask | 有 | 部分：`properties.rs` 另有一段专门认 `KCOX` 的 `Overlays`，但贴图本身仍不是可编辑项 | 没有 | 贴图：资料端＋UI |
-| EyeControl | `com.deathweasel.bepinex.eyecontrol` | `EyeOpenMax`（0–1，预设 1）、`DisableBlinking`（bool） | 有（`card_plugins::apply_eyecontrol`） | **没有**（不在白名单） | 没有 | 资料端＋UI |
+| EyeControl | `com.deathweasel.bepinex.eyecontrol` | `EyeOpenMax`（0–1，预设 1）、`DisableBlinking`（bool） | 有（`card_plugins::apply_eyecontrol`） | **2026-11-19 起可读写**（C000 上实测多出 2 项） | 没有 | UI |
 | EyeShaking | `com.deathweasel.bepinex.eyeshaking` | `EyeShaking`（bool） | **没读**（全仓库 grep 无此 GUID） | **没有** | 没有 | 资料端＋UI；原作这项只在 H 场景生效，优先度低 |
-| UncensorSelector | `com.deathweasel.bepinex.uncensorselector` | 身体／部件 GUID 选择 | 有（`card.rs` 有 `uncensorselector` 分支） | **没有**（不在白名单） | 没有 | 资料端＋UI（不属头发眼睛，但在我这块的点名范围内） |
+| UncensorSelector | `com.deathweasel.bepinex.uncensorselector` | 身体／部件 GUID 选择 | 有（`card.rs` 有 `uncensorselector` 分支） | **2026-11-19 起可读写**（C000 上实测多出 2 项） | 没有 | UI（身体那块，列在这里只因为被点名） |
 
 ### 4.1 哪些外挂真的会在「头发／眼睛」这两页加栏位（已穷举）
 
@@ -152,11 +162,18 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
 
 ## 5. 分批顺序
 
-1. **第一批（资料端真缺、改动小、立刻有用）**
-   - `face.foregroundEyes` / `face.foregroundEyebrow`：byte 栏位要能读写（`walk()` 现在整数一律不收，
-     要的是「白名单式的整数项」而不是放开全部整数，否则 `*.id` 会被使用者直接改坏，踩到
-     [读写表第 6 节](READER_UI_APPEARANCE_API.md) 已经写明的那个坑）。
-   - EyeControl 两项、EyeShaking 一项：把 `relevant()` 白名单补上，它们本来就是 KKEx 里的纯量与 bool。
+1. **第一批（资料端真缺、改动小、立刻有用）——2026-11-19 做完程式，`ccde34b12` 与工作树**
+   - ✅ `face.foregroundEyes` / `face.foregroundEyebrow`：读进 `CardInfo`，并在开卡时**真的套用**——
+     照 `ChaControl.SetForegroundEyesAndEyebrow`，卡片写 2 时把那几个 renderer 的材质 queue 换成 prefab 的
+     `m_queues`（新增 `unity::foreground_render_queues` 读 `SetRenderQueue_Custom`，queue 数字只存在 prefab 里）。
+     只有写 2 的卡会改动，0／1 维持现状；旧 OK 卡缺这个 memo 时会印明要 reseal，不静默。
+     属性清单那一侧走白名单式整数项（`integer_choice`），选项用 `label_id`；**`*.id` 另外写成明确排除规则**。
+     C000 实跑：prefab 读到 10 个 renderer，这张卡 `foregroundEyebrow=2`，眉毛 queue 2905 → 2805。
+     ⚠️ **画面差别还没实拍**：我们的头发是 masked、眼睛是 translucent，`_OKRenderQueue` 只参与 translucent 排序，
+     所以原作这个选项在我们这里可能本来就等于开着，也可能这次让眉毛排到别的位置。要拍 C000 的改前／改后。
+   - ✅ EyeControl 两项、UncensorSelector、`KSOX`／`KCOX`、`Accessory_States`／`madevil.kk.ass`：
+     白名单改成精确键名表后都收进来了（C000 上多出 75 项），并且不在表里的区段会报键名出来。
+     EyeShaking 这张卡没有，键名照 GUID 填着等实证。
 2. **第二批（UI：把扁平清单变成原作那样的两组分页）**
    - 头发四页：髮型、髮长、停止摆动、六个颜色块、髮饰色 ×3 ＋ 同步／反映／初始化按钮。
    - 眼睛两页：目（14 滑杆＋眼线）、瞳（左右切换＋瞳孔／渐层／眼白／高光），含 L→R 复制。
@@ -165,16 +182,21 @@ ClothingStateMenu、AccessoryStates、SliderHighlight、GeBo、IllusionFixes、F
    - `KSOX` 的眼睛／眼线／眉毛 overlay 贴图读写；MaterialEditor 的 texture 属性。
    - 要先决定「贴图怎么在读卡器里给／存」（档案选择、存回卡片的体积），不是单纯补栏位。
 4. **第四批（边角）**
-   - `hair.parts.N.pos/rot/scl`：**先让它真的套用**（现在读进 `CardInfo` 就没人用了），否则 UI 上调了没反应比没有更糟；
-     `hair.kind` 连读都还没读。
+   - `hair.parts.N.pos/rot/scl`：**先让它真的套用**（现在读进 `CardInfo` 就没人用了），否则 UI 上调了没反应比没有更糟。
+     2026-11-19 起这几项在属性清单里已标 `supported=false` ＋ 理由，`set` 会明确拒绝，而不是悄悄写进卡片却没效果。
+   - `hair.kind` **不收**（见第 2 节：原作也只拿它做卡片清单 metadata 与上传栏位，不影响渲染）。
    - MaterialEditor 的 `RendererProperty`（renderer 开关，`Value` 是字串）。
    - ABMX `location≥10` 的饰品本地骨。
    - UncensorSelector 的选择（跨到身体那一块，和别人的盘点合并再做）。
 
 ## 6. 本文的证据边界
 
-- 全部结论来自读 `D:\XKoikatuSunshine\kks_decomp` 的程式码与本仓库的程式码，**没有启动游戏、没有启动读卡器、没有实拍**。
+- 第 1–4 节的盘点来自读 `D:\XKoikatuSunshine\kks_decomp` 的程式码与本仓库的程式码；
   标「待查」的项目就是只凭读码不敢断言的（目前只剩 `face.eyelineUpWeight` 一项，原作自己也只存不改）。
+- **2026-11-19 另外做了离线实证**（`ok-appearance.exe` 的 `properties` 请求，游戏根目录 `D:\XKoikatuSunshine`，
+  卡 `Content/CharacterCards/CrowdAPNG/C000.png`）：2141 个可编辑键里 `hair.*` 188 个（含 `pos/rot/scl`）、
+  `foreground*` 零命中；真实 KKEx 区段键是 GUID 形式（见第 4 节的更新框）。
+  **仍然没有实拍任何画面**：`foregroundEyes` 的视觉效果、第二批 UI 都还没有截图。
 - 「没读」是对本仓库 `Tools/ok-extract/src/` 全文 grep 该栏位名／GUID 没有命中；
   「读了但没套用」是读进 `CardInfo` 之后没有第二处消费。两者都是读码结论，不是实测。
 - 「扁平清单」指的是属性面板现在呈现 `hair.parts.0.baseColor.r` 这种 key 的样子；
