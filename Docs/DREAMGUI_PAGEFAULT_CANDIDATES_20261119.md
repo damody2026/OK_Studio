@@ -916,7 +916,66 @@ UMaterialInterface* Material;            // FKKStreamProxySection 的成员，re
 
 **不谈修法**（按指示）。
 
+## 17. 解掉那个冲突：**「沿用」与「重建」说的是两批不同的 MID，两句都对**
+
+### 17a. 先做比对（协调要求）
+
+| 档案 | F | E | md5 |
+|---|---:|---:|---|
+| `KKRuntimePose/.../KKRuntimeMaterial.cpp` | 338 行 | 441 行 | **DIFFER** |
+| `KKRuntimePose/.../KKRuntimeSharedMaterial.cpp` | 608 行 | 609 行 | **DIFFER** |
+| `KKUnityBundle/.../KKPreviewRuntimeMaterials.inl` | 169 行 | 169 行 | **SAME** |
+
+两个 `KKRuntimePose` 的档都不同（E 多了诊断）。**但这不是冲突的来源**：§16 的 OK 侧行号我读的就是
+**E 树**，而且逐字核过——E 树 `KKPreviewActor.cpp:5241-5246`：
+
+```cpp
+UMaterialInterface* Parent=Mesh->GetMaterial(Slot);UTexture* Current=nullptr;
+if(!Parent||!Parent->GetTextureParameterValue(FMaterialParameterInfo(Name),Current))continue;
+auto* M=Cast<UMaterialInstanceDynamic>(Parent);
+if(!M){M=UMaterialInstanceDynamic::Create(Parent,this);Mesh->SetMaterial(Slot,M);...}
+UTexture* Target=Value;if(!Target && M->Parent)M->Parent->GetTextureParameterValue(FMaterialParameterInfo(Name),Target);
+if(Target && Target!=Current)M->SetTextureParameterValue(Name,Target);
+```
+
+### 17b. 冲突的真正来源：**两批 MID**
+
+| 哪一批 | 建立 | 换卡时 | 谁的贴图 |
+|---|---|---|---|
+| **每次载入自己建的**（e-cardload 看的那批） | `KKRuntimeSharedMaterial.cpp:419`，`UMaterialInstanceDynamic::Create(Parent, GetTransientPackage())`，**没有任何 MID 快取** | **整批重建**；旧的随 `CookedRoleMaterials.Reset()` 失去 actor 那一份强参照 | `:420` 把 `OKCreateRuntimePreparedTexture` 的卡片贴图设进去 |
+| **元件槽里沿用的**（我看的那批） | `KKPreviewActor.cpp:5244`、`:5190`、`:5274`：槽里**已经有**材质就沿用（不是 MID 才包一层） | **沿用同一个**，只 `SetTextureParameterValue` 重新指向（`:5246`、`:5256`、`:5276`） | shadow depth／反射 cube／`Main` 这类**后设**参数 |
+
+**e-cardload 说「`KKRuntimeMaterial.cpp` 全档 `SetTextureParameterValue` 命中 0」也是对的——
+我引的从来不是那个档**（是 `KKRuntimeSharedMaterial.cpp` 与 `KKPreviewActor.cpp`）。
+**两句话都成立，没有人读错；混的是「哪一批 MID」。**
+
+**而机制相关的是第一批**：它们每次载入重建、Outer 是 transient package、
+贴图就是故障那种卡片贴图 —— 也就是协调说的「重建」那一支，**我 §16d 指的残余形状因此仍然活著**。
+
+### 17c. 接著问的三题
+
+1. **`KKRuntimePose` 有没有自订 scene proxy：没有。**
+   `grep -rln "FPrimitiveSceneProxy\|CreateSceneProxy" Plugins/KKRuntimePose`（E 树）**零命中**。
+   这条路上唯一的自订 proxy 是 `KKUnityBundle` 的 `FKKStreamSceneProxy`（`KKStreamMeshProxy.cpp:144`）。
+2. **它怎么取得材质**：存**裸 `UMaterialInterface*`**（`FKKStreamProxySection::Material`，`:69`），
+   每帧 `Section->Material->GetRenderProxy()`（`:463`、`:580`、`:595`）。**不存 `FMaterialRenderProxy*`、不持参照。**
+3. **MID 被 GC 时 proxy 有没有被通知：没有任何通知机制。** 引擎的保护是间接的两层——
+   元件的 `OverrideMaterials` 是 `UPROPERTY`（材质在槽里就不会被收），
+   以及 `SetMaterial` 会 `MarkRenderStateDirty` 重建 proxy。
+   per-load 的那批 MID 由 `Actor->CookedRoleMaterials`／`CookedRoleOutlines`（`UPROPERTY`）持有
+   （`KKPreviewRuntimeMaterials.inl:168`），贴图由 `Actor->LoadedTextures` 持有；
+   三处 `Reset()` 在 `KKPreviewActor.cpp:5318`、`:5661`、`:8007`。
+
+**静态读不出来的那一步（我说清楚是读不出来，不是没查）**：
+有没有哪一条路**让一个 MID 失去最后一个强参照、而当时还有一个活著的 proxy 的 `Material` 指著它**。
+要判它需要知道 `Reset()`／槽位覆写与 proxy 重建的**实际先后**，那是执行期顺序，
+`CookedRoleMaterials.Reset()` 的三个呼叫点与元件槽的覆写**不在同一个函式里**，
+静态追不出谁先谁后。**e-cardload 的交接反查 log 正好量的就是这件事**
+（「MID 放手时还在不在、参数现值是什么」），所以这一题交给那边的事实。
+
+**不谈修法**（按指示）。
+
 ---
 
 调查：f-sceneload。现象、e-cardload 的趟数与追踪报告都是转述，报告原文与崩溃档我没有自己看过；
-§11 的两棵引擎比对、§12–§16 的程式码是我自己读的（§14–§16 的 OK 侧读的是 E 树的副本，只读）。
+§11 的两棵引擎比对、§12–§17 的程式码是我自己读的（§14–§17 的 OK 侧读的是 E 树的副本，只读）。
