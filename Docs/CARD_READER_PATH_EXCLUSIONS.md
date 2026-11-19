@@ -541,3 +541,44 @@ transient 資源有自己專屬的 heap（`D3D12TransientResourceAllocator.cpp:6
 **那個池化副本有沒有在前任房客等夠之前就被配置到同一塊上**——
 也就是池配置器重用一塊剛釋放的記憶體時，等的是哪個 fence、覆不覆蓋那張貼圖的最後一次使用。
 那條線索在池配置器自己，不在 RDG。
+
+### 第二十四條**改寫（同日，2026-11-20）：那個排除論證無效，transient 回到候選**
+
+**我上面用「十趟十次 `Transient: 0`」去排除 transient，是把一個正面指認讀成了排除論證，而且讀錯了名單的語意。**
+
+`FD3D12Heap::SetHeap` 取 GPU 位址並進 `TrackedHeaps` 的條件（`D3D12Resources.cpp:720-721`）是：
+
+```cpp
+if ((bForceGetGPUAddress || Adapter->IsTrackingAllAllocations())
+    && !(HeapDesc.Flags & D3D12_HEAP_FLAG_DENY_BUFFERS)
+    && HeapDesc.Properties.Type == D3D12_HEAP_TYPE_DEFAULT)
+```
+
+而 transient heap 的旗標來自 `Initializer.Flags`（`D3D12TransientResourceAllocator.cpp:15-32`）：
+`AllowTextures ⇒ ALLOW_ONLY_NON_RT_DS_TEXTURES`、`AllowRenderTargets ⇒ ALLOW_ONLY_RT_DS_TEXTURES`。
+**Windows SDK（`d3d12.h`，10.0.26100.0）的值是 `0x44` 與 `0x84`，而 `DENY_BUFFERS = 0x4`**，
+所以兩者都含 `DENY_BUFFERS` ⇒ 那個 `if` 整段被跳過 ⇒
+**純貼圖／純 RT 的 transient heap 根本不取 GPU 位址、也不進 `TrackedHeaps`。**
+
+**所以傾印裡看不到 transient heap，可能只是因為那種 heap 從不註冊。**
+那十份 log 的 `Transient: 0` 只證明**被列出來的那兩筆**（pool heap 與卡片貼圖）不是 transient，
+這是正確的正面指認；**但它無法排除「那段 VA 後來被一個 transient heap 佔用過」**，
+因為那個 heap 不會出現在名單裡。**第九條（只有在失敗時才讀得到的量具）的同族：
+名單的註冊條件恰好排除了要找的那一類，缺席就不是證據。**
+
+**而 transient 這條反而補上了那張表缺的環**：transient heap 是獨立的 `ID3D12Heap`
+（`D3D12TransientResourceAllocator.cpp:34-64` 自己 `CreateHeap`），銷毀走 `DeferDelete()`，
+回收複用走 `FRHITransientHeapCache`，**不經 pool 那側的 `GetLastUsedFrameFence()`／`InFrameLag`**——
+「那個 fence 只覆蓋池子自己知道的配置」在這裡成立；而**heap 銷毀是整段 VA 一起走，
+正是「整頁不在頁表」的形狀**。
+
+**但有一條我們自己的資料限制了它的形狀**：`NoBackdrop=2` 那三趟是 **3/3 故障**，
+而那個模式**副本照配置（transient 照走）、只把綁定換成 `GBlackTexture`**。
+所以**若 transient 是機制，被取樣的不是 backdrop 副本，而是那一幀裡別的 transient 貼圖。**
+
+**尚未解決的覆蓋率問題（登記著，不當成結論）**：`FD3D12TransientHeapCache::Create`
+（`:104-112`）在 `ResourceHeapTier == TIER_2` 時設 `bSupportsAllHeapFlags`，
+那時 heap 會以 `ALLOW_ALL_BUFFERS_AND_TEXTURES`（`0x0`，**不含** `DENY_BUFFERS`）建立，
+**就會**進 `TrackedHeaps`。本機的 resource heap tier **沒有**出現在 log 裡
+（log 有的是 binding tier 3，是另一回事），所以**我不主張它是哪一層**。
+這題不影響下一格的設計，所以用判別器去問，而不是去猜 tier。
