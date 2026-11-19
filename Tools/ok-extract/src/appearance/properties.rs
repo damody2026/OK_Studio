@@ -6,7 +6,7 @@ mod physics;
 fn label(key: &str) -> String {
  let mod_labels=[("AccessoryDynamicBoneData","飾品動態骨骼資料"),("AreolaDepth","乳暈深度"),("CenterNipples","乳頭置中"),("Damping","阻尼"),("Depth","深度"),("Elasticity","彈性"),("EnablePushup","啟用內衣塑形"),("Firmness","緊實度"),("FlattenNipples","壓平乳頭"),("HorizontalAngle","水平角度"),("HorizontalPosition","水平位置"),("Lift","托高"),("NippleDepth","乳頭深度"),("NippleWidth","乳頭寬度"),("PushTogether","向內集中"),("Pushup_BodyData","身體塑形資料"),("Pushup_BraData","胸罩塑形資料"),("Pushup_TopData","上衣塑形資料"),("Radius","半徑"),("Roundness","圓潤度"),("Size","大小"),("Softness","柔軟度"),("Squeeze","擠壓"),("Stiffness","剛性"),("UseAdvanced","使用進階設定"),("VerticalAngle","垂直角度"),("VerticalPosition","垂直位置"),("Weight","重量")];
  if let Some((_,v))=mod_labels.iter().find(|(k,_)|*k==key){return v.to_string();}
- let extra=[("areolaSize","乳暈大小"),("bustSoftness","胸部柔軟度"),("bustWeight","胸部重量"),("cheekGlossPower","臉頰光澤強度"),("detailPower","細節強度"),("doubleTooth","虎牙"),("drawAddLine","附加線條"),("eyelineUpWeight","上眼線粗細"),("gradBlend","漸層混合"),("gradOffsetY","漸層垂直位移"),("gradScale","漸層縮放"),("hideBraOpt","隱藏胸罩選項"),("hideOpt","隱藏選項"),("hideShortsOpt","隱藏內褲選項"),("hlDownX","下高光水平位置"),("hlDownY","下高光垂直位置"),("hlUpX","上高光水平位置"),("hlUpY","上高光垂直位置"),("lipGlossPower","嘴唇光澤強度"),("moleLayout","痣配置"),("nailGlossPower","指甲光澤強度"),("nipGlossPower","乳頭光澤強度"),("offset","位移"),("paintLayout","彩繪配置"),("pupilHeight","瞳孔高度"),("pupilWidth","瞳孔寬度"),("pupilX","瞳孔水平位置"),("pupilY","瞳孔垂直位置"),("rotate","旋轉"),("skinGlossPower","皮膚光澤強度"),("tiling","紋理重複"),("MaterialColorPropertyList","材質顏色覆寫"),("MaterialFloatPropertyList","材質數值覆寫"),("Color","顏色"),("Value","設定值"),("ColorOriginal","原始顏色"),("ValueOriginal","原始數值"),("additionalAccessories","額外飾品"),("CoordinateHairAccessories","本套服裝的髮飾"),("HairAccessories","髮飾"),("ColorMatch","跟隨髮色"),("HairGloss","頭髮光澤"),("OutlineColor","輪廓色"),("AccessoryColor","飾品顏色"),("GlossColor","光澤色"),("HairLength","頭髮長度")];
+ let extra=[("sleevesType","袖子種類"),("hideCategory","H 時分組"),("areolaSize","乳暈大小"),("bustSoftness","胸部柔軟度"),("bustWeight","胸部重量"),("cheekGlossPower","臉頰光澤強度"),("detailPower","細節強度"),("doubleTooth","虎牙"),("drawAddLine","附加線條"),("eyelineUpWeight","上眼線粗細"),("foregroundEyes","眼睛描畫前面"),("foregroundEyebrow","眉毛描畫前面"),("gradBlend","漸層混合"),("gradOffsetY","漸層垂直位移"),("gradScale","漸層縮放"),("hideBraOpt","隱藏胸罩選項"),("hideOpt","隱藏選項"),("hideShortsOpt","隱藏內褲選項"),("hlDownX","下高光水平位置"),("hlDownY","下高光垂直位置"),("hlUpX","上高光水平位置"),("hlUpY","上高光垂直位置"),("lipGlossPower","嘴唇光澤強度"),("moleLayout","痣配置"),("nailGlossPower","指甲光澤強度"),("nipGlossPower","乳頭光澤強度"),("offset","位移"),("paintLayout","彩繪配置"),("pupilHeight","瞳孔高度"),("pupilWidth","瞳孔寬度"),("pupilX","瞳孔水平位置"),("pupilY","瞳孔垂直位置"),("rotate","旋轉"),("skinGlossPower","皮膚光澤強度"),("tiling","紋理重複"),("MaterialColorPropertyList","材質顏色覆寫"),("MaterialFloatPropertyList","材質數值覆寫"),("Color","顏色"),("Value","設定值"),("ColorOriginal","原始顏色"),("ValueOriginal","原始數值"),("additionalAccessories","額外飾品"),("CoordinateHairAccessories","本套服裝的髮飾"),("HairAccessories","髮飾"),("ColorMatch","跟隨髮色"),("HairGloss","頭髮光澤"),("OutlineColor","輪廓色"),("AccessoryColor","飾品顏色"),("GlossColor","光澤色"),("HairLength","頭髮長度")];
  if let Some((_,v))=extra.iter().find(|(k,_)|*k==key){return v.to_string();}
  let pairs=[("face","臉部"),("body","身體"),("hair","頭髮"),("clothes","衣物"),("accessory","飾品"),("makeup","化妝"),("parts","部位"),("pupil","瞳孔"),("baseMakeup","基礎化妝"),("baseColor","主要顏色"),("subColor","次要顏色"),("startColor","髮根顏色"),("endColor","髮梢顏色"),("outlineColor","輪廓顏色"),("glossColor","光澤顏色"),("acsColor","髮飾顏色"),("eyebrowColor","眉毛顏色"),("eyelineColor","眼線顏色"),("whiteBaseColor","眼白主要顏色"),("whiteSubColor","眼白次要顏色"),("hlUpColor","上高光顏色"),("hlDownColor","下高光顏色"),("moleColor","痣顏色"),("lipLineColor","唇線顏色"),("skinMainColor","皮膚主要顏色"),("skinSubColor","皮膚次要顏色"),("nipColor","乳頭顏色"),("underhairColor","陰毛顏色"),("nailColor","指甲顏色"),("sunburnColor","曬痕顏色"),("cheekColor","腮紅顏色"),("eyeshadowColor","眼影顏色"),("lipColor","嘴唇顏色"),("paintColor","彩繪顏色"),("colorInfo","顏色層"),("color","顏色"),("patternColor","花紋顏色"),("pattern","花紋"),("parentKey","綁定骨架"),("addMove","變形組"),("noShake","停止擺動"),("pos","位置"),("rot","旋轉"),("scl","縮放"),("length","長度"),("x","橫軸"),("y","縱軸"),("z","深度"),("r","紅"),("g","綠"),("b","藍"),("a","透明度")];
  pairs.iter().find(|(k,_)|*k==key).map(|(_,v)|v.to_string()).unwrap_or_else(||key.parse::<usize>().map(|n|format!("{}",n+1)).unwrap_or_else(|_|format!("進階設定（{key}）")))
@@ -40,6 +40,11 @@ fn sections(blocks: &mut BTreeMap<String,Vec<u8>>, outfit: usize, mut f: impl Fn
 fn walk(v:&Value,path:&str,labels:&str,color:bool,out:&mut Vec<J>) {
  let key=path.rsplit('.').next().unwrap_or("");
  if matches!(key,"shapeValueBody"|"shapeValueFace"|"version") {return;}
+ // Item ids never become editable properties, whatever `integer_choice` grows to allow: writing an id here would
+ // leave the sideloader resolve list untouched, so the card would point at a different mod's slot and open as
+ // someone else's part (Docs/READER_UI_APPEARANCE_API.md §6). Changing an item goes through `appearance` instead.
+ // This is a rule, not an omission: a future whitelist entry must not be able to open it by accident.
+ if key=="id"||key.ends_with("Id")||key.ends_with("Ids") {return;}
  if key=="addMove" {if let Some(a)=v.as_array(){
   if let Some(flat)=a.get(2).and_then(Value::as_array).filter(|a|a.len()==6){for(i,vector)in flat.iter().enumerate(){let base=format!("{labels}／第 {} 組／{}",i/3+1,["位置（公分）","旋轉（度）","縮放"][i%3]);if let Some(axis)=vector.as_array(){for(j,v)in axis.iter().take(3).enumerate(){walk(v,&format!("{path}.2.{i}.{j}"),&format!("{base}／{}",["橫軸","縱軸","深度"][j]),false,out)}}}return;}
  }}
@@ -47,15 +52,87 @@ fn walk(v:&Value,path:&str,labels:&str,color:bool,out:&mut Vec<J>) {
  match v {
   Value::Map(m)=>for(k,v)in m {if let Some(k)=k.as_str(){walk(v,&format!("{path}.{k}"),&format!("{labels}／{}",label(k)),color,out)}},
   Value::Array(a)=>for(i,v)in a.iter().enumerate(){let component=if color&&a.len()==4{["紅","綠","藍","透明度"][i].to_string()}else{label(&i.to_string())};walk(v,&format!("{path}.{i}"),&format!("{labels}／{component}"),color,out)},
-  Value::F32(n)=>out.push(json!({"key":path,"label":labels,"kind":if color{"color"}else{"number"},"value":n})),
-  Value::F64(n)=>out.push(json!({"key":path,"label":labels,"kind":if color{"color"}else{"number"},"value":n})),
+  Value::F32(n)=>out.push(with_range(json!({"key":path,"label":labels,"kind":if color{"color"}else{"number"},"value":n}),path)),
+  Value::F64(n)=>out.push(with_range(json!({"key":path,"label":labels,"kind":if color{"color"}else{"number"},"value":n}),path)),
   Value::Boolean(n)=>out.push(json!({"key":path,"label":labels,"kind":"bool","value":n})),
   Value::String(s) if key=="parentKey"=>out.push(json!({"key":path,"label":labels,"kind":"parent","value":s.as_str()})),
+  // The maker's integer choices (CvsClothes sleeve toggles, CvsAccessory H group): only the ones the game reads.
+  Value::Integer(n)=>if let Some((max,options))=integer_choice(path){out.push(json!({"key":path,"label":labels,"kind":"choice","value":n.as_i64().unwrap_or(0),
+   "integer":true,"min":0,"max":max,"step":1,"decimals":0,"options":options}))},
   _=>{}
  }
 }
+/// The maker's ranges for the numbers it edits (CvsClothes pattern sliders; CustomAcsMoveWindow and
+/// ChaControl.SetAccessoryPos/Rot/Scl), as per-parameter metadata: `min`／`max` (closed), `step`, `decimals` (rounded to
+/// before the check), `wrap` (taken modulo [min,max): such a value is never refused for its range), `default` (the
+/// game's own default, what a reset goes back to). A number without them keeps the old wide limit.
+fn range_meta(path:&str)->Option<J>{
+ let parts:Vec<&str>=path.split('.').collect();
+ match parts.as_slice() {
+  // Pattern size, position and rotation: sliders over 0..1 (shown 0..100); defaults tiling 0, offset 0.5, rotate 0.5.
+  ["clothes","parts",_,"colorInfo",_,"tiling",_]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"default":0.0})),
+  ["clothes","parts",_,"colorInfo",_,"offset",_]|["clothes","parts",_,"colorInfo",_,"rotate"]=>Some(json!({"min":0.0,"max":1.0,"step":0.01,"default":0.5})),
+  // addMove[group][pos／rot／scl][xyz], flattened by walk as `addMove.2.{group*3+kind}.{axis}`.
+  ["accessory","parts",_,"addMove","2",i,_]=>match i.parse::<usize>().ok()?%3 {
+   0=>Some(json!({"min":-100.0,"max":100.0,"step":0.1,"decimals":1,"default":0.0})),
+   1=>Some(json!({"min":0.0,"max":360.0,"step":1.0,"decimals":0,"wrap":true,"default":0.0})),
+   _=>Some(json!({"min":0.01,"max":100.0,"step":0.01,"decimals":2,"default":1.0})),
+  },
+  _=>None,
+ }
+}
+fn with_range(mut row:J,path:&str)->J{if let (Some(J::Object(m)),J::Object(r))=(range_meta(path),&mut row){r.extend(m);}row}
+/// Apply a row's range metadata to an edit: round to `decimals` first, then take a `wrap` value modulo [min,max)
+/// (359.6 rounds to 360 and wraps to 0, so a wrapped value always lands inside and is never refused for its range).
+/// Keep this order: wrapping first leaves 359.6 as it is (already inside [0,360)), rounding then gives 360, outside
+/// [0,360), and the edit the user meant as "0" would be refused. A wrapped parameter is never refused for its range,
+/// by design, not a missing check. Last, anything outside [min,max] is refused, naming the value sent and the rounded one.
+pub(crate) fn ranged(p:&J,n:f64)->Result<f64,String>{
+ if !n.is_finite(){return Err("數值格式錯誤".into());}
+ let (lo,hi)=(p["min"].as_f64().unwrap_or(-1e6),p["max"].as_f64().unwrap_or(1e6));
+ let mut v=n;
+ if let Some(d)=p["decimals"].as_u64(){let k=10f64.powi(d as i32);v=(v*k).round()/k;}
+ if p["wrap"]==true&&hi>lo{v=lo+(v-lo).rem_euclid(hi-lo);}
+ if v<lo||v>hi{return Err(if v==n{format!("數值 {n} 超出範圍 {lo}～{hi}")}else{format!("數值 {n}（取整後 {v}）超出範圍 {lo}～{hi}")});}
+ Ok(v)
+}
+/// Integer fields offered as choices: the top's sleeve type (`parts[0].sleevesType`, 0..2, `ChaControl.DrawSode`) and an
+/// accessory's H group (`hideCategory`, 0 main／1 sub). Others (ids, `type`) go through the appearance pickers. Option
+/// names are text ids (ui_text.toml `[ui.editor_clothes]`); the UI looks them up and shows the id when one is missing.
+fn integer_choice(path:&str)->Option<(i64,J)>{
+ let parts:Vec<&str>=path.split('.').collect();
+ match parts.as_slice() {
+  ["clothes","parts","0","sleevesType"]=>Some((2,json!([{"value":0,"label_id":"ui.editor_clothes.sleeves_1"},{"value":1,"label_id":"ui.editor_clothes.sleeves_2"},{"value":2,"label_id":"ui.editor_clothes.sleeves_3"}]))),
+  ["accessory","parts",_,"hideCategory"]=>Some((1,json!([{"value":0,"label_id":"ui.editor_clothes.accessory_group_main"},{"value":1,"label_id":"ui.editor_clothes.accessory_group_sub"}]))),
+  // 目／眉の描画前面 (`ChaControl.SetForegroundEyesAndEyebrow`): 0 leaves it to the player's own config
+  // (`EtceteraSystem.ForegroundEyes`／`ForegroundEyebrow`, both off in a fresh install), 1 forces it off, 2 on.
+  ["face","foregroundEyes"]=>Some((2,json!([{"value":0,"label_id":"ui.editor_eyes.foreground_config"},{"value":1,"label_id":"ui.editor_eyes.foreground_off"},{"value":2,"label_id":"ui.editor_eyes.foreground_on"}]))),
+  ["face","foregroundEyebrow"]=>Some((2,json!([{"value":0,"label_id":"ui.editor_eyes.foreground_config"},{"value":1,"label_id":"ui.editor_eyes.foreground_off"},{"value":2,"label_id":"ui.editor_eyes.foreground_on"}]))),
+  _=>None,
+ }
+}
 pub(super) fn catalog_properties(original:&[u8],outfit:usize)->Result<Vec<J>,String>{
- let mut blocks=blocks_from_card(original)?;let mut props=physics::catalog(original,outfit)?;sections(&mut blocks,outfit,|name,v|{walk(v,name,&label(name),false,&mut props);Ok(())})?;plugins::catalog(&blocks,outfit,&mut props)?;Ok(props)
+ Ok(catalog_properties_with_unknown(original,outfit)?.0)
+}
+/// The editable properties, plus the KKEx section keys this build does not know (`plugins::catalog`).
+pub(super) fn catalog_properties_with_unknown(original:&[u8],outfit:usize)->Result<(Vec<J>,Vec<String>),String>{
+ let mut blocks=blocks_from_card(original)?;let mut props=physics::catalog(original,outfit)?;sections(&mut blocks,outfit,|name,v|{walk(v,name,&label(name),false,&mut props);Ok(())})?;let unknown=plugins::catalog(&blocks,outfit,&mut props)?;refuse_unapplied(&mut props);Ok((props,unknown))
+}
+/// Rows the card stores and we parse but **nobody applies**: an edit there would change the saved card and nothing
+/// else, which reads as a bug ("I moved the slider and nothing happened") and hides that the data side is fine.
+/// `supported:false` makes `set` answer "Parameter unsupported by current model" instead (the same refusal a missing
+/// bone gets), so the no-op is stated rather than performed. Remove a line here when its consumer lands.
+/// `hair.parts.N.pos/rot/scl`: `card.rs` reads them into `CardInfo.hair_parts`, and the only consumers of that
+/// struct take colours and `length` (`accessories.rs`); the C ABI carries no hair transform at all (2026-11-19).
+fn refuse_unapplied(props:&mut [J]){
+ for p in props.iter_mut(){
+  let Some(key)=p["key"].as_str() else{continue};
+  let parts:Vec<&str>=key.split('.').collect();
+  if !matches!(parts.as_slice(),["hair","parts",_,"pos"|"rot"|"scl",_]){continue}
+  p["supported"]=json!(false);
+  p["unsupported_reason"]=json!("Hair slot transform is parsed but not applied by the renderer");
+  p["unsupported_reason_id"]=json!("reader.unsupported.hair_transform_not_applied");
+ }
 }
 pub(super) fn patch_properties(original:&[u8],outfit:usize,edits:&[J])->Result<Vec<u8>,String>{
  if edits.is_empty()||edits.len()>8192{return Err("修改清單數量錯誤".into());}
@@ -68,6 +145,9 @@ pub(super) fn patch_properties(original:&[u8],outfit:usize,edits:&[J])->Result<V
   let value=match p["kind"].as_str().unwrap_or("") {
    "bool"=>Value::Boolean(edit["value"].as_bool().ok_or("布林值格式錯誤")?),
    "parent"=>{let s=edit["value"].as_str().ok_or("骨架名稱格式錯誤")?;if s.len()>256||s.chars().any(char::is_control){return Err("骨架名稱不合法".into());}s.into()},
+   _ if p["integer"]==true=>{let n=edit["value"].as_f64().ok_or("數值格式錯誤")?;let (lo,hi)=(p["min"].as_f64().unwrap_or(0.0),p["max"].as_f64().unwrap_or(0.0));
+    if !n.is_finite()||n.fract()!=0.0||n<lo||n>hi{return Err("數值超出可用範圍".into());}Value::from(n as i64)},
+   _ if p.get("min").is_some()&&p["kind"]=="number"=>Value::F32(ranged(p,edit["value"].as_f64().ok_or("數值格式錯誤")?)? as f32),
    kind=>{let n=edit["value"].as_f64().ok_or("數值格式錯誤")?;if !n.is_finite()||n.abs()>1e6||(kind=="color"&&!(0.0..=1.0).contains(&n)){return Err("數值超出可用範圍".into());}Value::F32(n as f32)}
   };changes.insert(key.to_string(),value);
  }
@@ -220,6 +300,19 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
 }
 
 #[cfg(test)] mod tests {
+ #[test]fn range_metadata_rounds_wraps_and_names_both_values(){
+  let rot=range_meta("accessory.parts.3.addMove.2.4.1").unwrap();assert_eq!(rot["wrap"],true);
+  assert_eq!(ranged(&rot,359.6).unwrap(),0.0);assert_eq!(ranged(&rot,-30.0).unwrap(),330.0);assert_eq!(ranged(&rot,725.0).unwrap(),5.0);
+  let pos=range_meta("accessory.parts.3.addMove.2.0.2").unwrap();assert_eq!(ranged(&pos,1.26).unwrap(),1.3);
+  let err=ranged(&pos,100.04).unwrap();assert_eq!(err,100.0);
+  let err=ranged(&pos,100.06).unwrap_err();assert!(err.contains("100.06")&&err.contains("100.1"),"{err}");
+  let scl=range_meta("accessory.parts.0.addMove.2.5.0").unwrap();assert!(ranged(&scl,0.004).is_err());assert_eq!(ranged(&scl,0.005).unwrap(),0.01);
+  let tiling=range_meta("clothes.parts.0.colorInfo.2.tiling.1").unwrap();assert!(ranged(&tiling,1.2).is_err());assert_eq!(tiling["default"],0.0);
+  assert_eq!(range_meta("clothes.parts.0.colorInfo.2.rotate").unwrap()["default"],0.5);
+  assert!(range_meta("face.shapeValueFace.3").is_none());
+  assert_eq!(integer_choice("clothes.parts.0.sleevesType").unwrap().0,2);assert!(integer_choice("clothes.parts.1.sleevesType").is_none());
+  assert_eq!(integer_choice("accessory.parts.12.hideCategory").unwrap().0,1);
+ }
  use super::*;
  #[test]#[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]fn lean_card_property_request_recovers_original_mod_controls(){
   let root=&crate::test_support::game_path("");let card=crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png");

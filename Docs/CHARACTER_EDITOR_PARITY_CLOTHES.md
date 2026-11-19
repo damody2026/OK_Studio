@@ -131,8 +131,8 @@
 
 第 1、2 批是资料端，第 3–7 批主要是 UI。第 2 批要读 prefab 元件，比较费工，可以和第 1 批并行。
 
-## 6. 未确认
+## 6. 原先待确认的三项（2026-11-19 实测）
 
-- 原作鞋子页编辑 `shoes_inner` 还是 `shoes_outer`（由 prefab 序列化的 `typeClothes` 决定，反编译看不到）。
-- 原作 20 个槽在换款时父骨怎么填（`takeOverParent` 关时用清单预设），我们原作槽的写法未查，只查了额外槽（`extra.rs` 只在缺属性时填）。
-- 男性胸罩页的条件（`IsMaleCoordinateBra`）我们是否处理。
+- **鞋子页编哪一槽**：编的是室外鞋 `shoes_outer`（8）。原作的 `KoikatsuSunshine_Data/level3` 里有 8 个 `CvsClothes`，读出它们的 `typeClothes` 是 0–6 和 8，没有 7。`typeClothes` 是元件的第一个序列化栏位；场景档没有型别树，所以按元件标头之后的位移读取（`entries.rs` 的忽略测试 `clothes_page_kinds`）。KKS 编辑器没有室内鞋的页面。我们两槽都给，多出室内鞋。
+- **20 槽换款式时父骨怎么填**：原作「保留父骨」（`acsTakeOverParent`）预设是开的（`CustomBase.cs`）。换款时父骨照旧，只有新款在清单里标 `HideHair==1` 时才清空，改回用清单预设。读卡器实测：原作卡 KK_007604，槽 16 原本是腕饰、父骨 `a_n_wrist_L`，换成戒指（清单预设父骨 `a_n_ring_L`）后仍是 `a_n_wrist_L`。这和原作的预设行为一致。缺的部分：`HideHair==1` 时清空，以及「保留父骨／保留颜色」两个开关。
+- **男性胸罩页**：原作只有清单里有 `Sex` 不是 3 或 99 的胸罩时，男性才显示胸罩页（`CustomBase.IsMaleCoordinateBra`）。读卡器实测：原作男角卡 KK_224305 的 `clothes2` 选图照样给 1035 项，没有这个条件。归在第 3 批（条件显示）。

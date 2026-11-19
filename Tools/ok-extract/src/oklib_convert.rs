@@ -225,6 +225,8 @@ fn convert_source(game: &Path, source: &Source, bytes: &[u8], prefab_hints: &BTr
         if clothes {
             let _ = crate::unity::clothes_renderer_map(bytes, name);
             let _ = crate::unity::prefab_node_names(bytes, name);
+            // Options／sleeves／colour layers the maker shows (entries.rs apply_clothes_options, appearance model_flags).
+            let _ = crate::unity::clothes_option_groups(bytes, name);
         }
         // Head bundles (whatever list names them): they carry the face mesh.
         if cats.contains(&100) || label.contains("bo_head") || dir.meshes.contains("cf_o_face") {

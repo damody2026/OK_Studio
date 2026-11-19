@@ -754,6 +754,52 @@ pub(crate) fn apply_dynamic_bone_editor(meshes: &mut [ExtractedMesh], card: &Car
     }
 }
 
+/// `ChaControl.DrawOption`／`DrawSode` on a worn garment: the renderers under `objOpt01/02` show when that option is not
+/// hidden, those under `objSleeves0{n+1}` only for the card's sleeve type. Turning a group off drops the meshes whose
+/// renderers all sit under it; turning on a group the prefab ships inactive (the other sleeves) adds its meshes from
+/// the prefab including disabled objects. Only the garment's own component counts, as in the game (`cusClothesCmp`).
+pub(crate) fn apply_clothes_options(
+    game_root: &Path,
+    zip: Option<&Path>,
+    entry: &ListEntry,
+    card: &CardInfo,
+    kind: usize,
+    meshes: &mut Vec<ExtractedMesh>,
+    skel: Option<&mut crate::pose::Skeleton>,
+) {
+    let hide = card.clothes_hide_opt.get(kind).copied().unwrap_or([false; 2]);
+    let Some(shared) = accessory_bundle_shared(game_root, zip, entry) else { return };
+    let groups = crate::unity::clothes_option_groups(&shared.0, &entry.main_data);
+    let mut wanted: Vec<(&[i64], bool)> = vec![(&groups.opt[0], !hide[0]), (&groups.opt[1], !hide[1])];
+    if kind == 0 {
+        for (i, g) in groups.sleeves.iter().enumerate() { wanted.push((g, i as i32 == card.sleeves_type)); }
+    }
+    let on: std::collections::HashSet<i64> = wanted.iter().filter(|(_, w)| *w).flat_map(|(g, _)| g.iter().copied()).collect();
+    let off: std::collections::HashSet<i64> = wanted.iter().filter(|(_, w)| !*w).flat_map(|(g, _)| g.iter().copied()).filter(|id| !on.contains(id)).collect();
+    if on.is_empty() && off.is_empty() { return; }
+    let before = meshes.len();
+    meshes.retain(|m| m.renderer_ids.is_empty() || !m.renderer_ids.iter().all(|id| off.contains(id)));
+    let removed = before - meshes.len();
+    let shown: std::collections::HashSet<i64> = meshes.iter().flat_map(|m| m.renderer_ids.iter().copied()).collect();
+    let mut added = 0;
+    if on.iter().any(|id| !shown.contains(id)) {
+        let (bytes, source_zip) = (&shared.0, shared.1.clone());
+        let parsed = crate::unity::parse_bundle_ref(bytes);
+        let (mut extra, _) = parsed.meshes_for_maindata_including_disabled_with_category(&entry.main_data, entry.category_no);
+        extra.retain(|m| m.renderer_ids.iter().any(|id| on.contains(id) && !shown.contains(id))
+            && !m.renderer_ids.iter().any(|id| off.contains(id))
+            && !is_dummy_part(&m.name, Some(&entry.name)));
+        if !extra.is_empty() {
+            hang_part_dynamic_bones(game_root, source_zip.as_deref(), bytes, &mut extra, skel, true, true);
+            added = extra.len();
+            meshes.extend(extra);
+        }
+    }
+    if removed + added > 0 || std::env::var_os("OK_DIAG").is_some() {
+        eprintln!("ok-extract: clothes options kind={kind} hide={hide:?} sleeves={} -{removed} +{added} meshes ({})", card.sleeves_type, entry.name);
+    }
+}
+
 pub(crate) fn meshes_for_accessory_entry_prefab(
     game_root: &Path,
     zip: Option<&Path>,
@@ -789,4 +835,64 @@ pub(crate) fn meshes_for_accessory_entry_prefab(
     hang_part_dynamic_bones(game_root, source_zip.as_deref(), &bytes, &mut meshes, skel.as_mut(), true, shake_enabled);
     meshes.retain(|m| !is_dummy_part(&m.name, Some(&entry.name)));
     (meshes, skel)
+}
+
+#[cfg(test)]
+mod clothes_option_tests {
+    use super::*;
+    /// Lists the game's garments whose prefab has option／sleeve groups, and what each group drops or adds:
+    /// `OK_GAME=D:/XKoikatuSunshine cargo test --lib clothes_option_survey -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn clothes_option_survey() {
+        let game = PathBuf::from(std::env::var("OK_GAME").unwrap_or_else(|_| "D:/XKoikatuSunshine".into()));
+        let cat = crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
+        let mut rows: Vec<_> = cat.by_id.values().filter(|e| (105..=112).contains(&e.category_no) && !e.main_data.is_empty()).collect();
+        rows.sort_by_key(|e| (e.category_no, e.id));
+        let (mut with_opt, mut with_sleeves) = (0, 0);
+        for e in rows {
+            let Some(shared) = accessory_bundle_shared(&game, None, e) else { continue };
+            let g = crate::unity::clothes_option_groups(&shared.0, &e.main_data);
+            if !g.opt_present.iter().any(|b| *b) && !g.sleeves_present.iter().any(|b| *b) { continue; }
+            with_opt += g.opt_present.iter().any(|b| *b) as usize;
+            with_sleeves += g.sleeves_present.iter().any(|b| *b) as usize;
+            println!("cat={} id={} {} {} opt={:?} sleeves={:?} use={:?} acc={} def={:?}", e.category_no, e.id, e.main_data, e.name,
+                g.opt.iter().map(Vec::len).collect::<Vec<_>>(), g.sleeves.iter().map(Vec::len).collect::<Vec<_>>(), g.use_color, g.has_accessory_renderer, g.def_colors[0]);
+        }
+        println!("garments with options {with_opt}, with sleeves {with_sleeves}");
+    }
+
+    /// Which ClothesKind each of the maker's clothes pages edits: `CvsClothes.typeClothes` is the component's first
+    /// serialized field (after the MonoBehaviour header: m_GameObject, m_Enabled, m_Script, m_Name). The game's level
+    /// files carry no type trees, so MonoBehaviours are grouped by script and the groups whose first ints are clothes
+    /// kinds are printed: `OK_GAME=D:/XKoikatuSunshine cargo test --lib clothes_page_kinds -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn clothes_page_kinds() {
+        let game = PathBuf::from(std::env::var("OK_GAME").unwrap_or_else(|_| "D:/XKoikatuSunshine".into()));
+        let data = game.join("KoikatsuSunshine_Data");
+        for e in std::fs::read_dir(&data).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with("level") || name.contains('.') { continue; }
+            let Ok(ser) = unity_asset_binary::asset::parse_serialized_file(std::fs::read(e.path()).unwrap()) else { continue };
+            let mut groups: std::collections::BTreeMap<(i32, i64), Vec<(i32, u32)>> = Default::default();
+            for h in ser.object_handles().filter(|h| h.class_id() == 114) {
+                let Ok(raw) = h.raw_data() else { continue };
+                if raw.len() < 36 { continue; }
+                let i32_at = |o: usize| i32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+                let script = (i32_at(16), i64::from_le_bytes(raw[20..28].try_into().unwrap()));
+                let n = i32_at(28).max(0) as usize;
+                let at = 32 + ((n + 3) & !3);
+                if raw.len() < at + 4 { continue; }
+                groups.entry(script).or_default().push((i32_at(at), h.byte_size()));
+            }
+            for (script, rows) in groups {
+                let kinds: Vec<i32> = rows.iter().map(|r| r.0).collect();
+                if (7..=10).contains(&rows.len()) && kinds.iter().all(|k| (0..9).contains(k)) && rows.iter().all(|r| r.1 > 400) {
+                    let mut k = kinds.clone(); k.sort();
+                    println!("{name} script={script:?} n={} kinds={k:?} sizes={:?}", rows.len(), rows.iter().map(|r| r.1).collect::<Vec<_>>());
+                }
+            }
+        }
+    }
 }

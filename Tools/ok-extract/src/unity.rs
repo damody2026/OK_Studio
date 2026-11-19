@@ -962,6 +962,121 @@ fn clothes_renderer_map_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &
     None
 }
 
+/// The clothes prefab's `ChaClothesComponent` switches and defaults the maker shows (`CvsClothes.CheckUseColor`) and
+/// `ChaControl.DrawOption`／`DrawSode` apply: the renderers under each `objOpt01/02` and `objSleeves01..03` GameObject
+/// (SetActive of the object hides its whole subtree), the colour layers the item uses and its default colours.
+/// A group the prefab lacks is empty; the maker then hides that option.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ClothesOptionGroups {
+    /// Renderers under `objOpt01`, `objOpt02`.
+    pub opt: [Vec<i64>; 2],
+    /// Renderers under `objSleeves01..03`.
+    pub sleeves: [Vec<i64>; 3],
+    /// Whether each `objOpt0x`／`objSleeves0x` array names any object (the maker shows the toggle then).
+    pub opt_present: [bool; 2],
+    pub sleeves_present: [bool; 3],
+    /// `useColorN01..03`.
+    pub use_color: [bool; 3],
+    /// `rendAccessory` is set (the 4th colour layer of a sailor／jacket sub-part).
+    pub has_accessory_renderer: bool,
+    /// `defMainColor01..03` (the maker's 初期設定).
+    pub def_colors: [[f32; 4]; 3],
+    /// Emblem 1／2 has a renderer (`ChaControl.IsEmblem`: `rendEmblem01` or `exRendEmblem01`; `exRendEmblem02`).
+    pub emblem: [bool; 2],
+}
+
+/// Read [`ClothesOptionGroups`] for the named prefab (same subtree association as [`clothes_renderer_map`]). Optional
+/// query: a shared `.okmodel` recorded before it answers the default (no groups), which leaves the prefab as it was.
+pub fn clothes_option_groups<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> ClothesOptionGroups {
+    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "clothes_option_groups", prefab_name, || clothes_option_groups_unity(bytes, prefab_name).unwrap_or_default())
+}
+fn clothes_option_groups_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesOptionGroups> {
+    let bundle = Arc::new(load_bundle_source(bytes.to_source(), false).ok()?);
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+                scripts.insert(info.path_id, class.to_string());
+            }
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+        }
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_children: HashMap<i64, Vec<i64>> = HashMap::new();
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+                if let Some(unity_asset_core::UnityValue::Array(ch)) = props.get("m_Children") {
+                    tf_children.insert(info.path_id, ch.iter().filter_map(pptr_path_id).collect());
+                }
+            }
+        }
+        let go_tf: HashMap<i64, i64> = tf_go.iter().map(|(tf, go)| (*go, *tf)).collect();
+        let subtree = |roots: &[i64]| -> std::collections::HashSet<i64> {
+            let mut seen = std::collections::HashSet::new();
+            let mut stack = roots.to_vec();
+            while let Some(go) = stack.pop() {
+                if !seen.insert(go) { continue; }
+                if let Some(kids) = go_tf.get(&go).and_then(|tf| tf_children.get(tf)) {
+                    stack.extend(kids.iter().filter_map(|t| tf_go.get(t)));
+                }
+            }
+            seen
+        };
+        let prefab_roots: Vec<i64> = go_names.iter()
+            .filter(|(_, n)| { let l = n.to_ascii_lowercase(); l == want || (!want_trim.is_empty() && l == want_trim) })
+            .map(|(id, _)| *id).collect();
+        let prefab = subtree(&prefab_roots);
+        let mut renderer_go: Vec<(i64, i64)> = Vec::new();
+        for info in ser.objects_of_type(23).into_iter().chain(ser.objects_of_type(137)) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                if let Some(go) = obj.class.properties().get("m_GameObject").and_then(pptr_path_id) { renderer_go.push((info.path_id, go)); }
+            }
+        }
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else { continue };
+            let props = obj.class.properties();
+            let class = props.get("m_Script").and_then(pptr_path_id).and_then(|id| scripts.get(&id)).cloned().unwrap_or_default();
+            if !class.contains("ChaClothesComponent") { continue; }
+            if !props.get("m_GameObject").and_then(pptr_path_id).is_some_and(|g| prefab.contains(&g)) { continue; }
+            let objects = |k: &str| -> Vec<i64> { props.get(k).map(uv_arr).unwrap_or_default().iter().filter_map(pptr_path_id).filter(|id| *id != 0).collect() };
+            let renderers = |k: &str| -> Vec<i64> {
+                let gos = subtree(&objects(k));
+                let mut ids: Vec<i64> = renderer_go.iter().filter(|(_, go)| gos.contains(go)).map(|(r, _)| *r).collect();
+                ids.sort_unstable();
+                ids
+            };
+            let color = |k: &str| -> [f32; 4] {
+                props.get(k).and_then(|v| v.as_object()).map(|c| {
+                    let f = |n: &str, d: f64| c.get(n).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
+                    [f("r", 1.0), f("g", 1.0), f("b", 1.0), f("a", 1.0)]
+                }).unwrap_or([1.0; 4])
+            };
+            let b = |k: &str| props.get(k).map(uv_bool).unwrap_or(false);
+            return Some(ClothesOptionGroups {
+                opt: [renderers("objOpt01"), renderers("objOpt02")],
+                sleeves: [renderers("objSleeves01"), renderers("objSleeves02"), renderers("objSleeves03")],
+                opt_present: [!objects("objOpt01").is_empty(), !objects("objOpt02").is_empty()],
+                sleeves_present: [!objects("objSleeves01").is_empty(), !objects("objSleeves02").is_empty(), !objects("objSleeves03").is_empty()],
+                use_color: [b("useColorN01"), b("useColorN02"), b("useColorN03")],
+                has_accessory_renderer: props.get("rendAccessory").and_then(pptr_path_id).is_some_and(|id| id != 0),
+                def_colors: [color("defMainColor01"), color("defMainColor02"), color("defMainColor03")],
+                emblem: [props.get("rendEmblem01").and_then(pptr_path_id).is_some_and(|id| id != 0) || !objects("exRendEmblem01").is_empty(), !objects("exRendEmblem02").is_empty()],
+            });
+        }
+    }
+    None
+}
+
 /// `KK_CopyChaBodyMat.ChaCopyBodyMaterial` components inside the named prefab subtree: the renderers of `rendTarget`
 /// (path ids) with the component's `customRenderQueue`. The plugin assigns `ChaControl.customMatBody` to them, sets
 /// `_alpha_a`/`_alpha_b` to 0 and, for a queue in 0..=5000, that render queue (ChaCopyBodyMaterial.CopyMaterial):
@@ -3993,6 +4108,15 @@ impl ParsedBundle {
         main_data: &str,
     ) -> (Vec<ExtractedMesh>, Option<crate::pose::Skeleton>) {
         self.meshes_for_maindata_with_renderer_state(main_data, true)
+    }
+
+    /// [`Self::meshes_for_maindata_including_disabled`] with the worn clothes state of that category applied.
+    pub fn meshes_for_maindata_including_disabled_with_category(
+        &self,
+        main_data: &str,
+        clothes_category: i32,
+    ) -> (Vec<ExtractedMesh>, Option<crate::pose::Skeleton>) {
+        self.meshes_for_maindata_with_clothes_kind(main_data, true, Some(clothes_category))
     }
 
     fn meshes_for_maindata_with_renderer_state(
