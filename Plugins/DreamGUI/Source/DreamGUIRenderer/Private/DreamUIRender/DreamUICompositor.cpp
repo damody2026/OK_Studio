@@ -286,8 +286,13 @@ namespace DreamUICompositorExperiment
 	// ever allocated. Blend modes that read what is behind look wrong while it is on; nothing else changes.
 	static TAutoConsoleVariable<int32> CVarNoBackdrop(
 		TEXT("DreamGUI.Experiment.NoBackdrop"), 0,
-		TEXT("Experiment: never copy what is behind a group, so no backdrop texture is allocated or sampled."),
+		TEXT("Experiment: 1 = never copy what is behind a group (nothing allocated or sampled, callers take their no-backdrop path); 2 = copy it as usual but bind the global black texture instead, so only the memory the shader reads differs."),
 		ECVF_RenderThreadSafe);
+}
+
+int32 DreamUIExperimentBackdropMode()
+{
+	return DreamUICompositorExperiment::CVarNoBackdrop.GetValueOnRenderThread();
 }
 
 FRDGTextureRef FDreamUICompositeStack::CopyBackdrop(const FIntRect& InRect, FIntPoint& OutOrigin, const TCHAR* InName)
@@ -297,7 +302,7 @@ FRDGTextureRef FDreamUICompositeStack::CopyBackdrop(const FIntRect& InRect, FInt
 
 FRDGTextureRef FDreamUICompositeStack::CopyFrom(const FFrame& InFrame, const FIntRect& InRect, FIntPoint& OutOrigin, const TCHAR* InName)
 {
-	if (DreamUICompositorExperiment::CVarNoBackdrop.GetValueOnRenderThread() != 0)
+	if (DreamUICompositorExperiment::CVarNoBackdrop.GetValueOnRenderThread() == 1)
 	{
 		OutOrigin = FIntPoint::ZeroValue;
 		return nullptr;
@@ -465,7 +470,8 @@ void FDreamUICompositeStack::PopAndComposite()
 				Parameters.DreamUI_CompositeOrigins = Origins;
 				Parameters.DreamUI_CompositeParams = Params;
 				Parameters.DreamUI_CompositeFlags = Flags;
-				Parameters.DreamUI_BackdropTex = Backdrop != nullptr ? Backdrop->GetRHI() : GBlackTexture->TextureRHI.GetReference();
+				Parameters.DreamUI_BackdropTex = Backdrop != nullptr && DreamUIExperimentBackdropMode() != 2
+					? Backdrop->GetRHI() : GBlackTexture->TextureRHI.GetReference();
 				Parameters.DreamUI_ClipDataTex = TextureOr(Textures.ClipDataTextureRHI.GetReference(), GBlackTexture);
 				Parameters.DreamUI_MaskTex0 = TextureOr(Textures.MaskTexture0RHI.GetReference(), GWhiteTexture);
 				Parameters.DreamUI_MaskTexSampler0 = Textures.MaskSampler0RHI.IsValid() ? Textures.MaskSampler0RHI.GetReference() : Bilinear;

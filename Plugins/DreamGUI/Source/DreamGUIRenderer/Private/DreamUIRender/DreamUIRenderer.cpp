@@ -1011,7 +1011,8 @@ void FDreamUIRenderer::DrawBuiltInBatch(FRHICommandList& RHICmdList, FGraphicsPi
 	PSParameters.DreamUI_ViewSizeInv = FVector2f(1.0f / FMath::Max(ViewSize.X, 1), 1.0f / FMath::Max(ViewSize.Y, 1));
 	PSParameters.DreamUI_BlendParams = FVector4f(static_cast<float>(BlendMode), bBackdrop && InBackdrop->bOpaque ? 1.0f : 0.0f
 		, bBackdrop ? static_cast<float>(InBackdrop->Origin.X) : 0.0f, bBackdrop ? static_cast<float>(InBackdrop->Origin.Y) : 0.0f);
-	PSParameters.DreamUI_BackdropTex = bBackdrop ? InBackdrop->Texture : GBlackTexture->TextureRHI.GetReference();
+	PSParameters.DreamUI_BackdropTex = bBackdrop && DreamUIExperimentBackdropMode() != 2
+		? InBackdrop->Texture : GBlackTexture->TextureRHI.GetReference();
 	SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PSParameters);
 
 	// OpenKoikatsu (2026-11-19): every built-in draw names the textures it binds in the GPU breadcrumbs, so a page fault
