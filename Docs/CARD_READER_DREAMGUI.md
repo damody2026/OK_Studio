@@ -1442,3 +1442,32 @@ log 裡 `Created late shader associations` 剛好各出現 2 次；另外兩格�
 而那個 cvar 管的是「1 對 1／Studio 期間讀卡器畫不畫」——**回到讀卡器之後兩邊應該一樣**。
 那它為什麼會影響後面 30 張？可能是進出那一趟留下的狀態不同（畫布在隱藏期間放掉並重建 vs 一直抓著），
 也可能根本就是趟間差異。**這個疑問本身就是要再跑一趟的理由。**
+
+#### 更正：`D3D12.DeleteQueueMaxEOPTimeDelta` 不是「把釋放往後推」，而且資源記憶體這條路**本來就有圍欄**
+
+查引擎才寫，不要再轉第三個沒接上的旋鈕：
+
+- `D3D12.DeleteQueueMaxEOPTimeDelta`（`D3D12RHI.cpp:62-67`）的語意是
+  **「處理刪除佇列時，RHI 執行緒會為比這個時間差更舊的 EOP 工作停下來等它完成」**，
+  目的是「限制 RHI 執行緒能比其他執行緒超前多少」，**0 秒＝不停等**。
+  所以把它調到 10 **不會**讓「GPU 真的看不到那塊記憶體」晚 10 秒發生，
+  它只會讓 RHI 執行緒**更不受約束地往前跑**。方向和我們想測的那件事無關。
+- 更關鍵的是：**資源的延遲刪除本來就是圍欄過的**。`FD3D12DynamicRHI::EnqueueEndOfPipeTask`
+  （`D3D12RHI.cpp:320`）對每一個佇列建一個 `FD3D12SyncPoint`（`GPUAndCPU`），
+  把它們當成 EOP 工作的前置條件，刪除才在那個工作裡執行。
+  **所以凡是走 `FD3D12DeferredDeleteObject` 的東西，都要等 GPU 過了那個點才真的被放掉。**
+  「一張貼圖的記憶體在 draw 還在取樣時被釋放」**在這條路上不可能發生**——引擎已經擋住了。
+
+**那麼「釋放」那個相關性要重新解釋，而且有一個沒被圍欄保護的候選：bindless 描述子堆。**
+`FD3D12BindlessResourceManager::GarbageCollect`（`D3D12BindlessDescriptors.cpp:420`）
+把整個 GPU 堆在 active 與 pooled 之間搬，而且在 **`ERHIBindlessConfiguration::RayTracing`**
+（正是這台機器的設定）下，當堆有 `D3D12.Bindless.GarbageCollectLatency` 個 update cycle 沒被用到就
+**`ReleaseGPUHeaps()` 全部放掉**（預設 600）。**一個回到池子又被拿出來重用的堆，它的描述子會被覆寫**，
+而還在飛的命令列表若引用那個堆裡的描述子，讀到的就是覆寫後的東西——
+**就是「shader 取樣時 page fault、偏移固定、而資源本身還好好活著」**，和四次完全相同的
+`fragment_02 @ 0x00045f90` 對得上。
+
+所以下一格是 `D3D12.Bindless.GarbageCollectLatency`（`ECVF_ReadOnly`，啟動時給）：
+**6000（堆留久）對 1（馬上重用）**，clear 配方 30 張，和死在第 23 張的基線可比。
+6000 活下來而 1 明顯更早當 ⇒ 描述子堆重用就是機制；兩邊沒差 ⇒ 這條也不是，
+那就只能從 DRED 拿到的名字往下追，不要再轉 cvar。
