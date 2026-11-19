@@ -299,7 +299,7 @@
 ### 10.6 我接下来要做的（B 类，照优先）
 
 1. `apply` 换上衣时写 `sleevesType=0`；换配件时，新配件 `HideHair==1` 就把 `parentKey` 清成 `""`。都照原作的 `UpdateSelect…Kind`。**已写**（`appearance.rs` `coordinate`）：只在 id 真的换了时才改，重套同一个 id 不动，所以 `verify` 照样幂等。测试 `new_top_starts_at_sleeve_zero_and_hide_hair_accessory_drops_parent`，尚未编译。
-2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。
+2. `model.accessories.n.default_colors`（`defColor01..04`），给「颜色初期化」用。**暂缓，等能编译再写**：不能直接在 `AccessoryColorUse` 加栏位。查询结果以 bincode 存进 `.okmodel`，加了栏位，所有已录的模型都会读不回来。要另开一个 `accessory_default_colors` 查询（`memo_bytes_recorded`，没录到回 `None`），在转换器录进去，再对 ao_ 来源补录一次。e-fork-2 这次窗口的补录不含它。
 3. 父骨表补 `reverse` 对应（照原作 `ChaAccessoryDefine.GetReverseParent`），给「父骨左右反转」与「左右反转复制」用。**已写**：`Tools/ok-extract/data/editor_accessory_parents.json` 的 18 对共 36 列加了 `reverse`，没有对应的列不加（原作 `_ => ""`，反转钮不显示）。随 `properties` 的 `parents` 输出。测试 `accessory_parent_reverse_pairs_are_symmetric`，尚未编译。
 4. 查清楚：换上衣时子部件回补后，原作写回卡上的值，我们有没有照写。
 5. （低优先）服装间复制衣服、复制配件、槽位互换：UI 先用「读别套＋`set`」组合；要不要专用操作，等 UI 做过再说。
