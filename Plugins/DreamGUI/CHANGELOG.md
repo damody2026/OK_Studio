@@ -13,6 +13,10 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### New
 
+- **`DreamUI.UpdateRate` ticks a game world's UI a set number of times a second.** `30` runs behaviours, layout and
+  canvas updates 30 times a second while the UI is still drawn every frame; a tick is handed the time since the last one.
+  `0` (the default) keeps ticking every frame. See [Canvas](Docs/concepts/canvas.md#update-rate).
+
 - **Edge Anti-Aliasing: the outline of a mesh element is smooth without MSAA.** A Polygon, Shape, Ring, Path, PolygonLine,
   2D line or custom mesh, and an Image drawn as a RoundedBox or radially filled, now draws its outline with a strip one
   device pixel wide made by its own geometry: the outline's vertices move half a pixel in, keeping the texture in place,

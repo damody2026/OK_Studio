@@ -84,6 +84,41 @@ static TAutoConsoleVariable<int32> CVarDreamUIDeferTransformNotifications(
 	TEXT("widget and its whole subtree. World transforms are composed when they are read either way."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarDreamUIUpdateRate(
+	TEXT("DreamUI.UpdateRate"),
+	0.0f,
+	TEXT("Updates per second of a game world's UI -- behaviours, layout, clips and the canvases' geometry -- independent of the ")
+	TEXT("frame rate: 30 updates the UI at most 30 times a second while the 3D view renders every frame (what is on screen is ")
+	TEXT("drawn every frame from the last update). Time is not lost: an update advances behaviours, scrolling and animations by ")
+	TEXT("the seconds since the last one. 0 (default): every frame."),
+	ECVF_Default);
+
+bool UDreamUIManagerWorldSubsystem::ConsumeUpdateRateFrame(float InDeltaTime, float& OutDeltaTime)
+{
+	SecondsSinceUpdate += InDeltaTime;
+	const float Rate = CVarDreamUIUpdateRate.GetValueOnGameThread();
+	const UWorld* World = GetWorld();
+	if (Rate > 0.0f && World != nullptr && World->IsGameWorld())
+	{
+		const float Interval = 1.0f / Rate;
+		UpdateIntervalPhase += InDeltaTime;
+		if (UpdateIntervalPhase < Interval)
+		{
+			return false;
+		}
+		// Kept on the schedule (30 a second stays 30 a second at any frame rate), but never more than one interval behind:
+		// after a long frame the next update waits a whole interval again rather than firing on several frames in a row.
+		UpdateIntervalPhase = FMath::Min(UpdateIntervalPhase - Interval, Interval);
+	}
+	else
+	{
+		UpdateIntervalPhase = 0.0f;
+	}
+	OutDeltaTime = SecondsSinceUpdate;
+	SecondsSinceUpdate = 0.0f;
+	return true;
+}
+
 void UDreamUIManagerWorldSubsystem::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -95,7 +130,11 @@ void UDreamUIManagerWorldSubsystem::Tick(float DeltaTime)
 	if (bShouldTickInEditor)
 #endif
 	{
-		this->TickDreamUI(DeltaTime);
+		float UpdateDeltaTime = DeltaTime;
+		if (ConsumeUpdateRateFrame(DeltaTime, UpdateDeltaTime))
+		{
+			this->TickDreamUI(UpdateDeltaTime);
+		}
 	}
 }
 

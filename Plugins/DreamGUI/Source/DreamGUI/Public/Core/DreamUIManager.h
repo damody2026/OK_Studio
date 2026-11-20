@@ -148,6 +148,12 @@ public:
 	virtual bool IsTickableInEditor()const override{ return false; }//use Ticker in editor, because Ticker can also tick when drag vector2/3 value while normal tick can't
 	virtual void Tick(float DeltaTime)override;
 	void TickDreamUI(float DeltaTime);
+	/**
+	 * Whether this frame updates the UI under DreamUI.UpdateRate, and with how much time: the seconds since the last update,
+	 * so behaviours, scrolling and animations advance by real time at any rate. Every frame when the rate is 0 or above the
+	 * frame rate. Game worlds only; editor previews always update.
+	 */
+	bool ConsumeUpdateRateFrame(float InDeltaTime, float& OutDeltaTime);
 	void OnWorldPreSendAllEndOfFrameUpdates(UWorld* InWorld);
 #if WITH_EDITOR
 	void DrawHelperGizmo();
@@ -475,6 +481,9 @@ private:
 	/** The frame the world's end-of-frame updates last submitted the canvases in, and whether they updated since. */
 	uint64 LastEndOfFrameSubmitFrame = MAX_uint64;
 	bool bCanvasesUpdatedSinceSubmit = true;
+	/** DreamUI.UpdateRate: seconds since the UI last updated, and how far into the current update interval this frame is. */
+	float SecondsSinceUpdate = 0.0f;
+	float UpdateIntervalPhase = 0.0f;
 	/**
 	 * The canvases that asked to be drawn to their render targets (AddRenderTargetDrawRequest) and to be sorted
 	 * (AddRenderPrioritySortRequest): what the submit and the tick look at, instead of every registered canvas every frame.

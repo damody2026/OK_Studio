@@ -1,6 +1,6 @@
 ---
 title: Canvas
-description: What UDreamCanvas does — batch a subtree into draw calls — with root and nested canvases, the four render modes, scaling and projection, sort order, what per-widget perspective needs, the screen root made on demand, and what DreamUI.Stats measures.
+description: What UDreamCanvas does — batch a subtree into draw calls — with root and nested canvases, the four render modes, scaling and projection, sort order, what per-widget perspective needs, the screen root made on demand, the update rate, and what DreamUI.Stats measures.
 ---
 
 A canvas (`UDreamCanvas`) is what turns a tree of widgets into a picture. It is a **behaviour** — a `UDreamUIBehaviour`
@@ -156,6 +156,14 @@ The root Blueprints placed in levels before 2.0 (`ScreenSpaceRoot`, `WorldSpaceR
 moves or changes colour keeps updating — and a rebuild asked for meanwhile happens the moment it is released. It is what
 Slate's `UInvalidationBox` does for cached draw elements, done for DreamGUI's draw calls, and the `UDreamInvalidationBox`
 behaviour drives it.
+
+## Update rate
+
+`DreamUI.UpdateRate` sets how many times a second a game world's UI manager ticks: behaviours, layout, clips and
+every root canvas's update. `0`, the default, ticks every frame. At `30` a 240 Hz frame rate ticks the UI on about one
+frame in eight, and the frames between draw the meshes the last tick left, so the screen still shows the UI every frame.
+A tick that comes after skipped frames is handed the time since the last one, so animations driven by the tick keep
+their speed. Editor worlds and previews always tick every frame. Tweens and input are not held back by it.
 
 ## What DreamUI.Stats measures
 
