@@ -1,4 +1,4 @@
-﻿# 試錯與回退紀錄
+# 試錯與回退紀錄
 
 這份紀錄供 `HANDOFF2.md` 的實作與驗證使用。每次出現錯誤、視覺退步或錯誤推論，當次增列一筆：寫明變更、可重現的症狀、已證實與仍待查的原因、回退／修正、下一次試驗前的檢查。未證實的原因不得寫成結論；保留診斷圖片與 log 路徑。正式截圖只放在 `Saved/Screenshots` 根目錄，失敗圖放 `Saved/DebugShots`。
 
@@ -6871,3 +6871,10 @@ OKReaderScreen.cpp(1224,37): error C2027: 使用未定义型别 'FTexture2DMipMa
   - 公式預測全部落空，本身就支持「沒接上」：參數沒到材質，任何從公式推出的預測都不會成立。
 - 待修（窗口後那一批）：把皮膚與頭髮的 `ambientRgb` 改成讀 `_ambientshadowG` 向量參數（預設 0.502），讓 setter 真的到達。接好後再用 1c 的三組設定與預測量重拍。
 - 還沒查：Forge 家族（`KKForgeOpaque/Alpha/Item`、`KKMainItemPlus`）的材質圖有 `_ambientshadowG` 參數（R1145 的 uasset 名稱表裡有），但它在圖裡是否影響亮度，要在窗口後加日誌或看圖。
+
+## 2026-11-20 讀卡器 GPU PageFault：先做了止血才找根因，而且一度把兇手認成 DreamGUI（C 組 c-pagefault）
+- 錯在哪：先交了「空的 pool heap 不交回」的止血（`RetainEmptyPoolMB=2048`），使用者指出要修根因；查找期間又照「閃退是換 DreamGUI 後才有」一直在 DreamGUI 與它綁的貼圖裡找，實驗做了三十多趟。
+- 真正的根因在引擎：online descriptor heap 的格子重複使用時不清空，沒被寫到的格子留著很久以前的 SRV 描述子；RTX 5090 會讀綁定表附近、著色器不取樣的描述子，指到已交回的 pool heap 就裝置移除。DreamGUI 的 Main 槽每筆 draw 換貼圖、每筆都重建表，只是最常踩到。
+- 決定性的量測是「記下每次抄進表的資源 GPU 範圍，故障時看誰涵蓋故障位址」：0 次，而那塊記憶體 850 幀前就釋放了。這一步早點做，就不必一層層排除（heap 綁定、懸空 view、resource、bindless 各花一趟以上）。
+- 修正：引擎補丁 `ClearRecycledOnlineDescriptors.patch`（區塊回收時清成 null），止血已撤回。紀錄在 `Docs/CARD_READER_GPU_PAGEFAULT_SLOTS_20261120.md` 第 10 節。
+- 下次：GPU 讀到已釋放記憶體時，先量「GPU 用的描述子是誰、什麼時候寫的」，不要先假設是綁定那一層的物件生命週期。

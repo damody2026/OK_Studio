@@ -16,7 +16,7 @@
 | 新增動畫庫的完整蒙皮矩陣計算著色器 | `../Patches/MatrixBank/` | — |
 | 不透明 base pass 可依 primitive 的 TranslucencySortPriority 排序（`r.OK.OpaqueSortPriority`） | 重合服裝層（Material Editor 複製材質、重複飾品）照 Unity 繪製順序，不再閃爍（`OpaqueSortPriority.patch`，見 [計畫](../../Docs/OPAQUE_DRAW_ORDER_ENGINE_PLAN.md)） | `OKOpaqueSortPriority` |
 | GPU 蒙皮 morph 雙緩衝：目前緩衝尚未寫入時改讀有資料的緩衝，不再 check 失敗 | OK Studio 載入場景時偶發 `Assertion failed: Index == 1`（`FMorphVertexBufferPool::GetReadingIndex`）當機（`MorphDoubleBufferRead.patch`） | — |
-| D3D12：空的 pool heap 可保留不交回（`D3D12.OK.RetainEmptyPoolMB`，預設 0） | 讀卡器連續開卡的 `LogD3D12RHI: Error: PageFault`：有個像素著色器透過舊描述子讀到已釋放的卡片貼圖，而那塊 64 MB heap 已交回、位址沒有映射。heap 保留時同樣的讀取只會讀到錯的內容、不會造成裝置移除。專案在 `Config/DefaultEngine.ini` 設 2048（`RetainEmptyPoolHeaps.patch`，見 [交接](../../Docs/CARD_READER_GPU_PAGEFAULT_HANDOFF_20261120.md)） | — |
+| D3D12：online view descriptor 區塊回收時清成 null 描述子（`D3D12.ClearRecycledOnlineDescriptors`，預設 1） | 讀卡器連續開卡的 `LogD3D12RHI: Error: PageFault`（DreamGUI `MainPS`）：online heap 沒被寫到的格子留著很久以前的 SRV 描述子，NVIDIA 硬體會讀綁定表附近、著色器不取樣的描述子，指到已交回的 pool heap 就是裝置移除。清空後 heap 裡沒有比區塊這次使用更舊的描述子（`ClearRecycledOnlineDescriptors.patch`，見 [查找紀錄](../../Docs/CARD_READER_GPU_PAGEFAULT_SLOTS_20261120.md) 第 10 節）。取代先前的止血 `RetainEmptyPoolHeaps.patch`（已撤回） | — |
 
 不搬的項目：
 - `BitwiseDecodeScopes.patch`：只加 profiler 範圍，D: 也沒有套。

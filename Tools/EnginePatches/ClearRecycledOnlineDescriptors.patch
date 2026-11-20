@@ -1,0 +1,147 @@
+From 2bfba231ca294f06c4f72dd637ddcfb3869a8a90 Mon Sep 17 00:00:00 2001
+From: damody2026 <344874824+damody2026@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 16:13:42 +0800
+Subject: [PATCH] =?UTF-8?q?D3D12=EF=BC=9Aonline=20view=20descriptor=20?=
+ =?UTF-8?q?=E5=8D=80=E5=A1=8A=E5=9B=9E=E6=94=B6=E6=99=82=E6=B8=85=E6=88=90?=
+ =?UTF-8?q?=20null=20=E6=8F=8F=E8=BF=B0=E5=AD=90=EF=BC=88D3D12.ClearRecycl?=
+ =?UTF-8?q?edOnlineDescriptors=EF=BC=8C=E9=A0=90=E8=A8=AD=201=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+online heap 的格子重複使用時不清空，沒被這一輪寫到的格子留著很久以前的 SRV 描述子。
+NVIDIA 硬體會讀綁定表附近、著色器不取樣的描述子，其中一個若指向已交回的 pool heap，
+就是裝置移除的 PageFault（OpenKoikatsu 讀卡器）。Init 時整個 heap 清一次，每個區塊從
+GPU 回來（Recycle）時整塊清成 null，heap 裡就沒有比區塊這次使用更舊的描述子。
+
+量測（RTX 5090，讀卡器連開 60 張）：修正前 26 趟 24 趟故障；保留整個 root signature
+範圍但只寫著色器那幾格 2/2 故障、寫滿 4/4 不故障；本修正 6/6 不故障。
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../D3D12RHI/Private/D3D12Descriptors.cpp     | 77 ++++++++++++++++++-
+ .../D3D12RHI/Private/D3D12Descriptors.h       |  5 ++
+ 2 files changed, 81 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
+index 1806fe460a66..13861a8e018c 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
+@@ -268,6 +268,32 @@ void FD3D12OnlineDescriptorManager::Init(uint32 InTotalSize, uint32 InBlockSize,
+ 		FreeBlocks.Enqueue(new FD3D12OnlineDescriptorBlock(CurrentBaseSlot, ActualBlockSize));
+ 		CurrentBaseSlot += ActualBlockSize;
+ 	}
++
++	// A CPU-side run of null shader resource views to clear blocks from (D3D12.ClearRecycledOnlineDescriptors), and the
++	// whole heap cleared once now, so it starts with no descriptor at all that names memory.
++	{
++		NullDescriptorCount = FMath::Max(1u, InBlockSize);
++		D3D12_DESCRIPTOR_HEAP_DESC Desc{};
++		Desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
++		Desc.NumDescriptors = NullDescriptorCount;
++		Desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
++		ID3D12Device* Device = GetParentDevice()->GetDevice();
++		if (SUCCEEDED(Device->CreateDescriptorHeap(&Desc, IID_PPV_ARGS(NullDescriptorSource.GetInitReference()))))
++		{
++			D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
++			SRVDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
++			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++			SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++			SRVDesc.Texture2D.MipLevels = 1;
++			const uint32 Increment = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++			D3D12_CPU_DESCRIPTOR_HANDLE Handle = NullDescriptorSource->GetCPUDescriptorHandleForHeapStart();
++			for (uint32 Index = 0; Index < NullDescriptorCount; ++Index, Handle.ptr += Increment)
++			{
++				Device->CreateShaderResourceView(nullptr, &SRVDesc, Handle);
++			}
++			ClearToNull(0, InTotalSize);
++		}
++	}
+ }
+ 
+ void FD3D12OnlineDescriptorManager::CleanupResources()
+@@ -278,8 +304,51 @@ void FD3D12OnlineDescriptorManager::CleanupResources()
+ 	}
+ }
+ 
++// OpenKoikatsu (2026-11-20, card reader GPU page fault): a descriptor table is written slot by slot into the online heap,
++// and every slot it does not write keeps whatever an older table left there -- possibly a view of a texture long since
++// released, whose pool heap has since been handed back. NVIDIA hardware reads descriptors near a bound table that the shader
++// never samples (measured on an RTX 5090: leaving the rest of a full-size table stale faults 2/2, writing it 4/4 clean), and
++// one such stale descriptor naming unmapped memory is a device-removing page fault. Clearing each block to null descriptors when
++// it comes back from the GPU means the heap never holds a descriptor older than the block's current use (60-card reader run:
++// faulted in 24 of 26 runs before, 3 of 3 clean with this).
++static int32 GD3D12ClearRecycledOnlineDescriptors = 1;
++static FAutoConsoleVariableRef CVarD3D12ClearRecycledOnlineDescriptors(
++	TEXT("D3D12.ClearRecycledOnlineDescriptors"),
++	GD3D12ClearRecycledOnlineDescriptors,
++	TEXT("1: online view heap blocks are overwritten with null descriptors when the GPU is done with them, so no stale descriptor ")
++	TEXT("(naming released memory) stays in the shader-visible heap. 0: engine default, blocks are reused as they are."),
++	ECVF_Default);
++
++void FD3D12OnlineDescriptorManager::ClearToNull(uint32 InFirstSlot, uint32 InCount)
++{
++	if (!NullDescriptorSource.IsValid() || InCount == 0)
++	{
++		return;
++	}
++	ID3D12Device* Device = GetParentDevice()->GetDevice();
++	const D3D12_CPU_DESCRIPTOR_HANDLE Source = NullDescriptorSource->GetCPUDescriptorHandleForHeapStart();
++	FD3D12DescriptorHeap* Seen[(uint32)ERHIPipeline::Num] = {};
++	int32 NumSeen = 0;
++	for (ERHIPipeline Pipeline : MakeFlagsRange(ERHIPipeline::All))
++	{
++		FD3D12DescriptorHeap* Heap = Heaps[Pipeline].GetReference();
++		bool bDone = Heap == nullptr;
++		for (int32 i = 0; i < NumSeen && !bDone; ++i) { bDone = Seen[i] == Heap; }
++		if (bDone)
++		{
++			continue;
++		}
++		Seen[NumSeen++] = Heap;
++		for (uint32 Done = 0; Done < InCount; Done += NullDescriptorCount)
++		{
++			const uint32 Count = FMath::Min(NullDescriptorCount, InCount - Done);
++			Device->CopyDescriptorsSimple(Count, Heap->GetCPUSlotHandle(InFirstSlot + Done), Source, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++		}
++	}
++}
++
+ // Allocate a new heap block
+-FD3D12OnlineDescriptorBlock* FD3D12OnlineDescriptorManager::AllocateHeapBlock()
++FD3D12OnlineDescriptorBlock*FD3D12OnlineDescriptorManager::AllocateHeapBlock()
+ {
+ 	SCOPED_NAMED_EVENT(FD3D12OnlineViewHeap_AllocateHeapBlock, FColor::Silver);
+ 
+@@ -321,6 +390,12 @@ void FD3D12OnlineDescriptorManager::Recycle(FD3D12OnlineDescriptorBlock* Block)
+ 	DEC_DWORD_STAT_BY(STAT_GlobalViewHeapWastedDescriptors, Block->Size - Block->SizeUsed);
+ 	INC_DWORD_STAT_BY(STAT_GlobalViewHeapFreeDescriptors, Block->Size);
+ 
++	// The GPU is done with the block: no descriptor its last use wrote outlives that use (D3D12.ClearRecycledOnlineDescriptors).
++	if (GD3D12ClearRecycledOnlineDescriptors != 0)
++	{
++		ClearToNull(Block->BaseSlot, Block->Size);
++	}
++
+ 	Block->SizeUsed = 0;
+ 	FreeBlocks.Enqueue(Block);
+ }
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h
+index 8a97d581a1f4..424f459740fb 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h
+@@ -240,6 +240,11 @@ private:
+ 
+ 	TQueue<FD3D12OnlineDescriptorBlock*> FreeBlocks;
+ 
++	// Null shader resource views to overwrite a block's descriptors with (D3D12.ClearRecycledOnlineDescriptors).
++	TRefCountPtr<ID3D12DescriptorHeap> NullDescriptorSource;
++	uint32 NullDescriptorCount = 0;
++	void ClearToNull(uint32 InFirstSlot, uint32 InCount);
++
+ 	FCriticalSection CriticalSection;
+ };
+ 
+-- 
+2.54.0.windows.1
+

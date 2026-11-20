@@ -1,5 +1,7 @@
 # 讀卡器 GPU PageFault 交接（2026-11-20，整合時封存）
 
+**2026-11-20 下午已找到根因並修正**：引擎 online descriptor heap 留著舊描述子，硬體讀到指向已交回 heap 的那一個。見 [查找紀錄](CARD_READER_GPU_PAGEFAULT_SLOTS_20261120.md) 第 10 節；第 9 節的止血已撤回。以下是當時的交接內容。
+
 這份是接手這個當機的人要先讀的東西。**持有者還沒指認**，但排除面已經很大，而且每一條排除都附了「什麼觀察會讓它復活」。
 整合（三樹合一、推上 master）在這一刻發生，所以下面提到的 commit 都在 `master` 上。
 
@@ -155,6 +157,8 @@ DreamGUI 去裸指標那一輪（`c9fd56d5d`、`2e0a02bdf`，F 樹原生，整�
 - 1/3、2/3 一律記「沒有結論」；某趟 `Shader Hash` 不同就是另一個故障，那趟不算。
 
 ## 9. 止血修法：空的 pool heap 不交回（2026-11-20 08:00–08:32，C 樹）
+
+> **已撤回（2026-11-20 下午）**：引擎 revert `db4ae5671283`、`Config/DefaultEngine.ini` 那行已刪、`RetainEmptyPoolHeaps.patch` 已移除。根因修正是 `ClearRecycledOnlineDescriptors.patch`，見 [查找紀錄](CARD_READER_GPU_PAGEFAULT_SLOTS_20261120.md) 第 10 節。
 
 持有者仍未指認，但第 2 節已經量死「故障 = 讀到一塊**已交回、沒有映射**的 heap」：
 那塊 64 MB `PoolAllocator Heap` 只要還在，同樣的讀取只會讀到錯的內容，不會頁錯誤。所以不等指認，直接讓空的 pool heap 留著。
