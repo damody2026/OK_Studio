@@ -321,6 +321,9 @@ public:
 	// ok.ClothGpu (ok_cloth_gpu_set / ok_cloth_gpu_moves): her garments with their own rig stay on the GPU route under the
 	// push and the jiggle; this pose's moves of one, dense per source vertex (native metres after the post correction),
 	// empty when none moved. False: bad input.
+	static void SetClothPx(int32 Mode); // ok.ClothPx: skirts/sleeves as PhysX cloth, 0 off (DynamicBone), 1 both, 2 skirts, 3 sleeves
+	bool ClothPxPart(int32 Part) const; // this garment is PhysX cloth now (drawn from its CPU vertices)
+	static int32 ClothPxStats(float* Out, int32 Max); // [cloths, particles, free, steps, mean step ms, max offset mm, clamped, pushed]
 	static void SetClothGpu(int32 Mode); // ok.ClothGpu: 0 CPU, 1 moves added on the GPU, 2 worked out on the GPU
 	int32 ClothGpuJob(int32 Part) const; // -1 not this route, 0 moves (ClothGpuMoves), >0 on the GPU (garment revision)
 	bool ClothGpuField(TArray<uint32>& Out) const; // this pose's skin field for ClothCover.usf

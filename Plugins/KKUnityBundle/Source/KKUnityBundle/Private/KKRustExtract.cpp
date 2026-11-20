@@ -384,6 +384,9 @@ bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutP
 		OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
 	return true; }
 void FOkSession::SetClothGpu(int32 Mode){ok_cloth_gpu_set(Mode);}
+void FOkSession::SetClothPx(int32 Mode){ok_cloth_px_set(Mode);}
+bool FOkSession::ClothPxPart(int32 Part) const{return Handle&&Part>=0&&ok_cloth_px_part(Handle,Part)==1;}
+int32 FOkSession::ClothPxStats(float* Out,int32 Max){return Out&&Max>0?ok_cloth_px_stats(Out,uint32(Max)):0;}
 int32 FOkSession::ClothGpuJob(int32 Part) const {return Handle&&Part>=0?ok_cloth_gpu_job(Handle,Part):-1;}
 // Read once at the size last seen (a field is read every frame and is bigger than any first guess: read twice otherwise).
 static bool OKClothWords(TArray<uint32>& Out,TFunctionRef<int32(uint32*,uint32)> Read,int32& SizeHint){

@@ -175,6 +175,15 @@ static TAutoConsoleVariable<int32> CVarOkPrivateGpuStreams(TEXT("ok.Animation.Pr
 static TAutoConsoleVariable<int32> CVarOkClothGpu(TEXT("ok.ClothGpu"),2,TEXT("2 (default): her garments' cloth push and thigh jiggle worked out on the GPU (ClothCover.usf); 1: only the moves added on the GPU; 0: drawn from CPU vertices"));
 static int32 OKClothGpuMode(){const int32 Mode=FMath::Clamp(CVarOkClothGpu.GetValueOnGameThread(),0,2);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothGpu(Mode);}return Mode;}
 static bool OKClothGpuOn(){return OKClothGpuMode()>=1;}
+// Skirts and sleeves as PhysX cloth (ok_extract cloth_px + OKPhysXSecondary PxDeformableSurface on the GPU, user 2026-11-20).
+// The cloth region, its pins and max distances come from the garment's skirt/arm bone weights; the skirt's DynamicBones stay
+// off while it is cloth. 0 gives the DynamicBones back. See Docs/CLOTH_PHYSX_SKIRT_SLEEVE.md.
+static TAutoConsoleVariable<int32> CVarOkClothPx(TEXT("ok.ClothPx"),1,TEXT("Skirts and sleeves as PhysX cloth: 1 (default) both, 2 skirts only, 3 sleeves only, 0 off (their DynamicBones as before)"));
+static int32 OKClothPxMode(){const int32 Mode=FMath::Clamp(CVarOkClothPx.GetValueOnGameThread(),0,3);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothPx(Mode);}return Mode;}
+static FAutoConsoleCommand GOKClothPxStats(TEXT("ok.ClothPxStats"),TEXT("Log the PhysX cloth since the last call: cloths, particles, free particles, steps, mean step ms, largest offset mm, clamped, pushed"),
+    FConsoleCommandDelegate::CreateLambda([]{float V[8]={};const int32 N=FOkSession::ClothPxStats(V,8);
+        UE_LOG(LogTemp,Display,TEXT("Cloth px: mode %d, %d cloths, %d particles (%d free), %d steps, %.3f ms/step, largest offset %.1f mm, clamped %d, pushed %d"),
+            OKClothPxMode(),N>0?int32(V[0]):0,int32(V[1]),int32(V[2]),int32(V[3]),V[4],V[5],int32(V[6]),int32(V[7]));}));
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayParity(TEXT("ok.Animation.NativeDisplayParity"),0,TEXT("Verify native worker display against uncached canonical draw formula."));
 static TAutoConsoleVariable<int32> CVarOkRestNormalCache(TEXT("ok.Animation.RestNormalCache"),1,TEXT("Reuse exact immutable rest-normal normalization built at runtime character load."));
 static TAutoConsoleVariable<int32> CVarOkZeroOffsetRotation(TEXT("ok.Animation.ZeroOffsetRotation"),1,TEXT("Skip identity rotation of zero-offset base surfaces; retain source-position addition."));
@@ -8346,6 +8355,7 @@ static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkPrivateGpuGates(TEXT("
     TArray<FString> Why;
     if(!C)Why.Add(TEXT("not affine"));if(P.bSlotAttached)Why.Add(TEXT("slot"));if(P.bFaceSphereNormals)Why.Add(TEXT("face normals"));
     if(P.SessionIndex==INDEX_NONE)Why.Add(TEXT("no session part"));else if(A->Session.MorphCount(P.SessionIndex)!=0)Why.Add(FString::Printf(TEXT("morphs %d"),A->Session.MorphCount(P.SessionIndex)));
+    if(A->Session.ClothPxPart(P.SessionIndex))Why.Add(TEXT("physx cloth"));
     if(A->CpuSkinnedParts.Contains(P.SessionIndex))Why.Add(TEXT("cpu skinned (cover)"));if(A->JiggleCpuParts.Contains(P.SessionIndex))Why.Add(TEXT("jiggle"));
     if(C&&(!C->SceneProxy||!C->UsesAnimatedStreams()))Why.Add(TEXT("no proxy/streams"));if(C&&C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)Why.Add(TEXT("collision"));
     const bool bOn=P.PrivateGpuDisplay.IsValid();(bOn?Gpu:Cpu)++;
@@ -8369,7 +8379,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  };
  bool bGated;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuGate);
  // ok.ClothGpu: the garments the push or the jiggle moves stay on this route, their moves added by the GPU (cloth_gpu).
- bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||(!OKClothGpuOn()&&(CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex)));}
+ bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||(!OKClothGpuOn()&&(CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex)))||(OKClothPxMode()>0&&Session.ClothPxPart(Part.SessionIndex));}
  if(bGated)return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
  // No scene proxy (a hidden part: her hair ornament and top halves not shown in this pose): nothing to install, so no
@@ -11712,6 +11722,7 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 	if (bSceneDrivenPose && bStudioItemShading && PoseMode == 0 && !bShapeDirty) { SetActorTickEnabled(false); return; }
  const bool Profile=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ANIM_PROFILE"))==TEXT("1");const double Begin=FPlatformTime::Seconds();
 	Super::Tick(DeltaSeconds);
+	OKClothPxMode();
 	PublishPhysicsFrame();
 	// The face pressed flat along the view (ok.FaceFlatten): the head and the player camera.
 	if (!FlatFaceMaterials.IsEmpty() && BodySkel)

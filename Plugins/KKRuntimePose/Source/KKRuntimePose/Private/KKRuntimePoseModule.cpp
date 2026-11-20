@@ -36,7 +36,7 @@ static void OKDefaultBaseLibrary(){
  const FString Library=FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()/TEXT("IndependentResources/base_v1"));
  if(FPaths::FileExists(Library/TEXT("oklib.json")))FPlatformMisc::SetEnvironmentVar(TEXT("OK_BASE_LIBRARY"),*Library);
 }
-class FKKRuntimePoseModule:public IModuleInterface {void StartupModule()override{FModuleManager::LoadModuleChecked<IModuleInterface>(TEXT("ImageWrapper"));OKDefaultBaseLibrary();OKRuntimeNativeBindings();OKPhysXSecondary::Register(&ok_set_physx_dynamic_solver);OKPhysXSecondary::RegisterTuning(&ok_set_secondary_tuning_source);}};
+class FKKRuntimePoseModule:public IModuleInterface {void StartupModule()override{FModuleManager::LoadModuleChecked<IModuleInterface>(TEXT("ImageWrapper"));OKDefaultBaseLibrary();OKRuntimeNativeBindings();OKPhysXSecondary::Register(&ok_set_physx_dynamic_solver);OKPhysXSecondary::RegisterCloth(&ok_set_physx_cloth);OKPhysXSecondary::RegisterTuning(&ok_set_secondary_tuning_source);}};
 TFuture<FKKRuntimeSnapshotResult> OKOpenRuntimePoseSnapshotAsync(FString Apng,int32 Outfit,TArray<uint8> InitializationCurves){
  return Async(EAsyncExecution::ThreadPool,[Apng=MoveTemp(Apng),Outfit,InitializationCurves=MoveTemp(InitializationCurves)](){
   const double Start=FPlatformTime::Seconds();FKKRuntimeSnapshotResult R;R.WorkerThread=!IsInGameThread();
