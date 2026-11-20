@@ -136,6 +136,9 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     // Not mixed either: a cf_j_sk corner of such a garment as cloth beside its DynamicBone drape jagged at the seam
     // and was made again every few seconds (the drape moves it 35%).
     if own_sleeves && !chain_sleeves { return None; }
+    // Nor any garment whose bones were grafted onto the body: its chains keep running in the shared clothes rig, and
+    // the cloth beside them rose 10 cm into the body (the kimono front apron on cf_j_sk, raw dy +100 mm, 2026-11-21).
+    if !runtime.implanted_bones().is_empty() && !chain_sleeves { return None; }
     let want_sleeve = want_sleeve && !own_sleeves;
     let sides: Vec<Option<usize>> = src.bone_names.iter().map(|b| arm_side(b)).collect();
     let mut kind = vec![0u8; n];
