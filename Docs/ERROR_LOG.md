@@ -6988,3 +6988,23 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   记成「读法写错」而不是改读法。
 - 结果：`ok.Studio.ItemOpenPool`（常驻执行绪池）`sync_gate_ms` 11 860 → 682 ms，`ready_ms` 63 093 → 61 786，
   峰值记忆体没变；详见 [Docs/OK_STUDIO_ITEM_OPEN_POOL_20261120.md](OK_STUDIO_ITEM_OPEN_POOL_20261120.md)。
+
+## 2026-11-20 PhysX 布料（裙子／袖子）一路上的錯（C 組 c-cloth-px）
+
+詳細做法與量測見 [Docs/CLOTH_PHYSX_SKIRT_SLEEVE.md](CLOTH_PHYSX_SKIRT_SLEEVE.md)。
+
+- **PhysXGpu.dll 載不到**：Flex 外掛 stage 了 DLL，但 PhysX 從程序目錄找，出現「Failed to load PhysXGpu.dll」。改成先用 Push/PopDllDirectory 從外掛的 `Binaries/ThirdParty/Win64` 預載 `cudart64_12.dll` 與 `PhysXGpu.dll`，並在 `Build.cs` 列為 RuntimeDependencies。
+- **建置錯**：只有巨集的 `if` 後接 `else`（UE_LOG 要加大括號）、`PxCudaHelpersExt` 在 `Ext::` 命名空間、缺 `HAL/PlatformTime.h`、旗標組合要寫成 `PxDeformableSurfaceDataFlags(...)`。
+- **讀卡器一步都沒跑**：讀卡器走 dt=0 的蒙皮路徑，布料從不前進。改成 dt 為 0 時用距離上次的實際時間（≥4 ms，上限 0.1 s）。
+- **同步太慢**：同步每幀 40 ms；改成每幀一次上傳／讀回仍要 21 ms；非同步但下一幀等它要 30 ms（32 FPS）。原因是渲染器也在用同一張 GPU，PhysX 每個子步等 7–11 ms。最後改成從不等待的背景工作，主執行緒每步 0.01–0.05 ms。
+- **袖子露出手臂、大腿穿過裙子**：用世界座標存的偏移不會跟著手臂轉，改成每個粒子局部座標系（法線＋鄰邊）搬運；每幀以目標推算的 capsule 限制讓邁步的腿穿過裙子，改成建立時擬合的背擋半徑。
+- **裙子前面一道縫**：只焊位置完全相同的頂點，接縫兩邊差一點點就沒焊上。改成 0.3 mm 內格點搜尋焊接。
+- **裙子比 DynamicBone 長 10 cm**：軟 FEM 被自重拉長。加 LRA；試過直接把 Youngs 拉到 5e6，裙子皺成一圈，改回 2e5。
+- **錯推論：以為是 LRA 讓裙子變短**（春野千佳走路時裙子縮在臀部）。先改成測地距離，沒用；接著逐一關掉 LRA、碰撞、背擋、回寫、局部座標搬運，看起來都沒用。之後加了 `OK_CLOTH_PX_DEBUG` 記錄「原始結果相對目標的平均 dy」，才看出 GPU 原始結果本身就高 5 cm，然後一個一個拆出四個疊在一起的原因：
+  1. `Thickness` 3 mm：GPU 布料自己往上往內縮。改 0.5 mm 後，站著平均下垂 4.6 mm。
+  2. 彎曲剛度：走一段路後褶子翻到鏡像 rest 角，被彎曲撐住（站回去也不會掉下來）。含裙子的布料改成 bending 0；只有袖子的維持 0.02，不然惠惠的喇叭袖會塌到袖口。
+  3. 建立時的姿勢：PhysX 只在建立時記 rest，之後上傳 rest positions 量不出差別。讀卡器第一幀是 bind pose，那時剛性裙子比走路動畫裡高 3–5 cm。改成姿勢動滿 1.5 秒才建（0.5 秒時從 bind pose 淡入的過渡還沒結束，量到 +46 mm）。
+  4. LRA 長度取自建立時：動作的裙骨 key 把裙子拉得比 bind pose 長，LRA 反而把下擺往上拉。改成至少等於目前目標的長度。
+  - 中間也修了幾個真問題，但都不是主因：雙面網格去重後三角形繞向不一致（改成統一繞向）、退化三角形把粒子甩到幾公尺外（改成去掉，沒有三角形的粒子固定）、每步覆寫位置但沒覆寫速度（改成一起上傳推算的速度）。
+- **教訓**：多個原因疊在一起時，一次關一個，每次都「還是壞」，很容易誤以為那一項無關。先量**原始輸出**（還沒套任何後處理的 GPU 結果）相對目標的偏差，再一層一層加回去，才分得出各自的貢獻。用肉眼看截圖判斷，比看數字慢很多。
+- **共用工作樹**：曾想用 `git checkout` 還原自己在 `dbone.rs` 的暫時修改，被自動模式擋下（會蓋掉別人的改動）。改用 Lua 精準移除自己的 hunk。
