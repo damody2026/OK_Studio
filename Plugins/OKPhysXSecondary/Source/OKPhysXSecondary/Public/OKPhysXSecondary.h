@@ -67,4 +67,15 @@ namespace OKPhysXSecondary
 	/** Full-body ragdoll (FOKPxBone[Count], in/out). Count 0 only reports whether it is enabled. */
 	OKPHYSXSECONDARY_API int32 Ragdoll(uint64 Group, void* Bones, uint32 Count, float Dt);
 	OKPHYSXSECONDARY_API void PublishBody(uint64 Group, const void* Capsules, uint32 Count);
+	/**
+	 * Skirts and sleeves as PhysX cloth (PxDeformableSurface on the GPU) for ok_extract's cloth_px: installs the host into
+	 * the calling module's ok_extract copy (pass &ok_set_physx_cloth). See OKPhysXCloth.cpp.
+	 */
+	/** Flags bit 0: the garment has a skirt (made without bending). */
+	using FClothCreateFn = int32 (*)(uint64 Key, uint32 N, const float* Pos, const float* InvMass, uint32 TriN, const uint32* Tris, uint32 Flags);
+	using FClothStepFn = int32 (*)(uint64 Key, uint32 N, const float* Targets, const float* Prev, const void* Capsules, uint32 CapN, float Dt, float* Out);
+	using FClothReleaseFn = void (*)(uint64 Key);
+	using FSetClothFn = void (*)(FClothCreateFn, FClothStepFn, FClothReleaseFn);
+	OKPHYSXSECONDARY_API void RegisterCloth(FSetClothFn SetCloth);
+	void ShutdownCloth();
 }

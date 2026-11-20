@@ -55,6 +55,13 @@ public class OKPhysXSecondary : ModuleRules
 			RuntimeDependencies.Add(Path.Combine(BinaryDirectory, Name + ".dll"), Dll);
 		}
 		RuntimeDependencies.Add(Path.Combine(BinaryDirectory, "PhysX-LICENSE.md"), Path.Combine(FlexBin, "PhysX-LICENSE.md"), StagedFileType.NonUFS);
+		// GPU PhysX for the skirt/sleeve cloth (PxDeformableSurface, OKPhysXCloth.cpp): PhysX.dll loads PhysXGpu.dll from its
+		// own folder at the first CUDA context; optional, without it the cloth stays off.
+		foreach (string Name in new[] { "PhysXGpu.dll", "cudart64_12.dll", "CUDA-LICENSE.txt" })
+		{
+			string File_ = Path.Combine(FlexBin, Name);
+			if (File.Exists(File_)) RuntimeDependencies.Add(Path.Combine(BinaryDirectory, Name), File_, StagedFileType.NonUFS);
+		}
 
 		// More comparison backends, built by Tools/build_physics_backends.lua: Jolt 5.6.0 (MIT) as a static library,
 		// MuJoCo 3.15.0 (Apache-2.0) as a DLL. (Bullet is not used by this project.)

@@ -11,6 +11,8 @@ namespace OKPhysXSecondary
 	void ResetStats() {}
 	FStats GetStats() { return FStats{}; }
 	void Register(void (*)(int32 (*)(const void*), void (*)(uint64), void (*)(uint64, const void*, uint32), int32 (*)(uint64, void*, uint32, float), float (*)(), int32 (*)(uint64, void*, uint32), int32 (*)())) {}
+	void RegisterCloth(FSetClothFn) {}
+	void ShutdownCloth() {}
 	void RegisterTuning(void (*)(void (*)(float*, float*))) {}
 	FSoftness Softness(uint32) { return FSoftness{}; }
 	bool IsEnabled() { return false; }
@@ -836,6 +838,13 @@ namespace OKPhysXSecondary
 		PxInitExtensions(*GPhysics, nullptr);
 		GDispatcher = PxDefaultCpuDispatcherCreate(0);
 		UE_LOG(LogOKPhysX, Display, TEXT("PhysX %d.%d secondary dynamics ready"), PX_PHYSICS_VERSION_MAJOR, PX_PHYSICS_VERSION_MINOR);
+		return true;
+	}
+
+	bool ClothRuntime(PxPhysics*& Physics, PxFoundation*& Foundation, PxCpuDispatcher*& Dispatcher)
+	{
+		if (!EnsurePhysics()) return false;
+		Physics = GPhysics; Foundation = GFoundation; Dispatcher = GDispatcher;
 		return true;
 	}
 
@@ -2457,6 +2466,7 @@ class FOKPhysXSecondaryModule : public IModuleInterface
 public:
 	virtual void ShutdownModule() override
 	{
+		OKPhysXSecondary::ShutdownCloth();
 		{
 			UE::TUniqueLock Guard(GMapLock);
 			GChains.Empty();
