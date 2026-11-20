@@ -25,15 +25,15 @@ namespace DreamTests
 		const FString PackageName = FString::Printf(TEXT("/Temp/DreamGUITests/%s_%s"),
 			InName, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 		Asset.Package = CreatePackage(*PackageName);
-		if (Asset.Package == nullptr)
+		if (Asset.Package.Get() == nullptr)
 		{
 			return Asset;
 		}
 		Asset.Package->AddToRoot();
 		Asset.Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-			UDreamUserWidget::StaticClass(), Asset.Package, FName(InName), BPTYPE_Normal,
+			UDreamUserWidget::StaticClass(), Asset.Package.Get(), FName(InName), BPTYPE_Normal,
 			UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
-		if (Asset.Blueprint == nullptr)
+		if (Asset.Blueprint.Get() == nullptr)
 		{
 			return Asset;
 		}
@@ -43,13 +43,13 @@ namespace DreamTests
 		{
 			Tree->RootWidget->CreateNewLayoutContainer(UDreamLayoutContainerCanvasPanel::StaticClass());
 		}
-		FKismetEditorUtilities::CompileBlueprint(Asset.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+		FKismetEditorUtilities::CompileBlueprint(Asset.Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 		return Asset;
 	}
 
 	void ReleaseDesignerTestAsset(FDesignerTestAsset& InOutAsset)
 	{
-		if (InOutAsset.Package != nullptr)
+		if (InOutAsset.Package.Get() != nullptr)
 		{
 			InOutAsset.Package->RemoveFromRoot();
 		}
@@ -165,7 +165,7 @@ namespace DreamTests
 			Failure = TEXT("the Widget Blueprint could not be created");
 			return;
 		}
-		TSharedPtr<FDreamDesignerDriver> Opened = FDreamDesignerDriver::Open(Asset.Blueprint);
+		TSharedPtr<FDreamDesignerDriver> Opened = FDreamDesignerDriver::Open(Asset.Blueprint.Get());
 		if (!Opened.IsValid())
 		{
 			Failure = TEXT("the designer did not open, or opened without a viewport (see LogDreamDesignerDriver)");

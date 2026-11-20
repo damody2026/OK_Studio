@@ -5745,6 +5745,27 @@ U279（Blender 的 G／R／S）第一輪按 G 都沒反應，前後三個原因�
 
 **修正**：不在自己的广播里移除；先复制要用的东西交给背景工作，解绑改用下一个游戏执行绪任务（`AsyncTask(GameThread)`），并用旗标只处理第一张。量测脚本（`route.lua`）连两个指令失败就停下、关游戏，不再空等。
 
+## 2026-11-20：照 11-17 的报告去优化 Sync 的父链走访，那个成本早就被 11-18 的 id 索引拿掉了（f-sceneload）
+
+- **变更**：`UOKSceneDocument::FPlaceScope`——一次由上而下算完全部世界变换与可见性，`WorldTransform`／`IsShown` 从表里回答（`ok.Studio.SyncPlaceIndex`）。依据是 11-17 的报告：那两个函式在 8806 物件场景占 23 526 ms。
+- **症狀与证据**：交错四趟（`Saved/Reports/scene-load/heavy-place-*`）量到 `sync_world_ms` **关 1 182 ms、开 1 927 ms**（目标那段变慢 63%），`ready_ms` 66 049 → 65 390（−1.0%，噪声内）。
+- **原因状态（已证实）**：（1）**前提过期**：那 23.5 s 是 `ok.Studio.SyncFindIndex`（11-18）之前的数字，当时每走一层父链都要线性扫 `Objects`；索引把它拿掉之後，链走本身只剩 1.1–1.2 s，上限是 63 s 的 1.9%，连 3% 门槛都到不了。（2）**在「边建边同步」下净亏**：场景分 1 170 个 Sync 建完，每个 Sync 的回圈只碰目前已存在的物件，而 pass 每次都走完全部 8 806 个并建表。
+- **处置**：**整个撤回**（`FPlaceScope`、cvar、`place_builds`、`OpenKoikatsu.Studio.ScenePlaceIndex` 全移除），不留 default-off 的死码。实作本身没问题——逐物件对照测试全 PASS、两条路径数字一致——错在题目。量测过程与数字写进 [OK_STUDIO_SYNC_PLACEMENT_PASS_20261120.md](OK_STUDIO_SYNC_PLACEMENT_PASS_20261120.md)，另外那一趟**按预先登记的闸门不算有效 A/B**（关的那侧 `place_builds=1` 而非 0——cvar 在第一个 Sync 之後才生效；`find_index_builds` 两侧不同——pass 不走 `Find()`），闸门的措辞要在**下次跑之前**改，不是看到数字再放宽。
+- **再试前检查**：**拿旧报告的数字当题目之前，先用现在的建置重量一次那个字段**。中间别人（或自己）改掉的东西会让一个 23 s 的热点变成 1 s，而文件不会自己更新。
+## 2026-11-20：量测行程空转十几分钟没人发现，清场又按行程名杀掉了别人的等待器（f-sceneload）
+
+- **变更**：要量 `ok.Studio.SyncPlaceIndex`（Sync 的摆位改成一次由上而下）在 8806 物件场景上的 A/B，用 `Saved/Reports/scene-load-f/ab-place.lua` 跑交错四趟。
+- **症狀与证据**：四趟一趟都没量到（0/4）。`Saved/Logs/SceneLoadProfile/heavy-place-place1-r1.log` 第 1901 行：`OKStudio.ProfileSceneLoad: OK_SCENE_PROFILE_LIST must name a readable list of scenes (Saved/Reports/scene-load-f/cold-heavy-only.txt)`；之後那个行程**活着但什么都没量**，每 30 秒印一次 `OKMem: commit 3.55 GB ... characters 0`，直到 21 分钟後我硬停。清场时我又用 `Get-Process lua | Stop-Process` 关「自己的」lua——那是**按名称**杀，连带杀掉 PID 41068，`unreal_slot status` 随即显示 `queue: e-cardload-physics (stale: process 41068 ended)`，e-cardload 的排队等待器被我弄掉了，已告知并请它重排。
+- **原因状态（三条都已证实）**：（1）清单传的是相对路径，而编辑器的工作目录不是那个 shell 的，所以 `OK_SCENE_PROFILE_LIST` 读不到；（2）**量具没有存活讯号**：`ab.lua` 只 `os.execute` 等子行程结束，不看它有没有真的开始量，也没有上限，所以「拒绝执行＋空转」和「正在量」在外面看起来一样；（3）`Get-Process <名称>` 不是「我的行程」，PID 才是。
+- **处置**：那一趟量测整个作废，不取任何数字（照预先登记的读法：中途停掉的整趟作废）。`ab-place.lua` 改了三处：清单在跑之前解成绝对路径**并读一次确认可读**（读不到就 1 秒内 exit 2）；每趟改成用 PowerShell `Start-Process -PassThru` 取 **pid** 启动、轮询该趟自己的 log，看到 `OKStudio.ProfileSceneLoad:` 的拒绝讯息立刻失败，`START_CAP=300 s` 内没看到起跑标记（`N scenes x N passes ->`）就杀掉并失败，`RUN_CAP=1200 s` 没写出报告也一样，**要杀只按 pid（`taskkill /T /F /PID`）**；任何一趟没量到就 `os.exit(3)` 终止整个量测，不再「印个 `!!` 继续跑」然後拿剩下的取中位数。另外把它印成 `SyncFindIndex` 的标签改对（命令行一直是对的，只有印出来的字是旧的，这种不一致会让日後读 log 的人以为翻错了开关）。
+- **再试前检查**：跑任何量测前先确认（a）清单是绝对路径且 `ab.lua` 开头印出了它与第一个场景；（b）前几十秒内出现「measuring after N s」；（c）清场只按 pid，先 `Get-CimInstance Win32_Process` 看 `CommandLine` 确认那是自己的那趟，再杀。**槽上的每一分钟都要换到数字**：行程活着不等于在量。
+## 2026-11-20：DreamGUI.Driver 的 30 笔失败不是去裸指标造成的，是专案的 CommonUI viewport client（f-sceneload）
+
+- **变更**：DreamGUI 测试模组 39 个成员与 `FDreamUIHitResultContainer` 三个成员从裸指标改成 `TWeakObjectPtr`（`cbbc20a20`、`09cc8bc01`），约 2,290 处呼叫端补 `.Get()`。
+- **症狀**：`OpenKoikatsuEditor` 建置并连结成功後，`Automation RunTests DreamGUI.Driver+DreamGUI.Lifecycle`（NullRHI）**129 通过、30 失败**。log：`F:\OpenKoikatsu\Saved\Logs\dreamgui-weak-tests.log`。
+- **原因状态**：**已证实与指标改动无关**。那 30 笔的错误行只有一种，而且是引擎发的：`LogUIActionRouter: Error: Using CommonUI without a CommonGameViewportClient derived game viewport client`；没有任何一笔有断言失败或空指标解参的讯息。本专案 `Config/DefaultEngine.ini:75` 把`GameViewportClientClassName` 设成 `/Script/DreamGUIInput.DreamGameViewportClient`，它不是从`UCommonGameViewportClient` 衍生的，所以每个开游戏 viewport 的测试都会吃到这条 error，而 automation 框架把 error 级的 log 当成失败。同一条讯息在 11-10／11-17 的`InteractionPair-*.log`、`OpenKoikatsu-backup-*.log` 里就有，`AGENTS.md` 的「验证状态」也早已列为已知 log error。
+- **处置**：**没有回退任何指标**（照规则：改动之後开始失败的测试要另外修，不是把指标改回去）。这一笔是把基准写下来：在修掉 viewport client 之前，`DreamGUI.Driver.GameHost`／`Keys`／`Players` 与`Lifecycle.Smoke` 那 30 笔在这个专案里本来就红。
+- **再试前检查**：要让这 30 笔变绿，得让专案的 viewport client 从 `UCommonGameViewportClient` 衍生（或在测试里换掉 client），那是独立的一件事；在那之前不要把这 30 笔当成某次改动的退步。
 ## 2026-11-19：仲裁者只看「现在持有」不看「正在排」，独占量测还在排队时照样放建置（c-street-city）
 
 `Tools/unreal_slot.lua` 的 `may_build()` 只扫各 slot 的 `owner.txt` 有没有 `[need N]`（N ≥ 60），没有扫佇列。**仲裁者只看「现在持有」而不看「正在排」，等于把『即将开始的独占量测』当成不存在。** 实际后果：f-sceneload 15:08 拿到 `go` 开始建置，那时 e-cardload 的 `[need 60]` 还在佇列里；e-cardload 15:11:31 拿到 slot1，量测一开始就被还在跑的建置压过。
@@ -6953,3 +6974,17 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 非尾段只印卡片类名字，而这一趟卡片类是零笔，于是「实测窗口」从 7914 帧塌成尾段的 52 帧。
 **一个依赖受测对象的窗口不是窗口。** 倒出已改成三段，第一段先印在**全部**纪录上算出来的
 `recorded/draws/frames=min..max/span`，不经任何过滤，而且每段各有结尾标记。
+## 2026-11-20 06:50 用「总时间 ÷ 次数」猜单次成本，差点改错地方；读法把门槛写成百分比也是错的（F 组 f-sceneload）
+- 题目：`sync_gate_ms` 11.9 s，闸门是「每个 Sync 问每个道具它的 session 好了没」。
+- 错 1：看到 `gate_calls` 414 万，就用 11 819 ms ÷ 414 万 = 2.85 µs／次当成「每次 map 查找要 2.85 µs」，
+  并据此准备写一个「问过就记住」的记忆表。实际量出来：414 万次呼叫（含 413 万次上限早退）合计约 0.2 s
+  （每次约 50 ns），11.0 s 全在 5867 次开启里，每次 1.88 ms——`AsyncThread` 每次都 `FRunnableThread::Create`
+  一条 4 MB OS 执行绪并等它起来（引擎 `Async.h:443`）。那张记忆表最多省 0.2 s。
+- 教训：**次数多的那一侧不等于成本在那一侧**。要改之前先把总时间拆到各段（两个计时＋三个计数，一趟就够），
+  不要用平均值反推单次成本——平均值把 1 次 1.88 ms 和 736 次 50 ns 混成一个假的 2.85 µs。
+- 错 2：A/B 读法里把判定写成「`ready_ms` 改善 > 3% 才留，低于门槛就是噪声」。这一轮两侧完全不重叠
+  （同侧差 43／105 ms，两侧差 1 276／1 338 ms，4/4 同向），2.1% 是真差，百分比门槛的「噪声」前提自己被否掉。
+  门槛要写成**两侧是否分离**（同侧散布 vs 两侧差距），不是一个百分比；数字出来之后不能放宽，所以这一轮照原文
+  记成「读法写错」而不是改读法。
+- 结果：`ok.Studio.ItemOpenPool`（常驻执行绪池）`sync_gate_ms` 11 860 → 682 ms，`ready_ms` 63 093 → 61 786，
+  峰值记忆体没变；详见 [Docs/OK_STUDIO_ITEM_OPEN_POOL_20261120.md](OK_STUDIO_ITEM_OPEN_POOL_20261120.md)。

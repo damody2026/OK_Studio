@@ -50,13 +50,13 @@ bool FDreamRectBlockRowsPerWorldTest::RunTest(const FString& Parameters)
 	using namespace DreamRectBlockRowsTestLocal;
 	DreamTests::Lifecycle::FScopedWorld First(EWorldType::Game);
 	DreamTests::Lifecycle::FScopedWorld Second(EWorldType::Game);
-	if (!TestNotNull(TEXT("A first world"), First.World) || !TestNotNull(TEXT("A second world"), Second.World))
+	if (!TestNotNull(TEXT("A first world"), First.World.Get()) || !TestNotNull(TEXT("A second world"), Second.World.Get()))
 	{
 		return false;
 	}
-	UDreamRectBlock* FirstBlock = MakeRectBlock(First.World);
-	UDreamRectBlock* FirstBlockAgain = MakeRectBlock(First.World);
-	UDreamRectBlock* SecondBlock = MakeRectBlock(Second.World);
+	UDreamRectBlock* FirstBlock = MakeRectBlock(First.World.Get());
+	UDreamRectBlock* FirstBlockAgain = MakeRectBlock(First.World.Get());
+	UDreamRectBlock* SecondBlock = MakeRectBlock(Second.World.Get());
 	if (!TestNotNull(TEXT("A rect block in the first world"), FirstBlock)
 		|| !TestNotNull(TEXT("...and another"), FirstBlockAgain)
 		|| !TestNotNull(TEXT("A rect block in the second world"), SecondBlock))
@@ -73,8 +73,8 @@ bool FDreamRectBlockRowsPerWorldTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Two rect blocks of one world share its rows"), FirstRows == FirstRowsAgain);
 	TestTrue(TEXT("A rect block of another world has rows of its own"), FirstRows != SecondRows);
 	TestTrue(TEXT("Each world's rows are its UI manager's"),
-		FirstRows->GetOuter() == UDreamUIManagerWorldSubsystem::GetInstance(First.World)
-		&& SecondRows->GetOuter() == UDreamUIManagerWorldSubsystem::GetInstance(Second.World));
+		FirstRows->GetOuter() == UDreamUIManagerWorldSubsystem::GetInstance(First.World.Get())
+		&& SecondRows->GetOuter() == UDreamUIManagerWorldSubsystem::GetInstance(Second.World.Get()));
 	TestTrue(TEXT("...and neither is the rect block data asset the worlds share"),
 		FirstRows != PropertyOf(FirstBlock, TEXT("RectBlockData")) && SecondRows != PropertyOf(SecondBlock, TEXT("RectBlockData")));
 	const UDreamUIDataAsTexture* Rows = Cast<UDreamUIDataAsTexture>(FirstRows);

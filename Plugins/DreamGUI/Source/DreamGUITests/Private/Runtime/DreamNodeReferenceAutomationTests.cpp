@@ -445,7 +445,7 @@ bool FDreamNodeReferenceSurvivesInstancingTest::RunTest(const FString& Parameter
 	// UDreamUserWidget itself, not a fixture subclass: the by-name binding step only considers
 	// properties declared BELOW UDreamUserWidget, so the base class declares no binding candidates
 	// and nothing in this test can be confused with a binding having done the work.
-	TStrongObjectPtr<UDreamUserWidget> UserWidget(NewObject<UDreamUserWidget>(TestWorld.World));
+	TStrongObjectPtr<UDreamUserWidget> UserWidget(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(
 		UserWidget.Get(), UDreamUserWidget::StaticClass(), Archetype.Tree.Get());
 

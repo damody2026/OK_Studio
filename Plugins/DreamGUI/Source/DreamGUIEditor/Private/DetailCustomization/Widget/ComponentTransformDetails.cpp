@@ -71,6 +71,7 @@ public:
 	}
 
 private:
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the scope: set in the constructor, restored in the destructor, and the editor's worlds outlive a details-panel scope -- the engine's own copy of this guard holds it the same way.
 	UWorld* PrevWorld;
 };
 

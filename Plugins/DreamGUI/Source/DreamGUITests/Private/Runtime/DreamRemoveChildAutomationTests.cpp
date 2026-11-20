@@ -53,16 +53,16 @@ bool FDreamRemoveChildSurvivesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRemoveChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
 		return false;
 	}
 
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"));
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Panel, TEXT("Child"));
-	UDreamWidget* Grandchild = MakeWidget(TestWorld.World, Child, TEXT("Grandchild"));
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"));
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Child"));
+	UDreamWidget* Grandchild = MakeWidget(TestWorld.World.Get(), Child, TEXT("Grandchild"));
 	Panel->OnRegister();
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 
@@ -85,7 +85,7 @@ bool FDreamRemoveChildSurvivesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("The manager still knows it"), Manager->IsWidgetRegistered(Child));
 
 	// And it goes back in.
-	UDreamWidget* OtherPanel = MakeWidget(TestWorld.World, nullptr, TEXT("OtherPanel"));
+	UDreamWidget* OtherPanel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("OtherPanel"));
 	OtherPanel->OnRegister();
 	OtherPanel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	TestNotNull(TEXT("Re-adding it yields a fresh slot"), OtherPanel->AddChild(Child));
@@ -104,10 +104,10 @@ bool FDreamRemoveChildRefusalTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRemoveChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"));
-	UDreamWidget* Mine = MakeWidget(TestWorld.World, Panel, TEXT("Mine"));
-	UDreamWidget* Other = MakeWidget(TestWorld.World, nullptr, TEXT("Other"));
-	UDreamWidget* Stranger = MakeWidget(TestWorld.World, Other, TEXT("Stranger"));
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"));
+	UDreamWidget* Mine = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Mine"));
+	UDreamWidget* Other = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Other"));
+	UDreamWidget* Stranger = MakeWidget(TestWorld.World.Get(), Other, TEXT("Stranger"));
 	Panel->OnRegister();
 	Other->OnRegister();
 
@@ -134,11 +134,11 @@ bool FDreamDestroyChildrenTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRemoveChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"));
-	UDreamWidget* A = MakeWidget(TestWorld.World, Panel, TEXT("A"));
-	UDreamWidget* B = MakeWidget(TestWorld.World, Panel, TEXT("B"));
-	UDreamWidget* C = MakeWidget(TestWorld.World, Panel, TEXT("C"));
-	UDreamWidget* Deep = MakeWidget(TestWorld.World, B, TEXT("Deep"));
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"));
+	UDreamWidget* A = MakeWidget(TestWorld.World.Get(), Panel, TEXT("A"));
+	UDreamWidget* B = MakeWidget(TestWorld.World.Get(), Panel, TEXT("B"));
+	UDreamWidget* C = MakeWidget(TestWorld.World.Get(), Panel, TEXT("C"));
+	UDreamWidget* Deep = MakeWidget(TestWorld.World.Get(), B, TEXT("Deep"));
 	Panel->OnRegister();
 	Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 
@@ -158,7 +158,7 @@ bool FDreamDestroyChildrenTest::RunTest(const FString& Parameters)
 
 	// The panel itself is fine and still usable.
 	TestTrue(TEXT("The panel survives"), IsValid(Panel) && Panel->HasRegistered());
-	UDreamWidget* Fresh = MakeWidget(TestWorld.World, nullptr, TEXT("Fresh"));
+	UDreamWidget* Fresh = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Fresh"));
 	Fresh->OnRegister();
 	TestNotNull(TEXT("And still takes children"), Panel->AddChild(Fresh));
 	return true;
@@ -173,11 +173,11 @@ bool FDreamChildQueriesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRemoveChildTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"));
-	UDreamWidget* A = MakeWidget(TestWorld.World, Panel, TEXT("A"));
-	UDreamWidget* B = MakeWidget(TestWorld.World, Panel, TEXT("B"));
-	UDreamWidget* Grandchild = MakeWidget(TestWorld.World, A, TEXT("Grandchild"));
-	UDreamWidget* Outsider = MakeWidget(TestWorld.World, nullptr, TEXT("Outsider"));
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"));
+	UDreamWidget* A = MakeWidget(TestWorld.World.Get(), Panel, TEXT("A"));
+	UDreamWidget* B = MakeWidget(TestWorld.World.Get(), Panel, TEXT("B"));
+	UDreamWidget* Grandchild = MakeWidget(TestWorld.World.Get(), A, TEXT("Grandchild"));
+	UDreamWidget* Outsider = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Outsider"));
 	Panel->OnRegister();
 
 	TestEqual(TEXT("A is at 0"), Panel->GetChildIndex(A), 0);
@@ -223,10 +223,10 @@ bool FDreamDetachSurvivesADeadSiblingTest::RunTest(const FString& Parameters)
 	// tests in the run left behind, reporting their orphans against this test and putting lines in
 	// the log that the suite's own zero-orphan check reads. So this pins the guard one step earlier,
 	// on a child that is garbage but not yet swept: same predicate, same fix, no collection.
-	TStrongObjectPtr<UDreamWidget> Root(MakeWidget(TestWorld.World, nullptr, TEXT("Root")));
+	TStrongObjectPtr<UDreamWidget> Root(MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root")));
 	Root->CreateNewLayoutContainer<UDreamLayoutContainerOverlay>();
-	UDreamWidget* Keep = MakeWidget(TestWorld.World, Root.Get(), TEXT("Keep"));
-	UDreamWidget* Doomed = MakeWidget(TestWorld.World, Root.Get(), TEXT("Doomed"));
+	UDreamWidget* Keep = MakeWidget(TestWorld.World.Get(), Root.Get(), TEXT("Keep"));
+	UDreamWidget* Doomed = MakeWidget(TestWorld.World.Get(), Root.Get(), TEXT("Doomed"));
 	if (!TestEqual(TEXT("both children attached"), Root->GetChildrenCount(), 2))return false;
 
 	Doomed->MarkAsGarbage();

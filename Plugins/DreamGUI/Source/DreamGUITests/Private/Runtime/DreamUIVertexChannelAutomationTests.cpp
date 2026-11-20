@@ -407,12 +407,12 @@ bool FDreamUIMeshMemoryInfoTest::RunTest(const FString& Parameters)
 
 	// A world-space panel drawing one image: one mesh section, its quad's vertices and indices.
 	DreamTests::Lifecycle::FScopedWorld World(EWorldType::Game);
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 	if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+	UDreamWidget* Root = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 	Root->SetWidth(200.0f);
 	Root->SetHeight(200.0f);
 	Root->OnRegister();
@@ -422,7 +422,7 @@ bool FDreamUIMeshMemoryInfoTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
-	UDreamWidget* Block = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+	UDreamWidget* Block = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 	Block->SetWidth(40.0f);
 	Block->SetHeight(30.0f);
 	Block->OnRegister();

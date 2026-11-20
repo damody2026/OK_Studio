@@ -121,7 +121,7 @@ namespace DreamEventBlockerTriggerWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		UDreamButton* Upper = PlaceButton(InTest, Rig, TEXT("Upper"), Parent, FVector2D(0.0, 110.0));
 		UDreamButton* Near = Upper != nullptr ? PlaceButton(InTest, Rig, TEXT("Near"), Parent, FVector2D(0.0, 20.0)) : nullptr;
@@ -180,7 +180,7 @@ bool FDreamWorldEventBlockerPressTest::RunTest(const FString& Parameters)
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
 	UDreamWidget* CardWidget = nullptr;
 	UDreamWidget* Patch = nullptr;
-	if (!Stage.IsReady() || !MakeCardAndPatch(*this, Rig, Stage.Panel, CardWidget, Patch))
+	if (!Stage.IsReady() || !MakeCardAndPatch(*this, Rig, Stage.Panel.Get(), CardWidget, Patch))
 	{
 		return false;
 	}
@@ -324,8 +324,8 @@ bool FDreamSurfaceEventTriggerTapTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FSurfaceStage Stage = SetUpSurface(*this, Rig);
-	UDreamWidget* TargetWidget = Stage.IsReady() ? Rig.MakeWidget(TEXT("Target"), Stage.Screen.CanvasRoot, FVector2D(120.0, 60.0), FVector2D(90.0, 50.0)) : nullptr;
-	UDreamWidget* DecoyWidget = Stage.IsReady() ? Rig.MakeWidget(TEXT("Decoy"), Stage.Screen.CanvasRoot, FVector2D(120.0, 60.0), FVector2D(-90.0, -50.0)) : nullptr;
+	UDreamWidget* TargetWidget = Stage.IsReady() ? Rig.MakeWidget(TEXT("Target"), Stage.Screen.CanvasRoot.Get(), FVector2D(120.0, 60.0), FVector2D(90.0, 50.0)) : nullptr;
+	UDreamWidget* DecoyWidget = Stage.IsReady() ? Rig.MakeWidget(TEXT("Decoy"), Stage.Screen.CanvasRoot.Get(), FVector2D(120.0, 60.0), FVector2D(-90.0, -50.0)) : nullptr;
 	if (!TestTrue(TEXT("Both widgets on the surface carry a trigger"), Listen(TargetWidget, Target) != nullptr && Listen(DecoyWidget, Decoy) != nullptr))
 	{
 		return false;

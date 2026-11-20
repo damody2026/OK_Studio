@@ -55,8 +55,8 @@ bool FDreamAnchorMaxStretchResolvesAgainstTheParentTest::RunTest(const FString& 
 {
 	using namespace DreamAnchorCacheTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 
 	// Point-anchored to start with, so the delta and the resolved width are the same number and nothing
 	// can be proven yet.
@@ -100,8 +100,8 @@ bool FDreamAnchorMinStretchResolvesAgainstTheParentTest::RunTest(const FString& 
 {
 	using namespace DreamAnchorCacheTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 
 	// The mirror image, on the other axis and the other end: AnchorMax.Y stays at its default 0.5, so
 	// dropping AnchorMin.Y to 0 opens a span of half the parent's height.
@@ -128,8 +128,8 @@ bool FDreamAnchorMinMaxWithoutKeepSizeLeavesACleanCacheTest::RunTest(const FStri
 {
 	using namespace DreamAnchorCacheTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 
 	// This is the deterministic path, not a timing-dependent one: the function asks GetWidth() first,
 	// which RESOLVES and clears the dirty flag, then calls the two anchor setters -- and with
@@ -156,8 +156,8 @@ bool FDreamAnchorOffsetOnAStretchedNodeIsAnInsetNotANegativeSizeTest::RunTest(co
 {
 	using namespace DreamAnchorCacheTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 
 	// The exact pair DreamTextInput runs on its clip and placeholder nodes, and the registry on the
 	// children it builds: stretch to the parent, then inset by the style's padding.
@@ -196,8 +196,8 @@ bool FDreamAnchorOffsetOnAPointAnchoredNodeSetsItsSizeTest::RunTest(const FStrin
 {
 	using namespace DreamAnchorCacheTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 
 	// On a point-anchored axis the parent's span is zero, so the offsets ARE the rect and the answer is
 	// the same one the old code produced. This pins that half of the contract so the rewrite cannot have
@@ -223,8 +223,8 @@ bool FDreamResolvedSizeIsNeverNegativeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamAnchorCacheTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 40.0f, 30.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 10.0f, 10.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 40.0f, 30.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 10.0f, 10.0f);
 
 	// A stretched child inset by more than the parent is wide enough to hold: the arithmetic wants
 	// 40 - 100 - 100. That is an empty rect, not a rect whose left edge is to the right of its right
@@ -242,7 +242,7 @@ bool FDreamResolvedSizeIsNeverNegativeTest::RunTest(const FString& Parameters)
 		Child->GetLocalSpaceBottom() <= Child->GetLocalSpaceTop());
 
 	// An authored negative is floored at the setter as well, so the stored intent and the answer agree.
-	UDreamWidget* Other = MakeWidget(TestWorld.World, Root, TEXT("Other"), 20.0f, 20.0f);
+	UDreamWidget* Other = MakeWidget(TestWorld.World.Get(), Root, TEXT("Other"), 20.0f, 20.0f);
 	Other->SetWidth(-5.0f);
 	Other->SetHeight(-5.0f);
 	TestTrue(TEXT("SetWidth floors its argument"), FMath::IsNearlyEqual(Other->GetWidth(), 0.0f, 0.01f));
@@ -266,12 +266,12 @@ bool FDreamLayoutAnimationStartsAtTheSizeItSnapshottedTest::RunTest(const FStrin
 	// would be no start state to look at.
 	DreamTests::FScopedGameInstanceWorld TestWorld;
 	if (!TestNotNull(TEXT("The world has a tween manager to run the layout animation on"),
-		UDreamTweenManager::GetDreamTweenInstance(TestWorld.World)))
+		UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get())))
 	{
 		return false;
 	}
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 300.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 300.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 50.0f);
 	Child->SetHorizontalAndVerticalAnchorMinMax(FVector2D(0.0, 0.0), FVector2D(1.0, 1.0), false, false);
 
 	// The two halves of the layout animation disagreed about units. SnapshotLayout records

@@ -107,6 +107,7 @@ private:
 	 * The list as a tick walks it, kept from one tick to the next so four ticks a frame do not allocate four copies.
 	 * Raw pointers, read only inside OnTick; TickDepth says whether one is already walking it.
 	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by OnTick, its only reader; TickDepth says whether one is already walking the list.
 	TArray<UDreamTweener*> TickSnapshot;
 	int32 TickDepth = 0;
 public:

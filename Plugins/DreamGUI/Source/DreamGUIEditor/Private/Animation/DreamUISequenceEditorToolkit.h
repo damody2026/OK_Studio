@@ -115,7 +115,8 @@ private:
 	/** Declared first so it is destroyed last: the viewport client and the preview tree live in it. */
 	TUniquePtr<FDreamWidgetDesignerScene> PreviewScene;
 
-	UDreamUISequence* Sequence = nullptr;
+	/** The sequence being edited. Weak: the toolkit is torn down by the asset editor, not by the asset going away. */
+	TWeakObjectPtr<UDreamUISequence> Sequence;
 	/**
 	 * The PreviewWidgetClass the preview was last built from -- its path, so a class that failed to load still
 	 * counts as built and an undo that leaves it alone does not rebuild it again.

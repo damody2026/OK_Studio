@@ -539,10 +539,10 @@ bool FDreamUIViewModelBaseTest::RunTest(const FString& Parameters)
 	using namespace DreamUIViewModelCoreTestLocal;
 
 	DreamTests::FScopedGameWorld TestWorld;
-	TStrongObjectPtr<UDreamTestPlayerVM> Player(NewObject<UDreamTestPlayerVM>(TestWorld.World));
+	TStrongObjectPtr<UDreamTestPlayerVM> Player(NewObject<UDreamTestPlayerVM>(TestWorld.World.Get()));
 	const TStrongObjectPtr<UDreamTestPlainModel> Owner = MakeObject<UDreamTestPlainModel>();
 
-	TestTrue(TEXT("a view model has the world of its outer"), Player->GetWorld() == TestWorld.World);
+	TestTrue(TEXT("a view model has the world of its outer"), Player->GetWorld() == TestWorld.World.Get());
 	TestNull(TEXT("the class default object has none"), GetDefault<UDreamTestPlayerVM>()->GetWorld());
 	TestTrue(TEXT("so Blueprint subclasses get world-context nodes"), GetDefault<UDreamTestPlayerVM>()->ImplementsGetWorld());
 	TStrongObjectPtr<UDreamTestPlayerVM> Loose(NewObject<UDreamTestPlayerVM>(GetTransientPackage()));
@@ -588,12 +588,12 @@ bool FDreamUIViewModelRegistryTest::RunTest(const FString& Parameters)
 	using namespace DreamUIViewModelCoreTestLocal;
 
 	DreamTests::FScopedGameInstanceWorld Game;
-	UDreamViewModelSubsystem* Registry = UDreamViewModelSubsystem::Get(Game.World);
+	UDreamViewModelSubsystem* Registry = UDreamViewModelSubsystem::Get(Game.World.Get());
 	if (!TestNotNull(TEXT("a game instance has a registry"), Registry))
 	{
 		return false;
 	}
-	TestTrue(TEXT("found from anything in its world"), UDreamViewModelSubsystem::Get(Game.GameInstance) == Registry);
+	TestTrue(TEXT("found from anything in its world"), UDreamViewModelSubsystem::Get(Game.GameInstance.Get()) == Registry);
 	TestNull(TEXT("nothing from null"), UDreamViewModelSubsystem::Get(nullptr));
 	const TStrongObjectPtr<UDreamTestPlainModel> Stray = MakeObject<UDreamTestPlainModel>();
 	TestNull(TEXT("nothing from an object in no world"), UDreamViewModelSubsystem::Get(Stray.Get()));
@@ -604,10 +604,10 @@ bool FDreamUIViewModelRegistryTest::RunTest(const FString& Parameters)
 		Heard.Emplace(InViewModel, InName);
 	});
 
-	UDreamTestPlayerVM* ByClass = NewObject<UDreamTestPlayerVM>(Game.GameInstance);
-	UDreamTestPlayerVM* Stash = NewObject<UDreamTestPlayerVM>(Game.GameInstance);
-	UDreamTestPlayerVM* NewStash = NewObject<UDreamTestPlayerVM>(Game.GameInstance);
-	UDreamTestStatsVM* Stats = NewObject<UDreamTestStatsVM>(Game.GameInstance);
+	UDreamTestPlayerVM* ByClass = NewObject<UDreamTestPlayerVM>(Game.GameInstance.Get());
+	UDreamTestPlayerVM* Stash = NewObject<UDreamTestPlayerVM>(Game.GameInstance.Get());
+	UDreamTestPlayerVM* NewStash = NewObject<UDreamTestPlayerVM>(Game.GameInstance.Get());
+	UDreamTestStatsVM* Stats = NewObject<UDreamTestStatsVM>(Game.GameInstance.Get());
 
 	Registry->Register(nullptr);
 	TestEqual(TEXT("null is ignored, and nobody is told"), Heard.Num(), 0);
@@ -646,10 +646,10 @@ bool FDreamUIViewModelRegistryTest::RunTest(const FString& Parameters)
 	if (TestNotNull(TEXT("FindOrCreate makes what is not there"), Made))
 	{
 		TestTrue(TEXT("of the class asked"), Made->IsA<UDreamTestItemVM>());
-		TestTrue(TEXT("outered to the game instance"), Made->GetOuter() == Game.GameInstance);
+		TestTrue(TEXT("outered to the game instance"), Made->GetOuter() == Game.GameInstance.Get());
 		TestTrue(TEXT("and registered under the name"), Registry->Find(UDreamTestItemVM::StaticClass(), TEXT("Made")) == Made);
 		TestTrue(TEXT("a second call finds it"), Registry->FindOrCreate(UDreamTestItemVM::StaticClass(), TEXT("Made")) == Made);
-		TestTrue(TEXT("and it has the game's world"), Made->GetWorld() == Game.World);
+		TestTrue(TEXT("and it has the game's world"), Made->GetWorld() == Game.World.Get());
 	}
 	TestNull(TEXT("FindOrCreate refuses an abstract class"), Registry->FindOrCreate(UDreamViewModel::StaticClass(), TEXT("Abstract")));
 

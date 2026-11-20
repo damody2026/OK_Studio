@@ -136,7 +136,7 @@ bool FDreamDriverElement::IsSelected() const
 	{
 		return false;
 	}
-	UDreamEventSystem* EventSystem = PinnedDriver->GetContext().EventSystem;
+	UDreamEventSystem* EventSystem = PinnedDriver->GetContext().EventSystem.Get();
 	return IsValid(EventSystem) && EventSystem->GetCurrentSelectedComponent(0) == Widget;
 }
 
@@ -445,7 +445,7 @@ bool FDreamDriverElement::Select()
 		ReportMissingElement(*this, TEXT("select"));
 		return false;
 	}
-	UDreamEventSystem* EventSystem = PinnedDriver->GetContext().EventSystem;
+	UDreamEventSystem* EventSystem = PinnedDriver->GetContext().EventSystem.Get();
 	if (!IsValid(EventSystem))
 	{
 		return false;

@@ -329,7 +329,13 @@ private:
 	 */
 	void CompilePropertyBindings(UClass* InClass);
 
+	/**
+	 * Raw, as FKismetCompilerContext holds its own NewClass: both live inside one compile, which the compiler driving it
+	 * holds the class and the tree through.
+	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the compile: FKismetCompilerContext holds its own NewClass the same way, for the same span.
 	UDreamWidgetGeneratedClass* NewDreamWidgetClass = nullptr;
 	/** The class's previous archetype, kept across the sanitize pass so it can be patched over. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the compile, as NewDreamWidgetClass above.
 	UDreamWidgetTree* OldWidgetTree = nullptr;
 };

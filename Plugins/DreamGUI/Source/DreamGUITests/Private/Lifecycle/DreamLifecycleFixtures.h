@@ -26,7 +26,7 @@ namespace DreamTests::Lifecycle
 	/** A world of the given type for the length of a scope. Its widget trees are destroyed with it. */
 	struct FScopedWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		explicit FScopedWorld(EWorldType::Type InWorldType);
 		~FScopedWorld();
 		UE_NONCOPYABLE(FScopedWorld);
@@ -52,8 +52,8 @@ namespace DreamTests::Lifecycle
 	 */
 	struct FScopedPanelClass
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		FString FileName;
 		explicit FScopedPanelClass(const TCHAR* InName, bool bInSavedToDisk = false);
 		~FScopedPanelClass();
@@ -108,10 +108,11 @@ namespace DreamTests::Lifecycle
 	 */
 	struct FWorldSpaceKinds
 	{
-		ADreamWorldWidgetActor* DreamRendered = nullptr;
-		ADreamWorldWidgetActor* EngineRendered = nullptr;
-		UDreamUIRenderTargetGeometrySource* Surface = nullptr;
-		UDreamWidget* SurfaceCanvasRoot = nullptr;
+		/** Weak: the actors belong to the world, which the fixture tears down around them. */
+		TWeakObjectPtr<ADreamWorldWidgetActor> DreamRendered;
+		TWeakObjectPtr<ADreamWorldWidgetActor> EngineRendered;
+		TWeakObjectPtr<UDreamUIRenderTargetGeometrySource> Surface;
+		TWeakObjectPtr<UDreamWidget> SurfaceCanvasRoot;
 		/** The actors placed. */
 		TArray<AActor*> Actors() const;
 	};

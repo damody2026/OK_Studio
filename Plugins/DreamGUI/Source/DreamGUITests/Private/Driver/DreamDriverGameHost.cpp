@@ -151,7 +151,7 @@ namespace DreamDriverGameHostLocal
 	/** The controller input goes to, or null with OutWhyNot saying which part is missing. */
 	APlayerController* ControllerFor(const FDreamDriverContext& InContext, FString& OutWhyNot)
 	{
-		APlayerController* Controller = InContext.PlayerController;
+		APlayerController* Controller = InContext.PlayerController.Get();
 		if (!IsValid(Controller))
 		{
 			OutWhyNot = TEXT("the input host has no player controller");
@@ -374,13 +374,13 @@ bool DreamDriverGameHost::Build(FDreamDriverContext& InContext, EDreamRigInputHo
 		OutWhyNot = TEXT("ModuleOnly has no input actor to build; the rig builds its own module for it");
 		return false;
 	}
-	UWorld* World = InContext.World;
+	UWorld* World = InContext.World.Get();
 	if (World == nullptr)
 	{
 		OutWhyNot = TEXT("there is no world to build the input host in");
 		return false;
 	}
-	UGameInstance* GameInstance = InContext.GameInstance;
+	UGameInstance* GameInstance = InContext.GameInstance.Get();
 	const int32 PlayerIndex = InContext.PlayerIndex;
 	if (GameInstance == nullptr)
 	{
@@ -502,7 +502,7 @@ bool DreamDriverGameHost::Build(FDreamDriverContext& InContext, EDreamRigInputHo
 	// is the public way to do now what the module's tick would do before the rig's first frame.
 	if (InHost == EDreamRigInputHost::EnhancedActor)
 	{
-		const ADreamDriverEnhancedInputActor* EnhancedActor = Cast<ADreamDriverEnhancedInputActor>(InContext.InputActor);
+		const ADreamDriverEnhancedInputActor* EnhancedActor = Cast<ADreamDriverEnhancedInputActor>(InContext.InputActor.Get());
 		const UInputMappingContext* PresetContext = EnhancedActor != nullptr ? EnhancedActor->GetDriverMappingContext() : nullptr;
 		if (PresetContext == nullptr || !EnhancedInput->HasMappingContext(PresetContext))
 		{
@@ -549,7 +549,7 @@ bool DreamDriverGameHost::AttachInputActor(FDreamDriverContext& InContext, APlay
 		OutWhyNot = TEXT("the player controller is in no world");
 		return false;
 	}
-	if (InContext.World != nullptr && InContext.World != World)
+	if (InContext.World.Get() != nullptr && InContext.World.Get() != World)
 	{
 		OutWhyNot = TEXT("the player controller is in a different world from the context's");
 		return false;
@@ -647,7 +647,7 @@ void DreamDriverGameHost::TickPlayerInput(FDreamDriverContext& InContext, float 
 	{
 		return;//the engine's own frame ticks the controller; a second input frame here would process everything twice
 	}
-	APlayerController* Controller = InContext.PlayerController;
+	APlayerController* Controller = InContext.PlayerController.Get();
 	if (!IsValid(Controller) || Controller->PlayerInput == nullptr)
 	{
 		return;
@@ -669,7 +669,7 @@ void DreamDriverGameHost::TickPlayerInput(FDreamDriverContext& InContext, float 
 	// because Enhanced Input has no absolute-position axis. In a game it shares TG_PrePhysics with the
 	// controller, both ahead of the event system's TG_DuringPhysics tick -- the pump's next step. Held to
 	// the engine's gates: a tick function that never ticks, is disabled, or does not tick while paused.
-	AActor* InputActor = InContext.InputActor;
+	AActor* InputActor = InContext.InputActor.Get();
 	if (IsValid(InputActor) && InputActor->PrimaryActorTick.bCanEverTick && InputActor->IsActorTickEnabled()
 		&& (!bGamePaused || InputActor->PrimaryActorTick.bTickEvenWhenPaused))
 	{
@@ -685,13 +685,13 @@ void DreamDriverGameHost::Teardown(FDreamDriverContext& InContext)
 {
 	using namespace DreamDriverGameHostLocal;
 
-	APlayerController* Controller = InContext.PlayerController;
-	ULocalPlayer* LocalPlayer = InContext.LocalPlayer;
+	APlayerController* Controller = InContext.PlayerController.Get();
+	ULocalPlayer* LocalPlayer = InContext.LocalPlayer.Get();
 	// Whatever was still owed to the controller -- a release, a finger it believes is down, a hook on
 	// the world tick -- goes with it.
 	ForgetHostState(Controller);
 
-	if (AActor* InputActor = InContext.InputActor; IsValid(InputActor))
+	if (AActor* InputActor = InContext.InputActor.Get(); IsValid(InputActor))
 	{
 		// Before the local player: the Enhanced preset's EndPlay takes its mapping context off the local
 		// player, found through its event system's controller, and removing the player first would leave
@@ -706,7 +706,7 @@ void DreamDriverGameHost::Teardown(FDreamDriverContext& InContext)
 
 	const bool bLocalPlayerBuiltHere = LocalPlayer != nullptr && BuiltLocalPlayers().Contains(LocalPlayer);
 	const bool bControllerBuiltHere = Controller != nullptr && BuiltControllers().Contains(Controller);
-	UGameInstance* GameInstance = InContext.GameInstance;
+	UGameInstance* GameInstance = InContext.GameInstance.Get();
 	if (bLocalPlayerBuiltHere && IsValid(LocalPlayer) && IsValid(GameInstance) && GameInstance->GetLocalPlayers().Contains(LocalPlayer))
 	{
 		// The engine's own removal: the player's controller destroyed (it is the authority here), its
@@ -892,8 +892,8 @@ bool DreamDriverGameHost::NavigationTrigger(FDreamDriverContext& InContext, bool
 bool DreamDriverGameHost::TypeCharacter(FDreamDriverContext& InContext, TCHAR InCharacter, FString& OutWhyNot)
 {
 	// The keyboard is the context's player's: player 0 of the rig's world unless the step is another player's.
-	const int32 KeyboardPlayer = IsValid(InContext.EventSystem) ? InContext.EventSystem->GetUserIndex() : InContext.PlayerIndex;
-	if (DreamUITextInputRouter::GetActiveTarget(InContext.World, KeyboardPlayer) == nullptr)
+	const int32 KeyboardPlayer = IsValid(InContext.EventSystem.Get()) ? InContext.EventSystem->GetUserIndex() : InContext.PlayerIndex;
+	if (DreamUITextInputRouter::GetActiveTarget(InContext.World.Get(), KeyboardPlayer) == nullptr)
 	{
 		OutWhyNot = FString::Printf(TEXT("no text field is being edited by player %d, so a character has nowhere to go: the game's road hands it to the field the typing player is editing (DreamUITextInputRouter::RouteCharacter) and there is none"),
 			KeyboardPlayer);
@@ -901,7 +901,7 @@ bool DreamDriverGameHost::TypeCharacter(FDreamDriverContext& InContext, TCHAR In
 	}
 	// The answer is dropped, as the module's road drops it: a refused character -- read-only, full, a
 	// letter in a number field -- is the field deciding.
-	DreamUITextInputRouter::RouteCharacter(InContext.World, KeyboardPlayer, InCharacter);
+	DreamUITextInputRouter::RouteCharacter(InContext.World.Get(), KeyboardPlayer, InCharacter);
 	return true;
 }
 
@@ -1013,7 +1013,7 @@ bool DreamDriverGameHost::Touch(FDreamDriverContext& InContext, EDreamDriverTouc
 	}
 
 	FPlayerHostState& State = HostStateFor(*Controller);
-	UDreamDriverInputModule* Module = InContext.InputModule;
+	UDreamDriverInputModule* Module = InContext.InputModule.Get();
 	const ETouchType::Type TouchType = TouchTypeOf(InPhase);
 
 	// The viewport's cursor follows every touch: FSceneViewport::OnTouchStarted, OnTouchMoved and

@@ -149,11 +149,12 @@ python Tools/Tests/static_checks.py --list-rules
 | `rig-needs-bindtest` | error | 没绑定的驱动装置不向测试报告任何东西；它的步骤失败了测试也不失败 |
 | `plan-label` | error | 计划标签不属于代码、测试名或注释 |
 | `eol` | warn | 混合换行符让文件之后的每个 diff 都很吵 |
+| `stored-raw-pointer` | error | 成员以裸指针持有 `UObject` 或 RHI 资源：地址说不出东西已经没了，而一个地址被释放又重新发出去时比起来是相等的。旁边有「物体消失计数」（`DreamUIGone`）的成员视为已守卫；函数参数与内联函数体内的局部变量不是成员，而在函数体内声明的类型只在该函数把实例交给另一个线程时才读。[存起来的指标可以是什么](../contributing/index.md#changing-what-a-stored-pointer-is) |
 | `layering` | error | 包含了上层的下层模块没法和它拆开 |
 | `layering-stale` | error | 待拆的边的清单只减不增：已经不存在的边要从清单上拿掉 |
 | `engine-private-path` | error | 引擎的 `Private` 和 `Internal` 头文件会不打招呼地在版本之间变化；插件只通过公开头文件读引擎 |
 
-一个应当保留的发现，可以就地放行（写在那一行或上一行），或者写进 `static-checks-allow.json`（路径 glob、可选的正则、理由）：
+一个应当保留的发现，可以就地放行（写在那一行或上一行），或者写进 `static-checks-allow.json`（路径 glob、可选的正则、理由）。理由要写出谁担保它，**以及它什么时候不再成立**——说不出何时失效的担保，就是还没找到的担保：
 
 ```cpp
 HitContainer.HitResult.Widget = Target;   // static-checks: allow(hand-fed-hit) this test is about the event system's handling of a given hit

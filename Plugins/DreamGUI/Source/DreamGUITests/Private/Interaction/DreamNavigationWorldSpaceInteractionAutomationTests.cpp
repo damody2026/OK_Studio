@@ -123,7 +123,7 @@ bool FDreamWorldWrapAreaTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamWidget* Area = Stage.IsReady() ? Rig.MakeWidget(TEXT("Area"), Stage.Panel, FVector2D(200.0, 280.0), FVector2D(-80.0, 10.0)) : nullptr;
+	UDreamWidget* Area = Stage.IsReady() ? Rig.MakeWidget(TEXT("Area"), Stage.Panel.Get(), FVector2D(200.0, 280.0), FVector2D(-80.0, 10.0)) : nullptr;
 	if (!TestNotNull(TEXT("An area for the column on the panel"), Area))
 	{
 		return false;
@@ -134,7 +134,7 @@ bool FDreamWorldWrapAreaTest::RunTest(const FString& Parameters)
 		PlaceButton(*this, Rig, TEXT("Top"), Area, FVector2D(0.0, 90.0)),
 		PlaceButton(*this, Rig, TEXT("Mid"), Area, FVector2D(0.0, 0.0)),
 		PlaceButton(*this, Rig, TEXT("Bottom"), Area, FVector2D(0.0, -90.0)),
-		PlaceButton(*this, Rig, TEXT("Outside"), Stage.Panel, FVector2D(150.0, -135.0)),
+		PlaceButton(*this, Rig, TEXT("Outside"), Stage.Panel.Get(), FVector2D(150.0, -135.0)),
 	};
 	if (Buttons.Contains(nullptr))
 	{
@@ -185,8 +185,8 @@ bool FDreamWorldBackStackTest::RunTest(const FString& Parameters)
 	}
 	UDreamButton* PageButton = nullptr;
 	UDreamButton* DialogButton = nullptr;
-	UDreamUINavigationScope* Page = MakeScreen(*this, Rig, Stage.Panel, TEXT("Page"), FVector2D(520.0, 300.0), FVector2D(-160.0, 100.0), PageButton);
-	UDreamUINavigationScope* Dialog = MakeScreen(*this, Rig, Stage.Panel, TEXT("Dialog"), FVector2D(300.0, 160.0), FVector2D(0.0, -20.0), DialogButton);
+	UDreamUINavigationScope* Page = MakeScreen(*this, Rig, Stage.Panel.Get(), TEXT("Page"), FVector2D(520.0, 300.0), FVector2D(-160.0, 100.0), PageButton);
+	UDreamUINavigationScope* Dialog = MakeScreen(*this, Rig, Stage.Panel.Get(), TEXT("Dialog"), FVector2D(300.0, 160.0), FVector2D(0.0, -20.0), DialogButton);
 	if (Page == nullptr || Dialog == nullptr)
 	{
 		return false;
@@ -239,7 +239,7 @@ bool FDreamWorldActionKeyTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* Button = Stage.IsReady() ? PlaceButton(*this, Rig, TEXT("Accept"), Stage.Panel, FVector2D(120.0, -60.0)) : nullptr;
+	UDreamButton* Button = Stage.IsReady() ? PlaceButton(*this, Rig, TEXT("Accept"), Stage.Panel.Get(), FVector2D(120.0, -60.0)) : nullptr;
 	UUIEventTrigger* ClickWatcher = Button != nullptr ? Button->FaceNode->AddComponent<UUIEventTrigger>() : nullptr;
 	if (!TestNotNull(TEXT("A button on the panel whose face carries a click watcher came up"), ClickWatcher))
 	{

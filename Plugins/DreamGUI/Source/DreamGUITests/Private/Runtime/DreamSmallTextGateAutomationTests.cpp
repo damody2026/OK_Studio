@@ -600,14 +600,14 @@ bool FDreamSmallTextGateCanvasesTest::RunTest(const FString& Parameters)
 
 	{
 		DreamTests::FScopedGameWorld TestWorld;
-		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 		if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 		{
 			return false;
 		}
 		UDreamWidget* Root = nullptr;
 		UDreamCanvas* Canvas = nullptr;
-		UDreamText* Text = BuildLabel(TestWorld.World, EDreamRenderMode::WorldSpace, Root, Canvas);
+		UDreamText* Text = BuildLabel(TestWorld.World.Get(), EDreamRenderMode::WorldSpace, Root, Canvas);
 		if (Text == nullptr)
 		{
 			if (Root != nullptr)
@@ -638,14 +638,14 @@ bool FDreamSmallTextGateCanvasesTest::RunTest(const FString& Parameters)
 	// resolution scale, set before the label's first paint, which counts as settled) has two of them to the canvas's unit.
 	{
 		DreamTests::FScopedGameWorld TestWorld;
-		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 		if (!TestNotNull(TEXT("Another game world with a UI manager"), Manager))
 		{
 			return false;
 		}
 		UDreamWidget* Root = nullptr;
 		UDreamCanvas* Canvas = nullptr;
-		UDreamText* Text = BuildLabel(TestWorld.World, EDreamRenderMode::RenderTarget, Root, Canvas);
+		UDreamText* Text = BuildLabel(TestWorld.World.Get(), EDreamRenderMode::RenderTarget, Root, Canvas);
 		if (Text != nullptr)
 		{
 			Canvas->SetRenderTargetResolutionScale(2.0f);
@@ -664,14 +664,14 @@ bool FDreamSmallTextGateCanvasesTest::RunTest(const FString& Parameters)
 
 	{
 		DreamTests::FScopedGameWorld EditorWorld(EWorldType::Editor);
-		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(EditorWorld.World);
+		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(EditorWorld.World.Get());
 		if (!TestNotNull(TEXT("An editor world with a UI manager"), Manager))
 		{
 			return false;
 		}
 		UDreamWidget* Root = nullptr;
 		UDreamCanvas* Canvas = nullptr;
-		UDreamText* Text = BuildLabel(EditorWorld.World, EDreamRenderMode::ScreenSpaceOverlay, Root, Canvas);
+		UDreamText* Text = BuildLabel(EditorWorld.World.Get(), EDreamRenderMode::ScreenSpaceOverlay, Root, Canvas);
 		if (Text != nullptr)
 		{
 			Manager->TickDreamUI(1.0f / 30.0f);

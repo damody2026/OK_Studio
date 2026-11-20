@@ -7,9 +7,13 @@
 class UDreamWidget;
 class UWorld;
 
-/** One widget whose rect the pick ray crossed. */
+/**
+ * One widget whose rect the pick ray crossed. Raw, and good only for the call that filled the array: RaycastWidgetRects
+ * fills it from widgets its caller holds, and every caller reads the hits before anything can go.
+ */
 struct FDreamUIWidgetPickHit
 {
+	// static-checks: allow(stored-raw-pointer) Guaranteed by RaycastWidgetRects' caller, which holds the widgets it hands in and reads the hits before they can go.
 	UDreamWidget* Widget = nullptr;
 	FVector WorldLocation = FVector::ZeroVector;
 	double Distance = 0.0;

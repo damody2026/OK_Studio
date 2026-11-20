@@ -149,7 +149,7 @@ namespace DreamDragDropWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		// The cursor reads the stick from player 0's controller; made after the world pointer, which asks to come first.
 		Rig.EnsureGameInputHost();
@@ -201,7 +201,7 @@ bool FDreamWorldDragDropPointerTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	const FDragScene Scene = Stage.IsReady() ? MakeScene(*this, Rig, Stage.Panel) : FDragScene();
+	const FDragScene Scene = Stage.IsReady() ? MakeScene(*this, Rig, Stage.Panel.Get()) : FDragScene();
 	if (!TestTrue(TEXT("The scene came up on the panel"), Scene.IsReady()))
 	{
 		return false;

@@ -186,17 +186,17 @@ namespace DreamWidgetWorldTransformTestLocal
 
 		bool Build(FAutomationTestBase& InTest)
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 			if (!InTest.TestNotNull(TEXT("A game world with a UI manager"), Manager))
 			{
 				return false;
 			}
-			Host = MakeHost(World.World, FVector(500.0, 0.0, 0.0));
+			Host = MakeHost(World.World.Get(), FVector(500.0, 0.0, 0.0));
 			if (!InTest.TestNotNull(TEXT("A scene component for the panel to stand on"), Host))
 			{
 				return false;
 			}
-			WorldRoot = MakeWidget(World.World, TEXT("WorldRoot"), nullptr, FVector2D(800.0, 600.0));
+			WorldRoot = MakeWidget(World.World.Get(), TEXT("WorldRoot"), nullptr, FVector2D(800.0, 600.0));
 			UDreamCanvas* WorldCanvas = WorldRoot->AddComponent<UDreamCanvas>();
 			if (!InTest.TestNotNull(TEXT("A canvas on the world-space root"), WorldCanvas))
 			{
@@ -204,16 +204,16 @@ namespace DreamWidgetWorldTransformTestLocal
 			}
 			WorldCanvas->SetRenderMode(EDreamRenderMode::WorldSpace);
 			WorldCanvas->AttachToSceneComponent(Host);
-			Panel = MakeWidget(World.World, TEXT("Panel"), WorldRoot, FVector2D(400.0, 300.0));
-			Button = MakeWidget(World.World, TEXT("Button"), Panel, FVector2D(120.0, 40.0));
-			Label = MakeWidget(World.World, TEXT("Label"), Button, FVector2D(80.0, 20.0));
-			Icon = MakeWidget(World.World, TEXT("Icon"), Button, FVector2D(20.0, 20.0));
-			Other = MakeWidget(World.World, TEXT("Other"), Panel, FVector2D(60.0, 60.0));
+			Panel = MakeWidget(World.World.Get(), TEXT("Panel"), WorldRoot, FVector2D(400.0, 300.0));
+			Button = MakeWidget(World.World.Get(), TEXT("Button"), Panel, FVector2D(120.0, 40.0));
+			Label = MakeWidget(World.World.Get(), TEXT("Label"), Button, FVector2D(80.0, 20.0));
+			Icon = MakeWidget(World.World.Get(), TEXT("Icon"), Button, FVector2D(20.0, 20.0));
+			Other = MakeWidget(World.World.Get(), TEXT("Other"), Panel, FVector2D(60.0, 60.0));
 			Label->SetAnchoredPosition(FVector2D(10.0, 0.0));
 			Icon->SetAnchoredPosition(FVector2D(-45.0, 0.0));
 			Other->SetAnchoredPosition(FVector2D(120.0, -90.0));
 
-			ScreenRoot = MakeWidget(World.World, TEXT("ScreenRoot"), nullptr);
+			ScreenRoot = MakeWidget(World.World.Get(), TEXT("ScreenRoot"), nullptr);
 			ScreenCanvas = ScreenRoot->AddComponent<UDreamCanvas>();
 			if (!InTest.TestNotNull(TEXT("A canvas on the screen-space root"), ScreenCanvas))
 			{
@@ -223,16 +223,16 @@ namespace DreamWidgetWorldTransformTestLocal
 			// headless world's two-pixel fallback, and the substitute is what undoes it.
 			ScreenCanvas->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
 			ScreenCanvas->SetViewportSizeOverride(FIntPoint(1280, 720));
-			Corner = MakeWidget(World.World, TEXT("Corner"), ScreenRoot, FVector2D(100.0, 50.0));
+			Corner = MakeWidget(World.World.Get(), TEXT("Corner"), ScreenRoot, FVector2D(100.0, 50.0));
 			Corner->SetAnchorMin(FVector2D(1.0, 1.0));
 			Corner->SetAnchorMax(FVector2D(1.0, 1.0));
 			Corner->SetPivot(FVector2D(1.0, 1.0));
 			Corner->SetAnchoredPosition(FVector2D(-20.0, -20.0));
-			Bar = MakeWidget(World.World, TEXT("Bar"), ScreenRoot, FVector2D(100.0, 40.0));
+			Bar = MakeWidget(World.World.Get(), TEXT("Bar"), ScreenRoot, FVector2D(100.0, 40.0));
 			Bar->SetHorizontalAndVerticalAnchorMinMax(FVector2D(0.0, 1.0), FVector2D(1.0, 1.0), false, false);
 			Bar->SetPivot(FVector2D(0.5, 1.0));
 			Bar->SetHeight(40.0f);
-			BarIcon = MakeWidget(World.World, TEXT("BarIcon"), Bar);
+			BarIcon = MakeWidget(World.World.Get(), TEXT("BarIcon"), Bar);
 			BarIcon->SetHorizontalAndVerticalAnchorMinMax(FVector2D(0.0, 0.0), FVector2D(1.0, 1.0), false, false);
 			// Turned about a corner, so that the bar growing moves the point it turns about.
 			BarIcon->SetRenderTransformPivot(FVector2D(0.0, 0.0));
@@ -287,7 +287,7 @@ namespace DreamWidgetWorldTransformTestLocal
 		Script.Add({ TEXT("a move after the frame, announced at its end"), [](FScriptScene& S)
 		{
 			S.Panel->SetRelativeLocation(FVector(0.0, -25.0, 40.0));
-			S.Manager->OnWorldPreSendAllEndOfFrameUpdates(S.World.World);
+			S.Manager->OnWorldPreSendAllEndOfFrameUpdates(S.World.World.Get());
 		}, false });
 		return Script;
 	}
@@ -381,17 +381,17 @@ bool FDreamWorldTransformCoalescingTest::RunTest(const FString& Parameters)
 	FTransformEventCounts Events;
 	const FScopedConsoleVariable Defer(DeferSwitch, 1);
 	FScopedWorld World(EWorldType::Game);
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 	if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 	{
 		return false;
 	}
 	UDreamCanvas* Canvas = nullptr;
-	UDreamWidget* Root = MakeCanvasRoot(World.World, Canvas);
-	UDreamWidget* Moved = MakeWidget(World.World, TEXT("Moved"), Root);
-	UDreamWidget* FirstChild = MakeWidget(World.World, TEXT("FirstChild"), Moved);
-	UDreamWidget* SecondChild = MakeWidget(World.World, TEXT("SecondChild"), Moved);
-	UDreamWidget* Grandchild = MakeWidget(World.World, TEXT("Grandchild"), SecondChild);
+	UDreamWidget* Root = MakeCanvasRoot(World.World.Get(), Canvas);
+	UDreamWidget* Moved = MakeWidget(World.World.Get(), TEXT("Moved"), Root);
+	UDreamWidget* FirstChild = MakeWidget(World.World.Get(), TEXT("FirstChild"), Moved);
+	UDreamWidget* SecondChild = MakeWidget(World.World.Get(), TEXT("SecondChild"), Moved);
+	UDreamWidget* Grandchild = MakeWidget(World.World.Get(), TEXT("Grandchild"), SecondChild);
 	const TArray<UDreamWidget*> Subtree = { Moved, FirstChild, SecondChild, Grandchild };
 	for (UDreamWidget* Widget : Subtree)
 	{
@@ -450,15 +450,15 @@ bool FDreamWorldTransformEventTimingTest::RunTest(const FString& Parameters)
 		FDelegateHandle ParentListener;
 		const FScopedConsoleVariable Defer(DeferSwitch, DeferValue);
 		FScopedWorld World(EWorldType::Game);
-		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 		if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 		{
 			return false;
 		}
 		UDreamCanvas* Canvas = nullptr;
-		UDreamWidget* Root = MakeCanvasRoot(World.World, Canvas);
-		UDreamWidget* Parent = MakeWidget(World.World, TEXT("Parent"), Root);
-		UDreamWidget* Child = MakeWidget(World.World, TEXT("Child"), Parent);
+		UDreamWidget* Root = MakeCanvasRoot(World.World.Get(), Canvas);
+		UDreamWidget* Parent = MakeWidget(World.World.Get(), TEXT("Parent"), Root);
+		UDreamWidget* Child = MakeWidget(World.World.Get(), TEXT("Child"), Parent);
 		Child->SetAnchoredPosition(FVector2D(30.0, 10.0));
 		Events.Listen(Parent);
 		Events.Listen(Child);
@@ -490,7 +490,7 @@ bool FDreamWorldTransformEventTimingTest::RunTest(const FString& Parameters)
 		{
 			// After the tick: what the world's end-of-frame updates flush.
 			TestEqual(TEXT("With the switch on, a move after the flush waits for the end of the frame"), Events.Of(Parent), 1);
-			Manager->OnWorldPreSendAllEndOfFrameUpdates(World.World);
+			Manager->OnWorldPreSendAllEndOfFrameUpdates(World.World.Get());
 			TestEqual(TEXT("... which announces it"), Events.Of(Parent), 2);
 		}
 		else
@@ -531,8 +531,8 @@ bool FDreamWorldTransformRaycastTest::RunTest(const FString& Parameters)
 	// the transform it reads and the bounding sphere it culls by have to be the moved ones already.
 	const FScopedConsoleVariable Defer(DeferSwitch, 1);
 	FScopedWorld World(EWorldType::Game);
-	USceneComponent* Host = MakeHost(World.World, FVector(300.0, 0.0, 0.0));
-	UDreamWidget* Panel = UDreamUIBPLibrary::ConstructWidget(World.World, TEXT("Panel"), nullptr);
+	USceneComponent* Host = MakeHost(World.World.Get(), FVector(300.0, 0.0, 0.0));
+	UDreamWidget* Panel = UDreamUIBPLibrary::ConstructWidget(World.World.Get(), TEXT("Panel"), nullptr);
 	if (!TestNotNull(TEXT("A host"), Host) || !TestNotNull(TEXT("A panel"), Panel))
 	{
 		return false;
@@ -547,7 +547,7 @@ bool FDreamWorldTransformRaycastTest::RunTest(const FString& Parameters)
 	Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
 	UDreamUIBPLibrary::AttachWidgetToSceneComponent(Panel, Host);
 	// The button is the one thing on the panel a ray can hit, off to the side of the ray to begin with.
-	UDreamWidget* Button = UDreamUIBPLibrary::ConstructWidget(World.World, TEXT("Button"), nullptr);
+	UDreamWidget* Button = UDreamUIBPLibrary::ConstructWidget(World.World.Get(), TEXT("Button"), nullptr);
 	if (!TestNotNull(TEXT("A button"), Button) || !TestTrue(TEXT("The button hangs on the panel"), Button->TrySetParent(Panel, false)))
 	{
 		return false;
@@ -617,7 +617,7 @@ bool FDreamWorldTransformRenderLayerRulesTest::RunTest(const FString& Parameters
 	FTransformEventCounts Events;
 	const FScopedConsoleVariable Defer(DeferSwitch, 1);
 	FScopedWorld World(EWorldType::Game);
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 	if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 	{
 		return false;
@@ -630,13 +630,13 @@ bool FDreamWorldTransformRenderLayerRulesTest::RunTest(const FString& Parameters
 	//           Nested (treated as a render layer)
 	//             NestedLeaf
 	UDreamCanvas* Canvas = nullptr;
-	UDreamWidget* Root = MakeCanvasRoot(World.World, Canvas);
-	UDreamWidget* Outside = MakeWidget(World.World, TEXT("Outside"), Root);
-	UDreamWidget* Layer = MakeWidget(World.World, TEXT("Layer"), Outside);
-	UDreamWidget* Inner = MakeWidget(World.World, TEXT("Inner"), Layer);
-	UDreamWidget* Leaf = MakeWidget(World.World, TEXT("Leaf"), Inner);
-	UDreamWidget* Nested = MakeWidget(World.World, TEXT("Nested"), Inner);
-	UDreamWidget* NestedLeaf = MakeWidget(World.World, TEXT("NestedLeaf"), Nested);
+	UDreamWidget* Root = MakeCanvasRoot(World.World.Get(), Canvas);
+	UDreamWidget* Outside = MakeWidget(World.World.Get(), TEXT("Outside"), Root);
+	UDreamWidget* Layer = MakeWidget(World.World.Get(), TEXT("Layer"), Outside);
+	UDreamWidget* Inner = MakeWidget(World.World.Get(), TEXT("Inner"), Layer);
+	UDreamWidget* Leaf = MakeWidget(World.World.Get(), TEXT("Leaf"), Inner);
+	UDreamWidget* Nested = MakeWidget(World.World.Get(), TEXT("Nested"), Inner);
+	UDreamWidget* NestedLeaf = MakeWidget(World.World.Get(), TEXT("NestedLeaf"), Nested);
 	const TArray<UDreamWidget*> All = { Root, Outside, Layer, Inner, Leaf, Nested, NestedLeaf };
 	for (UDreamWidget* Widget : All)
 	{
@@ -734,14 +734,14 @@ bool FDreamWorldTransformRunawayListenerTest::RunTest(const FString& Parameters)
 	int32 Calls = 0;
 	const FScopedConsoleVariable Defer(DeferSwitch, 1);
 	FScopedWorld World(EWorldType::Game);
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 	if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 	{
 		return false;
 	}
 	UDreamCanvas* Canvas = nullptr;
-	UDreamWidget* Root = MakeCanvasRoot(World.World, Canvas);
-	UDreamWidget* Restless = MakeWidget(World.World, TEXT("Restless"), Root);
+	UDreamWidget* Root = MakeCanvasRoot(World.World.Get(), Canvas);
+	UDreamWidget* Restless = MakeWidget(World.World.Get(), TEXT("Restless"), Root);
 	Manager->FlushTransformChanges();
 	// Every move it hears, it answers with another. Each answer is heard in a further pass of the flush.
 	const FDelegateHandle Listener = Restless->GetTransformChangedEvent().AddLambda([&Calls, Restless]()

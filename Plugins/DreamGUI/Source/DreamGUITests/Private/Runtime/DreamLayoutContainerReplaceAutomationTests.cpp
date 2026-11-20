@@ -46,13 +46,13 @@ bool FDreamLayoutContainerReplaceKeepsWidgetTest::RunTest(const FString& Paramet
 {
 	using namespace DreamLayoutContainerReplaceTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 400.0f, 400.0f);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, Root, TEXT("Panel"), 300.0f, 300.0f);
-	UDreamWidget* Sibling = MakeWidget(TestWorld.World, Root, TEXT("Sibling"), 50.0f, 50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 400.0f, 400.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), Root, TEXT("Panel"), 300.0f, 300.0f);
+	UDreamWidget* Sibling = MakeWidget(TestWorld.World.Get(), Root, TEXT("Sibling"), 50.0f, 50.0f);
 	TArray<UDreamWidget*> ExpectedChildren;
 	for (int32 i = 0; i < 3; i++)
 	{
-		ExpectedChildren.Add(MakeWidget(TestWorld.World, Panel, *FString::Printf(TEXT("Child%d"), i), 80.0f, 40.0f));
+		ExpectedChildren.Add(MakeWidget(TestWorld.World.Get(), Panel, *FString::Printf(TEXT("Child%d"), i), 80.0f, 40.0f));
 	}
 	Root->OnRegister();
 
@@ -106,10 +106,10 @@ bool FDreamLayoutContainerReplaceRefusesOverfullTest::RunTest(const FString& Par
 {
 	using namespace DreamLayoutContainerReplaceTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 300.0f, 300.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 300.0f, 300.0f);
 	for (int32 i = 0; i < 3; i++)
 	{
-		MakeWidget(TestWorld.World, Panel, *FString::Printf(TEXT("Child%d"), i), 80.0f, 40.0f);
+		MakeWidget(TestWorld.World.Get(), Panel, *FString::Printf(TEXT("Child%d"), i), 80.0f, 40.0f);
 	}
 	Panel->OnRegister();
 	UDreamLayoutContainer* Before = Panel->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();

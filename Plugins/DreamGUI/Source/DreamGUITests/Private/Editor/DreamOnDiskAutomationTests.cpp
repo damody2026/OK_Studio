@@ -67,7 +67,7 @@ bool FDreamOnDiskFixtureReallyReloadsTest::RunTest(const FString& Parameters)
 	using namespace DreamOnDiskTestLocal;
 
 	FScopedOnDiskPackage Fixture(TEXT("OnDiskSelfCheck"));
-	UDreamWidgetTree* Built = BuildTree(Fixture.Package, TEXT("OnDiskSelfCheck"));
+	UDreamWidgetTree* Built = BuildTree(Fixture.Package.Get(), TEXT("OnDiskSelfCheck"));
 
 	FString Error;
 	if (!TestTrue(*FString::Printf(TEXT("the package saved: %s"), *Error), Fixture.Save(Built, Error)))return false;
@@ -96,7 +96,7 @@ bool FDreamOnDiskTreeKnowsItsParentsTest::RunTest(const FString& Parameters)
 	using namespace DreamOnDiskTestLocal;
 
 	FScopedOnDiskPackage Fixture(TEXT("OnDiskParents"));
-	UDreamWidgetTree* Built = BuildTree(Fixture.Package, TEXT("OnDiskParents"));
+	UDreamWidgetTree* Built = BuildTree(Fixture.Package.Get(), TEXT("OnDiskParents"));
 
 	FString Error;
 	if (!TestTrue(*FString::Printf(TEXT("the package saved: %s"), *Error), Fixture.Save(Built, Error)))return false;

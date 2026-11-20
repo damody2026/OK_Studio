@@ -76,7 +76,7 @@ bool FDreamScrollBarWorldDragTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamScrollBar* Bar = Rig.MakeControl<UDreamScrollBar>(TEXT("Bar"), Stage.Panel, FVector2D(24.0, 180.0), FVector2D(-150.0, 0.0));
+	UDreamScrollBar* Bar = Rig.MakeControl<UDreamScrollBar>(TEXT("Bar"), Stage.Panel.Get(), FVector2D(24.0, 180.0), FVector2D(-150.0, 0.0));
 	Rig.PumpFrames(2);
 	FBarPixels Before;
 	if (!TestTrue(TEXT("The bar came up on the panel with a track and a handle"), Bar != nullptr && Bar->TrackNode != nullptr && Bar->HandleNode != nullptr)
@@ -92,7 +92,7 @@ bool FDreamScrollBarWorldDragTest::RunTest(const FString& Parameters)
 	const double DragPixels = 90.0;
 	const float Expected = static_cast<float>(DragPixels / Before.Travel);
 	const float OnePixel = static_cast<float>(1.0 / Before.Travel);
-	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer);
+	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer.Get());
 
 	const FVector2D MouseLanded = Before.Handle.GetCenter();
 	TestTrue(TEXT("The mouse's drag down the handle completes"),

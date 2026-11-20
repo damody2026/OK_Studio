@@ -99,7 +99,7 @@ bool FDreamUserWidgetInitializeBuildsAndBindsTest::RunTest(const FString& Parame
 
 	TStrongObjectPtr<UDreamWidgetTree> Template(BuildTemplate(GetTransientPackage()));
 	TStrongObjectPtr<UDreamUserWidgetBindFixture> UserWidget(
-		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass()));
+		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass()));
 
 	AddExpectedError(TEXT("matches property 'Mismatched'"), EAutomationExpectedErrorFlags::Contains, 1);
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(UserWidget.Get(), UDreamUserWidgetBindFixture::StaticClass(), Template.Get());
@@ -150,7 +150,7 @@ bool FDreamUserWidgetInitializeIsIdempotentTest::RunTest(const FString& Paramete
 
 	TStrongObjectPtr<UDreamWidgetTree> Template(BuildTemplate(GetTransientPackage()));
 	TStrongObjectPtr<UDreamUserWidgetBindFixture> UserWidget(
-		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass()));
+		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass()));
 
 	AddExpectedError(TEXT("matches property 'Mismatched'"), EAutomationExpectedErrorFlags::Contains, 1);
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(UserWidget.Get(), UDreamUserWidgetBindFixture::StaticClass(), Template.Get());
@@ -189,7 +189,7 @@ bool FDreamUserWidgetInheritsTemplateTest::RunTest(const FString& Parameters)
 	// native subclass, which never has a generated class at all.
 	TStrongObjectPtr<UDreamWidgetTree> Template(BuildTemplate(GetTransientPackage()));
 	TStrongObjectPtr<UDreamUserWidgetBindFixtureSubclass> UserWidget(
-		NewObject<UDreamUserWidgetBindFixtureSubclass>(TestWorld.World, UDreamUserWidgetBindFixtureSubclass::StaticClass()));
+		NewObject<UDreamUserWidgetBindFixtureSubclass>(TestWorld.World.Get(), UDreamUserWidgetBindFixtureSubclass::StaticClass()));
 
 	AddExpectedError(TEXT("matches property 'Mismatched'"), EAutomationExpectedErrorFlags::Contains, 1);
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(UserWidget.Get(), UDreamUserWidgetBindFixtureSubclass::StaticClass(), Template.Get());
@@ -219,7 +219,7 @@ bool FDreamUserWidgetVariableNameIsSharedTest::RunTest(const FString& Parameters
 	// two agreeing is the entire contract, and a second near-identical copy elsewhere is how a binding
 	// reports success and comes back null. These cases are the ones a careless reimplementation gets
 	// wrong.
-	TStrongObjectPtr<UDreamWidgetTree> Tree(NewObject<UDreamWidgetTree>(TestWorld.World));
+	TStrongObjectPtr<UDreamWidgetTree> Tree(NewObject<UDreamWidgetTree>(TestWorld.World.Get()));
 	UDreamWidget* Widget = Tree->ConstructWidget<UDreamWidget>();
 	Tree->RootWidget = Widget;
 
@@ -251,7 +251,7 @@ bool FDreamUserWidgetDestroyedStopsBeingPolledTest::RunTest(const FString& Param
 {
 	using namespace DreamUserWidgetTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the manager exists for the test world"), Manager))
 	{
 		return false;
@@ -269,7 +269,7 @@ bool FDreamUserWidgetDestroyedStopsBeingPolledTest::RunTest(const FString& Param
 	// it. Nothing below ticks: the count is read immediately after teardown, so a count of zero can
 	// only mean the unregister path took it off.
 	TStrongObjectPtr<UDreamUserWidget> UserWidget(
-		NewObject<UDreamUserWidget>(TestWorld.World, UDreamUserWidget::StaticClass()));
+		NewObject<UDreamUserWidget>(TestWorld.World.Get(), UDreamUserWidget::StaticClass()));
 	UserWidget->OnRegister();
 	Manager->AddPropertyBindingUser(UserWidget.Get());
 	if (!TestEqual(TEXT("the widget is on the polled-binding visit"), Manager->GetPropertyBindingUserCount(), 1))
@@ -298,7 +298,7 @@ bool FDreamUserWidgetWalkStepsOverHolesTest::RunTest(const FString& Parameters)
 	// held by something that did not take it out of the array. The editor once died walking one:
 	// registration, the compiler, the write-back and the editor tools all share this walk.
 	TStrongObjectPtr<UDreamUserWidgetBindFixture> Holder(
-		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass()));
+		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass()));
 	PunchAHoleInChildren(Holder.Get());
 	if (!TestEqual(TEXT("the fixture really holds a hole"), CountHolesInChildren(Holder.Get()), 1))
 	{
@@ -337,7 +337,7 @@ bool FDreamUserWidgetCultureRegistrationTolerantTest::RunTest(const FString& Par
 	UDreamUIManagerWorldSubsystem::UnregisterDreamUICultureChangedEvent(TScriptInterface<IDreamUICultureChangedInterface>());
 	// Reaching this line at all is the assertion; the checks below only keep it from reading as dead.
 	TestNotNull(TEXT("the manager is still there afterwards"),
-		UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World));
+		UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get()));
 	return true;
 }
 
@@ -358,7 +358,7 @@ bool FDreamUserWidgetDuplicateOwnsItsContentsTest::RunTest(const FString& Parame
 	// uninitialized, so none of its own bindings were ever resolved.
 	TStrongObjectPtr<UDreamWidgetTree> Template(BuildTemplate(GetTransientPackage()));
 	TStrongObjectPtr<UDreamUserWidgetBindFixture> Source(
-		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass()));
+		NewObject<UDreamUserWidgetBindFixture>(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass()));
 	AddExpectedError(TEXT("matches property 'Mismatched'"), EAutomationExpectedErrorFlags::Contains, 1);
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(Source.Get(), UDreamUserWidgetBindFixture::StaticClass(), Template.Get());
 	Source->OnRegister();
@@ -368,7 +368,7 @@ bool FDreamUserWidgetDuplicateOwnsItsContentsTest::RunTest(const FString& Parame
 	}
 
 	// The host a duplicated cell is parented to, the way a list's Content is.
-	UDreamWidget* Host = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Host = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Host->SetDisplayName(TEXT("Host"));
 	Host->OnRegister();
 

@@ -80,12 +80,12 @@ bool FDreamFontFallbackReloadWarmCachesTest::RunTest(const FString& Parameters)
 #if WITH_FREETYPE
 	using namespace DreamFontDependencyReloadTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Primary = MakeFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_Bitmap* Fallback = MakeFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
-	UDreamUIFontData_Bitmap* NewFaceReference = MakeFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Primary = MakeFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Fallback = MakeFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_Bitmap* NewFaceReference = MakeFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	Primary->SetFallbackFonts({ Fallback });
 	// Atlas reset notifies registered texts, which reenter InitFont/GetFontTexture while they take the new texture.
-	UDreamWidget* RegisteredRoot = NewObject<UDreamWidget>(TestWorld.World);
+	UDreamWidget* RegisteredRoot = NewObject<UDreamWidget>(TestWorld.World.Get());
 	RegisteredRoot->OnRegister();
 	ON_SCOPE_EXIT { RegisteredRoot->DestroyWidget(); };
 	UDreamText* RegisteredText = RegisteredRoot->CreateNewVisual<UDreamText>();
@@ -183,11 +183,11 @@ bool FDreamFontFallbackReloadFieldWorkerTest::RunTest(const FString& Parameters)
 		CoverageVariable->Set(SavedCoverage, ECVF_SetByCode);
 		UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1);
 	};
-	UDreamUIFontData_DistanceField* Primary = MakeFieldFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_Bitmap* Fallback = MakeFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
-	UDreamUIFontData_DistanceField* Reference = MakeFieldFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Primary = MakeFieldFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Fallback = MakeFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_DistanceField* Reference = MakeFieldFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	// An unused style dependency must stay lazy while synchronous fallback glyphs and cached metrics are read.
-	UDreamUIFontData_Bitmap* UnusedStyle = NewObject<UDreamUIFontData_Bitmap>(TestWorld.World);
+	UDreamUIFontData_Bitmap* UnusedStyle = NewObject<UDreamUIFontData_Bitmap>(TestWorld.World.Get());
 	UnusedStyle->SetFontFilePath(FPaths::Combine(FPaths::EngineContentDir(), TEXT("Slate/Fonts/Roboto-Italic.ttf")), false);
 	Primary->SetFallbackFonts({ Fallback });
 	Primary->SetStyleFonts(UnusedStyle, nullptr, nullptr);
@@ -261,9 +261,9 @@ bool FDreamFontStyleReloadWarmCachesTest::RunTest(const FString& Parameters)
 #if WITH_FREETYPE
 	using namespace DreamFontDependencyReloadTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Primary = MakeFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_Bitmap* Style = MakeFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
-	UDreamUIFontData_Bitmap* Reference = MakeFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Primary = MakeFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Style = MakeFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_Bitmap* Reference = MakeFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	Primary->SetStyleFonts(Style, nullptr, nullptr);
 	const int32 StyledFace = Primary->GetStyledFace(true, false);
 	if (!TestTrue(TEXT("the explicit bold face is available"), StyledFace != 0))return false;
@@ -307,13 +307,13 @@ bool FDreamFontFallbackReloadStaticTextTest::RunTest(const FString& Parameters)
 #if WITH_FREETYPE
 	using namespace DreamFontDependencyReloadTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIFontData_Bitmap* Primary = MakeFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_Bitmap* Fallback = MakeFont(TestWorld.World, TEXT("DroidSansFallback.ttf"));
-	UDreamUIFontData_Bitmap* ReferencePrimary = MakeFont(TestWorld.World, TEXT("Roboto-Regular.ttf"));
-	UDreamUIFontData_Bitmap* ReferenceFallback = MakeFont(TestWorld.World, TEXT("NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Primary = MakeFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_Bitmap* Fallback = MakeFont(TestWorld.World.Get(), TEXT("DroidSansFallback.ttf"));
+	UDreamUIFontData_Bitmap* ReferencePrimary = MakeFont(TestWorld.World.Get(), TEXT("Roboto-Regular.ttf"));
+	UDreamUIFontData_Bitmap* ReferenceFallback = MakeFont(TestWorld.World.Get(), TEXT("NotoNaskhArabicUI-Regular.ttf"));
 	Primary->SetFallbackFonts({ Fallback });
 	ReferencePrimary->SetFallbackFonts({ ReferenceFallback });
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get());
 	Root->SetWidth(1000.0f);
 	Root->SetHeight(600.0f);
 	Root->OnRegister();
@@ -323,7 +323,7 @@ bool FDreamFontFallbackReloadStaticTextTest::RunTest(const FString& Parameters)
 	Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
 	auto AddText = [Root, &TestWorld](UDreamUIFontData_Bitmap* InFont)
 	{
-		UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World);
+		UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get());
 		Child->SetWidth(600.0f);
 		Child->SetHeight(120.0f);
 		Child->OnRegister();

@@ -56,7 +56,7 @@ namespace DreamDriverGameHost
 {
 	/**
 	 * Step 3 of building a rig whose input host is an actor, for the player InContext.PlayerIndex speaks
-	 * for. Needs InContext.World and InContext.GameInstance, and the players before this one built: a
+	 * for. Needs InContext.World.Get() and InContext.GameInstance.Get(), and the players before this one built: a
 	 * player is the next local player on the game instance, so player N is built on a game instance that
 	 * has exactly N. Makes a local player (on the game instance, for that player's platform user), a
 	 * player controller for it (on the world's controller list, SetPlayer run, so its PlayerInput and

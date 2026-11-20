@@ -212,7 +212,7 @@ bool FDreamDriverPieClickTest::RunTest(const FString& Parameters)
 			// The arrangement the claim rests on: the event system that will dispatch is the input
 			// actor's own, not one the rig hung somewhere else.
 			TestTrue(TEXT("The event system is the input actor's own"),
-				InContext.InputActor != nullptr && InContext.EventSystem != nullptr && InContext.EventSystem->GetOwner() == InContext.InputActor);
+				InContext.InputActor.Get() != nullptr && InContext.EventSystem.Get() != nullptr && InContext.EventSystem->GetOwner() == InContext.InputActor.Get());
 		})
 		.MoveTo(FDreamBy::Name(TEXT("Play")))
 		.Press()
@@ -221,7 +221,7 @@ bool FDreamDriverPieClickTest::RunTest(const FString& Parameters)
 		.Then([this](FDreamDriverContext& InContext)
 		{
 			TestTrue(TEXT("While it is held, the left mouse button is down in the player controller's own input"),
-				InContext.PlayerController != nullptr && InContext.PlayerController->IsInputKeyDown(EKeys::LeftMouseButton));
+				InContext.PlayerController.Get() != nullptr && InContext.PlayerController->IsInputKeyDown(EKeys::LeftMouseButton));
 		})
 		.Release()
 		.Wait(FDreamUntil::Condition([Listener]() { return Listener->ClickedCount > 0; }, ConditionLimit()),
@@ -229,7 +229,7 @@ bool FDreamDriverPieClickTest::RunTest(const FString& Parameters)
 		.Then([this, Listener](FDreamDriverContext& InContext)
 		{
 			TestFalse(TEXT("After the release the left mouse button is up in the player controller's input"),
-				InContext.PlayerController != nullptr && InContext.PlayerController->IsInputKeyDown(EKeys::LeftMouseButton));
+				InContext.PlayerController.Get() != nullptr && InContext.PlayerController->IsInputKeyDown(EKeys::LeftMouseButton));
 			TestEqual(TEXT("One press"), Listener->PressedCount, 1);
 			TestEqual(TEXT("One release"), Listener->ReleasedCount, 1);
 			TestEqual(TEXT("One click"), Listener->ClickedCount, 1);
@@ -271,14 +271,14 @@ bool FDreamDriverPieUIOnlyClickTest::RunTest(const FString& Parameters)
 	Rig->Sequence()
 		.Then([this, bLookIgnoredBefore](FDreamDriverContext& InContext)
 		{
-			*bLookIgnoredBefore = InContext.PlayerController != nullptr && InContext.PlayerController->IsLookInputIgnored();
-			UDreamUIInputModeLibrary::SetInputModeUIOnly(InContext.PlayerController, nullptr, 0);
-			ULocalPlayer* LocalPlayer = InContext.PlayerController != nullptr ? InContext.PlayerController->GetLocalPlayer() : nullptr;
+			*bLookIgnoredBefore = InContext.PlayerController.Get() != nullptr && InContext.PlayerController->IsLookInputIgnored();
+			UDreamUIInputModeLibrary::SetInputModeUIOnly(InContext.PlayerController.Get(), nullptr, 0);
+			ULocalPlayer* LocalPlayer = InContext.PlayerController.Get() != nullptr ? InContext.PlayerController->GetLocalPlayer() : nullptr;
 			UGameViewportClient* Client = LocalPlayer != nullptr ? LocalPlayer->ViewportClient.Get() : nullptr;
 			UDreamGameViewportClient* DreamClient = Cast<UDreamGameViewportClient>(Client);
 			TestTrue(TEXT("The viewport client ignores input, as the engine's UI-only mode has it do"), Client != nullptr && Client->IgnoreInput());
 			TestTrue(TEXT("It is DreamGUI's client, holding DreamGUI's UI-only mode"), DreamClient != nullptr && DreamClient->IsDreamUIOnlyInput());
-			TestTrue(TEXT("and holding the player's look input"), InContext.PlayerController != nullptr && InContext.PlayerController->IsLookInputIgnored());
+			TestTrue(TEXT("and holding the player's look input"), InContext.PlayerController.Get() != nullptr && InContext.PlayerController->IsLookInputIgnored());
 		})
 		.MoveTo(FDreamBy::Name(TEXT("Play")))
 		.Press()
@@ -290,12 +290,12 @@ bool FDreamDriverPieUIOnlyClickTest::RunTest(const FString& Parameters)
 		.Then([this, Listener, bLookIgnoredBefore](FDreamDriverContext& InContext)
 		{
 			TestEqual(TEXT("One click"), Listener->ClickedCount, 1);
-			UDreamUIInputModeLibrary::SetInputModeGameAndUI(InContext.PlayerController, nullptr, 0);
-			ULocalPlayer* LocalPlayer = InContext.PlayerController != nullptr ? InContext.PlayerController->GetLocalPlayer() : nullptr;
+			UDreamUIInputModeLibrary::SetInputModeGameAndUI(InContext.PlayerController.Get(), nullptr, 0);
+			ULocalPlayer* LocalPlayer = InContext.PlayerController.Get() != nullptr ? InContext.PlayerController->GetLocalPlayer() : nullptr;
 			const UDreamGameViewportClient* DreamClient = LocalPlayer != nullptr ? Cast<UDreamGameViewportClient>(LocalPlayer->ViewportClient.Get()) : nullptr;
 			TestTrue(TEXT("Leaving the mode ends the client's routing"), DreamClient != nullptr && !DreamClient->IsDreamUIOnlyInput());
 			TestTrue(TEXT("and leaves the player's look input as it found it"),
-				InContext.PlayerController != nullptr && InContext.PlayerController->IsLookInputIgnored() == *bLookIgnoredBefore);
+				InContext.PlayerController.Get() != nullptr && InContext.PlayerController->IsLookInputIgnored() == *bLookIgnoredBefore);
 		})
 		.PerformLatent();
 	Rig->Finish();
@@ -426,7 +426,7 @@ bool FDreamDriverPieHoverTweenTest::RunTest(const FString& Parameters)
 		.Then([this, Seen, ButtonOf, FaceColourOf](FDreamDriverContext& InContext)
 		{
 			TestNotNull(TEXT("The play session's GameInstance has a tween manager"),
-				UDreamTweenManager::GetDreamTweenInstance(InContext.World));
+				UDreamTweenManager::GetDreamTweenInstance(InContext.World.Get()));
 			UDreamButton* Button = ButtonOf();
 			if (!TestTrue(TEXT("The button has a face it tints"), Button != nullptr && Button->ButtonBehaviour != nullptr && FaceColourOf().IsSet()))
 			{
@@ -456,7 +456,7 @@ bool FDreamDriverPieHoverTweenTest::RunTest(const FString& Parameters)
 			// The frame the hover began: the transition started in this frame's event system tick.
 			Seen->OnArrival = FaceColourOf();
 			Seen->FrameSecondsOnArrival = FApp::GetDeltaTime();
-			Seen->WorldSecondsOnArrival = InContext.World != nullptr ? InContext.World->GetTimeSeconds() : 0.0;
+			Seen->WorldSecondsOnArrival = InContext.World.Get() != nullptr ? InContext.World->GetTimeSeconds() : 0.0;
 		})
 		.Wait(FDreamUntil::Condition([Seen, FaceColourOf]() -> bool
 			{
@@ -466,7 +466,7 @@ bool FDreamDriverPieHoverTweenTest::RunTest(const FString& Parameters)
 			StepLimit(), TEXT("the button's face to reach its hovered colour"))
 		.Then([this, Seen](FDreamDriverContext& InContext)
 		{
-			Seen->WorldSecondsOnReaching = InContext.World != nullptr ? InContext.World->GetTimeSeconds() : 0.0;
+			Seen->WorldSecondsOnReaching = InContext.World.Get() != nullptr ? InContext.World->GetTimeSeconds() : 0.0;
 			const double Taken = Seen->WorldSecondsOnReaching - Seen->WorldSecondsOnArrival;
 			AddInfo(FString::Printf(TEXT("The face went from %s to %s in %.3f s of world time; the transition is %.3f s and the arrival frame was %.4f s."),
 				Seen->OnArrival.IsSet() ? *Seen->OnArrival->ToString() : TEXT("(no face)"), *Seen->Hovered.ToString(),
@@ -617,7 +617,7 @@ bool FDreamDriverPieWorldSpaceClickTest::RunTest(const FString& Parameters)
 			 * the driver's camera gives for the same pixel. Checked separately, direction and origin, so
 			 * a disagreement says which half of the camera drifted from the player.
 			 */
-			ULocalPlayer* Player = InContext.LocalPlayer;
+			ULocalPlayer* Player = InContext.LocalPlayer.Get();
 			FViewport* Viewport = Player != nullptr && Player->ViewportClient != nullptr ? Player->ViewportClient->Viewport : nullptr;
 			FSceneViewProjectionData Projection;
 			if (!TestTrue(TEXT("The local player has projection data for its viewport"),
@@ -625,7 +625,7 @@ bool FDreamDriverPieWorldSpaceClickTest::RunTest(const FString& Parameters)
 			{
 				return;
 			}
-			if (!TestTrue(TEXT("The context has a camera and an input module to ask"), InContext.Camera.IsValid() && InContext.InputModule != nullptr))
+			if (!TestTrue(TEXT("The context has a camera and an input module to ask"), InContext.Camera.IsValid() && InContext.InputModule.Get() != nullptr))
 			{
 				return;
 			}
@@ -778,7 +778,7 @@ namespace DreamDriverPieTestLocal
 	 */
 	void ClickThroughSlate(FAutomationTestBase& InTest, const FDreamDriverContext& InContext, const UDreamButton* InButton, bool bInDown)
 	{
-		UGameViewportClient* Client = InContext.World != nullptr ? InContext.World->GetGameViewport() : nullptr;
+		UGameViewportClient* Client = InContext.World.Get() != nullptr ? InContext.World->GetGameViewport() : nullptr;
 		const TSharedPtr<SViewport> Viewport = Client != nullptr ? Client->GetGameViewportWidget() : nullptr;
 		const TOptional<FVector2D> Pixel = FDreamDriverProjection::WidgetCentrePixel(InButton);
 		if (!InTest.TestTrue(TEXT("The play session has a viewport widget, and the button a pixel on it"), Viewport.IsValid() && Pixel.IsSet()))
@@ -836,7 +836,7 @@ bool FDreamDriverPieSlateSourceTest::RunTest(const FString& Parameters)
 	FDreamDriverSequence Steps = Rig->Sequence();
 	Steps.Then([this](FDreamDriverContext& InContext)
 	{
-		UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InContext.World);
+		UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InContext.World.Get());
 		if (TestNotNull(TEXT("The play session has DreamGUI's input"), Input))
 		{
 			Input->SetSlateInputSourceEnabled(true);
@@ -844,7 +844,7 @@ bool FDreamDriverPieSlateSourceTest::RunTest(const FString& Parameters)
 		}
 		// The rig's driver stands a virtual cursor in for the mouse, and a virtual cursor is where a mouse button
 		// presses. These clicks are the platform's own: the mouse is the mouse.
-		if (InContext.InputModule != nullptr)
+		if (InContext.InputModule.Get() != nullptr)
 		{
 			InContext.InputModule->SetOverrideMousePosition(false);
 		}
@@ -855,7 +855,7 @@ bool FDreamDriverPieSlateSourceTest::RunTest(const FString& Parameters)
 	{
 		Steps.Then([this, Made, Mode](FDreamDriverContext& InContext)
 		{
-			if (APlayerController* Controller = InContext.PlayerController)
+			if (APlayerController* Controller = InContext.PlayerController.Get())
 			{
 				switch (Mode)
 				{
@@ -878,11 +878,11 @@ bool FDreamDriverPieSlateSourceTest::RunTest(const FString& Parameters)
 	{
 		TestEqual(TEXT("One click in each of the engine's three input modes"), Listener->ClickedCount, ModeCount);
 		TestEqual(TEXT("...each pressed once"), Listener->PressedCount, ModeCount);
-		if (APlayerController* Controller = InContext.PlayerController)
+		if (APlayerController* Controller = InContext.PlayerController.Get())
 		{
 			Controller->SetInputMode(FInputModeGameAndUI());
 		}
-		if (UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InContext.World))
+		if (UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InContext.World.Get()))
 		{
 			Input->SetSlateInputSourceEnabled(false);
 		}

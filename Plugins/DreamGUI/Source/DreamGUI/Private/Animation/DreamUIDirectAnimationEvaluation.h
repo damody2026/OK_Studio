@@ -99,6 +99,7 @@ private:
 		 * object up in their map every time (WriteValue). Found with the property's type, once a play; none for a property
 		 * without a native setter, or down a path, which the bindings write as they always did.
 		 */
+		// static-checks: allow(stored-raw-pointer) Compared only, never followed: WriteValue asks SetterCheckedObject's class against it, and the next play makes the plan again (IsStillPlanFor).
 		const UClass* SetterClass = nullptr;
 		const FProperty* SetterProperty = nullptr;
 		int32 NumChannels = 0;
@@ -106,6 +107,7 @@ private:
 		 * The section the channels below were found in, while its sequence is alive (Evaluate), and where in it each channel
 		 * is: with the section's signature, what says which channel of which content it is (EvaluateChannels).
 		 */
+		// static-checks: allow(stored-raw-pointer) Guaranteed by the player's sequence, which Evaluate reads the channels of while it is alive; BoundSignature catches an edit.
 		const UMovieSceneSection* BoundSection = nullptr;
 		/**
 		 * The section's signature when the channels were found in it: what EvaluateChannels keys the channels' shared
@@ -142,6 +144,7 @@ private:
 		 * made the player -- which lives while the player plays: the component is the widget's own, and stops its plays when
 		 * it goes. Written without a weak look-up of it every frame.
 		 */
+		// static-checks: allow(stored-raw-pointer) Guaranteed by the player: it is the playback context, and the animation component that made the player stops its plays when it goes.
 		UObject* BoundHost = nullptr;
 		/**
 		 * The one object the binding resolved to, when it is a DreamGUI widget or behaviour, as a weak look-up found it alive
@@ -154,6 +157,7 @@ private:
 		 * The object the native setter was last found to fit or not (SetterClass), by address: what WriteValue asks of its
 		 * class -- in its header, a read from memory every write -- is asked again only of another object.
 		 */
+		// static-checks: allow(stored-raw-pointer) Compared only, never followed: it records which object the native setter was last asked about.
 		const UObject* SetterCheckedObject = nullptr;
 		bool bSetterFits = false;
 	};

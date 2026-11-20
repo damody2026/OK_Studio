@@ -142,7 +142,7 @@ bool FDreamFontOverlapWarningTest::RunTest(const FString& Parameters)
 	ON_SCOPE_EXIT { UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1); };
 	auto MakeFont = [&TestWorld](const FString& InPath)
 	{
-		UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+		UDreamUIFontData_DistanceField* Font = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 		Font->SetFontFilePath(InPath, false);
 		Font->InitFont();
 		Font->PrepareForLayout(0.0f);

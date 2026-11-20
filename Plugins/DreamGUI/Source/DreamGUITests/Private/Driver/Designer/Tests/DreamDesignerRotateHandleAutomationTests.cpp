@@ -620,7 +620,7 @@ bool FDreamDesignerRotateHandleWritesTheDuiTest::RunTest(const FString&)
 		return false;
 	}
 	FDreamDesignerDriver& Driver = *Scoped.Driver;
-	if (!TestTrue(TEXT("The class is text-authored"), DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint)))
+	if (!TestTrue(TEXT("The class is text-authored"), DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint.Get())))
 	{
 		return false;
 	}

@@ -88,9 +88,9 @@ bool FDreamFontFallbackEntryMigrationTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontFallbackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Saved = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
-	UDreamUIFontData_DistanceField* First = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
-	UDreamUIFontData_DistanceField* Third = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Saved = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
+	UDreamUIFontData_DistanceField* First = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
+	UDreamUIFontData_DistanceField* Third = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	FArrayProperty* OldList = FindFProperty<FArrayProperty>(UDreamUIFontData_FreeTypeRender::StaticClass(), TEXT("FallbackFontArray"));
 	if (!TestNotNull(TEXT("the old list is still a property, so old assets load into it"), OldList))return false;
 	FObjectPropertyBase* OldListInner = CastField<FObjectPropertyBase>(OldList->Inner);
@@ -107,7 +107,7 @@ bool FDreamFontFallbackEntryMigrationTest::RunTest(const FString& Parameters)
 	TArray<uint8> Bytes;
 	FObjectWriter Writer(Saved, Bytes);
 
-	UDreamUIFontData_DistanceField* Loaded = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Loaded = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	{
 		FObjectReader Reader(Bytes);
 		Reader.SetCustomVersion(FDreamGUIObjectVersion::GUID, (int32)FDreamGUIObjectVersion::FontFallbackEntries - 1, TEXT("DreamGUIObjectVersion"));
@@ -147,9 +147,9 @@ bool FDreamFontFallbackFaceTableTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontFallbackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
-	UDreamUIFontData_DistanceField* GenEi = MakeFieldFont(TestWorld.World, EditorFont(TEXT("GenEiGothicPro-Regular.otf")));
-	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("DroidSansFallback.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* GenEi = MakeFieldFont(TestWorld.World.Get(), EditorFont(TEXT("GenEiGothicPro-Regular.otf")));
+	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("DroidSansFallback.ttf")));
 
 	FDreamUIFontFallback Japanese = MakeEntry(GenEi);
 	Japanese.Ranges = { FInt32Interval(0x3040, 0x30FF), FInt32Interval(0x4E00, 0x9FFF) };
@@ -230,10 +230,10 @@ bool FDreamFontFallbackLayoutEpochTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontFallbackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
-	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("DroidSansFallback.ttf")));
-	UDreamUIFontData_DistanceField* Arabic = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
-	UDreamUIFontData_DistanceField* RobotoBold = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Bold.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("DroidSansFallback.ttf")));
+	UDreamUIFontData_DistanceField* Arabic = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("NotoNaskhArabicUI-Regular.ttf")));
+	UDreamUIFontData_DistanceField* RobotoBold = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Bold.ttf")));
 	Roboto->SetFallbackFonts({ Droid });
 	TestTrue(TEXT("face 1 is the CJK face"), Roboto->FaceHasCodepoint(1, 0x4E16));
 	float Ascent = 0.0f, Descent = 0.0f, LineHeight = 0.0f;
@@ -283,8 +283,8 @@ bool FDreamFontFallbackFaceIdentityTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamFontFallbackTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
-	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("DroidSansFallback.ttf")));
+	UDreamUIFontData_DistanceField* Roboto = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* Droid = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("DroidSansFallback.ttf")));
 	Roboto->SetFallbackFonts({ Droid });
 
 	const FDreamUIFontFaceIdentity Own = Roboto->GetFaceIdentity(0);
@@ -313,7 +313,7 @@ bool FDreamFontFallbackFaceIdentityTest::RunTest(const FString& Parameters)
 
 	// A face that does not open.
 	AddExpectedErrorPlain(TEXT("not exist"), EAutomationExpectedErrorFlags::Contains, 0);
-	UDreamUIFontData_DistanceField* Missing = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World);
+	UDreamUIFontData_DistanceField* Missing = NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get());
 	Missing->SetFontFilePath(FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("DreamGUITests_NoSuchFallbackFont.ttf")), false);
 	TestFalse(TEXT("a face that does not open is nobody's"), Missing->GetFaceIdentity(0).IsValid());
 	return true;
@@ -341,22 +341,22 @@ bool FDreamFontFallbackColorCoverageTest::RunTest(const FString& Parameters)
 		return true;
 	}
 	FScopedGameWorld TestWorld;
-	UDreamUIFontData_DistanceField* Emoji = MakeFieldFont(TestWorld.World, EmojiPath);
+	UDreamUIFontData_DistanceField* Emoji = MakeFieldFont(TestWorld.World.Get(), EmojiPath);
 	const uint32 Grin = 0x1F600;
 
-	UDreamUIFontData_DistanceField* OutlineField = MakeFieldFont(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")));
+	UDreamUIFontData_DistanceField* OutlineField = MakeFieldFont(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")));
 	OutlineField->SetFallbackFonts({ Emoji });
 	TestTrue(TEXT("through the outline field, the emoji face is a colour face"), OutlineField->IsColorFace(1));
 	TestTrue(TEXT("and has the grin"), OutlineField->FaceHasCodepoint(1, Grin));
 	TestFalse(TEXT("but not a letter it has no glyph for"), OutlineField->FaceHasCodepoint(1, 'A'));
 	TestFalse(TEXT("the font's own face is no colour face"), OutlineField->IsColorFace(0));
 
-	UDreamUIFontData_Bitmap* Bitmap = MakeFallbackTestFont<UDreamUIFontData_Bitmap>(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")), [](UDreamUIFontData_Bitmap*) {});
+	UDreamUIFontData_Bitmap* Bitmap = MakeFallbackTestFont<UDreamUIFontData_Bitmap>(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")), [](UDreamUIFontData_Bitmap*) {});
 	Bitmap->SetFallbackFonts({ Emoji });
 	TestTrue(TEXT("through a bitmap font, it is a colour face too"), Bitmap->IsColorFace(1));
 	TestTrue(TEXT("and has the grin"), Bitmap->FaceHasCodepoint(1, Grin));
 
-	UDreamUIFontData_DistanceField* SingleChannel = MakeFallbackTestFont<UDreamUIFontData_DistanceField>(TestWorld.World, RuntimeFont(TEXT("Roboto-Regular.ttf")),
+	UDreamUIFontData_DistanceField* SingleChannel = MakeFallbackTestFont<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), RuntimeFont(TEXT("Roboto-Regular.ttf")),
 		[](UDreamUIFontData_DistanceField* Font) { SetFontEnumProperty(Font, TEXT("SdfSource"), (int64)EDreamUISdfSource::BitmapSingleChannel); });
 	SingleChannel->SetFallbackFonts({ Emoji });
 	TestFalse(TEXT("through the single-channel field, it is no colour face"), SingleChannel->IsColorFace(1));

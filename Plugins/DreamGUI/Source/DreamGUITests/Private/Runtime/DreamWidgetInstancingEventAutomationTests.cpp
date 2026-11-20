@@ -91,8 +91,8 @@ bool FDreamWidgetInstancingRetargetsAuthoredEventTest::RunTest(const FString& Pa
 	using namespace DreamWidgetInstancingEventTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
 	TStrongObjectPtr<UDreamWidgetTree> Template(BuildTemplate(false));
-	TStrongObjectPtr<UDreamUserWidget> First(NewObject<UDreamUserWidget>(TestWorld.World));
-	TStrongObjectPtr<UDreamUserWidget> Second(NewObject<UDreamUserWidget>(TestWorld.World));
+	TStrongObjectPtr<UDreamUserWidget> First(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
+	TStrongObjectPtr<UDreamUserWidget> Second(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(First.Get(), First->GetClass(), Template.Get());
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(Second.Get(), Second->GetClass(), Template.Get());
 	UDreamEventBindingTestBehaviour* FirstSender = Behaviour(First->GetWidgetTree(), TEXT("Sender"));
@@ -134,8 +134,8 @@ bool FDreamWidgetInstancingRetargetsAuthoredWidgetArgumentTest::RunTest(const FS
 	using namespace DreamWidgetInstancingEventTestLocal;
 	DreamTests::FScopedGameWorld TestWorld;
 	TStrongObjectPtr<UDreamWidgetTree> Template(BuildTemplate(true));
-	TStrongObjectPtr<UDreamUserWidget> First(NewObject<UDreamUserWidget>(TestWorld.World));
-	TStrongObjectPtr<UDreamUserWidget> Second(NewObject<UDreamUserWidget>(TestWorld.World));
+	TStrongObjectPtr<UDreamUserWidget> First(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
+	TStrongObjectPtr<UDreamUserWidget> Second(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(First.Get(), First->GetClass(), Template.Get());
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(Second.Get(), Second->GetClass(), Template.Get());
 	UDreamEventBindingTestBehaviour* FirstSender = Behaviour(First->GetWidgetTree(), TEXT("Sender"));

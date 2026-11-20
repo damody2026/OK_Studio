@@ -18,7 +18,8 @@ namespace DreamPackageLoadCheck
 {
 	struct FResult
 	{
-		UPackage* Package = nullptr;
+		/** Weak: the result outlives nothing, and a package the checker loaded can be collected before it is read. */
+		TWeakObjectPtr<UPackage> Package;
 		/**
 		 * What makes the package unusable; empty when it came back clean. Every error logged meanwhile, from
 		 * any thread and in any category; every warning outside the Blueprint compiler's own log (a missing

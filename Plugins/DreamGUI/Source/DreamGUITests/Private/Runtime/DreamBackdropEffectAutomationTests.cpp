@@ -107,7 +107,7 @@ namespace DreamBackdropEffectTestLocal
 
 		FStage()
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 			Root = MakeWidget(TEXT("Root"), nullptr, FVector2D(800.0, 600.0));
 			Canvas = Root->AddComponent<UDreamCanvas>();
 			if (Canvas != nullptr)
@@ -118,7 +118,7 @@ namespace DreamBackdropEffectTestLocal
 		}
 		UDreamWidget* MakeWidget(const TCHAR* InName, UDreamWidget* InParent, FVector2D InSize, FVector2D InPosition = FVector2D::ZeroVector) const
 		{
-			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			Widget->SetDisplayName(InName);
 			Widget->SetWidth(static_cast<float>(InSize.X));
 			Widget->SetHeight(static_cast<float>(InSize.Y));

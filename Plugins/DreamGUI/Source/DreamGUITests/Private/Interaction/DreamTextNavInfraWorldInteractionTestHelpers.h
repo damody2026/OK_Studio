@@ -96,10 +96,10 @@ namespace DreamTextNavInfraWorldTest
 	/** The world pointer and the panel in front of it. */
 	struct FWorldStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
-		UDreamWidget* Panel = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
+		TWeakObjectPtr<UDreamWidget> Panel;
 
-		bool IsReady() const { return Pointer != nullptr && Panel != nullptr; }
+		bool IsReady() const { return Pointer.IsValid() && Panel.IsValid(); }
 	};
 
 	/** The world pointer first, then the panel, PanelSize() across, SceneDistance() ahead of it and facing it. */
@@ -108,18 +108,18 @@ namespace DreamTextNavInfraWorldTest
 		FWorldStage Stage;
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig, EyeAtTheOrigin(), EDreamWorldPointerSource::Mouse);
 		Stage.Panel = DreamDriverWorld::MakeWorldPanel(InRig, TEXT("Panel"), FTransform(FVector(SceneDistance(), 0.0, 0.0)), PanelSize());
-		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer);
-		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel);
+		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer.Get());
+		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel.Get());
 		return Stage;
 	}
 
 	/** The world pointer and a render-target surface showing a canvas. */
 	struct FSurfaceStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
 		DreamDriverWorld::FDreamRenderTargetMesh Screen;
 
-		bool IsReady() const { return Pointer != nullptr && Screen.IsComplete(); }
+		bool IsReady() const { return Pointer.IsValid() && Screen.IsComplete(); }
 	};
 
 	/** The world pointer first, then a SurfaceSize() texture shown on a plane SceneDistance() ahead, facing it. */
@@ -128,7 +128,7 @@ namespace DreamTextNavInfraWorldTest
 		FSurfaceStage Stage;
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig, EyeAtTheOrigin(), EDreamWorldPointerSource::Mouse);
 		Stage.Screen = DreamDriverWorld::MakeRenderTargetMesh(InRig, TEXT("Screen"), FTransform(FVector(SceneDistance(), 0.0, 0.0)), SurfaceSize());
-		if (InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer))
+		if (InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer.Get()))
 		{
 			// The only way a world pointer's trace meets a surface: the surface is a blocking body.
 			Stage.Pointer->SetOccludeByWorld(true);

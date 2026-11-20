@@ -323,9 +323,9 @@ void SDreamUILayerStyleDialog::CustomizePage(IDetailLayoutBuilder& InBuilder)
 	IDetailCategoryBuilder& Category = InBuilder.EditCategory(*Label.ToString(), Label);
 	// An element of a list has no default in the model, whose lists are empty: its fields reset to a new element's.
 	TSharedPtr<FStructOnScope> ElementDefaults;
-	if (FDreamUILayerStyleSession::IsMultiInstance(Selected.Page) && ShownStruct != nullptr)
+	if (FDreamUILayerStyleSession::IsMultiInstance(Selected.Page) && ShownStruct.IsValid())
 	{
-		ElementDefaults = MakeShared<FStructOnScope>(ShownStruct);
+		ElementDefaults = MakeShared<FStructOnScope>(ShownStruct.Get());
 	}
 	for (const FName Field : ShownFields)
 	{

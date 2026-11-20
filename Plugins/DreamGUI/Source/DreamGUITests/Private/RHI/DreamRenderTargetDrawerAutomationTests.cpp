@@ -47,7 +47,7 @@ namespace DreamRenderTargetDrawerTestLocal
 
 		bool Build(FAutomationTestBase& InTest)
 		{
-			if (!InTest.TestNotNull(TEXT("a game world of its own, which no viewport renders"), World.World))
+			if (!InTest.TestNotNull(TEXT("a game world of its own, which no viewport renders"), World.World.Get()))
 			{
 				return false;
 			}
@@ -57,7 +57,7 @@ namespace DreamRenderTargetDrawerTestLocal
 			NewTarget->UpdateResourceImmediate(true);
 			Target.Reset(NewTarget);
 
-			UDreamWidget* NewRoot = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* NewRoot = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			NewRoot->SetWidth(static_cast<float>(TargetExtent));
 			NewRoot->SetHeight(static_cast<float>(TargetExtent));
 			NewRoot->OnRegister();
@@ -74,7 +74,7 @@ namespace DreamRenderTargetDrawerTestLocal
 			Canvas->SetRenderTargetUpdateMode(EDreamCanvasRenderTargetUpdateMode::Always);
 			Canvas->SetRenderTarget(NewTarget);
 
-			UDreamWidget* Block = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* Block = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			Block->SetWidth(40.0f);
 			Block->SetHeight(40.0f);
 			Block->OnRegister();
@@ -92,7 +92,7 @@ namespace DreamRenderTargetDrawerTestLocal
 		/** One frame of this world alone: its UI manager ticked, its end-of-frame updates sent. Nothing renders it. */
 		void Frame()
 		{
-			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World))
+			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get()))
 			{
 				Manager->Tick(1.0f / 30.0f);
 			}

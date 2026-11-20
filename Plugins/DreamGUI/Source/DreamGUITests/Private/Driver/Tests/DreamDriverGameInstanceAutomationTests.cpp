@@ -77,7 +77,7 @@ bool FDreamDriverGameInstanceWorldTest::RunTest(const FString& Parameters)
 	// World->GetGameInstance(), and the manager finds its world through GameInstance->GetWorld().
 	TestSamePtr(TEXT("The rig's world says the game instance owns it"), World->GetGameInstance(), GameInstance);
 	TestSamePtr(TEXT("And the game instance says the rig's world is its world"), GameInstance->GetWorld(), World);
-	TestSamePtr(TEXT("The context carries the same game instance the rig reports"), Rig.Context().GameInstance, GameInstance);
+	TestSamePtr(TEXT("The context carries the same game instance the rig reports"), Rig.Context().GameInstance.Get(), GameInstance);
 	TestTrue(TEXT("The options say so too"), Rig.GetOptions().bWithGameInstance);
 
 	UDreamTweenManager* TweenManager = UDreamTweenManager::GetDreamTweenInstance(World);

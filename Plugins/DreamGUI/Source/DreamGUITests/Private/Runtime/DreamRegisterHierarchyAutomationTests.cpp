@@ -150,13 +150,13 @@ bool FDreamRegisterHierarchySkipsAlreadyBegunSubtreeTest::RunTest(const FString&
 	using namespace DreamRegisterHierarchyTestLocal;
 
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World))
+	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World.Get()))
 	{
 		return false;
 	}
 
 	// First, before a single widget exists. See OpenBeginPlayGate.
-	UDreamUIManagerWorldSubsystem* Manager = OpenBeginPlayGate(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = OpenBeginPlayGate(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
@@ -167,7 +167,7 @@ bool FDreamRegisterHierarchySkipsAlreadyBegunSubtreeTest::RunTest(const FString&
 		return false;
 	}
 
-	FHostTree Tree = BuildHostTree(TestWorld.World);
+	FHostTree Tree = BuildHostTree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the host tree was built"), Tree.IsUsable()))
 	{
 		return false;
@@ -239,12 +239,12 @@ bool FDreamRegisterHierarchyBeginsAWholeFreshTreeTest::RunTest(const FString& Pa
 	// BeginPlay at all are indistinguishable from that test alone, and the second of those is a fix
 	// somebody could plausibly reach for -- it would turn every screen inert and pass the suite.
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World))
+	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World.Get()))
 	{
 		return false;
 	}
 
-	UDreamUIManagerWorldSubsystem* Manager = OpenBeginPlayGate(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = OpenBeginPlayGate(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
@@ -254,7 +254,7 @@ bool FDreamRegisterHierarchyBeginsAWholeFreshTreeTest::RunTest(const FString& Pa
 		return false;
 	}
 
-	FHostTree Tree = BuildHostTree(TestWorld.World);
+	FHostTree Tree = BuildHostTree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the host tree was built"), Tree.IsUsable()))
 	{
 		return false;
@@ -300,12 +300,12 @@ bool FDreamRegisterHierarchySecondCallIsANoOpTest::RunTest(const FString& Parame
 	// brought to life -- which is precisely the position CreateDreamWidget is in with respect to an
 	// `each` list's cells -- has to be able to ask for it again and get a no-op.
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World))
+	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World.Get()))
 	{
 		return false;
 	}
 
-	UDreamUIManagerWorldSubsystem* Manager = OpenBeginPlayGate(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = OpenBeginPlayGate(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
@@ -315,7 +315,7 @@ bool FDreamRegisterHierarchySecondCallIsANoOpTest::RunTest(const FString& Parame
 		return false;
 	}
 
-	FHostTree Tree = BuildHostTree(TestWorld.World);
+	FHostTree Tree = BuildHostTree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the host tree was built"), Tree.IsUsable()))
 	{
 		return false;
@@ -364,13 +364,13 @@ bool FDreamRegisterHierarchyGatesBeginPlayOnTheManagerTest::RunTest(const FStrin
 	// it; if opening it ever stops working, this test is the one that stays green while they go red,
 	// and the pair says which of the two happened.
 	FScopedGameWorld TestWorld;
-	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World))
+	if (!TestNotNull(TEXT("a world to register into"), TestWorld.World.Get()))
 	{
 		return false;
 	}
 
 	// Deliberately NOT opened.
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
@@ -381,7 +381,7 @@ bool FDreamRegisterHierarchyGatesBeginPlayOnTheManagerTest::RunTest(const FStrin
 		return false;
 	}
 
-	FHostTree Tree = BuildHostTree(TestWorld.World);
+	FHostTree Tree = BuildHostTree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the host tree was built"), Tree.IsUsable()))
 	{
 		return false;

@@ -113,7 +113,7 @@ bool FDreamDriverRenderTargetMeshAimTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	// Off-centre on both axes, so a flipped or mirrored mapping lands somewhere else.
-	UDreamWidget* Target = Rig.MakeWidget(TEXT("Target"), Screen.CanvasRoot, FVector2D(80.0, 40.0), FVector2D(100.0, 50.0));
+	UDreamWidget* Target = Rig.MakeWidget(TEXT("Target"), Screen.CanvasRoot.Get(), FVector2D(80.0, 40.0), FVector2D(100.0, 50.0));
 	if (!TestNotNull(TEXT("A widget on the render-target canvas"), Target))
 	{
 		return false;
@@ -126,7 +126,7 @@ bool FDreamDriverRenderTargetMeshAimTest::RunTest(const FString& Parameters)
 	}
 
 	TestTrue(TEXT("The surface found for the canvas is the one that was built for it"),
-		FDreamDriverProjection::FindSurfaceShowing(Screen.Canvas) == Screen.Surface);
+		FDreamDriverProjection::FindSurfaceShowing(Screen.Canvas.Get()) == Screen.Surface.Get());
 	TestEqual(TEXT("The canvas fitted itself to its texture, across"), Screen.CanvasRoot->GetWidth(), static_cast<float>(TargetSize.X));
 	TestEqual(TEXT("... and up"), Screen.CanvasRoot->GetHeight(), static_cast<float>(TargetSize.Y));
 
@@ -154,7 +154,7 @@ bool FDreamDriverRenderTargetMeshAimTest::RunTest(const FString& Parameters)
 
 	// ...against the widget's own view point on its canvas. A texel and a half: a screen pixel here is
 	// under half a centimetre of surface, and the ray is made from the pixel's integer corner.
-	const TOptional<FVector2D> CanvasUV = FDreamDriverProjection::WorldPointToViewPoint01(Screen.Canvas, CentreOf(Target));
+	const TOptional<FVector2D> CanvasUV = FDreamDriverProjection::WorldPointToViewPoint01(Screen.Canvas.Get(), CentreOf(Target));
 	if (!TestTrue(TEXT("The widget has a view point on its canvas"), CanvasUV.IsSet()))
 	{
 		return false;
@@ -166,7 +166,7 @@ bool FDreamDriverRenderTargetMeshAimTest::RunTest(const FString& Parameters)
 	// through a raycaster of the canvas's own kind (the interaction is one), with the pointer position
 	// the screen raycaster expects -- target pixels, Y down, which it flips back to the UV.
 	UDreamScreenSpaceRaycaster* CanvasRaycaster = NewObject<UDreamScreenSpaceRaycaster>(GetTransientPackage());
-	CanvasRaycaster->SetRootCanvas(Screen.Canvas);
+	CanvasRaycaster->SetRootCanvas(Screen.Canvas.Get());
 	UDreamPointerEventData* Probe = NewObject<UDreamPointerEventData>(GetTransientPackage());
 	Probe->PointerPosition = FVector(SurfaceUV.X * TargetSize.X, (1.0 - SurfaceUV.Y) * TargetSize.Y, 0.0);
 	FVector CanvasOrigin = FVector::ZeroVector;
@@ -224,7 +224,7 @@ bool FDreamDriverRenderTargetMeshBlocksTest::RunTest(const FString& Parameters)
 	const bool bBlocked = Rig.GetWorld()->LineTraceSingleByChannel(WorldHit, RayOrigin, RayOrigin + RayDirection * 100000.0,
 		UEngineTypes::ConvertToCollisionChannel(TraceTypeQuery1), FCollisionQueryParams(SCENE_QUERY_STAT(DreamDriverRenderTargetMesh), true));
 	TestTrue(TEXT("A world trace through the middle of the surface is blocked"), bBlocked);
-	TestTrue(TEXT("... by the surface"), bBlocked && WorldHit.GetComponent() == Screen.Surface);
+	TestTrue(TEXT("... by the surface"), bBlocked && WorldHit.GetComponent() == Screen.Surface.Get());
 
 	// And through the world pointer, which is the only way it sees a surface at all: with occlusion on,
 	// its trace reports the surface as a hit that carries no widget, at the surface's distance.
@@ -273,7 +273,7 @@ bool FDreamDriverRenderTargetMeshClickTest::RunTest(const FString& Parameters)
 	Pointer->SetOccludeByWorld(true);
 
 	TStrongObjectPtr<UDreamPressInteractionListener> Listener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Button = Rig.MakeControl<UDreamButton>(TEXT("Play"), Screen.CanvasRoot, FVector2D(160.0, 60.0));
+	UDreamButton* Button = Rig.MakeControl<UDreamButton>(TEXT("Play"), Screen.CanvasRoot.Get(), FVector2D(160.0, 60.0));
 	if (!TestNotNull(TEXT("A button on the render-target canvas"), Button))
 	{
 		return false;
@@ -324,7 +324,7 @@ bool FDreamDriverRenderTargetMeshSliderTest::RunTest(const FString& Parameters)
 	}
 	Pointer->SetOccludeByWorld(true);
 
-	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Screen.CanvasRoot, FVector2D(300.0, 40.0));
+	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Screen.CanvasRoot.Get(), FVector2D(300.0, 40.0));
 	Rig.PumpFrames(2);
 	if (!TestTrue(TEXT("The slider came up with a handle and a handle area"),
 		Slider != nullptr && Slider->HandleNode != nullptr && Slider->HandleAreaNode != nullptr))
@@ -391,8 +391,8 @@ bool FDreamDriverRenderTargetMeshTwoPointersTest::RunTest(const FString& Paramet
 
 	TStrongObjectPtr<UDreamPressInteractionListener> LeftListener(NewObject<UDreamPressInteractionListener>());
 	TStrongObjectPtr<UDreamPressInteractionListener> RightListener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Screen.CanvasRoot, FVector2D(120.0, 60.0), FVector2D(-100.0, 0.0));
-	UDreamButton* Right = Rig.MakeControl<UDreamButton>(TEXT("Right"), Screen.CanvasRoot, FVector2D(120.0, 60.0), FVector2D(100.0, 0.0));
+	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Screen.CanvasRoot.Get(), FVector2D(120.0, 60.0), FVector2D(-100.0, 0.0));
+	UDreamButton* Right = Rig.MakeControl<UDreamButton>(TEXT("Right"), Screen.CanvasRoot.Get(), FVector2D(120.0, 60.0), FVector2D(100.0, 0.0));
 	if (!TestTrue(TEXT("Two buttons on the render-target canvas"), Left != nullptr && Right != nullptr))
 	{
 		return false;
@@ -458,7 +458,7 @@ bool FDreamDriverRenderTargetMeshDoubleClickTest::RunTest(const FString& Paramet
 		return false;
 	}
 	Pointer->SetOccludeByWorld(true);
-	UDreamWidget* Target = Rig.MakeWidget(TEXT("Target"), Screen.CanvasRoot, FVector2D(120.0, 60.0));
+	UDreamWidget* Target = Rig.MakeWidget(TEXT("Target"), Screen.CanvasRoot.Get(), FVector2D(120.0, 60.0));
 	UDreamDoubleClickCounter* Counter = Target != nullptr ? Target->AddComponent<UDreamDoubleClickCounter>() : nullptr;
 	if (!TestNotNull(TEXT("A widget on the surface counting double clicks"), Counter))
 	{
@@ -507,7 +507,7 @@ bool FDreamDriverRenderTargetMeshBroadcastTest::RunTest(const FString& Parameter
 		return false;
 	}
 	Pointer->SetOccludeByWorld(true);
-	UDreamWidget* Target = Rig.MakeWidget(TEXT("Target"), Screen.CanvasRoot, FVector2D(120.0, 60.0));
+	UDreamWidget* Target = Rig.MakeWidget(TEXT("Target"), Screen.CanvasRoot.Get(), FVector2D(120.0, 60.0));
 	if (!TestNotNull(TEXT("A widget on the surface"), Target))
 	{
 		return false;
@@ -575,7 +575,7 @@ bool FDreamDriverRenderTargetMeshDestroyedTest::RunTest(const FString& Parameter
 	}
 	Pointer->SetOccludeByWorld(true);
 	TStrongObjectPtr<UDreamPressInteractionListener> Listener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Button = Rig.MakeControl<UDreamButton>(TEXT("Play"), Screen.CanvasRoot, FVector2D(160.0, 60.0));
+	UDreamButton* Button = Rig.MakeControl<UDreamButton>(TEXT("Play"), Screen.CanvasRoot.Get(), FVector2D(160.0, 60.0));
 	if (!TestNotNull(TEXT("A button on the render-target canvas"), Button))
 	{
 		return false;
@@ -583,7 +583,7 @@ bool FDreamDriverRenderTargetMeshDestroyedTest::RunTest(const FString& Parameter
 	Button->OnClicked.AddDynamic(Listener.Get(), &UDreamPressInteractionListener::HandleClicked);
 	Rig.PumpFrames(2);
 	const TOptional<FVector2D> Pixel = FDreamDriverProjection::WidgetCentrePixel(Button, Rig.Context().Camera.Get());
-	AActor* SurfaceActor = Screen.Surface != nullptr ? Screen.Surface->GetOwner() : nullptr;
+	AActor* SurfaceActor = Screen.Surface.Get() != nullptr ? Screen.Surface->GetOwner() : nullptr;
 	if (!TestTrue(TEXT("The button has a pixel and the surface an actor"), Pixel.IsSet() && SurfaceActor != nullptr))
 	{
 		return false;

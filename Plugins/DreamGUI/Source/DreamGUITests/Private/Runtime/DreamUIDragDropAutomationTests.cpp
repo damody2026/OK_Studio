@@ -286,19 +286,19 @@ bool FDreamUIDragPerPointerTest::RunTest(const FString& Parameters)
 	// Registered by hand rather than by BeginPlay: a bare test world has not begun play, and driving
 	// the actor through BeginPlay would have it warn about the InputComponent no PlayerController
 	// created for it. The subsystem only needs to be able to FIND an event system for user 0.
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(TestWorld.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("...and an input subsystem it can register with"), InputSubsystem))
 	{
 		return false;
 	}
 	InputSubsystem->AddEventSystem(EventSystem);
 	TestEqual(TEXT("the event system is the one for user 0"),
-		UDreamEventSystem::GetDreamEventSystemInstance(TestWorld.World, 0), EventSystem);
+		UDreamEventSystem::GetDreamEventSystemInstance(TestWorld.World.Get(), 0), EventSystem);
 	DragDrop->Tick(0.0f);
 
 	// Two slots that accept different tags, so "which target is lit" is a question with two answers.
-	UDreamWidget* SlotA = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
-	UDreamWidget* SlotB = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* SlotA = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
+	UDreamWidget* SlotB = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	UDreamUIDropTarget* TargetA = SlotA->AddComponent<UDreamUIDropTarget>();
 	UDreamUIDropTarget* TargetB = SlotB->AddComponent<UDreamUIDropTarget>();
 	if (!TestNotNull(TEXT("slot A is a drop target"), TargetA) || !TestNotNull(TEXT("slot B is one too"), TargetB))
@@ -308,20 +308,20 @@ bool FDreamUIDragPerPointerTest::RunTest(const FString& Parameters)
 
 	auto MakeDrag = [&](int32 PointerID, UDreamWidget* EnterWidget) -> UDreamPointerEventData*
 	{
-		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World);
+		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World.Get());
 		EventData->PointerID = PointerID;
 		EventData->bIsDragging = true;
 		EventData->EnterWidget = EnterWidget;
 		EventData->EventType = EDreamUIPointerEventType::BeginDrag;
-		UDreamDragDropOperation* Operation = NewObject<UDreamDragDropOperation>(TestWorld.World);
+		UDreamDragDropOperation* Operation = NewObject<UDreamDragDropOperation>(TestWorld.World.Get());
 		Operation->Tag = FName(*FString::Printf(TEXT("Pointer%d"), PointerID));
 		EventData->DragOperation = Operation;
 		return EventData;
 	};
 
-	UDreamDragDropCallProbe* EnteredA = NewObject<UDreamDragDropCallProbe>(TestWorld.World);
-	UDreamDragDropCallProbe* OverA = NewObject<UDreamDragDropCallProbe>(TestWorld.World);
-	UDreamDragDropCallProbe* LeftA = NewObject<UDreamDragDropCallProbe>(TestWorld.World);
+	UDreamDragDropCallProbe* EnteredA = NewObject<UDreamDragDropCallProbe>(TestWorld.World.Get());
+	UDreamDragDropCallProbe* OverA = NewObject<UDreamDragDropCallProbe>(TestWorld.World.Get());
+	UDreamDragDropCallProbe* LeftA = NewObject<UDreamDragDropCallProbe>(TestWorld.World.Get());
 	TargetA->OnDragEnter.AddDynamic(EnteredA, &UDreamDragDropCallProbe::OnOperation);
 	TargetA->OnDragOver.AddDynamic(OverA, &UDreamDragDropCallProbe::OnOperation);
 	TargetA->OnDragLeave.AddDynamic(LeftA, &UDreamDragDropCallProbe::OnOperation);
@@ -439,7 +439,7 @@ bool FDreamUIDragPerPointerTest::RunTest(const FString& Parameters)
 	EventSystem->CallOnPointerBeginDrag(SlotA, ResidentFinger);
 	UDreamPointerEventData* IncomingFinger = MakeDrag(1, SlotA);
 	UDreamDragDropOperation* IncomingOperation = IncomingFinger->DragOperation.Get();
-	UDreamDragDropReentryProbe* CancelsIncoming = NewObject<UDreamDragDropReentryProbe>(TestWorld.World);
+	UDreamDragDropReentryProbe* CancelsIncoming = NewObject<UDreamDragDropReentryProbe>(TestWorld.World.Get());
 	CancelsIncoming->Action = [EventSystem, IncomingFinger, SlotA]()
 	{
 		IncomingFinger->DragOperation->NotifyDragCancelled();
@@ -457,7 +457,7 @@ bool FDreamUIDragPerPointerTest::RunTest(const FString& Parameters)
 
 	// Leave can destroy a target. The next target still receives this live drag, and a drop whose
 	// leave destroys its own target must not continue through acceptance on that dead component.
-	UDreamDragDropReentryProbe* DestroysA = NewObject<UDreamDragDropReentryProbe>(TestWorld.World);
+	UDreamDragDropReentryProbe* DestroysA = NewObject<UDreamDragDropReentryProbe>(TestWorld.World.Get());
 	DestroysA->Action = [SlotA]() { SlotA->DestroyWidget(); };
 	TargetA->OnDragLeave.AddDynamic(DestroysA, &UDreamDragDropReentryProbe::OnOperation);
 	ResidentFinger->EventType = EDreamUIPointerEventType::Drag;
@@ -466,7 +466,7 @@ bool FDreamUIDragPerPointerTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("A was destroyed by its leave callback"), IsValid(TargetA));
 	TestFalse(TEXT("a destroyed target has no aggregate hover"), TargetA->IsDragHovered());
 	TestEqual(TEXT("the live operation continues to B"), DragDrop->GetHoveredTargetForPointer(0), TargetB);
-	UDreamDragDropReentryProbe* DestroysB = NewObject<UDreamDragDropReentryProbe>(TestWorld.World);
+	UDreamDragDropReentryProbe* DestroysB = NewObject<UDreamDragDropReentryProbe>(TestWorld.World.Get());
 	DestroysB->Action = [SlotB]() { SlotB->DestroyWidget(); };
 	TargetB->OnDragLeave.AddDynamic(DestroysB, &UDreamDragDropReentryProbe::OnOperation);
 	ResidentFinger->bIsDragging = false;
@@ -480,11 +480,11 @@ bool FDreamUIDragPerPointerTest::RunTest(const FString& Parameters)
 	DragDrop->Tick(0.0f);
 	TestEqual(TEXT("release clears the bookkeeping when the source and target were destroyed"), DragDrop->GetDragCount(), 0);
 
-	UDreamWidget* SlotC = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* SlotC = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	UDreamUIDropTarget* TargetC = SlotC->AddComponent<UDreamUIDropTarget>();
 	if (!TestNotNull(TEXT("a new target can be destroyed from enter"), TargetC))return false;
-	UDreamDragDropCallProbe* OverC = NewObject<UDreamDragDropCallProbe>(TestWorld.World);
-	UDreamDragDropReentryProbe* DestroysC = NewObject<UDreamDragDropReentryProbe>(TestWorld.World);
+	UDreamDragDropCallProbe* OverC = NewObject<UDreamDragDropCallProbe>(TestWorld.World.Get());
+	UDreamDragDropReentryProbe* DestroysC = NewObject<UDreamDragDropReentryProbe>(TestWorld.World.Get());
 	DestroysC->Action = [SlotC]() { SlotC->DestroyWidget(); };
 	TargetC->OnDragEnter.AddDynamic(DestroysC, &UDreamDragDropReentryProbe::OnOperation);
 	TargetC->OnDragOver.AddDynamic(OverC, &UDreamDragDropCallProbe::OnOperation);
@@ -523,7 +523,7 @@ bool FDreamUIDragHoverHandlerEndsADragTest::RunTest(const FString& Parameters)
 	ADreamStandaloneInputEventSystemActor* EventActor =
 		DragDrop != nullptr ? TestWorld.World->SpawnActor<ADreamStandaloneInputEventSystemActor>() : nullptr;
 	UDreamEventSystem* EventSystem = EventActor != nullptr ? EventActor->GetEventSystem() : nullptr;
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(TestWorld.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(TestWorld.World.Get());
 	if (!TestTrue(TEXT("A drag-drop subsystem, and an event system its events come through"),
 		DragDrop != nullptr && EventSystem != nullptr && InputSubsystem != nullptr))
 	{
@@ -533,9 +533,9 @@ bool FDreamUIDragHoverHandlerEndsADragTest::RunTest(const FString& Parameters)
 	InputSubsystem->AddEventSystem(EventSystem);
 	DragDrop->Tick(0.0f);
 
-	UDreamWidget* SlotA = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
-	UDreamWidget* SlotB = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
-	UDreamWidget* SlotC = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* SlotA = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
+	UDreamWidget* SlotB = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
+	UDreamWidget* SlotC = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	UDreamUIDropTarget* TargetA = SlotA->AddComponent<UDreamUIDropTarget>();
 	UDreamUIDropTarget* TargetB = SlotB->AddComponent<UDreamUIDropTarget>();
 	UDreamUIDropTarget* TargetC = SlotC->AddComponent<UDreamUIDropTarget>();
@@ -545,12 +545,12 @@ bool FDreamUIDragHoverHandlerEndsADragTest::RunTest(const FString& Parameters)
 	}
 	auto MakeDrag = [&TestWorld](int32 InPointerID, UDreamWidget* InEnterWidget)
 	{
-		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World);
+		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World.Get());
 		EventData->PointerID = InPointerID;
 		EventData->bIsDragging = true;
 		EventData->EnterWidget = InEnterWidget;
 		EventData->EventType = EDreamUIPointerEventType::BeginDrag;
-		EventData->DragOperation = NewObject<UDreamDragDropOperation>(TestWorld.World);
+		EventData->DragOperation = NewObject<UDreamDragDropOperation>(TestWorld.World.Get());
 		return EventData;
 	};
 	auto EndDragOf = [EventSystem](UDreamPointerEventData* InFinger, UDreamWidget* InSource)
@@ -570,7 +570,7 @@ bool FDreamUIDragHoverHandlerEndsADragTest::RunTest(const FString& Parameters)
 	}
 
 	// The first finger has moved on to slot B, and slot A's leave ends the second finger's drag -- inside the tick.
-	UDreamDragDropReentryProbe* EndsTheOther = NewObject<UDreamDragDropReentryProbe>(TestWorld.World);
+	UDreamDragDropReentryProbe* EndsTheOther = NewObject<UDreamDragDropReentryProbe>(TestWorld.World.Get());
 	EndsTheOther->Action = [EndDragOf, SecondFinger, SlotC]() { EndDragOf(SecondFinger, SlotC); };
 	TargetA->OnDragLeave.AddDynamic(EndsTheOther, &UDreamDragDropReentryProbe::OnOperation);
 	FirstFinger->EnterWidget = SlotB;
@@ -583,7 +583,7 @@ bool FDreamUIDragHoverHandlerEndsADragTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("...having left the one it was over"), TargetA->IsDragHovered());
 
 	// The first finger moves back to slot A, and slot B's leave ends that very drag.
-	UDreamDragDropReentryProbe* EndsItsOwn = NewObject<UDreamDragDropReentryProbe>(TestWorld.World);
+	UDreamDragDropReentryProbe* EndsItsOwn = NewObject<UDreamDragDropReentryProbe>(TestWorld.World.Get());
 	EndsItsOwn->Action = [EndDragOf, FirstFinger, SlotB]() { EndDragOf(FirstFinger, SlotB); };
 	TargetB->OnDragLeave.AddDynamic(EndsItsOwn, &UDreamDragDropReentryProbe::OnOperation);
 	FirstFinger->EventType = EDreamUIPointerEventType::Drag;
@@ -639,30 +639,30 @@ bool FDreamUIDragAcceptanceReentryTest::RunTest(const FString& Parameters)
 	UDreamUIDragDropSubsystem* DragDrop = TestWorld.World->GetSubsystem<UDreamUIDragDropSubsystem>();
 	ADreamStandaloneInputEventSystemActor* EventActor = TestWorld.World->SpawnActor<ADreamStandaloneInputEventSystemActor>();
 	UDreamEventSystem* EventSystem = EventActor != nullptr ? EventActor->GetEventSystem() : nullptr;
-	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(TestWorld.World);
+	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the drag-drop service and its real input event system exist"),
 		DragDrop != nullptr && EventSystem != nullptr && Input != nullptr))return false;
 	Input->AddEventSystem(EventSystem);
 
-	UDreamWidget* QuerySlot = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
-	UDreamWidget* OtherSlot = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* QuerySlot = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
+	UDreamWidget* OtherSlot = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	UDreamDropAcceptanceReentryTarget* QueryTarget = QuerySlot->AddComponent<UDreamDropAcceptanceReentryTarget>();
 	UDreamUIDropTarget* OtherTarget = OtherSlot->AddComponent<UDreamUIDropTarget>();
 	if (!TestNotNull(TEXT("the acceptance query target was created"), QueryTarget)
 		|| !TestNotNull(TEXT("the other target was created"), OtherTarget))return false;
-	UDreamDragDropCallProbe* Entered = NewObject<UDreamDragDropCallProbe>(TestWorld.World);
-	UDreamDragDropCallProbe* Over = NewObject<UDreamDragDropCallProbe>(TestWorld.World);
+	UDreamDragDropCallProbe* Entered = NewObject<UDreamDragDropCallProbe>(TestWorld.World.Get());
+	UDreamDragDropCallProbe* Over = NewObject<UDreamDragDropCallProbe>(TestWorld.World.Get());
 	QueryTarget->OnDragEnter.AddDynamic(Entered, &UDreamDragDropCallProbe::OnOperation);
 	QueryTarget->OnDragOver.AddDynamic(Over, &UDreamDragDropCallProbe::OnOperation);
 	auto MakeDrag = [&TestWorld](int32 InPointerID, UDreamWidget* InEnterWidget)
 	{
-		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World);
+		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World.Get());
 		EventData->UserIndex = 0;
 		EventData->PointerID = InPointerID;
 		EventData->bIsDragging = true;
 		EventData->EnterWidget = InEnterWidget;
 		EventData->EventType = EDreamUIPointerEventType::BeginDrag;
-		EventData->DragOperation = NewObject<UDreamDragDropOperation>(TestWorld.World);
+		EventData->DragOperation = NewObject<UDreamDragDropOperation>(TestWorld.World.Get());
 		return EventData;
 	};
 
@@ -738,7 +738,7 @@ bool FDreamUIDragAcceptanceReentryTest::RunTest(const FString& Parameters)
 
 	// Removal does not garbage-mark a behaviour. Acceptance must also check it still belongs to
 	// the component array, rather than returning a valid but detached candidate from the snapshot.
-	UDreamWidget* RemovingSlot = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* RemovingSlot = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	UDreamDropAcceptanceReentryTarget* RemovingTarget = RemovingSlot->AddComponent<UDreamDropAcceptanceReentryTarget>();
 	if (!TestNotNull(TEXT("the self-removing target was created"), RemovingTarget))return false;
 	RemovingTarget->OnDragEnter.AddDynamic(Entered, &UDreamDragDropCallProbe::OnOperation);
@@ -776,26 +776,26 @@ bool FDreamUIDragVisualInitializationReentryTest::RunTest(const FString& Paramet
 	UDreamScreenUISubsystem* Screen = TestWorld.World->GetSubsystem<UDreamScreenUISubsystem>();
 	ADreamStandaloneInputEventSystemActor* EventActor = TestWorld.World->SpawnActor<ADreamStandaloneInputEventSystemActor>();
 	UDreamEventSystem* EventSystem = EventActor != nullptr ? EventActor->GetEventSystem() : nullptr;
-	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(TestWorld.World);
+	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the real drag, screen and input services exist"), DragDrop != nullptr
 		&& Screen != nullptr && EventSystem != nullptr && Input != nullptr))return false;
 	Input->AddEventSystem(EventSystem);
 	UDreamWidget* ScreenRoot = Screen->GetOrCreateScreenRootForUserIndex(0);
 	if (!TestNotNull(TEXT("a screen root can own the visual"), ScreenRoot))return false;
-	TStrongObjectPtr<UDreamDragVisualReentryProbe> Probe(NewObject<UDreamDragVisualReentryProbe>(TestWorld.World));
+	TStrongObjectPtr<UDreamDragVisualReentryProbe> Probe(NewObject<UDreamDragVisualReentryProbe>(TestWorld.World.Get()));
 	Probe->ScreenRoot = ScreenRoot;
 	UDreamDragVisualReentryWidget::ActiveProbe = Probe.Get();
 	ON_SCOPE_EXIT { UDreamDragVisualReentryWidget::ActiveProbe.Reset(); };
-	UDreamWidget* Source = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Source = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	auto MakeDrag = [&TestWorld, Source](int32 InPointerID, bool bInHasVisual)
 	{
-		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World);
+		UDreamPointerEventData* EventData = NewObject<UDreamPointerEventData>(TestWorld.World.Get());
 		EventData->UserIndex = 0;
 		EventData->PointerID = InPointerID;
 		EventData->bIsDragging = true;
 		EventData->EnterWidget = Source;
 		EventData->EventType = EDreamUIPointerEventType::BeginDrag;
-		EventData->DragOperation = NewObject<UDreamDragDropOperation>(TestWorld.World);
+		EventData->DragOperation = NewObject<UDreamDragDropOperation>(TestWorld.World.Get());
 		if (bInHasVisual)EventData->DragOperation->DragVisualClass = UDreamDragVisualReentryWidget::StaticClass();
 		return EventData;
 	};

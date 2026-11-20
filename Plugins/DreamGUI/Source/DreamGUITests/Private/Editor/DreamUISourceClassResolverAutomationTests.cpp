@@ -129,7 +129,7 @@ bool FDreamUISourceClassResolverChangedSourceAfterUnloadTest::RunTest(const FStr
 	DreamOnDiskFixture::FScopedOnDiskPackage& Disk = Fixture->Disk;
 	if (!TestTrue(TEXT("the disk fixture is under a registry-scannable mount"), Fixture->Mount.Place(Disk))) return false;
 	UDreamWidgetBlueprint* Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-		UDreamTextUserWidget::StaticClass(), Disk.Package, FName(*AssetName), BPTYPE_Normal,
+		UDreamTextUserWidget::StaticClass(), Disk.Package.Get(), FName(*AssetName), BPTYPE_Normal,
 		UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 	if (!TestNotNull(TEXT("a real text widget Blueprint was created"), Blueprint)) return false;
 	const FSoftObjectPath AssetPath(Blueprint);
@@ -165,7 +165,7 @@ bool FDreamUISourceClassResolverChangedSourceAfterUnloadTest::RunTest(const FStr
 		Registry.GetAssetByObjectPath(AssetPath, true).IsValid())) return false;
 
 	TWeakObjectPtr<UDreamWidgetBlueprint> BeforeUnload = Blueprint;
-	UPackage* PackageToUnload = Disk.Package;
+	UPackage* PackageToUnload = Disk.Package.Get();
 	PackageToUnload->RemoveFromRoot();
 	Disk.Package = nullptr; // Unload may collect it; the on-disk fixture must not keep a stale pointer.
 	Blueprint = nullptr;
@@ -234,8 +234,8 @@ bool FDreamUISourceClassResolverStableSharedSourceTest::RunTest(const FString&)
 		}
 		return Asset;
 	};
-	UDreamWidgetBlueprint* First = CreateBlueprint(FirstDisk.Package, FirstName);
-	UDreamWidgetBlueprint* Last = CreateBlueprint(LastDisk.Package, LastName);
+	UDreamWidgetBlueprint* First = CreateBlueprint(FirstDisk.Package.Get(), FirstName);
+	UDreamWidgetBlueprint* Last = CreateBlueprint(LastDisk.Package.Get(), LastName);
 	if (!TestNotNull(TEXT("the first shared-source Blueprint was created"), First)
 		|| !TestNotNull(TEXT("the other shared-source Blueprint was created"), Last)) return false;
 	if (!TestTrue(TEXT("the first Blueprint compiles from the shared source"), DreamUITextAuthoring::SetAuthoredSourcePath(First, Sources.OldPath))
@@ -251,7 +251,7 @@ bool FDreamUISourceClassResolverStableSharedSourceTest::RunTest(const FString&)
 	TestEqual(TEXT("a shared source initially selects the first asset path"), InitiallySelected, static_cast<UClass*>(First->GeneratedClass));
 
 	// Make this asset only after the first lookup, so its file cannot already have an indexed answer.
-	UDreamWidgetBlueprint* Other = CreateBlueprint(OtherDisk.Package, OtherName);
+	UDreamWidgetBlueprint* Other = CreateBlueprint(OtherDisk.Package.Get(), OtherName);
 	if (!TestNotNull(TEXT("an unrelated Blueprint was created afterwards"), Other)
 		|| !TestTrue(TEXT("it compiles from the unrelated source"), DreamUITextAuthoring::SetAuthoredSourcePath(Other, Sources.NewPath))) return false;
 	TestTrue(TEXT("the unrelated source compiles cleanly"), Other->Status == BS_UpToDate);
@@ -284,8 +284,8 @@ bool FDreamUISourceClassResolverSharedSourceAfterChangeTest::RunTest(const FStri
 			UDreamTextUserWidget::StaticClass(), Package, FName(*Name), BPTYPE_Normal,
 			UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 	};
-	UDreamWidgetBlueprint* First = CreateBlueprint(FirstDisk.Package, FirstName);
-	UDreamWidgetBlueprint* Last = CreateBlueprint(Disk.Package, LastName);
+	UDreamWidgetBlueprint* First = CreateBlueprint(FirstDisk.Package.Get(), FirstName);
+	UDreamWidgetBlueprint* Last = CreateBlueprint(Disk.Package.Get(), LastName);
 	if (!TestNotNull(TEXT("the first class was created"), First)
 		|| !TestNotNull(TEXT("the other class was created"), Last)) return false;
 	const FSoftObjectPath LastAssetPath(Last);
@@ -310,7 +310,7 @@ bool FDreamUISourceClassResolverSharedSourceAfterChangeTest::RunTest(const FStri
 	TestEqual(TEXT("both loaded classes initially select the first path"), Resolver(Sources.OldPath), static_cast<UClass*>(First->GeneratedClass));
 
 	TWeakObjectPtr<UDreamWidgetBlueprint> BeforeUnload = Last;
-	UPackage* PackageToUnload = Disk.Package;
+	UPackage* PackageToUnload = Disk.Package.Get();
 	PackageToUnload->RemoveFromRoot();
 	Disk.Package = nullptr;
 	Last = nullptr;

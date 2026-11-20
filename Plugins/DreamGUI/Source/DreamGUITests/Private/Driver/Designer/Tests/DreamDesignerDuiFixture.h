@@ -63,8 +63,8 @@ namespace DreamTests
 	struct FScopedDuiDesigner
 	{
 		FString FilePath;
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		TSharedPtr<FDreamDesignerDriver> Driver;
 		FString Failure;
 
@@ -87,7 +87,7 @@ namespace DreamTests
 			}
 			Package->AddToRoot();
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				UDreamTextUserWidget::StaticClass(), Package, FName(InName), BPTYPE_Normal,
+				UDreamTextUserWidget::StaticClass(), Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			if (Blueprint == nullptr)
 			{
@@ -98,12 +98,12 @@ namespace DreamTests
 			// the canvas down to that size once the file is read, and these tests place and drag against the full one.
 			// Set before the path, which compiles.
 			Blueprint->DesignerData.DesignViewportSize = FDreamWidgetDesignerData().CanvasSize;
-			if (!DreamUITextAuthoring::SetAuthoredSourcePath(Blueprint, FilePath))
+			if (!DreamUITextAuthoring::SetAuthoredSourcePath(Blueprint.Get(), FilePath))
 			{
 				Failure = TEXT("the Widget Blueprint would not take the .dui as its source");
 				return;
 			}
-			TSharedPtr<FDreamDesignerDriver> Opened = FDreamDesignerDriver::Open(Blueprint);
+			TSharedPtr<FDreamDesignerDriver> Opened = FDreamDesignerDriver::Open(Blueprint.Get());
 			if (!Opened.IsValid())
 			{
 				Failure = TEXT("the designer did not open, or opened without a viewport (see LogDreamDesignerDriver)");

@@ -8,11 +8,16 @@ class UDreamNiagaraSystem;
 class UMaterial;
 class UMaterialInterface;
 
-/** What a conversion made, and what of the particle material it could not make the UI's. */
+/**
+ * What a conversion made, and what of the particle material it could not make the UI's. Raw, and good only for the
+ * call that returned it: both materials are assets the conversion just made or was given, read before it returns.
+ */
 struct FDreamNiagaraMaterialConversion
 {
 	/** The UI material, or null when nothing was made (Error says why). */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the Convert call that returned it: the material is one it just made or was handed.
 	UMaterialInterface* Result = nullptr;
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the Convert call that returned it, as Result above.
 	UMaterialInterface* Source = nullptr;
 	/** Each node replaced, as "ParticleColor -> vertex colour". */
 	TArray<FString> Replaced;

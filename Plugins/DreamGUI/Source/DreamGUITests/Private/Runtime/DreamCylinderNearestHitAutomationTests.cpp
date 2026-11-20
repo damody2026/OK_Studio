@@ -33,7 +33,7 @@ bool FDreamCylinderNearestHitTest::RunTest(const FString& Parameters)
 	const auto Screen = DreamDriverWorld::MakeRenderTargetMesh(Rig, TEXT("CurvedScreen"),
 		FTransform(FRotator(13.0, 27.0, 8.0), FVector(300.0, 40.0, 25.0)), FIntPoint(512, 256));
 	if (!TestTrue(TEXT("the canvas and its displayed surface exist"), Screen.IsComplete()))return false;
-	UDreamUIRenderTargetGeometrySource* Surface = Screen.Surface;
+	UDreamUIRenderTargetGeometrySource* Surface = Screen.Surface.Get();
 	Surface->SetGeometryMode(EDreamUIRenderTargetGeometryMode::Cylinder);
 	Surface->SetCylinderArcAngle(90.0f);
 	const bool bFromRight = Parameters.StartsWith(TEXT("Right"));

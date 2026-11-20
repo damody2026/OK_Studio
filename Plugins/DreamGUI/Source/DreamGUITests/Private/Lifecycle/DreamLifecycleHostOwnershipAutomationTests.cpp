@@ -76,7 +76,7 @@ namespace DreamLifecycleHostOwnershipTestLocal
 		FScopedWorld Level(EWorldType::Editor);
 		// Held weakly across the collections below: the tree the deletion takes down is freed by them, and
 		// nothing else keeps it -- the component's hold on its tree is not undo's to record.
-		const TWeakObjectPtr<ADreamWorldWidgetActor> Actor = PlacePanel(Level.World, Panel.GetClass());
+		const TWeakObjectPtr<ADreamWorldWidgetActor> Actor = PlacePanel(Level.World.Get(), Panel.GetClass());
 		if (!InTest.TestTrue(TEXT("the panel was placed"), Actor.IsValid()))
 		{
 			return false;
@@ -87,9 +87,9 @@ namespace DreamLifecycleHostOwnershipTestLocal
 		{
 			return false;
 		}
-		TWeakObjectPtr<UDreamWidget> Blur = AddBackgroundBlur(Level.World, Tree.Get());
+		TWeakObjectPtr<UDreamWidget> Blur = AddBackgroundBlur(Level.World.Get(), Tree.Get());
 		InTest.TestTrue(TEXT("...and a background blur in it, with a canvas of its own"), Blur.IsValid());
-		DrawFrames(Level.World, 2);
+		DrawFrames(Level.World.Get(), 2);
 		Flush(bInFlush);
 
 		for (int32 Round = 0; Round < UndoRounds; ++Round)
@@ -103,18 +103,18 @@ namespace DreamLifecycleHostOwnershipTestLocal
 			Settle(bInFlush);
 			InTest.TestFalse(Deleted + TEXT(": deleting the host destroyed its tree"), Tree.IsValid());
 			InTest.TestFalse(Deleted + TEXT(": ...the blur and its canvas with it"), Blur.IsValid());
-			InTest.TestEqual(Deleted + TEXT(": ...and left no tree in the world"), RegisteredRoots(Level.World).Num(), 0);
+			InTest.TestEqual(Deleted + TEXT(": ...and left no tree in the world"), RegisteredRoots(Level.World.Get()).Num(), 0);
 
 			// Undone: the host comes back, and builds its tree again -- one tree, its own.
 			const FString Undone = FString::Printf(TEXT("Round %d, undone"), Round);
 			GEditor->UndoTransaction();
-			DrawFrames(Level.World, 2);
+			DrawFrames(Level.World.Get(), 2);
 			Flush(bInFlush);
 			if (!InTest.TestTrue(Undone + TEXT(": the host is back"), Actor.IsValid() && Host.IsValid()))
 			{
 				return false;
 			}
-			const TArray<UDreamWidget*> AfterUndo = RegisteredRoots(Level.World);
+			const TArray<UDreamWidget*> AfterUndo = RegisteredRoots(Level.World.Get());
 			InTest.TestEqual(Undone + TEXT(": ...with exactly one tree in the world"), AfterUndo.Num(), 1);
 			InTest.TestTrue(Undone + TEXT(": ...which is the host's, outered to it"),
 				AfterUndo.Num() == 1 && Host->GetLoadedWidget() == AfterUndo[0] && HolderOf(AfterUndo[0]) == Host.Get());
@@ -124,19 +124,19 @@ namespace DreamLifecycleHostOwnershipTestLocal
 			GEditor->RedoTransaction();
 			Flush(bInFlush);
 			Settle(bInFlush);
-			InTest.TestEqual(FString::Printf(TEXT("Round %d, redone: no tree in the world"), Round), RegisteredRoots(Level.World).Num(), 0);
+			InTest.TestEqual(FString::Printf(TEXT("Round %d, redone: no tree in the world"), Round), RegisteredRoots(Level.World.Get()).Num(), 0);
 
 			// Undone again, for the next round: the host back once more, with a blur in its new tree.
 			GEditor->UndoTransaction();
-			DrawFrames(Level.World, 2);
+			DrawFrames(Level.World.Get(), 2);
 			Flush(bInFlush);
 			if (!InTest.TestTrue(FString::Printf(TEXT("Round %d, undone again: the host is back"), Round), Actor.IsValid() && Host.IsValid() && Host->GetLoadedWidget() != nullptr))
 			{
 				return false;
 			}
 			Tree = Host->GetLoadedWidget();
-			Blur = AddBackgroundBlur(Level.World, Tree.Get());
-			DrawFrames(Level.World, 2);
+			Blur = AddBackgroundBlur(Level.World.Get(), Tree.Get());
+			DrawFrames(Level.World.Get(), 2);
 			Flush(bInFlush);
 		}
 		InTest.TestEqual(TEXT("No dynamic texture was left without a size"), JoinLines(FindZeroSizeDynamicTextures()), FString(TEXT("none")));
@@ -157,18 +157,18 @@ bool FDreamLifecycleHostHoldsItsTreeTest::RunTest(const FString& Parameters)
 	FScopedPanelClass Panel(TEXT("HostHoldsTree"));
 	if (!TestNotNull(TEXT("the panel class compiled"), Panel.GetClass()))return false;
 	FScopedWorld Level(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World, Panel.GetClass());
+	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World.Get(), Panel.GetClass());
 	if (!TestNotNull(TEXT("the panel was placed"), Actor))return false;
 	UDreamWorldWidgetComponent* Host = Actor->GetWidgetComponent();
 	UDreamWidget* Root = Host->GetLoadedWidget();
 	if (!TestNotNull(TEXT("with its tree"), Root))return false;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Level.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Level.World.Get());
 	if (!TestNotNull(TEXT("in a world with a UI manager"), Manager))return false;
 
 	TestTrue(TEXT("The tree is outered to the component that hosts it"), HolderOf(Root) == Host);
 	TestTrue(TEXT("...which the manager knows as a host"), Manager->IsTreeHostRegistered(Host));
 	TestFalse(TEXT("...and the manager does not also hold it"), Manager->IsFreeRoot(Root));
-	TestTrue(TEXT("It is the only tree in the world"), RegisteredRoots(Level.World).Num() == 1 && RegisteredRoots(Level.World)[0] == Root);
+	TestTrue(TEXT("It is the only tree in the world"), RegisteredRoots(Level.World.Get()).Num() == 1 && RegisteredRoots(Level.World.Get())[0] == Root);
 
 	// The registry does not keep a tree alive: a tree its host let go of without destroying it would be
 	// collected. Asked the other way round -- a host that still holds its tree keeps it through a collection.
@@ -176,7 +176,7 @@ bool FDreamLifecycleHostHoldsItsTreeTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A collection leaves the hosted tree alone"), IsValid(Root) && Host->GetLoadedWidget() == Root);
 
 	// A tree nobody hosts is the manager's, until it is attached somewhere.
-	UDreamWidget* Free = CreateDreamWidget(Level.World, Panel.GetClass());
+	UDreamWidget* Free = CreateDreamWidget(Level.World.Get(), Panel.GetClass());
 	if (!TestNotNull(TEXT("a tree made with no host"), Free))return false;
 	TestTrue(TEXT("A tree made with no host is held in the manager's pool"), Manager->IsFreeRoot(Free) && HolderOf(Free) == Manager);
 	Collect();
@@ -189,7 +189,7 @@ bool FDreamLifecycleHostHoldsItsTreeTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Destroyed, it leaves the pool"), Manager->IsFreeRoot(Free));
 
 	// A Blueprint's free widget is the manager's too.
-	UDreamWidget* Constructed = UDreamUIBPLibrary::ConstructWidget(Level.World, TEXT("Constructed"), nullptr);
+	UDreamWidget* Constructed = UDreamUIBPLibrary::ConstructWidget(Level.World.Get(), TEXT("Constructed"), nullptr);
 	if (TestNotNull(TEXT("a Blueprint's free widget"), Constructed))
 	{
 		TestTrue(TEXT("A Blueprint's free widget is parked and pooled"), Manager->IsWidgetParked(Constructed) && Manager->IsFreeRoot(Constructed));

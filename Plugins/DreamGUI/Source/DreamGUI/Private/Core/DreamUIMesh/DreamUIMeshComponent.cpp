@@ -1468,6 +1468,7 @@ private:
 	 * pass only needs a material that compiles a hit proxy shader, and the default surface material is
 	 * the one exempt from the proxy's used-material verification.
 	 */
+	// static-checks: allow(stored-raw-pointer) FMaterialRenderProxy has no counted or weak form; guaranteed by UMaterial::GetDefaultMaterial(MD_Surface), which is rooted.
 	FMaterialRenderProxy* EditorHitProxyFallbackMaterial = nullptr;
 #endif
 };

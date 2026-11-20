@@ -55,14 +55,17 @@ struct DREAMGUI_API FDreamUINodeSpec
 	FName Name;
 
 	/** Null means a plain UDreamWidget. A UDreamUserWidget subclass here is what Nested() writes. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by DreamUI::Realize, which consumes the spec inside the call it is handed to; the class system keeps the UClass.
 	UClass* WidgetClass = nullptr;
 
 	/** Null means a node that draws nothing -- .dui's `Widget` tag. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by DreamUI::Realize, as WidgetClass above.
 	UClass* VisualClass = nullptr;
 
 	/** One `+ Something { }`: a behaviour, a layout container, or a layout-self. */
 	struct FComponent
 	{
+		// static-checks: allow(stored-raw-pointer) Guaranteed by DreamUI::Realize, as WidgetClass above.
 		UClass* Class = nullptr;
 		TFunction<void(UObject&)> Init;
 	};

@@ -154,7 +154,7 @@ bool FDreamWorldPopupOutsidePressTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* OnPanel = Stage.IsReady() ? PlaceButton(*this, Rig, TEXT("OnPanel"), Stage.Panel, FVector2D(160.0, 60.0), FVector2D(150.0, -80.0), PanelListener.Get()) : nullptr;
+	UDreamButton* OnPanel = Stage.IsReady() ? PlaceButton(*this, Rig, TEXT("OnPanel"), Stage.Panel.Get(), FVector2D(160.0, 60.0), FVector2D(150.0, -80.0), PanelListener.Get()) : nullptr;
 	// High on the screen, well clear of where the panel's button is seen.
 	UDreamWidget* Card = OnPanel != nullptr ? Rig.MakeWidget(TEXT("Card"), nullptr, FVector2D(300.0, 120.0), FVector2D(-200.0, 200.0)) : nullptr;
 	UDreamButton* Inside = Card != nullptr ? PlaceButton(*this, Rig, TEXT("Inside"), Card, ButtonSize, FVector2D::ZeroVector, CardListener.Get()) : nullptr;
@@ -235,8 +235,8 @@ bool FDreamWorldPopupFocusTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* Opener = Stage.IsReady() ? PlaceButton(*this, Rig, TEXT("Opener"), Stage.Panel, FVector2D(160.0, 60.0), FVector2D(-150.0, -80.0), OpenerListener.Get()) : nullptr;
-	UDreamWidget* Card = Opener != nullptr ? Rig.MakeWidget(TEXT("Card"), Stage.Panel, FVector2D(360.0, 120.0), FVector2D(60.0, 60.0)) : nullptr;
+	UDreamButton* Opener = Stage.IsReady() ? PlaceButton(*this, Rig, TEXT("Opener"), Stage.Panel.Get(), FVector2D(160.0, 60.0), FVector2D(-150.0, -80.0), OpenerListener.Get()) : nullptr;
+	UDreamWidget* Card = Opener != nullptr ? Rig.MakeWidget(TEXT("Card"), Stage.Panel.Get(), FVector2D(360.0, 120.0), FVector2D(60.0, 60.0)) : nullptr;
 	UDreamButton* Left = Card != nullptr ? PlaceButton(*this, Rig, TEXT("Left"), Card, ButtonSize, FVector2D(-90.0, 0.0), nullptr) : nullptr;
 	UDreamButton* Right = Left != nullptr ? PlaceButton(*this, Rig, TEXT("Right"), Card, ButtonSize, FVector2D(90.0, 0.0), RightListener.Get()) : nullptr;
 	UDreamUIPopupLayer* Popups = UDreamUIPopupLayer::Get(Rig.GetWorld());
@@ -263,7 +263,7 @@ bool FDreamWorldPopupFocusTest::RunTest(const FString& Parameters)
 	const UDreamCanvas* CardCanvas = Card->GetRenderCanvas();
 	const UDreamCanvas* OpenerCanvas = Opener->FaceNode->GetRenderCanvas();
 	TestTrue(TEXT("The card stayed on the panel, drawn by the panel's canvas, not on the screen"),
-		Card->GetParent() == Stage.Panel && Card->GetRootCanvas() == Stage.Panel->GetRootCanvas() && !Card->IsScreenSpaceOverlayUI());
+		Card->GetParent() == Stage.Panel.Get() && Card->GetRootCanvas() == Stage.Panel->GetRootCanvas() && !Card->IsScreenSpaceOverlayUI());
 	TestTrue(TEXT("...above the panel's button"), CardCanvas != nullptr && OpenerCanvas != nullptr
 		&& CardCanvas->GetActualSortOrder() > OpenerCanvas->GetActualSortOrder());
 	TestTrue(TEXT("...where the camera sees it"), RectOf(Rig, Left).IsSet() && RectOf(Rig, Right).IsSet());

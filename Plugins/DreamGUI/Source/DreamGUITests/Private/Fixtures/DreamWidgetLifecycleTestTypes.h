@@ -48,8 +48,11 @@ public:
 	virtual void OnRenderCanvasChanged(UDreamCanvas* InOldCanvas, UDreamCanvas* InNewCanvas) override;
 	virtual void MarkAllDirty() override;
 
-	/** Old and new canvas of each change, compared by address only: either may be gone by the time a test looks. */
-	TArray<TPair<const UDreamCanvas*, const UDreamCanvas*>> CanvasChanges;
+	/**
+	 * Old and new canvas of each change, compared by identity only: either may be gone by the time a test looks, and a
+	 * weak pointer says so where an address could not.
+	 */
+	TArray<TPair<TWeakObjectPtr<const UDreamCanvas>, TWeakObjectPtr<const UDreamCanvas>>> CanvasChanges;
 	int32 MarkAllDirtyCount = 0;
 };
 

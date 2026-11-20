@@ -107,6 +107,7 @@ struct FDreamMeasureSpec
  */
 struct FDreamPanelChildRect
 {
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the arrange/commit pair of UDreamPanelLayoutBase that produced the fragment, as the comment above says.
 	UDreamWidget* Child = nullptr;
 	FVector2D AnchoredPosition = FVector2D::ZeroVector;
 	FVector2f Size = FVector2f::ZeroVector;

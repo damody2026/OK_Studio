@@ -73,8 +73,8 @@ namespace DreamUITextStructureFixtures
 	/** A text-authored widget blueprint on a .dui, of InParentClass, with a designer open on it unless asked otherwise. */
 	struct FScopedTextBlueprint
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		FDreamWidgetBlueprintEditor* Designer = nullptr;
 		int32 CompileErrors = 0;
 
@@ -84,7 +84,7 @@ namespace DreamUITextStructureFixtures
 			Package = CreatePackage(*FString::Printf(TEXT("/Temp/DreamGUITests/%s"), InName));
 			Package->AddToRoot();
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				InParentClass, Package, FName(InName), BPTYPE_Normal,
+				InParentClass, Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			if (Blueprint == nullptr)
 			{
@@ -96,14 +96,14 @@ namespace DreamUITextStructureFixtures
 				Defaults->SourceFile.FilePath = InDuiFilePath;
 			}
 			FCompilerResultsLog Results;
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection, &Results);
 			CompileErrors = Results.NumErrors;
 
 			if (bInOpenDesigner)
 			{
-				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Blueprint);
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Blueprint.Get());
 				Designer = static_cast<FDreamWidgetBlueprintEditor*>(
-					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(Blueprint, false));
+					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(Blueprint.Get(), false));
 			}
 		}
 
@@ -111,7 +111,7 @@ namespace DreamUITextStructureFixtures
 		{
 			if (GEditor != nullptr && Blueprint != nullptr && Designer != nullptr)
 			{
-				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Blueprint);
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Blueprint.Get());
 				FSlateApplication::Get().Tick();
 			}
 			if (Package != nullptr)

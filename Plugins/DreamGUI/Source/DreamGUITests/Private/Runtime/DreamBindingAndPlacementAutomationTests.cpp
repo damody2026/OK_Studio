@@ -196,8 +196,8 @@ bool FDreamResponsiveFirstMatchTest::RunTest(const FString& Parameters)
 	using namespace DreamBindingPlacementTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Frame = MakeWidget(TestWorld.World, nullptr, TEXT("Frame"), 1000.0f, 600.0f);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, Frame, TEXT("Panel"), 100.0f, 100.0f);
+	UDreamWidget* Frame = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Frame"), 1000.0f, 600.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), Frame, TEXT("Panel"), 100.0f, 100.0f);
 	UDreamResponsiveBehaviour* Responsive = Panel->AddComponent<UDreamResponsiveBehaviour>();
 	if (!TestNotNull(TEXT("the panel carries a responsive behaviour"), Responsive))
 	{
@@ -314,8 +314,8 @@ bool FDreamResponsiveReferenceSizeTest::RunTest(const FString& Parameters)
 	// happens to give the same answer for both cannot tell which one was read. This matters in
 	// practice: the widget's own size is usually the thing the rule is about to CHANGE, so matching
 	// against it would make the breakpoint depend on its own last answer.
-	UDreamWidget* Frame = MakeWidget(TestWorld.World, nullptr, TEXT("Frame"), 1000.0f, 600.0f);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, Frame, TEXT("Panel"), 100.0f, 100.0f);
+	UDreamWidget* Frame = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Frame"), 1000.0f, 600.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), Frame, TEXT("Panel"), 100.0f, 100.0f);
 	UDreamResponsiveBehaviour* Responsive = Panel->AddComponent<UDreamResponsiveBehaviour>();
 	if (!TestNotNull(TEXT("the panel carries a responsive behaviour"), Responsive))
 	{
@@ -345,7 +345,7 @@ bool FDreamResponsiveReferenceSizeTest::RunTest(const FString& Parameters)
 	// A root has no parent to measure against, so it falls back to its own size. Without the
 	// fallback the reference would be zero and a root would permanently sit in the narrowest rule,
 	// which is exactly what a full-screen root is not.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 1600.0f, 900.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 1600.0f, 900.0f);
 	UDreamResponsiveBehaviour* RootResponsive = Root->AddComponent<UDreamResponsiveBehaviour>();
 	if (!TestNotNull(TEXT("the root carries a responsive behaviour"), RootResponsive))
 	{
@@ -375,8 +375,8 @@ bool FDreamResponsiveResizeSubscriptionTest::RunTest(const FString& Parameters)
 	using namespace DreamBindingPlacementTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Frame = MakeWidget(TestWorld.World, nullptr, TEXT("Frame"), 1000.0f, 600.0f);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, Frame, TEXT("Panel"), 100.0f, 100.0f);
+	UDreamWidget* Frame = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Frame"), 1000.0f, 600.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), Frame, TEXT("Panel"), 100.0f, 100.0f);
 
 	// AddComponent runs the behaviour's OnRegister because the widget is already registered, and
 	// OnRegister is where the subscription to the PARENT's dimension event is made. That ordering is
@@ -444,8 +444,8 @@ bool FDreamDataBindingRefusalTest::RunTest(const FString& Parameters)
 	using namespace DreamBindingPlacementTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Host = MakeWidget(TestWorld.World, nullptr, TEXT("Host"), 100.0f, 100.0f);
-	UDreamWidget* Source = MakeWidget(TestWorld.World, nullptr, TEXT("Source"), 100.0f, 100.0f);
+	UDreamWidget* Host = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Host"), 100.0f, 100.0f);
+	UDreamWidget* Source = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Source"), 100.0f, 100.0f);
 	UDreamDataBinding* Binding = Host->AddComponent<UDreamDataBinding>();
 	if (!TestNotNull(TEXT("the host carries a data binding"), Binding))
 	{
@@ -500,7 +500,7 @@ bool FDreamDataBindingRefusalTest::RunTest(const FString& Parameters)
 
 	// An explicitly named target wins over the owning-widget default, which is what lets one
 	// behaviour drive a sibling rather than itself.
-	UDreamWidget* Other = MakeWidget(TestWorld.World, nullptr, TEXT("Other"), 100.0f, 100.0f);
+	UDreamWidget* Other = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Other"), 100.0f, 100.0f);
 	*TargetObject = Other;
 	Source->SetRenderOpacity(0.25f);
 	TestTrue(TEXT("a binding with an explicit target applies"), Binding->ApplyBinding());
@@ -530,11 +530,11 @@ bool FDreamDataBindingSetterPathTest::RunTest(const FString& Parameters)
 	// widget then LOOKS right in the Details panel while its children behave as though nothing
 	// happened. That is the failure this test exists to catch, so every assertion below reads the
 	// child rather than the target.
-	UDreamWidget* Target = MakeWidget(TestWorld.World, nullptr, TEXT("Target"), 400.0f, 400.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Target, TEXT("Child"), 100.0f, 100.0f);
-	UDreamWidget* Source = MakeWidget(TestWorld.World, nullptr, TEXT("Source"), 100.0f, 100.0f);
+	UDreamWidget* Target = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Target"), 400.0f, 400.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Target, TEXT("Child"), 100.0f, 100.0f);
+	UDreamWidget* Source = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Source"), 100.0f, 100.0f);
 
-	UDreamWidget* Host = MakeWidget(TestWorld.World, nullptr, TEXT("Host"), 100.0f, 100.0f);
+	UDreamWidget* Host = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Host"), 100.0f, 100.0f);
 	UDreamDataBinding* Binding = Host->AddComponent<UDreamDataBinding>();
 	if (!TestNotNull(TEXT("the host carries a data binding"), Binding))
 	{
@@ -748,13 +748,13 @@ bool FDreamWidgetPlacementReuseTest::RunTest(const FString& Parameters)
 	// holds one placement and re-captures into it on every pick-up, so every field Capture does not
 	// write is a field the PREVIOUS card left behind. Capture opens with Reset for exactly this
 	// reason, and nothing else in the suite would notice if it stopped.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Hand = MakeWidget(TestWorld.World, Root, TEXT("Hand"), 400.0f, 200.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Hand = MakeWidget(TestWorld.World.Get(), Root, TEXT("Hand"), 400.0f, 200.0f);
 	Hand->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
-	UDreamWidget* DragLayer = MakeWidget(TestWorld.World, Root, TEXT("DragLayer"), 800.0f, 600.0f);
+	UDreamWidget* DragLayer = MakeWidget(TestWorld.World.Get(), Root, TEXT("DragLayer"), 800.0f, 600.0f);
 
-	UDreamWidget* First = MakeWidget(TestWorld.World, Hand, TEXT("First"), 100.0f, 100.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Hand, TEXT("Second"), 100.0f, 100.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Hand, TEXT("First"), 100.0f, 100.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Second"), 100.0f, 100.0f);
 
 	// Give the first card a slot nothing like a default, so anything of it that survives into the
 	// second card's restore is unmistakable.
@@ -824,13 +824,13 @@ bool FDreamWidgetPlacementNoOpRestoreTest::RunTest(const FString& Parameters)
 	// path skips the reparent entirely and takes the "just fix the sibling index" branch instead, so
 	// it is a different route through Restore than the one the round-trip test covers -- and it is
 	// by far the more common one, because most drags are cancelled.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Hand = MakeWidget(TestWorld.World, Root, TEXT("Hand"), 400.0f, 200.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Hand = MakeWidget(TestWorld.World.Get(), Root, TEXT("Hand"), 400.0f, 200.0f);
 	Hand->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 
-	UDreamWidget* Leading = MakeWidget(TestWorld.World, Hand, TEXT("Leading"), 100.0f, 100.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Hand, TEXT("Card"), 100.0f, 100.0f);
-	UDreamWidget* Trailing = MakeWidget(TestWorld.World, Hand, TEXT("Trailing"), 100.0f, 100.0f);
+	UDreamWidget* Leading = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Leading"), 100.0f, 100.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Card"), 100.0f, 100.0f);
+	UDreamWidget* Trailing = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Trailing"), 100.0f, 100.0f);
 
 	UDreamPanelSlot* Slot = Card->GetPanelSlot();
 	if (!TestNotNull(TEXT("the card has a panel slot"), Slot))

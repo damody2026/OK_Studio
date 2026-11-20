@@ -228,17 +228,17 @@ UDreamDriverWorldSpaceRaycaster* DreamDriverWorld::AttachWorldPointer(FDreamDriv
 	const FMinimalViewInfo& InView, const FIntPoint& InViewportSize, EDreamWorldPointerSource InSource)
 {
 	using namespace DreamDriverWorldLocal;
-	if (!IsValid(InHost) || InContext.World == nullptr)
+	if (!IsValid(InHost) || InContext.World.Get() == nullptr)
 	{
 		ReportFailure(&InContext, TEXT("A world pointer needs a world and an actor to ride on, and the context has not got them."));
 		return nullptr;
 	}
-	const int32 UserIndex = IsValid(InContext.EventSystem) ? InContext.EventSystem->GetUserIndex() : 0;
+	const int32 UserIndex = IsValid(InContext.EventSystem.Get()) ? InContext.EventSystem->GetUserIndex() : 0;
 
 	// One world pointer per player. A second one -- the input subsystem's, made by EnsureInteractionForPlayer
 	// for a world widget that began play, or an earlier call to this -- would trace the same panels from
 	// a different eye, and which of the two answered a click would be decided by list order.
-	if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(InContext.World))
+	if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(InContext.World.Get()))
 	{
 		for (const TWeakObjectPtr<UDreamBaseRaycaster>& Enrolled : Manager->GetAllRaycasterArray())
 		{
@@ -344,7 +344,8 @@ USceneComponent* DreamDriverWorld::GetPanelHost(const UDreamWidget* InPanelRoot)
 
 bool DreamDriverWorld::FDreamRenderTargetMesh::IsComplete() const
 {
-	return IsValid(CanvasRoot) && IsValid(Canvas) && IsValid(RenderTarget) && IsValid(Surface) && IsValid(Interaction) && IsValid(Actor);
+	return IsValid(CanvasRoot.Get()) && IsValid(Canvas.Get()) && IsValid(RenderTarget.Get()) && IsValid(Surface.Get())
+		&& IsValid(Interaction.Get()) && IsValid(Actor.Get());
 }
 
 DreamDriverWorld::FDreamRenderTargetMesh DreamDriverWorld::MakeRenderTargetMesh(FDreamDriverRig& InRig, const FString& InName,

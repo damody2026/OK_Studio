@@ -578,7 +578,7 @@ bool FDreamUIForCopiesInOrderTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIForLoopTestLocal;
 	FScopedGameWorld TestWorld;
-	FForTree Tree(TestWorld.World);
+	FForTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()))
 	{
 		return false;
@@ -644,7 +644,7 @@ bool FDreamUIForRefreshTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIForLoopTestLocal;
 	FScopedGameWorld TestWorld;
-	FForTree Tree(TestWorld.World);
+	FForTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()))
 	{
 		return false;
@@ -731,11 +731,11 @@ bool FDreamUIForNestedUserWidgetTest::RunTest(const FString& Parameters)
 	UDreamWidget* Face = RowArchetype->ConstructWidget<UDreamWidget>();
 	Face->SetDisplayName(TEXT("Face"));
 	RowArchetype->RootWidget = Face;
-	UDreamForLoopTestRow* RowTemplate = NewObject<UDreamForLoopTestRow>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamForLoopTestRow* RowTemplate = NewObject<UDreamForLoopTestRow>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	RowTemplate->InitializeFromArchetype(RowArchetype);
 	RowTemplate->Caption = FText::FromString(TEXT("Authored"));
 
-	FForTree Tree(TestWorld.World, RowTemplate);
+	FForTree Tree(TestWorld.World.Get(), RowTemplate);
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture())
 		|| !TestTrue(TEXT("the template row has contents of its own"), RowTemplate->GetContentRoot() != nullptr))
 	{
@@ -806,7 +806,7 @@ bool FDreamUIForAdoptAndReleaseTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamUIForLoopTestLocal;
 	FScopedGameWorld TestWorld;
-	FForTree Tree(TestWorld.World);
+	FForTree Tree(TestWorld.World.Get());
 	if (!TestTrue(TEXT("the fixture tree was assembled"), Tree.IsValidFixture()))
 	{
 		return false;

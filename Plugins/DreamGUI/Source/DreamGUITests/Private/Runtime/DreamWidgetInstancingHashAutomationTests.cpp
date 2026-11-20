@@ -47,8 +47,8 @@ bool FDreamWidgetInstancingRetargetsAfterHashedKeysTest::RunTest(const FString& 
 	Source->WidgetSet.Add(SourceKey);
 	Source->FollowingReference = SourceValue;
 
-	TStrongObjectPtr<UDreamUserWidget> First(NewObject<UDreamUserWidget>(TestWorld.World));
-	TStrongObjectPtr<UDreamUserWidget> Second(NewObject<UDreamUserWidget>(TestWorld.World));
+	TStrongObjectPtr<UDreamUserWidget> First(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
+	TStrongObjectPtr<UDreamUserWidget> Second(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(First.Get(), First->GetClass(), Template.Get());
 	UDreamWidgetGeneratedClass::InitializeWidgetStatic(Second.Get(), Second->GetClass(), Template.Get());
 	for (UDreamUserWidget* Instance : {First.Get(), Second.Get()})

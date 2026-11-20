@@ -52,11 +52,11 @@ bool FDreamEventDelegateWidthConversionTest::RunTest(const FString& Parameters)
 	using namespace DreamEventDelegateTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to host the widget"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to host the widget"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Scope.World, TEXT("Host"));
+	UDreamWidget* Widget = MakeWidget(Scope.World.Get(), TEXT("Host"));
 	UDreamEventDelegateReceiver* Receiver = Widget->AddComponent<UDreamEventDelegateReceiver>();
 	if (!TestNotNull(TEXT("A behaviour to be called"), Receiver))
 	{

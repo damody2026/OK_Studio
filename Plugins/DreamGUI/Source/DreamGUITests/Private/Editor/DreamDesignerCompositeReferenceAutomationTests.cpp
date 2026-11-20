@@ -85,7 +85,7 @@ namespace DreamDesignerCompositeReferenceTestLocal
 		explicit FScopedDesigner(const TCHAR* InName) : Disk(InName)
 		{
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				UDreamUserWidget::StaticClass(), Disk.Package, FName(InName), BPTYPE_Normal,
+				UDreamUserWidget::StaticClass(), Disk.Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			if (Blueprint == nullptr) return;
 			UDreamWidgetTree* Tree = Blueprint->GetOrCreateWidgetTree();

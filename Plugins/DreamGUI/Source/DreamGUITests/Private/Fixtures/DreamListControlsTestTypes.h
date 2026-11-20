@@ -218,6 +218,11 @@ public:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UDreamWidget> LastFocusedWidget = nullptr;
+	/**
+	 * Raw and UPROPERTY, so the collector sees them: the value type is what FDreamTreeGetItemChildren hands out
+	 * (ProvideChildren's out parameter), and a wrapped one could not be assigned to it.
+	 */
+	// static-checks: allow(stored-raw-pointer) The value type is FDreamTreeGetItemChildren's own; a wrapped one cannot be assigned to its out parameter.
 	TMap<UObject*, TArray<UObject*>> Children;
 
 	/** Reflected, because a probe that keeps a widget alive only by luck is a probe that crashes. */

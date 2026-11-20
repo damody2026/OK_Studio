@@ -93,8 +93,8 @@ bool FDreamActionRouterScopeOwnershipTest::RunTest(const FString& Parameters)
 	UDataTable* Table = MakeActionTable();
 	AddAction(Table, TEXT("Delete"), EKeys::Delete, EKeys::Gamepad_FaceButton_Left);
 
-	UDreamUINavigationScope* List = MakeScope(TestWorld.World, TEXT("List"));
-	UDreamUINavigationScope* Dialog = MakeScope(TestWorld.World, TEXT("Dialog"));
+	UDreamUINavigationScope* List = MakeScope(TestWorld.World.Get(), TEXT("List"));
+	UDreamUINavigationScope* Dialog = MakeScope(TestWorld.World.Get(), TEXT("Dialog"));
 	UDreamActionCallCounter* ListDelete = NewObject<UDreamActionCallCounter>();
 	UDreamActionCallCounter* DialogDelete = NewObject<UDreamActionCallCounter>();
 
@@ -156,7 +156,7 @@ bool FDreamActionRouterGlobalAndUserTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A global binding answers with no screen open"), Router->HandleKey(0, EKeys::M, true));
 	TestEqual(TEXT("...and fires"), Global->CallCount, 1);
 
-	UDreamUINavigationScope* Page = MakeScope(TestWorld.World, TEXT("Page"));
+	UDreamUINavigationScope* Page = MakeScope(TestWorld.World.Get(), TEXT("Page"));
 	Router->RegisterAction(Page, MakeHandle(Table, TEXT("Menu")), BindTo(Screen));
 	Page->ActivateScope();
 	Router->HandleKey(0, EKeys::M, true);
@@ -240,7 +240,7 @@ bool FDreamActionRouterDisplayTest::RunTest(const FString& Parameters)
 	AddAction(Table, TEXT("Hidden"), EKeys::H, EKeys::Gamepad_FaceButton_Top);
 	UDreamActionCallCounter* Counter = NewObject<UDreamActionCallCounter>();
 
-	UDreamUINavigationScope* Page = MakeScope(TestWorld.World, TEXT("Page"));
+	UDreamUINavigationScope* Page = MakeScope(TestWorld.World.Get(), TEXT("Page"));
 	Router->RegisterAction(Page, MakeHandle(Table, TEXT("Confirm")), BindTo(Counter));
 	Router->RegisterAction(Page, MakeHandle(Table, TEXT("Hidden")), BindTo(Counter), 0, false);
 
@@ -396,7 +396,7 @@ bool FDreamActionTriggerTest::RunTest(const FString& Parameters)
 	UDataTable* Table = MakeActionTable();
 	AddAction(Table, TEXT("Confirm"), EKeys::Enter, EKeys::Gamepad_FaceButton_Bottom);
 
-	UDreamWidget* Button = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Button = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Button->SetDisplayName(TEXT("Button"));
 	Button->SetWidth(100.0f);
 	Button->SetHeight(40.0f);

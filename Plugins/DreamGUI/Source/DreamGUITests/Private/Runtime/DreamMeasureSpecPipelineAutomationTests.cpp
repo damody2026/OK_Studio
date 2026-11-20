@@ -60,10 +60,10 @@ bool FDreamWrapBoxMeasuresAgainstTheWidthItIsOfferedTest::RunTest(const FString&
 
 	// Authored a thousand wide on purpose: that is the number the old code read, and it is wide enough
 	// to hold all three items on one line, so the two answers cannot be confused for each other.
-	UDreamWidget* WrapWidget = MakeWidget(TestWorld.World, nullptr, TEXT("Wrap"), 1000.0f, 40.0f);
+	UDreamWidget* WrapWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Wrap"), 1000.0f, 40.0f);
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
-		MakeWidget(TestWorld.World, WrapWidget, *FString::Printf(TEXT("Item%d"), Index), 120.0f, 40.0f);
+		MakeWidget(TestWorld.World.Get(), WrapWidget, *FString::Printf(TEXT("Item%d"), Index), 120.0f, 40.0f);
 	}
 	UDreamLayoutContainerWrapBox* Wrap = WrapWidget->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>();
 	if (!TestNotNull(TEXT("Wrap box created"), Wrap))
@@ -98,17 +98,17 @@ bool FDreamWrapBoxInAStackIsRightOnTheFirstPassTest::RunTest(const FString& Para
 {
 	using namespace DreamMeasureSpecTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 400.0f);
-	UDreamWidget* WrapWidget = MakeWidget(TestWorld.World, Root, TEXT("Wrap"), 1000.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 400.0f);
+	UDreamWidget* WrapWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Wrap"), 1000.0f, 40.0f);
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
-		MakeWidget(TestWorld.World, WrapWidget, *FString::Printf(TEXT("Item%d"), Index), 120.0f, 40.0f);
+		MakeWidget(TestWorld.World.Get(), WrapWidget, *FString::Printf(TEXT("Item%d"), Index), 120.0f, 40.0f);
 	}
 	if (!TestNotNull(TEXT("Wrap box created"), WrapWidget->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())
 		|| !TestNotNull(TEXT("Vertical box created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>()))
@@ -145,8 +145,8 @@ bool FDreamScaleBoxFitsTheWidthItIsOfferedTest::RunTest(const FString& Parameter
 	using namespace DreamMeasureSpecTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* BoxWidget = MakeWidget(TestWorld.World, nullptr, TEXT("ScaleBox"), 1000.0f, 1000.0f);
-	MakeWidget(TestWorld.World, BoxWidget, TEXT("Content"), 100.0f, 100.0f);
+	UDreamWidget* BoxWidget = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("ScaleBox"), 1000.0f, 1000.0f);
+	MakeWidget(TestWorld.World.Get(), BoxWidget, TEXT("Content"), 100.0f, 100.0f);
 	UDreamLayoutContainerScaleBox* ScaleBox = BoxWidget->CreateNewLayoutContainer<UDreamLayoutContainerScaleBox>();
 	if (!TestNotNull(TEXT("Scale box created"), ScaleBox))
 	{
@@ -175,11 +175,11 @@ bool FDreamMeasureMemoSeparatesConstraintsTest::RunTest(const FString& Parameter
 {
 	using namespace DreamMeasureSpecTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 900.0f, 400.0f);
-	UDreamWidget* WrapWidget = MakeWidget(TestWorld.World, Root, TEXT("Wrap"), 1000.0f, 40.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 900.0f, 400.0f);
+	UDreamWidget* WrapWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Wrap"), 1000.0f, 40.0f);
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
-		MakeWidget(TestWorld.World, WrapWidget, *FString::Printf(TEXT("Item%d"), Index), 120.0f, 40.0f);
+		MakeWidget(TestWorld.World.Get(), WrapWidget, *FString::Printf(TEXT("Item%d"), Index), 120.0f, 40.0f);
 	}
 	if (!TestNotNull(TEXT("Wrap box created"), WrapWidget->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())
 		|| !TestNotNull(TEXT("Overlay created"), Root->CreateNewLayoutContainer<UDreamLayoutContainerOverlay>()))
@@ -219,18 +219,18 @@ bool FDreamWrappingTextInAStackIsRightOnTheFirstPassTest::RunTest(const FString&
 {
 	using namespace DreamMeasureSpecTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("DreamUI manager subsystem exists"), Manager))
 	{
 		return false;
 	}
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	const FText Paragraph = FText::FromString(TEXT("The quick brown fox jumps over the lazy dog, and then over the lazy dog once again."));
 
 	// The reference: the same paragraph in a widget 300 wide, under a canvas of its own, measured at its own width.
-	UDreamWidget* ReferenceRoot = MakeWidget(TestWorld.World, nullptr, TEXT("ReferenceRoot"), 300.0f, 600.0f);
+	UDreamWidget* ReferenceRoot = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("ReferenceRoot"), 300.0f, 600.0f);
 	ReferenceRoot->AddComponent<UDreamCanvas>();
-	UDreamWidget* ReferenceWidget = MakeWidget(TestWorld.World, ReferenceRoot, TEXT("Reference"), 300.0f, 20.0f);
+	UDreamWidget* ReferenceWidget = MakeWidget(TestWorld.World.Get(), ReferenceRoot, TEXT("Reference"), 300.0f, 20.0f);
 	UDreamText* Reference = ReferenceWidget->CreateNewVisual<UDreamText>();
 	Reference->SetFont(Font);
 	Reference->SetText(Paragraph);
@@ -243,10 +243,10 @@ bool FDreamWrappingTextInAStackIsRightOnTheFirstPassTest::RunTest(const FString&
 		return false;
 	}
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 300.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 300.0f, 600.0f);
 	Root->AddComponent<UDreamCanvas>();
 	// Ten wide, as authored: the width the old measurement read.
-	UDreamWidget* TextWidget = MakeWidget(TestWorld.World, Root, TEXT("Paragraph"), 10.0f, 20.0f);
+	UDreamWidget* TextWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Paragraph"), 10.0f, 20.0f);
 	UDreamText* Text = TextWidget->CreateNewVisual<UDreamText>();
 	Text->SetFont(Font);
 	Text->SetText(Paragraph);

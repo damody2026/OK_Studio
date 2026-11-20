@@ -148,7 +148,7 @@ bool FDreamDesignerSidewaysDragWritesOnlyXTest::RunTest(const FString&)
 	}
 	FDreamDesignerDriver& Driver = *Scoped.Driver;
 	FBox2D WorkArea(ForceInit);
-	if (!TestTrue(TEXT("The class is text-authored"), DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint))
+	if (!TestTrue(TEXT("The class is text-authored"), DreamUITextAuthoring::IsTextAuthored(Scoped.Blueprint.Get()))
 		|| !PrepareDesignerOneToOne(*this, Driver, WorkArea))
 	{
 		return false;

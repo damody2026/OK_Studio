@@ -278,13 +278,13 @@ bool FDreamWorldDepthUsesEachViewRectPictureTest::RunTest(const FString& Paramet
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ReadPicture(*this, Context.World, State->Background, State->Size);
+		ReadPicture(*this, Context.World.Get(), State->Background, State->Size);
 		if (State->Panel.IsValid()) State->Panel->SetVisibility(EDreamWidgetVisibility::Visible);
 	});
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ExpectPanel(*this, *State, Context.World, 1, false, false, TEXT("WorldDepth_FullView_BlendDepth1"));
+		ExpectPanel(*this, *State, Context.World.Get(), 1, false, false, TEXT("WorldDepth_FullView_BlendDepth1"));
 		if (State->Canvas.IsValid()) State->Canvas->SetBlendDepth(0.0f);
 	});
 	Steps.WaitFrames(8);
@@ -292,8 +292,8 @@ bool FDreamWorldDepthUsesEachViewRectPictureTest::RunTest(const FString& Paramet
 	{
 		// This baseline proves the real depth write, shader sampling, and hidden/visible pixel oracles
 		// work before split-screen is involved. A failure here is a fixture failure, not the UV bug.
-		ExpectPanel(*this, *State, Context.World, 1, false, true, TEXT("WorldDepth_FullView_Occlusion"));
-		UGameInstance* Instance = Context.World != nullptr ? Context.World->GetGameInstance() : nullptr;
+		ExpectPanel(*this, *State, Context.World.Get(), 1, false, true, TEXT("WorldDepth_FullView_Occlusion"));
+		UGameInstance* Instance = Context.World.Get() != nullptr ? Context.World->GetGameInstance() : nullptr;
 		UGameViewportClient* Viewport = Rig->GetViewportClient();
 		if (!TestNotNull(TEXT("The play session has a game instance"), Instance)
 			|| !TestNotNull(TEXT("The play session has a viewport"), Viewport)) return;
@@ -302,7 +302,7 @@ bool FDreamWorldDepthUsesEachViewRectPictureTest::RunTest(const FString& Paramet
 		ULocalPlayer* Second = Instance->CreateLocalPlayer(1, WhyNot, true);
 		if (!TestNotNull(*FString::Printf(TEXT("A second real player joins (%s)"), *WhyNot), Second)) return;
 		State->SecondPlayer = Second;
-		APlayerController* SecondController = Second->GetPlayerController(Context.World);
+		APlayerController* SecondController = Second->GetPlayerController(Context.World.Get());
 		if (TestNotNull(TEXT("The second player has a camera controller"), SecondController))
 		{
 			SecondController->SetViewTarget(State->Camera.Get());
@@ -312,21 +312,21 @@ bool FDreamWorldDepthUsesEachViewRectPictureTest::RunTest(const FString& Paramet
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ReadPicture(*this, Context.World, State->Background, State->Size);
+		ReadPicture(*this, Context.World.Get(), State->Background, State->Size);
 		if (State->Canvas.IsValid()) State->Canvas->SetBlendDepth(1.0f);
 		if (State->Panel.IsValid()) State->Panel->SetVisibility(EDreamWidgetVisibility::Visible);
 	});
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ExpectPanel(*this, *State, Context.World, 2, false, false, TEXT("WorldDepth_SplitView_BlendDepth1"));
+		ExpectPanel(*this, *State, Context.World.Get(), 2, false, false, TEXT("WorldDepth_SplitView_BlendDepth1"));
 		if (State->Canvas.IsValid()) State->Canvas->SetBlendDepth(0.0f);
 	});
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ExpectPanel(*this, *State, Context.World, 2, false, true, TEXT("WorldDepth_SplitView_Occlusion"));
-		if (UGameInstance* Instance = Context.World != nullptr ? Context.World->GetGameInstance() : nullptr)
+		ExpectPanel(*this, *State, Context.World.Get(), 2, false, true, TEXT("WorldDepth_SplitView_Occlusion"));
+		if (UGameInstance* Instance = Context.World.Get() != nullptr ? Context.World->GetGameInstance() : nullptr)
 		{
 			if (State->SecondPlayer.IsValid()) Instance->RemoveLocalPlayer(State->SecondPlayer.Get());
 		}
@@ -340,20 +340,20 @@ bool FDreamWorldDepthUsesEachViewRectPictureTest::RunTest(const FString& Paramet
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ReadPicture(*this, Context.World, State->Background, State->Size);
+		ReadPicture(*this, Context.World.Get(), State->Background, State->Size);
 		if (State->Canvas.IsValid()) State->Canvas->SetBlendDepth(1.0f);
 		if (State->Panel.IsValid()) State->Panel->SetVisibility(EDreamWidgetVisibility::Visible);
 	});
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ExpectPanel(*this, *State, Context.World, 1, true, false, TEXT("WorldDepth_ConstrainedView_BlendDepth1"));
+		ExpectPanel(*this, *State, Context.World.Get(), 1, true, false, TEXT("WorldDepth_ConstrainedView_BlendDepth1"));
 		if (State->Canvas.IsValid()) State->Canvas->SetBlendDepth(0.0f);
 	});
 	Steps.WaitFrames(8);
 	Steps.Then([this, State](FDreamDriverContext& Context)
 	{
-		ExpectPanel(*this, *State, Context.World, 1, true, true, TEXT("WorldDepth_ConstrainedView_Occlusion"));
+		ExpectPanel(*this, *State, Context.World.Get(), 1, true, true, TEXT("WorldDepth_ConstrainedView_Occlusion"));
 	});
 	Steps.PerformLatent();
 	Rig->Finish();

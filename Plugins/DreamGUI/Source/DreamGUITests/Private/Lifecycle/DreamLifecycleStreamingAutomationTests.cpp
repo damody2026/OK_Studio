@@ -87,7 +87,7 @@ namespace DreamLifecycleStreamingTestLocal
 	{
 		UWorld::InitializationValues Values;
 		Values.ShouldSimulatePhysics(false).EnableTraceCollision(false).CreateNavigation(false).CreateAISystem(false).AllowAudioPlayback(false);
-		UWorld* Level = UWorld::CreateWorld(EWorldType::Inactive, /*bInformEngineOfWorld*/ false, FName(*InMap.AssetName), InMap.Package,
+		UWorld* Level = UWorld::CreateWorld(EWorldType::Inactive, /*bInformEngineOfWorld*/ false, FName(*InMap.AssetName), InMap.Package.Get(),
 			/*bAddToRoot*/ false, ERHIFeatureLevel::Num, &Values);
 		if (Level == nullptr)
 		{
@@ -203,7 +203,7 @@ namespace DreamLifecycleStreamingTestLocal
 		FLeakLogWatch Watch;
 		{
 			FScopedWorld Persistent(EWorldType::Editor);
-			UWorld* World = Persistent.World;
+			UWorld* World = Persistent.World.Get();
 			const ULevelStreaming* Streaming = AddSublevel(World, Map.PackageName);
 			ULevel* SubLevel = Streaming != nullptr ? Streaming->GetLoadedLevel() : nullptr;
 			if (!InTest.TestTrue(TEXT("The level was read from its file as the world's sublevel, and shown"),
@@ -318,7 +318,7 @@ namespace DreamLifecycleStreamingTestLocal
 			{
 				*State = FPlayRound();
 				bool bAsked = false;
-				ULevelStreamingDynamic* Streaming = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(InContext.World, LevelAsset,
+				ULevelStreamingDynamic* Streaming = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(InContext.World.Get(), LevelAsset,
 					FTransform(FVector(0.0, 0.0, 500.0 * (Round + 1))), bAsked);
 				if (!Test->TestTrue(FString::Printf(TEXT("Round %d: an instance of the level was asked for"), Round), bAsked && Streaming != nullptr))
 				{
@@ -337,7 +337,7 @@ namespace DreamLifecycleStreamingTestLocal
 					State->Hosts.Add(Host);
 				}
 				UDreamWidget* SurfaceRoot = nullptr;
-				State->Surface = PlaceSurface(InContext.World, Level, SurfaceRoot);
+				State->Surface = PlaceSurface(InContext.World.Get(), Level, SurfaceRoot);
 				State->SurfaceRoot = SurfaceRoot;
 				Test->TestTrue(FString::Printf(TEXT("Round %d: ...with its surface set up"), Round), State->Surface.IsValid() && SurfaceRoot != nullptr);
 				if (bInFlush)
@@ -359,7 +359,7 @@ namespace DreamLifecycleStreamingTestLocal
 					}
 				}
 				Test->TestEqual(In + TEXT(": the level brought its two panels"), Hosts.Num(), 2);
-				ExpectEachHostBuilt(*Test, In, InContext.World, Hosts, {}, State->Trees);
+				ExpectEachHostBuilt(*Test, In, InContext.World.Get(), Hosts, {}, State->Trees);
 				UDreamUIRenderTargetGeometrySource* Surface = State->Surface.Get();
 				Test->TestTrue(In + TEXT(": its surface shows the world's canvas"), Surface != nullptr && ShowsItsCanvas(Surface));
 				State->SurfaceMaterial = Surface != nullptr ? Surface->GetMaterialInstance() : nullptr;
@@ -375,7 +375,7 @@ namespace DreamLifecycleStreamingTestLocal
 				}
 				const FString Out = FString::Printf(TEXT("Round %d, streamed out"), Round);
 				Test->TestFalse(Out + TEXT(": the level is out of the world"), State->Level.IsValid() && State->Level->bIsVisible);
-				ExpectNoHostBuilt(*Test, Out, InContext.World, State->Hosts, State->Trees);
+				ExpectNoHostBuilt(*Test, Out, InContext.World.Get(), State->Hosts, State->Trees);
 				Test->TestTrue(Out + TEXT(": the canvas its surface showed is the world's, and stays"), State->SurfaceRoot.IsValid() && State->SurfaceRoot->HasRegistered());
 			});
 			// A level streamed out is made ready for the collector as a world tick ends.

@@ -117,13 +117,13 @@ bool FDreamEventSystemBindingsObserveByDefaultTest::RunTest(const FString& Param
 	using namespace DreamEventSystemBindingsTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to place the preset in"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to place the preset in"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
 
 	ADreamStandaloneInputEventSystemActor* Actor =
-		MakeBoundActor<ADreamStandaloneInputEventSystemActor>(Scope.World, false);
+		MakeBoundActor<ADreamStandaloneInputEventSystemActor>(Scope.World.Get(), false);
 	if (!TestTrue(TEXT("The preset actor, with an input component and its bindings made"),
 		Actor != nullptr && Actor->InputComponent != nullptr))
 	{
@@ -156,7 +156,7 @@ bool FDreamEventSystemBindingsConsumeWhenAskedTest::RunTest(const FString& Param
 	using namespace DreamEventSystemBindingsTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to place the preset in"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to place the preset in"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
@@ -164,7 +164,7 @@ bool FDreamEventSystemBindingsConsumeWhenAskedTest::RunTest(const FString& Param
 	// The escape hatch for a project whose UI is meant to be the only thing listening -- a menu-only
 	// title, say. It has to reach every binding, or it silently half-works.
 	ADreamStandaloneInputEventSystemActor* Actor =
-		MakeBoundActor<ADreamStandaloneInputEventSystemActor>(Scope.World, true);
+		MakeBoundActor<ADreamStandaloneInputEventSystemActor>(Scope.World.Get(), true);
 	if (!TestTrue(TEXT("The preset actor, with an input component and its bindings made"),
 		Actor != nullptr && Actor->InputComponent != nullptr))
 	{
@@ -192,7 +192,7 @@ bool FDreamEnhancedEventSystemInheritedBindingsTest::RunTest(const FString& Para
 	using namespace DreamEventSystemBindingsTestLocal;
 
 	FScopedGameWorld Scope;
-	if (!TestTrue(TEXT("A world to place the preset in"), Scope.World != nullptr))
+	if (!TestTrue(TEXT("A world to place the preset in"), Scope.World.Get() != nullptr))
 	{
 		return false;
 	}
@@ -200,7 +200,7 @@ bool FDreamEnhancedEventSystemInheritedBindingsTest::RunTest(const FString& Para
 	// The Enhanced variant replaces only the mouse half; navigation, touch and AnyKey are the base
 	// class's legacy bindings, and those are the ones that were eating the pawn's keyboard.
 	ADreamEnhancedInputEventSystemActor* Actor =
-		MakeBoundActor<ADreamEnhancedInputEventSystemActor, UEnhancedInputComponent>(Scope.World, false);
+		MakeBoundActor<ADreamEnhancedInputEventSystemActor, UEnhancedInputComponent>(Scope.World.Get(), false);
 	if (!TestTrue(TEXT("The Enhanced Input preset, with an enhanced input component and its bindings made"),
 		Actor != nullptr && Actor->InputComponent != nullptr))
 	{

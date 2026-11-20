@@ -110,7 +110,7 @@ namespace DreamRenderLayerPixelTestLocal
 
 		bool Build(FAutomationTestBase& InTest, bool bInBuiltInShader, EScene InScene)
 		{
-			if (!InTest.TestNotNull(TEXT("a game world of its own"), World.World))
+			if (!InTest.TestNotNull(TEXT("a game world of its own"), World.World.Get()))
 			{
 				return false;
 			}
@@ -229,7 +229,7 @@ namespace DreamRenderLayerPixelTestLocal
 
 		UDreamWidget* MakeWidget(UDreamWidget* InParent, const FVector2D& InSize, const FVector2D& InPosition)
 		{
-			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* Widget = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			Widget->SetWidth(static_cast<float>(InSize.X));
 			Widget->SetHeight(static_cast<float>(InSize.Y));
 			Widget->OnRegister();
@@ -262,7 +262,7 @@ namespace DreamRenderLayerPixelTestLocal
 		/** One frame of this world alone: its UI manager ticked, its end-of-frame updates sent, its target drawn. */
 		void Frame()
 		{
-			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World))
+			if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get()))
 			{
 				Manager->Tick(1.0f / 30.0f);
 			}

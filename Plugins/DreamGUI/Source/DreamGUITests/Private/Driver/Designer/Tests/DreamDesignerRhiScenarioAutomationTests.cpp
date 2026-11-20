@@ -105,7 +105,7 @@ namespace DreamDesignerRhiScenarioLocal
 
 	bool OpenDesigner(FAutomationTestBase& InTest, const FScenarioRef& InScenario)
 	{
-		InScenario->Driver = DreamTests::FDreamDesignerDriver::Open(InScenario->Asset.Blueprint);
+		InScenario->Driver = DreamTests::FDreamDesignerDriver::Open(InScenario->Asset.Blueprint.Get());
 		if (!InScenario->Driver.IsValid())
 		{
 			InTest.AddError(TEXT("The designer did not open, or opened without a viewport (see LogDreamDesignerDriver)."));
@@ -291,7 +291,7 @@ namespace DreamDesignerRhiScenarioLocal
 	int32 ButtonsInAsset(const FScenarioRef& InScenario)
 	{
 		return DreamTests::CountDescendantsOfClass(
-			DreamTests::DesignerTemplateRoot(InScenario->Asset.Blueprint), UDreamButton::StaticClass());
+			DreamTests::DesignerTemplateRoot(InScenario->Asset.Blueprint.Get()), UDreamButton::StaticClass());
 	}
 
 	/** The plain claims: open, rooted, whole, and holding what was put in. */

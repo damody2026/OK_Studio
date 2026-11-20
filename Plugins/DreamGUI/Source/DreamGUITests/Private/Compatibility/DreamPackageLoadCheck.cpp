@@ -87,14 +87,14 @@ DreamPackageLoadCheck::FResult DreamPackageLoadCheck::LoadAndCompile(const FStri
 	FResult Result;
 	FProblemCapture Capture;
 	Result.Package = LoadPackage(nullptr, *InPackageName, LOAD_None);
-	if (Result.Package == nullptr)
+	if (!Result.Package.IsValid())
 	{
 		Result.Problems.Add(FString::Printf(TEXT("%s did not load"), *InPackageName));
 	}
 	else
 	{
 		TArray<UBlueprint*> Blueprints;
-		ForEachObjectWithPackage(Result.Package, [&Blueprints](UObject* InObject)
+		ForEachObjectWithPackage(Result.Package.Get(), [&Blueprints](UObject* InObject)
 		{
 			if (UBlueprint* Blueprint = Cast<UBlueprint>(InObject))
 			{

@@ -124,7 +124,7 @@ bool FDreamLifecycleRecompilePointerTest::RunTest(const FString& Parameters)
 	}
 	const TWeakObjectPtr<UDreamWidget> OldPageWeak = OldPage;
 
-	FKismetEditorUtilities::CompileBlueprint(Panel.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+	FKismetEditorUtilities::CompileBlueprint(Panel.Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 	TestFalse(TEXT("The compile is over"), EditorSubsystem->IsRecompiling());
 	TestFalse(TEXT("The page went before the compile"), OldPageWeak.IsValid() && OldPageWeak->HasRegistered());
 	// What the tick after the compile does.
@@ -186,14 +186,14 @@ bool FDreamLifecyclePieRecompilePointerTest::RunTest(const FString& Parameters)
 		.Then([this, Panel, Page, Clicks](FDreamDriverContext& InContext)
 		{
 			UDreamGUIEditorSubsystem* EditorSubsystem = UDreamGUIEditorSubsystem::Get();
-			UDreamScreenUISubsystem* Screen = InContext.World != nullptr ? InContext.World->GetSubsystem<UDreamScreenUISubsystem>() : nullptr;
+			UDreamScreenUISubsystem* Screen = InContext.World.Get() != nullptr ? InContext.World->GetSubsystem<UDreamScreenUISubsystem>() : nullptr;
 			if (!TestNotNull(TEXT("The editor's DreamGUI subsystem"), EditorSubsystem) || !TestNotNull(TEXT("The play world's screen"), Screen)
 				|| !TestTrue(TEXT("The page is on the screen"), Page->IsValid()))
 			{
 				return;
 			}
 			const TWeakObjectPtr<UDreamWidget> OldPage = *Page;
-			FKismetEditorUtilities::CompileBlueprint(Panel->Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+			FKismetEditorUtilities::CompileBlueprint(Panel->Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 			EditorSubsystem->RebuildReleasedTrees();
 			UDreamWidget* NewPage = Screen->GetUI(PageName);
 			TestTrue(TEXT("The page is back, built from the new class"), NewPage != nullptr && NewPage != OldPage.Get() && NewPage->GetClass() == Panel->GetClass());
@@ -209,7 +209,7 @@ bool FDreamLifecyclePieRecompilePointerTest::RunTest(const FString& Parameters)
 		{
 			TestEqual(TEXT("The rebuilt page took the click, once"), Clicks->OnNewPage, 1);
 			TestEqual(TEXT("...and the page it replaced heard none"), Clicks->OnOldPage, 0);
-			if (UDreamScreenUISubsystem* Screen = InContext.World != nullptr ? InContext.World->GetSubsystem<UDreamScreenUISubsystem>() : nullptr)
+			if (UDreamScreenUISubsystem* Screen = InContext.World.Get() != nullptr ? InContext.World->GetSubsystem<UDreamScreenUISubsystem>() : nullptr)
 			{
 				Screen->RemoveUI(PageName);
 			}

@@ -81,7 +81,7 @@ bool FDreamTextLayoutMeasuresWithoutEmittingTest::RunTest(const FString& Paramet
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList Small, Large;
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("Measure me"));
@@ -120,7 +120,7 @@ bool FDreamTextLayoutWrapsInsideTheBoxTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	const FString Content = TEXT("The quick brown fox jumps over the lazy dog and keeps running through the field");
 
 	FDreamTextLayoutInput In = MakeInput(Font, Content, 200.0f, 300.0f);
@@ -168,7 +168,7 @@ bool FDreamTextLayoutTruncationTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	const FString Content = TEXT("This sentence is far too long to fit inside the box it was given");
 
 	FDreamTextLayoutInput In = MakeInput(Font, Content, 200.0f, 60.0f);
@@ -221,7 +221,7 @@ bool FDreamTextLayoutRichTextTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("ab<shake>cd</shake>e <color=#ff0000>red</color> <u>u</u><size=48>H</size>"), 600.0f, 120.0f);
 	In.bRichText = true;
@@ -268,7 +268,7 @@ bool FDreamTextPainterColourIsPaintTimeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("plain <color=#00ff00>green</color>"), 400.0f, 120.0f);
 	In.bRichText = true;
@@ -306,7 +306,7 @@ bool FDreamTextCaretContractTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("ab cd\nefg"), 400.0f, 120.0f);
 	FDreamTextDisplayList DL;
@@ -345,12 +345,12 @@ bool FDreamTextCaretMoveWithoutLayoutTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Widget->SetWidth(200.0f);
 	Widget->SetHeight(40.0f);
 	UDreamText* Text = Widget->CreateNewVisual<UDreamText>();
 	if (!TestNotNull(TEXT("text visual"), Text))return false;
-	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World));
+	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World.Get()));
 	Text->SetText(FText::FromString(TEXT("never laid out")));
 	if (!TestEqual(TEXT("with no render canvas the text has no lines"), Text->GetCacheTextGeometryData().GetLines().Num(), 0))return false;
 
@@ -378,16 +378,16 @@ bool FDreamTextBestFitMemoTest::RunTest(const FString& Parameters)
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetWidth(800.0f);
 	Root->SetHeight(600.0f);
 	Root->AddComponent<UDreamCanvas>();
 	Root->OnRegister();
 	Root->SetWidgetActive(true);
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Child->SetWidth(120.0f);
 	Child->SetHeight(80.0f);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	UDreamText* Text = Child->CreateNewVisual<UDreamText>();
 	if (!TestNotNull(TEXT("text visual"), Text))return false;
 	Text->SetFont(Font);
@@ -460,7 +460,7 @@ bool FDreamTextBreakerWordWrapTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("The quick brown fox jumps over the lazy dog and keeps running"), 180.0f, 400.0f);
 	In.OverflowType = EDreamUITextOverflowType::VerticalOverflow;
@@ -498,7 +498,7 @@ bool FDreamTextBreakerLongWordPolicyTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("a Supercalifragilisticexpialidocious word"), 150.0f, 400.0f);
 	In.OverflowType = EDreamUITextOverflowType::VerticalOverflow;
@@ -534,7 +534,7 @@ bool FDreamTextBreakerKinsokuTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	// Every width from "one glyph" up to the whole string: whatever the break, closing punctuation
@@ -577,7 +577,7 @@ bool FDreamTextBreakerPhraseWrapTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	// 我 爱 北京 天安门: the dictionary knows 北京 and 天安门 as words.
@@ -653,7 +653,7 @@ bool FDreamTextBreakerCaretsOnSoftBreakTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	// Find a width where "ab cd" wraps after the space.
@@ -685,7 +685,7 @@ bool FDreamTextBaselineTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("small <size=48>BIG</size> small"), 600.0f, 200.0f);
 	In.bRichText = true;
@@ -730,7 +730,7 @@ bool FDreamTextFadingDoesNotCostALayoutTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// GetFinalColor() folds the whole hierarchy's render opacity into the alpha, so a widget fading
 	// anywhere above this text hands the cache a new colour on every single frame. None of it reaches
@@ -780,7 +780,7 @@ bool FDreamTextTagColourFadesAtPaintTimeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("plain <color=#00ff00>green</color>"), 400.0f, 120.0f);
 	In.bRichText = true;
@@ -820,7 +820,7 @@ bool FDreamTextRasterCapDoesNotShrinkTheTextTest::RunTest(const FString& Paramet
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// A scaled canvas rasterizes at the device size and measures back in text units. The font caps the
 	// size it will rasterize (200 here), and the measurement has to be divided by the ratio that was
@@ -855,7 +855,7 @@ bool FDreamTextDoubledCharactersKernTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// "ll" used to lose its kerning entirely: the guard that stops the FIRST character from being
 	// paired with itself was written as "the two characters differ", which is also true of every
@@ -886,7 +886,7 @@ bool FDreamTextExpandMeshSizeIsAPaintInputTest::RunTest(const FString& Parameter
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	const FDreamTextGlyphPaintStyle NoExpand = Font->GetGlyphPaintStyle(FVector2f(1.0f, 1.0f), 0.0f);
 	const FDreamTextGlyphPaintStyle Expanded = Font->GetGlyphPaintStyle(FVector2f(1.0f, 1.0f), 4.0f);
@@ -911,7 +911,7 @@ bool FDreamTextPendingGlyphKeepsItsIndexTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutEngine::Layout(MakeInput(Font, TEXT("abc"), 600.0f, 200.0f), DL);
@@ -1008,7 +1008,7 @@ bool FDreamTextEscapeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// "&lt;b&gt;" is five characters that mean "<b>", not a tag and not nine characters. There was no
 	// way at all to show a literal '<' before: the only escape was to misspell the tag.
@@ -1064,7 +1064,7 @@ bool FDreamTextTagRangeMatchesCharPropertiesTest::RunTest(const FString& Paramet
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// A custom tag's range and the painter's character list used to be two different counts. They
 	// agreed until something was thrown away -- and a truncated line throws characters away.
@@ -1119,7 +1119,7 @@ bool FDreamTextHyperlinkTagTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("go <a=Buy>here</a> now"), 900.0f, 200.0f);
 	In.bRichText = true;
@@ -1153,7 +1153,7 @@ bool FDreamTextImageSizeTagTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	auto ImageQuad = [&](const TCHAR* Content, FVector2f& OutSize) -> bool
 	{
@@ -1209,7 +1209,7 @@ bool FDreamTextComponentStyleTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	// A component-level underline applies to plain text, which markup could never reach.
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("abc"), 600.0f, 200.0f);
@@ -1247,7 +1247,7 @@ bool FDreamTextMultiLineEllipsisTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	const FString Content = TEXT("one two three four five six seven eight nine ten eleven twelve thirteen");
 
 	// Ellipsis on its own is a one-line feature: it does not wrap, so it cuts at the right edge.
@@ -1300,16 +1300,16 @@ bool FDreamTextMinDesiredWidthTest::RunTest(const FString& Parameters)
 
 	// A preferred width needs a laid-out text, and a layout needs a render canvas: the canvas is where
 	// the root scale and the world-space flag come from.
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetWidth(800.0f);
 	Root->SetHeight(600.0f);
 	Root->AddComponent<UDreamCanvas>();
 	Root->OnRegister();
 	Root->SetWidgetActive(true);
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Child->SetWidth(120.0f);
 	Child->SetHeight(80.0f);
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	UDreamText* Text = Child->CreateNewVisual<UDreamText>();
 	if (!TestNotNull(TEXT("text visual"), Text))return false;
 	Text->SetFont(Font);
@@ -1343,7 +1343,7 @@ bool FDreamTextBitmapShadowAndOutlineTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutEngine::Layout(MakeInput(Font, TEXT("ab"), 600.0f, 200.0f), DL);
@@ -1435,7 +1435,7 @@ bool FDreamTextBitmapPassesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("abc"), 600.0f, 200.0f);
 	In.FontSpace.X = -6.0f;
@@ -1492,7 +1492,7 @@ bool FDreamTextAdjacentTagsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("<a=x>1</a> and <a=y>22</a><a=z>3</a>"), 900.0f, 200.0f);
 	In.bRichText = true;
@@ -1541,8 +1541,8 @@ bool FDreamTextCustomStyleEveryCharacterTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
-	UDreamUIRichTextCustomStyleData* Styles = NewObject<UDreamUIRichTextCustomStyleData>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
+	UDreamUIRichTextCustomStyleData* Styles = NewObject<UDreamUIRichTextCustomStyleData>(TestWorld.World.Get());
 	TMap<FName, FDreamUIRichTextCustomStyleItemData> StyleMap;
 	FDreamUIRichTextCustomStyleItemData Warn;
 	Warn.colorType = EDreamUIRichTextCustomStyleData_ColorType::Replace;
@@ -1594,7 +1594,7 @@ bool FDreamTextClampDropsInlineObjectsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	auto Layout = [Font](const TCHAR* Content, EDreamUITextOverflowType Overflow, float Width, FDreamTextDisplayList& OutDL)
 	{
@@ -1651,7 +1651,7 @@ bool FDreamTextEllipsisTakesTheRunsStyleTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("<size=48><b>abcdefghijklmnopqrstuvwxyz</b></size>"), 300.0f, 200.0f);
 	In.FontSize = 16.0f;
@@ -1685,7 +1685,7 @@ bool FDreamTextTallImageGrowsItsLineTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("a<img=x,48/>\nb"), 600.0f, 300.0f);
 	In.FontSize = 20.0f;
@@ -1730,7 +1730,7 @@ bool FDreamTextImageSizeIgnoresRasterScaleTest::RunTest(const FString& Parameter
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockSupportsDynamicPixelsPerUnit = true;
 
 	FDreamTextLayoutInput WorldSpace = MakeInput(Font, TEXT("a<img=x/>"), 600.0f, 300.0f);
@@ -1771,7 +1771,7 @@ bool FDreamTextSpacingSkipsMarksTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	auto Positions = [Font](float Spacing, float& OutE, float& OutAccent, float& OutX)
 	{
@@ -1810,7 +1810,7 @@ bool FDreamTextGraphemeClusterTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutEngine::Layout(MakeInput(Font, TEXT("e\U00000301e"), 600.0f, 200.0f), DL);
@@ -1847,7 +1847,7 @@ bool FDreamTextHalfLeadingTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	const float Ascent = 24.0f * 0.95f;
 	const float Descent = 24.0f * 0.3f;
 	const float LineHeight = 24.0f * 1.25f;
@@ -1896,7 +1896,7 @@ bool FDreamTextSuperscriptLineBoxTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput Sup = MakeInput(Font, TEXT("x<sup>2</sup>"), 600.0f, 200.0f);
 	Sup.bRichText = true;
@@ -1940,8 +1940,8 @@ bool FDreamTextStyleSizeAndSuperscriptTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
-	UDreamUIRichTextCustomStyleData* Styles = NewObject<UDreamUIRichTextCustomStyleData>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
+	UDreamUIRichTextCustomStyleData* Styles = NewObject<UDreamUIRichTextCustomStyleData>(TestWorld.World.Get());
 	TMap<FName, FDreamUIRichTextCustomStyleItemData> StyleMap;
 	FDreamUIRichTextCustomStyleItemData Warn;
 	Warn.sizeType = EDreamUIRichTextCustomStyleData_SizeType::SizeValue;
@@ -1998,7 +1998,7 @@ bool FDreamTextUnderlineIsOneStrokeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("<u>a b </u>"), 600.0f, 200.0f);
 	In.bRichText = true;
@@ -2051,18 +2051,18 @@ bool FDreamTextAnimatedStrokesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetWidth(800.0f);
 	Root->SetHeight(600.0f);
 	Root->AddComponent<UDreamCanvas>();
 	Root->OnRegister();
 	Root->SetWidgetActive(true);
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Child->SetWidth(400.0f);
 	Child->SetHeight(80.0f);
 	UDreamText* Text = Child->CreateNewVisual<UDreamText>();
 	if (!TestNotNull(TEXT("text visual"), Text))return false;
-	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World));
+	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World.Get()));
 	Child->OnRegister();
 	if (!TestTrue(TEXT("child attaches"), Child->TrySetParent(Root, false)))return false;
 	Text->SetRichText(true);
@@ -2077,7 +2077,7 @@ bool FDreamTextAnimatedStrokesTest::RunTest(const FString& Parameters)
 	FDreamTextPainter::Paint(DL, Still, StillGeometry, StillChars);
 
 	// Any live object can stand for an animator; UObject itself is abstract.
-	UObject* Animator = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UObject* Animator = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Text->RegisterPerCharacterAnimation(Animator);
 	const FDreamTextPaintParams Animated = UDreamText::MakePaintParams(Text);
 	TestTrue(TEXT("a registered animator has the strokes drawn per character"), Animated.bStrokesPerCharacter);
@@ -2127,7 +2127,7 @@ bool FDreamTextTagColourOverrideTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamUITextGeometryCache Cache;
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("<a=x>ab</a> <a=y>cd</a>"), 600.0f, 200.0f);
@@ -2171,7 +2171,7 @@ bool FDreamTextEmojiFallsBackToAGlyphTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutEngine::Layout(MakeInput(Font, TEXT("a\U0001F600b"), 600.0f, 200.0f), DL);
@@ -2200,7 +2200,7 @@ bool FDreamTextMarkOnASpaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutEngine::Layout(MakeInput(Font, TEXT(" \U00000301"), 600.0f, 200.0f), DL);
@@ -2300,7 +2300,7 @@ bool FDreamTextTabStopTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 	const float Size = 10.0f;
 	const float Space = Font->GetCharData(' ', Size, false).XAdvance;
@@ -2340,7 +2340,7 @@ bool FDreamTextTabHalfSpaceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 	const float Size = 10.0f;
 	const float Space = Font->GetCharData(' ', Size, false).XAdvance;
@@ -2384,7 +2384,7 @@ bool FDreamTextTabAfterWrapTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 	const float Size = 10.0f;
 	const float Space = Font->GetCharData(' ', Size, false).XAdvance;
@@ -2425,7 +2425,7 @@ bool FDreamTextTabSizeZeroTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 	const float Size = 10.0f;
 	const float Space = Font->GetCharData(' ', Size, false).XAdvance;
@@ -2462,7 +2462,7 @@ bool FDreamTextShapedTabTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(MAX_int32);
 	ON_SCOPE_EXIT { UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1); };
-	UDreamUIFontData_DistanceField* Roboto = MakeEngineFont(TestWorld.World, TEXT("Slate/Fonts/Roboto-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Roboto = MakeEngineFont(TestWorld.World.Get(), TEXT("Slate/Fonts/Roboto-Regular.ttf"));
 	if (!TestTrue(TEXT("Roboto shapes"), FDreamTextShaper::CanShape(Roboto)))return false;
 
 	auto CaretOfB = [Roboto](const TCHAR* Content, int32 BElement)
@@ -2494,7 +2494,7 @@ bool FDreamTextMiddleEllipsisBalanceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	const FString Content = TEXT("abcdefghijklmnopqrstuvwxyz");
@@ -2570,7 +2570,7 @@ bool FDreamTextMiddleEllipsisCountsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("abcdefghijklmnopqrstuvwxyz"), 200.0f, 200.0f);
@@ -2616,7 +2616,7 @@ bool FDreamTextMiddleEllipsisPerLineTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	// Each hard line on its own: the short one in the middle is untouched, and the last is elided, not cut away.
@@ -2664,7 +2664,7 @@ bool FDreamTextMiddleEllipsisImageTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 
 	auto Layout = [Font](const TCHAR* Content, FDreamTextLayoutInput& OutIn, FDreamTextDisplayList& OutDL)
@@ -2703,7 +2703,7 @@ bool FDreamTextMiddleEllipsisRightToLeftTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 	UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(MAX_int32);
 	ON_SCOPE_EXIT { UDreamUIFontData_FreeTypeRender::SetAsyncGlyphSyncBudgetOverride(-1); };
-	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont(TestWorld.World, TEXT("Slate/Fonts/NotoNaskhArabicUI-Regular.ttf"));
+	UDreamUIFontData_DistanceField* Arabic = MakeEngineFont(TestWorld.World.Get(), TEXT("Slate/Fonts/NotoNaskhArabicUI-Regular.ttf"));
 	if (!TestTrue(TEXT("Noto Naskh shapes"), FDreamTextShaper::CanShape(Arabic)))return false;
 
 	const FString Content = TEXT("مرحبا بالعالم هذا نص عربي طويل جدا");
@@ -2747,13 +2747,13 @@ bool FDreamTextEmojiPrecedenceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->MockFaces.SetNum(2);
 	Font->MockFaces[0].Has = { FInt32Interval(0x20, 0x7E) };
 	Font->MockFaces[1].Has = { FInt32Interval(0x1F300, 0x1FAFF) };
 	Font->MockFaces[1].bColor = true;
 
-	UDreamUIFontEmojiData* Emoji = NewObject<UDreamUIFontEmojiData>(TestWorld.World);
+	UDreamUIFontEmojiData* Emoji = NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get());
 	TMap<FDreamUIFontEmojiKey, FDreamUIFontEmojiDataItem> Pictures;
 	Pictures.Add(FDreamUIFontEmojiKey(0x1F600), FDreamUIFontEmojiDataItem());
 	Pictures.Add(FDreamUIFontEmojiKey(0x1F44D), FDreamUIFontEmojiDataItem());
@@ -2836,7 +2836,7 @@ bool FDreamTextBoxesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	const FString Content = TEXT("The quick brown fox jumps over the lazy dog and keeps running through the field");
 
 	struct FCase
@@ -2964,7 +2964,7 @@ bool FDreamTextPaintRunPiecesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("aa <gradient=Gold>bbbb bbbb bbbb bbbb</gradient> cc"), 150.0f, 300.0f);
 	In.bRichText = true;
 	In.OverflowType = EDreamUITextOverflowType::VerticalOverflow;
@@ -3047,8 +3047,8 @@ bool FDreamTextPaintInnermostTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
-	UDreamUIRichTextCustomStyleData* Styles = NewObject<UDreamUIRichTextCustomStyleData>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
+	UDreamUIRichTextCustomStyleData* Styles = NewObject<UDreamUIRichTextCustomStyleData>(TestWorld.World.Get());
 	FDreamUIRichTextCustomStyleItemData Tint;
 	Tint.colorType = EDreamUIRichTextCustomStyleData_ColorType::Multiply;
 	Tint.color = FColor(128, 128, 255);
@@ -3101,7 +3101,7 @@ bool FDreamTextLineBreakCultureTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	FInternationalization& I18N = FInternationalization::Get();
 	FInternationalization::FCultureStateSnapshot Before;
 	I18N.BackupCultureState(Before);
@@ -3162,7 +3162,7 @@ bool FDreamTextScaledTabStopTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->bMockHasKerning = false;
 	Font->MockAdvanceGrid = 1.0f;
 	const float Size = 16.0f;
@@ -3200,12 +3200,12 @@ bool FDreamTextNoColorFacesTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextLayoutTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 	Font->MockFaces.SetNum(2);
 	Font->MockFaces[0].Has = { FInt32Interval(0x20, 0x7E) };
 	Font->MockFaces[1].Has = { FInt32Interval(0x1F300, 0x1FAFF) };
 	Font->MockFaces[1].bColor = true;
-	UDreamUIFontEmojiData* Emoji = NewObject<UDreamUIFontEmojiData>(TestWorld.World);
+	UDreamUIFontEmojiData* Emoji = NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get());
 	TMap<FDreamUIFontEmojiKey, FDreamUIFontEmojiDataItem> Pictures;
 	Pictures.Add(FDreamUIFontEmojiKey(0x1F44D), FDreamUIFontEmojiDataItem());
 	Emoji->SetDataMap(Pictures);

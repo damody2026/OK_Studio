@@ -167,9 +167,9 @@ namespace DreamLifecyclePastePlayTestLocal
 				{
 					FlushRenderingCommands();
 				}
-				const TArray<UDreamWorldWidgetComponent*> Panels = FindPanels(*InContext.World);
+				const TArray<UDreamWorldWidgetComponent*> Panels = FindPanels(*InContext.World.Get());
 				Test->TestEqual(TEXT("In play: every panel of the level is there"), Panels.Num(), State->PanelsInTheLevel);
-				const TArray<UDreamWidget*> Roots = RegisteredRoots(InContext.World);
+				const TArray<UDreamWidget*> Roots = RegisteredRoots(InContext.World.Get());
 				TArray<FString> NotHoldingOne;
 				for (const UDreamWorldWidgetComponent* Host : Panels)
 				{
@@ -182,7 +182,7 @@ namespace DreamLifecyclePastePlayTestLocal
 				}
 				Test->TestEqual(TEXT("...each holding exactly one tree, its own"), JoinLines(NotHoldingOne), FString(TEXT("none")));
 				Test->TestEqual(TEXT("...no dynamic texture is without a size"), JoinLines(FindZeroSizeDynamicTextures()), FString(TEXT("none")));
-				Test->TestEqual(TEXT("...no canvas mesh the play level would keep"), JoinLines(FindPersistentCanvasMeshes(InContext.World)), FString(TEXT("none")));
+				Test->TestEqual(TEXT("...no canvas mesh the play level would keep"), JoinLines(FindPersistentCanvasMeshes(InContext.World.Get())), FString(TEXT("none")));
 			})
 			.PerformLatent();
 		Rig->Finish();

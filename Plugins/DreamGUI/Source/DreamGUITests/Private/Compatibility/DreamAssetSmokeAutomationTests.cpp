@@ -50,7 +50,7 @@ bool FDreamAssetSmokeTest::RunTest(const FString& Parameters)
 	for (const FName Package : Packages)
 	{
 		const DreamPackageLoadCheck::FResult Loaded = DreamPackageLoadCheck::LoadAndCompile(Package.ToString());
-		TestNotNull(*FString::Printf(TEXT("%s loads"), *Package.ToString()), Loaded.Package);
+		TestNotNull(*FString::Printf(TEXT("%s loads"), *Package.ToString()), Loaded.Package.Get());
 		for (const FString& Problem : Loaded.Problems)
 		{
 			AddError(FString::Printf(TEXT("%s: %s"), *Package.ToString(), *Problem));

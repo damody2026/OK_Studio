@@ -104,8 +104,8 @@ namespace DreamLayerStyleTestLocal
 
 		FStage()
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-			Root = MakeWidget(World.World, nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+			Root = MakeWidget(World.World.Get(), nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			Canvas = Root->AddComponent<UDreamCanvas>();
 			if (Canvas != nullptr)
 			{
@@ -513,7 +513,7 @@ bool FDreamLayerStyleRectBlockTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Stage.World.World, Stage.Root, TEXT("Block"), FVector2D(80.0, 80.0));
+	UDreamWidget* Widget = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Block"), FVector2D(80.0, 80.0));
 	UDreamRectBlock* Block = Widget->CreateNewVisual<UDreamRectBlock>();
 	if (!TestNotNull(TEXT("A rect block"), Block))
 	{
@@ -591,7 +591,7 @@ bool FDreamLayerStyleGroupTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	auto MakeBlock = [World](UDreamWidget* InParent, const TCHAR* InName, FVector2D InPosition)
 	{
 		UDreamWidget* Widget = MakeWidget(World, InParent, InName, FVector2D(40.0, 40.0), InPosition);
@@ -672,7 +672,7 @@ bool FDreamLayerStyleDrawsNothingTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	auto MakeBlock = [World](UDreamWidget* InParent, const TCHAR* InName, FVector2D InPosition)
 	{
 		UDreamWidget* Widget = MakeWidget(World, InParent, InName, FVector2D(40.0, 40.0), InPosition);
@@ -736,7 +736,7 @@ bool FDreamLayerStylePresetTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Stage.World.World, Stage.Root, TEXT("Block"), FVector2D(80.0, 80.0));
+	UDreamWidget* Widget = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Block"), FVector2D(80.0, 80.0));
 	Widget->CreateNewVisual<UDreamRectBlock>();
 	UDreamLayerStyle* Style = Widget->AddComponent<UDreamLayerStyle>();
 	Style->SetStyle(DropShadowStyle(2.0f, 2.0f));
@@ -768,7 +768,7 @@ bool FDreamLayerStyleRectBlockNotationTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Widget = MakeWidget(Stage.World.World, Stage.Root, TEXT("Block"), FVector2D(100.0, 60.0));
+	UDreamWidget* Widget = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Block"), FVector2D(100.0, 60.0));
 	UDreamRectBlock* Block = Widget->CreateNewVisual<UDreamRectBlock>();
 	if (!TestNotNull(TEXT("A rect block"), Block))
 	{

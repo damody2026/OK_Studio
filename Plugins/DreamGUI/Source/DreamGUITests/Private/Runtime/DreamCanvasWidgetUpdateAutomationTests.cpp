@@ -56,12 +56,12 @@ bool FDreamCanvasWokenByOneWidgetTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamCanvasWidgetUpdateTestLocal;
 	DreamTests::Lifecycle::FScopedWorld World(EWorldType::Game);
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 	if (!TestNotNull(TEXT("A game world with a UI manager"), Manager))
 	{
 		return false;
 	}
-	UDreamWidget* Root = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+	UDreamWidget* Root = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 	Root->SetWidth(400.0f);
 	Root->SetHeight(400.0f);
 	Root->OnRegister();
@@ -75,7 +75,7 @@ bool FDreamCanvasWokenByOneWidgetTest::RunTest(const FString& Parameters)
 	TArray<UDreamWidget*> Blocks;
 	for (int32 Index = 0; Index < BlockCount; ++Index)
 	{
-		UDreamWidget* Block = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+		UDreamWidget* Block = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 		Block->SetWidth(10.0f);
 		Block->SetHeight(10.0f);
 		Block->OnRegister();

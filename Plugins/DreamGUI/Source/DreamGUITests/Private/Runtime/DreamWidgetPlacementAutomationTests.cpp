@@ -27,9 +27,9 @@ namespace DreamWidgetPlacementTestLocal
 {
 	struct FScopedWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		FScopedWorld() { World = UWorld::CreateWorld(EWorldType::Editor, false); }
-		~FScopedWorld() { if (World) { World->DestroyWorld(false); } }
+		~FScopedWorld() { if (UWorld* Owned = World.Get()) { Owned->DestroyWorld(false); } }
 	};
 
 	UDreamWidget* MakeWidget(UWorld* World, UDreamWidget* Parent, const TCHAR* Name)
@@ -56,14 +56,14 @@ bool FDreamWidgetPlacementRoundTripTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetPlacementTestLocal;
 	FScopedWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Hand = MakeWidget(TestWorld.World, Root, TEXT("Hand"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Hand = MakeWidget(TestWorld.World.Get(), Root, TEXT("Hand"));
 	Hand->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
-	UDreamWidget* DragLayer = MakeWidget(TestWorld.World, Root, TEXT("DragLayer"));
+	UDreamWidget* DragLayer = MakeWidget(TestWorld.World.Get(), Root, TEXT("DragLayer"));
 
-	UDreamWidget* Filler = MakeWidget(TestWorld.World, Hand, TEXT("Filler"));
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Hand, TEXT("Card"));
-	UDreamWidget* Trailing = MakeWidget(TestWorld.World, Hand, TEXT("Trailing"));
+	UDreamWidget* Filler = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Filler"));
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Card"));
+	UDreamWidget* Trailing = MakeWidget(TestWorld.World.Get(), Hand, TEXT("Trailing"));
 
 	// Author a slot that is nothing like a default one, so a restore that only handles the parent
 	// and the ZOrder cannot pass by accident.
@@ -130,10 +130,10 @@ bool FDreamWidgetPlacementRefusalTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetPlacementTestLocal;
 	FScopedWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Owner = MakeWidget(TestWorld.World, Root, TEXT("Owner"));
-	UDreamWidget* DragLayer = MakeWidget(TestWorld.World, Root, TEXT("DragLayer"));
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Owner, TEXT("Card"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Owner = MakeWidget(TestWorld.World.Get(), Root, TEXT("Owner"));
+	UDreamWidget* DragLayer = MakeWidget(TestWorld.World.Get(), Root, TEXT("DragLayer"));
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Owner, TEXT("Card"));
 
 	FDreamWidgetPlacement Empty;
 	TestFalse(TEXT("An uncaptured placement is not valid"), Empty.IsValid());

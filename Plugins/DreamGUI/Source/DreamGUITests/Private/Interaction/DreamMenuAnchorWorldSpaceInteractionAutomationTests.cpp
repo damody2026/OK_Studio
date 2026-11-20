@@ -183,7 +183,7 @@ bool FDreamMenuAnchorWorldPressTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	OnScreen->OnClicked.AddDynamic(ScreenClicks.Get(), &UDreamPressInteractionListener::HandleClicked);
-	const FPlacedMenu Placed = PlaceMenu(Rig, Stage.Panel, FVector2D(-120.0, 110.0));
+	const FPlacedMenu Placed = PlaceMenu(Rig, Stage.Panel.Get(), FVector2D(-120.0, 110.0));
 	if (!TestTrue(TEXT("A trigger and a menu anchor with three entries can be made on the panel"), Placed.IsReady()))
 	{
 		return false;
@@ -202,7 +202,7 @@ bool FDreamMenuAnchorWorldPressTest::RunTest(const FString& Parameters)
 	}
 	FString Where;
 	TestTrue(TEXT("The menu is up on the panel above the trigger, not on the screen, and the camera sees it hang below the anchor"),
-		MenuIsUpBelowTheAnchorAsSeen(Rig, Placed, Stage.Panel, Where));
+		MenuIsUpBelowTheAnchorAsSeen(Rig, Placed, Stage.Panel.Get(), Where));
 	AddInfo(Where);
 	const TOptional<FBox2D> Second = DreamControlsWorldTest::SeenRect(Rig, Placed.Entries[1]->FaceNode.Get());
 	const TOptional<FBox2D> Menu = DreamControlsWorldTest::SeenRect(Rig, Placed.Anchor->PopupNode.Get());
@@ -222,7 +222,7 @@ bool FDreamMenuAnchorWorldPressTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	TestTrue(TEXT("Opened by a tap, the menu is up on the panel below the anchor as seen"), MenuIsUpBelowTheAnchorAsSeen(Rig, Placed, Stage.Panel, Where));
+	TestTrue(TEXT("Opened by a tap, the menu is up on the panel below the anchor as seen"), MenuIsUpBelowTheAnchorAsSeen(Rig, Placed, Stage.Panel.Get(), Where));
 	AddInfo(Where);
 	const TOptional<FBox2D> Third = DreamControlsWorldTest::SeenRect(Rig, Placed.Entries[2]->FaceNode.Get());
 	if (!TestTrue(TEXT("The camera sees the third entry"), Third.IsSet()))
@@ -267,7 +267,7 @@ bool FDreamMenuAnchorWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FPlacedMenu Placed = PlaceMenu(Rig, Stage.Panel, FVector2D(-120.0, 110.0));
+	const FPlacedMenu Placed = PlaceMenu(Rig, Stage.Panel.Get(), FVector2D(-120.0, 110.0));
 	if (!TestTrue(TEXT("A trigger and a menu anchor with three entries can be made on the panel"), Placed.IsReady())
 		|| !TestTrue(TEXT("The focus goes onto the trigger"), PutFocusOn(Rig, Placed.Trigger->FaceNode.Get())))
 	{
@@ -282,7 +282,7 @@ bool FDreamMenuAnchorWorldPadTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("...one press of the trigger"), Placed.Listener->TriggerClickedCount, 1);
 	FString Where;
 	TestTrue(TEXT("The menu is up on the panel above the trigger, not on the screen, and the camera sees it hang below the anchor"),
-		MenuIsUpBelowTheAnchorAsSeen(Rig, Placed, Stage.Panel, Where));
+		MenuIsUpBelowTheAnchorAsSeen(Rig, Placed, Stage.Panel.Get(), Where));
 	AddInfo(Where);
 	TestTrue(TEXT("The pad's Back completes"), PressKey(Rig, EKeys::Gamepad_FaceButton_Right));
 	TestFalse(TEXT("Back closed the menu"), Placed.Anchor->IsOpen());

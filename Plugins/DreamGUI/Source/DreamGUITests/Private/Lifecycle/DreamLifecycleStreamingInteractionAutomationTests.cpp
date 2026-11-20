@@ -52,7 +52,7 @@ namespace DreamLifecycleStreamingInteractionTestLocal
 	{
 		UWorld::InitializationValues Values;
 		Values.ShouldSimulatePhysics(false).EnableTraceCollision(false).CreateNavigation(false).CreateAISystem(false).AllowAudioPlayback(false);
-		UWorld* Level = UWorld::CreateWorld(EWorldType::Inactive, /*bInformEngineOfWorld*/ false, FName(*InMap.AssetName), InMap.Package,
+		UWorld* Level = UWorld::CreateWorld(EWorldType::Inactive, /*bInformEngineOfWorld*/ false, FName(*InMap.AssetName), InMap.Package.Get(),
 			/*bAddToRoot*/ false, ERHIFeatureLevel::Num, &Values);
 		if (Level == nullptr)
 		{
@@ -134,7 +134,7 @@ bool FDreamLifecycleStreamingInteractionPieTest::RunTest(const FString& Paramete
 	Steps.Then([this, Streamed, LevelAsset](FDreamDriverContext& InContext)
 	{
 		bool bAsked = false;
-		ULevelStreamingDynamic* Streaming = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(InContext.World, LevelAsset,
+		ULevelStreamingDynamic* Streaming = ULevelStreamingDynamic::LoadLevelInstanceBySoftObjectPtr(InContext.World.Get(), LevelAsset,
 			FTransform::Identity, bAsked);
 		if (!TestTrue(TEXT("An instance of the level was asked for"), bAsked && Streaming != nullptr))
 		{

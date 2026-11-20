@@ -445,7 +445,7 @@ bool FDreamCreateDreamWidgetNodeTest::RunTest(const FString& Parameters)
 	}
 
 	DreamTests::FScopedGameWorld TestWorld;
-	UWorld* World = TestWorld.World;
+	UWorld* World = TestWorld.World.Get();
 	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World);
 	UDreamScreenUISubsystem* Screen = UDreamScreenUISubsystem::Get(World);
 	if (!TestNotNull(TEXT("the world has a UI manager"), Manager) || !TestNotNull(TEXT("and a screen"), Screen))

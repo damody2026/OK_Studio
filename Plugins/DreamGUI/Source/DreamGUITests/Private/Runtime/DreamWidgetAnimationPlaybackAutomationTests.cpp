@@ -82,19 +82,19 @@ namespace DreamWidgetAnimationPlaybackTestLocal
 	 */
 	struct FScopedGameWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		FScopedGameWorld()
 		{
 			World = UWorld::CreateWorld(EWorldType::Game, false);
 			FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
-			Context.SetCurrentWorld(World);
+			Context.SetCurrentWorld(World.Get());
 		}
 		~FScopedGameWorld()
 		{
-			if (World)
+			if (UWorld* Owned = World.Get())
 			{
-				GEngine->DestroyWorldContext(World);
-				World->DestroyWorld(false);
+				GEngine->DestroyWorldContext(Owned);
+				Owned->DestroyWorld(false);
 			}
 		}
 	};
@@ -528,7 +528,7 @@ bool FDreamWidgetAnimationFloatTrackPlaybackTest::RunTest(const FString& Paramet
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	Tree.Button->SetWidth(60.0f);
 
@@ -540,12 +540,12 @@ bool FDreamWidgetAnimationFloatTrackPlaybackTest::RunTest(const FString& Paramet
 	TestTrue(TEXT("The instance reports playing"), Tree.Animator->IsAnimationPlaying(Handle));
 	TestTrue(TEXT("The instance is findable by its animation"), Tree.Animator->FindAnimationInstance(Tree.Animation).Player == Handle.Player);
 
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const float MidValue = Tree.Button->GetWidth();
 	TestTrue(FString::Printf(TEXT("Eight frames in, the width is on the ramp (got %.2f)"), MidValue),
 		MidValue > RampAt(20.0f, 220.0f, 4) && MidValue < RampAt(20.0f, 220.0f, 12));
 
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("At the end the last key's value holds"), Tree.Button->GetWidth(), 220.0f, 0.01f);
 	TestFalse(TEXT("A finished instance no longer reports playing"), Tree.Animator->IsAnimationPlaying(Handle));
 	TestFalse(TEXT("A finished instance is released"), Tree.Animator->FindAnimationInstance(Tree.Animation).IsValid());
@@ -561,7 +561,7 @@ bool FDreamWidgetAnimationVectorTrackPlaybackTest::RunTest(const FString& Parame
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	// The slide-in every gallery button animation is: off to the side, then home.
 	Tree.AddVectorTrack(TEXT("RenderTranslation"), FVector(0.0, -100.0, 0.0), FVector::ZeroVector);
 	// Parked somewhere neither key names, so "never written" and "written the rest value" differ.
@@ -573,12 +573,12 @@ bool FDreamWidgetAnimationVectorTrackPlaybackTest::RunTest(const FString& Parame
 		return false;
 	}
 
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const double MidY = Tree.Button->GetRenderTranslation().Y;
 	TestTrue(FString::Printf(TEXT("Eight frames in, Y is on the ramp (got %.2f)"), MidY),
 		MidY > RampAt(-100.0f, 0.0f, 4) && MidY < RampAt(-100.0f, 0.0f, 12));
 
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("At the end Y holds the last key"), Tree.Button->GetRenderTranslation().Y, 0.0, 0.01);
 	TestFalse(TEXT("A finished instance no longer reports playing"), Tree.Animator->IsAnimationPlaying(Handle));
 	return true;
@@ -593,7 +593,7 @@ bool FDreamWidgetAnimationTimeRangeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 
 	// Stop a quarter second in: frame 7.5 of a 15-frame ramp, so well short of the last key.
@@ -602,7 +602,7 @@ bool FDreamWidgetAnimationTimeRangeTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	TickFrames(Scope.World, AnimationFrames + 10);
+	TickFrames(Scope.World.Get(), AnimationFrames + 10);
 
 	const float EndValue = Tree.Button->GetWidth();
 	TestTrue(FString::Printf(TEXT("Playback stopped near the range end, not the animation's (got %.2f)"), EndValue),
@@ -620,7 +620,7 @@ bool FDreamWidgetAnimationReverseRelativeTest::RunTest(const FString& Parameters
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 
 	const FDreamUIAnimationHandle Forward = Tree.Animator->PlayAnimationForward(Tree.Animation);
@@ -629,17 +629,17 @@ bool FDreamWidgetAnimationReverseRelativeTest::RunTest(const FString& Parameters
 		return false;
 	}
 	TestTrue(TEXT("It runs forward"), Tree.Animator->IsAnimationPlayingForward(Forward));
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const float TurnValue = Tree.Button->GetWidth();
 
 	const FDreamUIAnimationHandle Reverse = Tree.Animator->PlayAnimationReverse(Tree.Animation);
 	TestTrue(TEXT("PlayAnimationReverse turns the SAME instance around rather than starting another"), Reverse.Player == Forward.Player);
 	TestFalse(TEXT("It now runs backwards"), Tree.Animator->IsAnimationPlayingForward(Reverse));
-	TickFrames(Scope.World, 4);
+	TickFrames(Scope.World.Get(), 4);
 	const float BackValue = Tree.Button->GetWidth();
 	TestTrue(FString::Printf(TEXT("Four frames later the value has come back down (%.2f -> %.2f)"), TurnValue, BackValue), BackValue < TurnValue);
 
-	TickFrames(Scope.World, AnimationFrames);
+	TickFrames(Scope.World.Get(), AnimationFrames);
 	TestEqual(TEXT("Run back to the start, the first key's value holds"), Tree.Button->GetWidth(), 20.0f, 0.01f);
 	TestFalse(TEXT("And the instance is done"), Tree.Animator->IsAnimationPlaying(Reverse));
 	return true;
@@ -654,7 +654,7 @@ bool FDreamWidgetAnimationFinishedEventsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 
 	int32 StartedCount = 0;
@@ -669,12 +669,12 @@ bool FDreamWidgetAnimationFinishedEventsTest::RunTest(const FString& Parameters)
 
 	const FDreamUIAnimationHandle First = Tree.Animator->PlayAnimation(Tree.Animation);
 	TestEqual(TEXT("Started fires as the instance starts"), StartedCount, 1);
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("Finished fires once at the natural end"), FinishedCount, 1);
 	TestTrue(TEXT("For the instance that ended"), LastFinished == First.Player);
 
 	const FDreamUIAnimationHandle Second = Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, 3);
+	TickFrames(Scope.World.Get(), 3);
 	Tree.Animator->StopAnimation(Second);
 	TestEqual(TEXT("Stop counts as finishing, the way UMG's does"), FinishedCount, 2);
 	TestTrue(TEXT("For the stopped instance"), LastFinished == Second.Player);
@@ -692,11 +692,11 @@ bool FDreamWidgetAnimationPauseSeekTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 
 	const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, 6);
+	TickFrames(Scope.World.Get(), 6);
 	const float PausedAt = Tree.Animator->PauseAnimation(Handle);
 	TestTrue(TEXT("Pause reports where it paused"), PausedAt > 3.0f * FrameSeconds && PausedAt < 9.0f * FrameSeconds);
 	TestTrue(TEXT("Paused reads as paused"), Tree.Animator->IsAnimationPaused(Handle));
@@ -704,7 +704,7 @@ bool FDreamWidgetAnimationPauseSeekTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A paused instance is still a live one"), Tree.Animator->FindAnimationInstance(Tree.Animation).IsValid());
 
 	const float PausedValue = Tree.Button->GetWidth();
-	TickFrames(Scope.World, 5);
+	TickFrames(Scope.World.Get(), 5);
 	TestEqual(TEXT("Ticks do not move a paused instance"), Tree.Button->GetWidth(), PausedValue, 0.01f);
 
 	Tree.Animator->SetAnimationCurrentTime(Handle, 12.0f * FrameSeconds);
@@ -713,7 +713,7 @@ bool FDreamWidgetAnimationPauseSeekTest::RunTest(const FString& Parameters)
 
 	Tree.Animator->ResumeAnimation(Handle);
 	TestTrue(TEXT("Resume plays again"), Tree.Animator->IsAnimationPlaying(Handle));
-	TickFrames(Scope.World, AnimationFrames);
+	TickFrames(Scope.World.Get(), AnimationFrames);
 	TestEqual(TEXT("And it runs to the end from there"), Tree.Button->GetWidth(), 220.0f, 0.01f);
 	TestFalse(TEXT("Done"), Tree.Animator->IsAnimationPlaying(Handle));
 	return true;
@@ -728,7 +728,7 @@ bool FDreamWidgetAnimationControlVectorTrackTest::RunTest(const FString& Paramet
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedControlTree Tree(Scope.World);
+	FScopedControlTree Tree(Scope.World.Get());
 	Tree.Button->SetRenderTranslation(FVector(0.0, 50.0, 0.0));
 
 	const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
@@ -737,11 +737,11 @@ bool FDreamWidgetAnimationControlVectorTrackTest::RunTest(const FString& Paramet
 		return false;
 	}
 
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const double MidY = Tree.Button->GetRenderTranslation().Y;
 	TestTrue(FString::Printf(TEXT("Eight frames in, the control's Y is on its way home (got %.2f)"), MidY), MidY > -99.0 && MidY < -1.0);
 
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("At the end Y holds the last key"), Tree.Button->GetRenderTranslation().Y, 0.0, 0.01);
 	return true;
 }
@@ -762,7 +762,7 @@ bool FDreamWidgetAnimationTemplateInstancingTest::RunTest(const FString& Paramet
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddVectorTrack(TEXT("RenderTranslation"), FVector(0.0, -100.0, 0.0), FVector::ZeroVector);
 
 	// The instance's copy, made the way UDreamWidgetGeneratedClass makes one.
@@ -790,10 +790,10 @@ bool FDreamWidgetAnimationTemplateInstancingTest::RunTest(const FString& Paramet
 	{
 		return false;
 	}
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const double MidY = Tree.Button->GetRenderTranslation().Y;
 	TestTrue(FString::Printf(TEXT("Eight frames in, the copy has moved the button (Y = %.2f)"), MidY), MidY > -99.0 && MidY < -1.0);
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("At the end Y holds the last key"), Tree.Button->GetRenderTranslation().Y, 0.0, 0.01);
 	TestFalse(TEXT("A finished handle reads as invalid"), Handle.IsValid());
 	return true;
@@ -808,7 +808,7 @@ bool FDreamWidgetAnimationNegativeLoopCountTest::RunTest(const FString& Paramete
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 
 	// Zero is UMG's spelling of "for ever" and the one this API documents; -1 is what every tweening
@@ -819,19 +819,19 @@ bool FDreamWidgetAnimationNegativeLoopCountTest::RunTest(const FString& Paramete
 	{
 		return false;
 	}
-	TickFrames(Scope.World, AnimationFrames * 3);
+	TickFrames(Scope.World.Get(), AnimationFrames * 3);
 	TestTrue(TEXT("three times its own length later, an animation asked to loop for ever still plays"),
 		Tree.Animator->IsAnimationPlaying(Endless));
 	Tree.Animator->StopAnimation(Endless);
 
 	// Zero still means the same thing, and one still means one.
 	const FDreamUIAnimationHandle Zero = Tree.Animator->PlayAnimation(Tree.Animation, 0.0f, 0);
-	TickFrames(Scope.World, AnimationFrames * 3);
+	TickFrames(Scope.World.Get(), AnimationFrames * 3);
 	TestTrue(TEXT("zero loops for ever too"), Tree.Animator->IsAnimationPlaying(Zero));
 	Tree.Animator->StopAnimation(Zero);
 
 	const FDreamUIAnimationHandle Once = Tree.Animator->PlayAnimation(Tree.Animation, 0.0f, 1);
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestFalse(TEXT("and one play is still one play"), Tree.Animator->IsAnimationPlaying(Once));
 	return true;
 }
@@ -845,14 +845,14 @@ bool FDreamWidgetAnimationMovedWidgetTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	Tree.Button->SetWidth(20.0f);
 
 	// The binding was recorded as the path "ButtonA" from the root. Dragging the button under a new
 	// panel makes that path unwalkable -- and a binding path is display names all the way down, so
 	// every segment above a moved widget goes wrong at once while the widget itself is untouched.
-	UDreamWidget* Panel = MakeWidget(Scope.World, TEXT("Panel"), Tree.Root);
+	UDreamWidget* Panel = MakeWidget(Scope.World.Get(), TEXT("Panel"), Tree.Root);
 	Tree.Button->TrySetParent(Panel, false);
 
 	const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
@@ -860,7 +860,7 @@ bool FDreamWidgetAnimationMovedWidgetTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	TestTrue(FString::Printf(TEXT("the moved widget is still animated (width %.2f)"), Tree.Button->GetWidth()),
 		Tree.Button->GetWidth() > 25.0f);
 	Tree.Animator->StopAnimation(Handle);
@@ -876,7 +876,7 @@ bool FDreamWidgetAnimationUnscaledTimeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 
 	AWorldSettings* Settings = Scope.World->GetWorldSettings();
@@ -890,14 +890,14 @@ bool FDreamWidgetAnimationUnscaledTimeTest::RunTest(const FString& Parameters)
 
 	Tree.Animator->SetAffectedByTimeDilation(true);
 	const FDreamUIAnimationHandle Slowed = Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const float SlowedWidth = Tree.Button->GetWidth();
 	Tree.Animator->StopAnimation(Slowed);
 
 	Tree.Button->SetWidth(20.0f);
 	Tree.Animator->SetAffectedByTimeDilation(false);
 	const FDreamUIAnimationHandle Unscaled = Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const float UnscaledWidth = Tree.Button->GetWidth();
 	Tree.Animator->StopAnimation(Unscaled);
 
@@ -915,7 +915,7 @@ bool FDreamWidgetAnimationWeightTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	// The blend channel a weight is applied through; without it the instance simply overwrites and a
 	// weight has nothing to scale.
@@ -923,14 +923,14 @@ bool FDreamWidgetAnimationWeightTest::RunTest(const FString& Parameters)
 	Tree.Button->SetWidth(20.0f);
 
 	const FDreamUIAnimationHandle Full = Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const float FullWidth = Tree.Button->GetWidth();
 	Tree.Animator->StopAnimation(Full);
 
 	Tree.Button->SetWidth(20.0f);
 	const FDreamUIAnimationHandle Weighted = Tree.Animator->PlayAnimation(Tree.Animation);
 	Tree.Animator->SetAnimationWeight(Weighted, 0.0f);
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const float WeightedWidth = Tree.Button->GetWidth();
 
 	// Asserted as a comparison rather than an exact value: how far a zero weight pulls the result
@@ -941,7 +941,7 @@ bool FDreamWidgetAnimationWeightTest::RunTest(const FString& Parameters)
 
 	// And clearing it is safe on a live instance, which is the other half of the pair.
 	Tree.Animator->ClearAnimationWeight(Weighted);
-	TickFrames(Scope.World, 2);
+	TickFrames(Scope.World.Get(), 2);
 	TestTrue(TEXT("the instance survives having its weight cleared"), Tree.Animator->IsAnimationPlaying(Weighted));
 	Tree.Animator->StopAnimation(Weighted);
 	return true;
@@ -957,7 +957,7 @@ bool FDreamWidgetAnimationComponentOnUserWidgetItselfTest::RunTest(const FString
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	FScopedGameWorld Scope;
 
-	UDreamUserWidget* Instance = CreateDreamWidget(Scope.World, UDreamUserWidget::StaticClass());
+	UDreamUserWidget* Instance = CreateDreamWidget(Scope.World.Get(), UDreamUserWidget::StaticClass());
 	if (!TestNotNull(TEXT("a user widget instantiates"), Instance))
 	{
 		return false;
@@ -1078,7 +1078,7 @@ bool FDreamWidgetAnimationGalleryAssetTest::RunTest(const FString& Parameters)
 
 	UClass* GalleryClass = Gallery.Blueprint->GeneratedClass;
 	FScopedGameWorld Scope;
-	UDreamUserWidget* Instance = CreateDreamWidget(Scope.World, GalleryClass);
+	UDreamUserWidget* Instance = CreateDreamWidget(Scope.World.Get(), GalleryClass);
 	if (!TestNotNull(TEXT("The gallery instantiates"), Instance))
 	{
 		return false;
@@ -1109,10 +1109,10 @@ bool FDreamWidgetAnimationGalleryAssetTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	TickFrames(Scope.World, 8);
+	TickFrames(Scope.World.Get(), 8);
 	const FVector Mid = ButtonA->GetRenderTranslation();
 	TestTrue(FString::Printf(TEXT("Eight frames in, ButtonA has left its rest pose (Y = %.2f)"), Mid.Y), Mid.Y < -1.0);
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("and it has slid home: Y holds the last key"), ButtonA->GetRenderTranslation().Y, 0.0, 0.01);
 	TestFalse(TEXT("The instance finished"), Instance->IsAnimationPlaying(Handle));
 	return true;
@@ -1138,7 +1138,7 @@ namespace DreamWidgetAnimationPlaybackTestLocal
 	{
 		const DreamTests::Lifecycle::FScopedConsoleVariable Direct(TEXT("DreamUI.Animation.DirectEvaluation"), InDirectEvaluation);
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.AddVectorTrack(TEXT("RenderTranslation"), FVector(0.0, -100.0, 0.0), FVector(0.0, 0.0, 30.0));
 		Tree.Button->SetWidth(60.0f);
@@ -1150,7 +1150,7 @@ namespace DreamWidgetAnimationPlaybackTestLocal
 			{
 				IConsoleManager::Get().FindConsoleVariable(TEXT("DreamUI.Animation.DirectEvaluation"))->Set(0, ECVF_SetByCode);
 			}
-			TickFrames(Scope.World, 1);
+			TickFrames(Scope.World.Get(), 1);
 			if (Frame == 0 && Handle.Player != nullptr)
 			{
 				Play.bDirect = Handle.Player->IsEvaluatingDirectly();
@@ -1245,11 +1245,11 @@ bool FDreamWidgetAnimationDirectEvaluationDeclinesTest::RunTest(const FString& P
 	{
 		// Weights blend against the initial values the sequencer captures: only it can.
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animator->SetDynamicWeighting(true);
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 2);
+		TickFrames(Scope.World.Get(), 2);
 		TestTrue(TEXT("A weighted play is live"), Handle.IsValid() && Handle.Player != nullptr);
 		TestFalse(TEXT("...and evaluated by the sequencer"), Handle.Player != nullptr && Handle.Player->IsEvaluatingDirectly());
 		TestTrue(TEXT("...which still writes it"), Tree.Button->GetWidth() > 20.0f && Tree.Button->GetWidth() < 220.0f);
@@ -1257,11 +1257,11 @@ bool FDreamWidgetAnimationDirectEvaluationDeclinesTest::RunTest(const FString& P
 	{
 		// A track bound to nothing (events, sub-sequences, time warps) is the sequencer's.
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animation->GetMovieScene()->AddTrack<UMovieSceneFloatTrack>();
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 2);
+		TickFrames(Scope.World.Get(), 2);
 		TestFalse(TEXT("An animation with an unbound track is evaluated by the sequencer"), Handle.Player != nullptr && Handle.Player->IsEvaluatingDirectly());
 		TestTrue(TEXT("...which still writes its bound track"), Tree.Button->GetWidth() > 20.0f && Tree.Button->GetWidth() < 220.0f);
 	}
@@ -1284,7 +1284,7 @@ bool FDreamWidgetAnimationQueuedCallsTest::RunTest(const FString& Parameters)
 	// Declared before the tree: a Finished listener below counts into it, and the tree's teardown may still finish something.
 	int32 FinishedCount = 0;
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	// The tick manager runs what was queued at the end of a tick that updated a group of players, and there is a group
 	// only while a player is registered with it: the component's own player, given the animation here, is one.
@@ -1292,22 +1292,22 @@ bool FDreamWidgetAnimationQueuedCallsTest::RunTest(const FString& Parameters)
 
 	Tree.Animator->QueuePlayAnimation(Tree.Animation);
 	TestFalse(TEXT("A queued play has not started when the call returns"), Tree.Animator->HasPlayingAnimation(Tree.Animation));
-	TickFrames(Scope.World, 1);
+	TickFrames(Scope.World.Get(), 1);
 	const FDreamUIAnimationHandle Handle = Tree.Animator->FindAnimationInstance(Tree.Animation);
 	if (!TestTrue(TEXT("It has started by the end of the frame's sequence tick"), Tree.Animator->IsAnimationPlaying(Handle)))
 	{
 		return false;
 	}
 
-	TickFrames(Scope.World, 3);
+	TickFrames(Scope.World.Get(), 3);
 	Tree.Animator->QueuePauseAnimation(Handle);
 	TestTrue(TEXT("A queued pause leaves the instance playing when the call returns"), Tree.Animator->IsAnimationPlaying(Handle));
-	TickFrames(Scope.World, 1);
+	TickFrames(Scope.World.Get(), 1);
 	TestTrue(TEXT("...and has paused it by the end of the frame"), Tree.Animator->IsAnimationPaused(Handle));
 
 	Tree.Animator->QueueStopAnimation(Handle);
 	TestTrue(TEXT("A queued stop leaves the instance live when the call returns"), Handle.IsValid());
-	TickFrames(Scope.World, 1);
+	TickFrames(Scope.World.Get(), 1);
 	TestFalse(TEXT("...and has ended it by the end of the frame"), Handle.IsValid());
 
 	// What the queue is for: the next play asked for from inside the Finished of the one before.
@@ -1321,7 +1321,7 @@ bool FDreamWidgetAnimationQueuedCallsTest::RunTest(const FString& Parameters)
 		}
 	});
 	const FDreamUIAnimationHandle First = Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, AnimationFrames + 3);
+	TickFrames(Scope.World.Get(), AnimationFrames + 3);
 	TestEqual(TEXT("The first play finished once"), FinishedCount, 1);
 	const FDreamUIAnimationHandle Second = Tree.Animator->FindAnimationInstance(Tree.Animation);
 	TestTrue(TEXT("The play its Finished queued has started after it"),
@@ -1329,7 +1329,7 @@ bool FDreamWidgetAnimationQueuedCallsTest::RunTest(const FString& Parameters)
 
 	Tree.Animator->QueueStopAllAnimations();
 	TestTrue(TEXT("A queued stop of everything leaves it playing when the call returns"), Tree.Animator->HasPlayingAnimation(Tree.Animation));
-	TickFrames(Scope.World, 1);
+	TickFrames(Scope.World.Get(), 1);
 	TestFalse(TEXT("...and has stopped it by the end of the frame"), Tree.Animator->HasPlayingAnimation(Tree.Animation));
 	return true;
 }
@@ -1350,7 +1350,7 @@ bool FDreamWidgetAnimationLitePlayerTakenTest::RunTest(const FString& Parameters
 	const DreamTests::Lifecycle::FScopedConsoleVariable Direct(TEXT("DreamUI.Animation.DirectEvaluation"), 1);
 	{
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation, 0.0f, 0);
 		UDreamWidgetAnimationPlayer* Player = Handle.Player;
@@ -1358,17 +1358,17 @@ bool FDreamWidgetAnimationLitePlayerTakenTest::RunTest(const FString& Parameters
 		{
 			return false;
 		}
-		TickFrames(Scope.World, 1);
+		TickFrames(Scope.World.Get(), 1);
 		TestFalse(TEXT("The first tick of a play is the sequencer's: it starts the play"), Player->IsTickingLite());
-		TickFrames(Scope.World, 3);
+		TickFrames(Scope.World.Get(), 3);
 		TestTrue(TEXT("A plain play keeps its own time after that"), Player->IsTickingLite());
 		TestTrue(TEXT("...being one its player evaluates itself"), Player->IsEvaluatingDirectly());
 		// Past two loop boundaries: each is handed to the sequencer's cursor update from inside the player's own tick.
-		TickFrames(Scope.World, AnimationFrames * 2);
+		TickFrames(Scope.World.Get(), AnimationFrames * 2);
 		TestTrue(TEXT("A looping play keeps its own time across its loops"), Player->IsTickingLite() && Player->IsPlaying());
 
 		Tree.Animator->PauseAnimation(Handle);
-		TickFrames(Scope.World, 2);
+		TickFrames(Scope.World.Get(), 2);
 		TestTrue(TEXT("A paused player has nothing to update, and skips the sequencer's update"), Player->IsTickingLite());
 
 		// A clock set from outside the component -- through the handle's player, as game code can -- is not the one the
@@ -1376,7 +1376,7 @@ bool FDreamWidgetAnimationLitePlayerTakenTest::RunTest(const FString& Parameters
 		Player->SetTimeController(MakeShared<FMovieSceneTimeController_Tick>());
 		Tree.Animator->ResumeAnimation(Handle);
 		const float WidthAtResume = Tree.Button->GetWidth();
-		TickFrames(Scope.World, 4);
+		TickFrames(Scope.World.Get(), 4);
 		TestFalse(TEXT("A play on a clock the component did not give it goes through the sequencer's update"), Player->IsTickingLite());
 		TestTrue(FString::Printf(TEXT("...which plays it on (width %.2f -> %.2f)"), WidthAtResume, Tree.Button->GetWidth()),
 			Tree.Animator->IsAnimationPlaying(Handle) && !FMath::IsNearlyEqual(Tree.Button->GetWidth(), WidthAtResume, 0.01f));
@@ -1384,59 +1384,59 @@ bool FDreamWidgetAnimationLitePlayerTakenTest::RunTest(const FString& Parameters
 	{
 		// The component's unscaled clock is one it vouches for too.
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animator->SetAffectedByTimeDilation(false);
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 4);
+		TickFrames(Scope.World.Get(), 4);
 		TestTrue(TEXT("A play that ignores time dilation keeps its own time"), Handle.Player != nullptr && Handle.Player->IsTickingLite());
 	}
 	{
 		// Weights blend in the sequencer, which evaluates them.
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animator->SetDynamicWeighting(true);
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 4);
+		TickFrames(Scope.World.Get(), 4);
 		TestFalse(TEXT("A weighted play goes through the sequencer's update"), Handle.Player == nullptr || Handle.Player->IsTickingLite());
 	}
 	{
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animation->GetMovieScene()->AddTrack<UMovieSceneFloatTrack>();
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 4);
+		TickFrames(Scope.World.Get(), 4);
 		TestFalse(TEXT("A play the sequencer evaluates goes through the sequencer's update"), Handle.Player == nullptr || Handle.Player->IsTickingLite());
 	}
 	{
 		// A clock the animation asks for itself is Initialize's to make, not the component's.
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animation->GetMovieScene()->SetClockSource(EUpdateClockSource::Platform);
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 4);
+		TickFrames(Scope.World.Get(), 4);
 		TestFalse(TEXT("A play on the platform clock goes through the sequencer's update"), Handle.Player == nullptr || Handle.Player->IsTickingLite());
 	}
 	{
 		const DreamTests::Lifecycle::FScopedConsoleVariable Off(TEXT("DreamUI.Animation.LitePlayer"), 0);
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
-		TickFrames(Scope.World, 4);
+		TickFrames(Scope.World.Get(), 4);
 		TestFalse(TEXT("With DreamUI.Animation.LitePlayer 0 a plain play goes through the sequencer's update"), Handle.Player == nullptr || Handle.Player->IsTickingLite());
 	}
 	{
 		// The component's own player, registered with the tick manager and stopped, as it sits on every component with an
 		// animation of its own.
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.Animator->InitSequencePlayer();
-		TickFrames(Scope.World, 2);
+		TickFrames(Scope.World.Get(), 2);
 		UDreamWidgetAnimationPlayer* Idle = Tree.Animator->GetSequencePlayer();
 		TestTrue(TEXT("A stopped player skips the sequencer's update"), Idle != nullptr && Idle->IsTickingLite());
 	}
@@ -1516,7 +1516,7 @@ namespace DreamWidgetAnimationPlaybackTestLocal
 		int32 Frame = INDEX_NONE;
 		bool bRecording = true;
 		FScopedGameWorld Scope;
-		FScopedTree Tree(Scope.World);
+		FScopedTree Tree(Scope.World.Get());
 		Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 		Tree.AddVectorTrack(TEXT("RenderTranslation"), FVector(0.0, -100.0, 0.0), FVector(0.0, 0.0, 30.0));
 		Tree.Button->SetWidth(60.0f);
@@ -1547,7 +1547,7 @@ namespace DreamWidgetAnimationPlaybackTestLocal
 				InScript.BeforeTick(Frame, *Tree.Animator, Handle);
 			}
 			const bool bWasPlaying = Player != nullptr && Player->IsPlaying();
-			TickFrames(Scope.World, 1);
+			TickFrames(Scope.World.Get(), 1);
 			if (bWasPlaying && Player->IsTickingLite())
 			{
 				++Play.LiteFrames;
@@ -1972,12 +1972,12 @@ bool FDreamWidgetAnimationStoppedFromItsOwnWriteTest::RunTest(const FString& Par
 			const FString Case = FString::Printf(TEXT("%s, stopped through the %s"), bRestoreState ? TEXT("restoring") : TEXT("keeping"),
 				bThroughComponent ? TEXT("component") : TEXT("player"));
 			FScopedGameWorld Scope;
-			FScopedTree Tree(Scope.World);
+			FScopedTree Tree(Scope.World.Get());
 			Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 			Tree.AddVectorTrack(TEXT("RenderTranslation"), FVector(0.0, -100.0, 0.0), FVector(0.0, 0.0, 30.0));
 			Tree.Button->SetWidth(60.0f);
 			const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation, 0.0f, 1, EDreamUIAnimationPlayMode::Forward, 1.0f, bRestoreState);
-			TickFrames(Scope.World, 3);
+			TickFrames(Scope.World.Get(), 3);
 			if (!TestTrue(FString::Printf(TEXT("%s: the player evaluates the animation itself"), *Case), Handle.Player != nullptr && Handle.Player->IsEvaluatingDirectly()))
 			{
 				continue;
@@ -2002,14 +2002,14 @@ bool FDreamWidgetAnimationStoppedFromItsOwnWriteTest::RunTest(const FString& Par
 						Handle.Player->Stop();
 					}
 				});
-			TickFrames(Scope.World, 1);
+			TickFrames(Scope.World.Get(), 1);
 			Tree.Button->GetDimensionChangedEvent().Remove(Listening);
 
 			TestTrue(FString::Printf(TEXT("%s: the listener stopped the animation from inside its write"), *Case), bStopped);
 			TestFalse(FString::Printf(TEXT("%s: it is not playing any more"), *Case), Handle.Player != nullptr && Handle.Player->IsPlaying());
 			const float WidthAfterStop = Tree.Button->GetWidth();
 			const double TranslationAfterStop = Tree.Button->GetRenderTranslation().Y;
-			TickFrames(Scope.World, 3);
+			TickFrames(Scope.World.Get(), 3);
 			TestEqual(FString::Printf(TEXT("%s: nothing writes the width after the stop"), *Case), Tree.Button->GetWidth(), WidthAfterStop, 0.001f);
 			TestEqual(FString::Printf(TEXT("%s: nor the translation"), *Case), Tree.Button->GetRenderTranslation().Y, TranslationAfterStop, 0.001);
 			if (bRestoreState)
@@ -2039,7 +2039,7 @@ bool FDreamWidgetAnimationReusedPlayerTest::RunTest(const FString& Parameters)
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	const DreamTests::Lifecycle::FScopedConsoleVariable Reuse(TEXT("DreamUI.Animation.ReusePlayers"), 1);
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	auto Frames = [&Scope, &Tree](int32 InCount, TArray<float>* OutWidths)
 	{
@@ -2121,7 +2121,7 @@ bool FDreamWidgetAnimationKeptBoundObjectTest::RunTest(const FString& Parameters
 	const DreamTests::Lifecycle::FScopedConsoleVariable Verify(TEXT("r.DreamUI.VerifyKeptPointers"), 1);
 	const uint64 Before = DreamUIGone::GetKeptDisagreements();
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	Tree.Button->SetWidth(60.0f);
 	const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation);
@@ -2129,16 +2129,16 @@ bool FDreamWidgetAnimationKeptBoundObjectTest::RunTest(const FString& Parameters
 	{
 		return false;
 	}
-	TickFrames(Scope.World, 6);
+	TickFrames(Scope.World.Get(), 6);
 	TestFalse(TEXT("Six frames in, the bound widget is being written"), FMath::IsNearlyEqual(Tree.Button->GetWidth(), 60.0f));
 	// The bound widget goes in the middle of the play.
 	Tree.Button->DestroyWidget();
 	Tree.Button = nullptr;
-	TickFrames(Scope.World, 6);
+	TickFrames(Scope.World.Get(), 6);
 	// Played again from the start, with nothing to bind to.
 	Tree.Animator->StopAllAnimations();
 	Tree.Animator->PlayAnimation(Tree.Animation);
-	TickFrames(Scope.World, AnimationFrames + 5);
+	TickFrames(Scope.World.Get(), AnimationFrames + 5);
 	TestEqual(TEXT("No kept pointer disagreed with its look-up"),
 		static_cast<int64>(DreamUIGone::GetKeptDisagreements() - Before), static_cast<int64>(0));
 	return true;
@@ -2162,7 +2162,7 @@ bool FDreamWidgetAnimationBatchStopReentryTest::RunTest(const FString& Parameter
 	using namespace DreamWidgetAnimationPlaybackTestLocal;
 	const DreamTests::Lifecycle::FScopedConsoleVariable Reuse(TEXT("DreamUI.Animation.ReusePlayers"), 1);
 	FScopedGameWorld Scope;
-	FScopedTree Tree(Scope.World);
+	FScopedTree Tree(Scope.World.Get());
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	const FDreamUIAnimationHandle First = Tree.Animator->PlayAnimation(Tree.Animation);
 	const FDreamUIAnimationHandle Second = Tree.Animator->PlayAnimation(Tree.Animation);
@@ -2242,8 +2242,8 @@ bool FDreamWidgetAnimationStopRestoreGarbageCollectionTest::RunTest(const FStrin
 	const DreamTests::Lifecycle::FScopedConsoleVariable Reachability(TEXT("gc.AllowIncrementalReachability"), 0);
 	const DreamTests::Lifecycle::FScopedConsoleVariable BeginDestroy(TEXT("gc.IncrementalBeginDestroyEnabled"), 1);
 	FScopedGameWorld Scope;
-	const TStrongObjectPtr<UWorld> KeepWorld(Scope.World);
-	FScopedTree Tree(Scope.World);
+	const TStrongObjectPtr<UWorld> KeepWorld(Scope.World.Get());
+	FScopedTree Tree(Scope.World.Get());
 	const TStrongObjectPtr<UDreamWidget> KeepRoot(Tree.Root);
 	Tree.AddFloatTrack(TEXT("AnimatableWidth"), 20.0f, 220.0f);
 	Tree.Button->SetWidth(60.0f);
@@ -2251,7 +2251,7 @@ bool FDreamWidgetAnimationStopRestoreGarbageCollectionTest::RunTest(const FStrin
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, /*bPerformFullPurge*/ true);
 	const FDreamUIAnimationHandle Handle = Tree.Animator->PlayAnimation(Tree.Animation, 0.0f, 1, EDreamUIAnimationPlayMode::Forward, 1.0f, true);
 	if (!TestTrue(TEXT("the restore-state animation owns a live instance"), Handle.IsValid()))return false;
-	TickFrames(Scope.World, 3);
+	TickFrames(Scope.World.Get(), 3);
 	if (!TestFalse(TEXT("the animation changed the width before Stop"), FMath::IsNearlyEqual(Tree.Button->GetWidth(), 60.0f)))return false;
 
 	const TWeakObjectPtr<UDreamWidgetAnimationPlayer> WeakPlayer(Handle.Player.Get());

@@ -167,7 +167,7 @@ bool FDreamWorldModalPressTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* OnPanel = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("OnPanel"), Stage.Panel, FVector2D(160.0, 60.0), FVector2D(-150.0, 80.0)) : nullptr;
+	UDreamButton* OnPanel = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("OnPanel"), Stage.Panel.Get(), FVector2D(160.0, 60.0), FVector2D(-150.0, 80.0)) : nullptr;
 	if (!TestNotNull(TEXT("A button on the panel came up"), OnPanel))
 	{
 		return false;
@@ -230,7 +230,7 @@ bool FDreamWorldModalPadTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* OnPanel = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("OnPanel"), Stage.Panel, FVector2D(160.0, 60.0), FVector2D(-150.0, 80.0)) : nullptr;
+	UDreamButton* OnPanel = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("OnPanel"), Stage.Panel.Get(), FVector2D(160.0, 60.0), FVector2D(-150.0, 80.0)) : nullptr;
 	if (!TestTrue(TEXT("A button on the panel came up"), OnPanel != nullptr && OnPanel->FaceNode != nullptr))
 	{
 		return false;

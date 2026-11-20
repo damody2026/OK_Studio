@@ -36,7 +36,7 @@ bool FDreamModalCloseAllReentryTest::RunTest(const FString& Parameters)
 	int32 ReplacementAnswers = 0;
 	bool bOpenReplacement = Parameters == TEXT("reopen");
 	const bool bTeardown = Parameters == TEXT("teardown");
-	UDreamUINavigationStack* Navigation = UDreamUINavigationStack::Get(TestWorld.World);
+	UDreamUINavigationStack* Navigation = UDreamUINavigationStack::Get(TestWorld.World.Get());
 	if (bTeardown && !TestNotNull(TEXT("the navigation service exists"), Navigation))return false;
 	TArray<FName> AnswerOrder;
 	TWeakObjectPtr<UDreamUserWidget> Replacement;
@@ -61,8 +61,8 @@ bool FDreamModalCloseAllReentryTest::RunTest(const FString& Parameters)
 		{
 			// Navigation forgets its scopes during world teardown; closing the claimed modal batch
 			// afterwards must neither deliver more results nor leave its remaining widgets orphaned.
-			Navigation->TeardownForWorld(*TestWorld.World);
-			Modals->TeardownForWorld(*TestWorld.World);
+			Navigation->TeardownForWorld(*TestWorld.World.Get());
+			Modals->TeardownForWorld(*TestWorld.World.Get());
 		}
 		if (bOpenReplacement)
 		{

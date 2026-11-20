@@ -62,13 +62,13 @@ bool FDreamInstancedSubobjectEventReferenceTest::RunTest(const FString& Paramete
 	UDreamWidgetTree* CopyTree = nullptr;
 	if (Parameters == TEXT("Duplicate"))
 	{
-		DuplicatedTree.Reset(NewObject<UDreamWidgetTree>(TestWorld.World));
+		DuplicatedTree.Reset(NewObject<UDreamWidgetTree>(TestWorld.World.Get()));
 		DuplicatedTree->RootWidget = UDreamWidget::DuplicateSubtree(DuplicatedTree.Get(), Root);
 		CopyTree = DuplicatedTree.Get();
 	}
 	else
 	{
-		Instance.Reset(NewObject<UDreamUserWidget>(TestWorld.World));
+		Instance.Reset(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 		UDreamWidgetGeneratedClass::InitializeWidgetStatic(Instance.Get(), Instance->GetClass(), SourceTree.Get());
 		CopyTree = Instance->GetWidgetTree();
 	}
@@ -153,13 +153,13 @@ bool FDreamInstancedSequenceEventReferenceTest::RunTest(const FString& Parameter
 	UDreamWidgetTree* CopyTree = nullptr;
 	if (Parameters == TEXT("Duplicate"))
 	{
-		DuplicatedTree.Reset(NewObject<UDreamWidgetTree>(TestWorld.World));
+		DuplicatedTree.Reset(NewObject<UDreamWidgetTree>(TestWorld.World.Get()));
 		DuplicatedTree->RootWidget = UDreamWidget::DuplicateSubtree(DuplicatedTree.Get(), Root);
 		CopyTree = DuplicatedTree.Get();
 	}
 	else
 	{
-		Instance.Reset(NewObject<UDreamUserWidget>(TestWorld.World));
+		Instance.Reset(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 		UDreamWidgetGeneratedClass::InitializeWidgetStatic(Instance.Get(), Instance->GetClass(), SourceTree.Get());
 		CopyTree = Instance->GetWidgetTree();
 	}

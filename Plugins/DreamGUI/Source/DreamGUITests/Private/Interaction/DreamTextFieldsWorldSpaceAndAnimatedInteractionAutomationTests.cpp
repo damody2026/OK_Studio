@@ -161,7 +161,7 @@ namespace DreamTextFieldsWorldTestLocal
 			return false;
 		}
 		const FWorldStage Stage = SetUpPanel(InTest, Rig);
-		TField* Field = Stage.IsReady() ? Rig.MakeControl<TField>(TEXT("Notes"), Stage.Panel, InSize) : nullptr;
+		TField* Field = Stage.IsReady() ? Rig.MakeControl<TField>(TEXT("Notes"), Stage.Panel.Get(), InSize) : nullptr;
 		if (!InTest.TestNotNull(TEXT("A field on the panel"), Field))
 		{
 			return false;
@@ -212,7 +212,7 @@ namespace DreamTextFieldsWorldTestLocal
 			return false;
 		}
 		const FWorldStage Stage = SetUpPanel(InTest, Rig);
-		TField* Field = Stage.IsReady() ? Rig.MakeControl<TField>(TEXT("Notes"), Stage.Panel, InSize) : nullptr;
+		TField* Field = Stage.IsReady() ? Rig.MakeControl<TField>(TEXT("Notes"), Stage.Panel.Get(), InSize) : nullptr;
 		if (!InTest.TestNotNull(TEXT("A field on the panel"), Field))
 		{
 			return false;
@@ -258,9 +258,9 @@ namespace DreamTextFieldsWorldTestLocal
 		}
 		const FWorldStage Stage = SetUpPanel(InTest, Rig);
 		// All on the panel, which reaches 160 cm above and below its middle.
-		UDreamButton* Above = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel, FVector2D(160.0, 40.0), FVector2D(0.0, 110.0)) : nullptr;
-		TField* Field = Above != nullptr ? Rig.MakeControl<TField>(TEXT("Notes"), Stage.Panel, InSize, FVector2D(0.0, 30.0 - InSize.Y * 0.5)) : nullptr;
-		UDreamButton* Far = Field != nullptr ? Rig.MakeControl<UDreamButton>(TEXT("Far"), Stage.Panel, FVector2D(160.0, 40.0), FVector2D(0.0, -140.0)) : nullptr;
+		UDreamButton* Above = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel.Get(), FVector2D(160.0, 40.0), FVector2D(0.0, 110.0)) : nullptr;
+		TField* Field = Above != nullptr ? Rig.MakeControl<TField>(TEXT("Notes"), Stage.Panel.Get(), InSize, FVector2D(0.0, 30.0 - InSize.Y * 0.5)) : nullptr;
+		UDreamButton* Far = Field != nullptr ? Rig.MakeControl<UDreamButton>(TEXT("Far"), Stage.Panel.Get(), FVector2D(160.0, 40.0), FVector2D(0.0, -140.0)) : nullptr;
 		if (!InTest.TestTrue(TEXT("Two buttons and the field between them came up on the panel"), Far != nullptr && Above->FaceNode != nullptr))
 		{
 			return false;
@@ -413,7 +413,7 @@ bool FDreamSurfaceMultiLineTapTest::RunTest(const FString& Parameters)
 	}
 	const FSurfaceStage Stage = SetUpSurface(*this, Rig);
 	UDreamMultiLineEditableText* Field = Stage.IsReady()
-		? Rig.MakeControl<UDreamMultiLineEditableText>(TEXT("Notes"), Stage.Screen.CanvasRoot, MultiLineSize)
+		? Rig.MakeControl<UDreamMultiLineEditableText>(TEXT("Notes"), Stage.Screen.CanvasRoot.Get(), MultiLineSize)
 		: nullptr;
 	if (!TestNotNull(TEXT("A multi-line field on the surface's canvas"), Field))
 	{

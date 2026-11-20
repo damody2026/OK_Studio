@@ -303,9 +303,10 @@ struct FDreamUIHitResultContainer
 
 	FVector RayOrigin = FVector(0, 0, 0), RayDirection = FVector(1, 0, 0), RayEnd = FVector(1, 0, 0);
 
-	UDreamBaseRaycaster* Raycaster = nullptr;
+	/** Weak, as the hit cache that outlives a dispatch holds it: a raycaster the world has taken reads as gone. */
+	TWeakObjectPtr<UDreamBaseRaycaster> Raycaster;
 
-	TArray<UDreamWidget*> HoverArray;
+	TArray<TWeakObjectPtr<UDreamWidget>> HoverArray;
 
 	/**
 	 * The widget drawn on top where the ray struck, enabled or not. HitResult.Widget is where the hit goes -- this
@@ -313,5 +314,5 @@ struct FDreamUIHitResultContainer
 	 * ResolveEnabledHitTarget) -- and this is where a tooltip is looked for, as Slate looks for one under the cursor
 	 * including disabled widgets. Null means HitResult.Widget.
 	 */
-	UDreamWidget* WidgetIgnoringEnabled = nullptr;
+	TWeakObjectPtr<UDreamWidget> WidgetIgnoringEnabled;
 };

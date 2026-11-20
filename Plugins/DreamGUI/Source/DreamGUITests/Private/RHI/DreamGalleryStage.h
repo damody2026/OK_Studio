@@ -76,7 +76,7 @@ namespace DreamGalleryStage
 		FAutomationTestBase& GetTest() const { return Test; }
 		UDreamCanvas* GetCanvas() const { return CanvasComponent.Get(); }
 		UDreamWidget* GetRoot() const { return RootWidget.Get(); }
-		UWorld* GetWorld() const { return World; }
+		UWorld* GetWorld() const { return World.Get(); }
 		/** The colour the target is cleared to: what CountDrawn counts as nothing drawn. */
 		FColor GetBackdrop() const { return BackdropColour; }
 		FIntPoint GetSize() const { return StageSize; }
@@ -133,7 +133,8 @@ namespace DreamGalleryStage
 	private:
 		FAutomationTestBase& Test;
 		FString Failure;
-		UWorld* World = nullptr;
+		/** The editor world the stage draws in. Weak: the stage does not keep it, and a world torn down reads as gone. */
+		TWeakObjectPtr<UWorld> World;
 		FIntPoint StageSize = FIntPoint(Extent, Extent);
 		FColor BackdropColour = Backdrop;
 		TStrongObjectPtr<UTextureRenderTarget2D> TargetTexture;

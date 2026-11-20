@@ -453,11 +453,11 @@ FWidgetPath UDreamUMGWidgetInteraction::DetermineWidgetUnderPointer(FForwardedPo
 		WidgetComponent->GetLocalHitLocation(TracedPointer->FaceIndex, TracedPointer->GetWorldPointInPlane(), RayOrigin, RayEnd, TraceResult.LocalHitLocation);
 		bTraced = true;
 	}
-	else if (TracedPointer != nullptr && TracedPointer->Raycaster != nullptr)
+	else if (UDreamBaseRaycaster* TracedRaycaster = TracedPointer != nullptr ? TracedPointer->Raycaster.Get() : nullptr)
 	{
-		auto RayOrigin = TracedPointer->Raycaster->GetRayOrigin();
-		auto RayDirection = TracedPointer->Raycaster->GetRayDirection();
-		auto RayEnd = RayOrigin + RayDirection * TracedPointer->Raycaster->GetRayLength();
+		auto RayOrigin = TracedRaycaster->GetRayOrigin();
+		auto RayDirection = TracedRaycaster->GetRayDirection();
+		auto RayEnd = RayOrigin + RayDirection * TracedRaycaster->GetRayLength();
 
 		WidgetComponent->GetLocalHitLocation(TracedPointer->FaceIndex, TracedPointer->WorldPoint, RayOrigin, RayEnd, TraceResult.LocalHitLocation);
 		bTraced = true;

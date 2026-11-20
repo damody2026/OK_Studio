@@ -93,7 +93,7 @@ bool FDreamTileViewWorldPressTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamTileView* Tiles = MakeTiles(Rig, Stage.Panel, 240.0, FVector2D(-40.0, 0.0), 40);
+	UDreamTileView* Tiles = MakeTiles(Rig, Stage.Panel.Get(), 240.0, FVector2D(-40.0, 0.0), 40);
 	if (!TestTrue(TEXT("A tile view four tiles across came up on the panel"), Tiles != nullptr && Tiles->GetColumnCount() == 4))
 	{
 		return false;
@@ -151,15 +151,15 @@ bool FDreamTileViewWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamTileView* Tiles = MakeTiles(Rig, Stage.Panel, 3.0 * LineHeight, FVector2D(0.0, -40.0), 40);
+	UDreamTileView* Tiles = MakeTiles(Rig, Stage.Panel.Get(), 3.0 * LineHeight, FVector2D(0.0, -40.0), 40);
 	if (!TestTrue(TEXT("A tile view four tiles across came up on the panel"), Tiles != nullptr && Tiles->GetColumnCount() == 4))
 	{
 		return false;
 	}
 	const TOptional<FBox2D> Window = SeenRect(Rig, Tiles->ViewportNode.Get());
 	// Over the first tile's column, so the nearest thing below the button is the first tile.
-	const FVector2D FirstTileOnPanel = Tiles->GetRowWidget(0) != nullptr ? OnPanel(Stage.Panel, Tiles->GetRowWidget(0)) : FVector2D::ZeroVector;
-	UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel, FVector2D(70.0, 40.0), FVector2D(FirstTileOnPanel.X, 115.0));
+	const FVector2D FirstTileOnPanel = Tiles->GetRowWidget(0) != nullptr ? OnPanel(Stage.Panel.Get(), Tiles->GetRowWidget(0)) : FVector2D::ZeroVector;
+	UDreamButton* Above = Rig.MakeControl<UDreamButton>(TEXT("Above"), Stage.Panel.Get(), FVector2D(70.0, 40.0), FVector2D(FirstTileOnPanel.X, 115.0));
 	if (!TestTrue(TEXT("The camera sees the view's window, and a button above its first tile came up"),
 		Window.IsSet() && Tiles->GetRowWidget(0) != nullptr && Above != nullptr && Above->FaceNode != nullptr))
 	{

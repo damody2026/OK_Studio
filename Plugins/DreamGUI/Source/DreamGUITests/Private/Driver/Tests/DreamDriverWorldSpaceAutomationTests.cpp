@@ -131,10 +131,10 @@ namespace DreamDriverWorldSpaceTestLocal
 	/** The world pointer and one panel facing it: the part nearly every test shares. */
 	struct FWorldStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
-		UDreamWidget* Panel = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
+		TWeakObjectPtr<UDreamWidget> Panel;
 
-		bool IsReady() const { return Pointer != nullptr && Panel != nullptr; }
+		bool IsReady() const { return Pointer.IsValid() && Panel.IsValid(); }
 	};
 
 	FWorldStage SetUpStage(FAutomationTestBase& InTest, FDreamDriverRig& InRig,
@@ -146,8 +146,8 @@ namespace DreamDriverWorldSpaceTestLocal
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig, EyeAtTheOrigin(), InSource);
 		Stage.Panel = DreamDriverWorld::MakeWorldPanel(InRig, TEXT("Panel"), AheadOfTheEye(300.0), FVector2D(400.0, 300.0),
 			bInHitTestableBackground);
-		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer);
-		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel);
+		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer.Get());
+		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel.Get());
 		return Stage;
 	}
 }
@@ -173,7 +173,7 @@ bool FDreamDriverWorldSpaceClickTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TStrongObjectPtr<UDreamPressInteractionListener> Listener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Button = MakeObservedButton(Rig, Stage.Panel, TEXT("Play"), Listener.Get());
+	UDreamButton* Button = MakeObservedButton(Rig, Stage.Panel.Get(), TEXT("Play"), Listener.Get());
 	if (!TestNotNull(TEXT("A button was made on the panel"), Button))
 	{
 		return false;
@@ -200,7 +200,7 @@ bool FDreamDriverWorldSpaceClickTest::RunTest(const FString& Parameters)
 	// it was, and the rig's screen raycaster has nothing under that pixel to have found.
 	const UDreamPointerEventData* EventData = Rig.Context().GetPointerEventData(0);
 	TestTrue(TEXT("The press was judged by the world pointer"),
-		EventData != nullptr && EventData->PressRaycaster.Get() == static_cast<UDreamBaseRaycaster*>(Stage.Pointer));
+		EventData != nullptr && EventData->PressRaycaster.Get() == static_cast<UDreamBaseRaycaster*>(Stage.Pointer.Get()));
 	return true;
 }
 
@@ -225,7 +225,7 @@ bool FDreamDriverWorldSpaceHoverTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TStrongObjectPtr<UDreamPressInteractionListener> Listener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Button = MakeObservedButton(Rig, Stage.Panel, TEXT("Play"), Listener.Get());
+	UDreamButton* Button = MakeObservedButton(Rig, Stage.Panel.Get(), TEXT("Play"), Listener.Get());
 	if (!TestNotNull(TEXT("A button was made on the panel"), Button))
 	{
 		return false;
@@ -337,7 +337,7 @@ bool FDreamDriverWorldSpaceOverlayWinsTest::RunTest(const FString& Parameters)
 	}
 	TStrongObjectPtr<UDreamPressInteractionListener> WorldListener(NewObject<UDreamPressInteractionListener>());
 	TStrongObjectPtr<UDreamPressInteractionListener> OverlayListener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* WorldButton = MakeObservedButton(Rig, Stage.Panel, TEXT("WorldPlay"), WorldListener.Get());
+	UDreamButton* WorldButton = MakeObservedButton(Rig, Stage.Panel.Get(), TEXT("WorldPlay"), WorldListener.Get());
 	// Null parent: the rig's own ScreenSpaceOverlay root, i.e. the HUD. Centred, so it sits over the
 	// middle of the viewport, where the world button is seen.
 	UDreamButton* Overlay = MakeObservedButton(Rig, nullptr, TEXT("OverlayPlay"), OverlayListener.Get(), FVector2D(200.0, 100.0));
@@ -393,9 +393,9 @@ bool FDreamDriverWorldSpaceReticleTest::RunTest(const FString& Parameters)
 	}
 	TStrongObjectPtr<UDreamPressInteractionListener> CentreListener(NewObject<UDreamPressInteractionListener>());
 	TStrongObjectPtr<UDreamPressInteractionListener> AsideListener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Centre = MakeObservedButton(Rig, Stage.Panel, TEXT("Centre"), CentreListener.Get());
+	UDreamButton* Centre = MakeObservedButton(Rig, Stage.Panel.Get(), TEXT("Centre"), CentreListener.Get());
 	// 130 cm to the right: from 70 to 190 cm, clear of the centre button's 60 and inside the panel's 200.
-	UDreamButton* Aside = MakeObservedButton(Rig, Stage.Panel, TEXT("Aside"), AsideListener.Get(), FVector2D(120.0, 60.0), FVector2D(130.0, 0.0));
+	UDreamButton* Aside = MakeObservedButton(Rig, Stage.Panel.Get(), TEXT("Aside"), AsideListener.Get(), FVector2D(120.0, 60.0), FVector2D(130.0, 0.0));
 	if (!TestNotNull(TEXT("The centre button"), Centre) || !TestNotNull(TEXT("The button to the side"), Aside))
 	{
 		return false;
@@ -510,7 +510,7 @@ bool FDreamDriverWorldSpaceBackgroundTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TStrongObjectPtr<UDreamPressInteractionListener> Listener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Button = MakeObservedButton(Rig, Stage.Panel, TEXT("Play"), Listener.Get());
+	UDreamButton* Button = MakeObservedButton(Rig, Stage.Panel.Get(), TEXT("Play"), Listener.Get());
 	if (!TestNotNull(TEXT("A button on a panel with a background"), Button))
 	{
 		return false;
@@ -548,7 +548,7 @@ bool FDreamDriverWorldSpaceScrollTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* List = Rig.MakeWidget(TEXT("List"), Stage.Panel, FVector2D(200.0, 200.0), FVector2D::ZeroVector);
+	UDreamWidget* List = Rig.MakeWidget(TEXT("List"), Stage.Panel.Get(), FVector2D(200.0, 200.0), FVector2D::ZeroVector);
 	if (!TestNotNull(TEXT("A widget on the panel"), List))
 	{
 		return false;
@@ -586,7 +586,7 @@ bool FDreamDriverWorldSpaceTypingTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamTextInput* Field = Rig.MakeControl<UDreamTextInput>(TEXT("Username"), Stage.Panel, FVector2D(320.0, 40.0));
+	UDreamTextInput* Field = Rig.MakeControl<UDreamTextInput>(TEXT("Username"), Stage.Panel.Get(), FVector2D(320.0, 40.0));
 	if (!TestNotNull(TEXT("A text field on the panel"), Field))
 	{
 		return false;

@@ -1223,7 +1223,9 @@ private:
 	{
 		/** The object the setter is called on -- the widget, its visual, or one of its behaviours. */
 		TWeakObjectPtr<UObject> Target;
+		// static-checks: allow(stored-raw-pointer) Guaranteed by Target's class, which owns the UFunction and outlives its instances; Initialize resolves the binding again.
 		UFunction* SourceFunction = nullptr;
+		// static-checks: allow(stored-raw-pointer) Guaranteed by Target's class, as SourceFunction above.
 		UFunction* Setter = nullptr;
 		/** Instead of Setter, for a user widget's variable written directly (FDreamWidgetPropertyBinding::SetterName). */
 		FProperty* DirectProperty = nullptr;

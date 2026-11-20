@@ -79,8 +79,8 @@ FDreamDriverRig::FDreamDriverRig(const FDreamRigOptions& InOptions)
 	if (Options.bWithGameInstance)
 	{
 		ScopedGameInstanceWorld = MakeUnique<DreamTests::FScopedGameInstanceWorld>();
-		BuildWorld = ScopedGameInstanceWorld->World;
-		DriverContext->GameInstance = ScopedGameInstanceWorld->GameInstance;
+		BuildWorld = ScopedGameInstanceWorld->World.Get();
+		DriverContext->GameInstance = ScopedGameInstanceWorld->GameInstance.Get();
 		if (BuildWorld == nullptr)
 		{
 			BuildFailure = TEXT("UGameInstance::InitializeStandalone did not give the game instance a world");
@@ -90,7 +90,7 @@ FDreamDriverRig::FDreamDriverRig(const FDreamRigOptions& InOptions)
 	else
 	{
 		ScopedWorld = MakeUnique<DreamTests::FScopedGameWorld>(EWorldType::Game);
-		BuildWorld = ScopedWorld->World;
+		BuildWorld = ScopedWorld->World.Get();
 		if (BuildWorld == nullptr)
 		{
 			BuildFailure = TEXT("UWorld::CreateWorld did not make a world");
@@ -123,7 +123,7 @@ FDreamDriverRig::FDreamDriverRig(const FDreamRigOptions& InOptions)
 				WhyNot.IsEmpty() ? TEXT("the game host gave no reason") : *WhyNot);
 			return;
 		}
-		if (!IsValid(DriverContext->EventSystem) || !IsValid(DriverContext->InputModule))
+		if (!IsValid(DriverContext->EventSystem.Get()) || !IsValid(DriverContext->InputModule.Get()))
 		{
 			BuildFailure = TEXT("the input host was built but did not provide an event system and an input module");
 			return;
@@ -131,14 +131,14 @@ FDreamDriverRig::FDreamDriverRig(const FDreamRigOptions& InOptions)
 	}
 	else
 	{
-		UDreamEventSystem* BuiltEventSystem = NewObject<UDreamEventSystem>(Host);
+		UDreamEventSystem* BuiltEventSystem = NewObject<UDreamEventSystem>(Host.Get());
 		// AddInstanceComponent before RegisterComponent, the way the world-space raycast fixture does it:
 		// it is what makes the component belong to the actor rather than merely be outered to it.
 		Host->AddInstanceComponent(BuiltEventSystem);
 		BuiltEventSystem->RegisterComponent();
 		DriverContext->EventSystem = BuiltEventSystem;
 
-		UDreamDriverInputModule* BuiltInputModule = NewObject<UDreamDriverInputModule>(Host);
+		UDreamDriverInputModule* BuiltInputModule = NewObject<UDreamDriverInputModule>(Host.Get());
 		Host->AddInstanceComponent(BuiltInputModule);
 		BuiltInputModule->RegisterComponent();
 		BuiltInputModule->RegisterInputModuleToEventSystem(BuiltEventSystem);
@@ -187,7 +187,7 @@ FDreamDriverRig::FDreamDriverRig(const FDreamRigOptions& InOptions)
 	{
 		BuiltCanvas->SetViewportPlayerIndex(0);
 	}
-	DriverContext->Raycaster = MakeScreenRaycaster(Host, BuiltCanvas, 0);
+	DriverContext->Raycaster = MakeScreenRaycaster(Host.Get(), BuiltCanvas, 0);
 	// With every screen the screen UI's, player 0's is the first one it is asked for, while the rig's own root is the only
 	// screen-space root there is for it to adopt (UDreamScreenUISubsystem::GetOrCreateScreenRootForIndex adopts one for its
 	// first player only).
@@ -248,7 +248,7 @@ FString FDreamDriverRig::DescribeRefusedPlayerOptions(const FDreamRigOptions& In
 
 bool FDreamDriverRig::BuildOtherPlayersInput()
 {
-	UWorld* BuildWorld = DriverContext->World;
+	UWorld* BuildWorld = DriverContext->World.Get();
 	for (int32 PlayerIndex = 1; PlayerIndex < Options.PlayerCount; ++PlayerIndex)
 	{
 		FOtherPlayer& Player = OtherPlayers.AddDefaulted_GetRef();
@@ -257,8 +257,8 @@ bool FDreamDriverRig::BuildOtherPlayersInput()
 		Player.Driver = MakeShared<FDreamDriver>(PlayerContext);
 		// The world's, the same on every player's context: what a step reads that belongs to nobody in particular.
 		PlayerContext.World = BuildWorld;
-		PlayerContext.Manager = DriverContext->Manager;
-		PlayerContext.GameInstance = DriverContext->GameInstance;
+		PlayerContext.Manager = DriverContext->Manager.Get();
+		PlayerContext.GameInstance = DriverContext->GameInstance.Get();
 		PlayerContext.InputHost = Options.InputHost;
 		PlayerContext.CurrentTest = DriverContext->CurrentTest;
 		PlayerContext.FrameSeconds = DriverContext->FrameSeconds;
@@ -267,7 +267,7 @@ bool FDreamDriverRig::BuildOtherPlayersInput()
 		// An actor of the player's own for its raycaster to ride on -- and, under ModuleOnly, its event system and
 		// module, as player 0's ride on the rig's host.
 		Player.Host = BuildWorld->SpawnActor<AActor>();
-		if (Player.Host == nullptr)
+		if (Player.Host.Get() == nullptr)
 		{
 			BuildFailure = FString::Printf(TEXT("the world would not spawn player %d's host actor"), PlayerIndex);
 			return false;
@@ -283,7 +283,7 @@ bool FDreamDriverRig::BuildOtherPlayersInput()
 					WhyNot.IsEmpty() ? TEXT("the game host gave no reason") : *WhyNot);
 				return false;
 			}
-			if (!IsValid(PlayerContext.EventSystem) || !IsValid(PlayerContext.InputModule))
+			if (!IsValid(PlayerContext.EventSystem.Get()) || !IsValid(PlayerContext.InputModule.Get()))
 			{
 				BuildFailure = FString::Printf(TEXT("player %d's input host was built but did not provide an event system and an input module"), PlayerIndex);
 				return false;
@@ -293,13 +293,13 @@ bool FDreamDriverRig::BuildOtherPlayersInput()
 
 		// ModuleOnly (SlateSource takes one player): a script player, fed straight into its own module. The UserIndex
 		// before the event system registers, so that it registers -- at the begin-play gate -- as the player it is.
-		UDreamEventSystem* BuiltEventSystem = NewObject<UDreamEventSystem>(Player.Host);
+		UDreamEventSystem* BuiltEventSystem = NewObject<UDreamEventSystem>(Player.Host.Get());
 		BuiltEventSystem->SetUserIndex(PlayerIndex);
 		Player.Host->AddInstanceComponent(BuiltEventSystem);
 		BuiltEventSystem->RegisterComponent();
 		PlayerContext.EventSystem = BuiltEventSystem;
 
-		UDreamDriverInputModule* BuiltInputModule = NewObject<UDreamDriverInputModule>(Player.Host);
+		UDreamDriverInputModule* BuiltInputModule = NewObject<UDreamDriverInputModule>(Player.Host.Get());
 		Player.Host->AddInstanceComponent(BuiltInputModule);
 		BuiltInputModule->RegisterComponent();
 		BuiltInputModule->RegisterInputModuleToEventSystem(BuiltEventSystem);
@@ -330,7 +330,7 @@ bool FDreamDriverRig::LayOutSplitScreen()
 	for (int32 PlayerIndex = 0; PlayerIndex < Count; ++PlayerIndex)
 	{
 		FDreamDriverContext* PlayerContext = FindPlayerContext(PlayerIndex);
-		ULocalPlayer* LocalPlayer = PlayerContext != nullptr ? PlayerContext->LocalPlayer : nullptr;
+		ULocalPlayer* LocalPlayer = PlayerContext != nullptr ? PlayerContext->LocalPlayer.Get() : nullptr;
 		if (LocalPlayer == nullptr)
 		{
 			BuildFailure = FString::Printf(TEXT("player %d has no local player to give a part of the viewport to"), PlayerIndex);
@@ -349,7 +349,7 @@ bool FDreamDriverRig::LayOutSplitScreen()
 
 UDreamCanvas* FDreamDriverRig::MakeScreenRoot(const FString& InDisplayName, UDreamWidget*& OutRoot)
 {
-	UDreamWidget* BuiltRoot = NewObject<UDreamWidget>(DriverContext->World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* BuiltRoot = NewObject<UDreamWidget>(DriverContext->World.Get(), NAME_None, RF_Public | RF_Transactional);
 	BuiltRoot->SetDisplayName(InDisplayName);
 	BuiltRoot->OnRegister();
 	OutRoot = BuiltRoot;
@@ -422,8 +422,8 @@ bool FDreamDriverRig::BuildOtherPlayersScreens()
 			// The raycaster first, enrolled and projecting through nothing yet: the screen UI, asked for the player's screen,
 			// finds it as that player's own raycaster and points it at the screen it makes (UDreamUIInputSubsystem::
 			// PrepareScreenInteraction) instead of making one of its own on a host of its own beside it.
-			PlayerContext.Raycaster = MakeScreenRaycaster(Player.Host, nullptr, PlayerContext.PlayerIndex);
-			UDreamScreenUISubsystem* Screens = UDreamScreenUISubsystem::Get(PlayerContext.World);
+			PlayerContext.Raycaster = MakeScreenRaycaster(Player.Host.Get(), nullptr, PlayerContext.PlayerIndex);
+			UDreamScreenUISubsystem* Screens = UDreamScreenUISubsystem::Get(PlayerContext.World.Get());
 			UDreamWidget* PlayerRoot = Screens != nullptr ? Screens->GetOrCreateScreenRootForUserIndex(PlayerContext.PlayerIndex) : nullptr;
 			UDreamCanvas* PlayerCanvas = PlayerRoot != nullptr ? PlayerRoot->GetComponent<UDreamCanvas>() : nullptr;
 			if (PlayerCanvas == nullptr)
@@ -459,10 +459,10 @@ bool FDreamDriverRig::BuildOtherPlayersScreens()
 		}
 		else
 		{
-			PlayerContext.Root = DriverContext->Root;
-			PlayerContext.RootCanvas = DriverContext->RootCanvas;
+			PlayerContext.Root = DriverContext->Root.Get();
+			PlayerContext.RootCanvas = DriverContext->RootCanvas.Get();
 		}
-		PlayerContext.Raycaster = MakeScreenRaycaster(Player.Host, PlayerContext.RootCanvas, PlayerContext.PlayerIndex);
+		PlayerContext.Raycaster = MakeScreenRaycaster(Player.Host.Get(), PlayerContext.RootCanvas.Get(), PlayerContext.PlayerIndex);
 	}
 
 	TArray<FDreamDriverContext*> AllPlayers;
@@ -494,12 +494,12 @@ void FDreamDriverRig::ReleaseScreensFromPlayers()
 	// measures its part; once the local players come off, an index left behind names nobody -- or, after another player
 	// joins, somebody else. Every screen the rig made, whoever gave it a player: the rig, or a test.
 	TArray<UDreamCanvas*, TInlineAllocator<DreamRigMaxPlayers>> Screens;
-	Screens.Add(DriverContext->RootCanvas);
+	Screens.Add(DriverContext->RootCanvas.Get());
 	for (const FOtherPlayer& Player : OtherPlayers)
 	{
 		if (Player.bOwnsScreen && Player.Context.IsValid())
 		{
-			Screens.Add(Player.Context->RootCanvas);
+			Screens.Add(Player.Context->RootCanvas.Get());
 		}
 	}
 	for (UDreamCanvas* Screen : Screens)
@@ -526,15 +526,15 @@ void FDreamDriverRig::TearDownOtherPlayersInput(FAutomationTestBase* InTest)
 			// Each player's host is checked gone, which the game host's own tear-down promises: a local player left on
 			// the game instance, or a controller or input actor left in the world, is the next player's index taken.
 			TArray<FString> LeftBehind;
-			if (PlayerContext->InputActor != nullptr)
+			if (PlayerContext->InputActor.Get() != nullptr)
 			{
 				LeftBehind.Add(TEXT("its input actor"));
 			}
-			if (PlayerContext->PlayerController != nullptr)
+			if (PlayerContext->PlayerController.Get() != nullptr)
 			{
 				LeftBehind.Add(TEXT("its player controller"));
 			}
-			if (PlayerContext->LocalPlayer != nullptr)
+			if (PlayerContext->LocalPlayer.Get() != nullptr)
 			{
 				LeftBehind.Add(TEXT("its local player"));
 			}
@@ -559,18 +559,18 @@ void FDreamDriverRig::TearDownOtherPlayersScreens()
 		}
 		if (Player.bOwnsScreen)
 		{
-			if (UDreamWidget* PlayerRoot = PlayerContext->Root; IsValid(PlayerRoot))
+			if (UDreamWidget* PlayerRoot = PlayerContext->Root.Get(); IsValid(PlayerRoot))
 			{
 				PlayerRoot->DestroyWidget();
 			}
 		}
-		if (UDreamScreenSpaceRaycaster* PlayerRaycaster = PlayerContext->Raycaster; IsValid(PlayerRaycaster))
+		if (UDreamScreenSpaceRaycaster* PlayerRaycaster = PlayerContext->Raycaster.Get(); IsValid(PlayerRaycaster))
 		{
 			PlayerRaycaster->DeactivateRaycaster();
 		}
 		if (!IsActorInputHost(PlayerContext->InputHost))
 		{
-			if (UDreamDriverInputModule* PlayerModule = PlayerContext->InputModule; IsValid(PlayerModule))
+			if (UDreamDriverInputModule* PlayerModule = PlayerContext->InputModule.Get(); IsValid(PlayerModule))
 			{
 				PlayerModule->UnregisterInputModuleFromEventSystem();
 			}
@@ -745,7 +745,7 @@ TArray<FString> FDreamDriverRig::DescribeUnsettledProcessState(int32 InLayoutPas
 UUITextInput* FDreamDriverRig::FindEditInRigTree() const
 {
 	UUITextInput* Active = UUITextInput::GetActiveTextInput();
-	UDreamWidget* RigRoot = DriverContext.IsValid() ? DriverContext->Root : nullptr;
+	UDreamWidget* RigRoot = DriverContext.IsValid() ? DriverContext->Root.Get() : nullptr;
 	if (Active == nullptr || !IsValid(RigRoot))
 	{
 		return nullptr;
@@ -766,15 +766,15 @@ UUITextInput* FDreamDriverRig::FindEditInRigTree() const
 bool FDreamDriverRig::IsUnderRigScreens(const UDreamWidget* InWidget) const
 {
 	TArray<const UDreamWidget*, TInlineAllocator<DreamRigMaxPlayers>> Screens;
-	if (DriverContext.IsValid() && IsValid(DriverContext->Root))
+	if (DriverContext.IsValid() && IsValid(DriverContext->Root.Get()))
 	{
-		Screens.Add(DriverContext->Root);
+		Screens.Add(DriverContext->Root.Get());
 	}
 	for (const FOtherPlayer& Player : OtherPlayers)
 	{
-		if (Player.bOwnsScreen && Player.Context.IsValid() && IsValid(Player.Context->Root))
+		if (Player.bOwnsScreen && Player.Context.IsValid() && IsValid(Player.Context->Root.Get()))
 		{
-			Screens.Add(Player.Context->Root);
+			Screens.Add(Player.Context->Root.Get());
 		}
 	}
 	for (const UDreamWidget* Walk = InWidget; Walk != nullptr; Walk = Walk->GetParent())
@@ -793,7 +793,7 @@ TMap<int32, TWeakObjectPtr<UUITextInput>> FDreamDriverRig::FindPlayerEditsInRigT
 	// with several players the process-wide answer is whichever player's field is found first, which would let one
 	// player's leaked edit hide another's. A field on a world-space panel goes with the world, as it does for one player.
 	TMap<int32, TWeakObjectPtr<UUITextInput>> Edits;
-	UWorld* RigWorld = DriverContext.IsValid() ? DriverContext->World : nullptr;
+	UWorld* RigWorld = DriverContext.IsValid() ? DriverContext->World.Get() : nullptr;
 	if (RigWorld == nullptr)
 	{
 		return Edits;
@@ -813,7 +813,7 @@ void FDreamDriverRig::EndLeakedPlayerTextEdits(const TMap<int32, TWeakObjectPtr<
 {
 	// EndLeakedTextEdit, player by player: the trees are gone, so a field still being edited by the player who was
 	// editing it is one tear-down missed, ended through its own DeactivateInput while the world still stands.
-	UWorld* RigWorld = DriverContext.IsValid() ? DriverContext->World : nullptr;
+	UWorld* RigWorld = DriverContext.IsValid() ? DriverContext->World.Get() : nullptr;
 	for (const TPair<int32, TWeakObjectPtr<UUITextInput>>& Edit : InEditsInRigTree)
 	{
 		UUITextInput* Field = Edit.Value.Get();
@@ -906,8 +906,8 @@ void FDreamDriverRig::ReportRigProblem(FAutomationTestBase* InTest, const FStrin
 
 void FDreamDriverRig::OpenBeginPlayGate()
 {
-	UWorld* HostWorld = DriverContext.IsValid() ? DriverContext->World : nullptr;
-	UDreamUIManagerWorldSubsystem* HostManager = DriverContext.IsValid() ? DriverContext->Manager : nullptr;
+	UWorld* HostWorld = DriverContext.IsValid() ? DriverContext->World.Get() : nullptr;
+	UDreamUIManagerWorldSubsystem* HostManager = DriverContext.IsValid() ? DriverContext->Manager.Get() : nullptr;
 	if (HostWorld == nullptr || !IsValid(HostManager))
 	{
 		return;
@@ -918,7 +918,7 @@ void FDreamDriverRig::OpenBeginPlayGate()
 	// directly rather than by calling the component's BeginPlay, which would also mark it begun in a
 	// world that is not -- and it is guarded, so EnsureGameInputHost, which makes the same call, stays a
 	// no-op after it.
-	UDreamEventSystem* HostEventSystem = DriverContext->EventSystem;
+	UDreamEventSystem* HostEventSystem = DriverContext->EventSystem.Get();
 	UDreamUIInputSubsystem* HostInput = UDreamUIInputSubsystem::Get(HostWorld);
 	if (IsValid(HostEventSystem) && HostInput != nullptr
 		&& HostInput->GetEventSystemByUserIndex(HostEventSystem->GetUserIndex()) != HostEventSystem)
@@ -929,7 +929,7 @@ void FDreamDriverRig::OpenBeginPlayGate()
 	// own BeginPlay, and a script player's is enrolled here, as the player its UserIndex names.
 	for (const FOtherPlayer& Player : OtherPlayers)
 	{
-		UDreamEventSystem* PlayerEventSystem = Player.Context.IsValid() ? Player.Context->EventSystem : nullptr;
+		UDreamEventSystem* PlayerEventSystem = Player.Context.IsValid() ? Player.Context->EventSystem.Get() : nullptr;
 		if (IsValid(PlayerEventSystem) && HostInput != nullptr
 			&& HostInput->GetEventSystemByUserIndex(PlayerEventSystem->GetUserIndex()) != PlayerEventSystem)
 		{
@@ -953,7 +953,7 @@ FDreamDriverRig::~FDreamDriverRig()
 	// Taken before the context goes: the checks at the very end report against the test that was
 	// running, and by then the context that knew it has been released.
 	FAutomationTestBase* TeardownTest = DriverContext.IsValid() ? DriverContext->CurrentTest : nullptr;
-	UWorld* RigWorld = DriverContext.IsValid() ? DriverContext->World : nullptr;
+	UWorld* RigWorld = DriverContext.IsValid() ? DriverContext->World.Get() : nullptr;
 	int32 LayoutPassDepthAtTeardown = 0;
 	int32 MemoDepthAtTeardown = 0;
 
@@ -977,11 +977,11 @@ FDreamDriverRig::~FDreamDriverRig()
 			// instance is to have none of the rig's local players left.
 			if (OtherPlayers.Num() > 0)
 			{
-				if (DriverContext->InputActor != nullptr || DriverContext->PlayerController != nullptr || DriverContext->LocalPlayer != nullptr)
+				if (DriverContext->InputActor.Get() != nullptr || DriverContext->PlayerController.Get() != nullptr || DriverContext->LocalPlayer.Get() != nullptr)
 				{
 					ReportRigProblem(TeardownTest, TEXT("Player 0's input host was torn down and left its input actor, controller or local player behind"));
 				}
-				if (const UGameInstance* RigGameInstance = DriverContext->GameInstance; IsValid(RigGameInstance) && RigGameInstance->GetNumLocalPlayers() > 0)
+				if (const UGameInstance* RigGameInstance = DriverContext->GameInstance.Get(); IsValid(RigGameInstance) && RigGameInstance->GetNumLocalPlayers() > 0)
 				{
 					ReportRigProblem(TeardownTest, FString::Printf(TEXT("The rig's game instance still has %d local player(s) after every player's input host was torn down"),
 						RigGameInstance->GetNumLocalPlayers()));
@@ -999,11 +999,11 @@ FDreamDriverRig::~FDreamDriverRig()
 		const TMap<int32, TWeakObjectPtr<UUITextInput>> PlayerEditsInRigTree = bSeveralPlayers
 			? FindPlayerEditsInRigTree() : TMap<int32, TWeakObjectPtr<UUITextInput>>();
 		TearDownOtherPlayersScreens();
-		if (UDreamWidget* RootWidget = DriverContext->Root; IsValid(RootWidget))
+		if (UDreamWidget* RootWidget = DriverContext->Root.Get(); IsValid(RootWidget))
 		{
 			RootWidget->DestroyWidget();
 		}
-		if (UDreamScreenSpaceRaycaster* RigRaycaster = DriverContext->Raycaster; IsValid(RigRaycaster))
+		if (UDreamScreenSpaceRaycaster* RigRaycaster = DriverContext->Raycaster.Get(); IsValid(RigRaycaster))
 		{
 			RigRaycaster->DeactivateRaycaster();
 		}
@@ -1011,7 +1011,7 @@ FDreamDriverRig::~FDreamDriverRig()
 		// host's tear-down is what releases it.
 		if (!IsActorInputHost(DriverContext->InputHost))
 		{
-			if (UDreamDriverInputModule* RigInputModule = DriverContext->InputModule; IsValid(RigInputModule))
+			if (UDreamDriverInputModule* RigInputModule = DriverContext->InputModule.Get(); IsValid(RigInputModule))
 			{
 				RigInputModule->UnregisterInputModuleFromEventSystem();
 			}
@@ -1022,7 +1022,7 @@ FDreamDriverRig::~FDreamDriverRig()
 		EndLeakedPlayerTextEdits(PlayerEditsInRigTree, TeardownTest);
 		// The world's layout context goes with its manager, so what it says about passes left open
 		// is read now, with the tree gone and the world still whole.
-		if (const UDreamUIManagerWorldSubsystem* RigManager = DriverContext->Manager; IsValid(RigManager))
+		if (const UDreamUIManagerWorldSubsystem* RigManager = DriverContext->Manager.Get(); IsValid(RigManager))
 		{
 			LayoutPassDepthAtTeardown = RigManager->GetLayoutPassContext().GetPassDepth();
 			MemoDepthAtTeardown = RigManager->GetLayoutPassContext().GetMemoDepth();
@@ -1048,8 +1048,8 @@ bool FDreamDriverRig::IsUsable() const
 	if (!BuildFailure.IsEmpty()
 		|| !DriverContext.IsValid()
 		|| !DriverContext->IsUsable()
-		|| !IsValid(DriverContext->RootCanvas)
-		|| !IsValid(DriverContext->Raycaster))
+		|| !IsValid(DriverContext->RootCanvas.Get())
+		|| !IsValid(DriverContext->Raycaster.Get()))
 	{
 		return false;
 	}
@@ -1057,7 +1057,7 @@ bool FDreamDriverRig::IsUsable() const
 	for (const FOtherPlayer& Player : OtherPlayers)
 	{
 		if (!Player.Context.IsValid() || !Player.Context->IsUsable()
-			|| !IsValid(Player.Context->RootCanvas) || !IsValid(Player.Context->Raycaster))
+			|| !IsValid(Player.Context->RootCanvas.Get()) || !IsValid(Player.Context->Raycaster.Get()))
 		{
 			return false;
 		}
@@ -1067,32 +1067,32 @@ bool FDreamDriverRig::IsUsable() const
 
 UWorld* FDreamDriverRig::GetWorld() const
 {
-	return DriverContext.IsValid() ? DriverContext->World : nullptr;
+	return DriverContext.IsValid() ? DriverContext->World.Get() : nullptr;
 }
 
 UDreamWidget* FDreamDriverRig::Root() const
 {
-	return DriverContext.IsValid() ? DriverContext->Root : nullptr;
+	return DriverContext.IsValid() ? DriverContext->Root.Get() : nullptr;
 }
 
 UDreamCanvas* FDreamDriverRig::RootCanvas() const
 {
-	return DriverContext.IsValid() ? DriverContext->RootCanvas : nullptr;
+	return DriverContext.IsValid() ? DriverContext->RootCanvas.Get() : nullptr;
 }
 
 UDreamEventSystem* FDreamDriverRig::EventSystem() const
 {
-	return DriverContext.IsValid() ? DriverContext->EventSystem : nullptr;
+	return DriverContext.IsValid() ? DriverContext->EventSystem.Get() : nullptr;
 }
 
 UDreamDriverInputModule* FDreamDriverRig::InputModule() const
 {
-	return DriverContext.IsValid() ? DriverContext->InputModule : nullptr;
+	return DriverContext.IsValid() ? DriverContext->InputModule.Get() : nullptr;
 }
 
 UDreamScreenSpaceRaycaster* FDreamDriverRig::Raycaster() const
 {
-	return DriverContext.IsValid() ? DriverContext->Raycaster : nullptr;
+	return DriverContext.IsValid() ? DriverContext->Raycaster.Get() : nullptr;
 }
 
 FDreamDriverContext& FDreamDriverRig::Context() const
@@ -1112,17 +1112,17 @@ const FDreamRigOptions& FDreamDriverRig::GetOptions() const
 
 UGameInstance* FDreamDriverRig::GetGameInstance() const
 {
-	return DriverContext.IsValid() ? DriverContext->GameInstance : nullptr;
+	return DriverContext.IsValid() ? DriverContext->GameInstance.Get() : nullptr;
 }
 
 APlayerController* FDreamDriverRig::GetPlayerController() const
 {
-	return DriverContext.IsValid() ? DriverContext->PlayerController : nullptr;
+	return DriverContext.IsValid() ? DriverContext->PlayerController.Get() : nullptr;
 }
 
 AActor* FDreamDriverRig::GetHostActor() const
 {
-	return Host;
+	return Host.Get();
 }
 
 const FString& FDreamDriverRig::GetBuildFailure() const
@@ -1192,53 +1192,53 @@ FDreamDriverRef FDreamDriverRig::Driver(int32 InPlayerIndex) const
 UDreamWidget* FDreamDriverRig::Root(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->Root : nullptr;
+	return Found != nullptr ? Found->Root.Get() : nullptr;
 }
 
 UDreamCanvas* FDreamDriverRig::RootCanvas(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->RootCanvas : nullptr;
+	return Found != nullptr ? Found->RootCanvas.Get() : nullptr;
 }
 
 UDreamEventSystem* FDreamDriverRig::EventSystem(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->EventSystem : nullptr;
+	return Found != nullptr ? Found->EventSystem.Get() : nullptr;
 }
 
 UDreamDriverInputModule* FDreamDriverRig::InputModule(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->InputModule : nullptr;
+	return Found != nullptr ? Found->InputModule.Get() : nullptr;
 }
 
 UDreamScreenSpaceRaycaster* FDreamDriverRig::Raycaster(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->Raycaster : nullptr;
+	return Found != nullptr ? Found->Raycaster.Get() : nullptr;
 }
 
 APlayerController* FDreamDriverRig::GetPlayerController(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->PlayerController : nullptr;
+	return Found != nullptr ? Found->PlayerController.Get() : nullptr;
 }
 
 ULocalPlayer* FDreamDriverRig::GetLocalPlayer(int32 InPlayerIndex) const
 {
 	const FDreamDriverContext* Found = FindPlayerContext(InPlayerIndex);
-	return Found != nullptr ? Found->LocalPlayer : nullptr;
+	return Found != nullptr ? Found->LocalPlayer.Get() : nullptr;
 }
 
 AActor* FDreamDriverRig::GetHostActor(int32 InPlayerIndex) const
 {
 	if (InPlayerIndex == 0)
 	{
-		return Host;
+		return Host.Get();
 	}
 	const int32 OtherIndex = InPlayerIndex - 1;
-	return OtherPlayers.IsValidIndex(OtherIndex) ? OtherPlayers[OtherIndex].Host : nullptr;
+	return OtherPlayers.IsValidIndex(OtherIndex) ? OtherPlayers[OtherIndex].Host.Get() : nullptr;
 }
 
 FBox2D FDreamDriverRig::GetPlayerViewRect(int32 InPlayerIndex) const
@@ -1260,17 +1260,17 @@ FBox2D FDreamDriverRig::GetPlayerViewRect(int32 InPlayerIndex) const
 UDreamWidget* FDreamDriverRig::MakeWidget(const FString& InDisplayName, UDreamWidget* InParent,
 	const FVector2D& InSize, const FVector2D& InAnchoredPosition)
 {
-	if (!DriverContext.IsValid() || DriverContext->World == nullptr)
+	if (!DriverContext.IsValid() || DriverContext->World.Get() == nullptr)
 	{
 		return nullptr;
 	}
-	UDreamWidget* Parent = InParent != nullptr ? InParent : DriverContext->Root;
+	UDreamWidget* Parent = InParent != nullptr ? InParent : DriverContext->Root.Get();
 	if (!IsValid(Parent))
 	{
 		return nullptr;
 	}
 
-	UDreamWidget* NewWidget = NewObject<UDreamWidget>(DriverContext->World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* NewWidget = NewObject<UDreamWidget>(DriverContext->World.Get(), NAME_None, RF_Public | RF_Transactional);
 	NewWidget->SetDisplayName(InDisplayName);
 	NewWidget->SetWidth(InSize.X);
 	NewWidget->SetHeight(InSize.Y);
@@ -1283,7 +1283,7 @@ UDreamWidget* FDreamDriverRig::MakeWidget(const FString& InDisplayName, UDreamWi
 	// RegisterDreamWidgetHierarchy both begin a widget made after the MANAGER has begun play. Without it
 	// a widget made here would sit registered in a begun world without ever having begun, a state no
 	// game can reach, and a behaviour added to it later would never Awake.
-	if (IsValid(DriverContext->Manager) && DriverContext->Manager->HasBegunPlay() && !NewWidget->HasBegunPlay())
+	if (IsValid(DriverContext->Manager.Get()) && DriverContext->Manager->HasBegunPlay() && !NewWidget->HasBegunPlay())
 	{
 		NewWidget->BeginPlay();
 	}
@@ -1293,11 +1293,11 @@ UDreamWidget* FDreamDriverRig::MakeWidget(const FString& InDisplayName, UDreamWi
 UDreamWidget* FDreamDriverRig::MakeControl(TSubclassOf<UDreamUserWidget> InClass, const FString& InDisplayName,
 	UDreamWidget* InParent, const FVector2D& InSize, const FVector2D& InAnchoredPosition)
 {
-	if (!DriverContext.IsValid() || DriverContext->World == nullptr || !IsValid(InClass))
+	if (!DriverContext.IsValid() || DriverContext->World.Get() == nullptr || !IsValid(InClass))
 	{
 		return nullptr;
 	}
-	UDreamWidget* Parent = InParent != nullptr ? InParent : DriverContext->Root;
+	UDreamWidget* Parent = InParent != nullptr ? InParent : DriverContext->Root.Get();
 	if (!IsValid(Parent))
 	{
 		return nullptr;
@@ -1310,7 +1310,7 @@ UDreamWidget* FDreamDriverRig::MakeControl(TSubclassOf<UDreamUserWidget> InClass
 	// parent before register, register the whole hierarchy -- is exactly the part a fixture would get
 	// subtly wrong by hand, and the callback is the seam it offers for writing properties before
 	// anything registered can observe them.
-	UDreamUserWidget* Control = CreateDreamWidget(DriverContext->World, InClass, Parent,
+	UDreamUserWidget* Control = CreateDreamWidget(DriverContext->World.Get(), InClass, Parent,
 		[&InDisplayName, &InSize](UDreamUserWidget* InBuilt)
 		{
 			InBuilt->SetDisplayName(InDisplayName);
@@ -1329,14 +1329,14 @@ UDreamWidget* FDreamDriverRig::MakeControl(TSubclassOf<UDreamUserWidget> InClass
 
 void FDreamDriverRig::EnsureGameInputHost()
 {
-	if (!DriverContext.IsValid() || DriverContext->World == nullptr)
+	if (!DriverContext.IsValid() || DriverContext->World.Get() == nullptr)
 	{
 		return;
 	}
-	UWorld* HostWorld = DriverContext->World;
+	UWorld* HostWorld = DriverContext->World.Get();
 
 	UDreamUIInputSubsystem* HostInput = UDreamUIInputSubsystem::Get(HostWorld);
-	UDreamEventSystem* HostEventSystem = DriverContext->EventSystem;
+	UDreamEventSystem* HostEventSystem = DriverContext->EventSystem.Get();
 	if (HostInput != nullptr && IsValid(HostEventSystem)
 		&& HostInput->GetEventSystemByUserIndex(HostEventSystem->GetUserIndex()) != HostEventSystem)
 	{
@@ -1347,7 +1347,7 @@ void FDreamDriverRig::EnsureGameInputHost()
 	}
 	for (const FOtherPlayer& Player : OtherPlayers)
 	{
-		UDreamEventSystem* PlayerEventSystem = Player.Context.IsValid() ? Player.Context->EventSystem : nullptr;
+		UDreamEventSystem* PlayerEventSystem = Player.Context.IsValid() ? Player.Context->EventSystem.Get() : nullptr;
 		if (HostInput != nullptr && IsValid(PlayerEventSystem)
 			&& HostInput->GetEventSystemByUserIndex(PlayerEventSystem->GetUserIndex()) != PlayerEventSystem)
 		{
@@ -1358,7 +1358,7 @@ void FDreamDriverRig::EnsureGameInputHost()
 	// The context's controller first: an input host (or a PIE rig) has already given the world its
 	// player 0, with a local player behind it, and a second controller spawned here would be a second
 	// player 0 that half of the lookups find and half do not.
-	APlayerController* HostController = DriverContext->PlayerController;
+	APlayerController* HostController = DriverContext->PlayerController.Get();
 	if (!IsValid(HostController))
 	{
 		HostController = HostWorld->GetFirstPlayerController();

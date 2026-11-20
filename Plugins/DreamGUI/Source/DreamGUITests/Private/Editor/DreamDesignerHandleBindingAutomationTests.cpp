@@ -62,7 +62,7 @@ bool FDreamDesignerHandleBindingTest::RunTest(const FString&)
 	}
 
 	DreamTests::Lifecycle::FScopedWorld World{ EWorldType::Editor };
-	UDreamRectBlock* Block = MakeBlock(World.World);
+	UDreamRectBlock* Block = MakeBlock(World.World.Get());
 	if (!TestNotNull(TEXT("A rect block on a widget"), Block))
 	{
 		return false;

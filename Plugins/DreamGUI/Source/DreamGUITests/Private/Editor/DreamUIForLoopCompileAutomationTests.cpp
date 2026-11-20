@@ -57,8 +57,8 @@ namespace DreamUIForLoopCompileTestLocal
 	/** A .dui-backed Blueprint in /Temp, deriving from InParentClass, pointed at InFilePath and compiled. */
 	struct FScopedTextBlueprint
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		FCompilerResultsLog Results;
 
 		FScopedTextBlueprint(const TCHAR* InName, UClass* InParentClass, const FString& InFilePath)
@@ -67,7 +67,7 @@ namespace DreamUIForLoopCompileTestLocal
 			Package = CreatePackage(*PackageName);
 			Package->AddToRoot();
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				InParentClass, Package, FName(InName), BPTYPE_Normal,
+				InParentClass, Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			UDreamTextUserWidget* Defaults = Blueprint != nullptr && Blueprint->GeneratedClass != nullptr
 				? Cast<UDreamTextUserWidget>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
@@ -77,7 +77,7 @@ namespace DreamUIForLoopCompileTestLocal
 				return;
 			}
 			Defaults->SourceFile.FilePath = InFilePath;
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection, &Results);
 		}
 		~FScopedTextBlueprint()
 		{
@@ -190,7 +190,7 @@ bool FDreamUIForCompiledTest::RunTest(const FString& Parameters)
 	};
 
 	FScopedGameWorld TestWorld;
-	UDreamForLoopTestHost* Instance = Cast<UDreamForLoopTestHost>(CreateDreamWidget(TestWorld.World, Host.GetClass()));
+	UDreamForLoopTestHost* Instance = Cast<UDreamForLoopTestHost>(CreateDreamWidget(TestWorld.World.Get(), Host.GetClass()));
 	if (!TestNotNull(TEXT("the host instantiates"), Instance))
 	{
 		return false;
@@ -265,7 +265,7 @@ bool FDreamUIForCompiledTest::RunTest(const FString& Parameters)
 
 	// The designer's preview, an edit world: no copies, and the template stands as written for the author to see.
 	FScopedGameWorld EditWorld(EWorldType::Editor);
-	UDreamForLoopTestHost* Preview = Cast<UDreamForLoopTestHost>(CreateDreamWidget(EditWorld.World, Host.GetClass()));
+	UDreamForLoopTestHost* Preview = Cast<UDreamForLoopTestHost>(CreateDreamWidget(EditWorld.World.Get(), Host.GetClass()));
 	if (TestNotNull(TEXT("the host instantiates in an edit world"), Preview))
 	{
 		UDreamWidget* PreviewTemplate = Preview->GetWidgetFromName(TEXT("Choice"));

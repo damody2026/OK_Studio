@@ -19,9 +19,13 @@ class UDreamWidgetBlueprint;
  */
 namespace DreamWidgetPropertyBindingExtension
 {
-	/** Where a binding authored on InObject would point: the widget, and which of its objects. */
+	/**
+	 * Where a binding authored on InObject would point: the widget, and which of its objects. Raw: the site is made and
+	 * read inside one details-panel callback, from the object that callback was given.
+	 */
 	struct FBindingSite
 	{
+		// static-checks: allow(stored-raw-pointer) Guaranteed by the details-panel callback that made the site from the object it was given.
 		UDreamWidget* Widget = nullptr;
 		EDreamWidgetBindingTarget Target = EDreamWidgetBindingTarget::Widget;
 		int32 BehaviourIndex = INDEX_NONE;

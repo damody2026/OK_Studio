@@ -112,17 +112,18 @@ namespace DreamUITagsAndShorthandsTestLocal
 	/** A game world for the length of a test, for what needs one to instance a user widget. */
 	struct FScopedWorld
 	{
-		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+		TWeakObjectPtr<UWorld> World = UWorld::CreateWorld(EWorldType::Game, false);
 
 		FScopedWorld()
 		{
-			GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+			GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World.Get());
 		}
 
 		~FScopedWorld()
 		{
-			GEngine->DestroyWorldContext(World);
-			World->DestroyWorld(false);
+			UWorld* Owned = World.Get();
+			GEngine->DestroyWorldContext(Owned);
+			Owned->DestroyWorld(false);
 		}
 	};
 
@@ -272,7 +273,7 @@ bool FDreamUITagLookupTest::RunTest(const FString& Parameters)
 		TArray<FName>({ FName(TEXT("Sigil")), FName(TEXT("Trim")), FName(TEXT("UI.Glow")) }));
 	TestTrue(TEXT("HasTag answers by name"), TrimB->HasTag(TEXT("ui.glow")) && !TrimB->HasTag(NAME_None) && !TrimB->HasTag(TEXT("Glow")));
 
-	TStrongObjectPtr<UDreamUserWidget> Host(NewObject<UDreamUserWidget>(TestWorld.World));
+	TStrongObjectPtr<UDreamUserWidget> Host(NewObject<UDreamUserWidget>(TestWorld.World.Get()));
 	Host->InitializeFromArchetype(Built.Tree.Get());
 	ON_SCOPE_EXIT
 	{
@@ -589,7 +590,7 @@ bool FDreamRingMenuTemplatePlacementTest::RunTest(const FString& Parameters)
 	using namespace DreamUITagsAndShorthandsTestLocal;
 	FScopedWorld TestWorld;
 
-	TStrongObjectPtr<UDreamRingMenu> Menu(NewObject<UDreamRingMenu>(TestWorld.World));
+	TStrongObjectPtr<UDreamRingMenu> Menu(NewObject<UDreamRingMenu>(TestWorld.World.Get()));
 	Menu->StyleSource = EDreamUIStyleSource::Inline;
 	Menu->Style.StartAngle = 0.0f;
 	Menu->Style.SweepAngle = 360.0f;

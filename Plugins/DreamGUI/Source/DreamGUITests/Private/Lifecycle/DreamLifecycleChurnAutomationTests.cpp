@@ -125,10 +125,10 @@ namespace DreamLifecycleChurnTestLocal
 				{
 					return false;
 				}
-				Fill(Game.World, Page, UDreamRectBlock::StaticClass(), BlocksPerPage);
-				Fill(Game.World, Page, UDreamImage::StaticClass(), ImagesPerPage);
+				Fill(Game.World.Get(), Page, UDreamRectBlock::StaticClass(), BlocksPerPage);
+				Fill(Game.World.Get(), Page, UDreamImage::StaticClass(), ImagesPerPage);
 				// A background blur, with a canvas of its own under it.
-				if (UDreamWidget* Blur = UDreamUIBPLibrary::ConstructWidget(Game.World, TEXT("Blur"), UDreamBackgroundBlur::StaticClass()))
+				if (UDreamWidget* Blur = UDreamUIBPLibrary::ConstructWidget(Game.World.Get(), TEXT("Blur"), UDreamBackgroundBlur::StaticClass()))
 				{
 					Blur->SetWidth(64.0f);
 					Blur->SetHeight(64.0f);
@@ -136,8 +136,8 @@ namespace DreamLifecycleChurnTestLocal
 					Blur->AddComponent<UDreamCanvas>();
 				}
 				// A placed panel in the level alongside, gone by the end of the round.
-				ADreamWorldWidgetActor* Placed = PlacePanel(Level.World, Panel.GetClass());
-				DrawFrames(Game.World, 2);
+				ADreamWorldWidgetActor* Placed = PlacePanel(Level.World.Get(), Panel.GetClass());
+				DrawFrames(Game.World.Get(), 2);
 				Flush(bInFlush);
 
 				// A child canvas on and off again, under the frame just drawn.
@@ -145,7 +145,7 @@ namespace DreamLifecycleChurnTestLocal
 				if (First != nullptr)
 				{
 					UDreamCanvas* ChildCanvas = First->AddComponent<UDreamCanvas>();
-					DrawFrames(Game.World, 1);
+					DrawFrames(Game.World.Get(), 1);
 					Flush(bInFlush);
 					First->RemoveComponent(ChildCanvas);
 				}
@@ -154,7 +154,7 @@ namespace DreamLifecycleChurnTestLocal
 				{
 					Canvas->SetDefaultMaterial(Materials[Round % 2]);
 				}
-				DrawFrames(Game.World, 2);
+				DrawFrames(Game.World.Get(), 2);
 				Flush(bInFlush);
 
 				Screen->RemoveUI(PageName);
@@ -162,7 +162,7 @@ namespace DreamLifecycleChurnTestLocal
 				{
 					Level.World->DestroyActor(Placed);
 				}
-				DrawFrames(Game.World, 1);
+				DrawFrames(Game.World.Get(), 1);
 				Flush(bInFlush);
 				if (Round % 5 == 4)
 				{

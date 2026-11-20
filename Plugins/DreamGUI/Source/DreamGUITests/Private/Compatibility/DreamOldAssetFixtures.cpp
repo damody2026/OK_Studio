@@ -812,10 +812,10 @@ bool DreamOldAssetFixtures::WriteSnapshot(TArray<FString>& OutLog)
 		{
 			OutLog.Add(FString::Printf(TEXT("%s, not counted: %s"), *PackageName, *Note));
 		}
-		bClean &= Loaded.Package != nullptr && Loaded.Problems.Num() == 0 && Loaded.CompilerWarnings.Num() == 0;
+		bClean &= Loaded.Package.IsValid() && Loaded.Problems.Num() == 0 && Loaded.CompilerWarnings.Num() == 0;
 		Lines.Add(TEXT(""));
 		Lines.Add(FString::Printf(TEXT("package %s"), *PackageName));
-		Lines.Add(Describe(Loaded.Package));
+		Lines.Add(Describe(Loaded.Package.Get()));
 	}
 	if (!bClean)
 	{

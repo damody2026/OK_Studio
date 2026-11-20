@@ -394,6 +394,70 @@ after 3 for 2.1.0 -- so the engine never takes 1.0.0 for the older of the two.
 
 ### Changed
 
+- **Every stored raw pointer the plugin keeps on purpose now says who guarantees it.** The 39 the new
+  `stored-raw-pointer` check reports outside the test module -- a popup's parameters, a tab step, a clip level, a
+  shape or coverage call's font, an arranged child's rect, a scroll slot, a builder node's classes, a resolved
+  binding's functions, the preview and designer scenes' components, the retired font atlases, the
+  Blueprint compiler's class and old tree, a pick hit, a details placement, an MCP compile outcome, a Niagara
+  conversion, the wireframe material proxy and the tween manager's tick snapshot -- carry a
+  `// static-checks: allow(stored-raw-pointer)` line that names what keeps the object alive: the call that consumes
+  it, the owner that outlives it, or the root it is held by. The check's rule also learned that a star inside someone
+  else's template argument does not make the member a pointer. Nothing changed in what any of them does.
+
+- **The stored-pointer check reads the `.cpp` files too, and is now an error.** A type declared inside a function
+  body is read only when that function hands an instance of it to another thread (a render command, an async task):
+  such a type cannot be named anywhere else, so an instance of it lives in the call that made it, and `ParallelFor`
+  does not change that because it joins before the call returns. Of the 514 members a first `.cpp` pass reported,
+  511 were exactly that per-call working data; the five that were not now say who guarantees them -- the sprite
+  atlas's two texture resources, which a render command reads after the copy ahead of it (a `UTexture` releases its
+  resource through a later command), the mesh proxy's editor hit-proxy material and the render-target geometry
+  source's surface material, neither of which has a counted or weak form, and the details panel's play-world
+  switch -- each saying who guarantees it and when that would stop being true. The 36 places where a lambda
+  captures one of those local structs by reference are a different hazard, named in [Contributing]
+  (Docs/contributing/index.md): what dangles there is the struct, not the member, so this check says nothing
+  about them. Nothing changed in what any of them does.
+- **A static check names every stored pointer that is only an address.** `static_checks.py` has a
+  `stored-raw-pointer` rule: a member holding a `UObject` or an RHI resource as a raw pointer, where an address cannot
+  say the thing has gone and one freed and handed out again compares equal. A member kept beside a count of objects
+  gone (`DreamUIGone`) counts as guarded, because that pair is an identity with a serial; function parameters and the
+  locals of inline bodies are not members and are not read. It is a warning for now -- the plugin still has the
+  findings it was written to find -- and the call-site shapes a change like this produces, including the two the
+  compiler does not report, are on [Contributing](Docs/contributing/index.md).
+
+- **The test fixtures that could outlive what they name now name it weakly.** The gallery stage's editor world, the
+  world-space lifecycle fixture's two actors, its render-target surface and that surface's canvas root, the package
+  load check's loaded package and the canvas-change log's pairs are weak pointers; `GetWorld` still hands back a plain
+  pointer. `FDreamListControlsTestTypes::Children` stays raw and `UPROPERTY`, because its value type is the one
+  `FDreamTreeGetItemChildren` hands out.
+
+- **Every remaining stored object pointer in the test module is weak as well.** The driver context's eleven (world,
+  event system, input module, manager, raycaster, root, root canvas, game instance, player controller, local player,
+  input actor), both rigs' host actor and the PIE rig's viewport client, the scoped world, game-instance-world,
+  on-disk-package, panel-class, designer-asset, dui-designer and text-blueprint fixtures, the world and surface
+  stages, and the render-target mesh's six are `TWeakObjectPtr`; the fixtures named the same way inside single test
+  files went with them. The PIE rig's policy already asked for this -- it keeps no strong reference into a play world
+  so that the world can be torn down, and said a test keeps between steps weakly -- and weak is what says a world
+  already destroyed has gone instead of handing out its address. Every call site that passes one on resolves it
+  (`.Get()`); dereferences are unchanged. What a fixture creates is still created and destroyed by that fixture: no
+  lifetime moved.
+
+- **A pointer hit says what it hit weakly.** `FDreamUIHitResultContainer`'s raycaster, hover array and
+  widget-ignoring-enabled are weak, matching the trace cache that outlives a dispatch and already held them that way,
+  so a widget or raycaster collected between the trace and the dispatch reads as gone rather than as an address.
+  C++ reading these fields resolves them; what the pointer does is unchanged.
+
+  None of this is a fix for the GPU `PageFault` seen in the card reader on 2026-11-20: it removes a whole shape --
+  holding a UObject or a GPU resource across frames with nothing that can say it has gone -- and the five measurement
+  trips after the renderer round still faulted, 5 of 5.
+
+- **The editor's own stored object pointers are weak, and the ones that stay raw say why.** The sequence editor's
+  asset, the hierarchy picker's class filter, a component-reference property's allowed and disallowed class lists and
+  the layer style dialog's shown struct are weak pointers resolved where they are read; `GetShownStruct` still hands
+  back a plain pointer, so callers are unchanged. What stays raw is what lives inside one call or one pass -- a pick
+  hit, a Niagara conversion's materials, an MCP compile outcome, a binding site, a details placement's objects, and
+  the Blueprint compiler's class and old tree, which the engine's own compiler context holds the same way -- and each
+  now says in a comment whose lifetime covers it.
+
 - **A section's material, a text input's owner and an action bar's row are named the way their lifetime works.** A
   mesh section and its render proxy name their material weakly and resolve it as they draw, so a visual hidden or
   collected while its section waits in the pool leaves no address behind; the queued material update does the same. The

@@ -115,7 +115,7 @@ bool FDreamCanvasExactFitTest::RunTest(const FString& Parameters)
 	// would give it -- both reduce to 2Y/Width -- which is why a perspective preview can be offered
 	// without moving where flat widgets sit, and so without disturbing alignment work.
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetDisplayName(TEXT("Root"));
 	Root->SetWidth(1600.0f);
 	Root->SetHeight(900.0f);
@@ -209,7 +209,7 @@ bool FDreamCanvasShippedPlaneTest::RunTest(const FString& Parameters)
 	// which ortho can then draw. Two properties make it usable: it must be the identity on flat
 	// content, so a design surface is not disturbed, and it must move things the right way.
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Root->SetDisplayName(TEXT("Root"));
 	Root->SetWidth(1600.0f);
 	Root->SetHeight(900.0f);

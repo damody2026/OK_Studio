@@ -176,11 +176,11 @@ bool FDreamDriverWorldOcclusionManagerDefaultTest::RunTest(const FString& Parame
 		static_cast<int32>(UEngineTypes::ConvertToCollisionChannel(TraceTypeQuery1)), static_cast<int32>(ECC_Visibility));
 
 	DreamTests::FScopedGameWorld Scope;
-	if (!TestNotNull(TEXT("A world"), Scope.World))
+	if (!TestNotNull(TEXT("A world"), Scope.World.Get()))
 	{
 		return false;
 	}
-	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World);
+	UDreamUIInputSubsystem* InputSubsystem = UDreamUIInputSubsystem::Get(Scope.World.Get());
 	if (!TestNotNull(TEXT("An input subsystem for it"), InputSubsystem))
 	{
 		return false;
@@ -344,7 +344,7 @@ bool FDreamDriverWorldOcclusionRenderTargetDefaultsTest::RunTest(const FString& 
 	TestTrue(TEXT("The world pointer, attached and left alone, traces the world"), Pointer->GetOccludeByWorld());
 
 	TStrongObjectPtr<UDreamPressInteractionListener> Listener(NewObject<UDreamPressInteractionListener>());
-	UDreamButton* Button = Rig.MakeControl<UDreamButton>(TEXT("Play"), Screen.CanvasRoot, FVector2D(160.0, 60.0));
+	UDreamButton* Button = Rig.MakeControl<UDreamButton>(TEXT("Play"), Screen.CanvasRoot.Get(), FVector2D(160.0, 60.0));
 	if (!TestNotNull(TEXT("A button on the render-target canvas"), Button))
 	{
 		return false;

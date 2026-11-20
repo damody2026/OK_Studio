@@ -16,13 +16,14 @@ bool DreamPointerOnPlane::Find(const UDreamWidget* InWidget, int32 InUserIndex, 
 	UDreamUIInputSubsystem* Input = UDreamUIInputSubsystem::Get(InWidget);
 	UDreamUIInputUser* User = Input != nullptr ? Input->GetUser(InUserIndex) : nullptr;
 	UDreamPointerEventData* Pointer = User != nullptr ? User->FindPointerEventData(InPointerId) : nullptr;
-	if (Pointer == nullptr || Pointer->Raycaster == nullptr)
+	UDreamBaseRaycaster* PointerRaycaster = Pointer != nullptr ? Pointer->Raycaster.Get() : nullptr;
+	if (PointerRaycaster == nullptr)
 	{
 		return false;
 	}
 	FVector Origin, Direction, End;
 	float Length = 0.0f;
-	if (!Pointer->Raycaster->GenerateRay(Pointer, Origin, Direction, End, Length))
+	if (!PointerRaycaster->GenerateRay(Pointer, Origin, Direction, End, Length))
 	{
 		return false;
 	}

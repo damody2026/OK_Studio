@@ -94,10 +94,10 @@ bool FDreamFontEmojiResourceUndoTest::RunTest(const FString& Parameters)
 	using namespace DreamResourceUndoTestLocal;
 	if (!TestTrue(TEXT("the editor has a transaction buffer"), GEditor != nullptr && GEditor->Trans != nullptr))return false;
 	DreamTests::FScopedGameWorld TestWorld;
-	TStrongObjectPtr<UDreamUIFontEmojiData> EmojiA(NewObject<UDreamUIFontEmojiData>(TestWorld.World));
-	TStrongObjectPtr<UDreamUIFontEmojiData> EmojiB(NewObject<UDreamUIFontEmojiData>(TestWorld.World));
+	TStrongObjectPtr<UDreamUIFontEmojiData> EmojiA(NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get()));
+	TStrongObjectPtr<UDreamUIFontEmojiData> EmojiB(NewObject<UDreamUIFontEmojiData>(TestWorld.World.Get()));
 	TStrongObjectPtr<UDreamUIFontData_DistanceField> Font(
-		NewObject<UDreamUIFontData_DistanceField>(TestWorld.World, NAME_None, RF_Transactional));
+		NewObject<UDreamUIFontData_DistanceField>(TestWorld.World.Get(), NAME_None, RF_Transactional));
 	Font->SetFontFilePath(FPaths::Combine(FPaths::EngineContentDir(), TEXT("Slate/Fonts/Roboto-Regular.ttf")), false);
 	Font->InitFont();
 	FObjectPropertyBase* EmojiProperty = FindFProperty<FObjectPropertyBase>(Font->GetClass(), TEXT("EmojiData"));

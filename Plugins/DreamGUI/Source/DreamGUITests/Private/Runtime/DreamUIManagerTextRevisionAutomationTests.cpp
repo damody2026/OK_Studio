@@ -29,14 +29,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FDreamUIManagerTextRevisionReachesCultureListenersTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameWorld TestWorld;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("a game world with a UI manager"), Manager))
 	{
 		return false;
 	}
 
 	TStrongObjectPtr<UDreamCultureListenerProbe> Probe(
-		NewObject<UDreamCultureListenerProbe>(TestWorld.World, UDreamCultureListenerProbe::StaticClass()));
+		NewObject<UDreamCultureListenerProbe>(TestWorld.World.Get(), UDreamCultureListenerProbe::StaticClass()));
 	UDreamUIManagerWorldSubsystem::RegisterDreamUICultureChangedEvent(Probe.Get());
 	// Whatever an earlier test left pending is spent here, so the count below is this test's own.
 	Manager->Tick(1.0f / 30.0f);

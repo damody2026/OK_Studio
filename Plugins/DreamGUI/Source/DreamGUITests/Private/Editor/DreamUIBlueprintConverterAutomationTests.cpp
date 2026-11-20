@@ -89,9 +89,9 @@ bool FDreamUIConverterRoundTripTest::RunTest(const FString&)
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_ConverterRoundTrip"), Source.FilePath, /*bInOpenDesigner*/false,
 		UDreamTextUserWidgetBindingBase::StaticClass());
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
-	UDreamWidgetBlueprint* Blueprint = Scoped.Blueprint;
+	UDreamWidgetBlueprint* Blueprint = Scoped.Blueprint.Get();
 	if (!TestTrue(TEXT("detached, the Blueprint authors its own tree"), Detach(Blueprint))) return false;
 	if (!TestNotNull(TEXT("and still has it"), Scoped.FindTemplate(TEXT("Title")))) return false;
 
@@ -188,15 +188,15 @@ bool FDreamUIConverterShorthandsTest::RunTest(const FString&)
 	}
 	FScopedTextBlueprint Scoped(TEXT("BP_ConverterShorthands"), Source.FilePath, /*bInOpenDesigner*/false,
 		UDreamTextUserWidgetBindingBase::StaticClass());
-	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint)) return false;
+	if (!TestNotNull(TEXT("the Blueprint was created"), Scoped.Blueprint.Get())) return false;
 	if (!TestEqual(TEXT("and its .dui compiled clean"), Scoped.CompileErrors, 0)) return false;
-	if (!TestTrue(TEXT("detached, the Blueprint authors its own tree"), Detach(Scoped.Blueprint))) return false;
+	if (!TestTrue(TEXT("detached, the Blueprint authors its own tree"), Detach(Scoped.Blueprint.Get()))) return false;
 
 	const FString Target = TargetPath(TEXT("ConverterShorthands.dui"));
 	FScopedFileCleanup Cleanup{ Target };
 	FDreamUIConversionReport Report;
 	if (!TestTrue(*FString::Printf(TEXT("the Blueprint converts:\n%s"), *Report.ToString()),
-		FDreamUIBlueprintConverter::Convert(Scoped.Blueprint, Target, /*bInAllowLoss*/false, Report)))
+		FDreamUIBlueprintConverter::Convert(Scoped.Blueprint.Get(), Target, /*bInAllowLoss*/false, Report)))
 	{
 		return false;
 	}
@@ -223,22 +223,22 @@ bool FDreamUIConverterRefusalTest::RunTest(const FString&)
 	// ---- a parent class that is neither UDreamUserWidget nor a text user widget
 	{
 		FScopedTextBlueprint Custom(TEXT("BP_ConverterCustomParent"), FString(), /*bInOpenDesigner*/false, UDreamUserWidgetBindFixture::StaticClass());
-		if (TestNotNull(TEXT("a Blueprint of a custom C++ class was made"), Custom.Blueprint))
+		if (TestNotNull(TEXT("a Blueprint of a custom C++ class was made"), Custom.Blueprint.Get()))
 		{
 			Custom.Blueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/true);
 			FDreamUIConversionReport Report;
-			TestFalse(TEXT("it is refused"), FDreamUIBlueprintConverter::Preflight(Custom.Blueprint, TargetPath(TEXT("CustomParent.dui")), Report));
+			TestFalse(TEXT("it is refused"), FDreamUIBlueprintConverter::Preflight(Custom.Blueprint.Get(), TargetPath(TEXT("CustomParent.dui")), Report));
 			TestTrue(*FString::Printf(TEXT("naming the class (%s)"), *Report.ToString()), Report.ToString().Contains(TEXT("UDreamTextUserWidget")));
-			TestFalse(TEXT("and the Content Browser does not offer it"), FDreamUIBlueprintConverter::IsConvertible(Custom.Blueprint));
+			TestFalse(TEXT("and the Content Browser does not offer it"), FDreamUIBlueprintConverter::IsConvertible(Custom.Blueprint.Get()));
 		}
 	}
 
 	// ---- UDreamUserWidget: reparented, and a value with no spelling is the loss the author has to allow
 	FScopedTextBlueprint Plain(TEXT("BP_ConverterPlain"), FString(), /*bInOpenDesigner*/false, UDreamUserWidget::StaticClass());
-	if (!TestNotNull(TEXT("a plain DreamUI Blueprint was made"), Plain.Blueprint)) return false;
+	if (!TestNotNull(TEXT("a plain DreamUI Blueprint was made"), Plain.Blueprint.Get())) return false;
 	UDreamWidgetTree* Tree = Plain.Blueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/true);
 	if (!TestTrue(TEXT("with a root"), Tree != nullptr && Tree->RootWidget != nullptr)) return false;
-	TestTrue(TEXT("it is offered for conversion"), FDreamUIBlueprintConverter::IsConvertible(Plain.Blueprint));
+	TestTrue(TEXT("it is offered for conversion"), FDreamUIBlueprintConverter::IsConvertible(Plain.Blueprint.Get()));
 	FFloatProperty* Opacity = CastField<FFloatProperty>(Tree->RootWidget->GetClass()->FindPropertyByName(TEXT("RenderOpacity")));
 	if (!TestNotNull(TEXT("the root has an opacity"), Opacity)) return false;
 	Opacity->SetPropertyValue_InContainer(Tree->RootWidget, std::numeric_limits<float>::quiet_NaN());
@@ -247,7 +247,7 @@ bool FDreamUIConverterRefusalTest::RunTest(const FString&)
 	FScopedFileCleanup Cleanup{ Target };
 	{
 		FDreamUIConversionReport Report;
-		TestFalse(TEXT("a loss the author did not allow stops it"), FDreamUIBlueprintConverter::Convert(Plain.Blueprint, Target, /*bInAllowLoss*/false, Report));
+		TestFalse(TEXT("a loss the author did not allow stops it"), FDreamUIBlueprintConverter::Convert(Plain.Blueprint.Get(), Target, /*bInAllowLoss*/false, Report));
 		TestTrue(*FString::Printf(TEXT("and the report names it (%s)"), *Report.ToString()),
 			Report.Residue.ContainsByPredicate([](const FString& InEntry) { return InEntry.Contains(TEXT("RenderOpacity")); }));
 		TestFalse(TEXT("nothing was written"), FPaths::FileExists(Target));
@@ -255,23 +255,23 @@ bool FDreamUIConverterRefusalTest::RunTest(const FString&)
 	}
 	{
 		FDreamUIConversionReport Report;
-		TestTrue(*FString::Printf(TEXT("allowed, it converts (%s)"), *Report.ToString()), FDreamUIBlueprintConverter::Convert(Plain.Blueprint, Target, /*bInAllowLoss*/true, Report));
+		TestTrue(*FString::Printf(TEXT("allowed, it converts (%s)"), *Report.ToString()), FDreamUIBlueprintConverter::Convert(Plain.Blueprint.Get(), Target, /*bInAllowLoss*/true, Report));
 		TestTrue(TEXT("the file was written"), FPaths::FileExists(Target));
 		TestTrue(TEXT("the class is a text user widget now"), Plain.Blueprint->ParentClass == UDreamTextUserWidget::StaticClass());
-		TestTrue(TEXT("built from the file"), DreamUITextAuthoring::IsTextAuthored(Plain.Blueprint));
-		TestFalse(TEXT("and no longer offered for conversion"), FDreamUIBlueprintConverter::IsConvertible(Plain.Blueprint));
+		TestTrue(TEXT("built from the file"), DreamUITextAuthoring::IsTextAuthored(Plain.Blueprint.Get()));
+		TestFalse(TEXT("and no longer offered for conversion"), FDreamUIBlueprintConverter::IsConvertible(Plain.Blueprint.Get()));
 	}
 
 	// ---- a file that is there already is never written over
 	{
 		FScopedTextBlueprint Other(TEXT("BP_ConverterExisting"), FString(), /*bInOpenDesigner*/false, UDreamUserWidget::StaticClass());
-		if (TestNotNull(TEXT("another plain Blueprint was made"), Other.Blueprint))
+		if (TestNotNull(TEXT("another plain Blueprint was made"), Other.Blueprint.Get()))
 		{
 			Other.Blueprint->GetOrCreateWidgetTree(/*bEnsureRootWidget*/true);
 			FString Before;
 			FFileHelper::LoadFileToString(Before, *Target);
 			FDreamUIConversionReport Report;
-			TestFalse(TEXT("converting into an existing file is refused"), FDreamUIBlueprintConverter::Convert(Other.Blueprint, Target, true, Report));
+			TestFalse(TEXT("converting into an existing file is refused"), FDreamUIBlueprintConverter::Convert(Other.Blueprint.Get(), Target, true, Report));
 			FString After;
 			FFileHelper::LoadFileToString(After, *Target);
 			TestEqual(TEXT("and the file is as it was"), After, Before);

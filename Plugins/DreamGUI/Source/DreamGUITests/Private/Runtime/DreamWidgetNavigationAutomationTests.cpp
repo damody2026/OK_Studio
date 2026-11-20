@@ -67,8 +67,8 @@ bool FDreamWidgetNavigationRulesTest::RunTest(const FString& Parameters)
 	using namespace DreamWidgetNavigationTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* From = MakeWidget(TestWorld.World, TEXT("From"), 0.0f, 0.0f);
-	UDreamWidget* Target = MakeWidget(TestWorld.World, TEXT("Target"), 300.0f, 0.0f);
+	UDreamWidget* From = MakeWidget(TestWorld.World.Get(), TEXT("From"), 0.0f, 0.0f);
+	UDreamWidget* Target = MakeWidget(TestWorld.World.Get(), TEXT("Target"), 300.0f, 0.0f);
 
 	// The accessor pair is the widget's face on the rules, and creating them must be idempotent --
 	// a second call from a details panel button or from code must not leave two rule sets fighting.
@@ -101,7 +101,7 @@ bool FDreamWidgetNavigationRulesTest::RunTest(const FString& Parameters)
 
 	// Explicit by NAME, which is the only form a text-authored .dui can express: it can give a
 	// property an asset path and never a sibling in the live tree.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, TEXT("Root"), 0.0f, 0.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), TEXT("Root"), 0.0f, 0.0f);
 	From->TrySetParent(Root, false);
 	Target->TrySetParent(Root, false);
 	FDreamWidgetNavigationData& RightRule = Navigation->GetNavigationData(EDreamUINavigationDirection::Right);
@@ -118,7 +118,7 @@ bool FDreamWidgetNavigationRulesTest::RunTest(const FString& Parameters)
 
 	// Custom: the delegate decides. This is the rule a grid needs, where the neighbour is arithmetic
 	// on an index and not a link anybody can draw in a panel.
-	UDreamNavigationTargetProvider* Provider = NewObject<UDreamNavigationTargetProvider>(TestWorld.World);
+	UDreamNavigationTargetProvider* Provider = NewObject<UDreamNavigationTargetProvider>(TestWorld.World.Get());
 	Provider->Target = Target;
 	FDreamCustomWidgetNavigationDelegate Delegate;
 	Delegate.BindUFunction(Provider, TEXT("Provide"));
@@ -156,9 +156,9 @@ bool FDreamWidgetNavigationOutranksSelectableTest::RunTest(const FString& Parame
 	 * can see. So the tie is broken by MEANING instead: a rule that was actually authored wins, and an
 	 * untouched rule set stays out of the way.
 	 */
-	UDreamWidget* FromWidget = MakeWidget(TestWorld.World, TEXT("From"), 0.0f, 0.0f);
-	UDreamWidget* ByRule = MakeWidget(TestWorld.World, TEXT("ByRule"), 300.0f, 0.0f);
-	UDreamWidget* BySelectable = MakeWidget(TestWorld.World, TEXT("BySelectable"), 600.0f, 0.0f);
+	UDreamWidget* FromWidget = MakeWidget(TestWorld.World.Get(), TEXT("From"), 0.0f, 0.0f);
+	UDreamWidget* ByRule = MakeWidget(TestWorld.World.Get(), TEXT("ByRule"), 300.0f, 0.0f);
+	UDreamWidget* BySelectable = MakeWidget(TestWorld.World.Get(), TEXT("BySelectable"), 600.0f, 0.0f);
 
 	UUISelectable* Selectable = FromWidget->AddComponent<UUISelectable>();
 	UUISelectable* SelectableTarget = BySelectable->AddComponent<UUISelectable>();
@@ -205,8 +205,8 @@ bool FDreamWidgetNavigationWithoutSelectableTest::RunTest(const FString& Paramet
 	FScopedGameWorld TestWorld;
 
 	// The whole point of the feature: neither of these two widgets is a button.
-	UDreamWidget* PanelA = MakeWidget(TestWorld.World, TEXT("PanelA"), 0.0f, 0.0f);
-	UDreamWidget* PanelB = MakeWidget(TestWorld.World, TEXT("PanelB"), 300.0f, 0.0f);
+	UDreamWidget* PanelA = MakeWidget(TestWorld.World.Get(), TEXT("PanelA"), 0.0f, 0.0f);
+	UDreamWidget* PanelB = MakeWidget(TestWorld.World.Get(), TEXT("PanelB"), 300.0f, 0.0f);
 	UDreamWidgetNavigation* NavA = PanelA->GetOrCreateNavigation();
 	UDreamWidgetNavigation* NavB = PanelB->GetOrCreateNavigation();
 	if (!TestNotNull(TEXT("rules on a widget with no selectable"), NavA)
@@ -257,10 +257,10 @@ bool FDreamWidgetNavigationCustomBoundaryTest::RunTest(const FString& Parameters
 
 	// Two neighbours side by side, and a third widget somewhere else entirely that only the delegate
 	// knows about -- "the next page", in the shape the rule exists for.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, TEXT("Root"), 0.0f, 0.0f);
-	UDreamWidget* From = MakeWidget(TestWorld.World, TEXT("From"), 0.0f, 0.0f);
-	UDreamWidget* Neighbour = MakeWidget(TestWorld.World, TEXT("Neighbour"), 200.0f, 0.0f);
-	UDreamWidget* OffPage = MakeWidget(TestWorld.World, TEXT("OffPage"), 0.0f, -4000.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), TEXT("Root"), 0.0f, 0.0f);
+	UDreamWidget* From = MakeWidget(TestWorld.World.Get(), TEXT("From"), 0.0f, 0.0f);
+	UDreamWidget* Neighbour = MakeWidget(TestWorld.World.Get(), TEXT("Neighbour"), 200.0f, 0.0f);
+	UDreamWidget* OffPage = MakeWidget(TestWorld.World.Get(), TEXT("OffPage"), 0.0f, -4000.0f);
 	From->TrySetParent(Root, false);
 	Neighbour->TrySetParent(Root, false);
 	OffPage->TrySetParent(Root, false);
@@ -269,7 +269,7 @@ bool FDreamWidgetNavigationCustomBoundaryTest::RunTest(const FString& Parameters
 	Neighbour->GetOrCreateNavigation();
 	OffPage->GetOrCreateNavigation();
 
-	UDreamNavigationTargetProvider* Provider = NewObject<UDreamNavigationTargetProvider>(TestWorld.World);
+	UDreamNavigationTargetProvider* Provider = NewObject<UDreamNavigationTargetProvider>(TestWorld.World.Get());
 	Provider->Target = OffPage;
 	FDreamCustomWidgetNavigationDelegate Delegate;
 	Delegate.BindUFunction(Provider, TEXT("Provide"));
@@ -324,11 +324,11 @@ bool FDreamWidgetNavigationConfinedTest::RunTest(const FString& Parameters)
 	 * menu and its own player's screen, where a selectable beside it stayed in. They are now kept where a selectable's
 	 * scan is kept -- the open popup or confining screen that holds the widget, else its root canvas.
 	 */
-	UDreamWidget* Root = MakeWidget(TestWorld.World, TEXT("Root"), 0.0f, 0.0f);
-	UDreamWidget* Dialog = MakeWidget(TestWorld.World, TEXT("Dialog"), 0.0f, 0.0f);
-	UDreamWidget* Inside = MakeWidget(TestWorld.World, TEXT("Inside"), 0.0f, 0.0f);
-	UDreamWidget* InsideLeft = MakeWidget(TestWorld.World, TEXT("InsideLeft"), -200.0f, 0.0f);
-	UDreamWidget* Outside = MakeWidget(TestWorld.World, TEXT("Outside"), 600.0f, 0.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), TEXT("Root"), 0.0f, 0.0f);
+	UDreamWidget* Dialog = MakeWidget(TestWorld.World.Get(), TEXT("Dialog"), 0.0f, 0.0f);
+	UDreamWidget* Inside = MakeWidget(TestWorld.World.Get(), TEXT("Inside"), 0.0f, 0.0f);
+	UDreamWidget* InsideLeft = MakeWidget(TestWorld.World.Get(), TEXT("InsideLeft"), -200.0f, 0.0f);
+	UDreamWidget* Outside = MakeWidget(TestWorld.World.Get(), TEXT("Outside"), 600.0f, 0.0f);
 	Dialog->TrySetParent(Root, false);
 	Inside->TrySetParent(Dialog, false);
 	InsideLeft->TrySetParent(Dialog, false);
@@ -379,9 +379,9 @@ bool FDreamWidgetNavigationDefersToSelectableTest::RunTest(const FString& Parame
 	 * Once any direction has a rule, the pipeline hands every move to the rules component (FindNavigationBehaviour) --
 	 * including the directions it has no rule for, which are still the selectable's: its explicit links, its None.
 	 */
-	UDreamWidget* FromWidget = MakeWidget(TestWorld.World, TEXT("From"), 0.0f, 0.0f);
-	UDreamWidget* ByRule = MakeWidget(TestWorld.World, TEXT("ByRule"), 300.0f, 0.0f);
-	UDreamWidget* BySelectable = MakeWidget(TestWorld.World, TEXT("BySelectable"), -600.0f, 0.0f);
+	UDreamWidget* FromWidget = MakeWidget(TestWorld.World.Get(), TEXT("From"), 0.0f, 0.0f);
+	UDreamWidget* ByRule = MakeWidget(TestWorld.World.Get(), TEXT("ByRule"), 300.0f, 0.0f);
+	UDreamWidget* BySelectable = MakeWidget(TestWorld.World.Get(), TEXT("BySelectable"), -600.0f, 0.0f);
 	UUISelectable* Selectable = FromWidget->AddComponent<UUISelectable>();
 	UUISelectable* SelectableTarget = BySelectable->AddComponent<UUISelectable>();
 	ByRule->AddComponent<UUISelectable>();
@@ -421,9 +421,9 @@ bool FDreamWidgetNavigationUnfocusableTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 
 	// SetFocus refuses a widget that is not focusable; navigation used to land on one anyway and strand the player there.
-	UDreamWidget* PanelA = MakeWidget(TestWorld.World, TEXT("PanelA"), 0.0f, 0.0f);
-	UDreamWidget* PanelB = MakeWidget(TestWorld.World, TEXT("PanelB"), 300.0f, 0.0f);
-	UDreamWidget* Button = MakeWidget(TestWorld.World, TEXT("Button"), -300.0f, 0.0f);
+	UDreamWidget* PanelA = MakeWidget(TestWorld.World.Get(), TEXT("PanelA"), 0.0f, 0.0f);
+	UDreamWidget* PanelB = MakeWidget(TestWorld.World.Get(), TEXT("PanelB"), 300.0f, 0.0f);
+	UDreamWidget* Button = MakeWidget(TestWorld.World.Get(), TEXT("Button"), -300.0f, 0.0f);
 	UDreamWidgetNavigation* NavA = PanelA->GetOrCreateNavigation();
 	UDreamWidgetNavigation* NavB = PanelB->GetOrCreateNavigation();
 	UUISelectable* ButtonSelectable = Button->AddComponent<UUISelectable>();

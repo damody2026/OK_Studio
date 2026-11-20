@@ -65,7 +65,11 @@ namespace DreamGUIMCP
 		FString RefusalReason;
 		FString RefusalSummary;
 		FString RefusalNext;
-		/** The Blueprint of the file asked for, compiled (or failed); null on a refusal. */
+		/**
+		 * The Blueprint of the file asked for, compiled (or failed); null on a refusal. Raw: the outcome is read by the
+		 * call that asked for the compile, which holds the asset through it.
+		 */
+		// static-checks: allow(stored-raw-pointer) Guaranteed by the call that asked for the compile, which holds the asset through it.
 		UDreamWidgetBlueprint* Blueprint = nullptr;
 		bool bFailed = false;
 		TArray<FCompiledAsset> Assets;

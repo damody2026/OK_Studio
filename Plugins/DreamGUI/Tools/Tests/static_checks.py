@@ -26,6 +26,15 @@ Rules (--list-rules prints them with their reasons):
     hand-fed-hit         a test writing HitResult.Widget or HoverArray itself, outside Private/Driver
     pixels-need-rhi      a test reading pixels without NonNullRHI
     rig-needs-bindtest   a test building FDreamDriverRig::Headless without calling BindTest
+  Stored pointers:
+    stored-raw-pointer   a member holding a UObject or an RHI resource as a raw pointer. An
+                         address cannot say the thing has gone, and one freed and handed out again
+                         compares equal. A member kept beside a count of objects gone (DreamUIGone) is
+                         taken as guarded. Function parameters and the locals of inline bodies are not
+                         members and are not read. Headers and .cpp files, but a type declared inside
+                         a function body is read only when that function hands an instance of it to
+                         another thread: its type cannot be named elsewhere, so an instance lives in
+                         that call. Docs/contributing has the call-site shapes
   Words and files:
     plan-label           planning vocabulary in comments and string literals (every file of the test
                          module; the other modules' files this branch touched). Identifiers are
@@ -113,6 +122,7 @@ RULES = collections.OrderedDict([
     ('layering', 'A lower layer that includes a higher one cannot be split from it; every new edge is one more to cut.'),
     ('layering-stale', 'The list of edges still to cut only shrinks: an edge that is gone comes off it.'),
     ('engine-private-path', "The engine's Private and Internal headers change between versions without notice; the plugin reads the engine through its public headers."),
+    ('stored-raw-pointer', 'A stored address cannot say the thing has gone, and an address freed and handed out again compares equal; see Docs/contributing (stored pointers).'),
     ('preset-names', "A screen changes its look by naming another preset, so every preset has to answer to every name the others declare."),
 ])
 WARNING_RULES = frozenset(['eol'])
@@ -892,6 +902,127 @@ def check_presets(root, findings, want):
                 findings.append(Finding('preset-names', rel, 1, 'declares the %s %s, which Default.dui does not' % (kind, name)))
 
 
+# ------------------------------------------------------------------------------------------------
+# stored pointers
+# ------------------------------------------------------------------------------------------------
+
+WRAPPED = re.compile(r'\bT(?:Object|WeakObject|SoftObject|SoftClass|RefCount|Script|Shared|Weak|Unique)'
+                     r'(?:Ptr|Interface|Ref)?\s*<')
+RAW_UOBJECT = re.compile(r'\b(?:class\s+)?((?:U|A)[A-Z][A-Za-z0-9_]*)\s*\*')
+RAW_GPU = re.compile(r'\b(FRHI[A-Za-z0-9_]+|FMaterialRenderProxy|FTextureResource|FTexture2DResource)\s*\*')
+CONTAINER_OF = re.compile(r'\bT(?:Array|Map|Set|Pair)\s*<')
+NOT_A_MEMBER = re.compile(r'\b(typedef|using|friend|return|delete|new|sizeof|static_cast|operator)\b')
+MEMBER_DECL = re.compile(
+    r'(?:^|[;{}])\s*((?:mutable\s+|static\s+|constexpr\s+|inline\s+)*'
+    r'(?:const\s+)?(?:class\s+|struct\s+)?[A-Za-z_][A-Za-z_0-9:<>,\s\*]*?)'
+    r'\b([A-Za-z_][A-Za-z_0-9]*)\s*(?:\[[^\]\n]*\])?\s*(?:=[^;\n]*)?;', re.M)
+TYPE_SCOPE = re.compile(r'\b(?:class|struct|union|enum)\b[^;{}]*$')
+
+
+def member_text(code, a, b):
+    """The class body with every function body and initialiser blanked, so that only members are left.
+
+    A brace is member scope when what comes before it declares a type (a nested struct keeps its
+    members); anything else -- a method body, a lambda, a braced initialiser -- is blanked, which is
+    what keeps a local out of the count.
+    """
+    body = code[a:b]
+    out = list(body)
+    stack = []
+    for i, ch in enumerate(body):
+        if ch == '{':
+            stack.append('type' if TYPE_SCOPE.search(body[:i]) else 'code')
+        if any(kind == 'code' for kind in stack):
+            if ch != '\n':
+                out[i] = ' '
+        if ch == '}' and stack:
+            stack.pop()
+    return ''.join(out)
+
+
+HANDS_OFF_THE_CALL = re.compile(r'\b(?:ENQUEUE_RENDER_COMMAND|AsyncTask|TGraphTask|FFunctionGraphTask'
+                                r'|UE::Tasks::Launch)\b')
+
+
+def declared_in_a_call(code, at):
+    """The text of the function body a type is declared inside, or None when it is declared at file scope.
+
+    A struct declared inside a function body is per-call working data: its type cannot be named anywhere else,
+    so an instance of it lives in that call, and the call is what keeps whatever it points at. ParallelFor does
+    not change that -- it joins before the call returns.
+    """
+    stack = []
+    for i, ch in enumerate(code[:at]):
+        if ch == '{':
+            stack.append((i, 'type' if TYPE_SCOPE.search(code[:i]) else 'code'))
+        elif ch == '}' and stack:
+            stack.pop()
+    calls = [i for i, kind in stack if kind == 'code']
+    if not calls:
+        return None
+    start = calls[0]
+    depth, end = 0, len(code)
+    for i in range(start, len(code)):
+        if code[i] == '{':
+            depth += 1
+        elif code[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    return code[start:end]
+
+
+def check_stored_pointers(root, findings, want):
+    """A stored pointer that is an address and nothing else: see Docs/contributing (stored pointers).
+
+    Headers and .cpp files, but a type declared inside a function body is read only when that function hands an
+    instance of it to another thread (a render command, an async task): see declared_in_a_call. A lambda that
+    captures such an instance by reference is a different hazard -- the struct itself dangles, and naming one of
+    its members weakly would not fix that.
+    """
+    if 'stored-raw-pointer' not in want:
+        return
+    for sf in [sourcescan.load(root, p) for p in sourcescan.source_files(root, 'Source', ('.h', '.cpp'))]:
+        code = sf.code
+        for a, b, cname, _base in class_ranges(code):
+            enclosing_call = declared_in_a_call(code, a)
+            if enclosing_call is not None and not HANDS_OFF_THE_CALL.search(enclosing_call):
+                continue
+            flat = member_text(code, a, b)
+            guarded = re.search(r'\b[A-Za-z_][A-Za-z_0-9]*Gone\b', flat) is not None
+            for m in MEMBER_DECL.finditer(flat):
+                decl, name = m.group(1), m.group(2)
+                # A parameter list spans lines, so a default argument looks like a declaration at the
+                # start of its line: a member declaration carries no parentheses at all.
+                if '(' in m.group(0) or ')' in m.group(0):
+                    continue
+                if '*' not in decl or NOT_A_MEMBER.search(decl) or WRAPPED.search(decl):
+                    continue
+                # The declared type is a pointer, or a container of them. A star anywhere else is inside
+                # someone else's template argument (TMovieSceneMaterialSystem<..., UObject*, ...>), and the
+                # member it declares is not a pointer at all.
+                if not CONTAINER_OF.search(decl) and not re.search(r'\*\s*(?:const\s*)?$', decl):
+                    continue
+                kind = None
+                if RAW_GPU.search(decl):
+                    kind = 'an RHI resource'
+                elif RAW_UOBJECT.search(decl):
+                    kind = 'a UObject'
+                if kind is None:
+                    continue
+                # A member kept beside a count of objects gone is an identity with a serial, not an
+                # address on its own (DreamUIGone): while the count reads the same it still names what
+                # it named, which an address alone cannot say.
+                if guarded and (name.endswith('Raw') or (name + 'Gone') in flat):
+                    continue
+                findings.append(Finding(
+                    'stored-raw-pointer', sf.rel, sf.line_of(a + m.start(2)),
+                    '%s::%s stores %s as a raw pointer; hold it (TObjectPtr in a UPROPERTY, a counted '
+                    'reference for RHI) or name it weakly (TWeakObjectPtr)' % (cname, name, kind),
+                    token=name))
+
+
 def main(argv=None):
     sourcescan.console_safe()
     ap = argparse.ArgumentParser(description='Static checks over the plugin source (see the module docstring).')
@@ -934,6 +1065,7 @@ def main(argv=None):
         check_layering(root, findings, want)
         check_engine_paths(root, findings, want)
         check_presets(root, findings, want)
+        check_stored_pointers(root, findings, want)
         allow = load_allow(ns.allow)
     except Exception:  # noqa: BLE001 -- a crash here must read as "could not run", not as findings
         import traceback

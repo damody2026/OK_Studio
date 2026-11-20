@@ -71,7 +71,7 @@ bool FDreamWorldTeardownOrderTest::RunTest(const FString& Parameters)
 	namespace Priority = DreamUI::WorldServiceTeardownPriority;
 
 	DreamTests::FScopedGameWorld Scope;
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Scope.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(Scope.World.Get());
 	if (!TestNotNull(TEXT("The world has a UI manager"), Manager))
 	{
 		return false;
@@ -82,12 +82,12 @@ bool FDreamWorldTeardownOrderTest::RunTest(const FString& Parameters)
 	const TStrongObjectPtr<UDreamWorldServiceProbe> Input(MakeProbe(Manager, Priority::Input, TEXT("input"), Log));
 	const TStrongObjectPtr<UDreamWorldServiceProbe> Layers(MakeProbe(Manager, Priority::Layers, TEXT("layers"), Log));
 	TestTrue(TEXT("An enrolled service is known to the manager"), Manager->HasWorldService(Input.Get()));
-	UDreamWidget* Tree = MakeRecordedWidget(Scope.World, TEXT("Tree"), Log);
+	UDreamWidget* Tree = MakeRecordedWidget(Scope.World.Get(), TEXT("Tree"), Log);
 	Tree->OnRegister();
 
 	// The world comes down the way a level editor's or a test's does: cleaned up without having played.
 	Log->Reset();
-	UWorld* World = Scope.World;
+	UWorld* World = Scope.World.Get();
 	Scope.World = nullptr;
 	World->DestroyWorld(false);
 	TestTrue(TEXT("The manager took its world down"), Manager->HasTornDownWorld());
@@ -106,7 +106,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FDreamWorldServicesEnrolTest::RunTest(const FString& Parameters)
 {
 	DreamTests::FScopedGameWorld Scope;
-	UWorld* World = Scope.World;
+	UWorld* World = Scope.World.Get();
 	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World);
 	if (!TestNotNull(TEXT("The world has a UI manager"), Manager))
 	{

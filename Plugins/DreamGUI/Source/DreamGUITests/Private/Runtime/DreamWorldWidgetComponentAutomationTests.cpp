@@ -29,9 +29,9 @@ namespace DreamWorldWidgetTestLocal
 {
 	struct FScopedWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		explicit FScopedWorld(EWorldType::Type InWorldType) { World = UWorld::CreateWorld(InWorldType, false); }
-		~FScopedWorld() { if (World) { World->DestroyWorld(false); } }
+		~FScopedWorld() { if (UWorld* Owned = World.Get()) { Owned->DestroyWorld(false); } }
 	};
 
 	/** A host actor with InWidgetClass already loaded on it. */
@@ -63,7 +63,7 @@ bool FDreamWorldWidgetLoadsAtDesignSizeTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWorldWidgetTestLocal;
 	FScopedWorld TestWorld(EWorldType::Game);
-	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass());
+	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass());
 	if (!TestNotNull(TEXT("host actor"), Actor))return false;
 	UDreamWorldWidgetComponent* Component = Actor->GetWidgetComponent();
 	UDreamWidget* Root = Component->GetLoadedWidget();
@@ -100,7 +100,7 @@ bool FDreamWorldWidgetSettersApplyInPlaceTest::RunTest(const FString& Parameters
 {
 	using namespace DreamWorldWidgetTestLocal;
 	FScopedWorld TestWorld(EWorldType::Game);
-	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass());
+	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass());
 	if (!TestNotNull(TEXT("host actor"), Actor))return false;
 	UDreamWorldWidgetComponent* Component = Actor->GetWidgetComponent();
 	UDreamWidget* Root = Component->GetLoadedWidget();
@@ -147,7 +147,7 @@ bool FDreamWorldWidgetMeshOwnerTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamWorldWidgetTestLocal;
 	FScopedWorld TestWorld(EWorldType::Game);
-	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass());
+	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass());
 	if (!TestNotNull(TEXT("host actor"), Actor))return false;
 	UDreamCanvas* Canvas = Actor->GetWidgetComponent()->GetLoadedCanvas();
 	if (!TestNotNull(TEXT("root canvas"), Canvas))return false;
@@ -177,7 +177,7 @@ bool FDreamWorldWidgetReloadAndReregisterTest::RunTest(const FString& Parameters
 	// that loads on register, and the only one where a reregister happens for reasons that are not a
 	// teardown.
 	FScopedWorld TestWorld(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass());
+	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass());
 	if (!TestNotNull(TEXT("host actor"), Actor))return false;
 	UDreamWorldWidgetComponent* Component = Actor->GetWidgetComponent();
 	UDreamWidget* FirstTree = Component->GetLoadedWidget();
@@ -217,7 +217,7 @@ bool FDreamWorldWidgetDestroyTearsDownTest::RunTest(const FString& Parameters)
 	// component's own teardown or not at all until garbage collection, and a tree torn down from inside
 	// GC is the case to stay out of.
 	FScopedWorld TestWorld(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World, UDreamUserWidgetBindFixture::StaticClass());
+	ADreamWorldWidgetActor* Actor = MakeHost(TestWorld.World.Get(), UDreamUserWidgetBindFixture::StaticClass());
 	if (!TestNotNull(TEXT("host actor"), Actor))return false;
 	UDreamWorldWidgetComponent* Component = Actor->GetWidgetComponent();
 	const TWeakObjectPtr<UDreamWidget> TreeWatch = Component->GetLoadedWidget();

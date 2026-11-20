@@ -59,15 +59,15 @@ bool FDreamRectBlockCornerOrderTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamRectBlockCornerOrderTestLocal;
 	DreamTests::Lifecycle::FScopedWorld World{ EWorldType::Game };
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-	UDreamWidget* Root = MakeWidget(World.World, nullptr, FVector2D(400.0, 400.0));
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+	UDreamWidget* Root = MakeWidget(World.World.Get(), nullptr, FVector2D(400.0, 400.0));
 	UDreamCanvas* Canvas = Root != nullptr ? Root->AddComponent<UDreamCanvas>() : nullptr;
 	if (!TestTrue(TEXT("The stage is set up"), Manager != nullptr && Canvas != nullptr))
 	{
 		return false;
 	}
 	Canvas->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Widget = MakeWidget(World.World, Root, FVector2D(100.0, 100.0));
+	UDreamWidget* Widget = MakeWidget(World.World.Get(), Root, FVector2D(100.0, 100.0));
 	UDreamRectBlock* Block = Widget->CreateNewVisual<UDreamRectBlock>();
 	if (!TestNotNull(TEXT("A rect block"), Block))
 	{

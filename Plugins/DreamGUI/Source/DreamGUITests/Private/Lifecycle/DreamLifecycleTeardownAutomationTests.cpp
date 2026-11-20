@@ -39,7 +39,7 @@ bool FDreamLifecycleDestroyTakesPartsDownTest::RunTest(const FString& Parameters
 	FScopedPanelClass Panel(TEXT("LifecycleTeardown"));
 	if (!TestNotNull(TEXT("the panel class compiled"), Panel.GetClass()))return false;
 	FScopedWorld Level(EWorldType::Editor);
-	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World, Panel.GetClass());
+	ADreamWorldWidgetActor* Actor = PlacePanel(Level.World.Get(), Panel.GetClass());
 	if (!TestNotNull(TEXT("the panel was placed"), Actor))return false;
 	UDreamWidget* Root = Actor->GetWidgetComponent()->GetLoadedWidget();
 	UDreamCanvas* Canvas = Actor->GetWidgetComponent()->GetLoadedCanvas();
@@ -99,12 +99,12 @@ bool FDreamLifecycleCompileAfterTeardownTest::RunTest(const FString& Parameters)
 	TWeakObjectPtr<UWorld> TornDown;
 	{
 		FScopedWorld Level(EWorldType::Editor);
-		if (!TestNotNull(TEXT("the panel was placed"), PlacePanel(Level.World, Panel.GetClass())))return false;
-		TornDown = Level.World;
+		if (!TestNotNull(TEXT("the panel was placed"), PlacePanel(Level.World.Get(), Panel.GetClass())))return false;
+		TornDown = Level.World.Get();
 	}
 	if (!TestTrue(TEXT("the torn-down level is still in memory, waiting for the collector"), TornDown.IsValid()))return false;
 
-	FKismetEditorUtilities::CompileBlueprint(Panel.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+	FKismetEditorUtilities::CompileBlueprint(Panel.Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 
 	TArray<UDreamWidget*> Built;
 	for (TObjectIterator<UDreamWidget> It; It; ++It)

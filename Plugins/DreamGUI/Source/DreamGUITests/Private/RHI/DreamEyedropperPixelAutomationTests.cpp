@@ -48,7 +48,7 @@ bool FDreamEyedropperDesignerPixelTest::RunTest(const FString&)
 	{
 		FDreamDesignerDriver& Driver = *State->Driver;
 		const FIntPoint Size = Driver.ViewportPixelSize();
-		UDreamWidget* Root = DesignerTemplateRoot(State->Asset.Blueprint);
+		UDreamWidget* Root = DesignerTemplateRoot(State->Asset.Blueprint.Get());
 		const TArray<UDreamWidget*> Existing = LiveChildrenOf(Root);
 		if (!TestTrue(TEXT("A rect block's drop is taken"), Driver.DropBasicFromPalette(UDreamRectBlock::StaticClass(), FIntPoint(Size.X / 2, Size.Y / 2))))
 		{

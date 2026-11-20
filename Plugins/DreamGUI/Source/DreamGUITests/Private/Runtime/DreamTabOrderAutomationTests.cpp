@@ -122,13 +122,13 @@ bool FDreamTabOrderFormTest::RunTest(const FString& Parameters)
 
 	// A column of three fields and, lower down, a button pushed to the right and another to the left: the case where the
 	// geometric Next went from the first field straight to the button on its right.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Form = MakeWidget(TestWorld.World, Root, TEXT("Form"), -200.0f, 0.0f);
-	UDreamWidget* NameField = MakeStop(TestWorld.World, Form, TEXT("Name"), 0.0f, 100.0f);
-	UDreamWidget* EmailField = MakeStop(TestWorld.World, Form, TEXT("Email"), 0.0f, 50.0f);
-	MakeStop(TestWorld.World, Form, TEXT("Password"), 0.0f, 0.0f);
-	MakeStop(TestWorld.World, Root, TEXT("Submit"), 300.0f, -60.0f);
-	MakeStop(TestWorld.World, Root, TEXT("Cancel"), -300.0f, -60.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Form = MakeWidget(TestWorld.World.Get(), Root, TEXT("Form"), -200.0f, 0.0f);
+	UDreamWidget* NameField = MakeStop(TestWorld.World.Get(), Form, TEXT("Name"), 0.0f, 100.0f);
+	UDreamWidget* EmailField = MakeStop(TestWorld.World.Get(), Form, TEXT("Email"), 0.0f, 50.0f);
+	MakeStop(TestWorld.World.Get(), Form, TEXT("Password"), 0.0f, 0.0f);
+	MakeStop(TestWorld.World.Get(), Root, TEXT("Submit"), 300.0f, -60.0f);
+	MakeStop(TestWorld.World.Get(), Root, TEXT("Cancel"), -300.0f, -60.0f);
 	const FDreamUITabDomain Domain = ScreenOf(Root);
 
 	TestEqual(TEXT("the stops are the hierarchy, depth first"), StopsOf(Domain), TEXT("Name, Email, Password, Submit, Cancel"));
@@ -139,8 +139,8 @@ bool FDreamTabOrderFormTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Shift+Tab walks exactly the same stops backwards"),
 		Walk(Domain, NameField, 5, true), TEXT("Cancel, Submit, Password, Email, Name"));
 	// And the whole press, explicit links and all, says the same thing: a step is the order when nothing overrides it.
-	TestEqual(TEXT("one press from the first field lands on the second"), StepFrom(TestWorld.World, NameField, false), TEXT("Email"));
-	TestEqual(TEXT("and one back from the second lands on the first"), StepFrom(TestWorld.World, EmailField, true), TEXT("Name"));
+	TestEqual(TEXT("one press from the first field lands on the second"), StepFrom(TestWorld.World.Get(), NameField, false), TEXT("Email"));
+	TestEqual(TEXT("and one back from the second lands on the first"), StepFrom(TestWorld.World.Get(), EmailField, true), TEXT("Name"));
 
 	Root->DestroyWidget();
 	return true;
@@ -157,12 +157,12 @@ bool FDreamTabOrderGridTest::RunTest(const FString& Parameters)
 	FScopedGameWorld TestWorld;
 
 	// A B / C D. Geometrically Tab went A, B, D and stopped, and Shift+Tab D, C, A: one cell lost each way.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Grid = MakeWidget(TestWorld.World, Root, TEXT("Grid"));
-	UDreamWidget* CellA = MakeStop(TestWorld.World, Grid, TEXT("A"), -100.0f, 50.0f);
-	MakeStop(TestWorld.World, Grid, TEXT("B"), 100.0f, 50.0f);
-	MakeStop(TestWorld.World, Grid, TEXT("C"), -100.0f, -50.0f);
-	UDreamWidget* CellD = MakeStop(TestWorld.World, Grid, TEXT("D"), 100.0f, -50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Grid = MakeWidget(TestWorld.World.Get(), Root, TEXT("Grid"));
+	UDreamWidget* CellA = MakeStop(TestWorld.World.Get(), Grid, TEXT("A"), -100.0f, 50.0f);
+	MakeStop(TestWorld.World.Get(), Grid, TEXT("B"), 100.0f, 50.0f);
+	MakeStop(TestWorld.World.Get(), Grid, TEXT("C"), -100.0f, -50.0f);
+	UDreamWidget* CellD = MakeStop(TestWorld.World.Get(), Grid, TEXT("D"), 100.0f, -50.0f);
 	const FDreamUITabDomain Domain = ScreenOf(Root);
 
 	TestEqual(TEXT("Tab from A reaches B, C and D once each, then A again"), Walk(Domain, CellA, 4, false), TEXT("B, C, D, A"));
@@ -184,10 +184,10 @@ bool FDreamTabOrderWrapTest::RunTest(const FString& Parameters)
 	using namespace DreamTabOrderTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* First = MakeStop(TestWorld.World, Root, TEXT("First"));
-	MakeStop(TestWorld.World, Root, TEXT("Middle"));
-	UDreamWidget* Last = MakeStop(TestWorld.World, Root, TEXT("Last"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* First = MakeStop(TestWorld.World.Get(), Root, TEXT("First"));
+	MakeStop(TestWorld.World.Get(), Root, TEXT("Middle"));
+	UDreamWidget* Last = MakeStop(TestWorld.World.Get(), Root, TEXT("Last"));
 
 	TestEqual(TEXT("a screen that wraps goes round from its last stop to its first"),
 		FDreamUITabOrder::FindNextStop(ScreenOf(Root, true), Last, false), First);
@@ -200,14 +200,14 @@ bool FDreamTabOrderWrapTest::RunTest(const FString& Parameters)
 	// The screen's own rule comes from the project setting.
 	{
 		TGuardValue<bool> NoScreenWrap(GetMutableDefault<UDreamGUISettings>()->bTabWrapsAtScreenEnd, false);
-		const FDreamUITabDomain Found = FDreamUITabOrder::FindDomain(TestWorld.World, 0, Last);
+		const FDreamUITabDomain Found = FDreamUITabOrder::FindDomain(TestWorld.World.Get(), 0, Last);
 		TestTrue(TEXT("a screen's domain is found from the focus on it"), Found.Kind == EDreamUITabDomainKind::Screen && Found.GetRoot() == Root);
 		TestFalse(TEXT("and wraps as bTabWrapsAtScreenEnd says"), Found.bWraps);
-		TestEqual(TEXT("so a press at the end of the screen keeps the focus where it is"), StepFrom(TestWorld.World, Last, false), TEXT("(none)"));
+		TestEqual(TEXT("so a press at the end of the screen keeps the focus where it is"), StepFrom(TestWorld.World.Get(), Last, false), TEXT("(none)"));
 	}
 	{
 		TGuardValue<bool> ScreenWrap(GetMutableDefault<UDreamGUISettings>()->bTabWrapsAtScreenEnd, true);
-		TestEqual(TEXT("with the setting on, the same press goes round"), StepFrom(TestWorld.World, Last, false), TEXT("First"));
+		TestEqual(TEXT("with the setting on, the same press goes round"), StepFrom(TestWorld.World.Get(), Last, false), TEXT("First"));
 	}
 
 	// A root that says Cycle or Contained has the last word over the setting.
@@ -231,22 +231,22 @@ bool FDreamTabOrderTabIndexTest::RunTest(const FString& Parameters)
 	using namespace DreamTabOrderTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	MakeStop(TestWorld.World, Root, TEXT("A"));
-	MakeStop(TestWorld.World, Root, TEXT("B"))->SetTabIndex(-1);
-	MakeStop(TestWorld.World, Root, TEXT("C"))->SetTabIndex(2);
-	MakeStop(TestWorld.World, Root, TEXT("D"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	MakeStop(TestWorld.World.Get(), Root, TEXT("A"));
+	MakeStop(TestWorld.World.Get(), Root, TEXT("B"))->SetTabIndex(-1);
+	MakeStop(TestWorld.World.Get(), Root, TEXT("C"))->SetTabIndex(2);
+	MakeStop(TestWorld.World.Get(), Root, TEXT("D"));
 	TestEqual(TEXT("lower first, and siblings with the same index keep the hierarchy's order"), StopsOf(ScreenOf(Root)), TEXT("B, A, D, C"));
 
 	// Only siblings are compared: a negative index deep inside a later panel does not pull its widget ahead of an
 	// earlier panel's stops.
-	UDreamWidget* Other = MakeWidget(TestWorld.World, nullptr, TEXT("Other"));
-	UDreamWidget* Late = MakeWidget(TestWorld.World, Other, TEXT("Late"));
+	UDreamWidget* Other = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Other"));
+	UDreamWidget* Late = MakeWidget(TestWorld.World.Get(), Other, TEXT("Late"));
 	Late->SetTabIndex(1);
-	UDreamWidget* Early = MakeWidget(TestWorld.World, Other, TEXT("Early"));
-	MakeStop(TestWorld.World, Late, TEXT("Late1"));
-	MakeStop(TestWorld.World, Late, TEXT("Late2"))->SetTabIndex(-5);
-	MakeStop(TestWorld.World, Early, TEXT("Early1"));
+	UDreamWidget* Early = MakeWidget(TestWorld.World.Get(), Other, TEXT("Early"));
+	MakeStop(TestWorld.World.Get(), Late, TEXT("Late1"));
+	MakeStop(TestWorld.World.Get(), Late, TEXT("Late2"))->SetTabIndex(-5);
+	MakeStop(TestWorld.World.Get(), Early, TEXT("Early1"));
 	TestEqual(TEXT("a panel's index orders it among its siblings, and its children's among theirs"),
 		StopsOf(ScreenOf(Other)), TEXT("Early1, Late2, Late1"));
 	TestEqual(TEXT("the accessor answers what was set"), Late->GetTabIndex(), 1);
@@ -266,32 +266,32 @@ bool FDreamTabOrderSkipTest::RunTest(const FString& Parameters)
 	using namespace DreamTabOrderTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Open = MakeStop(TestWorld.World, Root, TEXT("Open"));
-	UDreamWidget* NotTabStop = MakeStop(TestWorld.World, Root, TEXT("NotTabStop"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Open = MakeStop(TestWorld.World.Get(), Root, TEXT("Open"));
+	UDreamWidget* NotTabStop = MakeStop(TestWorld.World.Get(), Root, TEXT("NotTabStop"));
 	NotTabStop->SetIsTabStop(false);
-	UDreamWidget* DisabledControl = MakeStop(TestWorld.World, Root, TEXT("DisabledControl"));
+	UDreamWidget* DisabledControl = MakeStop(TestWorld.World.Get(), Root, TEXT("DisabledControl"));
 	DisabledControl->GetComponent<UUISelectable>()->SetInteractable(false);
-	UDreamWidget* DisabledWidget = MakeStop(TestWorld.World, Root, TEXT("DisabledWidget"));
+	UDreamWidget* DisabledWidget = MakeStop(TestWorld.World.Get(), Root, TEXT("DisabledWidget"));
 	DisabledWidget->SetIsEnabled(false);
-	UDreamWidget* Hidden = MakeStop(TestWorld.World, Root, TEXT("Hidden"));
+	UDreamWidget* Hidden = MakeStop(TestWorld.World.Get(), Root, TEXT("Hidden"));
 	Hidden->SetVisibility(EDreamWidgetVisibility::Hidden);
-	UDreamWidget* Collapsed = MakeStop(TestWorld.World, Root, TEXT("Collapsed"));
+	UDreamWidget* Collapsed = MakeStop(TestWorld.World.Get(), Root, TEXT("Collapsed"));
 	Collapsed->SetVisibility(EDreamWidgetVisibility::Collapsed);
-	UDreamWidget* Inactive = MakeStop(TestWorld.World, Root, TEXT("Inactive"));
+	UDreamWidget* Inactive = MakeStop(TestWorld.World.Get(), Root, TEXT("Inactive"));
 	Inactive->SetWidgetActive(false);
 	// SetFocus refuses a widget that is not focusable, and navigation used to land on one anyway.
-	UDreamWidget* Unfocusable = MakeStop(TestWorld.World, Root, TEXT("Unfocusable"));
+	UDreamWidget* Unfocusable = MakeStop(TestWorld.World.Get(), Root, TEXT("Unfocusable"));
 	Unfocusable->SetIsFocusable(false);
-	UDreamWidget* Refusing = MakeStop(TestWorld.World, Root, TEXT("Refusing"));
+	UDreamWidget* Refusing = MakeStop(TestWorld.World.Get(), Root, TEXT("Refusing"));
 	Refusing->GetComponent<UUISelectable>()->SetCanNavigateHere(false);
-	UDreamWidget* NoneContainer = MakeWidget(TestWorld.World, Root, TEXT("NoneContainer"));
+	UDreamWidget* NoneContainer = MakeWidget(TestWorld.World.Get(), Root, TEXT("NoneContainer"));
 	NoneContainer->SetTabNavigation(EDreamWidgetTabNavigation::None);
-	UDreamWidget* InNone = MakeStop(TestWorld.World, NoneContainer, TEXT("InNone"));
-	UDreamWidget* ScrollbarPart = MakeStop(TestWorld.World, Root, TEXT("ScrollbarPart"));
+	UDreamWidget* InNone = MakeStop(TestWorld.World.Get(), NoneContainer, TEXT("InNone"));
+	UDreamWidget* ScrollbarPart = MakeStop(TestWorld.World.Get(), Root, TEXT("ScrollbarPart"));
 	ScrollbarPart->AddComponent<UDreamScrollbarPartTestBehaviour>();
-	UDreamWidget* Plain = MakeWidget(TestWorld.World, Root, TEXT("Plain"));
-	UDreamWidget* Last = MakeStop(TestWorld.World, Root, TEXT("Last"));
+	UDreamWidget* Plain = MakeWidget(TestWorld.World.Get(), Root, TEXT("Plain"));
+	UDreamWidget* Last = MakeStop(TestWorld.World.Get(), Root, TEXT("Last"));
 	const FDreamUITabDomain Domain = ScreenOf(Root);
 
 	TestEqual(TEXT("only the two that can take focus are stops"), StopsOf(Domain), TEXT("Open, Last"));
@@ -333,17 +333,17 @@ bool FDreamTabOrderEmptyStartTest::RunTest(const FString& Parameters)
 	using namespace DreamTabOrderTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* First = MakeStop(TestWorld.World, Root, TEXT("First"));
-	MakeStop(TestWorld.World, Root, TEXT("Middle"));
-	UDreamWidget* Last = MakeStop(TestWorld.World, Root, TEXT("Last"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* First = MakeStop(TestWorld.World.Get(), Root, TEXT("First"));
+	MakeStop(TestWorld.World.Get(), Root, TEXT("Middle"));
+	UDreamWidget* Last = MakeStop(TestWorld.World.Get(), Root, TEXT("Last"));
 	const FDreamUITabDomain Domain = ScreenOf(Root);
 
 	// Both used to land on the "default" top-left control, so Shift+Tab could never start at the end.
 	TestEqual(TEXT("Tab with nothing focused goes to the first stop"), FDreamUITabOrder::FindNextStop(Domain, nullptr, false), First);
 	TestEqual(TEXT("Shift+Tab with nothing focused goes to the last"), FDreamUITabOrder::FindNextStop(Domain, nullptr, true), Last);
 	// A start outside the domain counts as none: Tab enters the domain.
-	UDreamWidget* Elsewhere = MakeStop(TestWorld.World, nullptr, TEXT("Elsewhere"));
+	UDreamWidget* Elsewhere = MakeStop(TestWorld.World.Get(), nullptr, TEXT("Elsewhere"));
 	TestEqual(TEXT("a start outside the domain enters it at its first stop"), FDreamUITabOrder::FindNextStop(Domain, Elsewhere, false), First);
 	TestEqual(TEXT("and backwards at its last"), FDreamUITabOrder::FindNextStop(Domain, Elsewhere, true), Last);
 
@@ -362,15 +362,15 @@ bool FDreamTabOrderContainerModesTest::RunTest(const FString& Parameters)
 	using namespace DreamTabOrderTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Before = MakeStop(TestWorld.World, Root, TEXT("Before"));
-	UDreamTabEntryTestWidget* Group = NewObject<UDreamTabEntryTestWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Before = MakeStop(TestWorld.World.Get(), Root, TEXT("Before"));
+	UDreamTabEntryTestWidget* Group = NewObject<UDreamTabEntryTestWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 	Group->SetDisplayName(TEXT("Group"));
 	Group->TrySetParent(Root, false);
 	Group->OnRegister();
-	UDreamWidget* InsideFirst = MakeStop(TestWorld.World, Group, TEXT("G1"));
-	UDreamWidget* InsideLast = MakeStop(TestWorld.World, Group, TEXT("G2"));
-	UDreamWidget* After = MakeStop(TestWorld.World, Root, TEXT("After"));
+	UDreamWidget* InsideFirst = MakeStop(TestWorld.World.Get(), Group, TEXT("G1"));
+	UDreamWidget* InsideLast = MakeStop(TestWorld.World.Get(), Group, TEXT("G2"));
+	UDreamWidget* After = MakeStop(TestWorld.World.Get(), Root, TEXT("After"));
 	const FDreamUITabDomain Domain = ScreenOf(Root);
 
 	// Continue, the default: the group's stops are walked where it stands, and Tab goes on past them.
@@ -401,11 +401,11 @@ bool FDreamTabOrderContainerModesTest::RunTest(const FString& Parameters)
 
 	// Entering it: a question (Peek) goes to its first stop, its last backwards, and never asks the container to scroll
 	// or build anything; the press itself (Step) asks the container where to enter, a list's selected row.
-	TestEqual(TEXT("Once: a question enters at its first stop"), NameOf(FDreamUITabOrder::Peek(TestWorld.World, 0, Before, false).Target), TEXT("G1"));
-	TestEqual(TEXT("Once: and backwards at its last"), NameOf(FDreamUITabOrder::Peek(TestWorld.World, 0, After, true).Target), TEXT("G2"));
+	TestEqual(TEXT("Once: a question enters at its first stop"), NameOf(FDreamUITabOrder::Peek(TestWorld.World.Get(), 0, Before, false).Target), TEXT("G1"));
+	TestEqual(TEXT("Once: and backwards at its last"), NameOf(FDreamUITabOrder::Peek(TestWorld.World.Get(), 0, After, true).Target), TEXT("G2"));
 	TestEqual(TEXT("Once: no question asked the container"), Group->EntryCalls, 0);
 	Group->Entry = InsideLast;
-	const FDreamUITabStep Entered = FDreamUITabOrder::Step(TestWorld.World, 0, Before, false);
+	const FDreamUITabStep Entered = FDreamUITabOrder::Step(TestWorld.World.Get(), 0, Before, false);
 	TestEqual(TEXT("Once: a press enters where the container says"), NameOf(Entered.Target), TEXT("G2"));
 	TestTrue(TEXT("Once: and says it came through the container"), Entered.bEnteredContainer);
 	TestEqual(TEXT("Once: the container was asked once, forwards"), Group->EntryCalls, 1);
@@ -415,7 +415,7 @@ bool FDreamTabOrderContainerModesTest::RunTest(const FString& Parameters)
 	// A container with nothing to answer (an empty list) leaves the walk to its first stop.
 	Group->Entry = nullptr;
 	TestEqual(TEXT("Once: no answer from the container enters at its first stop"),
-		NameOf(FDreamUITabOrder::Step(TestWorld.World, 0, Before, false).Target), TEXT("G1"));
+		NameOf(FDreamUITabOrder::Step(TestWorld.World.Get(), 0, Before, false).Target), TEXT("G1"));
 
 	Root->DestroyWidget();
 	return true;
@@ -433,11 +433,11 @@ bool FDreamTabOrderLinksTest::RunTest(const FString& Parameters)
 	TGuardValue<bool> NoScreenWrap(GetMutableDefault<UDreamGUISettings>()->bTabWrapsAtScreenEnd, false);
 	TGuardValue<EDreamUITabOrder> HierarchyOrder(GetMutableDefault<UDreamGUISettings>()->TabOrder, EDreamUITabOrder::Hierarchy);
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* WidgetA = MakeStop(TestWorld.World, Root, TEXT("A"));
-	UDreamWidget* WidgetB = MakeStop(TestWorld.World, Root, TEXT("B"));
-	UDreamWidget* WidgetC = MakeStop(TestWorld.World, Root, TEXT("C"));
-	UDreamWidget* WidgetD = MakeStop(TestWorld.World, Root, TEXT("D"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* WidgetA = MakeStop(TestWorld.World.Get(), Root, TEXT("A"));
+	UDreamWidget* WidgetB = MakeStop(TestWorld.World.Get(), Root, TEXT("B"));
+	UDreamWidget* WidgetC = MakeStop(TestWorld.World.Get(), Root, TEXT("C"));
+	UDreamWidget* WidgetD = MakeStop(TestWorld.World.Get(), Root, TEXT("D"));
 	UUISelectable* SelectableA = WidgetA->GetComponent<UUISelectable>();
 	UUISelectable* SelectableB = WidgetB->GetComponent<UUISelectable>();
 	UUISelectable* SelectableD = WidgetD->GetComponent<UUISelectable>();
@@ -445,50 +445,50 @@ bool FDreamTabOrderLinksTest::RunTest(const FString& Parameters)
 	// A selectable's explicit Next wins over the order.
 	SelectableA->SetNavigationNext(EUISelectableNavigationMode::Explicit);
 	SelectableA->SetNavigationNextExplicit(SelectableD);
-	TestEqual(TEXT("an explicit Next link wins"), StepFrom(TestWorld.World, WidgetA, false), TEXT("D"));
+	TestEqual(TEXT("an explicit Next link wins"), StepFrom(TestWorld.World.Get(), WidgetA, false), TEXT("D"));
 	// A link to something that cannot take focus leaves the order to answer: never a dead end.
 	SelectableD->SetInteractable(false);
-	TestEqual(TEXT("a link into a disabled control falls back to the order"), StepFrom(TestWorld.World, WidgetA, false), TEXT("B"));
+	TestEqual(TEXT("a link into a disabled control falls back to the order"), StepFrom(TestWorld.World.Get(), WidgetA, false), TEXT("B"));
 	SelectableD->SetInteractable(true);
 	SelectableA->SetNavigationNext(EUISelectableNavigationMode::Auto);
 
 	// A selectable's None keeps focus where it is, as it does for the arrows.
 	SelectableB->SetNavigationPrev(EUISelectableNavigationMode::None);
-	TestEqual(TEXT("Prev set to None holds Shift+Tab"), StepFrom(TestWorld.World, WidgetB, true), TEXT("(none)"));
+	TestEqual(TEXT("Prev set to None holds Shift+Tab"), StepFrom(TestWorld.World.Get(), WidgetB, true), TEXT("(none)"));
 	TestNull(TEXT("and the selectable's own finder says navigation is off that way"), SelectableB->FindNavigableOn(EDreamUINavigationDirection::Prev));
 	SelectableB->SetNavigationPrev(EUISelectableNavigationMode::Auto);
 
 	// The widget's own rules come first, as for every direction.
 	UDreamWidgetNavigation* RulesB = WidgetB->GetOrCreateNavigation();
 	RulesB->SetRule(EDreamUINavigationDirection::Next, EDreamUINavigationRule::Stop);
-	TestEqual(TEXT("a Stop rule on Next holds Tab"), StepFrom(TestWorld.World, WidgetB, false), TEXT("(none)"));
+	TestEqual(TEXT("a Stop rule on Next holds Tab"), StepFrom(TestWorld.World.Get(), WidgetB, false), TEXT("(none)"));
 	FDreamWidgetNavigationData& NextOfB = RulesB->GetNavigationData(EDreamUINavigationDirection::Next);
 	NextOfB.Rule = EDreamUINavigationRule::Explicit;
 	NextOfB.WidgetToFocus = TEXT("A");
-	TestEqual(TEXT("an Explicit rule by name sends Tab exactly there"), StepFrom(TestWorld.World, WidgetB, false), TEXT("A"));
+	TestEqual(TEXT("an Explicit rule by name sends Tab exactly there"), StepFrom(TestWorld.World.Get(), WidgetB, false), TEXT("A"));
 
-	UDreamNavigationTargetProvider* Provider = NewObject<UDreamNavigationTargetProvider>(TestWorld.World);
+	UDreamNavigationTargetProvider* Provider = NewObject<UDreamNavigationTargetProvider>(TestWorld.World.Get());
 	FDreamCustomWidgetNavigationDelegate Delegate;
 	Delegate.BindUFunction(Provider, TEXT("Provide"));
 	UDreamWidgetNavigation* RulesA = WidgetA->GetOrCreateNavigation();
 	Provider->Target = WidgetC;
 	RulesA->SetCustomDelegate(EDreamUINavigationDirection::Prev, Delegate);
-	TestEqual(TEXT("a Custom rule on Previous decides Shift+Tab"), StepFrom(TestWorld.World, WidgetA, true), TEXT("C"));
+	TestEqual(TEXT("a Custom rule on Previous decides Shift+Tab"), StepFrom(TestWorld.World.Get(), WidgetA, true), TEXT("C"));
 	TestEqual(TEXT("and was told the direction"), Provider->LastDirection, EDreamUINavigationDirection::Prev);
 	Provider->Target = nullptr;
-	TestEqual(TEXT("a Custom rule that answers nothing keeps the focus"), StepFrom(TestWorld.World, WidgetA, true), TEXT("(none)"));
+	TestEqual(TEXT("a Custom rule that answers nothing keeps the focus"), StepFrom(TestWorld.World.Get(), WidgetA, true), TEXT("(none)"));
 
 	// At the end of a screen that does not wrap: a Wrap rule goes round anyway, and a boundary rule is asked first.
-	TestEqual(TEXT("the last stop of a screen that does not wrap holds"), StepFrom(TestWorld.World, WidgetD, false), TEXT("(none)"));
+	TestEqual(TEXT("the last stop of a screen that does not wrap holds"), StepFrom(TestWorld.World.Get(), WidgetD, false), TEXT("(none)"));
 	UDreamWidgetNavigation* RulesD = WidgetD->GetOrCreateNavigation();
 	RulesD->SetRule(EDreamUINavigationDirection::Next, EDreamUINavigationRule::Wrap);
-	TestEqual(TEXT("a Wrap rule on Next goes round where the screen does not"), StepFrom(TestWorld.World, WidgetD, false), TEXT("A"));
+	TestEqual(TEXT("a Wrap rule on Next goes round where the screen does not"), StepFrom(TestWorld.World.Get(), WidgetD, false), TEXT("A"));
 	Provider->Target = WidgetB;
 	Provider->CallCount = 0;
 	RulesD->SetNavigationRuleCustomBoundary(EDreamUINavigationDirection::Next, Delegate);
-	TestEqual(TEXT("a CustomBoundary rule is asked when the order runs out"), StepFrom(TestWorld.World, WidgetD, false), TEXT("B"));
+	TestEqual(TEXT("a CustomBoundary rule is asked when the order runs out"), StepFrom(TestWorld.World.Get(), WidgetD, false), TEXT("B"));
 	TestEqual(TEXT("once"), Provider->CallCount, 1);
-	TestEqual(TEXT("and not while the order has somewhere to go"), StepFrom(TestWorld.World, WidgetC, false), TEXT("D"));
+	TestEqual(TEXT("and not while the order has somewhere to go"), StepFrom(TestWorld.World.Get(), WidgetC, false), TEXT("D"));
 	TestEqual(TEXT("so it was not asked again"), Provider->CallCount, 1);
 
 	Root->DestroyWidget();
@@ -505,38 +505,38 @@ bool FDreamTabOrderDialogTest::RunTest(const FString& Parameters)
 	using namespace DreamTabOrderTestLocal;
 	FScopedGameWorld TestWorld;
 	TGuardValue<bool> ScreenWrap(GetMutableDefault<UDreamGUISettings>()->bTabWrapsAtScreenEnd, true);
-	if (!TestNotNull(TEXT("the world has a navigation stack"), UDreamUINavigationStack::Get(TestWorld.World)))
+	if (!TestNotNull(TEXT("the world has a navigation stack"), UDreamUINavigationStack::Get(TestWorld.World.Get())))
 	{
 		return false;
 	}
 
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* Page = MakeWidget(TestWorld.World, Root, TEXT("Page"));
-	UDreamWidget* OnPage = MakeStop(TestWorld.World, Page, TEXT("OnPage"));
-	MakeStop(TestWorld.World, Page, TEXT("AlsoOnPage"));
-	UDreamWidget* Dialog = MakeWidget(TestWorld.World, Root, TEXT("Dialog"));
-	UDreamWidget* Ok = MakeStop(TestWorld.World, Dialog, TEXT("Ok"));
-	UDreamWidget* Cancel = MakeStop(TestWorld.World, Dialog, TEXT("Cancel"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* Page = MakeWidget(TestWorld.World.Get(), Root, TEXT("Page"));
+	UDreamWidget* OnPage = MakeStop(TestWorld.World.Get(), Page, TEXT("OnPage"));
+	MakeStop(TestWorld.World.Get(), Page, TEXT("AlsoOnPage"));
+	UDreamWidget* Dialog = MakeWidget(TestWorld.World.Get(), Root, TEXT("Dialog"));
+	UDreamWidget* Ok = MakeStop(TestWorld.World.Get(), Dialog, TEXT("Ok"));
+	UDreamWidget* Cancel = MakeStop(TestWorld.World.Get(), Dialog, TEXT("Cancel"));
 	UDreamUINavigationScope* Scope = Dialog->AddComponent<UDreamUINavigationScope>();
 	Scope->SetActivateWhenEnabled(false);
 	Scope->ActivateScope();
 
-	const FDreamUITabDomain Domain = FDreamUITabOrder::FindDomain(TestWorld.World, 0, OnPage);
+	const FDreamUITabDomain Domain = FDreamUITabOrder::FindDomain(TestWorld.World.Get(), 0, OnPage);
 	TestTrue(TEXT("with a confining screen up, the domain is that screen wherever the focus is"),
 		Domain.Kind == EDreamUITabDomainKind::Scope && Domain.GetRoot() == Dialog);
 	TestTrue(TEXT("and it goes round"), Domain.bWraps);
-	TestEqual(TEXT("Tab from the page behind enters the dialog at its first stop"), StepFrom(TestWorld.World, OnPage, false), TEXT("Ok"));
-	TestEqual(TEXT("Shift+Tab from the page enters at its last"), StepFrom(TestWorld.World, OnPage, true), TEXT("Cancel"));
-	TestEqual(TEXT("Tab with nothing focused enters it too"), StepFrom(TestWorld.World, nullptr, false), TEXT("Ok"));
-	TestEqual(TEXT("Tab at the dialog's last stop goes round inside it, never to the page"), StepFrom(TestWorld.World, Cancel, false), TEXT("Ok"));
-	TestEqual(TEXT("and Shift+Tab at its first"), StepFrom(TestWorld.World, Ok, true), TEXT("Cancel"));
+	TestEqual(TEXT("Tab from the page behind enters the dialog at its first stop"), StepFrom(TestWorld.World.Get(), OnPage, false), TEXT("Ok"));
+	TestEqual(TEXT("Shift+Tab from the page enters at its last"), StepFrom(TestWorld.World.Get(), OnPage, true), TEXT("Cancel"));
+	TestEqual(TEXT("Tab with nothing focused enters it too"), StepFrom(TestWorld.World.Get(), nullptr, false), TEXT("Ok"));
+	TestEqual(TEXT("Tab at the dialog's last stop goes round inside it, never to the page"), StepFrom(TestWorld.World.Get(), Cancel, false), TEXT("Ok"));
+	TestEqual(TEXT("and Shift+Tab at its first"), StepFrom(TestWorld.World.Get(), Ok, true), TEXT("Cancel"));
 
 	// A screen that does not confine leaves Tab on the whole screen.
 	Scope->SetConfineNavigation(false);
-	TestEqual(TEXT("without confinement Tab from the dialog's last stop goes on to the page"), StepFrom(TestWorld.World, Cancel, false), TEXT("OnPage"));
+	TestEqual(TEXT("without confinement Tab from the dialog's last stop goes on to the page"), StepFrom(TestWorld.World.Get(), Cancel, false), TEXT("OnPage"));
 	Scope->SetConfineNavigation(true);
 	Scope->DeactivateScope();
-	TestEqual(TEXT("closed, it holds nothing"), StepFrom(TestWorld.World, Cancel, false), TEXT("OnPage"));
+	TestEqual(TEXT("closed, it holds nothing"), StepFrom(TestWorld.World.Get(), Cancel, false), TEXT("OnPage"));
 
 	Root->DestroyWidget();
 	return true;
@@ -555,11 +555,11 @@ bool FDreamTabOrderSelectableTest::RunTest(const FString& Parameters)
 	TGuardValue<bool> ScreenWrap(GetMutableDefault<UDreamGUISettings>()->bTabWrapsAtScreenEnd, true);
 
 	// The selectable's own finder (what OnNavigate answers, and any caller asking it directly) is the Tab order too.
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"));
-	UDreamWidget* CellA = MakeStop(TestWorld.World, Root, TEXT("A"), -100.0f, 50.0f);
-	UDreamWidget* CellB = MakeStop(TestWorld.World, Root, TEXT("B"), 100.0f, 50.0f);
-	UDreamWidget* CellC = MakeStop(TestWorld.World, Root, TEXT("C"), -100.0f, -50.0f);
-	UDreamWidget* CellD = MakeStop(TestWorld.World, Root, TEXT("D"), 100.0f, -50.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"));
+	UDreamWidget* CellA = MakeStop(TestWorld.World.Get(), Root, TEXT("A"), -100.0f, 50.0f);
+	UDreamWidget* CellB = MakeStop(TestWorld.World.Get(), Root, TEXT("B"), 100.0f, 50.0f);
+	UDreamWidget* CellC = MakeStop(TestWorld.World.Get(), Root, TEXT("C"), -100.0f, -50.0f);
+	UDreamWidget* CellD = MakeStop(TestWorld.World.Get(), Root, TEXT("D"), 100.0f, -50.0f);
 	UUISelectable* SelectableA = CellA->GetComponent<UUISelectable>();
 	UUISelectable* SelectableB = CellB->GetComponent<UUISelectable>();
 
@@ -589,9 +589,9 @@ bool FDreamTabOrderPlayerScreenTest::RunTest(const FString& Parameters)
 	 * registered first -- a panel welded to a machine in the level, a HUD, the other half of a split screen. It now looks
 	 * at the player's own screen-space canvases only, and so does a Tab with nothing focused.
 	 */
-	UDreamWidget* WorldRoot = MakeWidget(TestWorld.World, nullptr, TEXT("WorldPanel"));
+	UDreamWidget* WorldRoot = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("WorldPanel"));
 	UDreamCanvas* WorldCanvas = WorldRoot->AddComponent<UDreamCanvas>();
-	UDreamWidget* ScreenRoot = MakeWidget(TestWorld.World, nullptr, TEXT("Screen"));
+	UDreamWidget* ScreenRoot = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Screen"));
 	UDreamCanvas* ScreenCanvas = ScreenRoot->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("a canvas for the world-space panel"), WorldCanvas) || !TestNotNull(TEXT("and one for the screen"), ScreenCanvas))
 	{
@@ -602,19 +602,19 @@ bool FDreamTabOrderPlayerScreenTest::RunTest(const FString& Parameters)
 	WorldCanvas->SetRenderMode(EDreamRenderMode::WorldSpace);
 	ScreenCanvas->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
 	// The world-space control registers first and sits further up and left: what the old search would have taken.
-	UDreamWidget* InWorld = MakeStop(TestWorld.World, WorldRoot, TEXT("InWorld"), -300.0f, 200.0f);
-	UDreamWidget* OnScreen = MakeStop(TestWorld.World, ScreenRoot, TEXT("OnScreen"), 100.0f, -100.0f);
+	UDreamWidget* InWorld = MakeStop(TestWorld.World.Get(), WorldRoot, TEXT("InWorld"), -300.0f, 200.0f);
+	UDreamWidget* OnScreen = MakeStop(TestWorld.World.Get(), ScreenRoot, TEXT("OnScreen"), 100.0f, -100.0f);
 	TestTrue(TEXT("the panel's control is world-space UI"), InWorld->IsWorldSpaceUI());
 	TestTrue(TEXT("and the screen's is screen-space UI"), OnScreen->IsScreenSpaceOverlayUI());
 
 	TArray<UDreamWidget*> ScreenRoots;
-	FDreamUITabOrder::GetPlayerScreenRoots(TestWorld.World, 0, ScreenRoots);
+	FDreamUITabOrder::GetPlayerScreenRoots(TestWorld.World.Get(), 0, ScreenRoots);
 	TestTrue(TEXT("the player's screens include the screen-space canvas"), ScreenRoots.Contains(ScreenRoot));
 	TestFalse(TEXT("and never the world-space one"), ScreenRoots.Contains(WorldRoot));
 	TestEqual(TEXT("with no scope, the default control is on the player's own screen"),
-		UUISelectable::FindDefaultSelectable(TestWorld.World, 0), OnScreen->GetComponent<UUISelectable>());
-	TestEqual(TEXT("and a Tab with nothing focused starts there too"), StepFrom(TestWorld.World, nullptr, false), TEXT("OnScreen"));
-	TestEqual(TEXT("as does a Shift+Tab"), StepFrom(TestWorld.World, nullptr, true), TEXT("OnScreen"));
+		UUISelectable::FindDefaultSelectable(TestWorld.World.Get(), 0), OnScreen->GetComponent<UUISelectable>());
+	TestEqual(TEXT("and a Tab with nothing focused starts there too"), StepFrom(TestWorld.World.Get(), nullptr, false), TEXT("OnScreen"));
+	TestEqual(TEXT("as does a Shift+Tab"), StepFrom(TestWorld.World.Get(), nullptr, true), TEXT("OnScreen"));
 
 	WorldRoot->DestroyWidget();
 	ScreenRoot->DestroyWidget();

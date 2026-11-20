@@ -45,13 +45,14 @@ namespace DreamTests::Lifecycle
 
 	FScopedWorld::~FScopedWorld()
 	{
-		if (World == nullptr)
+		UWorld* OwnedWorld = World.Get();
+		if (OwnedWorld == nullptr)
 		{
 			return;
 		}
 		// The trees first. DestroyWorld leaves a registered tree to the collector, whose last-resort
 		// teardown reports it as leaked -- inside whichever test happens to collect next.
-		if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World))
+		if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(OwnedWorld))
 		{
 			TArray<UDreamWidget*> Roots;
 			for (UDreamWidget* Widget : Manager->GetRegisteredWidgets())
@@ -69,7 +70,7 @@ namespace DreamTests::Lifecycle
 				}
 			}
 		}
-		World->DestroyWorld(false);
+		OwnedWorld->DestroyWorld(false);
 	}
 
 	FScopedPanelClass::FScopedPanelClass(const TCHAR* InName, bool bInSavedToDisk)
@@ -81,14 +82,14 @@ namespace DreamTests::Lifecycle
 		// in memory.
 		Package->MarkAsFullyLoaded();
 		Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-			UDreamUserWidget::StaticClass(), Package, FName(InName), BPTYPE_Normal,
+			UDreamUserWidget::StaticClass(), Package.Get(), FName(InName), BPTYPE_Normal,
 			UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 		if (Blueprint != nullptr)
 		{
 			UDreamWidget* Root = Blueprint->GetOrCreateWidgetTree()->RootWidget;
 			Root->SetDisplayName(TEXT("Panel"));
 			Root->CreateNewVisual<UDreamRectBlock>();
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 			if (bInSavedToDisk)
 			{
 				FileName = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
@@ -98,7 +99,7 @@ namespace DreamTests::Lifecycle
 				// Not through GError, which in an unattended editor turns SavePackage's explanation into a crash.
 				Args.Error = GWarn;
 				Args.bSlowTask = false;
-				if (!UPackage::Save(Package, Blueprint, *FileName, Args).IsSuccessful())
+				if (!UPackage::Save(Package.Get(), Blueprint.Get(), *FileName, Args).IsSuccessful())
 				{
 					UE_LOG(LogTemp, Warning, TEXT("[%s].%d The test class %s could not be saved to %s."), ANSI_TO_TCHAR(__FUNCTION__), __LINE__, *Package->GetName(), *FileName);
 				}
@@ -113,7 +114,7 @@ namespace DreamTests::Lifecycle
 			if (!FileName.IsEmpty())
 			{
 				// A loader that read the file still holds it open.
-				ResetLoaders(Package);
+				ResetLoaders(Package.Get());
 				IFileManager::Get().Delete(*FileName, /*RequireExists*/ false, /*EvenReadOnly*/ true, /*Quiet*/ true);
 			}
 			Package->RemoveFromRoot();
@@ -245,7 +246,7 @@ namespace DreamTests::Lifecycle
 	TArray<AActor*> FWorldSpaceKinds::Actors() const
 	{
 		TArray<AActor*> Placed;
-		for (AActor* Actor : { static_cast<AActor*>(DreamRendered), static_cast<AActor*>(EngineRendered), Surface != nullptr ? Surface->GetOwner() : nullptr })
+		for (AActor* Actor : { static_cast<AActor*>(DreamRendered.Get()), static_cast<AActor*>(EngineRendered.Get()), Surface.IsValid() ? Surface->GetOwner() : nullptr })
 		{
 			if (Actor != nullptr)
 			{
@@ -263,19 +264,21 @@ namespace DreamTests::Lifecycle
 			return Kinds;
 		}
 		Kinds.DreamRendered = PlacePanel(InWorld, InPanelClass);
-		if (Kinds.DreamRendered != nullptr)
+		if (Kinds.DreamRendered.IsValid())
 		{
 			AddBackgroundBlur(InWorld, Kinds.DreamRendered->GetWidgetComponent()->GetLoadedWidget());
 		}
 		Kinds.EngineRendered = InWorld->SpawnActor<ADreamWorldWidgetActor>(FVector(0.0, 400.0, 0.0), FRotator::ZeroRotator);
-		if (Kinds.EngineRendered != nullptr)
+		if (Kinds.EngineRendered.IsValid())
 		{
 			Kinds.EngineRendered->GetWidgetComponent()->SetBackend(EDreamWorldWidgetBackend::UERenderer);
 			Kinds.EngineRendered->GetWidgetComponent()->SetWidgetClass(InPanelClass);
 		}
 		if (bInWithSurface)
 		{
-			Kinds.Surface = PlaceSurface(InWorld, nullptr, Kinds.SurfaceCanvasRoot, /*bInAlsoOnAStaticMesh*/ true);
+			UDreamWidget* SurfaceRoot = nullptr;
+			Kinds.Surface = PlaceSurface(InWorld, nullptr, SurfaceRoot, /*bInAlsoOnAStaticMesh*/ true);
+			Kinds.SurfaceCanvasRoot = SurfaceRoot;
 		}
 		DrawFrames(InWorld, 2);
 		return Kinds;

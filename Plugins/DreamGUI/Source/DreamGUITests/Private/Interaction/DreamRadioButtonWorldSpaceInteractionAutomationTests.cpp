@@ -139,7 +139,7 @@ bool FDreamRadioWorldHitTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FRadioGroup Radios = MakeRadioGroup(Rig, Stage.Panel, FVector2D(-20.0, 80.0));
+	const FRadioGroup Radios = MakeRadioGroup(Rig, Stage.Panel.Get(), FVector2D(-20.0, 80.0));
 	if (!TestTrue(TEXT("Three radios in a group can be made on the panel"), Radios.IsReady()))
 	{
 		return false;
@@ -201,7 +201,7 @@ bool FDreamRadioWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FRadioGroup Radios = MakeRadioGroup(Rig, Stage.Panel, FVector2D(-20.0, 80.0));
+	const FRadioGroup Radios = MakeRadioGroup(Rig, Stage.Panel.Get(), FVector2D(-20.0, 80.0));
 	if (!TestTrue(TEXT("Three radios in a group can be made on the panel"), Radios.IsReady())
 		|| !TestTrue(TEXT("The focus goes onto the first radio"), PutFocusOn(Rig, Radios.Radios[0]->BoxNode.Get())))
 	{

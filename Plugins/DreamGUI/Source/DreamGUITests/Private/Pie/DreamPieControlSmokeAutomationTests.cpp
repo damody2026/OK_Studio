@@ -98,7 +98,7 @@ namespace DreamPieControlSmokeTestLocal
 	/** A pixel near the bottom-right corner of the session's viewport, where nothing a test builds reaches. */
 	TOptional<FVector2D> FarCorner(const FDreamDriverContext& InContext)
 	{
-		const FIntPoint Size = IsValid(InContext.RootCanvas) ? InContext.RootCanvas->GetViewportSize() : FIntPoint::ZeroValue;
+		const FIntPoint Size = IsValid(InContext.RootCanvas.Get()) ? InContext.RootCanvas->GetViewportSize() : FIntPoint::ZeroValue;
 		return Size.X > 40 && Size.Y > 40 ? TOptional<FVector2D>(FVector2D(Size.X - 20.0, Size.Y - 20.0)) : TOptional<FVector2D>();
 	}
 
@@ -842,7 +842,7 @@ bool FDreamPieAddedToViewportSmokeTest::RunTest(const FString& Parameters)
 	Steps.Then([this, Listener, Button](FDreamDriverContext& InContext)
 	{
 		TestEqual(TEXT("It was clicked once"), Listener->ClickedCount, 1);
-		if (UDreamScreenUISubsystem* Screens = InContext.World != nullptr ? UDreamScreenUISubsystem::Get(InContext.World) : nullptr)
+		if (UDreamScreenUISubsystem* Screens = InContext.World.Get() != nullptr ? UDreamScreenUISubsystem::Get(InContext.World.Get()) : nullptr)
 		{
 			Screens->RemoveFromViewport(Button->Get());
 		}

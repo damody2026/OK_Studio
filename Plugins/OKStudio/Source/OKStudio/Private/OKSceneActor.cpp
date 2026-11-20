@@ -714,6 +714,27 @@ int32 AOKSceneActor::ItemOpensAhead()
 	return FMath::Clamp(CVarOkStudioItemOpensAhead.GetValueOnGameThread(), 0, 32);
 }
 
+/** 0 opens each item on a thread of its own, the way this worked before 2026-11-20. That cost 1.88 ms of the game
+ *  thread per item -- 11.0 of the 11.6 s SyncGateMs on the 8806-object scene -- because FRunnableThread::Create
+ *  waits for the new thread to start running and eight decode workers were already on the machine. It is here to
+ *  measure that difference again; the open itself is the same work either way. */
+static TAutoConsoleVariable<int32> CVarOkStudioItemOpenPool(TEXT("ok.Studio.ItemOpenPool"), 1,
+	TEXT("Open item sessions on a kept pool of threads (0: a new thread per item, as before 2026-11-20)."));
+
+FQueuedThreadPool* AOKSceneActor::ItemOpenThreads()
+{
+	if (ItemOpenPool) return ItemOpenPool;
+	FQueuedThreadPool* Pool = FQueuedThreadPool::Allocate();
+	// The stack an item open had on its own thread, and as many threads as the cap lets open at once.
+	if (!Pool->Create(FMath::Max(ItemOpensAhead(), 1), 4 * 1024 * 1024, TPri_Normal, TEXT("OKStudioItemOpen")))
+	{
+		delete Pool;
+		return nullptr;
+	}
+	ItemOpenPool = Pool;
+	return ItemOpenPool;
+}
+
 FString AOKSceneActor::ItemPrepareKey(const FOKSceneItem& Item, const FString& Model, const FString& Prefab) const
 {
 	return Model + TEXT("|") + Prefab + TEXT("|") + ItemBuildJson(Item);
@@ -730,6 +751,7 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 {
 	const int32 Ahead = ItemOpensAhead();
 	if (Ahead <= 0) return true;
+	if (bSyncDetailTimers) ++LoadStats.GateCalls;
 	TSharedPtr<FPreparedItem> P = PreparedItems.FindRef(Object.Id);
 	if (!P)
 	{
@@ -748,17 +770,27 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 			OpeningItems = 0;
 			for (const auto& Pair : PreparedItems) if (!Pair.Value->bDone) ++OpeningItems;
 		}
-		if (OpeningItems >= Ahead || PreparedItems.Num() >= Ahead * 3) return false;
+		if (OpeningItems >= Ahead || PreparedItems.Num() >= Ahead * 3)
+		{
+			if (bSyncDetailTimers) ++LoadStats.GateCapped;
+			return false;
+		}
 	}
 	FString Model, Prefab, ModelError;
 	// Not a model this build can find: Build says why, in the frame, as it did before.
-	if (!ItemModel(Object.Item, Model, Prefab, ModelError)) return true;
+	const double ModelStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
+	const bool bHasModel = ItemModel(Object.Item, Model, Prefab, ModelError);
+	if (bSyncDetailTimers) LoadStats.SyncGateModelMs += (FPlatformTime::Seconds() - ModelStart) * 1000.;
+	if (!bHasModel) return true;
+	const double KeyStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
 	const FString Key = ItemPrepareKey(Object.Item, Model, Prefab);
+	if (bSyncDetailTimers) { LoadStats.SyncGateKeyMs += (FPlatformTime::Seconds() - KeyStart) * 1000.; ++LoadStats.GateKeys; }
 	if (P && P->Key != Key) { DropPreparedItem(Object.Id); P.Reset(); }
 	if (P) return P->bDone;
+	const double OpenStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
 	P = MakeShared<FPreparedItem>();
 	P->Key = Key;
-	P->Opening = AsyncThread([P, Library = LibraryDirectory(), Model, Prefab, Json = ItemBuildJson(Object.Item)]
+	auto OpenWork = [P, Library = LibraryDirectory(), Model, Prefab, Json = ItemBuildJson(Object.Item)]
 	{
 		const double Start = FPlatformTime::Seconds();
 		P->bOpened = P->Session.OpenOkModelFk(Library, Model, Prefab, Json, P->Error);
@@ -769,8 +801,14 @@ bool AOKSceneActor::PrepareItem(const FOKSceneObject& Object)
 		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: item materials not prepared: %s"), *MaterialError);
 		P->OpenSeconds = FPlatformTime::Seconds() - Start;
 		P->bDone = true;
-	}, 4 * 1024 * 1024);
+	};
+	const double SpawnStart = bSyncDetailTimers ? FPlatformTime::Seconds() : 0.;
+	// A pool thread where there is one: asking the engine for a thread per item is what SyncGateMs mostly was.
+	FQueuedThreadPool* const Pool = CVarOkStudioItemOpenPool.GetValueOnGameThread() != 0 ? ItemOpenThreads() : nullptr;
+	P->Opening = Pool ? AsyncPool(*Pool, MoveTemp(OpenWork)) : AsyncThread(MoveTemp(OpenWork), 4 * 1024 * 1024);
+	if (bSyncDetailTimers) LoadStats.SyncGateSpawnMs += (FPlatformTime::Seconds() - SpawnStart) * 1000.;
 	PreparedItems.Add(Object.Id, P);
+	if (bSyncDetailTimers) { LoadStats.SyncGateOpenMs += (FPlatformTime::Seconds() - OpenStart) * 1000.; ++LoadStats.GateOpens; }
 	// This frame's count knows about the open it just started, so the cap still holds within one Sync.
 	if (OpeningItemsFrame == GFrameCounter) ++OpeningItems;
 	return false;
@@ -1534,6 +1572,7 @@ void AOKSceneActor::Sync()
 	// is instrumentation heavy enough to be worth its own measurement, which is what this switch is for: run the same
 	// scene with it on and off and the difference in sync_ms is what the timers themselves cost. 1 keeps the detail.
 	const bool bDetail = CVarOkStudioSyncDetailTimers.GetValueOnGameThread() != 0;
+	bSyncDetailTimers = bDetail;
 	const double LoopStart = FPlatformTime::Seconds();
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
@@ -3572,6 +3611,17 @@ void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
 	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
 	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
 	Prepared.Reset();
+	// The item opens as well, and only then the threads they run on: a pool must not be destroyed under work
+	// still writing into the session it holds. (Nothing waited for these before the pool, so an item open could
+	// outlive the world it was opened for.)
+	for (const auto& Pair : PreparedItems) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
+	PreparedItems.Reset();
+	if (ItemOpenPool)
+	{
+		ItemOpenPool->Destroy();
+		delete ItemOpenPool;
+		ItemOpenPool = nullptr;
+	}
 	StopMapPrepare();
 	for (const TSharedPtr<FPreparedMap>& M : DroppedMaps) if (M->Opening.IsValid()) M->Opening.Wait();
 	DroppedMaps.Reset();

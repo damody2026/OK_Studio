@@ -60,7 +60,7 @@ bool FDreamWidgetThumbnailIsTheScreenTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	FThumbnailRenderingInfo* RenderingInfo = UThumbnailManager::Get().GetRenderingInfo(Asset.Blueprint);
+	FThumbnailRenderingInfo* RenderingInfo = UThumbnailManager::Get().GetRenderingInfo(Asset.Blueprint.Get());
 	if (!TestTrue(TEXT("DreamUI Widget Blueprints have DreamGUI's thumbnail renderer"),
 		RenderingInfo != nullptr && Cast<UDreamWidgetBlueprintThumbnailRenderer>(RenderingInfo->Renderer) != nullptr))
 	{
@@ -88,10 +88,10 @@ bool FDreamWidgetThumbnailIsTheScreenTest::RunTest(const FString& Parameters)
 	}
 	Visual->SetTexture(FDreamUIUtils::GetDefaultWhiteTexture());
 	Visual->SetColor(FColor::Red);
-	FKismetEditorUtilities::CompileBlueprint(Asset.Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
+	FKismetEditorUtilities::CompileBlueprint(Asset.Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection);
 
 	FObjectThumbnail Thumbnail;
-	ThumbnailTools::RenderThumbnail(Asset.Blueprint, ThumbnailExtent, ThumbnailExtent,
+	ThumbnailTools::RenderThumbnail(Asset.Blueprint.Get(), ThumbnailExtent, ThumbnailExtent,
 		ThumbnailTools::EThumbnailTextureFlushMode::NeverFlush, nullptr, &Thumbnail);
 	if (!TestEqual(TEXT("the thumbnail is the size asked for"), Thumbnail.GetImageWidth(), ThumbnailExtent)
 		|| !TestEqual(TEXT("...both ways"), Thumbnail.GetImageHeight(), ThumbnailExtent)

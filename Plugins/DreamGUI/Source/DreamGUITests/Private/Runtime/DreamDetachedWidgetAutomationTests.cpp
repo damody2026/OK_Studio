@@ -53,13 +53,13 @@ bool FDreamParkedWidgetIsInertTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamDetachedWidgetTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Parked = MakeParkedWidget(TestWorld.World, TEXT("Parked"));
+	UDreamWidget* Parked = MakeParkedWidget(TestWorld.World.Get(), TEXT("Parked"));
 
 	// Being registered is what makes OnAttachedToParent recompute anchors later, and what anchors a
 	// registered root nobody hosts against GC is the manager's pool of them (its registry itself is weak),
 	// so the parked state must keep both -- inertness has to come from somewhere else.
 	TestTrue(TEXT("A parked widget is registered"), Parked->HasRegistered());
-	if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World))
+	if (UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get()))
 	{
 		TestTrue(TEXT("A parked widget is anchored by the manager"),
 			Manager->IsFreeRoot(Parked) && Manager->IsWidgetRegistered(Parked));
@@ -87,7 +87,7 @@ bool FDreamParkedWidgetSubObjectsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamDetachedWidgetTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Parked = MakeParkedWidget(TestWorld.World, TEXT("Parked"));
+	UDreamWidget* Parked = MakeParkedWidget(TestWorld.World.Get(), TEXT("Parked"));
 
 	// The whole point of handing back a parked widget is that the caller configures it before adding
 	// it. CreateNewLayoutContainer and AddComponent both Call_OnRegister their subobject
@@ -105,7 +105,7 @@ bool FDreamParkedWidgetSubObjectsTest::RunTest(const FString& Parameters)
 		TestNull(TEXT("The visual has no canvas to render through"), Parked->GetRenderCanvas());
 	}
 
-	UDreamWidget* Child = MakeParkedWidget(TestWorld.World, TEXT("Child"));
+	UDreamWidget* Child = MakeParkedWidget(TestWorld.World.Get(), TEXT("Child"));
 	TestTrue(TEXT("A parked widget accepts children"), Child->TrySetParent(Parked, false));
 	TestNotNull(TEXT("The child gets a panel slot under a parked panel"), Child->GetPanelSlot());
 	return true;
@@ -125,7 +125,7 @@ bool FDreamParkedWidgetOwnCanvasTest::RunTest(const FString& Parameters)
 	// it has one, so a page prefab -- whose root almost always carries a UDreamCanvas -- becomes a
 	// render root the moment it exists, with no parent required. Creating one to show later would
 	// otherwise put it on screen immediately, in its authored render mode.
-	UDreamWidget* Parked = MakeParkedWidget(TestWorld.World, TEXT("ParkedPage"), /*bWithOwnCanvas*/true);
+	UDreamWidget* Parked = MakeParkedWidget(TestWorld.World.Get(), TEXT("ParkedPage"), /*bWithOwnCanvas*/true);
 	UDreamCanvas* OwnCanvas = Parked->GetComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("The parked page has its own canvas"), OwnCanvas))return false;
 
@@ -143,7 +143,7 @@ bool FDreamParkedWidgetOwnCanvasTest::RunTest(const FString& Parameters)
 	// root overlay canvases, and a parked page's canvas is a root canvas by virtue of having no
 	// parent. It must not be counted as competing for a screen it is not on.
 	OwnCanvas->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!Manager)
 	{
 		AddError(TEXT("No manager for the test world."));
@@ -175,10 +175,10 @@ bool FDreamWidgetRegisterIsIdempotentTest::RunTest(const FString& Parameters)
 	// early-outs -- but UDreamCanvas::RegisterVisual calls RegisterBuffer() unconditionally and
 	// overwrites the visual's recorded position, so the slot it held is never returned to the free
 	// list. One leaked row of the property-data texture per redundant registration.
-	UDreamWidget* Root = MakeParkedWidget(TestWorld.World, TEXT("Root"), /*bWithOwnCanvas*/true);
+	UDreamWidget* Root = MakeParkedWidget(TestWorld.World.Get(), TEXT("Root"), /*bWithOwnCanvas*/true);
 	Root->SetWidgetActive(true);
 
-	UDreamWidget* Child = MakeParkedWidget(TestWorld.World, TEXT("Child"));
+	UDreamWidget* Child = MakeParkedWidget(TestWorld.World.Get(), TEXT("Child"));
 	UDreamVisual* Visual = Child->CreateNewVisual<UDreamVisualEmpty>();
 	if (!TestNotNull(TEXT("The child has a visual"), Visual))return false;
 	if (!TestTrue(TEXT("The child attaches under the canvas"), Child->TrySetParent(Root, false)))return false;

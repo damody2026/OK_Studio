@@ -333,7 +333,7 @@ bool FDreamRenderTargetNestedSurfaceTest::RunTest(const FString& Parameters)
 	using namespace DreamInteractionExtensionTestLocal;
 	FScopedGameWorld TestWorld;
 
-	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World);
+	UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("the world has a DreamUI manager"), Manager))
 	{
 		return false;

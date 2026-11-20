@@ -115,7 +115,7 @@ bool FDreamTextPainterFillChannelsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextStyleTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("Hello world"));
@@ -215,7 +215,7 @@ bool FDreamTextPainterEffectLayerTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextStyleTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("<b>ab</b>c"));
@@ -352,7 +352,7 @@ bool FDreamTextPainterUnderlayLayerTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextStyleTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World);
+	UDreamTextTestFont* Font = NewObject<UDreamTextTestFont>(TestWorld.World.Get());
 
 	FDreamTextDisplayList DL;
 	FDreamTextLayoutInput In = MakeInput(Font, TEXT("<b>ab</b>c"));
@@ -497,9 +497,9 @@ bool FDreamTextPaintParamsUnderlayAndContentTintTest::RunTest(const FString& Par
 {
 	using namespace DreamTextStyleTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Parent = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Parent = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Parent->OnRegister();
-	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Transient);
+	UDreamWidget* Child = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Transient);
 	Child->OnRegister();
 	UDreamText* Text = Child->TrySetParent(Parent, false) ? Child->CreateNewVisual<UDreamText>() : nullptr;
 	if (!TestNotNull(TEXT("A text under a parent"), Text))
@@ -507,7 +507,7 @@ bool FDreamTextPaintParamsUnderlayAndContentTintTest::RunTest(const FString& Par
 		Parent->DestroyWidget();
 		return false;
 	}
-	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World));
+	Text->SetFont(NewObject<UDreamTextTestFont>(TestWorld.World.Get()));
 
 	const FDreamTextPaintParams Plain = UDreamText::MakePaintParams(Text);
 	TestTrue(TEXT("The made-up font paints as a distance field"), Plain.bDistanceField);

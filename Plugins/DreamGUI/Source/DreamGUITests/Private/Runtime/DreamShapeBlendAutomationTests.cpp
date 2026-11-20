@@ -78,8 +78,8 @@ namespace DreamShapeBlendTestLocal
 
 		FStage()
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
-			Root = MakeWidget(World.World, nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
+			Root = MakeWidget(World.World.Get(), nullptr, TEXT("Root"), FVector2D(800.0, 600.0));
 			Canvas = Root->AddComponent<UDreamCanvas>();
 			if (Canvas != nullptr)
 			{
@@ -234,7 +234,7 @@ bool FDreamShapeBlendGroupTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Group = MakeWidget(World, Stage.Root, TEXT("Group"), FVector2D(300.0, 120.0));
 	UDreamRectBlock* Left = MakeBlock(World, Group, TEXT("Left"), FVector2D(60.0, 60.0), FVector2D(-40.0, 0.0), FColor(240, 80, 80));
 	UDreamRectBlock* Right = MakeBlock(World, Group, TEXT("Right"), FVector2D(60.0, 60.0), FVector2D(40.0, 0.0), FColor(80, 80, 240));
@@ -319,7 +319,7 @@ bool FDreamPointerLightTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UWorld* World = Stage.World.World;
+	UWorld* World = Stage.World.World.Get();
 	UDreamWidget* Panel = MakeWidget(World, Stage.Root, TEXT("Panel"), FVector2D(400.0, 200.0));
 	UDreamRectBlock* Bevelled = MakeBlock(World, Panel, TEXT("Bevelled"), FVector2D(80.0, 80.0), FVector2D(-100.0, 0.0), FColor(120, 120, 140));
 	FDreamLayerEffects Effects;
@@ -370,7 +370,7 @@ bool FDreamTiltCardTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* Card = MakeWidget(Stage.World.World, Stage.Root, TEXT("Card"), FVector2D(160.0, 220.0));
+	UDreamWidget* Card = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Card"), FVector2D(160.0, 220.0));
 	UDreamTiltCard* Tilt = Card->AddComponent<UDreamTiltCard>();
 	Tilt->SetFollowPointer(false);
 	Tilt->SetTargetTilt(FVector2D(1.0, 0.0));
@@ -406,7 +406,7 @@ bool FDreamHoloFoilTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamRectBlock* Card = MakeBlock(Stage.World.World, Stage.Root, TEXT("Card"), FVector2D(160.0, 220.0), FVector2D::ZeroVector, FColor(30, 40, 70));
+	UDreamRectBlock* Card = MakeBlock(Stage.World.World.Get(), Stage.Root, TEXT("Card"), FVector2D(160.0, 220.0), FVector2D::ZeroVector, FColor(30, 40, 70));
 	UDreamHoloFoil* Foil = Card->GetWidget()->AddComponent<UDreamHoloFoil>();
 	if (!TestNotNull(TEXT("The foil made its material (DreamUI_HoloFoilRect)"), Foil->GetFoilMaterial()))
 	{
@@ -428,7 +428,7 @@ bool FDreamHoloFoilTest::RunTest(const FString& Parameters)
 
 	// On a texture with a material of the author's: drawn with the foil's while it is on, the author's left as it was -- what
 	// a save or a copy of the texture then holds -- and drawn with again once the foil goes.
-	UDreamWidget* Picture = MakeWidget(Stage.World.World, Stage.Root, TEXT("Picture"), FVector2D(120.0, 160.0));
+	UDreamWidget* Picture = MakeWidget(Stage.World.World.Get(), Stage.Root, TEXT("Picture"), FVector2D(120.0, 160.0));
 	UDreamTexture* Texture = Picture->CreateNewVisual<UDreamTexture>();
 	UMaterialInterface* AuthorMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/DreamGUI/Materials/DreamUI_HoloFoil.DreamUI_HoloFoil"));
 	if (!TestNotNull(TEXT("A texture and a material of the author's"), Texture) || AuthorMaterial == nullptr)

@@ -57,7 +57,7 @@ namespace DreamDesignerShortcutTestLocal
 	/** The authored widgets directly under the asset's root. */
 	TArray<UDreamWidget*> AuthoredChildren(const FDesignerLatentRef& InState)
 	{
-		return LiveChildrenOf(DesignerTemplateRoot(InState->Asset.Blueprint));
+		return LiveChildrenOf(DesignerTemplateRoot(InState->Asset.Blueprint.Get()));
 	}
 
 	/** The designer clipboard is one for the whole process and outlives the designer that filled it: not left to the next test. */

@@ -367,14 +367,15 @@ private:
 	/** By pointer so its address survives anything that happens to this object. */
 	TUniquePtr<FDreamDriverContext> DriverContext;
 	TSharedPtr<FDreamDriver> DriverInstance;
-	AActor* Host = nullptr;
+	/** Weak: the rig does not keep the world's actor alive, and one the world took reads as gone. */
+	TWeakObjectPtr<AActor> Host;
 
 	/** A player after player 0: its context and the driver over it, by pointer for the same reason as player 0's. */
 	struct FOtherPlayer
 	{
 		TUniquePtr<FDreamDriverContext> Context;
 		TSharedPtr<FDreamDriver> Driver;
-		AActor* Host = nullptr;
+		TWeakObjectPtr<AActor> Host;
 		/** Whether the root in its context is its own (a split screen's), which the rig then destroys. */
 		bool bOwnsScreen = false;
 	};

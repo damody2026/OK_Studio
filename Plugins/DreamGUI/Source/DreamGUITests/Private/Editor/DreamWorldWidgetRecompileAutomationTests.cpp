@@ -39,9 +39,9 @@ namespace DreamWorldWidgetRecompileTestLocal
 {
 	struct FScopedWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		explicit FScopedWorld(EWorldType::Type InWorldType) { World = UWorld::CreateWorld(InWorldType, false); }
-		~FScopedWorld() { if (World) { World->DestroyWorld(false); } }
+		~FScopedWorld() { if (UWorld* Owned = World.Get()) { Owned->DestroyWorld(false); } }
 	};
 
 	struct FScopedBlueprint
@@ -141,10 +141,10 @@ bool FDreamWorldWidgetRecompileTest::RunTest(const FString& Parameters)
 
 	// Before any collection: the mesh has to be gone by the time one could free what it draws with.
 	TestFalse(TEXT("the placed tree's mesh went with it"), FirstMeshWatch.IsValid());
-	TestEqual(TEXT("so nothing is left drawing the old tree"), RegisteredMeshesIn(TestWorld.World).Num(), 0);
+	TestEqual(TEXT("so nothing is left drawing the old tree"), RegisteredMeshesIn(TestWorld.World.Get()).Num(), 0);
 	TestFalse(TEXT("the placed tree was destroyed, not handed to the reinstancer"), IsValid(FirstTree));
 	TestNull(TEXT("the host holds no tree while the class compiles"), Component->GetLoadedWidget());
-	TestEqual(TEXT("and the reinstancer made no copy of it"), CountLiveInstances(TestWorld.World, GeneratedClass, /*bRegisteredOnly*/false), 0);
+	TestEqual(TEXT("and the reinstancer made no copy of it"), CountLiveInstances(TestWorld.World.Get(), GeneratedClass, /*bRegisteredOnly*/false), 0);
 	TestFalse(TEXT("the compile is over"), EditorSubsystem->IsRecompiling());
 	TestTrue(TEXT("and the host is waiting to build again"), EditorSubsystem->HasPendingRebuild());
 
@@ -156,17 +156,17 @@ bool FDreamWorldWidgetRecompileTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("a new one"), Rebuilt != FirstTree);
 	TestTrue(TEXT("of the recompiled class"), Rebuilt->GetClass() == GeneratedClass);
 	TestTrue(TEXT("registered in its place"), Rebuilt->HasRegistered());
-	TestEqual(TEXT("and it is the only tree of the class there, registered or not"), CountLiveInstances(TestWorld.World, GeneratedClass, false), 1);
+	TestEqual(TEXT("and it is the only tree of the class there, registered or not"), CountLiveInstances(TestWorld.World.Get(), GeneratedClass, false), 1);
 	UDreamCanvas* RebuiltCanvas = Component->GetLoadedCanvas();
 	if (!TestNotNull(TEXT("the new tree has a root canvas"), RebuiltCanvas))return false;
 	UDreamUIMeshComponent* RebuiltMesh = RebuiltCanvas->GetUIMesh();
 	if (!TestNotNull(TEXT("with a mesh"), RebuiltMesh))return false;
 	TestEqual(TEXT("owned by the same actor"), RebuiltMesh->GetOwner(), static_cast<AActor*>(Actor));
-	TestEqual(TEXT("and it is the only mesh drawing there"), RegisteredMeshesIn(TestWorld.World).Num(), 1);
+	TestEqual(TEXT("and it is the only mesh drawing there"), RegisteredMeshesIn(TestWorld.World.Get()).Num(), 1);
 
 	// The moment the crash happened: the collection that frees the old tree and its materials.
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, /*bPerformFullPurge*/ true);
-	const TArray<UDreamUIMeshComponent*> Surviving = RegisteredMeshesIn(TestWorld.World);
+	const TArray<UDreamUIMeshComponent*> Surviving = RegisteredMeshesIn(TestWorld.World.Get());
 	TestEqual(TEXT("after a collection one mesh is still drawing"), Surviving.Num(), 1);
 	TestTrue(TEXT("the new tree's, whose canvas is alive"), Surviving.Num() == 1 && Surviving[0] == RebuiltMesh && IsValid(RebuiltCanvas));
 	TestTrue(TEXT("and the host still holds that tree"), Component->GetLoadedWidget() == Rebuilt && IsValid(Rebuilt));
@@ -201,7 +201,7 @@ bool FDreamWorldWidgetRecompileWithoutManagerTest::RunTest(const FString& Parame
 	if (!TestNotNull(TEXT("and compiled"), GeneratedClass))return false;
 
 	FScopedWorld TestWorld(EWorldType::GamePreview);
-	if (!TestNull(TEXT("a game preview world has no UI manager"), UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World)))
+	if (!TestNull(TEXT("a game preview world has no UI manager"), UDreamUIManagerWorldSubsystem::GetInstance(TestWorld.World.Get())))
 	{
 		return false;
 	}
@@ -235,7 +235,7 @@ bool FDreamWorldWidgetRecompileWithoutManagerTest::RunTest(const FString& Parame
 		FString::Join(StillRegistered, TEXT(", ")), FString());
 	TestFalse(TEXT("and the replaced tree is on its way out"), IsValid(FirstTree));
 	TestFalse(TEXT("its mesh went with it, before any collection"), FirstMeshWatch.IsValid());
-	TestEqual(TEXT("so nothing in that world is left drawing the old tree"), RegisteredMeshesIn(TestWorld.World).Num(), 0);
+	TestEqual(TEXT("so nothing in that world is left drawing the old tree"), RegisteredMeshesIn(TestWorld.World.Get()).Num(), 0);
 	return true;
 }
 

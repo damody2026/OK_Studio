@@ -302,7 +302,7 @@ namespace DreamDriverPieRigLocal
 			{
 				return EDreamDriverStepResult::Done;
 			}
-			UGameViewportClient* Client = InContext.World != nullptr ? InContext.World->GetGameViewport() : nullptr;
+			UGameViewportClient* Client = InContext.World.Get() != nullptr ? InContext.World->GetGameViewport() : nullptr;
 			FSceneViewport* SceneViewport = Client != nullptr ? Client->GetGameViewport() : nullptr;
 			const TSharedPtr<SViewport> ViewportWidget = Client != nullptr ? Client->GetGameViewportWidget() : TSharedPtr<SViewport>();
 			if (Client == nullptr)
@@ -712,7 +712,7 @@ bool FDreamDriverPieRig::UpdateTravel(FTravelRequest& InRequest)
 			InRequest.Phase = FTravelRequest::EPhase::Done;
 			return true;
 		}
-		UWorld* LeavingWorld = DriverContext->World;
+		UWorld* LeavingWorld = DriverContext->World.Get();
 		if (LeavingWorld == nullptr || GEditor == nullptr || GEditor->PlayWorld.Get() != LeavingWorld)
 		{
 			return FailTravel(InRequest, TEXT("the rig's world is not the editor's play world any more"));
@@ -847,8 +847,8 @@ void FDreamDriverPieRig::TearDownInputHost()
 	FDreamDriverContext& HostContext = *DriverContext;
 	// Only while the world the context points into is the live play world: after the session ends the
 	// pointers would be dangling, and the engine has already destroyed everything they named.
-	const bool bContextIsLive = HostContext.World != nullptr && GEditor != nullptr && GEditor->PlayWorld == HostContext.World;
-	if (bContextIsLive && (HostContext.InputActor != nullptr || HostContext.EventSystem != nullptr))
+	const bool bContextIsLive = HostContext.World.Get() != nullptr && GEditor != nullptr && GEditor->PlayWorld == HostContext.World.Get();
+	if (bContextIsLive && (HostContext.InputActor.Get() != nullptr || HostContext.EventSystem.Get() != nullptr))
 	{
 		DreamDriverGameHost::Teardown(HostContext);
 	}
@@ -1295,7 +1295,7 @@ FString FDreamDriverPieRig::BuildOnPlayWorld()
 	BuildContext.bEnginePumped = true;
 	BuildContext.CurrentTest = Test;
 	ViewportClient = Client;
-	if (!IsValid(BuildContext.Manager))
+	if (!IsValid(BuildContext.Manager.Get()))
 	{
 		return TEXT("the play world has no DreamUI manager");
 	}
@@ -1310,7 +1310,7 @@ FString FDreamDriverPieRig::BuildOnPlayWorld()
 		{
 			return FString::Printf(TEXT("the input actor could not be attached: %s"), *WhyNot);
 		}
-		if (!IsValid(BuildContext.EventSystem) || !IsValid(BuildContext.InputModule))
+		if (!IsValid(BuildContext.EventSystem.Get()) || !IsValid(BuildContext.InputModule.Get()))
 		{
 			return TEXT("the input actor was attached but the context has no event system or no input module");
 		}
@@ -1349,10 +1349,10 @@ FString FDreamDriverPieRig::BuildOnPlayWorld()
 		BuiltRoot->BeginPlay();
 	}
 
-	UDreamScreenSpaceRaycaster* BuiltRaycaster = NewObject<UDreamScreenSpaceRaycaster>(HostActor, NAME_None, RF_Transient);
+	UDreamScreenSpaceRaycaster* BuiltRaycaster = NewObject<UDreamScreenSpaceRaycaster>(HostActor.Get(), NAME_None, RF_Transient);
 	// The player the input actor speaks for, stated rather than assumed: LineTrace only asks raycasters
 	// whose user index is the event system's. The first player's when the level brought the event system.
-	BuiltRaycaster->SetUserIndex(IsValid(BuildContext.EventSystem) ? BuildContext.EventSystem->GetUserIndex() : 0);
+	BuiltRaycaster->SetUserIndex(IsValid(BuildContext.EventSystem.Get()) ? BuildContext.EventSystem->GetUserIndex() : 0);
 	BuiltRaycaster->SetRootCanvas(BuiltCanvas);
 	HostActor->AddInstanceComponent(BuiltRaycaster);
 	BuiltRaycaster->RegisterComponent();
@@ -1374,7 +1374,7 @@ FString FDreamDriverPieRig::BuildOnPlayWorld()
 bool FDreamDriverPieRig::RefreshCameraFromPlayer(FString* OutWhyNot)
 {
 	FDreamDriverContext& CameraContext = *DriverContext;
-	APlayerController* Controller = CameraContext.PlayerController;
+	APlayerController* Controller = CameraContext.PlayerController.Get();
 	if (Controller == nullptr)
 	{
 		if (OutWhyNot != nullptr)
@@ -1686,22 +1686,22 @@ void FDreamDriverPieRig::RestoreEditorState()
 
 UWorld* FDreamDriverPieRig::GetWorld() const
 {
-	return bAlive ? DriverContext->World : nullptr;
+	return bAlive ? DriverContext->World.Get() : nullptr;
 }
 
 APlayerController* FDreamDriverPieRig::GetPlayerController() const
 {
-	return bAlive ? DriverContext->PlayerController : nullptr;
+	return bAlive ? DriverContext->PlayerController.Get() : nullptr;
 }
 
 ULocalPlayer* FDreamDriverPieRig::GetLocalPlayer() const
 {
-	return bAlive ? DriverContext->LocalPlayer : nullptr;
+	return bAlive ? DriverContext->LocalPlayer.Get() : nullptr;
 }
 
 UGameViewportClient* FDreamDriverPieRig::GetViewportClient() const
 {
-	return bAlive ? ViewportClient : nullptr;
+	return bAlive ? ViewportClient.Get() : nullptr;
 }
 
 FSceneViewport* FDreamDriverPieRig::GetSceneViewport() const
@@ -1712,22 +1712,22 @@ FSceneViewport* FDreamDriverPieRig::GetSceneViewport() const
 
 UDreamWidget* FDreamDriverPieRig::Root() const
 {
-	return bAlive ? DriverContext->Root : nullptr;
+	return bAlive ? DriverContext->Root.Get() : nullptr;
 }
 
 UDreamCanvas* FDreamDriverPieRig::RootCanvas() const
 {
-	return bAlive ? DriverContext->RootCanvas : nullptr;
+	return bAlive ? DriverContext->RootCanvas.Get() : nullptr;
 }
 
 UDreamScreenSpaceRaycaster* FDreamDriverPieRig::Raycaster() const
 {
-	return bAlive ? DriverContext->Raycaster : nullptr;
+	return bAlive ? DriverContext->Raycaster.Get() : nullptr;
 }
 
 AActor* FDreamDriverPieRig::GetHostActor() const
 {
-	return bAlive ? HostActor : nullptr;
+	return bAlive ? HostActor.Get() : nullptr;
 }
 
 FDreamDriverContext& FDreamDriverPieRig::Context() const
@@ -1776,11 +1776,11 @@ UDreamWidget* FDreamDriverPieRig::MakeWidgetWithVisual(TSubclassOf<UDreamVisual>
 	UDreamWidget* InParent, const FVector2D& InSize, const FVector2D& InAnchoredPosition)
 {
 	FDreamDriverContext& MakeContext = *DriverContext;
-	if (!bAlive || MakeContext.World == nullptr)
+	if (!bAlive || MakeContext.World.Get() == nullptr)
 	{
 		return nullptr;
 	}
-	UDreamWidget* Parent = InParent != nullptr ? InParent : MakeContext.Root;
+	UDreamWidget* Parent = InParent != nullptr ? InParent : MakeContext.Root.Get();
 	if (!IsValid(Parent))
 	{
 		return nullptr;
@@ -1788,7 +1788,7 @@ UDreamWidget* FDreamDriverPieRig::MakeWidgetWithVisual(TSubclassOf<UDreamVisual>
 
 	// FDreamDriverRig::MakeWidget's order, for its reason: the visual last, once the widget has a
 	// parent and therefore a render canvas to be enrolled with.
-	UDreamWidget* NewWidget = NewObject<UDreamWidget>(MakeContext.World, NAME_None, RF_Transient);
+	UDreamWidget* NewWidget = NewObject<UDreamWidget>(MakeContext.World.Get(), NAME_None, RF_Transient);
 	NewWidget->SetDisplayName(InDisplayName);
 	NewWidget->SetWidth(InSize.X);
 	NewWidget->SetHeight(InSize.Y);
@@ -1800,7 +1800,7 @@ UDreamWidget* FDreamDriverPieRig::MakeWidgetWithVisual(TSubclassOf<UDreamVisual>
 		NewWidget->CreateNewVisual(InVisualClass);
 	}
 	// Begun, because the manager has: the rule the runtime's own creation roads apply.
-	if (IsValid(MakeContext.Manager) && MakeContext.Manager->HasBegunPlay() && !NewWidget->HasBegunPlay())
+	if (IsValid(MakeContext.Manager.Get()) && MakeContext.Manager->HasBegunPlay() && !NewWidget->HasBegunPlay())
 	{
 		NewWidget->BeginPlay();
 	}
@@ -1812,11 +1812,11 @@ UDreamWidget* FDreamDriverPieRig::MakeControl(TSubclassOf<UDreamUserWidget> InCl
 	UDreamWidget* InParent, const FVector2D& InSize, const FVector2D& InAnchoredPosition)
 {
 	FDreamDriverContext& MakeContext = *DriverContext;
-	if (!bAlive || MakeContext.World == nullptr || !IsValid(InClass))
+	if (!bAlive || MakeContext.World.Get() == nullptr || !IsValid(InClass))
 	{
 		return nullptr;
 	}
-	UDreamWidget* Parent = InParent != nullptr ? InParent : MakeContext.Root;
+	UDreamWidget* Parent = InParent != nullptr ? InParent : MakeContext.Root.Get();
 	if (!IsValid(Parent))
 	{
 		return nullptr;
@@ -1824,7 +1824,7 @@ UDreamWidget* FDreamDriverPieRig::MakeControl(TSubclassOf<UDreamUserWidget> InCl
 	// The runtime's own factory, exactly as the headless rig calls it; see FDreamDriverRig::MakeControl.
 	// Nothing like its EnsureGameInputHost is needed first: a play world has its player controller and
 	// its registered event system already.
-	UDreamUserWidget* Control = CreateDreamWidget(MakeContext.World, InClass, Parent,
+	UDreamUserWidget* Control = CreateDreamWidget(MakeContext.World.Get(), InClass, Parent,
 		[&InDisplayName, &InSize](UDreamUserWidget* InBuilt)
 		{
 			InBuilt->SetDisplayName(InDisplayName);
@@ -1894,7 +1894,7 @@ UDreamWorldSpaceRaycaster* FDreamDriverPieRig::AddWorldPointer()
 		return nullptr;
 	}
 	UDreamWorldSpaceRaycaster* Pointer = NewObject<UDreamWorldSpaceRaycaster>(Host, NAME_None, RF_Transient);
-	UDreamEventSystem* Events = DriverContext->EventSystem;
+	UDreamEventSystem* Events = DriverContext->EventSystem.Get();
 	Pointer->SetUserIndex(IsValid(Events) ? Events->GetUserIndex() : 0);
 	Host->AddInstanceComponent(Pointer);
 	Pointer->RegisterComponent();

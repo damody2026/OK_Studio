@@ -81,8 +81,8 @@ bool FDreamButtonWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FWorldButton Left = PlaceButton(Rig, Stage.Panel, TEXT("Left"), FVector2D(-120.0, 40.0));
-	const FWorldButton Right = PlaceButton(Rig, Stage.Panel, TEXT("Right"), FVector2D(120.0, 40.0));
+	const FWorldButton Left = PlaceButton(Rig, Stage.Panel.Get(), TEXT("Left"), FVector2D(-120.0, 40.0));
+	const FWorldButton Right = PlaceButton(Rig, Stage.Panel.Get(), TEXT("Right"), FVector2D(120.0, 40.0));
 	if (!TestTrue(TEXT("Two buttons with faces can be made on the panel"), Left.Button != nullptr && Right.Button != nullptr))
 	{
 		return false;

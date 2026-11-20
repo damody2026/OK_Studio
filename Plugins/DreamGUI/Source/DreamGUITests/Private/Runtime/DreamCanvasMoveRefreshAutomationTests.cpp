@@ -80,12 +80,12 @@ namespace DreamCanvasMoveRefreshTestLocal
 
 		bool Build(FAutomationTestBase& InTest, const TArray<EDreamUIBlendMode>& InBlends)
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 			if (!InTest.TestNotNull(TEXT("A game world with a UI manager"), Manager))
 			{
 				return false;
 			}
-			UDreamWidget* Root = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+			UDreamWidget* Root = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 			Root->SetWidth(400.0f);
 			Root->SetHeight(400.0f);
 			Root->OnRegister();
@@ -97,7 +97,7 @@ namespace DreamCanvasMoveRefreshTestLocal
 			Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
 			for (int32 Index = 0; Index < InBlends.Num(); ++Index)
 			{
-				UDreamWidget* Block = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+				UDreamWidget* Block = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 				Block->SetWidth(40.0f);
 				Block->SetHeight(40.0f);
 				Block->OnRegister();
@@ -275,14 +275,14 @@ namespace DreamCanvasMoveRefreshTestLocal
 
 		bool Build(FAutomationTestBase& InTest, int32 InCount)
 		{
-			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World);
+			Manager = UDreamUIManagerWorldSubsystem::GetInstance(World.World.Get());
 			if (!InTest.TestNotNull(TEXT("A game world with a UI manager"), Manager))
 			{
 				return false;
 			}
 			for (int32 Index = 0; Index < InCount; ++Index)
 			{
-				UDreamWidget* Root = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+				UDreamWidget* Root = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 				Root->SetWidth(200.0f);
 				Root->SetHeight(200.0f);
 				Root->OnRegister();
@@ -292,7 +292,7 @@ namespace DreamCanvasMoveRefreshTestLocal
 					return false;
 				}
 				Canvas->SetRenderMode(EDreamRenderMode::WorldSpace);
-				UDreamWidget* Block = NewObject<UDreamWidget>(World.World, NAME_None, RF_Transient);
+				UDreamWidget* Block = NewObject<UDreamWidget>(World.World.Get(), NAME_None, RF_Transient);
 				Block->SetWidth(40.0f + Index);
 				Block->SetHeight(30.0f);
 				Block->OnRegister();

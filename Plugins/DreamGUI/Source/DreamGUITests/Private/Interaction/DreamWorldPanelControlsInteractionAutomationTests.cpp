@@ -42,10 +42,10 @@ namespace DreamWorldPanelControlsTestLocal
 
 	struct FWorldStage
 	{
-		UDreamDriverWorldSpaceRaycaster* Pointer = nullptr;
-		UDreamWidget* Panel = nullptr;
+		TWeakObjectPtr<UDreamDriverWorldSpaceRaycaster> Pointer;
+		TWeakObjectPtr<UDreamWidget> Panel;
 
-		bool IsReady() const { return Pointer != nullptr && Panel != nullptr; }
+		bool IsReady() const { return Pointer.IsValid() && Panel.IsValid(); }
 	};
 
 	/** The world pointer, then a 500 by 400 panel 300 cm ahead of it, facing it: the pointer exists before the panel begins. */
@@ -55,8 +55,8 @@ namespace DreamWorldPanelControlsTestLocal
 		Stage.Pointer = DreamDriverWorld::AttachWorldPointer(InRig,
 			DreamDriverWorld::MakeView(FVector::ZeroVector, FRotator::ZeroRotator, 90.0f, ViewportSize), EDreamWorldPointerSource::Mouse);
 		Stage.Panel = DreamDriverWorld::MakeWorldPanel(InRig, TEXT("Panel"), FTransform(FVector(300.0, 0.0, 0.0)), FVector2D(500.0, 400.0));
-		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer);
-		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel);
+		InTest.TestNotNull(TEXT("A world pointer was attached to the rig"), Stage.Pointer.Get());
+		InTest.TestNotNull(TEXT("A world-space panel was built in front of it"), Stage.Panel.Get());
 		return Stage;
 	}
 }
@@ -89,7 +89,7 @@ bool FDreamWorldPanelScrollBoxWheelTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	// Twenty rows of 60 in a 240-tall window on the panel: plenty to scroll.
-	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Panel, FVector2D(300.0, 240.0));
+	UDreamScrollBox* Box = Rig.MakeControl<UDreamScrollBox>(TEXT("Box"), Stage.Panel.Get(), FVector2D(300.0, 240.0));
 	if (!TestTrue(TEXT("The box came up on the panel with a viewport and a content node"),
 		Box != nullptr && Box->ViewportNode != nullptr && Box->GetContentNode() != nullptr))
 	{
@@ -156,7 +156,7 @@ bool FDreamWorldPanelListClickTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamListView* List = Rig.MakeControl<UDreamListView>(TEXT("List"), Stage.Panel, FVector2D(300.0, 240.0));
+	UDreamListView* List = Rig.MakeControl<UDreamListView>(TEXT("List"), Stage.Panel.Get(), FVector2D(300.0, 240.0));
 	if (!TestNotNull(TEXT("A list was made on the panel"), List))
 	{
 		return false;

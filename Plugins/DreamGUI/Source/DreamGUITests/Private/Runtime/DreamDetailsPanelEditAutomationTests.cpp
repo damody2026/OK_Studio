@@ -66,8 +66,8 @@ bool FDreamRenderTransformDetailsEditTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamDetailsEditTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Widget = MakeWidget(TestWorld.World, Root, TEXT("Widget"), 100.0f, 100.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Widget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Widget"), 100.0f, 100.0f);
 	const FVector Before = Widget->GetWorldTransform().GetLocation();
 
 	if (!EditAsDetailsPanel<FVector>(*this, Widget, TEXT("RenderTranslation"), FVector(0.0, 200.0, 0.0)))return false;
@@ -95,9 +95,9 @@ bool FDreamPerspectiveDetailsEditTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamDetailsEditTestLocal;
 	FScopedGameWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 400.0f, 300.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 100.0f, 140.0f);
 
 	TestFalse(TEXT("No scope to begin with"), Card->HasInheritedPerspective());
 

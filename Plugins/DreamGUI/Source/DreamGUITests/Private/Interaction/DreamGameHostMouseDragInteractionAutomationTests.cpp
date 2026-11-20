@@ -73,7 +73,7 @@ namespace DreamGameHostMouseDragTestLocal
 	/** Whether InKey is held down in the rig's player controller's own input right now. */
 	bool ControllerHoldsKey(const FDreamDriverContext& InContext, const FKey& InKey)
 	{
-		return InContext.PlayerController != nullptr && InContext.PlayerController->IsInputKeyDown(InKey);
+		return InContext.PlayerController.Get() != nullptr && InContext.PlayerController->IsInputKeyDown(InKey);
 	}
 }
 

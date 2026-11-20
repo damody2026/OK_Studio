@@ -30,11 +30,11 @@ namespace DreamInteractionTestLocal
 {
 	struct FScopedWorld
 	{
-		UWorld* World = nullptr;
+		TWeakObjectPtr<UWorld> World;
 		// Editor world for the same reason the perspective fixtures use one: a canvas resizes its
 		// root widget from a cached viewport size, which is a 2x2 fallback in a headless game world.
 		FScopedWorld() { World = UWorld::CreateWorld(EWorldType::Editor, false); }
-		~FScopedWorld() { if (World) { World->DestroyWorld(false); } }
+		~FScopedWorld() { if (UWorld* Owned = World.Get()) { Owned->DestroyWorld(false); } }
 	};
 
 	UDreamWidget* MakeWidget(UWorld* World, UDreamWidget* Parent, const TCHAR* Name, float W = 100.0f, float H = 100.0f)
@@ -64,10 +64,10 @@ bool FDreamInteractionDragSourceTest::RunTest(const FString& Parameters)
 	// and sits under the cursor, so it wins its own hit test; the drop event is then dispatched only
 	// when the widget under the cursor is NOT the drag source, which is never.
 	FScopedWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Root, TEXT("Card"));
-	UDreamWidget* CardArt = MakeWidget(TestWorld.World, Card, TEXT("CardArt"));
-	UDreamWidget* Slot = MakeWidget(TestWorld.World, Root, TEXT("Slot"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Root, TEXT("Card"));
+	UDreamWidget* CardArt = MakeWidget(TestWorld.World.Get(), Card, TEXT("CardArt"));
+	UDreamWidget* Slot = MakeWidget(TestWorld.World.Get(), Root, TEXT("Slot"));
 
 	TestTrue(TEXT("The dragged widget itself is ignored"),
 		DreamPointerPolicy::ShouldIgnoreHitWhileDragging(Card, Card, true));
@@ -99,9 +99,9 @@ bool FDreamInteractionCursorTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamInteractionTestLocal;
 	FScopedWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, Root, TEXT("Panel"));
-	UDreamWidget* Button = MakeWidget(TestWorld.World, Panel, TEXT("Button"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), Root, TEXT("Panel"));
+	UDreamWidget* Button = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Button"));
 
 	EMouseCursor::Type Cursor = EMouseCursor::None;
 	UDreamWidget* Stack[] = { Button, Panel, Root };
@@ -146,10 +146,10 @@ bool FDreamInteractionInteractableTest::RunTest(const FString& Parameters)
 	// uGUI's CanvasGroup.interactable, and the escape hatch that goes with it. Nothing covered this,
 	// and it decides whether a whole panel greys out -- one of the most visible behaviours there is.
 	FScopedWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, Root, TEXT("Panel"));
-	UDreamWidget* Button = MakeWidget(TestWorld.World, Panel, TEXT("Button"));
-	UDreamWidget* Escapee = MakeWidget(TestWorld.World, Panel, TEXT("Escapee"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), Root, TEXT("Panel"));
+	UDreamWidget* Button = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Button"));
+	UDreamWidget* Escapee = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Escapee"));
 
 	TestTrue(TEXT("Everything starts interactable"),
 		Root->GetInteractableInHierarchy() && Panel->GetInteractableInHierarchy() && Button->GetInteractableInHierarchy());
@@ -178,15 +178,15 @@ bool FDreamInteractionToggleGroupTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamInteractionTestLocal;
 	FScopedWorld TestWorld;
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* GroupWidget = MakeWidget(TestWorld.World, Root, TEXT("Group"));
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* GroupWidget = MakeWidget(TestWorld.World.Get(), Root, TEXT("Group"));
 	UUIToggleGroup* Group = GroupWidget->AddComponent<UUIToggleGroup>();
 	if (!TestNotNull(TEXT("Group created"), Group))return false;
 
 	TArray<UUIToggle*> Toggles;
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
-		UDreamWidget* W = MakeWidget(TestWorld.World, GroupWidget, *FString::Printf(TEXT("Toggle%d"), Index));
+		UDreamWidget* W = MakeWidget(TestWorld.World.Get(), GroupWidget, *FString::Printf(TEXT("Toggle%d"), Index));
 		UUIToggle* T = W->AddComponent<UUIToggle>();
 		if (!TestNotNull(TEXT("Toggle created"), T))return false;
 		T->SetToggleGroup(Group);

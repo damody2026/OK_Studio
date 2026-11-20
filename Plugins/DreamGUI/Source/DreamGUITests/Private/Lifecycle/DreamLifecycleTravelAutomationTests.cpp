@@ -182,14 +182,14 @@ namespace DreamLifecycleTravelTestLocal
 	/** The world the session is in now has DreamGUI up, its own and nobody else's. */
 	void ExpectBuiltAgain(FAutomationTestBase& InTest, const FString& InWhen, FDreamDriverContext& InContext, const FWorldSnapshot* InOld)
 	{
-		UWorld* World = InContext.World;
+		UWorld* World = InContext.World.Get();
 		UDreamUIManagerWorldSubsystem* Manager = UDreamUIManagerWorldSubsystem::GetInstance(World);
 		if (!InTest.TestNotNull(InWhen + TEXT(": the world has a UI manager"), Manager))
 		{
 			return;
 		}
 		InTest.TestTrue(InWhen + TEXT(": ...that is up and has begun play"), Manager->IsInitialized() && !Manager->HasTornDownWorld() && Manager->HasBegunPlay());
-		InTest.TestTrue(InWhen + TEXT(": ...the one the rig's context names"), InContext.Manager == Manager);
+		InTest.TestTrue(InWhen + TEXT(": ...the one the rig's context names"), InContext.Manager.Get() == Manager);
 		InTest.TestNotNull(InWhen + TEXT(": ...with paint rows of its own"), Manager->GetPaintRowsTexture());
 		if (InOld != nullptr)
 		{
@@ -198,7 +198,7 @@ namespace DreamLifecycleTravelTestLocal
 		InTest.TestEqual(InWhen + TEXT(": one play world's UI manager is alive, this one"), CountPlayWorldManagers(), 1);
 
 		InTest.TestTrue(InWhen + TEXT(": the rig's screen canvas is registered with it"),
-			InContext.RootCanvas != nullptr && Manager->IsCanvasStillRegistered(InContext.RootCanvas));
+			InContext.RootCanvas.Get() != nullptr && Manager->IsCanvasStillRegistered(InContext.RootCanvas.Get()));
 		int32 Canvases = 0;
 		int32 ForeignCanvases = 0;
 		for (const TWeakObjectPtr<UDreamCanvas>& Canvas : Manager->GetAllCanvasArray())
@@ -218,7 +218,7 @@ namespace DreamLifecycleTravelTestLocal
 		}
 		InTest.TestEqual(InWhen + TEXT(": every widget registered with it is this world's"), ForeignWidgets, 0);
 
-		UDreamWidget* Title = InContext.Root != nullptr ? InContext.Root->FindChildByDisplayName(TEXT("Title"), /*IncludeChildren*/ true) : nullptr;
+		UDreamWidget* Title = InContext.Root.Get() != nullptr ? InContext.Root->FindChildByDisplayName(TEXT("Title"), /*IncludeChildren*/ true) : nullptr;
 		const UDreamText* Text = Title != nullptr ? Cast<UDreamText>(Title->GetVisual()) : nullptr;
 		InTest.TestTrue(InWhen + TEXT(": the painted title holds a text table in this world's paint rows"), Text != nullptr && Text->GetPaintTextRow() != INDEX_NONE);
 		int32 TextureRows = 0;

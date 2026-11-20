@@ -88,7 +88,7 @@ bool FDreamListRowDragDropWorldTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const TArray<UObject*> Items = DreamListsInteraction::MakeItems(7);
-	UDreamListView* List = Rig.MakeControl<UDreamListView>(TEXT("List"), Stage.Panel, FVector2D(300.0, 7.0 * RowHeight), FVector2D(-60.0, 0.0));
+	UDreamListView* List = Rig.MakeControl<UDreamListView>(TEXT("List"), Stage.Panel.Get(), FVector2D(300.0, 7.0 * RowHeight), FVector2D(-60.0, 0.0));
 	if (!TestNotNull(TEXT("A list came up on the panel"), List))
 	{
 		return false;
@@ -110,7 +110,7 @@ bool FDreamListRowDragDropWorldTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	TestNearlyEqual(TEXT("A row is seen its pitch in panel units tall"), Fourth->Max.Y - Fourth->Min.Y, static_cast<double>(RowHeight) * PixelsPerUnit(), 1.5);
-	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer);
+	const double FirstMove = DreamControlsWorldTest::PastDragThreshold(Stage.Pointer.Get());
 
 	for (int32 DropIndex = 0; DropIndex < Drops.Num(); ++DropIndex)
 	{

@@ -1,6 +1,6 @@
 ---
 title: Contributing
-description: How to report a problem, propose a change and get a pull request merged — the issue forms and the environment command, the repository's layout, building in a host project, the Quick test gate, what to update with a change, the docs and translation flow, and AI-assisted contributions.
+description: How to report a problem, propose a change and get a pull request merged — the issue forms and the environment command, the repository's layout, building in a host project, the Quick test gate, what a stored pointer is allowed to be, what to update with a change, the docs and translation flow, and AI-assisted contributions.
 ---
 
 DreamGUI takes bug reports, proposals, docs fixes and pull requests on
@@ -70,6 +70,62 @@ It prints one line that starts with `RESULT`: paste that line into the pull requ
 the pixel tests, `Designer`, `Pie`, `All`), the report, known issues and the static checks' rules are on
 [The automation suite](../tools/tests.md). `python Tools/Tests/static_checks.py` runs the static checks alone,
 without an engine.
+
+## Changing what a stored pointer is
+
+A member that holds a `UObject` is a `TWeakObjectPtr` unless something names it strongly: a raw pointer is an address
+that cannot say the object has gone, and a `TObjectPtr` keeps nothing alive outside a `UPROPERTY`. A member that holds
+an RHI resource is a counted reference (`FTextureRHIRef`, `FBufferRHIRef`, `TRefCountPtr<...>`); RHI objects have no
+weak form, so the choice is to hold one or not to store it. A pointer kept only to answer "is this still the same
+thing?" is not an identity: an address freed and handed out again compares equal. Keep a counted reference, or a serial
+of your own -- never the address.
+
+Changing one is mechanical, but only the compiler can find every caller. These are the shapes it reports, and the two
+it does not:
+
+| Shape | Before | After |
+| --- | --- | --- |
+| Passed to something taking a raw pointer | `DrawFrames(Ctx.World, 2)` | `DrawFrames(Ctx.World.Get(), 2)` |
+| Assigned to a raw local | `UWorld* W = Scoped.World;` | `... = Scoped.World.Get();` |
+| Compared with `nullptr` | `if (Kinds.Surface != nullptr)` | `if (Kinds.Surface.IsValid())` |
+| An out parameter | `Place(..., Kinds.CanvasRoot)` | take it in a raw local, then store it |
+| A braced list or a cast | `{ static_cast<AActor*>(Rendered), ... }` | `.Get()` first, then cast |
+| **Used as a truth value** | `if (Member)`, `!Member`, `Member ? a : b` | **does not compile**: `TWeakObjectPtr` deletes `operator bool` on purpose, "to avoid resolving weak pointers too often -- use `Get()` once in a function" |
+| **Dereferenced with `->`** | `Kinds.Actor->GetWidget()` | **compiles unchanged, and means something else** |
+
+The last row is the one that costs an afternoon. `TWeakObjectPtr::operator->` returns `Get()`, so every `->` line goes
+on compiling -- and where the object has gone it now dereferences null and crashes on the spot, instead of reading
+freed memory and sometimes getting away with it. That is the better behaviour and the reason for the change, but it
+turns "passes most of the time" into "fails every time", so a test that starts failing after a change like this is
+usually reporting a lifetime bug that was always there. Record it, say which step it fails at, and fix it separately --
+do not revert the pointer.
+
+Two more differences in meaning, both intended: `Weak == nullptr` is `!IsValid()`, so it is also true for an object
+that has been collected, where the raw comparison only asked whether the pointer was set; and comparing a weak pointer
+with a raw one builds a `TWeakObjectPtrBase` to do it, so in a path that runs every frame write `Member.Get() == Other`
+instead.
+
+So in a struct whose members become weak, read every `->` on them before trusting the build, and prefer an explicit
+`if (UWorld* World = Ctx.World.Get())` over leaning on `operator->`. Nothing else has to change: a line that only
+calls through the pointer is already correct.
+
+**What counts as stored.** `stored-raw-pointer` reads headers and `.cpp` files, but a type declared inside a function
+body is read only when that function hands an instance of it to another thread -- a render command, an async task. Such
+a type cannot be named anywhere else, so an instance of it lives in the call that made it, and the call is what keeps
+whatever it points at; `ParallelFor` does not change that, because it joins before the call returns. Of the 514 members
+a first `.cpp` pass reported, 511 were exactly this per-call working data.
+
+**What this check does not and cannot catch: 36 captured lifetimes.** A lambda that captures one of those local structs
+**by reference** -- bound to a delegate, or handed to `ParallelFor` -- is a different hazard, and the `.cpp` pass found
+36 of them. What dangles there is the struct itself, not the member: naming one of its pointers weakly would not fix
+anything, because the weak pointer would be read through a reference to a frame that has gone. That is a question about
+the lifetime of a capture, not about what a stored pointer may be, so it needs a check of its own and has not been
+done. **A clean `stored-raw-pointer` run says nothing about those 36.**
+
+**An allow says who guarantees it, and when that stops being true.** A reason that names an owner is only half of it:
+the half that rots is the condition. Write both, as the sprite atlas's does -- a `UTexture` releases its resource
+through a render command enqueued after this one, *so a texture made to disappear without going through its own release
+enqueue would break this*. A guarantee whose end you cannot state is one you have not found.
 
 ## What to update with a change
 

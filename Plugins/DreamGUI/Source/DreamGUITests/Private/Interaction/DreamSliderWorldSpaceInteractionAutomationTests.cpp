@@ -86,7 +86,7 @@ bool FDreamSliderWorldFingerTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Stage.Panel, SliderSize, FVector2D(-20.0, 60.0));
+	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Stage.Panel.Get(), SliderSize, FVector2D(-20.0, 60.0));
 	Rig.PumpFrames(2);
 	if (!TestTrue(TEXT("The slider came up on the panel with a handle and a handle area"), HasParts(Slider)))
 	{
@@ -109,7 +109,7 @@ bool FDreamSliderWorldFingerTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("The finger's drag along the travel completes"),
 		Rig.Driver()->Sequence()
 			.TouchDown(0, LandAt)
-			.TouchMoveTo(0, LandAt + FVector2D(DreamControlsWorldTest::PastDragThreshold(Stage.Pointer), 0.0))
+			.TouchMoveTo(0, LandAt + FVector2D(DreamControlsWorldTest::PastDragThreshold(Stage.Pointer.Get()), 0.0))
 			.TouchMoveTo(0, (LandAt + LiftAt) * 0.5)
 			.TouchMoveTo(0, LiftAt)
 			.WaitFrames(1)
@@ -149,8 +149,8 @@ bool FDreamSliderWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Stage.Panel, SliderSize, FVector2D(60.0, 60.0));
-	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Stage.Panel, FVector2D(80.0, 40.0), FVector2D(-200.0, 60.0));
+	UDreamSlider* Slider = Rig.MakeControl<UDreamSlider>(TEXT("Volume"), Stage.Panel.Get(), SliderSize, FVector2D(60.0, 60.0));
+	UDreamButton* Left = Rig.MakeControl<UDreamButton>(TEXT("Left"), Stage.Panel.Get(), FVector2D(80.0, 40.0), FVector2D(-200.0, 60.0));
 	Rig.PumpFrames(2);
 	if (!TestTrue(TEXT("The slider and a button left of it came up on the panel"), HasParts(Slider) && Left != nullptr && Left->FaceNode != nullptr))
 	{

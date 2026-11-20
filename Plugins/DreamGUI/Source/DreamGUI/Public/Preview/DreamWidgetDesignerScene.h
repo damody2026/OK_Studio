@@ -45,6 +45,7 @@ public:
 	UDreamWidget* GetRootAgent()const { return RootAgentWidget.Get(); }
 private:
 	TStrongObjectPtr<UDreamWidget> RootAgentWidget = nullptr;
+	// static-checks: allow(stored-raw-pointer) Guaranteed by the preview world: FPreviewScene owns what it spawns into itself and destroys it with itself.
 	UStaticMeshComponent* SkySphereComponent = nullptr;
 };
 #endif

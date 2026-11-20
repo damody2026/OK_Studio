@@ -35,12 +35,12 @@ bool FDreamTweenSequenceSelfContainmentTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenSequenceCycleTestLocal;
 	DreamTests::FScopedGameInstanceWorld World;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(World.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager)) return false;
 	for (int32 EntryPoint = 0; EntryPoint < 4; ++EntryPoint)
 	{
 		float Value = 0;
-		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(World.World);
+		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(World.World.Get());
 		Sequence->SetTickType(EDreamTweenTickType::Manual);
 		Sequence->Append(nullptr, MakeChild(Value));
 		const float Duration = Sequence->GetDuration();

@@ -15,13 +15,13 @@ namespace DreamMenuAnchorProviderReentryTestLocal
 	bool RunCase(FAutomationTestBase& InTest, bool bInReturnContent)
 	{
 		DreamTests::FScopedGameWorld TestWorld;
-		TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World));
+		TDreamTestControl<UDreamWidget> Root(NewObject<UDreamWidget>(TestWorld.World.Get()));
 		Root->SetWidth(1000.0f);
 		Root->SetHeight(600.0f);
 		Root->OnRegister();
 		// A registered hierarchy without a screen root uses the anchor's documented in-place
 		// popup path. No input player or operating-system focus is needed to cancel its provider.
-		UDreamMenuAnchor* Anchor = NewObject<UDreamMenuAnchor>(TestWorld.World);
+		UDreamMenuAnchor* Anchor = NewObject<UDreamMenuAnchor>(TestWorld.World.Get());
 		Anchor->StyleSource = EDreamUIStyleSource::Inline;
 		Anchor->SetWidth(160.0f);
 		Anchor->SetHeight(40.0f);
@@ -32,12 +32,12 @@ namespace DreamMenuAnchorProviderReentryTestLocal
 		if (!InTest.TestNotNull(TEXT("the anchor realized a popup"), Popup))return false;
 		InTest.TestFalse(TEXT("a new anchor starts with its popup asleep"), Popup->GetWidgetActive());
 
-		UDreamWidget* Content = NewObject<UDreamWidget>(TestWorld.World);
+		UDreamWidget* Content = NewObject<UDreamWidget>(TestWorld.World.Get());
 		Content->SetWidth(120.0f);
 		Content->SetHeight(80.0f);
 		Content->OnRegister();
 		if (!InTest.TestTrue(TEXT("the provider's real content is owned by the same registered hierarchy"), Content->TrySetParent(Root.Get(), false)))return false;
-		TStrongObjectPtr<UDreamMenuAnchorProviderReentryProbe> Probe(NewObject<UDreamMenuAnchorProviderReentryProbe>(TestWorld.World));
+		TStrongObjectPtr<UDreamMenuAnchorProviderReentryProbe> Probe(NewObject<UDreamMenuAnchorProviderReentryProbe>(TestWorld.World.Get()));
 		Probe->Anchor = Anchor;
 		Probe->Content = Content;
 		Probe->bReturnContentOnFirstCall = bInReturnContent;

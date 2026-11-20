@@ -127,8 +127,8 @@ bool FDreamGameHostProbeStructureTest::RunTest(const FString& Parameters)
 		const FDreamDriverContext& Context = Rig.Context();
 		UGameInstance* GameInstance = Rig.GetGameInstance();
 		APlayerController* Controller = Rig.GetPlayerController();
-		ULocalPlayer* LocalPlayer = Context.LocalPlayer;
-		AActor* InputActor = Context.InputActor;
+		ULocalPlayer* LocalPlayer = Context.LocalPlayer.Get();
+		AActor* InputActor = Context.InputActor.Get();
 
 		// The player.
 		if (!TestNotNull(*FString::Printf(TEXT("[%s] 1. The rig has a game instance"), Case.Name), GameInstance)
@@ -210,7 +210,7 @@ bool FDreamGameHostProbeEnhancedActionTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	APlayerController* Controller = Rig.GetPlayerController();
-	ULocalPlayer* LocalPlayer = Rig.Context().LocalPlayer;
+	ULocalPlayer* LocalPlayer = Rig.Context().LocalPlayer.Get();
 	ADreamDriverEnhancedInputActor* InputActor = Cast<ADreamDriverEnhancedInputActor>(Rig.Context().InputActor);
 	if (!TestNotNull(TEXT("1. There is a player controller"), Controller)
 		|| !TestNotNull(TEXT("2. There is a local player"), LocalPlayer)
@@ -287,7 +287,7 @@ bool FDreamGameHostProbeLegacyBindingTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	APlayerController* Controller = Rig.GetPlayerController();
-	AActor* InputActor = Rig.Context().InputActor;
+	AActor* InputActor = Rig.Context().InputActor.Get();
 	if (!TestNotNull(TEXT("1. There is a player controller"), Controller)
 		|| !TestNotNull(TEXT("2. There is an input actor"), InputActor)
 		|| !TestNotNull(TEXT("3. with an input component"), InputActor->InputComponent.Get()))
@@ -336,7 +336,7 @@ bool FDreamGameHostProbeDeferredRebuildTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	APlayerController* Controller = Rig.GetPlayerController();
-	ULocalPlayer* LocalPlayer = Rig.Context().LocalPlayer;
+	ULocalPlayer* LocalPlayer = Rig.Context().LocalPlayer.Get();
 	UEnhancedPlayerInput* PlayerInput = Controller != nullptr ? Cast<UEnhancedPlayerInput>(Controller->PlayerInput) : nullptr;
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer != nullptr ? LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
 	if (!TestNotNull(TEXT("1. The player's PlayerInput is an EnhancedPlayerInput"), PlayerInput)

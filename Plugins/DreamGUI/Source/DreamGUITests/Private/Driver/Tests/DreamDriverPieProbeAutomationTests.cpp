@@ -315,7 +315,7 @@ bool FDreamDriverPieProbeTwoSessionsTest::RunTest(const FString& Parameters)
 			// that never began an edit would pass it for nothing.
 			TestNotNull(TEXT("While the first session edits a field, a field is being edited"), UUITextInput::GetActiveTextInput());
 			TestTrue(TEXT("...and the character that reached it turned the session's \"a host delivers characters\" switch on"),
-				UUITextInput::IsHostDeliveringCharacterEvents(InContext.World));
+				UUITextInput::IsHostDeliveringCharacterEvents(InContext.World.Get()));
 		});
 		Steps.PerformLatent();
 	}

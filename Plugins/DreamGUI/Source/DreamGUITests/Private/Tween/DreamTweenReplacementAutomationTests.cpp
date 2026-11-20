@@ -57,8 +57,8 @@ bool FDreamTweenReplacementLaterStartWinsTest::RunTest(const FString& Parameters
 {
 	using namespace DreamTweenReplacementTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
-	UDreamVisualEmpty* Target = NewObject<UDreamVisualEmpty>(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
+	UDreamVisualEmpty* Target = NewObject<UDreamVisualEmpty>(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager) || !TestNotNull(TEXT("and a target"), Target))
 	{
 		return false;
@@ -66,8 +66,8 @@ bool FDreamTweenReplacementLaterStartWinsTest::RunTest(const FString& Parameters
 
 	// A fade in, then at once a fade out of the same property: the fade out stops the fade in when it starts.
 	FTweenedFloat Opacity;
-	UDreamTweener* FadeIn = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 1.0f, Target, 1);
-	UDreamTweener* FadeOut = MakeVerbTween(TestWorld.World, Opacity, 0.0f, 1.0f, Target, 1);
+	UDreamTweener* FadeIn = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 1.0f, Target, 1);
+	UDreamTweener* FadeOut = MakeVerbTween(TestWorld.World.Get(), Opacity, 0.0f, 1.0f, Target, 1);
 	Manager->ManualTick(0.1f);
 	TestTrue(TEXT("The earlier tween was stopped"), FadeIn->IsMarkedToKill());
 	TestTrue(TEXT("and the later runs"), Manager->IsTweening(FadeOut) && !FadeOut->IsMarkedToKill());
@@ -77,17 +77,17 @@ bool FDreamTweenReplacementLaterStartWinsTest::RunTest(const FString& Parameters
 	// Another property of the same target is left alone.
 	FTweenedFloat Scale;
 	FTweenedFloat Angle;
-	UDreamTweener* ScaleTween = MakeVerbTween(TestWorld.World, Scale, 2.0f, 1.0f, Target, 2);
-	UDreamTweener* AngleTween = MakeVerbTween(TestWorld.World, Angle, 90.0f, 1.0f, Target, 4);
+	UDreamTweener* ScaleTween = MakeVerbTween(TestWorld.World.Get(), Scale, 2.0f, 1.0f, Target, 2);
+	UDreamTweener* AngleTween = MakeVerbTween(TestWorld.World.Get(), Angle, 90.0f, 1.0f, Target, 4);
 	Manager->ManualTick(0.1f);
 	TestFalse(TEXT("A tween of another property is not stopped"), ScaleTween->IsMarkedToKill());
 	TestFalse(TEXT("nor does it stop the other"), AngleTween->IsMarkedToKill());
 
 	// The same property of another target is left alone too.
-	UDreamVisualEmpty* Other = NewObject<UDreamVisualEmpty>(TestWorld.World);
+	UDreamVisualEmpty* Other = NewObject<UDreamVisualEmpty>(TestWorld.World.Get());
 	FTweenedFloat OtherOpacity;
-	UDreamTweener* Mine = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 1.0f, Target, 1);
-	UDreamTweener* Theirs = MakeVerbTween(TestWorld.World, OtherOpacity, 1.0f, 1.0f, Other, 1);
+	UDreamTweener* Mine = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 1.0f, Target, 1);
+	UDreamTweener* Theirs = MakeVerbTween(TestWorld.World.Get(), OtherOpacity, 1.0f, 1.0f, Other, 1);
 	Manager->ManualTick(0.1f);
 	TestFalse(TEXT("Another target's tween of the same property is not stopped"), Mine->IsMarkedToKill() || Theirs->IsMarkedToKill());
 	return true;
@@ -102,8 +102,8 @@ bool FDreamTweenReplacementDelayedLaterTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenReplacementTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
-	UDreamVisualEmpty* Target = NewObject<UDreamVisualEmpty>(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
+	UDreamVisualEmpty* Target = NewObject<UDreamVisualEmpty>(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager) || !TestNotNull(TEXT("and a target"), Target))
 	{
 		return false;
@@ -112,8 +112,8 @@ bool FDreamTweenReplacementDelayedLaterTest::RunTest(const FString& Parameters)
 	// A fade in now and a fade out two seconds later, asked for in that order: the fade in starting does not stop the
 	// fade out waiting its turn, and the fade out starting takes over.
 	FTweenedFloat Opacity;
-	UDreamTweener* FadeIn = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 0.5f, Target, 1);
-	UDreamTweener* FadeOut = MakeVerbTween(TestWorld.World, Opacity, 0.0f, 0.5f, Target, 1, /*Delay*/ 2.0f);
+	UDreamTweener* FadeIn = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 0.5f, Target, 1);
+	UDreamTweener* FadeOut = MakeVerbTween(TestWorld.World.Get(), Opacity, 0.0f, 0.5f, Target, 1, /*Delay*/ 2.0f);
 	Manager->ManualTick(0.1f);
 	TestFalse(TEXT("A later tween that has not started is left to start"), FadeOut->IsMarkedToKill());
 	Manager->ManualTick(0.5f);
@@ -123,8 +123,8 @@ bool FDreamTweenReplacementDelayedLaterTest::RunTest(const FString& Parameters)
 	TestNearlyEqual(TEXT("and the fade out follows it"), *Opacity.Value, 0.0f, 0.001f);
 
 	// Asked for the other way round -- the delayed one first -- the one asked for last wins, as a command does.
-	UDreamTweener* LateFadeOut = MakeVerbTween(TestWorld.World, Opacity, 0.0f, 0.5f, Target, 1, /*Delay*/ 2.0f);
-	UDreamTweener* NowFadeIn = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 0.5f, Target, 1);
+	UDreamTweener* LateFadeOut = MakeVerbTween(TestWorld.World.Get(), Opacity, 0.0f, 0.5f, Target, 1, /*Delay*/ 2.0f);
+	UDreamTweener* NowFadeIn = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 0.5f, Target, 1);
 	Manager->ManualTick(0.1f);
 	TestTrue(TEXT("An earlier tween still waiting is stopped by a later one that starts"), LateFadeOut->IsMarkedToKill());
 	TestFalse(TEXT("which runs"), NowFadeIn->IsMarkedToKill());
@@ -140,8 +140,8 @@ bool FDreamTweenReplacementExemptionsTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTweenReplacementTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
-	UDreamVisualEmpty* Target = NewObject<UDreamVisualEmpty>(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
+	UDreamVisualEmpty* Target = NewObject<UDreamVisualEmpty>(TestWorld.World.Get());
 	if (!TestNotNull(TEXT("The world has a tween manager"), Manager) || !TestNotNull(TEXT("and a target"), Target))
 	{
 		return false;
@@ -151,18 +151,18 @@ bool FDreamTweenReplacementExemptionsTest::RunTest(const FString& Parameters)
 	// started beside the sequence does not stop either -- the sequence schedules its own.
 	{
 		FTweenedFloat Opacity;
-		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(TestWorld.World);
+		UDreamTweenerSequence* Sequence = UDreamTweenManager::CreateSequence(TestWorld.World.Get());
 		if (!TestNotNull(TEXT("A sequence is made"), Sequence))
 		{
 			return false;
 		}
 		Sequence->SetTickType(EDreamTweenTickType::Manual);
-		UDreamTweener* In = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 0.5f, Target, 1);
-		Sequence->Append(TestWorld.World, In);
-		UDreamTweener* Out = MakeVerbTween(TestWorld.World, Opacity, 0.0f, 0.5f, Target, 1);
-		Sequence->Append(TestWorld.World, Out);
+		UDreamTweener* In = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 0.5f, Target, 1);
+		Sequence->Append(TestWorld.World.Get(), In);
+		UDreamTweener* Out = MakeVerbTween(TestWorld.World.Get(), Opacity, 0.0f, 0.5f, Target, 1);
+		Sequence->Append(TestWorld.World.Get(), Out);
 		FTweenedFloat Unrelated;
-		UDreamTweener* Beside = MakeVerbTween(TestWorld.World, Unrelated, 1.0f, 0.5f, Target, 1);
+		UDreamTweener* Beside = MakeVerbTween(TestWorld.World.Get(), Unrelated, 1.0f, 0.5f, Target, 1);
 		Manager->ManualTick(0.25f);
 		TestFalse(TEXT("A tween in a sequence is not stopped by a tween beside it"), In->IsMarkedToKill());
 		TestFalse(TEXT("nor does it stop that tween"), Beside->IsMarkedToKill());
@@ -175,9 +175,9 @@ bool FDreamTweenReplacementExemptionsTest::RunTest(const FString& Parameters)
 	// A tween kept to be played again is paused, not killed: its handle still restarts it.
 	{
 		FTweenedFloat Opacity;
-		UDreamTweener* Kept = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 1.0f, Target, 1);
+		UDreamTweener* Kept = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 1.0f, Target, 1);
 		Kept->SetAutoKill(false);
-		UDreamTweener* Later = MakeVerbTween(TestWorld.World, Opacity, 0.0f, 1.0f, Target, 1);
+		UDreamTweener* Later = MakeVerbTween(TestWorld.World.Get(), Opacity, 0.0f, 1.0f, Target, 1);
 		Manager->ManualTick(0.1f);
 		TestFalse(TEXT("A kept tween is not killed"), Kept->IsMarkedToKill());
 		TestTrue(TEXT("it is still the manager's"), Manager->IsTweening(Kept));
@@ -192,12 +192,12 @@ bool FDreamTweenReplacementExemptionsTest::RunTest(const FString& Parameters)
 	{
 		FTweenedFloat Opacity;
 		FTweenedFloat Glow;
-		UDreamTweener* OptedOut = MakeVerbTween(TestWorld.World, Glow, 1.0f, 1.0f, Target, 1);
+		UDreamTweener* OptedOut = MakeVerbTween(TestWorld.World.Get(), Glow, 1.0f, 1.0f, Target, 1);
 		OptedOut->SetReplacesEarlierTweens(false);
-		UDreamTweener* Ordinary = MakeVerbTween(TestWorld.World, Opacity, 1.0f, 1.0f, Target, 1);
+		UDreamTweener* Ordinary = MakeVerbTween(TestWorld.World.Get(), Opacity, 1.0f, 1.0f, Target, 1);
 		Manager->ManualTick(0.1f);
 		TestFalse(TEXT("A tween that opted out is not stopped"), OptedOut->IsMarkedToKill());
-		UDreamTweener* OptedOutLater = MakeVerbTween(TestWorld.World, Glow, 0.0f, 1.0f, Target, 1);
+		UDreamTweener* OptedOutLater = MakeVerbTween(TestWorld.World.Get(), Glow, 0.0f, 1.0f, Target, 1);
 		OptedOutLater->SetReplacesEarlierTweens(false);
 		Manager->ManualTick(0.1f);
 		TestFalse(TEXT("and one that opted out stops nothing"), Ordinary->IsMarkedToKill());

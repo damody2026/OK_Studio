@@ -76,8 +76,8 @@ bool FDreamPerspectiveInheritanceTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 400.0f, 300.0f);
 	// One assertion for the whole file: the canvas must not have resized the root out from under
 	// the fixture. Everything here is a relationship rather than a magnitude, so all of it passed
 	// for a long time on a 2x2 canvas whose eye stood 1.7 units off the plane -- a configuration no
@@ -85,9 +85,9 @@ bool FDreamPerspectiveInheritanceTest::RunTest(const FString& Parameters)
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
 	if (!TestTrue(TEXT("The canvas leaves the fixture's authored size alone"),
 		CanvasKeptItsSize(Root, 800.0f)))return false;
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 100.0f, 140.0f);
-	UDreamWidget* Pip = MakeWidget(TestWorld.World, Card, TEXT("Pip"), 10.0f, 10.0f);
-	UDreamWidget* Hud = MakeWidget(TestWorld.World, Root, TEXT("Hud"), 200.0f, 50.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Pip = MakeWidget(TestWorld.World.Get(), Card, TEXT("Pip"), 10.0f, 10.0f);
+	UDreamWidget* Hud = MakeWidget(TestWorld.World.Get(), Root, TEXT("Hud"), 200.0f, 50.0f);
 
 	TestFalse(TEXT("Nothing declares one to begin with"), Table->HasPerspectiveInHierarchy());
 	TestFalse(TEXT("...so nothing inherits one"), Card->HasInheritedPerspective());
@@ -129,10 +129,10 @@ bool FDreamPerspectiveLayoutUntouchedTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Panel = MakeWidget(TestWorld.World, nullptr, TEXT("Panel"), 800.0f, 600.0f);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Panel, TEXT("Table"), 400.0f, 300.0f);
-	UDreamWidget* First = MakeWidget(TestWorld.World, Table, TEXT("First"), 100.0f, 40.0f);
-	UDreamWidget* Second = MakeWidget(TestWorld.World, Table, TEXT("Second"), 100.0f, 40.0f);
+	UDreamWidget* Panel = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Panel"), 800.0f, 600.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Panel, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* First = MakeWidget(TestWorld.World.Get(), Table, TEXT("First"), 100.0f, 40.0f);
+	UDreamWidget* Second = MakeWidget(TestWorld.World.Get(), Table, TEXT("Second"), 100.0f, 40.0f);
 	Table->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>();
 	UDreamWidget::MarkLayoutForRebuild(Panel);
 	UDreamWidget::RebuildLayoutImmediately(Panel);
@@ -176,14 +176,14 @@ bool FDreamPerspectiveForeshortensDepthTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("The root has a canvas"), Canvas))return false;
 	// A fresh canvas is WorldSpace, where the scene camera does the projecting; perspective only
 	// applies where the canvas projects through its own virtual camera.
 	Canvas->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 400.0f, 300.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 100.0f, 140.0f);
 	Card->SetRelativeLocation(FVector(0.0, 150.0, 0.0));//off to one side, so foreshortening has a direction
 
 	Table->SetPerspective(true);
@@ -252,8 +252,8 @@ bool FDreamPerspectiveDisabledIsExactTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
-	UDreamWidget* Child = MakeWidget(TestWorld.World, Root, TEXT("Child"), 100.0f, 140.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Child = MakeWidget(TestWorld.World.Get(), Root, TEXT("Child"), 100.0f, 140.0f);
 	Child->SetRenderTranslation(FVector(40.0, 25.0, -10.0));
 	Child->SetRenderRotation(FRotator(0.0, 30.0, 12.0));
 
@@ -280,11 +280,11 @@ bool FDreamPerspectiveDeclarerIsInOwnScopeTest::RunTest(const FString& Parameter
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Outer = MakeWidget(TestWorld.World, Root, TEXT("Outer"), 500.0f, 400.0f);
-	UDreamWidget* Inner = MakeWidget(TestWorld.World, Outer, TEXT("Inner"), 300.0f, 200.0f);
-	UDreamWidget* Leaf = MakeWidget(TestWorld.World, Inner, TEXT("Leaf"), 60.0f, 60.0f);
+	UDreamWidget* Outer = MakeWidget(TestWorld.World.Get(), Root, TEXT("Outer"), 500.0f, 400.0f);
+	UDreamWidget* Inner = MakeWidget(TestWorld.World.Get(), Outer, TEXT("Inner"), 300.0f, 200.0f);
+	UDreamWidget* Leaf = MakeWidget(TestWorld.World.Get(), Inner, TEXT("Leaf"), 60.0f, 60.0f);
 
 	Outer->SetPerspective(true);
 	// The angles matter here. A 40 degree scope on a 500-wide widget puts its eye at ~687, and the
@@ -331,7 +331,7 @@ bool FDreamPerspectiveDeclarerIsInOwnScopeTest::RunTest(const FString& Parameter
 	// And the point of self-inclusion, said through geometry: a declarer that rotates itself is
 	// foreshortened by its own perspective, with no wrapper widget in sight.
 	Inner->SetRenderRotation(FRotator(0.0, 50.0, 0.0));
-	UDreamWidget* Corner = MakeWidget(TestWorld.World, Inner, TEXT("Corner"), 10.0f, 10.0f);
+	UDreamWidget* Corner = MakeWidget(TestWorld.World.Get(), Inner, TEXT("Corner"), 10.0f, 10.0f);
 	Corner->SetRelativeLocation(FVector(0.0, 120.0, 0.0));
 	const FVector WithOwnScope = Corner->GetWorldMatrix().TransformPosition(FVector::ZeroVector);
 	const FVector WithoutAnyScope = Corner->GetWorldTransform().GetLocation();
@@ -349,10 +349,10 @@ bool FDreamPerspectiveHitTestFollowsTheDrawingTest::RunTest(const FString& Param
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 400.0f, 300.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 100.0f, 140.0f);
 	Card->SetRelativeLocation(FVector(0.0, 150.0, 0.0));
 	UDreamVisual* Visual = Card->CreateNewVisual<UDreamVisualEmpty>();
 	if (!TestNotNull(TEXT("The card has a visual to hit"), Visual))return false;
@@ -414,11 +414,11 @@ bool FDreamPerspectiveRefusesWhereItCannotApplyTest::RunTest(const FString& Para
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("The root has a canvas"), Canvas))return false;
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 400.0f, 300.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 100.0f, 140.0f);
 	Table->SetPerspective(true);
 	Card->SetRenderTranslation(FVector(90.0, 0.0, 0.0));//real depth, so there is something to foreshorten
 
@@ -456,7 +456,7 @@ bool FDreamPerspectiveSurvivesLoadTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
 
 	// Assembled the way WidgetSerializer assembles a prefab: objects, then raw property writes,
@@ -466,7 +466,7 @@ bool FDreamPerspectiveSurvivesLoadTest::RunTest(const FString& Parameters)
 	// to work, and a declarer one level down silently loses its scope: the case pinned here.
 	auto MakeBare = [&](const TCHAR* Name, float W, float H)
 	{
-		UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World, NAME_None, RF_Public | RF_Transactional);
+		UDreamWidget* Widget = NewObject<UDreamWidget>(TestWorld.World.Get(), NAME_None, RF_Public | RF_Transactional);
 		Widget->SetDisplayName(Name);
 		Widget->SetWidth(W);
 		Widget->SetHeight(H);
@@ -507,11 +507,11 @@ bool FDreamPerspectiveEyeSideTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamPerspectiveWidgetTestLocal;
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 800.0f, 600.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 800.0f, 600.0f);
 	UDreamCanvas* Canvas = Root->AddComponent<UDreamCanvas>();
 	if (!TestNotNull(TEXT("The root has a canvas"), Canvas))return false;
 	Canvas->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 400.0f, 300.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 400.0f, 300.0f);
 	Table->SetPerspective(true);
 
 	DreamPerspective::FScope Scope;
@@ -537,7 +537,7 @@ bool FDreamPerspectiveEyeSideTest::RunTest(const FString& Parameters)
 	// the scope axis it moves a child in DEPTH only and its drawn world Y never budges however deep
 	// it goes. This test used to assert on exactly that Y and could not have failed. So pin the
 	// invariance as its own claim, then measure the thing that does move -- the projected image.
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 100.0f, 140.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 100.0f, 140.0f);
 	Card->SetRelativeLocation(FVector(0.0, 150.0, 0.0));
 	auto DrawnAtDepth = [&](double Depth)
 	{
@@ -617,10 +617,10 @@ bool FDreamPerspectiveLayoutIsTheWriteBackSpaceTest::RunTest(const FString& Para
 	// against the layout plane while drawing on the drawn one, since they are at different depths
 	// and one screen pixel is then worth different world distances on each.
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 1600.0f, 900.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 1600.0f, 900.0f);
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 800.0f, 600.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 120.0f, 160.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 800.0f, 600.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 120.0f, 160.0f);
 	Table->SetPerspective(true);
 	Table->SetPerspectiveFieldOfView(70.0f);
 	Card->SetRelativeLocation(FVector(0.0, 200.0, 0.0));
@@ -681,10 +681,10 @@ bool FDreamPerspectiveClipFollowsTheDrawnClipperTest::RunTest(const FString& Par
 	// exactly why fixing one alone would have been worse than fixing neither. That is the property
 	// this test exists to hold, more than the individual correctness of either half.
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 1600.0f, 900.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 1600.0f, 900.0f);
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 900.0f, 600.0f);
-	UDreamWidget* Clipper = MakeWidget(TestWorld.World, Table, TEXT("Clipper"), 300.0f, 200.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 900.0f, 600.0f);
+	UDreamWidget* Clipper = MakeWidget(TestWorld.World.Get(), Table, TEXT("Clipper"), 300.0f, 200.0f);
 	Table->SetPerspective(true);
 	Table->SetPerspectiveFieldOfView(80.0f);
 	// Off the scope's axis AND off its plane, so the remap displaces it rather than leaving it be.
@@ -718,7 +718,7 @@ bool FDreamPerspectiveClipFollowsTheDrawnClipperTest::RunTest(const FString& Par
 		Clipper->IsPointVisibleOnClip(DrawnCentre));
 
 	// A widget with no perspective must take the untouched path, bit for bit.
-	UDreamWidget* Plain = MakeWidget(TestWorld.World, Root, TEXT("Plain"), 300.0f, 200.0f);
+	UDreamWidget* Plain = MakeWidget(TestWorld.World.Get(), Root, TEXT("Plain"), 300.0f, 200.0f);
 	TestFalse(TEXT("The plain widget has no perspective"), Plain->HasPerspectiveApplied());
 	const FVector PlainPoint = Plain->GetWorldTransform().TransformPosition(FVector(0.0, 40.0, 20.0));
 	TestTrue(TEXT("Without perspective the conversion is the transform's own"),
@@ -741,10 +741,10 @@ bool FDreamPerspectiveRectBlockHitTest::RunTest(const FString& Parameters)
 	// and the existing test was structurally incapable of noticing, because it tested a class that
 	// does not override. Whatever else this asserts, it asserts that the override exists.
 	FScopedGameWorld TestWorld(EWorldType::Editor);
-	UDreamWidget* Root = MakeWidget(TestWorld.World, nullptr, TEXT("Root"), 1600.0f, 900.0f);
+	UDreamWidget* Root = MakeWidget(TestWorld.World.Get(), nullptr, TEXT("Root"), 1600.0f, 900.0f);
 	Root->AddComponent<UDreamCanvas>()->SetRenderMode(EDreamRenderMode::ScreenSpaceOverlay);
-	UDreamWidget* Table = MakeWidget(TestWorld.World, Root, TEXT("Table"), 900.0f, 600.0f);
-	UDreamWidget* Card = MakeWidget(TestWorld.World, Table, TEXT("Card"), 160.0f, 220.0f);
+	UDreamWidget* Table = MakeWidget(TestWorld.World.Get(), Root, TEXT("Table"), 900.0f, 600.0f);
+	UDreamWidget* Card = MakeWidget(TestWorld.World.Get(), Table, TEXT("Card"), 160.0f, 220.0f);
 	UDreamVisual* Visual = Card->CreateNewVisual<UDreamRectBlock>();
 	if (!TestNotNull(TEXT("The card has a RectBlock to hit"), Visual))return false;
 	Table->SetPerspective(true);

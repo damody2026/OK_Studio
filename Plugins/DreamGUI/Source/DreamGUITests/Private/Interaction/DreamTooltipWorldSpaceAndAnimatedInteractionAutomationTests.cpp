@@ -112,7 +112,7 @@ namespace DreamTooltipWorldTestLocal
 			{
 				return false;
 			}
-			Parent = Stage.Panel;
+			Parent = Stage.Panel.Get();
 		}
 		UDreamButton* First = Rig.MakeControl<UDreamButton>(TEXT("First"), Parent, FVector2D(140.0, 50.0), FVector2D(-200.0, 40.0));
 		UDreamButton* Help = MakeHelpButton(Rig, TEXT("Help"), Parent, FVector2D(140.0, 50.0), FVector2D(0.0, 40.0), nullptr);
@@ -166,7 +166,7 @@ bool FDreamWorldTooltipMouseTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel, FVector2D(200.0, 60.0), FVector2D(-60.0, 40.0), nullptr) : nullptr;
+	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel.Get(), FVector2D(200.0, 60.0), FVector2D(-60.0, 40.0), nullptr) : nullptr;
 	if (!TestNotNull(TEXT("A button with a tooltip on the panel"), Help))
 	{
 		return false;
@@ -208,7 +208,7 @@ bool FDreamWorldTooltipFingerTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel, FVector2D(200.0, 60.0), FVector2D(-60.0, 40.0), Listener.Get()) : nullptr;
+	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel.Get(), FVector2D(200.0, 60.0), FVector2D(-60.0, 40.0), Listener.Get()) : nullptr;
 	if (!TestNotNull(TEXT("A button with a tooltip on the panel"), Help))
 	{
 		return false;

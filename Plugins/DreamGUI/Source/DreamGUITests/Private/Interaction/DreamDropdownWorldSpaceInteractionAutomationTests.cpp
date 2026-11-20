@@ -318,8 +318,8 @@ bool FDreamDropdownWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	const FPlacedDropdown Left = PlaceDropdown(Rig, TEXT("Texture"), Stage.Panel, FVector2D(-130.0, 100.0));
-	const FPlacedDropdown Right = PlaceDropdown(Rig, TEXT("Shadow"), Stage.Panel, FVector2D(130.0, 100.0));
+	const FPlacedDropdown Left = PlaceDropdown(Rig, TEXT("Texture"), Stage.Panel.Get(), FVector2D(-130.0, 100.0));
+	const FPlacedDropdown Right = PlaceDropdown(Rig, TEXT("Shadow"), Stage.Panel.Get(), FVector2D(130.0, 100.0));
 	if (!TestTrue(TEXT("Two dropdowns can be made on the panel"), Left.IsReady() && Right.IsReady())
 		|| !TestTrue(TEXT("The focus goes onto the first dropdown"), PutFocusOn(Rig, Left.Dropdown->FaceNode.Get())))
 	{
@@ -338,7 +338,7 @@ bool FDreamDropdownWorldPadTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	CheckOpenListOn(*this, Rig, Dropdown, Stage.Panel, TEXT("Opened by the pad"));
+	CheckOpenListOn(*this, Rig, Dropdown, Stage.Panel.Get(), TEXT("Opened by the pad"));
 	TestTrue(TEXT("The list opened with the focus on the chosen row"), Right.Row(0) != nullptr && FocusIsIn(Rig, Right.Row(0)));
 
 	TestTrue(TEXT("D-pad down completes"), PressKey(Rig, EKeys::Gamepad_DPad_Down));
@@ -350,7 +350,7 @@ bool FDreamDropdownWorldPadTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Accept chose the second option"), Dropdown->GetSelectedIndex(), 1);
 	TestFalse(TEXT("...and closed the list"), Dropdown->IsOpen());
 	TestTrue(TEXT("...with the focus back on the dropdown"), FocusIsIn(Rig, Dropdown));
-	TestTrue(TEXT("The list fades out and goes home"), WaitForListPutAway(Rig, Dropdown, Stage.Panel));
+	TestTrue(TEXT("The list fades out and goes home"), WaitForListPutAway(Rig, Dropdown, Stage.Panel.Get()));
 
 	TestTrue(TEXT("The pad's Accept completes"), PadConfirm(Rig));
 	if (!TestTrue(TEXT("Accept opened the list again"), WaitForListShown(Rig, Dropdown)))
@@ -393,7 +393,7 @@ bool FDreamDropdownSurfacePressTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-	UDreamWidget* CanvasRoot = Stage.Screen.CanvasRoot;
+	UDreamWidget* CanvasRoot = Stage.Screen.CanvasRoot.Get();
 	const FPlacedDropdown Placed = PlaceDropdown(Rig, TEXT("Quality"), CanvasRoot, FVector2D(0.0, 90.0));
 	if (!TestTrue(TEXT("A dropdown with a face and a list can be made on the surface's canvas"), Placed.IsReady()))
 	{

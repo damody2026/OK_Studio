@@ -179,8 +179,9 @@ struct FDreamPieRigReport
  *
  * NO STRONG REFERENCES INTO THE PLAY WORLD. Ending a play session garbage-collects it and treats any
  * object from it that is still referenced as a fatal leak. The context and the rig therefore hold
- * raw pointers only -- they are cleared before the session is asked to end -- and anything a test
- * keeps between steps it keeps weakly.
+ * weak pointers only -- they are cleared before the session is asked to end, and a session already
+ * ended reads as gone rather than as an address -- and anything a test keeps between steps it keeps
+ * weakly too.
  *
  * WHAT THE RIG CHANGES OUTSIDE THE PLAY WORLD, AND PUTS BACK. The next test runs in the same editor,
  * so everything the rig moves that outlives a session is put back the way it was found:
@@ -498,9 +499,12 @@ private:
 	/** The editor's floating windows the rig hid for the session (HideFloatingEditorWindows), shown again by RestoreEditorState. */
 	TArray<TWeakPtr<SWindow>> HiddenEditorWindows;
 
-	/** Play-world objects, raw on purpose (see NO STRONG REFERENCES). Cleared by ReleasePlayWorld. */
-	AActor* HostActor = nullptr;
-	UGameViewportClient* ViewportClient = nullptr;
+	/**
+	 * Play-world objects, weak: no strong reference into the play world (see NO STRONG REFERENCES), and a
+	 * session already ended reads as gone instead of as an address. Cleared by ReleasePlayWorld.
+	 */
+	TWeakObjectPtr<AActor> HostActor;
+	TWeakObjectPtr<UGameViewportClient> ViewportClient;
 	TArray<TWeakObjectPtr<UDreamWorldSpaceRaycaster>> WorldPointers;
 	TMap<FString, TWeakObjectPtr<UDreamWidget>> MadeWidgets;
 };

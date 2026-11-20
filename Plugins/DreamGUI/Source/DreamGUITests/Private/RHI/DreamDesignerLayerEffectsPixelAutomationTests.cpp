@@ -645,7 +645,7 @@ bool FDreamDesignerLayerEffectsPixelTest::RunTest(const FString& Parameters)
 	EnqueueDesignerFrames(State, 2, /*bInDraw*/ true);
 	EnqueueDesignerAction(State, [this, State, Case]()
 	{
-		UDreamWidgetBlueprint* Blueprint = State->Asset.Blueprint;
+		UDreamWidgetBlueprint* Blueprint = State->Asset.Blueprint.Get();
 		UDreamWidget* Root = DesignerTemplateRoot(Blueprint);
 		for (const bool bWith : { true, false })
 		{
@@ -776,7 +776,7 @@ bool FDreamDesignerPaletteEffectsPixelTest::RunTest(const FString& Parameters)
 	EnqueueDesignerAction(State, [this, State]()
 	{
 		FBuild Build;
-		Build.Blueprint = State->Asset.Blueprint;
+		Build.Blueprint = State->Asset.Blueprint.Get();
 		Build.Holder = DreamWidgetTreeEditing::CreateWidget(Build.Blueprint, UDreamWidget::StaticClass(), DesignerTemplateRoot(Build.Blueprint), -1, TEXT("Backdrop"));
 		if (!TestNotNull(TEXT("A backdrop was made"), Build.Holder))
 		{
@@ -808,7 +808,7 @@ bool FDreamDesignerPaletteEffectsPixelTest::RunTest(const FString& Parameters)
 		}
 		// The centre is over the backdrop, a group with no panel, and a drop on a group lands in it -- so the new widget is looked
 		// for in the whole tree, not only among the root's children.
-		UDreamWidget* Root = DesignerTemplateRoot(State->Asset.Blueprint);
+		UDreamWidget* Root = DesignerTemplateRoot(State->Asset.Blueprint.Get());
 		TArray<UDreamWidget*> Existing;
 		CollectLiveUnder(Root, Existing);
 		if (!TestTrue(FString::Printf(TEXT("The %s row's drop is taken"), *Row.ToString()), Driver.DropFromPalette(Row, Driver.ViewportCentrePixel())))

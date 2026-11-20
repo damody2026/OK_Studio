@@ -105,7 +105,7 @@ bool FDreamRuntimeComponentBindingOrderTest::RunTest(const FString& Parameters)
 
 	DreamTests::FScopedGameWorld TestWorld;
 	UDreamRuntimeComponentBindingOrderTestWidget* Instance = Cast<UDreamRuntimeComponentBindingOrderTestWidget>(
-		BeginCreateDreamWidget(TestWorld.World, Generated));
+		BeginCreateDreamWidget(TestWorld.World.Get(), Generated));
 	if (!TestNotNull(TEXT("the public deferred-create path creates the compiled widget"), Instance))return false;
 	ON_SCOPE_EXIT { if (IsValid(Instance))Instance->DestroyWidget(); };
 	// Assign the real instance before its initialization hook, like an Expose on Spawn input.
@@ -126,7 +126,7 @@ bool FDreamRuntimeComponentBindingOrderTest::RunTest(const FString& Parameters)
 			|| !TestEqual(TEXT("the source order differs from the authored order"), SourceFront->Identity, FName(TEXT("Second"))))return false;
 		// Keep the source's changed order in the copy: there is no second reorder to mask a bad mapping.
 		Instance->bReorderOnInitialized = false;
-		Copy = Cast<UDreamRuntimeComponentBindingOrderTestWidget>(DuplicateDreamWidgetHierarchy(TestWorld.World, Instance, nullptr));
+		Copy = Cast<UDreamRuntimeComponentBindingOrderTestWidget>(DuplicateDreamWidgetHierarchy(TestWorld.World.Get(), Instance, nullptr));
 		if (!TestNotNull(TEXT("the public hierarchy duplication creates a user widget"), Copy))return false;
 		CheckedInstance = Copy;
 	}
@@ -224,7 +224,7 @@ bool FDreamComponentBindingIdentityScopeTest::RunTest(const FString& Parameters)
 
 	DreamTests::FScopedGameWorld TestWorld;
 	UDreamRuntimeComponentBindingOrderTestWidget* Instance = Cast<UDreamRuntimeComponentBindingOrderTestWidget>(
-		BeginCreateDreamWidget(TestWorld.World, Generated));
+		BeginCreateDreamWidget(TestWorld.World.Get(), Generated));
 	if (!TestNotNull(TEXT("the deferred-create path creates the compiled widget"), Instance))return false;
 	ON_SCOPE_EXIT { if (IsValid(Instance))Instance->DestroyWidget(); };
 	if (!TestNotNull(TEXT("FinishCreateDreamWidget initializes the instance"), FinishCreateDreamWidget(Instance)))return false;

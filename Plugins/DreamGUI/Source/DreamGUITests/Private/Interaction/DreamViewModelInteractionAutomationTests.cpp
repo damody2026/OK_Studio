@@ -71,8 +71,8 @@ namespace DreamViewModelInteractionTestLocal
 	/** A .dui-backed Blueprint in /Temp, its package rooted for the test, pointed at InFilePath and compiled. */
 	struct FScopedTextBlueprint
 	{
-		UPackage* Package = nullptr;
-		UDreamWidgetBlueprint* Blueprint = nullptr;
+		TWeakObjectPtr<UPackage> Package;
+		TWeakObjectPtr<UDreamWidgetBlueprint> Blueprint;
 		FCompilerResultsLog Results;
 
 		FScopedTextBlueprint(const TCHAR* InName, const FString& InFilePath)
@@ -84,7 +84,7 @@ namespace DreamViewModelInteractionTestLocal
 			// editor module's (UK2Node_CallFunction::ValidateNodeDuringCompilation) -- on a runtime parent, Heal and
 			// SetVolume would be "editor functions in a runtime Blueprint". A game's view models are in its runtime code.
 			Blueprint = Cast<UDreamWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-				UDreamTestViewModelWidgetBase::StaticClass(), Package, FName(InName), BPTYPE_Normal,
+				UDreamTestViewModelWidgetBase::StaticClass(), Package.Get(), FName(InName), BPTYPE_Normal,
 				UDreamWidgetBlueprint::StaticClass(), UDreamWidgetGeneratedClass::StaticClass()));
 			UDreamTextUserWidget* Defaults = Blueprint != nullptr && Blueprint->GeneratedClass != nullptr
 				? Cast<UDreamTextUserWidget>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
@@ -94,7 +94,7 @@ namespace DreamViewModelInteractionTestLocal
 				return;
 			}
 			Defaults->SourceFile.FilePath = InFilePath;
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &Results);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint.Get(), EBlueprintCompileOptions::SkipGarbageCollection, &Results);
 		}
 		~FScopedTextBlueprint()
 		{

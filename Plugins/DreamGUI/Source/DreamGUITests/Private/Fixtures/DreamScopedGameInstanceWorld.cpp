@@ -35,14 +35,15 @@ namespace DreamTests
 
 	FScopedGameInstanceWorld::~FScopedGameInstanceWorld()
 	{
-		UWorld* OwnedWorld = World;
+		UWorld* OwnedWorld = World.Get();
 		// In the order the editor ends a PIE session (UEditorEngine::TeardownPlaySession): the game
 		// instance shuts down first -- local players removed, its subsystems deinitialized, which for
 		// the tween manager means every tween killed without its completion handlers -- and only then
 		// does the world clean up. The world never began play, so there is no EndPlay to route first.
-		if (IsValid(GameInstance))
+		UGameInstance* OwnedGameInstance = GameInstance.Get();
+		if (IsValid(OwnedGameInstance))
 		{
-			GameInstance->Shutdown();
+			OwnedGameInstance->Shutdown();
 		}
 		if (OwnedWorld != nullptr)
 		{
@@ -58,9 +59,9 @@ namespace DreamTests
 		{
 			GEngine->DestroyWorldContext(OwnedWorld);
 		}
-		if (GameInstance != nullptr)
+		if (OwnedGameInstance != nullptr)
 		{
-			GameInstance->RemoveFromRoot();
+			OwnedGameInstance->RemoveFromRoot();
 		}
 		GameInstance = nullptr;
 		World = nullptr;

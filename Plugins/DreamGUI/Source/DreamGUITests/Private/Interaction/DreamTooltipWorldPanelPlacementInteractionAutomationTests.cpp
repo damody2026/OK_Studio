@@ -147,7 +147,7 @@ bool FDreamWorldTooltipPlacementMouseTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel, FVector2D(200.0, 60.0), FVector2D(-120.0, 60.0)) : nullptr;
+	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel.Get(), FVector2D(200.0, 60.0), FVector2D(-120.0, 60.0)) : nullptr;
 	if (!TestNotNull(TEXT("A button with a tooltip on the panel"), Help))
 	{
 		return false;
@@ -171,7 +171,7 @@ bool FDreamWorldTooltipPlacementMouseTest::RunTest(const FString& Parameters)
 	UDreamWidget* Bubble = Tooltip->GetBubbleForUser(0);
 	FString Where;
 	TestTrue(TEXT("The bubble is on the panel: the panel root's child, drawn by its canvas, in its plane, seen inside it"),
-		BubbleIsOnThePanel(Rig, Bubble, Stage.Panel, Where));
+		BubbleIsOnThePanel(Rig, Bubble, Stage.Panel.Get(), Where));
 	AddInfo(Where);
 	TestTrue(TEXT("The bubble hangs off the button's bottom-right corner by the tooltip offset, as the camera sees it"),
 		HangsAt(Rig, Bubble, Expected.GetValue(), Where));
@@ -214,8 +214,8 @@ bool FDreamWorldTooltipPlacementPadTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FWorldStage Stage = SetUpPanel(*this, Rig);
-	UDreamButton* First = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("First"), Stage.Panel, FVector2D(140.0, 50.0), FVector2D(-180.0, 60.0)) : nullptr;
-	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel, FVector2D(140.0, 50.0), FVector2D(0.0, 60.0)) : nullptr;
+	UDreamButton* First = Stage.IsReady() ? Rig.MakeControl<UDreamButton>(TEXT("First"), Stage.Panel.Get(), FVector2D(140.0, 50.0), FVector2D(-180.0, 60.0)) : nullptr;
+	UDreamButton* Help = Stage.IsReady() ? MakeHelpButton(Rig, TEXT("Help"), Stage.Panel.Get(), FVector2D(140.0, 50.0), FVector2D(0.0, 60.0)) : nullptr;
 	if (!TestTrue(TEXT("Two buttons on the panel, the second with a tooltip"), First != nullptr && First->FaceNode != nullptr && Help != nullptr))
 	{
 		return false;
@@ -237,7 +237,7 @@ bool FDreamWorldTooltipPlacementPadTest::RunTest(const FString& Parameters)
 	UDreamWidget* Bubble = Tooltip->GetBubbleForUser(0);
 	FString Where;
 	TestTrue(TEXT("The bubble is on the panel: the panel root's child, drawn by its canvas, in its plane, seen inside it"),
-		BubbleIsOnThePanel(Rig, Bubble, Stage.Panel, Where));
+		BubbleIsOnThePanel(Rig, Bubble, Stage.Panel.Get(), Where));
 	AddInfo(Where);
 	TestTrue(TEXT("The bubble hangs off the focused button's bottom-right corner by the tooltip offset, as the camera sees it"),
 		HangsAt(Rig, Bubble, Expected.GetValue(), Where));

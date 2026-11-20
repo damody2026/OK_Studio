@@ -38,9 +38,9 @@ bool FDreamTextPaintLibraryTweenTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextPaintLibraryTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	UDreamWidget* Widget = nullptr;
-	UDreamText* Text = MakeText(TestWorld.World, Widget);
+	UDreamText* Text = MakeText(TestWorld.World.Get(), Widget);
 	if (!TestNotNull(TEXT("the world has a tween manager"), Manager) || !TestNotNull(TEXT("a text"), Text))
 	{
 		return false;
@@ -85,9 +85,9 @@ bool FDreamTextPaintLibraryShimmerTest::RunTest(const FString& Parameters)
 {
 	using namespace DreamTextPaintLibraryTestLocal;
 	DreamTests::FScopedGameInstanceWorld TestWorld;
-	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World);
+	UDreamTweenManager* Manager = UDreamTweenManager::GetDreamTweenInstance(TestWorld.World.Get());
 	UDreamWidget* Widget = nullptr;
-	UDreamText* Text = MakeText(TestWorld.World, Widget);
+	UDreamText* Text = MakeText(TestWorld.World.Get(), Widget);
 	if (!TestNotNull(TEXT("the world has a tween manager"), Manager) || !TestNotNull(TEXT("a text"), Text))
 	{
 		return false;

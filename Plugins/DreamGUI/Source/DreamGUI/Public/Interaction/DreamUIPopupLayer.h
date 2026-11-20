@@ -78,11 +78,13 @@ struct FDreamPopupParams
 	 * The popup: a widget its owner built and positioned under itself; the layer lifts it onto the player's screen root, or
 	 * -- opened from a tree drawn into the level -- onto the top of that tree (UDreamUIPopupLayer::Push).
 	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by UDreamUIPopupLayer::Push, its only reader, as the comment above says.
 	UDreamWidget* Popup = nullptr;
 	/**
 	 * What opened it: where focus goes back to, what it follows while open, and what decides its parent -- the player's
 	 * deepest open popup that is or contains the opener. Null: a top-level popup with nothing to follow or return to.
 	 */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by UDreamUIPopupLayer::Push, as Popup above.
 	UDreamWidget* Opener = nullptr;
 	/** The player the popup belongs to: whose focus it takes and returns, whose Back closes it, whose presses dismiss it. */
 	int32 UserIndex = 0;
@@ -90,6 +92,7 @@ struct FDreamPopupParams
 	/** Move the player's focus into the popup once it is up: to InitialFocus when it is usable, else its first navigable control. */
 	bool bFocusOnOpen = true;
 	/** Where focus goes on open -- a dropdown's selected row; null for the first navigable control. */
+	// static-checks: allow(stored-raw-pointer) Guaranteed by UDreamUIPopupLayer::Push, as Popup above.
 	UDreamWidget* InitialFocus = nullptr;
 	/**
 	 * Put the popup back under its parent, at its old child index, when it closes. False keeps it lifted -- drawn above

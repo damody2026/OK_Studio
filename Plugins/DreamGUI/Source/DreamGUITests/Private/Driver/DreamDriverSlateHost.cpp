@@ -26,7 +26,7 @@ namespace DreamDriverSlateHostLocal
 	/** The player the rig's event system speaks for, which is whose keyboard the driver's characters are typed on. */
 	int32 PlayerOf(const FDreamDriverContext& InContext)
 	{
-		return IsValid(InContext.EventSystem) ? InContext.EventSystem->GetUserIndex() : DriverPlayer;
+		return IsValid(InContext.EventSystem.Get()) ? InContext.EventSystem->GetUserIndex() : DriverPlayer;
 	}
 
 	/** One key event to the source, made the way FSlateApplication::OnKeyDown and OnKeyUp make one from a platform message. */
@@ -71,7 +71,7 @@ bool DreamDriverSlateHost::Build(FDreamDriverContext& InContext, const FIntPoint
 {
 	using namespace DreamDriverSlateHostLocal;
 
-	UWorld* World = InContext.World;
+	UWorld* World = InContext.World.Get();
 	UDreamUIInputSubsystem* Input = World != nullptr ? UDreamUIInputSubsystem::Get(World) : nullptr;
 	if (Input == nullptr)
 	{
@@ -122,7 +122,7 @@ bool DreamDriverSlateHost::Build(FDreamDriverContext& InContext, const FIntPoint
 
 	// The mouse is Slate's now. With its override on, the driver's module stands a cursor of its own in for the mouse --
 	// the source then treats it as a virtual cursor, ignores the mouse's moves and presses where the module points.
-	if (UDreamDriverInputModule* Module = InContext.InputModule; IsValid(Module))
+	if (UDreamDriverInputModule* Module = InContext.InputModule.Get(); IsValid(Module))
 	{
 		Module->SetOverrideMousePosition(false);
 	}
@@ -133,7 +133,7 @@ bool DreamDriverSlateHost::Build(FDreamDriverContext& InContext, const FIntPoint
 
 void DreamDriverSlateHost::Teardown(FDreamDriverContext& InContext)
 {
-	if (UDreamUIInputSubsystem* Input = InContext.World != nullptr ? UDreamUIInputSubsystem::Get(InContext.World) : nullptr)
+	if (UDreamUIInputSubsystem* Input = InContext.World.Get() != nullptr ? UDreamUIInputSubsystem::Get(InContext.World.Get()) : nullptr)
 	{
 		Input->SetSlateInputSourceEnabled(false);
 	}
@@ -147,7 +147,7 @@ TSharedPtr<FDreamUISlateInputSource> DreamDriverSlateHost::FindSource(const FDre
 		OutWhyNot = TEXT("Slate is not running, so there is nothing to make Slate's events with");
 		return nullptr;
 	}
-	const UDreamUIInputSubsystem* Input = InContext.World != nullptr ? UDreamUIInputSubsystem::Get(InContext.World) : nullptr;
+	const UDreamUIInputSubsystem* Input = InContext.World.Get() != nullptr ? UDreamUIInputSubsystem::Get(InContext.World.Get()) : nullptr;
 	if (Input == nullptr)
 	{
 		OutWhyNot = TEXT("the world has no DreamUI input subsystem");
@@ -400,14 +400,14 @@ bool DreamDriverSlateHost::TypeCharacter(FDreamDriverContext& InContext, TCHAR I
 {
 	using namespace DreamDriverSlateHostLocal;
 
-	UDreamUIInputSubsystem* Input = InContext.World != nullptr ? UDreamUIInputSubsystem::Get(InContext.World) : nullptr;
+	UDreamUIInputSubsystem* Input = InContext.World.Get() != nullptr ? UDreamUIInputSubsystem::Get(InContext.World.Get()) : nullptr;
 	if (Input == nullptr)
 	{
 		OutWhyNot = TEXT("the world has no DreamUI input subsystem for the viewport to hand a character to");
 		return false;
 	}
 	const int32 Player = PlayerOf(InContext);
-	if (DreamUITextInputRouter::GetActiveTarget(InContext.World, Player) == nullptr)
+	if (DreamUITextInputRouter::GetActiveTarget(InContext.World.Get(), Player) == nullptr)
 	{
 		OutWhyNot = TEXT("no text field is being edited, so a character has nowhere to go: the viewport hands it to the field the typing player is editing (UDreamUIInputSubsystem::HandleViewportCharacter) and there is none");
 		return false;
