@@ -1055,6 +1055,12 @@ void UOKGalleryWidget::NativeConstruct()
 	if(!FParse::Param(FCommandLine::Get(),TEXT("LegacyReader")))if((ReaderScreen=UOKReaderScreen::Open(this))!=nullptr)
 	{
 		SetRenderOpacity(0.f);SetVisibility(ESlateVisibility::HitTestInvisible);
+		// Only a model now: its controls' values, lists and handlers are read and driven by the DreamGUI screen, which also
+		// reads each control's own visibility flag (IsUmgShown), and none of that needs Slate to lay out or paint them.
+		// Left visible at opacity 0 it still cost every frame -- attribute updates and prepass over the whole tree (~2 ms),
+		// and a 12-14 ms repaint on every change a click made to it (2026-11-20 trace). Collapsing its content leaves this
+		// widget itself visible, so its NativeTick (which ticks the DreamGUI screen) keeps running.
+		if(UWidget* Content=GetRootWidget())Content->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 
