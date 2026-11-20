@@ -1,0 +1,131 @@
+From b2a3bf0ebdc7896223027ce0ea8225ff0264ea4b Mon Sep 17 00:00:00 2001
+From: damody2026 <344874824+damody2026@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 06:28:38 +0800
+Subject: [PATCH] =?UTF-8?q?D3D12=EF=BC=9A=E5=9B=9E=E6=94=B6=20online=20des?=
+ =?UTF-8?q?criptor=20=E5=8D=80=E5=A1=8A=E6=99=82=E5=8F=AF=E9=81=B8?=
+ =?UTF-8?q?=E7=9A=84=E4=B8=8B=E6=AF=92=EF=BC=88D3D12.OK.PoisonRecycledDesc?=
+ =?UTF-8?q?riptorBlocks=EF=BC=8C=E9=A0=90=E8=A8=AD=200=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GPU 讀的是 BuildSRVTable 抄進 online heap 區塊的那份描述子副本，不是狀態快取裡的裸指標
+（狀態快取那條路的兩半都量過，各自零次：OpenKoikatsu 排除清單第三十、三十一條）。
+區塊經 FreeHeapBlock → DeferredDelete → EOP Recycle 交回 FreeBlocks；
+若那個栅欄沒有真的涵蓋用過這張表的 command list，區塊可能在 GPU 還讀著的時候被重用並覆寫。
+
+開著時，Recycle 在把區塊推回 FreeBlocks 之前，把整個區塊填成 NullSRV 描述子：
+栅欄正確時完全看不出差別（反正下一個使用者會覆寫），栅欄錯誤時懸空描述子變成 null 描述子，
+取樣讀到零而不是去碰沒有映射的位址。
+
+到達證據：第一次下毒與每 256 次各印一行（累計數、baseSlot、區塊大小），
+所以「故障沒變」可以和「旋鈕沒生效」分開。
+
+ECVF_ReadOnly、預設 0；關著時只多一個 bool 測試。
+事前登記的讀法在 OpenKoikatsu Docs/CARD_READER_DREAMGUI.md（2026-11-20）。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../D3D12RHI/Private/D3D12Descriptors.cpp     | 54 ++++++++++++++++++-
+ .../D3D12RHI/Private/D3D12Descriptors.h       |  9 +++-
+ 2 files changed, 61 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
+index 1806fe460a66..409b1ca42261 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ 
+ #include "D3D12Descriptors.h"
+ #include "D3D12RHIPrivate.h"
+@@ -311,9 +311,61 @@ void FD3D12OnlineDescriptorManager::FreeHeapBlock(FD3D12OnlineDescriptorBlock* I
+ 	FD3D12DynamicRHI::GetD3DRHI()->DeferredDelete(InHeapBlock, this);
+ }
+ 
++static TAutoConsoleVariable<int32> CVarOKPoisonRecycledDescriptorBlocks(
++	TEXT("D3D12.OK.PoisonRecycledDescriptorBlocks"), 0,
++	TEXT("Fill an online descriptor heap block with null descriptors as it is recycled (diagnostic)."),
++	ECVF_ReadOnly);
++
++static bool OKPoisonEnabled()
++{
++	static int32 Cached = -1;
++	if (Cached < 0)
++	{
++		Cached = CVarOKPoisonRecycledDescriptorBlocks.GetValueOnAnyThread() != 0 ? 1 : 0;
++	}
++	return Cached == 1;
++}
++
++static FThreadSafeCounter64 GOKPoisonedBlocks;
++
++void FD3D12OnlineDescriptorManager::PoisonBlock(FD3D12OnlineDescriptorBlock* Block)
++{
++	if (Block == nullptr || Block->Size == 0)
++	{
++		return;
++	}
++	ID3D12Device* Device = GetParentDevice()->GetDevice();
++	const D3D12_CPU_DESCRIPTOR_HANDLE NullSRV = GetParentDevice()->GetDefaultViews().NullSRV;
++	for (ERHIPipeline Pipeline : MakeFlagsRange(ERHIPipeline::All))
++	{
++		FD3D12DescriptorHeap* Heap = Heaps[Pipeline].GetReference();
++		if (Heap == nullptr)
++		{
++			continue;
++		}
++		for (uint32 Slot = 0; Slot < Block->Size; ++Slot)
++		{
++			const D3D12_CPU_DESCRIPTOR_HANDLE Dest = Heap->GetCPUSlotHandle(Block->BaseSlot + Slot);
++			Device->CopyDescriptorsSimple(1, Dest, NullSRV, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++		}
++	}
++	const int64 Count = GOKPoisonedBlocks.Increment();
++	if (Count == 1 || (Count % 256) == 0)
++	{
++		UE_LOG(LogD3D12RHI, Display, TEXT("OK poisoned recycled descriptor block: count=%lld baseSlot=%u size=%u"),
++			Count, Block->BaseSlot, Block->Size);
++	}
++}
++
+ // Called by the EOP task to recycle blocks
+ void FD3D12OnlineDescriptorManager::Recycle(FD3D12OnlineDescriptorBlock* Block)
+ {
++	if (OKPoisonEnabled())
++	{
++		// Before it can be handed to anyone else: see the comment on PoisonBlock.
++		PoisonBlock(Block);
++	}
++
+ 	FScopeLock Lock(&CriticalSection);
+ 
+ 	// Update stats
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h
+index 8a97d581a1f4..b60e4057d44a 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.h
+@@ -1,4 +1,4 @@
+-// Copyright Epic Games, Inc. All Rights Reserved.
++﻿// Copyright Epic Games, Inc. All Rights Reserved.
+ 
+ #pragma once
+ 
+@@ -235,6 +235,13 @@ public:
+ 	// Called by the EOP task to recycle blocks
+ 	void Recycle(FD3D12OnlineDescriptorBlock* Block);
+ 
++	/**
++	 * OpenKoikatsu diagnostic (D3D12.OK.PoisonRecycledDescriptorBlocks, read-only cvar, default 0): fill a block
++	 * with the null SRV descriptor as it is recycled. A correct fence makes this invisible; an incorrect one turns a
++	 * dangling descriptor the GPU is still reading into a null descriptor. See Docs/CARD_READER_DREAMGUI.md.
++	 */
++	void PoisonBlock(FD3D12OnlineDescriptorBlock* Block);
++
+ private:
+ 	TRHIPipelineArray<FD3D12DescriptorHeapPtr> Heaps;
+ 
+-- 
+2.54.0.windows.1
+

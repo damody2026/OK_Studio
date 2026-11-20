@@ -6550,3 +6550,562 @@ PipelineState.Common.SamplerCache.DirtyAll();
 九個槽改成 weak 之後，E 樹獨有的 `LogSlot` 印 `src=` 那裡要從 weak 解出來。
 **所以啟動驗收時 `DreamGUI.LogTextureSlots=1` 還能印出 `slot … src=…`，就是搬運沒搬壞的直接證據**；
 印不出來或印成空的，就是那一處沒接好，而不是「量具剛好沒觸發」。
+
+
+# 去裸指標那一輪之後：**5/5 照樣故障**，所以持有者不在「不帶參照計數又跨幀」那一類裡
+
+樹：`d0742c2b7`（整合後，三棵樹同一個 commit），工作區只有一個產生檔是脏的。
+同一把尺：同一份 60 張卡單、同一組旋鈕、固定取樣卡序、同樣的報告欄位。
+
+| | 趟 1 | 趟 2 | 趟 3 | 趟 4 | 趟 5 |
+|---|---|---|---|---|---|
+| `faults` | **1** | **1** | **1** | **1** | **1** |
+| `Shader Hash` | `E6753E1E…` | 同一顆 | 同一顆 | 同一顆 | 同一顆 |
+| `cards` | 4 | 14 | 14 | 36 | 14 |
+| `fault_texture` | `Texture2D_85` | `_874` | `_901` | `_2323` | `_893` |
+| `kept_created` | 392 | 864 | 864 | 2115 | 863 |
+| `handoffs` | 4557 | 9860 | 9883 | 22480 | 9931 |
+| `last_local_used` | 2259 MB | 2578 MB | 3088 MB | 2863 MB | 2576 MB |
+
+**五趟的 `Shader Hash` 都是同一顆**，所以五趟都算（第十七條）。對上歷史基線累計 13/13，現在是 **18/18**。
+
+## 讀法（事前登記的那一條）
+
+**`5/5` ⇒ 持有者不在那一類裡。** 那一輪把「跨幀又不帶參照計數」整類形狀去掉
+（UObject 裸指標 ⇒ weak、RHI 裸指標 ⇒ 持有參照、只當比較鍵的 ⇒ 改序號），而故障完全沒有變化：
+重現率、故障的著色器、故障貼圖的型態、幀數關係全部照舊。
+
+**所以前面那些排除更硬了**：backdrop（兩個方向）、transient heap、pool 側 fence、
+descriptor／state cache、材質 uniform expression、proxy 解構、group RT、縮圖 brush——
+**再加上「DreamGUI 裡任何不帶參照計數的跨幀持有」整類**。
+
+## 幀數關係在新的 build 上完全複製
+
+| | 趟 1 | 趟 2 | 趟 3 | 趟 4 | 趟 5 |
+|---|---:|---:|---:|---:|---:|
+| 貼圖釋放 | 7623 | 18628 | 18703 | 56820 | 18981 |
+| heap 釋放 | 7645 | 18651 | 18725 | 56844 | 19004 |
+| 故障當幀 | 8049 | 18708 | 18729 | 56878 | 19092 |
+| **heap − 貼圖** | **22** | **23** | **22** | **24** | **23** |
+| 故障 − heap | 404 | 57 | **4** | 34 | 88 |
+
+**`heap − 貼圖` 現在是 15 趟 15 次落在 22–24**（跨兩個 build），池配置器的行為與寫死的 20 幀完全相符。
+**`故障 − heap` 的全距現在是 4 到 4116 幀**——趟 3 的 4 幀是目前最短的一次。
+
+## 兩個量具的覆蓋率，照實記
+
+- **新的 `collected` 狀態一次都沒印**（五趟 `collected` 0 行）。那是整合時加進 `LogSlot` 的狀態
+  （weak 指標指向的貼圖已被回收）。**所以這五趟裡，九個槽從來沒有在綁一個已被回收的 `UTexture`**——
+  但這條的覆蓋率仍受第二十六條限制（只印變化＋心跳、靠名字比對、而且那條路持有參照）。
+- **`slot_hits_fault_texture` 五趟都是 0**，和改動前四趟一致。
+- **重建過的顯存取樣器還是沒有資料**（`rhi_total_lines=0`，而樣本欄位是空的）。
+  **照我自己登記的規則，這算量具失敗，不算「沒資料」**，原因見錯誤紀錄第十二條：
+  那個命令的輸出走的是 console 的 output device，**會回在 `ui_exec` 的回應裡，而不是進 log**，
+  而我的驅動把那個回應丟進了 `/dev/null`。**所以落點比較這一欄在這一格仍然是空的**，
+  不過 `5/5` 的讀法用不到它。
+
+
+# 著色器身分驗了：傾印自己說出那顆是 **`FDreamUIBasePS`**，而且是同一個 `Shader Hash`
+
+## 一、先說為什麼非驗不可：`Function = MainPS` 從來不是指認
+
+`MainPS` 是入口點名，不是身分。**光這個專案就有八顆 pixel shader 用這個入口點，其中七顆在 DreamGUI 裡**：
+`FDreamUIBasePS`、`FDreamUICompositePS`、`FDreamUILayerStyleCompositePS`、
+`FDreamUIScreenRenderPS`／`FDreamUIWorldRenderPS`／`FDreamUIWorldRenderDepthFadePS`、
+`FDreamUIBackdropCompositePS`，外加 `KKCrowdGpuPacking` 的 `FOKSourceMaterialPS`；
+引擎原始碼裡另有 51 個檔案含這個字串。
+**所以那一行連「DreamGUI 內是哪一顆」都分不出來**，更不足以撐起「取樣者在 DreamGUI 的繪製裡」這個前提。
+
+## 二、一趟就問出來了
+
+旋鈕：`r.Shaders.ExtraData=1`（`ShaderCompiler.cpp:451-457`，`ECVF_ReadOnly`，
+由驅動以 `-ini:Engine:[ConsoleVariables]` 在鎖定前設；到達證據是回讀 `= "1"`）。
+它會把著色器名寫進 shader code 的選用資料（`D3D12Shaders.cpp:38`），
+再經 `D3D12NvidiaExtensions.cpp:40` 交給 Aftermath，故障時印成 `DebugName`
+（`RHICoreNvidiaAftermath.cpp:405-408`）。
+
+```
+Active Shaders:
+  Type = Pixel
+  Function = MainPS
+  DebugName = 'Global/FDreamUIBasePS/0:/Plugin/DreamGUI/Private/DreamUIBase.usf|MainPS'
+  Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF
+```
+
+**`Shader Hash` 和先前每一次故障都是同一個值**，所以這次的指認**可以套用到之前所有趟次**
+（同一顆著色器，不是只有這一趟）。`Failed to associate Aftermath hash` 0 筆。
+
+**前提成立：取樣者就是 DreamGUI 的基礎 UI 像素著色器。** 之前的框架不必重排。
+
+## 三、代價與量具的覆蓋率，照實記
+
+- 整趟 **542 秒**（約 9 分鐘）走到故障，`cards=4`。重編著色器的代價在一趟之內，可以接受。
+- **`shader_compile_lines=0`**：我抓編譯行的那組樣式一行都沒命中，**而樣本欄位也是空的**。
+  依第十一條這算那個小量具失敗（樣式不對，或這次走了 DDC），
+  **不能據此宣稱「沒有重編」**；真正的到達證據是另外兩層：旋鈕回讀為 `1`，
+  以及**先前所有趟次都沒有的 `DebugName` 行這次出現了**——那一行只有這個設定開著才可能存在。
+- `shader_pdb` 是空的（沒開符號），本條不需要它。
+
+## 四、這顆著色器的參數長相，下一步的起點
+
+`FDreamUIBasePS::FParameters`（`DreamUIBaseShaders.h:157-187`）的**十一個貼圖參數全部是
+`SHADER_PARAMETER_TEXTURE`**（`DreamUI_MainTex`、`DreamUI_FontTex`、`DreamUI_WidgetDataTex`、
+`DreamUI_ClipDataTex`、`DreamUI_RectBlockDataTex`、`DreamUI_PaintDataTex`、
+`DreamUI_MaskTex0/1`、`DreamUI_SceneDepthTex`、`DreamUI_BackdropTex`，
+以及另一個結構裡的 `DreamUI_RenderLayerTable`／`DreamUI_RenderLayerWidgetData`）。
+
+**`SHADER_PARAMETER_TEXTURE` 收的是裸 `FRHITexture*`，RDG 不會為它延長生命期**
+（那是 `SHADER_PARAMETER_RDG_TEXTURE` 才有的保證）——**繫結期間由呼叫端負責讓它活著**。
+而第二十六條已經說明：我那九個槽的量具看的是 `FTextureReferenceRHIRef` 那一側，
+**結構上只看得到活著的綁定**。
+**所以下一步要問的是：這十一個參數分別從哪裡取值，哪些不是經過那九個槽。**
+
+
+# 那顆著色器的貼圖參數盤完了：**十一個全部有擔保人**，而且懷疑的那個缺口不是缺口
+
+純讀碼，零趟次。綁定點在 `DreamUIRenderer.cpp:981-1014`。
+
+| 參數 | 值從哪裡來 | 繫結那一刻誰擔保 | 可能是卡片 runtime 貼圖嗎 |
+|---|---|---|---|
+| `DreamUI_MainTex` | `Params.MainTextureRHI`（槽 0） | `FTextureReferenceRHIRef`，由 draw params 持有 | **可能**（卡片縮圖／預覽就走這裡） |
+| `DreamUI_FontTex` | `FontTextureRHI`（槽 1） | 同上 | 否：`Texture2DArray`，字型圖集 |
+| `DreamUI_WidgetDataTex` | `WidgetDataTextureRHI`（槽 2） | 同上 | 否：DreamGUI 自建的資料貼圖 |
+| `DreamUI_ClipDataTex` | `ClipDataTextureRHI`（槽 3） | 同上 | 否：同上 |
+| `DreamUI_RectBlockDataTex` | `RectBlockDataRHI`（槽 5） | 同上 | 否：同上 |
+| `DreamUI_PaintDataTex` | `PaintDataRHI`（槽 6） | 同上 | 否：同上 |
+| `DreamUI_MaskTex0/1` | `MaskTexture0/1RHI`（槽 7、8） | 同上 | 可能（遮罩可以是任意 `UTexture`） |
+| `DreamUI_SceneDepthTex` | 傳進來的 `SceneDepthTexture`，否則 `GBlackTexture` | pass 之內取值，RDG 保證 | 否：場景深度 |
+| `DreamUI_BackdropTex` | 當幀的 backdrop 副本，否則 `GBlackTexture` | 同上；**且兩個方向都已除名** | 否 |
+| `DreamUI_RenderLayerTable`（VS） | `RenderLayerTableRHI`（槽 4） | `FTextureReferenceRHIRef` | 否 |
+| `DreamUI_RenderLayerWidgetData`（VS） | **`WidgetDataTextureRHI`（槽 2）** | 同上 | 否 |
+
+## 一、懷疑的那個缺口不成立：`RenderLayerWidgetData` 沒有自己的來源
+
+協調 session 推測 `RenderLayerWidgetData` 既不在九個槽裡也沒被排除過。**不是這樣**：
+`DreamUIRenderer.cpp:982` 是
+
+```cpp
+VSParameters.DreamUI_RenderLayerWidgetData = TextureOrFallback(Params.WidgetDataTextureRHI.GetReference(), GBlackTexture);
+```
+
+**它和 `DreamUI_WidgetDataTex` 讀的是同一個槽（槽 2 `WidgetData`）**，所以它在量具視野內，
+而且它是**頂點著色器**的參數——**故障的是 pixel shader**（`Type = Pixel`），
+所以那兩個 VS 參數本來就不會是這次被取樣的那一張。
+
+## 二、十一個都有擔保人，所以照事前登記的讀法，矛盾落在量具那一側
+
+九個走 `FTextureReferenceRHIRef`（draw params 持有，計數有效）、
+`SceneDepthTex` 與 `BackdropTex` 在 pass 之內取值。**沒有一個是「沒有擔保人的裸值」。**
+而第二十六條的三個洞說那個量具**結構上看不到懸空的綁定**。
+**兩者正面矛盾 ⇒ 東西藏在洞裡 ⇒ 下一步要把量具補到「每一筆 draw 真正綁出去的那個值」。**
+
+## 三、補量具時要量什麼：綁出去的是**參照物件本身**，不是被參照的貼圖
+
+`TextureOrFallback(Params.MainTextureRHI.GetReference(), …)` 交給
+`SHADER_PARAMETER_TEXTURE` 的是 **`FRHITextureReference` 這個物件**（它本身就是一種 `FRHITexture`）。
+**GPU 真正取樣的是它當下所指的那一張**，而那層指向可以在繫結之後改變：
+
+- `FD3D12RHITextureReference::SwitchToNewTexture`（`D3D12TextureReference.cpp:43-79`）最後一行是
+  `SetReferencedTexture(InNewTexture)`——**傳進來的原值**；
+  `NewTexture`（在 null 時退回 `GetDefaultTexture()`）只用在 bindless 那一段。
+  所以清掉參照時，`ReferencedTexture` 變成 **nullptr**，不是黑貼圖。
+- `FRHITextureReference::ReferencedTexture` 是 `TRefCountPtr`（`RHITextureReference.h:53`），
+  **所以「參照指著它」與「它的配置被釋放」不能同時成立**——
+  這正是第二十六條第三個洞說的：**量具只看得到活著的那一半**。
+
+**所以樁要下在每一筆 draw 繫結的那一刻，記錄「參照物件 ⇒ 它當下指向的貼圖 ⇒ 那張貼圖的名字與位址」，
+並且在貼圖已經不在時也要印得出來**（不能靠讀它的名字，因為那時讀的就是已釋放的記憶體）。
+這就是交接文件第 7 節那個樁要解決的問題，而這次盤點把它的規格講清楚了：
+**量的對象是「參照 → 被參照」那一跳，不是槽位解析那一刻。**
+
+
+## 數清楚了：填 `FDreamUIBasePS::FParameters` 的只有**兩處**，第二處全部是全域貼圖，而且沒有任何一處把參數結構存起來
+
+全樹 grep（`Plugins`、`Source`，排除 `Intermediate`／`Binaries`）：`FDreamUIBasePS`／`FDreamUIBaseVS`
+出現 25 行，其中**宣告與 `IMPLEMENT_GLOBAL_SHADER` 以外，只有兩處建立 `FParameters`**：
+
+| | `DreamUIRenderer.cpp:988`（主路徑） | `DreamUIRenderer.cpp:2883`（編輯器外框，`FPlainColor`） |
+|---|---|---|
+| 十一個貼圖欄位 | 九個走 `TextureOrFallback(Params.*RHI.GetReference(), …)`，即**參照物件本身**；`SceneDepthTex`、`BackdropTex` 走當幀的值或 `GBlackTexture` | **全部是全域**：`GWhiteTexture`／`GBlackTexture`／`GBlackArrayTexture` |
+| 沒填的欄位 | 無 | `DreamUI_BlendParams`、`DreamUI_BackdropTex` |
+| 沒填會是什麼 | — | **`nullptr`**：`SHADER_PARAMETER_TEXTURE` 的巨集帶 `= nullptr` 預設值（`ShaderParameterMacros.h:1637-1638`），所以不是未初始化的堆疊垃圾 |
+| 結構生命期 | 區域變數，當場 `SetShaderParameters(RHICmdList, …)` 消費 | 同左 |
+
+**所以第二處不可能交出一張卡片 runtime 貼圖**（它只交全域貼圖），**而且兩處都沒有把參數結構留到下一幀**
+（`SHADER_PARAMETER_TEXTURE` 存的是裸值，結構若活過一幀就等於裸值活過一幀——這裡沒有）。
+`InOutCache->Pipeline.Remember(...)` 只記 PSO 的組合，不記貼圖。
+
+**permutation 共用同一個參數結構**（第二處的註解自己寫著「the parameter struct is shared」），
+`FBlendDepth`／`FDepthFade`／`FPlainColor`／`FBackdrop` 只換 define，不換結構。
+
+### 讀法：落在第一種分支
+
+**只有一處會交出卡片貼圖，而它交的是參照物件**（`TextureOrFallback` 回的是
+`static_cast<FRHITexture*>(InReference)`，`DreamUIRenderer.cpp:972-975`）。
+所以問題不在「誰填」，而在**填進去之後那一跳（參照 → 被參照）在執行時指向什麼**。
+**這一格不是指認**：第二處存在，但它只交全域貼圖，照 7k 條它是「機制點不可能帶著卡片貼圖」。
+
+**於是那個樁的目標與位置都確定了**：下在 `DreamUIRenderer.cpp:988-1015` 這一段**參數結構填好、
+`SetShaderParameters` 之前**，逐欄位記下指標值；對走參照的那九個，另外記下
+`GetReferencedTexture()` 當下指向誰、以及那張的名字與位址——**並且在它已經不在時也要印得出來**。
+
+## 2026-11-20（第二趟樁）**故障那張貼圖，整趟從來沒有被任何一筆內建 draw 綁過**
+
+樹 `96615a0c7`，一趟，`DreamGUI.LogBoundTextures=1`、`DreamGUI.BoundRingSize=131072`、
+`D3D12.TrackAllAllocations=1`、`TrackedReleasedAllocationFrameRetention=400000`。
+
+### 一、先說量具：第一趟倒不出來，第二趟倒完了
+
+第一趟（同一個樁，觸發掛在 `OnHandleSystemError`／`OnShutdownAfterError`／`OnEnginePreExit` 三條委派上）
+**`ring_blocks=0`——三條一條都沒燒到**，log 停在 RHI 自己那份崩潰報告的最後一行。
+那一趟**不是陰性結果，是量具沒能講話**（ERROR_LOG 第十一條）。
+換成**掛在 log 串流上的 `FOutputDevice`**（看到 `PageFault`／`MMU Fault` 就當場同執行緒倒出）之後：
+
+| | |
+|---|---|
+| `DreamUI bound ring allocated: slots=131072` | 啟動就印（到達證據，與故障無關） |
+| `ring_blocks` / `ring_end_blocks` | **1 / 1**——開頭與結尾都在，**沒有被截斷** |
+| 倒出行數 | **40,750** |
+| 環內紀錄 | `next=7751`、`draws=138823`（已繞過，保留最後 131072 筆） |
+
+### 二、窗口覆蓋得住，而且幾乎覆蓋整趟
+
+**實測窗口 `frame=166..8079`，span 7914 幀。** 這一趟自己的距離：
+
+| | 幀 |
+|---|---:|
+| `Texture2D_247` 的配置釋放 | 8037 |
+| 包住它的 pool heap 釋放 | 8059 |
+| 故障當幀 | **8079** |
+| 故障 − heap | **20** |
+| 故障 − 貼圖釋放 | **42** |
+
+**7914 ≫ 42**，窗口起點（幀 166）幾乎就是趟次開頭。**所以這個陰性不是窗口太短。**
+
+### 三、答案
+
+**`fault_texture_in_ring = 0`。** `Texture2D_247` 在整份 log 裡只出現**一次**——在頁錯誤傾印自己那一行；
+**環形緩衝的 40,750 行裡一次都沒有。**（回查樣式本身是好的：同一個樣式在環裡命中 **35,118 行**。）
+
+**而且更進一步**：環裡曾被綁過的卡片類貼圖只有 **19 張，`Texture2D_7` 到 `_25` 連號，沒有任何編號更高的**。
+而歷次故障的那些是 `_89`、`_247`、`_320`、`_550`、`_647`、`_660`、`_869`、`_870`、`_874`、`_893`、`_895`、
+`_901`、`_956`、`_1007`、`_1430`、`_2323`、`_2961`——**全部在 `_25` 之後，一張都沒進過那十一個欄位。**
+十一個欄位裡**只有 `MainTex` 會帶卡片類貼圖**（35,118 行全是它），其餘十個一次都沒有。
+
+### 四、順帶更正一個被當成前提的描述
+
+故障那張**不是**一直在講的 1024×1024。這一趟是
+**`Texture 256x512x1 DXGI_FORMAT_B8G8R8A8_TYPELESS`（720,896 bytes，0.69 MB）**；
+先前量到的是 1024×1024（5.38 MB）與 512×512（1.38 MB）。
+**尺寸會變，所以「故障的是卡片 runtime 貼圖」這個身分是靠格式與命名推測的，不是量到的。**
+
+### 五、讀法（照跑之前登記的那條）
+
+登記的讀法是：「有倒出來但沒有那張 ⇒ 同時給實測窗口幀數與這趟自己的『故障 − heap』距離；
+窗口短於距離就只是窗口太短，不是結果。」這裡窗口遠大於距離，且結尾標記在，**所以走硬陰性那一支**。
+
+**著色器身分已確認是 `FDreamUIBasePS`，而被取樣的那張從沒從它的十一個欄位進去過。**
+於是剩下的形狀只有兩種：
+
+1. **同一條 command list 上還有別人綁了東西**——別的 pass／著色器把 descriptor 留在同一張
+   descriptor table 的槽位，而 `FDreamUIBasePS` 某個未使用槽位讀到了它（狀態快取 ABA 的窗口已量過是
+   「一條 command list」，這一條正是在那個窗口之內，所以和先前的排除不衝突）；
+2. **綁進去的值在執行時指向的東西和記錄當下不同**——但第二十七條已排除參照那一跳，
+   要成立得走**不經參照的那條**（`SceneDepthTex`／`BackdropTex`，兩者都另有排除）。
+
+**下一步往第 1 種走：同一條 command list 上還有誰綁了東西。**
+
+## 2026-11-20（讀碼）D3D12 的 SRV 狀態快取：**裸指標陣列、整張表一起重抄、而且貼圖銷毀時沒人清它**
+
+接著「同一條 command list 上還有誰綁了東西」那一格，先把這條路在引擎裡的實際形狀讀出來
+（`E:\PhysX\UE5.8`，讀碼，沒有跑任何東西）。
+
+### 一、十一個欄位之外的槽位**不會**讀到別人留下的描述子
+
+`FD3D12DescriptorCache::BuildSRVTable`（`D3D12DescriptorCache.cpp:439-485`）對範圍內每一槽：
+有 SRV 就抄它的 offline handle，**沒有就抄 `DefaultViews.NullSRV`**，且 `check(SrcDescriptors[i].ptr != 0)`。
+**所以「著色器宣告但沒填的槽位讀到上一筆的描述子」這個形狀在這個引擎裡不成立。**
+（也呼應前面量到的：`SHADER_PARAMETER_TEXTURE` 沒填就是 `nullptr`，而 `ValidateShaderParameters`
+對著色器**真的會綁**的 null 參數直接 `EmitNullShaderParameterFatalError`，`ShaderParameterStruct.cpp:542-553`。）
+
+### 二、但整張表是「有一個髒就全部重抄」，而且抄的來源是**裸指標**
+
+`FD3D12ShaderResourceViewCache`（`D3D12StateCachePrivate.h:224-225`）：
+
+```cpp
+FD3D12ShaderResourceView* Views[SF_NumStandardFrequencies][MAX_SRVS];
+FD3D12Resource*           Resources[SF_NumStandardFrequencies][MAX_SRVS];
+```
+
+**兩個都是裸、不持有的指標。** 而 `D3D12StateCache.cpp:705-724`：只有當
+`CurrentShaderDirtySRVSlots[Stage]`（當前著色器暫存器遮罩 ∩ 髒遮罩）不為零時才建表，
+**但建表時是 `for (SlotIndex < SlotsNeeded)` 整個範圍一起抄**，髒不髒都抄。
+**「髒」只表示要再抄一次，不表示槽位被清掉。**
+而 `DirtyStateForNewCommandList()` 每條新 command list 都 `DirtyAll()`，
+所以**每一幀都會把整個範圍重抄一遍**——抄的就是那兩個裸指標陣列裡當下的內容。
+
+### 三、**緩衝區銷毀會清狀態快取，貼圖銷毀不會**
+
+`ConditionalClearShaderResource`（`D3D12CommandContext.cpp:712-717`）會把指到某個
+`FD3D12ResourceLocation` 的槽位清掉。它的呼叫點**全部**是：
+
+| 呼叫點 | 對象 |
+|---|---|
+| `D3D12Buffer.cpp:687`、`:804` | **緩衝區**（lock／rename） |
+| `D3D12ResourceCollection.cpp:119` | 緩衝區 |
+| `D3D12Commands.cpp:904`、`:922` | 貼圖，但**是在它被設成 render target 的時候** |
+| `D3D12RenderTarget.cpp:169`、`:266` | 貼圖，**在 RT 複製的時候** |
+| `D3D12Commands.cpp:451`、`:505`、`D3D12WorkGraph.cpp:1032`、`:1274` | UAV |
+
+**`~FD3D12Texture`（`D3D12Texture.cpp:1612-1618`）只做統計，一個字都沒碰狀態快取。**
+所以一張普通貼圖銷毀之後，指著它的 `Views[]`／`Resources[]` 槽位**留在原地**。
+
+### 四、這條路為什麼還沒被排除，以及它預期的時間形狀
+
+延後刪除會等 GPU 過了才真的放，所以「銷毀當下還在槽位裡」本身不致命；
+**致命的是上面第二點：下一幀整個範圍會被重抄，而重抄會去解參照那個裸 `FD3D12ShaderResourceView*`。**
+它什麼時候會燒，取決於「什麼時候有個 SRV 範圍涵蓋那一槽的著色器來畫」——
+**這正好是「故障 − heap 釋放 = 4…4116 幀」那種事件驅動、不是每幀的分布**（十五趟都是這個形狀）。
+
+**還不是指認**，因為 DreamUI 這一筆 draw 的十一槽**每一筆都自己填滿**，
+所以它自己那張表的範圍內沒有空槽可以留舊東西（第一點也排掉了空槽讀舊值）。
+缺的那一塊是：**故障位址是否落在這一筆 draw 真的綁進去的某張貼圖的記憶體裡**——
+上一趟用「名字」比對是陰性，而**名字不是故障報告用來指認的東西，位址才是**。
+
+### 五、下一格：把環裡的名字比對換成**位址**比對
+
+同一個樁，每個欄位多記兩個值：被指到那張貼圖的 **GPU 虛擬位址與大小**
+（`FRHITexture::GetNativeResource()` → `ID3D12Resource::GetGPUVirtualAddress()` 與 `GetDesc()`）。
+**登記讀法**：
+
+- 故障位址落在環裡某一筆的某個欄位的 [VA, VA+size) 內 ⇒ **那一欄就是入口**，名字對不上只是名字不是同一張；
+- 落不進任何一筆，而窗口又涵蓋這一趟自己的「故障 − heap」距離 ⇒
+  **那個位址從來沒有以「這一筆 draw 綁的貼圖」的身分出現過**，於是第三點那條裸指標路成為主要嫌疑，
+  下一步就是在引擎側補上貼圖的 `ConditionalClearShaderResource`（有 cvar、預設關）並做干預測試；
+- 倒不出來或窗口短於距離 ⇒ 照第十一條，不算結果。
+
+## 2026-11-20（第三趟樁）位址比對**量不到**——而且原因在 API 本身；但這一趟換來一個比位址更強的副產品
+
+### 一、照登記的讀法，這是量具失敗（第二條），不是陰性
+
+| | |
+|---|---|
+| `ring_blocks` / `ring_end_blocks` | 1 / 1（倒出完整） |
+| `bound_lines` | 5,632 |
+| **`va_nonzero`** | **0**——**每一個欄位的位址都是 0** |
+| `distinct_vas` | 1（就是 `0x0`） |
+
+**原因不是程式碼寫錯，是我沒先查那個 API 的語義**：
+`ID3D12Resource::GetGPUVirtualAddress()` **對非緩衝資源（貼圖）就是定義回傳 0**。
+貼圖的位址範圍在 D3D12 配置器自己的簿記裡（頁錯誤報告印的就是那份），
+**那份資料在 RHI 內部，渲染外掛拿不到**。所以這個比對**從設計上就不可能**在外掛裡做成，
+程式碼已拿掉，並把理由留在原地（`DreamUIBaseShaders.cpp` 的 `RecordOne`），免得下一個人再走一次。
+
+### 二、副產品：**這一趟 DreamGUI 連一張卡片貼圖都沒綁過，而故障照樣發生**
+
+| | |
+|---|---|
+| 這一趟開的卡 | **15 張** |
+| 環裡保留的 draw | **131,072 筆**（整趟 246,159 筆的後 53%） |
+| 環裡出現過的貼圖名字（全部） | `DreamUIDataTexture_1/3/4/6`、`DreamUIDynamicSpriteAtlasData_Texture_0`、`DreamUIFontData_DistanceField_Texture_0`、`DreamUIPreset_WhiteSolid`、`FBlackTextureWithSRV`、`FWhiteTexture` |
+| 其中卡片類（`Texture2D_<n>`） | **0 筆** |
+| 故障讀到的 | `Texture2D_867`，`512x512 B8G8R8A8_TYPELESS`，1.38 MB |
+| 故障當幀 / heap 釋放 / 貼圖釋放 | 18765 / 18577 / 18553（故障−heap **188** 幀，故障−貼圖 212 幀） |
+| 著色器 | 同一顆 `E6753E1EA9F1F20775D8BC0AD963B1EF` |
+
+**這比第二趟更強**：第二趟 DreamGUI 綁過 19 張開頭的縮圖（`_7`..`_25`），
+這一趟**整個保留窗口裡一張卡片貼圖都沒綁**，開了 15 張卡、故障仍然發生在一張死掉的卡片貼圖上。
+**所以「DreamGUI 綁的東西裡沒有會故障的那一張」不是第二趟的巧合，是常態**（排除清單第二十九條更強了一層）。
+
+覆蓋的話要照實說：卡片類名字的比對涵蓋**整個 131,072 筆環**（過濾器是按名字的，所以任何
+`Texture2D_*` 都會被印出來），**但這一趟印出來的幀號只來自尾段 512 筆（span 52 幀）**，
+因為非尾段只印卡片類，而這一趟卡片類是零筆——**於是「實測窗口」這個數字反而測不到了**。
+
+### 三、第二個量具缺陷，已修
+
+**窗口不能依賴這一趟剛好綁了什麼。** 倒出改成三段、各自有結尾標記，
+而**第一段先印在全部紀錄上算出來的窗口**（`recorded`、`draws`、`frames=min..max`、`span`），
+不經任何名字過濾；第二段是最後 512 筆完整內容（故障當下那一刻），第三段才是卡片類的全史。
+最重要的先印，因為這段是在 GPU 崩潰報告正在寫的時候跑的，進程隨時可能被收掉。
+
+## 2026-11-20（事前登記）補那一半：「view 還活著，它指的資源已經死了」要怎麼量
+
+第一半（槽位留著**已銷毀的 view 物件**）已經量完：2,800 萬個槽位、`stale=0`、故障照舊。
+這裡在趟 2／3 還在跑的時候先把第二半登記好，**免得讀法跟著結果走**。
+
+### 一、怎麼判定「資源死了」——而且先說清這個來源會漏什麼
+
+**不能用 `FD3D12Resource*` 的物件存活來判定。** 讀碼後確認：
+`FD3D12StateCache::SetShaderResourceView`（`D3D12StateCache.cpp:1586`）記的是
+`Cache.Resources[freq][idx] = SRV->GetResource()`，而**池化貼圖的 `GetResource()` 是那塊共用的 64 MB
+池 heap 資源**，不是每張貼圖自己的物件——它比單張貼圖活得久，所以物件存活檢查對它幾乎永遠是「活著」。
+**（這就是為什麼第一半的量具不能照抄過來換個型別。）**
+
+所以第二半要問的是**配置層級**的事，而且用兩個**都還活著**的物件去問，不碰任何可能已被釋放的記憶體：
+
+| 判定 | 來源 | 會漏什麼 |
+|---|---|---|
+| 這一槽的 view 還活著 | 第一半那個登記表 | — |
+| **但它當初建立時記下的資源，和它那張貼圖「現在」的資源不是同一個** | `SRV->GetResource()` 對 `SRV->GetResourceInfo().BaseResource->ResourceLocation.GetResource()` | 若 rename 之後 view 已被正確重建，兩者會一致，**於是這個判定看不到「描述子的副本還留在表裡」那一種** |
+| 或者那張貼圖的配置已經無效 | `ResourceLocation.IsValid()` | 歸還後位址被再用時仍是 valid，所以它只抓「已經放手」不抓「已經被別人拿去用」 |
+
+**明確不採用的做法**：拿已被 free 的指標去比對（物件沒了之後指標比對本身就不可靠——
+位址可能被新物件重用，ABA 會讓死的看起來像活的）。因此這個量具**只讀兩個都還活著的物件**。
+
+### 二、檢查點與每趟會掃到多少
+
+檢查點和第一半同一處：**`FD3D12DescriptorCache::BuildSRVTable`**——唯一會把那些裸指標變成
+交給 GPU 的描述子的地方。到達證據照第一半的樣子做：第一次檢查與**每四百萬次各印一行**，
+附上「已檢查槽位數」與「目前活著的 view 數」。
+**第一半實測一趟掃到 2,800 萬個槽位**，所以同一個檢查點的量級是已知的，不是估的；
+**沒有到達行就是量具失敗，不是乾淨結果**（第十一、十四條）。
+
+### 三、讀法，現在寫死
+
+- **有任何一行報告 ⇒ 指認**：印出 stage、slot、view 指標、它記的資源與貼圖現在的資源，回報、不改其他碼。
+- **零次 ⇒ 只排除這一半**，也就是「view 活著、而它記的資源與貼圖現在的資源不一致（或配置已無效）」。
+  **它看不到**：
+  1. **描述子的副本**——描述子被抄進 descriptor heap 的區塊之後，GPU 讀的是那份副本，
+     與狀態快取裡的指標無關（這一種的窗口先前量過是「一條 command list」，因為
+     `DirtyStateForNewCommandList()` 每條新 command list 都 `DirtyAll()`，下一幀會重抄一份正確的）；
+  2. 歸還後位址被別人拿去用的情形（`IsValid()` 仍為真）；
+  3. 不經這個狀態快取的綁定路徑（本機 bindless 只開給 ray tracing，所以這一條目前是空集合，
+     但它是空集合這件事本身要在報告裡講明，而不是默默當成不存在）。
+- **到達行在、報告零次、而故障照舊 ⇒ 下一格就是上面第 1 種**（描述子副本與 descriptor heap 區塊的回收），
+  那一格的量具不在狀態快取，而在 `FD3D12OnlineDescriptorManager` 的區塊回收與 EOP 栅欄。
+
+## 2026-11-20（事前登記）下一格：**描述子的副本**——回收的 descriptor heap 區塊是否在 GPU 還讀著的時候被交還
+
+狀態快取那條路兩半都空了（第三十、三十一條），而兩半的量具都**看不到描述子被抄進
+descriptor heap 區塊之後的那份副本**。這一格就量它，**讀法先寫死**。
+
+### 一、機制與它在碼裡的位置
+
+每條 command list 的 view 描述子來自 `FD3D12SubAllocatedOnlineHeap`，它向
+`FD3D12OnlineDescriptorManager` 借一個區塊（`AllocateHeapBlock`，`D3D12Descriptors.cpp:282`），
+用完以 `FreeHeapBlock`（`:304`）交回——而那是走
+`FD3D12DynamicRHI::DeferredDelete(InHeapBlock, this)`，由 **EOP（end of pipe）任務**
+呼叫 `Recycle`（`:315`）把它推回 `FreeBlocks`。
+`BuildSRVTable` 把描述子**抄進**區塊的槽位，`SetSRVTable` 只把那個區塊的 GPU handle
+設成 root descriptor table——**所以 GPU 讀的是區塊裡那份副本，不是狀態快取裡的指標。**
+
+若那個 EOP 栅欄沒有真的涵蓋「這張表被哪條 command list 用到」，
+區塊就可能在 GPU 還在讀的時候被交還、被下一個使用者覆寫，
+**GPU 於是讀到別人的描述子——那個別人可以是一張已經死掉的貼圖。**
+這與量到的事實相容：故障那張從來沒被 DreamGUI 綁過（第二十九條），
+而「故障 − heap 釋放 = 4…4116 幀」那種事件驅動的分布也對得上「要等某個區塊被重用」。
+
+### 二、量具（干預式，一個旋鈕，預設關）
+
+`D3D12.OK.PoisonRecycledDescriptorBlocks`（`ECVF_ReadOnly`，預設 0）：
+在 `FD3D12OnlineDescriptorManager::Recycle(Block)` 把區塊推回 `FreeBlocks` **之前**，
+把整個區塊的描述子寫成 **NullSRV**（下毒）。
+
+- 若栅欄是對的（GPU 早已讀完），下毒不改變任何結果——反正下一個使用者會覆寫它。
+- 若栅欄是錯的（GPU 還在讀），下毒把**懸空的描述子換成 null 描述子**：
+  取樣讀到零，而不是去碰一塊沒有映射的位址。
+
+**到達證據**：每次下毒累加，第一次與每 256 次各印一行（區塊數、累計下毒數、FreeBlocks 大小）。
+**沒有到達行就是量具失敗**，不是乾淨結果（第十一、十四條）。
+
+### 三、讀法，現在寫死
+
+- **開著 0/3（三趟都不故障）⇒ 指認**：GPU 真的在讀已回收的區塊，
+  而這一格的干預就是修法的方向（正確做法是修栅欄，不是長期下毒）。
+- **開著 3/3 ⇒ 這條路除名**，並講明覆蓋範圍：下毒只涵蓋**走 `Recycle` 回到 `FreeBlocks`
+  的那些區塊**，不涵蓋
+  1. `FD3D12LocalOnlineHeap` 的溢出堆（它自己的 `RecycleSlots`／`ReclaimPool`，
+     而歷次故障 log 裡 `OnlineHeap RollOver` 共 **0 次／108 份**，所以這條路在這個場景沒被走到）；
+  2. 全域取樣器堆（`RollOver` 直接 `check(false)`，不會回收）；
+  3. 同一個區塊**還被持有**、而槽位在區塊內被重新發出的情形（`ReserveSlots`／`SetNextSlot`）。
+- **1/3 或 2/3 ⇒ 不套任何一支**：那表示故障率本身在變動，
+  要先把「旋鈕的成本是否改了時序」量出來才有資格讀（這一點在第三十一條已經踩過一次）。
+
+## 2026-11-20（下毒三趟）**1/3**——照事前登記，這**不套任何一支**；而這三趟最重要的產物是「卡數」那一欄
+
+旋鈕 `D3D12.OK.PoisonRecycledDescriptorBlocks=1`，引擎 commit `b2a3bf0ebdc7`（未推送）。
+
+### 一、量到什麼
+
+| 趟 | 到達行 | 已下毒區塊（最後一行） | 故障 | 卡 | 故障那張 | `OnlineHeap RollOver` |
+|---:|---:|---:|---:|---:|---|---:|
+| 1 | 239 | **60,928** | **0** | 60（跑滿） | — | 0 |
+| 2 | 231 | **58,880** | **1** | 53 | `Texture2D_3103` | 0 |
+| 3 | 228 | **58,112** | **0** | 60（跑滿） | — | 0 |
+
+到達證據三趟都在，每趟下毒約**六萬個區塊**（每塊 2,000 個描述子，約一億兩千萬個描述子被寫成 null）。
+`RollOver` 三趟都是 0，所以 local 溢出堆那條路這個場景沒走到（與 108 份舊 log 一致）。
+
+### 二、照事前登記：1/3 ⇒ 不套任何一支
+
+登記寫的是「0/3 ⇒ 指認；3/3 ⇒ 除名；**1/3 或 2/3 ⇒ 不套任何一支**，
+先把旋鈕成本是否改了時序量出來」。結果正是 1/3。**所以這一格現在沒有結論。**
+
+### 三、但有一條**事後**的推理，要標明它是推理而不是登記過的讀法
+
+**被下毒的區塊只會讓取樣讀到 null 描述子（讀到零），不會造成頁錯誤。**
+所以趟 2 那一次故障的描述子**不是來自已被回收並下毒的區塊**。
+在「所有故障是同一個機制」這個前提下（十五趟以上同一顆著色器雜湊、同一種死去的卡片貼圖簽章），
+這會把「GPU 讀到已回收區塊裡的舊描述子」排除掉。
+**但這個前提本身沒有被獨立驗證過**，而且另外兩趟沒故障又指向相反的方向
+（旋鈕可能真的壓掉了大部分故障）。**兩個讀法並存，所以這一格必須先解掉混淆。**
+
+### 四、真正的障礙已經量出來了：**故障率與「跑到第幾張卡才故障」會隨旋鈕變**
+
+| 這一輪 | 故障 | 卡數 |
+|---|---|---|
+| 乾淨基線（11-18～11-20，108 份 log） | 幾乎每趟都故障 | 多半十幾張內 |
+| SRV 槽位檢查（第一半） | 3/3 | 14、5、14 |
+| SRV 資源現時性（第二半） | 2/3 | 52、**60（沒故障）**、6 |
+| 下毒 | **1/3** | **60（沒故障）**、53、**60（沒故障）** |
+
+**旋鈕越貴，故障越晚、越少。** 這三格的旋鈕都在熱路徑上做額外工作
+（一億次集合查詢、一億兩千萬次描述子寫入），所以
+**「故障變少」目前無法區分是「機制被擋住」還是「時序被改掉」。**
+在這一點解掉之前，任何「開著就不故障」的格子都不能讀成指認——這已經是第三格踩到同一件事。
+
+### 五、下一格（登記在下一條）：**成本對照**
+
+要能讀，就得有一個**做同樣多工、但語義上什麼都沒改**的對照組：
+`D3D12.OK.PoisonRecycledDescriptorBlocks=2` ⇒ 對每個槽位做一次同樣的描述子複製，
+**但目標是一個離線的暫存槽**（區塊內容完全不變）。於是
+`0`（關）、`1`（下毒）、`2`（等成本、無語義）三臂交錯各跑數趟，
+**故障率的差異才有可能歸因到語義而不是成本**。
+
+## 2026-11-20（事前登記）三臂交錯：**把「成本」和「語義」分開**
+
+三格下來同一個混淆：旋鈕越貴，故障越晚越少。所以下一輪不是再加一個旋鈕，
+而是**讓同一個旋鈕多一條什麼都不改、但一樣貴的路**。
+
+### 一、三臂
+
+`D3D12.OK.PoisonRecycledDescriptorBlocks`：
+
+| 值 | 做什麼 | 成本 | 語義 |
+|---:|---|---|---|
+| 0 | 關 | 無 | 無 |
+| 1 | 回收的區塊整塊寫成 NullSRV | 每槽一次描述子複製 | **改了**（懸空描述子變 null） |
+| 2 | **成本對照**：每槽一次同樣的描述子複製，但**來源是區塊的槽位、目標是一個離線暫存槽** | **與 1 相同** | **沒改**（區塊逐位元不變） |
+
+引擎 commit（下一筆）；`ECVF_ReadOnly`，預設 0。
+
+### 二、怎麼跑
+
+**交錯** `0,1,2,0,1,2,…`，**每臂四趟**，同一個驅動、同一份卡片清單、同一台機器、同一個槽位。
+每趟記：是否故障、故障前開到第幾張卡（**跑滿 60 張沒故障就記為「60 右設限」**）、到達行、
+已處理區塊數、著色器雜湊。
+
+### 三、判準（現在寫死，不准事後調）
+
+以四趟為單位看「故障趟數」，並用「到第幾張卡」當輔助：
+
+1. **臂 1 ≤ 1/4 而臂 2 ≥ 3/4 ⇒ 指認**：差異來自語義，也就是 GPU 真的在讀已回收的區塊；
+   修法方向是栅欄，不是長期下毒。
+2. **|臂 1 − 臂 2| ≤ 1（例如兩臂都是 1～2/4）⇒ 差異來自成本**：
+   下毒這個設計**無法**回答這一格，而「已回收區塊」這條路**既不被指認也不被排除**——
+   要換一個不依賴故障率的讀出方式才能繼續。
+3. **臂 0 ≤ 2/4 ⇒ 連基線都不夠穩**：那麼「故障趟數」這種二元讀出對這個場景就是不夠用的工具，
+   必須改用「到第幾張卡才故障」的設限分析（或把每趟拉長），而且要明說先前所有
+   「開著就 0/3」的格子都受同一個限制。
+
+**三種情形都要把三臂的卡數一起報出來**，因為它比二元的故障趟數帶更多資訊。

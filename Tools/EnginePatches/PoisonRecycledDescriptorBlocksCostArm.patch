@@ -1,0 +1,112 @@
+From 317726a306da723ea5a2838911ce7d5feae44e13 Mon Sep 17 00:00:00 2001
+From: damody2026 <344874824+damody2026@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 07:01:08 +0800
+Subject: [PATCH] =?UTF-8?q?D3D12=EF=BC=9A=E4=B8=8B=E6=AF=92=E6=97=8B?=
+ =?UTF-8?q?=E9=88=95=E5=8A=A0=E4=B8=8A=E6=88=90=E6=9C=AC=E5=B0=8D=E7=85=A7?=
+ =?UTF-8?q?=E8=87=82=EF=BC=88=E6=A8=A1=E5=BC=8F=202=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+三格下來同一個混淆：旋鈕越貴，故障越晚越少。所以讓同一個旋鈕多一條「一樣貴但什麼都不改」的路：
+模式 2 對回收區塊的每個槽位做一次同樣的描述子複製，但來源是區塊槽位、目標是一個離線暫存槽，
+區塊內容逐位元不變。於是 0（關）／1（下毒）／2（等成本無語義）可以交錯比較，
+故障率的差異才有可能歸因到語義而不是成本。
+
+ECVF_ReadOnly、預設 0；到達行多印 mode=。
+事前登記的判準在 OpenKoikatsu Docs/CARD_READER_DREAMGUI.md（2026-11-20）。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../D3D12RHI/Private/D3D12Descriptors.cpp     | 41 +++++++++++++++----
+ 1 file changed, 32 insertions(+), 9 deletions(-)
+
+diff --git a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
+index 409b1ca42261..97f189238714 100644
+--- a/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
++++ b/Engine/Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp
+@@ -313,17 +313,19 @@ void FD3D12OnlineDescriptorManager::FreeHeapBlock(FD3D12OnlineDescriptorBlock* I
+ 
+ static TAutoConsoleVariable<int32> CVarOKPoisonRecycledDescriptorBlocks(
+ 	TEXT("D3D12.OK.PoisonRecycledDescriptorBlocks"), 0,
+-	TEXT("Fill an online descriptor heap block with null descriptors as it is recycled (diagnostic)."),
++	TEXT("0 off; 1 fill a recycled online descriptor block with null descriptors; 2 cost-matched control: the same "
++		 "number of descriptor copies, out of the block into a scratch offline slot, leaving the block unchanged."),
+ 	ECVF_ReadOnly);
+ 
+-static bool OKPoisonEnabled()
++/** 0 off, 1 poison, 2 cost-matched control. See the patch header for why the control arm exists. */
++static int32 OKPoisonMode()
+ {
+ 	static int32 Cached = -1;
+ 	if (Cached < 0)
+ 	{
+-		Cached = CVarOKPoisonRecycledDescriptorBlocks.GetValueOnAnyThread() != 0 ? 1 : 0;
++		Cached = FMath::Clamp(CVarOKPoisonRecycledDescriptorBlocks.GetValueOnAnyThread(), 0, 2);
+ 	}
+-	return Cached == 1;
++	return Cached;
+ }
+ 
+ static FThreadSafeCounter64 GOKPoisonedBlocks;
+@@ -334,8 +336,22 @@ void FD3D12OnlineDescriptorManager::PoisonBlock(FD3D12OnlineDescriptorBlock* Blo
+ 	{
+ 		return;
+ 	}
++	const int32 Mode = OKPoisonMode();
++	if (Mode == 0)
++	{
++		return;
++	}
+ 	ID3D12Device* Device = GetParentDevice()->GetDevice();
+ 	const D3D12_CPU_DESCRIPTOR_HANDLE NullSRV = GetParentDevice()->GetDefaultViews().NullSRV;
++
++	// Mode 2 writes into this instead of into the block, so the block is left bit-for-bit unchanged while the number
++	// and kind of descriptor copies stays identical. Allocated once, on first use.
++	static FD3D12OfflineDescriptor GScratch;
++	if (Mode == 2 && GScratch.ptr == 0)
++	{
++		GScratch = GetParentDevice()->GetOfflineDescriptorManager(ERHIDescriptorHeapType::Standard).AllocateHeapSlot();
++	}
++
+ 	for (ERHIPipeline Pipeline : MakeFlagsRange(ERHIPipeline::All))
+ 	{
+ 		FD3D12DescriptorHeap* Heap = Heaps[Pipeline].GetReference();
+@@ -345,22 +361,29 @@ void FD3D12OnlineDescriptorManager::PoisonBlock(FD3D12OnlineDescriptorBlock* Blo
+ 		}
+ 		for (uint32 Slot = 0; Slot < Block->Size; ++Slot)
+ 		{
+-			const D3D12_CPU_DESCRIPTOR_HANDLE Dest = Heap->GetCPUSlotHandle(Block->BaseSlot + Slot);
+-			Device->CopyDescriptorsSimple(1, Dest, NullSRV, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++			const D3D12_CPU_DESCRIPTOR_HANDLE InBlock = Heap->GetCPUSlotHandle(Block->BaseSlot + Slot);
++			if (Mode == 1)
++			{
++				Device->CopyDescriptorsSimple(1, InBlock, NullSRV, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++			}
++			else
++			{
++				Device->CopyDescriptorsSimple(1, GScratch, InBlock, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++			}
+ 		}
+ 	}
+ 	const int64 Count = GOKPoisonedBlocks.Increment();
+ 	if (Count == 1 || (Count % 256) == 0)
+ 	{
+-		UE_LOG(LogD3D12RHI, Display, TEXT("OK poisoned recycled descriptor block: count=%lld baseSlot=%u size=%u"),
+-			Count, Block->BaseSlot, Block->Size);
++		UE_LOG(LogD3D12RHI, Display, TEXT("OK poisoned recycled descriptor block: mode=%d count=%lld baseSlot=%u size=%u"),
++			Mode, Count, Block->BaseSlot, Block->Size);
+ 	}
+ }
+ 
+ // Called by the EOP task to recycle blocks
+ void FD3D12OnlineDescriptorManager::Recycle(FD3D12OnlineDescriptorBlock* Block)
+ {
+-	if (OKPoisonEnabled())
++	if (OKPoisonMode() != 0)
+ 	{
+ 		// Before it can be handed to anyone else: see the comment on PoisonBlock.
+ 		PoisonBlock(Block);
+-- 
+2.54.0.windows.1
+

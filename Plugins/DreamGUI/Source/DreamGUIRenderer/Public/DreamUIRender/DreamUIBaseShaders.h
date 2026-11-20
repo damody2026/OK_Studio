@@ -207,3 +207,10 @@ public:
 		return true;
 	}
 };
+
+/**
+ * OpenKoikatsu diagnostic (default off, DreamGUI.LogBoundTextures): record what this draw hands the GPU -- the value in
+ * every texture field and, where that value is a texture reference, what it points at right now. Called once per
+ * built-in draw, just before the parameters are handed over.
+ */
+DREAMGUIRENDERER_API void DreamUIRecordBoundTextures(const FDreamUIBasePS::FParameters& InPS, FRHITexture* InRenderLayerWidgetData);
