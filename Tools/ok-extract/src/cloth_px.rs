@@ -310,6 +310,53 @@ impl PoseWatch {
 }
 type Map = HashMap<(usize, usize), Arc<Mutex<Entry>>>;
 static STATES: Mutex<Option<Map>> = Mutex::new(None);
+/// Per (session, part): how far each region (by kind) sits from the body, measured on the moving pose before the
+/// cloth is made. Of two garments with the same region only the outer one becomes cloth; the inner one follows the
+/// pose under it. Two cloths simulated apart crossed each other (Chika's blouse under her blazer, 2026-11-21).
+/// Per region: (mean distance out from the body capsules, reach: how far down a skirt hangs / how far from the
+/// shoulder a sleeve goes, 95th percentile).
+type Layer = [Option<(f32, f32)>; 5];
+static LAYERS: Mutex<Option<HashMap<(usize, usize), Layer>>> = Mutex::new(None);
+fn layer_measure(d: &Detect, positions: &[[f32; 3]], skel: &crate::pose::Skeleton, caps: &[OkPxCapsule]) -> Layer {
+    let shoulder = [bone_pos(skel, "cf_j_arm00_L"), bone_pos(skel, "cf_j_arm00_R")];
+    let mut sum = [(0f64, 0usize); 5];
+    let mut reach: [Vec<f32>; 5] = Default::default();
+    for (v, k) in d.kind.iter().enumerate() {
+        let k = *k as usize;
+        if k == 0 || k >= 5 { continue; }
+        let r = caps.iter().map(|c| seg_closest(positions[v], c.a, c.b).1 - c.radius).fold(f32::MAX, f32::min);
+        if r.is_finite() && r < 1. { sum[k].0 += r as f64; sum[k].1 += 1; }
+        let sleeve = if k == KIND_SLEEVE_L as usize { shoulder[0] } else if k == KIND_SLEEVE_R as usize { shoulder[1] } else { None };
+        // Down is -y: a skirt's reach is how low it goes (stored as -y so larger = farther, like a sleeve's).
+        reach[k].push(match sleeve { Some(s) => len(sub(positions[v], s)), None => -positions[v][1] });
+    }
+    let mut out = [None; 5];
+    for k in 1..5 {
+        if sum[k].1 < 30 { continue; }
+        reach[k].sort_by(f32::total_cmp);
+        let r95 = reach[k][(reach[k].len() - 1) * 95 / 100];
+        out[k] = Some(((sum[k].0 / sum[k].1 as f64) as f32, r95));
+    }
+    out
+}
+/// The regions of this part that another part of the session covers (same kind, farther out by more than 3 mm).
+fn covered(session: usize, index: usize, own: &Layer) -> [bool; 5] {
+    let mut out = [false; 5];
+    let all = LAYERS.lock().unwrap();
+    let Some(map) = all.as_ref() else { return out };
+    for ((s, i), other) in map {
+        if *s != session || *i == index { continue; }
+        for k in 1..5 {
+            // Skirt and chain regions are one layer (both hang from the waist or arm the same way).
+            let same = |a: usize, b: usize| a == b || (a == KIND_SKIRT as usize && b == KIND_CHAIN as usize) || (a == KIND_CHAIN as usize && b == KIND_SKIRT as usize);
+            let Some(mine) = own[k] else { continue };
+            // Covered: the other is farther out and reaches as far (within 2 cm); a blazer ending at the hips does
+            // not cover the skirt below it.
+            if (1..5).any(|j| same(k, j) && other[j].is_some_and(|o| o.0 > mine.0 + 0.003 && o.1 >= mine.1 - 0.02)) { out[k] = true; }
+        }
+    }
+    out
+}
 
 fn entry(session: usize, index: usize, part: &crate::session::SessionPart) -> Option<Arc<Mutex<Entry>>> {
     let sig = part.runtime_accessory.as_ref().map(|r| (r.source_mesh().weights.len(), r.source_mesh().indices.len()))?;
@@ -330,6 +377,7 @@ fn release_entry(e: &mut Entry) {
 
 /// The session went away: its cloths released on the host.
 pub fn forget(session: usize) {
+    if let Some(m) = LAYERS.lock().unwrap().as_mut() { m.retain(|(s, _), _| *s != session); }
     let gone: Vec<Arc<Mutex<Entry>>> = {
         let mut all = STATES.lock().unwrap();
         let Some(map) = all.as_mut() else { return };
@@ -340,6 +388,7 @@ pub fn forget(session: usize) {
 }
 /// Mode changed: every cloth starts over (released on the host, detection again).
 pub fn reset_all() {
+    *LAYERS.lock().unwrap() = None;
     let gone: Vec<Arc<Mutex<Entry>>> = STATES.lock().unwrap().take().map(|m| m.into_values().collect()).unwrap_or_default();
     for e in gone { release_entry(&mut e.lock().unwrap()); }
 }
@@ -650,6 +699,10 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) started moving, made again on the moving pose", part.role));
         release_entry(&mut e);
     }
+    if e.sim.is_none() {
+        let m = layer_measure(&d, positions, skel, &capsules(skel));
+        LAYERS.lock().unwrap().get_or_insert_with(HashMap::new).insert((session, index), m);
+    }
     if e.sim.is_none() && e.pose.moved_for() < 1.5 && e.pose.still_for() < 2. { return; }
     // The garment's shape moved far from the one the cloth was made in (the reader's first frame is the bind pose,
     // a skirt spread out; the walk then hangs it): PhysX keeps the rest shape it was made with (a later rest upload
@@ -668,6 +721,22 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             release_entry(&mut e);
         }
     }
+    if e.sim.is_none() {
+        let own = LAYERS.lock().unwrap().as_ref().and_then(|m| m.get(&(session, index)).copied()).unwrap_or([None; 5]);
+        let under = covered(session, index, &own);
+        if under.iter().any(|u| *u) {
+            let mut kind = d.kind.clone();
+            for k in kind.iter_mut() { if (*k as usize) < 5 && under[*k as usize] { *k = 0; } }
+            let skirt = kind.iter().filter(|k| **k == KIND_SKIRT || **k == KIND_CHAIN).count() >= 30;
+            let sleeves = kind.iter().any(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R);
+            crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) is under another garment's cloth (kinds {:?}), those follow the pose", part.role,
+                (1..5).filter(|k| under[*k]).collect::<Vec<_>>()));
+            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, sig: d.sig };
+            if !skirt && !sleeves { e.failed = true; e.detect = Some(Arc::new(nd)); return; }
+            e.detect = Some(Arc::new(nd));
+        }
+    }
+    let d = e.detect.clone().unwrap();
     if e.sim.is_none() {
         match build(&d, &runtime.source_mesh().indices, positions, skel) {
             Some(mut sim) => { sim.made_still = !moving; e.sim = Some(sim) }
