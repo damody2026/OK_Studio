@@ -384,6 +384,17 @@ void UOKDreamControl::HandleInputCommitted(const FString& Text)
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
 
+// The interface's own update rate (DreamUI.UpdateRate, DreamUIManager_Tick.cpp), kept as the user's setting.
+namespace OKReaderUIRate
+{
+	const TCHAR* Section=TEXT("OK.Reader");
+	const TCHAR* Key=TEXT("UIUpdateRate");
+	float Saved(){float Value=0.f;if(GConfig)GConfig->GetFloat(Section,Key,Value,GGameUserSettingsIni);return FMath::Max(0.f,Value);}
+	void Apply(float Value){if(IConsoleVariable* Rate=IConsoleManager::Get().FindConsoleVariable(TEXT("DreamUI.UpdateRate")))Rate->Set(Value,ECVF_SetByGameSetting);}
+	void Save(float Value){if(GConfig){GConfig->SetFloat(Section,Key,Value,GGameUserSettingsIni);GConfig->Flush(false,GGameUserSettingsIni);}Apply(Value);}
+	FString Describe(float Value){return Value>0.f?FString::Printf(TEXT("目前：介面每秒更新 %d 次，3D 畫面照常每幀畫。"),FMath::RoundToInt(Value)):FString(TEXT("目前：介面每幀更新（和 3D 畫面一樣）。"));}
+}
+
 // ------------------------------------------------------------------------------------------------- UOKReaderScreen
 
 UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
@@ -410,6 +421,8 @@ UOKReaderScreen* UOKReaderScreen::Open(UOKCharacterController* Controller)
 	// found yet: the defrag stays off while the reader screen runs (the other modes keep it).
 	// That and the serial render graph the launcher gives: ReaderRenderSettings.
 	ReaderRenderSettings();
+	// The interface's own update rate, as the user last chose it (設定 › 介面更新率).
+	OKReaderUIRate::Apply(OKReaderUIRate::Saved());
 	// Design pixels on a 1080-high screen, whatever the window.
 	if(auto* Screens=UDreamScreenUISubsystem::Get(Controller->GetWorld()))if(UDreamCanvas* Canvas=Screens->GetScreenCanvas(Controller->GetOwningPlayer()))
 	{
@@ -969,6 +982,7 @@ void UOKReaderScreen::BuildCategories()
 							Out.Build=[this](UDreamWidget* Page){BuildEyeOverlayPage(Page);};
 						}
 						else if(Value==TEXT("game_root"))Out.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};
+						else if(Value==TEXT("ui_rate"))Out.Build=[this](UDreamWidget* Page){BuildUIRatePage(Page);};
 						else Bad(TEXT("不認得的 builder ")+Value);
 					}
 					const TArray<TSharedPtr<FJsonValue>>* Buttons=nullptr;
@@ -1366,6 +1380,7 @@ void UOKReaderScreen::BuildCategories()
 	FCategory Settings;Settings.Name=TEXT("設定／介面");Settings.Tab=3;
 	// The game folder (where zipmods are looked for) and the local library: a page of the screen's own, first.
 	{FGroup Folders;Folders.Name=TEXT("遊戲目錄");Folders.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};Settings.Groups.Add(MoveTemp(Folders));}
+	{FGroup Rate;Rate.Name=TEXT("介面更新率");Rate.Build=[this](UDreamWidget* Page){BuildUIRatePage(Page);};Settings.Groups.Add(MoveTemp(Rate));}
 	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting")){Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));Settings.Groups.Last().OnEnter=OpenDrawer(D);}
 	// The style box shows only under the bone category 角色風格 (OKGalleryBoneControls): this page selects it.
 	if(G->StyleBox){Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));Settings.Groups.Last().OnEnter=BoneCategory(TEXT("角色風格"));}
@@ -2130,6 +2145,32 @@ void UOKReaderScreen::BuildEyeOverlayPage(UDreamWidget* Page)
 	}
 	if(Unused)Text(Page,FString::Printf(TEXT("另有 %d 個槽位這條開卡路徑不畫（瞳孔材質上的高光貼圖走「眼睛」頁的高光種類），不列出。"),Unused));
 	if(Other)Text(Page,FString::Printf(TEXT("這張卡另有 %d 張用在衣服或配件上的貼圖，不列在這裡。"),Other));
+}
+
+void UOKReaderScreen::BuildUIRatePage(UDreamWidget* Page)
+{
+	if(!Page)return;
+	auto Text=[this](UDreamWidget* Into,const FString& Value)
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+		return C;
+	};
+	Text(Page,TEXT("介面（按鈕、滑桿、文字）每秒更新幾次，和 3D 畫面的幀率分開。選 30 時介面最多每秒更新 30 次，角色與鏡頭照常每幀畫；省下的是介面排版與更新的時間。捲動、拖曳與動畫的速度不變，只是介面畫面換得沒那麼密。"));
+	UOKDreamControl* Status=Text(Page,OKReaderUIRate::Describe(OKReaderUIRate::Saved()));
+	TWeakObjectPtr<UOKDreamControl> WeakStatus(Status);
+	UDreamWidget* Row=MakePanel(Page,true,6.f);
+	const TPair<const TCHAR*,float> Choices[]={{TEXT("每幀"),0.f},{TEXT("60 次"),60.f},{TEXT("30 次"),30.f},{TEXT("20 次"),20.f}};
+	for(const TPair<const TCHAR*,float>& Choice:Choices)
+	{
+		const float Value=Choice.Value;
+		MakeOwnButton(Row,Choice.Key,[WeakStatus,Value]()
+		{
+			OKReaderUIRate::Save(Value);
+			if(UOKDreamControl* C=WeakStatus.Get()){const FString Said=OKReaderUIRate::Describe(Value);C->FixedText=Said;C->SetText(Said);}
+		});
+	}
+	Text(Page,TEXT("設定會存下來，下次開程式還在。"));
 }
 
 void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)

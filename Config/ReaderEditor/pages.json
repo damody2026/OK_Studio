@@ -90,6 +90,7 @@
       "name": "設定／介面", "tab": 3,
       "subs": [
         { "name": "遊戲目錄", "builder": "game_root" },
+        { "name": "介面更新率", "builder": "ui_rate" },
         { "name": "光影", "sources": [{ "drawer": "Lighting" }] },
         { "name": "角色風格", "sources": [{ "widget": "style_box" }], "bone_category": "角色風格" },
         { "name": "物理", "sources": [{ "rows": "physics" }] },

@@ -297,6 +297,8 @@ private:
 	void TickThumbnails();
 	void BuildEyeOverlayPage(UDreamWidget* Page);
 	void BuildGameRootPage(UDreamWidget* Page);
+	// 設定 › 介面更新率: how many times a second the DreamGUI interface updates (DreamUI.UpdateRate), apart from the 3D view.
+	void BuildUIRatePage(UDreamWidget* Page);
 	void CheckGameRoot(const FString& Root);
 	void CheckLocalLibrary(const FString& Library);
 	static FString PickFolder(const FString& Title,const FString& Start);
