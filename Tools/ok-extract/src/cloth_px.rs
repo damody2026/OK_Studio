@@ -56,7 +56,7 @@ fn active() -> bool { mode() > 0 && host().is_some() }
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32 }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32 }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -64,6 +64,7 @@ fn tune() -> &'static Tune {
         pin_t: env_f("OK_CLOTH_PX_PIN", 0.12),
         skirt_reach: env_f("OK_CLOTH_PX_SKIRT_REACH", 0.55),
         skirt_max: env_f("OK_CLOTH_PX_SKIRT_MAX", 0.30),
+        chain_max: env_f("OK_CLOTH_PX_CHAIN_MAX", 0.06),
         sleeve_reach: env_f("OK_CLOTH_PX_SLEEVE_REACH", 0.35),
         sleeve_max: env_f("OK_CLOTH_PX_SLEEVE_MAX", 0.08),
         shoulder_u: env_f("OK_CLOTH_PX_SHOULDER", 0.14),
@@ -80,6 +81,9 @@ fn tune() -> &'static Tune {
 const KIND_SKIRT: u8 = 1;
 const KIND_SLEEVE_L: u8 = 2;
 const KIND_SLEEVE_R: u8 = 3;
+/// On a garment's own sleeve chain (its DynamicBones keep posing it): the cloth only sways around that pose
+/// (OK_CLOTH_PX_CHAIN_MAX). Left free, a long drape crumpled into a heap at the knee (2026-11-21).
+const KIND_CHAIN: u8 = 4;
 
 /// `cf_j_sk_03_04` -> level 4.
 fn skirt_level(name: &str) -> Option<u32> {
@@ -101,7 +105,8 @@ fn skirt_role(role: &str) -> bool {
 fn sleeve_role(role: &str) -> bool { role.starts_with("clothes_top") }
 
 /// Per render vertex: the kind (0 none) and, for a skirt vertex, its depth along the chains (0 waist .. 1 hem).
-struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, sig: (usize, usize) }
+/// pleats: a pleated skirt (cf_j_sk_*), made without bending.
+struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, sig: (usize, usize) }
 
 fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     let runtime = part.runtime_accessory.as_ref()?;
@@ -114,26 +119,45 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     // DynamicBone chains are rooted on the clothes rig, not in its SMR skeleton (tried 2026-11-20: no bone found on any
     // test card); a mod skirt on other bones (K*/joint*) that no chain moves stays as it was.
     let max_level = src.bone_names.iter().filter_map(|b| skirt_level(b)).max().unwrap_or(0).max(1) as f32;
-    let levels: Vec<Option<f32>> = src.bone_names.iter().map(|b| skirt_level(b).map(|l| l as f32 / max_level)).collect();
+    let mut levels: Vec<Option<f32>> = src.bone_names.iter().map(|b| skirt_level(b).map(|l| l as f32 / max_level)).collect();
+    // A mod garment's own DynamicBone chains (Raiden Shogun's kimono: +SleeveB_*, its skirt panels), found by name in
+    // the renderer's skeleton: depth = steps below the chain root / the deepest step of that chain (pinned at the root, like cf_j_sk_*)
+    // (2026-11-21).
+    let chains = chain_levels(src, runtime.implanted_bones());
+    let mut chain_bone = vec![false; src.bone_names.len()];
+    // Sleeves with chains of their own are those chains: the arm-weight sleeve (pinned along the arm) put on top of
+    // them collapsed the kimono's sleeves and tore its long drape (2026-11-21). They stay DynamicBone; as cloth
+    // (OK_CLOTH_PX_CHAINS=1, experimental) the drape still flails and tears while walking.
+    let own_sleeves = chains.iter().any(|l| l.is_some());
+    let chain_sleeves = want_sleeve && std::env::var("OK_CLOTH_PX_CHAINS").is_ok_and(|v| v == "1");
+    if chain_sleeves {
+        for (b, l) in chains.iter().enumerate() { if let (Some(l), None) = (l, levels[b]) { levels[b] = Some(*l); chain_bone[b] = true; } }
+    }
+    // Not mixed either: a cf_j_sk corner of such a garment as cloth beside its DynamicBone drape jagged at the seam
+    // and was made again every few seconds (the drape moves it 35%).
+    if own_sleeves && !chain_sleeves { return None; }
+    let want_sleeve = want_sleeve && !own_sleeves;
     let sides: Vec<Option<usize>> = src.bone_names.iter().map(|b| arm_side(b)).collect();
     let mut kind = vec![0u8; n];
     let mut depth = vec![0f32; n];
-    let (mut skirt_n, mut sleeve_n) = (0usize, [0usize; 2]);
+    let (mut skirt_n, mut sleeve_n, mut chain_n) = (0usize, [0usize; 2], 0usize);
     for v in 0..n {
-        let (mut total, mut sk, mut sk_level, mut arm) = (0f32, 0f32, 0f32, [0f32; 2]);
+        let (mut total, mut sk, mut sk_level, mut arm, mut chain_w) = (0f32, 0f32, 0f32, [0f32; 2], 0f32);
         for k in 0..4 {
             let w = src.weights[v][k];
             if w <= 0. { continue; }
             total += w;
             let b = src.bone_idx[v][k] as usize;
-            if let Some(Some(l)) = levels.get(b) { sk += w; sk_level += w * *l; }
+            if let Some(Some(l)) = levels.get(b) { sk += w; sk_level += w * *l; if chain_bone[b] { chain_w += w; } }
             if let Some(Some(s)) = sides.get(b) { arm[*s] += w; }
         }
         if total <= 1e-5 { continue; }
-        if want_skirt && sk / total >= 0.25 {
-            kind[v] = KIND_SKIRT;
+        let on_chain = chain_w * 2. >= sk;
+        if sk / total >= 0.25 && (if on_chain { chain_sleeves } else { want_skirt }) {
+            kind[v] = if on_chain { KIND_CHAIN } else { KIND_SKIRT };
             depth[v] = (sk_level / total).clamp(0., 1.);
             skirt_n += 1;
+            if on_chain { chain_n += 1; }
         } else if want_sleeve {
             for s in 0..2 { if arm[s] / total >= 0.5 { kind[v] = KIND_SLEEVE_L + s as u8; sleeve_n[s] += 1; } }
         }
@@ -144,13 +168,72 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
         let mut order: Vec<usize> = (0..sums.len()).collect();
         order.sort_by(|a, b| sums[*b].total_cmp(&sums[*a]));
         let top: Vec<String> = order.iter().take(12).map(|&b| format!("{}={:.0}", src.bone_names[b], sums[b])).collect();
-        crate::ffi::ffi_log(1, &format!("OK cloth px detect: role={} verts={n} skirt_verts={skirt_n} sleeve_verts={sleeve_n:?} bones: {}", part.role, top.join(" ")));
+        crate::ffi::ffi_log(1, &format!("OK cloth px detect: role={} verts={n} skirt_verts={skirt_n} (own chains {chain_n}) sleeve_verts={sleeve_n:?} chain bones={} bones: {}", part.role, chains.iter().filter(|l| l.is_some()).count(), top.join(" ")));
     }
     let skirt = skirt_n >= 30;
     let sleeves = sleeve_n.iter().any(|c| *c >= 30);
-    if !skirt { for k in kind.iter_mut() { if *k == KIND_SKIRT { *k = 0; } } }
+    if !skirt { for k in kind.iter_mut() { if *k == KIND_SKIRT || *k == KIND_CHAIN { *k = 0; } } }
     for s in 0..2 { if sleeve_n[s] < 30 { for k in kind.iter_mut() { if *k == KIND_SLEEVE_L + s as u8 { *k = 0; } } } }
-    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, sig: (n, src.indices.len()) })
+    // Pleated skirts get no bending (their folds flip); a region mostly on the garment's own chains (sleeves, panels)
+    // keeps it, or it slumps.
+    let pleats = skirt && chain_n * 2 < skirt_n;
+    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, sig: (n, src.indices.len()) })
+}
+/// Per renderer bone: its depth (0 root .. 1 deepest) in one of the garment's own DynamicBone chains, by name.
+/// Clothes whose bones were grafted onto the body (copy-weights clothes with their own chains: the kimono) have no
+/// set of their own any more; their chains start at each grafted bone whose parent is not grafted.
+fn chain_levels(src: &crate::unity::ExtractedMesh, implanted: &std::collections::HashSet<i64>) -> Vec<Option<f32>> {
+    let mut out = vec![None; src.bone_names.len()];
+    let Some(skel) = src.smr_skel.as_ref() else { return out };
+    let mut roots = src.deferred_dbones.as_ref().map(|set| set.root_names(skel)).unwrap_or_default();
+    if roots.is_empty() {
+        roots = implanted.iter().filter_map(|id| skel.tfs.get(id))
+            .filter(|t| !t.parent.is_some_and(|p| implanted.contains(&p)))
+            .map(|t| (t.name.clone(), Vec::new())).collect();
+    }
+    let parent_of: HashMap<&str, &str> = skel.tfs.values()
+        .filter_map(|t| t.parent.and_then(|p| skel.tfs.get(&p)).map(|p| (t.name.as_str(), p.name.as_str()))).collect();
+    // Only sleeve chains (hung from an arm bone). Long panels and trains from the waist crumple and tear as cloth (the
+    // kimono's back train, 2026-11-21): they stay DynamicBone.
+    let on_arm = |root: &str| {
+        let mut cur = root;
+        for _ in 0..64 {
+            let Some(p) = parent_of.get(cur) else { return false };
+            // Body bones reach a grafted garment as "__ok_body_bridge/<bone>".
+            if arm_side(p.rsplit('/').next().unwrap_or(p)).is_some() { return true; }
+            cur = p;
+        }
+        false
+    };
+    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+        for (root, _) in &roots {
+            let mut path = vec![root.as_str()]; let mut cur = root.as_str();
+            while let Some(p) = parent_of.get(cur) { path.push(p); cur = p; if path.len() > 10 { break; } }
+            crate::ffi::ffi_log(1, &format!("OK cloth px chain root on_arm={} {}", on_arm(root), path.join("<")));
+        }
+    }
+    roots.retain(|(root, _)| on_arm(root));
+    if roots.is_empty() { return out; }
+    // Each bone: (its root, steps below it), the nearest chain root up its ancestry.
+    let mut found: Vec<Option<(usize, u32)>> = vec![None; src.bone_names.len()];
+    for (b, name) in src.bone_names.iter().enumerate() {
+        let mut cur = name.as_str();
+        for step in 0..64u32 {
+            if let Some(r) = roots.iter().position(|(root, ex)| root == cur || ex.iter().any(|e| e == cur)) {
+                if roots[r].1.iter().any(|e| e == cur) { break; }
+                if step > 0 || roots[r].0 == *name { found[b] = Some((r, step)); }
+                break;
+            }
+            let Some(p) = parent_of.get(cur) else { break };
+            cur = p;
+        }
+    }
+    let mut deepest = vec![0u32; roots.len()];
+    for f in found.iter().flatten() { deepest[f.0] = deepest[f.0].max(f.1); }
+    for (b, f) in found.iter().enumerate() {
+        if let Some((r, s)) = f { out[b] = Some(*s as f32 / deepest[*r].max(1) as f32); }
+    }
+    out
 }
 
 // ---- per (session, part) state
@@ -266,7 +349,10 @@ pub fn takes_over_dynamics(session: usize, index: usize, part: &crate::session::
     if !active() || part.runtime_accessory.is_none() { return false; }
     let Some(e) = entry(session, index, part) else { return false };
     let e = e.lock().unwrap();
-    !e.failed && e.detect.as_ref().is_some_and(|d| d.skirt)
+    // A garment grafted onto the body (coordinated) shares its chains with the clothes set: they keep running and the
+    // cloth overrides only its own vertices, or its other panels would go rigid.
+    let grafted = part.runtime_accessory.as_ref().is_some_and(|r| !r.implanted_bones().is_empty());
+    !e.failed && !grafted && e.detect.as_ref().is_some_and(|d| d.skirt)
 }
 
 // ---- vector helpers
@@ -384,7 +470,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         let k = kind_of[p];
         // A particle no element holds would only fall: it follows the pose.
         pinned[p] = !all_region[p] || !in_tri[p] || match k {
-            KIND_SKIRT => depth_of[p] < t.pin_t,
+            KIND_SKIRT | KIND_CHAIN => depth_of[p] < t.pin_t,
             KIND_SLEEVE_L | KIND_SLEEVE_R => {
                 let s = (k - KIND_SLEEVE_L) as usize;
                 arms[s].is_none() || u[p] < t.shoulder_u || u[p] > umax[s] - t.cuff_u
@@ -424,6 +510,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         if anchor[p] != u32::MAX { straight[p] = len(sub(pos[p], pos[anchor[p] as usize])); }
         max_dist[p] = match kind_of[p] {
             KIND_SKIRT => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(t.skirt_max),
+            KIND_CHAIN => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(t.chain_max),
             _ => (t.sleeve_reach * near).min(0.012 + 0.6 * (r[p] - 0.05).max(0.)).min(t.sleeve_max),
         };
         if max_dist[p] > 1e-4 { free += 1; } else { pinned[p] = true; }
@@ -585,7 +672,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let targets: Vec<[f32; 3]> = sim.rep.iter().map(|&v| positions[v as usize]).collect();
     if !sim.created {
         let inv: Vec<f32> = sim.pinned.iter().map(|p| if *p { 0. } else { 1. }).collect();
-        let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.skirt as u32) };
+        let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.pleats as u32) };
         if ok != 1 {
             e.failed = true; e.sim = None;
             crate::ffi::ffi_log(2, &format!("OK cloth px: host could not create the cloth of part {index} ({}), DynamicBone kept", part.role));
@@ -751,7 +838,7 @@ mod tests {
                 let Some(rt) = p.runtime_accessory.as_ref() else { continue };
                 let src = rt.source_mesh();
                 let d = detect(p);
-                let (sk, sl) = d.as_ref().map_or((0, 0), |d| (d.kind.iter().filter(|k| **k == KIND_SKIRT).count(), d.kind.iter().filter(|k| **k >= KIND_SLEEVE_L).count()));
+                let (sk, sl) = d.as_ref().map_or((0, 0), |d| (d.kind.iter().filter(|k| **k == KIND_SKIRT || **k == KIND_CHAIN).count(), d.kind.iter().filter(|k| **k == KIND_SLEEVE_L || **k == KIND_SLEEVE_R).count()));
                 // Where her unclaimed bones hang: the ancestry of the most weighted bone.
                 let anc = |name: &str| -> String {
                     let Some(sk) = src.smr_skel.as_ref() else { return String::new() };

@@ -2633,6 +2633,15 @@ impl DBoneSet {
         }
         changed
     }
+    /// The names of this set's chain roots (m_Root, named in `skel` or as the source recorded it), with the names of
+    /// their excluded bones: a garment's own chains by name, for cloth_px (the rig copies keep the names, not the ids).
+    pub(crate) fn root_names(&self, skel: &Skeleton) -> Vec<(String, Vec<String>)> {
+        self.bones.iter().filter_map(|db| {
+            let root = skel.tfs.get(&db.root).map(|t| t.name.clone()).or_else(|| db.source_root_name.clone())?;
+            let excluded = db.exclusions.iter().filter_map(|id| skel.tfs.get(id).map(|t| t.name.clone())).collect();
+            Some((root, excluded))
+        }).collect()
+    }
     /// OK_DBONE_DIAG: every component of this set, its root and whether `skel` (the renderer's rig) contains it.
     pub(crate) fn diag_against(&self, skel: &Skeleton, label: &str) {
         for db in &self.bones {

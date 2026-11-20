@@ -227,6 +227,8 @@ impl AccessoryRuntime {
     #[cfg(test)]
     pub(crate) fn dynamic_state_for_test(&self)->Option<&crate::dbone::AttachedDynamicSet>{self.state.as_ref()}
     pub(crate) fn source_mesh(&self) -> &ExtractedMesh { &self.source }
+    /// The garment's own bones grafted onto the body rig (its DynamicBone chains, run by the body-level clothes set).
+    pub(crate) fn implanted_bones(&self) -> &std::collections::HashSet<i64> { &self.implanted_bones }
     // Coordinated implanted clothes use the solved shared clothes rig.
     pub(crate) fn editor_bind_source(&self,body:&Skeleton)->Option<(&ExtractedMesh,Vec<crate::pose::Mat4>)>{
         let mut policy=AccessoryFramePolicy::read();policy.rigid_clothes=true;
