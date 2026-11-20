@@ -153,3 +153,32 @@ DreamGUI 去裸指標那一輪（`c9fd56d5d`、`2e0a02bdf`，F 樹原生，整�
 - **中途停掉驅動之後，要再查一次機器上還有沒有引擎**，並按 cmdline 指認歸屬再停——孤兒引擎會佔住槽。
 - **機制點不存在 ≠ 陰性結果**，分開記，兩者的復活條件不同。
 - 1/3、2/3 一律記「沒有結論」；某趟 `Shader Hash` 不同就是另一個故障，那趟不算。
+
+## 9. 止血修法：空的 pool heap 不交回（2026-11-20 08:00–08:32，C 樹）
+
+持有者仍未指認，但第 2 節已經量死「故障 = 讀到一塊**已交回、沒有映射**的 heap」：
+那塊 64 MB `PoolAllocator Heap` 只要還在，同樣的讀取只會讀到錯的內容，不會頁錯誤。所以不等指認，直接讓空的 pool heap 留著。
+
+- 引擎補丁 `Tools/EnginePatches/RetainEmptyPoolHeaps.patch`（D: 引擎 `D3D12PoolAllocator.cpp` 的 `CleanUpAllocations`）：
+  新增 `D3D12.OK.RetainEmptyPoolMB`（預設 0＝引擎原行為），每個 pool allocator 在這個預算內保留空 heap、之後的配置會重用它們；
+  強制釋放（`bForceFree`）與 allocator 解構時的 lag 0 清理照舊全部釋放。
+- 專案 `Config/DefaultEngine.ini` `[ConsoleVariables]` 設 `D3D12.OK.RetainEmptyPoolMB=2048`。沒套補丁的引擎只會警告不認得這個 cvar。
+- 代價：顯示記憶體停在讀卡過程中的高水位、不會縮回（重用空 heap，所以不會一直長）。
+
+**驗證**（同一份建置、同一份 `E:/OKPackage/ext60`、驅動逐張 `reader_call load`，每張之後查程序存活與 log 的
+`PageFault`／`GPU crash`，出事就強制關遊戲；開完六十張再空跑兩分鐘；到達證據＝每趟啟動後用 `ui_exec` 回讀旋鈕值）：
+
+| 趟 | 旋鈕回讀 | 結果 |
+|---|---|---|
+| retain-trip1 | 2048 | 60/60 張＋空跑，沒有故障 |
+| control-trip1 | 0 | 第 11 張故障：`PageFault`、`Function = MainPS`、`Shader Hash = E6753E1EA9F1F20775D8BC0AD963B1EF`、`Found 0 active heaps` |
+| retain-trip2 | 2048 | 60/60，沒有故障 |
+| control-trip2 | 0 | 第 13 張故障，同一顆 Shader Hash |
+| retain-trip3 | 2048 | 60/60，沒有故障 |
+
+保留 3/3 存活、對照 2/2 故障，而且兩組只差一個執行期 cvar，所以差異歸因到這個旋鈕。報告在
+`Saved/Reports/card-reader-pagefault-fix/`。
+
+**這不是指認**：那個舊描述子（或其他東西）仍然會讀已釋放的位置，只是讀不到未映射的頁。可能的副作用是某一幀 UI 取樣到錯的內容；
+三趟裡都沒有看到。保留預算超出時，超出的空 heap 仍會交回，舊問題就可能回來。E 樹的指認工作（第 7 節）照舊有意義。
+E 引擎（`E:\PhysX\UE5.8`）還沒套這個補丁：`git -C E:/PhysX/UE5.8 apply --check` 已確認可以乾淨套上。
