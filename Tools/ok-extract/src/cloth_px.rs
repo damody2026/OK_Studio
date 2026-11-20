@@ -268,6 +268,10 @@ struct Sim {
     /// not move with the leg) and a sleeve sag onto the arm (Keqing running, 2026-11-20).
     cap_fit: Vec<f32>,
     cap_n: usize,
+    /// The capsules' radii on the GPU: none bigger than the free particles' room from it in the shape the cloth was
+    /// made in. At full size the hip and thigh capsules sat outside Chika's pleated skirt and pushed it 4.4 cm up
+    /// (OKPhysXCloth.Collide 0: -0.2 cm, 2026-11-21).
+    gpu_rad: Vec<f32>,
     /// Long-range attachment: each free particle's nearest pinned particle and its distance when built. The soft FEM
     /// surface stretched under its weight (a short skirt hung 10 cm longer than the game's, Haruno Chika walking,
     /// 2026-11-20) and a stiffer one crumpled; no free particle may get farther from its pin than OK_CLOTH_PX_STRETCH x that.
@@ -520,7 +524,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     }
     if free < 16 { return None; }
     Some(Sim { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), created: false, particle_of, rep, pinned, max_dist, tris,
-        offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, anchor, anchor_len,
+        offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false })
 }
 
@@ -696,7 +700,14 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         sim.cap_n = caps.len();
         sim.cap_fit = (0..np).flat_map(|p| caps.iter().map(move |c| (p, c)).collect::<Vec<_>>())
             .map(|(p, c)| (c.radius * t.cap_scale).min((seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).max(0.))).collect();
+        sim.gpu_rad = caps.iter().enumerate().map(|(ci, c)| (0..np).filter(|&p| !sim.pinned[p])
+            .map(|p| sim.cap_fit[p * sim.cap_n + ci]).fold(c.radius, f32::min)).collect();
     }
+    // A skirt gets none on the GPU: the thighs swinging into it there kicked Chika's pleated skirt 3-4 cm up for good
+    // (OKPhysXCloth.Collide 0: -0.2 cm; shrunk capsules or no friction did not help, 2026-11-21). Rust still pushes
+    // every particle out of the body after each step.
+    let gpu_caps: Vec<OkPxCapsule> = if d.skirt { Vec::new() } else {
+        caps.iter().zip(&sim.gpu_rad).map(|(c, r)| OkPxCapsule { radius: *r, ..*c }).collect() };
     let now = std::time::Instant::now();
     let dt = if dt > 0. { dt } else {
         let passed = sim.last_step.map_or(0., |t| now.duration_since(t).as_secs_f32());
@@ -712,7 +723,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let t0 = std::time::Instant::now();
         sim_pos = vec![[0f32; 3]; np];
         let reset = jump > 0.35;
-        let ok = unsafe { step(sim.key, np as u32, targets.as_ptr().cast(), carried.as_ptr().cast(), caps.as_ptr(), caps.len() as u32, if reset { -1. } else { dt }, sim_pos.as_mut_ptr().cast()) };
+        let ok = unsafe { step(sim.key, np as u32, targets.as_ptr().cast(), carried.as_ptr().cast(), gpu_caps.as_ptr(), gpu_caps.len() as u32, if reset { -1. } else { dt }, sim_pos.as_mut_ptr().cast()) };
         match ok {
             1 => {}
             // The host's result for the targets its job was given (it simulates while frames render): carried onto this pose.
