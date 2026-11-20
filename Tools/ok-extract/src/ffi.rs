@@ -291,6 +291,28 @@ pub extern "C" fn ok_cloth_gpu_set(on:i32) {
     crate::cloth_gpu::set_mode(on);
 }
 #[no_mangle]
+pub extern "C" fn ok_cloth_px_set(mode:i32) {
+    // Skirts and sleeves as PhysX cloth (cloth_px): 0 off (their DynamicBones, as before), 1 both, 2 skirts, 3 sleeves.
+    // A change starts every cloth over.
+    if crate::cloth_px::mode()!=mode {crate::cloth_px::set_mode(mode);crate::cloth_px::reset_all();}
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cloth_px_part(s:*mut OkSession,part:i32)->i32 {
+    // 1 when this garment is PhysX cloth now: Unreal draws it from its CPU vertices.
+    let Some(s)=sess_ref(s) else{return 0;};
+    let Some(p)=usize::try_from(part).ok().and_then(|i|s.parts.get(i)) else{return 0;};
+    crate::cloth_px::is_cloth(&*s as *const OkSession as usize,part as usize,p) as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cloth_px_stats(out:*mut f32,max:u32)->i32 {
+    // Since the last call: [cloths, particles, free particles, steps, mean step ms, largest offset mm, clamped, pushed].
+    if out.is_null() {return 0;}
+    let st=crate::cloth_px::take_stats();
+    let v=[st.cloths as f32,st.particles as f32,st.free as f32,st.steps as f32,
+        if st.steps>0{st.step_us as f32/st.steps as f32/1000.}else{0.},st.max_offset_mm,st.clamped as f32,st.pushed as f32];
+    let n=v.len().min(max as usize);std::ptr::copy_nonoverlapping(v.as_ptr(),out,n);n as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_cloth_gpu_job(s:*mut OkSession,part:i32)->i32 {
     // A garment's route this pose (ok.ClothGpu): -1 none of this, 0 its moves (ok_cloth_gpu_moves), >0 done on the GPU
     // (the revision of its still data: ok_cloth_gpu_garment again when it changes).

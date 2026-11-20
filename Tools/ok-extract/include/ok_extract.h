@@ -174,6 +174,13 @@ int32_t ok_thigh_jiggle_cloth(OkSession* s,uint32_t* out_part,uint32_t* out_idx,
 /* Her garments with their own rig stay on the GPU route while pushed over her skin / following her thighs' jiggle
    (cloth_gpu): on 1, 0 off (the CPU route). ok_cloth_gpu_moves: this pose's moves of one such garment, up to max
    (vertex, xyz in the session's Unity space after the placement correction, metres); returns the count, -1 bad input. */
+void ok_cloth_px_set(int32_t mode); /* skirts/sleeves as PhysX cloth: 0 off (DynamicBone), 1 both, 2 skirts, 3 sleeves */
+int32_t ok_cloth_px_part(OkSession* s, int32_t part); /* 1: this garment is PhysX cloth now (draw from CPU vertices) */
+int32_t ok_cloth_px_stats(float* out, uint32_t max);
+/* PhysX cloth host (OKPhysXSecondary): create(key, n, xyz[n], invMass[n], triN, tris[triN*3]); step(key, n, targets, capsules, capN, dt (<0 reset), out) */
+void ok_set_physx_cloth(int32_t (*create)(uint64_t key, uint32_t n, const float* pos, const float* inv_mass, uint32_t tri_n, const uint32_t* tris, uint32_t flags),
+	int32_t (*step)(uint64_t key, uint32_t n, const float* targets, const float* prev, const void* capsules, uint32_t cap_n, float dt, float* out),
+	void (*release)(uint64_t key));
 void ok_cloth_gpu_set(int32_t on); /* 2: the push and the jiggle themselves on the GPU (ClothCover.usf) */
 int32_t ok_cloth_gpu_job(OkSession* s,int32_t part);
 int32_t ok_cloth_gpu_field(OkSession* s,uint32_t* out,uint32_t max);

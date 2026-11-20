@@ -62,18 +62,22 @@ fn native_pool(start:bool)->Option<&'static rayon::ThreadPool> {
 /// remains a live frame snapshot, not a process-wide cache: audit profiling and
 /// diagnostic/renderer toggles continue to take effect on the next frame.
 #[derive(Clone, Copy)]
-pub(crate) struct AccessoryFramePolicy { profiling:bool, rigid_clothes:bool, parity:bool, optional_skin:bool }
+pub(crate) struct AccessoryFramePolicy { profiling:bool, rigid_clothes:bool, parity:bool, optional_skin:bool,
+    /// This garment's skirt is PhysX cloth (cloth_px): skinned without its DynamicBones, as rigid_clothes does.
+    cloth_rigid:bool }
 impl AccessoryFramePolicy {
     pub(crate) fn read()->Self {
         Self {
             profiling:std::env::var("OK_ANIM_PROFILE").ok().as_deref()==Some("1"),
             rigid_clothes:std::env::var("OK_NO_CLOTH_DYNAMICS").ok().as_deref()==Some("1"),
+            cloth_rigid:false,
             parity:std::env::var("OK_ANIM_SKIN_PARITY").ok().as_deref()==Some("1"),
             optional_skin:std::env::var("OK_SMOOTH").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(0)>0||
                 ["OK_DQS","OK_DQSH","OK_RELAX","OK_DIAG","OK_SKINDIAG","OK_BONEDIAG"].iter().any(|key|std::env::var(key).is_ok()),
         }
     }
     pub(crate) fn supports_private_gpu(&self)->bool{!self.optional_skin}
+    pub(crate) fn with_cloth_rigid(self,on:bool)->Self{Self{cloth_rigid:on,..self}}
 }
 
 /// Immutable, scoped to one solved body pose. Missing names are cached too;
@@ -445,7 +449,7 @@ impl AccessoryRuntime {
         let dbones = self.source.deferred_dbones.as_ref()?;
         // Gameplay bake policy: retain authored private bindings and animated
         // body assignment, but do not integrate clothing spring particles.
-        if self.copy_weights_body && policy.rigid_clothes {
+        if (self.copy_weights_body && policy.rigid_clothes) || policy.cloth_rigid {
             self.state=None;
             if !emit_geometry {return None;}
             return self.skin_palette_with_policy(self.source.smr_skel.as_ref()?, &placement, body,policy,assigned);
@@ -644,7 +648,7 @@ impl AccessoryRuntime {
     /// No collider preparation, attachment rebind, or particle state mutation.
     fn render_solved(&self, body:Option<&Skeleton>,head:Option<&Skeleton>,policy:AccessoryFramePolicy,assigned:Option<&AssignedWorldFrame>)
         -> Option<(Vec<[f32;3]>,Vec<[f32;3]>,Vec<[f32;4]>)> {
-        let rigid_clothes=self.copy_weights_body && policy.rigid_clothes;
+        let rigid_clothes=(self.copy_weights_body && policy.rigid_clothes)||policy.cloth_rigid;
         // Match export_skin_palette: an unsupported/uninitialized spring rig
         // must not silently fall back to a different authored palette.
         if !rigid_clothes&&self.state.is_none()&&self.source.deferred_dbones.as_ref().is_some_and(|d|!d.is_empty()){return None;}
@@ -1495,7 +1499,7 @@ fn cloth_gpu_moves(key:usize,index:usize,part:&SessionPart,body:Option<&Skeleton
     crate::cloth_gpu::put(key,index,crate::cloth_gpu::diff(&positions,&moved));
 }
 impl Drop for OkSession {
-    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); crate::cloth_gpu::forget(self as *const Self as usize); }
+    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); crate::cloth_gpu::forget(self as *const Self as usize); crate::cloth_px::forget(self as *const Self as usize); }
 }
 
 impl OkSession {
@@ -2628,6 +2632,8 @@ impl OkSession {
         if crate::cloth_gpu::on_gpu()&&!pass.early(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
+            // Its skirt as PhysX cloth: its DynamicBones stay off (cloth_px).
+            let cloth_rigid=crate::cloth_px::takes_over_dynamics(jiggle_key,index,part);
             let Some(runtime) = &mut part.runtime_accessory else { return; };
             let _group = crate::px::enter_group(group, physx);
             // Hair and accessories are worn over the clothes: they collide with the clothed body surface. Garments
@@ -2641,12 +2647,13 @@ impl OkSession {
             let frame=if runtime.coordinated {&clothes_frame}else{&body_frame};
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
             let t_part=std::time::Instant::now();
-            let rendered=runtime.update_render_impl(source,head,colliders,flags,dt,!palette_only&&excluded.binary_search(&index).is_err(),frame.as_ref(),policy,assigned);
+            let rendered=runtime.update_render_impl(source,head,colliders,flags,dt,!palette_only&&excluded.binary_search(&index).is_err(),frame.as_ref(),policy.with_cloth_rigid(cloth_rigid),assigned);
             let render_us=t_part.elapsed().as_micros() as u64;let start_us=t_part.duration_since(t_parts).as_micros() as u64;let mut cover_us=0u64;
-            if let Some((mut positions, normals,tangents)) = rendered {
+            if let Some((mut positions, mut normals,tangents)) = rendered {
                 skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                 if let Some(cover)=cover {let t_cover=std::time::Instant::now();cover.cover(index,part,&mut positions);cover_us=t_cover.elapsed().as_micros() as u64;}
                 crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
+                crate::cloth_px::apply(jiggle_key,index,part,source,&mut positions,&mut normals,dt);
                 part.positions = positions;
                 part.normals = normals;
                 part.rest_tangents=tangents;
@@ -2716,10 +2723,11 @@ impl OkSession {
                         runtime.update_render_impl(source,head,colliders,flags,dt,emit,frame.as_ref(),policy,assigned)
                     }
                 };
-                if let Some((mut positions,normals,tangents))=rendered {
+                if let Some((mut positions,mut normals,tangents))=rendered {
                     skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                     if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
                     crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
+                    crate::cloth_px::apply(jiggle_key,index,part,source,&mut positions,&mut normals,dt);
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
                 }
@@ -2764,9 +2772,12 @@ impl OkSession {
             if excluded.binary_search(&index).is_ok(){
                 if crate::cloth_gpu::wants(jiggle_key,index){let source=if runtime.coordinated{clothes}else{body};cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());}
                 return;}
-            if let Some((mut positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
+            let cloth_rigid=crate::cloth_px::takes_over_dynamics(jiggle_key,index,part);
+            let source=if runtime.coordinated{clothes}else{body};
+            if let Some((mut positions,mut normals,tangents))=runtime.render_solved(source,head,policy.with_cloth_rigid(cloth_rigid),assigned) {
                 if let Some(cover)=&cover {cover.cover(index,part,&mut positions);}
                 crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
+                crate::cloth_px::apply(jiggle_key,index,part,source,&mut positions,&mut normals,0.);
                 part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }
