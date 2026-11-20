@@ -7016,5 +7016,6 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **錯三：手臂判斷失敗**。這類骨架裡的身體骨叫 `__ok_body_bridge/cf_j_arm00_L`，`arm_side` 比對不到。去掉前綴再比。
 - **錯四：takes_over_dynamics 關掉整件的 DynamicBone**。移植衣服的鏈和整套骨架共用，前片、長擺一起變僵。移植衣服改成 DynamicBone 照跑。
 - **錯五：長擺做成布料皺成一團、撕裂**。後擺和前片從腰垂下，改成只認手臂下的鏈；手臂權重的袖子疊在鏈袖上會撕開，改成有鏈袖的衣服不用手臂權重。限制偏離 DynamicBone 6 cm、2 cm 都還在甩動撕裂，可見不是「可移動範圍」的問題（布料和 DynamicBone 帶動的移植骨對不上，加上形狀變動 35% 一直重建）。
-- **處置**：自帶袖子鏈的衣服整件留在 DynamicBone；鏈袖布料留成實驗開關 `OK_CLOTH_PX_CHAINS=1`。開著布料時這件衣服的 DynamicBone 長擺仍比關掉時鋸齒，原因未查明。
+- **處置**：自帶袖子鏈的衣服整件留在 DynamicBone；鏈袖布料留成實驗開關 `OK_CLOTH_PX_CHAINS=1`。
+- **錯六：以為「開布料時 DynamicBone 長擺鋸齒」是別的部件互相影響**。其實破面來自同一件和服的 part 27（`cf_j_sk` 前片，也是移植骨）：它是布料，往上浮 10 cm（dy +100 mm），前片消失、垂片和流蘇脫節。移植骨的衣服一律不做布料後，和 `ClothPx 0` 一樣。對照兩支影片的格子圖（每 50 幀一格）比逐張截圖快得多。
 - **CRLF**：用 sed 插入 `\r\n` 讓 LF 檔案混入 CR，Lua 修補以為是 CRLF 檔而比對失敗。修補前先確認整檔換行一致。
