@@ -42,9 +42,10 @@
 - **自帶袖子鏈的衣服**（2026-11-21，雷電將軍紫色和服「服裝 5」）：mod 上衣的寬袖由自己的 DynamicBone 鏈（`+SleeveB_L_A21`、`+SleeveB_R_A31`／`A41`，掛在手臂骨下）帶動，還有從腰垂下的長擺（`+BowknotB_CB_A01`）。
   - 鏈的根：衣服自己的 DynamicBone 設定有就用它；骨頭被移植到身體骨架上的衣服（coordinated），設定已清空，改取「被移植、父骨沒被移植」的骨當根。身體骨在這種衣服的骨架裡叫 `__ok_body_bridge/<骨名>`，比對時要去掉前綴。
   - 只認掛在手臂骨下的鏈（袖子）；從腰垂下的長擺與前片不算。
-  - 這種衣服**整件留在 DynamicBone**：不再用手臂權重辨識袖子，裡面夾帶的 `cf_j_sk_*` 角落也不做布料。
-- **骨頭移植到身體骨架的衣服（coordinated）一律不做布料**：它的鏈在整套衣服骨架裡照跑，旁邊的布料往上浮 10 cm（雷電將軍和服的前片 part 27，原始輸出 dy +100 mm），前片不見、流蘇脫開。開 `OK_CLOTH_PX_CHAINS=1` 才會試。
-  - 把袖子鏈做成布料（`OK_CLOTH_PX_CHAINS=1`，實驗）：深度 = 鏈內層數 ÷ 該鏈最深層數，根部固定，最多偏離 DynamicBone 姿勢 `OK_CLOTH_PX_CHAIN_MAX`（預設 6 cm）。走路時長袖垂擺仍會甩開、撕裂，所以預設關閉。
+  - 鏈上的頂點是 `KIND_CHAIN` 布料：深度 = 鏈內層數 ÷ 該鏈最深層數，根部固定，最多偏離 DynamicBone 姿勢 `OK_CLOTH_PX_CHAIN_MAX`（預設 6 cm）。不再用手臂權重辨識這種衣服的袖子。
+  - 手套（`clothes_gloves`）也看自己的鏈：雷電服裝 2 掛在手臂上的紗袍是手套部件，24 根骨移植到身體上。沒有鏈的一般手套不做布料。
+- **骨頭移植到身體骨架的衣服（coordinated）也做布料（2026-11-21 起）**：它的鏈在整套衣服骨架裡照跑，布料跟著 DynamicBone 姿勢擺（下面「跟著 DynamicBone 擺」），偏移另外和鄰點平均（`OK_CLOTH_PX_SMOOTH`，預設 2 次），免得各點各自被夾住而邊緣鋸齒、撕開。
+  - 以前這兩類衣服整件留在 DynamicBone，理由是「布料浮起 10 cm、撕裂」。那些現象其實是主機上傳失效造成的（見「PhysX 主機」）。`OK_CLOTH_PX_CHAINS=0` 回到舊做法。
 
 ### 模擬網格
 
@@ -55,6 +56,16 @@
 - 每個連通塊統一三角形的繞向。
 - 沒有任何三角形用到的粒子改成固定。
 
+### 加面（`Tools/ok-extract/src/cloth_refine.rs`，2026-11-21）
+
+面數少的衣服只能在少數幾條邊上折，像紙板：雷電的女僕長裙 776 頂點、和服裙片 953 頂點。
+
+- 衣服的骨架建好後（`push.rs`），用同一套辨識找出布料區；碰到布料區的三角形一直切到每條邊不超過 `OK_CLOTH_PX_EDGE`（預設 25 mm，0 關閉）。每次切三角形最長的那條邊，三角形形狀才不會變爛；最多 8 輪，新增頂點不超過原本 6 倍（4000–40000）。切好後骨架用新網格重建一次。
+- 新頂點是邊的中點：位置、法線、切線、UV、頂點色、蒙皮權重、morph 位移都取兩端平均，所以布料不動時看起來和原本一樣。
+- 邊用「位置」判斷要不要切，不用頂點編號：UV 接縫和雙面複本在同一位置有各自的頂點，只切一邊會沿接縫裂開。兩邊各有自己的中點（各自的 UV），位置相同，布料再把它們焊成一個粒子。
+- 只在有 PhysX 布料主機時做（`OK_CLOTH_PX_REFINE=1` 強制、`0` 關閉），沒有主機的 CLI 與轉卡不受影響。
+- 結果（雷電）：女僕長裙 776 → 3600 頂點；和服裙片 953 → 3434；紗袍 2731 → 5144。
+
 ### 限制（Rust 每幀套用）
 
 - **最大距離**（等同 Unreal 布料的 max distance 遮罩）：自由點離蒙皮位置最多
@@ -64,8 +75,9 @@
 - **袖子不內陷**：袖子粒子沿蒙皮法線最多只能往內 2 mm，不然外套底下的襯衫會從袖子穿出來。
 - **身體背擋**：粒子離每個身體 capsule 軸的距離，不能小於 min(1.5 × 半徑, 建立時的距離 − 1 mm)。之前用每幀的目標當限制，邁步的大腿會穿過裙子，因為目標裙子不會跟著腿動。
 - **回拉**：要交給下一步的偏移，每秒衰減 3 倍（`OK_CLOTH_PX_PULL`）。
+- **長裙避開小腿**：長裙垂下的部分離小腿膠囊軸至少 1.5 × 半徑，不管建立時離多近（`OK_CLOTH_PX_SHIN`，預設開）。走路中途建立時小腿已經在和服裙片裡，舊規則（不超過建立時的距離）就讓它一直穿過去。
 
-環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`。`OK_CLOTH_PX_DEBUG=1` 每秒記一行：原始結果相對目標的平均 dy 和外擴量、飛出去的粒子數。查問題時靠的就是這一行。
+環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`。`OK_CLOTH_PX_DEBUG=1` 每秒記一行：原始結果相對目標的平均 dy 和外擴量、飛出去的粒子數，以及那一幀主機的回傳碼（2 是新結果、3 是沿用上一個）和姿勢跳動；主機每次回傳的結果若有點離目標超過 0.5 m，另記一行 `host result`。只看每秒一行會漏掉：那一行多半落在回傳 3 的幀。
 
 ### 什麼時候建立布料
 
@@ -91,11 +103,13 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 兩件衣服有同一種布料區（裙子、左袖、右袖）時，只有外層那件是布料，裡層那件照骨架姿勢走，所以兩層不會互穿。
 - 外層的判斷：在動作中、布料建立前，量每個區的頂點離身體膠囊的平均距離，以及它垂多遠（裙子取最低點，袖子取離肩膀最遠處，都用第 95 百分位）。另一件比它外 3 mm 以上，而且垂得一樣遠（差 2 cm 內），才算蓋住它。只到臀部的外套不算蓋住底下的裙子。
 - 春野千佳：襯衫袖子在外套袖子裡面，改成跟骨架走；外套和褶裙都還是布料。
+- 只比同一種區（2026-11-21）：以前把「裙」和「鏈」當同一層，鏈現在只指手臂上的袖鏈，它的「垂多遠」是離肩距離，和裙子的最低點不能比；合併時雷電和服的裙片「蓋住」了自己的袖子。
+- 只量這個部件自己三角形用到的頂點，而且同一個 mesh 的子網格不互相比：一件衣服的子網格共用整個頂點緩衝，量全部頂點時和服的每個子網格都找到「別的部件蓋住它」，結果沒有一塊是布料。
 
 ### 與身體的碰撞
 
-- 有裙子的布料，GPU 上不放身體膠囊：走路時大腿甩進裙子，把千佳的褶裙平均頂高 3–4 cm，前擺翻起（`OKPhysXCloth.Collide 0` 時 −0.2 cm；把膠囊縮到布料裡、摩擦設 0 都沒用）。每步之後 Rust 仍把每個粒子推出身體（不超過建立時的距離）。
-- 只有袖子的布料照常放 GPU 膠囊，半徑縮到不超過自由粒子在建立形狀時離它的距離。
+- 2026-11-21 起，裙子也在 GPU 上放身體膠囊（`OK_CLOTH_PX_SKIRT_CAPS=0` 關掉）。之前不放，理由是「大腿把千佳的褶裙頂高 3–4 cm」，但那是主機上傳失效時的量測（見「PhysX 主機」）；布料真的在模擬後，腿要靠 GPU 膠囊推開裙片。每步之後 Rust 仍把每個粒子推出身體。
+- GPU 膠囊的半徑縮到不超過自由粒子在建立形狀時離它的距離。
 
 ### 與 DynamicBone 互斥
 
@@ -109,11 +123,16 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 從外掛目錄先載入 `cudart64_12.dll` 和 `PhysXGpu.dll`（`Build.cs` 把它們列為 RuntimeDependencies）。少了這一步會出現「Failed to load PhysXGpu.dll」。
 - 三角網格不清理、不焊接，直接 cook，cook 完再依位置對回 Rust 的粒子順序。建立時若 `OKPhysXCloth.Log 1`，會先自測一步：網格一致的話，自由點只會因重力移動不到 1 mm。
 - **非同步，從不等待**：每幀交出一個背景工作（一次上傳、N 個子步、一次讀回）。工作還在跑時，這幀沿用上一個結果（回傳 3）；跑完的結果屬於它當初拿到的目標，Rust 再把位移從那時每個粒子的局部座標系（法線＋一條鄰邊）搬到這一幀的姿勢上。之所以這樣做，是因為在這台機器上，渲染器也在用同一張 GPU，PhysX 每個子步光同步就要等 7–11 ms，同步做一幀要 40 ms。
-- 自由點從 Rust 上一幀顯示的位置開始（已經套過上面的限制）；速度也一起上傳，用前兩次起點的差推算。如果只覆寫位置、留著 GPU 原本的速度，兩者不一致，裙子走路時每一步都會被抬高。
-- 固定點的逆質量為 0，放在目標上。
+- **不寫位置，只給速度（2026-11-21，`OKPhysXCloth.PinByVelocity` 1）**：解算器把主機寫進去的位置當成這一步內的位移，換成速度。以前每步把固定點放到新目標、自由點放到 Rust 顯示的位置，速度就被灌到上限 8 m/s；第一個卡頓幀之後整塊布（固定點也一起）飛走，再也回不來，畫面上只剩 Rust 的夾限結果。11-20／21 上午所有「裙子上浮」的量測與調參都是在這個狀態下做的。現在：
+  - 固定點（逆質量 0）給（目標 − GPU 上的位置）÷ Dt 的速度，子步跑完剛好到目標；
+  - 自由點保留 GPU 自己的位置和速度（每次讀回位置時也讀回速度）；只有被 Rust 夾住或推開超過 5 mm 的點，用速度引導回 Rust 顯示的位置（`OKPhysXCloth.SteerGain`，預設 1，最大 6 m/s）。跟著 DynamicBone 的長裙就是靠這個不會飄走。
+  - `PinByVelocity 0` 是舊做法（`FeedPrev`：位置與推算速度一起寫），只留作對照。
+- 一次工作最多模擬 MaxSubsteps ÷ SubstepHz 秒，多的丟掉：切動作時的 0.1 s 卡頓原本變成兩個 50 ms 子步。
+- 上傳改用同步的 `copyHToD` 再 `markDirty`（`PxDeformableSurfaceExt::copyToDevice` 在 stream 0 上非同步拷貝）。
+- `OKPhysXCloth.Log 2`：每次工作記一行，自由點與固定點這次移動了多少、GPU 上最快的速度。固定點本來不該動，它若「移動」就是上傳出了問題。
 - 身體 capsule（`dbone::body_proxy_capsules`：上臂、前臂、大腿、小腿、骨盆、軀幹、肩）是 kinematic 剛體。
 - 材質：`Thickness` 0.5 mm。原本設 3 mm 時，GPU 布料自己會往上往內縮，裙子平均高 5 cm。含裙子的布料 `BendingSkirt` 為 0；只有袖子的布料 `Bending` 為 0.02。原因是任何彎曲剛度，走一段路後都可能把褶子翻到鏡像的 rest 角，把裙子撐高 5 cm；但沒有彎曲的話，惠惠的喇叭袖會塌到袖口。
-- CVar：`OKPhysXCloth.Youngs`（2e5）、`Poisson`、`Friction`、`Thickness`、`Bending`、`BendingSkirt`、`ElasticDamping`、`BendDamping`、`Damping`、`Mass`、`Iterations`（12）、`SubstepHz`（120）、`MaxSubsteps`（2）、`Async`（1）、`FeedPrev`（1）、`RestFollow`（0）、`InterpolatePins`、`Collide`、`CudaWait`、`Log`。
+- CVar：`OKPhysXCloth.Youngs`（2e5）、`Poisson`、`Friction`、`Thickness`、`Bending`、`BendingSkirt`、`ElasticDamping`、`BendDamping`、`Damping`、`Mass`、`Iterations`（12）、`SubstepHz`（120）、`MaxSubsteps`（2）、`Async`（1）、`PinByVelocity`（1）、`SteerGain`（1）、`FeedPrev`（1）、`RestFollow`（0）、`InterpolatePins`、`Collide`、`CudaWait`、`Log`（1 或 2）。
 
 ### Unreal 端
 

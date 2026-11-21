@@ -4,11 +4,11 @@
 
 ## 目前狀態
 
-- 工作樹乾淨：全部改動都已提交到 `master`，最新是 `23300e60d`，沒有推送。`OKExtractBuildStamp.h` 和 `grok-media/` 不屬於這項工作，不要提交。
+- 上午的改動提交到 `23300e60d`；下午的修正見下方「使用者 11-21 回報的處理」。都沒有推送。`OKExtractBuildStamp.h` 和 `grok-media/` 不屬於這項工作，不要提交。
 - 遊戲沒在跑，Unreal slot 已釋放（slot1、slot2 都空）。
 - 主要程式碼：
   - Rust 端：`Tools/ok-extract/src/cloth_px.rs`。
-  - Unreal 端：`Plugins/OKPhysXSecondary/.../OKPhysXCloth.cpp`（CVar `ok.PhysXCloth.*`，這輪沒改）。
+  - Unreal 端：`Plugins/OKPhysXSecondary/.../OKPhysXCloth.cpp`（CVar `OKPhysXCloth.*`；11-21 下午改了上傳方式，見下）。
   - 另有小改動：`dbone.rs` 的 `DBoneSet::root_names`，`session.rs` 的 `AccessoryRuntime::implanted_bones`。
 
 ### 已修好且錄影確認
@@ -21,9 +21,9 @@
 | 千佳褶裙上浮、前擺翻起 | 裙子不放 GPU 身體膠囊（`ae19a7ad6`）；所有裙子改成跟著 DB 擺：布料最多離 DB 5 cm（`OK_CLOTH_PX_LONG_MAX`），不能高於姿勢 5 mm（`OK_CLOTH_PX_UP`）（`99eeab16d`） |
 | 女僕長裙變短、被腿刺穿；惠惠裙擺露出內褲 | 同上 DB 跟隨 |
 
-**上浮的真正原因**：`PxDeformableSurface` 的靜止形狀在建立那一刻就定死了，走路中途建的布料會一直保留那一刻的外擴。為此調過彎曲、摩擦、楊氏模數、厚度、迭代次數、PULL、CPU 膠囊，全都沒用，不要再走一遍。
+**上浮的原因（上午的判斷，當時主機上傳失效、布料根本沒在跟身體模擬，見下方根本原因，需重新驗證）**：`PxDeformableSurface` 的靜止形狀在建立那一刻就定死了，走路中途建的布料會一直保留那一刻的外擴。為此調過彎曲、摩擦、楊氏模數、厚度、迭代次數、PULL、CPU 膠囊，全都沒用，不要再走一遍。
 
-## 使用者最新回報（未處理）
+## 使用者 11-21 回報的處理（下午）
 
 使用者說的原話：
 
@@ -32,28 +32,26 @@
 > 服裝 5，面數不夠且小腿穿模和服長裙
 > 我看起來有兩個問題：1. 衣服面數不夠時需要自己加面 2. 物理碰撞參數沒有調到位
 
-修完後要**把五套服裝全部重錄一遍**（多角度、20 秒、布料和原作物理左右並排）。
+讀卡器的「服裝 N」是 outfit 索引 N−1（`OKGalleryWidget.cpp` 的 `服裝 %d` 用 `i + 1`）。
 
-### 建議的下一步
+| 問題 | 原因 | 做法 |
+|---|---|---|
+| **布料從來沒跟著身體動（根本原因）** | 主機每步寫進 GPU 的位置被解算器當成位移換成速度；第一個卡頓幀後整塊布連固定點一起飛走，畫面只剩 Rust 的夾限結果 | 固定點用速度帶到目標、自由點保留 GPU 狀態，只把被夾住的點用速度引導回去（`OKPhysXCloth.PinByVelocity`），單次工作時間有上限。詳見 [ERROR_LOG.md](ERROR_LOG.md)「PhysX 布料從來沒跟著身體動」 |
+| 服裝 2 紗袖沒有物理 | 紗袍是 `clothes_gloves`，移植 24 根骨、有自己的袖鏈；detect 只看 `clothes_top`，移植骨衣服又整件排除 | 手套看自己的鏈；移植骨與自帶鏈的衣服預設做布料，跟著 DynamicBone 擺，偏移和鄰點平均 |
+| 服裝 3、5 面數不夠 | — | `cloth_refine.rs` 自動加面（邊 ≤ 25 mm）：女僕長裙 776 → 3600 頂點、和服裙片 953 → 3434、紗袍 2731 → 5144 |
+| 服裝 5 小腿穿出和服長裙 | 和服整件因移植骨被排除，是 DynamicBone；另外分層把和服的子網格互判成「被蓋住」 | 和服成為布料；長裙垂下部分避開小腿膠囊整個半徑；裙子也放 GPU 身體膠囊；分層只比同種區、只量自己畫的頂點、同 mesh 子網格不互比 |
 
-1. **服裝 2 手臂上的紗袍沒有物理。**
-   - 先查它的 role 與主要權重骨。`cloth_px.rs` 的 `detect()` 只收 `clothes_*` 角色，袖子只認 `clothes_top`；之前服裝 2 的 detect log 只有兩個 `clothes_top`：胸部權重 1868 頂點、腰部權重 719 頂點，沒有裙子或袖子區。
-   - 很可能紗袍是配件（`acc`，在 `push.rs:212` 走 `from_assigned_accessory`），或手臂權重太低沒被判成袖子。
-   - 做法：在 `detect()` 的角色過濾**之前**加 `OK_CLOTH_PX_DEBUG` log，印出每個 part 的 role 和權重最重的骨頭。確認後，把袖子判定擴到配件，或放寬手臂權重門檻。
-2. **自動加面（細分）。**
-   - 布料區頂點太稀時，要同時細分模擬網格和渲染網格。
-   - 要一起細分的逐頂點欄位都在 `unity.rs:1785` 的 `ExtractedMesh`：
-     - 位置：`positions`、`rest_positions`；
-     - 法線與切線：`normals`、`rest_normals`、`tangents`；
-     - UV 與頂點色：`uvs`、`uv2`–`uv4`、`vertex_colors`；
-     - 蒙皮：`weights`、`bone_idx`；
-     - morph：`blend_shapes`（中點取兩端 delta 的平均）；
-     - 索引與子網格：`indices`、`submesh_ranges`、`submesh_index`。
-   - 只細分被判成布料的三角形，避免整件衣服頂點數暴增。要等 detect 之後、建立 `AccessoryRuntime` 之前做，或改成在 runtime 的 source mesh 上做。
-3. **服裝 5 和服長裙被小腿穿出。**
-   - 現在裙子走 DB 跟隨，穿模主要來自 DB 的碰撞體，加上布料層沒有身體膠囊。
-   - 檢查小腿的 DB collider 半徑與長度，以及布料端 `cap_fit` 的 CPU 膠囊（`cap_scale` 1.5、`cap_margin`）有沒有涵蓋小腿。必要時只對長裙（`d.long`）加小腿膠囊。
-4. 五套服裝重錄（流程見下），更新文件與 ERROR_LOG，分別提交（一種改動一個 commit）。
+### 重錄（五套全部，修完之後）
+
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all2\raiden_outfit1_compare_20s.mp4` … `raiden_outfit5_compare_20s.mp4`（左 PhysX 布料、右原始物理，20 秒，每 5 秒轉 90°）。
+- 單邊：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all2\outfit{N}_cloth.mp4`、`outfit{N}_dynamicbone.mp4`。
+- 錄影腳本（暫存區，可能被清掉）：用 ok-game-mcp CLI 切服裝、`ok.ClothPx 1/0`、相機 yaw，ffmpeg `gfxcapture` 抓遊戲視窗，`hstack` 加 `drawtext` 標字。
+
+### 還沒處理／已知
+
+- 服裝 3 側面錄影中有一段前片被大腿頂到往前翻起約 20 cm，之後落回。`ok.ClothPxStats` 量到顯示位置最多離 DynamicBone 姿勢 90 mm，超出 5 cm 的部分來自 Rust 的身體膠囊推出（含新的小腿規則）。要再壓可以限制推出後的總偏移。
+- 布料真的會動之後，以前在壞掉狀態下定的參數（`BendingSkirt` 0、`Thickness`、`OK_CLOTH_PX_PULL`、重建門檻、「跟著 DynamicBone」本身）都值得重新量一次。
+- 其他卡（千佳、惠惠、刻晴）還沒在修好的主機上重看。
 
 ## 測試與錄影流程
 
