@@ -550,7 +550,9 @@ fn entry(session: usize, index: usize, part: &crate::session::SessionPart) -> Op
         if fresh { return Some(e.clone()); }
         release_entry(&mut e.lock().unwrap());
     }
-    let e = Arc::new(Mutex::new(Entry { detect: detect(part).map(Arc::new), sim: None, failed: false, pose: PoseWatch::default() }));
+    // OK_CLOTH_PX_ONLY=23,27: only those parts as cloth (finding which garment does what).
+    let only = std::env::var("OK_CLOTH_PX_ONLY").ok().is_some_and(|v| !v.split(',').any(|s| s.trim().parse::<usize>().ok() == Some(index)));
+    let e = Arc::new(Mutex::new(Entry { detect: if only { None } else { detect(part).map(Arc::new) }, sim: None, failed: false, pose: PoseWatch::default() }));
     map.insert((session, index), e.clone());
     Some(e)
 }
@@ -624,7 +626,7 @@ fn seg_closest(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> (f32, f32) {
 /// Builds the simulation mesh of a garment from its region, at the targets of this frame.
 fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::Skeleton) -> Option<Sim> {
     let n = targets.len();
-    if d.kind.len() != n { return None; }
+    if d.kind.len() != n { log(1, &format!("OK cloth px build: region of {} vertices, mesh of {n}", d.kind.len())); return None; }
     let t = tune();
     // Triangles touching the region, all three vertices simulated (the ones outside it pinned: the border).
     let mut used = vec![false; n];
@@ -668,7 +670,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         if d.kind[v] == 0 { all_region[p] = false; } else { kind_of[p] = d.kind[v]; depth_of[p] = depth_of[p].min(d.depth[v]); }
     }
     let np = rep.len();
-    if np < 8 { return None; }
+    if np < 8 { log(1, &format!("OK cloth px build: {np} particles")); return None; }
     let mut seen: std::collections::HashSet<[u32; 3]> = std::collections::HashSet::new();
     let mut tris: Vec<[u32; 3]> = Vec::new();
     for tri in &raw {
@@ -684,7 +686,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         let mut s = p; s.sort_unstable();
         if seen.insert(s) { tris.push(p); }
     }
-    if tris.len() < 8 { return None; }
+    if tris.len() < 8 { log(1, &format!("OK cloth px build: {} triangles of {np} particles", tris.len())); return None; }
     orient(&mut tris);
     let mut nbr = vec![u32::MAX; np];
     for t in &tris { for k in 0..3 { let p = t[k] as usize; if nbr[p] == u32::MAX { nbr[p] = t[(k + 1) % 3]; } } }
@@ -742,10 +744,25 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     // and shown moved as the nearest particle of that bigger one (`lead`), keeping the gap.
     // Under FleX too: simulated on its own, a lining a few mm under its outer cloth passed through it (the rest-pose
     // filter keeps particles that start that close from colliding), Raiden's kimono showed patches of both (2026-11-21).
+    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+        // Why each particle is pinned, and how low the pinned ones reach (a pin far down holds the cloth there).
+        let (mut out, mut shallow, mut other, mut low) = (0, 0, 0, f32::MAX);
+        for p in 0..np {
+            if !pinned[p] { continue; }
+            low = low.min(pos[p][1]);
+            if !all_region[p] { out += 1 } else if kind_of[p] == KIND_SKIRT || kind_of[p] == KIND_CHAIN { shallow += 1 } else { other += 1 }
+        }
+        let high = pos.iter().fold(f32::MIN, |a, p| a.max(p[1]));
+        let free_low = (0..np).filter(|&p| !pinned[p]).fold(f32::MAX, |a, p| a.min(pos[p][1]));
+        log(1, &format!("OK cloth px pins: {np} particles, pinned {out} off the region, {shallow} near a chain root, {other} other; lowest pin y {low:.3}, lowest free y {free_low:.3}, top y {high:.3}"));
+    }
     let lead = layer_leads(&tris, &pos, np);
     for p in 0..np { if lead[p] != u32::MAX { pinned[p] = true; } }
     let pins: Vec<usize> = (0..np).filter(|&p| pinned[p] && lead[p] == u32::MAX).collect();
-    if pins.is_empty() { return None; }
+    if pins.is_empty() {
+        log(1, &format!("OK cloth px build: no pin ({np} particles, {} follow another layer)", lead.iter().filter(|l| **l != u32::MAX).count()));
+        return None;
+    }
     let mut max_dist = vec![0f32; np];
     let mut anchor = vec![u32::MAX; np];
     let mut anchor_len = vec![0f32; np];
@@ -782,7 +799,11 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         };
         if max_dist[p] > 1e-4 { free += 1; } else { pinned[p] = true; }
     }
-    if free < 16 { return None; }
+    if free < 16 {
+        log(1, &format!("OK cloth px build: {free} free of {np} particles ({} pinned, {} follow another layer)",
+            pinned.iter().filter(|p| **p).count(), lead.iter().filter(|l| **l != u32::MAX).count()));
+        return None;
+    }
     Some(Sim { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), created: false, particle_of, rep, pinned, max_dist, tris,
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
@@ -851,7 +872,11 @@ fn layer_leads(tris: &[[u32; 3]], pos: &[[f32; 3]], np: usize) -> Vec<u32> {
         for p in 0..np { let l = lead[p]; if l != u32::MAX && lead[l as usize] != u32::MAX { lead[p] = lead[l as usize]; } }
     }
     let n = lead.iter().filter(|l| **l != u32::MAX).count();
-    if n > 0 { log(1, &format!("OK cloth px layers: {} pieces, {} of {np} particles follow another layer", size.len(), n)); }
+    if n > 0 {
+        let far = (0..np).filter(|&p| lead[p] != u32::MAX && len(sub(pos[p], pos[lead[p] as usize])) > 0.015).count();
+        let most = (0..np).filter(|&p| lead[p] != u32::MAX).map(|p| len(sub(pos[p], pos[lead[p] as usize]))).fold(0f32, f32::max);
+        log(1, &format!("OK cloth px layers: {} pieces, {} of {np} particles follow another layer ({far} over 15 mm from their lead, farthest {:.0} mm)", size.len(), n, most * 1000.));
+    }
     lead
 }
 
@@ -1217,6 +1242,19 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         log(1, &format!("OK cloth px jitter: cloth {} raw {:.2} mm, shown {:.2} mm a frame (second difference of the pose (raw) and of the cloth shown, mean of free particles over {} frames, {} with a host result)",
             sim.key, j[0] / s, j[1] / s, j[3], j[4]));
         sim.jit = [0.; 5];
+        // Crumples: triangles folded more than a right angle against their corners' surface (the shards and dark
+        // flecks of a crumpled cloth), as a share of all of them, the cloth shown and the pose.
+        let folds = |pos: &[[f32; 3]]| {
+            let nv = particle_normals(pos, &sim.tris);
+            let n = sim.tris.iter().filter(|t3| {
+                let [a, b, c] = t3.map(|i| pos[i as usize]);
+                let f = cross(sub(b, a), sub(c, a));
+                t3.iter().any(|&i| dot(f, nv[i as usize]) < 0.)
+            }).count();
+            n as f64 * 100. / sim.tris.len().max(1) as f64
+        };
+        log(1, &format!("OK cloth px folds: cloth {} {:.2}% of {} triangles folded over (pose {:.2}%)",
+            sim.key, folds(&sim_pos), sim.tris.len(), folds(&targets)));
         // Raw cloth against the pose: how far down (-) / up (+) and out from the pinned ring's axis the free part sits.
         let pins: Vec<usize> = (0..np).filter(|&p| sim.pinned[p]).collect();
         let c = pins.iter().fold([0f32; 3], |a, &p| add(a, targets[p]));
