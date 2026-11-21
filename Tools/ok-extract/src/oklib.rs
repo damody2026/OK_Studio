@@ -3222,6 +3222,8 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             Some(plugin) => crate::okclothes::probe_plugin(&lib.ok_or("file required")?, plugin)?,
             None => crate::okclothes::probe(&lib.ok_or("file required")?)?,
         },
+        // clothes-accessories <card | coordinate card | .okclothes>: each outfit's accessory slots (inspection).
+        "clothes-accessories" => crate::okclothes::probe_accessories(&lib.ok_or("file required")?)?,
         "clothes-import" => {
             // clothes-import <coordinate card> <out.okclothes>
             let input = PathBuf::from(args.get(1).ok_or("coordinate card required")?);
@@ -3246,23 +3248,21 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             println!("OKCLOTHES export {} outfit={outfit} -> {} bytes={}", card.display(), out.display(), bytes.len());
         }
         "clothes-wear" => {
-            // clothes-wear <card> <okclothes> <outfit> <out card> [--clothes-only]: as the card reader wears it (an OK
-            // card gets the outfit's pack, is sealed and made again; OK_BASE_LIBRARY names the library).
+            // clothes-wear <card> <okclothes> <outfit> <out card> [--clothes-only | --all]: as the card reader wears it
+            // (an OK card gets the outfit's pack, is sealed and made again; OK_BASE_LIBRARY names the library). Her hair
+            // and head accessories stay unless --all; --clothes-only keeps all her accessories.
             let card = PathBuf::from(args.get(1).ok_or("card required")?);
             let clothes = PathBuf::from(args.get(2).ok_or("okclothes required")?);
             let outfit: usize = args.get(3).and_then(|v| v.parse().ok()).ok_or("outfit required")?;
             let out = PathBuf::from(args.get(4).ok_or("output required")?);
-            let only = args.get(5).is_some_and(|a| a == "--clothes-only");
-            let summary = crate::okclothes::file::wear_into(None, game, &card, &clothes, outfit, only, &out)?;
+            let scope = match args.get(5).map(String::as_str) {
+                Some("--clothes-only") => crate::okclothes::WearScope::ClothesOnly,
+                Some("--all") => crate::okclothes::WearScope::All,
+                _ => crate::okclothes::WearScope::KeepHair,
+            };
+            let summary = crate::okclothes::file::wear_into(None, game, &card, &clothes, outfit, scope, &out)?;
             println!("OKCLOTHES {summary} -> {}", out.display());
         }
-        "clothes-test" => {
-            // clothes-test <work dir> <card> [outfit]: export -> wear back -> same session.
-            let work = lib.ok_or("work directory required")?;
-            std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
-            let card = PathBuf::from(args.get(2).ok_or("card required")?);
-            let outfit: usize = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
-            let original = std::fs::read(&card).map_err(|e| e.to_string())?;
         "breed" => {
             // breed <mother card> <father card> <seed> <out card>: the child as the card reader makes her (an OK card
             // parent makes her an OK card: both packs and answers, sealed and made again; OK_BASE_LIBRARY names the library).
@@ -3273,6 +3273,13 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             let summary = crate::breed::file::breed_into(None, game, &mother, &father, seed, &out)?;
             println!("OKBREED {summary} -> {}", out.display());
         }
+        "clothes-test" => {
+            // clothes-test <work dir> <card> [outfit]: export -> wear back -> same session.
+            let work = lib.ok_or("work directory required")?;
+            std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+            let card = PathBuf::from(args.get(2).ok_or("card required")?);
+            let outfit: usize = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
+            let original = std::fs::read(&card).map_err(|e| e.to_string())?;
             let (clothes, thumb) = crate::okclothes::export_outfit(&original, outfit)?;
             let packed = clothes.to_bytes(&thumb)?;
             let clothes = crate::okclothes::OkClothes::from_bytes(&packed)?;

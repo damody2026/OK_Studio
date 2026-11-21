@@ -33,10 +33,11 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
             0=>crate::okclothes::file::import(a,out),
             1=>crate::okclothes::file::export(a,outfit?,out),
             // An OK card wearing new clothes gets the outfit's pack, is sealed and made again (okclothes::file::wear_into).
-            2=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;
-                crate::okclothes::file::wear_into(None,&installed_game_root(),a,std::path::Path::new(&b),outfit?,false,out)}
-            3=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;
-                crate::okclothes::file::wear_into(None,&installed_game_root(),a,std::path::Path::new(&b),outfit?,true,out)}
+            // 2: her hair and head accessories kept (the reader's 套用服裝卡); 3: all her accessories kept; 5: everything
+            // of the outfit, hair made of accessories too (the game's coordinate load).
+            2|3|5=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;
+                let scope=match op{2=>crate::okclothes::WearScope::KeepHair,3=>crate::okclothes::WearScope::ClothesOnly,_=>crate::okclothes::WearScope::All};
+                crate::okclothes::file::wear_into(None,&installed_game_root(),a,std::path::Path::new(&b),outfit?,scope,out)}
             // 4: export outfit `outfit` of card `a` with picture `b` (a PNG of the outfit as shown).
             4=>{let b=cstr_opt(b).ok_or("okclothes: picture path missing")?;crate::okclothes::file::export_with_thumbnail(a,outfit?,std::path::Path::new(&b),out)}
             _=>Err(format!("okclothes: unknown op {op}")),
@@ -45,7 +46,6 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
     match result{Ok(summary)=>{write_err(msg,cap,&summary);0},Err(e)=>{write_err(msg,cap,&e);-1}}
 }
 
-/// The installation original cards and their zipmods come from: OK_GAME_ROOT (may be absent: then only the base
 /// Breeding (breed.rs) for the reader. op 0: the child of cards `a` (mother) and `b` (father) from `seed`, written to
 /// `out`; 1: card `a` shown by picture `b` (a PNG), written to `out`. Returns 0 and a one-line summary in `msg`, or -1
 /// and the error.
@@ -63,6 +63,7 @@ pub unsafe extern "C" fn ok_breed_file(op:i32,a:*const c_char,b:*const c_char,se
     match result{Ok(summary)=>{write_err(msg,cap,&summary);0},Err(e)=>{write_err(msg,cap,&e);-1}}
 }
 
+/// The installation original cards and their zipmods come from: OK_GAME_ROOT (may be absent: then only the base
 /// library and the card's own folder provide resources).
 fn installed_game_root()->std::path::PathBuf {
     std::env::var_os("OK_GAME_ROOT").map(std::path::PathBuf::from).filter(|g|g.is_dir()).unwrap_or_default()
