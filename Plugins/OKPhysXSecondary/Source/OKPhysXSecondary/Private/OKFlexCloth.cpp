@@ -27,8 +27,8 @@ static TAutoConsoleVariable<int32> CVarFlexIterations(TEXT("OKFlexCloth.Iteratio
 static TAutoConsoleVariable<float> CVarFlexSubstepHz(TEXT("OKFlexCloth.SubstepHz"), 240.f, TEXT("FleX substeps per second (at most MaxSubsteps per solve)."));
 static TAutoConsoleVariable<int32> CVarFlexMaxSubsteps(TEXT("OKFlexCloth.MaxSubsteps"), 6, TEXT("Most FleX substeps in one solve."));
 static TAutoConsoleVariable<float> CVarFlexMaxDt(TEXT("OKFlexCloth.MaxDt"), 0.04f, TEXT("Most time (s) one solve simulates; the time past it is dropped."));
-static TAutoConsoleVariable<float> CVarFlexRadius(TEXT("OKFlexCloth.Radius"), 0.010f, TEXT("FleX particle interaction radius (m). New solvers."));
-static TAutoConsoleVariable<float> CVarFlexRest(TEXT("OKFlexCloth.SolidRest"), 0.005f, TEXT("Distance cloth particles keep from each other (other layers, self-collision), m."));
+static TAutoConsoleVariable<float> CVarFlexRadius(TEXT("OKFlexCloth.Radius"), 0.006f, TEXT("FleX particle interaction radius (m). New solvers."));
+static TAutoConsoleVariable<float> CVarFlexRest(TEXT("OKFlexCloth.SolidRest"), 0.004f, TEXT("Distance cloth particles keep from each other (other layers, self-collision), m."));
 static TAutoConsoleVariable<float> CVarFlexBodyDistance(TEXT("OKFlexCloth.BodyDistance"), 0.004f, TEXT("Distance cloth particles keep from her body mesh (m)."));
 static TAutoConsoleVariable<float> CVarFlexStretch(TEXT("OKFlexCloth.Stretch"), 1.0f, TEXT("Stretch spring stiffness (0..1). New cloths."));
 static TAutoConsoleVariable<float> CVarFlexBend(TEXT("OKFlexCloth.Bend"), 0.3f, TEXT("Bending spring stiffness (0..1). New cloths."));
@@ -169,6 +169,7 @@ namespace
 		int32 N = 0;
 		int32 Base = 0;                 // first particle in the solver
 		TArray<float> InvMass;
+		TArray<bool> Inactive;          // left out of the solver (a following layer)
 		TArray<int32> Phase;            // per particle (group per connected piece)
 		TArray<FIntVector> Tris;
 		TArray<FVector3f> Rest;         // the shape it was made in
@@ -203,6 +204,7 @@ namespace
 		bool bJob = false;
 		double JobSeconds = 0.;
 		int32 Total = 0;
+		int32 NumActive = 0;
 
 		void Wait() { if (bJob) { Job.Wait(); bJob = false; } }
 		void FreeAll()
@@ -319,7 +321,7 @@ namespace
 			float* SL = S.SpringLen.Map<float>();
 			float* SK = S.SpringK.Map<float>();
 			int32* TI = S.TriIdx.Map<int32>();
-			int32 Sp = 0, Tr = 0;
+			int32 Sp = 0, Tr = 0, NumActive = 0;
 			for (FCloth* CPtr : S.Ptrs)
 			{
 				FCloth& C = *CPtr;
@@ -328,7 +330,7 @@ namespace
 					const int32 P = C.Base + I;
 					Rest[P * 4 + 0] = C.Rest[I].X; Rest[P * 4 + 1] = C.Rest[I].Y; Rest[P * 4 + 2] = C.Rest[I].Z; Rest[P * 4 + 3] = C.InvMass[I];
 					Phase[P] = C.Phase[I];
-					Active[P] = P;
+					if (!C.Inactive[I]) Active[NumActive++] = P;
 				}
 				for (const TPair<FIntPoint, float>& Spring : C.Springs)
 				{
@@ -339,12 +341,13 @@ namespace
 				}
 				for (const FIntVector& T : C.Tris) { TI[Tr * 3] = C.Base + T.X; TI[Tr * 3 + 1] = C.Base + T.Y; TI[Tr * 3 + 2] = C.Base + T.Z; ++Tr; }
 			}
+			S.NumActive = NumActive;
 			S.RestParticles.Unmap(); S.Phases.Unmap(); S.Active.Unmap(); S.SpringIdx.Unmap(); S.SpringLen.Unmap(); S.SpringK.Unmap(); S.TriIdx.Unmap();
 		}
 		GApi.SetRestParticles(S.Solver, S.RestParticles.B, nullptr);
 		GApi.SetPhases(S.Solver, S.Phases.B, nullptr);
 		GApi.SetActive(S.Solver, S.Active.B, nullptr);
-		GApi.SetActiveCount(S.Solver, Total);
+		GApi.SetActiveCount(S.Solver, S.NumActive);
 		GApi.SetSprings(S.Solver, S.SpringIdx.B, S.SpringLen.B, S.SpringK.B, NumSprings);
 		GApi.SetDynamicTriangles(S.Solver, S.TriIdx.B, S.TriNormals.B, NumTris);
 		S.bLayout = false;
@@ -578,10 +581,15 @@ namespace
 		C->Key = Key; C->Session = Session; C->N = int32(N);
 		C->bPrevIsCorrection = (Flags & 2u) != 0;
 		C->InvMass = TArray<float>(InvMass, int32(N));
+		// Below 0: a layer Rust moves with another (left out of the solver: not active, never collides).
+		C->Inactive.SetNum(N);
+		for (uint32 I = 0; I < N; ++I) { C->Inactive[I] = C->InvMass[I] < 0.f; if (C->Inactive[I]) C->InvMass[I] = 0.f; }
 		C->Rest.SetNum(N); C->Pos.SetNum(N); C->Vel.SetNumZeroed(N); C->Target.SetNum(N); C->Corr.SetNumZeroed(N);
 		for (uint32 I = 0; I < N; ++I) { C->Rest[I] = C->Pos[I] = C->Target[I] = FVector3f(Pos[I * 3], Pos[I * 3 + 1], Pos[I * 3 + 2]); }
 		C->Tris.SetNum(TriN);
 		for (uint32 T = 0; T < TriN; ++T) C->Tris[T] = FIntVector(int32(Tris[T * 3]), int32(Tris[T * 3 + 1]), int32(Tris[T * 3 + 2]));
+		// No springs or air triangles on the layers left out of the solver.
+		C->Tris.RemoveAll([&C](const FIntVector& T) { return C->Inactive[T.X] || C->Inactive[T.Y] || C->Inactive[T.Z]; });
 		int32 NextGroup = 1;
 		for (FCloth* Other : S.Ptrs) for (int32 Ph : Other->Phase) NextGroup = FMath::Max(NextGroup, (Ph & eNvFlexPhaseGroupMask) + 1);
 		MakePhases(*C, NextGroup);

@@ -79,6 +79,10 @@ pub(crate) fn flex_body(session: usize, pos: &[[f32; 3]], tris: &[u32]) {
 /// FleX settings that differ from PhysX's: a finer mesh (FleX collides particles, so the layers and her body must not slip
 /// between them), every layer simulated (they collide), less smoothing (FleX keeps the cloth whole itself).
 fn flex_edge() -> f32 { static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_EDGE", 0.01)) }
+/// FleX keeps the cloth together and out of her body itself: Rust then only clamps each particle to its max distance from
+/// the pose (OK_CLOTH_FLEX_PURE=1; default off). Its other corrections move particles FleX has just solved (out of her skin,
+/// LRA, smoothing), but without them the kimono went to spikes within seconds (2026-11-21).
+fn flex_pure() -> bool { static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_PURE", 0.) > 0.5) }
 fn flex_smooth() -> u32 { static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_SMOOTH", 1.).max(0.) as u32) }
 
 #[no_mangle]
@@ -722,7 +726,9 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     // through the purple (2026-11-21); the original moves both on the same bones. A mesh piece (connected by triangles)
     // that lies mostly within OK_CLOTH_PX_LAYER_GAP of a bigger one is not simulated: its particles are held on the pose
     // and shown moved as the nearest particle of that bigger one (`lead`), keeping the gap.
-    let lead = if flex() { vec![u32::MAX; np] } else { layer_leads(&tris, &pos, np) };
+    // Under FleX too: simulated on its own, a lining a few mm under its outer cloth passed through it (the rest-pose
+    // filter keeps particles that start that close from colliding), Raiden's kimono showed patches of both (2026-11-21).
+    let lead = layer_leads(&tris, &pos, np);
     for p in 0..np { if lead[p] != u32::MAX { pinned[p] = true; } }
     let pins: Vec<usize> = (0..np).filter(|&p| pinned[p] && lead[p] == u32::MAX).collect();
     if pins.is_empty() { return None; }
@@ -976,7 +982,9 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             drift += (l - sim.straight[p]).abs() / sim.straight[p].max(1e-4);
             n += 1;
         }
-        if n > 0 && drift / n as f32 > tune().rebuild {
+        // Free cloth is not made again: that only put the PhysX rest shape back on a walk's skirt keys (the cloth was
+        // reset onto the pose every few seconds, Raiden's kimono 3 times in 20 s under FleX, 2026-11-21).
+        if n > 0 && !tune().free && drift / n as f32 > tune().rebuild {
             log(1, &format!("OK cloth px: part {index} ({}) changed shape ({:.0}% from its rest), made again", part.role, drift / n as f32 * 100.));
             release_entry(&mut e);
         }
@@ -1007,7 +1015,8 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let np = sim.rep.len();
     let targets: Vec<[f32; 3]> = sim.rep.iter().map(|&v| positions[v as usize]).collect();
     if !sim.created {
-        let inv: Vec<f32> = sim.pinned.iter().map(|p| if *p { 0. } else { 1. }).collect();
+        // -1: a following layer (`lead`), left out of the FleX solver (pinned on its pose it would be a wall in the cloth).
+        let inv: Vec<f32> = (0..np).map(|p| if sim.lead.get(p).is_some_and(|l| *l != u32::MAX) { -1. } else if sim.pinned[p] { 0. } else { 1. }).collect();
         flex_bind(sim.key, session);
         let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.pleats as u32 | 2) };
         if ok != 1 {
@@ -1090,7 +1099,9 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
                 let full = c.radius * t.cap_scale;
                 // At least the capsule itself whatever the pose: the DynamicBone pose of Raiden's gauze sleeves lay in her pelvis
                 // and "no nearer than the pose" let the cloth follow it in (2026-11-21).
-                let r = (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out).max(c.radius * if t.free { t.cap_floor.max(1.) } else { t.cap_floor });
+                // Free cloth: out of the capsule itself, wherever the pose is. "No nearer than the pose" pushed a cloth falling
+                // in toward her back out to where the DynamicBone pose had it every frame, and the kimono crumpled (2026-11-21).
+                let r = if t.free { c.radius * t.cap_floor.max(1.) } else { (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out).max(c.radius * t.cap_floor) };
                 v[p * caps.len() + ci] = if sim.cap_forced.get(p * sim.cap_n + ci).copied().unwrap_or(false) { r.max(full) } else { r };
             }
         }
@@ -1241,7 +1252,9 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let l = sim.lead.get(p).copied().unwrap_or(u32::MAX);
         if l != u32::MAX {
             let l = l as usize;
-            positions[v] = add(positions[v], sub(sim_pos[l], targets[l]));
+            // Its gap to the lead turned as the lead's surface turned: moved only, a lining poked through its outer cloth
+            // wherever the cloth bent (Raiden's kimono hem, FleX, 2026-11-21).
+            positions[v] = add(sim_pos[l], turn(sub(positions[v], targets[l]), nt[l], ns[l]));
             if let Some(n) = normals.get_mut(v) { *n = turn(*n, nt[l], ns[l]); }
             continue;
         }
@@ -1261,6 +1274,15 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
     let np = pos.len();
     let (mut clamped, mut pushed) = (0u64, 0u64);
     let t = tune();
+    if flex() && flex_pure() {
+        for p in 0..np {
+            if sim.pinned[p] || !pos[p].iter().all(|x| x.is_finite()) { pos[p] = targets[p]; continue; }
+            let off = sub(pos[p], targets[p]);
+            let l = len(off);
+            if l > sim.max_dist[p] { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
+        }
+        return (clamped, pushed);
+    }
     for p in 0..np {
         if sim.pinned[p] { pos[p] = targets[p]; continue; }
         if !pos[p].iter().all(|x| x.is_finite()) { pos[p] = targets[p]; continue; }
@@ -1317,8 +1339,8 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
         }
         for p in 0..np { if !sim.pinned[p] { pos[p] = add(targets[p], off[p]); } }
     }
-    // Two passes for capsules that overlap (hip and thigh).
-    for p in 0..np {
+    // Two passes for capsules that overlap (hip and thigh). FleX meets her capsules and her body mesh itself.
+    for p in 0..if flex() { 0 } else { np } {
         if sim.pinned[p] { continue; }
         for (ci, c) in caps.iter().enumerate().chain(caps.iter().enumerate()) {
             let r = live.get(p * caps.len() + ci).copied().unwrap_or(0.);
