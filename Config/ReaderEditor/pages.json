@@ -83,7 +83,7 @@
     {
       "name": "衣服卡總欄", "tab": 2,
       "subs": [
-        { "name": "服裝卡", "sources": [{ "named": "OkClothesRow" }] }
+        { "name": "服裝卡", "sources": [{ "named": "OkClothesRow" }], "builder": "okclothes_grid" }
       ]
     },
     {

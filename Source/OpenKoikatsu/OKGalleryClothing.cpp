@@ -260,9 +260,11 @@ void UOKCharacterController::ExportOkClothesTo(const FString& OutIn,TFunction<vo
  const FString Card=Entries[SelectedIndex].Path;const int32 Outfit=OutfitIndex;
  const FString Output=!OutIn.IsEmpty()?OutIn:OKClothesFolder(OutputDirectoryInput)/FString::Printf(TEXT("%s_outfit%d.okclothes"),*FPaths::GetBaseFilename(Card),Outfit);
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
- auto Export=[Card,Outfit,Output,Done](const FString& Picture){
+ TWeakObjectPtr<UOKCharacterController> Weak(this);
+ auto Export=[Weak,Card,Outfit,Output,Done](const FString& Picture){
   FString Summary;const bool Ok=Picture.IsEmpty()?FOkSession::ClothesExport(Card,Outfit,Output,Summary):FOkSession::ClothesExportPictured(Card,Outfit,Picture,Output,Summary);
   UE_LOG(LogTemp,Display,TEXT("OK clothes export %s outfit %d -> %s: %s"),*Card,Outfit,*Output,*Summary);
+  if(Ok&&Weak.IsValid())++Weak->OkClothesVersion;
   Done(Ok,Ok?Output:Summary);
  };
  // Pictured as she wears it now (the front view of the card capture); the card's own picture when she is not shown.
@@ -284,6 +286,24 @@ void UOKCharacterController::OnWearOkClothes(){
 }
 void UOKCharacterController::OnWearOkClothesOnly(){
  OKWearPicked(this,true,[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);});
+}
+void UOKCharacterController::WearOkClothesReported(const FString& Clothes,bool bClothesOnly){
+ TWeakObjectPtr<UOKCharacterController> Weak(this);
+ auto Report=[Weak](const FString& Text){if(UOKCharacterController* Self=Weak.Get()){if(Self->InspectorText)Self->InspectorText->SetText(FText::FromString(Text));Self->ScreenNote(1,8.f,FColor::Cyan,Text);}};
+ Report((bClothesOnly?TEXT("只換衣服中…："):TEXT("套用服裝卡中…："))+FPaths::GetBaseFilename(Clothes));
+ WearOkClothesFrom(Clothes,bClothesOnly,[Report](bool bOk,const FString& What){Report(bOk?TEXT("已套用服裝卡（工作卡，要保留請另存）：")+What:TEXT("套用服裝卡失敗：")+What);});
+}
+TArray<FString> UOKCharacterController::OkClothesFiles() const{
+ TArray<FString> Folders{OKClothesFolder(OutputDirectoryInput),FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()/TEXT("UserData/okclothes"))};
+ TArray<TPair<FDateTime,FString>> Found;
+ for(int32 I=0;I<Folders.Num();++I){
+  if(Folders.IndexOfByPredicate([&](const FString& F){return FPaths::IsSamePath(F,Folders[I]);})!=I)continue;
+  TArray<FString> Names;IFileManager::Get().FindFiles(Names,*(Folders[I]/TEXT("*.okclothes")),true,false);
+  for(const FString& Name:Names){const FString Path=Folders[I]/Name;Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
+ }
+ Found.Sort([](const auto& A,const auto& B){return A.Key>B.Key;});
+ TArray<FString> Out;for(const auto& F:Found)Out.Add(F.Value);
+ return Out;
 }
 void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClothesOnly,TFunction<void(bool,const FString&)> Done){
  if(!Done)Done=[](bool,const FString&){};
@@ -327,5 +347,6 @@ void UOKCharacterController::OnImportClothesCard(){
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
  FString Summary;const bool Ok=FOkSession::ClothesImport(Coordinate,Output,Summary);
  UE_LOG(LogTemp,Display,TEXT("OK clothes import %s -> %s: %s"),*Coordinate,*Output,*Summary);
+ if(Ok)++OkClothesVersion;
  Report(Ok?TEXT("已轉成 OK 服裝：")+Output:TEXT("轉換服裝卡失敗：")+Summary);
 }

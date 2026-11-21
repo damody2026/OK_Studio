@@ -170,6 +170,8 @@ public:
 	// The card list: its N-th tile clicked as the pointer would, and that card's file (ok.ReaderScreen card).
 	bool PressCard(int32 Index){return CardButtons.IsValidIndex(Index)&&IsValid(CardButtons[Index])&&CardButtons[Index]->Press();}
 	FString CardFile(int32 Index) const {return CardPaths.IsValidIndex(Index)?CardPaths[Index]:FString();}
+	// The card a tile opens (its index in the controller's Entries; INDEX_NONE for an outfit card or no tile).
+	int32 CardEntry(int32 Index) const {return CardEntries.IsValidIndex(Index)?CardEntries[Index]:INDEX_NONE;}
 	void ScrollLeftPage(float Progress);
 	// "pagefit": the shown page's height against the left scroll box (its view, how far it lets you scroll): a page
 	// taller than the view must scroll to its end (MISMATCH otherwise). Read a few frames after the page opens.
@@ -239,6 +241,18 @@ private:
 	// The card list's buttons, their texts, and the card they last marked as the current one.
 	UPROPERTY() TArray<TObjectPtr<UOKDreamControl>> CardButtons;
 	TArray<FString> CardTexts;
+	// Each tile's card (its index in the controller's Entries; INDEX_NONE for an outfit card): a search shows only some.
+	TArray<int32> CardEntries;
+	// The grid the tiles sit in, rebuilt alone when the search changes (the search field keeps the keyboard), whether it
+	// lists outfit cards (衣服卡總欄) rather than characters, and what the count line under the search says.
+	UPROPERTY() TObjectPtr<UDreamWidget> CardGrid;
+	TWeakObjectPtr<UOKDreamControl> GridCount,ClothesModeButton;
+	bool bClothesGrid=false;
+	// The searches (kept while the reader runs), the outfit-card list it last read (OkClothesVersion), and whether a tile
+	// wears the outfit card whole or only its clothes.
+	FString CardFilter,ClothesFilter;
+	int32 ShownClothesVersion=-1;
+	bool bWearClothesOnly=false;
 	int32 ShownCardSelection=INDEX_NONE;
 	// How many cards were marked as not opening when the list was last marked.
 	int32 ShownUnopenable=0;
@@ -295,6 +309,11 @@ private:
 	void ClearPage();
 	void MarkCurrentCard();
 	void TickThumbnails();
+	// The card wall (bClothes false) or the outfit-card list: a search field and a grid of tiles under it (FillCardGrid).
+	void BuildCardGrid(UDreamWidget* Page,bool bClothes);
+	void FillCardGrid();
+	// The tiles let go of their pictures and go, decodes still on the way are dropped.
+	void ClearCardTiles();
 	void BuildEyeOverlayPage(UDreamWidget* Page);
 	void BuildGameRootPage(UDreamWidget* Page);
 	// 設定 › 介面更新率: how many times a second the DreamGUI interface updates (DreamUI.UpdateRate), apart from the 3D view.

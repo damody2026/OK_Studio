@@ -300,6 +300,8 @@ bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
 	auto Fail=[OutNote](const FString& Why){if(OutNote)*OutNote=Why;return false;};
 	if(!IsOnScreen())return Fail(TEXT("not shown now"));
 	UWidget* S=Source.Get();
+	// The screen's own field (the card and outfit-card searches): no UMG control behind it, set as typed and committed.
+	if(!S&&Input){Input->SetText(Value);Input->GetOnTextChangedEvent().Broadcast(Value);Input->GetOnTextCommittedEvent().Broadcast(Value);return true;}
 	if(!S||!S->GetIsEnabled())return Fail(TEXT("no enabled control behind it"));
 	if(auto* U=Cast<USlider>(S))
 	{
@@ -983,6 +985,7 @@ void UOKReaderScreen::BuildCategories()
 						}
 						else if(Value==TEXT("game_root"))Out.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};
 						else if(Value==TEXT("ui_rate"))Out.Build=[this](UDreamWidget* Page){BuildUIRatePage(Page);};
+						else if(Value==TEXT("okclothes_grid"))Out.Build=[this](UDreamWidget* Page){BuildCardGrid(Page,true);};
 						else Bad(TEXT("不認得的 builder ")+Value);
 					}
 					const TArray<TSharedPtr<FJsonValue>>* Buttons=nullptr;
@@ -1375,6 +1378,7 @@ void UOKReaderScreen::BuildCategories()
 
 	FCategory ClothesCards;ClothesCards.Name=TEXT("衣服卡總欄");ClothesCards.Tab=2;
 	ClothesCards.Groups.Add(Group(TEXT("服裝卡"),{static_cast<UWidget*>(Named(TEXT("OkClothesRow")))}));
+	ClothesCards.Groups.Last().Build=[this](UDreamWidget* Page){BuildCardGrid(Page,true);};
 	Categories.Add(MoveTemp(ClothesCards));
 
 	FCategory Settings;Settings.Name=TEXT("設定／介面");Settings.Tab=3;
@@ -1526,21 +1530,27 @@ void UOKReaderScreen::BuildPluginTools()
 	if(UWidget* Fps=G->WidgetTree->FindWidget(TEXT("ReaderFps")))if(Fps!=G->FpsText)Mirror(Fps,PluginHost,true);
 }
 
-void UOKReaderScreen::ClearPage()
+void UOKReaderScreen::ClearCardTiles()
 {
 	// The card tiles let go of their pictures before the tiles and the textures go: no brush is left pointing at a
 	// texture the next collection frees, whenever DreamGUI actually releases the destroyed tiles.
 	for(UOKDreamControl* Tile:CardButtons)if(IsValid(Tile)&&Tile->Picture)
 		if(auto* Image=Cast<UDreamImage>(Tile->Picture->GetVisual())){FDreamUIImageBrush Brush=Image->GetBrush();Brush.SetResourceObject(nullptr);Image->SetBrush(Brush);}
+	CardButtons.Reset();CardTexts.Reset();CardEntries.Reset();ShownCardSelection=INDEX_NONE;
+	for(UTexture2D* T:CardThumbs)GiveBackThumb(T);
+	CardThumbs.Reset();CardPaths.Reset();CardThumbLoading.Reset();ThumbsInFlight=0;++ThumbGeneration;
+	*ThumbCancel=true;ThumbCancel=MakeShared<FThreadSafeBool>(false);
+}
+
+void UOKReaderScreen::ClearPage()
+{
+	ClearCardTiles();
+	CardGrid=nullptr;GridCount.Reset();ClothesModeButton.Reset();bClothesGrid=false;
 	for(UDreamWidget* W:PageWidgets)if(IsValid(W))W->DestroyWidget();
 	PageWidgets.Reset();
 	ShownPageHeight=-1.f;
 	for(UOKDreamControl* B:SubButtons)if(IsValid(B))B->DestroyWidget();
 	SubButtons.Reset();
-	CardButtons.Reset();CardTexts.Reset();ShownCardSelection=INDEX_NONE;
-	for(UTexture2D* T:CardThumbs)GiveBackThumb(T);
-	CardThumbs.Reset();CardPaths.Reset();CardThumbLoading.Reset();ThumbsInFlight=0;++ThumbGeneration;
-	*ThumbCancel=true;ThumbCancel=MakeShared<FThreadSafeBool>(false);
 	WantedTargets.Reset();WantedProperties.Reset();
 	RootInput.Reset();RootStatus.Reset();LibraryInput.Reset();LibraryStatus.Reset();++RootCheckGeneration;
 	Controls.RemoveAll([](const TObjectPtr<UOKDreamControl>& C){return !IsValid(C);});
@@ -1551,7 +1561,7 @@ void UOKReaderScreen::ClearPage()
 // others dimmed a little.
 void UOKReaderScreen::MarkCurrentCard()
 {
-	UOKCharacterController* G=Controller.Get();if(!G||CardButtons.IsEmpty())return;
+	UOKCharacterController* G=Controller.Get();if(!G||CardButtons.IsEmpty()||bClothesGrid)return;
 	const int32 Current=G->SelectedIndex;const int32 Unopenable=G->UnopenableCards.Num();
 	if(Current==ShownCardSelection&&Unopenable==ShownUnopenable)return;
 	ShownCardSelection=Current;ShownUnopenable=Unopenable;
@@ -1560,8 +1570,9 @@ void UOKReaderScreen::MarkCurrentCard()
 	{
 		const bool bBad=CardPaths.IsValidIndex(I)&&G->UnopenableCards.Contains(CardPaths[I]);
 		// U+00A0 after the mark: the line breaks inside a long name rather than leave the mark alone on its own line.
-		B->FixedText=(I==Current?TEXT("▶ "):TEXT(""))+FString(bBad?TEXT("開不了："):TEXT(""))+CardTexts[I];B->SetText(B->FixedText);
-		B->SetRenderOpacity(I==Current||bBad?1.f:.72f);
+		const bool bCurrent=CardEntries.IsValidIndex(I)&&CardEntries[I]==Current;
+		B->FixedText=(bCurrent?TEXT("▶ "):TEXT(""))+FString(bBad?TEXT("開不了："):TEXT(""))+CardTexts[I];B->SetText(B->FixedText);
+		B->SetRenderOpacity(bCurrent||bBad?1.f:.72f);
 	}
 }
 
@@ -1977,6 +1988,119 @@ UTexture2D* UOKReaderScreen::PutThumb(int32 Width,int32 Height,const TArray<uint
 	return Texture;
 }
 
+// A search: words separated by spaces, every one must match. A word with * or ? is a wildcard over the whole name (or
+// file name); one without matches anywhere in it. Case is ignored.
+static bool OKSearchMatches(const FString& Filter,std::initializer_list<FString> Texts)
+{
+	TArray<FString> Words;Filter.ParseIntoArrayWS(Words);
+	for(const FString& Word:Words)
+	{
+		const bool bWild=Word.Contains(TEXT("*"))||Word.Contains(TEXT("?"));
+		bool bAny=false;
+		for(const FString& Text:Texts)if(bWild?Text.MatchesWildcard(Word):Text.Contains(Word)){bAny=true;break;}
+		if(!bAny)return false;
+	}
+	return true;
+}
+
+void UOKReaderScreen::BuildCardGrid(UDreamWidget* Page,bool bClothes)
+{
+	UOKCharacterController* G=Controller.Get();if(!G||!Page)return;
+	bClothesGrid=bClothes;
+	TWeakObjectPtr<UOKReaderScreen> WeakSelf(this);
+	if(bClothes)
+	{
+		// What a tile does: the outfit card whole (clothes and accessories, as the game's coordinate cards) or only its
+		// clothes (her own hair ornaments and accessories kept).
+		UDreamWidget* Row=MakePanel(Page,true,6.f);
+		auto ModeText=[](bool bOnly){return FString(bOnly?TEXT("點縮圖＝只換衣服"):TEXT("點縮圖＝整套套用"));};
+		ClothesModeButton=MakeOwnButton(Row,ModeText(bWearClothesOnly),[WeakSelf,ModeText]()
+		{
+			UOKReaderScreen* Self=WeakSelf.Get();if(!Self)return;
+			Self->bWearClothesOnly=!Self->bWearClothesOnly;
+			if(UOKDreamControl* B=Self->ClothesModeButton.Get()){B->FixedText=ModeText(Self->bWearClothesOnly);B->SetText(B->FixedText);B->SetWidth(FMath::Max(64.f,TextWidth(B->FixedText,20.f)+36.f));}
+		});
+		MakeOwnButton(Row,TEXT("重新整理"),[WeakSelf](){if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();});
+	}
+	if(UOKDreamControl* Search=MakeControl(TEXT("Input"),Page);Search&&Search->Input)
+	{
+		Search->Input->SetText(bClothes?ClothesFilter:CardFilter);
+		Search->Input->SetPlaceholder(FText::FromString(bClothes?TEXT("搜尋服裝卡（檔名；* ? 萬用字元，空格隔開多個詞）"):TEXT("搜尋人物卡（名字或檔名；* ? 萬用字元，空格隔開多個詞）")));
+		Search->Input->GetOnTextChangedEvent().AddWeakLambda(this,[this,bClothes](const FString& Typed)
+		{
+			(bClothes?ClothesFilter:CardFilter)=Typed.TrimStartAndEnd();
+			if(bClothesGrid==bClothes)FillCardGrid();
+		});
+	}
+	if(UOKDreamControl* Count=MakeControl(TEXT("Label"),Page))
+	{
+		if(UDreamPanelSlot* Slot=Count->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);
+		GridCount=Count;
+	}
+	// The pictures load as their tiles scroll into view (TickThumbnails); an outfit card's picture is her wearing it.
+	CardGrid=UDreamUIBPLibrary::ConstructWidget(this,TEXT("CardGrid"),nullptr);
+	if(!CardGrid)return;
+	if(auto* Wrap=CardGrid->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())Wrap->SetSpacing(FVector2D(8,8));
+	CardGrid->SetSizeDelta(FVector2D::ZeroVector);AddToHost(Page,CardGrid,false);
+	FillCardGrid();
+}
+
+void UOKReaderScreen::FillCardGrid()
+{
+	UOKCharacterController* G=Controller.Get();if(!G||!IsValid(CardGrid))return;
+	TArray<UOKDreamControl*> Old;for(UOKDreamControl* Tile:CardButtons)Old.Add(Tile);
+	ClearCardTiles();
+	for(UOKDreamControl* Tile:Old)if(IsValid(Tile))Tile->DestroyWidget();
+	const FString& Filter=bClothesGrid?ClothesFilter:CardFilter;
+	TArray<FString> Paths,Texts;TArray<int32> Indices;int32 All=0;
+	if(bClothesGrid)
+	{
+		ShownClothesVersion=G->OkClothesVersion;
+		const TArray<FString> Files=G->OkClothesFiles();All=Files.Num();
+		for(const FString& File:Files)
+		{
+			const FString Name=FPaths::GetBaseFilename(File);
+			if(OKSearchMatches(Filter,{Name,FPaths::GetCleanFilename(File)})){Paths.Add(File);Texts.Add(Name);Indices.Add(INDEX_NONE);}
+		}
+	}
+	else
+	{
+		ShownEntries=G->Entries.Num();All=ShownEntries;
+		for(int32 I=0;I<G->Entries.Num();++I)
+		{
+			const auto& E=G->Entries[I];
+			const FString Name=FString::Printf(TEXT("%s %s"),*E.LastName,*E.FirstName).TrimStartAndEnd();
+			const FString Text=Name.IsEmpty()?FPaths::GetBaseFilename(E.FileName):Name;
+			if(OKSearchMatches(Filter,{Text,E.FileName,FPaths::GetBaseFilename(E.FileName)})){Paths.Add(E.Path);Texts.Add(Text);Indices.Add(I);}
+		}
+	}
+	constexpr int32 MaxTiles=400;
+	TWeakObjectPtr<UOKCharacterController> Weak(G);TWeakObjectPtr<UOKReaderScreen> WeakSelf(this);
+	for(int32 K=0;K<Paths.Num()&&K<MaxTiles;++K)
+	{
+		UOKDreamControl* B=MakeControl(TEXT("CardTile"),CardGrid);
+		if(B)
+		{
+			if(bClothesGrid)B->OnPressed=[Weak,WeakSelf,Path=Paths[K]](){if(Weak.IsValid()&&WeakSelf.IsValid())Weak->WearOkClothesReported(Path,WeakSelf->bWearClothesOnly);};
+			else B->OnPressed=[Weak,I=Indices[K]](){if(Weak.IsValid())Weak->SelectIndex(I);};
+			B->FixedText=Texts[K];B->SetText(Texts[K]);
+			if(UDreamPanelSlot* Slot=B->GetPanelSlot()){Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Left);Slot->SetMinDesiredSize(FVector2D(156,252));Slot->SetMaxDesiredSize(FVector2D(156,252));}
+			if(B->Picture)B->Picture->SetShown(false);
+		}
+		CardButtons.Add(B);CardTexts.Add(Texts[K]);CardEntries.Add(Indices[K]);CardPaths.Add(Paths[K]);CardThumbs.Add(nullptr);CardThumbLoading.Add(false);
+	}
+	if(UOKDreamControl* Count=GridCount.Get())
+	{
+		FString Say;
+		if(bClothesGrid&&All==0)Say=TEXT("還沒有服裝卡：在「編輯」載入角色後按「匯出服裝卡」，或把 .okclothes 放進另存資料夾／UserData/okclothes。點縮圖會套到目前選的角色身上。");
+		else if(bClothesGrid)Say=Filter.IsEmpty()?FString::Printf(TEXT("服裝卡 %d 張，點縮圖套到目前選的角色身上。"),All):FString::Printf(TEXT("服裝卡 %d 張，符合 %d 張。"),All,Paths.Num());
+		else Say=Filter.IsEmpty()?FString::Printf(TEXT("人物卡 %d 張。"),All):FString::Printf(TEXT("人物卡 %d 張，符合 %d 張。"),All,Paths.Num());
+		if(Paths.Num()>MaxTiles)Say+=FString::Printf(TEXT("只列前 %d 張，請用搜尋縮小範圍。"),MaxTiles);
+		Count->FixedText=Say;Count->SetText(Say);
+	}
+	MarkCurrentCard();
+}
+
 void UOKReaderScreen::TickThumbnails()
 {
 	if(CardButtons.IsEmpty()||!LeftScroll)return;
@@ -2363,34 +2487,8 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page&&(!C.Groups[Sub].bShownOnly||IsUmgShown(Source.Get())))Mirror(Source.Get(),Page,false);
 		ShownSignature=C.Groups[Sub].Signature?C.Groups[Sub].Signature():FString();
 		if(C.Groups[Sub].Build&&Page)C.Groups[Sub].Build(Page);
-		// The card list: a grid of the cards' pictures with their names under them, as a file browser shows pictures (the
-		// pictures load as their tiles scroll into view, TickThumbnails).
-		if(Tab==1&&Page)if(UOKCharacterController* G=Controller.Get())
-		{
-			UDreamWidget* List=UDreamUIBPLibrary::ConstructWidget(this,TEXT("CardGrid"),nullptr);
-			if(List)
-			{
-				if(auto* Wrap=List->CreateNewLayoutContainer<UDreamLayoutContainerWrapBox>())Wrap->SetSpacing(FVector2D(8,8));
-				List->SetSizeDelta(FVector2D::ZeroVector);AddToHost(Page,List,false);
-			}
-			ShownEntries=G->Entries.Num();
-			for(int32 I=0;I<G->Entries.Num()&&I<400&&List;++I)
-			{
-				const auto& E=G->Entries[I];
-				const FString Name=FString::Printf(TEXT("%s %s"),*E.LastName,*E.FirstName).TrimStartAndEnd();
-				const FString Text=Name.IsEmpty()?FPaths::GetBaseFilename(E.FileName):Name;
-				TWeakObjectPtr<UOKCharacterController> Weak(G);
-				UOKDreamControl* B=MakeControl(TEXT("CardTile"),List);
-				if(B)
-				{
-					B->FixedText=Text;B->OnPressed=[Weak,I](){if(Weak.IsValid())Weak->SelectIndex(I);};B->SetText(Text);
-					if(UDreamPanelSlot* Slot=B->GetPanelSlot()){Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Left);Slot->SetMinDesiredSize(FVector2D(156,252));Slot->SetMaxDesiredSize(FVector2D(156,252));}
-					if(B->Picture)B->Picture->SetShown(false);
-				}
-				CardButtons.Add(B);CardTexts.Add(Text);CardPaths.Add(E.Path);CardThumbs.Add(nullptr);CardThumbLoading.Add(false);
-			}
-			ShownCardSelection=INDEX_NONE;MarkCurrentCard();
-		}
+		// The card list: a search and a grid of the cards' pictures (BuildCardGrid).
+		if(Tab==1&&Page&&Controller.IsValid())BuildCardGrid(Page,false);
 		LeftScroll->ScrollToStart();
 	}
 }
@@ -2686,7 +2784,9 @@ void UOKReaderScreen::SyncAll()
 	{
 		// The card wall until a card is open, the editor once one is; a new card folder lists again.
 		if(G->bModelLayout!=bShownModelLayout){bShownModelLayout=G->bModelLayout;ShowTab(bShownModelLayout?0:1);}
-		else if(Tab==1&&G->Entries.Num()!=ShownEntries)ShowCategory(Category,Sub);
+		else if(IsValid(CardGrid)&&!bClothesGrid&&G->Entries.Num()!=ShownEntries)FillCardGrid();
+		// A new outfit card (exported, converted) shows in the list at once.
+		else if(IsValid(CardGrid)&&bClothesGrid&&G->OkClothesVersion!=ShownClothesVersion)FillCardGrid();
 		MarkCurrentCard();
 	}
 	TickNotice();
@@ -2844,10 +2944,13 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		else if(Verb==TEXT("card"))
 		{
 			const int32 I=Value.IsNumeric()?FCString::Atoi(*Value):-1;
+			// A tile of the outfit-card list wears it; a card tile under a search opens the card it shows (not the N-th card).
+			const int32 Entry=S->CardEntry(I);
 			Done=S->PressCard(I);
+			if(Done&&Entry==INDEX_NONE)Out.Logf(TEXT("outfit card %d: %s"),I,*S->CardFile(I));
 			// The tile's press does nothing while a card loads, and keeps the old selection when the file is not a character
 			// card: say so rather than "card=N" (a script then loaded the previous card, 2026-11-19).
-			if(Done)if(UOKCharacterController* G=S->GetController();G&&G->SelectedIndex!=I)
+			if(Done&&Entry!=INDEX_NONE)if(UOKCharacterController* G=S->GetController();G&&G->SelectedIndex!=Entry)
 			{
 				const FString* Why=G->UnopenableCards.Find(S->CardFile(I));
 				Out.Logf(TEXT("not selected: card %d (%s) did not open, the selection stays on card %d: %s"),I,*S->CardFile(I),G->SelectedIndex,
