@@ -42,7 +42,7 @@ static MODE: AtomicI32 = AtomicI32::new(0);
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
 /// Which host simulates the cloth: 0 PhysX (PxDeformableSurface), 1 NVIDIA FleX (particles: one solver per character, every
 /// garment of hers in it, so the layers collide with each other and with her posed body mesh).
-static SOLVER: AtomicI32 = AtomicI32::new(0);
+static SOLVER: AtomicI32 = AtomicI32::new(1);
 static FCREATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static FSTEP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 static FRELEASE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
@@ -92,7 +92,7 @@ pub extern "C" fn ok_set_physx_cloth(create: Option<CreateFn>, step: Option<Step
     CREATE.store(create.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
 }
 fn host() -> Option<(CreateFn, StepFn, ReleaseFn)> {
-    let (c, s, r) = if solver() == 1 { (FCREATE.load(Ordering::Acquire), FSTEP.load(Ordering::Acquire), FRELEASE.load(Ordering::Acquire)) }
+    let (c, s, r) = if flex() { (FCREATE.load(Ordering::Acquire), FSTEP.load(Ordering::Acquire), FRELEASE.load(Ordering::Acquire)) }
         else { (CREATE.load(Ordering::Acquire), STEP.load(Ordering::Acquire), RELEASE.load(Ordering::Acquire)) };
     if c.is_null() || s.is_null() || r.is_null() { return None; }
     // SAFETY: only ok_set_physx_cloth stores here, each with its own function type.
