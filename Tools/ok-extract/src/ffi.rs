@@ -32,13 +32,13 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
         match op {
             0=>crate::okclothes::file::import(a,out),
             1=>crate::okclothes::file::export(a,outfit?,out),
-            2=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;let summary=crate::okclothes::file::wear_file(a,std::path::Path::new(&b),outfit?,out)?;
-                // An OK card wearing new clothes is made again, so its models list and pack cover them.
-                if crate::oklib::is_library_card(out) {remake_card_in_place(out)?;}
-                Ok(summary)}
-            3=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;let summary=crate::okclothes::file::wear_clothes_only_file(a,std::path::Path::new(&b),outfit?,out)?;
-                if crate::oklib::is_library_card(out) {remake_card_in_place(out)?;}
-                Ok(summary)}
+            // An OK card wearing new clothes gets the outfit's pack, is sealed and made again (okclothes::file::wear_into).
+            2=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;
+                crate::okclothes::file::wear_into(None,&installed_game_root(),a,std::path::Path::new(&b),outfit?,false,out)}
+            3=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;
+                crate::okclothes::file::wear_into(None,&installed_game_root(),a,std::path::Path::new(&b),outfit?,true,out)}
+            // 4: export outfit `outfit` of card `a` with picture `b` (a PNG of the outfit as shown).
+            4=>{let b=cstr_opt(b).ok_or("okclothes: picture path missing")?;crate::okclothes::file::export_with_thumbnail(a,outfit?,std::path::Path::new(&b),out)}
             _=>Err(format!("okclothes: unknown op {op}")),
         }
     }).unwrap_or_else(|_|Err("okclothes: panic".into()));

@@ -171,6 +171,12 @@ pub struct OkClothes {
     pub models: Vec<String>,
     /// Plugin data that cannot follow the outfit (reported, not written).
     pub dropped: Vec<String>,
+    /// The `okLc` pack of the OK card the outfit came from: its third-party models (not in the shared base library)
+    /// go with it, so another OK card can wear it without the zipmods (an `okLc` chunk of the .okclothes PNG).
+    pub pack: Option<Vec<u8>>,
+    /// That card's `okLt` answers (what its open asks of the mods tree): the outfit's third-party mods are not in the
+    /// shared library's tree, so the card wearing it takes these (an `okLt` chunk of the .okclothes PNG).
+    pub answers: Option<Vec<u8>>,
 }
 
 fn map_get<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
@@ -420,8 +426,27 @@ fn export_plugins(character: &Value, outfit: usize) -> Value {
 
 // ------------------------------------------------------------ operations
 
+/// A card's picture as a still PNG: its first image only (an APNG's other frames dropped) and none of the OK chunks
+/// (an OK card's pack, answers and voice sat before IEND and went into the outfit's picture: 112 MB for Raiden).
+pub fn still_picture(png: &[u8]) -> Result<Vec<u8>, String> {
+    if png.len() < 8 || &png[..8] != b"\x89PNG\r\n\x1a\n" { return Err("not a PNG".into()); }
+    let mut out = png[..8].to_vec();
+    let mut pos = 8usize;
+    while pos + 12 <= png.len() {
+        let len = u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
+        let end = pos.checked_add(12 + len).filter(|e| *e <= png.len()).ok_or("truncated PNG chunk")?;
+        let kind = &png[pos + 4..pos + 8];
+        let keep = !kind.starts_with(b"ok") && kind != b"acTL" && kind != b"fcTL" && kind != b"fdAT";
+        if keep { out.extend_from_slice(&png[pos..end]); }
+        if kind == b"IEND" { return Ok(out); }
+        pos = end;
+    }
+    Err("missing PNG IEND".into())
+}
+
 impl OkClothes {
     pub fn to_bytes(&self, thumbnail: &[u8]) -> Result<Vec<u8>, String> {
+        let thumbnail = &still_picture(thumbnail)?;
         let payload = encode(&Value::Map(vec![
             ("format".into(), "okclothes".into()), ("version".into(), 1.into()),
             ("name".into(), self.name.clone().into()), ("source".into(), self.source.clone().into()),
@@ -437,6 +462,14 @@ impl OkClothes {
         chunk.extend_from_slice(&payload);
         out.extend_from_slice(&chunk);
         out.extend_from_slice(&crc32fast::hash(&chunk).to_be_bytes());
+        for (kind, data) in [(crate::oklib::PACK_CHUNK, &self.pack), (crate::tree_answers::CHUNK, &self.answers)] {
+            let Some(data) = data else { continue };
+            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let mut chunk = kind.to_vec();
+            chunk.extend_from_slice(data);
+            out.extend_from_slice(&chunk);
+            out.extend_from_slice(&crc32fast::hash(&chunk).to_be_bytes());
+        }
         out.extend_from_slice(&thumbnail[iend..iend + 12]);
         Ok(out)
     }
@@ -454,6 +487,8 @@ impl OkClothes {
                     coordinate: map_get(&v, "coordinate").and_then(|x| x.as_slice()).ok_or("okCl coordinate missing")?.to_vec(),
                     plugins: map_get(&v, "plugins").cloned().unwrap_or(Value::Map(Vec::new())),
                     models: list("models"), dropped: list("dropped"),
+                    pack: crate::oklib::png_chunk(bytes, crate::oklib::PACK_CHUNK).map(<[u8]>::to_vec),
+                    answers: crate::oklib::png_chunk(bytes, crate::tree_answers::CHUNK).map(<[u8]>::to_vec),
                 });
             }
             pos += 12 + len;
@@ -467,7 +502,7 @@ pub fn import_coordinate(card: &[u8]) -> Result<(OkClothes, Vec<u8>), String> {
     let f = read_coordinate_file(card)?;
     let plugins = f.kkex.unwrap_or(Value::Map(Vec::new()));
     let dropped = plugins.as_map().map(|m| m.iter().filter_map(|(k, _)| k.as_str()).filter(|k| !HANDLED.contains(k)).map(str::to_owned).collect()).unwrap_or_default();
-    Ok((OkClothes { name: f.name, source: "coordinate".into(), coordinate: f.data, plugins, models: Vec::new(), dropped }, f.png))
+    Ok((OkClothes { name: f.name, source: "coordinate".into(), coordinate: f.data, plugins, models: Vec::new(), dropped, pack: None, answers: None }, f.png))
 }
 
 fn coordinate_entries(blocks: &std::collections::BTreeMap<String, Vec<u8>>) -> Result<Vec<Vec<u8>>, String> {
@@ -488,7 +523,11 @@ pub fn export_outfit(card: &[u8], outfit: usize) -> Result<(OkClothes, Vec<u8>),
     let kkex = card_kkex(card)?.unwrap_or(Value::Map(Vec::new()));
     let (iend, _) = crate::portable::png_snapshot(card)?;
     let name = format!("outfit{outfit}");
-    Ok((OkClothes { name, source: "character".into(), coordinate, plugins: export_plugins(&kkex, outfit), models: Vec::new(), dropped: Vec::new() }, card[..iend + 12].to_vec()))
+    // An OK card's own pack goes with the outfit: the third-party models of its clothes are only there.
+    let pack = crate::oklib::png_chunk(card, crate::oklib::PACK_CHUNK).map(<[u8]>::to_vec);
+    let answers = crate::oklib::png_chunk(card, crate::tree_answers::CHUNK).map(<[u8]>::to_vec);
+    Ok((OkClothes { name, source: "character".into(), coordinate, plugins: export_plugins(&kkex, outfit), models: Vec::new(), dropped: Vec::new(), pack, answers },
+        card[..iend + 12].to_vec()))
 }
 
 /// Wear okclothes as outfit `outfit` of a character card (a new card).
@@ -671,7 +710,15 @@ pub mod file {
         let (clothes, thumb) = export_outfit(&read(card)?, outfit)?;
         let bytes = clothes.to_bytes(&thumb)?;
         write(out, &bytes)?;
-        Ok(format!("export outfit={outfit} bytes={}", bytes.len()))
+        Ok(format!("export outfit={outfit} bytes={} pack={}", bytes.len(), clothes.pack.as_ref().map_or(0, Vec::len)))
+    }
+    /// As `export`, with `thumbnail` (a PNG: the outfit as shown) as the file's picture instead of the card's.
+    pub fn export_with_thumbnail(card: &Path, outfit: usize, thumbnail: &Path, out: &Path) -> Result<String, String> {
+        let (clothes, thumb) = export_outfit(&read(card)?, outfit)?;
+        let picture = read(thumbnail).ok().filter(|p| crate::portable::png_snapshot(p).is_ok()).unwrap_or(thumb);
+        let bytes = clothes.to_bytes(&picture)?;
+        write(out, &bytes)?;
+        Ok(format!("export outfit={outfit} bytes={} pack={}", bytes.len(), clothes.pack.as_ref().map_or(0, Vec::len)))
     }
     /// .okclothes worn as outfit `outfit` of a character card, written as a new card.
     pub fn wear_file(card: &Path, okclothes: &Path, outfit: usize, out: &Path) -> Result<String, String> {
@@ -679,6 +726,40 @@ pub mod file {
         let (bytes, dropped) = wear(&read(card)?, &clothes, outfit)?;
         write(out, &bytes)?;
         Ok(format!("wear outfit={outfit} dropped={dropped:?}"))
+    }
+    /// .okclothes worn as outfit `outfit` of a character card, as the card reader and the editor wear it: an OK card
+    /// gets the outfit's pack merged into its own and is sealed and made again (its answers, its pack and its models
+    /// list cover the new clothes; `ok-extract.exe` does the sealing, one process per step); an original card wearing
+    /// an outfit that carries a pack is made an OK card first (from its own zipmods), since the outfit's third-party
+    /// models exist only in that pack. `clothes_only`: her accessories and makeup kept. Returns a one-line summary.
+    pub fn wear_into(lib: Option<&Path>, game: &Path, card: &Path, okclothes: &Path, outfit: usize, clothes_only: bool, out: &Path) -> Result<String, String> {
+        let clothes = OkClothes::from_bytes(&read(okclothes)?)?;
+        let ok_card = crate::oklib::is_library_card(card);
+        let needs_ok = ok_card || clothes.pack.is_some();
+        let lib = if needs_ok { Some(lib.map(Path::to_owned).or_else(crate::oklib::configured_library).ok_or("OK base library not configured")?) } else { None };
+        let base = if !ok_card && needs_ok {
+            // Her own data made into an OK card first (the outfit's models come in its pack, hers from her zipmods).
+            let (_, _, made, _) = crate::oklib::remake_ok_card(lib.as_deref().unwrap(), game, card)?;
+            made
+        } else { read(card)? };
+        let (worn, dropped) = wear_scoped(&base, &clothes, outfit, clothes_only)?;
+        if !needs_ok {
+            write(out, &worn)?;
+            return Ok(format!("wear outfit={outfit} dropped={dropped:?}"));
+        }
+        let lib = lib.unwrap();
+        let merged = match &clothes.pack { Some(pack) => crate::oklib::merge_card_pack(&worn, pack)?, None => worn };
+        // The outfit's answers with hers: recorded again from the shared library they would lose the outfit's
+        // third-party mods (not in its tree). An outfit without answers (a game coordinate card): recorded again.
+        let (merged, keep) = match (&clothes.answers, crate::oklib::png_chunk(&merged, crate::tree_answers::CHUNK).is_some()) {
+            (Some(answers), true) => (crate::tree_answers::merge(&merged, answers)?, true),
+            _ => (crate::cardbake::strip_answers(&merged).into_owned(), false),
+        };
+        let (sealed, sealing) = crate::oklib::seal_card_with(&lib, &merged, !keep)?;
+        write(out, &sealed)?;
+        let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
+        write(out, &made)?;
+        Ok(format!("wear outfit={outfit} clothes_only={clothes_only} dropped={dropped:?} sealed: {sealing}; digest {digest} pack={pack}"))
     }
     /// Only the clothes of .okclothes worn as outfit `outfit` (her accessories kept), written as a new card.
     pub fn wear_clothes_only_file(card: &Path, okclothes: &Path, outfit: usize, out: &Path) -> Result<String, String> {

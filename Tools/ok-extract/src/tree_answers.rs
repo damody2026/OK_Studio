@@ -121,6 +121,46 @@ pub fn lookup_within<T: serde::de::DeserializeOwned>(kind: &str, key: &[u8]) -> 
     bincode::deserialize(value).ok()
 }
 
+/// `lookup_within` for a question whose answer is a list about the names asked (which of them a migration strips,
+/// which archive declares each): when no one answer covers every name, the answers of the questions that together
+/// cover them, put together. A card wearing another card's outfit (okclothes) asks about her names and the outfit's
+/// at once, and each card recorded only its own (2026-11-21).
+pub fn lookup_covered<E: serde::de::DeserializeOwned + Ord>(kind: &str, key: &[u8]) -> Option<Vec<E>> {
+    if let Some(found) = lookup_within::<Vec<E>>(kind, key) { return Some(found); }
+    let table = table()?;
+    let lines = |text: &'_ [u8]| text.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(<[u8]>::to_vec).collect::<std::collections::HashSet<_>>();
+    let wanted = lines(key);
+    if wanted.is_empty() { return None; }
+    let mut covered = std::collections::HashSet::new();
+    let mut out: Vec<E> = Vec::new();
+    for ((k, asked), value) in table.iter() {
+        if k != kind { continue; }
+        let asked = lines(asked);
+        if asked.is_disjoint(&wanted) { continue; }
+        let Ok(part) = bincode::deserialize::<Vec<E>>(value) else { continue };
+        covered.extend(asked.intersection(&wanted).cloned());
+        out.extend(part);
+    }
+    if !wanted.is_subset(&covered) { return None; }
+    out.sort();
+    out.dedup();
+    Some(out)
+}
+
+/// The card's answers with `other`'s (an `okLt` payload, e.g. an outfit's from another OK card) added: its own answer
+/// wins where both answer one question.
+pub fn merge(card: &[u8], other: &[u8]) -> Result<Vec<u8>, String> {
+    let read = |chunk: &[u8]| -> Result<Table, String> {
+        let raw = zstd::stream::decode_all(chunk).map_err(|e| e.to_string())?;
+        let saved: Saved = bincode::deserialize(&raw).map_err(|e| e.to_string())?;
+        if saved.version != VERSION { return Err(format!("okLt version {}", saved.version)); }
+        Ok(saved.rows.into_iter().map(|(k, key, v)| ((k, key), v)).collect())
+    };
+    let mut table = match crate::oklib::png_chunk(card, CHUNK) { Some(chunk) => read(chunk)?, None => Table::new() };
+    for (key, value) in read(other)? { table.entry(key).or_insert(value); }
+    with_answers(card, &encode(table)?)
+}
+
 /// How many outfits (coordinates) the card saves.
 pub fn outfit_count(card: &[u8]) -> usize {
     crate::card::parse_card_bytes_mode(card, 0, false).map(|c| c.coordinate_count).unwrap_or(1).max(1)

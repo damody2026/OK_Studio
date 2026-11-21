@@ -1033,6 +1033,40 @@ fn merge_additions(pack: &mut CardPack, adds: crate::okstrict::Additions) {
     pack.records.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
 }
 
+/// The card with pack `other` (an `okLc` payload, e.g. an outfit's from another OK card) merged into its own: its own
+/// files, zips and records keep precedence, the other's are added (a pack made when it has none).
+pub fn merge_card_pack(card: &[u8], other: &[u8]) -> Result<Vec<u8>, String> {
+    let decode = |chunk: &[u8]| -> Result<CardPack, String> {
+        let pack: CardPack = bincode::deserialize(&decode_card_pack_bytes(chunk)?).map_err(|e| format!("card pack: {e}"))?;
+        if pack.version != CARD_PACK_VERSION { return Err(format!("card pack version {} (expected {CARD_PACK_VERSION})", pack.version)); }
+        Ok(pack)
+    };
+    let mut pack = match png_chunk(card, PACK_CHUNK) { Some(chunk) => decode(chunk)?, None => CardPack { version: CARD_PACK_VERSION, index: Default::default(), records: Vec::new() } };
+    let add = decode(other)?;
+    for (key, entry) in add.index.files { pack.index.files.entry(key).or_insert(entry); }
+    for (key, dir) in add.index.dirs { pack.index.dirs.entry(key).or_insert(dir); }
+    for (key, zip) in add.index.zips {
+        let own = pack.index.zips.entry(key).or_insert_with(|| crate::gamefs::ZipIndex { names: zip.names.clone(), entries: Default::default() });
+        for (i, entry) in zip.entries { own.entries.entry(i).or_insert(entry); }
+    }
+    let have: std::collections::HashSet<(Id, String, Vec<u8>)> = pack.records.iter().map(|r| (r.0, r.1.clone(), r.2.clone())).collect();
+    pack.records.extend(add.records.into_iter().filter(|r| !have.contains(&(r.0, r.1.clone(), r.2.clone()))));
+    pack.records.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
+    crate::tree_answers::with_chunk(card, PACK_CHUNK, &encode_card_pack(&pack)?)
+}
+
+/// The `ok-extract` program the sealing steps run in (one process per step): this one when it is ok-extract, else
+/// OK_EXTRACT_EXE, else the project's release build beside the base library (<project>/Content/IndependentResources/
+/// <library>): inside Unreal the current program is the editor or the game.
+fn ok_extract_exe(lib: &Path) -> Result<PathBuf, String> {
+    let current = std::env::current_exe().map_err(|e| e.to_string())?;
+    if current.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s.starts_with("ok-extract")) { return Ok(current); }
+    if let Some(exe) = std::env::var_os("OK_EXTRACT_EXE").map(PathBuf::from).filter(|p| p.is_file()) { return Ok(exe); }
+    let project = lib.ancestors().nth(3).ok_or("base library outside a project")?;
+    let exe = project.join("Tools/ok-extract/target/release/ok-extract.exe");
+    if exe.is_file() { Ok(exe) } else { Err(format!("ok-extract.exe not found ({}); set OK_EXTRACT_EXE", exe.display())) }
+}
+
 /// A PNG chunk's data.
 pub fn png_chunk<'a>(bytes: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
     if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" { return None; }
@@ -2128,7 +2162,11 @@ fn absent_zipmod_gap(gap: &str, root: &Path, card: &Path) -> bool {
 /// Each step runs in a process of its own (`seal-step`): a value an earlier open of the process kept (an entry memo,
 /// a ramp, a parsed bundle) answers a later open without the reads that step must make, so answers went unrecorded
 /// and library data uncopied, and a check in the same process passed a card a new process could not open.
-pub fn seal_card(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> {
+pub fn seal_card(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> { seal_card_with(lib, card, true) }
+
+/// `seal_card`; `record_answers` false keeps the answers the card carries (it must have them): a card wearing another
+/// card's outfit carries both cards' answers, and the shared library's tree cannot answer for the outfit's mods.
+pub fn seal_card_with(lib: &Path, card: &[u8], record_answers: bool) -> Result<(Vec<u8>, String), String> {
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = lib.join("work");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -2136,13 +2174,16 @@ pub fn seal_card(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> {
     let step_file = |step: &str| TempCard(dir.join(format!("seal_{}_{n}_{step}.png", std::process::id())));
     let (input, answered, sealed) = (step_file("in"), step_file("answers"), step_file("sealed"));
     std::fs::write(&input.0, card).map_err(|e| format!("{}: {e}", input.0.display()))?;
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = ok_extract_exe(lib)?;
     let run = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
-        let out = std::process::Command::new(&exe).arg("X:/NoGame").arg("--oklib").args(args).output().map_err(|e| e.to_string())?;
+        let mut command = std::process::Command::new(&exe);
+        #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x0800_0000); } // no console window
+        let out = command.arg("X:/NoGame").arg("--oklib").args(args).output().map_err(|e| e.to_string())?;
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         if out.status.success() { Ok(text) } else { Err(text.lines().filter(|l| l.starts_with("OK")).collect::<Vec<_>>().join(" ")) }
     };
-    run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?;
+    if record_answers { run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?; }
+    else { std::fs::copy(&input.0, &answered.0).map_err(|e| e.to_string())?; }
     let mut summary = run(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()])?;
     // A read made by an open's background work (entry prefetch) can land after its step took what it copied (seen
     // under load): the strict check names it, and completing the sealed card again copies it.
@@ -3205,15 +3246,15 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             println!("OKCLOTHES export {} outfit={outfit} -> {} bytes={}", card.display(), out.display(), bytes.len());
         }
         "clothes-wear" => {
-            // clothes-wear <card> <okclothes> <outfit> <out card> [--clothes-only]
-            let card = std::fs::read(args.get(1).ok_or("card required")?).map_err(|e| e.to_string())?;
-            let clothes = crate::okclothes::OkClothes::from_bytes(&std::fs::read(args.get(2).ok_or("okclothes required")?).map_err(|e| e.to_string())?)?;
+            // clothes-wear <card> <okclothes> <outfit> <out card> [--clothes-only]: as the card reader wears it (an OK
+            // card gets the outfit's pack, is sealed and made again; OK_BASE_LIBRARY names the library).
+            let card = PathBuf::from(args.get(1).ok_or("card required")?);
+            let clothes = PathBuf::from(args.get(2).ok_or("okclothes required")?);
             let outfit: usize = args.get(3).and_then(|v| v.parse().ok()).ok_or("outfit required")?;
             let out = PathBuf::from(args.get(4).ok_or("output required")?);
-            let (bytes, dropped) = if args.get(5).is_some_and(|a| a == "--clothes-only") { crate::okclothes::wear_clothes_only(&card, &clothes, outfit)? }
-                else { crate::okclothes::wear(&card, &clothes, outfit)? };
-            std::fs::write(&out, &bytes).map_err(|e| e.to_string())?;
-            println!("OKCLOTHES wear outfit={outfit} -> {} dropped={dropped:?}", out.display());
+            let only = args.get(5).is_some_and(|a| a == "--clothes-only");
+            let summary = crate::okclothes::file::wear_into(None, game, &card, &clothes, outfit, only, &out)?;
+            println!("OKCLOTHES {summary} -> {}", out.display());
         }
         "clothes-test" => {
             // clothes-test <work dir> <card> [outfit]: export -> wear back -> same session.
