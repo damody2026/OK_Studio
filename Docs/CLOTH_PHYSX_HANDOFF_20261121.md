@@ -174,3 +174,8 @@
 - 試過「FleX 時 Rust 只夾最大距離」（`OK_CLOTH_FLEX_PURE=1`）：幾秒內變尖刺，預設關。關掉自碰撞或身體網格碰撞，畫面差不多。
 - 服裝 2 在 FleX 下乾淨：紗袍掛在手臂，背後垂過臀部，不穿身體（`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex5\raiden_outfit2_compare_20s.mp4`）。
 - 服裝 5 還有細皺與下擺堆疊；下擺的鋸齒有一部分是和服本身的 alpha 鏤空與深色紋樣（原始物理也有）。
+
+### 巡檢（11-21 19:20–19:30）：FleX 設為預設
+
+- 千佳（歩く1）、惠惠、刻晴（走る1）、三月七（歩く1）在 FleX 下：裙子、袖子垂擺正常，沒有穿模；畫面抖動比姿勢多 0.1–0.4 mm。
+- `ok.ClothSolver` 預設 1、Rust 端也預設 FleX（第一次載入就用 FleX 的細網格）；FleX 主機沒註冊時（CLI）用 PhysX。讀卡器選單預設顯示「FleX 布料」。

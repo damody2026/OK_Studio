@@ -201,4 +201,4 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 
 ### 讀卡器選單
 
-「衣服 › 布料物理」（`control.PhysicsCombo`）：原始物理（DynamicBone）／PhysX 布料／FleX 布料。換 PhysX／FleX 會重新載入模型（兩者切網格的大小不同）。預設仍是 PhysX。
+「衣服 › 布料物理」（`control.PhysicsCombo`）：原始物理（DynamicBone）／PhysX 布料／FleX 布料。換 PhysX／FleX 會重新載入模型（兩者切網格的大小不同）。2026-11-21 晚起預設 FleX（`ok.ClothSolver` 1；FleX 主機沒註冊時自動用 PhysX）：雷電服裝 2／3／5 與千佳、惠惠、刻晴、三月七在 FleX 下都沒有穿模，畫面抖動比姿勢多 0.1–0.4 mm。
