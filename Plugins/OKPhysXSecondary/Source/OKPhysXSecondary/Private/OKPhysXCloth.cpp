@@ -58,6 +58,8 @@ static TAutoConsoleVariable<float> CVarSubstepHz(TEXT("OKPhysXCloth.SubstepHz"),
 static TAutoConsoleVariable<int32> CVarMaxSubsteps(TEXT("OKPhysXCloth.MaxSubsteps"), 2, TEXT("Most substeps in one frame."));
 static TAutoConsoleVariable<int32> CVarRestFollow(TEXT("OKPhysXCloth.RestFollow"), 0, TEXT("1: upload the skinned pose as the rest positions every step. PhysX keeps the rest state of the pose a cloth was made in, so this changed nothing measurable (2026-11-20); Rust makes the cloth on a moving pose instead."));
 static TAutoConsoleVariable<int32> CVarFeedPrev(TEXT("OKPhysXCloth.FeedPrev"), 1, TEXT("1: the free vertices start each step where Rust showed them (carried with the body); 0: the GPU keeps its own state, only the pins move."));
+static TAutoConsoleVariable<int32> CVarPinByVelocity(TEXT("OKPhysXCloth.PinByVelocity"), 1, TEXT("1: the pins move to their targets by velocity and the free vertices keep the GPU state; 0: both written as positions each step (made the cloth fly off, 2026-11-21)."));
+static TAutoConsoleVariable<float> CVarSteerGain(TEXT("OKPhysXCloth.SteerGain"), 1.f, TEXT("PinByVelocity: share of the way to where Rust showed it a moved free vertex is steered in one step (by velocity)."));
 static TAutoConsoleVariable<int32> CVarCollide(TEXT("OKPhysXCloth.Collide"), 1, TEXT("1: the body capsules are kinematic colliders on the GPU too (Rust always pushes out of them after)."));
 static TAutoConsoleVariable<int32> CVarCudaWait(TEXT("OKPhysXCloth.CudaWait"), 0, TEXT("CUDA context scheduling when it is created: 0 auto (spin while cores are free), 1 spin, 2 yield, 4 blocking."));
 static TAutoConsoleVariable<int32> CVarInterpolatePins(TEXT("OKPhysXCloth.InterpolatePins"), 0, TEXT("1: the pinned vertices move along their path every substep (an upload and a readback per substep)."));
@@ -317,6 +319,7 @@ namespace
 			Cloth->LastPinned[I] = Cooked[I];
 		}
 		PxDeformableSurfaceExt::copyToDevice(*Cloth->Surface, PxDeformableSurfaceDataFlag::eALL, N, Cloth->PosInvMass, Cloth->Vel, Cloth->Rest);
+		Cloth->Surface->markDirty(PxDeformableSurfaceDataFlag::eALL);
 		if (CVarLog.GetValueOnAnyThread())
 		{
 			// One step from rest: a consistent mesh barely moves (gravity alone, under a millimetre).
@@ -335,10 +338,27 @@ namespace
 				Key, Free ? Sum / Free * 1000.0 : 0.0, Free ? SumY / Free * 1000.0 : 0.0, Most * 1000.f, Free);
 			for (uint32 I = 0; I < N; ++I) Cloth->Vel[I] = PxVec4(0.f);
 			PxDeformableSurfaceExt::copyToDevice(*Cloth->Surface, PxDeformableSurfaceDataFlag::eALL, N, Cloth->PosInvMass, Cloth->Vel, Cloth->Rest);
+			Cloth->Surface->markDirty(PxDeformableSurfaceDataFlag::eALL);
 		}
 		Cloth->N = int32(N);
 		GCloths.Add(Key, MoveTemp(Cloth));
 		return 1;
+	}
+
+	/**
+	 * Host data into the GPU buffers the solver reads (positions, velocities, rest), then marked dirty. The copies are
+	 * synchronous: PxDeformableSurfaceExt::copyToDevice queues them on CUDA stream 0 while PhysX simulates on its own
+	 * stream, and the solver ran on the buffers before they landed. Every upload after the first frames was lost: the
+	 * pins never followed the body, the cloth stayed where it was made and flew off at the 8 m/s cap after the first
+	 * hitch, and Rust showed only its max-distance clamp of that (2026-11-21).
+	 */
+	void Upload(FCloth& Cloth, PxDeformableSurfaceDataFlags Flags)
+	{
+		const uint32 N = uint32(Cloth.N);
+		if (Flags & PxDeformableSurfaceDataFlag::ePOSITION_INVMASS) Ext::PxCudaHelpersExt::copyHToD(*GCuda, Cloth.Surface->getPositionInvMassBufferD(), Cloth.PosInvMass, N);
+		if (Flags & PxDeformableSurfaceDataFlag::eVELOCITY) Ext::PxCudaHelpersExt::copyHToD(*GCuda, Cloth.Surface->getVelocityBufferD(), Cloth.Vel, N);
+		if (Flags & PxDeformableSurfaceDataFlag::eREST_POSITION) Ext::PxCudaHelpersExt::copyHToD(*GCuda, Cloth.Surface->getRestPositionBufferD(), Cloth.Rest, N);
+		Cloth.Surface->markDirty(Flags);
 	}
 
 	/** The substeps of one frame on the GPU (a worker task, or inline): one upload, the substeps, one readback. */
@@ -350,13 +370,37 @@ namespace
 		PxDeformableSurfaceDataFlags Up(PxDeformableSurfaceDataFlag::ePOSITION_INVMASS);
 		if (Cloth.bRestDirty) { Up |= PxDeformableSurfaceDataFlag::eREST_POSITION; Cloth.bRestDirty = false; }
 		if (Cloth.bVelDirty) { Up |= PxDeformableSurfaceDataFlag::eVELOCITY; Cloth.bVelDirty = false; }
-		PxDeformableSurfaceExt::copyToDevice(*Cloth.Surface, Up, uint32(Cloth.N), Cloth.PosInvMass, Cloth.Vel, Cloth.Rest);
+		Upload(Cloth, Up);
+		TArray<PxVec4> Before;
+		if (CVarLog.GetValueOnAnyThread() >= 2) Before = TArray<PxVec4>(Cloth.PosInvMass, Cloth.N);
 		for (int32 S = 0; S < Steps; ++S)
 		{
 			Cloth.Scene->simulate(H);
 			Cloth.Scene->fetchResults(true);
 		}
 		Ext::PxCudaHelpersExt::copyDToH(*GCuda, Cloth.PosInvMass, Device, uint32(Cloth.N));
+		// The velocities too: the next upload sends them back (the pins' set to reach their targets, the rest as they were).
+		Ext::PxCudaHelpersExt::copyDToH(*GCuda, Cloth.Vel, Cloth.Surface->getVelocityBufferD(), uint32(Cloth.N));
+		if (Before.Num() == Cloth.N)
+		{
+			// OKPhysXCloth.Log 2: how far this job moved the free vertices, and the GPU velocities after it.
+			TArray<PxVec4> V; V.SetNumUninitialized(Cloth.N);
+			Ext::PxCudaHelpersExt::copyDToH(*GCuda, V.GetData(), Cloth.Surface->getVelocityBufferD(), uint32(Cloth.N));
+			float Most = 0.f, Fast = 0.f, PinFast = 0.f, PinMoved = 0.f; int32 Worst = -1;
+			for (int32 I = 0; I < Cloth.N; ++I)
+			{
+				const float Speed = V[I].getXYZ().magnitude();
+				if (Cloth.InvMass[I] <= 0.f) { PinFast = FMath::Max(PinFast, Speed); PinMoved = FMath::Max(PinMoved, (Cloth.PosInvMass[I].getXYZ() - Before[I].getXYZ()).magnitude()); continue; }
+				const float D = (Cloth.PosInvMass[I].getXYZ() - Before[I].getXYZ()).magnitude();
+				if (D > Most) { Most = D; Worst = I; }
+				Fast = FMath::Max(Fast, Speed);
+			}
+			UE_LOG(LogOKPhysXCloth, Display, TEXT("cloth job: %d substeps of %.2f ms, free moved most %.1f mm (vertex %d w %.3g, %s -> %s), fastest free %.2f m/s, fastest pin %.2f m/s, pins moved %.1f mm"),
+				Steps, H * 1000.f, Most * 1000.f, Worst, Worst >= 0 ? Cloth.PosInvMass[Worst].w : 0.f,
+				Worst >= 0 ? *FString::Printf(TEXT("(%.3f %.3f %.3f)"), Before[Worst].x, Before[Worst].y, Before[Worst].z) : TEXT("-"),
+				Worst >= 0 ? *FString::Printf(TEXT("(%.3f %.3f %.3f)"), Cloth.PosInvMass[Worst].x, Cloth.PosInvMass[Worst].y, Cloth.PosInvMass[Worst].z) : TEXT("-"),
+				Fast, PinFast, PinMoved * 1000.f);
+		}
 		Cloth.JobSeconds = FPlatformTime::Seconds() - Start;
 	}
 
@@ -401,7 +445,7 @@ namespace
 				Cloth.Vel[I] = PxVec4(0.f);
 				Cloth.LastPinned[I] = P;
 			}
-			PxDeformableSurfaceExt::copyToDevice(*Cloth.Surface, PxDeformableSurfaceDataFlags(PxDeformableSurfaceDataFlag::ePOSITION_INVMASS) | PxDeformableSurfaceDataFlag::eVELOCITY, N, Cloth.PosInvMass, Cloth.Vel, Cloth.Rest);
+			Upload(Cloth, PxDeformableSurfaceDataFlags(PxDeformableSurfaceDataFlag::ePOSITION_INVMASS) | PxDeformableSurfaceDataFlag::eVELOCITY);
 			FMemory::Memcpy(Out, Targets, sizeof(float) * 3 * N);
 			return 1;
 		}
@@ -417,13 +461,51 @@ namespace
 		};
 		// The previous job's result, for the targets it was given (LastPinned holds them).
 		if (bHave && bAsync) Write([&](int32 I) { return Cloth.LastPinned[I]; });
-		Dt = FMath::Min(Dt, 0.1f);
+		// No substep longer than 1/SubstepHz: the time past MaxSubsteps of them is dropped. A hitch (switching clips, 0.1 s)
+		// made two 50 ms substeps, after which the whole cloth, pins included, flew off at the 8 m/s cap (2026-11-21).
+		const float FrameDt = FMath::Min(Dt, 0.1f);
+		Dt = FMath::Min(Dt, float(FMath::Max(1, CVarMaxSubsteps.GetValueOnAnyThread())) / FMath::Max(10.f, CVarSubstepHz.GetValueOnAnyThread()));
 		// What Rust showed last frame (its max distance and capsule push applied) is where the free vertices start.
 		// Their velocities with them: the motion shown between the last two starts. The GPU's own velocity belongs to
 		// positions this replaced, and kept it lifted the skirt 4 cm a step while walking (2026-11-20).
-		if (Prev && CVarFeedPrev.GetValueOnAnyThread() != 0)
+		const bool bPinByVelocity = CVarPinByVelocity.GetValueOnAnyThread() != 0;
+		if (bPinByVelocity)
 		{
+			// The pins reach this frame's targets by moving there over the substeps (their velocity), from where the GPU
+			// has them; the free vertices keep the GPU's own state. The solver takes a written position as a move made
+			// during the step: a pin put on its new target, or a free vertex put where Rust showed it, gained that move as
+			// velocity, and the cloth flew off at the 8 m/s cap within a second of walking (pins included, 2026-11-21).
 			const float InvDt = Dt > 1e-4f ? 1.f / Dt : 0.f;
+			for (int32 I = 0; I < Cloth.N; ++I)
+			{
+				if (Cloth.InvMass[I] > 0.f) continue;
+				const PxVec3 From = Cloth.PosInvMass[I].getXYZ();
+				Cloth.PosInvMass[I].w = 0.f;
+				Cloth.Vel[I] = PxVec4((Target(I) - From) * InvDt, 0.f);
+			}
+			// A free vertex Rust moved (kept within its max distance of the pose, pushed out of the body) is steered
+			// there over the substeps, by velocity as well: left alone, a long panel's hem swung 0.5-0.9 m off its
+			// DynamicBone pose and Rust showed only the clamp of that (Raiden's kimono, 2026-11-21).
+			if (Prev && CVarFeedPrev.GetValueOnAnyThread() != 0)
+			{
+				const float Gain = FMath::Max(0.f, CVarSteerGain.GetValueOnAnyThread());
+				for (int32 I = 0; I < Cloth.N; ++I)
+				{
+					if (Cloth.InvMass[I] <= 0.f) continue;
+					const float* P = Prev + Cloth.InputOf[I] * 3;
+					const PxVec3 Off = PxVec3(P[0], P[1], P[2]) - Cloth.PosInvMass[I].getXYZ();
+					if (Off.magnitudeSquared() < 0.005f * 0.005f) continue;
+					PxVec3 V = Off * (InvDt * Gain);
+					const float Speed = V.magnitude();
+					if (Speed > 6.f) V *= 6.f / Speed;
+					Cloth.Vel[I] = PxVec4(V, 0.f);
+				}
+			}
+			Cloth.bVelDirty = true;
+		}
+		else if (Prev && CVarFeedPrev.GetValueOnAnyThread() != 0)
+		{
+			const float InvDt = FrameDt > 1e-4f ? 1.f / FrameDt : 0.f;
 			for (int32 I = 0; I < Cloth.N; ++I)
 			{
 				if (Cloth.InvMass[I] <= 0.f) continue;
@@ -439,8 +521,9 @@ namespace
 			Cloth.bHavePrev = true;
 			Cloth.bVelDirty = true;
 		}
-		for (int32 I = 0; I < Cloth.N; ++I)
-			if (Cloth.InvMass[I] <= 0.f) Cloth.PosInvMass[I] = PxVec4(Target(I), 0.f);
+		if (!bPinByVelocity)
+			for (int32 I = 0; I < Cloth.N; ++I)
+				if (Cloth.InvMass[I] <= 0.f) Cloth.PosInvMass[I] = PxVec4(Target(I), 0.f);
 		for (int32 I = 0; I < Cloth.N; ++I) Cloth.LastPinned[I] = Target(I);
 		if (CVarRestFollow.GetValueOnAnyThread() != 0)
 		{
