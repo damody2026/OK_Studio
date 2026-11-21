@@ -185,3 +185,21 @@
 - 服裝 5 和服下擺起皺、堆疊：迭代 8 → 16 → 24 逐步平順；彎曲 0.7、阻尼 3 反而皺。預設改為迭代 20、子步最多 8（她 42k 粒子一次求解約 15 ms，非同步）。
 - 預設設定的錄影：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex7\raiden_outfit2_compare_20s.mp4`、`raiden_outfit3_compare_20s.mp4`、`raiden_outfit5_compare_20s.mp4`。
 - 還沒好：服裝 5 右腰側的垂片有時翻出深色碎片。
+
+### 巡檢（11-21 19:40–23:00）：使用者回報「服裝 2 袖子沒物理、服裝 3／5 碎片化抖動與穿模」
+
+逐項量測（`folds`：折超過直角的三角形比例，減去姿勢本身的）後的處置，提交 `e6462670e`、`a938a30fc`、`3ffab2161`：
+
+| 問題 | 原因 | 處置 | 量測 |
+|---|---|---|---|
+| 服裝 3／5 皺成碎片 | FleX 切到 1 cm，像紙巾；身體網格碰撞每幀跳動把布擠皺；彎曲記住姿勢的捲曲 | 邊長 2.5 cm、`OKFlexCloth.BodyMesh` 0、`OKFlexCloth.FlatBend` 1 | 和服三塊多餘翻折 11／13／17% → 3.7／2.3／1.7%；女僕裙 4.1% → 1.5% |
+| 服裝 2 袖子沒物理 | 三個鏈根附近全部釘住，最低釘點在胯部（1042／2804 粒子） | 手套紗幔只釘臂環（233 個） | 自由粒子 1718 → 2571 |
+| 服裝 3 吊襪帶蕾絲穿出裙片 | 皮膚碰撞場只有身體 | 加長襪、褲襪、鞋靴 | — |
+| 和服黑色碎片 | 描邊外殼從摺起的前層穿出（原始物理也有） | 物件描邊沿視線後退 1 cm（`ok.OutlinePushBack`） | `ok.Debug.Outline 0` 對照確認 |
+| 內襯深色閃爍 | 跟隨的內襯只離外層 1 mm | 至少 4 mm | — |
+
+其他卡（千佳、惠惠、刻晴、三月七）同一版翻折都比上一版少，畫面乾淨。
+
+錄影：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex9\raiden_outfit2_compare_20s.mp4`、`raiden_outfit3_compare_20s.mp4`、`raiden_outfit5_compare_20s.mp4`（左 FleX，右原始物理；左上標籤仍寫「PhysX 布料」）。
+
+還沒好：和服下擺在腳邊偶爾堆疊；描邊後退只做了 MainItemPlus 家族（和服、紗袖），其他描邊家族沒動。

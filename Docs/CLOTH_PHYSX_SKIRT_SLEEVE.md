@@ -192,11 +192,16 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 
 - NvFlex 1.2：用引擎 `Engine/Plugins/GameWorks/Flex` 留下的原版標頭與 DLL（那個外掛的執行期已改用 PhysX 5.8，不再載入它們）。建置時把 `NvFlexReleaseCUDA_x64.dll`、`NvFlexReleaseD3D_x64.dll` 等複製到本外掛 `Binaries/ThirdParty/Win64`，執行時載入：先 CUDA（RTX 5090 上可用，DLL 內有 PTX），不行用 D3D11 compute（`OKFlexCloth.Backend`）。
 - 和 PhysX 主機同一組 Create／Step／Release 介面，另加 Bind（布料屬於哪個角色）與 Body（她這一幀的身體網格）。Rust 端 `ok_set_flex_cloth`、`ok_cloth_px_solver`，Unreal 端 `ok.ClothSolver`（0 PhysX、1 FleX）。
-- 每個角色一個 FleX 解算器，她所有布料都在裡面，粒子之間互相碰撞（內襯與外層、袍子與裙子）。她擺好姿勢的身體網格每幀當三角網格碰撞形狀（`OKFlexCloth.BodyMesh`），身體膠囊也放（`OKFlexCloth.Capsules`）。
+- 每個角色一個 FleX 解算器，她所有布料都在裡面，粒子之間互相碰撞（內襯與外層、袍子與裙子）。碰撞形狀是身體膠囊（`OKFlexCloth.Capsules`）；她的身體網格（`OKFlexCloth.BodyMesh`）預設關：FleX 的三角網格沒有速度，每次求解整幀跳一次，走路的大腿落在布上把布擠皺（和服側垂片翻折的三角形多一倍）。不讓布進皮膚交給 Rust 的皮膚碰撞場。
 - 全部布料同一個 group、自碰撞、依建立時的形狀過濾（`eNvFlexPhaseSelfCollideFilter`）：建立時就在半徑內的粒子對永遠不碰。原姿勢裡各層本來就互穿（和服裙片、紗袍內襯），每片一個 group 時 FleX 一開始就同時把它們拉開，和服纏成一團堆在腳邊。
 - 每次求解：先收結果（Step 的 Dt 0），Rust 算修正，再交出這一幀的目標；她的布料全部交齊（或同一塊交第二次）才開始求解，非同步跑在 worker 上；FleX 呼叫在 `GFlexLock` 內，共用狀態在 `GLock` 內，求解時不握 `GLock`，遊戲執行緒不會等 GPU。
-- 彈簧：每條邊一條拉伸彈簧（`OKFlexCloth.Stretch` 1.0），共邊兩三角形的對角一條彎曲彈簧（`OKFlexCloth.Bend` 0.3；0.05 時女僕長裙下擺會皺）。
-- FleX 時 Rust 端：布料切到 1 cm（`OK_CLOTH_FLEX_EDGE`，粒子之間要夠密，身體與其他層才鑽不過去）、內襯也模擬（不再跟著外層）、不判斷誰蓋住誰、偏移平滑 1 次（`OK_CLOTH_FLEX_SMOOTH`）。雷電服裝 2 紗袍 14,621 粒子，一次求解約 7 ms（5 個子步）。
+- 彈簧：每條邊一條拉伸彈簧（`OKFlexCloth.Stretch` 1.0），共邊兩三角形的對角一條彎曲彈簧（`OKFlexCloth.Bend` 0.3；0.05 時女僕長裙下擺會皺）。彎曲彈簧的靜止長度是兩個三角形攤平時的對角距離（`OKFlexCloth.FlatBend` 1）：用建立當下的姿勢當靜止形狀時，布記住 DynamicBone 的捲曲，像硬紙一樣（服裝 2 紗袖一直捲在胯前）。
+- FleX 時 Rust 端：布料邊長最多 2.5 cm（`OK_CLOTH_FLEX_EDGE`）、不判斷誰蓋住誰、偏移平滑 1 次（`OK_CLOTH_FLEX_SMOOTH`）。1 cm 時布像紙巾一樣皺：14–20% 的三角形折超過直角（姿勢本身 1–3%），和服出現碎片；2–2.5 cm 只剩三分之一，粒子數約五分之一，幀率也高很多。
+- 內襯（同一件衣服 6 mm 內的較小網格片）跟著外層、不進解算器；顯示時至少離外層 4 mm（`OK_CLOTH_PX_LINING_GAP`）。原本只差 1 mm，兩層三角化不同，彎處互相穿插閃出深色。
+- 手套上的自帶鏈紗幔（雷電服裝 2）：只釘縫在手臂上的粒子，不在鏈根附近釘住（原本 2804 個粒子釘了 1042 個，最低釘點在胯部，袖子沒有物理可言）。上衣的袖鏈根就是袖口接縫，照舊釘住（放開和服袖子會皺成團）；`OK_CLOTH_PX_CHAIN_ROOT_PIN=1` 回到全部釘住。
+- 皮膚碰撞場除了身體，還包含長襪、褲襪、鞋靴（有自己骨架的用上一幀蒙皮結果）：布不再停在皮膚與襪面之間（女僕裙被吊襪帶蕾絲穿出）。
+- 診斷（`OK_CLOTH_PX_DEBUG=1`）：`folds`（折超過直角的三角形比例，和姿勢比）、`build`（建不起來的原因）、`pins`（釘點數量與最低高度）、`skin`（皮膚碰撞場用了哪些部件）、`layers`（內襯離領頭粒子多遠）；`OK_CLOTH_PX_ONLY=23,27` 只讓指定部件當布料。
+- 和服的黑色碎片是描邊：布摺起來時後層離前層比描邊外殼還近，黑色外殼從前層穿出（`ok.Debug.Outline 0` 時全部消失；原始物理也有）。物件描邊（MainItemPlus）外殼沿視線往後退 `ok.OutlinePushBack`（1 cm）。
 - 其他 CVar：`OKFlexCloth.Iterations`（20；8 時和服下擺起皺堆疊）、`SubstepHz`（240）、`MaxSubsteps`（8）、`MaxDt`、`Radius`（1 cm）、`SolidRest`（5 mm）、`BodyDistance`（4 mm）、`Friction`、`ParticleFriction`、`Damping`、`Drag`、`Lift`、`SelfCollide`、`Async`、`Log`。
 
 ### 讀卡器選單
