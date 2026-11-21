@@ -89,8 +89,10 @@ fn flex_pure() -> bool { static E: std::sync::OnceLock<bool> = std::sync::OnceLo
 /// Passes of the move smoothing under FleX (OK_CLOTH_FLEX_SMOOTH). 4 (was 1): Raiden's gauze robe (outfit 2) wrinkled
 /// finely at her crotch, its light-blue back showing in flecks; the light-blue share of a crotch close-up fell from
 /// 1.90% / 1.87% to 1.41% / 1.28% (ten shots each, twice; the original physics 0.41%), her kimono and maid skirt
-/// unchanged (2026-11-22).
-fn flex_smooth() -> u32 { static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_SMOOTH", 4.).max(0.) as u32) }
+/// unchanged (2026-11-22). 8: Megumin's long coat crumpled where her boots kicked it while she ran, its dark inside
+/// showing over 4.0% of its back, 2.2% with 8 passes (1.7% with 16, but the maid skirt's hem went to points; the
+/// original physics 1.05%, its boots through the coat); the gauze's light blue 1.08%, the kimono's folds fewer.
+fn flex_smooth() -> u32 { static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_SMOOTH", 8.).max(0.) as u32) }
 
 #[no_mangle]
 pub extern "C" fn ok_set_physx_cloth(create: Option<CreateFn>, step: Option<StepFn>, release: Option<ReleaseFn>) {
