@@ -25,6 +25,10 @@ struct FOKItemTexture {const TCHAR* Name;int32 Index,Sampler,Dim;};
 struct FOKItemProperty {const TCHAR* Name;int32 Type;bool Gamma;FLinearColor Default;const TCHAR* DefaultTexture;};
 #include "Shaders/MainItemPlusBindings.inl"
 #include "Shaders/MainItemPlusProgram.inl"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<float> CVarOutlinePushBack(TEXT("ok.OutlinePushBack"),1.f,
+    TEXT("Item outline shells set back from the camera by this many cm (0: as the game draws them). Parts loaded after a change."));
 
 static const FOKItemProperty* Property(const FString& Name)
 {
@@ -215,6 +219,21 @@ UMaterial* OKMakeMainItemPlusMaterial(const FOKNativeItemDraw& Draw,bool bOutlin
             const auto* Found=Draw.Textures.Find(TEXT("_DetailMask"));Object->Texture=Found?Found->Get():DefaultTexture(TEXT("black"));Object->SamplerType=Object->Texture&&Object->Texture->SRGB?SAMPLERTYPE_Color:SAMPLERTYPE_LinearColor;Mat->GetExpressionCollection().AddExpression(Object);
             auto& TI=Offset->Inputs.AddDefaulted_GetRef();TI.InputName=TEXT("Texture");TI.Input.Expression=Object;
             Mat->GetExpressionCollection().AddExpression(Offset);Ed->WorldPositionOffset.Expression=Offset;
+        }
+        // The outline shell also set back from the camera (ok.OutlinePushBack, cm): where a cloth folds, the layer behind
+        // lies closer than the shell is thick and its black shell came out through the layer in front, the dark shards
+        // on Raiden's kimono (gone with ok.Debug.Outline 0; DynamicBone showed them too, 2026-11-21). Silhouettes keep
+        // their line: what is behind them is far.
+        const float Back=FMath::Max(0.f,CVarOutlinePushBack.GetValueOnAnyThread());
+        if(bOutline&&Back>0.f&&Ed->WorldPositionOffset.Expression)
+        {
+            UMaterialExpressionCustom* Push=NewObject<UMaterialExpressionCustom>(Mat);Push->Material=Mat;Push->OutputType=CMOT_Float3;
+            Push->Code=FString::Printf(TEXT("return Offset+normalize(Position-Camera)*%s;"),*Bits(Back));
+            auto In=[&](const TCHAR* Name,UMaterialExpression* E,int32 Out){auto& I=Push->Inputs.AddDefaulted_GetRef();I.InputName=Name;I.Input.Expression=E;I.Input.OutputIndex=Out;};
+            auto* Position=NewObject<UMaterialExpressionWorldPosition>(Mat);Position->Material=Mat;Mat->GetExpressionCollection().AddExpression(Position);
+            auto* Camera=NewObject<UMaterialExpressionCameraPositionWS>(Mat);Camera->Material=Mat;Mat->GetExpressionCollection().AddExpression(Camera);
+            In(TEXT("Offset"),Ed->WorldPositionOffset.Expression,Ed->WorldPositionOffset.OutputIndex);In(TEXT("Position"),Position,0);In(TEXT("Camera"),Camera,0);
+            Mat->GetExpressionCollection().AddExpression(Push);Ed->WorldPositionOffset.Expression=Push;Ed->WorldPositionOffset.OutputIndex=0;
         }
     }
     // An equal graph finalized before (OK_MATERIAL_DEDUPE=1) is used as is.
