@@ -7003,3 +7003,5 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - 「套用服裝卡」與點縮圖照遊戲的服裝卡整套套用（衣服＋飾品），刻晴、Alice 這類頭髮是飾品做的角色，頭髮變成服裝卡那位的；「只換衣服」又連服裝卡的袖子、腳環等飾品都不穿。使用者要的是只換衣服、不換頭髮。改成預設逐格合併（`okclothes::WearScope::KeepHair`）：角色掛在頭上或 HairAccessoryCustomizer 標成頭髮的飾品留在原格，服裝卡其他飾品照穿，撞格就換到空格，外掛資料跟著換格；整套套用只留在命令列 `--all`。
   - 教訓：照搬遊戲行為前先想使用者要的結果；「服裝」在這個遊戲裡包含頭髮，不能直接當成衣服。
   - 認頭髮不能只看 HairAccessoryCustomizer：雷電的頭髮（`a_n_head`）沒被它列入；它卻列了腳踝上用頭髮零件做的花（「跟隨髮色」關著）。掛在頭上，或被它列入且跟隨髮色，才算頭髮。第一次只看「有沒有列入」，花沒穿上，拿截圖對照整套套用才發現。
+- 提交時用 `git diff -U0` 過濾掉配種 session 的 hunk，再 `git apply --cached --unidiff-zero`，結果 `ffi.rs` 少了一行原本就有的註解（沒有上下文的 hunk 套錯位置）。看 `git show HEAD` 才發現，用整個工作檔重新提交修正。
+  - 教訓：共用工作樹只提交自己的 hunk，對方已提交時直接用整個檔案；要過濾 hunk 就保留上下文（不要 `-U0`），提交後看 `git show HEAD` 有沒有多刪多加。
