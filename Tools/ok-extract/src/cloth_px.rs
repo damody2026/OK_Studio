@@ -1212,6 +1212,11 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             // turned back onto the pose that result was made on.
             let mut fixed: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.goal[p])).collect();
             constrain(sim, &d, &targets, normals, &caps, &live, if t.skin_host { skin_arg } else { None }, &mut fixed);
+            // The garments' order handed back too (OK_CLOTH_PX_LAYER_FEED, default on): kept only in what is shown, the
+            // solver's coat stayed inside Megumin's skirt and was pushed out again every frame, dented over its pleats with
+            // the coat's dark inside showing in patches while she swung a sword (2.5% of her coat's back, 1.0% fed back;
+            // 2026-11-22).
+            if layer_feed() { keep_layers(session, index, sim, skel, &mut fixed); }
             let back = 1. - (-(if t.free { t.free_pull } else { t.pull }) * sim.pending).exp();
             let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
             let delta: Vec<[f32; 3]> = (0..np).map(|p| {
@@ -1351,6 +1356,8 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let mut st = STATS.lock().unwrap();
     st.clamped += clamped; st.pushed += pushed; st.max_offset_mm = st.max_offset_mm.max(most * 1000.);
 }
+
+fn layer_feed() -> bool { static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_PX_LAYER_FEED", 1.) > 0.5) }
 
 /// Her garments kept in their order (OK_CLOTH_PX_LAYER_ORDER, default on): a skirt particle that lay outside another
 /// garment's skirt particles near it where the cloth was made (within 5 cm, its distance from her hips' vertical axis
