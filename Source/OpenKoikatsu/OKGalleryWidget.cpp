@@ -743,9 +743,9 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	};
 	OkClothesButton(TEXT("匯出服裝卡"),TEXT("把目前顯示的這套服裝存成服裝卡 .okclothes（另存資料夾，沒填就是 UserData/okclothes）；OK 卡的第三方模型一起帶走。"))
 		->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnExportOkClothes);
-	OkClothesButton(TEXT("套用服裝卡"),TEXT("選一張服裝卡 .okclothes，穿成目前角色的這套服裝並立刻顯示（工作卡，原卡不變；要保留請另存）。"))
+	OkClothesButton(TEXT("套用服裝卡"),TEXT("選一張服裝卡 .okclothes，穿成目前角色的這套服裝並立刻顯示：衣服與身上的飾品換成服裝卡的，頭髮與頭上的飾品保留角色自己的（工作卡，原卡不變；要保留請另存）。"))
 		->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnWearOkClothes);
-	OkClothesButton(TEXT("只換衣服"),TEXT("同「套用服裝卡」，但保留目前角色自己的飾品（髮飾等），只換衣服。"))
+	OkClothesButton(TEXT("只換衣服"),TEXT("同「套用服裝卡」，但角色自己的飾品全部保留，服裝卡的飾品都不穿，只換衣服。"))
 		->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnWearOkClothesOnly);
 	OkClothesButton(TEXT("轉換服裝卡"),TEXT("把遊戲的服裝卡（KoiKatuClothes）轉成 .okclothes。"))
 		->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnImportClothesCard);

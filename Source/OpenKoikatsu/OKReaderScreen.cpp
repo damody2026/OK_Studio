@@ -2012,10 +2012,10 @@ void UOKReaderScreen::BuildCardGrid(UDreamWidget* Page,bool bClothes)
 	TWeakObjectPtr<UOKReaderScreen> WeakSelf(this);
 	if(bClothes)
 	{
-		// What a tile does: the outfit card whole (clothes and accessories, as the game's coordinate cards) or only its
-		// clothes (her own hair ornaments and accessories kept).
+		// What a tile does: the outfit's clothes and accessories with her hair and head accessories kept
+		// (okclothes::WearScope::KeepHair), or only its clothes (all her accessories kept).
 		UDreamWidget* Row=MakePanel(Page,true,6.f);
-		auto ModeText=[](bool bOnly){return FString(bOnly?TEXT("點縮圖＝只換衣服"):TEXT("點縮圖＝整套套用"));};
+		auto ModeText=[](bool bOnly){return FString(bOnly?TEXT("點縮圖＝只換衣服（飾品全保留）"):TEXT("點縮圖＝換衣服（保留頭髮）"));};
 		ClothesModeButton=MakeOwnButton(Row,ModeText(bWearClothesOnly),[WeakSelf,ModeText]()
 		{
 			UOKReaderScreen* Self=WeakSelf.Get();if(!Self)return;
