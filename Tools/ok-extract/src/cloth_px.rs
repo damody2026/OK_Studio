@@ -56,7 +56,7 @@ fn active() -> bool { mode() > 0 && host().is_some() }
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32 }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32 }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -65,6 +65,14 @@ fn tune() -> &'static Tune {
         skirt_reach: env_f("OK_CLOTH_PX_SKIRT_REACH", 0.55),
         skirt_max: env_f("OK_CLOTH_PX_SKIRT_MAX", 0.30),
         chain_max: env_f("OK_CLOTH_PX_CHAIN_MAX", 0.06),
+        // Every skirt (span 0): a cloth made mid-walk keeps that moment's flare as its rest shape (PhysX keeps the rest
+        // it was made with), so a free skirt hung 1-4 cm above its pose or 1 cm below by when it was made; softer,
+        // thinner, Poisson 0, more iterations, a stronger pull did not change that (2026-11-21).
+        long_span: env_f("OK_CLOTH_PX_LONG_SPAN", 0.),
+        long_max: env_f("OK_CLOTH_PX_LONG_MAX", 0.05),
+        // A skirt is never shown higher than its pose by more than this: hanging cloth does not rise by itself, a leg
+        // kicking it up is already in the DynamicBone pose (Megumin's hem showed her underwear 2 cm up).
+        up_max: env_f("OK_CLOTH_PX_UP", 0.005),
         sleeve_reach: env_f("OK_CLOTH_PX_SLEEVE_REACH", 0.35),
         sleeve_max: env_f("OK_CLOTH_PX_SLEEVE_MAX", 0.08),
         shoulder_u: env_f("OK_CLOTH_PX_SHOULDER", 0.14),
@@ -106,7 +114,8 @@ fn sleeve_role(role: &str) -> bool { role.starts_with("clothes_top") }
 
 /// Per render vertex: the kind (0 none) and, for a skirt vertex, its depth along the chains (0 waist .. 1 hem).
 /// pleats: a pleated skirt (cf_j_sk_*), made without bending.
-struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, sig: (usize, usize) }
+/// long: a long skirt, cloth around its running DynamicBones (see detect).
+struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, long: bool, sig: (usize, usize) }
 
 fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     let runtime = part.runtime_accessory.as_ref()?;
@@ -180,7 +189,20 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     // Pleated skirts get no bending (their folds flip); a region mostly on the garment's own chains (sleeves, panels)
     // keeps it, or it slumps.
     let pleats = skirt && chain_n * 2 < skirt_n;
-    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, sig: (n, src.indices.len()) })
+    // A long skirt (its region spans more than OK_CLOTH_PX_LONG_SPAN top to hem; 0 by default, so every skirt): its
+    // DynamicBones keep running
+    // and the cloth only sways around them (OK_CLOTH_PX_LONG_MAX). Free, Raiden's maid skirt panels swung up to mid
+    // thigh, and the legs went through the front panel: the body capsules are thinner than legs in thigh-high
+    // stockings, while DynamicBone's own colliders keep the panel off them (2026-11-21).
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    for (v, k) in kind.iter().enumerate() {
+        if *k == KIND_SKIRT { if let Some(p) = src.positions.get(v) { lo = lo.min(p[1]); hi = hi.max(p[1]); } }
+    }
+    let long = skirt && hi > lo && hi - lo > tune().long_span;
+    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") && skirt {
+        crate::ffi::ffi_log(1, &format!("OK cloth px detect: role={} skirt span {:.3} long={long}", part.role, hi - lo));
+    }
+    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, long, sig: (n, src.indices.len()) })
 }
 /// Per renderer bone: its depth (0 root .. 1 deepest) in one of the garment's own DynamicBone chains, by name.
 /// Clothes whose bones were grafted onto the body (copy-weights clothes with their own chains: the kimono) have no
@@ -272,6 +294,8 @@ struct Sim {
     /// made in. At full size the hip and thigh capsules sat outside Chika's pleated skirt and pushed it 4.4 cm up
     /// (OKPhysXCloth.Collide 0: -0.2 cm, 2026-11-21).
     gpu_rad: Vec<f32>,
+    /// Skirt (or own-chain) particles: never shown above their pose by more than OK_CLOTH_PX_UP.
+    skirt: Vec<bool>,
     /// Long-range attachment: each free particle's nearest pinned particle and its distance when built. The soft FEM
     /// surface stretched under its weight (a short skirt hung 10 cm longer than the game's, Haruno Chika walking,
     /// 2026-11-20) and a stiffer one crumpled; no free particle may get farther from its pin than OK_CLOTH_PX_STRETCH x that.
@@ -408,7 +432,7 @@ pub fn takes_over_dynamics(session: usize, index: usize, part: &crate::session::
     // A garment grafted onto the body (coordinated) shares its chains with the clothes set: they keep running and the
     // cloth overrides only its own vertices, or its other panels would go rigid.
     let grafted = part.runtime_accessory.as_ref().is_some_and(|r| !r.implanted_bones().is_empty());
-    !e.failed && !grafted && e.detect.as_ref().is_some_and(|d| d.skirt)
+    !e.failed && !grafted && e.detect.as_ref().is_some_and(|d| d.skirt && !d.long)
 }
 
 // ---- vector helpers
@@ -565,7 +589,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         anchor_len[p] = if geo_src[p] == u32::MAX { let _ = near_id; near } else { geo[p] };
         if anchor[p] != u32::MAX { straight[p] = len(sub(pos[p], pos[anchor[p] as usize])); }
         max_dist[p] = match kind_of[p] {
-            KIND_SKIRT => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(t.skirt_max),
+            KIND_SKIRT => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(if d.long { t.long_max } else { t.skirt_max }),
             KIND_CHAIN => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(t.chain_max),
             _ => (t.sleeve_reach * near).min(0.012 + 0.6 * (r[p] - 0.05).max(0.)).min(t.sleeve_max),
         };
@@ -573,7 +597,8 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     }
     if free < 16 { return None; }
     Some(Sim { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), created: false, particle_of, rep, pinned, max_dist, tris,
-        offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(), anchor, anchor_len,
+        offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
+        skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false })
 }
 
@@ -731,7 +756,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             let sleeves = kind.iter().any(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R);
             crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) is under another garment's cloth (kinds {:?}), those follow the pose", part.role,
                 (1..5).filter(|k| under[*k]).collect::<Vec<_>>()));
-            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, sig: d.sig };
+            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, long: d.long && skirt, sig: d.sig };
             if !skirt && !sleeves { e.failed = true; e.detect = Some(Arc::new(nd)); return; }
             e.detect = Some(Arc::new(nd));
         }
@@ -829,6 +854,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     // Max distance, then out of the body (never deeper than the target already was).
     let (mut clamped, mut pushed, mut most) = (0u64, 0u64, 0f32);
     let stretch = tune().stretch;
+    let up = tune().up_max;
     for p in 0..np {
         if sim.pinned[p] { sim_pos[p] = targets[p]; continue; }
         if !sim_pos[p].iter().all(|x| x.is_finite()) { sim_pos[p] = targets[p]; continue; }
@@ -850,6 +876,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         }
         let l = len(off);
         if l > sim.max_dist[p] { sim_pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
+        if sim.skirt[p] && sim_pos[p][1] > targets[p][1] + up { sim_pos[p][1] = targets[p][1] + up; clamped += 1; }
         for (ci, c) in caps.iter().enumerate() {
             let r = sim.cap_fit[p * sim.cap_n + ci];
             if r <= 0. { continue; }
