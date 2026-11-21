@@ -79,8 +79,27 @@
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all4\raiden_outfit5_compare_20s.mp4`
 - 單邊：同資料夾的 `outfit{N}_cloth.mp4`、`outfit{N}_dynamicbone.mp4`。
 
+## 使用者 11-21 第三次回報（晚上，附截圖）
+
+> 服裝二 一樣穿模 / 服裝三 一直抖動且邊緣鋸齒 / 服裝五 穿模加抖動且邊緣鋸齒
+
+| 問題 | 原因 | 做法 |
+|---|---|---|
+| 服裝 2 紗袖穿過大腿、淺藍碎片露在腰前 | ① 身體膠囊比她的大腿細，粒子在膠囊外卻在皮膚裡；② 紗袖的 DynamicBone 姿勢有一段本來就垂進腰臀（原版藏在身體裡），被推出來擠成一團；③ 淺藍內襯是另一片網格，兩片各自模擬互穿 | 皮膚碰撞場（`cloth_skin.rs`）；姿勢在皮膚裡的地方布料留在姿勢上；同一件衣服 6 mm 內的較小網格片當內襯跟著外層 |
+| 服裝 3、5 皺成紙巾狀、下擺鋸齒 | 彎曲剛度 0（上傳失效時定的），布料真的動了以後沒有東西撐住形狀；偏移平滑只用在跟著 DynamicBone 的布料 | `Bending`／`BendingSkirt` 0.5；偏移平滑 6 次、所有布料都做 |
+| 服裝 5 穿模 | 同服裝 2 ①（小腿） | 皮膚碰撞場 |
+
+量測（`jitter` 行，shown／raw，mm／幀）：服裝 2 6.10／4.92，服裝 5 第 5 塊 9.74／7.88；比上一輪多了一些（推出皮膚帶進來的），其他布料 shown ≈ raw。
+
+錄影：
+
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all6\raiden_outfit1_compare_20s.mp4` … `raiden_outfit5_compare_20s.mp4`
+- 單邊：同資料夾的 `outfit{N}_cloth.mp4`、`outfit{N}_dynamicbone.mp4`。
+
 還沒處理：
 
+- 服裝 2、5 推出皮膚的那幾塊布料比姿勢多抖約 1–2 mm／幀。
+- 服裝 5 白色袖口有時比原版張得開。
 - 服裝 3 女僕長裙側面走路時前後片往外張開，是它跟著的 DynamicBone 姿勢本身就張開（布料最多偏 5 cm），修之前的錄影也一樣。
 - 讀卡器姿勢在高幀率下取樣不均勻（身體也一起抖），不在布料範圍。
 

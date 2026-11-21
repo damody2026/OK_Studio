@@ -44,7 +44,7 @@
   - 只認掛在手臂骨下的鏈（袖子）；從腰垂下的長擺與前片不算。
   - 鏈上的頂點是 `KIND_CHAIN` 布料：深度 = 鏈內層數 ÷ 該鏈最深層數，根部固定，最多偏離 DynamicBone 姿勢 `OK_CLOTH_PX_CHAIN_MAX`（預設 6 cm）。不再用手臂權重辨識這種衣服的袖子。
   - 手套（`clothes_gloves`）也看自己的鏈：雷電服裝 2 掛在手臂上的紗袍是手套部件，24 根骨移植到身體上。沒有鏈的一般手套不做布料。
-- **骨頭移植到身體骨架的衣服（coordinated）也做布料（2026-11-21 起）**：它的鏈在整套衣服骨架裡照跑，布料跟著 DynamicBone 姿勢擺（下面「跟著 DynamicBone 擺」），偏移另外和鄰點平均（`OK_CLOTH_PX_SMOOTH`，預設 2 次），免得各點各自被夾住而邊緣鋸齒、撕開。
+- **骨頭移植到身體骨架的衣服（coordinated）也做布料（2026-11-21 起）**：它的鏈在整套衣服骨架裡照跑，布料跟著 DynamicBone 姿勢擺（下面「跟著 DynamicBone 擺」），偏移另外和鄰點平均（`OK_CLOTH_PX_SMOOTH`，預設 6 次；2026-11-21 晚起所有布料都做，`OK_CLOTH_PX_SMOOTH_ALL=0` 只做跟著 DynamicBone 的），免得各點各自被夾住而邊緣鋸齒、撕開。
   - 以前這兩類衣服整件留在 DynamicBone，理由是「布料浮起 10 cm、撕裂」。那些現象其實是主機上傳失效造成的（見「PhysX 主機」）。`OK_CLOTH_PX_CHAINS=0` 回到舊做法。
 
 ### 模擬網格
@@ -75,10 +75,14 @@
 - **袖子不內陷**：袖子粒子沿蒙皮法線最多只能往內 2 mm，不然外套底下的襯衫會從袖子穿出來。
 - **身體背擋（2026-11-21 下午起每幀算）**：粒子離每個身體 capsule 軸的距離，不能比**這一幀**姿勢離它近，上限 1.5 × 半徑 + 4 cm（`OK_CLOTH_PX_KEEP_OUT`）。兩輪（臀和大腿的膠囊重疊）。以前用建立時的距離：走路後姿勢變了，太小的讓雷電服裝 2 的紗袖垂進腰臀與胯下，太大的每幀把布料推出姿勢之外。`OK_CLOTH_PX_LIVE_PUSH=0` 回到建立時的距離。更早（11-20）用每幀目標時大腿會穿過裙子，那是主機上傳失效、布料根本沒在模擬時的結論（見「PhysX 主機」）。
 - **回拉**：交給主機的修正裡，加上把結果往姿勢拉回的量，每秒 3 倍（`OK_CLOTH_PX_PULL`），依這次工作涵蓋的時間計算。
+- **身體皮膚（2026-11-21 晚，`Tools/ok-extract/src/cloth_skin.rs`）**：膠囊比風格化的身體細，雷電服裝 2 的紗袖穿過大腿、服裝 5 的裙片穿過小腿時，每個粒子都還在膠囊外。所以有布料的角色每幀把身體網格（每 1 cm 方塊取一點，`THIN_M`）用骨架 palette 擺好，放進 4 cm 的格子。粒子讀周圍 27 格的皮膚點，以高斯（σ 1 cm）加權算出離皮膚的距離和往外的方向，比皮膚外 4 mm（`OK_CLOTH_PX_SKIN_MARGIN`）近就推出去，但不比姿勢本身更外。
+  - 讀數的可信度 0–1：兩邊皮膚方向相反處（兩腿之間，沒有往外的方向）和最近皮膚接近 4 cm 時逐漸降到 0。用最近四點反距離加權時，點一換讀數就跳，被推的布料抖（1.7 → 3.6 mm／幀）。
+  - **姿勢本身在身體裡的地方，布料留在姿勢上**：雷電紗袖的 DynamicBone 姿勢有一段垂進腰臀裡（原版就藏在身體裡看不到），把它推出皮膚會擠成一團皺在肚子前。姿勢在皮膚下 5 mm（`OK_CLOTH_PX_SKIN_DEEP`）以內完全留住，往外到皮膚外 3 cm（`OK_CLOTH_PX_HOLD_OUT`）逐漸放開；推出量也乘上同樣的比例。`OK_CLOTH_PX_SKIN=0` 關掉整個皮膚碰撞。
+- **膠囊下限**：`OK_CLOTH_PX_CAP_FLOOR`（預設 0）讓粒子不論姿勢都至少離膠囊軸這麼多倍半徑。設 1 會把垂進骨盆的紗袖往外推皺，皮膚碰撞已經處理穿模，所以預設不用。
 - **長裙避開小腿**：長裙垂下的部分離小腿膠囊軸至少 1.5 × 半徑，不管姿勢離多近（`OK_CLOTH_PX_SHIN`，預設開）。走路中途建立時小腿已經在和服裙片裡，舊規則（不超過建立時的距離）就讓它一直穿過去。
 - 這些限制寫成一個函式（`constrain`），每幀用兩次：一次用在 GPU 剛做完的結果上，算出要交給主機的修正（見「PhysX 主機」的收／發）；一次用在畫面顯示的位置上。
 
-環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`、`OK_CLOTH_PX_KEEP_OUT`、`OK_CLOTH_PX_LIVE_PUSH`、`OK_CLOTH_PX_BLEND`。`OK_CLOTH_PX_DEBUG=1` 每秒記兩行：
+環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`、`OK_CLOTH_PX_KEEP_OUT`、`OK_CLOTH_PX_LIVE_PUSH`、`OK_CLOTH_PX_BLEND`、`OK_CLOTH_PX_SMOOTH_ALL`、`OK_CLOTH_PX_SKIN`、`OK_CLOTH_PX_SKIN_MARGIN`、`OK_CLOTH_PX_SKIN_DEEP`、`OK_CLOTH_PX_HOLD_OUT`、`OK_CLOTH_PX_CAP_FLOOR`、`OK_CLOTH_PX_LAYER_GAP`。`OK_CLOTH_PX_DEBUG=1` 每秒記兩行：
 - `jitter`：姿勢（raw）和畫面上的布料（shown）在她的骨架空間裡每幀位置的二階差分，取自由粒子的平均，加上這一秒的幀數和新結果數。平滑的走路在 200 fps 下應不到 0.1 mm；讀卡器的姿勢本身就有 5–6 mm（動畫取樣不均勻，身體一樣），所以看的是 shown 有沒有比 raw 大。不要量「布料相對姿勢的偏移」：姿勢在跳時，那個量會把姿勢的抖動算成布料的。
 - `debug`：顯示的布料相對目標的平均 dy 和外擴量、飛出去的粒子數，以及那一幀主機的回傳碼（2 是新結果、3 是工作還在跑）和姿勢跳動。
 
@@ -107,6 +111,7 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 外層的判斷：在動作中、布料建立前，量每個區的頂點離身體膠囊的平均距離，以及它垂多遠（裙子取最低點，袖子取離肩膀最遠處，都用第 95 百分位）。另一件比它外 3 mm 以上，而且垂得一樣遠（差 2 cm 內），才算蓋住它。只到臀部的外套不算蓋住底下的裙子。
 - 春野千佳：襯衫袖子在外套袖子裡面，改成跟骨架走；外套和褶裙都還是布料。
 - 只比同一種區（2026-11-21）：以前把「裙」和「鏈」當同一層，鏈現在只指手臂上的袖鏈，它的「垂多遠」是離肩距離，和裙子的最低點不能比；合併時雷電和服的裙片「蓋住」了自己的袖子。
+- **同一件衣服的內襯（2026-11-21 晚）**：內襯是外層底下幾 mm 的另一片網格。兩片各自模擬會互穿：雷電紗袖的淺藍內襯一塊塊從紫色外層穿出來。同一件衣服裡，一片網格（三角形連通的一塊）有一半以上的頂點離較大的那片不到 6 mm（`OK_CLOTH_PX_LAYER_GAP`，0 關閉），它就不模擬：固定在姿勢上，畫面上跟著較大那片最近的粒子移動，間距不變。log 會印 `OK cloth px layers`。
 - 只量這個部件自己三角形用到的頂點，而且同一個 mesh 的子網格不互相比：一件衣服的子網格共用整個頂點緩衝，量全部頂點時和服的每個子網格都找到「別的部件蓋住它」，結果沒有一塊是布料。
 
 ### 與身體的碰撞
@@ -136,7 +141,7 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 上傳改用同步的 `copyHToD` 再 `markDirty`（`PxDeformableSurfaceExt::copyToDevice` 在 stream 0 上非同步拷貝）。
 - `OKPhysXCloth.Log 2`：每次工作記一行，自由點與固定點這次移動了多少、GPU 上最快的速度。固定點本來不該動，它若「移動」就是上傳出了問題。
 - 身體 capsule（`dbone::body_proxy_capsules`：上臂、前臂、大腿、小腿、骨盆、軀幹、肩）是 kinematic 剛體。
-- 材質：`Thickness` 0.5 mm。原本設 3 mm 時，GPU 布料自己會往上往內縮，裙子平均高 5 cm。含裙子的布料 `BendingSkirt` 為 0；只有袖子的布料 `Bending` 為 0.02。原因是任何彎曲剛度，走一段路後都可能把褶子翻到鏡像的 rest 角，把裙子撐高 5 cm；但沒有彎曲的話，惠惠的喇叭袖會塌到袖口。
+- 材質：`Thickness` 0.5 mm。原本設 3 mm 時，GPU 布料自己會往上往內縮，裙子平均高 5 cm。彎曲剛度 `Bending`（只有袖子）與 `BendingSkirt`（含裙子）都是 0.5（2026-11-21 晚起）。以前裙子 0、袖子 0.02，理由是「彎曲剛度會把褶子翻到鏡像的 rest 角、撐高裙子 5 cm」，但那是主機上傳失效時的判斷；布料真的在模擬後，0 讓雷電的女僕長裙皺得像紙巾、下擺鋸齒，0.5 平整垂下，服裝 4 紅褶裙的褶子仍在（dy ±4 mm）；其他角色（千佳、惠惠、刻晴）還沒用 0.5 重看。
 - CVar：`OKPhysXCloth.Youngs`（2e5）、`Poisson`、`Friction`、`Thickness`、`Bending`、`BendingSkirt`、`ElasticDamping`、`BendDamping`、`Damping`、`Mass`、`Iterations`（12）、`SubstepHz`（120）、`MaxSubsteps`（2）、`MaxDt`（0.034）、`Async`（1）、`PinByVelocity`（1）、`SteerGain`（1）、`SteerKeep`（1，只用在位置模式；修正模式固定為 0）、`FeedPrev`（1）、`RestFollow`（0）、`InterpolatePins`、`Collide`、`CudaWait`、`Log`（1 或 2）。
 
 ### Unreal 端
