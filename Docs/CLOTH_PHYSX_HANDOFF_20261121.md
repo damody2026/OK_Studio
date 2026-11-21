@@ -53,6 +53,37 @@
 - 布料真的會動之後，以前在壞掉狀態下定的參數（`BendingSkirt` 0、`Thickness`、`OK_CLOTH_PX_PULL`、重建門檻、「跟著 DynamicBone」本身）都值得重新量一次。
 - 其他卡（千佳、惠惠、刻晴）還沒在修好的主機上重看。
 
+## 使用者 11-21 第二次回報（傍晚）
+
+> 服裝二 一樣穿模 / 服裝三 一直抖動 / 服裝五 穿模加抖動
+
+| 問題 | 原因 | 做法 |
+|---|---|---|
+| 抖動（服裝 3、5） | ① 非同步時主機用絕對位置轉向，而 Rust 給的位置落後 GPU 一個結果，每次都把布料拉回上一個結果，60 fps 每幀抖 19 mm；② 200 fps 下約 6 幀才一個結果，中間幀顯示衰減中的舊結果，新結果一到又跳出去 | 每幀先收結果、對這個結果算修正、再發下一個工作，修正以「修正量」交給主機（建立旗標 bit 1），逆著修正的速度歸零、修正不留成動量；兩次結果之間平滑過去（`OK_CLOTH_PX_BLEND`）；單次工作上限改為 `OKPhysXCloth.MaxDt` 34 ms |
+| 穿模（服裝 2 紗袖垂進腰臀胯下；服裝 5） | Rust 推出身體用建立時的距離，走路後不對 | 每幀依姿勢：離膠囊軸不比姿勢近，上限 1.5 × 半徑 + 4 cm（`OK_CLOTH_PX_KEEP_OUT`、`OK_CLOTH_PX_LIVE_PUSH`） |
+
+量測（`OK_CLOTH_PX_DEBUG=1` 的 `jitter` 行，shown 是畫面上布料、raw 是姿勢本身，見 CLOTH_PHYSX_SKIRT_SLEEVE.md）：
+
+| 服裝 3 | 修之前 | 修之後 |
+|---|---|---|
+| 200 fps（非同步） | 偏移量測 3.3 mm／幀，畫面上裙片側邊一寬一窄地翻 | shown 6.10 ≈ raw 6.05 mm（布料不再多加抖動） |
+| 60 fps（非同步） | 19 mm（位置轉向時） | shown 4.4、raw 2.8 mm |
+| 同步（`Async 0`） | — | shown 4.29、raw 4.45 mm |
+
+服裝 2、4、5 修之後 shown 與 raw 也相同（1.51／1.24、2.62／2.58、8.5／8.4 mm）。讀卡器的姿勢本身在 200 fps 下每幀二階差分就有 5–6 mm（動畫取樣不均勻），那是身體和布料一起的，不是布料。
+
+錄影（修之後）：
+
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all4\raiden_outfit2_compare_20s.mp4`
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all4\raiden_outfit3_compare_20s.mp4`
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all4\raiden_outfit5_compare_20s.mp4`
+- 單邊：同資料夾的 `outfit{N}_cloth.mp4`、`outfit{N}_dynamicbone.mp4`。
+
+還沒處理：
+
+- 服裝 3 女僕長裙側面走路時前後片往外張開，是它跟著的 DynamicBone 姿勢本身就張開（布料最多偏 5 cm），修之前的錄影也一樣。
+- 讀卡器姿勢在高幀率下取樣不均勻（身體也一起抖），不在布料範圍。
+
 ## 測試與錄影流程
 
 1. 先佔 slot，再確認可以建置：

@@ -73,11 +73,14 @@
   - 袖子：min(0.35 × 到最近固定點的距離, 0.012 + 0.6 × max(0, r − 0.05))，上限 0.08 m。袖子越寬鬆越能擺。
 - **LRA（long-range attachment）**：每個自由點沿網格找測地距離最近的固定點。離它的距離不能超過 1.03 × max(建立時的測地距離, 目前目標到那個固定點的直線距離)。少了這條限制，軟布會被自己的重量拉長，春野的短裙比 DynamicBone 版長了 10 cm。取 max 是因為動作本身的裙骨 key 會把裙子拉得比建立時更長。
 - **袖子不內陷**：袖子粒子沿蒙皮法線最多只能往內 2 mm，不然外套底下的襯衫會從袖子穿出來。
-- **身體背擋**：粒子離每個身體 capsule 軸的距離，不能小於 min(1.5 × 半徑, 建立時的距離 − 1 mm)。之前用每幀的目標當限制，邁步的大腿會穿過裙子，因為目標裙子不會跟著腿動。
-- **回拉**：要交給下一步的偏移，每秒衰減 3 倍（`OK_CLOTH_PX_PULL`）。
-- **長裙避開小腿**：長裙垂下的部分離小腿膠囊軸至少 1.5 × 半徑，不管建立時離多近（`OK_CLOTH_PX_SHIN`，預設開）。走路中途建立時小腿已經在和服裙片裡，舊規則（不超過建立時的距離）就讓它一直穿過去。
+- **身體背擋（2026-11-21 下午起每幀算）**：粒子離每個身體 capsule 軸的距離，不能比**這一幀**姿勢離它近，上限 1.5 × 半徑 + 4 cm（`OK_CLOTH_PX_KEEP_OUT`）。兩輪（臀和大腿的膠囊重疊）。以前用建立時的距離：走路後姿勢變了，太小的讓雷電服裝 2 的紗袖垂進腰臀與胯下，太大的每幀把布料推出姿勢之外。`OK_CLOTH_PX_LIVE_PUSH=0` 回到建立時的距離。更早（11-20）用每幀目標時大腿會穿過裙子，那是主機上傳失效、布料根本沒在模擬時的結論（見「PhysX 主機」）。
+- **回拉**：交給主機的修正裡，加上把結果往姿勢拉回的量，每秒 3 倍（`OK_CLOTH_PX_PULL`），依這次工作涵蓋的時間計算。
+- **長裙避開小腿**：長裙垂下的部分離小腿膠囊軸至少 1.5 × 半徑，不管姿勢離多近（`OK_CLOTH_PX_SHIN`，預設開）。走路中途建立時小腿已經在和服裙片裡，舊規則（不超過建立時的距離）就讓它一直穿過去。
+- 這些限制寫成一個函式（`constrain`），每幀用兩次：一次用在 GPU 剛做完的結果上，算出要交給主機的修正（見「PhysX 主機」的收／發）；一次用在畫面顯示的位置上。
 
-環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`。`OK_CLOTH_PX_DEBUG=1` 每秒記一行：原始結果相對目標的平均 dy 和外擴量、飛出去的粒子數，以及那一幀主機的回傳碼（2 是新結果、3 是沿用上一個）和姿勢跳動；主機每次回傳的結果若有點離目標超過 0.5 m，另記一行 `host result`。只看每秒一行會漏掉：那一行多半落在回傳 3 的幀。
+環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`、`OK_CLOTH_PX_KEEP_OUT`、`OK_CLOTH_PX_LIVE_PUSH`、`OK_CLOTH_PX_BLEND`。`OK_CLOTH_PX_DEBUG=1` 每秒記兩行：
+- `jitter`：姿勢（raw）和畫面上的布料（shown）在她的骨架空間裡每幀位置的二階差分，取自由粒子的平均，加上這一秒的幀數和新結果數。平滑的走路在 200 fps 下應不到 0.1 mm；讀卡器的姿勢本身就有 5–6 mm（動畫取樣不均勻，身體一樣），所以看的是 shown 有沒有比 raw 大。不要量「布料相對姿勢的偏移」：姿勢在跳時，那個量會把姿勢的抖動算成布料的。
+- `debug`：顯示的布料相對目標的平均 dy 和外擴量、飛出去的粒子數，以及那一幀主機的回傳碼（2 是新結果、3 是工作還在跑）和姿勢跳動。
 
 ### 什麼時候建立布料
 
@@ -109,7 +112,7 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 ### 與身體的碰撞
 
 - 2026-11-21 起，裙子也在 GPU 上放身體膠囊（`OK_CLOTH_PX_SKIRT_CAPS=0` 關掉）。之前不放，理由是「大腿把千佳的褶裙頂高 3–4 cm」，但那是主機上傳失效時的量測（見「PhysX 主機」）；布料真的在模擬後，腿要靠 GPU 膠囊推開裙片。每步之後 Rust 仍把每個粒子推出身體。
-- GPU 膠囊的半徑縮到不超過自由粒子在建立形狀時離它的距離。
+- GPU 膠囊的半徑縮到不超過自由粒子在建立形狀時離它的距離。Rust 端的推出改成每幀依姿勢算（見「限制」的身體背擋）。
 
 ### 與 DynamicBone 互斥
 
@@ -125,14 +128,16 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - **非同步，從不等待**：每幀交出一個背景工作（一次上傳、N 個子步、一次讀回）。工作還在跑時，這幀沿用上一個結果（回傳 3）；跑完的結果屬於它當初拿到的目標，Rust 再把位移從那時每個粒子的局部座標系（法線＋一條鄰邊）搬到這一幀的姿勢上。之所以這樣做，是因為在這台機器上，渲染器也在用同一張 GPU，PhysX 每個子步光同步就要等 7–11 ms，同步做一幀要 40 ms。
 - **不寫位置，只給速度（2026-11-21，`OKPhysXCloth.PinByVelocity` 1）**：解算器把主機寫進去的位置當成這一步內的位移，換成速度。以前每步把固定點放到新目標、自由點放到 Rust 顯示的位置，速度就被灌到上限 8 m/s；第一個卡頓幀之後整塊布（固定點也一起）飛走，再也回不來，畫面上只剩 Rust 的夾限結果。11-20／21 上午所有「裙子上浮」的量測與調參都是在這個狀態下做的。現在：
   - 固定點（逆質量 0）給（目標 − GPU 上的位置）÷ Dt 的速度，子步跑完剛好到目標；
-  - 自由點保留 GPU 自己的位置和速度（每次讀回位置時也讀回速度）；只有被 Rust 夾住或推開超過 5 mm 的點，用速度引導回 Rust 顯示的位置（`OKPhysXCloth.SteerGain`，預設 1，最大 6 m/s）。跟著 DynamicBone 的長裙就是靠這個不會飄走。
+  - 自由點保留 GPU 自己的位置和速度（每次讀回位置時也讀回速度）；Rust 對結果做的修正（夾限、推出身體、回拉）用速度交給它（`OKPhysXCloth.SteerGain`，預設 1，最大 6 m/s）：逆著修正方向的那部分速度歸零（像碰撞），修正本身只移動它、步完就從速度裡扣掉，不留成動量。跟著 DynamicBone 的長裙就是靠這個不會飄走。
   - `PinByVelocity 0` 是舊做法（`FeedPrev`：位置與推算速度一起寫），只留作對照。
-- 一次工作最多模擬 MaxSubsteps ÷ SubstepHz 秒，多的丟掉：切動作時的 0.1 s 卡頓原本變成兩個 50 ms 子步。
+- **先收、再算、再發（2026-11-21 下午）**：每幀 Rust 先用 Dt 0 呼叫一次 `Step`，只收已做完的工作結果（回傳 2；還在跑回傳 3；沒有工作回傳 0）；對**這個結果**套用限制，算出修正，轉回那個結果建立時的姿勢座標，再呼叫一次 `Step` 發出下一個工作，修正放在 `Prev`（建立旗標 bit 1：`Prev` 是修正量而不是位置）。以前修正和發工作是同一次呼叫，算的是前一個結果：非同步模式下主機把每個點拉回上一個結果，雷電的女僕長裙在兩個結果之間來回翻（60 fps 每幀 19 mm）。
+- **兩次結果之間平滑過去（`OK_CLOTH_PX_BLEND`，預設開）**：GPU 工作在渲染器同時使用 GPU 時要 20 ms，200 fps 下約 6 幀才回一次結果。中間的幀以前顯示「往姿勢衰減中的舊結果」，新結果一到又跳出去，形成鋸齒。現在畫面上的偏移每幀往最新結果移動 dt ÷（平均結果間隔）。
+- 一次工作最多模擬 `OKPhysXCloth.MaxDt`（預設 34 ms）秒，多的丟掉：切動作時的 0.1 s 卡頓原本變成兩個 50 ms 子步。以前上限是 MaxSubsteps ÷ SubstepHz（16.7 ms），工作要 20 ms 時布料只跑到 2/3 速度。
 - 上傳改用同步的 `copyHToD` 再 `markDirty`（`PxDeformableSurfaceExt::copyToDevice` 在 stream 0 上非同步拷貝）。
 - `OKPhysXCloth.Log 2`：每次工作記一行，自由點與固定點這次移動了多少、GPU 上最快的速度。固定點本來不該動，它若「移動」就是上傳出了問題。
 - 身體 capsule（`dbone::body_proxy_capsules`：上臂、前臂、大腿、小腿、骨盆、軀幹、肩）是 kinematic 剛體。
 - 材質：`Thickness` 0.5 mm。原本設 3 mm 時，GPU 布料自己會往上往內縮，裙子平均高 5 cm。含裙子的布料 `BendingSkirt` 為 0；只有袖子的布料 `Bending` 為 0.02。原因是任何彎曲剛度，走一段路後都可能把褶子翻到鏡像的 rest 角，把裙子撐高 5 cm；但沒有彎曲的話，惠惠的喇叭袖會塌到袖口。
-- CVar：`OKPhysXCloth.Youngs`（2e5）、`Poisson`、`Friction`、`Thickness`、`Bending`、`BendingSkirt`、`ElasticDamping`、`BendDamping`、`Damping`、`Mass`、`Iterations`（12）、`SubstepHz`（120）、`MaxSubsteps`（2）、`Async`（1）、`PinByVelocity`（1）、`SteerGain`（1）、`FeedPrev`（1）、`RestFollow`（0）、`InterpolatePins`、`Collide`、`CudaWait`、`Log`（1 或 2）。
+- CVar：`OKPhysXCloth.Youngs`（2e5）、`Poisson`、`Friction`、`Thickness`、`Bending`、`BendingSkirt`、`ElasticDamping`、`BendDamping`、`Damping`、`Mass`、`Iterations`（12）、`SubstepHz`（120）、`MaxSubsteps`（2）、`MaxDt`（0.034）、`Async`（1）、`PinByVelocity`（1）、`SteerGain`（1）、`SteerKeep`（1，只用在位置模式；修正模式固定為 0）、`FeedPrev`（1）、`RestFollow`（0）、`InterpolatePins`、`Collide`、`CudaWait`、`Log`（1 或 2）。
 
 ### Unreal 端
 
