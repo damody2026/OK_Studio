@@ -51,7 +51,7 @@
 
 - 服裝 3 側面錄影中有一段前片被大腿頂到往前翻起約 20 cm，之後落回。`ok.ClothPxStats` 量到顯示位置最多離 DynamicBone 姿勢 90 mm，超出 5 cm 的部分來自 Rust 的身體膠囊推出（含新的小腿規則）。要再壓可以限制推出後的總偏移。
 - 布料真的會動之後，以前在壞掉狀態下定的參數（`BendingSkirt` 0、`Thickness`、`OK_CLOTH_PX_PULL`、重建門檻、「跟著 DynamicBone」本身）都值得重新量一次。
-- 其他卡（千佳、惠惠、刻晴）還沒在修好的主機上重看。
+- 其他卡（千佳、惠惠、刻晴）已在修好的主機上重看（2026-11-21 晚，見第三次回報）。
 
 ## 使用者 11-21 第二次回報（傍晚）
 
@@ -95,6 +95,12 @@
 
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all6\raiden_outfit1_compare_20s.mp4` … `raiden_outfit5_compare_20s.mp4`
 - 單邊：同資料夾的 `outfit{N}_cloth.mp4`、`outfit{N}_dynamicbone.mp4`。
+
+其他卡（同一版）：千佳歩く1、惠惠與刻晴走る1，各錄 20 秒對比，沒有退步：
+
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\others7\chika_outfit1_compare_20s.mp4`
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\others7\megumin_outfit1_compare_20s.mp4`
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\others7\keqing_outfit1_compare_20s.mp4`
 
 還沒處理：
 

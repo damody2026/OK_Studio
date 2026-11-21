@@ -141,7 +141,7 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 上傳改用同步的 `copyHToD` 再 `markDirty`（`PxDeformableSurfaceExt::copyToDevice` 在 stream 0 上非同步拷貝）。
 - `OKPhysXCloth.Log 2`：每次工作記一行，自由點與固定點這次移動了多少、GPU 上最快的速度。固定點本來不該動，它若「移動」就是上傳出了問題。
 - 身體 capsule（`dbone::body_proxy_capsules`：上臂、前臂、大腿、小腿、骨盆、軀幹、肩）是 kinematic 剛體。
-- 材質：`Thickness` 0.5 mm。原本設 3 mm 時，GPU 布料自己會往上往內縮，裙子平均高 5 cm。彎曲剛度 `Bending`（只有袖子）與 `BendingSkirt`（含裙子）都是 0.5（2026-11-21 晚起）。以前裙子 0、袖子 0.02，理由是「彎曲剛度會把褶子翻到鏡像的 rest 角、撐高裙子 5 cm」，但那是主機上傳失效時的判斷；布料真的在模擬後，0 讓雷電的女僕長裙皺得像紙巾、下擺鋸齒，0.5 平整垂下，服裝 4 紅褶裙的褶子仍在（dy ±4 mm）；其他角色（千佳、惠惠、刻晴）還沒用 0.5 重看。
+- 材質：`Thickness` 0.5 mm。原本設 3 mm 時，GPU 布料自己會往上往內縮，裙子平均高 5 cm。彎曲剛度 `Bending`（只有袖子）與 `BendingSkirt`（含裙子）都是 0.5（2026-11-21 晚起）。以前裙子 0、袖子 0.02，理由是「彎曲剛度會把褶子翻到鏡像的 rest 角、撐高裙子 5 cm」，但那是主機上傳失效時的判斷；布料真的在模擬後，0 讓雷電的女僕長裙皺得像紙巾、下擺鋸齒，0.5 平整垂下，服裝 4 紅褶裙的褶子仍在（dy ±4 mm）；千佳（歩く1）、惠惠、刻晴（走る1）也重錄過（2026-11-21 晚），裙長與原始物理一致、惠惠喇叭袖張開、刻晴跑步沒有穿腿，畫面布料抖動和姿勢相同（shown − raw ≤ 0.25 mm）。
 - CVar：`OKPhysXCloth.Youngs`（2e5）、`Poisson`、`Friction`、`Thickness`、`Bending`、`BendingSkirt`、`ElasticDamping`、`BendDamping`、`Damping`、`Mass`、`Iterations`（12）、`SubstepHz`（120）、`MaxSubsteps`（2）、`MaxDt`（0.034）、`Async`（1）、`PinByVelocity`（1）、`SteerGain`（1）、`SteerKeep`（1，只用在位置模式；修正模式固定為 0）、`FeedPrev`（1）、`RestFollow`（0）、`InterpolatePins`、`Collide`、`CudaWait`、`Log`（1 或 2）。
 
 ### Unreal 端
