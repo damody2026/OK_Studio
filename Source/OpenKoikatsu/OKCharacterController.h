@@ -431,6 +431,20 @@ public:
 	TArray<FString> OkClothesFiles() const;
 	/** Raised when an outfit card is written (exported, converted): the list reads its folders again. */
 	int32 OkClothesVersion = 0;
+	/** Breeding (配種, OKGalleryBreed.cpp): the parents chosen (card paths), what the last breeding said, and whether one
+	 *  runs. A child is a new card in UserData/okbreed, opened at once and then pictured as she looks. */
+	FString BreedMother, BreedFather, BreedStatus;
+	bool bBreeding = false;
+	/** Raised when a card's picture changes on disk (a child pictured): the card wall reads its pictures again. */
+	int32 CardPicturesVersion = 0;
+	/** The selected card (or Path) as the father (bFather) or the mother; false when there is none. */
+	bool SetBreedParent(bool bFather, const FString& Path = FString());
+	/** The child of the two parents from Seed (0: a new one): made on a worker thread, opened, then pictured. */
+	void BreedChild(uint64 Seed = 0, TFunction<void(bool, const FString&)> Done = nullptr);
+	/** A card's name as the list shows it, else its file name. */
+	FString BreedParentName(const FString& Path) const;
+	/** The child at Output, shown now, pictured by the front view of the card capture (her own picture on the wall). */
+	void PictureBredChild(const FString& Output, TFunction<void(bool, const FString&)> Done);
 	UFUNCTION()
 	void OnOpenCardFolder();
 	UFUNCTION()

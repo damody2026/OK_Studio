@@ -986,6 +986,7 @@ void UOKReaderScreen::BuildCategories()
 						else if(Value==TEXT("game_root"))Out.Build=[this](UDreamWidget* Page){BuildGameRootPage(Page);};
 						else if(Value==TEXT("ui_rate"))Out.Build=[this](UDreamWidget* Page){BuildUIRatePage(Page);};
 						else if(Value==TEXT("okclothes_grid"))Out.Build=[this](UDreamWidget* Page){BuildCardGrid(Page,true);};
+						else if(Value==TEXT("breed"))Out.Build=[this](UDreamWidget* Page){BuildBreedPage(Page);};
 						else Bad(TEXT("不認得的 builder ")+Value);
 					}
 					const TArray<TSharedPtr<FJsonValue>>* Buttons=nullptr;
@@ -1374,6 +1375,7 @@ void UOKReaderScreen::BuildCategories()
 
 	FCategory Cards;Cards.Name=TEXT("人物卡總欄");Cards.Tab=1;
 	Cards.Groups.Add(Group(TEXT("人物卡"),{G->CardCol.Get()}));
+	{FGroup Breed;Breed.Name=TEXT("配種");Breed.Build=[this](UDreamWidget* Page){BuildBreedPage(Page);};Cards.Groups.Add(MoveTemp(Breed));}
 	Categories.Add(MoveTemp(Cards));
 
 	FCategory ClothesCards;ClothesCards.Name=TEXT("衣服卡總欄");ClothesCards.Tab=2;
@@ -1545,7 +1547,7 @@ void UOKReaderScreen::ClearCardTiles()
 void UOKReaderScreen::ClearPage()
 {
 	ClearCardTiles();
-	CardGrid=nullptr;GridCount.Reset();ClothesModeButton.Reset();bClothesGrid=false;
+	CardGrid=nullptr;GridCount.Reset();ClothesModeButton.Reset();bClothesGrid=false;BreedLabel.Reset();
 	for(UDreamWidget* W:PageWidgets)if(IsValid(W))W->DestroyWidget();
 	PageWidgets.Reset();
 	ShownPageHeight=-1.f;
@@ -2045,6 +2047,25 @@ void UOKReaderScreen::BuildCardGrid(UDreamWidget* Page,bool bClothes)
 	FillCardGrid();
 }
 
+void UOKReaderScreen::BuildBreedPage(UDreamWidget* Page)
+{
+	UOKCharacterController* G=Controller.Get();if(!G||!Page)return;
+	auto Text=[this](UDreamWidget* Into,const FString& Value)
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+		return C;
+	};
+	Text(Page,TEXT("在下面的卡片牆點一張卡按「設為母親」，再點另一張按「設為父親」，然後按「配種」。孩子混合兩人的臉、身材、髮型與顏色，偶爾突變；衣服與飾品來自其中一人。每按一次都是不同的孩子，存在 UserData/okbreed，生出來直接打開，並拍一張她自己的照片當卡片圖。"));
+	TWeakObjectPtr<UOKCharacterController> Weak(G);
+	UDreamWidget* Row=MakePanel(Page,true,6.f);
+	MakeOwnButton(Row,TEXT("設為母親"),[Weak](){if(Weak.IsValid())Weak->SetBreedParent(false);});
+	MakeOwnButton(Row,TEXT("設為父親"),[Weak](){if(Weak.IsValid())Weak->SetBreedParent(true);});
+	MakeOwnButton(Row,TEXT("對調"),[Weak](){if(UOKCharacterController* C=Weak.Get())Swap(C->BreedMother,C->BreedFather);});
+	MakeOwnButton(Row,TEXT("配種"),[Weak](){if(Weak.IsValid())Weak->BreedChild(0);});
+	BreedLabel=Text(Page,FString());
+}
+
 void UOKReaderScreen::FillCardGrid()
 {
 	UOKCharacterController* G=Controller.Get();if(!G||!IsValid(CardGrid))return;
@@ -2065,7 +2086,7 @@ void UOKReaderScreen::FillCardGrid()
 	}
 	else
 	{
-		ShownEntries=G->Entries.Num();All=ShownEntries;
+		ShownEntries=G->Entries.Num();All=ShownEntries;ShownPicturesVersion=G->CardPicturesVersion;
 		for(int32 I=0;I<G->Entries.Num();++I)
 		{
 			const auto& E=G->Entries[I];
@@ -2787,6 +2808,13 @@ void UOKReaderScreen::SyncAll()
 		else if(IsValid(CardGrid)&&!bClothesGrid&&G->Entries.Num()!=ShownEntries)FillCardGrid();
 		// A new outfit card (exported, converted) shows in the list at once.
 		else if(IsValid(CardGrid)&&bClothesGrid&&G->OkClothesVersion!=ShownClothesVersion)FillCardGrid();
+		// A child pictured as she looks: the wall shows her picture.
+		else if(IsValid(CardGrid)&&!bClothesGrid&&G->CardPicturesVersion!=ShownPicturesVersion)FillCardGrid();
+		if(UOKDreamControl* L=BreedLabel.Get())
+		{
+			const FString Say=FString::Printf(TEXT("母親：%s　　父親：%s\n%s"),*G->BreedParentName(G->BreedMother),*G->BreedParentName(G->BreedFather),*G->BreedStatus);
+			if(Say!=L->FixedText){L->FixedText=Say;L->SetText(Say);}
+		}
 		MarkCurrentCard();
 	}
 	TickNotice();

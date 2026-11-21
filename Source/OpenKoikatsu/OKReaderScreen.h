@@ -311,6 +311,11 @@ private:
 	void TickThumbnails();
 	// The card wall (bClothes false) or the outfit-card list: a search field and a grid of tiles under it (FillCardGrid).
 	void BuildCardGrid(UDreamWidget* Page,bool bClothes);
+	// 人物卡總欄 › 配種: the parents, the buttons and what the last breeding said (BreedLabel, kept current by SyncAll);
+	// the card wall under it picks the cards.
+	void BuildBreedPage(UDreamWidget* Page);
+	TWeakObjectPtr<UOKDreamControl> BreedLabel;
+	int32 ShownPicturesVersion=-1;
 	void FillCardGrid();
 	// The tiles let go of their pictures and go, decodes still on the way are dropped.
 	void ClearCardTiles();

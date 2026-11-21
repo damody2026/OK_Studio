@@ -1771,6 +1771,13 @@ bool FOkSession::ClothesExport(const FString& Card,int32 Outfit,const FString& O
 bool FOkSession::ClothesExportPictured(const FString& Card,int32 Outfit,const FString& Picture,const FString& Out,FString& Summary){return OKClothesFile(4,Card,Picture,Outfit,Out,Summary);}
 bool FOkSession::ClothesWear(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(2,Card,OkClothes,Outfit,Out,Summary);}
 bool FOkSession::ClothesWearClothesOnly(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(3,Card,OkClothes,Outfit,Out,Summary);}
+extern "C" int32_t ok_breed_file(int32_t,const char*,const char*,uint64_t,const char*,char*,int32_t);
+static bool OKBreedFile(int32 Op,const FString& A,const FString& B,uint64 Seed,const FString& Out,FString& Summary){
+ char Buffer[8192]{};const int32 Result=ok_breed_file(Op,TCHAR_TO_UTF8(*A),TCHAR_TO_UTF8(*B),Seed,TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
+ Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
+}
+bool FOkSession::Breed(const FString& Mother,const FString& Father,uint64 Seed,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKBreedFile(0,Mother,Father,Seed,Out,Summary);}
+bool FOkSession::BreedPicture(const FString& Card,const FString& Picture,const FString& Out,FString& Summary){return OKBreedFile(1,Card,Picture,0,Out,Summary);}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){
  OKPrepareCardEnvironment();char Buffer[2048]{};
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));

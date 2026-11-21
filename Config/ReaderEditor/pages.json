@@ -77,7 +77,8 @@
     {
       "name": "人物卡總欄", "tab": 1,
       "subs": [
-        { "name": "人物卡", "sources": [{ "widget": "card_col" }] }
+        { "name": "人物卡", "sources": [{ "widget": "card_col" }] },
+        { "name": "配種", "builder": "breed" }
       ]
     },
     {

@@ -102,6 +102,10 @@ public:
  // Only the clothes worn: the character keeps that outfit's accessories and makeup (the maker's coordinate load with its
  // accessories unticked).
  static bool ClothesWearClothesOnly(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary);
+ /** Breeding (ok-extract breed.rs): the child of the cards Mother and Father from Seed, written to Out (an OK card when
+  *  either parent is one: both packs, sealed). BreedPicture: Card shown by Picture (a PNG), written to Out. */
+ static bool Breed(const FString& Mother,const FString& Father,uint64 Seed,const FString& Out,FString& Summary);
+ static bool BreedPicture(const FString& Card,const FString& Picture,const FString& Out,FString& Summary);
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);
