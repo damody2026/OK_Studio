@@ -3263,6 +3263,16 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             let card = PathBuf::from(args.get(2).ok_or("card required")?);
             let outfit: usize = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
             let original = std::fs::read(&card).map_err(|e| e.to_string())?;
+        "breed" => {
+            // breed <mother card> <father card> <seed> <out card>: the child as the card reader makes her (an OK card
+            // parent makes her an OK card: both packs and answers, sealed and made again; OK_BASE_LIBRARY names the library).
+            let mother = PathBuf::from(args.get(1).ok_or("mother card required")?);
+            let father = PathBuf::from(args.get(2).ok_or("father card required")?);
+            let seed: u64 = args.get(3).and_then(|v| v.parse().ok()).ok_or("seed required (a whole number)")?;
+            let out = PathBuf::from(args.get(4).ok_or("output required")?);
+            let summary = crate::breed::file::breed_into(None, game, &mother, &father, seed, &out)?;
+            println!("OKBREED {summary} -> {}", out.display());
+        }
             let (clothes, thumb) = crate::okclothes::export_outfit(&original, outfit)?;
             let packed = clothes.to_bytes(&thumb)?;
             let clothes = crate::okclothes::OkClothes::from_bytes(&packed)?;

@@ -39,6 +39,8 @@ int32_t ok_card_outfit_gaps(const char* game,const char* card,char* out,int32_t 
 int32_t ok_clothing_transition(const char* root,const char* card,int32_t outfit,const uint8_t* previous,int32_t kind,uint8_t* out,char* error,int32_t error_cap);
 /* OK clothes (.okclothes). op 0 import coordinate card a; 1 export outfit of card a; 2 wear okclothes b as outfit of card a. Writes out; summary or error in msg. */
 int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,const char* out,char* msg,int32_t msg_cap);
+/* Breeding. op 0: the child of cards a (mother) and b (father) from seed, written to out; 1: card a shown by picture b (PNG), written to out. Summary or error in msg. */
+int32_t ok_breed_file(int32_t op,const char* a,const char* b,uint64_t seed,const char* out,char* msg,int32_t msg_cap);
 /* GUIDs (one per line in msg) an original card names that its open finds in no zipmod; 0, or -1 and the error. */
 int32_t ok_card_absent_mods(const char* card, char* msg, int32_t cap);
 int32_t ok_okcard_make(const char* game, const char* card, const char* out, char* msg, int32_t cap);

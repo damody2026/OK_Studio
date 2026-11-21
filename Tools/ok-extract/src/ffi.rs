@@ -46,6 +46,23 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
 }
 
 /// The installation original cards and their zipmods come from: OK_GAME_ROOT (may be absent: then only the base
+/// Breeding (breed.rs) for the reader. op 0: the child of cards `a` (mother) and `b` (father) from `seed`, written to
+/// `out`; 1: card `a` shown by picture `b` (a PNG), written to `out`. Returns 0 and a one-line summary in `msg`, or -1
+/// and the error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_breed_file(op:i32,a:*const c_char,b:*const c_char,seed:u64,out:*const c_char,msg:*mut c_char,cap:i32)->i32 {
+    let result=std::panic::catch_unwind(||{
+        let (Some(a),Some(b),Some(out))=(cstr_opt(a),cstr_opt(b),cstr_opt(out)) else{return Err("breed: path missing".to_string());};
+        let (a,b,out)=(std::path::Path::new(&a),std::path::Path::new(&b),std::path::Path::new(&out));
+        match op {
+            0=>crate::breed::file::breed_into(None,&installed_game_root(),a,b,seed,out),
+            1=>crate::breed::file::repicture_into(a,b,out),
+            _=>Err(format!("breed: unknown op {op}")),
+        }
+    }).unwrap_or_else(|_|Err("breed: panic".into()));
+    match result{Ok(summary)=>{write_err(msg,cap,&summary);0},Err(e)=>{write_err(msg,cap,&e);-1}}
+}
+
 /// library and the card's own folder provide resources).
 fn installed_game_root()->std::path::PathBuf {
     std::env::var_os("OK_GAME_ROOT").map(std::path::PathBuf::from).filter(|g|g.is_dir()).unwrap_or_default()
