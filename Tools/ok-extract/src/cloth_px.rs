@@ -469,6 +469,9 @@ struct Sim {
     /// and where it was shown last frame: the layer order kept between her garments (`keep_layers`).
     rest_r: Vec<f32>,
     rest_at: Vec<[f32; 3]>,
+    /// The other garments paired with (their keys) and, per particle, (garment slot, its particle) found inside it there.
+    layer_keys: Vec<u64>,
+    layer_pairs: Vec<Vec<(u32, u32)>>,
     shown: Vec<[f32; 3]>,
     /// Time passed since the last job was launched (the next one simulates it).
     pending: f32,
@@ -817,7 +820,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
-        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead, rest_r: Vec::new(), rest_at: Vec::new(), shown: Vec::new() })
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead, rest_r: Vec::new(), rest_at: Vec::new(), layer_keys: Vec::new(), layer_pairs: Vec::new(), shown: Vec::new() })
 }
 
 /// For each particle of a layer that follows another (see `build`): the particle it moves as; u32::MAX for the rest.
@@ -1291,8 +1294,9 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         log(1, &format!("OK cloth px debug: cloth {} free {} raw mean dy {:.1} mm, mean out {:.1} mm, {far} flung (pin centre y {:.3}, host {} jump {:.0} mm)", sim.key, n, dy / n * 1000., dr / n * 1000., c[1], sim.last_ok, sim.last_jump * 1000.));
     }
     let (clamped, pushed) = constrain(sim, &d, &targets, normals, &caps, &live, skin_arg, &mut sim_pos);
+    let t_layers = std::time::Instant::now();
     let layered = keep_layers(session, index, sim, skel, &mut sim_pos);
-    if layered > 0 && debug_on() { log(1, &format!("OK cloth px layers: cloth {} {layered} particles kept outside the garment under them", sim.key)); }
+    if layered > 0 && debug_on() { log(1, &format!("OK cloth px layers: cloth {} {layered} particles kept outside the garment under them ({} us)", sim.key, t_layers.elapsed().as_micros())); }
     sim.shown = sim_pos.clone();
     let most = (0..np).map(|p| len(sub(sim_pos[p], targets[p]))).fold(0f32, f32::max);
     for p in 0..np { sim.offsets[p] = sub(sim_pos[p], targets[p]); }
@@ -1349,10 +1353,12 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
 }
 
 /// Her garments kept in their order (OK_CLOTH_PX_LAYER_ORDER, default on): a skirt particle that lay outside another
-/// garment's skirt particles near it where the cloth was made (its distance from her hips' vertical axis 5 mm more) is
-/// moved back out past them, OK_CLOTH_PX_LAYER_KEEP (6 mm) beyond the outermost. FleX's particles alone, 6 mm round and
-/// 25 mm apart, let Megumin's pink pleated skirt out through the back of her coat in stripes while she ran (2026-11-22).
-/// Uses the others as shown last frame (they are locked only if free: no garment waits on another).
+/// garment's skirt particles near it where the cloth was made (within 5 cm, its distance from her hips' vertical axis
+/// 5 mm more) is moved back out past those of them still within 4 cm, OK_CLOTH_PX_LAYER_KEEP (6 mm) beyond the
+/// outermost. FleX's particles alone, 6 mm round and 25 mm apart, let Megumin's pink pleated skirt out through the back
+/// of her coat in stripes while she ran (2026-11-22). The pairs are found once (again when another garment of hers is
+/// made); a grid of the others each frame took 1.5-3.5 ms for her coat. Uses the others as shown last frame, read only
+/// when not locked (no garment waits on another).
 fn keep_layers(session: usize, index: usize, sim: &mut Sim, skel: &crate::pose::Skeleton, pos: &mut [[f32; 3]]) -> usize {
     if env_f("OK_CLOTH_PX_LAYER_ORDER", 1.) < 0.5 { return 0; }
     let Some(h) = bone_pos(skel, "cf_j_hips") else { return 0 };
@@ -1361,37 +1367,67 @@ fn keep_layers(session: usize, index: usize, sim: &mut Sim, skel: &crate::pose::
     if sim.rest_r.len() != np {
         sim.rest_r = (0..np).map(|p| if sim.skirt[p] { radial(pos[p]) } else { f32::NAN }).collect();
         sim.rest_at = pos.to_vec();
+        sim.layer_keys.clear();
+        sim.layer_pairs.clear();
     }
     let others: Vec<Arc<Mutex<Entry>>> = STATES.lock().unwrap().as_ref().map(|m| m.iter()
         .filter(|((s, i), _)| *s == session && *i != index).map(|(_, e)| e.clone()).collect()).unwrap_or_default();
-    const CELL: f32 = 0.04;
-    let key = |p: [f32; 3]| [(p[0] / CELL).floor() as i64, (p[1] / CELL).floor() as i64, (p[2] / CELL).floor() as i64];
-    let mut grid: HashMap<[i64; 3], Vec<([f32; 3], f32, [f32; 3])>> = HashMap::new();
+    // Each other garment readable now: its key, where it is shown, and (for a garment not paired yet) its made-in data.
+    let mut shown: Vec<(u64, Vec<[f32; 3]>)> = Vec::new();
+    let mut new: Vec<(u64, Vec<f32>, Vec<[f32; 3]>)> = Vec::new();
     for e in &others {
         let Ok(e) = e.try_lock() else { continue };
         let Some(o) = e.sim.as_ref() else { continue };
-        if o.shown.len() != o.rest_r.len() || o.rest_at.len() != o.rest_r.len() { continue; }
-        for q in 0..o.shown.len() { if o.rest_r[q].is_finite() { grid.entry(key(o.shown[q])).or_default().push((o.shown[q], o.rest_r[q], o.rest_at[q])); } }
+        if o.shown.is_empty() || o.shown.len() != o.rest_r.len() || o.rest_at.len() != o.rest_r.len() { continue; }
+        if !sim.layer_keys.contains(&o.key) { new.push((o.key, o.rest_r.clone(), o.rest_at.clone())); }
+        shown.push((o.key, o.shown.clone()));
     }
-    if grid.is_empty() { return 0; }
+    if !new.is_empty() {
+        if sim.layer_pairs.len() != np { sim.layer_pairs = vec![Vec::new(); np]; }
+        const PAIR: f32 = 0.05;
+        let key = |p: [f32; 3]| p.map(|v| (v / PAIR).floor() as i64);
+        for (k, rr, at) in &new {
+            let slot = sim.layer_keys.len() as u32;
+            sim.layer_keys.push(*k);
+            let mut grid: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+            for q in 0..at.len() { if rr[q].is_finite() { grid.entry(key(at[q])).or_default().push(q as u32); } }
+            for p in 0..np {
+                let rp0 = sim.rest_r[p];
+                if !rp0.is_finite() || sim.pinned[p] { continue; }
+                let c = key(sim.rest_at[p]);
+                let mut near: Vec<(f32, u32)> = Vec::new();
+                for dx in -1..=1 { for dy in -1..=1 { for dz in -1..=1 {
+                    let Some(list) = grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) else { continue };
+                    for &q in list {
+                        let d = len(sub(at[q as usize], sim.rest_at[p]));
+                        if rr[q as usize] + 0.005 < rp0 && d <= PAIR { near.push((d, q)); }
+                    }
+                } } }
+                // The nearest few (OK_CLOTH_PX_LAYER_PAIRS, 12): every one within 5 cm took 0.65 ms a frame.
+                near.sort_by(|a, b| a.0.total_cmp(&b.0));
+                near.truncate(env_f("OK_CLOTH_PX_LAYER_PAIRS", 12.).max(1.) as usize);
+                sim.layer_pairs[p].extend(near.into_iter().map(|(_, q)| (slot, q)));
+            }
+        }
+    }
+    if sim.layer_pairs.len() != np || shown.is_empty() { return 0; }
+    let now: Vec<Option<&Vec<[f32; 3]>>> = sim.layer_keys.iter().map(|k| shown.iter().find(|(s, _)| s == k).map(|(_, v)| v)).collect();
     let keep = env_f("OK_CLOTH_PX_LAYER_KEEP", 0.006);
+    let pairs = &sim.layer_pairs;
+    let needs: Vec<f32> = (0..np).into_par_iter().map(|p| {
+        let mut need = f32::MIN;
+        for &(slot, q) in &pairs[p] {
+            let Some(Some(v)) = now.get(slot as usize) else { continue };
+            let Some(q) = v.get(q as usize) else { continue };
+            if len(sub(*q, pos[p])) <= 0.04 { need = need.max(radial(*q) + keep); }
+        }
+        need
+    }).collect();
     let mut moved = 0;
     for p in 0..np {
-        let rp0 = sim.rest_r[p];
-        if !rp0.is_finite() || sim.pinned[p] { continue; }
-        let c = key(pos[p]);
-        let mut need = f32::MIN;
-        for dx in -1..=1 { for dy in -1..=1 { for dz in -1..=1 {
-            let Some(list) = grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) else { continue };
-            // Neighbours now that were neighbours where the cloth was made, and inside it there.
-            for (q, rq0, q_at) in list {
-                if *rq0 + 0.005 >= rp0 || len(sub(*q, pos[p])) > CELL || len(sub(*q_at, sim.rest_at[p])) > 0.05 { continue; }
-                need = need.max(radial(*q) + keep);
-            }
-        } } }
         let r = radial(pos[p]);
-        if need > r && r > 1e-4 {
-            let k = need / r;
+        if needs[p] > r && r > 1e-4 {
+            let k = needs[p] / r;
             pos[p][0] = h[0] + (pos[p][0] - h[0]) * k;
             pos[p][2] = h[2] + (pos[p][2] - h[2]) * k;
             moved += 1;
