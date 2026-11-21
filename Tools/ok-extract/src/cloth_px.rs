@@ -883,7 +883,17 @@ fn layer_leads(tris: &[[u32; 3]], pos: &[[f32; 3]], np: usize) -> Vec<u32> {
 /// Body capsules for the cloth: limbs, hips and torso of the skeleton (no head, no floor sphere), as the body proxies
 /// (the host collides with these; Rust's backstop grows them, cap_fit).
 fn capsules(skel: &crate::pose::Skeleton) -> Vec<OkPxCapsule> {
-    crate::dbone::body_proxy_capsules(skel).into_iter().filter(|c| c.radius > 0. && c.radius < 1.0).collect()
+    let mut out: Vec<OkPxCapsule> = crate::dbone::body_proxy_capsules(skel).into_iter().filter(|c| c.radius > 0. && c.radius < 1.0).collect();
+    // Her feet: the proxies end at the ankle, and running, her heel kicked up through Raiden's kimono train
+    // (2026-11-21). Ankle to foot to toes, shoe sized (OK_CLOTH_PX_FOOT, 4 cm).
+    let r = env_f("OK_CLOTH_PX_FOOT", 0.04);
+    if r > 0. {
+        for side in ["L", "R"] {
+            let chain: Vec<[f32; 3]> = ["cf_j_leg03", "cf_j_foot", "cf_j_toes"].iter().filter_map(|b| bone_pos(skel, &format!("{b}_{side}"))).collect();
+            for w in chain.windows(2) { out.push(OkPxCapsule { a: w[0], b: w[1], radius: r }); }
+        }
+    }
+    out
 }
 
 fn particle_normals(pos: &[[f32; 3]], tris: &[[u32; 3]]) -> Vec<[f32; 3]> {
