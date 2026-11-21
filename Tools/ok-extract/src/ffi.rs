@@ -297,6 +297,12 @@ pub extern "C" fn ok_cloth_px_set(mode:i32) {
     if crate::cloth_px::mode()!=mode {crate::cloth_px::set_mode(mode);crate::cloth_px::reset_all();}
 }
 #[no_mangle]
+pub extern "C" fn ok_cloth_px_solver(solver:i32) {
+    // Which host simulates the cloth: 0 PhysX, 1 NVIDIA FleX. A change starts every cloth over (FleX's finer mesh needs
+    // the garments loaded again: cloth_refine runs as they load).
+    if crate::cloth_px::solver()!=solver {crate::cloth_px::set_solver(solver);crate::cloth_px::reset_all();}
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_cloth_px_part(s:*mut OkSession,part:i32)->i32 {
     // 1 when this garment is PhysX cloth now: Unreal draws it from its CPU vertices.
     let Some(s)=sess_ref(s) else{return 0;};

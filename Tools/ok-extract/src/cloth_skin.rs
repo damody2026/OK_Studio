@@ -54,10 +54,37 @@ fn still(parts: &[SessionPart]) -> Option<Arc<Still>> {
 /// Poses her skin for this frame when any of her garments is PhysX cloth (`cloth_px::has_cloth`); before her garments are
 /// skinned. `skel`: her body skeleton now.
 pub(crate) fn prepare(session: usize, parts: &[SessionPart], skel: Option<&Skeleton>) {
-    let field = if crate::cloth_px::has_cloth(session) { skel.and_then(|skel| build(parts, skel)) } else { None };
+    let cloth = crate::cloth_px::has_cloth(session);
+    if cloth && crate::cloth_px::flex() { if let Some(skel) = skel { flex_body(session, parts, skel); } }
+    let field = if cloth { skel.and_then(|skel| build(parts, skel)) } else { None };
     let mut all = FIELDS.lock().unwrap();
     let map = all.get_or_insert_with(HashMap::new);
     match field { Some(f) => { map.insert(session, Arc::new(f)); } None => { map.remove(&session); } }
+}
+
+/// Her whole body mesh posed, to the FleX host: her cloth particles collide with its triangles there (a capsule body is
+/// thinner than hers, and her skin field only pushes after each step).
+fn flex_body(session: usize, parts: &[SessionPart], skel: &Skeleton) {
+    use rayon::prelude::*;
+    let Some(still) = still(parts) else { return };
+    let part = &parts[still.body];
+    let (worlds, binds) = crate::skel_export::palettes(skel, part);
+    if worlds.is_empty() || part.indices.len() < 3 { return; }
+    let skins: Vec<Mat4> = worlds.iter().zip(&binds).map(|(w, b)| crate::pose::mat_mul_pub(w, b)).collect();
+    let pos: Vec<[f32; 3]> = (0..part.rest_positions.len()).into_par_iter().map(|j| {
+        let (Some(b), Some(w)) = (part.bone_idx.get(j), part.weights.get(j)) else { return part.rest_positions[j] };
+        let mut m = [[0f32; 4]; 4];
+        let mut total = 0.;
+        for k in 0..4 {
+            let Some(s) = skins.get(b[k] as usize) else { continue };
+            if w[k] <= 0. { continue; }
+            total += w[k];
+            for r in 0..4 { for c in 0..4 { m[r][c] += s[r][c] * w[k]; } }
+        }
+        if total < 0.5 { return part.rest_positions[j]; }
+        point(&m, part.rest_positions[j])
+    }).collect();
+    crate::cloth_px::flex_body(session, &pos, &part.indices);
 }
 
 fn build(parts: &[SessionPart], skel: &Skeleton) -> Option<SkinField> {

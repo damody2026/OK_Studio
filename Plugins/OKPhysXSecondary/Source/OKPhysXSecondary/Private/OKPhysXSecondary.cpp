@@ -2467,6 +2467,7 @@ public:
 	virtual void ShutdownModule() override
 	{
 		OKPhysXSecondary::ShutdownCloth();
+		OKPhysXSecondary::ShutdownFlexCloth();
 		{
 			UE::TUniqueLock Guard(GMapLock);
 			GChains.Empty();

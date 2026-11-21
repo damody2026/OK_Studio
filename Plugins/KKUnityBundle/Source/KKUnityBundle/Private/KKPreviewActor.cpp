@@ -179,7 +179,9 @@ static bool OKClothGpuOn(){return OKClothGpuMode()>=1;}
 // The cloth region, its pins and max distances come from the garment's skirt/arm bone weights; the skirt's DynamicBones stay
 // off while it is cloth. 0 gives the DynamicBones back. See Docs/CLOTH_PHYSX_SKIRT_SLEEVE.md.
 static TAutoConsoleVariable<int32> CVarOkClothPx(TEXT("ok.ClothPx"),1,TEXT("Skirts and sleeves as PhysX cloth: 1 (default) both, 2 skirts only, 3 sleeves only, 0 off (their DynamicBones as before)"));
-static int32 OKClothPxMode(){const int32 Mode=FMath::Clamp(CVarOkClothPx.GetValueOnGameThread(),0,3);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothPx(Mode);}return Mode;}
+static TAutoConsoleVariable<int32> CVarOkClothSolver(TEXT("ok.ClothSolver"),0,TEXT("Which host simulates the cloth (ok.ClothPx): 0 PhysX (PxDeformableSurface), 1 NVIDIA FleX (particles: her layers collide with each other and with her body mesh). A change starts every cloth over; reload the card for FleX's finer mesh."));
+static int32 OKClothPxMode(){const int32 Mode=FMath::Clamp(CVarOkClothPx.GetValueOnGameThread(),0,3);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothPx(Mode);}
+    const int32 Solver=FMath::Clamp(CVarOkClothSolver.GetValueOnGameThread(),0,1);static int32 SentSolver=-1;if(SentSolver!=Solver){SentSolver=Solver;FOkSession::SetClothSolver(Solver);}return Mode;}
 static FAutoConsoleCommand GOKClothPxStats(TEXT("ok.ClothPxStats"),TEXT("Log the PhysX cloth since the last call: cloths, particles, free particles, steps, mean step ms, largest offset mm, clamped, pushed"),
     FConsoleCommandDelegate::CreateLambda([]{float V[8]={};const int32 N=FOkSession::ClothPxStats(V,8);
         UE_LOG(LogTemp,Display,TEXT("Cloth px: mode %d, %d cloths, %d particles (%d free), %d steps, %.3f ms/step, largest offset %.1f mm, clamped %d, pushed %d"),

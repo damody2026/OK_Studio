@@ -322,6 +322,7 @@ public:
 	// push and the jiggle; this pose's moves of one, dense per source vertex (native metres after the post correction),
 	// empty when none moved. False: bad input.
 	static void SetClothPx(int32 Mode); // ok.ClothPx: skirts/sleeves as PhysX cloth, 0 off (DynamicBone), 1 both, 2 skirts, 3 sleeves
+	static void SetClothSolver(int32 Solver); // ok.ClothSolver: 0 PhysX, 1 NVIDIA FleX
 	bool ClothPxPart(int32 Part) const; // this garment is PhysX cloth now (drawn from its CPU vertices)
 	static int32 ClothPxStats(float* Out, int32 Max); // [cloths, particles, free, steps, mean step ms, max offset mm, clamped, pushed]
 	static void SetClothGpu(int32 Mode); // ok.ClothGpu: 0 CPU, 1 moves added on the GPU, 2 worked out on the GPU

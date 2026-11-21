@@ -28,6 +28,7 @@ void FKKUnityBundleModule::StartupModule()
 	// DynamicBone chains of this module's ok_extract copy run on PhysX.
 	OKPhysXSecondary::Register(&ok_set_physx_dynamic_solver);
 	OKPhysXSecondary::RegisterCloth(&ok_set_physx_cloth);
+	OKPhysXSecondary::RegisterFlexCloth(&ok_set_flex_cloth);
 	// Its built-in Verlet follows the same weight/hardness settings as the host solvers.
 	OKPhysXSecondary::RegisterTuning(&ok_set_secondary_tuning_source);
  OKInstallNativeSharedAnimationDriver();

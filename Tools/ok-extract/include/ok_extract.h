@@ -181,6 +181,13 @@ int32_t ok_cloth_px_stats(float* out, uint32_t max);
 void ok_set_physx_cloth(int32_t (*create)(uint64_t key, uint32_t n, const float* pos, const float* inv_mass, uint32_t tri_n, const uint32_t* tris, uint32_t flags),
 	int32_t (*step)(uint64_t key, uint32_t n, const float* targets, const float* prev, const void* capsules, uint32_t cap_n, float dt, float* out),
 	void (*release)(uint64_t key));
+/* The same cloth on NVIDIA FleX (OKFlexCloth): as ok_set_physx_cloth, plus bind(key, session) before each create and
+   body(session, nv, xyz[nv], nt, tris[nt*3]) with her posed body each frame. */
+void ok_set_flex_cloth(int32_t (*create)(uint64_t key, uint32_t n, const float* pos, const float* inv_mass, uint32_t tri_n, const uint32_t* tris, uint32_t flags),
+	int32_t (*step)(uint64_t key, uint32_t n, const float* targets, const float* prev, const void* capsules, uint32_t cap_n, float dt, float* out),
+	void (*release)(uint64_t key), void (*bind)(uint64_t key, uint64_t session),
+	void (*body)(uint64_t session, uint32_t nv, const float* pos, uint32_t nt, const uint32_t* tris));
+void ok_cloth_px_solver(int32_t solver); /* which host simulates the cloth: 0 PhysX, 1 NVIDIA FleX (a change starts every cloth over) */
 void ok_cloth_gpu_set(int32_t on); /* 2: the push and the jiggle themselves on the GPU (ClothCover.usf) */
 int32_t ok_cloth_gpu_job(OkSession* s,int32_t part);
 int32_t ok_cloth_gpu_field(OkSession* s,uint32_t* out,uint32_t max);

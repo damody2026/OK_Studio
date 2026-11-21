@@ -78,4 +78,14 @@ namespace OKPhysXSecondary
 	using FSetClothFn = void (*)(FClothCreateFn, FClothStepFn, FClothReleaseFn);
 	OKPHYSXSECONDARY_API void RegisterCloth(FSetClothFn SetCloth);
 	void ShutdownCloth();
+	/**
+	 * The same cloth on NVIDIA FleX (OKFlexCloth.cpp): one particle solver per character holding all her cloth, so the
+	 * layers collide with each other and with her posed body mesh. Bind tells which character a cloth belongs to (before
+	 * its Create); Body gives her body this frame (vertices xyz, triangles). Pass &ok_set_flex_cloth.
+	 */
+	using FClothBindFn = void (*)(uint64 Key, uint64 Session);
+	using FClothBodyFn = void (*)(uint64 Session, uint32 NV, const float* Pos, uint32 NT, const uint32* Tris);
+	using FSetFlexClothFn = void (*)(FClothCreateFn, FClothStepFn, FClothReleaseFn, FClothBindFn, FClothBodyFn);
+	OKPHYSXSECONDARY_API void RegisterFlexCloth(FSetFlexClothFn SetCloth);
+	void ShutdownFlexCloth();
 }

@@ -40,6 +40,46 @@ static RELEASE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
 /// 0 off (DynamicBone as before), 1 skirts and sleeves, 2 skirts only, 3 sleeves only.
 static MODE: AtomicI32 = AtomicI32::new(0);
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
+/// Which host simulates the cloth: 0 PhysX (PxDeformableSurface), 1 NVIDIA FleX (particles: one solver per character, every
+/// garment of hers in it, so the layers collide with each other and with her posed body mesh).
+static SOLVER: AtomicI32 = AtomicI32::new(0);
+static FCREATE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static FSTEP: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static FRELEASE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static FBIND: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+static FBODY: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+/// FleX: the cloth `key` belongs to the character `session` (its solver), called before its create.
+pub type BindFn = unsafe extern "C" fn(key: u64, session: u64);
+/// FleX: her body this frame (vertices xyz, triangles) in her skeleton space; her cloths collide with it.
+pub type BodyFn = unsafe extern "C" fn(session: u64, nv: u32, pos: *const f32, nt: u32, tris: *const u32);
+
+#[no_mangle]
+pub extern "C" fn ok_set_flex_cloth(create: Option<CreateFn>, step: Option<StepFn>, release: Option<ReleaseFn>, bind: Option<BindFn>, body: Option<BodyFn>) {
+    FRELEASE.store(release.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
+    FSTEP.store(step.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
+    FBIND.store(bind.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
+    FBODY.store(body.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
+    FCREATE.store(create.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
+}
+pub fn set_solver(s: i32) { SOLVER.store(s.clamp(0, 1), Ordering::Relaxed); }
+pub fn solver() -> i32 { SOLVER.load(Ordering::Relaxed) }
+/// The FleX host is the one simulating (chosen and registered).
+pub(crate) fn flex() -> bool { solver() == 1 && !FCREATE.load(Ordering::Acquire).is_null() }
+fn flex_bind(key: u64, session: usize) {
+    let f = FBIND.load(Ordering::Acquire);
+    // SAFETY: only ok_set_flex_cloth stores here, as a BindFn.
+    if flex() && !f.is_null() { unsafe { std::mem::transmute::<*mut (), BindFn>(f)(key, session as u64) } }
+}
+/// Her posed body to the FleX host (cloth_skin, each frame she has cloth).
+pub(crate) fn flex_body(session: usize, pos: &[[f32; 3]], tris: &[u32]) {
+    let f = FBODY.load(Ordering::Acquire);
+    // SAFETY: only ok_set_flex_cloth stores here, as a BodyFn.
+    if flex() && !f.is_null() { unsafe { std::mem::transmute::<*mut (), BodyFn>(f)(session as u64, pos.len() as u32, pos.as_ptr().cast(), (tris.len() / 3) as u32, tris.as_ptr()) } }
+}
+/// FleX settings that differ from PhysX's: a finer mesh (FleX collides particles, so the layers and her body must not slip
+/// between them), every layer simulated (they collide), less smoothing (FleX keeps the cloth whole itself).
+fn flex_edge() -> f32 { static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_EDGE", 0.01)) }
+fn flex_smooth() -> u32 { static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_SMOOTH", 1.).max(0.) as u32) }
 
 #[no_mangle]
 pub extern "C" fn ok_set_physx_cloth(create: Option<CreateFn>, step: Option<StepFn>, release: Option<ReleaseFn>) {
@@ -48,7 +88,8 @@ pub extern "C" fn ok_set_physx_cloth(create: Option<CreateFn>, step: Option<Step
     CREATE.store(create.map_or(std::ptr::null_mut(), |f| f as *mut ()), Ordering::Release);
 }
 fn host() -> Option<(CreateFn, StepFn, ReleaseFn)> {
-    let (c, s, r) = (CREATE.load(Ordering::Acquire), STEP.load(Ordering::Acquire), RELEASE.load(Ordering::Acquire));
+    let (c, s, r) = if solver() == 1 { (FCREATE.load(Ordering::Acquire), FSTEP.load(Ordering::Acquire), FRELEASE.load(Ordering::Acquire)) }
+        else { (CREATE.load(Ordering::Acquire), STEP.load(Ordering::Acquire), RELEASE.load(Ordering::Acquire)) };
     if c.is_null() || s.is_null() || r.is_null() { return None; }
     // SAFETY: only ok_set_physx_cloth stores here, each with its own function type.
     unsafe { Some((std::mem::transmute::<*mut (), CreateFn>(c), std::mem::transmute::<*mut (), StepFn>(s), std::mem::transmute::<*mut (), ReleaseFn>(r))) }
@@ -64,7 +105,7 @@ fn log(level: i32, msg: &str) {
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool, smooth_all: bool, skin: bool, skin_margin: f32, skin_deep: f32, cap_floor: f32, layer_gap: f32, hold_out: f32, skin_host: bool, damp: bool, damp_t: f32, hold: bool }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool, smooth_all: bool, skin: bool, skin_margin: f32, skin_deep: f32, cap_floor: f32, layer_gap: f32, hold_out: f32, skin_host: bool, damp: bool, damp_t: f32, hold: bool, free: bool, free_max: f32, free_pull: f32 }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -103,6 +144,15 @@ fn tune() -> &'static Tune {
         damp: env_f("OK_CLOTH_PX_DAMP", 1.) > 0.5,
         damp_t: env_f("OK_CLOTH_PX_DAMP_T", 2.),
         hold: env_f("OK_CLOTH_PX_HOLD", 1.) > 0.5,
+        // Real cloth (default): the PhysX cloth is there to move better than the DynamicBone pose, not to copy it. Kept
+        // within a few cm of that pose, pulled back to it and held on it where the pose went into her, Raiden's gauze robe
+        // (outfit 2) never moved as cloth and still hung through her crotch (user, 2026-11-21). Free, every cloth hangs
+        // from its pinned rows only: up to OK_CLOTH_PX_FREE_MAX off the pose, pulled back at OK_CLOTH_PX_FREE_PULL a
+        // second, never held on the pose, out of her capsules and skin whatever the pose does; a long skirt's
+        // DynamicBones go off. OK_CLOTH_PX_FREE=0: the cloth sways round the DynamicBone pose as before.
+        free: env_f("OK_CLOTH_PX_FREE", 1.) > 0.5,
+        free_max: env_f("OK_CLOTH_PX_FREE_MAX", 0.30),
+        free_pull: env_f("OK_CLOTH_PX_FREE_PULL", 0.3),
         // Out of each body capsule at least this times its radius, whatever the pose (0: as the pose. 1 pushed the part of
         // Raiden's gauze sleeves hanging in her pelvis out sideways and crumpled it, 2026-11-21; her skin field does it).
         cap_floor: env_f("OK_CLOTH_PX_CAP_FLOOR", 0.),
@@ -261,13 +311,14 @@ fn classify(src: &crate::unity::ExtractedMesh, role: &str, implanted: &std::coll
 pub(crate) fn refine_mesh(mesh: &mut crate::unity::ExtractedMesh, role: &str, rig: &crate::session::AccessoryRuntime) -> usize {
     let t = tune();
     let forced = std::env::var("OK_CLOTH_PX_REFINE").ok();
-    if t.edge <= 0. || forced.as_deref() == Some("0") || (host().is_none() && forced.as_deref() != Some("1")) { return 0; }
+    let edge = if flex() { flex_edge() } else { t.edge };
+    if edge <= 0. || forced.as_deref() == Some("0") || (host().is_none() && forced.as_deref() != Some("1")) { return 0; }
     let src = rig.source_mesh();
     if src.weights.len() != mesh.weights.len() || src.indices != mesh.indices { return 0; }
     let Some(d) = classify(src, role, rig.implanted_bones(), 1, false) else { return 0 };
     let selected: Vec<bool> = d.kind.iter().map(|k| *k != 0).collect();
     let (n, tris) = (mesh.weights.len(), mesh.indices.len() / 3);
-    let added = crate::cloth_refine::refine(mesh, &selected, t.edge, (n * 6).clamp(4000, 40000));
+    let added = crate::cloth_refine::refine(mesh, &selected, edge, if flex() { (n * 40).clamp(8000, 150000) } else { (n * 6).clamp(4000, 40000) });
     if added > 0 && std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
         log(1, &format!("OK cloth px refine: {role} {} vertices {n} -> {}, triangles {tris} -> {} (edges <= {:.0} mm)",
             mesh.name, mesh.weights.len(), mesh.indices.len() / 3, t.edge * 1000.));
@@ -540,7 +591,7 @@ pub fn takes_over_dynamics(session: usize, index: usize, part: &crate::session::
     // A garment grafted onto the body (coordinated) shares its chains with the clothes set: they keep running and the
     // cloth overrides only its own vertices, or its other panels would go rigid.
     let grafted = part.runtime_accessory.as_ref().is_some_and(|r| !r.implanted_bones().is_empty());
-    !e.failed && !grafted && e.detect.as_ref().is_some_and(|d| d.skirt && !d.long)
+    !e.failed && !grafted && e.detect.as_ref().is_some_and(|d| d.skirt && (!d.long || tune().free))
 }
 
 // ---- vector helpers
@@ -671,7 +722,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     // through the purple (2026-11-21); the original moves both on the same bones. A mesh piece (connected by triangles)
     // that lies mostly within OK_CLOTH_PX_LAYER_GAP of a bigger one is not simulated: its particles are held on the pose
     // and shown moved as the nearest particle of that bigger one (`lead`), keeping the gap.
-    let lead = layer_leads(&tris, &pos, np);
+    let lead = if flex() { vec![u32::MAX; np] } else { layer_leads(&tris, &pos, np) };
     for p in 0..np { if lead[p] != u32::MAX { pinned[p] = true; } }
     let pins: Vec<usize> = (0..np).filter(|&p| pinned[p] && lead[p] == u32::MAX).collect();
     if pins.is_empty() { return None; }
@@ -704,8 +755,8 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         anchor_len[p] = if geo_src[p] == u32::MAX { let _ = near_id; near } else { geo[p] };
         if anchor[p] != u32::MAX { straight[p] = len(sub(pos[p], pos[anchor[p] as usize])); }
         max_dist[p] = match kind_of[p] {
-            KIND_SKIRT => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(if d.long { t.long_max } else { t.skirt_max }),
-            KIND_CHAIN => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(t.chain_max),
+            KIND_SKIRT => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(if t.free { t.free_max } else if d.long { t.long_max } else { t.skirt_max }),
+            KIND_CHAIN => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(if t.free { t.free_max } else { t.chain_max }),
             _ => (t.sleeve_reach * near).min(0.012 + 0.6 * (r[p] - 0.05).max(0.)).min(t.sleeve_max),
         };
         if max_dist[p] > 1e-4 { free += 1; } else { pinned[p] = true; }
@@ -932,7 +983,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     }
     if e.sim.is_none() {
         let (own, mesh) = LAYERS.lock().unwrap().as_ref().and_then(|m| m.get(&(session, index)).cloned()).unwrap_or(([None; 5], (0, String::new())));
-        let under = covered(session, index, &own, &mesh);
+        let under = if flex() { [false; 5] } else { covered(session, index, &own, &mesh) };
         if under.iter().any(|u| *u) {
             let mut kind = d.kind.clone();
             for k in kind.iter_mut() { if (*k as usize) < 5 && under[*k as usize] { *k = 0; } }
@@ -957,6 +1008,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let targets: Vec<[f32; 3]> = sim.rep.iter().map(|&v| positions[v as usize]).collect();
     if !sim.created {
         let inv: Vec<f32> = sim.pinned.iter().map(|p| if *p { 0. } else { 1. }).collect();
+        flex_bind(sim.key, session);
         let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.pleats as u32 | 2) };
         if ok != 1 {
             e.failed = true; e.sim = None;
@@ -992,8 +1044,10 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
                 for &ci in &shins { sim.cap_fit[p * sim.cap_n + ci] = caps[ci].radius * t.cap_scale; sim.cap_forced[p * sim.cap_n + ci] = true; }
             }
         }
-        sim.gpu_rad = caps.iter().enumerate().map(|(ci, c)| (0..np).filter(|&p| !sim.pinned[p])
-            .map(|p| sim.cap_fit[p * sim.cap_n + ci]).fold(c.radius, f32::min)).collect();
+        // Free cloth meets her capsules whole on the GPU: shrunk to the room each particle had in its pose, a pose through
+        // her pelvis left them at nothing there.
+        sim.gpu_rad = caps.iter().enumerate().map(|(ci, c)| if t.free { c.radius } else { (0..np).filter(|&p| !sim.pinned[p])
+            .map(|p| sim.cap_fit[p * sim.cap_n + ci]).fold(c.radius, f32::min) }).collect();
     }
     // A skirt gets none on the GPU: the thighs swinging into it there kicked Chika's pleated skirt 3-4 cm up for good
     // (OKPhysXCloth.Collide 0: -0.2 cm; shrunk capsules or no friction did not help, 2026-11-21). Rust still pushes
@@ -1036,7 +1090,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
                 let full = c.radius * t.cap_scale;
                 // At least the capsule itself whatever the pose: the DynamicBone pose of Raiden's gauze sleeves lay in her pelvis
                 // and "no nearer than the pose" let the cloth follow it in (2026-11-21).
-                let r = (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out).max(c.radius * t.cap_floor);
+                let r = (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out).max(c.radius * if t.free { t.cap_floor.max(1.) } else { t.cap_floor });
                 v[p * caps.len() + ci] = if sim.cap_forced.get(p * sim.cap_n + ci).copied().unwrap_or(false) { r.max(full) } else { r };
             }
         }
@@ -1055,7 +1109,9 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         Some(f) => (0..np).into_par_iter().map(|p| match f.depth(targets[p]) {
             Some((dep, _, trust)) => {
                 let x = ((dep + t.skin_deep) / (t.hold_out + t.skin_deep).max(1e-4)).clamp(0., 1.);
-                (t.skin_margin + (dep.min(t.skin_margin) - t.skin_margin) * trust, if t.hold { 1. - trust * (1. - x * x * (3. - 2. * x)) } else { 1. })
+                if t.free { (t.skin_margin, 1.) } else {
+                    (t.skin_margin + (dep.min(t.skin_margin) - t.skin_margin) * trust, if t.hold { 1. - trust * (1. - x * x * (3. - 2. * x)) } else { 1. })
+                }
             }
             None => (t.skin_margin, 1.),
         }).unzip(),
@@ -1083,7 +1139,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             // turned back onto the pose that result was made on.
             let mut fixed: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.goal[p])).collect();
             constrain(sim, &d, &targets, normals, &caps, &live, if t.skin_host { skin_arg } else { None }, &mut fixed);
-            let back = 1. - (-t.pull * sim.pending).exp();
+            let back = 1. - (-(if t.free { t.free_pull } else { t.pull }) * sim.pending).exp();
             let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
             let delta: Vec<[f32; 3]> = (0..np).map(|p| {
                 if sim.pinned[p] { return [0.; 3]; }
@@ -1226,7 +1282,7 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
         }
         let l = len(off);
         if l > sim.max_dist[p] { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
-        if sim.skirt[p] && pos[p][1] > targets[p][1] + t.up_max { pos[p][1] = targets[p][1] + t.up_max; clamped += 1; }
+        if sim.skirt[p] && !t.free && pos[p][1] > targets[p][1] + t.up_max { pos[p][1] = targets[p][1] + t.up_max; clamped += 1; }
     }
     // Out of her real skin (cloth_skin) before the smoothing too, so the smoothing spreads the push over the cloth round
     // it instead of leaving one particle poking out: `need`, how far out of it each particle must stay (the margin, or as
@@ -1248,9 +1304,10 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
     // own, the drape's edge jagged and tore (Raiden's kimono), and what the GPU cloth adds on top of the garment's own
     // shape crumpled like tissue (her maid skirt's hem, 2026-11-21). Smoothing the moves keeps the garment's shape and
     // its slow swing and drops the crumples (OK_CLOTH_PX_SMOOTH passes; OK_CLOTH_PX_SMOOTH_ALL=0: follow cloths only).
-    if (d.follow || t.smooth_all) && t.smooth > 0 {
+    let passes = if flex() { flex_smooth() } else { t.smooth };
+    if (d.follow || t.smooth_all) && passes > 0 {
         let mut off: Vec<[f32; 3]> = (0..np).map(|p| sub(pos[p], targets[p])).collect();
-        for _ in 0..t.smooth {
+        for _ in 0..passes {
             let next: Vec<[f32; 3]> = (0..np).map(|p| {
                 if sim.pinned[p] || sim.links[p].is_empty() { return off[p]; }
                 let sum = sim.links[p].iter().fold([0f32; 3], |a, &q| add(a, off[q as usize]));

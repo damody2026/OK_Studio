@@ -63,6 +63,26 @@ public class OKPhysXSecondary : ModuleRules
 			if (File.Exists(File_)) RuntimeDependencies.Add(Path.Combine(BinaryDirectory, Name), File_, StagedFileType.NonUFS);
 		}
 
+		// NVIDIA FleX 1.2 cloth (OKFlexCloth.cpp): the original NvFlex headers and DLLs the engine's GameWorks Flex plugin
+		// keeps (its runtime moved to PhysX 5.8 and no longer loads them). Loaded at run time, CUDA build first, D3D11
+		// compute build otherwise; without them the FleX choice keeps the DynamicBones.
+		string FlexSdk = Path.Combine(EngineDirectory, "Plugins", "GameWorks", "Flex", "Source", "ThirdParty", "FlexLibrary", "include");
+		string FlexDlls = Path.Combine(EngineDirectory, "Plugins", "GameWorks", "Flex", "Binaries", "ThirdParty", "Win64");
+		if (File.Exists(Path.Combine(FlexSdk, "NvFlex.h")) && File.Exists(Path.Combine(FlexDlls, "NvFlexReleaseCUDA_x64.dll")))
+		{
+			PrivateIncludePaths.Add(FlexSdk);
+			PrivateDefinitions.Add("OK_FLEX_CLOTH=1");
+			foreach (string Name in new[] { "NvFlexReleaseCUDA_x64.dll", "NvFlexReleaseD3D_x64.dll", "NvFlexDeviceRelease_x64.dll", "cudart64_80.dll", "amd_ags_x64.dll", "nvToolsExt64_1.dll" })
+			{
+				string File_ = Path.Combine(FlexDlls, Name);
+				if (File.Exists(File_)) RuntimeDependencies.Add(Path.Combine(BinaryDirectory, Name), File_, StagedFileType.NonUFS);
+			}
+		}
+		else
+		{
+			PrivateDefinitions.Add("OK_FLEX_CLOTH=0");
+		}
+
 		// More comparison backends, built by Tools/build_physics_backends.lua: Jolt 5.6.0 (MIT) as a static library,
 		// MuJoCo 3.15.0 (Apache-2.0) as a DLL. (Bullet is not used by this project.)
 		string ThirdParty = Path.Combine(Plugin, "Source", "ThirdParty");
