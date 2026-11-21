@@ -8343,6 +8343,23 @@ void AKKPreviewActor::SkinPrivateDisplay()
  if(Excluded.IsEmpty()||!Session.SkinDisplayExceptPrivate(Excluded,Revisions))Session.Skin();
 }
 
+// ok.ClothOutline <scale>: the outline width of every garment that is PhysX cloth now, times scale (1 as authored). Its
+// outline shell, pushed out along the normals, pokes through where the cloth folds tightly: the black shards along the
+// kimono's hem while she runs (2026-11-22). The shared outline parents are not touched: the width is a scalar of each
+// part's own outline instance.
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkClothOutline(TEXT("ok.ClothOutline"),TEXT("ok.ClothOutline <scale>: outline width of the garments that are PhysX cloth now, times scale (1 as authored)"),
+ FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Out){
+  if(!World||Args.Num()<1)return;const float Scale=FCString::Atof(*Args[0]);
+  static TMap<TWeakObjectPtr<UMaterialInstanceDynamic>,TPair<float,float>> Authored;
+  static const FName Width(TEXT("__OK_OutlineWidth")),LineWidth(TEXT("_linewidthG"));
+  for(TActorIterator<AKKPreviewActor> It(World);It;++It){AKKPreviewActor* A=*It;
+   for(const FKKLoadedPart& P:A->Parts){if(!P.Comp||P.SessionIndex==INDEX_NONE||!A->Session.ClothPxPart(P.SessionIndex))continue;
+    for(int32 i=0;i<P.Comp->GetNumMaterials();++i){auto* M=Cast<UMaterialInstanceDynamic>(P.Comp->GetMaterial(i));float W=0.f,L=0.f;
+     if(!M||!M->GetScalarParameterValue(FMaterialParameterInfo(Width),W))continue;M->GetScalarParameterValue(FMaterialParameterInfo(LineWidth),L);
+     const TPair<float,float>& Base=Authored.FindOrAdd(M,TPair<float,float>(W,L));
+     M->SetScalarParameterValue(Width,Base.Key*Scale);M->SetScalarParameterValue(LineWidth,Base.Value*Scale);
+     Out.Logf(TEXT("%s part %d %s: outline %.3f -> %.3f"),*A->GetName(),P.SessionIndex,*M->GetName(),Base.Key,Base.Key*Scale);}}}
+ }));
 // ok.PrivateGpuLog 1: log each private GPU display a part loses or captures again (what makes it re-capture each frame).
 static TAutoConsoleVariable<int32> CVarOkPrivateGpuLog(TEXT("ok.PrivateGpuLog"),0,TEXT("1: log each private GPU display reset and capture with its reason"));
 // ok.PrivateGpuGates: for every character, each runtime part's private GPU route and what holds it on the CPU (the gate of
