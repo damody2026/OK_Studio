@@ -1334,6 +1334,7 @@ void UOKReaderScreen::BuildCategories()
 	FCategory Clothes;Clothes.Name=TEXT("衣服");
 	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Clothes")){Clothes.Groups.Add(Group(TEXT("穿著狀態"),{D->Body.Get()}));Clothes.Groups.Last().OnEnter=OpenDrawer(D);}
 	Clothes.Groups.Add(Group(TEXT("服裝"),{G->OutfitCombo?static_cast<UWidget*>(G->OutfitCombo->GetParent()):nullptr,G->OutfitNav.Get()}));
+	Clothes.Groups.Add(Group(TEXT("布料物理"),{G->PhysicsCombo?static_cast<UWidget*>(G->PhysicsCombo->GetParent()):nullptr}));
 	{FGroup Pick;Pick.Name=TEXT("外觀選擇");Pickers(Pick,{TEXT("clothes"),TEXT("pattern"),TEXT("emblem"),TEXT("sub")},{});Clothes.Groups.Add(MoveTemp(Pick));}
 	{FGroup Colours;Colours.Name=TEXT("顏色與設定");Pickers(Colours,{},{TEXT("clothes")});Clothes.Groups.Add(MoveTemp(Colours));}
 	for(FGroup& Each:Clothes.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
@@ -1475,6 +1476,7 @@ void UOKReaderScreen::BuildDrawers()
 		Row({TEXT("EditorInteraction"),TEXT("EditorStudio"),TEXT("EditorStudioTimeline")});
 		Row({TEXT("ModelApngSave"),TEXT("EditorSaveKks"),TEXT("EditorHands")});
 		if(G->OutfitCombo)Mirror(G->OutfitCombo.Get(),Grid,false);
+		if(G->PhysicsCombo)Mirror(G->PhysicsCombo.Get(),Grid,false);
 	}
 }
 

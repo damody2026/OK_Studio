@@ -455,6 +455,24 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	OutfitBox->SetHeightOverride(32.f);
 	OutfitBox->AddChild(OutfitCombo);
 	ShapeCol->AddChild(OutfitBox);
+	// Physics of her skirts, sleeves and drapes (ok.ClothPx / ok.ClothSolver).
+	PhysicsCombo = WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass(), TEXT("PhysicsCombo"));
+	PhysicsCombo->AddOption(TEXT("原始物理（DynamicBone）"));
+	PhysicsCombo->AddOption(TEXT("PhysX 布料"));
+	PhysicsCombo->AddOption(TEXT("FleX 布料"));
+	{
+		const IConsoleVariable* Px = IConsoleManager::Get().FindConsoleVariable(TEXT("ok.ClothPx"));
+		const IConsoleVariable* Solver = IConsoleManager::Get().FindConsoleVariable(TEXT("ok.ClothSolver"));
+		const int32 Current = (!Px || Px->GetInt() == 0) ? 0 : (Solver && Solver->GetInt() == 1 ? 2 : 1);
+		PhysicsCombo->SetSelectedIndex(Current);
+	}
+	PhysicsCombo->SetToolTipText(FText::FromString(TEXT("裙子、袖子與垂布用哪種物理：原作的 DynamicBone、PhysX 布料，或 NVIDIA FleX 布料（各層布料互相碰撞、碰撞她的身體網格）。換 PhysX／FleX 會重新載入模型。")));
+	PhysicsCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnPhysicsSelected);
+	USizeBox* PhysicsBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("PhysicsBox"));
+	PhysicsBox->SetWidthOverride(180.f);
+	PhysicsBox->SetHeightOverride(32.f);
+	PhysicsBox->AddChild(PhysicsCombo);
+	ShapeCol->AddChild(PhysicsBox);
 	auto* HandsButton=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("EditorHands"));auto* HandsLabel=WidgetTree->ConstructWidget<UTextBlock>();HandsLabel->SetText(FText::FromString(TEXT("左右手動作")));HandsButton->SetContent(HandsLabel);StylePoseButton(HandsButton);HandsButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnOpenHandControls);ShapeCol->AddChild(HandsButton);
 	HandCombos.Reset();
 	HandBlendSliders.Reset();
@@ -2321,6 +2339,26 @@ void UOKCharacterController::RefreshOutfitList()
 		OutfitLabel->SetText(FText::FromString(OutfitCombo->GetOptionAtIndex(Index)));
 	}
 	bSuppressOutfitCombo = false;
+}
+
+void UOKCharacterController::OnPhysicsSelected(FString SelectedItem, ESelectInfo::Type SelectionType)
+{
+	if (SelectionType == ESelectInfo::Direct || !PhysicsCombo) return;
+	const int32 Index = PhysicsCombo->FindOptionIndex(SelectedItem);
+	IConsoleVariable* Px = IConsoleManager::Get().FindConsoleVariable(TEXT("ok.ClothPx"));
+	IConsoleVariable* Solver = IConsoleManager::Get().FindConsoleVariable(TEXT("ok.ClothSolver"));
+	if (Index == INDEX_NONE || !Px || !Solver) return;
+	const int32 OldSolver = Solver->GetInt();
+	const bool bWasOn = Px->GetInt() != 0;
+	Px->Set(Index == 0 ? 0 : 1, ECVF_SetByConsole);
+	if (Index > 0) Solver->Set(Index == 2 ? 1 : 0, ECVF_SetByConsole);
+	// PhysX and FleX cut the cloth to different sizes as it loads (cloth_refine): her model is loaded again.
+	if (Index > 0 && (OldSolver != Solver->GetInt() || !bWasOn) && PreviewActor && !bLoadInFlight)
+	{
+		FOkSession::SetClothSolver(Solver->GetInt());
+		FOkSession::SetClothPx(Px->GetInt());
+		OnLoad3D();
+	}
 }
 
 void UOKCharacterController::OnOutfitSelected(FString SelectedItem, ESelectInfo::Type SelectionType)

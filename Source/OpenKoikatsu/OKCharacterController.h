@@ -494,6 +494,12 @@ public:
 
 	void RefreshOutfitList();
 
+	/** Which physics moves her skirts, sleeves and drapes: the original DynamicBones, PhysX cloth or NVIDIA FleX cloth. */
+	UFUNCTION()
+	void OnPhysicsSelected(FString SelectedItem, ESelectInfo::Type SelectionType);
+	UPROPERTY()
+	TObjectPtr<UComboBoxString> PhysicsCombo;
+
 	void OnShapeChanged(bool bBody, int32 Index, float Value);
 	void ResetShape(bool bBody, int32 Index);
 	UFUNCTION()
