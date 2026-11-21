@@ -63,7 +63,7 @@ fn log(level: i32, msg: &str) {
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool, smooth_all: bool, skin: bool, skin_margin: f32, skin_deep: f32, cap_floor: f32, layer_gap: f32, hold_out: f32 }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -91,7 +91,18 @@ fn tune() -> &'static Tune {
         rebuild: env_f("OK_CLOTH_PX_REBUILD", 0.3),
         shin: env_f("OK_CLOTH_PX_SHIN", 1.) > 0.5,
         // Passes averaging a follow cloth's offsets with its neighbours'.
-        smooth: env_f("OK_CLOTH_PX_SMOOTH", 2.).max(0.) as u32,
+        smooth: env_f("OK_CLOTH_PX_SMOOTH", 6.).max(0.) as u32,
+        smooth_all: env_f("OK_CLOTH_PX_SMOOTH_ALL", 1.) > 0.5,
+        skin: env_f("OK_CLOTH_PX_SKIN", 1.) > 0.5,
+        skin_margin: env_f("OK_CLOTH_PX_SKIN_MARGIN", 0.004),
+        // Where the pose lies deeper than this in her skin the cloth is held on it (hidden in her as the original is).
+        skin_deep: env_f("OK_CLOTH_PX_SKIN_DEEP", 0.005),
+        hold_out: env_f("OK_CLOTH_PX_HOLD_OUT", 0.03),
+        // Out of each body capsule at least this times its radius, whatever the pose (0: as the pose. 1 pushed the part of
+        // Raiden's gauze sleeves hanging in her pelvis out sideways and crumpled it, 2026-11-21; her skin field does it).
+        cap_floor: env_f("OK_CLOTH_PX_CAP_FLOOR", 0.),
+        // A mesh piece this near a bigger one of the same garment is its lining: it moves with it (0: every piece simulated).
+        layer_gap: env_f("OK_CLOTH_PX_LAYER_GAP", 0.006),
         // Longest edge of a cloth region's triangles after loading (0: the garment as authored), see cloth_refine.
         edge: env_f("OK_CLOTH_PX_EDGE", 0.025),
         // Out of the body: never nearer a capsule's axis than its pose is now, up to the capsule grown by
@@ -382,6 +393,8 @@ struct Sim {
     shown_raw: Vec<[f32; 3]>,
     since_result: f32,
     interval: f32,
+    /// Each particle of a layer that follows another: the particle it is shown moved as (u32::MAX: none; layer_leads).
+    lead: Vec<u32>,
     /// Time passed since the last job was launched (the next one simulates it).
     pending: f32,
 }
@@ -480,7 +493,15 @@ fn release_entry(e: &mut Entry) {
 }
 
 /// The session went away: its cloths released on the host.
+/// Whether any garment of `session` is (or is about to become) PhysX cloth: her skin is worth posing (cloth_skin).
+pub(crate) fn has_cloth(session: usize) -> bool {
+    if !active() { return false; }
+    let all = STATES.lock().unwrap();
+    all.as_ref().is_some_and(|m| m.iter().any(|((s, _), e)| *s == session && e.try_lock().map_or(true, |e| !e.failed && e.detect.is_some())))
+}
+
 pub fn forget(session: usize) {
+    crate::cloth_skin::forget(session);
     if let Some(m) = LAYERS.lock().unwrap().as_mut() { m.retain(|(s, _), _| *s != session); }
     let gone: Vec<Arc<Mutex<Entry>>> = {
         let mut all = STATES.lock().unwrap();
@@ -638,7 +659,14 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
             _ => true,
         };
     }
-    let pins: Vec<usize> = (0..np).filter(|&p| pinned[p]).collect();
+    // Layers of one garment: a lining (or a second skin) lies a few mm under its outer cloth as a mesh of its own. Two
+    // meshes simulated apart cross each other: Raiden's gauze sleeves showed their light-blue lining in torn patches
+    // through the purple (2026-11-21); the original moves both on the same bones. A mesh piece (connected by triangles)
+    // that lies mostly within OK_CLOTH_PX_LAYER_GAP of a bigger one is not simulated: its particles are held on the pose
+    // and shown moved as the nearest particle of that bigger one (`lead`), keeping the gap.
+    let lead = layer_leads(&tris, &pos, np);
+    for p in 0..np { if lead[p] != u32::MAX { pinned[p] = true; } }
+    let pins: Vec<usize> = (0..np).filter(|&p| pinned[p] && lead[p] == u32::MAX).collect();
     if pins.is_empty() { return None; }
     let mut max_dist = vec![0f32; np];
     let mut anchor = vec![u32::MAX; np];
@@ -680,7 +708,72 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
-        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), since_result: 0., interval: 0., pending: 0. })
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), since_result: 0., interval: 0., pending: 0., lead })
+}
+
+/// For each particle of a layer that follows another (see `build`): the particle it moves as; u32::MAX for the rest.
+fn layer_leads(tris: &[[u32; 3]], pos: &[[f32; 3]], np: usize) -> Vec<u32> {
+    let mut lead = vec![u32::MAX; np];
+    let gap = tune().layer_gap;
+    if gap <= 0. { return lead; }
+    let mut adj: Vec<Vec<u32>> = vec![Vec::new(); np];
+    for t3 in tris { for k in 0..3 { let (a, b) = (t3[k], t3[(k + 1) % 3]); adj[a as usize].push(b); adj[b as usize].push(a); } }
+    // Pieces by triangle edges.
+    let mut comp = vec![u32::MAX; np];
+    let mut size: Vec<usize> = Vec::new();
+    for s in 0..np {
+        if comp[s] != u32::MAX || adj[s].is_empty() { continue; }
+        let id = size.len() as u32;
+        let mut stack = vec![s as u32];
+        comp[s] = id;
+        let mut count = 0;
+        while let Some(a) = stack.pop() {
+            count += 1;
+            for &b in &adj[a as usize] { if comp[b as usize] == u32::MAX { comp[b as usize] = id; stack.push(b); } }
+        }
+        size.push(count);
+    }
+    if size.len() < 2 { return lead; }
+    // A piece is led by a bigger one (by particles; the first of equal ones leads).
+    let leads = |a: u32, b: u32| size[a as usize] > size[b as usize] || (size[a as usize] == size[b as usize] && a < b);
+    let cell = |p: [f32; 3]| -> [i64; 3] { p.map(|v| (v / gap).floor() as i64) };
+    let mut grid: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    for p in 0..np { if comp[p] != u32::MAX { grid.entry(cell(pos[p])).or_default().push(p as u32); } }
+    let mut best = vec![u32::MAX; np];
+    let mut close = vec![0usize; size.len()];
+    for p in 0..np {
+        if comp[p] == u32::MAX { continue; }
+        let c = cell(pos[p]);
+        let mut near = (gap * gap, u32::MAX);
+        for dx in -1..=1 { for dy in -1..=1 { for dz in -1..=1 {
+            let Some(list) = grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) else { continue };
+            for &q in list {
+                if comp[q as usize] == comp[p] || !leads(comp[q as usize], comp[p]) { continue; }
+                let d = sub(pos[q as usize], pos[p]);
+                let d = dot(d, d);
+                if d <= near.0 { near = (d, q); }
+            }
+        } } }
+        if near.1 != u32::MAX { best[p] = near.1; close[comp[p] as usize] += 1; }
+    }
+    let follows: Vec<bool> = (0..size.len()).map(|c| size[c] >= 8 && close[c] * 2 >= size[c]).collect();
+    for p in 0..np { if comp[p] != u32::MAX && follows[comp[p] as usize] { lead[p] = best[p]; } }
+    // The few of a following piece with nothing that near take a neighbour's.
+    for _ in 0..64 {
+        let mut changed = false;
+        for p in 0..np {
+            if comp[p] == u32::MAX || !follows[comp[p] as usize] || lead[p] != u32::MAX { continue; }
+            if let Some(&q) = adj[p].iter().find(|&&q| lead[q as usize] != u32::MAX) { lead[p] = lead[q as usize]; changed = true; }
+        }
+        if !changed { break; }
+    }
+    // Led by a piece that itself follows: by what that one follows.
+    for _ in 0..8 {
+        for p in 0..np { let l = lead[p]; if l != u32::MAX && lead[l as usize] != u32::MAX { lead[p] = lead[l as usize]; } }
+    }
+    let n = lead.iter().filter(|l| **l != u32::MAX).count();
+    if n > 0 { log(1, &format!("OK cloth px layers: {} pieces, {} of {np} particles follow another layer", size.len(), n)); }
+    lead
 }
 
 /// Body capsules for the cloth: limbs, hips and torso of the skeleton (no head, no floor sphere), as the body proxies
@@ -933,12 +1026,34 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             if sim.pinned[p] { continue; }
             for (ci, c) in caps.iter().enumerate() {
                 let full = c.radius * t.cap_scale;
-                let r = (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out);
+                // At least the capsule itself whatever the pose: the DynamicBone pose of Raiden's gauze sleeves lay in her pelvis
+                // and "no nearer than the pose" let the cloth follow it in (2026-11-21).
+                let r = (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out).max(c.radius * t.cap_floor);
                 v[p * caps.len() + ci] = if sim.cap_forced.get(p * sim.cap_n + ci).copied().unwrap_or(false) { r.max(full) } else { r };
             }
         }
         v
     } else { (0..np * caps.len()).map(|i| sim.cap_fit.get(i).copied().unwrap_or(0.)).collect() };
+    // Her real skin (cloth_skin, OK_CLOTH_PX_SKIN): each particle kept OK_CLOTH_PX_SKIN_MARGIN out of it, or as deep as
+    // its pose already is (a garment authored into her skin is not pushed off).
+    let skin_field = if t.skin { crate::cloth_skin::field(session) } else { None };
+    // `hold`: how much of its move each particle keeps (0: held on its pose). Where the pose itself lies in her body the
+    // cloth stays on it, hidden there as the original's is: Raiden's gauze sleeves hang through her pelvis in their
+    // DynamicBone pose, the cloth let them out in front of it, and pushing them out of her skin crumpled them onto her
+    // belly (2026-11-21). The hold eases off from OK_CLOTH_PX_SKIN_DEEP in her skin to OK_CLOTH_PX_HOLD_OUT out of it: cloth
+    // hanging near her body moves as the original, the rest swings (a hold only inside her folded the sleeve where it
+    // left her body into a crumpled wad showing its back).
+    let (need, hold): (Vec<f32>, Vec<f32>) = match &skin_field {
+        Some(f) => (0..np).map(|p| match f.depth(targets[p]) {
+            Some((dep, _, trust)) => {
+                let x = ((dep + t.skin_deep) / (t.hold_out + t.skin_deep).max(1e-4)).clamp(0., 1.);
+                (t.skin_margin + (dep.min(t.skin_margin) - t.skin_margin) * trust, 1. - trust * (1. - x * x * (3. - 2. * x)))
+            }
+            None => (t.skin_margin, 1.),
+        }).unzip(),
+        None => (Vec::new(), Vec::new()),
+    };
+    let skin_arg = skin_field.as_deref().map(|f| (f, need.as_slice(), hold.as_slice()));
     // Collect the finished GPU job first, work out the corrections on that very result (the GPU holds it), then launch
     // the next job with them. Corrections sent with the launch that collected a result were for the result before: in
     // async mode the host steered every vertex back to the previous result and the skirt shook between the two
@@ -959,7 +1074,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             // time this job covers (OK_CLOTH_PX_PULL per second: a pleat the walk flipped stayed flipped, 2026-11-20);
             // turned back onto the pose that result was made on.
             let mut fixed: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.goal[p])).collect();
-            constrain(sim, &d, &targets, normals, &caps, &live, &mut fixed);
+            constrain(sim, &d, &targets, normals, &caps, &live, skin_arg, &mut fixed);
             let back = 1. - (-t.pull * sim.pending).exp();
             let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
             let delta: Vec<[f32; 3]> = (0..np).map(|p| {
@@ -1011,7 +1126,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let n = n.max(1) as f64;
         log(1, &format!("OK cloth px debug: cloth {} free {} raw mean dy {:.1} mm, mean out {:.1} mm, {far} flung (pin centre y {:.3}, host {} jump {:.0} mm)", sim.key, n, dy / n * 1000., dr / n * 1000., c[1], sim.last_ok, sim.last_jump * 1000.));
     }
-    let (clamped, pushed) = constrain(sim, &d, &targets, normals, &caps, &live, &mut sim_pos);
+    let (clamped, pushed) = constrain(sim, &d, &targets, normals, &caps, &live, skin_arg, &mut sim_pos);
     let most = (0..np).map(|p| len(sub(sim_pos[p], targets[p]))).fold(0f32, f32::max);
     for p in 0..np { sim.offsets[p] = sub(sim_pos[p], targets[p]); }
     if debug_on() && dt > 0. {
@@ -1041,6 +1156,14 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let p = sim.particle_of[v];
         if p == u32::MAX { continue; }
         let p = p as usize;
+        // A following layer: moved as its lead, its own gap kept.
+        let l = sim.lead.get(p).copied().unwrap_or(u32::MAX);
+        if l != u32::MAX {
+            let l = l as usize;
+            positions[v] = add(positions[v], sub(sim_pos[l], targets[l]));
+            if let Some(n) = normals.get_mut(v) { *n = turn(*n, nt[l], ns[l]); }
+            continue;
+        }
         if sim.pinned[p] { continue; }
         positions[v] = sim_pos[p];
         if let Some(n) = normals.get_mut(v) { *n = turn(*n, nt[p], ns[p]); }
@@ -1052,7 +1175,8 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
 /// The cloth's positions kept to the garment: max distance from its pin and from the pose, sleeves not sunk behind their
 /// surface, skirts not risen, a follow cloth's moves smoothed with its neighbours', then out of the body (`live`: each
 /// particle's room from each capsule axis). Returns (clamped, pushed).
-fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], caps: &[OkPxCapsule], live: &[f32], pos: &mut [[f32; 3]]) -> (u64, u64) {
+fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], caps: &[OkPxCapsule], live: &[f32],
+    skin: Option<(&crate::cloth_skin::SkinField, &[f32], &[f32])>, pos: &mut [[f32; 3]]) -> (u64, u64) {
     let np = pos.len();
     let (mut clamped, mut pushed) = (0u64, 0u64);
     let t = tune();
@@ -1079,9 +1203,29 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
         if l > sim.max_dist[p] { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
         if sim.skirt[p] && pos[p][1] > targets[p][1] + t.up_max { pos[p][1] = targets[p][1] + t.up_max; clamped += 1; }
     }
-    // A follow cloth's moves averaged with its neighbours' (pinned ones moving by nothing): each particle clamped on its
-    // own around a DynamicBone pose that swings, the drape's edge jagged and tore (Raiden's kimono, 2026-11-21).
-    if d.follow && t.smooth > 0 {
+    // Out of her real skin (cloth_skin) before the smoothing too, so the smoothing spreads the push over the cloth round
+    // it instead of leaving one particle poking out: `need`, how far out of it each particle must stay (the margin, or as
+    // deep as its pose already is).
+    let out_of_skin = |pos: &mut [[f32; 3]]| -> u64 {
+        let Some((field, need, hold)) = skin else { return 0 };
+        let mut n = 0;
+        for p in 0..np {
+            if sim.pinned[p] { continue; }
+            let Some((dep, way, trust)) = field.depth(pos[p]) else { continue };
+            let want = need.get(p).copied().unwrap_or(t.skin_margin);
+            // As much as the particle is free of its pose (`hold`): one held near it is where the original has it, and pushed
+            // onto her skin where the pose went into her the sleeve folded into a wad on her belly (2026-11-21).
+            let free = hold.get(p).copied().unwrap_or(1.);
+            if dep < want { pos[p] = add(pos[p], scale(way, (want - dep) * trust * free)); n += 1; }
+        }
+        n
+    };
+    pushed += out_of_skin(pos);
+    // The moves averaged with the neighbours' (pinned ones moving by nothing), every cloth: each particle clamped on its
+    // own, the drape's edge jagged and tore (Raiden's kimono), and what the GPU cloth adds on top of the garment's own
+    // shape crumpled like tissue (her maid skirt's hem, 2026-11-21). Smoothing the moves keeps the garment's shape and
+    // its slow swing and drops the crumples (OK_CLOTH_PX_SMOOTH passes; OK_CLOTH_PX_SMOOTH_ALL=0: follow cloths only).
+    if (d.follow || t.smooth_all) && t.smooth > 0 {
         let mut off: Vec<[f32; 3]> = (0..np).map(|p| sub(pos[p], targets[p])).collect();
         for _ in 0..t.smooth {
             let next: Vec<[f32; 3]> = (0..np).map(|p| {
@@ -1106,6 +1250,15 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
             let v = sub(pos[p], axis);
             let dl = len(v);
             if dl < r && dl > 1e-6 { pos[p] = add(axis, scale(v, r / dl)); pushed += 1; }
+        }
+    }
+    // And after it (the smoothing pulls a pushed particle back in a little).
+    pushed += out_of_skin(pos);
+    // Last, held where the pose lies in her body (`hold`).
+    if let Some((_, _, hold)) = skin {
+        for p in 0..np {
+            let h = hold.get(p).copied().unwrap_or(1.);
+            if h < 1. && !sim.pinned[p] { pos[p] = add(targets[p], scale(sub(pos[p], targets[p]), h)); }
         }
     }
     (clamped, pushed)

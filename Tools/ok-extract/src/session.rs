@@ -2632,6 +2632,8 @@ impl OkSession {
         let jiggle_key=self as *const Self as usize;
         let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
         if crate::cloth_gpu::on_gpu()&&!pass.early(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
+        // Her skin posed for the PhysX cloth to keep out of (cloth_skin), when any of her garments is cloth.
+        crate::cloth_skin::prepare(jiggle_key,&self.parts,body);
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
             // Its skirt as PhysX cloth: its DynamicBones stay off (cloth_px).
@@ -2768,6 +2770,7 @@ impl OkSession {
         let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);
         let jiggle_key=self as *const Self as usize;
         if crate::cloth_gpu::on_gpu(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
+        crate::cloth_skin::prepare(jiggle_key,&self.parts,body);
         let render=|(index,part):(usize,&mut SessionPart)| {
             let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};

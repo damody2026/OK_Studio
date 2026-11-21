@@ -47,8 +47,8 @@ static TAutoConsoleVariable<float> CVarYoungs(TEXT("OKPhysXCloth.Youngs"), 2.0e5
 static TAutoConsoleVariable<float> CVarPoisson(TEXT("OKPhysXCloth.Poisson"), 0.3f, TEXT("Cloth Poisson ratio. New cloths."));
 static TAutoConsoleVariable<float> CVarFriction(TEXT("OKPhysXCloth.Friction"), 0.3f, TEXT("Cloth friction on the body capsules. New cloths."));
 static TAutoConsoleVariable<float> CVarThickness(TEXT("OKPhysXCloth.Thickness"), 0.0005f, TEXT("Cloth thickness (m). New cloths. 3 mm drew the skirt 5 cm up and in (2026-11-20)."));
-static TAutoConsoleVariable<float> CVarBending(TEXT("OKPhysXCloth.Bending"), 0.02f, TEXT("Bending stiffness of sleeves-only cloths (without it a bell sleeve slumped onto its cuff). New cloths."));
-static TAutoConsoleVariable<float> CVarBendingSkirt(TEXT("OKPhysXCloth.BendingSkirt"), 0.f, TEXT("Bending stiffness of cloths with a skirt. Any bending let a walk flip the pleats into a mirrored rest angle that held the skirt 5 cm up (2026-11-20). New cloths."));
+static TAutoConsoleVariable<float> CVarBending(TEXT("OKPhysXCloth.Bending"), 0.5f, TEXT("Bending stiffness of sleeves-only cloths (without it a bell sleeve slumped onto its cuff; 0.02 until 2026-11-21, crumpled once the cloth really moved). New cloths."));
+static TAutoConsoleVariable<float> CVarBendingSkirt(TEXT("OKPhysXCloth.BendingSkirt"), 0.5f, TEXT("Bending stiffness of cloths with a skirt. 0 until 2026-11-21 (\"pleats flipped to a mirrored rest angle\", judged while the host lost every upload); with the cloth really simulated, 0 crumpled Raiden's maid skirt like tissue with a jagged hem, 0.5 hangs flat. New cloths."));
 static TAutoConsoleVariable<float> CVarElasticDamping(TEXT("OKPhysXCloth.ElasticDamping"), 0.005f, TEXT("Stretch damping. New cloths."));
 static TAutoConsoleVariable<float> CVarBendDamping(TEXT("OKPhysXCloth.BendDamping"), 0.01f, TEXT("Bending damping. New cloths."));
 static TAutoConsoleVariable<float> CVarLinearDamping(TEXT("OKPhysXCloth.Damping"), 0.6f, TEXT("Linear damping of the cloth vertices (air)."));
