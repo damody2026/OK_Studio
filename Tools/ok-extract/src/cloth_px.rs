@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use rayon::prelude::*;
 
 use crate::px::OkPxCapsule;
 
@@ -63,7 +64,7 @@ fn log(level: i32, msg: &str) {
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool, smooth_all: bool, skin: bool, skin_margin: f32, skin_deep: f32, cap_floor: f32, layer_gap: f32, hold_out: f32 }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool, smooth_all: bool, skin: bool, skin_margin: f32, skin_deep: f32, cap_floor: f32, layer_gap: f32, hold_out: f32, skin_host: bool, damp: bool, damp_t: f32, hold: bool }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -98,6 +99,10 @@ fn tune() -> &'static Tune {
         // Where the pose lies deeper than this in her skin the cloth is held on it (hidden in her as the original is).
         skin_deep: env_f("OK_CLOTH_PX_SKIN_DEEP", 0.005),
         hold_out: env_f("OK_CLOTH_PX_HOLD_OUT", 0.03),
+        skin_host: env_f("OK_CLOTH_PX_SKIN_HOST", 1.) > 0.5,
+        damp: env_f("OK_CLOTH_PX_DAMP", 1.) > 0.5,
+        damp_t: env_f("OK_CLOTH_PX_DAMP_T", 2.),
+        hold: env_f("OK_CLOTH_PX_HOLD", 1.) > 0.5,
         // Out of each body capsule at least this times its radius, whatever the pose (0: as the pose. 1 pushed the part of
         // Raiden's gauze sleeves hanging in her pelvis out sideways and crumpled it, 2026-11-21; her skin field does it).
         cap_floor: env_f("OK_CLOTH_PX_CAP_FLOOR", 0.),
@@ -391,6 +396,8 @@ struct Sim {
     /// since that result and the usual time between results.
     goal: Vec<[f32; 3]>,
     shown_raw: Vec<[f32; 3]>,
+    /// How fast what is shown moves (OK_CLOTH_PX_DAMP), carried as `goal`.
+    shown_vel: Vec<[f32; 3]>,
     since_result: f32,
     interval: f32,
     /// Each particle of a layer that follows another: the particle it is shown moved as (u32::MAX: none; layer_leads).
@@ -708,7 +715,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
-        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), since_result: 0., interval: 0., pending: 0., lead })
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead })
 }
 
 /// For each particle of a layer that follows another (see `build`): the particle it moves as; u32::MAX for the rest.
@@ -1009,11 +1016,12 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let last_frames = frames(&sim.last_target, &sim.tris, &sim.nbr);
     let reset = jump > 0.35;
     if sim.goal.len() != np || reset {
-        sim.goal = vec![[0f32; 3]; np]; sim.shown_raw = vec![[0f32; 3]; np]; sim.interval = 0.; sim.since_result = 0.;
+        sim.goal = vec![[0f32; 3]; np]; sim.shown_raw = vec![[0f32; 3]; np]; sim.shown_vel = vec![[0f32; 3]; np]; sim.interval = 0.; sim.since_result = 0.;
     }
     for p in 0..np {
         sim.goal[p] = carry(sim.goal[p], &last_frames[p], &now_frames[p]);
         sim.shown_raw[p] = carry(sim.shown_raw[p], &last_frames[p], &now_frames[p]);
+        sim.shown_vel[p] = carry(sim.shown_vel[p], &last_frames[p], &now_frames[p]);
     }
     // Out of the body. Live (OK_CLOTH_PX_LIVE_PUSH): never nearer a capsule's axis than the pose is this frame, up to the
     // capsule grown plus OK_CLOTH_PX_KEEP_OUT. The room a particle had when the cloth was made was wrong once the walk
@@ -1044,10 +1052,10 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     // hanging near her body moves as the original, the rest swings (a hold only inside her folded the sleeve where it
     // left her body into a crumpled wad showing its back).
     let (need, hold): (Vec<f32>, Vec<f32>) = match &skin_field {
-        Some(f) => (0..np).map(|p| match f.depth(targets[p]) {
+        Some(f) => (0..np).into_par_iter().map(|p| match f.depth(targets[p]) {
             Some((dep, _, trust)) => {
                 let x = ((dep + t.skin_deep) / (t.hold_out + t.skin_deep).max(1e-4)).clamp(0., 1.);
-                (t.skin_margin + (dep.min(t.skin_margin) - t.skin_margin) * trust, 1. - trust * (1. - x * x * (3. - 2. * x)))
+                (t.skin_margin + (dep.min(t.skin_margin) - t.skin_margin) * trust, if t.hold { 1. - trust * (1. - x * x * (3. - 2. * x)) } else { 1. })
             }
             None => (t.skin_margin, 1.),
         }).unzip(),
@@ -1074,7 +1082,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             // time this job covers (OK_CLOTH_PX_PULL per second: a pleat the walk flipped stayed flipped, 2026-11-20);
             // turned back onto the pose that result was made on.
             let mut fixed: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.goal[p])).collect();
-            constrain(sim, &d, &targets, normals, &caps, &live, skin_arg, &mut fixed);
+            constrain(sim, &d, &targets, normals, &caps, &live, if t.skin_host { skin_arg } else { None }, &mut fixed);
             let back = 1. - (-t.pull * sim.pending).exp();
             let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
             let delta: Vec<[f32; 3]> = (0..np).map(|p| {
@@ -1100,8 +1108,25 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         sim.interval = if sim.interval > 0. { sim.interval * 0.7 + sim.since_result * 0.3 } else { sim.since_result };
         sim.since_result = 0.;
     }
-    let a = if !t.blend || reset || sim.interval <= 1e-4 { 1. } else { (dt / sim.interval).clamp(0., 1.) };
-    for p in 0..np { sim.shown_raw[p] = add(sim.shown_raw[p], scale(sub(sim.goal[p], sim.shown_raw[p]), a)); }
+    // A critically damped spring toward it (OK_CLOTH_PX_DAMP, time OK_CLOTH_PX_DAMP_T x the usual time between results):
+    // easing a share of the way each frame turned the cloth's motion at every result, 3 frames apart at 60 fps, and the
+    // kimono shook 1.5-2 times its pose (Raiden, 2026-11-21); the spring keeps its speed continuous.
+    if !t.blend || reset || sim.interval <= 1e-4 {
+        for p in 0..np { sim.shown_raw[p] = sim.goal[p]; sim.shown_vel[p] = [0.; 3]; }
+    } else if t.damp && dt > 0. {
+        let w = 2. / (sim.interval * t.damp_t).max(1e-3);
+        let x = w * dt;
+        let e = 1. / (1. + x + 0.48 * x * x + 0.235 * x * x * x);
+        for p in 0..np {
+            let change = sub(sim.shown_raw[p], sim.goal[p]);
+            let temp = scale(add(sim.shown_vel[p], scale(change, w)), dt);
+            sim.shown_vel[p] = scale(sub(sim.shown_vel[p], scale(temp, w)), e);
+            sim.shown_raw[p] = add(sim.goal[p], scale(add(change, temp), e));
+        }
+    } else {
+        let a = (dt / sim.interval).clamp(0., 1.);
+        for p in 0..np { sim.shown_raw[p] = add(sim.shown_raw[p], scale(sub(sim.goal[p], sim.shown_raw[p]), a)); }
+    }
     let mut sim_pos: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.shown_raw[p])).collect();
     sim.last_target = targets.clone();
     if debug_due(sim.key) {
@@ -1208,17 +1233,15 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
     // deep as its pose already is).
     let out_of_skin = |pos: &mut [[f32; 3]]| -> u64 {
         let Some((field, need, hold)) = skin else { return 0 };
-        let mut n = 0;
-        for p in 0..np {
-            if sim.pinned[p] { continue; }
-            let Some((dep, way, trust)) = field.depth(pos[p]) else { continue };
+        pos.par_iter_mut().enumerate().map(|(p, at)| {
+            if sim.pinned[p] { return 0; }
+            let Some((dep, way, trust)) = field.depth(*at) else { return 0 };
             let want = need.get(p).copied().unwrap_or(t.skin_margin);
             // As much as the particle is free of its pose (`hold`): one held near it is where the original has it, and pushed
             // onto her skin where the pose went into her the sleeve folded into a wad on her belly (2026-11-21).
             let free = hold.get(p).copied().unwrap_or(1.);
-            if dep < want { pos[p] = add(pos[p], scale(way, (want - dep) * trust * free)); n += 1; }
-        }
-        n
+            if dep < want { *at = add(*at, scale(way, (want - dep) * trust * free)); 1 } else { 0 }
+        }).sum::<u64>()
     };
     pushed += out_of_skin(pos);
     // The moves averaged with the neighbours' (pinned ones moving by nothing), every cloth: each particle clamped on its

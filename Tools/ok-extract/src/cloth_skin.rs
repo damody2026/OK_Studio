@@ -15,6 +15,10 @@ const THIN_M: f32 = 0.01;
 const CELL_M: f32 = 0.04;
 /// Width of the Gaussian each skin vertex is read with (`SkinField::depth`).
 const SIGMA_M: f32 = 0.01;
+fn sigma() -> f32 {
+    static S: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *S.get_or_init(|| std::env::var("OK_CLOTH_PX_SKIN_SIGMA").ok().and_then(|v| v.parse().ok()).unwrap_or(SIGMA_M))
+}
 
 /// Her body part and the vertices kept of it (by its mesh and size).
 struct Still { body: usize, verts: Vec<u32> }
@@ -121,22 +125,27 @@ impl SkinField {
                 Some(&self.items[self.start[i] as usize..self.start[i + 1] as usize])
             });
         let dist2 = |q: [f32; 3]| (at[0] - q[0]).powi(2) + (at[1] - q[1]).powi(2) + (at[2] - q[2]).powi(2);
-        let mut nearest = f32::MAX;
-        for items in cells() { for &s in items { nearest = nearest.min(dist2(self.p[s as usize])); } }
-        if nearest > CELL_M * CELL_M { return None; }
         // Weighted against the nearest (it counts 1): a point deep in her thigh, 3 cm from all her skin, reads it as
-        // surely as one on it.
+        // surely as one on it. One pass: the sums so far are scaled down whenever a nearer vertex turns up (this runs
+        // several times a frame for every particle; two passes cost Raiden 40 fps, 2026-11-21).
         let (mut sum, mut weight, mut way) = (0f32, 0f32, [0f32; 3]);
-        let k2 = -0.5 / (SIGMA_M * SIGMA_M);
+        let mut nearest = CELL_M * CELL_M;
+        let k2 = -0.5 / (sigma() * sigma());
         for items in cells() { for &s in items {
             let (q, n) = (self.p[s as usize], self.n[s as usize]);
             let d = dist2(q);
             if d > CELL_M * CELL_M { continue; }
+            if d < nearest {
+                let k = ((nearest - d) * k2).exp();
+                sum *= k; weight *= k; for a in 0..3 { way[a] *= k; }
+                nearest = d;
+            }
             let w = ((d - nearest) * k2).exp();
             sum += w * ((at[0] - q[0]) * n[0] + (at[1] - q[1]) * n[1] + (at[2] - q[2]) * n[2]);
             weight += w;
             for a in 0..3 { way[a] += w * n[a]; }
         } }
+        if weight <= 0. { return None; }
         let l = (way[0] * way[0] + way[1] * way[1] + way[2] * way[2]).sqrt();
         if l < 1e-6 || weight < 1e-6 { return None; }
         // How much the reading counts (0..1), fading out where the skin read faces both ways (between her thighs: no way
