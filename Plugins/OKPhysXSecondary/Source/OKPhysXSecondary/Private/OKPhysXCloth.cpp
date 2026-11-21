@@ -56,10 +56,12 @@ static TAutoConsoleVariable<float> CVarMass(TEXT("OKPhysXCloth.Mass"), 0.25f, TE
 static TAutoConsoleVariable<int32> CVarIterations(TEXT("OKPhysXCloth.Iterations"), 12, TEXT("Solver position iterations."));
 static TAutoConsoleVariable<float> CVarSubstepHz(TEXT("OKPhysXCloth.SubstepHz"), 120.f, TEXT("Substeps per second (at most MaxSubsteps per frame)."));
 static TAutoConsoleVariable<int32> CVarMaxSubsteps(TEXT("OKPhysXCloth.MaxSubsteps"), 2, TEXT("Most substeps in one frame."));
+static TAutoConsoleVariable<float> CVarMaxDt(TEXT("OKPhysXCloth.MaxDt"), 0.034f, TEXT("Most time (s) one GPU job simulates (in at most MaxSubsteps substeps); the time past it is dropped. Was MaxSubsteps/SubstepHz (16.7 ms): with a job taking 20 ms on a busy GPU the cloth ran at 2/3 speed (2026-11-21)."));
 static TAutoConsoleVariable<int32> CVarRestFollow(TEXT("OKPhysXCloth.RestFollow"), 0, TEXT("1: upload the skinned pose as the rest positions every step. PhysX keeps the rest state of the pose a cloth was made in, so this changed nothing measurable (2026-11-20); Rust makes the cloth on a moving pose instead."));
 static TAutoConsoleVariable<int32> CVarFeedPrev(TEXT("OKPhysXCloth.FeedPrev"), 1, TEXT("1: the free vertices start each step where Rust showed them (carried with the body); 0: the GPU keeps its own state, only the pins move."));
 static TAutoConsoleVariable<int32> CVarPinByVelocity(TEXT("OKPhysXCloth.PinByVelocity"), 1, TEXT("1: the pins move to their targets by velocity and the free vertices keep the GPU state; 0: both written as positions each step (made the cloth fly off, 2026-11-21)."));
 static TAutoConsoleVariable<float> CVarSteerGain(TEXT("OKPhysXCloth.SteerGain"), 1.f, TEXT("PinByVelocity: share of the way to where Rust showed it a moved free vertex is steered in one step (by velocity)."));
+static TAutoConsoleVariable<float> CVarSteerKeep(TEXT("OKPhysXCloth.SteerKeep"), 1.f, TEXT("PinByVelocity: share of a steered free vertex's steering velocity it keeps after the step (0: steering moves it like a position correction, no momentum left to overshoot with)."));
 static TAutoConsoleVariable<int32> CVarCollide(TEXT("OKPhysXCloth.Collide"), 1, TEXT("1: the body capsules are kinematic colliders on the GPU too (Rust always pushes out of them after)."));
 static TAutoConsoleVariable<int32> CVarCudaWait(TEXT("OKPhysXCloth.CudaWait"), 0, TEXT("CUDA context scheduling when it is created: 0 auto (spin while cores are free), 1 spin, 2 yield, 4 blocking."));
 static TAutoConsoleVariable<int32> CVarInterpolatePins(TEXT("OKPhysXCloth.InterpolatePins"), 0, TEXT("1: the pinned vertices move along their path every substep (an upload and a readback per substep)."));
@@ -138,6 +140,9 @@ namespace
 		TArray<PxVec3> LastPrev;   // cooked order: where the free vertices started the last step (Prev)
 		bool bHavePrev = false;
 		TArray<PxVec3> LastPinned; // cooked order: last frame's targets (pinned vertices move along them per substep)
+		TArray<PxVec3> Steer;      // cooked order: the steering velocity this job's free vertices were given (zero: none)
+		float SteerKeep = 1.f;
+		bool bPrevIsCorrection = false; // Create flag bit 1: Step's Prev holds Rust's corrections, not positions
 		TArray<PxRigidDynamic*> Capsules;
 		TArray<FVector4f> CapsuleShape; // radius, half height
 		int32 N = 0;
@@ -341,6 +346,7 @@ namespace
 			Cloth->Surface->markDirty(PxDeformableSurfaceDataFlag::eALL);
 		}
 		Cloth->N = int32(N);
+		Cloth->bPrevIsCorrection = (Flags & 2u) != 0;
 		GCloths.Add(Key, MoveTemp(Cloth));
 		return 1;
 	}
@@ -381,6 +387,17 @@ namespace
 		Ext::PxCudaHelpersExt::copyDToH(*GCuda, Cloth.PosInvMass, Device, uint32(Cloth.N));
 		// The velocities too: the next upload sends them back (the pins' set to reach their targets, the rest as they were).
 		Ext::PxCudaHelpersExt::copyDToH(*GCuda, Cloth.Vel, Cloth.Surface->getVelocityBufferD(), uint32(Cloth.N));
+		// The steering taken back out (OKPhysXCloth.SteerKeep): it was there to move the vertex, not to keep it moving.
+		if (Cloth.SteerKeep < 1.f && Cloth.Steer.Num() == Cloth.N)
+		{
+			const float Drop = 1.f - FMath::Max(0.f, Cloth.SteerKeep);
+			for (int32 I = 0; I < Cloth.N; ++I)
+			{
+				if (Cloth.Steer[I].isZero()) continue;
+				const PxVec3 V = Cloth.Vel[I].getXYZ() - Cloth.Steer[I] * Drop;
+				Cloth.Vel[I] = PxVec4(V, Cloth.Vel[I].w);
+			}
+		}
 		if (Before.Num() == Cloth.N)
 		{
 			// OKPhysXCloth.Log 2: how far this job moved the free vertices, and the GPU velocities after it.
@@ -427,6 +444,26 @@ namespace
 		// One caller per cloth at a time (Rust locks its entry); Release takes GLock and waits for the job.
 		bool bHave = false;
 		const bool bAsync = CVarAsync.GetValueOnAnyThread() != 0;
+		// Dt 0: only collect. The finished job's result (for the targets it was given) into Out, returns 2; 3 while it
+		// still runs, 0 with no job. Rust then works out its corrections on that very result and launches the next job
+		// with them: corrections sent with the launch that collected it were for the result before, and steering the
+		// GPU by them shook Raiden's skirt between two results (2026-11-21).
+		if (Dt == 0.f)
+		{
+			if (!Cloth.bJob) return 0;
+			if (bAsync && !Cloth.Job.IsCompleted()) return 3;
+			{ TRACE_CPUPROFILER_EVENT_SCOPE(OKPxCloth_Wait); Cloth.Job.Wait(); }
+			Cloth.bJob = false;
+			for (int32 I = 0; I < Cloth.N; ++I)
+			{
+				const PxVec4& P = Cloth.PosInvMass[I];
+				float* O = Out + Cloth.InputOf[I] * 3;
+				const PxVec3 T = Cloth.LastPinned[I];
+				if (Cloth.InvMass[I] <= 0.f || !P.isFinite()) { O[0] = T.x; O[1] = T.y; O[2] = T.z; }
+				else { O[0] = P.x; O[1] = P.y; O[2] = P.z; }
+			}
+			return 2;
+		}
 		// Still on the GPU (each substep waits 7-11 ms for the GPU the renderer also uses; the Flex plugin measured the
 		// same): this frame keeps the last result, its time added to the next job. Never blocks the frame.
 		if (Cloth.bJob && bAsync && Dt >= 0.f && !Cloth.Job.IsCompleted()) { Cloth.PendingDt += Dt; return 3; }
@@ -461,10 +498,10 @@ namespace
 		};
 		// The previous job's result, for the targets it was given (LastPinned holds them).
 		if (bHave && bAsync) Write([&](int32 I) { return Cloth.LastPinned[I]; });
-		// No substep longer than 1/SubstepHz: the time past MaxSubsteps of them is dropped. A hitch (switching clips, 0.1 s)
+		// No job longer than OKPhysXCloth.MaxDt: the time past it is dropped. A hitch (switching clips, 0.1 s)
 		// made two 50 ms substeps, after which the whole cloth, pins included, flew off at the 8 m/s cap (2026-11-21).
 		const float FrameDt = FMath::Min(Dt, 0.1f);
-		Dt = FMath::Min(Dt, float(FMath::Max(1, CVarMaxSubsteps.GetValueOnAnyThread())) / FMath::Max(10.f, CVarSubstepHz.GetValueOnAnyThread()));
+		Dt = FMath::Min(Dt, FMath::Clamp(CVarMaxDt.GetValueOnAnyThread(), 0.005f, 0.1f));
 		// What Rust showed last frame (its max distance and capsule push applied) is where the free vertices start.
 		// Their velocities with them: the motion shown between the last two starts. The GPU's own velocity belongs to
 		// positions this replaced, and kept it lifted the skirt 4 cm a step while walking (2026-11-20).
@@ -486,6 +523,8 @@ namespace
 			// A free vertex Rust moved (kept within its max distance of the pose, pushed out of the body) is steered
 			// there over the substeps, by velocity as well: left alone, a long panel's hem swung 0.5-0.9 m off its
 			// DynamicBone pose and Rust showed only the clamp of that (Raiden's kimono, 2026-11-21).
+			Cloth.Steer.SetNumZeroed(Cloth.N);
+			Cloth.SteerKeep = CVarSteerKeep.GetValueOnAnyThread();
 			if (Prev && CVarFeedPrev.GetValueOnAnyThread() != 0)
 			{
 				const float Gain = FMath::Max(0.f, CVarSteerGain.GetValueOnAnyThread());
@@ -493,14 +532,29 @@ namespace
 				{
 					if (Cloth.InvMass[I] <= 0.f) continue;
 					const float* P = Prev + Cloth.InputOf[I] * 3;
-					const PxVec3 Off = PxVec3(P[0], P[1], P[2]) - Cloth.PosInvMass[I].getXYZ();
-					if (Off.magnitudeSquared() < 0.005f * 0.005f) continue;
+					// Corrections (create flag bit 1): the move Rust gave the result it showed. Positions were a result
+					// behind the GPU in async mode, so steering to them pulled every vertex back to the result before
+					// and the cloth shook between the two (2026-11-21).
+					const PxVec3 Off = Cloth.bPrevIsCorrection ? PxVec3(P[0], P[1], P[2]) : PxVec3(P[0], P[1], P[2]) - Cloth.PosInvMass[I].getXYZ();
+					if (Off.magnitudeSquared() < (Cloth.bPrevIsCorrection ? 0.0005f * 0.0005f : 0.005f * 0.005f)) continue;
 					PxVec3 V = Off * (InvDt * Gain);
 					const float Speed = V.magnitude();
 					if (Speed > 6.f) V *= 6.f / Speed;
-					Cloth.Vel[I] = PxVec4(V, 0.f);
+					if (Cloth.bPrevIsCorrection)
+					{
+						// Like a contact: the vertex's own motion against the correction stops (it kept running into the
+						// clamp), the rest of it stays, and the correction moves it without staying as momentum.
+						PxVec3 Own = Cloth.Vel[I].getXYZ();
+						const PxVec3 Dir = Off.getNormalized();
+						const float Against = Own.dot(Dir);
+						if (Against < 0.f) Own -= Dir * Against;
+						Cloth.Vel[I] = PxVec4(Own + V, 0.f);
+					}
+					else Cloth.Vel[I] = PxVec4(V, 0.f);
+					Cloth.Steer[I] = V;
 				}
 			}
+			if (Cloth.bPrevIsCorrection) Cloth.SteerKeep = 0.f;
 			Cloth.bVelDirty = true;
 		}
 		else if (Prev && CVarFeedPrev.GetValueOnAnyThread() != 0)

@@ -24,10 +24,12 @@ use std::sync::{Arc, Mutex};
 use crate::px::OkPxCapsule;
 
 /// `flags` bit 0: the garment has a skirt region (no bending: a walk flipped its pleats into a mirrored rest angle).
+/// Bit 1: `prev` of each step holds corrections (the move Rust gave each vertex of the last result shown), not positions.
 pub type CreateFn = unsafe extern "C" fn(key: u64, n: u32, pos: *const f32, inv_mass: *const f32, tri_n: u32, tris: *const u32, flags: u32) -> i32;
 /// dt < 0: put every vertex on its target at rest (teleport, first frame). Returns 1 with `out` for these targets, 2 with
 /// `out` for the previous call's targets (the host simulates while the frame renders), 0 with nothing.
-/// `prev`: what was shown last frame (null: the host's own state); the free vertices start there.
+/// `prev`: what was shown last frame (null: the host's own state); the free vertices start there. With create flag bit 1:
+/// the corrections to steer the free vertices by instead.
 pub type StepFn = unsafe extern "C" fn(key: u64, n: u32, targets: *const f32, prev: *const f32, caps: *const OkPxCapsule, cap_n: u32, dt: f32, out: *mut f32) -> i32;
 pub type ReleaseFn = unsafe extern "C" fn(key: u64);
 
@@ -61,7 +63,7 @@ fn log(level: i32, msg: &str) {
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32 }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32, keep_out: f32, live_push: bool, blend: bool }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -92,6 +94,11 @@ fn tune() -> &'static Tune {
         smooth: env_f("OK_CLOTH_PX_SMOOTH", 2.).max(0.) as u32,
         // Longest edge of a cloth region's triangles after loading (0: the garment as authored), see cloth_refine.
         edge: env_f("OK_CLOTH_PX_EDGE", 0.025),
+        // Out of the body: never nearer a capsule's axis than its pose is now, up to the capsule grown by
+        // OK_CLOTH_PX_CAPSULE plus this (OK_CLOTH_PX_LIVE_PUSH=0: the room it had when the cloth was made, as before).
+        keep_out: env_f("OK_CLOTH_PX_KEEP_OUT", 0.04),
+        live_push: env_f("OK_CLOTH_PX_LIVE_PUSH", 1.) > 0.5,
+        blend: env_f("OK_CLOTH_PX_BLEND", 1.) > 0.5,
     })
 }
 
@@ -362,6 +369,21 @@ struct Sim {
     /// Diagnostics (OK_CLOTH_PX_DEBUG): the host's last answer and the pose jump it was given.
     last_ok: i32,
     last_jump: f32,
+    /// Jitter (OK_CLOTH_PX_DEBUG): each free particle's offset from its pose over the last two frames, raw (the host's
+    /// result carried) and shown; the second difference of that is what shakes on screen while the pose moves smoothly.
+    jit_hist: Vec<[[f32; 3]; 4]>,
+    /// [raw sum mm, shown sum mm, samples, frames, frames with a host result]
+    jit: [f64; 5],
+    /// Per particle and capsule: kept out by the capsule's whole grown size whatever its pose (a long skirt's shins).
+    cap_forced: Vec<bool>,
+    /// OK_CLOTH_PX_BLEND: the newest host result and what is shown, as offsets from the pose (carried with it), the time
+    /// since that result and the usual time between results.
+    goal: Vec<[f32; 3]>,
+    shown_raw: Vec<[f32; 3]>,
+    since_result: f32,
+    interval: f32,
+    /// Time passed since the last job was launched (the next one simulates it).
+    pending: f32,
 }
 struct Entry { detect: Option<Arc<Detect>>, sim: Option<Sim>, failed: bool, pose: PoseWatch }
 /// Whether the garment is being animated. PhysX keeps the rest shape a cloth was made in, and the bind pose (the
@@ -658,7 +680,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
-        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0. })
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), since_result: 0., interval: 0., pending: 0. })
 }
 
 /// Body capsules for the cloth: limbs, hips and torso of the skeleton (no head, no floor sphere), as the body proxies
@@ -678,9 +700,12 @@ fn particle_normals(pos: &[[f32; 3]], tris: &[[u32; 3]]) -> Vec<[f32; 3]> {
     n
 }
 /// OK_CLOTH_PX_DEBUG=1: true about once a second per cloth.
-fn debug_due(key: u64) -> bool {
+fn debug_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1")) { return false; }
+    *ON.get_or_init(|| std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1"))
+}
+fn debug_due(key: u64) -> bool {
+    if !debug_on() { return false; }
     static LAST: Mutex<Option<HashMap<u64, std::time::Instant>>> = Mutex::new(None);
     let mut m = LAST.lock().unwrap();
     let m = m.get_or_insert_with(HashMap::new);
@@ -832,7 +857,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let targets: Vec<[f32; 3]> = sim.rep.iter().map(|&v| positions[v as usize]).collect();
     if !sim.created {
         let inv: Vec<f32> = sim.pinned.iter().map(|p| if *p { 0. } else { 1. }).collect();
-        let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.pleats as u32) };
+        let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.pleats as u32 | 2) };
         if ok != 1 {
             e.failed = true; e.sim = None;
             log(2, &format!("OK cloth px: host could not create the cloth of part {index} ({}), DynamicBone kept", part.role));
@@ -856,6 +881,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         // A long skirt's hanging part keeps out of the lower legs by their whole size, however close it hung when the
         // cloth was made: made mid-stride, the shin was already in Raiden's kimono panel and kept going through it
         // (outfit 5, 2026-11-21). OK_CLOTH_PX_SHIN=0: as the rest of the body.
+        sim.cap_forced = vec![false; np * caps.len()];
         if d.long && t.shin {
             let shins: Vec<usize> = caps.iter().enumerate().filter(|(_, c)| ["L", "R"].iter().any(|s| {
                 let near = |a: [f32; 3], bone: &str| bone_pos(skel, &format!("{bone}_{s}")).is_some_and(|b| len(sub(a, b)) < 1e-4);
@@ -863,7 +889,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             })).map(|(i, _)| i).collect();
             for p in 0..np {
                 if sim.pinned[p] || !sim.skirt[p] { continue; }
-                for &ci in &shins { sim.cap_fit[p * sim.cap_n + ci] = caps[ci].radius * t.cap_scale; }
+                for &ci in &shins { sim.cap_fit[p * sim.cap_n + ci] = caps[ci].radius * t.cap_scale; sim.cap_forced[p * sim.cap_n + ci] = true; }
             }
         }
         sim.gpu_rad = caps.iter().enumerate().map(|(ci, c)| (0..np).filter(|&p| !sim.pinned[p])
@@ -885,41 +911,90 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         if passed >= 0.004 { passed.min(0.1) } else { 0. }
     };
     if dt > 0. || sim.last_step.is_none() { sim.last_step = Some(now); }
-    // The last result's moves, turned from the last pose's local frames to this pose's.
+    // The newest result and what is shown, as moves off the pose: turned from the last pose's local frames to this one's.
     let now_frames = frames(&targets, &sim.tris, &sim.nbr);
     let last_frames = frames(&sim.last_target, &sim.tris, &sim.nbr);
-    let carried: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], carry(sim.offsets[p], &last_frames[p], &now_frames[p]))).collect();
-    let mut sim_pos: Vec<[f32; 3]>;
-    if dt > 0. {
-        let t0 = std::time::Instant::now();
-        sim_pos = vec![[0f32; 3]; np];
-        let reset = jump > 0.35;
-        let ok = unsafe { step(sim.key, np as u32, targets.as_ptr().cast(), carried.as_ptr().cast(), gpu_caps.as_ptr(), gpu_caps.len() as u32, if reset { -1. } else { dt }, sim_pos.as_mut_ptr().cast()) };
-        match ok {
-            1 => {}
-            // The host's result for the targets its job was given (it simulates while frames render): carried onto this pose.
-            2 => {
-                if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
-                    let d: Vec<f32> = (0..np).filter(|&p| !sim.pinned[p]).map(|p| len(sub(sim_pos[p], sim.launch_target[p]))).collect();
-                    let far = d.iter().filter(|x| **x > 0.5).count();
-                    if far > 0 { log(1, &format!("OK cloth px host result: cloth {} {far}/{} free far from their launch targets, max {:.2} m, first {:?} vs {:?}",
-                        sim.key, d.len(), d.iter().fold(0f32, |a, b| a.max(*b)), sim_pos[(0..np).find(|&p| !sim.pinned[p]).unwrap_or(0)], sim.launch_target[(0..np).find(|&p| !sim.pinned[p]).unwrap_or(0)])); }
-                }
-                let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
-                for p in 0..np { sim_pos[p] = add(targets[p], carry(sub(sim_pos[p], sim.launch_target[p]), &launch_frames[p], &now_frames[p])); }
-            }
-            _ => sim_pos = carried.clone(),
-        }
-        // 3: its job still runs (nothing launched); otherwise a job now runs on these targets.
-        if ok != 3 { sim.launch_target = targets.clone(); }
-        sim.last_ok = ok; sim.last_jump = jump;
-        let mut st = STATS.lock().unwrap(); st.steps += 1; st.step_us += t0.elapsed().as_micros() as u64;
-    } else {
-        sim_pos = carried;
-        sim.last_ok = -2;
+    let reset = jump > 0.35;
+    if sim.goal.len() != np || reset {
+        sim.goal = vec![[0f32; 3]; np]; sim.shown_raw = vec![[0f32; 3]; np]; sim.interval = 0.; sim.since_result = 0.;
     }
+    for p in 0..np {
+        sim.goal[p] = carry(sim.goal[p], &last_frames[p], &now_frames[p]);
+        sim.shown_raw[p] = carry(sim.shown_raw[p], &last_frames[p], &now_frames[p]);
+    }
+    // Out of the body. Live (OK_CLOTH_PX_LIVE_PUSH): never nearer a capsule's axis than the pose is this frame, up to the
+    // capsule grown plus OK_CLOTH_PX_KEEP_OUT. The room a particle had when the cloth was made was wrong once the walk
+    // moved it: too little let Raiden's gauze sleeves fall into her hips (outfit 2), too much pushed cloth out past its
+    // pose every frame (outfits 3, 5, 2026-11-21).
+    let t = tune();
+    let live: Vec<f32> = if t.live_push {
+        let mut v = vec![0f32; np * caps.len()];
+        for p in 0..np {
+            if sim.pinned[p] { continue; }
+            for (ci, c) in caps.iter().enumerate() {
+                let full = c.radius * t.cap_scale;
+                let r = (seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).min(full + t.keep_out);
+                v[p * caps.len() + ci] = if sim.cap_forced.get(p * sim.cap_n + ci).copied().unwrap_or(false) { r.max(full) } else { r };
+            }
+        }
+        v
+    } else { (0..np * caps.len()).map(|i| sim.cap_fit.get(i).copied().unwrap_or(0.)).collect() };
+    // Collect the finished GPU job first, work out the corrections on that very result (the GPU holds it), then launch
+    // the next job with them. Corrections sent with the launch that collected a result were for the result before: in
+    // async mode the host steered every vertex back to the previous result and the skirt shook between the two
+    // (Raiden's maid skirt, 19 mm a frame at 60 fps, 2026-11-21).
+    let t0 = std::time::Instant::now();
+    let mut out = vec![[0f32; 3]; np];
+    let mut fresh = false;
+    if dt > 0. {
+        sim.pending += dt;
+        let mut code = if reset { 0 } else { unsafe { step(sim.key, np as u32, targets.as_ptr().cast(), std::ptr::null(), std::ptr::null(), 0, 0., out.as_mut_ptr().cast()) } };
+        if code == 2 {
+            let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
+            for p in 0..np { sim.goal[p] = carry(sub(out[p], sim.launch_target[p]), &launch_frames[p], &now_frames[p]); }
+            fresh = true;
+        }
+        if code != 3 {
+            // What the clamps and the push do to the result the GPU holds, and the pull back toward the pose over the
+            // time this job covers (OK_CLOTH_PX_PULL per second: a pleat the walk flipped stayed flipped, 2026-11-20);
+            // turned back onto the pose that result was made on.
+            let mut fixed: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.goal[p])).collect();
+            constrain(sim, &d, &targets, normals, &caps, &live, &mut fixed);
+            let back = 1. - (-t.pull * sim.pending).exp();
+            let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
+            let delta: Vec<[f32; 3]> = (0..np).map(|p| {
+                if sim.pinned[p] { return [0.; 3]; }
+                let c = sub(sub(fixed[p], targets[p]), sim.goal[p]);
+                let c = sub(c, scale(sub(fixed[p], targets[p]), back));
+                carry(c, &now_frames[p], &launch_frames[p])
+            }).collect();
+            let ok = unsafe { step(sim.key, np as u32, targets.as_ptr().cast(), delta.as_ptr().cast(), gpu_caps.as_ptr(), gpu_caps.len() as u32,
+                if reset { -1. } else { sim.pending }, out.as_mut_ptr().cast()) };
+            // 1: done at once (OKPhysXCloth.Async 0, or a reset onto the targets).
+            if ok == 1 { for p in 0..np { sim.goal[p] = sub(out[p], targets[p]); } fresh = true; code = 1; }
+            sim.launch_target = targets.clone();
+            sim.pending = 0.;
+        }
+        sim.last_ok = code; sim.last_jump = jump;
+        let mut st = STATS.lock().unwrap(); st.steps += 1; st.step_us += t0.elapsed().as_micros() as u64;
+    }
+    // Between two results the cloth shown eases toward the newest one (OK_CLOTH_PX_BLEND): the GPU job takes 20 ms with
+    // the renderer on the same GPU, a result came every 6 frames at 200 fps and the frames between held the last one.
+    sim.since_result += dt;
+    if fresh {
+        sim.interval = if sim.interval > 0. { sim.interval * 0.7 + sim.since_result * 0.3 } else { sim.since_result };
+        sim.since_result = 0.;
+    }
+    let a = if !t.blend || reset || sim.interval <= 1e-4 { 1. } else { (dt / sim.interval).clamp(0., 1.) };
+    for p in 0..np { sim.shown_raw[p] = add(sim.shown_raw[p], scale(sub(sim.goal[p], sim.shown_raw[p]), a)); }
+    let mut sim_pos: Vec<[f32; 3]> = (0..np).map(|p| add(targets[p], sim.shown_raw[p])).collect();
     sim.last_target = targets.clone();
     if debug_due(sim.key) {
+        let j = sim.jit;
+        let s = j[2].max(1.);
+        log(1, &format!("OK cloth px jitter: cloth {} raw {:.2} mm, shown {:.2} mm a frame (second difference of the pose (raw) and of the cloth shown, mean of free particles over {} frames, {} with a host result)",
+            sim.key, j[0] / s, j[1] / s, j[3], j[4]));
+        sim.jit = [0.; 5];
         // Raw cloth against the pose: how far down (-) / up (+) and out from the pinned ring's axis the free part sits.
         let pins: Vec<usize> = (0..np).filter(|&p| sim.pinned[p]).collect();
         let c = pins.iter().fold([0f32; 3], |a, &p| add(a, targets[p]));
@@ -936,66 +1011,29 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let n = n.max(1) as f64;
         log(1, &format!("OK cloth px debug: cloth {} free {} raw mean dy {:.1} mm, mean out {:.1} mm, {far} flung (pin centre y {:.3}, host {} jump {:.0} mm)", sim.key, n, dy / n * 1000., dr / n * 1000., c[1], sim.last_ok, sim.last_jump * 1000.));
     }
-    // Max distance, then out of the body (never deeper than the target already was).
-    let (mut clamped, mut pushed, mut most) = (0u64, 0u64, 0f32);
-    let stretch = tune().stretch;
-    let up = tune().up_max;
-    for p in 0..np {
-        if sim.pinned[p] { sim_pos[p] = targets[p]; continue; }
-        if !sim_pos[p].iter().all(|x| x.is_finite()) { sim_pos[p] = targets[p]; continue; }
-        if let Some(&a) = sim.anchor.get(p).filter(|a| **a != u32::MAX) {
-            let pin = targets[a as usize];
-            let v = sub(sim_pos[p], pin);
-            let d = len(v);
-            // Never shorter than the garment as posed now: a clip's own skirt keys stretch it past the lengths of the
-            // pose it was built in (the reader's bind pose), and that limit held the hem 4 cm up (2026-11-20).
-            let limit = sim.anchor_len[p].max(len(sub(targets[p], pin))) * stretch;
-            if d > limit && d > 1e-9 { sim_pos[p] = add(pin, scale(v, limit / d)); }
-        }
-        let mut off = sub(sim_pos[p], targets[p]);
-        if sim.sleeve[p] {
-            if let Some(n) = normals.get(sim.rep[p] as usize).copied().filter(|n| len(*n) > 0.5) {
-                let d = dot(off, n);
-                if d < -0.002 { off = sub(off, scale(n, d + 0.002)); sim_pos[p] = add(targets[p], off); }
+    let (clamped, pushed) = constrain(sim, &d, &targets, normals, &caps, &live, &mut sim_pos);
+    let most = (0..np).map(|p| len(sub(sim_pos[p], targets[p]))).fold(0f32, f32::max);
+    for p in 0..np { sim.offsets[p] = sub(sim_pos[p], targets[p]); }
+    if debug_on() && dt > 0. {
+        if sim.jit_hist.len() != np { sim.jit_hist = vec![[[f32::NAN; 3]; 4]; np]; }
+        let (mut a, mut b, mut n) = (0f64, 0f64, 0usize);
+        for p in 0..np {
+            if sim.pinned[p] { continue; }
+            // Where the pose and the cloth shown are, in her space: their second differences (the pose's own shake is
+            // the floor; an offset measure counted a jittery pose as the cloth's).
+            let (tg, fin) = (targets[p], sim_pos[p]);
+            let h = &mut sim.jit_hist[p];
+            if h[1][0].is_finite() && h[3][0].is_finite() {
+                a += len(add(sub(tg, scale(h[0], 2.)), h[1])) as f64;
+                b += len(add(sub(fin, scale(h[2], 2.)), h[3])) as f64;
+                n += 1;
             }
+            *h = [tg, h[0], fin, h[2]];
         }
-        let l = len(off);
-        if l > sim.max_dist[p] { sim_pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
-        if sim.skirt[p] && sim_pos[p][1] > targets[p][1] + up { sim_pos[p][1] = targets[p][1] + up; clamped += 1; }
+        if n > 0 { sim.jit[0] += a / n as f64 * 1000.; sim.jit[1] += b / n as f64 * 1000.; sim.jit[2] += 1.; }
+        sim.jit[3] += 1.;
+        if fresh { sim.jit[4] += 1.; }
     }
-    // A follow cloth's moves averaged with its neighbours' (pinned ones moving by nothing): each particle clamped on its
-    // own around a DynamicBone pose that swings, the drape's edge jagged and tore (Raiden's kimono, 2026-11-21).
-    if d.follow && tune().smooth > 0 {
-        let mut off: Vec<[f32; 3]> = (0..np).map(|p| sub(sim_pos[p], targets[p])).collect();
-        for _ in 0..tune().smooth {
-            let next: Vec<[f32; 3]> = (0..np).map(|p| {
-                if sim.pinned[p] || sim.links[p].is_empty() { return off[p]; }
-                let sum = sim.links[p].iter().fold([0f32; 3], |a, &q| add(a, off[q as usize]));
-                add(scale(off[p], 0.5), scale(sum, 0.5 / sim.links[p].len() as f32))
-            }).collect();
-            off = next;
-        }
-        for p in 0..np { if !sim.pinned[p] { sim_pos[p] = add(targets[p], off[p]); } }
-    }
-    for p in 0..np {
-        if sim.pinned[p] { continue; }
-        for (ci, c) in caps.iter().enumerate() {
-            let r = sim.cap_fit[p * sim.cap_n + ci];
-            if r <= 0. { continue; }
-            let ab = sub(c.b, c.a);
-            let l2 = dot(ab, ab);
-            let s = if l2 > 1e-12 { (dot(sub(sim_pos[p], c.a), ab) / l2).clamp(0., 1.) } else { 0. };
-            let axis = add(c.a, scale(ab, s));
-            let v = sub(sim_pos[p], axis);
-            let dl = len(v);
-            if dl < r && dl > 1e-6 { sim_pos[p] = add(axis, scale(v, r / dl)); pushed += 1; }
-        }
-        most = most.max(len(sub(sim_pos[p], targets[p])));
-    }
-    // What the next step starts from eases back toward the garment as skinned (OK_CLOTH_PX_PULL per second): a pleat
-    // the walk flipped stayed flipped, its bending holding the skirt 3-5 cm up even standing (2026-11-20).
-    let keep = if dt > 0. { (-tune().pull * dt).exp() } else { 1. };
-    for p in 0..np { sim.offsets[p] = scale(sub(sim_pos[p], targets[p]), keep); }
     // Normals turned with the cloth, then the region written.
     let nt = particle_normals(&targets, &sim.tris);
     let ns = particle_normals(&sim_pos, &sim.tris);
@@ -1009,6 +1047,68 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     }
     let mut st = STATS.lock().unwrap();
     st.clamped += clamped; st.pushed += pushed; st.max_offset_mm = st.max_offset_mm.max(most * 1000.);
+}
+
+/// The cloth's positions kept to the garment: max distance from its pin and from the pose, sleeves not sunk behind their
+/// surface, skirts not risen, a follow cloth's moves smoothed with its neighbours', then out of the body (`live`: each
+/// particle's room from each capsule axis). Returns (clamped, pushed).
+fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], caps: &[OkPxCapsule], live: &[f32], pos: &mut [[f32; 3]]) -> (u64, u64) {
+    let np = pos.len();
+    let (mut clamped, mut pushed) = (0u64, 0u64);
+    let t = tune();
+    for p in 0..np {
+        if sim.pinned[p] { pos[p] = targets[p]; continue; }
+        if !pos[p].iter().all(|x| x.is_finite()) { pos[p] = targets[p]; continue; }
+        if let Some(&a) = sim.anchor.get(p).filter(|a| **a != u32::MAX) {
+            let pin = targets[a as usize];
+            let v = sub(pos[p], pin);
+            let dl = len(v);
+            // Never shorter than the garment as posed now: a clip's own skirt keys stretch it past the lengths of the
+            // pose it was built in (the reader's bind pose), and that limit held the hem 4 cm up (2026-11-20).
+            let limit = sim.anchor_len[p].max(len(sub(targets[p], pin))) * t.stretch;
+            if dl > limit && dl > 1e-9 { pos[p] = add(pin, scale(v, limit / dl)); }
+        }
+        let mut off = sub(pos[p], targets[p]);
+        if sim.sleeve[p] {
+            if let Some(n) = normals.get(sim.rep[p] as usize).copied().filter(|n| len(*n) > 0.5) {
+                let k = dot(off, n);
+                if k < -0.002 { off = sub(off, scale(n, k + 0.002)); pos[p] = add(targets[p], off); }
+            }
+        }
+        let l = len(off);
+        if l > sim.max_dist[p] { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
+        if sim.skirt[p] && pos[p][1] > targets[p][1] + t.up_max { pos[p][1] = targets[p][1] + t.up_max; clamped += 1; }
+    }
+    // A follow cloth's moves averaged with its neighbours' (pinned ones moving by nothing): each particle clamped on its
+    // own around a DynamicBone pose that swings, the drape's edge jagged and tore (Raiden's kimono, 2026-11-21).
+    if d.follow && t.smooth > 0 {
+        let mut off: Vec<[f32; 3]> = (0..np).map(|p| sub(pos[p], targets[p])).collect();
+        for _ in 0..t.smooth {
+            let next: Vec<[f32; 3]> = (0..np).map(|p| {
+                if sim.pinned[p] || sim.links[p].is_empty() { return off[p]; }
+                let sum = sim.links[p].iter().fold([0f32; 3], |a, &q| add(a, off[q as usize]));
+                add(scale(off[p], 0.5), scale(sum, 0.5 / sim.links[p].len() as f32))
+            }).collect();
+            off = next;
+        }
+        for p in 0..np { if !sim.pinned[p] { pos[p] = add(targets[p], off[p]); } }
+    }
+    // Two passes for capsules that overlap (hip and thigh).
+    for p in 0..np {
+        if sim.pinned[p] { continue; }
+        for (ci, c) in caps.iter().enumerate().chain(caps.iter().enumerate()) {
+            let r = live.get(p * caps.len() + ci).copied().unwrap_or(0.);
+            if r <= 0. { continue; }
+            let ab = sub(c.b, c.a);
+            let l2 = dot(ab, ab);
+            let s = if l2 > 1e-12 { (dot(sub(pos[p], c.a), ab) / l2).clamp(0., 1.) } else { 0. };
+            let axis = add(c.a, scale(ab, s));
+            let v = sub(pos[p], axis);
+            let dl = len(v);
+            if dl < r && dl > 1e-6 { pos[p] = add(axis, scale(v, r / dl)); pushed += 1; }
+        }
+    }
+    (clamped, pushed)
 }
 
 #[cfg(test)]
