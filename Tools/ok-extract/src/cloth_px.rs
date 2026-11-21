@@ -86,7 +86,11 @@ fn flex_edge() -> f32 { static E: std::sync::OnceLock<f32> = std::sync::OnceLock
 /// the pose (OK_CLOTH_FLEX_PURE=1; default off). Its other corrections move particles FleX has just solved (out of her skin,
 /// LRA, smoothing), but without them the kimono went to spikes within seconds (2026-11-21).
 fn flex_pure() -> bool { static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_PURE", 0.) > 0.5) }
-fn flex_smooth() -> u32 { static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_SMOOTH", 1.).max(0.) as u32) }
+/// Passes of the move smoothing under FleX (OK_CLOTH_FLEX_SMOOTH). 4 (was 1): Raiden's gauze robe (outfit 2) wrinkled
+/// finely at her crotch, its light-blue back showing in flecks; the light-blue share of a crotch close-up fell from
+/// 1.90% / 1.87% to 1.41% / 1.28% (ten shots each, twice; the original physics 0.41%), her kimono and maid skirt
+/// unchanged (2026-11-22).
+fn flex_smooth() -> u32 { static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_SMOOTH", 4.).max(0.) as u32) }
 
 #[no_mangle]
 pub extern "C" fn ok_set_physx_cloth(create: Option<CreateFn>, step: Option<StepFn>, release: Option<ReleaseFn>) {
