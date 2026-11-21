@@ -102,9 +102,17 @@
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\others7\megumin_outfit1_compare_20s.mp4`
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\others7\keqing_outfit1_compare_20s.mp4`
 
+### 無人值守巡檢（11-21 16:10–16:45）
+
+- 開皮膚碰撞後幀率掉到約 70（皮膚查詢每粒子每幀 5 次、每次掃兩遍）。改成一次掃描加 rayon 平行，回到約 110。
+- 60 fps 下關掉皮膚碰撞，服裝 5 的布料也比姿勢多抖 1.5–2 倍：兩次結果之間的平滑每次結果到達都折方向。改成臨界阻尼彈簧（`OK_CLOTH_PX_DAMP_T` 2）。
+- 皮膚碰撞再多加約 1 mm／幀（服裝 2 紗袖、服裝 5 和服後擺）。逐項關掉量過：不交給 GPU（`OK_CLOTH_PX_SKIN_HOST=0`）、不留在姿勢（`OK_CLOTH_PX_HOLD=0`）、高斯加寬到 2 cm，都沒有差別。判斷是布料貼著大腿、跟著腿動（腿本身每幀二階差分就比袖子大），不是讀數雜訊。
+- 60 fps、阻尼 2 倍時（shown／raw mm）：服裝 2 紗袖 3.2／1.7，服裝 5 和服 3.6／2.2、6.8／4.8；關掉皮膚碰撞是 2.6／1.7、3.4／2.3、5.2／4.4。不鎖幀（100–165 fps）時 shown 和 raw 相差 0.05–1 mm。
+- 錄影：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_all7\raiden_outfit2_compare_20s.mp4`、`raiden_outfit3_compare_20s.mp4`、`raiden_outfit5_compare_20s.mp4`。服裝 5 和服長擺在轉身時會往側面水平甩出，原始物理同一時刻也一樣。
+
 還沒處理：
 
-- 服裝 2、5 推出皮膚的那幾塊布料比姿勢多抖約 1–2 mm／幀。
+- 服裝 2、5 貼著大腿的布料跟著腿動，比姿勢多抖約 1 mm／幀（見上）。
 - 服裝 5 白色袖口有時比原版張得開。
 - 服裝 3 女僕長裙側面走路時前後片往外張開，是它跟著的 DynamicBone 姿勢本身就張開（布料最多偏 5 cm），修之前的錄影也一樣。
 - 讀卡器姿勢在高幀率下取樣不均勻（身體也一起抖），不在布料範圍。

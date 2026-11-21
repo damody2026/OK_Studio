@@ -77,12 +77,13 @@
 - **回拉**：交給主機的修正裡，加上把結果往姿勢拉回的量，每秒 3 倍（`OK_CLOTH_PX_PULL`），依這次工作涵蓋的時間計算。
 - **身體皮膚（2026-11-21 晚，`Tools/ok-extract/src/cloth_skin.rs`）**：膠囊比風格化的身體細，雷電服裝 2 的紗袖穿過大腿、服裝 5 的裙片穿過小腿時，每個粒子都還在膠囊外。所以有布料的角色每幀把身體網格（每 1 cm 方塊取一點，`THIN_M`）用骨架 palette 擺好，放進 4 cm 的格子。粒子讀周圍 27 格的皮膚點，以高斯（σ 1 cm）加權算出離皮膚的距離和往外的方向，比皮膚外 4 mm（`OK_CLOTH_PX_SKIN_MARGIN`）近就推出去，但不比姿勢本身更外。
   - 讀數的可信度 0–1：兩邊皮膚方向相反處（兩腿之間，沒有往外的方向）和最近皮膚接近 4 cm 時逐漸降到 0。用最近四點反距離加權時，點一換讀數就跳，被推的布料抖（1.7 → 3.6 mm／幀）。
+  - 成本：每個粒子每幀查 5 次（need／hold 一次、兩次限制各兩次）。查詢一次掃描 27 格（找到更近的皮膚點時把已累加的權重縮小），並用 rayon 平行；最早兩次掃描、單執行緒時雷電從約 110 fps 掉到 70。
   - **姿勢本身在身體裡的地方，布料留在姿勢上**：雷電紗袖的 DynamicBone 姿勢有一段垂進腰臀裡（原版就藏在身體裡看不到），把它推出皮膚會擠成一團皺在肚子前。姿勢在皮膚下 5 mm（`OK_CLOTH_PX_SKIN_DEEP`）以內完全留住，往外到皮膚外 3 cm（`OK_CLOTH_PX_HOLD_OUT`）逐漸放開；推出量也乘上同樣的比例。`OK_CLOTH_PX_SKIN=0` 關掉整個皮膚碰撞。
 - **膠囊下限**：`OK_CLOTH_PX_CAP_FLOOR`（預設 0）讓粒子不論姿勢都至少離膠囊軸這麼多倍半徑。設 1 會把垂進骨盆的紗袖往外推皺，皮膚碰撞已經處理穿模，所以預設不用。
 - **長裙避開小腿**：長裙垂下的部分離小腿膠囊軸至少 1.5 × 半徑，不管姿勢離多近（`OK_CLOTH_PX_SHIN`，預設開）。走路中途建立時小腿已經在和服裙片裡，舊規則（不超過建立時的距離）就讓它一直穿過去。
 - 這些限制寫成一個函式（`constrain`），每幀用兩次：一次用在 GPU 剛做完的結果上，算出要交給主機的修正（見「PhysX 主機」的收／發）；一次用在畫面顯示的位置上。
 
-環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`、`OK_CLOTH_PX_KEEP_OUT`、`OK_CLOTH_PX_LIVE_PUSH`、`OK_CLOTH_PX_BLEND`、`OK_CLOTH_PX_SMOOTH_ALL`、`OK_CLOTH_PX_SKIN`、`OK_CLOTH_PX_SKIN_MARGIN`、`OK_CLOTH_PX_SKIN_DEEP`、`OK_CLOTH_PX_HOLD_OUT`、`OK_CLOTH_PX_CAP_FLOOR`、`OK_CLOTH_PX_LAYER_GAP`。`OK_CLOTH_PX_DEBUG=1` 每秒記兩行：
+環境變數（啟動時讀一次）：`OK_CLOTH_PX_PIN`、`OK_CLOTH_PX_SKIRT_REACH`、`OK_CLOTH_PX_SKIRT_MAX`、`OK_CLOTH_PX_SLEEVE_REACH`、`OK_CLOTH_PX_SLEEVE_MAX`、`OK_CLOTH_PX_SHOULDER`、`OK_CLOTH_PX_CUFF`、`OK_CLOTH_PX_CAPSULE`、`OK_CLOTH_PX_MARGIN`、`OK_CLOTH_PX_STRETCH`、`OK_CLOTH_PX_PULL`、`OK_CLOTH_PX_CARRY`、`OK_CLOTH_PX_REBUILD`、`OK_CLOTH_PX_EDGE`、`OK_CLOTH_PX_REFINE`、`OK_CLOTH_PX_CHAINS`、`OK_CLOTH_PX_SMOOTH`、`OK_CLOTH_PX_SHIN`、`OK_CLOTH_PX_SKIRT_CAPS`、`OK_CLOTH_PX_KEEP_OUT`、`OK_CLOTH_PX_LIVE_PUSH`、`OK_CLOTH_PX_BLEND`、`OK_CLOTH_PX_SMOOTH_ALL`、`OK_CLOTH_PX_SKIN`、`OK_CLOTH_PX_SKIN_MARGIN`、`OK_CLOTH_PX_SKIN_DEEP`、`OK_CLOTH_PX_HOLD_OUT`、`OK_CLOTH_PX_CAP_FLOOR`、`OK_CLOTH_PX_LAYER_GAP`、`OK_CLOTH_PX_DAMP`、`OK_CLOTH_PX_DAMP_T`；診斷用 `OK_CLOTH_PX_SKIN_HOST=0`（皮膚推出只用在畫面，不交給 GPU）、`OK_CLOTH_PX_HOLD=0`（不把姿勢在身體裡的布料留在姿勢上）、`OK_CLOTH_PX_SKIN_SIGMA`（皮膚讀數的高斯寬度，預設 0.01 m）。`OK_CLOTH_PX_DEBUG=1` 每秒記兩行：
 - `jitter`：姿勢（raw）和畫面上的布料（shown）在她的骨架空間裡每幀位置的二階差分，取自由粒子的平均，加上這一秒的幀數和新結果數。平滑的走路在 200 fps 下應不到 0.1 mm；讀卡器的姿勢本身就有 5–6 mm（動畫取樣不均勻，身體一樣），所以看的是 shown 有沒有比 raw 大。不要量「布料相對姿勢的偏移」：姿勢在跳時，那個量會把姿勢的抖動算成布料的。
 - `debug`：顯示的布料相對目標的平均 dy 和外擴量、飛出去的粒子數，以及那一幀主機的回傳碼（2 是新結果、3 是工作還在跑）和姿勢跳動。
 
@@ -136,7 +137,7 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
   - 自由點保留 GPU 自己的位置和速度（每次讀回位置時也讀回速度）；Rust 對結果做的修正（夾限、推出身體、回拉）用速度交給它（`OKPhysXCloth.SteerGain`，預設 1，最大 6 m/s）：逆著修正方向的那部分速度歸零（像碰撞），修正本身只移動它、步完就從速度裡扣掉，不留成動量。跟著 DynamicBone 的長裙就是靠這個不會飄走。
   - `PinByVelocity 0` 是舊做法（`FeedPrev`：位置與推算速度一起寫），只留作對照。
 - **先收、再算、再發（2026-11-21 下午）**：每幀 Rust 先用 Dt 0 呼叫一次 `Step`，只收已做完的工作結果（回傳 2；還在跑回傳 3；沒有工作回傳 0）；對**這個結果**套用限制，算出修正，轉回那個結果建立時的姿勢座標，再呼叫一次 `Step` 發出下一個工作，修正放在 `Prev`（建立旗標 bit 1：`Prev` 是修正量而不是位置）。以前修正和發工作是同一次呼叫，算的是前一個結果：非同步模式下主機把每個點拉回上一個結果，雷電的女僕長裙在兩個結果之間來回翻（60 fps 每幀 19 mm）。
-- **兩次結果之間平滑過去（`OK_CLOTH_PX_BLEND`，預設開）**：GPU 工作在渲染器同時使用 GPU 時要 20 ms，200 fps 下約 6 幀才回一次結果。中間的幀以前顯示「往姿勢衰減中的舊結果」，新結果一到又跳出去，形成鋸齒。現在畫面上的偏移每幀往最新結果移動 dt ÷（平均結果間隔）。
+- **兩次結果之間平滑過去（`OK_CLOTH_PX_BLEND`，預設開）**：GPU 工作在渲染器同時使用 GPU 時要 20 ms，200 fps 下約 6 幀才回一次結果。中間的幀以前顯示「往姿勢衰減中的舊結果」，新結果一到又跳出去，形成鋸齒。後來改成畫面上的偏移每幀往最新結果移動 dt ÷（平均結果間隔），但 60 fps 下每 3 幀才一個結果，運動方向每次結果到達就折一下，和服比姿勢多抖 1.5–2 倍。2026-11-21 晚起改用臨界阻尼彈簧追最新結果（`OK_CLOTH_PX_DAMP`，時間 = 平均結果間隔 × `OK_CLOTH_PX_DAMP_T`，預設 2），速度連續。量過 1、2、3 倍：2 倍明顯比 1 倍好，3 倍沒有再好。
 - 一次工作最多模擬 `OKPhysXCloth.MaxDt`（預設 34 ms）秒，多的丟掉：切動作時的 0.1 s 卡頓原本變成兩個 50 ms 子步。以前上限是 MaxSubsteps ÷ SubstepHz（16.7 ms），工作要 20 ms 時布料只跑到 2/3 速度。
 - 上傳改用同步的 `copyHToD` 再 `markDirty`（`PxDeformableSurfaceExt::copyToDevice` 在 stream 0 上非同步拷貝）。
 - `OKPhysXCloth.Log 2`：每次工作記一行，自由點與固定點這次移動了多少、GPU 上最快的速度。固定點本來不該動，它若「移動」就是上傳出了問題。
