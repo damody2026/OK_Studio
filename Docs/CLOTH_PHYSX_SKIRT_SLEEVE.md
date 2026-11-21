@@ -197,7 +197,7 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 每次求解：先收結果（Step 的 Dt 0），Rust 算修正，再交出這一幀的目標；她的布料全部交齊（或同一塊交第二次）才開始求解，非同步跑在 worker 上；FleX 呼叫在 `GFlexLock` 內，共用狀態在 `GLock` 內，求解時不握 `GLock`，遊戲執行緒不會等 GPU。
 - 彈簧：每條邊一條拉伸彈簧（`OKFlexCloth.Stretch` 1.0），共邊兩三角形的對角一條彎曲彈簧（`OKFlexCloth.Bend` 0.3；0.05 時女僕長裙下擺會皺）。
 - FleX 時 Rust 端：布料切到 1 cm（`OK_CLOTH_FLEX_EDGE`，粒子之間要夠密，身體與其他層才鑽不過去）、內襯也模擬（不再跟著外層）、不判斷誰蓋住誰、偏移平滑 1 次（`OK_CLOTH_FLEX_SMOOTH`）。雷電服裝 2 紗袍 14,621 粒子，一次求解約 7 ms（5 個子步）。
-- 其他 CVar：`OKFlexCloth.Iterations`（8）、`SubstepHz`（240）、`MaxSubsteps`（6）、`MaxDt`、`Radius`（1 cm）、`SolidRest`（5 mm）、`BodyDistance`（4 mm）、`Friction`、`ParticleFriction`、`Damping`、`Drag`、`Lift`、`SelfCollide`、`Async`、`Log`。
+- 其他 CVar：`OKFlexCloth.Iterations`（20；8 時和服下擺起皺堆疊）、`SubstepHz`（240）、`MaxSubsteps`（8）、`MaxDt`、`Radius`（1 cm）、`SolidRest`（5 mm）、`BodyDistance`（4 mm）、`Friction`、`ParticleFriction`、`Damping`、`Drag`、`Lift`、`SelfCollide`、`Async`、`Log`。
 
 ### 讀卡器選單
 

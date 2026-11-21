@@ -179,3 +179,9 @@
 
 - 千佳（歩く1）、惠惠、刻晴（走る1）、三月七（歩く1）在 FleX 下：裙子、袖子垂擺正常，沒有穿模；畫面抖動比姿勢多 0.1–0.4 mm。
 - `ok.ClothSolver` 預設 1、Rust 端也預設 FleX（第一次載入就用 FleX 的細網格）；FleX 主機沒註冊時（CLI）用 PhysX。讀卡器選單預設顯示「FleX 布料」。
+
+### 巡檢（11-21 19:30–19:45）：FleX 迭代次數
+
+- 服裝 5 和服下擺起皺、堆疊：迭代 8 → 16 → 24 逐步平順；彎曲 0.7、阻尼 3 反而皺。預設改為迭代 20、子步最多 8（她 42k 粒子一次求解約 15 ms，非同步）。
+- 預設設定的錄影：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex7\raiden_outfit2_compare_20s.mp4`、`raiden_outfit3_compare_20s.mp4`、`raiden_outfit5_compare_20s.mp4`。
+- 還沒好：服裝 5 右腰側的垂片有時翻出深色碎片。
