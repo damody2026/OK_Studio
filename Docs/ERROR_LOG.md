@@ -6988,3 +6988,12 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   记成「读法写错」而不是改读法。
 - 结果：`ok.Studio.ItemOpenPool`（常驻执行绪池）`sync_gate_ms` 11 860 → 682 ms，`ready_ms` 63 093 → 61 786，
   峰值记忆体没变；详见 [Docs/OK_STUDIO_ITEM_OPEN_POOL_20261120.md](OK_STUDIO_ITEM_OPEN_POOL_20261120.md)。
+
+## 2026-11-21 服裝卡：縮圖整張卡照抄變 112 MB；穿到 OK 卡上重錄 answers 丟了服裝的 mod（F 組 f-okclothes）
+
+- **縮圖**：`.okclothes` 的圖用 `card[..IEND+12]`，以為只是圖。OK 卡的 `okLc`／`okLt`／`okVo` 與 APNG 的 `acTL`/`fcTL`/`fdAT` 都在 IEND 前，整包被抄進縮圖，再加上另外帶的 `okLc`，雷電服裝卡 112 MB。改成 `okclothes::still_picture`（只留第一幀、去掉 `ok*`），60 MB。
+  - 教訓：OK 卡的 PNG「到 IEND 為止」不等於「只有圖」，取圖一律去掉 `ok*` 與 APNG 動畫 chunk。
+- **封裝失敗**：惠惠穿雷電服裝，封裝報 `2 unanswered question(s): okLt cat 403 1768; okLt cat 423 702`。換衣服後把 answers 清掉重錄，但重錄只看共用基礎庫的樹，雷電的第三方 mod 不在裡面。改成服裝卡帶來源卡的 `okLt`，合併後不重錄（`seal_card_with(..., false)`）。
+- **接著讀卡器開不了**（`okLt guids (25)`、`strip-all (25)` 沒有答案）：以 GUID 集合為題的答案，兩張卡各自只錄了自己的集合。加 `tree_answers::lookup_covered`（多筆合起來涵蓋就用）。之後讀卡器仍報同樣錯：讀卡器跑的是舊 DLL，重編 F 編輯器後正常。
+  - 教訓：改了 `ok-extract` 要測讀卡器，先重編 UE 編輯器（只跑 cargo 不會換掉已連結的 lib）。
+- 說明：[OK_CLOTHES_CARD.md](OK_CLOTHES_CARD.md)。
