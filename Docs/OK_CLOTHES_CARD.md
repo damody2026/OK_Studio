@@ -9,13 +9,20 @@
 | 按鈕 | 作用 |
 |---|---|
 | 匯出服裝卡 | 目前顯示的這套服裝 → `<另存資料夾>/<卡名>_outfit<N>.okclothes`（另存資料夾沒填就是 `UserData/okclothes/`）。縮圖是角色現在穿著這套服裝的正面 T-pose（讀卡用的四視圖擷取）；角色沒顯示時用卡片原圖。 |
-| 套用服裝卡 | 選一張 `.okclothes`，穿成目前角色的這套服裝（衣服＋飾品，和遊戲的服裝卡一樣）。結果是工作卡 `Saved/OKClothes/Worn/<角色>+<服裝卡>.png`，套完立刻開啟；原卡不變，要保留請另存。 |
-| 只換衣服 | 同上，但保留角色自己的飾品（髮飾、耳飾等），只換衣服。 |
+| 套用服裝卡 | 選一張 `.okclothes`，穿成目前角色的這套服裝：衣服與身上的飾品換成服裝卡的，**頭髮與頭上的飾品保留角色自己的**（見下方「保留頭髮」）。結果是工作卡 `Saved/OKClothes/Worn/<角色>+<服裝卡>.png`，套完立刻開啟；原卡不變，要保留請另存。 |
+| 只換衣服 | 同上，但角色自己的飾品全部保留，服裝卡的飾品都不穿。 |
 | 轉換服裝卡 | 遊戲的服裝卡（KoiKatuClothes PNG）→ `.okclothes`。 |
 
-按鈕下方是**服裝卡清單**：另存資料夾（匯出服裝卡寫到的地方）與 `UserData/okclothes/` 裡的 `.okclothes`，新的在前，每張顯示縮圖與檔名。點縮圖就套到目前選的角色身上；上方的「點縮圖＝整套套用／只換衣服」切換點下去的做法。匯出或轉換完的服裝卡馬上出現在清單最前面；自己把檔案放進資料夾，或換了另存資料夾，按「重新整理」。
+按鈕下方是**服裝卡清單**：另存資料夾（匯出服裝卡寫到的地方）與 `UserData/okclothes/` 裡的 `.okclothes`，新的在前，每張顯示縮圖與檔名。點縮圖就套到目前選的角色身上；上方的「點縮圖＝換衣服（保留頭髮）／只換衣服（飾品全保留）」切換點下去的做法。匯出或轉換完的服裝卡馬上出現在清單最前面；自己把檔案放進資料夾，或換了另存資料夾，按「重新整理」。
 
-整套套用會連飾品一起換，和遊戲套服裝卡一樣：頭髮是用飾品做的角色（例如 Alice 的雙馬尾）會換成服裝卡那位的頭髮，要保留就用「只換衣服」（她用飾品做的衣服部件也會留著）。
+**保留頭髮**（2026-11-22）：很多卡的頭髮是用飾品做的（刻晴、雷電、Alice 的雙馬尾），遊戲套服裝卡會連飾品一起換，頭髮就變成服裝卡那位的。讀卡器套用時逐格決定：
+
+- 角色的飾品掛在頭上（`a_n_hair*`、`a_n_head*`、眼鏡、耳環、鼻、嘴），或 HairAccessoryCustomizer 標成頭髮的（有它的設定且「跟隨髮色」開著），保留在原格。
+- 服裝卡的其他飾品（頸飾、腳環、手環、戒指等）照穿；服裝卡的頭髮與頭上飾品不穿。雷電的頭髮掛在 `a_n_head`，HairAccessoryCustomizer 沒有它，靠掛點認出；她腳踝的花是用頭髮零件做的（HairAccessoryCustomizer 有它，但「跟隨髮色」關著），算裝飾，照穿。
+- 服裝卡的飾品要放的那格已被角色的頭髮佔用，就換到同一區（0–19 格，或 MoreAccessories 的 20 格以後）的第一個空格；Sideloader、Material Editor、HairAccessoryCustomizer、Accessory States、DynamicBoneEditor、ASS 的資料跟著換格。0–19 格全滿時放不下的會列在結果的 `dropped`。
+- 化妝保留角色的。
+
+遊戲原本的整套套用（頭髮一起換）只留在命令列 `--all` 與 FFI op 5。檢查一張卡哪幾格會被當成頭部保留：`ok-extract.exe X:/NoGame --oklib clothes-accessories <角色卡或 .okclothes>`（`HEAD` 是保留的格）。
 
 **搜尋**：人物卡總欄與服裝卡清單上方各有一個搜尋框，打字就篩選。
 
@@ -24,11 +31,11 @@
 - 有 `*`、`?` 的詞是萬用字元，比對整個名字或檔名（`*heroine_k*`、`raiden*`、`??_crowd_*`）。
 - 不分大小寫。人物卡比對卡上的名字與檔名，服裝卡比對檔名。清單最多列 400 張，超過時請用搜尋縮小。
 
-MCP 操作清單與搜尋（`ui_exec`）：`ok.ReaderScreen set 人物卡總欄›人物卡›Input = <搜尋>`、`ok.ReaderScreen set 衣服卡總欄›服裝卡›Input = <搜尋>`、`ok.ReaderScreen card <N>`（第 N 張縮圖，從 0 起；在服裝卡清單是套用那張服裝卡）、`ok.ReaderScreen press 點縮圖＝整套套用`（切換做法）。資料驅動頁面用 builder `okclothes_grid`。
+MCP 操作清單與搜尋（`ui_exec`）：`ok.ReaderScreen set 人物卡總欄›人物卡›Input = <搜尋>`、`ok.ReaderScreen set 衣服卡總欄›服裝卡›Input = <搜尋>`、`ok.ReaderScreen card <N>`（第 N 張縮圖，從 0 起；在服裝卡清單是套用那張服裝卡）、`ok.ReaderScreen press 點縮圖＝換衣服（保留頭髮）`（切換做法）。資料驅動頁面用 builder `okclothes_grid`。
 
 MCP（`reader_call`）：`{"action":"action","command":"clothes_export","out":"<可省略>"}`、`{"action":"action","command":"clothes_wear","path":"<.okclothes>","clothes_only":false}`，結果寫在 log（`MCP clothes_export ok: ...`／`MCP clothes_wear ok: ...`）。
 
-命令列：`ok-extract.exe <遊戲> --oklib clothes-wear <角色卡> <服裝卡> <服裝組> <輸出卡> [--clothes-only]`，與讀卡器走同一段程式（`okclothes::file::wear_into`）；`OK_BASE_LIBRARY` 指定基礎庫。
+命令列：`ok-extract.exe <遊戲> --oklib clothes-wear <角色卡> <服裝卡> <服裝組> <輸出卡> [--clothes-only | --all]`（預設保留頭髮），與讀卡器走同一段程式（`okclothes::file::wear_into`）；`OK_BASE_LIBRARY` 指定基礎庫。
 
 ## 格式
 
@@ -61,6 +68,7 @@ OK 卡只能用卡內資源包＋共用基礎庫開（strict），所以換了�
 - 匯出：服裝卡縮圖是穿著這套服裝的正面 T-pose。
 - 清單：點雷電服裝卡縮圖套到 Alice（整套，頭髮換成雷電的；只換衣服，保留白色雙馬尾與耳機）；刻晴匯出後清單從 2 張變 3 張，新卡在最前面且有縮圖。
 - 搜尋：`*heroine_k*` → 刻晴、Klara 2 張；`apng 01` → 9 張；`刻晴` → 1 張；服裝卡 `raiden*` → 1 張。
+- 保留頭髮（2026-11-22）：點雷電服裝卡縮圖，刻晴保留淡紫長髮與頭飾（0、1、2、3、5 格），穿上雷電的大袖、泳裝、頸飾、腳環與腳踝的花，腳環從第 3 格換到第 4 格（Sideloader、Material Editor 跟著換）；Alice 保留白色雙馬尾與耳機，她用飾品做的外套袖子換成雷電的。命令列 `clothes-wear` 刻晴＋雷電約 38 秒。
 
 ## 未做
 

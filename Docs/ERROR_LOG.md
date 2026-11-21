@@ -6997,3 +6997,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **接著讀卡器開不了**（`okLt guids (25)`、`strip-all (25)` 沒有答案）：以 GUID 集合為題的答案，兩張卡各自只錄了自己的集合。加 `tree_answers::lookup_covered`（多筆合起來涵蓋就用）。之後讀卡器仍報同樣錯：讀卡器跑的是舊 DLL，重編 F 編輯器後正常。
   - 教訓：改了 `ok-extract` 要測讀卡器，先重編 UE 編輯器（只跑 cargo 不會換掉已連結的 lib）。
 - 說明：[OK_CLOTHES_CARD.md](OK_CLOTHES_CARD.md)。
+
+## 2026-11-22 服裝卡：預設整套套用，頭髮是飾品做的角色連頭髮都被換掉（F 組 f-okclothes）
+
+- 「套用服裝卡」與點縮圖照遊戲的服裝卡整套套用（衣服＋飾品），刻晴、Alice 這類頭髮是飾品做的角色，頭髮變成服裝卡那位的；「只換衣服」又連服裝卡的袖子、腳環等飾品都不穿。使用者要的是只換衣服、不換頭髮。改成預設逐格合併（`okclothes::WearScope::KeepHair`）：角色掛在頭上或 HairAccessoryCustomizer 標成頭髮的飾品留在原格，服裝卡其他飾品照穿，撞格就換到空格，外掛資料跟著換格；整套套用只留在命令列 `--all`。
+  - 教訓：照搬遊戲行為前先想使用者要的結果；「服裝」在這個遊戲裡包含頭髮，不能直接當成衣服。
+  - 認頭髮不能只看 HairAccessoryCustomizer：雷電的頭髮（`a_n_head`）沒被它列入；它卻列了腳踝上用頭髮零件做的花（「跟隨髮色」關著）。掛在頭上，或被它列入且跟隨髮色，才算頭髮。第一次只看「有沒有列入」，花沒穿上，拿截圖對照整套套用才發現。
