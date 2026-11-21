@@ -76,9 +76,12 @@ pub(crate) fn flex_body(session: usize, pos: &[[f32; 3]], tris: &[u32]) {
     // SAFETY: only ok_set_flex_cloth stores here, as a BodyFn.
     if flex() && !f.is_null() { unsafe { std::mem::transmute::<*mut (), BodyFn>(f)(session as u64, pos.len() as u32, pos.as_ptr().cast(), (tris.len() / 3) as u32, tris.as_ptr()) } }
 }
-/// FleX settings that differ from PhysX's: a finer mesh (FleX collides particles, so the layers and her body must not slip
-/// between them), every layer simulated (they collide), less smoothing (FleX keeps the cloth whole itself).
-fn flex_edge() -> f32 { static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_EDGE", 0.01)) }
+/// FleX settings that differ from PhysX's: edges up to 2.5 cm (OK_CLOTH_FLEX_EDGE), every layer simulated (they collide),
+/// less smoothing (FleX keeps the cloth whole itself). At 1 cm the cloth crumpled like tissue (14-20% of the triangles
+/// folded over against 1-3% in the pose: the kimono's shards and dark flecks); 2-2.5 cm folds a third of that, and her
+/// capsules are too thick to slip between particles that far apart (2026-11-21).
+fn lining_gap() -> f32 { static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_PX_LINING_GAP", 0.004)) }
+fn flex_edge() -> f32 { static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_FLEX_EDGE", 0.025)) }
 /// FleX keeps the cloth together and out of her body itself: Rust then only clamps each particle to its max distance from
 /// the pose (OK_CLOTH_FLEX_PURE=1; default off). Its other corrections move particles FleX has just solved (out of her skin,
 /// LRA, smoothing), but without them the kimono went to spikes within seconds (2026-11-21).
@@ -102,7 +105,7 @@ pub fn set_mode(mode: i32) { MODE.store(mode.clamp(0, 3), Ordering::Relaxed); }
 pub fn mode() -> i32 { MODE.load(Ordering::Relaxed) }
 fn active() -> bool { mode() > 0 && host().is_some() }
 /// To Unreal's log (and stderr in tests, which have no Unreal).
-fn log(level: i32, msg: &str) {
+pub(crate) fn log(level: i32, msg: &str) {
     crate::ffi::ffi_log(level, msg);
     #[cfg(test)] eprintln!("{msg}");
 }
@@ -212,7 +215,8 @@ fn chains_on() -> bool { std::env::var("OK_CLOTH_PX_CHAINS").map_or(true, |v| v 
 /// pleats: a pleated skirt (cf_j_sk_*), made without bending.
 /// long: a long skirt, cloth around its running DynamicBones (see detect).
 /// follow: on a garment whose DynamicBones keep running (own chains or grafted bones): the cloth only sways around them.
-struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, long: bool, follow: bool, sig: (usize, usize) }
+/// hang: a drape on a glove's own chains (Raiden's gauze wrap): it hangs from the arm band, not from its chain roots.
+struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, long: bool, follow: bool, hang: bool, sig: (usize, usize) }
 
 fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     let runtime = part.runtime_accessory.as_ref()?;
@@ -306,7 +310,7 @@ fn classify(src: &crate::unity::ExtractedMesh, role: &str, implanted: &std::coll
     if debug && skirt {
         log(1, &format!("OK cloth px detect: role={role} skirt span {:.3} long={long}", hi - lo));
     }
-    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, long, follow: chain_sleeves || grafted, sig: (n, src.indices.len()) })
+    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, long, follow: chain_sleeves || grafted, hang: chain_sleeves && role.starts_with("clothes_gloves"), sig: (n, src.indices.len()) })
 }
 /// A garment mesh whose rig was just built from it (push.rs): more triangles where it will be cloth (cloth_refine),
 /// when PhysX cloth can run here (a host registered, or OK_CLOTH_PX_REFINE=1). The region is found on the built rig
@@ -709,11 +713,21 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     let mut in_tri = vec![false; np];
     for t3 in &tris { for &q in t3 { in_tri[q as usize] = true; } }
     let mut pinned = vec![false; np];
+    // A garment's own chains (sleeves, drapes) hang from where it is sewn on: its particles on her body's bones (off the
+    // region). Pinned near each chain root as well, Raiden's gauze sleeves (outfit 2: three roots along each arm) were
+    // pinned down to her crotch, 1042 of 2804 particles, and kept the DynamicBone pose's curl round her hips: no cloth
+    // to see (user, 2026-11-21). Free cloth with enough of those seams pins only them (OK_CLOTH_PX_CHAIN_ROOT_PIN=1: as before).
+    // Only a glove's drape (`hang`): a top's sleeve chain roots are its armhole, freed the kimono's sleeves hung from
+    // 40 particles and crumpled (three times the folded triangles), pinned near the arm's line or near the other pins
+    // alike.
+    let sewn = (0..np).filter(|&p| !all_region[p] && in_tri[p]).count();
+    let root_pin = !t.free || !d.hang || sewn < 16 || std::env::var("OK_CLOTH_PX_CHAIN_ROOT_PIN").is_ok_and(|v| v == "1");
     for p in 0..np {
         let k = kind_of[p];
         // A particle no element holds would only fall: it follows the pose.
         pinned[p] = !all_region[p] || !in_tri[p] || match k {
-            KIND_SKIRT | KIND_CHAIN => depth_of[p] < t.pin_t,
+            KIND_CHAIN => root_pin && depth_of[p] < t.pin_t,
+            KIND_SKIRT => depth_of[p] < t.pin_t,
             KIND_SLEEVE_L | KIND_SLEEVE_R => {
                 let s = (k - KIND_SLEEVE_L) as usize;
                 arms[s].is_none() || u[p] < t.shoulder_u || u[p] > umax[s] - t.cuff_u
@@ -762,6 +776,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         if anchor[p] != u32::MAX { straight[p] = len(sub(pos[p], pos[anchor[p] as usize])); }
         max_dist[p] = match kind_of[p] {
             KIND_SKIRT => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(if t.free { t.free_max } else if d.long { t.long_max } else { t.skirt_max }),
+            KIND_CHAIN if !root_pin => (t.skirt_reach * near).min(t.free_max),
             KIND_CHAIN => (t.skirt_reach * near * smooth(t.pin_t, t.pin_t + 0.25, depth_of[p])).min(if t.free { t.free_max } else { t.chain_max }),
             _ => (t.sleeve_reach * near).min(0.012 + 0.6 * (r[p] - 0.05).max(0.)).min(t.sleeve_max),
         };
@@ -999,7 +1014,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             let sleeves = kind.iter().any(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R);
             log(1, &format!("OK cloth px: part {index} ({}) is under another garment's cloth (kinds {:?}), those follow the pose", part.role,
                 (1..5).filter(|k| under[*k]).collect::<Vec<_>>()));
-            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, long: d.long && skirt, follow: d.follow, sig: d.sig };
+            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, long: d.long && skirt, follow: d.follow, hang: d.hang, sig: d.sig };
             if !skirt && !sleeves { e.failed = true; e.detect = Some(Arc::new(nd)); return; }
             e.detect = Some(Arc::new(nd));
         }
@@ -1254,7 +1269,14 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             let l = l as usize;
             // Its gap to the lead turned as the lead's surface turned: moved only, a lining poked through its outer cloth
             // wherever the cloth bent (Raiden's kimono hem, FleX, 2026-11-21).
-            positions[v] = add(sim_pos[l], turn(sub(positions[v], targets[l]), nt[l], ns[l]));
+            // Kept at least OK_CLOTH_PX_LINING_GAP (4 mm) off its outer cloth along the cloth's normal: the kimono's dark
+            // lining lies 1 mm under the purple, and the two meshes, cut into triangles apart, crossed each other wherever
+            // the cloth bent, dark flecks flickering through it (2026-11-21).
+            let d = sub(positions[v], targets[l]);
+            let k = dot(d, nt[l]);
+            let gap = lining_gap();
+            let along = if k.abs() >= gap { k } else if k < 0. { -gap } else { gap };
+            positions[v] = add(add(sim_pos[l], turn(sub(d, scale(nt[l], k)), nt[l], ns[l])), scale(ns[l], along));
             if let Some(n) = normals.get_mut(v) { *n = turn(*n, nt[l], ns[l]); }
             continue;
         }

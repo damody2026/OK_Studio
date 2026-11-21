@@ -32,13 +32,20 @@ static TAutoConsoleVariable<float> CVarFlexRest(TEXT("OKFlexCloth.SolidRest"), 0
 static TAutoConsoleVariable<float> CVarFlexBodyDistance(TEXT("OKFlexCloth.BodyDistance"), 0.004f, TEXT("Distance cloth particles keep from her body mesh (m)."));
 static TAutoConsoleVariable<float> CVarFlexStretch(TEXT("OKFlexCloth.Stretch"), 1.0f, TEXT("Stretch spring stiffness (0..1). New cloths."));
 static TAutoConsoleVariable<float> CVarFlexBend(TEXT("OKFlexCloth.Bend"), 0.3f, TEXT("Bending spring stiffness (0..1). New cloths."));
+// Bending rest: the pose's own curl (0) or the two triangles unfolded flat (1). Bending held to the pose it was made in,
+// the cloth kept that shape like stiff paper: Raiden's gauze sleeves stayed curled round her hips as the DynamicBone pose
+// has them instead of hanging from her arms (user: "no physics", 2026-11-21).
+static TAutoConsoleVariable<float> CVarFlexFlatBend(TEXT("OKFlexCloth.FlatBend"), 1.f, TEXT("Bending springs' rest: 0 the shape the cloth was made in, 1 flat cloth (it hangs as fabric). New cloths."));
 static TAutoConsoleVariable<float> CVarFlexFriction(TEXT("OKFlexCloth.Friction"), 0.4f, TEXT("Friction on her body."));
 static TAutoConsoleVariable<float> CVarFlexParticleFriction(TEXT("OKFlexCloth.ParticleFriction"), 0.2f, TEXT("Friction between cloth particles (layers)."));
 static TAutoConsoleVariable<float> CVarFlexDamping(TEXT("OKFlexCloth.Damping"), 0.5f, TEXT("Viscous damping (1/s)."));
 static TAutoConsoleVariable<float> CVarFlexDrag(TEXT("OKFlexCloth.Drag"), 0.05f, TEXT("Air drag on the cloth triangles."));
 static TAutoConsoleVariable<float> CVarFlexLift(TEXT("OKFlexCloth.Lift"), 0.02f, TEXT("Air lift on the cloth triangles."));
 static TAutoConsoleVariable<int32> CVarFlexSelf(TEXT("OKFlexCloth.SelfCollide"), 1, TEXT("1: a cloth collides with itself (its folds), not only with other layers."));
-static TAutoConsoleVariable<int32> CVarFlexBody(TEXT("OKFlexCloth.BodyMesh"), 1, TEXT("1: her posed body mesh is a collision shape (0: capsules only)."));
+// Off: her body mesh jumps a whole frame each solve (a mesh has no velocity in FleX), the walking thigh lands over the
+// cloth and throws it out crumpled (the kimono's side drape: twice the folded triangles of capsules only, 2026-11-21).
+// Rust keeps the cloth out of her skin itself (cloth_skin).
+static TAutoConsoleVariable<int32> CVarFlexBody(TEXT("OKFlexCloth.BodyMesh"), 0, TEXT("1: her posed body mesh is a collision shape too (0: capsules only; Rust keeps the cloth out of her skin)."));
 static TAutoConsoleVariable<int32> CVarFlexCapsules(TEXT("OKFlexCloth.Capsules"), 1, TEXT("1: her body capsules are collision shapes too."));
 static TAutoConsoleVariable<int32> CVarFlexAsync(TEXT("OKFlexCloth.Async"), 1, TEXT("1: the solve runs while the frame renders, collected next frame. 0: wait for it."));
 static TAutoConsoleVariable<int32> CVarFlexLog(TEXT("OKFlexCloth.Log"), 0, TEXT("1: log each solve."));
@@ -173,7 +180,8 @@ namespace
 		TArray<int32> Phase;            // per particle (group per connected piece)
 		TArray<FIntVector> Tris;
 		TArray<FVector3f> Rest;         // the shape it was made in
-		TArray<TPair<FIntPoint, float>> Springs; // particle pair, stiffness (rest length from Rest)
+		TArray<TPair<FIntPoint, float>> Springs; // particle pair, stiffness
+		TArray<float> SpringRest;                // each spring's rest length
 		TArray<FVector3f> Pos;          // its state: where the solver has it
 		TArray<FVector3f> Vel;
 		TArray<FVector3f> Target;       // the pins' targets for the solve being staged / last solved
@@ -263,7 +271,21 @@ namespace
 		TSet<FIntPoint> Seen;
 		const float Stretch = FMath::Clamp(CVarFlexStretch.GetValueOnAnyThread(), 0.f, 1.f);
 		const float Bend = FMath::Clamp(CVarFlexBend.GetValueOnAnyThread(), 0.f, 1.f);
+		const float Flat = FMath::Clamp(CVarFlexFlatBend.GetValueOnAnyThread(), 0.f, 1.f);
 		auto Key = [](int32 A, int32 B) { return A < B ? FIntPoint(A, B) : FIntPoint(B, A); };
+		auto Add = [&](const FIntPoint& K, float Stiff, float Len) { C.Springs.Add({K, Stiff}); C.SpringRest.Add(Len); };
+		// Opposite corners O1, O2 of the two triangles on edge A-B: their distance with both triangles laid flat.
+		auto FlatLen = [&](int32 A, int32 B, int32 O1, int32 O2)
+		{
+			const FVector3f E = C.Rest[B] - C.Rest[A];
+			const float L = E.Length();
+			if (L < 1e-6f) return (C.Rest[O1] - C.Rest[O2]).Length();
+			const FVector3f U = E / L;
+			const FVector3f D1 = C.Rest[O1] - C.Rest[A], D2 = C.Rest[O2] - C.Rest[A];
+			const float X1 = FVector3f::DotProduct(D1, U), X2 = FVector3f::DotProduct(D2, U);
+			const float H1 = (D1 - U * X1).Length(), H2 = (D2 - U * X2).Length();
+			return FMath::Sqrt(FMath::Square(X1 - X2) + FMath::Square(H1 + H2));
+		};
 		for (const FIntVector& T : C.Tris)
 		{
 			const int32 V[3] = {T.X, T.Y, T.Z};
@@ -271,10 +293,14 @@ namespace
 			{
 				const int32 A = V[E], B = V[(E + 1) % 3], O = V[(E + 2) % 3];
 				const FIntPoint K = Key(A, B);
-				if (!Seen.Contains(K)) { Seen.Add(K); C.Springs.Add({K, Stretch}); }
+				if (!Seen.Contains(K)) { Seen.Add(K); Add(K, Stretch, (C.Rest[A] - C.Rest[B]).Length()); }
 				if (const int32* Other = EdgeTri.Find(K))
 				{
-					if (Bend > 0.f && *Other != O) C.Springs.Add({Key(*Other, O), Bend});
+					if (Bend > 0.f && *Other != O)
+					{
+						const float Posed = (C.Rest[*Other] - C.Rest[O]).Length();
+						Add(Key(*Other, O), Bend, FMath::Lerp(Posed, FlatLen(A, B, *Other, O), Flat));
+					}
 				}
 				else EdgeTri.Add(K, O);
 			}
@@ -332,10 +358,11 @@ namespace
 					Phase[P] = C.Phase[I];
 					if (!C.Inactive[I]) Active[NumActive++] = P;
 				}
-				for (const TPair<FIntPoint, float>& Spring : C.Springs)
+				for (int32 K = 0; K < C.Springs.Num(); ++K)
 				{
+					const TPair<FIntPoint, float>& Spring = C.Springs[K];
 					SI[Sp * 2] = C.Base + Spring.Key.X; SI[Sp * 2 + 1] = C.Base + Spring.Key.Y;
-					SL[Sp] = (C.Rest[Spring.Key.X] - C.Rest[Spring.Key.Y]).Length();
+					SL[Sp] = C.SpringRest.IsValidIndex(K) ? C.SpringRest[K] : (C.Rest[Spring.Key.X] - C.Rest[Spring.Key.Y]).Length();
 					SK[Sp] = Spring.Value;
 					++Sp;
 				}

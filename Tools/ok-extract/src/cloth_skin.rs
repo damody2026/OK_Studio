@@ -20,9 +20,13 @@ fn sigma() -> f32 {
     *S.get_or_init(|| std::env::var("OK_CLOTH_PX_SKIN_SIGMA").ok().and_then(|v| v.parse().ok()).unwrap_or(SIGMA_M))
 }
 
-/// Her body part and the vertices kept of it (by its mesh and size).
-struct Still { body: usize, verts: Vec<u32> }
+/// Her body part and the vertices kept of it and of what she wears tight on it (`verts`: part, vertex).
+struct Still { body: usize, verts: Vec<(u32, u32)> }
 static STILL: Mutex<Vec<(usize, usize, usize, Arc<Still>)>> = Mutex::new(Vec::new());
+/// Tight garments on her skin, read as skin too: stockings, tights, boots stand off it by their thickness, and cloth
+/// kept off her bare skin only lay inside them (Raiden's maid skirt under her garter frills, her kimono in her
+/// thigh-high boots, 2026-11-21). Those with a rig of their own are read as skinned last frame.
+const TIGHT: [&str; 3] = ["clothes_socks", "clothes_panst", "clothes_shoes"];
 /// Per session: her skin posed this frame.
 static FIELDS: Mutex<Option<HashMap<usize, Arc<SkinField>>>> = Mutex::new(None);
 
@@ -36,14 +40,30 @@ fn cell(p: [f32; 3]) -> [i64; 3] { p.map(|v| (v / CELL_M).floor() as i64) }
 fn still(parts: &[SessionPart]) -> Option<Arc<Still>> {
     let (body, part) = parts.iter().enumerate().filter(|(_, p)| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none())
         .max_by_key(|(_, p)| p.rest_positions.len())?;
-    let key = (parts.as_ptr() as usize, body, part.rest_positions.len());
+    // The tight garments first: in a cube her skin and her stocking share, the stocking (outside) is kept.
+    let mut chosen: Vec<usize> = parts.iter().enumerate()
+        .filter(|(_, p)| TIGHT.iter().any(|r| p.role.starts_with(r)) && p.render_visible
+            && (if p.runtime_accessory.is_some() { p.normals.len() == p.positions.len() && !p.positions.is_empty() } else { p.skel_kind == 1 }))
+        .map(|(i, _)| i).collect();
+    chosen.push(body);
+    let key = (parts.as_ptr() as usize, body, chosen.iter().fold(part.rest_positions.len(), |a, &i| a.wrapping_mul(31).wrapping_add(i * 7919 + parts[i].rest_positions.len())));
     if let Some(e) = STILL.lock().unwrap().iter().find(|e| (e.0, e.1, e.2) == key) { return Some(e.3.clone()); }
-    let mut taken = std::collections::HashSet::new();
-    let verts: Vec<u32> = (0..part.rest_positions.len()).filter(|&j| {
-        part.rest_normals.get(j).is_some_and(|n| n.iter().any(|v| *v != 0.)) && part.bone_idx.get(j).is_some() && part.weights.get(j).is_some()
-            && taken.insert(part.rest_positions[j].map(|v| (v / THIN_M).floor() as i64))
-    }).map(|j| j as u32).collect();
+    let mut verts: Vec<(u32, u32)> = Vec::new();
+    for &i in &chosen {
+        // Thinned each in its own space (a rigged garment's rest is not her body's).
+        let mut taken = std::collections::HashSet::new();
+        let q = &parts[i];
+        for j in 0..q.rest_positions.len() {
+            if q.rest_normals.get(j).is_some_and(|n| n.iter().any(|v| *v != 0.)) && q.bone_idx.get(j).is_some() && q.weights.get(j).is_some()
+                && taken.insert(q.rest_positions[j].map(|v| (v / THIN_M).floor() as i64)) { verts.push((i as u32, j as u32)); }
+        }
+    }
     if verts.is_empty() { return None; }
+    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+        let names: Vec<String> = parts.iter().enumerate().filter(|(i, p)| chosen.contains(i) || TIGHT.iter().any(|r| p.role.starts_with(r)))
+            .map(|(i, p)| format!("{}{} kind {} rig {} shown {}", if chosen.contains(&i) { "+" } else { "-" }, p.role, p.skel_kind, p.runtime_accessory.is_some(), p.render_visible)).collect();
+        crate::cloth_px::log(1, &format!("OK cloth px skin: {} points from {:?}", verts.len(), names));
+    }
     let s = Arc::new(Still { body, verts });
     let mut kept = STILL.lock().unwrap();
     if kept.len() >= 16 { kept.remove(0); }
@@ -89,12 +109,24 @@ fn flex_body(session: usize, parts: &[SessionPart], skel: &Skeleton) {
 
 fn build(parts: &[SessionPart], skel: &Skeleton) -> Option<SkinField> {
     let still = still(parts)?;
-    let part = &parts[still.body];
-    let (worlds, binds) = crate::skel_export::palettes(skel, part);
-    if worlds.is_empty() { return None; }
-    let skins: Vec<Mat4> = worlds.iter().zip(&binds).map(|(w, b)| crate::pose::mat_mul_pub(w, b)).collect();
+    let mut palettes: HashMap<u32, Vec<Mat4>> = HashMap::new();
     let (mut p, mut n) = (Vec::with_capacity(still.verts.len()), Vec::with_capacity(still.verts.len()));
-    for &j in &still.verts {
+    for &(i, j) in &still.verts {
+        let part = &parts[i as usize];
+        if part.runtime_accessory.is_some() {
+            let j = j as usize;
+            let (Some(&at), Some(&q)) = (part.positions.get(j), part.normals.get(j)) else { continue };
+            let l = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
+            if l < 1e-6 { continue; }
+            p.push(at);
+            n.push([q[0] / l, q[1] / l, q[2] / l]);
+            continue;
+        }
+        let skins = palettes.entry(i).or_insert_with(|| {
+            let (worlds, binds) = crate::skel_export::palettes(skel, part);
+            worlds.iter().zip(&binds).map(|(w, b)| crate::pose::mat_mul_pub(w, b)).collect()
+        });
+        if skins.is_empty() { continue; }
         let j = j as usize;
         let (b, w) = (part.bone_idx[j], part.weights[j]);
         let mut m = [[0f32; 4]; 4];
