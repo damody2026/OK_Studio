@@ -1456,7 +1456,7 @@ mod tests {
         assert_eq!(arm_side("cf_j_index01_L"), None);
         assert!(skirt_role("clothes_bot") && skirt_role("clothes_top") && !skirt_role("clothes_socks"));
     }
-    /// OK_CLOTH_CARD=<card.png>[;<card.png>...]: what each garment's detection finds (its chains, its weights).
+    /// OK_CLOTH_CARD=<card.png>[;<card.png>...] (OK_CLOTH_GAME=<game root> for a game card): what each garment's detection finds (its chains, its weights).
     #[test]
     #[ignore = "local cards: OK_CLOTH_CARD"]
     fn describe_cards() {
@@ -1466,7 +1466,7 @@ mod tests {
         let outfits: Vec<i32> = std::env::var("OK_CLOTH_OUTFITS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or(vec![0]);
         let all = std::env::var("OK_CLOTH_ALL").is_ok_and(|v| v == "1");
         for card in cards.split(';').filter(|c| !c.is_empty()) { for &outfit in &outfits {
-            let game = std::ffi::CString::new("").unwrap();
+            let game = std::ffi::CString::new(std::env::var("OK_CLOTH_GAME").unwrap_or_default()).unwrap();
             let c = std::ffi::CString::new(card).unwrap();
             let mut out = std::ptr::null_mut();
             let mut err = [0i8; 512];
@@ -1502,8 +1502,8 @@ mod tests {
                     e.sort_by(f32::total_cmp);
                     if !e.is_empty() { eprintln!("    region edges: n={} median {:.1} mm p90 {:.1} mm max {:.1} mm follow={} long={}", e.len(), e[e.len() / 2] * 1000., e[e.len() * 9 / 10] * 1000., e[e.len() - 1] * 1000., d.follow, d.long); }
                 }
-                eprintln!("  part {i} {} verts={} tris={} skirt={sk} sleeve={sl} dbones={} implanted={} top: {} path={}",
-                    p.role, src.weights.len(), src.indices.len() / 3, src.deferred_dbones.is_some(), rt.implanted_bones().len(), tops.join(" "), anc(&top));
+                eprintln!("  part {i} {} on {:?} verts={} tris={} skirt={sk} sleeve={sl} dbones={} implanted={} top: {} path={}",
+                    p.role, rt.parent_key(), src.weights.len(), src.indices.len() / 3, src.deferred_dbones.is_some(), rt.implanted_bones().len(), tops.join(" "), anc(&top));
             }
         } }
     }

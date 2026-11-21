@@ -229,6 +229,9 @@ impl AccessoryRuntime {
     pub(crate) fn source_mesh(&self) -> &ExtractedMesh { &self.source }
     /// The garment's own bones grafted onto the body rig (its DynamicBone chains, run by the body-level clothes set).
     pub(crate) fn implanted_bones(&self) -> &std::collections::HashSet<i64> { &self.implanted_bones }
+    /// The anchor an accessory hangs on (a_n_elbo_L, ...; empty for clothes). Only cloth_px describe_cards reads it.
+    #[cfg(test)]
+    pub(crate) fn parent_key(&self) -> &str { &self.parent_key }
     // Coordinated implanted clothes use the solved shared clothes rig.
     pub(crate) fn editor_bind_source(&self,body:&Skeleton)->Option<(&ExtractedMesh,Vec<crate::pose::Mat4>)>{
         let mut policy=AccessoryFramePolicy::read();policy.rigid_clothes=true;
