@@ -203,3 +203,9 @@
 錄影：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex9\raiden_outfit2_compare_20s.mp4`、`raiden_outfit3_compare_20s.mp4`、`raiden_outfit5_compare_20s.mp4`（左 FleX，右原始物理；左上標籤仍寫「PhysX 布料」）。
 
 還沒好：和服下擺在腳邊偶爾堆疊；描邊後退只做了 MainItemPlus 家族（和服、紗袖），其他描邊家族沒動。
+
+### 巡檢（11-21 22:15–23:10）：和服下擺的黑色旗狀物
+
+- 下擺兩側流蘇旁的黑色旗狀物只在描邊開時出現；原始物理同一位置也有、而且更大（逐幀對照），是這件和服的描邊本身，不是布料造成的。
+- 和服的描邊是預先烘好的共用母材質（`M_ForgeOpaque_Outline`、`M_ForgeAlphaMasked_Outline`），執行時加不了往後退的節點；上一輪的 `ok.OutlinePushBack` 只對 MainItemPlus 家族有效。要改得重新產生 `Content/IndependentResources/RuntimeMaterials` 的母材質（影響所有組），先不動。
+- 試過、沒用（已撤回）：FleX 自碰撞半徑加大（12 mm／9 mm，像厚布）、布料區法線直接用模擬後的平滑法線。
