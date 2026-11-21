@@ -1763,11 +1763,12 @@ int32 FOkSession::RefineBelly(){return Handle?ok_session_refine_belly(Handle):-1
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);
 extern "C" int32_t ok_clothes_file(int32_t,const char*,const char*,int32_t,const char*,char*,int32_t);
 static bool OKClothesFile(int32 Op,const FString& A,const FString& B,int32 Outfit,const FString& Out,FString& Summary){
- char Buffer[2048]{};const int32 Result=ok_clothes_file(Op,TCHAR_TO_UTF8(*A),B.IsEmpty()?nullptr:static_cast<const char*>(TCHAR_TO_UTF8(*B)),Outfit,TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
+ char Buffer[8192]{};const int32 Result=ok_clothes_file(Op,TCHAR_TO_UTF8(*A),B.IsEmpty()?nullptr:static_cast<const char*>(TCHAR_TO_UTF8(*B)),Outfit,TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
  Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
 }
 bool FOkSession::ClothesImport(const FString& CoordinateCard,const FString& Out,FString& Summary){return OKClothesFile(0,CoordinateCard,FString(),0,Out,Summary);}
 bool FOkSession::ClothesExport(const FString& Card,int32 Outfit,const FString& Out,FString& Summary){return OKClothesFile(1,Card,FString(),Outfit,Out,Summary);}
+bool FOkSession::ClothesExportPictured(const FString& Card,int32 Outfit,const FString& Picture,const FString& Out,FString& Summary){return OKClothesFile(4,Card,Picture,Outfit,Out,Summary);}
 bool FOkSession::ClothesWear(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(2,Card,OkClothes,Outfit,Out,Summary);}
 bool FOkSession::ClothesWearClothesOnly(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(3,Card,OkClothes,Outfit,Out,Summary);}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){

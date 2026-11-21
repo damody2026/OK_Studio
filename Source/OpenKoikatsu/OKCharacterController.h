@@ -412,8 +412,18 @@ public:
 	void OnExportOkClothes();
 	UFUNCTION()
 	void OnWearOkClothes();
+	/** As OnWearOkClothes, keeping her own accessories (hair ornaments etc.): only the clothes change. */
+	UFUNCTION()
+	void OnWearOkClothesOnly();
 	UFUNCTION()
 	void OnImportClothesCard();
+	/** Export the shown outfit to an outfit card (Out empty: the save folder, else UserData/okclothes), pictured as she
+	 *  wears it now; Done gets (ok, path or error). Wear an outfit card on the shown character as her shown outfit: made
+	 *  into a work card (Saved/OKClothes/Worn, sealed when she is an OK card) on a worker thread and opened at once. */
+	void ExportOkClothesTo(const FString& Out, TFunction<void(bool, const FString&)> Done = nullptr);
+	void WearOkClothesFrom(const FString& Clothes, bool bClothesOnly, TFunction<void(bool, const FString&)> Done = nullptr);
+	/** A wear on a worker thread is running (its card opens when it ends). */
+	bool bWearingOkClothes = false;
 	UFUNCTION()
 	void OnOpenCardFolder();
 	UFUNCTION()

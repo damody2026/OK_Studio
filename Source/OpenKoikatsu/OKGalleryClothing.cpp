@@ -19,6 +19,7 @@
 #include "HAL/PlatformProcess.h"
 #include "Widgets/SWindow.h"
 #include "KKRustExtract.h"
+#include "OKCardPreviewCapture.h"
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <commdlg.h>
@@ -244,33 +245,78 @@ bool OKPickFile(const TCHAR* Filter,const TCHAR* Title,FString& Out){
 #endif
 }
 }
+// Outfit cards go to the save folder when one is given, else to UserData/okclothes (the player's own data, kept).
+static FString OKClothesFolder(const UEditableTextBox* SaveFolder){
+ const FString Typed=SaveFolder?SaveFolder->GetText().ToString().TrimStartAndEnd():FString();
+ return FPaths::ConvertRelativePathToFull(Typed.IsEmpty()?FPaths::ProjectDir()/TEXT("UserData/okclothes"):Typed);
+}
 void UOKCharacterController::OnExportOkClothes(){
  auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};
- if(!Entries.IsValidIndex(SelectedIndex)){Report(TEXT("請先選擇一張角色卡。"));return;}
- const FString Directory=OutputDirectoryInput?OutputDirectoryInput->GetText().ToString().TrimStartAndEnd():FString();
- if(Directory.IsEmpty()){Report(TEXT("請先在卡片列表填寫另存資料夾。"));return;}
- const FString Card=Entries[SelectedIndex].Path;
- const FString Output=FPaths::ConvertRelativePathToFull(Directory)/FString::Printf(TEXT("%s_outfit%d.okclothes"),*FPaths::GetBaseFilename(Card),OutfitIndex);
+ ExportOkClothesTo(FString(),[Report](bool bOk,const FString& What){Report(bOk?TEXT("已匯出服裝卡：")+What:TEXT("匯出服裝卡失敗：")+What);});
+}
+void UOKCharacterController::ExportOkClothesTo(const FString& OutIn,TFunction<void(bool,const FString&)> Done){
+ if(!Done)Done=[](bool,const FString&){};
+ if(!Entries.IsValidIndex(SelectedIndex)){Done(false,TEXT("請先選擇一張角色卡。"));return;}
+ const FString Card=Entries[SelectedIndex].Path;const int32 Outfit=OutfitIndex;
+ const FString Output=!OutIn.IsEmpty()?OutIn:OKClothesFolder(OutputDirectoryInput)/FString::Printf(TEXT("%s_outfit%d.okclothes"),*FPaths::GetBaseFilename(Card),Outfit);
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
- FString Summary;const bool Ok=FOkSession::ClothesExport(Card,OutfitIndex,Output,Summary);
- UE_LOG(LogTemp,Display,TEXT("OK clothes export %s -> %s: %s"),*Card,*Output,*Summary);
- Report(Ok?FString::Printf(TEXT("已匯出服裝 %d：%s"),OutfitIndex,*Output):TEXT("匯出服裝失敗：")+Summary);
+ auto Export=[Card,Outfit,Output,Done](const FString& Picture){
+  FString Summary;const bool Ok=Picture.IsEmpty()?FOkSession::ClothesExport(Card,Outfit,Output,Summary):FOkSession::ClothesExportPictured(Card,Outfit,Picture,Output,Summary);
+  UE_LOG(LogTemp,Display,TEXT("OK clothes export %s outfit %d -> %s: %s"),*Card,Outfit,*Output,*Summary);
+  Done(Ok,Ok?Output:Summary);
+ };
+ // Pictured as she wears it now (the front view of the card capture); the card's own picture when she is not shown.
+ if(!IsValid(PreviewActor)||!FPaths::IsSamePath(PreviewCardPath,Card)){Export(FString());return;}
+ const FString Picture=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKClothes/picture.png"));
+ OKCardPreviewCapture::Begin(PreviewActor,[Export,Picture](TArray<TArray<uint8>> Views,FString Error){
+  const bool bPicture=Error.IsEmpty()&&Views.Num()>1&&Views[1].Num()>0&&FFileHelper::SaveArrayToFile(Views[1],*Picture);
+  if(!bPicture)UE_LOG(LogTemp,Warning,TEXT("OK clothes export: no picture (%s), the card's own used"),*Error);
+  Export(bPicture?Picture:FString());
+ });
+}
+static void OKWearPicked(UOKCharacterController* Self,bool bClothesOnly,TFunction<void(const FString&)> Report){
+ FString Clothes;if(!OKPickFile(TEXT("OK 服裝卡\0*.okclothes\0所有檔案\0*.*\0"),TEXT("選擇要套用的服裝卡"),Clothes))return;
+ Report(TEXT("套用服裝卡中…"));
+ Self->WearOkClothesFrom(Clothes,bClothesOnly,[Report](bool bOk,const FString& What){Report(bOk?TEXT("已套用服裝卡（工作卡，要保留請另存）：")+What:TEXT("套用服裝卡失敗：")+What);});
 }
 void UOKCharacterController::OnWearOkClothes(){
- auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};
- if(!Entries.IsValidIndex(SelectedIndex)){Report(TEXT("請先選擇一張角色卡。"));return;}
- const FString Directory=OutputDirectoryInput?OutputDirectoryInput->GetText().ToString().TrimStartAndEnd():FString();
- if(Directory.IsEmpty()){Report(TEXT("請先在卡片列表填寫另存資料夾。"));return;}
- FString Clothes;if(!OKPickFile(TEXT("OK 服裝\0*.okclothes\0所有檔案\0*.*\0"),TEXT("選擇要穿上的 OK 服裝"),Clothes))return;
- const FString Card=Entries[SelectedIndex].Path;
- // A new card: the original stays as it was.
- const FString Output=UKKCardWorkspace::NewCardPath(FPaths::ConvertRelativePathToFull(Directory),Card);
+ OKWearPicked(this,false,[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);});
+}
+void UOKCharacterController::OnWearOkClothesOnly(){
+ OKWearPicked(this,true,[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);});
+}
+void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClothesOnly,TFunction<void(bool,const FString&)> Done){
+ if(!Done)Done=[](bool,const FString&){};
+ if(!Entries.IsValidIndex(SelectedIndex)){Done(false,TEXT("請先選擇一張角色卡。"));return;}
+ if(bWearingOkClothes){Done(false,TEXT("另一次套用還在進行。"));return;}
+ if(!IFileManager::Get().FileExists(*Clothes)){Done(false,TEXT("找不到服裝卡：")+Clothes);return;}
+ const FString Card=Entries[SelectedIndex].Path;const int32 Outfit=OutfitIndex;
+ // A work card: the card shown stays as it was; saving keeps the result (the reader's save).
+ const FString Output=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKClothes/Worn")/FString::Printf(TEXT("%s+%s.png"),*FPaths::GetBaseFilename(Card).Left(60),*FPaths::GetBaseFilename(Clothes).Left(60)));
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
- FString Summary;const bool Ok=FOkSession::ClothesWear(Card,Clothes,OutfitIndex,Output,Summary);
- UE_LOG(LogTemp,Display,TEXT("OK clothes wear %s on %s outfit %d -> %s: %s"),*Clothes,*Card,OutfitIndex,*Output,*Summary);
- if(!Ok){Report(TEXT("穿上服裝失敗：")+Summary);return;}
- Report(FString::Printf(TEXT("已穿上為服裝 %d，另存新卡：%s"),OutfitIndex,*Output));
- RefreshCardList();
+ bWearingOkClothes=true;
+ TWeakObjectPtr<UOKCharacterController> Weak(this);
+ // An OK card is sealed again for her new clothes (ok-extract.exe, seconds): off the game thread.
+ Async(EAsyncExecution::Thread,[Weak,Card,Clothes,Outfit,Output,bClothesOnly,Done](){
+  FString Summary;
+  const bool Ok=bClothesOnly?FOkSession::ClothesWearClothesOnly(Card,Clothes,Outfit,Output,Summary):FOkSession::ClothesWear(Card,Clothes,Outfit,Output,Summary);
+  AsyncTask(ENamedThreads::GameThread,[Weak,Card,Clothes,Outfit,Output,Ok,Summary,Done](){
+   UE_LOG(LogTemp,Display,TEXT("OK clothes wear %s on %s outfit %d -> %s: %s"),*Clothes,*Card,Outfit,*Output,*Summary);
+   UOKCharacterController* Self=Weak.Get();
+   if(!Self){return;}
+   Self->bWearingOkClothes=false;
+   if(!Ok){Done(false,Summary);return;}
+   // Opened at once, in the outfit she now wears.
+   Self->bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Output).IsEmpty();
+   int32 Index=Self->Entries.IndexOfByPredicate([&](const auto& E){return FPaths::IsSamePath(E.Path,Output);});
+   if(Index==INDEX_NONE){FKKCardListEntry E;E.Path=Output;E.FileName=FPaths::GetCleanFilename(Output);Index=Self->Entries.Add(E);}
+   else Self->Entries[Index].FileName=FPaths::GetCleanFilename(Output);
+   Self->SelectIndex(Index);
+   if(Self->SelectedIndex!=Index){Done(false,TEXT("套好的卡讀不出來：")+Output);return;}
+   Self->OutfitIndex=FMath::Max(0,Outfit);Self->RefreshOutfitList();Self->OnLoad3D();
+   Done(true,Output);
+  });
+ });
 }
 void UOKCharacterController::OnImportClothesCard(){
  auto Report=[this](const FString& Text){if(InspectorText)InspectorText->SetText(FText::FromString(Text));ScreenNote(1,8.f,FColor::Cyan,Text);};

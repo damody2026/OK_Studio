@@ -96,6 +96,8 @@ public:
   *  Summary gets a one-line result (with plugin data that could not be converted), or the error. */
  static bool ClothesImport(const FString& CoordinateCard,const FString& Out,FString& Summary);
  static bool ClothesExport(const FString& Card,int32 Outfit,const FString& Out,FString& Summary);
+ // As ClothesExport, pictured by Picture (a PNG of the outfit as worn) instead of the card's picture.
+ static bool ClothesExportPictured(const FString& Card,int32 Outfit,const FString& Picture,const FString& Out,FString& Summary);
  static bool ClothesWear(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary);
  // Only the clothes worn: the character keeps that outfit's accessories and makeup (the maker's coordinate load with its
  // accessories unticked).
