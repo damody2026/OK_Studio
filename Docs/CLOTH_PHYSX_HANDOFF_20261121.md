@@ -150,3 +150,20 @@
 - 不推送；只提交自己的 hunk；不要在共用工作樹上 checkout、reset、stash。
 - 角色卡、原作資料、`grok-media/`、`OKExtractBuildStamp.h` 不提交。
 - 腳本只用 Lua（`Tools\lua\lua.exe`），不新增 `.py`／`.ps1`。
+
+## 使用者 11-21 第四次回報（晚上）
+
+> 我沒有要你對齊原始的物理，用 physx 的意義就是要比原本的好……服裝二沒有上物理、穿模了，你要幫他上物理；UI 要可以切換不同的物理；除了 apex 還要新增 flex 的布料模擬。nvflex 一定能做到更好，穿模、布料之間的穿透都能解決，把所有布料的問題都修正。
+
+做了（見 CLOTH_PHYSX_SKIRT_SLEEVE.md「真的模擬與 NVIDIA FleX」）：
+
+- 真布料成為預設，FleX 主機，讀卡器「布料物理」選單。提交 `78434cadb`、`762d51e94`。
+- FleX 錄影：
+  - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex4\raiden_outfit2_compare_20s.mp4`（服裝 2）
+  - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex3\raiden_outfit3_compare_20s.mp4`、`raiden_outfit5_compare_20s.mp4`
+
+還沒做好：
+
+- 服裝 2：原姿勢藏在骨盆裡的那段紗袍，現在垂在胯前成一團布（不穿模，但皺）；內襯邊緣偶爾從外層上緣露出。
+- 服裝 5：側片邊緣有破碎感；要看是布料區和非布料區交界處被拉開，還是三角形翻面。
+- FleX 還不是預設；其他角色卡（千佳、惠惠、刻晴、三月七）還沒用 FleX 看過。

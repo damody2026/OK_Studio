@@ -176,3 +176,29 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 - 布料是在「動了 1.5 秒」的姿勢上建立的。換成一個裙骨 key 差很多的動作時，要等形狀偏離超過 30% 才會重建，在那之前下擺可能比目標高或低幾公分。
 - 外套底下的襯衫和外套袖子之間沒有碰撞，只靠「袖子不內陷 2 mm」擋住。
 - 只有 `KKUnityBundle` 開啟；街區（`KKRuntimePose`）、群眾仍用 DynamicBone。
+
+## 真的模擬與 NVIDIA FleX（2026-11-21 晚）
+
+使用者要的是比原始物理好（不穿模、各層不互穿），不是和原始物理一樣。上面「跟著 DynamicBone 擺」那一套把布料限制在姿勢 5–6 cm 內並拉回姿勢，畫面幾乎就是原始物理，雷電服裝 2 紗袍等於沒上物理、仍從胯下穿出（見 `Docs/ERROR_LOG.md` 同日）。
+
+### 真布料（`OK_CLOTH_PX_FREE`，預設 1）
+
+- 布料只從固定列垂下：最多離姿勢 `OK_CLOTH_PX_FREE_MAX`（30 cm），拉回姿勢只剩每秒 `OK_CLOTH_PX_FREE_PULL`（0.3）。
+- 不在姿勢落在身體裡時留在姿勢上；皮膚推出要求在皮膚外 `OK_CLOTH_PX_SKIN_MARGIN`；Rust 端身體膠囊推出用整個半徑；GPU 膠囊不再縮小；裙子可以被腿踢高。
+- 長裙也關掉 DynamicBone（移植骨的衣服除外，它的鏈和整套衣服共用）。
+- `OK_CLOTH_PX_FREE=0` 回到跟著 DynamicBone 擺。
+
+### FleX 主機（`Plugins/OKPhysXSecondary/Source/OKPhysXSecondary/Private/OKFlexCloth.cpp`）
+
+- NvFlex 1.2：用引擎 `Engine/Plugins/GameWorks/Flex` 留下的原版標頭與 DLL（那個外掛的執行期已改用 PhysX 5.8，不再載入它們）。建置時把 `NvFlexReleaseCUDA_x64.dll`、`NvFlexReleaseD3D_x64.dll` 等複製到本外掛 `Binaries/ThirdParty/Win64`，執行時載入：先 CUDA（RTX 5090 上可用，DLL 內有 PTX），不行用 D3D11 compute（`OKFlexCloth.Backend`）。
+- 和 PhysX 主機同一組 Create／Step／Release 介面，另加 Bind（布料屬於哪個角色）與 Body（她這一幀的身體網格）。Rust 端 `ok_set_flex_cloth`、`ok_cloth_px_solver`，Unreal 端 `ok.ClothSolver`（0 PhysX、1 FleX）。
+- 每個角色一個 FleX 解算器，她所有布料都在裡面，粒子之間互相碰撞（內襯與外層、袍子與裙子）。她擺好姿勢的身體網格每幀當三角網格碰撞形狀（`OKFlexCloth.BodyMesh`），身體膠囊也放（`OKFlexCloth.Capsules`）。
+- 全部布料同一個 group、自碰撞、依建立時的形狀過濾（`eNvFlexPhaseSelfCollideFilter`）：建立時就在半徑內的粒子對永遠不碰。原姿勢裡各層本來就互穿（和服裙片、紗袍內襯），每片一個 group 時 FleX 一開始就同時把它們拉開，和服纏成一團堆在腳邊。
+- 每次求解：先收結果（Step 的 Dt 0），Rust 算修正，再交出這一幀的目標；她的布料全部交齊（或同一塊交第二次）才開始求解，非同步跑在 worker 上；FleX 呼叫在 `GFlexLock` 內，共用狀態在 `GLock` 內，求解時不握 `GLock`，遊戲執行緒不會等 GPU。
+- 彈簧：每條邊一條拉伸彈簧（`OKFlexCloth.Stretch` 1.0），共邊兩三角形的對角一條彎曲彈簧（`OKFlexCloth.Bend` 0.3；0.05 時女僕長裙下擺會皺）。
+- FleX 時 Rust 端：布料切到 1 cm（`OK_CLOTH_FLEX_EDGE`，粒子之間要夠密，身體與其他層才鑽不過去）、內襯也模擬（不再跟著外層）、不判斷誰蓋住誰、偏移平滑 1 次（`OK_CLOTH_FLEX_SMOOTH`）。雷電服裝 2 紗袍 14,621 粒子，一次求解約 7 ms（5 個子步）。
+- 其他 CVar：`OKFlexCloth.Iterations`（8）、`SubstepHz`（240）、`MaxSubsteps`（6）、`MaxDt`、`Radius`（1 cm）、`SolidRest`（5 mm）、`BodyDistance`（4 mm）、`Friction`、`ParticleFriction`、`Damping`、`Drag`、`Lift`、`SelfCollide`、`Async`、`Log`。
+
+### 讀卡器選單
+
+「衣服 › 布料物理」（`control.PhysicsCombo`）：原始物理（DynamicBone）／PhysX 布料／FleX 布料。換 PhysX／FleX 會重新載入模型（兩者切網格的大小不同）。預設仍是 PhysX。
