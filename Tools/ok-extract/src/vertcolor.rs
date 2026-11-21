@@ -534,15 +534,15 @@ fn simplify(d: &Dense, pos_src: &[[f32; 3]], color: &[[f32; 4]], target: usize, 
 
 // ------------------------------------------------------- attribute transfer
 
-fn lerp<const N: usize>(src: &[[f32; N]], b: &[Bary]) -> Vec<[f32; N]> {
+pub(crate) fn lerp<const N: usize>(src: &[[f32; N]], b: &[Bary]) -> Vec<[f32; N]> {
     b.iter().map(|b| { let mut o = [0.0; N]; for k in 0..3 { let s = src[b.v[k] as usize]; for c in 0..N { o[c] += s[c] * b.w[k]; } } o }).collect()
 }
 
-fn lerp_dirs(src: &[[f32; 3]], b: &[Bary]) -> Vec<[f32; 3]> {
+pub(crate) fn lerp_dirs(src: &[[f32; 3]], b: &[Bary]) -> Vec<[f32; 3]> {
     lerp(src, b).into_iter().map(|d| { let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt(); if l > 1e-12 { [d[0] / l, d[1] / l, d[2] / l] } else { [0.0, 1.0, 0.0] } }).collect()
 }
 
-fn lerp_tangents(src: &[[f32; 4]], b: &[Bary]) -> Vec<[f32; 4]> {
+pub(crate) fn lerp_tangents(src: &[[f32; 4]], b: &[Bary]) -> Vec<[f32; 4]> {
     b.iter().map(|b| {
         let mut o = [0.0f32; 3];
         for k in 0..3 { let s = src[b.v[k] as usize]; for c in 0..3 { o[c] += s[c] * b.w[k]; } }
@@ -552,7 +552,7 @@ fn lerp_tangents(src: &[[f32; 4]], b: &[Bary]) -> Vec<[f32; 4]> {
     }).collect()
 }
 
-fn lerp_skin(weights: &[[f32; 4]], bones: &[[u16; 4]], b: &[Bary]) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
+pub(crate) fn lerp_skin(weights: &[[f32; 4]], bones: &[[u16; 4]], b: &[Bary]) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
     b.iter().map(|b| {
         let mut acc: Vec<(u16, f32)> = Vec::with_capacity(12);
         for k in 0..3 {
@@ -572,7 +572,7 @@ fn lerp_skin(weights: &[[f32; 4]], bones: &[[u16; 4]], b: &[Bary]) -> (Vec<[f32;
     }).unzip()
 }
 
-fn lerp_morph(deltas: &[(u32, [f32; 3])], sources: usize, b: &[Bary]) -> Vec<(u32, [f32; 3])> {
+pub(crate) fn lerp_morph(deltas: &[(u32, [f32; 3])], sources: usize, b: &[Bary]) -> Vec<(u32, [f32; 3])> {
     let mut dense = vec![[0.0f32; 3]; sources];
     for (i, d) in deltas { if let Some(slot) = dense.get_mut(*i as usize) { *slot = *d; } }
     lerp(&dense, b).into_iter().enumerate()

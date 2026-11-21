@@ -53,10 +53,15 @@ fn host() -> Option<(CreateFn, StepFn, ReleaseFn)> {
 pub fn set_mode(mode: i32) { MODE.store(mode.clamp(0, 3), Ordering::Relaxed); }
 pub fn mode() -> i32 { MODE.load(Ordering::Relaxed) }
 fn active() -> bool { mode() > 0 && host().is_some() }
+/// To Unreal's log (and stderr in tests, which have no Unreal).
+fn log(level: i32, msg: &str) {
+    crate::ffi::ffi_log(level, msg);
+    #[cfg(test)] eprintln!("{msg}");
+}
 
 // ---- tuning (OK_CLOTH_PX_* environment overrides, read once)
 fn env_f(key: &str, default: f32) -> f32 { std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default) }
-struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32 }
+struct Tune { stretch: f32, pin_t: f32, skirt_reach: f32, skirt_max: f32, chain_max: f32, long_span: f32, long_max: f32, up_max: f32, sleeve_reach: f32, sleeve_max: f32, shoulder_u: f32, cuff_u: f32, cap_scale: f32, cap_margin: f32, carry: bool, pull: f32, rebuild: f32, shin: bool, smooth: u32, edge: f32 }
 fn tune() -> &'static Tune {
     static T: std::sync::OnceLock<Tune> = std::sync::OnceLock::new();
     T.get_or_init(|| Tune {
@@ -82,6 +87,11 @@ fn tune() -> &'static Tune {
         carry: env_f("OK_CLOTH_PX_CARRY", 1.) > 0.5,
         pull: env_f("OK_CLOTH_PX_PULL", 3.),
         rebuild: env_f("OK_CLOTH_PX_REBUILD", 0.3),
+        shin: env_f("OK_CLOTH_PX_SHIN", 1.) > 0.5,
+        // Passes averaging a follow cloth's offsets with its neighbours'.
+        smooth: env_f("OK_CLOTH_PX_SMOOTH", 2.).max(0.) as u32,
+        // Longest edge of a cloth region's triangles after loading (0: the garment as authored), see cloth_refine.
+        edge: env_f("OK_CLOTH_PX_EDGE", 0.025),
     })
 }
 
@@ -111,19 +121,35 @@ fn skirt_role(role: &str) -> bool {
     role.starts_with("clothes") && !["clothes_shoes", "clothes_socks", "clothes_panst", "clothes_gloves", "clothes_bra", "clothes_shorts"].iter().any(|r| role.starts_with(r))
 }
 fn sleeve_role(role: &str) -> bool { role.starts_with("clothes_top") }
+/// Garments whose own sleeve chains may be cloth: tops, and gloves that carry a drape on their own chains (Raiden
+/// Shogun's outfit 2: a gauze wrap hung from the arms, grafted onto the body, 2026-11-21). A plain glove has no chain
+/// and stays as it is.
+fn chain_role(role: &str) -> bool { sleeve_role(role) || role.starts_with("clothes_gloves") }
+/// Garments with DynamicBone chains of their own or bones grafted onto the body (the kimono, the gauze wrap) as
+/// cloth swaying around their running DynamicBones (OK_CLOTH_PX_CHAINS=0: they stay DynamicBone, as before
+/// 2026-11-21). They were left out when a free cloth rose 10 cm off them; following the DynamicBone pose (as every
+/// skirt does now) keeps them on it.
+fn chains_on() -> bool { std::env::var("OK_CLOTH_PX_CHAINS").map_or(true, |v| v != "0") }
 
 /// Per render vertex: the kind (0 none) and, for a skirt vertex, its depth along the chains (0 waist .. 1 hem).
 /// pleats: a pleated skirt (cf_j_sk_*), made without bending.
 /// long: a long skirt, cloth around its running DynamicBones (see detect).
-struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, long: bool, sig: (usize, usize) }
+/// follow: on a garment whose DynamicBones keep running (own chains or grafted bones): the cloth only sways around them.
+struct Detect { kind: Vec<u8>, depth: Vec<f32>, skirt: bool, sleeves: bool, pleats: bool, long: bool, follow: bool, sig: (usize, usize) }
 
 fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     let runtime = part.runtime_accessory.as_ref()?;
-    let src = runtime.source_mesh();
+    classify(runtime.source_mesh(), &part.role, runtime.implanted_bones(), mode(), true)
+}
+/// What of a garment mesh is cloth in this mode (1 all, 2 skirts, 3 sleeves). `implanted`: its bones grafted onto
+/// the body (empty before its rig is built: the chains are then found from its own DynamicBone set).
+fn classify(src: &crate::unity::ExtractedMesh, role: &str, implanted: &std::collections::HashSet<i64>, mode: i32, debug: bool) -> Option<Detect> {
+    let debug = debug && std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1");
     let n = src.weights.len();
     if n == 0 || src.bone_idx.len() != n || src.indices.len() < 3 { return None; }
-    let (want_skirt, want_sleeve) = (skirt_role(&part.role) && mode() != 3, sleeve_role(&part.role) && mode() != 2);
-    if !want_skirt && !want_sleeve { return None; }
+    let (want_skirt, want_sleeve) = (skirt_role(role) && mode != 3, sleeve_role(role) && mode != 2);
+    let want_chain = chain_role(role) && mode != 2 && chains_on();
+    if !want_skirt && !want_sleeve && !want_chain { return None; }
     // Each bone's depth along the game's skirt chains cf_j_sk_<column>_<level> (0 waist .. 1 hem). The garment's own
     // DynamicBone chains are rooted on the clothes rig, not in its SMR skeleton (tried 2026-11-20: no bone found on any
     // test card); a mod skirt on other bones (K*/joint*) that no chain moves stays as it was.
@@ -132,22 +158,23 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
     // A mod garment's own DynamicBone chains (Raiden Shogun's kimono: +SleeveB_*, its skirt panels), found by name in
     // the renderer's skeleton: depth = steps below the chain root / the deepest step of that chain (pinned at the root, like cf_j_sk_*)
     // (2026-11-21).
-    let chains = chain_levels(src, runtime.implanted_bones());
+    let chains = chain_levels(src, implanted, debug);
     let mut chain_bone = vec![false; src.bone_names.len()];
     // Sleeves with chains of their own are those chains: the arm-weight sleeve (pinned along the arm) put on top of
-    // them collapsed the kimono's sleeves and tore its long drape (2026-11-21). They stay DynamicBone; as cloth
-    // (OK_CLOTH_PX_CHAINS=1, experimental) the drape still flails and tears while walking.
+    // them collapsed the kimono's sleeves and tore its long drape (2026-11-21). As cloth they follow their running
+    // DynamicBones (KIND_CHAIN, OK_CLOTH_PX_CHAIN_MAX).
     let own_sleeves = chains.iter().any(|l| l.is_some());
-    let chain_sleeves = want_sleeve && std::env::var("OK_CLOTH_PX_CHAINS").is_ok_and(|v| v == "1");
+    let chain_sleeves = want_chain && own_sleeves;
     if chain_sleeves {
         for (b, l) in chains.iter().enumerate() { if let (Some(l), None) = (l, levels[b]) { levels[b] = Some(*l); chain_bone[b] = true; } }
     }
-    // Not mixed either: a cf_j_sk corner of such a garment as cloth beside its DynamicBone drape jagged at the seam
-    // and was made again every few seconds (the drape moves it 35%).
+    // With OK_CLOTH_PX_CHAINS=0 such a garment stays DynamicBone whole: a cf_j_sk corner of it as free cloth beside its
+    // DynamicBone drape jagged at the seam (the drape moves it 35%).
     if own_sleeves && !chain_sleeves { return None; }
-    // Nor any garment whose bones were grafted onto the body: its chains keep running in the shared clothes rig, and
-    // the cloth beside them rose 10 cm into the body (the kimono front apron on cf_j_sk, raw dy +100 mm, 2026-11-21).
-    if !runtime.implanted_bones().is_empty() && !chain_sleeves { return None; }
+    // So does any garment whose bones were grafted onto the body: its chains keep running in the shared clothes rig,
+    // and a free cloth beside them rose 10 cm into the body (the kimono front apron on cf_j_sk, raw dy +100 mm).
+    let grafted = !implanted.is_empty();
+    if grafted && !chains_on() { return None; }
     let want_sleeve = want_sleeve && !own_sleeves;
     let sides: Vec<Option<usize>> = src.bone_names.iter().map(|b| arm_side(b)).collect();
     let mut kind = vec![0u8; n];
@@ -174,13 +201,13 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
             for s in 0..2 { if arm[s] / total >= 0.5 { kind[v] = KIND_SLEEVE_L + s as u8; sleeve_n[s] += 1; } }
         }
     }
-    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+    if debug {
         let mut sums = vec![0f32; src.bone_names.len()];
         for v in 0..n { for k in 0..4 { if let Some(s) = sums.get_mut(src.bone_idx[v][k] as usize) { *s += src.weights[v][k]; } } }
         let mut order: Vec<usize> = (0..sums.len()).collect();
         order.sort_by(|a, b| sums[*b].total_cmp(&sums[*a]));
         let top: Vec<String> = order.iter().take(12).map(|&b| format!("{}={:.0}", src.bone_names[b], sums[b])).collect();
-        crate::ffi::ffi_log(1, &format!("OK cloth px detect: role={} verts={n} skirt_verts={skirt_n} (own chains {chain_n}) sleeve_verts={sleeve_n:?} chain bones={} bones: {}", part.role, chains.iter().filter(|l| l.is_some()).count(), top.join(" ")));
+        log(1, &format!("OK cloth px detect: role={} verts={n} skirt_verts={skirt_n} (own chains {chain_n}) sleeve_verts={sleeve_n:?} chain bones={} grafted={grafted} bones: {}", role, chains.iter().filter(|l| l.is_some()).count(), top.join(" ")));
     }
     let skirt = skirt_n >= 30;
     let sleeves = sleeve_n.iter().any(|c| *c >= 30);
@@ -199,15 +226,35 @@ fn detect(part: &crate::session::SessionPart) -> Option<Detect> {
         if *k == KIND_SKIRT { if let Some(p) = src.positions.get(v) { lo = lo.min(p[1]); hi = hi.max(p[1]); } }
     }
     let long = skirt && hi > lo && hi - lo > tune().long_span;
-    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") && skirt {
-        crate::ffi::ffi_log(1, &format!("OK cloth px detect: role={} skirt span {:.3} long={long}", part.role, hi - lo));
+    if debug && skirt {
+        log(1, &format!("OK cloth px detect: role={role} skirt span {:.3} long={long}", hi - lo));
     }
-    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, long, sig: (n, src.indices.len()) })
+    (skirt || sleeves).then_some(Detect { kind, depth, skirt, sleeves, pleats, long, follow: chain_sleeves || grafted, sig: (n, src.indices.len()) })
 }
-/// Per renderer bone: its depth (0 root .. 1 deepest) in one of the garment's own DynamicBone chains, by name.
+/// A garment mesh whose rig was just built from it (push.rs): more triangles where it will be cloth (cloth_refine),
+/// when PhysX cloth can run here (a host registered, or OK_CLOTH_PX_REFINE=1). The region is found on the built rig
+/// (a grafted garment's chains are known only there), whose source keeps the mesh's vertex order. Returns the
+/// vertices added: the caller builds the rig again from the refined mesh.
+pub(crate) fn refine_mesh(mesh: &mut crate::unity::ExtractedMesh, role: &str, rig: &crate::session::AccessoryRuntime) -> usize {
+    let t = tune();
+    let forced = std::env::var("OK_CLOTH_PX_REFINE").ok();
+    if t.edge <= 0. || forced.as_deref() == Some("0") || (host().is_none() && forced.as_deref() != Some("1")) { return 0; }
+    let src = rig.source_mesh();
+    if src.weights.len() != mesh.weights.len() || src.indices != mesh.indices { return 0; }
+    let Some(d) = classify(src, role, rig.implanted_bones(), 1, false) else { return 0 };
+    let selected: Vec<bool> = d.kind.iter().map(|k| *k != 0).collect();
+    let (n, tris) = (mesh.weights.len(), mesh.indices.len() / 3);
+    let added = crate::cloth_refine::refine(mesh, &selected, t.edge, (n * 6).clamp(4000, 40000));
+    if added > 0 && std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+        log(1, &format!("OK cloth px refine: {role} {} vertices {n} -> {}, triangles {tris} -> {} (edges <= {:.0} mm)",
+            mesh.name, mesh.weights.len(), mesh.indices.len() / 3, t.edge * 1000.));
+    }
+    added
+}
+// Per renderer bone: its depth (0 root .. 1 deepest) in one of the garment's own DynamicBone chains, by name.
 /// Clothes whose bones were grafted onto the body (copy-weights clothes with their own chains: the kimono) have no
 /// set of their own any more; their chains start at each grafted bone whose parent is not grafted.
-fn chain_levels(src: &crate::unity::ExtractedMesh, implanted: &std::collections::HashSet<i64>) -> Vec<Option<f32>> {
+fn chain_levels(src: &crate::unity::ExtractedMesh, implanted: &std::collections::HashSet<i64>, debug: bool) -> Vec<Option<f32>> {
     let mut out = vec![None; src.bone_names.len()];
     let Some(skel) = src.smr_skel.as_ref() else { return out };
     let mut roots = src.deferred_dbones.as_ref().map(|set| set.root_names(skel)).unwrap_or_default();
@@ -230,11 +277,11 @@ fn chain_levels(src: &crate::unity::ExtractedMesh, implanted: &std::collections:
         }
         false
     };
-    if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+    if debug {
         for (root, _) in &roots {
             let mut path = vec![root.as_str()]; let mut cur = root.as_str();
             while let Some(p) = parent_of.get(cur) { path.push(p); cur = p; if path.len() > 10 { break; } }
-            crate::ffi::ffi_log(1, &format!("OK cloth px chain root on_arm={} {}", on_arm(root), path.join("<")));
+            log(1, &format!("OK cloth px chain root on_arm={} {}", on_arm(root), path.join("<")));
         }
     }
     roots.retain(|(root, _)| on_arm(root));
@@ -310,6 +357,11 @@ struct Sim {
     built: std::time::Instant,
     /// Made on a pose that was not moving (made again once it moves).
     made_still: bool,
+    /// Each particle's neighbours along the triangle edges (smoothing a follow cloth's offsets).
+    links: Vec<Vec<u32>>,
+    /// Diagnostics (OK_CLOTH_PX_DEBUG): the host's last answer and the pose jump it was given.
+    last_ok: i32,
+    last_jump: f32,
 }
 struct Entry { detect: Option<Arc<Detect>>, sim: Option<Sim>, failed: bool, pose: PoseWatch }
 /// Whether the garment is being animated. PhysX keeps the rest shape a cloth was made in, and the bind pose (the
@@ -340,14 +392,19 @@ static STATES: Mutex<Option<Map>> = Mutex::new(None);
 /// Per region: (mean distance out from the body capsules, reach: how far down a skirt hangs / how far from the
 /// shoulder a sleeve goes, 95th percentile).
 type Layer = [Option<(f32, f32)>; 5];
-static LAYERS: Mutex<Option<HashMap<(usize, usize), Layer>>> = Mutex::new(None);
-fn layer_measure(d: &Detect, positions: &[[f32; 3]], skel: &crate::pose::Skeleton, caps: &[OkPxCapsule]) -> Layer {
+/// With the garment mesh it was measured on (path id, name): the submeshes of one garment are not layers of each other.
+static LAYERS: Mutex<Option<HashMap<(usize, usize), (Layer, (i64, String))>>> = Mutex::new(None);
+/// Only the vertices this part draws: the submeshes of one garment share its whole vertex buffer, and measured over all of
+/// it Raiden's kimono parts each found another covering them, none becoming cloth (2026-11-21).
+fn layer_measure(d: &Detect, indices: &[u32], positions: &[[f32; 3]], skel: &crate::pose::Skeleton, caps: &[OkPxCapsule]) -> Layer {
+    let mut drawn = vec![false; d.kind.len()];
+    for &i in indices { if let Some(x) = drawn.get_mut(i as usize) { *x = true; } }
     let shoulder = [bone_pos(skel, "cf_j_arm00_L"), bone_pos(skel, "cf_j_arm00_R")];
     let mut sum = [(0f64, 0usize); 5];
     let mut reach: [Vec<f32>; 5] = Default::default();
     for (v, k) in d.kind.iter().enumerate() {
         let k = *k as usize;
-        if k == 0 || k >= 5 { continue; }
+        if k == 0 || k >= 5 || !drawn[v] { continue; }
         let r = caps.iter().map(|c| seg_closest(positions[v], c.a, c.b).1 - c.radius).fold(f32::MAX, f32::min);
         if r.is_finite() && r < 1. { sum[k].0 += r as f64; sum[k].1 += 1; }
         let sleeve = if k == KIND_SLEEVE_L as usize { shoulder[0] } else if k == KIND_SLEEVE_R as usize { shoulder[1] } else { None };
@@ -364,15 +421,16 @@ fn layer_measure(d: &Detect, positions: &[[f32; 3]], skel: &crate::pose::Skeleto
     out
 }
 /// The regions of this part that another part of the session covers (same kind, farther out by more than 3 mm).
-fn covered(session: usize, index: usize, own: &Layer) -> [bool; 5] {
+fn covered(session: usize, index: usize, own: &Layer, mesh: &(i64, String)) -> [bool; 5] {
     let mut out = [false; 5];
     let all = LAYERS.lock().unwrap();
     let Some(map) = all.as_ref() else { return out };
-    for ((s, i), other) in map {
-        if *s != session || *i == index { continue; }
+    for ((s, i), (other, other_mesh)) in map {
+        if *s != session || *i == index || other_mesh == mesh { continue; }
         for k in 1..5 {
-            // Skirt and chain regions are one layer (both hang from the waist or arm the same way).
-            let same = |a: usize, b: usize| a == b || (a == KIND_SKIRT as usize && b == KIND_CHAIN as usize) || (a == KIND_CHAIN as usize && b == KIND_SKIRT as usize);
+            // Only the same kind: a chain is a sleeve on its arm now, and its reach (from the shoulder) is no skirt's (how
+            // low); merged, Raiden's kimono panel "covered" her own sleeves (2026-11-21).
+            let same = |a: usize, b: usize| a == b;
             let Some(mine) = own[k] else { continue };
             // Covered: the other is farther out and reaches as far (within 2 cm); a blazer ending at the hips does
             // not cover the skirt below it.
@@ -599,7 +657,8 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
     Some(Sim { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), created: false, particle_of, rep, pinned, max_dist, tris,
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
-        sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false })
+        sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0. })
 }
 
 /// Body capsules for the cloth: limbs, hips and torso of the skeleton (no head, no floor sphere), as the body proxies
@@ -721,12 +780,12 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     if positions.len() != d.kind.len() { return; }
     let moving = e.pose.see(positions);
     if e.sim.as_ref().is_some_and(|s| s.made_still) && moving && e.pose.moved_for() >= 1.5 {
-        crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) started moving, made again on the moving pose", part.role));
+        log(1, &format!("OK cloth px: part {index} ({}) started moving, made again on the moving pose", part.role));
         release_entry(&mut e);
     }
     if e.sim.is_none() {
-        let m = layer_measure(&d, positions, skel, &capsules(skel));
-        LAYERS.lock().unwrap().get_or_insert_with(HashMap::new).insert((session, index), m);
+        let m = layer_measure(&d, &runtime.source_mesh().indices, positions, skel, &capsules(skel));
+        LAYERS.lock().unwrap().get_or_insert_with(HashMap::new).insert((session, index), (m, (runtime.source_mesh().path_id, runtime.source_mesh().name.clone())));
     }
     if e.sim.is_none() && e.pose.moved_for() < 1.5 && e.pose.still_for() < 2. { return; }
     // The garment's shape moved far from the one the cloth was made in (the reader's first frame is the bind pose,
@@ -742,21 +801,21 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             n += 1;
         }
         if n > 0 && drift / n as f32 > tune().rebuild {
-            crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) changed shape ({:.0}% from its rest), made again", part.role, drift / n as f32 * 100.));
+            log(1, &format!("OK cloth px: part {index} ({}) changed shape ({:.0}% from its rest), made again", part.role, drift / n as f32 * 100.));
             release_entry(&mut e);
         }
     }
     if e.sim.is_none() {
-        let own = LAYERS.lock().unwrap().as_ref().and_then(|m| m.get(&(session, index)).copied()).unwrap_or([None; 5]);
-        let under = covered(session, index, &own);
+        let (own, mesh) = LAYERS.lock().unwrap().as_ref().and_then(|m| m.get(&(session, index)).cloned()).unwrap_or(([None; 5], (0, String::new())));
+        let under = covered(session, index, &own, &mesh);
         if under.iter().any(|u| *u) {
             let mut kind = d.kind.clone();
             for k in kind.iter_mut() { if (*k as usize) < 5 && under[*k as usize] { *k = 0; } }
             let skirt = kind.iter().filter(|k| **k == KIND_SKIRT || **k == KIND_CHAIN).count() >= 30;
             let sleeves = kind.iter().any(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R);
-            crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) is under another garment's cloth (kinds {:?}), those follow the pose", part.role,
+            log(1, &format!("OK cloth px: part {index} ({}) is under another garment's cloth (kinds {:?}), those follow the pose", part.role,
                 (1..5).filter(|k| under[*k]).collect::<Vec<_>>()));
-            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, long: d.long && skirt, sig: d.sig };
+            let nd = Detect { kind, depth: d.depth.clone(), skirt, sleeves, pleats: d.pleats && skirt, long: d.long && skirt, follow: d.follow, sig: d.sig };
             if !skirt && !sleeves { e.failed = true; e.detect = Some(Arc::new(nd)); return; }
             e.detect = Some(Arc::new(nd));
         }
@@ -765,7 +824,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     if e.sim.is_none() {
         match build(&d, &runtime.source_mesh().indices, positions, skel) {
             Some(mut sim) => { sim.made_still = !moving; e.sim = Some(sim) }
-            None => { e.failed = true; crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) has no usable cloth region, DynamicBone kept", part.role)); return; }
+            None => { e.failed = true; log(1, &format!("OK cloth px: part {index} ({}) has no usable cloth region, DynamicBone kept", part.role)); return; }
         }
     }
     let sim = e.sim.as_mut().unwrap();
@@ -776,14 +835,14 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let ok = unsafe { create(sim.key, np as u32, targets.as_ptr().cast(), inv.as_ptr(), sim.tris.len() as u32, sim.tris.as_ptr().cast(), d.pleats as u32) };
         if ok != 1 {
             e.failed = true; e.sim = None;
-            crate::ffi::ffi_log(2, &format!("OK cloth px: host could not create the cloth of part {index} ({}), DynamicBone kept", part.role));
+            log(2, &format!("OK cloth px: host could not create the cloth of part {index} ({}), DynamicBone kept", part.role));
             return;
         }
         sim.created = true;
         sim.last_target = targets.clone();
         let mut out = vec![[0f32; 3]; np];
         unsafe { step(sim.key, np as u32, targets.as_ptr().cast(), std::ptr::null(), std::ptr::null(), 0, -1., out.as_mut_ptr().cast()); }
-        crate::ffi::ffi_log(1, &format!("OK cloth px: part {index} ({}) skirt={} sleeves={} particles={np} free={} triangles={}",
+        log(1, &format!("OK cloth px: part {index} ({}) skirt={} sleeves={} particles={np} free={} triangles={}",
             part.role, d.skirt, d.sleeves, sim.free, sim.tris.len()));
     }
     // A jump of the pose (new animation, teleport): start again on the targets.
@@ -794,13 +853,31 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         sim.cap_n = caps.len();
         sim.cap_fit = (0..np).flat_map(|p| caps.iter().map(move |c| (p, c)).collect::<Vec<_>>())
             .map(|(p, c)| (c.radius * t.cap_scale).min((seg_closest(targets[p], c.a, c.b).1 - t.cap_margin).max(0.))).collect();
+        // A long skirt's hanging part keeps out of the lower legs by their whole size, however close it hung when the
+        // cloth was made: made mid-stride, the shin was already in Raiden's kimono panel and kept going through it
+        // (outfit 5, 2026-11-21). OK_CLOTH_PX_SHIN=0: as the rest of the body.
+        if d.long && t.shin {
+            let shins: Vec<usize> = caps.iter().enumerate().filter(|(_, c)| ["L", "R"].iter().any(|s| {
+                let near = |a: [f32; 3], bone: &str| bone_pos(skel, &format!("{bone}_{s}")).is_some_and(|b| len(sub(a, b)) < 1e-4);
+                near(c.a, "cf_j_leg01") && near(c.b, "cf_j_leg03")
+            })).map(|(i, _)| i).collect();
+            for p in 0..np {
+                if sim.pinned[p] || !sim.skirt[p] { continue; }
+                for &ci in &shins { sim.cap_fit[p * sim.cap_n + ci] = caps[ci].radius * t.cap_scale; }
+            }
+        }
         sim.gpu_rad = caps.iter().enumerate().map(|(ci, c)| (0..np).filter(|&p| !sim.pinned[p])
             .map(|p| sim.cap_fit[p * sim.cap_n + ci]).fold(c.radius, f32::min)).collect();
     }
     // A skirt gets none on the GPU: the thighs swinging into it there kicked Chika's pleated skirt 3-4 cm up for good
     // (OKPhysXCloth.Collide 0: -0.2 cm; shrunk capsules or no friction did not help, 2026-11-21). Rust still pushes
     // every particle out of the body after each step.
-    let gpu_caps: Vec<OkPxCapsule> = if d.skirt { Vec::new() } else {
+    // That was judged while the host ignored every upload after the first frames (the cloth never followed the body,
+    // see OKPhysXCloth Upload); with the cloth simulated for real the legs must push the skirt (a shin went through
+    // Raiden's kimono panel, 2026-11-21). OK_CLOTH_PX_SKIRT_CAPS=0: none for skirts, as before.
+    static SKIRT_CAPS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let skirt_caps = *SKIRT_CAPS.get_or_init(|| std::env::var("OK_CLOTH_PX_SKIRT_CAPS").map_or(true, |v| v != "0"));
+    let gpu_caps: Vec<OkPxCapsule> = if d.skirt && !skirt_caps { Vec::new() } else {
         caps.iter().zip(&sim.gpu_rad).map(|(c, r)| OkPxCapsule { radius: *r, ..*c }).collect() };
     let now = std::time::Instant::now();
     let dt = if dt > 0. { dt } else {
@@ -822,6 +899,12 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             1 => {}
             // The host's result for the targets its job was given (it simulates while frames render): carried onto this pose.
             2 => {
+                if std::env::var("OK_CLOTH_PX_DEBUG").is_ok_and(|v| v == "1") {
+                    let d: Vec<f32> = (0..np).filter(|&p| !sim.pinned[p]).map(|p| len(sub(sim_pos[p], sim.launch_target[p]))).collect();
+                    let far = d.iter().filter(|x| **x > 0.5).count();
+                    if far > 0 { log(1, &format!("OK cloth px host result: cloth {} {far}/{} free far from their launch targets, max {:.2} m, first {:?} vs {:?}",
+                        sim.key, d.len(), d.iter().fold(0f32, |a, b| a.max(*b)), sim_pos[(0..np).find(|&p| !sim.pinned[p]).unwrap_or(0)], sim.launch_target[(0..np).find(|&p| !sim.pinned[p]).unwrap_or(0)])); }
+                }
                 let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
                 for p in 0..np { sim_pos[p] = add(targets[p], carry(sub(sim_pos[p], sim.launch_target[p]), &launch_frames[p], &now_frames[p])); }
             }
@@ -829,9 +912,11 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         }
         // 3: its job still runs (nothing launched); otherwise a job now runs on these targets.
         if ok != 3 { sim.launch_target = targets.clone(); }
+        sim.last_ok = ok; sim.last_jump = jump;
         let mut st = STATS.lock().unwrap(); st.steps += 1; st.step_us += t0.elapsed().as_micros() as u64;
     } else {
         sim_pos = carried;
+        sim.last_ok = -2;
     }
     sim.last_target = targets.clone();
     if debug_due(sim.key) {
@@ -849,7 +934,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             n += 1;
         }
         let n = n.max(1) as f64;
-        crate::ffi::ffi_log(1, &format!("OK cloth px debug: cloth {} free {} raw mean dy {:.1} mm, mean out {:.1} mm, {far} flung (pin centre y {:.3})", sim.key, n, dy / n * 1000., dr / n * 1000., c[1]));
+        log(1, &format!("OK cloth px debug: cloth {} free {} raw mean dy {:.1} mm, mean out {:.1} mm, {far} flung (pin centre y {:.3}, host {} jump {:.0} mm)", sim.key, n, dy / n * 1000., dr / n * 1000., c[1], sim.last_ok, sim.last_jump * 1000.));
     }
     // Max distance, then out of the body (never deeper than the target already was).
     let (mut clamped, mut pushed, mut most) = (0u64, 0u64, 0f32);
@@ -877,6 +962,23 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         let l = len(off);
         if l > sim.max_dist[p] { sim_pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
         if sim.skirt[p] && sim_pos[p][1] > targets[p][1] + up { sim_pos[p][1] = targets[p][1] + up; clamped += 1; }
+    }
+    // A follow cloth's moves averaged with its neighbours' (pinned ones moving by nothing): each particle clamped on its
+    // own around a DynamicBone pose that swings, the drape's edge jagged and tore (Raiden's kimono, 2026-11-21).
+    if d.follow && tune().smooth > 0 {
+        let mut off: Vec<[f32; 3]> = (0..np).map(|p| sub(sim_pos[p], targets[p])).collect();
+        for _ in 0..tune().smooth {
+            let next: Vec<[f32; 3]> = (0..np).map(|p| {
+                if sim.pinned[p] || sim.links[p].is_empty() { return off[p]; }
+                let sum = sim.links[p].iter().fold([0f32; 3], |a, &q| add(a, off[q as usize]));
+                add(scale(off[p], 0.5), scale(sum, 0.5 / sim.links[p].len() as f32))
+            }).collect();
+            off = next;
+        }
+        for p in 0..np { if !sim.pinned[p] { sim_pos[p] = add(targets[p], off[p]); } }
+    }
+    for p in 0..np {
+        if sim.pinned[p] { continue; }
         for (ci, c) in caps.iter().enumerate() {
             let r = sim.cap_fit[p * sim.cap_n + ci];
             if r <= 0. { continue; }
@@ -935,17 +1037,21 @@ mod tests {
     fn describe_cards() {
         set_mode(1);
         let cards = std::env::var("OK_CLOTH_CARD").expect("OK_CLOTH_CARD");
-        for card in cards.split(';').filter(|c| !c.is_empty()) {
+        // OK_CLOTH_OUTFITS=0,1,2 (default 0); OK_CLOTH_ALL=1 also lists the parts that are not clothes (accessories).
+        let outfits: Vec<i32> = std::env::var("OK_CLOTH_OUTFITS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or(vec![0]);
+        let all = std::env::var("OK_CLOTH_ALL").is_ok_and(|v| v == "1");
+        for card in cards.split(';').filter(|c| !c.is_empty()) { for &outfit in &outfits {
             let game = std::ffi::CString::new("").unwrap();
             let c = std::ffi::CString::new(card).unwrap();
             let mut out = std::ptr::null_mut();
             let mut err = [0i8; 512];
-            let r = unsafe { crate::ffi::session_open(game.as_ptr(), c.as_ptr(), 0, &mut out, err.as_mut_ptr(), 512) };
+            let r = unsafe { crate::ffi::session_open(game.as_ptr(), c.as_ptr(), outfit, &mut out, err.as_mut_ptr(), 512) };
             if r != 0 { eprintln!("CARD {card}: open failed {}", unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }.to_string_lossy()); continue; }
+            eprintln!("CARD {card} outfit {outfit}");
             let s = unsafe { &mut *out };
             for (i, p) in s.parts.iter().enumerate() {
-                if !p.role.starts_with("clothes") { continue; }
-                let Some(rt) = p.runtime_accessory.as_ref() else { continue };
+                if !p.role.starts_with("clothes") && !all { continue; }
+                let Some(rt) = p.runtime_accessory.as_ref() else { if all { eprintln!("  part {i} {} (no runtime)", p.role); } continue };
                 let src = rt.source_mesh();
                 let d = detect(p);
                 let (sk, sl) = d.as_ref().map_or((0, 0), |d| (d.kind.iter().filter(|k| **k == KIND_SKIRT || **k == KIND_CHAIN).count(), d.kind.iter().filter(|k| **k == KIND_SLEEVE_L || **k == KIND_SLEEVE_R).count()));
@@ -959,11 +1065,22 @@ mod tests {
                 };
                 let mut sums = vec![0f32; src.bone_names.len()];
                 for v in 0..src.weights.len() { for k in 0..4 { if let Some(x) = sums.get_mut(src.bone_idx[v][k] as usize) { *x += src.weights[v][k]; } } }
-                let top = (0..sums.len()).max_by(|a, b| sums[*a].total_cmp(&sums[*b])).map(|b| src.bone_names[b].clone()).unwrap_or_default();
-                eprintln!("CARD {card} part {i} {} verts={} skirt={sk} sleeve={sl} dbones={} top={top} path={}",
-                    p.role, src.weights.len(), src.deferred_dbones.is_some(), anc(&top));
+                let mut order: Vec<usize> = (0..sums.len()).collect();
+                order.sort_by(|a, b| sums[*b].total_cmp(&sums[*a]));
+                let top = order.first().map(|b| src.bone_names[*b].clone()).unwrap_or_default();
+                let tops: Vec<String> = order.iter().take(6).map(|&b| format!("{}={:.0}", src.bone_names[b], sums[b])).collect();
+                // The cloth region's triangle edges (how coarse it is).
+                if let Some(d) = d.as_ref() {
+                    let pos = if src.rest_positions.len() == src.weights.len() { &src.rest_positions } else { &src.positions };
+                    let mut e: Vec<f32> = src.indices.chunks_exact(3).filter(|t| t.iter().any(|&v| d.kind[v as usize] != 0))
+                        .flat_map(|t| (0..3).map(move |k| len(sub(pos[t[k] as usize], pos[t[(k + 1) % 3] as usize])))).collect();
+                    e.sort_by(f32::total_cmp);
+                    if !e.is_empty() { eprintln!("    region edges: n={} median {:.1} mm p90 {:.1} mm max {:.1} mm follow={} long={}", e.len(), e[e.len() / 2] * 1000., e[e.len() * 9 / 10] * 1000., e[e.len() - 1] * 1000., d.follow, d.long); }
+                }
+                eprintln!("  part {i} {} verts={} tris={} skirt={sk} sleeve={sl} dbones={} implanted={} top: {} path={}",
+                    p.role, src.weights.len(), src.indices.len() / 3, src.deferred_dbones.is_some(), rt.implanted_bones().len(), tops.join(" "), anc(&top));
             }
-        }
+        } }
     }
     #[test]
     fn turn_keeps_length_and_maps_axis() {

@@ -228,8 +228,15 @@ impl<'a, 's> PushCtx<'a, 's> {
                     crate::session::AccessoryRuntime::from_hair_source(&mesh, part_skel, &parent))
             } else if role.starts_with("clothes") {
                 let (copy_dynamic, component) = clothes_load_settings(property.as_deref().unwrap_or(""));
-                body_skel.and_then(|body| crate::session::AccessoryRuntime::from_clothes_source(
-                    &mesh, part_skel, body, copy_dynamic, component, part_local, crate::dbone::implant::installed(game_root)))
+                let rig = |mesh: &crate::unity::ExtractedMesh| body_skel.and_then(|body| crate::session::AccessoryRuntime::from_clothes_source(
+                    mesh, part_skel, body, copy_dynamic, component, part_local, crate::dbone::implant::installed(game_root)));
+                let built = rig(&mesh);
+                // Where the garment will be PhysX cloth, more triangles (its region is known from the rig: a grafted
+                // garment's chains), and the rig built again from them.
+                match built {
+                    Some(r) if crate::cloth_px::refine_mesh(&mut mesh, role, &r) > 0 => rig(&mesh),
+                    other => other,
+                }
             } else { None };
             if role.starts_with("clothes") {if let Some(runtime)=&mut runtime_accessory {runtime.coordinate_clothes();}}
             if let Some(runtime) = &mut runtime_accessory {

@@ -575,6 +575,7 @@ mod rig;
 pub mod thigh_jiggle;
 pub mod cloth_gpu;
 pub mod cloth_px;
+pub mod cloth_refine;
 pub(crate) use rig::*;
 
 /// Diagnostic for "switching cards deforms the character" (2026-11-18): opens every card of `cards` in THIS process,
