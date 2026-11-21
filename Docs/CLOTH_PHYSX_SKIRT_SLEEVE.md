@@ -168,8 +168,8 @@ PhysX 只會在布料建立的那一刻記下 rest 狀態，之後上傳新的 r
 
 ## 限制
 
-- 雷電將軍紫色和服整套是 DynamicBone（見上），`ok.ClothPx 1` 和 `0` 看起來一樣。
-- 刻晴、三月七沒有在分層與 GPU 膠囊的改動後重拍。
+- 雷電將軍紫色和服（服裝 5）以前整套是 DynamicBone；2026-11-21 起袖鏈與移植骨的衣服也做布料（見「自動辨識」）。
+- 刻晴、三月七在 2026-11-21 晚的預設（皮膚碰撞、彎曲 0.5、阻尼平滑）下重錄過，沒有退步：`C:\portable\OpenKoikatsu\Saved\OKControl\videos\others7\keqing_outfit1_compare_20s.mp4`、`march7_outfit1_compare_20s.mp4`（三月七裙下的深色是她的短褲，原始物理同一時刻也看得到）。
 
 - 三月七（`18_heroine_march_7th`）的 mod 裙子用自己的 `K*`／`joint*` 骨，不在 `cf_j_sk_*` 鏈上，辨識不到，所以只有袖子會變成布料。
 - 讀卡器沒有原地轉身的動作，轉身只用鏡頭繞看過；跑步和走路驗證過。
