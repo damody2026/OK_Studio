@@ -1,0 +1,7 @@
+id = "org.openkoikatsu.test.badlayout"
+name = "Bad layout test"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_fixture_bad_layout.dll"
+targets = ["reader", "studio", "pair", "street", "extract"]
+category = "tool"

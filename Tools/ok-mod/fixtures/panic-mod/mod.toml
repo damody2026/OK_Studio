@@ -1,0 +1,8 @@
+id = "org.openkoikatsu.test.panic"
+name = "Panic test"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_fixture_panic.dll"
+description_id = "mod.org.openkoikatsu.test.panic.description"
+targets = ["reader", "studio", "pair", "street", "extract"]
+category = "tool"

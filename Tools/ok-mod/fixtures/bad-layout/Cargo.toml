@@ -1,0 +1,13 @@
+[package]
+name = "ok-mod-fixture-bad-layout"
+version = "0.1.0"
+edition = "2021"
+description = "Test fixture: exports an ok_mod root module whose layout differs from ok-mod-api's, so abi_stable must refuse it."
+publish = false
+
+[lib]
+name = "ok_fixture_bad_layout"
+crate-type = ["cdylib"]
+
+[dependencies]
+abi_stable = { workspace = true }

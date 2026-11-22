@@ -1,0 +1,11 @@
+[package]
+name = "ok-mod-api"
+version = "0.1.0"
+edition = "2021"
+description = "OK mod framework: the types that cross the DLL boundary between the host and a mod (abi_stable). Types only, no logic."
+
+[lib]
+name = "ok_mod_api"
+
+[dependencies]
+abi_stable = { workspace = true }

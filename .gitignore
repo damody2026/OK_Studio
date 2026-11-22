@@ -62,6 +62,10 @@ Content/IndependentResources/MarketData/
 Tools/ok-mind/target/
 Tools/ok-rules/target/
 Tools/ok-story/target/
+Tools/ok-mod/target/
+# OK mod framework: mods the player installed and the config values the host keeps for them.
+/Mods/
+/UserData/config/mods/
 Tools/ok-game-mcp/target/
 Tools/engine.local.json
 Tools/.thirdparty/

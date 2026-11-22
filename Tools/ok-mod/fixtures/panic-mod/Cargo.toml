@@ -1,0 +1,13 @@
+[package]
+name = "ok-mod-fixture-panic"
+version = "0.1.0"
+edition = "2021"
+description = "Test fixture: a mod that panics on purpose (in register, on an event or a command, chosen by its config) so the host must disable it and keep running."
+publish = false
+
+[lib]
+name = "ok_fixture_panic"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
