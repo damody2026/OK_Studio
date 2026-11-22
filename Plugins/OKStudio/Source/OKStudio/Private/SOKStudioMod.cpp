@@ -35,7 +35,8 @@ namespace
 			Generation = FOKStudioModRegistry::Get().Generation();
 			TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
 			if (Build) Build(Box);
-			ChildSlot[Box];
+			// Never zero-sized: an empty row still ticks, so buttons of mods registering later appear.
+			ChildSlot[SNew(SBox).MinDesiredWidth(1.f).MinDesiredHeight(1.f)[Box]];
 		}
 
 		TFunction<void(const TSharedRef<SHorizontalBox>&)> Build;

@@ -451,6 +451,8 @@ public:
 						[Tagged(TEXT("QuickSearchButton"), IconButton(TEXT("search"), Tip(TEXT("快搜"), TEXT("app.quicksearch")), Cmd(TEXT("app.quicksearch")), 33.f, 33.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("quick")); })))]
 					// One tool wider than HS2Studio6's row: the timeline toggle beside MMD 導演 (U111).
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1363.9f), 7.f, 398.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
+					// Mods' tool buttons (OKStudioMod.h): their own row left of the top tools, growing to the left as mods add more.
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(1.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).AutoSize(true).Offset(FMargin(Right(1363.9f) - 7.f, 7.f, 0.f, 33.f))[Tagged(TEXT("ModTools"), MakeModTools())]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1284.9f), 47.f, 240.f, 429.f))
 						[Tagged(TEXT("CharacterGroupPanel"), SNew(SBox).Visibility_Lambda([this] { return bShowGroups ? EVisibility::Visible : EVisibility::Collapsed; })[MakeGroupPanel()])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1528.9f), 47.f, 240.f, 429.f))
@@ -1596,6 +1598,12 @@ public:
 			Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
 				[Tagged(*FString::Printf(TEXT("TopTool_%d"), I), IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 33.f, 33.f, TAttribute<bool>::CreateLambda([On] { return On(); }), ButtonFill(), ToolOn()))];
 		}
+		return Box;
+	}
+
+	TSharedRef<SWidget> MakeModTools()
+	{
+		TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
 		AddModTools(Box);
 		return Box;
 	}
