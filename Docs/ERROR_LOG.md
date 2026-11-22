@@ -7236,3 +7236,18 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **症狀**：不用開卡快取時（快取被清掉、或快取鍵改變），街區開 `jeanne_alter.png`、`raiden_shogun.png` 都報 `the OK card has N unanswered question(s)`，問的是 `mods/sideloader modpack - animations/…zipmod`。`-NoMods`＋`OK_NOCACHE=1` 也一樣，和 mod 框架無關；`Tools/ok_cards.lua verify` 在遊戲外開同一張卡是好的。
 - **推測**：街區執行時讀動畫 mod 的掃描落進了卡片的嚴格開卡範圍。
 - **狀態**：既有問題，未修。協調者指派給 C 組，排在同步點 B 之後（街區屬 C 的範圍）。發現經過見上一條與 `Docs/OK_MOD_S10_STREET.md`。
+- 2026-11-23 OK mod 工作項 8（Studio API，`Docs/OK_MOD_S8_STUDIO_API.md`）：
+  - `Plugins/OKStudio/.../OKStudioGame.cpp` 是 CRLF 夾少數 LF 的混合行尾。用 `sed -i`、`unix2dos` 與 Edit 工具改一行，整個檔案的行尾都被統一，diff 變成上千行。修正：`git checkout --` 還原，改用逐位元組替換的 Lua 小腳本（錨點與替換文字都用 CRLF），diff 回到 4 行。教訓：改之前先用 `od -c`／Lua 看行尾（git bash 的 `cat -A` 看不出 `\r`），混合行尾的檔案只做位元組層級的替換；Windows 上 Lua 的命令列參數不能帶換行，替換規格要放檔案。
+  - 橋接第一次建置 C2446：`cond ? nullptr : MakeShared<FJsonValueString>(...)` 兩邊型別不同（`TSharedRef` 不能和 `nullptr` 合成一個型別）。改成分開的 `return`。
+  - 橋接在 mod 回 panic 時，於那個 mod 自己的指令執行中就 `RemoveOwner`，刪掉正在執行的 `TFunction`（自我測試「panic 的 mod 離開」失敗才看出來）。改成標記後下一幀移除。教訓：回呼裡不要移除擁有這個回呼的登錄項。
+  - 自我測試直接呼叫面板列的 `Set` 卻沒有像面板一樣 `NotifyChanged`，復原紀錄沒記到，重做失敗。是測試寫錯，改成照面板的流程。
+  - 工作項 5 把 mod 工具列按鈕接在上方工具列（固定寬 398 的 slot）後面，只用登錄後的元件清單驗過；接真 mod 後 7 顆按鈕全在視窗外，`ui_widgets` 列得到、畫面看不到。改成獨立 slot 往左長。教訓：UI 的驗收要截圖看畫面，元件存在不等於看得到。
+  - 橋接先照通知把 hook 的 payload 當字串送；宿主實作是把 `payload` 欄位當 JSON 值再序列化，送字串 mod 會拿到雙重編碼。對 `ok_mod_host.h` 後改送物件（在實機前發現）。教訓：跨組介面以對方提交的標頭為準，通知只是摘要。
+
+- 2026-11-23 OK mod 工作項 13（1 對 1，`Docs/OK_MOD_S13_PAIR.md`）：
+  - 工作項 6 的模式切換只看遊戲模式；讀卡器與街區世界裡開的 1 對 1 不會進 `pair`，第一次實機進 1 對 1 時 log 一直是 `mode reader: 0 mod(s)`，pair-counter 沒載入。改成 pair 橋接在 Enter／Exit 切宿主模式。教訓：先確認 mod 在那個情境真的會被載入，再看事件。
+  - 往 CRLF 工作檔（`Tools/ok-extract/src/ffi.rs`）用 Lua 插入 LF 文字，檔案變成混合行尾；git bash 的 `sed`／`od` 顯示時把 `\r` 去掉，錨點對不上卻看不出原因。用 Lua 數 `\r\n` 與 `\n` 才看出來，整檔統一成 CRLF（倉庫內是 LF，提交時正規化，diff 不受影響）。
+  - pair 橋接 `if (...) UE_LOG(...); else UE_LOG(...);` 編譯錯 C2181：`UE_LOG` 展開成區塊，不能接 `else`。加大括號。
+  - zh-TW 的提交用 `examples/*/locale/zh-TW` 萬用字元，把 pair-counter 的 zh-TW 檔也一起提交（早了一個提交）。內容無害，未改寫歷史。
+  - 第一版 S13 回報寫「`ok.PairModBridgeSelfTest` 17/17 仍通過」，其實那是改動前跑的，最後的改動之後沒重跑。統籌指出後重跑（21/21）並更正。教訓：回報裡的「通過」要是在最後的程式上跑的。
+  - 13 前置把 `FireFinish` 只放在 `UOKHScenePanel::Finish`；她愛撫與獨自的高潮走 `CountHerOrgasm` 不經 `Finish`，`pair.finish` 漏送。實機查高潮計數時讀程式才發現。另 `OKInteractionMod.h` 的種類範例（`org_in`、`same_out`）是憑印象寫的，實際是 `orgW`、`outside` 等，一併改正。

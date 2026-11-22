@@ -1,0 +1,8 @@
+"mod.org.openkoikatsu.scene_notes.description" = "OK Studio：在物件上加備註，工具列逐一選到有備註的物件。"
+"mod.org.openkoikatsu.scene_notes.cmd.add" = "給所選物件加備註"
+"mod.org.openkoikatsu.scene_notes.cmd.remove" = "刪除所選物件的備註"
+"mod.org.openkoikatsu.scene_notes.cmd.next" = "選到下一個有備註的物件"
+"mod.org.openkoikatsu.scene_notes.menu.add" = "加備註"
+"mod.org.openkoikatsu.scene_notes.menu.remove" = "刪除備註"
+"mod.org.openkoikatsu.scene_notes.tool.next" = "備註清單：選到下一個有備註的物件"
+"mod.org.openkoikatsu.scene_notes.row.note" = "備註"

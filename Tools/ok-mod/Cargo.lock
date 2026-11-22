@@ -321,7 +321,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-object-hotkeys"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
 name = "ok-mod-outfit-names"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-pair-counter"
 version = "0.1.0"
 dependencies = [
  "ok-mod-sdk",
@@ -349,6 +366,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-scene-notes"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
 name = "ok-mod-sdk"
 version = "0.1.0"
 dependencies = [
@@ -359,12 +384,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-studio"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-studio-autosave"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
 name = "ok-mod-subtitles"
 version = "0.1.0"
 dependencies = [
  "ok-mod-sdk",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ok-mod-timeline-flow"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
 ]
 
 [[package]]

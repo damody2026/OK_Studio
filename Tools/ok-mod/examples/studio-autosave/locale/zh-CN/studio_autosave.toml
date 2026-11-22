@@ -1,0 +1,6 @@
+"mod.org.openkoikatsu.studio_autosave.description" = "OK Studio：每隔几分钟把场景另存到备份资料夹，保留最新几份。"
+"mod.org.openkoikatsu.studio_autosave.config.enabled" = "自动备份"
+"mod.org.openkoikatsu.studio_autosave.config.minutes" = "每几分钟备份一次"
+"mod.org.openkoikatsu.studio_autosave.config.keep" = "保留最新几份"
+"mod.org.openkoikatsu.studio_autosave.cmd.save_now" = "立刻备份一份"
+"mod.org.openkoikatsu.studio_autosave.tool.save_now" = "立刻备份场景（自动备份 mod）"

@@ -43,6 +43,10 @@ int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,co
 int32_t ok_breed_file(int32_t op,const char* a,const char* b,uint64_t seed,const char* out,char* msg,int32_t msg_cap);
 /* GUIDs (one per line in msg) an original card names that its open finds in no zipmod; 0, or -1 and the error. */
 int32_t ok_card_absent_mods(const char* card, char* msg, int32_t cap);
+/* One mod's section of a card's okMx: get returns the data length (> cap: nothing copied), -2 none, -1 error; set
+   (remove != 0 removes) returns 0 or -1. The card file is rewritten in place, its identity kept. */
+int32_t ok_card_mod_section_get(const char* card, const char* mod_id, uint32_t* version, uint8_t* data, int32_t cap, char* error, int32_t error_cap);
+int32_t ok_card_mod_section_set(const char* card, const char* mod_id, uint32_t version, const uint8_t* data, int32_t len, int32_t remove, char* error, int32_t error_cap);
 int32_t ok_okcard_make(const char* game, const char* card, const char* out, char* msg, int32_t cap);
 /* Preserve coordinate numbering and record resources for the explicitly selected outfit. */
 int32_t ok_okcard_make_outfit(const char* game, const char* card, const char* out, int32_t outfit, char* msg, int32_t cap);

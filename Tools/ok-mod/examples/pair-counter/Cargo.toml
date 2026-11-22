@@ -1,0 +1,15 @@
+[package]
+name = "ok-mod-pair-counter"
+version = "0.1.0"
+edition = "2021"
+description = "One-on-one statistics: how many times and how long, and how often each comes, kept in her card's okMx (HSceneProc / StartH-EndH counters)."
+publish = false
+
+[lib]
+name = "ok_pair_counter"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }

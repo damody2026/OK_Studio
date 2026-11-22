@@ -132,6 +132,24 @@ public:
 	struct FMenuInterpolable { FString Title; FString Owner; FString Id; int32 ObjectId = -1; };
 	TArray<FMenuInterpolable> InterpolableMenu(const UOKSceneDocument& Document, int32 SelectedId) const;
 
+	// --- Scene events (KKAPI SceneCustomFunctionController), for whoever passes them on to the mods (the mod host bridge,
+	// Source/OpenKoikatsu/OKStudioModBridge.cpp). The studio calls the Notify functions, one line where it happens; with
+	// no sink they do nothing. Args are JSON: ids as numbers, maps as {"<old id>": <new id>}.
+
+	/** event: scene_load {kind: load|import|clear, map?, imported_mods?}, scene_save, objects_copied {map},
+	 *  objects_deleted {ids}, objects_selected {ids, primary}. Called inside the change (a mod's answer is part of its
+	 *  undo step); the sink must not change objects there, only the scene's mod data. */
+	TFunction<void(const FString& Event, const TSharedRef<class FJsonObject>& Args)> SceneEventSink;
+	void NotifySceneLoad(const TCHAR* Kind, const TMap<int32, int32>* IdMap = nullptr, const TSharedPtr<class FJsonObject>& ImportedRoot = nullptr);
+	void NotifySceneSave();
+	void NotifyObjectsCopied(const TMap<int32, int32>& IdMap);
+	void NotifyObjectsDeleted(const TArray<int32>& Ids);
+	void NotifySelected(const TArray<int32>& Ids, int32 Primary);
+	/** The id map of the last objects added with new ids (paste, import), for the Notify right after. */
+	TMap<int32, int32> LastRemap;
+	/** Shows a line in the studio's status bar (set by the panel while it is open). */
+	TFunction<void(const FString&)> ShowStatus;
+
 private:
 	bool Check(const FString& Owner, const FString& Name, const TCHAR* What, bool bTaken) const;
 	TArray<FOKStudioModCommand> CommandList;

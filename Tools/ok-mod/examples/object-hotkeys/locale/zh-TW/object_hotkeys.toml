@@ -1,0 +1,5 @@
+"mod.org.openkoikatsu.object_hotkeys.description" = "OK Studio：按住鍵移動滑鼠，移動、旋轉、縮放所選物件。"
+"mod.org.openkoikatsu.object_hotkeys.config.hotkey_move" = "按住移動的鍵"
+"mod.org.openkoikatsu.object_hotkeys.config.hotkey_rotate" = "按住旋轉的鍵"
+"mod.org.openkoikatsu.object_hotkeys.config.hotkey_scale" = "按住縮放的鍵"
+"mod.org.openkoikatsu.object_hotkeys.config.speed" = "每像素移動幾公分（旋轉幾度）"

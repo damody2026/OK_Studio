@@ -1,0 +1,8 @@
+"mod.org.openkoikatsu.scene_notes.description" = "OK Studio: notes on objects; a tool button steps through them."
+"mod.org.openkoikatsu.scene_notes.cmd.add" = "Add a note to the selected object"
+"mod.org.openkoikatsu.scene_notes.cmd.remove" = "Remove the notes of the selection"
+"mod.org.openkoikatsu.scene_notes.cmd.next" = "Select the next object with a note"
+"mod.org.openkoikatsu.scene_notes.menu.add" = "Add note"
+"mod.org.openkoikatsu.scene_notes.menu.remove" = "Remove note"
+"mod.org.openkoikatsu.scene_notes.tool.next" = "Notes: select the next object with a note"
+"mod.org.openkoikatsu.scene_notes.row.note" = "Note"
