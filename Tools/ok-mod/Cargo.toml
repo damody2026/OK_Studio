@@ -11,6 +11,7 @@ members = [
     "examples/glass-shader",
     "examples/boop",
     "examples/skin-decal",
+    "examples/toon-post",
     "studio",
     "examples/profile",
     "examples/outfit-names",

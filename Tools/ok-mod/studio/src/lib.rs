@@ -338,6 +338,14 @@ impl Ui {
         self.map.insert("timeline_marks".into(), path.into());
         self
     }
+    /// A post-process material of this mod (`materials/*.toml`, "<mod id>/<name>") drawn over the whole studio view
+    /// while the data at `enabled` is true; `scalars` and `colors` map material parameters to paths in the data (a
+    /// number; a "#RRGGBB" text). The studio reads them every frame, so panel rows and timeline keys on those paths
+    /// change the picture without calls to the mod.
+    pub fn post_process(&mut self, material: &str, enabled: &str, scalars: &[(&str, &str)], colors: &[(&str, &str)]) -> &mut Self {
+        let map = |pairs: &[(&str, &str)]| Value::Object(pairs.iter().map(|(k, v)| (k.to_string(), Value::from(*v))).collect());
+        self.push("post_process", json!({"material": material, "enabled": enabled, "scalars": map(scalars), "colors": map(colors)}))
+    }
     /// Send the scene's object list with every call.
     pub fn objects(&mut self, on: bool) -> &mut Self {
         self.map.insert("objects".into(), on.into());

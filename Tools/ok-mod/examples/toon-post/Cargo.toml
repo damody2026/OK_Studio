@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-toon-post"
+version = "0.1.0"
+edition = "2021"
+description = "OK Studio: comic outlines and halftone dots over the view (a post-process material from the mod's own pak), set per scene and keyed on the timeline."
+publish = false
+
+[lib]
+name = "ok_toon_post"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+ok-mod-studio = { path = "../../studio" }
