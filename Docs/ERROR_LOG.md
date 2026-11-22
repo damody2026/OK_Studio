@@ -7214,3 +7214,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 用 `lua.exe -e '...'` 把含 `§` 的註解寫進 `Tools/stage_street_social.lua`，命令列字串走主控台字碼頁，檔案變成非 UTF-8，commit hook 擋下。修正：改成 ASCII 的 `section 8`。教訓：要寫非 ASCII 的內容用 Write／Edit 工具，不用命令列字串。
   - 多模式整合測試第一版拿 hello 的 DLL 改 id 當第二個 mod，宿主正確地以「DLL 與 mod.toml 不符」拒載，測試失敗。是測試寫錯：換成另一個真的不同的 fixture（panic mod，只改 targets）。
   - 在 `OKGameControl.cpp` 第一次把 `OKModControlRoutes()` 的宣告放進匿名 namespace 裡，會和全域定義對不上（連結失敗）；建置前發現，移到檔案層級。
+
+## 2026-11-23 原作卡另存成 OK 卡時，mod 從 KKEx 匯入的資料被存檔掛點刪掉（C 組 c-mod-7，OK Mod 工作項 7）
+
+- **症狀**：讀卡器開原作卡（有 `KK_Profile`）、按「另存新卡」，轉出的 OK 卡沒有 `profile` 的 `okMx` 區段。
+- **原因**：轉卡時 `extract.kkex` 確實把簡介寫進新卡，但接著的 `reader.character_save` 是依 mod 的記憶體狀態回覆；開原作卡時 mod 只收到「卡上沒有區段」，簡介是空的，於是回 `remove`，把剛轉出的區段刪掉。
+- **修正**：開原作卡時，讀卡器先用 ok-extract 新的 `ok_kkex_mod_sections` 拿到 mod 從 KKEx 做出的區段，經 `card_load` 的 `imported` 交給 mod（payload `imported: true`）；mod 看到的就是轉卡會得到的內容，存檔時照寫。實測 `Alice_keiyuu.png`：開卡即顯示簡介，另存的 OK 卡有 profile 區段，改簡介後 MCP `save` 再重開仍在。
+- **教訓**：「轉卡時寫入」和「存檔時寫入」兩條路寫同一份資料時，mod 的狀態要從開卡那一刻就和轉卡結果一致，不能只在轉卡那一側處理；端對端要用真的有資料的原作卡測（第一張測試卡 `KK_103512.png` 的 `ProfileText` 是空字串，看不出問題）。
+- 另：用 Git Bash 的 `sed -i` 改 `examples/*/mod.toml` 時，沒有命中的 `hello/mod.toml` 也被改成 LF 行尾（內容沒變），提交前發現已還原。
