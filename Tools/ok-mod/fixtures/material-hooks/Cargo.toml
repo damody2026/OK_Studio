@@ -1,0 +1,15 @@
+[package]
+name = "ok-mod-fixture-material-hooks"
+version = "0.1.0"
+edition = "2021"
+description = "Test fixture: answers material.post_texture (tints one clothes slot) and material.resolve_shader (a mod material on parts whose name contains a word)."
+publish = false
+
+[lib]
+name = "ok_fixture_material_hooks"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = "1"

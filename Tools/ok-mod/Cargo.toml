@@ -11,6 +11,7 @@ members = [
     "examples/glass-shader",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
+    "fixtures/material-hooks",
 ]
 
 [workspace.dependencies]

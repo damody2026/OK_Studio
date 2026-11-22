@@ -1,0 +1,8 @@
+id = "org.openkoikatsu.test.material-hooks"
+name = "Material hooks test"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_fixture_material_hooks.dll"
+description_id = "mod.org.openkoikatsu.test.material-hooks.description"
+targets = ["reader", "studio", "pair", "street"]
+category = "tool"

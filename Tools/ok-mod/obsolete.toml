@@ -15,3 +15,8 @@ reason = "test fixture that panics on purpose (Tools/ok-mod/fixtures/panic-mod);
 id = "org.openkoikatsu.test.badlayout"
 versions = "*"
 reason = "test fixture with a wrong ABI layout (Tools/ok-mod/fixtures/bad-layout); not for players"
+
+[[obsolete]]
+id = "org.openkoikatsu.test.material-hooks"
+versions = "*"
+reason = "test fixture for the material hooks (Tools/ok-mod/fixtures/material-hooks); not for players"
