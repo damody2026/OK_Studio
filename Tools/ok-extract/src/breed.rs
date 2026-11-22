@@ -199,8 +199,10 @@ fn custom_value<'a>(custom: &'a [Value], section: &str, path: &str) -> Option<&'
 /// kept when the child's value is its slot and comes from the parent who had it (both parents having the value: the
 /// base's entry, else the other's); an entry of a value she does not have is dropped. Kept, a parent's entry whose slot
 /// the other parent's value happened to equal (a mod's slot and an original id alike) gave her a mod part neither parent
-/// wore, and her strict open asked about it (an eye highlight, cat 410 1919, 2026-11-22). Outfit entries stay the base's.
-fn sideloader_select(base: &mut Value, other: &Value, base_is_father: bool, custom: &[Value], sources: &BTreeMap<String, Option<bool>>) {
+/// wore, and her strict open asked about it (an eye highlight, cat 410 1919, 2026-11-22). Outfit entries are the base's,
+/// those of clothes she took from the other parent (`outfit_from_other`) the other's.
+fn sideloader_select(base: &mut Value, other: &Value, base_is_father: bool, custom: &[Value], sources: &BTreeMap<String, Option<bool>>,
+    outfit_from_other: &dyn Fn(&str) -> bool) {
     let entries = |v: &Value| -> Vec<Value> {
         map_get(v, SIDELOADER).and_then(|p| match p { Value::Array(a) if a.len() == 2 => Some(&a[1]), other => Some(other) })
             .and_then(|d| map_get(d, "info")).and_then(|i| i.as_array()).cloned().unwrap_or_default()
@@ -211,7 +213,8 @@ fn sideloader_select(base: &mut Value, other: &Value, base_is_father: bool, cust
     for (e, from_base) in entries(base).into_iter().map(|e| (e, true)).chain(entries(other).into_iter().map(|e| (e, false))) {
         let k = key(&e);
         if had.contains(&k) { continue; }
-        if k.0.starts_with("outfit") { if !from_base { continue; } }
+        // Outfit entries are the base's, but for the clothes she took from the other parent (`mix_clothes`).
+        if k.0.starts_with("outfit") { if from_base == outfit_from_other(&k.0) { continue; } }
         else if let Some((section, path)) = crate::appearance::custom_field_of_property(&k.0) {
             if custom_value(custom, &section, &path).and_then(|v| v.as_i64()) != Some(k.1) { continue; }
             let from_father = if from_base { base_is_father } else { !base_is_father };
@@ -230,10 +233,15 @@ fn sideloader_select(base: &mut Value, other: &Value, base_is_father: bool, cust
 
 /// The hair's Material Editor rows (ObjectType 3) and their textures taken from `from` instead of the base's.
 fn hair_material_rows(base: &mut Value, from: &Value) {
+    material_rows(base, from, &|e: &Value| map_get(e, "ObjectType").and_then(|t| t.as_i64()) == Some(HAIR_OBJECT));
+}
+
+/// The Material Editor rows `take` picks (and their textures) taken from `from` instead of the base's.
+fn material_rows(base: &mut Value, from: &Value, take: &dyn Fn(&Value) -> bool) {
     let data = |v: &Value| map_get(v, MATERIAL_EDITOR).map(|p| match p { Value::Array(a) if a.len() == 2 => (a[0].clone(), a[1].clone()), other => (Value::from(0), other.clone()) });
     let (Some((version, mut dst)), src) = (data(base).or_else(|| data(from).map(|(v, _)| (v, Value::Map(Vec::new())))), data(from)) else { return };
     let src = src.map(|(_, d)| d).unwrap_or(Value::Map(Vec::new()));
-    let hair = |e: &Value| map_get(e, "ObjectType").and_then(|t| t.as_i64()) == Some(HAIR_OBJECT);
+    let hair = take;
     let src_tex = map_get(&src, "TextureDictionary").map(unbin).unwrap_or(Value::Nil);
     let mut dst_tex = map_get(&dst, "TextureDictionary").map(unbin).filter(|v| v.is_map()).unwrap_or(Value::Map(Vec::new()));
     let mut next = dst_tex.as_map().map(|m| m.iter().filter_map(|(k, _)| k.as_i64()).max().unwrap_or(-1) + 1).unwrap_or(0);
@@ -259,6 +267,73 @@ fn hair_material_rows(base: &mut Value, from: &Value) {
     }
     map_set(&mut dst, "TextureDictionary", Value::Binary(encode(&dst_tex)));
     map_set(base, MATERIAL_EDITOR, Value::Array(vec![version, dst]));
+}
+
+// ------------------------------------------------------------------ clothes mixed between the parents
+
+/// A piece of clothing that goes from one parent as a whole: its gene name, its `ChaFileClothes.parts` slots (the
+/// Material Editor clothing slots too), the Sideloader properties after `outfitN.ChaFileClothes.` (prefixes: a piece's
+/// pattern and emblem entries go with it), and whether the top's sub parts (sailor, jacket) go with it.
+type ClothesGene = (&'static str, &'static [usize], &'static [&'static str], bool);
+const CLOTHES_GENES: [ClothesGene; 3] = [
+    ("top", &[0], &["ClothesTop", "ClothesSailorSub", "ClothesJacketSub"], true),
+    ("bottom", &[1], &["ClothesBot"], false),
+    ("underwear", &[2, 3], &["ClothesBra", "ClothesShorts"], false),
+];
+
+/// A Coordinate entry's clothes (decoded) and the rest of it: [i32 length][clothes msgpack][accessories, makeup].
+fn split_coordinate(entry: &[u8]) -> Option<(Value, Vec<u8>)> {
+    let n = i32::from_le_bytes(entry.get(..4)?.try_into().ok()?);
+    let end = 4usize.checked_add(usize::try_from(n).ok()?)?;
+    Some((decode(entry.get(4..end)?)?, entry.get(end..)?.to_vec()))
+}
+fn join_coordinate(clothes: &Value, rest: &[u8]) -> Vec<u8> {
+    let c = encode(clothes);
+    let mut out = (c.len() as i32).to_le_bytes().to_vec();
+    out.extend(c);
+    out.extend_from_slice(rest);
+    out
+}
+fn coordinate_entries(blocks: &BTreeMap<String, Vec<u8>>) -> Vec<Vec<u8>> {
+    blocks.get("Coordinate").and_then(|b| decode(b)).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+        .into_iter().filter_map(|e| match e { Value::Binary(b) => Some(b), _ => None }).collect()
+}
+fn clothes_parts(clothes: &Value) -> Vec<Value> { map_get(clothes, "parts").and_then(|p| p.as_array()).cloned().unwrap_or_default() }
+fn wears(clothes: &Value, slot: usize) -> bool {
+    clothes_parts(clothes).get(slot).and_then(|p| map_get(p, "id")).and_then(|i| i.as_i64()).is_some_and(|i| i != 0)
+}
+
+/// Her top, bottom and underwear each from either parent (user, 2026-11-22: 上衣 下衣 內衣混搭); the rest of every
+/// outfit (gloves, pantyhose, socks, shoes, accessories) is the base's. Each gene is drawn once and worn in every outfit
+/// both parents have where the other parent wears that piece (taking nothing would undress her). The pieces keep their
+/// colours and patterns (they are in the parts entry); their Sideloader and Material Editor entries go with them
+/// (`sideloader_select`, `material_rows`). Returns the (outfit, gene) taken from the other parent.
+fn mix_clothes(blocks: &mut BTreeMap<String, Vec<u8>>, other: &BTreeMap<String, Vec<u8>>, from_father: bool, mixer: &mut Mixer, unmixed: &[usize]) -> Vec<(usize, ClothesGene)> {
+    let draws: Vec<bool> = CLOTHES_GENES.iter().map(|_| mixer.rng.chance(0.5)).collect();
+    let (mut mine, theirs) = (coordinate_entries(blocks), coordinate_entries(other));
+    let mut taken = Vec::new();
+    for (o, entry) in mine.iter_mut().enumerate() {
+        let Some(their) = theirs.get(o) else { break };
+        if unmixed.contains(&o) { continue; }
+        let (Some((mut clothes, rest)), Some((their_clothes, _))) = (split_coordinate(entry), split_coordinate(their)) else { continue };
+        let mut changed = false;
+        for (gene, take) in CLOTHES_GENES.iter().zip(&draws) {
+            if !*take || !gene.1.iter().any(|s| wears(&their_clothes, *s)) { continue; }
+            let (mut parts, from) = (clothes_parts(&clothes), clothes_parts(&their_clothes));
+            for s in gene.1 { if let (Some(d), Some(v)) = (parts.get_mut(*s), from.get(*s)) { *d = v.clone(); } }
+            map_set(&mut clothes, "parts", Value::Array(parts));
+            if gene.3 { if let Some(v) = map_get(&their_clothes, "subPartsId").cloned() { map_set(&mut clothes, "subPartsId", v); } }
+            taken.push((o, *gene));
+            changed = true;
+        }
+        if changed { *entry = join_coordinate(&clothes, &rest); }
+    }
+    for (gene, take) in CLOTHES_GENES.iter().zip(&draws) {
+        let applied = *take && taken.iter().any(|(_, g)| g.0 == gene.0);
+        mixer.picks.insert(gene.0.into(), if applied { !from_father } else { from_father });
+    }
+    if !taken.is_empty() { blocks.insert("Coordinate".into(), encode(&Value::Array(mine.into_iter().map(Value::Binary).collect()))); }
+    taken
 }
 
 // ------------------------------------------------------------------ chunks
@@ -315,7 +390,10 @@ pub fn breed(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path)) -> 
 }
 
 /// A child as reed makes her, with what file::breed_whole needs to change genes.
-pub struct Bred { pub card: Vec<u8>, pub from_father: bool, pub summary: String, custom: Vec<Value>, sources: BTreeMap<String, Option<bool>> }
+pub struct Bred { pub card: Vec<u8>, pub from_father: bool, pub summary: String, custom: Vec<Value>, sources: BTreeMap<String, Option<bool>>, mixed_outfits: Vec<usize> }
+
+/// `forced` key of an outfit whose clothes stay the base's whole (its mix needed what neither parent's data had).
+fn unmixed_key(outfit: usize) -> String { format!("clothes.outfit{outfit}") }
 
 /// reed with some whole-number fields (section.path) taken from the father (	rue) or the mother whatever the draw.
 fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), forced: &BTreeMap<String, bool>) -> Result<Bred, String> {
@@ -346,11 +424,29 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
     blocks.insert("Parameter".into(), encode(&parameter));
 
     // Plugin data: the base's, with the other parent's face/body/hair mod entries, and the hair's materials.
+    // Her top, bottom and underwear, each from either parent (drawn after everything above: a seed's earlier genes
+    // stay what they were before clothes were mixed).
+    let unmixed: Vec<usize> = (0..64).filter(|o| forced.contains_key(&unmixed_key(*o))).collect();
+    let clothes_taken = mix_clothes(&mut blocks, other, from_father, &mut mixer, &unmixed);
+    let mut mixed_outfits: Vec<usize> = clothes_taken.iter().map(|(o, _)| *o).collect();
+    mixed_outfits.dedup();
+
     let hair_from_father = mixer.picks.get("hair").copied().unwrap_or(false);
     let mut kkex = base.get("KKEx").and_then(|k| decode(k)).unwrap_or(Value::Map(Vec::new()));
     let other_kkex = other.get("KKEx").and_then(|k| decode(k)).unwrap_or(Value::Map(Vec::new()));
-    sideloader_select(&mut kkex, &other_kkex, from_father, &mixed, &mixer.sources);
+    let outfit_from_other = |p: &str| clothes_taken.iter().any(|(o, gene)| {
+        p.strip_prefix(&format!("outfit{o}.ChaFileClothes.")).is_some_and(|rest| gene.2.iter().any(|n| rest.starts_with(n)))
+    });
+    sideloader_select(&mut kkex, &other_kkex, from_father, &mixed, &mixer.sources, &outfit_from_other);
     if hair_from_father != from_father { hair_material_rows(&mut kkex, &other_kkex); }
+    if !clothes_taken.is_empty() {
+        // (Material Editor clothing rows: ObjectType 1, the outfit and the slot of ChaFileClothes.parts)
+        material_rows(&mut kkex, &other_kkex, &|e: &Value| {
+            let int = |k: &str| map_get(e, k).and_then(|v| v.as_i64());
+            int("ObjectType") == Some(1) && clothes_taken.iter().any(|(o, gene)| int("CoordinateIndex") == Some(*o as i64)
+                && int("Slot").is_some_and(|s| gene.1.contains(&(s as usize))))
+        });
+    }
     blocks.insert("KKEx".into(), encode(&kkex));
 
     // Her own identity: from her parents and the seed (the same child is the same person).
@@ -381,13 +477,15 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
     let record = serde_json::json!({
         "format": "ok-breed", "version": 1, "name": format!("{last} {first}").trim(), "seed": seed, "generation": generation, "mother": rm, "father": rf,
         "base": side(from_father), "picks": mixer.picks.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
-        "changed": forced.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
+        "changed": forced.iter().filter(|(k, _)| !k.starts_with("clothes.")).map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
+        "clothes_not_mixed": unmixed,
         "hairdeck": if hairdeck { serde_json::Value::from(side(hair_from_father)) } else { serde_json::Value::Null },
     });
     let card = crate::tree_answers::with_chunk(&card, DNA_CHUNK, &serde_json::to_vec(&record).unwrap())?;
-    let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {}, hair from the {}{})", side(from_father), side(hair_from_father),
-        if hairdeck { ", HairDeck hair" } else { "" });
-    Ok(Bred { card, from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources })
+    let pick = |g: &str| side(mixer.picks.get(g).copied().unwrap_or(from_father));
+    let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {} with the top from the {}, bottom from the {}, underwear from the {}, hair from the {}{})",
+        side(from_father), pick("top"), pick("bottom"), pick("underwear"), side(hair_from_father), if hairdeck { ", HairDeck hair" } else { "" });
+    Ok(Bred { card, from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources, mixed_outfits })
 }
 
 /// The list entries (category, id) an OK card's strict open lacked, as its error names them ("okLt cat 410 1919").
@@ -403,6 +501,17 @@ fn catalogue_gaps(error: &str) -> Vec<(i64, i64)> {
 
 /// Genes to take from the other parent: the fields of the child whose value is a list entry (category, id) her open
 /// lacked and that came from one parent (`sources`).
+/// The outfits a strict open failed in, as its error names them ("outfit 4: ...", "| outfit 4 clothes [...]").
+fn failing_outfits(error: &str) -> Vec<usize> {
+    let mut out: Vec<usize> = error.match_indices("outfit ").filter_map(|(at, m)| {
+        let rest = &error[at + m.len()..];
+        rest[..rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len())].parse().ok()
+    }).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn genes_to_change(bred: &Bred, gaps: &[(i64, i64)]) -> BTreeMap<String, bool> {
     let mut out = BTreeMap::new();
     for &(category, id) in gaps {
@@ -616,8 +725,13 @@ pub mod file {
                     return Ok(format!("{}; {sealing}{changed}", bred.summary));
                 }
                 Err(e) => {
-                    let more = genes_to_change(&bred, &catalogue_gaps(&e));
-                    if attempt >= 2 || more.is_empty() || more.iter().all(|(k, v)| forced.get(k) == Some(v)) { return Err(e); }
+                    let mut more = genes_to_change(&bred, &catalogue_gaps(&e));
+                    // A mixed outfit that cannot open (a top and a bottom from different parents ask for a body mask
+                    // neither parent's data has: texture_payload ... bodymask, 2026-11-22): that outfit stays the base's.
+                    if more.is_empty() {
+                        for o in failing_outfits(&e) { if bred.mixed_outfits.contains(&o) { more.insert(unmixed_key(o), true); } }
+                    }
+                    if attempt >= 6 || more.is_empty() || more.iter().all(|(k, v)| forced.get(k) == Some(v)) { return Err(e); }
                     eprintln!("ok-extract: breed: {} gene(s) her parents' data cannot show, taken from the other parent: {more:?}", more.len());
                     forced.extend(more);
                 }
@@ -687,12 +801,41 @@ mod tests {
         // Her highlight 5 is her father's original one: her mother's dormant mod entry for slot 5 must not take it.
         let sources = BTreeMap::from([("face.hlUpId".to_owned(), Some(true))]);
         let mut base = kkex(vec![entry(5, "mother.mod")]);
-        sideloader_select(&mut base, &kkex(vec![]), false, &custom(5), &sources);
+        sideloader_select(&mut base, &kkex(vec![]), false, &custom(5), &sources, &|_| false);
         assert!(guids(&base).is_empty());
         // Her father's mod highlight (slot 5) comes with its entry; one for a value she lacks does not.
         let mut base = kkex(vec![entry(9, "mother.mod")]);
-        sideloader_select(&mut base, &kkex(vec![entry(5, "father.mod")]), false, &custom(5), &sources);
+        sideloader_select(&mut base, &kkex(vec![entry(5, "father.mod")]), false, &custom(5), &sources, &|_| false);
         assert_eq!(guids(&base), ["father.mod"]);
+    }
+
+    #[test]
+    fn clothes_mix_by_piece() {
+        // Outfit 0: mother (base) wears top 1, bottom 2, bra 3, shorts 4; father top 11, bottom 0 (none), bra 13, shorts 14.
+        let outfit = |ids: [i64; 4]| {
+            let parts: Vec<Value> = (0..9).map(|i| Value::Map(vec![("id".into(), Value::from(*ids.get(i).unwrap_or(&0)))])).collect();
+            join_coordinate(&Value::Map(vec![("parts".into(), Value::Array(parts)), ("subPartsId".into(), Value::Array(vec![]))]), b"rest")
+        };
+        let blocks = |ids| BTreeMap::from([("Coordinate".to_owned(), encode(&Value::Array(vec![Value::Binary(outfit(ids))])))]);
+        let ids = |b: &BTreeMap<String, Vec<u8>>| { let (c, rest) = split_coordinate(&coordinate_entries(b)[0]).unwrap(); assert_eq!(rest, b"rest");
+            clothes_parts(&c).iter().take(4).map(|p| map_get(p, "id").unwrap().as_i64().unwrap()).collect::<Vec<_>>() };
+        for seed in 0..64 {
+            let (mut mine, theirs) = (blocks([1, 2, 3, 4]), blocks([11, 0, 13, 14]));
+            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+            let taken = mix_clothes(&mut mine, &theirs, false, &mut m, &[]);
+            let got = ids(&mine);
+            // Never undressed: the father wears no bottom, so hers stays. Bra and shorts go together.
+            assert_eq!(got[1], 2);
+            assert!((got[2], got[3]) == (3, 4) || (got[2], got[3]) == (13, 14), "{got:?}");
+            assert_eq!(taken.iter().any(|(_, g)| g.0 == "top"), got[0] == 11);
+            assert_eq!(m.picks.get("top") == Some(&true), got[0] == 11);
+        }
+        // An outfit kept whole: nothing taken.
+        let (mut mine, theirs) = (blocks([1, 2, 3, 4]), blocks([11, 12, 13, 14]));
+        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+        assert!(mix_clothes(&mut mine, &theirs, false, &mut m, &[0]).is_empty());
+        assert_eq!(ids(&mine), [1, 2, 3, 4]);
+        assert_eq!(failing_outfits("sealing open failed: outfit 4: x | outfit 4 clothes [1] | outfit 12: y"), [4, 12]);
     }
 
     #[test]
