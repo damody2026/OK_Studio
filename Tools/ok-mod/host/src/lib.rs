@@ -8,6 +8,8 @@
 
 pub mod config;
 pub mod content;
+#[cfg(feature = "frame")]
+pub mod frame;
 pub mod ffi;
 pub mod manifest;
 pub mod resolve;
@@ -167,6 +169,9 @@ struct Loaded {
     commands: Vec<String>,
     subscriptions: HashSet<String>,
     rustc: String,
+    /// The DLL's `ok_mod_frame` (feature `frame`).
+    #[cfg(feature = "frame")]
+    frame: Option<frame::ModFrameFn>,
 }
 
 struct ModEntry {
@@ -277,7 +282,22 @@ impl ModHost {
             self.targets.push(mode.to_string());
             self.scan();
         }
-        self.dispatch(&Event::ModeEnter { mode: mode.into() })
+        let replies = self.dispatch(&Event::ModeEnter { mode: mode.into() });
+        self.publish_frames();
+        replies
+    }
+
+    /// Hands the enabled mods' frame functions to `okm_frame` (feature `frame`; nothing otherwise).
+    fn publish_frames(&self) {
+        #[cfg(feature = "frame")]
+        frame::publish(
+            self.order
+                .iter()
+                .filter(|&&i| self.mods[i].state == State::Enabled)
+                .filter_map(|&i| self.mods[i].loaded.as_ref().and_then(|l| l.frame).map(|f| (self.mods[i].id.clone(), f)))
+                .collect(),
+            &self.log,
+        );
     }
 
     /// Subscribers get `mode_exit`; the mods stay loaded.
@@ -378,7 +398,7 @@ impl ModHost {
             (self.log)(LogLevel::Warn, &manifest.id, &w);
         }
         (self.log)(LogLevel::Info, &manifest.id, &format!("loaded {} {} (built with {rustc})", manifest.name, manifest.version));
-        Ok(Loaded { instance, handle, shared, commands, subscriptions, rustc })
+        Ok(Loaded { instance, handle, shared, commands, subscriptions, rustc, #[cfg(feature = "frame")] frame: frame::find(&dll) })
     }
 
     fn find(&self, id: &str) -> Result<usize, String> {
@@ -407,6 +427,8 @@ impl ModHost {
         let m = &mut self.mods[idx];
         m.state = State::Faulted(why.to_string());
         (self.log)(LogLevel::Error, &m.id, &format!("disabled after a panic: {why}"));
+        #[cfg(feature = "frame")]
+        frame::clear_one(&m.id);
         // The mod's state may be broken: never call it again, not even its destructor.
         if let Some(loaded) = m.loaded.take() {
             lock(registry()).remove(&loaded.handle.0);
@@ -526,6 +548,7 @@ impl ModHost {
                 let _ = self.call_event(idx, &Event::Enabled);
                 let msg = format!("reloaded {id} {} from {}", manifest.version, copy.display());
                 self.host_log(LogLevel::Info, &msg);
+                self.publish_frames();
                 Ok(msg)
             }
             Err(state) => {
@@ -544,6 +567,7 @@ impl ModHost {
         }
         self.shutdown_one(idx);
         self.mods[idx].state = State::Disabled("disabled for this session".into());
+        self.publish_frames();
         Ok(())
     }
 
@@ -611,6 +635,8 @@ impl ModHost {
             return;
         }
         self.closed = true;
+        #[cfg(feature = "frame")]
+        frame::clear();
         for idx in self.order.clone().into_iter().rev() {
             if self.mods[idx].state == State::Enabled {
                 self.shutdown_one(idx);

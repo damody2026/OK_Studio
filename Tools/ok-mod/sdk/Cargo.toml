@@ -7,6 +7,10 @@ description = "OK mod framework SDK: the ok_mod! macro (root module export, pani
 [lib]
 name = "ok_mod_sdk"
 
+[features]
+# Per-frame calls (ok_mod_frame!, frame.rs). Proposed in Docs/OK_MOD_S11_FRAME.md, waiting on the coordinator.
+frame = []
+
 [dependencies]
 ok-mod-api = { path = "../api" }
 # Hook payloads and replies are JSON; mod data travels as base64 (hooks.rs).

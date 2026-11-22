@@ -62,6 +62,8 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 //       A named hook (Event::Hook, mode-prefixed snake_case names; Docs/OK_MOD_HOOKS.md) to every enabled mod that
 //       subscribed to it, in load order; with "mods" only to those (each must have subscribed). Each reply as for
 //       "command": "json" (Reply::Json parsed), "text" (Reply::Text), neither for Reply::None.
+//   {"op":"frame_stats"} / {"op":"frame_budget","us"}   (host built with the `frame` feature) mods taking frames: calls,
+//       calls over budget, worst call (us), stopped; frame_budget sets the per-mod per-call budget (0 = 500 us).
 //   {"op":"subscribers","hook"} -> {"mods":["<id>",...]}   enabled mods subscribed to that hook, in load order (check
 //       before building an expensive payload: a hook nobody subscribed to must cost nothing)
 // Returns NULL for a malformed request (see okm_last_error).

@@ -47,6 +47,8 @@ use api::{
 pub use api::{ConfigValue, Event, LogLevel, Reply};
 
 pub mod hooks;
+#[cfg(feature = "frame")]
+pub mod frame;
 
 pub type ModResult<T> = Result<T, String>;
 

@@ -193,6 +193,15 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
             }
         }
         "content" => json!({"mods": host.content()}),
+        // {"op":"frame_stats"}: mods taking frames, their calls, overruns, worst call and whether they were stopped.
+        #[cfg(feature = "frame")]
+        "frame_stats" => crate::frame::stats(),
+        // {"op":"frame_budget","us"}: the per-mod per-call budget (0 = the default 500 us).
+        #[cfg(feature = "frame")]
+        "frame_budget" => {
+            crate::frame::okm_frame_budget(req.get("us").and_then(Value::as_u64).unwrap_or(0));
+            crate::frame::stats()
+        }
         "reload" => match host.reload(str_field(req, "mod")?) {
             Ok(text) => json!({"ok": true, "text": text}),
             Err(e) => json!({"ok": false, "error": e}),

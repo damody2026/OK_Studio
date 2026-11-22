@@ -8,6 +8,11 @@ description = "OK mod host: discovers Mods/, resolves dependencies, loads mod DL
 name = "ok_mod_host"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Per-frame mod calls (okm_frame; a mod's exported ok_mod_frame). Proposed in Docs/OK_MOD_S11_FRAME.md, waiting on the
+# coordinator's decision, so off by default.
+frame = []
+
 [dependencies]
 ok-mod-api = { path = "../api" }
 serde = { workspace = true }
