@@ -475,3 +475,8 @@
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\raiden_outfit3_compare_20s.mp4`（走路）
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\raiden_outfit5_compare_20s.mp4`（走路）
 - `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\megumin_outfit4_compare_20s.mp4`（跑步；原始物理的粉紅裙從大衣前面露出、靴子穿過大衣）
+
+### 巡檢：倒地、躺下（地面判定）
+
+- 「両手剣倒れる」（雷電 5、3，惠惠 4）、「添い寝1」（千佳 1）：腳底 `cf_j_root` 都停在 y 0，地面判定正確；沒有布料飛走（flung 0）。倒地後和服、女僕裙、大衣攤在地面上。
+- 日誌裡還有幾十到兩百個粒子在地板下 2–5 cm，它們顯示的位置等於姿勢（被釘住的或跟隨內層，身體本身躺在地上），原始物理同樣在那裡；自由粒子都在地面上 3 mm。
