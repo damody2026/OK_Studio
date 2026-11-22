@@ -37,13 +37,17 @@ pub struct Force {
     pub reserved: f32,
 }
 
+/// The `RawFrame` layout version this SDK reads (`RawFrame::version`).
+pub const FRAME_VERSION: u32 = 1;
+
 /// The frame as the host lays it out (Tools/ok-extract/src/mod_frame.rs `OkModFrame`).
 #[repr(C)]
 pub struct RawFrame {
-    pub size: u32,
+    pub struct_size: u32,
+    pub version: u32,
     pub kind: u32,
-    pub character: u64,
     pub sex: i32,
+    pub character: u64,
     pub dt: f32,
     pub time: f32,
     pub bone_count: u32,
@@ -63,15 +67,16 @@ pub struct Frame<'a> {
 impl<'a> Frame<'a> {
     /// # Safety
     /// `raw` is the host's frame, valid for `'a`.
+    /// None for a frame this SDK does not know (another `version`, or smaller than its `RawFrame`).
     pub unsafe fn from_raw(raw: &'a mut RawFrame) -> Option<Self> {
-        (raw.size as usize >= std::mem::size_of::<RawFrame>()).then_some(Frame { raw })
+        (raw.version == FRAME_VERSION && raw.struct_size as usize >= std::mem::size_of::<RawFrame>()).then_some(Frame { raw })
     }
     /// 0 = a character on its own (card reader, Studio), 1 = in a pair frame (1-on-1).
     pub fn kind(&self) -> u32 { self.raw.kind }
     /// Stable for the character's lifetime: key per-character state with it.
     pub fn character(&self) -> u64 { self.raw.character }
     pub fn is_female(&self) -> bool { self.raw.sex == 1 }
-    /// Seconds since the last frame (0 in pair frames: keep your own clock there).
+    /// Seconds since the last frame (in a pair frame: how far the pair's playback clock moved).
     pub fn dt(&self) -> f32 { self.raw.dt }
     pub fn time(&self) -> f32 { self.raw.time }
     pub fn len(&self) -> usize { self.raw.bone_count as usize }
@@ -155,7 +160,7 @@ mod tests {
         let mut bones = [Bone::default(); 2];
         let worlds = [[0.0f32; 16]; 2];
         let mut forces = [Force::default(); 1];
-        let mut raw = RawFrame { size: std::mem::size_of::<RawFrame>() as u32, kind: 0, character: 1, sex: 1, dt: 0.0, time: 0.0,
+        let mut raw = RawFrame { struct_size: std::mem::size_of::<RawFrame>() as u32, version: FRAME_VERSION, kind: 0, character: 1, sex: 1, dt: 0.0, time: 0.0,
             bone_count: 2, names: names.as_ptr(), bones: bones.as_mut_ptr(), worlds: worlds.as_ptr(), forces: forces.as_mut_ptr(),
             force_cap: 1, force_count: 0 };
         let r = unsafe { lift_export::ok_mod_frame(&mut raw as *mut RawFrame as *mut _) };

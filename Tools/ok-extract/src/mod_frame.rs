@@ -41,17 +41,24 @@ pub struct OkModForce {
     pub reserved: f32,
 }
 
-/// What a frame call sees. `size` is this struct's size (fields are only ever appended).
+/// The layout's version (`OkModFrame::version`). Fields are only ever appended at the end (`struct_size` grows); the
+/// version changes only if an existing field ever had to change, and both sides refuse a version they do not know.
+pub const FRAME_VERSION: u32 = 1;
+
+/// What a frame call sees. `struct_size` is this struct's size and `version` is `FRAME_VERSION`; both the host and the
+/// mod (the SDK) check them before reading anything else.
 #[repr(C)]
 pub struct OkModFrame {
-    pub size: u32,
+    pub struct_size: u32,
+    pub version: u32,
     /// 0 = a character on its own (card reader, Studio), 1 = a pair frame (1-on-1).
     pub kind: u32,
-    /// Stable for the character's lifetime (its session), to key a mod's per-character state.
-    pub character: u64,
     /// 0 male, 1 female.
     pub sex: i32,
-    /// Seconds since the last frame, and the clip time.
+    /// Stable for the character's lifetime (its session), to key a mod's per-character state.
+    pub character: u64,
+    /// Seconds since the last frame (in a pair frame: how far the pair's playback clock moved since this character's
+    /// last pair frame), and the clip time.
     pub dt: f32,
     pub time: f32,
     pub bone_count: u32,
@@ -77,8 +84,13 @@ static ANY_FORCE: AtomicBool = AtomicBool::new(false);
 static FORCES: RwLock<Option<HashMap<u64, Vec<OkModForce>>>> = RwLock::new(None);
 /// Bone names per skeleton layout, as C strings (built once per layout, not per frame).
 static NAMES: Mutex<Option<HashMap<u64, std::sync::Arc<Names>>>> = Mutex::new(None);
+/// Each character's last pair-frame time: a pair frame's `dt` is how far the pair's clock moved since (the sampler
+/// itself gets only the clip time). Touched only while some mod takes frames.
+static PAIR_TIMES: Mutex<Option<HashMap<u64, f32>>> = Mutex::new(None);
 
 pub const MAX_FORCES: usize = 32;
+
+const _: () = assert!(std::mem::size_of::<OkModFrame>() == 80, "OkModFrame v1 is 80 bytes (Tools/ok-mod host FRAME_V1_SIZE)");
 
 struct Names {
     _owned: Vec<CString>,
@@ -100,7 +112,20 @@ pub unsafe extern "C" fn ok_set_mod_frame(frame: Option<OkModFrameFn>) {
             *g = None;
         }
         ANY_FORCE.store(false, Ordering::Release);
+        *PAIR_TIMES.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
+}
+
+/// A pair frame's `dt`: the pair clock's advance since this character's last pair frame (0 on the first, after a seek
+/// back, or after a gap over a second).
+fn pair_dt(character: u64, time: f32) -> f32 {
+    let mut g = PAIR_TIMES.lock().unwrap_or_else(|e| e.into_inner());
+    let map = g.get_or_insert_with(HashMap::new);
+    if map.len() > 256 {
+        map.clear();
+    }
+    let dt = map.insert(character, time).map_or(0.0, |last| time - last);
+    if dt.is_finite() && (0.0..=1.0).contains(&dt) { dt } else { 0.0 }
 }
 
 #[inline]
@@ -150,6 +175,7 @@ pub fn post_pose(sk: &mut Skeleton, character: u64, sex: i32, kind: u32, dt: f32
         }
         return;
     }
+    let dt = if kind == 1 { pair_dt(character, time) } else { dt };
     let mut order: Vec<i64> = sk.tfs.keys().copied().collect();
     order.sort_unstable();
     let names = names_for(sk, &order);
@@ -173,10 +199,11 @@ pub fn post_pose(sk: &mut Skeleton, character: u64, sex: i32, kind: u32, dt: f32
         .collect();
     let mut forces = [OkModForce::default(); MAX_FORCES];
     let mut view = OkModFrame {
-        size: std::mem::size_of::<OkModFrame>() as u32,
+        struct_size: std::mem::size_of::<OkModFrame>() as u32,
+        version: FRAME_VERSION,
         kind,
-        character,
         sex,
+        character,
         dt,
         time,
         bone_count: order.len() as u32,
@@ -258,7 +285,9 @@ mod tests {
             return 1;
         }
         let f = &mut *frame;
-        assert_eq!(f.size as usize, std::mem::size_of::<OkModFrame>());
+        assert_eq!(f.struct_size as usize, std::mem::size_of::<OkModFrame>());
+        assert_eq!(f.version, FRAME_VERSION);
+        PAIR_DTS.lock().unwrap().push((f.kind, f.dt));
         let bones = std::slice::from_raw_parts_mut(f.bones, f.bone_count as usize);
         let names = std::slice::from_raw_parts(f.names, f.bone_count as usize);
         for (b, n) in bones.iter_mut().zip(names) {
@@ -270,6 +299,8 @@ mod tests {
         f.force_count = 1;
         1
     }
+
+    static PAIR_DTS: Mutex<Vec<(u32, f32)>> = Mutex::new(Vec::new());
 
     #[test]
     fn frame_bends_and_pushes() {
@@ -289,6 +320,13 @@ mod tests {
         assert_eq!(force_at_slow(7, [1.0, 0.0, 0.0]), [0.5, 0.0, 0.0]);
         assert_eq!(force_at_slow(7, [3.0, 0.0, 0.0]), [0.0; 3], "outside the sphere");
         assert_eq!(force_at_slow(8, [0.0; 3]), [0.0; 3], "another character");
+        // Pair frames: dt is the pair clock's advance, whatever the caller passed.
+        PAIR_DTS.lock().unwrap().clear();
+        for t in [1.0, 1.25, 1.75, 0.5] {
+            post_pose(&mut sk, 9, 1, 1, 0.0, t);
+        }
+        let dts: Vec<(u32, f32)> = PAIR_DTS.lock().unwrap().clone();
+        assert_eq!(dts, [(1, 0.0), (1, 0.25), (1, 0.5), (1, 0.0)], "first frame and a seek back give 0");
         unsafe { ok_set_mod_frame(None) };
         assert_eq!(force_at([0.0; 3]), [0.0; 3]);
     }

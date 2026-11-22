@@ -21,6 +21,11 @@ pub type ModFrameFn = unsafe extern "C" fn(frame: *mut c_void) -> u32;
 pub const SYMBOL: &[u8] = b"ok_mod_frame\0";
 pub const PANICKED: u32 = 0x8000_0000;
 pub const OVERRUN_LIMIT: u32 = 30;
+/// `OkModFrame` starts with `struct_size: u32, version: u32` (Tools/ok-extract/src/mod_frame.rs). The host knows
+/// version 1, which is at least `FRAME_V1_SIZE` bytes; any other frame is passed to nobody.
+pub const FRAME_VERSION: u32 = 1;
+pub const FRAME_V1_SIZE: u32 = 80;
+static BAD_FRAME: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct FrameMod {
     pub(crate) id: String,
@@ -114,6 +119,13 @@ pub unsafe extern "C" fn okm_frame(frame: *mut c_void) -> u32 {
         return mods.iter().filter(|m| !m.off.load(Ordering::Relaxed)).count() as u32;
     }
     if mods.is_empty() {
+        return 0;
+    }
+    let (size, version) = { let head = frame as *const u32; (*head, *head.add(1)) };
+    if version != FRAME_VERSION || size < FRAME_V1_SIZE {
+        if !BAD_FRAME.swap(true, Ordering::Relaxed) {
+            log(LogLevel::Error, "host", &format!("frame version {version} size {size}: this host reads version {FRAME_VERSION} (at least {FRAME_V1_SIZE} bytes); frames are not passed on"));
+        }
         return 0;
     }
     let budget = BUDGET_US.load(Ordering::Relaxed);
