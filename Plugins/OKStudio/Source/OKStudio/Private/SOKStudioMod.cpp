@@ -68,6 +68,11 @@ void SOKStudioPanel::SyncModCommands()
 
 void SOKStudioPanel::AddModTools(const TSharedRef<SHorizontalBox>& Box)
 {
+	// A mod's status line goes to this panel's status bar while it is open.
+	FOKStudioModRegistry::Get().ShowStatus = [Weak = TWeakPtr<SWidget>(AsShared())](const FString& Text)
+	{
+		if (const TSharedPtr<SWidget> Panel = Weak.Pin()) StaticCastSharedPtr<SOKStudioPanel>(Panel)->SetStatus(Text);
+	};
 	Box->AddSlot().AutoWidth()
 	[
 		SNew(SOKStudioModTools)

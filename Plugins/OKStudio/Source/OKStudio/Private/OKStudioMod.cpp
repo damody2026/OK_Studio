@@ -1,5 +1,6 @@
 #include "OKStudioMod.h"
 #include "OKSceneDocument.h"
+#include "Dom/JsonObject.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOKStudioMod, Log, All);
 
@@ -149,4 +150,61 @@ TArray<FOKStudioModRegistry::FMenuInterpolable> FOKStudioModRegistry::Interpolab
 		Out.Add({ FString::Printf(TEXT("Mod %s：%s（%s）"), *I.Owner, *I.Label, *Where), TimelineOwner(I.Owner), I.Id, I.bPerObject ? Selected->Id : -1 });
 	}
 	return Out;
+}
+
+namespace
+{
+	TSharedRef<FJsonObject> MapJson(const TMap<int32, int32>& IdMap)
+	{
+		TSharedRef<FJsonObject> Map = MakeShared<FJsonObject>();
+		for (const TPair<int32, int32>& P : IdMap) Map->SetNumberField(FString::FromInt(P.Key), P.Value);
+		return Map;
+	}
+	TArray<TSharedPtr<FJsonValue>> IdsJson(const TArray<int32>& Ids)
+	{
+		TArray<TSharedPtr<FJsonValue>> Out;
+		for (int32 Id : Ids) Out.Add(MakeShared<FJsonValueNumber>(Id));
+		return Out;
+	}
+}
+
+void FOKStudioModRegistry::NotifySceneLoad(const TCHAR* Kind, const TMap<int32, int32>* IdMap, const TSharedPtr<FJsonObject>& ImportedRoot)
+{
+	if (!SceneEventSink) return;
+	TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+	Args->SetStringField(TEXT("kind"), Kind);
+	if (IdMap) Args->SetObjectField(TEXT("map"), MapJson(*IdMap));
+	const TSharedPtr<FJsonObject>* Mods = nullptr;
+	if (ImportedRoot && ImportedRoot->TryGetObjectField(TEXT("mods"), Mods) && Mods) Args->SetObjectField(TEXT("imported_mods"), *Mods);
+	SceneEventSink(TEXT("scene_load"), Args);
+}
+
+void FOKStudioModRegistry::NotifySceneSave()
+{
+	if (SceneEventSink) SceneEventSink(TEXT("scene_save"), MakeShared<FJsonObject>());
+}
+
+void FOKStudioModRegistry::NotifyObjectsCopied(const TMap<int32, int32>& IdMap)
+{
+	if (!SceneEventSink || IdMap.IsEmpty()) return;
+	TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+	Args->SetObjectField(TEXT("map"), MapJson(IdMap));
+	SceneEventSink(TEXT("objects_copied"), Args);
+}
+
+void FOKStudioModRegistry::NotifyObjectsDeleted(const TArray<int32>& Ids)
+{
+	if (!SceneEventSink || Ids.IsEmpty()) return;
+	TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+	Args->SetArrayField(TEXT("ids"), IdsJson(Ids));
+	SceneEventSink(TEXT("objects_deleted"), Args);
+}
+
+void FOKStudioModRegistry::NotifySelected(const TArray<int32>& Ids, int32 Primary)
+{
+	if (!SceneEventSink) return;
+	TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+	Args->SetArrayField(TEXT("ids"), IdsJson(Ids));
+	Args->SetNumberField(TEXT("primary"), Primary);
+	SceneEventSink(TEXT("objects_selected"), Args);
 }

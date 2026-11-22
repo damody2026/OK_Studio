@@ -1,5 +1,6 @@
 #include "OKStudioGame.h"
 #include "SOKStudioPanel.h"
+#include "OKStudioMod.h"
 #include "OKStudioGameInternal.h"
 #include "OKStudioSettings.h"
 #include "OKStudioThumbnails.h"
@@ -751,6 +752,7 @@ void UOKStudioGame::SelectMany(const TArray<int32>& Ids, int32 Primary)
 	for (int32 Id : Ids) if (Document && Document->Find(Id)) Selection.AddUnique(Id);
 	SelectedId = Selection.Contains(Primary) ? Primary : (Selection.Num() ? Selection.Last() : -1);
 	if (Panel) Panel->RefreshRows();
+	FOKStudioModRegistry::Get().NotifySelected(Selection, SelectedId);
 }
 
 void UOKStudioGame::ToggleSelect(int32 Id)
@@ -774,6 +776,7 @@ TArray<int32> UOKStudioGame::SelectionRoots() const
 
 bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 {
+	FOKStudioModRegistry::Get().NotifySceneSave();
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
 	Document->SavedView.bSet = true;
 	Document->SavedView.Focus = Focus;
@@ -905,6 +908,7 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 		if (bTimelinePlaying) SetTimelineTime(0.f);
 		Vnge().OnSceneOpened();
 	}
+	FOKStudioModRegistry::Get().NotifySceneLoad(TEXT("load"));
 	ResetHistory();
 	bDirty = false;
 	return true;
