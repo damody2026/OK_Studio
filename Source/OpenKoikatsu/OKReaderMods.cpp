@@ -4,6 +4,7 @@
 #include "Misc/Paths.h"
 #include "OKCharacterController.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKModContent.h"
 #include "OKModHost.h"
 #include "OKReaderText.h"
 #include "Serialization/JsonReader.h"
@@ -179,6 +180,8 @@ void OKReaderMods::Loaded(UOKCharacterController* G,const FString& Card,int32 Ou
 	if(!Active()||Card.IsEmpty())return;
 	const FString Full=FPaths::ConvertRelativePathToFull(Card);
 	if(Full==GCard&&Outfit==GOutfit)return;
+	// The card's mod material overrides (ok.materials), with its own fallback where the mod is not here.
+	OKModContent::CardLoaded(Full);
 	if(Full==GCard)
 	{
 		GOutfit=Outfit;
@@ -232,6 +235,7 @@ void OKReaderMods::Saved(UOKCharacterController* G,const FString& Path)
 	if(!Active())return;
 	auto R=Op(TEXT("card_store"));R->SetStringField(TEXT("card"),FPaths::ConvertRelativePathToFull(Path));R->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);
 	const TSharedPtr<FJsonObject> Answer=Ask(R);
+	OKModContent::CardSaved(FPaths::ConvertRelativePathToFull(Path));
 	if(!Answer.IsValid())return;
 	const TArray<TSharedPtr<FJsonValue>>* Errors=nullptr;
 	if(Answer->TryGetArrayField(TEXT("errors"),Errors))for(const auto& E:*Errors)if(const auto O=E->AsObject())UE_LOG(LogOKMod,Warning,TEXT("[%s] not saved into the card: %s"),*O->GetStringField(TEXT("mod")),*O->GetStringField(TEXT("error")));
@@ -421,6 +425,21 @@ bool OKReaderMods::Set(UOKCharacterController* G,const FString& Key,const TShare
 	const TSharedPtr<FJsonObject>* Json=nullptr;
 	if(Answer->TryGetObjectField(TEXT("json"),Json))Follow(G,Answer->GetStringField(TEXT("mod")),*Json);
 	RefreshValues();
+	return true;
+}
+
+bool OKReaderMods::Emit(UOKCharacterController* G,const FString& Mod,const FString& Event,const FString& Value,FString& Error)
+{
+	if(!Active()){Error=TEXT("mods are off");return false;}
+	auto R=Op(TEXT("hook"));R->SetStringField(TEXT("hook"),TEXT("ui.")+Mod+TEXT(".")+Event);
+	R->SetArrayField(TEXT("mods"),{MakeShared<FJsonValueString>(Mod)});
+	auto P=MakeShared<FJsonObject>();P->SetStringField(TEXT("event"),Event);P->SetStringField(TEXT("value"),Value);R->SetObjectField(TEXT("payload"),P);
+	const TSharedPtr<FJsonObject> Answer=Ask(R);
+	const TArray<TSharedPtr<FJsonValue>>* Replies=nullptr;
+	if(!Answer.IsValid()||!Answer->TryGetArrayField(TEXT("replies"),Replies)||Replies->IsEmpty()){Error=TEXT("no answer from the mod host");return false;}
+	const TSharedPtr<FJsonObject> O=(*Replies)[0]->AsObject();bool bOk=false;if(O.IsValid())O->TryGetBoolField(TEXT("ok"),bOk);
+	if(!bOk){Error=O.IsValid()?O->GetStringField(TEXT("error")):TEXT("bad reply");return false;}
+	FollowReplies(G,Answer);RefreshValues();
 	return true;
 }
 

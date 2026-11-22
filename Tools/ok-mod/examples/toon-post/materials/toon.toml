@@ -1,0 +1,6 @@
+# B layer only: a post-process material (comic outlines, halftone dots). Without the pak (the editor, another game build)
+# there is no look; the scene keeps its settings.
+[[material]]
+name = "toon"
+asset = "/org_openkoikatsu_toon_post/M_OKToonPost.M_OKToonPost"
+copy_source_values = false

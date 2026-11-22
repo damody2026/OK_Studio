@@ -5,7 +5,7 @@
 //
 // Items: bool (toggle), choice (dropdown), radio, text (multiline, placeholder), number (a number box), slider, color
 // ("#RRGGBB"), list (options to pick from, or a read-only list of lines), progress, label, image (a PNG in the mod's
-// folder), button (a mod command). Containers: group (a title that folds, with "fold": true), row, tabs, scroll; a page
+// folder), button (a mod command), dui (the mod's own .dui panel, "widget": <name>; plan §6.13 D2). Containers: group (a title that folds, with "fold": true), row, tabs, scroll; a page
 // and a group take "layout" (column, row, tabs, scroll). "style" names a text style of the theme (Theme.dui's preset):
 // Title, Lead, Body, Caption, Overline, AccentText, GoodText, BadText, WarnText.
 
@@ -13,6 +13,10 @@
 #include "OKReaderMods.h"
 #include "OKCharacterController.h"
 #include "OKReaderText.h"
+#include "OKModContent.h"
+#include "OKModDreamPanel.h"
+#include "DreamUIBPLibrary.h"
+#include "Core/DreamWidgetTree.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/Texture2D.h"
@@ -297,6 +301,39 @@ float UOKReaderScreen::BuildModItem(UDreamWidget* Into,const FItem& Item,const F
 		// Both sides fixed: a width alone was taken as a minimum and the column squeezed the picture narrow.
 		C->SetWidth(W);if(UDreamPanelSlot* Slot=C->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(W,H));Slot->SetMaxDesiredSize(FVector2D(W,H));}
 		if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Left);
+		return H;
+	}
+	// A mod's own .dui panel, cooked into its pak (OKModContent::Widget checks it); it reaches only this mod's values
+	// (Mod.Text/Number/Flag) and this mod's ui.<id>.* hooks (Mod.Emit).
+	if(Kind==TEXT("dui"))
+	{
+		const FString Mod=Str(Item,TEXT("mod")),Widget=Str(Item,TEXT("widget"));
+		if(Mod.IsEmpty()||Widget.IsEmpty())return Bad(TEXT("dui 需要 widget"));
+		UClass* Class=OKModContent::Widget(Mod,Widget);
+		if(!Class)return Bad(TEXT("面板 ")+Widget+TEXT(" 不能用（mod 的內容沒載入或沒通過檢查，見 log）"));
+		auto* Panel=Cast<UOKModDreamPanel>(UDreamUIBPLibrary::CreateDreamWidgetOfClass(this,Class));
+		if(!Panel)return Bad(TEXT("面板 ")+Widget+TEXT(" 建立失敗"));
+		UOKModDreamBridge* Bridge=NewObject<UOKModDreamBridge>(Panel);
+		Bridge->ModId=Mod;
+		Bridge->OnRead=[Mod](const FString& K){return AsText(OKReaderMods::Value(TEXT("mod.")+Mod+TEXT(".")+K));};
+		Bridge->OnEmit=[WeakG,Mod](const FString& Event,const FString& Value)
+		{
+			FString Error;
+			if(!OKReaderMods::Emit(WeakG.Get(),Mod,Event,Value,Error))UE_LOG(LogTemp,Warning,TEXT("ok.ReaderScreen: ui.%s.%s: %s"),*Mod,*Event,*Error);
+		};
+		Panel->Mod=Bridge;
+		// Its designed size (the .dui root's), the height the mod asks for winning; the root fills it.
+		FVector2D Natural(LeftWidth-80.f,200.f);
+		if(UDreamWidget* Root=Panel->GetWidgetTree()?Panel->GetWidgetTree()->GetRootWidget():nullptr)
+		{
+			if(Root->GetSizeDelta().Y>0)Natural=Root->GetSizeDelta();
+			Root->SetAnchorMin(FVector2D(0,0));Root->SetAnchorMax(FVector2D(1,1));Root->SetAnchoredPosition(FVector2D::ZeroVector);Root->SetSizeDelta(FVector2D::ZeroVector);
+		}
+		const float H=FMath::Clamp((float)Num(Item,TEXT("height"),Natural.Y),20.f,1200.f);
+		Panel->SetSizeDelta(FVector2D(Natural.X,H));
+		AddToHost(Into,Panel,false);
+		if(UDreamPanelSlot* Slot=Panel->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(0,H));Slot->SetMaxDesiredSize(FVector2D(0,H));}
+		if(bRow)Fill(Panel);
 		return H;
 	}
 	if(Kind==TEXT("button"))

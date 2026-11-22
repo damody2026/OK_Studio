@@ -3,15 +3,20 @@
 //! touches a file and every other mod's section is kept byte for byte.
 //!
 //! Mod data travels as base64 (`data_b64`): the bytes are the mod's own (the SDK's `ExtData` writes JSON).
+//!
+//! Resources (`okMr`, plan §6.12): a `reader.character_save` reply may add `"resources_b64": [..]`; each is stored once
+//! by its sha256 (lowercase hex), which the mod writes into its own data to reference it. A resource no section's data
+//! names any more is dropped when the card is saved, and a mod's referenced resources may weigh at most
+//! `resource_limit()` (100 MiB) per card: over it, that mod's section is not written and the log says why.
 
 use base64::Engine;
-use ok_card_mods::{ModData, Requires, Section};
-use ok_mod_api::Reply;
+use ok_card_mods::{ModData, Requires, Resources, Section};
+use ok_mod_api::{LogLevel, Reply};
 use serde_json::{json, Map, Value};
 
 use crate::ModHost;
 
-pub const OPS: &[&str] = &["card_mods", "card_load", "card_store", "extract.kkex", "reader.ui", "reader.values", "reader.control"];
+pub const OPS: &[&str] = &["card_core", "card_mods", "card_load", "card_store", "extract.kkex", "reader.ui", "reader.values", "reader.control"];
 
 fn b64() -> base64::engine::GeneralPurpose { base64::engine::general_purpose::STANDARD }
 
@@ -39,6 +44,22 @@ fn read_card(path: &str) -> Result<(Vec<u8>, ModData), String> {
     Ok((bytes, data))
 }
 
+/// What one mod's resources may weigh in one card (plan §6.12, 100 MiB). `OK_MOD_RESOURCE_LIMIT` (bytes) lowers it
+/// for tests.
+pub fn resource_limit() -> usize {
+    std::env::var("OK_MOD_RESOURCE_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(100 * 1024 * 1024)
+}
+
+/// Whether `data` names resource `hash` (its 64 hex digits appear in the bytes).
+fn names(data: &[u8], hash: &str) -> bool {
+    data.windows(hash.len()).any(|w| w == hash.as_bytes())
+}
+
+/// The card's resources that `data` names, as `{hash: base64}` (for character_load).
+fn named_resources(res: &Resources, data: &[u8]) -> Value {
+    Value::Object(res.by_hash.iter().filter(|(h, _)| names(data, h)).map(|(h, b)| (h.clone(), b64().encode(b).into())).collect())
+}
+
 fn section_json(s: &Section) -> Value {
     json!({
         "version": s.version,
@@ -52,6 +73,16 @@ fn section_from_reply(id: &str, version: &str, v: &Value) -> Result<Section, Str
     let data_version = v.get("version").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or("reply needs \"version\" (u32)")?;
     let data = b64().decode(v.get("data_b64").and_then(Value::as_str).ok_or("reply needs \"data_b64\"")?).map_err(|e| format!("data_b64: {e}"))?;
     Ok(Section { version: data_version, requires: Some(Requires { id: id.into(), version: version.into() }), data })
+}
+
+/// A character_save reply's `"resources_b64": [..]`, by sha256 hex.
+fn resources_from_reply(v: &Value) -> Result<Resources, String> {
+    let mut res = Resources::default();
+    for item in v.get("resources_b64").and_then(Value::as_array).into_iter().flatten() {
+        let text = item.as_str().ok_or("resources_b64 holds base64 strings")?;
+        res.add(&b64().decode(text).map_err(|e| format!("resources_b64: {e}"))?);
+    }
+    Ok(res)
 }
 
 fn replies_json(replies: Vec<crate::ModReply>) -> Value {
@@ -70,11 +101,13 @@ fn split_key<'a>(key: &'a str, ids: &std::collections::HashMap<String, String>) 
 }
 
 /// A reader page's items and every container's under them: keys and actions get the mod's prefix, images become full
-/// paths inside the mod's folder (anything else is removed: a mod shows only its own pictures).
+/// paths inside the mod's folder (anything else is removed: a mod shows only its own pictures). A `.dui` panel item
+/// (`"kind": "dui"`, plan §6.13 D2) gets `"mod"`: its panel, values and hooks are always this mod's.
 fn rewrite_items(node: &mut Value, id: &str, dir: Option<&std::path::Path>) {
     for item in node.get_mut("items").and_then(Value::as_array_mut).into_iter().flatten() {
         if let Some(k) = item.get("key").and_then(Value::as_str).map(str::to_owned) { item["key"] = format!("mod.{id}.{k}").into(); }
         if let Some(a) = item.get("action").and_then(Value::as_str).map(str::to_owned) { item["action"] = format!("mod.{id}.{a}").into(); }
+        if item.get("kind").and_then(Value::as_str) == Some("dui") { item["mod"] = id.into(); }
         if let Some(image) = item.get("image").and_then(Value::as_str).map(str::to_owned) {
             match dir.and_then(|d| mod_file(d, &image)) {
                 Some(full) => item["image"] = full.into(),
@@ -96,6 +129,32 @@ fn mod_file(dir: &std::path::Path, name: &str) -> Option<String> {
 pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String> {
     let payload = |v: Value| v.to_string();
     Ok(match op {
+        // {"op":"card_core","card","id":"ok.<name>"} -> {"data_b64"|null}: a section the core itself keeps in okMx (the
+        // reader's mod material overrides, "ok.materials"), read; with "data_b64" it is written (null removes it).
+        // Only "ok." ids: mods' sections are theirs (card_store).
+        "card_core" => {
+            let path = str_field(req, "card")?;
+            let id = str_field(req, "id")?;
+            if !id.starts_with("ok.") { return Err(format!("card_core is for the core's own sections (ok.*), not {id}")); }
+            let (bytes, mut data) = read_card(path)?;
+            match req.get("data_b64") {
+                None => json!({"data_b64": data.get(id).and_then(Result::ok).map(|s| b64().encode(&s.data))}),
+                Some(v) => {
+                    let changed = match v.as_str() {
+                        Some(text) => {
+                            let bytes = b64().decode(text).map_err(|e| format!("data_b64: {e}"))?;
+                            data.set(id, &Section { version: 1, requires: None, data: bytes });
+                            true
+                        }
+                        None => data.remove(id),
+                    };
+                    if changed {
+                        std::fs::write(path, ok_card_mods::with_data(&bytes, &data)?).map_err(|e| format!("{path}: {e}"))?;
+                    }
+                    json!({"ok": true, "changed": changed})
+                }
+            }
+        }
         // {"op":"card_mods","card"}: the card's okMx sections and whether their mods are here.
         "card_mods" => {
             let path = str_field(req, "card")?;
@@ -123,17 +182,30 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
             let (bytes, data) = read_card(path)?;
             let identity = ok_card_mods::card_identity(&bytes);
             let mods = enabled(host);
+            // okMr only when there is one (zstd of up to every mod's resources).
+            let res = if ok_card_mods::chunk(&bytes, ok_card_mods::RESOURCE_CHUNK).is_some() {
+                ok_card_mods::read_resources(&bytes).unwrap_or_else(|e| {
+                    host.host_log(LogLevel::Warn, &format!("{path}: {e}; mods get no resources"));
+                    Resources::default()
+                })
+            } else {
+                Resources::default()
+            };
             let mut replies = Vec::new();
             for id in host.subscribers("reader.character_load") {
                 let (section, imported) = match data.get(&id) {
-                    Some(Ok(s)) => (section_json(&s), false),
+                    Some(Ok(s)) => {
+                        let mut v = section_json(&s);
+                        if !res.by_hash.is_empty() { v["resources"] = named_resources(&res, &s.data); }
+                        (v, false)
+                    }
                     _ => match req.get("imported").and_then(|i| i.get(&id)) { Some(s) if s.is_object() => (s.clone(), true), _ => (Value::Null, false) },
                 };
                 let body = payload(json!({"card": path, "outfit": outfit, "identity": identity, "apply": !skip.contains(&id.as_str()), "section": section, "imported": imported}));
                 let result = host.hook_one(&id, "reader.character_load", &body);
                 replies.push(crate::ModReply { id, result });
             }
-            let missing: Vec<Value> = data.ids().filter(|id| !mods.contains_key(*id)).map(|id| {
+            let missing: Vec<Value> = data.ids().filter(|id| !id.starts_with("ok.") && !mods.contains_key(*id)).map(|id| {
                 let r = data.get(id).and_then(Result::ok).and_then(|s| s.requires);
                 json!({"id": id, "version": r.map(|r| r.version)})
             }).collect();
@@ -144,6 +216,9 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
             let path = str_field(req, "card")?;
             let outfit = req.get("outfit").and_then(Value::as_i64).unwrap_or(0);
             let (bytes, mut data) = read_card(path)?;
+            let mut res = ok_card_mods::read_resources(&bytes).map_err(|e| format!("{path}: {e}"))?;
+            let res_before: Vec<String> = res.by_hash.keys().cloned().collect();
+            let limit = resource_limit();
             let mods = enabled(host);
             let (mut written, mut removed, mut errors) = (Vec::new(), Vec::new(), Vec::new());
             for id in host.subscribers("reader.character_save") {
@@ -151,18 +226,44 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
                 match reply_value(&host.hook_one(&id, "reader.character_save", &body)) {
                     Ok(Value::Null) => {}
                     Ok(v) if v.get("remove").and_then(Value::as_bool) == Some(true) => { if data.remove(&id) { removed.push(id); } }
-                    Ok(v) => match section_from_reply(&id, mods.get(&id).map_or("", String::as_str), &v) {
-                        Ok(s) => { data.set(&id, &s); written.push(id); }
+                    Ok(v) => match section_from_reply(&id, mods.get(&id).map_or("", String::as_str), &v).and_then(|s| {
+                        let added = resources_from_reply(&v)?;
+                        Ok((s, added))
+                    }) {
+                        Ok((s, added)) => {
+                            // What this section names, from the card or from this reply, counted once.
+                            let weight: usize = res.by_hash.iter().chain(added.by_hash.iter().filter(|(h, _)| !res.by_hash.contains_key(*h)))
+                                .filter(|(h, _)| names(&s.data, h)).map(|(_, b)| b.len()).sum();
+                            if weight > limit {
+                                let e = format!("its resources weigh {weight} bytes in this card, over the limit of {limit}: not written");
+                                host.host_log(LogLevel::Error, &format!("{id}: {path}: {e}"));
+                                errors.push(json!({"mod": id, "error": e}));
+                                continue;
+                            }
+                            for (h, b) in added.by_hash { res.by_hash.entry(h).or_insert(b); }
+                            data.set(&id, &s);
+                            written.push(id);
+                        }
                         Err(e) => errors.push(json!({"mod": id, "error": e})),
                     },
                     Err(e) => errors.push(json!({"mod": id, "error": e})),
                 }
             }
+            let mut pruned = 0;
             if !written.is_empty() || !removed.is_empty() {
-                let out = ok_card_mods::with_data(&bytes, &data)?;
+                // Resources no section names any more (a mod replaced or removed its picture) leave the card.
+                let raws: Vec<&[u8]> = data.ids().filter_map(|id| data.raw(id)).collect();
+                let before = res.by_hash.len();
+                res.by_hash.retain(|h, _| raws.iter().any(|r| names(r, h)));
+                pruned = before - res.by_hash.len();
+                let mut out = ok_card_mods::with_data(&bytes, &data)?;
+                if res.by_hash.keys().ne(res_before.iter()) {
+                    out = ok_card_mods::with_resources(&out, &res)?;
+                }
                 std::fs::write(path, out).map_err(|e| format!("{path}: {e}"))?;
             }
-            json!({"ok": errors.is_empty(), "written": written, "removed": removed, "errors": errors})
+            json!({"ok": errors.is_empty(), "written": written, "removed": removed, "errors": errors,
+                   "resources": {"count": res.by_hash.len(), "bytes": res.total_bytes(), "pruned": pruned}})
         }
         // {"op":"extract.kkex","sections":{"<KKEx key>": "<msgpack b64>"}}: converting an original card. Returns the okMx
         // sections mods made from them; the caller (ok-extract) writes them into the OK card.
@@ -255,6 +356,7 @@ mod tests {
                 {"kind": "image", "image": "pics/icon.png"},
                 {"kind": "image", "image": "../secret.png"},
                 {"kind": "image", "image": "missing.png"},
+                {"kind": "dui", "widget": "Panel", "mod": "org.other"},
             ]},
         ]});
         rewrite_items(&mut page, "org.x", Some(&dir));
@@ -263,6 +365,7 @@ mod tests {
         assert_eq!(g[0]["items"][1]["action"], "mod.org.x.go");
         assert!(g[1]["image"].as_str().unwrap().ends_with("pics/icon.png"), "{page}");
         assert!(g[2].get("image").is_none() && g[3].get("image").is_none(), "{page}");
+        assert_eq!(g[4]["mod"], "org.x", "a panel is always the page's own mod's");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

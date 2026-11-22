@@ -105,6 +105,24 @@ Event::Hook { name: RString, payload: RString }   // payload 是 JSON
 - 值的顯示：每一幀從讀卡器保存的 `reader.values` 結果拿（開卡、換服裝、每次 `reader.control` 之後重新問一次），所以 mod 改了別的鍵的值（例如 `length`）也會跟著變。輸入框、數字框只在 mod 那邊的值變了時才覆蓋畫面上的內容，正在打的字不會被蓋掉。
 - 舊格式（只有 `items`、`bool`／`choice`／`text`／`button`）照樣能用。
 
+### 4.1 mod 自帶的 `.dui` 面板（D2，工作項 9b）
+
+`{"kind": "dui", "widget": "Panel", "height": 170}`：放 mod 自己的 DreamGUI 面板。宿主把這一項標上頁面所屬的 mod（`"mod"`，mod 自己寫的會被蓋掉），所以面板只能是自己的。
+
+- **來源**：ModKit 外掛的 `DUI/<Name>.dui`，`Tools\lua\lua.exe Tools\modkit_cook.lua --mod <外掛>` 編成 `/<content_root>/UI/WBP_<Name>`（父類別固定 `UOKModDreamPanel`，外掛 `Plugins/OKModDream`），cook 進 mod 的 `content/*.pak`。mod 資料夾要附 `ui/<Name>.dui`（ModKit 輸出的 `ui/` 整個複製過去），沒有就拒絕。
+- **`.dui` 裡能碰到的只有 `Mod`**：
+  - `Text <- Mod.Text("greeting")`：本 mod 的值 `mod.<id>.greeting`（`reader.values` 的結果）；另有 `Mod.Number`、`Mod.Flag`。帶參數的綁定每幀讀。
+  - `OnClicked -> Mod.Emit("hello")`、`Mod.EmitValue("pick", "a")`：掛點 `ui.<id>.<事件>`，只送給這個 mod（mod 要 `subscribe` 這個名字），payload `{"event", "value"}`；回覆照 §5 處理，之後重問 `reader.values`。事件名只能是 A-Z a-z 0-9 _。
+- **ModKit 擋下的寫法**：`class` 不是 `/<外掛>/UI/WBP_<檔名>`；`use` 不是 `"Theme.dui"`（讀卡器主題）或 `"Plugin.DreamGUI:..."`；`new`、`viewmodels`、`props`、`global`、`<->`。
+- **編譯後的檢查**（ModKit 的 `OKModDreamCheck` 與遊戲掛載 pak 時同一份 `OKModDream::CheckPackage`）：
+  - 一個 widget 類別 `WBP_<Name>_C`，父類別是 `UOKModDreamPanel`；
+  - 函式只能是編譯器產生的 `__DreamBinding_`／`__DreamEmit_`／`__DreamRoute_`、dispatcher 簽章（沒有手寫圖）；
+  - 位元組碼呼叫的函式：自己的、`UOKModDreamBridge` 的、DreamGUI／UMG 控制項的（不含函式庫），以及函式庫裡的 Math、String、`IsValid`、FieldNotification；
+  - 參照的東西只能在允許的模組（CoreUObject、Engine、UMG、Slate、DreamGUI*、DreamTween、FieldNotification、OKModDream）或 mod 自己、`/DreamGUI/`、`/Engine/` 的內容裡；
+  - ModKit 從乾淨狀態編兩次，指紋（函式、參數、位元組碼長度與呼叫對象、屬性、widget 樹）要一樣。
+  - 不合格：ModKit 停下；遊戲整個 pak 不用（`content pak refused: panel ...`）。
+- **編輯器測試**：`-ModDev -ModDevContent`，專案 `Plugins/<外掛>/` 裡有 ModKit 編好的 `Content/UI/WBP_<Name>.uasset` 時直接用（同樣做檢查）。
+
 ## 5. 回覆裡讀卡器會做的事
 
 `reader.character_load`、`reader.outfit_change`、`reader.control`、按鈕指令、`reader.speech_start` 的 JSON 回覆可以帶：

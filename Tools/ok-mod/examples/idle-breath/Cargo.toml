@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-idle-breath"
+version = "0.1.0"
+edition = "2021"
+description = "Example mod: posed Studio characters breathe (post-pose bones per frame, settings per object in the scene)."
+publish = false
+
+[lib]
+name = "ok_idle_breath"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk", features = ["frame"] }
+ok-mod-studio = { path = "../../studio" }

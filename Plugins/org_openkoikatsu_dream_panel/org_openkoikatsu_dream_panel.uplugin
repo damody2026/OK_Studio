@@ -1,0 +1,10 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1",
+  "FriendlyName": "OK Mod: Dream Panel",
+  "Description": "B-layer content of the OK sample mod org.openkoikatsu.dream-panel (Docs/OK_MOD_FRAMEWORK_PLAN.md §6.13 D2): DUI/Panel.dui, which Tools/modkit_cook.lua compiles into /org_openkoikatsu_dream_panel/UI/WBP_Panel (parent UOKModDreamPanel) and cooks. The widget asset is made by the ModKit from the .dui every time; it is not kept. Not enabled in the game or the editor.",
+  "Category": "OKMod",
+  "EnabledByDefault": false,
+  "CanContainContent": true
+}

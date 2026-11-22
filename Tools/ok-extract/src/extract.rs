@@ -760,6 +760,8 @@ pub(crate) fn extract_session_from_info(
             if matches!(s.as_str(), "kkutsalpha" | "kkutsalpha_tess" | "kkussalpha") { body_blend = "translucent"; }
             else if matches!(s.as_str(), "kkuts" | "kkuts_tess" | "kkuss") { body_blend = "masked"; }
         }
+        // Mods' texture post-processing (material.post_texture) on her skin, as push.rs does for the other parts.
+        crate::mod_forward::post_texture("body", &mesh.name, outfit, &mut mesh.texture_png);
         let (p, tex) = emit_part(out_dir, &mut session_parts, "body", "body", mesh, body_blend, false)?;
         profile_tick("body draw+emit", t_mark); t_mark = Instant::now();
         if let Some(part) = session_parts.last_mut() {
@@ -1167,6 +1169,7 @@ pub(crate) fn extract_session_from_info(
         // (Material Editor) cuts the scalp that would show through its hair. Disabled channels are whitened as for
         // the body, and the face draws masked like the body.
         let face_blend = face_alpha_blend(&mut mesh);
+        crate::mod_forward::post_texture("head", &mesh.name, outfit, &mut mesh.texture_png);
         let (p, tex) =
             emit_part(out_dir, &mut session_parts, "head", "head", &mesh, face_blend, false)?;
         seen_meshes.insert(mesh.name.to_ascii_lowercase());

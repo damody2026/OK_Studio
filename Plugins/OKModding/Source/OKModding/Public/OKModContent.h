@@ -18,4 +18,20 @@ namespace OKModContent
 	/** A mod material by "<mod id>/<name>". */
 	OKMODDING_API TSharedPtr<FKKModMaterial> Find(const FString& Id);
 	OKMODDING_API TArray<FString> MaterialIds();
+	/**
+	 * A mod's .dui panel (plan §6.13 D2): the class of /<content root>/UI/WBP_<Name>, a UOKModDreamPanel, checked to be
+	 * only what the DreamGUI compiler made from the mod's ui/<Name>.dui. Null (logged once) when the mod's content is not
+	 * loaded or the panel was refused. Game thread.
+	 */
+	OKMODDING_API UClass* Widget(const FString& ModId, const FString& Name);
+
+	/**
+	 * The card reader's per-part material overrides (mod.material.apply) kept in the card: the core's okMx section
+	 * "ok.materials", {"overrides":[{"part","material":"<mod>/<name>","fallback":{A-layer: parent, scalars, vectors}}]}.
+	 * CardLoaded reads it and applies each override to the characters shown, using the card's fallback (a core parent
+	 * with the saved parameters) when that mod material is not here (mod not installed or disabled); CardSaved writes the
+	 * overrides of the character shown into the saved card. Game thread.
+	 */
+	OKMODDING_API void CardLoaded(const FString& Card);
+	OKMODDING_API void CardSaved(const FString& Card);
 }

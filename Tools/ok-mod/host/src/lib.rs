@@ -311,7 +311,7 @@ impl ModHost {
         &self.targets
     }
 
-    fn host_log(&self, level: LogLevel, message: &str) {
+    pub(crate) fn host_log(&self, level: LogLevel, message: &str) {
         (self.log)(level, "", message);
     }
 

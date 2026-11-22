@@ -211,7 +211,8 @@ fn check_pak(id: &str, pak: &Path) -> Result<()> {
     let root = cwd.ancestors().find(|d| d.join("Tools/modkit_cook.lua").is_file()).ok_or("content pak check needs Tools/modkit_cook.lua (run from the ModKit checkout, or pass --skip-pak-check)")?;
     let out = std::process::Command::new(root.join("Tools/lua/lua.exe"))
         .arg(root.join("Tools/modkit_cook.lua"))
-        .args(["--mod", id, "--verify"])
+        // The ModKit names a mod by its content root (the plugin name: the id with `.` and `-` made `_`).
+        .args(["--mod", &ok_mod_host::content::content_root(id), "--verify"])
         .arg(pak)
         .current_dir(root)
         .output()

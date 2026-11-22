@@ -63,6 +63,9 @@ pub struct Object {
     pub name: String,
     pub parent: i64,
     pub visible: bool,
+    /// A shown character: the id its per-frame calls carry (`ok_mod_sdk::frame::Frame::character`). Changes when the
+    /// character is built again (outfit, card); None for other objects.
+    pub frame: Option<u64>,
 }
 
 /// The context of one call from the studio.
@@ -148,6 +151,7 @@ impl Call {
                             name: o.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
                             parent: o.get("parent").and_then(Value::as_i64).unwrap_or(-1),
                             visible: o.get("visible").and_then(Value::as_bool).unwrap_or(true),
+                            frame: o.get("frame").and_then(Value::as_str).and_then(|s| s.parse().ok()),
                         })
                     })
                     .collect()
@@ -337,6 +341,14 @@ impl Ui {
     pub fn timeline_marks(&mut self, path: &str) -> &mut Self {
         self.map.insert("timeline_marks".into(), path.into());
         self
+    }
+    /// A post-process material of this mod (`materials/*.toml`, "<mod id>/<name>") drawn over the whole studio view
+    /// while the data at `enabled` is true; `scalars` and `colors` map material parameters to paths in the data (a
+    /// number; a "#RRGGBB" text). The studio reads them every frame, so panel rows and timeline keys on those paths
+    /// change the picture without calls to the mod.
+    pub fn post_process(&mut self, material: &str, enabled: &str, scalars: &[(&str, &str)], colors: &[(&str, &str)]) -> &mut Self {
+        let map = |pairs: &[(&str, &str)]| Value::Object(pairs.iter().map(|(k, v)| (k.to_string(), Value::from(*v))).collect());
+        self.push("post_process", json!({"material": material, "enabled": enabled, "scalars": map(scalars), "colors": map(colors)}))
     }
     /// Send the scene's object list with every call.
     pub fn objects(&mut self, on: bool) -> &mut Self {

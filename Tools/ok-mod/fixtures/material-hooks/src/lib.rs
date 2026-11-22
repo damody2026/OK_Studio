@@ -15,7 +15,11 @@ struct Hooks {
 #[derive(Deserialize)]
 struct PostTexture {
     slot: String,
+    #[serde(default)]
+    query: bool,
+    #[serde(default)]
     rgba: usize,
+    #[serde(default)]
     len: usize,
 }
 
@@ -49,7 +53,14 @@ impl Mod for Hooks {
         match event {
             Event::Hook { name, payload } if name.as_str() == "material.post_texture" => {
                 let p: PostTexture = serde_json::from_str(payload.as_str()).map_err(|e| e.to_string())?;
-                if p.slot != self.text("tint_slot") || p.rgba == 0 {
+                if p.slot != self.text("tint_slot") {
+                    return Ok(Reply::None);
+                }
+                // Offered without pixels first: only the slot it tints.
+                if p.query {
+                    return Ok(Reply::Json(r#"{"want":true}"#.into()));
+                }
+                if p.rgba == 0 {
                     return Ok(Reply::None);
                 }
                 let tint: Vec<f32> = self.text("tint").split(',').filter_map(|s| s.trim().parse().ok()).collect();

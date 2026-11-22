@@ -1,0 +1,16 @@
+[package]
+name = "ok-mod-skin-decal"
+version = "0.1.0"
+edition = "2021"
+description = "Example mod: a sticker or tattoo (a PNG) on the body or face, kept in the card (okMr) and drawn into the skin texture (material.post_texture)."
+publish = false
+
+[lib]
+name = "ok_skin_decal"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk", features = ["card-file"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }

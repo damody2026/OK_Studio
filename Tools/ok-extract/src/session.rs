@@ -30,6 +30,10 @@ use crate::shape::{CorrectInfo, Keyframe};
 use crate::unity::ExtractedMesh;
 
 pub(crate) fn native_parallel_work<F,R>(work:F)->R where F:FnOnce()->R+Send,R:Send {
+    // The card being opened goes with the work to the pool thread (mod_forward::CardScope is per thread): its emit
+    // runs there and material.post_texture names the card.
+    let card=crate::mod_forward::current_card();
+    let work=move||{let _card=crate::mod_forward::CardScope::named(card);work()};
     // A card opening with its own pack: its own pool, whose threads read that pack (oklib::pack_parallel).
     if crate::oklib::pack_scope_here() { return crate::oklib::pack_parallel(work); }
     match native_pool(true) {Some(pool)=>pool.install(work),None=>work()}

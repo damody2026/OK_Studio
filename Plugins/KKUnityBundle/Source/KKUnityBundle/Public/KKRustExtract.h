@@ -207,6 +207,9 @@ public:
 	// The raw pointer: `Handle != nullptr` converts through Get(), which waits for a pair frame being solved in the
 	// background, and the one-on-one scene asks this every frame while the next frame solves.
 	bool IsOpen() const { return Handle.Raw != nullptr; }
+	/** The id the mods' per-frame calls know this character by (ok-extract mod_frame `character`: the session's
+	 *  address), so a mode can tell a mod which of its objects a frame is about; 0 when not open. */
+	uint64 ModFrameId() const { return uint64(UPTRINT(Handle.Raw)); }
 	bool IsPortable() const { return bPortable; }
 	/** Identity of this native session for the PhysX secondary-dynamics groups (the native session address). */
 	uint64 PhysicsGroup() const { return reinterpret_cast<uint64>(Handle.Raw); }

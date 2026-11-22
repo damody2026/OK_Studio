@@ -60,4 +60,8 @@ namespace OKReaderMods
 
 	// A button's mod command (`mod.<id>.<name>`): run, its text shown as a notice.
 	bool RunCommand(UOKCharacterController* G,const FString& Command,FString& Error);
+
+	// A mod's .dui panel raised an event (plan §6.13 D2): hook ui.<mod>.<event> to that mod alone, payload
+	// {"event","value"}; its reply is followed like any hook's.
+	bool Emit(UOKCharacterController* G,const FString& Mod,const FString& Event,const FString& Value,FString& Error);
 }

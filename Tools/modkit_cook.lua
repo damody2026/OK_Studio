@@ -27,6 +27,16 @@
 --
 -- verify (moves to the Rust ok-mod-pack later, work item 12): every entry under the mount point above, only cooked
 -- package files and this mod's shader library, and every export of every package of an allowed class (§6.11 white list).
+--
+-- .dui panels (§6.13 D2): every Plugins/<id>/DUI/<Name>.dui becomes /<id>/UI/WBP_<Name> (parent UOKModDreamPanel,
+-- plugin OKModDream), compiled by DreamGUI's DreamUICompileWidgets in the cook host -- always from the .dui, never kept:
+--   1. lint: the class line is /<id>/UI/WBP_<Name>; `use` only "Theme.dui" (the reader theme) or "Plugin.DreamGUI:...";
+--      no `new`, view models, props, globals or two-way bindings (the panel reaches the game only through `Mod`);
+--   2. compile, check with OKModDreamCheck (only compiler-made functions, calls on the list, references inside the
+--      mod, DreamGUI or the engine) and take each widget's fingerprint; delete, compile again, same fingerprints;
+--   3. cook; the pak's panel packages are checked again by the game when it mounts the pak (OKModContent).
+-- The mod folder ships each .dui as ui/<Name>.dui next to content/ (the game refuses a panel without it); the run
+-- leaves them in <out>/ui/. A pak with panels only has no shader library.
 -- Artifacts go under Saved/ModKit/<id>/ (not versioned).
 local ok = require "ok"
 local json, path, proc, util = ok.json, ok.path, ok.proc, ok.util
@@ -34,6 +44,7 @@ local lfs = require "lfs"
 
 local function win(p) return (path.norm(p):gsub("/", "\\")) end
 local function step(name) io.write("[", os.date("%H:%M:%S"), "] ", name, "\n"); io.flush() end
+local function editor_cmd(engine) return win(path.join(engine, "Engine/Binaries/Win64/UnrealEditor-Cmd.exe")) end
 
 -- §6.11: the only classes a mod pak may carry (no Blueprint: code in a mod is a Rust DLL).
 local ALLOWED_CLASSES = {
@@ -57,6 +68,49 @@ local function files_below(dir, out)
     if attr and attr.mode == "directory" then files_below(full, out) elseif attr and attr.mode == "file" then out[#out + 1] = full end
   end
   return out
+end
+
+-- Plugins/<id>/DUI/*.dui (the mod's panels).
+local function dui_files(plugin_dir)
+  local out = {}
+  local dir = path.join(plugin_dir, "DUI")
+  if not path.is_dir(dir) then return out end
+  for _, n in ipairs(path.list(dir)) do
+    if n:lower():match("%.dui$") then
+      if not n:match("^[A-Za-z0-9_]+%.dui$") then error("a panel's file name is A-Z a-z 0-9 _ only: " .. n, 0) end
+      out[#out + 1] = path.join(dir, n)
+    end
+  end
+  table.sort(out)
+  return out
+end
+
+-- What a mod's .dui may say (the game's check covers the compiled result; this stops the obvious early, with a line).
+local function lint_dui(id, file)
+  local problems = {}
+  local name = path.stem(file)
+  local want = "/" .. id .. "/UI/WBP_" .. name
+  local n, class = 0, nil
+  local text = path.read_text(file)
+  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+    n = n + 1
+    local code = line:gsub("\r$", ""):gsub("//.*$", "")
+    local function bad(why) problems[#problems + 1] = ("%d: %s"):format(n, why) end
+    local c = code:match("^%s*class%s+(%S+)")
+    if c then class = c end
+    local u = code:match("^%s*use%s+(.+)$")
+    if u then
+      local target = u:match('^"([^"]*)"')
+      if not target then bad("use names a file, not a class: " .. util.strip(u))
+      elseif target ~= "Theme.dui" and not target:match("^Plugin%.DreamGUI:") then bad("use only \"Theme.dui\" or \"Plugin.DreamGUI:...\": " .. target) end
+    end
+    if code:find("<->", 1, true) then bad("two-way binding (<->): a panel only reads the mod's values (Mod.Text) and raises its events (Mod.Emit)") end
+    for _, word in ipairs({ "new", "viewmodels", "props", "global", "globals" }) do
+      if code:find("%f[%w_]" .. word .. "%f[^%w_]") then bad("`" .. word .. "` is not allowed in a mod panel") end
+    end
+  end
+  if class ~= want then problems[#problems + 1] = ("the class line must be `class %s` (it is %s)"):format(want, tostring(class)) end
+  return problems
 end
 
 local function junction(link, target)
@@ -98,21 +152,94 @@ local function prepare_host(id, plugin_dir)
     "bUseZenStore=False",
     "bUsePakFile=True",
     "" }, "\r\n"))
+  local plugins = {
+    json.object({ { "Name", id }, { "Enabled", true } }),
+    json.object({ { "Name", "PythonScriptPlugin" }, { "Enabled", true } }),
+    json.object({ { "Name", "EditorScriptingUtilities" }, { "Enabled", true } }),
+  }
+  -- .dui panels: DreamGUI compiles them, OKModDream is their parent class and their check (both the game's builds).
+  local duis = dui_files(plugin_dir)
+  if #duis > 0 then
+    for _, name in ipairs({ "DreamGUI", "OKModDream" }) do
+      junction(path.join(host, "Plugins/" .. name), path.join(root, "Plugins/" .. name))
+      plugins[#plugins + 1] = json.object({ { "Name", name }, { "Enabled", true } })
+    end
+    path.mkdir(path.join(host, "DUI"))
+    path.copy(path.join(root, "DUI/Theme.dui"), path.join(host, "DUI/Theme.dui"))
+  end
   local project = json.object({
     { "FileVersion", 3 }, { "EngineAssociation", "" }, { "Category", "OKMod cook host" },
     { "Description", "Generated by Tools/modkit_cook.lua for mod " .. id .. "; do not edit." },
-    { "Plugins", {
-      json.object({ { "Name", id }, { "Enabled", true } }),
-      json.object({ { "Name", "PythonScriptPlugin" }, { "Enabled", true } }),
-      json.object({ { "Name", "EditorScriptingUtilities" }, { "Enabled", true } }),
-    } },
+    { "Plugins", plugins },
   })
   local project_path = path.join(host, host_name(id) .. ".uproject")
   path.write_text(project_path, json.encode(project, { indent = 4 }) .. "\n")
-  return { host = host, project = project_path }
+  return { host = host, project = project_path, duis = duis }
 end
 
-local function editor_cmd(engine) return win(path.join(engine, "Engine/Binaries/Win64/UnrealEditor-Cmd.exe")) end
+-- ---------------------------------------------------------------------------------------------------------------
+-- .dui panels (§6.13 D2)
+-- ---------------------------------------------------------------------------------------------------------------
+local function compile_duis(engine, id, host, work, round)
+  local plugin = path.join(host.host, "Plugins/" .. id)
+  local ui = path.join(plugin, "Content/UI")
+  -- Always from the .dui: what an earlier compile left (or an author saved by hand) is deleted first.
+  for _, f in ipairs(files_below(ui)) do if path.name(f):match("^WBP_.*%.uasset$") then path.remove(f) end end
+  local entries = {}
+  for _, d in ipairs(host.duis) do
+    local name = path.stem(d)
+    local copy = path.join(host.host, "DUI/" .. name .. ".dui")
+    path.copy(d, copy)
+    entries[#entries + 1] = json.object({ { "asset", "/" .. id .. "/UI/WBP_" .. name }, { "parent", "/Script/OKModDream.OKModDreamPanel" },
+      { "source", name .. ".dui" } })
+  end
+  local manifest = path.join(work, "widgets.json")
+  path.write_text(manifest, json.encode(json.object({ { "widgets", entries } }), { indent = 2 }) .. "\n")
+  step("dui compile " .. round)
+  local log = path.join(work, "dui-compile-" .. round .. ".log")
+  local line = '"' .. editor_cmd(engine) .. '" "' .. win(host.project) .. '" -run=DreamUICompileWidgets -Manifest="' .. win(manifest)
+    .. '" -unattended -nosound -NoSplash -NullRHI -abslog="' .. win(log) .. '"'
+  local r = proc.run(line, { shell = false, hide = true, quiet = true, timeout = 20 * 60 })
+  local errors = {}
+  for _, l in ipairs(path.exists(log) and path.read_lines(log) or {}) do
+    if l:find("DUI%d%d%d%d") or l:find("Error:", 1, true) then errors[#errors + 1] = l end
+  end
+  if not r.ok or #errors > 0 then error(".dui compile failed (" .. win(log) .. "):\n" .. table.concat(errors, "\n"), 0) end
+  step("dui check " .. round)
+  local out = path.join(work, "dui-fingerprints-" .. round .. ".txt")
+  local clog = path.join(work, "dui-check-" .. round .. ".log")
+  line = '"' .. editor_cmd(engine) .. '" "' .. win(host.project) .. '" -run=OKModDreamCheck -Root=' .. id .. ' -Out="' .. win(out)
+    .. '" -unattended -nosound -NoSplash -NullRHI -abslog="' .. win(clog) .. '"'
+  r = proc.run(line, { shell = false, hide = true, quiet = true, timeout = 20 * 60 })
+  local problems = {}
+  for _, l in ipairs(path.exists(clog) and path.read_lines(clog) or {}) do
+    if l:find("OKModDreamCheck:", 1, true) and l:find("Error", 1, true) then problems[#problems + 1] = l end
+  end
+  if not r.ok or #problems > 0 or not path.is_file(out) then
+    error("the .dui panels fail the mod check (" .. win(clog) .. "):\n" .. table.concat(problems, "\n"), 0)
+  end
+  local text = path.read_text(out)
+  local count = select(2, text:gsub("\n", ""))
+  if count ~= #host.duis then error(("the check saw %d panel(s), the plugin has %d .dui (%s)"):format(count, #host.duis, win(clog)), 0) end
+  return text
+end
+
+local function build_duis(engine, id, host, work)
+  if #host.duis == 0 then return end
+  for _, d in ipairs(host.duis) do
+    local problems = lint_dui(id, d)
+    if #problems > 0 then error(win(d) .. ":\n  " .. table.concat(problems, "\n  "), 0) end
+  end
+  local first = compile_duis(engine, id, host, work, 1)
+  local second = compile_duis(engine, id, host, work, 2)
+  if first ~= second then
+    error("compiling the same .dui twice gave different widgets:\n" .. first .. "---\n" .. second, 0)
+  end
+  path.mkdir(path.join(work, "ui"))
+  for _, d in ipairs(host.duis) do path.copy(d, path.join(work, "ui/" .. path.name(d))) end
+  io.write(first)
+end
+
 
 -- ---------------------------------------------------------------------------------------------------------------
 -- pak check
@@ -245,7 +372,7 @@ local function verify_pak(engine, id, pak, work)
       end
     end
   end
-  if not report.shader_library then bad("no shader library " .. library .. "<format>.ushaderbytecode at the mod root") end
+  local needs_library = false
   -- Package classes: extract and read each .uasset header.
   local extract = path.join(work, "verify.extract")
   if path.is_dir(extract) then path.rmtree(extract) end
@@ -263,7 +390,21 @@ local function verify_pak(engine, id, pak, work)
       local info = { file = pkg.rel, package = parsed.package, exports = {} }
       if parsed.package:lower() ~= expected:lower() then bad(pkg.rel .. " names itself " .. parsed.package .. ", expected " .. expected) end
       local asset = path.stem(pkg.rel)
+      -- A .dui panel (§6.13 D2): UI/WBP_<Name> with a generated widget class, from DUI/<Name>.dui. Its exports are the
+      -- DreamGUI compiler's (checked by OKModDreamCheck before the cook and by the game when it mounts the pak).
+      local panel = false
       for _, e in ipairs(parsed.exports) do
+        if e.class == "DreamWidgetGeneratedClass" and e.outer == 0 then panel = true end
+      end
+      if panel then
+        local name = pkg.rel:match("^UI/WBP_([A-Za-z0-9_]+)%.uasset$")
+        if not name then bad(pkg.rel .. ": a panel must be UI/WBP_<Name>") end
+        info.class = "DreamWidgetGeneratedClass"
+        info.panel = name
+      else
+        needs_library = true
+      end
+      for _, e in ipairs(panel and {} or parsed.exports) do
         info.exports[#info.exports + 1] = { name = e.name, class = e.class, native = e.native, class_package = e.class_package }
         local top = e.outer == 0
         if not e.native or e.class_package ~= "/Script/Engine" then
@@ -279,6 +420,7 @@ local function verify_pak(engine, id, pak, work)
       report.packages[#report.packages + 1] = info
     end
   end
+  if needs_library and not report.shader_library then bad("no shader library " .. library .. "<format>.ushaderbytecode at the mod root") end
   report.accepted = #problems == 0
   report.problems = problems
   path.write_text(path.join(work, "verify.json"), json.encode(report, { indent = 2 }) .. "\n")
@@ -325,7 +467,8 @@ local function cook(engine, id, host, work)
   for _, f in ipairs(files) do
     if path.fnmatch(path.name(f), "ShaderArchive-*.ushaderbytecode") then error("unexpected plugin shader library " .. win(f), 0) end
   end
-  if #libraries == 0 then error("cook omitted the shader library ShaderArchive-" .. name .. "-*.ushaderbytecode in " .. win(cooked), 0) end
+  -- No library when nothing has shaders (a mod with .dui panels only); verify_pak requires one when materials are there.
+  if #libraries == 0 then io.write("(no shader library: nothing in the plugin has shaders)\n") end
   -- A material that does not compile still "cooks" (Success, warnings only) without a shader map and draws the default
   -- material in the game; e.g. a Custom node whose #include is missing (Docs/OK_MOD_S3_材質可行性.md).
   local failed = {}
@@ -397,6 +540,7 @@ local function main()
     io.write(win(log), "\n")
     return
   end
+  build_duis(engine, id, host, work)
   local content, files, libraries = cook(engine, id, host, work)
   local pak = make_pak(engine, id, content, files, libraries, work)
   step("verify")
@@ -409,6 +553,7 @@ local function main()
   local stamp = content_build(engine)
   path.write_text(path.join(work, "content_build.txt"), stamp .. "\n")
   io.write('content_build = "', stamp, '"   (put this in the mod.toml)\n')
+  if #host.duis > 0 then io.write("panels: copy ", win(path.join(work, "ui")), " into the mod folder as ui/\n") end
   io.write(win(pak), "\n")
 end
 

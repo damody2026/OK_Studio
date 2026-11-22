@@ -1,0 +1,5 @@
+"mod.org.openkoikatsu.idle-breath.description" = "OK Studio: posed characters breathe (chest rises, shoulders follow); strength per character, saved in the scene."
+"mod.org.openkoikatsu.idle-breath.cmd.reset" = "Breathing back to the defaults"
+"mod.org.openkoikatsu.idle-breath.row.enabled" = "Breathing"
+"mod.org.openkoikatsu.idle-breath.row.speed" = "Breaths per minute"
+"mod.org.openkoikatsu.idle-breath.row.strength" = "Breathing strength"

@@ -86,7 +86,10 @@ FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error,const FOKStr
  if(!FaceFrom.IsEmpty())for(int32 I=0;I<S.Manifest.Characters.Num();++I)if(OKStreetStableId(S.Manifest.Characters[I])==FaceFrom&&S.BaseCards.IsValidIndex(I))Donor=S.BaseCards[I];
  if(!FaceFrom.IsEmpty()&&Donor.IsEmpty()){Error=TEXT("whose face she has is not in this street: ")+FaceFrom;return FString();}
  // One file for each look of hers: the same look again reuses it (and the crowd's disk cache keyed by the card).
- const FString Key=FMD5::HashAnsiString(*FString::Printf(TEXT("%s|%s|%s|%d|%s"),*Own,*Donor,*Hair,Outfit,*DressKey)).Left(12);
+ // The two cards by content too (size and time): a card edited in place (a mod's okMx / okMr section, e.g. a decal)
+ // is another look, not the file made from it before.
+ auto Stamp=[](const FString& Path){if(Path.IsEmpty())return FString();const FFileStatData D=IFileManager::Get().GetStatData(*Path);return FString::Printf(TEXT("%lld@%lld"),D.FileSize,D.ModificationTime.GetTicks());};
+ const FString Key=FMD5::HashAnsiString(*FString::Printf(TEXT("%s|%s|%s|%s|%s|%d|%s"),*Own,*Stamp(Own),*Donor,*Stamp(Donor),*Hair,Outfit,*DressKey)).Left(12);
  const FString Out=OKStreetClinic::Dir()/FString::Printf(TEXT("%s-%s.png"),*Girl.Right(16),*Key);
  if(IFileManager::Get().FileExists(*Out))return Out;
  auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),TEXT("restyle"));Json->SetStringField(TEXT("card"),Own);Json->SetStringField(TEXT("output"),Out);

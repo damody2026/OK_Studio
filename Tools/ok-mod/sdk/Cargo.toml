@@ -8,8 +8,11 @@ description = "OK mod framework SDK: the ok_mod! macro (root module export, pani
 name = "ok_mod_sdk"
 
 [features]
-# Per-frame calls (ok_mod_frame!, frame.rs). Proposed in Docs/OK_MOD_S11_FRAME.md, waiting on the coordinator.
+# Per-frame calls (ok_mod_frame!, frame.rs; Docs/OK_MOD_S11_FRAME.md, adopted at sync point B). A mod that takes frames turns it on.
 frame = []
+# Reading a card file's okMx/okMr directly (hooks::CardMod::read), for hooks that only get the card's path
+# (material.post_texture). Pulls in zstd.
+card-file = ["dep:ok-card-mods"]
 
 [dependencies]
 ok-mod-api = { path = "../api" }
@@ -17,3 +20,6 @@ ok-mod-api = { path = "../api" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = "0.22"
+# Resource hashes (hooks::resource_hash): okMr stores resources by sha256.
+sha2 = "0.10"
+ok-card-mods = { path = "../../ok-card-mods", optional = true }

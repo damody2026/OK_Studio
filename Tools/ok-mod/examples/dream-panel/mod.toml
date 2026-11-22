@@ -1,0 +1,13 @@
+id = "org.openkoikatsu.dream-panel"
+name = "Dream panel"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_dream_panel.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.dream-panel.description"
+targets = ["reader"]
+category = "tool"
+# The game build content/*.pak was cooked for (Tools/modkit_cook.lua prints it); another build does not mount the pak.
+# The panel's source ships as ui/Panel.dui (the game refuses a panel without it). Both come from
+# Tools\lua\lua.exe Tools\modkit_cook.lua --mod org_openkoikatsu_dream_panel (Plugins/org_openkoikatsu_dream_panel/DUI).
+content_build = "1@5.8.4-0"

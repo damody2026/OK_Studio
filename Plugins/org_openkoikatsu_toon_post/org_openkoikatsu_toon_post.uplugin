@@ -1,0 +1,10 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1",
+  "FriendlyName": "OK Mod: Toon Post",
+  "Description": "B-layer content of the OK sample mod org.openkoikatsu.toon-post (Docs/OK_MOD_FRAMEWORK_PLAN.md §14): M_OKToonPost, a post-process material that draws comic outlines (depth edges) and halftone dots in the shadows, its HLSL inline in a Custom node. Cooked on its own by Tools/modkit_cook.lua --mod org_openkoikatsu_toon_post; not enabled in the game or the editor.",
+  "Category": "OKMod",
+  "EnabledByDefault": false,
+  "CanContainContent": true
+}

@@ -981,6 +981,8 @@ pub(crate) fn extract_session(
             .map_err(|e| format!("parse card {}: {e}", path.display())))
         .transpose()?;
     let t = Instant::now();
+    // Hooks run while the card opens (material.post_texture) name it, so a mod can read its own data in the card.
+    let _card = crate::mod_forward::CardScope::new(card_path);
     let session = extract_session_from_info(game_root,card_path,outfit,out_dir,parsed_card);
     profile_tick("extract_session TOTAL", t);
     session

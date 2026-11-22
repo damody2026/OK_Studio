@@ -7298,3 +7298,23 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - `PlayerController::DeprojectMousePositionToWorld`：讀卡器畫面蓋在 viewport 上時，viewport 只在滑鼠移動的那一幀知道游標位置，之後就失敗。改用 Slate 游標位置對遊戲 viewport 的幾何換算，再 `DeprojectScreenPositionToWorld`。
   - `GetComponentsBoundingBox(false, …)`：第一個參數 `bNonColliding=false` 只算有碰撞的元件。預覽角色的網格都沒有碰撞，算出來只剩一個點。改成 `true`。
   - 這兩個都是靠新加的略過原因 log 找到的（`LogOKMod Verbose`，原因改變時寫一次）。
+- 2026-11-23 OK mod 工作項 9 收尾（卡內資源、skin-decal、toon-post，`Docs/OK_MOD_S9_FINISH.md`）：
+  - `material.post_texture` 有一個訂閱者時，每張貼圖都先解碼再交給 mod，讀卡器屬性工作從幾秒變成約 8 分鐘（約 2400 CPU 秒）。改成先問（不含像素、`"query": true`），只有回 want 的 mod 才拿像素。教訓：會對每個部件觸發的 hook，先讓 mod 說要不要，再做花時間的準備。
+  - 貼紙一直沒畫上去，有兩個原因：身體與臉的主貼圖不經 `push.rs` 的 emit（在 `extract.rs` 另外輸出），以及卡片路徑放在執行緒區域變數，開卡的部件工作在池執行緒上跑，拿到的是空的。分別在 `extract.rs` 補呼叫、`native_parallel_work` 把路徑帶進池執行緒。是暫時加 `OK_DECAL_DEBUG` log 與手動 `mod.call` 送 query 才查出來（log 已移除）。另外第一次提交漏了 `CardScope::named`，補了一個提交。教訓：執行緒區域變數要確認實際跑的執行緒；提交前 `git diff` 看一次有沒有漏掉的檔案。
+  - 讀卡器把核心區段 `ok.materials` 當成缺少的 mod 列出來。宿主的缺 mod 清單改為略過 `ok.*`。
+  - Lua 長字串 `[[ ]]` 裡有 `]]` 時提早結束，改用 `[==[ ]==]`；Lua 字串 `'\'` 經命令列轉了一次變成 `'\'`，改用 Edit 工具直接改。
+  - toon-post 第一次在 Studio 測，`-ModDevContent` 找不到內容外掛：`EnabledByDefault false` 又沒人啟用的外掛，以 `-game` 啟動時不在外掛管理器的清單裡，`FindPlugin` 回空；`MountExplicitlyLoadedPlugin` 也要 descriptor 有 `ExplicitlyLoaded`。改成先 `AddToPluginsList(<外掛>.uplugin)` 再 `MountNewlyCreatedPlugin`。
+  - 只建了編輯器就先測，`FMaterialResource::FinishCompilation` 只在 `WITH_EDITOR` 有，遊戲目標編不過；包 `#if WITH_EDITOR` 後兩個目標重建通過。教訓：共用外掛改完兩個目標都建過才算完成（規則本來就這樣寫）。
+
+- 2026-11-23 OK mod 工作項 9b（DreamGUI D2，`Docs/OK_MOD_S9b_DREAMGUI_D2.md`）：
+  - `Mod.Text` 第一版回傳 `FString`，DreamGUI 的 `Text` 屬性是 `FText`，編譯報 `has to take no arguments and return the type of "Greeting.Text"`（訊息說「不帶參數」，實際是型別不符）。改回傳 `FText`，另留 `Raw` 給 `Number`／`Flag`。
+  - 面板檢查在編輯器資產上誤報，連改四次：藍圖下的 widget 樹（外層是藍圖，`IsEditorOnlyObject` 不算）、`SKEL_` 骨架類別被選成面板類別、編譯器的 EdGraph 節點（外層直接是包）、`SKEL_` 類別的 CDO。最後一律依外層鏈判斷編輯器殘留，面板類別依名字 `WBP_<Name>_C` 選。教訓：檢查 cooked 資產的規則先在未 cook 的資產上跑一次，把「不是面板的一部分」的物件連完整路徑印出來再改，不要一次猜一種。
+  - 把 `editor_cmd` 用在定義它的那行之前的函式裡（Lua 區域函式要先定義），ModKit 第一次執行就停；移到檔案前面。
+  - 用 bash heredoc 寫含大量引號的 Lua 腳本，bash 解析失敗（`unexpected EOF while looking for matching`），檔案沒寫出來；改用 Write 工具寫腳本。
+
+- 2026-11-23 OK mod 工作項 11、12 收尾（`Docs/OK_MOD_S11_FINISH.md`、`Docs/OK_MOD_S12_FINISH.md`）：
+  - `ok-mod-pack` 的 pak 檢查把 mod id 當 `--mod` 傳給 `modkit_cook.lua`，id 有 `.` 一定被拒，任何帶 pak 的 mod 都打不了包。工作項 12 的測試只打包 hello（沒有 pak），一直沒發現，到這次打包全部範例才看到。教訓：打包流程的測試要包含帶 B 層內容的 mod。
+  - 新增的主控台指令用了 `FConsoleCommandWithOutputDeviceDelegate`（不帶參數），編譯在 `Tuple.h` 報 `Invoke` 找不到多載；要參數與輸出要用 `FConsoleCommandWithArgsAndOutputDeviceDelegate`。
+  - idle-breath 第一版寫了 `Mod::on_disable`，SDK 的 trait 沒有這個方法。
+
+- 2026-11-23 OK mod 快取追加項（`Docs/OK_MOD_S9c_CACHES.md`）：遊戲端 `OKModModes.cpp` `SyncExtract` 推給 ok-extract 的「會改開卡結果的 mod」清單只認 `extract.*`，漏了 `material.post_texture`，和 Rust 的 `okmods::changes_opens` 不同步：skin-decal 的掛點照跑，開卡快取鍵卻不含它。教訓：同一條規則在 C++ 與 Rust 各寫一份時，改一邊要搜另一邊（這次是加 `material.post_texture` 進 `changes_opens` 時沒找 C++ 的那份）。子代理的盤點也漏看了這處，它只看了 Rust 的鍵。

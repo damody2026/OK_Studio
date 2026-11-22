@@ -9,7 +9,8 @@
   "CanContainContent": false,
   "SupportedTargetPlatforms": [ "Win64" ],
   "Plugins": [
-    { "Name": "KKUnityBundle", "Enabled": true }
+    { "Name": "KKUnityBundle", "Enabled": true },
+    { "Name": "OKModDream", "Enabled": true }
   ],
   "Modules": [
     { "Name": "OKModding", "Type": "Runtime", "LoadingPhase": "Default" }

@@ -23,6 +23,35 @@ struct Forward {
 
 static FORWARD: Mutex<Option<Forward>> = Mutex::new(None);
 
+thread_local! {
+    /// The card this thread is opening (`CardScope`), handed to hooks that need the card's own mod data.
+    static CARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// While alive, this thread's hooks name `path` as the card being opened (`extract_session`).
+pub struct CardScope(Option<String>);
+impl CardScope {
+    pub fn new(path: Option<&std::path::Path>) -> CardScope {
+        let path = path.map(|p| p.to_string_lossy().replace('\\', "/"));
+        CardScope::named(path)
+    }
+    /// The same for a path already in the form `current_card` gives (carried to another thread).
+    pub fn named(path: Option<String>) -> CardScope {
+        CardScope(CARD.with(|c| c.replace(path)))
+    }
+}
+impl Drop for CardScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CARD.with(|c| *c.borrow_mut() = previous);
+    }
+}
+
+/// The card this thread is opening, if known.
+pub fn current_card() -> Option<String> {
+    CARD.with(|c| c.borrow().clone())
+}
+
 /// Sets (or, with a null function, clears) the game's mod host dispatcher.
 ///
 /// # Safety
@@ -72,10 +101,17 @@ pub fn subscribers(hook: &str) -> Vec<String> {
 
 /// `material.post_texture`: a part's main texture after all the core's own work (composites, KSOX/KCOX overlays,
 /// emblems, Material Editor), for every card kind, before it reaches the session. Payload:
-/// `{"slot":"<part role: body, head, hair, clothes_top, accessory...>","part":"<mesh name>","outfit","width","height",
-/// "rgba":<address>,"len"}`
-/// where `rgba` is the address of `len` bytes of 8-bit RGBA (rows top to bottom), writable in place by the mod for the
+/// `{"slot":"<part role: body, head, hair, clothes_top, accessory...>","part":"<mesh name>","outfit","card":"<path>"|null,
+/// "width","height","rgba":<address>,"len"}`
+/// where `card` is the card file being opened (its okMx/okMr hold the mod's own data for this character, read with the
+/// SDK's `hooks::CardMod`), and
+/// `rgba` is the address of `len` bytes of 8-bit RGBA (rows top to bottom), writable in place by the mod for the
 /// duration of the call only. Reply `{"changed":true}` when it wrote, so the texture is encoded again.
+///
+/// Each texture is first offered without pixels: the same payload without `width`/`height`/`rgba`/`len` and with
+/// `"query": true`. Only mods that answer `{"want":true}` get the pixels, and a texture nobody wants is never decoded
+/// (an open decodes hundreds of textures, the reader's outfit and property jobs thousands: decoding all of them for a
+/// mod that draws on one took the property job from seconds to minutes).
 pub const POST_TEXTURE: &str = "material.post_texture";
 
 /// Runs `material.post_texture` over `png` (PNG or the raw container, crate::teximg) when some mod subscribed;
@@ -83,6 +119,18 @@ pub const POST_TEXTURE: &str = "material.post_texture";
 pub fn post_texture(slot: &str, part: &str, outfit: i32, png: &mut Option<Vec<u8>>) {
     let Some(bytes) = png.as_deref() else { return };
     if subscribers(POST_TEXTURE).is_empty() {
+        return;
+    }
+    let card = current_card();
+    let query = serde_json::json!({"slot": slot, "part": part, "outfit": outfit, "card": card, "query": true});
+    let request = serde_json::json!({"op": "hook", "hook": POST_TEXTURE, "payload": query}).to_string();
+    let Some(answer) = dispatch(&request) else { return };
+    let value: serde_json::Value = serde_json::from_str(&answer).unwrap_or_default();
+    let wanted: Vec<serde_json::Value> = value["replies"].as_array().into_iter().flatten()
+        .filter(|r| r["ok"].as_bool() == Some(true) && r["json"]["want"].as_bool() == Some(true))
+        .map(|r| r["mod"].clone())
+        .collect();
+    if wanted.is_empty() {
         return;
     }
     let image = match crate::teximg::load_from_memory(bytes) {
@@ -96,10 +144,10 @@ pub fn post_texture(slot: &str, part: &str, outfit: i32, png: &mut Option<Vec<u8
     let (width, height) = rgba.dimensions();
     let len = rgba.len();
     let payload = serde_json::json!({
-        "slot": slot, "part": part, "outfit": outfit, "width": width, "height": height,
+        "slot": slot, "part": part, "outfit": outfit, "card": card, "width": width, "height": height,
         "rgba": rgba.as_mut_ptr() as usize, "len": len,
     });
-    let request = serde_json::json!({"op": "hook", "hook": POST_TEXTURE, "payload": payload}).to_string();
+    let request = serde_json::json!({"op": "hook", "hook": POST_TEXTURE, "payload": payload, "mods": wanted}).to_string();
     let Some(answer) = dispatch(&request) else { return };
     let value: serde_json::Value = serde_json::from_str(&answer).unwrap_or_default();
     let mut changed = false;
@@ -147,6 +195,8 @@ mod tests {
         assert_eq!(png.as_deref(), Some(original.as_slice()));
         // A subscriber that turns every pixel green in place.
         unsafe { ok_set_mod_dispatch(Some(painter), Some(release)) };
+        post_texture("hair", "o_hair", 0, &mut png);
+        assert_eq!(png.as_deref(), Some(original.as_slice()), "a texture nobody wants is not touched");
         post_texture("body", "o_body_a", 0, &mut png);
         let out = image::load_from_memory(png.as_deref().unwrap()).unwrap().to_rgba8();
         assert!(out.pixels().all(|p| p.0 == [0, 255, 0, 255]));
@@ -165,8 +215,15 @@ mod tests {
         let req: serde_json::Value = serde_json::from_str(&CStr::from_ptr(req).to_string_lossy()).unwrap();
         let answer = match req["op"].as_str().unwrap() {
             "subscribers" => r#"{"mods":["painter"]}"#.to_string(),
+            // Offered without pixels first: wants the body only.
+            "hook" if req["payload"]["query"] == true => {
+                assert!(req["payload"].get("rgba").is_none());
+                let want = req["payload"]["slot"] == "body";
+                format!(r#"{{"replies":[{{"mod":"painter","ok":true,"json":{{"want":{want}}}}}]}}"#)
+            }
             "hook" => {
                 let p = &req["payload"];
+                assert_eq!(req["mods"], serde_json::json!(["painter"]), "pixels only to the mods that asked");
                 assert_eq!((p["slot"].as_str(), p["width"].as_u64(), p["len"].as_u64()), (Some("body"), Some(2), Some(16)));
                 let rgba = std::slice::from_raw_parts_mut(p["rgba"].as_u64().unwrap() as usize as *mut u8, 16);
                 for px in rgba.chunks_mut(4) { px.copy_from_slice(&[0, 255, 0, 255]); }

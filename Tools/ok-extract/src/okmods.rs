@@ -25,11 +25,12 @@ pub fn set_enabled(mut mods: Vec<(String, String)>) {
 }
 
 /// Whether a mod with these subscriptions can change what an open makes: it takes a hook that runs inside an open
-/// (`extract.*`), other than the conversion-only `extract.kkex` / `extract.kkex_keys`. Only those count in the open-cache
+/// (`extract.*`, and `material.post_texture`, which draws into the textures an open makes), other than the
+/// conversion-only `extract.kkex` / `extract.kkex_keys`. Only those count in the open-cache
 /// key: a street or reader mod (birthday, subtitles, profile) changes nothing an open makes, and counting it made every
 /// cached open miss once a mod was installed (street heroines whose in-game cold open fails then never loaded; S10).
 pub fn changes_opens<'a>(subscriptions: impl IntoIterator<Item = &'a str>) -> bool {
-    subscriptions.into_iter().any(|s| s.starts_with("extract.") && s != "extract.kkex" && s != "extract.kkex_keys")
+    subscriptions.into_iter().any(|s| (s.starts_with("extract.") && s != "extract.kkex" && s != "extract.kkex_keys") || s == "material.post_texture")
 }
 
 /// The enabled mods that can change an open (`changes_opens`), with their versions, sorted: as set, else the game's
@@ -158,6 +159,8 @@ mod tests {
     fn only_open_changing_mods_count() {
         assert!(!changes_opens(["street.day_change", "reader.ui", "extract.kkex", "extract.kkex_keys"]));
         assert!(changes_opens(["reader.ui", "extract.post_texture"]));
+        assert!(changes_opens(["material.post_texture"]), "skin-decal, glass-shader: an open from before the mod lacks their textures");
+        assert!(!changes_opens(["material.resolve_shader"]), "picked in Unreal, not in the open");
     }
     #[test]
     fn cache_key_bytes_only_with_mods() {
