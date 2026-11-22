@@ -1,0 +1,5 @@
+"mod.org.openkoikatsu.boop.description" = "戳一下，頭髮、胸部、裙子就晃一晃。"
+"mod.org.openkoikatsu.boop.config.strength" = "戳的力道"
+"mod.org.openkoikatsu.boop.config.decay" = "戳完晃幾秒"
+"mod.org.openkoikatsu.boop.config.frequency" = "每秒晃幾下"
+"mod.org.openkoikatsu.boop.cmd.poke" = "戳每個角色：poke [head|chest|skirt|all]"

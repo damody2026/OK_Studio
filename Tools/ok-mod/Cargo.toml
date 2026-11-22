@@ -9,6 +9,7 @@ members = [
     "pack",
     "examples/hello",
     "examples/glass-shader",
+    "examples/boop",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
     "fixtures/material-hooks",

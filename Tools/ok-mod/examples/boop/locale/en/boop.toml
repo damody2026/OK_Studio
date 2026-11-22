@@ -1,0 +1,5 @@
+"mod.org.openkoikatsu.boop.description" = "A poke makes hair, chest and skirt bounce."
+"mod.org.openkoikatsu.boop.config.strength" = "How hard a poke pushes"
+"mod.org.openkoikatsu.boop.config.decay" = "Seconds a poke keeps bouncing"
+"mod.org.openkoikatsu.boop.config.frequency" = "Bounces per second"
+"mod.org.openkoikatsu.boop.cmd.poke" = "Poke every character: poke [head|chest|skirt|all]"

@@ -1,0 +1,15 @@
+[package]
+name = "ok-mod-boop"
+version = "0.1.0"
+edition = "2021"
+description = "Example mod: a poke makes hair, chest and skirt bounce (per-frame physics forces, budget, input hook)."
+publish = false
+
+[lib]
+name = "ok_boop"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk", features = ["frame"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
