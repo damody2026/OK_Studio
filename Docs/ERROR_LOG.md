@@ -7173,3 +7173,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 先用「材質是不是共用母材質實例」找頭髮網格，HairDeck 頭髮走自己的材質圖、刻晴的頭髮戴在飾品槽（role accessory），兩者都找不到（日誌「0 hair meshes」），重編了三次。改成建材質時依部件 role／名稱／shader 記錄部件編號，再用元件的 `KKSessionPart_` 標籤對應。
   - 要停讀卡器時下了「停掉所有 UnrealEditor」的指令（被擋下）；只能停自己啟動的那個 pid。
   - 教訓：先列出卡片部件的 role 與實際畫它的元件，再決定怎麼辨認；寫一個 dump 開關（`OK_FOREGROUND_DUMP=1`）比猜測重編快。
+
+- 2026-11-23 OK mod 框架 Rust 骨架（`Tools/ok-mod`，`Docs/OK_MOD_S1_Rust骨架.md`）：
+  - SDK 的 `ok_mod!` 自己展開 abi_stable 的 `LibHeader` 匯出（mod 不必直接相依 abi_stable），匯出名先憑印象寫成 `_as_lib_header_root_module_loader`，測試比對 `abi_stable::library::ROOT_MODULE_LOADER_NAME` 才發現真正的是混淆過的 `_1as_0lib_1header_0root_bmodule_bloader`。寫錯的話所有 mod 都會「找不到 root module」被拒。修正：照常量改，並留著那個比對測試。
+  - abi_stable 的 `NonExhaustive` 儲存大小要自己估，`RString` 是 4 個 word（指標、長度、容量、vtable）不是 3 個，第一次估小了編不過（編譯期就會報，不會到執行期）。
+  - 教訓：跨 DLL 的符號名、版面大小一律以 abi_stable 的常數與編譯期檢查為準，不憑記憶；abi_stable 0.x 的版本相容規則是「宿主 patch ≤ mod patch」，所以 RootModule 的版本字串和 crate 版本分開（見報告「設計上的決定」第 1 點）。
