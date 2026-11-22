@@ -1,0 +1,10 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1",
+  "FriendlyName": "OK Mod: Glass Shader",
+  "Description": "B-layer material content of the OK sample mod org.openkoikatsu.glass-shader (Docs/OK_MOD_FRAMEWORK_PLAN.md §6.11, §14.1): a translucent two-sided glass material for character clothes and accessories whose Custom node #includes this plugin's Shaders/OKGlass.usf. Cooked on its own by Tools/modkit_cook.lua --mod org_openkoikatsu_glass_shader; not enabled in the game or the editor.",
+  "Category": "OKMod",
+  "EnabledByDefault": false,
+  "CanContainContent": true
+}

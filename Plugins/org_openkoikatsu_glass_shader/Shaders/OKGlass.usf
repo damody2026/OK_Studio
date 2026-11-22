@@ -1,0 +1,52 @@
+// OK sample mod org.openkoikatsu.glass-shader: included by the Custom node of
+// /org_openkoikatsu_glass_shader/M_OKGlass through /Project/OKMod/org_openkoikatsu_glass_shader/OKGlass.usf
+// (Tools/modkit_cook.lua maps the cook host's Shaders/OKMod/<id> to this folder). Only the cook reads this file:
+// the game gets the compiled bytecode from the mod's shader library.
+#pragma once
+
+// Fresnel term: 0 facing the camera, 1 at grazing angles. Two-sided, so the sign of N.V does not matter.
+float OKGlassFresnel(float3 N, float3 V, float Power)
+{
+	const float NdotV = saturate(abs(dot(normalize(N), normalize(V))));
+	return pow(1.0 - NdotV, max(Power, 0.01));
+}
+
+// Fake refraction: bend the view ray through the surface (one eta per channel for a little dispersion) and read a
+// vertical gradient built from GlassTint with the bent ray's height (UE world up is Z). Dark tint below, bright above,
+// so the glass shows a soft "environment" that slides as the normal turns, without sampling the scene.
+float OKGlassGradient(float3 Ray, float3 N, float Eta)
+{
+	float3 Bent = refract(-Ray, N, Eta);
+	if (dot(Bent, Bent) < 1e-6)
+	{
+		Bent = reflect(-Ray, N); // total internal reflection
+	}
+	return saturate(0.5 + 0.5 * normalize(Bent).z);
+}
+
+float3 OKGlassRefractionTint(float3 N, float3 V, float3 Tint)
+{
+	N = normalize(N);
+	V = normalize(V);
+	if (dot(N, V) < 0.0)
+	{
+		N = -N; // back face of a two-sided mesh
+	}
+	const float3 T = float3(OKGlassGradient(V, N, 1.0 / 1.43), OKGlassGradient(V, N, 1.0 / 1.45), OKGlassGradient(V, N, 1.0 / 1.47));
+	const float3 Low = Tint * 0.55;
+	const float3 High = lerp(Tint, float3(1.0, 1.0, 1.0), 0.35);
+	return lerp(Low, High, T);
+}
+
+// Whole glass shading for M_OKGlass. Returns the base color; Rim (emissive) and Opacity are written out.
+//   Base / BaseAlpha: the part's own texture (_MainTex), multiplies the glass color and its opacity.
+//   Tint / TintAlpha: GlassTint (a vector parameter feeds a Custom node RGB and alpha separately).
+float3 OKGlassShade(float3 N, float3 V, float3 Tint, float TintAlpha, float3 Base, float BaseAlpha, float GlassOpacity, float FresnelPower,
+	float RimStrength, out float3 Rim, out float Opacity)
+{
+	const float F = OKGlassFresnel(N, V, FresnelPower);
+	const float3 Color = OKGlassRefractionTint(N, V, Tint) * Base;
+	Rim = lerp(Tint, float3(1.0, 1.0, 1.0), 0.5) * (F * RimStrength);
+	Opacity = saturate(lerp(GlassOpacity, 1.0, F) * TintAlpha * BaseAlpha);
+	return Color;
+}
