@@ -348,6 +348,14 @@ private:
  FString HolidayOn(int32 Day) const;
  bool BirthdayOf(int32 I,int32 Day) const;
  FString TodayText(int32 Character) const;
+ // OK mod hooks street.* (OKStreetSocialMods.inl, Docs/OK_MOD_HOOKS.md §8).
+ TSharedRef<class FJsonObject> ModsPayload() const;
+ TSharedRef<class FJsonObject> ModsHeroine(int32 Character) const;
+ TSharedPtr<class FJsonObject> ModsHook(const TCHAR* Name,const TSharedRef<class FJsonObject>& Payload,const TArray<FString>& Only=TArray<FString>());
+ void ModsEnsureLoaded();
+ void ModsHeroineEvent(const TCHAR* Name,int32 Character,const TFunction<void(class FJsonObject&)>& More=nullptr);
+ void ModsDayChanged();
+ TArray<FString> ModsTalkFacts(int32 Character) const;
  void TickInitiative();
  void TickDirector();
  void CheckBirthdays();

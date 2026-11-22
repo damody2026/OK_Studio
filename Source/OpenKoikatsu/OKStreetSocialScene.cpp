@@ -18,6 +18,7 @@ extern "C" __declspec(dllimport) void __stdcall DisableProcessWindowsGhosting(vo
 #include "OKStreetSocialSpeakerText.h"
 #include "OKStreetSocialSongState.h"
 #include "OKInteractionMode.h"
+#include "OKModHost.h"
 #include "KKRustExtract.h"
 #include "KKSpeech.h"
 #include "Async/Async.h"
@@ -689,6 +690,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  // The down triangle over the head of the girl E would talk to, while several are in reach (overlay units).
  bool TalkMarkerShown=false;FVector2D TalkMarkerAt=FVector2D::ZeroVector;
  FOKStreetCandidateProbeSnapshot Probe;
+ bool ModsLoaded=false; // street.load sent to the mods for this scene's save (OKStreetSocialMods.inl)
  bool Started=false,SelfTest=false,RetargetSelfTest=false,Reported=false,ClipStarted=false,AllReady=false,ConversationShot=false;
  int32 IdentityRetargetApplied=0,IdentityRetargetReplayed=0,IdentityRetargetRejected=0,ActiveActorInterrupts=0,ActiveActorInterruptCommits=0,InterruptPhase=0,InjectFaultSlot=INDEX_NONE;
  bool InjectActiveFault=false,InterruptEndedThisTick=false;
@@ -1108,6 +1110,7 @@ bool AOKStreetSocialScene::BeginTalk(int32 Character){
   else Topic(TEXT("greeting"));}
  // Whoever starts the conversation (E, she walks up to him, an invitation), it is a free talk with the microphone open.
  if(!Quiet&&!S.SelfTest&&!S.RetargetSelfTest){S.FreeTalkOpen=true;FreeTalkLiveSet(true);}
+ ModsHeroineEvent(TEXT("street.talk_begin"),Character);
  return true;
 }
 
@@ -2174,6 +2177,8 @@ void AOKStreetSocialScene::SpeakFreeTalk(int32 Character,const TArray<FString>& 
  S.FreeTalkSpeechStreamed.Init(0,Lines.Num());S.FreeTalkSpeechStreams.Init(nullptr,Lines.Num());
  S.FreeTalkSpeechSentAt.Init(0,Lines.Num());S.FreeTalkSpeechRepliedAt=FPlatformTime::Seconds();
  RequestFreeTalkSegment(S.FreeTalkSpeechGeneration,0);
+ // Her reply is spoken (a subtitle mod shows it): street.speech_start.
+ ModsHeroineEvent(TEXT("street.speech_start"),Character,[&](FJsonObject& P){P.SetStringField(TEXT("text"),FString::Join(Lines,TEXT("\n")));});
 }
 
 void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
@@ -2668,6 +2673,7 @@ void AOKStreetSocialScene::EndTalk(){
  if(S.Pair.Conversation()&&S.Pair.Partner!=INDEX_NONE){FinishPhoto(false);return;} // ending the talk ends the meal too, not the other way round
  S.InvitationActive=false;S.InvitationSequence.Reset();S.InvitationQueued=INDEX_NONE;S.InvitationGirl=INDEX_NONE;S.InvitationCommand=INDEX_NONE;
  const bool Ending=S.Target!=INDEX_NONE;
+ if(Ending)ModsHeroineEvent(TEXT("street.talk_end"),S.Target);
  // She spoke to him and he went off without one word back (any talk: she came over at their date, or he pressed E and
  // walked away from her answer): hers to remember. A talk of under a minute left no memory at all, and 三月七, met at
  // the park for their walk, greeted him a quarter hour later as if by chance (R6-15). How she takes it is the AI's.
@@ -3341,6 +3347,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialVenture.inl"
 #include "OKStreetSocialCampus.inl"
 #include "OKStreetSocialBank.inl"
+#include "OKStreetSocialMods.inl"
 #include "OKStreetSocialInspector.inl"
 #include "OKStreetSocialUiProbe.inl"
 #include "OKStreetSocialRoster.inl"
