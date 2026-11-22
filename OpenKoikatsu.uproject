@@ -40,6 +40,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "OKModDream",
+			"Enabled": true
+		},
+		{
 			"Name": "KKCard",
 			"Enabled": true
 		},
