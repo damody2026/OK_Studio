@@ -1,11 +1,77 @@
-# Full profile (section 14.4): every example mod, all enabled together. Added here as each example exists.
+# Full profile (section 14.4): every example mod (Tools/ok-mod/examples), all enabled together.
+# The ones with B-layer content (glass-shader, toon-post, dream-panel) need their content/*.pak from Tools/modkit_cook.lua
+# (and dream-panel its ui/Panel.dui) in the package; without the pak they use their A-layer fallbacks or show no panel.
 name = "full"
 description_id = "mod.profile.full.description"
+
+[[mod]]
+id = "org.openkoikatsu.birthday"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.boop"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.dream-panel"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.glass-shader"
+version = "0.1.0"
 
 [[mod]]
 id = "org.openkoikatsu.hello"
 version = "0.1.0"
 
 [[mod]]
-id = "org.openkoikatsu.glass-shader"
+id = "org.openkoikatsu.idle-breath"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.object_hotkeys"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.outfit-names"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.pair_counter"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.profile"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.random-chara"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.scene_notes"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.skin-decal"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.studio_autosave"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.subtitles"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.timeline_flow"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.toon-post"
+version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.ui-sample"
 version = "0.1.0"

@@ -182,8 +182,10 @@ fn profiles_save_and_apply() {
     });
     install(&[extra], &mods, &InstallOptions::default()).unwrap();
 
-    // The starter profile of the repository: only hello for now.
-    let r = profile_apply(&workspace().join("profiles/starter.toml"), &mods, hello.parent().unwrap(), &InstallOptions::default()).unwrap();
+    // A profile of hello alone (the repository's starter needs every starter package; see every_example_is_in_full).
+    let starter = s.p("starter.toml");
+    std::fs::write(&starter, "name = \"starter\"\n\n[[mod]]\nid = \"org.openkoikatsu.hello\"\nversion = \"0.1.0\"\n").unwrap();
+    let r = profile_apply(&starter, &mods, hello.parent().unwrap(), &InstallOptions::default()).unwrap();
     assert!(r.iter().any(|o| o.id == "org.openkoikatsu.hello" && o.result == "installed"), "{r:?}");
     assert!(!mods.join("org.example.extra").exists(), "mods outside the profile go to .old");
     let rec = read_installed(&mods).unwrap();
@@ -197,6 +199,27 @@ fn profiles_save_and_apply() {
     let r = profile_apply(&saved, &mods, hello.parent().unwrap(), &InstallOptions::default()).unwrap();
     assert_eq!(r[0].result, "already_installed");
     assert!(read_profile(&workspace().join("profiles/full.toml")).is_ok());
+    assert!(read_profile(&workspace().join("profiles/starter.toml")).is_ok());
+}
+
+/// The full profile lists every example mod (section 14.4), at its version; the starter profile only examples.
+#[test]
+fn every_example_is_in_full() {
+    let full = read_profile(&workspace().join("profiles/full.toml")).unwrap();
+    let starter = read_profile(&workspace().join("profiles/starter.toml")).unwrap();
+    let mut examples = Vec::new();
+    for e in std::fs::read_dir(workspace().join("examples")).unwrap().flatten() {
+        let Ok(text) = std::fs::read_to_string(e.path().join("mod.toml")) else { continue };
+        let t: toml::Table = toml::from_str(&text).unwrap();
+        examples.push(ProfileMod { id: t["id"].as_str().unwrap().into(), version: t["version"].as_str().unwrap().into() });
+    }
+    for m in &examples {
+        assert!(full.mods.contains(m), "full profile lacks {} {}", m.id, m.version);
+    }
+    assert_eq!(full.mods.len(), examples.len(), "full lists something that is not an example");
+    for m in &starter.mods {
+        assert!(examples.contains(m), "starter lists {} {}, not an example", m.id, m.version);
+    }
 }
 
 #[test]
