@@ -20,6 +20,9 @@ public class OpenKoikatsu : ModuleRules
 		PrivateDefinitions.Add(Patched("OK_CROWD_CONSTANT_SCALE_CACHE","Source/Runtime/Engine/Private/Animation/AnimCompress.cpp","PrepareAnimConstantScaleCache"));
 		// Coincident clothing layers draw in source order (KKPreviewActor draw_layer -> TranslucencySortPriority).
 		PrivateDefinitions.Add(Patched("OK_OPAQUE_SORT_PRIORITY","Source/Runtime/Renderer/Private/BasePassRendering.cpp","OKOpaqueSortPriority"));
+		// Without it the card reader loses the GPU (PageFault in DreamGUI MainPS) after a dozen cards: stale descriptors in
+		// the online heap point at freed pool heaps (Docs/CARD_READER_GPU_PAGEFAULT_SLOTS_20261120.md section 10).
+		PrivateDefinitions.Add(Patched("OK_D3D12_CLEAR_RECYCLED_DESCRIPTORS","Source/Runtime/D3D12RHI/Private/D3D12Descriptors.cpp","ClearRecycledOnlineDescriptors"));
 
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
