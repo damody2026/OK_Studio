@@ -487,6 +487,29 @@
 - OK Studio（`OKGalleryOkStudio.cpp`）與 1 對 1（`OKInteraction*`、`OKHScene`）都用 `AKKPreviewActor`，FleX 布料在那裡是開著的；FleX 只有她的膠囊、（可選）身體網格與 11-22 加的地面，椅子、長椅、床都擋不住布料。
 - 要做：`OKFlexCloth.cpp` 加場景形狀介面（角色空間的方塊／球／膠囊），`AKKPreviewActor` 每隔幾幀查周圍 WorldStatic 的 `AggGeom` 換算後交給它；先確認家具有沒有簡單碰撞。改的是三組共用程式碼，提成獨立任務（[C組] FleX 布料碰場景家具），無人值守期間不動。
 
+#### 做了（11-22，c-cloth-scene）
+
+- **座標**：FleX 的 session 就是 `FOkSession::PhysicsGroup()`（`OkSession` 指標）。角色空間 → 世界用 `PublishPhysicsFrame` 同一個換算（骨架公尺 `-X, Z, Y` 乘 100 再乘 `SkeletonWorldTransform`），世界 → 角色空間取它的反矩陣。
+- **FleX 主機**：`OKPhysXSecondary::SetFlexSceneShapes(Session, 形狀)`（`FFlexSceneShape`：方塊、球、膠囊，角色空間），在 `Shapes()` 和身體膠囊一起放進解算器（靜態形狀）。`OKFlexCloth.Scene 0` 關掉；`OKFlexCloth.Log 1` 另印「場景形狀裡的粒子數：送進去 → 解算後」。
+- **`AKKPreviewActor::PublishFlexScene`**：有布料的角色每 10 幀（角色移動時立刻）用關節包圍盒外擴 35 cm 查 WorldStatic／WorldDynamic 重疊，略過角色與 pawn。取 `UBodySetup::AggGeom` 的 Box／Sphere／Sphyl（凸包用 `ElemBox`），換到角色空間，同時交給 FleX 主機與 Rust（`ok_cloth_px_scene`）。CVar：`ok.ClothScene`（0 關）、`ok.ClothScene.Frames`、`ok.ClothScene.Reach`、`ok.ClothScene.Log`（形狀數變了就印清單）。PhysX（輔）解算器也會收到（只有 Rust 那半）。
+- **測試用家具**：`ok.ClothSceneBox <前> <右> <上> <長> <寬> <高> [yaw]`（公分，以臀部正下方、腳底高度為原點，沿她面向），`ok.ClothSceneBox hide`（不畫但仍碰撞，看布料停在哪）、`show`、`clear`。
+- **只有 FleX 不夠**：雷電服裝 3「ベンチで寝る1」，長椅 160×45×45 cm（頂面在臀部下 10 cm）：FleX 每次解算前有 817 個粒子在長椅裡、解算後剩 3 個，畫面上裙子照樣直直穿過。原因是 Rust 每幀把布料夾回 DynamicBone 姿勢 30 cm 內（`OK_CLOTH_PX_FREE_MAX`）並往姿勢拉回，而姿勢本身穿過長椅。`OK_CLOTH_FLEX_PURE=1`＋`OK_CLOTH_PX_FREE_MAX=1.5` 也一樣（拉回仍在）。
+- **Rust（`cloth_px.rs`）**：
+  - 姿勢落在家具裡的粒子（`scene_loose`）不夾離姿勢的距離、不往姿勢拉回（到固定點的長度限制仍在）。
+  - 顯示的位置和回饋給 FleX 的修正量最後都推出家具外，離表面 5 mm（`OK_CLOTH_PX_SCENE_GAP`，mm），在地面判定之後。
+  - 推出方向：先沿「固定點 → 粒子」那條線退到它進入家具的地方。從最近的面推出時，長椅中段那片裙子被推到長椅側面外，變成貼著椅側的一片簾子。固定點本身也在家具裡（和服的腰帶一圈，她躺在椅面上）時，改從朝向固定點的那一面出去；最近的面讓和服下半截從椅底、椅端出去，左邊還有零星碎片。
+  - 單元測試 `scene_shapes_push_out_nearest_way`；`cargo test cloth` 54 通過。
+- **結果**：
+  - 讀卡器場景（Template_Default）周圍沒有任何碰撞，日誌 0 個形狀，沒家具時行為不變。
+  - 雷電服裝 3 躺長椅：裙子停在椅面上不穿過（`C:\portable\OpenKoikatsu\Saved\OKControl\shots\25056-0001.png` 有長椅、`C:\portable\OpenKoikatsu\Saved\OKControl\shots\25056-0002.png` 隱藏長椅）。多餘翻折 10.45%（姿勢 1.24%），是攤在椅面上的皺，和坐在地上時同一量級。
+  - FleX 每步 30–80 ms，開關場景形狀一樣：當時另一個 Unreal 占著 GPU（79%），不是家具造成的。
+- **還沒驗證**：和服（服裝 5）「固定點也在家具裡」的修正寫好、單元測試過，還沒在遊戲裡看；「お姉さん座り」與「Demo：女 椅子」配椅子還沒測。測試時讓路給布料巡檢，slot 已釋放。
+- **家具本身的碰撞**：
+  - OK Studio 道具是 `KKPreviewActor` 的程序網格，`CreateMeshSection` 不建碰撞，地圖與道具都查不到。
+  - 1 對 1（`OKHScene.cpp` `PlaceProps`、灰房間）的椅子、桌子是引擎 `Cube`，本身有簡單方塊碰撞，但設成 `NoCollision`。
+  - 選項（都還沒做）：1 對 1 的道具改成 `QueryOnly`（物件類型 WorldStatic、只回應 overlap，不擋角色與相機），就會被查到；Studio 道具要嘛匯入時用包圍盒加一個 `UBoxComponent`（只查詢），要嘛從網格取三角形給 FleX 當三角網格形狀（FleX 支援，主機已有身體網格的同一套路徑）。
+- 頭髮（辮子）不是布料，仍穿過長椅，不在這次範圍。
+
 ### 巡檢：其他服裝跑步（目前預設）
 
 | 卡 | 服裝 | 多餘翻折（各件） | 抖動（姿勢 → 顯示） | 畫面 |
