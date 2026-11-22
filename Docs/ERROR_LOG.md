@@ -7180,3 +7180,16 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **修正**：三處統一為「`okId`，否則扣掉 `okVo`／`okMx`／`okMr` 的 sha256」，C++ 用新檔 `OKCardIdentity.{h,cpp}`＋`OKCardIdentityCore.inl`，ID 一律 `apng-<身分>`，只有不是 PNG 時才退回 `reader:<MD5>`。368 張現有卡三種實作結果逐張相同，Rust／Lua 新舊結果也逐張相同（`Docs/OK_MOD_S2_CARD_CHUNKS.md`）。
 - **行為改變（協調者已同意）**：沒有 `okId` 的卡，讀卡對話以前存在 `mind` 的 `reader:<MD5>` 記憶不會搬到新 ID，這些卡在讀卡對話裡等於重新認識；有 `okId` 的卡（所有 OK 卡）不受影響。
 - **教訓**：同一個「身分」有多處實作時，新增排除規則要一次改齊並用同一批卡交叉比對；C++ 端的雜湊寫成不含 UE 型別的 `.inl`，才能單獨編成小工具和 Rust、Lua 對照。
+
+## 2026-11-23 卡片的 physics.* 下拉經登錄寫不進去（C 組 c-mod-4，OK Mod 工作項 4）
+
+- **症狀**：`reader_call set` 寫 `physics.hair.back = "kawaii"`（卡片 `okPh` 的物理選單，字串值）沒有任何效果，也沒有錯誤。
+- **原因**：`OKCharacterMCPRegistry::SetParameters` 把所有 `physics.` 開頭的鍵都交給身體物理滑桿 `OnBodyPhysicsChanged(…, AsNumber())`。只有 `physics.bustSoftness／bustWeight` 是身體滑桿，卡片屬性的 `physics.*` 是一般屬性，被當成數字 0 丟掉。
+- **修正**：只有 `category != "properties"` 的 `physics.*` 走身體物理，其餘照一般屬性暫存。讀卡器實測選 KawaiiPhysics 後 `reader_call get` 讀回 `kawaii`。
+- **教訓**：用鍵的前綴分派寫入時，前綴相同的兩種資料（身體滑桿與卡片屬性）要看列自己的 `category`，不能只看前綴。
+
+## 2026-11-23 讀卡器新畫面下 ui_widgets 整個是空的（C 組 c-mod-4 發現，未修）
+
+- **症狀**：讀卡器（DreamGUI 新畫面）開著時，`ui_widgets` 回傳 `buttons: []`、`controls: []`，原本鏡像的滑桿與按鈕也不在；`Docs/CARD_READER_DREAMGUI.md` 說 `ui_*` 照舊能操作透明的 UMG 層，目前不成立。
+- **推測（未證實）**：UMG 層設成 `RenderOpacity 0`（`OKGalleryWidget.cpp:1077`），`OKGameControl.cpp` `OnScreen()` 要求 cached geometry 不為 0，透明的控制項可能從沒被量過大小，全被濾掉。
+- **處置**：`OKGameControl.cpp` 歸 F 組（OK Mod 工作項 6），C 組沒改，已在 `Docs/OK_MOD_S4_READER_PREREQ.md` 回報。讀卡器的 MCP 操作暫時用 `ui_exec` 的 `ok.ReaderScreen set／press` 與 `reader_call`。
