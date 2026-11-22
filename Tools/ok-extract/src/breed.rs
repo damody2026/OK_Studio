@@ -336,9 +336,10 @@ fn mix_clothes(blocks: &mut BTreeMap<String, Vec<u8>>, other: &BTreeMap<String, 
     taken
 }
 
-/// Her lower body covered where mixing left it bare (the user, 2026-11-22: 下體沒穿就補上裙子): an outfit without a
-/// bottom whose top came from a parent who wore a bottom with it in that outfit gets that bottom (a top that does not
-/// cover her; a parent who wore it without one, a one-piece or a swimsuit, is left as she was). Hers, not one of the
+/// Her lower body covered where mixing left it bare (the user, 2026-11-22: 下體沒穿就補上裙子): an outfit with a top
+/// and no bottom gets the bottom the top's parent wore in that outfit, else the other parent's. Only when neither wore
+/// one does she stay as she is. (A parent who wore that top without a bottom is no sign it covers her: Raiden's bunny
+/// suit is open in front, and her children showed only underwear.) Hers, not one of the
 /// game's skirts: a garment neither parent wore asks the sealed open questions neither parent's data answers (the
 /// game's プリーツスカートA: skel:bone_implants of co_bot_00), and the outfit went back to the base parent's whole.
 /// Returns the (outfit, bottom gene) taken from the other parent, for her Sideloader and Material Editor entries.
@@ -350,14 +351,14 @@ fn cover_bare_outfits(blocks: &mut BTreeMap<String, Vec<u8>>, base: &BTreeMap<St
         let Some((mut clothes, rest)) = split_coordinate(entry) else { continue };
         if wears(&clothes, 1) || !wears(&clothes, 0) { continue; }
         let top_from_other = taken.iter().any(|(t, g)| *t == o && g.0 == "top");
-        let Some((source, _)) = (if top_from_other { other_c.get(o) } else { base_c.get(o) }).and_then(|e| split_coordinate(e)) else { continue };
-        if !wears(&source, 1) { continue; }
+        let side = |from_other: bool| (if from_other { other_c.get(o) } else { base_c.get(o) }).and_then(|e| split_coordinate(e)).map(|(c, _)| c).filter(|c| wears(c, 1));
+        let Some((source, from_other)) = side(top_from_other).map(|c| (c, top_from_other)).or_else(|| side(!top_from_other).map(|c| (c, !top_from_other))) else { continue };
         let mut parts = clothes_parts(&clothes);
         let (Some(d), Some(v)) = (parts.get_mut(1), clothes_parts(&source).get(1).cloned()) else { continue };
         *d = v;
         map_set(&mut clothes, "parts", Value::Array(parts));
         *entry = join_coordinate(&clothes, &rest);
-        if top_from_other { out.push((o, CLOTHES_GENES[1])); }
+        if from_other { out.push((o, CLOTHES_GENES[1])); }
     }
     if !out.is_empty() { blocks.insert("Coordinate".into(), encode(&Value::Array(mine.into_iter().map(Value::Binary).collect()))); }
     out
@@ -869,8 +870,7 @@ mod tests {
         assert!(mix_clothes(&mut mine, &theirs, false, &mut m, &[0]).is_empty());
         assert_eq!(ids(&mine), [1, 2, 3, 4]);
         assert_eq!(failing_outfits("sealing open failed: outfit 4: x | outfit 4 clothes [1] | outfit 12: y"), [4, 12]);
-        // Bare below: the base (father) wears a one-piece 11 and no bottom; with the mother's top 1 she gets the bottom 2
-        // the mother wore with it. With his own one-piece she stays as he wore it.
+        // Bare below: the base (father) wears top 11 and no bottom; she never stays bare while the mother wears bottom 2.
         let mut skirted_seen = false;
         for seed in 0..64 {
             let (base, other) = (blocks([11, 0, 13, 14]), blocks([1, 2, 3, 4]));
@@ -879,7 +879,7 @@ mod tests {
             let taken = mix_clothes(&mut mine, &other, true, &mut m, &[]);
             let skirted = cover_bare_outfits(&mut mine, &base, &other, &taken);
             let got = ids(&mine);
-            if got[0] == 1 { assert_eq!(got[1], 2, "bare below: {got:?}"); } else { assert!(skirted.is_empty(), "{got:?}"); }
+            assert_eq!(got[1], 2, "bare below: {got:?}");
             assert!(skirted.iter().all(|(o, g)| *o == 0 && g.0 == "bottom"));
             skirted_seen |= !skirted.is_empty();
         }
