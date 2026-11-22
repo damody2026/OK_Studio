@@ -22,6 +22,8 @@ path = "src/main.rs"
 [dependencies]
 zstd = { version = "0.13", features = ["zstdmt"] }
 rmpv = "1"
+# okMx/okMr and the card identity, shared with the OK mod host (Tools/ok-card-mods).
+ok-card-mods = { path = "../ok-card-mods" }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,0 +1,16 @@
+[package]
+name = "ok-card-mods"
+version = "0.1.0"
+edition = "2021"
+description = "What mods store in an OK card (okMx data, okMr resources) and the card identity that leaves them out. Shared by ok-extract and the OK mod host (Docs/OK_MOD_FRAMEWORK_PLAN.md §6.2, §6.12)."
+
+[dependencies]
+rmpv = "1"
+sha2 = "0.10"
+crc32fast = "1"
+zstd = { version = "0.13", optional = true }
+
+[features]
+default = ["resources"]
+# okMr (zstd). The mod host leaves it out until a mod there writes resources.
+resources = ["dep:zstd"]
