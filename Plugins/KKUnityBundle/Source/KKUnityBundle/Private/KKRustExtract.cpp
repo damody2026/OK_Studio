@@ -293,6 +293,12 @@ bool FOkSession::ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,
 	if(R==0&&!OutReport.Contains(TEXT("\"already\":true")))RuntimeMaterials.Reset();
 	return R==0;
 }
+TArray<int32> FOkSession::NonHairAccessories() const
+{
+	TArray<int32> Out;if(!Handle)return Out;
+	Out.SetNumZeroed(512);const int32 N=ok_session_non_hair_accessories(Handle,Out.GetData(),Out.Num());
+	Out.SetNum(FMath::Clamp(N,0,Out.Num()));return Out;
+}
 int32 FOkSession::ApplyCardHairDeck(FString& OutReport)
 {
 	if(!Handle){OutReport=TEXT("no session");return 1;}

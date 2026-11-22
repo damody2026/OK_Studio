@@ -12,6 +12,13 @@
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
+#include "HAL/PlatformProcess.h"
+
+FString OKHairDeckExe(); // OKGalleryHairDeck.cpp
+// HairDeck's square crop of a face picture (OKCardPreviewCapture::BeginHairReference: 768x1024, the face centre in the
+// middle): the face centre 0.48 of the way down, as in HairDeck's reference images.
+static const TCHAR* BreedFaceBox=TEXT("0,143,768,911");
 
 FString UOKCharacterController::BreedParentName(const FString& Path) const
 {
@@ -47,12 +54,37 @@ void UOKCharacterController::BreedChild(uint64 SeedIn,TFunction<void(bool,const 
 		*FPaths::GetBaseFilename(Mother).Left(40),*FPaths::GetBaseFilename(Father).Left(40),Seed));
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
 	bBreeding=true;
-	BreedStatus=FString::Printf(TEXT("配種中（種子 %llu）：%s × %s …（OK 卡要重新封裝，約半分鐘）"),Seed,*BreedParentName(Mother),*BreedParentName(Father));
 	TWeakObjectPtr<UOKCharacterController> Weak(this);
-	Async(EAsyncExecution::Thread,[Weak,Mother,Father,Seed,Output,Done]()
+	// Her hair is HairDeck's, drawn from both parents' faces mixed 40-60% (the share from the seed): their face pictures
+	// first (each opened and pictured once, kept while the card is unchanged).
+	auto Breed=[Weak,Mother,Father,Seed,Output,Done]()
+	{
+	UOKCharacterController* Self=Weak.Get();
+	if(!Self)return;
+	Self->BreedStatus=FString::Printf(TEXT("配種中（種子 %llu）：%s × %s …（OK 卡要重新封裝，約半分鐘）"),Seed,*Self->BreedParentName(Mother),*Self->BreedParentName(Father));
+	const FString MotherFace=BreedFaceCurrent(Mother)?BreedFacePath(Mother):FString(),FatherFace=BreedFaceCurrent(Father)?BreedFacePath(Father):FString();
+	const FString HairExe=OKHairDeckExe();
+	Async(EAsyncExecution::Thread,[Weak,Mother,Father,Seed,Output,Done,MotherFace,FatherFace,HairExe]()
 	{
 		FString Summary;
 		const bool Ok=FOkSession::Breed(Mother,Father,Seed,Output,Summary);
+		if(Ok&&!MotherFace.IsEmpty()&&!FatherFace.IsEmpty()&&!HairExe.IsEmpty())
+		{
+			// The father's share 40-60%, from the seed (the same child each time for the same seed).
+			const double Share=.4+.2*double((Seed*0x9E3779B97F4A7C15ull)>>40)/double(1ull<<24);
+			const FString HairDir=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKBreed/hair")/FPaths::GetBaseFilename(Output));
+			const FString Args=FString::Printf(TEXT("generate --image \"%s\" --box %s --mix \"%s\" --mix-box %s --mix-weight %.3f --seed %llu --out \"%s\""),*MotherFace,BreedFaceBox,*FatherFace,BreedFaceBox,Share,Seed%1000000ull,*HairDir);
+			int32 Code=-1;FString StdOut,StdErr;
+			FPlatformProcess::ExecProcess(*HairExe,*Args,&Code,&StdOut,&StdErr);
+			const FString Cards=HairDir/FString::Printf(TEXT("cards_seed%llu.json"),Seed%1000000ull);
+			FString HairSummary;
+			const FString Opts=FString::Printf(TEXT("{\"mix\":{\"mother\":\"%s\",\"father\":\"%s\",\"father_share\":%.3f}}"),
+				*FPaths::GetCleanFilename(Mother).ReplaceCharWithEscapedChar(),*FPaths::GetCleanFilename(Father).ReplaceCharWithEscapedChar(),Share);
+			if(Code!=0||!FPaths::FileExists(Cards))Summary+=FString::Printf(TEXT("; HairDeck hair not made (%d): %s"),Code,*StdErr.TrimStartAndEnd().Right(300));
+			else if(!FOkSession::CardHairDeck(Output,Cards,Opts,Output,HairSummary))Summary+=TEXT("; HairDeck hair not kept: ")+HairSummary;
+			else Summary+=FString::Printf(TEXT("; HairDeck hair mixed from both (father %.0f%%): %s"),Share*100.0,*HairSummary);
+		}
+		else if(Ok)Summary+=FString::Printf(TEXT("; no HairDeck mix (faces %s/%s, ok-hairdeck %s)"),MotherFace.IsEmpty()?TEXT("-"):TEXT("ok"),FatherFace.IsEmpty()?TEXT("-"):TEXT("ok"),HairExe.IsEmpty()?TEXT("missing"):TEXT("ok"));
 		AsyncTask(ENamedThreads::GameThread,[Weak,Seed,Output,Ok,Summary,Done]()
 		{
 			UE_LOG(LogTemp,Display,TEXT("OK breed seed %llu -> %s: %s"),Seed,*Output,*Summary);
@@ -90,6 +122,67 @@ void UOKCharacterController::BreedChild(uint64 SeedIn,TFunction<void(bool,const 
 			}),0.25f);
 		});
 	});
+	};
+	BreedStatus=FString::Printf(TEXT("拍父母的臉（孩子的頭髮由兩人的頭髮混合生成）：%s × %s …"),*BreedParentName(Mother),*BreedParentName(Father));
+	EnsureBreedFace(Mother,[Weak,Father,Breed](bool)
+	{
+		if(UOKCharacterController* Self=Weak.Get())Self->EnsureBreedFace(Father,[Breed](bool){Breed();});
+	});
+}
+
+FString UOKCharacterController::BreedFacePath(const FString& Card)
+{
+	const FTCHARToUTF8 Utf8(*FPaths::ConvertRelativePathToFull(Card).ToLower());
+	FMD5 Md5;Md5.Update(reinterpret_cast<const uint8*>(Utf8.Get()),Utf8.Length());
+	uint8 Digest[16];Md5.Final(Digest);
+	const FString Key=BytesToHex(Digest,16);
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKBreed/faces")/(Key+TEXT(".png")));
+}
+
+bool UOKCharacterController::BreedFaceCurrent(const FString& Card)
+{
+	const FDateTime Face=IFileManager::Get().GetTimeStamp(*BreedFacePath(Card)),Of=IFileManager::Get().GetTimeStamp(*Card);
+	return Face!=FDateTime::MinValue()&&Of!=FDateTime::MinValue()&&Face>=Of;
+}
+
+void UOKCharacterController::EnsureBreedFace(const FString& Card,TFunction<void(bool)> Next)
+{
+	if(BreedFaceCurrent(Card)){Next(true);return;}
+	TWeakObjectPtr<UOKCharacterController> Weak(this);
+	auto Capture=[Weak,Card,Next]()
+	{
+		UOKCharacterController* Self=Weak.Get();
+		if(!Self||!IsValid(Self->PreviewActor)){Next(false);return;}
+		OKCardPreviewCapture::BeginHairReference(Self->PreviewActor,[Card,Next](TArray<TArray<uint8>> Views,FString Error)
+		{
+			const FString Face=BreedFacePath(Card);
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Face),true);
+			const bool bOk=Error.IsEmpty()&&Views.Num()>0&&Views[0].Num()>0&&FFileHelper::SaveArrayToFile(Views[0],*Face);
+			UE_LOG(LogTemp,Display,TEXT("OK breed face %s -> %s: %s"),*Card,*Face,bOk?TEXT("ok"):*Error);
+			Next(bOk);
+		});
+	};
+	if(IsValid(PreviewActor)&&FPaths::IsSamePath(PreviewCardPath,Card)&&!bLoadInFlight){Capture();return;}
+	bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Card).IsEmpty();
+	int32 Index=Entries.IndexOfByPredicate([&](const FKKCardListEntry& E){return FPaths::IsSamePath(E.Path,Card);});
+	if(Index==INDEX_NONE){FKKCardListEntry E;E.Path=Card;E.FileName=FPaths::GetCleanFilename(Card);Index=Entries.Add(E);}
+	SelectIndex(Index);
+	if(SelectedIndex!=Index){Next(false);return;}
+	OutfitIndex=0;RefreshOutfitList();OnLoad3D();
+	const double Until=FPlatformTime::Seconds()+180.0;
+	TSharedRef<double> ShownAt=MakeShared<double>(0.0);
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak,Card,Until,ShownAt,Capture,Next](float)->bool
+	{
+		UOKCharacterController* Self=Weak.Get();
+		if(!Self){Next(false);return false;}
+		const double Now=FPlatformTime::Seconds();
+		if(!(IsValid(Self->PreviewActor)&&FPaths::IsSamePath(Self->PreviewCardPath,Card)&&!Self->bLoadInFlight))
+		{*ShownAt=0.0;if(Now<Until)return true;Next(false);return false;}
+		if(*ShownAt==0.0){*ShownAt=Now;return true;}
+		if(Now-*ShownAt<1.5)return true;
+		Capture();
+		return false;
+	}),0.25f);
 }
 
 void UOKCharacterController::ExportBredChild(const FString& PathIn,TFunction<void(bool,const FString&)> Done)
@@ -133,15 +226,22 @@ void UOKCharacterController::PictureBredChild(const FString& Output,TFunction<vo
 		Self->BreedStatus=FString::Printf(TEXT("生出 %s%s\n%s"),*Self->BreedParentName(Output),bPictured?TEXT("。"):*(TEXT("（卡片圖沒換：")+Note+TEXT("）")),*Output);
 		Done(true,Output);
 	};
-	OKCardPreviewCapture::Begin(PreviewActor,[Picture,Output,Finish](TArray<TArray<uint8>> Views,FString Error)
+	OKCardPreviewCapture::Begin(PreviewActor,[Weak,Picture,Output,Finish](TArray<TArray<uint8>> Views,FString Error)
 	{
 		if(!Error.IsEmpty()||Views.Num()<2||Views[1].Num()==0||!FFileHelper::SaveArrayToFile(Views[1],*Picture)){Finish(false,Error.IsEmpty()?TEXT("拍照失敗"):Error);return;}
 		// The card rewritten (tens of MB) off the game thread.
-		Async(EAsyncExecution::Thread,[Picture,Output,Finish]()
+		Async(EAsyncExecution::Thread,[Weak,Picture,Output,Finish]()
 		{
 			FString Summary;
 			const bool Ok=FOkSession::BreedPicture(Output,Picture,Output,Summary);
-			AsyncTask(ENamedThreads::GameThread,[Ok,Summary,Finish](){UE_LOG(LogTemp,Display,TEXT("OK breed picture: %s"),*Summary);Finish(Ok,Summary);});
+			AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Finish]()
+			{
+				UE_LOG(LogTemp,Display,TEXT("OK breed picture: %s"),*Summary);
+				// Her face too (her own children's hair), after the card is rewritten so it is newer than the card.
+				UOKCharacterController* Self=Weak.Get();
+				if(!Self){Finish(Ok,Summary);return;}
+				Self->EnsureBreedFace(Output,[Ok,Summary,Finish](bool){Finish(Ok,Summary);});
+			});
 		});
 	});
 }

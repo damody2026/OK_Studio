@@ -34,11 +34,13 @@ pub struct HairDeckOpts {
     #[serde(default)] pub rigid: bool,
     /// One colour for all cards (sRGB 0..1) when the cards file has none.
     #[serde(default)] pub hair_color: Option<[f32; 3]>,
+    /// A bred child's hair drawn from both parents' faces (mother, father, father_share): a record only.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub mix: Option<serde_json::Value>,
 }
 fn yes() -> bool { true }
 fn one() -> f32 { 1.0 }
 impl Default for HairDeckOpts {
-    fn default() -> Self { Self { native: true, scale: 1.0, offset: [0.0; 3], frame_w: None, frame_o: None, rigid: false, hair_color: None } }
+    fn default() -> Self { Self { native: true, scale: 1.0, offset: [0.0; 3], frame_w: None, frame_o: None, rigid: false, hair_color: None, mix: None } }
 }
 
 #[derive(Deserialize)]
@@ -464,6 +466,36 @@ fn card_hair_slots(s: &OkSession) -> Vec<String> {
             let on_head = on_hair || socket.starts_with("a_n_head");
             if a.type_id == 121 || on_hair || (on_head && info.hair_acc.contains_key(&(o, k as i32))) { out.push(format!("outfit{o}.accessory{k}")); }
         }
+    }
+    out
+}
+
+/// Session parts that are accessories but not her hair (bunny ears, hats, pins and ribbons): what a picture of her
+/// face for HairDeck leaves out, else HairDeck draws them as hair (the user, 2026-11-22). A slot is hair when one of its
+/// renderers is (a hair shader, or "hair" / "kami" in its mesh or renderer name), or it is a hair-category (121)
+/// accessory; the whole slot then stays (Raiden's hair has a main_item layer under the same mesh). Not by socket: her
+/// bunny ears sit on a hair socket and her long hair on the head one. HairDeck hair stays.
+pub fn non_hair_accessory_parts(s: &OkSession) -> Vec<usize> {
+    let slot = |sp: &str| -> String { match sp.match_indices('.').nth(1) { Some((i, _)) => sp[..i].to_string(), None => sp.to_string() } };
+    let hairish = |p: &crate::session::SessionPart| {
+        let shader = p.source_material.as_ref().map(|m| m.shader.to_ascii_lowercase()).unwrap_or_default();
+        let named = |n: &str| { let n = n.to_ascii_lowercase(); n.contains("hair") || n.contains("kami") };
+        shader.contains("main_hair") || named(&p.name) || p.source_renderer_names.iter().any(|r| named(r))
+    };
+    let mut hair: std::collections::HashSet<String> = card_hair_category_slots(s).into_iter().collect();
+    for p in s.parts.iter().filter(|p| p.role == "accessory" && hairish(p)) { if let Some(sp) = &p.source_property { hair.insert(slot(sp)); } }
+    s.parts.iter().enumerate().filter(|(_, p)| p.role == "accessory" && !p.name.starts_with("Tripo_")
+        && !p.source_property.as_ref().is_some_and(|sp| hair.contains(&slot(sp))))
+        .map(|(i, _)| i).collect()
+}
+/// `outfit<o>.accessory<k>` of the session's card in the hair category (121, 髪).
+fn card_hair_category_slots(s: &OkSession) -> Vec<String> {
+    let Some(path) = s.card_path.as_deref() else { return Vec::new() };
+    let Ok(first) = crate::card::parse_card_outfit(path, 0) else { return Vec::new() };
+    let mut out = Vec::new();
+    for o in 0..first.coordinate_count.max(1) as i32 {
+        let info = if o == 0 { first.clone() } else { match crate::card::parse_card_outfit(path, o) { Ok(i) => i, Err(_) => continue } };
+        for (k, a) in info.accessory.iter().enumerate() { if a.type_id == 121 { out.push(format!("outfit{o}.accessory{k}")); } }
     }
     out
 }

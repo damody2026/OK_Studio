@@ -33,6 +33,9 @@
 
 namespace OKCardPreviewCapture
 {
+// Face-mesh widths across a HairDeck reference view: in its reference images the face is about a third of the crop (the
+// face mesh is about twice as wide as the face that shows).
+static constexpr double HairRefWidth=1.5;
 struct FJob : TSharedFromThis<FJob>
 {
     TWeakObjectPtr<AKKPreviewActor> Actor;
@@ -47,6 +50,10 @@ struct FJob : TSharedFromThis<FJob>
     int32 View=0, Waits=0;
     // Body-only (OK card): views 1..3 are captured and View starts at 1.
     bool BodyOnly=false;
+    // HairDeck reference (breeding): view 0 only, the face mesh's bounds (no hair or ears) centred, HairRefWidth face
+    // widths across, framed like HairDeck's reference images (head and shoulders).
+    bool HairRef=false;
+    FBox FaceMesh{ForceInit};
     uint64 Frame=0, ObservedFrame=MAX_uint64;
     double Started=FPlatformTime::Seconds();
     FTimerHandle Timer;
@@ -99,10 +106,18 @@ struct FJob : TSharedFromThis<FJob>
             {Finish(TEXT("無法讀取預覽視圖 render target"));return;}
             RawViews.Add(MoveTemp(Pixels));
             Pending=false;++View;
-            if(View==4){Finish(FString());return;}
+            if(View==(HairRef?1:4)){Finish(FString());return;}
         }
         // Allow initial texture/shader streaming, the studio scene (and a T-pose switch) to settle.
         if(RawViews.IsEmpty() && Waits<90) return;
+        if(HairRef)
+        {
+            const FVector Look=FaceMesh.GetCenter();
+            C->SetWorldLocationAndRotation(Look+FVector(0,1,0)*500,FVector(0,-1,0).Rotation());
+            C->OrthoWidth=FaceMesh.GetSize().X*HairRefWidth;
+            C->CaptureScene();Frame=GFrameCounter;Pending=true;
+            return;
+        }
         const FBox& Bounds=View==0?Face:Body;
         const FVector Look=Bounds.GetCenter();
         const FVector Axis=View==2?FVector(-1,0,0):View==3?FVector(0,-1,0):FVector(0,1,0);
@@ -113,9 +128,11 @@ struct FJob : TSharedFromThis<FJob>
     }
 };
 
-static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly);
+static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly,bool bHairRef=false);
 
 void Begin(AKKPreviewActor* Actor,FComplete Complete){Start(Actor,MoveTemp(Complete),false);}
+
+void BeginHairReference(AKKPreviewActor* Actor,FComplete Complete){Start(Actor,MoveTemp(Complete),false,true);}
 
 void BeginTPoseViews(AKKPreviewActor* Actor,FComplete Complete)
 {
@@ -130,11 +147,11 @@ void BeginTPoseViews(AKKPreviewActor* Actor,FComplete Complete)
     }),.3f,false);
 }
 
-static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly)
+static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly,bool bHairRef)
 {
     if(!IsValid(Actor)||!Actor->GetWorld()){Complete({},TEXT("請先載入角色 3D"));return;}
     auto Job=MakeShared<FJob>();Job->Actor=Actor;Job->World=Actor->GetWorld();Job->Complete=MoveTemp(Complete);
-    Job->BodyOnly=bBodyOnly;Job->View=bBodyOnly?1:0;
+    Job->BodyOnly=bBodyOnly;Job->HairRef=bHairRef;Job->View=bBodyOnly?1:0;
     // The views are encoded on workers; the module is loaded here, on the game thread.
     FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
     Job->WasTicking=Actor->IsActorTickEnabled();Actor->SetActorTickEnabled(false);
@@ -161,6 +178,7 @@ static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly)
         const FVector Center=Job->Body.GetCenter();const double Top=Job->Body.Max.Z;
         Job->Face=FBox(FVector(Center.X-12,Center.Y-12,Top-32),FVector(Center.X+12,Center.Y+12,Top));
     }
+    Job->FaceMesh=Job->Face;
     // Include nearby hair above the face, without pulling T-pose hands into the crop.
     const FBox Face=Job->Face;const FVector Center=Face.GetCenter();
     for(const auto& P:Points) if(P.Z>=Face.Min.Z-2&&P.Z<=Face.Max.Z+18&&FMath::Abs(P.X-Center.X)<Face.GetSize().X*.85&&FMath::Abs(P.Y-Center.Y)<30)Job->Face+=P;
@@ -170,6 +188,17 @@ static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly)
     Capture->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR;Capture->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
     Capture->ShowOnlyActorComponents(Actor);
     for(TActorIterator<AActor> It(Actor->GetWorld());It;++It) if(It->ActorHasTag(TEXT("OKStudioBackdrop")))Capture->ShowOnlyActorComponents(*It);
+    if(bHairRef)
+    {
+        // Her accessories that are not her hair (bunny ears, hats, pins) are left out: HairDeck draws whatever sits on
+        // her head as hair (the user, 2026-11-22). Hair made of accessories stays.
+        const TSet<int32> Hide(Actor->Session.NonHairAccessories());
+        TSet<FName> Tags;for(int32 I:Hide)Tags.Add(*FString::Printf(TEXT("KKSessionPart_%d"),I));
+        TArray<UPrimitiveComponent*> Prims;Actor->GetComponents(Prims);
+        for(UPrimitiveComponent* P:Prims) for(const FName& T:P->ComponentTags) if(Tags.Contains(T)){Capture->HideComponent(P);break;}
+        for(const auto& Part:Actor->Parts) if(Hide.Contains(Part.SessionIndex)&&IsValid(Part.Comp))Capture->HideComponent(Part.Comp);
+        UE_LOG(LogTemp,Display,TEXT("OK HairDeck reference: %d accessory parts left out"),Hide.Num());
+    }
     Capture->ShowFlags.SetTemporalAA(false);Capture->ShowFlags.SetMotionBlur(false);
     if(Actor->StudioCam)Capture->PostProcessSettings=Actor->StudioCam->GetCameraComponent()->PostProcessSettings;
     Capture->PostProcessBlendWeight=1;

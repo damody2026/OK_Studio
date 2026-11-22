@@ -450,6 +450,13 @@ public:
 	void BreedChild(uint64 Seed = 0, TFunction<void(bool, const FString&)> Done = nullptr);
 	/** A card's name as the list shows it, else its file name. */
 	FString BreedParentName(const FString& Path) const;
+	/** Her front face picture (the card capture's face view), the reference HairDeck mixes a child's hair from:
+	 *  Saved/OKBreed/faces/<hash of the path>.png, current while it is newer than the card. */
+	static FString BreedFacePath(const FString& Card);
+	static bool BreedFaceCurrent(const FString& Card);
+	/** Card's face picture kept (BreedFacePath): she is opened and pictured unless a current one is there. Next(true)
+	 *  once there is one. */
+	void EnsureBreedFace(const FString& Card, TFunction<void(bool)> Next);
 	/** The child at Output, shown now, pictured by the front view of the card capture (her own picture on the wall). */
 	void PictureBredChild(const FString& Output, TFunction<void(bool, const FString&)> Done);
 	/** A child carries only what her parents' cards do not and opens with theirs: the selected card (or Path) written as

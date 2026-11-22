@@ -28,8 +28,8 @@ bool UOKCharacterController::ApplyHairDeckHair(const FString& CardsJson,const FS
 	return true;
 }
 
-// ok-hairdeck (Tools/ok-hairdeck, Docs/HAIRDECK.md) as OK Studio finds it.
-static FString OKHairDeckExe()
+// ok-hairdeck (Tools/ok-hairdeck, Docs/HAIRDECK.md) as OK Studio finds it; breeding (OKGalleryBreed.cpp) uses it too.
+FString OKHairDeckExe()
 {
 	for(const FString& P:{FPaths::ProjectDir()/TEXT("Tools/ok-hairdeck/target/release/ok-hairdeck.exe"),FPaths::ProjectDir()/TEXT("Tools/ok-hairdeck/ok-hairdeck.exe"),
 		FPaths::LaunchDir()/TEXT("ok-hairdeck/ok-hairdeck.exe")})

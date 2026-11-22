@@ -347,6 +347,8 @@ public:
 	bool ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
 	/** The HairDeck hair her card keeps (okHk) put on: 0 put on, 2 the card keeps none, 1 error (OutReport). */
 	int32 ApplyCardHairDeck(FString& OutReport);
+	/** Session part indices of her accessories that are not her hair (bunny ears, hats...), left out of a HairDeck face picture. */
+	TArray<int32> NonHairAccessories() const;
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
 	// pair contacts. False: no penis. OutDegrees: turned now.
 	bool AimPenis(const FVector& UnityDir,float& OutDegrees);

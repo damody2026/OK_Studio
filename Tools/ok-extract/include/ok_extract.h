@@ -97,6 +97,9 @@ int32_t ok_session_apply_hairdeck(OkSession* s,const char* cards,const char* opt
 /* HairDeck hair kept in a card (okHk): card with the hair of cards (empty: the card's own hair back), written to out. */
 /* The HairDeck hair her card keeps (okHk) put on the session: 0 put on (report in out), 2 none, 1 error. */
 int32_t ok_session_apply_card_hairdeck(OkSession* s,char* out,int32_t cap);
+/* Session part indices of accessories that are not her hair (left out of a HairDeck face picture): up to cap into out;
+   returns the count, -1 without a session. */
+int32_t ok_session_non_hair_accessories(OkSession* s,int32_t* out,int32_t cap);
 int32_t ok_card_hairdeck(const char* card,const char* cards,const char* opts,const char* out,char* msg,int32_t cap);
 int32_t ok_session_prepare_studio_ik(OkSession* s,const char* root,char* err,int32_t cap);
 int32_t ok_session_set_studio_ik(OkSession* s,const int32_t* effectors,const float* positions,int32_t count);

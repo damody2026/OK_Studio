@@ -568,6 +568,15 @@ pub unsafe extern "C" fn ok_session_apply_card_hairdeck(s:*mut OkSession,out:*mu
     })).unwrap_or_else(|_|Err("HairDeck hair panicked".into()));
     match result { Ok(Some(r))=>{write_err(out,cap,&r.to_string());0}, Ok(None)=>2, Err(e)=>{write_err(out,cap,&e);1} }
 }
+/// Session part indices of accessories that are not her hair (`portable::hairdeck::non_hair_accessory_parts`), up to
+/// `cap` written to `out`; the count, or -1 without a session.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_non_hair_accessories(s:*mut OkSession,out:*mut i32,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let v=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||crate::portable::hairdeck::non_hair_accessory_parts(s))).unwrap_or_default();
+    if !out.is_null(){for (k,i) in v.iter().take(cap.max(0) as usize).enumerate(){*out.add(k)=*i as i32;}}
+    v.len() as i32
+}
 /// Keeps HairDeck hair in a card (`okHk`, `portable::hairdeck::with_hair`): `card` with the hair of `cards` (a
 /// `cards_seed<s>.json`, chains beside it; empty: the card's own hair back) and `opts` (HairDeckOpts JSON, empty: the
 /// defaults), written to `out` (may be `card`). 0 and a one-line summary in `msg`, or 1 and the error.
