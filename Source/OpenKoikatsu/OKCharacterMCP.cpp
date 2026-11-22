@@ -532,6 +532,9 @@ void UOKCharacterController::TickCharacterMCP()
    ExportBredChild(Path,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   // HairDeck hair: "hairdeck" puts a cards_seed<s>.json on her ("cards", "opts" JSON text); "hairdeck_save" keeps what
   // she wears in her card ("out": another file; "remove": the card's own hair back).
+  // The open card's picture replaced by a photo of her as she shows now (as a bred child is pictured).
+  else if(Command==TEXT("breed_picture")){if(!PreviewActor||PreviewCardPath.IsEmpty()||bBreeding){Finish(S,nullptr,TEXT("No open card, or a breeding is running"));return;}
+   bBreeding=true;PictureBredChild(PreviewCardPath,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_picture %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   else if(Command==TEXT("hairdeck")&&S.Request->HasField(TEXT("image"))){FString Image;S.Request->TryGetStringField(TEXT("image"),Image);GenerateHairDeckHair(Image);
    UE_LOG(LogTemp,Display,TEXT("MCP hairdeck generate: %s"),*HairDeckStatus);if(!bHairDeckBusy){Finish(S,nullptr,HairDeckStatus);return;}}
   else if(Command==TEXT("hairdeck")){FString Cards,Opts;if(!S.Request->TryGetStringField(TEXT("cards"),Cards)||!IFileManager::Get().FileExists(*Cards)){Finish(S,nullptr,TEXT("Provide an existing cards_seed<s>.json, or an image to generate from"));return;}
