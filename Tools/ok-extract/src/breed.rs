@@ -123,13 +123,17 @@ impl Mixer {
         }
         x
     }
-    fn colour(&mut self, a: &[Value], b: &[Value]) -> Vec<Value> {
+    /// A colour between the parents'. Hair colours mix in HSV (the user, 2026-11-22: 髮色要用 HSV 混，才不會愈混愈黑):
+    /// RGB halfway between two saturated colours is greyer and darker, and generations of it went black.
+    fn colour(&mut self, a: &[Value], b: &[Value], hsv: bool) -> Vec<Value> {
         let w = self.rng.range(0.2, 0.8);
         let shift = self.rng.chance(0.05);
         let jitter: Vec<f64> = (0..a.len()).map(|_| if shift { self.rng.normal() * 0.06 } else { 0.0 }).collect();
+        let f = |v: &[Value], i: usize| v.get(i).and_then(as_f64).unwrap_or(0.0);
+        let rgb = (hsv && a.len() >= 3 && b.len() >= 3).then(|| hsv_mix([f(a, 0), f(a, 1), f(a, 2)], [f(b, 0), f(b, 1), f(b, 2)], w));
         a.iter().zip(b).enumerate().map(|(i, (x, y))| {
             let (p, q) = (as_f64(x).unwrap_or(0.0), as_f64(y).unwrap_or(0.0));
-            let mut c = p + (q - p) * w;
+            let mut c = match rgb { Some(m) if i < 3 => m[i], _ => p + (q - p) * w };
             if i < 3 { c = (c + jitter[i]).clamp(0.0, 1.0); }
             like(x, c)
         }).collect()
@@ -150,7 +154,7 @@ impl Mixer {
             (Value::Array(xa), Value::Array(xb)) if xa.len() == xb.len() => {
                 let floats = |x: &Vec<Value>| !x.is_empty() && x.iter().all(|v| as_f64(v).is_some());
                 if xa.len() == 4 && floats(xa) && floats(xb) && path.to_ascii_lowercase().contains("color") {
-                    Value::Array(self.colour(xa, xb))
+                    Value::Array(self.colour(xa, xb, section == "hair"))
                 } else {
                     Value::Array(xa.iter().zip(xb).enumerate().map(|(i, (x, y))| self.mix(section, &format!("{path}.{i}"), x, y)).collect())
                 }
@@ -164,6 +168,28 @@ impl Mixer {
             }
         }
     }
+}
+
+fn rgb_to_hsv([r, g, b]: [f64; 3]) -> [f64; 3] {
+    let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+    let d = mx - mn;
+    let h = if d <= 1e-9 { 0.0 } else if mx == r { ((g - b) / d).rem_euclid(6.0) / 6.0 } else if mx == g { ((b - r) / d + 2.0) / 6.0 } else { ((r - g) / d + 4.0) / 6.0 };
+    [h, if mx <= 1e-9 { 0.0 } else { d / mx }, mx]
+}
+fn hsv_to_rgb([h, s, v]: [f64; 3]) -> [f64; 3] {
+    let h6 = h.rem_euclid(1.0) * 6.0;
+    let (i, f) = (h6.floor(), h6 - h6.floor());
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    match i as i32 { 0 => [v, t, p], 1 => [q, v, p], 2 => [p, v, t], 3 => [p, q, v], 4 => [t, p, v], _ => [v, p, q] }
+}
+/// `a` to `b` by `w` in HSV: hue the short way round (a near-grey colour has no hue: the other's is taken), saturation
+/// and value straight.
+fn hsv_mix(a: [f64; 3], b: [f64; 3], w: f64) -> [f64; 3] {
+    let (x, y) = (rgb_to_hsv(a), rgb_to_hsv(b));
+    let (hx, hy) = (if x[1] < 0.05 { y[0] } else { x[0] }, if y[1] < 0.05 { x[0] } else { y[0] });
+    let mut dh = hy - hx;
+    if dh > 0.5 { dh -= 1.0; } else if dh < -0.5 { dh += 1.0; }
+    hsv_to_rgb([hx + dh * w, x[1] + (y[1] - x[1]) * w, x[2] + (y[2] - x[2]) * w])
 }
 
 // ------------------------------------------------------------------ names
@@ -823,6 +849,16 @@ mod tests {
         let out = m.mix("hair", "baseColor", &c(0.0), &c(1.0));
         let v: Vec<f64> = out.as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
         assert!((v[0] - v[1]).abs() < 0.2 && (v[1] - v[2]).abs() < 0.2 && v[3] == 1.0, "{v:?}");
+        // Hair in HSV: red and blue meet as a bright purple, not RGB's darker half.
+        for seed in 0..32 {
+            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+            let rgb = |r: f32, g: f32, b: f32| Value::Array(vec![Value::F32(r), Value::F32(g), Value::F32(b), Value::F32(1.0)]);
+            let out = m.mix("hair", "parts.0.baseColor", &rgb(0.9, 0.1, 0.1), &rgb(0.1, 0.1, 0.9));
+            let v: Vec<f64> = out.as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
+            assert!(v[0].max(v[1]).max(v[2]) > 0.8, "darker than the parents: {v:?}");
+        }
+        let back = hsv_to_rgb(rgb_to_hsv([0.3, 0.6, 0.2]));
+        assert!((back[0] - 0.3).abs() < 1e-9 && (back[1] - 0.6).abs() < 1e-9 && (back[2] - 0.2).abs() < 1e-9);
     }
 
     #[test]

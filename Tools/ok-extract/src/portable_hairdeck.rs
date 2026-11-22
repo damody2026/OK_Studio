@@ -624,7 +624,10 @@ pub fn with_hair(card: &[u8], cards: Option<&Path>, opts: &HairDeckOpts) -> Resu
     let name = cards.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let chains_path = cards.with_file_name(name.replacen("cards_", "chains_", 1));
     let chains = if name.starts_with("cards_") && chains_path.ok_is_file() { Some(read_json(&chains_path)?) } else { None };
-    let saved = Saved { format: FORMAT.into(), version: 1, cards: deck, chains, opts: opts.clone(), hair_color: card_hair_color(card),
+    // A bred child's hair drawn from her parents' faces (`mix`) has their colours as the model saw them; kept against
+    // its own mean colour, it opens moved to her card's hair colour (mixed in HSV by breeding), so it follows her genes.
+    let hair_color = if opts.mix.is_some() { deck_mean_color(&deck).or_else(|| card_hair_color(card)) } else { card_hair_color(card) };
+    let saved = Saved { format: FORMAT.into(), version: 1, cards: deck, chains, opts: opts.clone(), hair_color,
         source: cards.parent().and_then(|d| d.file_name()).map(|d| format!("{}/{name}", d.to_string_lossy())) };
     let payload = zstd::stream::encode_all(&serde_json::to_vec(&saved).map_err(|e| e.to_string())?[..], 9).map_err(|e| e.to_string())?;
     crate::tree_answers::with_chunk(card, CHUNK, &payload)
@@ -639,6 +642,18 @@ pub fn put_into_card(card: &Path, cards: Option<&Path>, opts: &HairDeckOpts, out
         Some(p) => format!("HairDeck hair kept in the card ({} bytes)", p.len()),
         None => "the card's own hair".into(),
     })
+}
+
+/// The mean of the cards' colours (sRGB 0..1), None without any.
+fn deck_mean_color(cards: &serde_json::Value) -> Option<[f32; 3]> {
+    let (mut sum, mut n) = ([0f64; 3], 0usize);
+    for c in cards.as_array().into_iter().flatten().filter_map(|card| card.get("colors")).filter_map(|c| c.as_array()).flatten() {
+        let Some(rgb) = c.as_array() else { continue };
+        if rgb.len() < 3 { continue; }
+        for i in 0..3 { sum[i] += rgb[i].as_f64().unwrap_or(0.0); }
+        n += 1;
+    }
+    (n > 0).then(|| [0, 1, 2].map(|i| (sum[i] / n as f64) as f32))
 }
 
 /// Cards whose colours are moved by `shift` (clamped to 0..1).
