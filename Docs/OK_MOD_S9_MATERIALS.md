@@ -199,3 +199,56 @@ _DetailTex = "textures/detail.png"                          # mod 資料夾內�
 - **`content_build` 的引擎部分**是 `FEngineVersion::Current()`。原始碼建置的 changelist 是 0，所以 C、E、F 三份 5.8.4 引擎的值相同。真正擋住不相容 shader 的是 shader 庫自己的格式檢查，加上 ini 的 `ContentBuild`：遊戲改到會破壞舊 mod 內容時要手動加 1。
 - **`copy_source_values` 的顏色換算**：一律把卡片顏色當 sRGB 轉 linear。對本來就是線性值的參數（例如被當顏色存的數值）會算錯；glass 範例關掉了這個選項。
 - **白名單的 Rust 版本**仍在 Lua（`modkit_cook.lua --verify`），與遊戲端 C++ 是兩份實作。
+
+## D2（`.dui` 畫面，工作項 9b）的事前評估：怎麼確認「只有 DreamGUI 編譯器產生的節點」
+
+協調者要求先讀 DreamGUI 編譯器（`Plugins/DreamGUI/Source/DreamGUIEditor`），評估 §6.13 那條規則怎麼檢查。只讀了程式，沒有實作也沒有實驗。
+
+**讀到的事實**：
+
+1. **產物的類別不是 `WidgetBlueprintGeneratedClass`**：DreamGUI 的 widget Blueprint 編出來的是 `UDreamWidgetGeneratedClass`（`DreamWidgetBlueprintCompiler.cpp`），父類別由 manifest 的 `parent` 指定，預設 `UDreamTextUserWidget`（`DreamUICompileWidgetsCommandlet.h`）。§6.13 的白名單要寫這個類別。
+2. **編譯器自己就會產生 Blueprint 圖與位元組碼**，所以「沒有圖」不能當條件：
+   - `Text/DreamUIExpressionThunks.cpp` 會把 `.dui` 的 binding、emit、route 寫成真的 K2 函式圖，加進 `Blueprint->FunctionGraphs`；
+   - 函式名前綴分別是 `__DreamBinding_`、`__DreamEmit_`、`__DreamRoute_`；
+   - 圖裡有 `UK2Node_CallFunction`、`VariableGet`／`VariableSet`、`IfThenElse`、`FunctionResult`；
+   - 另外 `DeclareDispatcher` 會產生 dispatcher 的簽章圖（`DelegateSignatureGraphs`）。
+3. **表達式能呼叫的函式範圍**：
+   - 自己類別上的函式（`FindSelfFunction`）；
+   - 成員路徑上各類別的 BlueprintCallable setter（`Set<成員>`）；
+   - `UKismetMathLibrary`、`UKismetStringLibrary`；
+   - 編譯器自己會插入 `KismetSystemLibrary::IsValid` 與 `FieldNotificationLibrary::BroadcastFieldValueChanged`。
+4. **view model 可以 `= new` 任何具體類別**：`.dui` 寫類別路徑，任何 `/Script/` 類別都行（`DreamWidgetBlueprintCompiler.cpp` 約 420–445、921 行），執行時就會建出那個物件。成員與 view model 的型別也是任意類別。
+5. **cook 之後編輯器圖會被剝掉**，打包遊戲裡只剩 `UFunction` 的位元組碼（`Script`）。宿主掛載時看不到圖，也沒有編譯器可以重編。
+
+**建議的檢查方式（三層）**：
+
+1. **ModKit 只從 `.dui` 生成，不收作者的 widget `.uasset`**：
+   - 每次 cook 前刪掉舊資產，在乾淨的 cook 主機用 `DreamUICompileWidgets -Manifest` 重新建立再 cook；
+   - 父類別由 ModKit 決定（`UDreamTextUserWidget` 或之後 OK 自己的基底），不讓 manifest 指定；
+   - 這樣「只有編譯器產生的節點」是由流程保證，不必事後猜。
+   - 另外要注意：`DreamUIExpressionThunks.cpp` 的註解提到，名稱衝突時 `CreateNewGraph` 會把舊圖改名成 `EdGraph_0` 留在 `FunctionGraphs`，所以一定要從乾淨的資產重建，不要增量編譯。
+2. **`ok-mod-pack verify`／`modkit_cook.lua --verify`（有編輯器）**：
+   - 同一份 `.dui` 再編一次，比對每個 `UFunction` 的名稱、參數與 `Script` 位元組碼雜湊，以及屬性清單與 widget 樹；
+   - cook 產物的位元組不一定穩定，所以比結構與位元組碼，不比整個檔案。
+   - 同時在編譯前，用 `.dui` 的 AST 擋掉範圍外的東西：
+     - view model 的 `= new`／`global` 與成員型別只能用白名單類別（DreamGUI 控制項、核心提供的 mod 值 view model）；
+     - `use` 只能引用讀卡器主題與 DreamGUI 內建庫。
+3. **宿主掛載時（打包遊戲，沒有編譯器）**，在現有 B 層白名單之外，對每個 `UDreamWidgetGeneratedClass` 另外檢查：
+   - 父類別必須是允許的基底；
+   - 每個 `UFunction` 的名稱只能是三個前綴之一，或 dispatcher 簽章（`__DelegateSignature`）；
+   - **走一遍位元組碼**（`EX_FinalFunction`、`EX_LocalFinalFunction`、`EX_VirtualFunction`、`EX_LocalVirtualFunction`、`EX_CallMath` 等），每個被呼叫的函式都要在呼叫白名單上：
+     - Math／String 函式庫；
+     - IsValid、BroadcastFieldValueChanged；
+     - DreamGUI 控制項的 setter；
+     - 宿主給 mod 的 hook 入口；
+   - 套件的 import 表只能指向 `/Script/` 的白名單模組、DreamGUI、讀卡器主題，以及 mod 自己的根目錄；
+   - 每個 widget 都要有同名的 `.dui` 隨 mod 附上。
+   - 這一層是必要的：mod 包是作者自己打的，不一定經過我們的 ModKit。
+
+**估計**：
+
+- 第 1 層：主要是 `modkit_cook.lua` 加一段，小。
+- 第 2 層：要在 cook 主機跑一個比對 commandlet（C++ 或編輯器 Python），中等。
+- 第 3 層：位元組碼巡訪可以參考 `FKismetBytecodeDisassembler` 的格式，在遊戲端手寫一個只認呼叫類指令的走訪器，中等，是 D2 最大的一塊。
+- 第 4 點（`= new` 任何類別）是 D2 最主要的風險。這條白名單必須在第 2 層（AST）和第 3 層（import 表）都擋。
+- `.dui` 的 events／routes 轉成 `ui.<mod id>.<事件>` hook：做法是 ModKit 把 route 目標固定指到宿主提供的轉送函式（例如基底類別上的 `OKModEmit(Name, Payload)`），呼叫白名單只放這一個。
