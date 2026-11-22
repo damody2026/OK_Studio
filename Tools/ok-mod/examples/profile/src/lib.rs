@@ -84,11 +84,25 @@ impl Mod for Profile {
                 if self.text.trim().is_empty() { return hooks::remove(); }
                 hooks::save(DATA_VERSION, &Data { text: self.text.clone() })
             }
+            // Two tabs (Docs/OK_MOD_HOOKS.md §4): the text in a multi-line field with its length under it, and a note on
+            // where the text comes from and goes.
             "reader.ui" => hooks::json(&serde_json::json!({"pages": [{
                 "name": "角色簡介",
-                "items": [{"kind": "text", "key": "text", "label": "簡介"}],
+                "layout": "tabs",
+                "items": [
+                    {"kind": "group", "label": "簡介", "items": [
+                        {"kind": "text", "key": "text", "label": "簡介", "multiline": true, "height": 160, "placeholder": "寫下她的簡介"},
+                        {"kind": "label", "key": "length", "style": "Caption"},
+                    ]},
+                    {"kind": "group", "label": "說明", "items": [
+                        {"kind": "label", "text": "簡介存在卡片裡（OK 卡的 mod 資料），另存卡片時寫入；原作卡的 KK_Profile 會在開卡時帶進來。", "style": "Body"},
+                    ]},
+                ],
             }]})),
-            "reader.values" => hooks::json(&serde_json::json!({"text": self.text})),
+            "reader.values" => hooks::json(&serde_json::json!({
+                "text": self.text,
+                "length": format!("{} / 2000 字", self.text.chars().count()),
+            })),
             "reader.control" => {
                 let set: hooks::ReaderSet = hooks::parse(payload)?;
                 if set.key != "text" { return Err(format!("unknown key {}", set.key)); }

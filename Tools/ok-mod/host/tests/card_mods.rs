@@ -102,6 +102,8 @@ fn examples_round_trip_through_a_card() {
     // The reader's pages: keys and actions are mod.<id>.*.
     let ui = ask(&mut host, json!({"op": "reader.ui"})).to_string();
     assert!(ui.contains(&format!("mod.{PROFILE}.text")) && ui.contains(&format!("mod.{RANDOM}.roll")), "{ui}");
+    // Inside tabs and groups too (profile and outfit-names put their fields on tabs).
+    assert!(ui.contains(&format!("mod.{NAMES}.all")) && ui.contains(&format!("mod.{PROFILE}.length")) && !ui.contains(r#""key":"text""#), "{ui}");
 
     // Edit, then save into the card.
     let set = ask(&mut host, json!({"op": "reader.control", "key": format!("mod.{PROFILE}.text"), "value": "她喜歡貓"}));

@@ -368,6 +368,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-ui-sample"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

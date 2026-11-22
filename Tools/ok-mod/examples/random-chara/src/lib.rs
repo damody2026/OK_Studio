@@ -69,7 +69,7 @@ impl Mod for RandomChara {
                     "items": [
                         {"kind": "bool", "key": "body", "label": "身形"},
                         {"kind": "bool", "key": "face", "label": "臉型"},
-                        {"kind": "choice", "key": "spread", "label": "幅度", "options": [
+                        {"kind": "radio", "key": "spread", "label": "幅度", "options": [
                             {"value": "small", "label": "小"}, {"value": "medium", "label": "中"}, {"value": "wide", "label": "大"}]},
                         {"kind": "button", "action": "roll", "label": "隨機"},
                     ],

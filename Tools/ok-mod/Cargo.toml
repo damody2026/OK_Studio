@@ -12,6 +12,7 @@ members = [
     "examples/random-chara",
     "examples/subtitles",
     "examples/birthday",
+    "examples/ui-sample",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
 ]

@@ -69,6 +69,30 @@ fn split_key<'a>(key: &'a str, ids: &std::collections::HashMap<String, String>) 
         .max_by_key(|(n, _)| *n).map(|(n, f)| (&rest[..n], f))
 }
 
+/// A reader page's items and every container's under them: keys and actions get the mod's prefix, images become full
+/// paths inside the mod's folder (anything else is removed: a mod shows only its own pictures).
+fn rewrite_items(node: &mut Value, id: &str, dir: Option<&std::path::Path>) {
+    for item in node.get_mut("items").and_then(Value::as_array_mut).into_iter().flatten() {
+        if let Some(k) = item.get("key").and_then(Value::as_str).map(str::to_owned) { item["key"] = format!("mod.{id}.{k}").into(); }
+        if let Some(a) = item.get("action").and_then(Value::as_str).map(str::to_owned) { item["action"] = format!("mod.{id}.{a}").into(); }
+        if let Some(image) = item.get("image").and_then(Value::as_str).map(str::to_owned) {
+            match dir.and_then(|d| mod_file(d, &image)) {
+                Some(full) => item["image"] = full.into(),
+                None => { item.as_object_mut().map(|o| o.remove("image")); }
+            }
+        }
+        rewrite_items(item, id, dir);
+    }
+}
+
+/// `name` inside `dir` (relative, no `..`, an existing file), as a full path with forward slashes.
+fn mod_file(dir: &std::path::Path, name: &str) -> Option<String> {
+    let rel = std::path::Path::new(name);
+    if rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) { return None; }
+    let full = dir.join(rel);
+    full.is_file().then(|| std::path::absolute(&full).unwrap_or(full).to_string_lossy().replace('\\', "/"))
+}
+
 pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String> {
     let payload = |v: Value| v.to_string();
     Ok(match op {
@@ -161,17 +185,19 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
             json!({"sections": out, "errors": errors})
         }
         // {"op":"reader.ui"}: the controls each mod puts in the reader; keys become mod.<id>.<key>.
+        // Items nest (group, row, tabs, scroll: Docs/OK_MOD_HOOKS.md §4); every level is rewritten, and an image names a
+        // PNG in the mod's own folder, handed on as a full path (one outside the folder is dropped).
         "reader.ui" => {
-            let names: std::collections::HashMap<String, String> = host.statuses().into_iter().map(|s| (s.id, s.name)).collect();
+            let statuses = host.statuses();
+            let names: std::collections::HashMap<String, String> = statuses.iter().map(|s| (s.id.clone(), s.name.clone())).collect();
+            let dirs: std::collections::HashMap<String, String> = statuses.into_iter().map(|s| (s.id, s.dir)).collect();
             let mut out = Vec::new();
             for r in host.hook("reader.ui", "{}") {
                 match reply_value(&r.result) {
                     Ok(mut v) => {
+                        let dir = dirs.get(&r.id).map(std::path::PathBuf::from);
                         for page in v.get_mut("pages").and_then(Value::as_array_mut).into_iter().flatten() {
-                            for item in page.get_mut("items").and_then(Value::as_array_mut).into_iter().flatten() {
-                                if let Some(k) = item.get("key").and_then(Value::as_str).map(str::to_owned) { item["key"] = format!("mod.{}.{k}", r.id).into(); }
-                                if let Some(a) = item.get("action").and_then(Value::as_str).map(str::to_owned) { item["action"] = format!("mod.{}.{a}", r.id).into(); }
-                            }
+                            rewrite_items(page, &r.id, dir.as_deref());
                         }
                         out.push(json!({"mod": r.id, "name": names.get(&r.id), "pages": v.get("pages").cloned().unwrap_or(json!([]))}));
                     }
@@ -216,5 +242,27 @@ mod tests {
         assert_eq!(split_key("mod.org.a.b.text", &ids), Some(("org.a.b", "text")));
         assert_eq!(split_key("mod.org.a.text", &ids), Some(("org.a", "text")));
         assert_eq!(split_key("mod.org.c.text", &ids), None);
+    }
+
+    #[test]
+    fn nested_items_are_rewritten_and_images_stay_in_the_mod_folder() {
+        let dir = std::env::temp_dir().join(format!("ok-mod-ui-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("pics")).unwrap();
+        std::fs::write(dir.join("pics").join("icon.png"), b"png").unwrap();
+        let mut page = json!({"name": "p", "layout": "tabs", "items": [
+            {"kind": "group", "label": "a", "items": [
+                {"kind": "row", "items": [{"kind": "number", "key": "n"}, {"kind": "button", "action": "go"}]},
+                {"kind": "image", "image": "pics/icon.png"},
+                {"kind": "image", "image": "../secret.png"},
+                {"kind": "image", "image": "missing.png"},
+            ]},
+        ]});
+        rewrite_items(&mut page, "org.x", Some(&dir));
+        let g = &page["items"][0]["items"];
+        assert_eq!(g[0]["items"][0]["key"], "mod.org.x.n");
+        assert_eq!(g[0]["items"][1]["action"], "mod.org.x.go");
+        assert!(g[1]["image"].as_str().unwrap().ends_with("pics/icon.png"), "{page}");
+        assert!(g[2].get("image").is_none() && g[3].get("image").is_none(), "{page}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

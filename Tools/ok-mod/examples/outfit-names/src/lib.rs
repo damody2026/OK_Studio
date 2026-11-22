@@ -90,11 +90,29 @@ impl Mod for OutfitNames {
                 if self.names.is_empty() { return hooks::remove(); }
                 hooks::save(DATA_VERSION, &Data { names: self.names.clone() })
             }
+            // Two tabs (Docs/OK_MOD_HOOKS.md §4): the outfit shown now, typed into a text field, and every name the card
+            // has, as a read-only list.
             "reader.ui" => hooks::json(&serde_json::json!({"pages": [{
                 "name": "服裝名稱",
-                "items": [{"kind": "text", "key": "name", "label": "這套服裝的名稱"}],
+                "layout": "tabs",
+                "items": [
+                    {"kind": "group", "label": "這一套", "items": [
+                        {"kind": "text", "key": "name", "label": "名稱", "placeholder": "例如：制服"},
+                        {"kind": "label", "key": "which", "style": "Caption"},
+                    ]},
+                    {"kind": "group", "label": "全部", "items": [
+                        {"kind": "list", "key": "all", "label": "這張卡已命名的服裝", "height": 200},
+                    ]},
+                ],
             }]})),
-            "reader.values" => hooks::json(&serde_json::json!({"name": self.names.get(&self.outfit.to_string()).cloned().unwrap_or_default()})),
+            "reader.values" => {
+                let all: Vec<String> = self.names.iter().map(|(k, v)| format!("服裝 {}：{v}", k.parse::<i64>().map(|i| i + 1).unwrap_or(0))).collect();
+                hooks::json(&serde_json::json!({
+                    "name": self.names.get(&self.outfit.to_string()).cloned().unwrap_or_default(),
+                    "which": format!("目前是服裝 {}；名稱存在卡裡，另存卡片時寫入。", self.outfit + 1),
+                    "all": all,
+                }))
+            }
             "reader.control" => {
                 let set: hooks::ReaderSet = hooks::parse(payload)?;
                 if set.key != "name" { return Err(format!("unknown key {}", set.key)); }
