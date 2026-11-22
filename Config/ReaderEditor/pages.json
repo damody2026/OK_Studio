@@ -96,7 +96,7 @@
         { "name": "光影", "sources": [{ "drawer": "Lighting" }] },
         { "name": "角色風格", "sources": [{ "widget": "style_box" }], "bone_category": "角色風格" },
         { "name": "物理", "sources": [{ "rows": "physics" }] },
-        { "name": "介面", "sources": [{ "widget": "font_size_row" }] }
+        { "name": "介面", "items": [{ "widget": "font_size_row" }, { "kind": "choice", "key": "reader.lang", "label_id": "reader.settings.language" }] }
       ]
     }
   ]

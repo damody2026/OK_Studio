@@ -70,6 +70,7 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Misc/ScopeExit.h"
 #include "Containers/Ticker.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKReaderPageItems.h"
 #include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
 #include "Engine/Texture2D.h"
@@ -709,6 +710,8 @@ void UOKReaderScreen::BuildCategories()
 {
 	UOKCharacterController* G=Controller.Get();if(!G)return;
 	Categories.Reset();
+	// The pages' own UMG controls (bool／choice／color／text／button items) are made again with the pages.
+	OKReaderPageItems::Reset();
 	// Body and face sliders, grouped as the separators in KKShapeRows group them.
 	auto ShapeGroups=[&](bool bBody,const TArray<FString>& Names)
 	{
@@ -878,11 +881,22 @@ void UOKReaderScreen::BuildCategories()
 					const bool bItems=S->HasField(TEXT("items"));const TCHAR* ListName=bItems?TEXT("items"):TEXT("sources");
 					if(bItems&&S->HasField(TEXT("sources")))Bad(TEXT("sources 與 items 只能有一個（列的順序寫在 items 裡）"));
 					const TArray<TSharedPtr<FJsonValue>>* Sources=nullptr;
+					UVerticalBox* ItemBox=nullptr;	// this page's own controls (OKReaderPageItems), made on its first such item
 					if(S->HasField(ListName)&&!S->TryGetArrayField(ListName,Sources))Bad(FString(ListName)+TEXT(" 要是陣列"));
 					for(int32 K=0;Sources&&K<Sources->Num();++K)
 					{
 						const TSharedPtr<FJsonObject>* Spec=nullptr;FString Value;double Number=0;
 						if(!(*Sources)[K]->TryGetObject(Spec)){Bad(FString::Printf(TEXT("%s[%d] 不是物件"),ListName,K));continue;}
+						// bool／choice／color／text／button: a control of the page's own, bound to a registry key or a
+						// reader action, made in the see-through UMG layer so ui_widgets／ui_set reach it as they reach
+						// every mirrored control (OKReaderPageItems.h).
+						if(FString ItemKind;bItems&&(*Spec)->TryGetStringField(TEXT("kind"),ItemKind)&&OKReaderPageItems::IsItemKind(ItemKind))
+						{
+							FString Error;
+							if(UWidget* Row=OKReaderPageItems::Build(G,ItemBox,*Spec,Error))Out.Sources.Add(Row);
+							else PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] %s，這一項不建"),K,*Error));
+							continue;
+						}
 						if(bItems&&(*Spec)->HasField(TEXT("key")))
 						{
 							// For now a number item shows the row of the control that carries that key (its mirror, as the
@@ -893,7 +907,7 @@ void UOKReaderScreen::BuildCategories()
 							FString Key,Kind;
 							if(!(*Spec)->TryGetStringField(TEXT("key"),Key)||Key.IsEmpty()){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] 的 key 要是字串，這一項不建"),K));continue;}
 							if(!(*Spec)->TryGetStringField(TEXT("kind"),Kind))Kind=TEXT("number");
-							if(Kind!=TEXT("number")){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] %s 的 kind %s 還沒支援（目前只有 number），這一項不建"),K,*Key,*Kind));continue;}
+							if(Kind!=TEXT("number")){PagesErrors.Add(Where+FString::Printf(TEXT("：items[%d] %s 的 kind %s 不認得（number、bool、choice、color、text、button），這一項不建"),K,*Key,*Kind));continue;}
 							if(Registry.IsEmpty())for(const TSharedPtr<FJsonValue>& Row:OKCharacterMCPRegistry::Parameters(G))
 								if(const TSharedPtr<FJsonObject> P=Row.IsValid()?Row->AsObject():nullptr){FString RowKey;if(P->TryGetStringField(TEXT("key"),RowKey))Registry.Add(RowKey,P);}
 							const TSharedPtr<FJsonObject>* P=Registry.Find(Key);
@@ -952,6 +966,7 @@ void UOKReaderScreen::BuildCategories()
 					}
 					FString Value;
 					if(S->TryGetStringField(TEXT("bone_category"),Value))Enter.Add(BoneCategory(Value));
+					if(ItemBox)Enter.Add([Box=TWeakObjectPtr<UVerticalBox>(ItemBox)](){OKReaderPageItems::ShowOnly(Box.Get());});
 					if(S->TryGetStringField(TEXT("enter"),Value))
 					{
 						if(Value==TEXT("first_bone_category"))Enter.Add([Weak]()
@@ -998,7 +1013,8 @@ void UOKReaderScreen::BuildCategories()
 						{
 							const TSharedPtr<FJsonObject>* BO=nullptr;FString Label,Action;
 							if(!B->TryGetObject(BO)||!(*BO)->TryGetStringField(TEXT("label"),Label)||!(*BO)->TryGetStringField(TEXT("action"),Action)){Bad(TEXT("own_buttons 每項要有 label 與 action"));continue;}
-							if(Action==TEXT("add_accessory_slot"))Made.Emplace(Label,[Weak](){if(Weak.IsValid())Weak->OnAddAccessorySlot();});
+							// The reader's action table (OKReaderPageItems::RunAction), the one button items use.
+							if(OKReaderPageItems::IsKnownAction(Action))Made.Emplace(Label,[Weak,Action](){FString Error;if(!OKReaderPageItems::RunAction(Weak.Get(),Action,Error))UE_LOG(LogTemp,Warning,TEXT("ok.ReaderScreen: %s"),*Error);});
 							else Bad(TEXT("不認得的 action ")+Action);
 						}
 						if(Made.Num())
@@ -2553,6 +2569,8 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(C.Tab!=Tab){Tab=C.Tab;UDreamButton* Tabs[4]={Tab0,Tab1,Tab2,Tab3};PaintTabs(Tabs,Tab);}
 	for(int32 I=0;I<RailButtons.Num();++I)if(RailButtons[I])RailButtons[I]->SetRenderOpacity(I==Index?1.f:.7f);
 	if(auto* T=TextOf(CategoryTitle))T->SetText(FText::FromString(C.Name));
+	// Only the page shown has its own controls up (its enter shows them again).
+	OKReaderPageItems::ShowOnly(nullptr);
 	if(C.OnEnter)C.OnEnter();
 	Sub=FMath::Clamp(SubIndex,0,FMath::Max(0,C.Groups.Num()-1));
 	// The second-level menu: one button per group; the page shows the chosen group.
@@ -2921,6 +2939,7 @@ void UOKReaderScreen::Tick(float DeltaSeconds)
 			Canvas->SetReferenceResolution(FVector2D(1920,1080)/UiScale);
 	}
 	TickResize();
+	OKReaderPageItems::Refresh(Controller.Get(),DeltaSeconds);
 	SyncAll();
 	TickThumbnails();
 	// The camera watch (ok.ReaderScreen look): a changed orbit is put down to the mouse when the player controller noted
@@ -3035,6 +3054,8 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 		// was wrong with the file; with a word, built again from there. "reloadpages": the file read anew.
 		else if(Verb==TEXT("pages"))S->ReloadPages(Value,Out);
 		else if(Verb==TEXT("reloadpages"))S->ReloadPages(TEXT("file"),Out);
+		// "pageitems": the pages' own controls (bool／choice／color／text／button items), their keys and whether shown.
+		else if(Verb==TEXT("pageitems"))OKReaderPageItems::List(Out);
 		// "card <N>": the card list's N-th tile (from 0) clicked as the pointer would; prints its file.
 		else if(Verb==TEXT("card"))
 		{

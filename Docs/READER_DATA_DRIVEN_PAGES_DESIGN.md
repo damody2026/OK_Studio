@@ -236,3 +236,7 @@ C++ 怎麼分辨「沒有欄位」和「空清單」：靠 f-yvonne 在 `bad2861
 | `read` | 個數：清單；刻意不收的另列 |
 
 讀屬性的方法：進「全部屬性」頁，或下 MCP 的 `parameters`。
+
+## 畫面自己的控制項：bool／choice／color／text／button（2026-11-23，c-mod-4）
+
+`items` 除了 `number` 之外可以寫 `bool`（`toggle`）、`choice`（`dropdown`）、`color`、`text`、`button`，見 `Source/OpenKoikatsu/OKReaderPageItems.h` 與 [OK Mod 工作項 4 回報](OK_MOD_S4_READER_PREREQ.md)。和 `number` 鏡像既有控制列不同，這幾種是畫面替這一項在透明 UMG 層新建的 UMG 控制項，綁登錄鍵（`button` 綁 `action`），再照常鏡像；`label_id` 用文字表 id，跟著讀卡器語言（`OKReaderText.h`）。讀卡器自己的鍵 `reader.lang` 是語言下拉。`ok.ReaderScreen pageitems` 列出這些項目。

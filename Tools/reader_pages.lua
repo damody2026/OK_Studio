@@ -61,6 +61,7 @@ end
 
 -- Keys whose existence only the running game knows.
 function M.runtime_only(key)
+  if key == "reader.lang" then return false end
   return key:match("^pregnancy%.") or key:match("^style%.") or not (key:match("^shape%.") or key:match("^bone%.") or key:match("^physics%."))
 end
 
@@ -89,7 +90,12 @@ function M.page_rows(sub, groups)
   local rows, err = {}, nil
   if sub.sources and sub.items then err = "has both sources and items (one ordered list: items)" end
   for _, spec in ipairs(sub.items or sub.sources or {}) do
-    if spec.key ~= nil then rows[#rows + 1] = "key " .. tostring(spec.key)
+    -- The page's own controls (OKReaderPageItems: bool／choice／color／text／button) count with their kind, so turning a
+    -- key from a number row into a toggle is a change; a button is its action.
+    local kind = spec.kind == "toggle" and "bool" or spec.kind == "dropdown" and "choice" or spec.kind
+    if kind == "button" then rows[#rows + 1] = "button " .. tostring(spec.action)
+    elseif spec.key ~= nil and kind and kind ~= "number" then rows[#rows + 1] = kind .. " " .. tostring(spec.key)
+    elseif spec.key ~= nil then rows[#rows + 1] = "key " .. tostring(spec.key)
     else
       for _, t in ipairs(source_token(spec, groups)) do
         rows[#rows + 1] = t
@@ -159,7 +165,7 @@ function M.compare(old, new, groups, keys)
   for _, p in ipairs(new_list) do
     for _, item in ipairs(new_by[p].sub.items or {}) do
       local k = item.key ~= nil and tostring(item.key) or nil
-      if k == nil or keys[k] then
+      if k == nil or keys[k] or k == "reader.lang" then
       elseif M.runtime_only(k) then runtime[#runtime + 1] = p .. "  " .. k
       else unknown[#unknown + 1] = p .. "  " .. k end
     end
