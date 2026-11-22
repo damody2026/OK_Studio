@@ -1,0 +1,36 @@
+// dream-panel (OK mod D2 sample, Docs/OK_MOD_FRAMEWORK_PLAN.md §6.13): a mod's own DreamGUI panel on the card reader's
+// mod page. Everything the panel reaches goes through `Mod` (UOKModDreamBridge):
+//   Mod.Text("key")   this mod's value mod.org.openkoikatsu.dream-panel.key, as text (read every frame)
+//   Mod.Emit("name")  this mod's hook ui.org.openkoikatsu.dream-panel.name, answered by its Rust code
+// The ModKit compiles this file into the class below (parent UOKModDreamPanel) and refuses `new`, view models, props,
+// two-way bindings and any `use` but the reader theme.
+class /org_openkoikatsu_dream_panel/UI/WBP_Panel
+use "Theme.dui" as ui
+
+// The preset's bold face has no Chinese glyphs: the regular face, which falls back to CJK.
+style CjkLabel : ui.Label { Font = @ui.FontRegular }
+style CjkTitle : ui.Title { Font = @ui.FontRegular }
+
+Widget Root {
+    AnchorData.SizeDelta = (440, 170)
+    + Overlay { }
+    RectBlock Face : ui.Panel : ui.FillSlot
+
+    VerticalBox Column : ui.FillSlot {
+        Padding = (14, 12, 14, 12)
+        Spacing = 10
+        Text Greeting : CjkTitle { Text <- Mod.Text("greeting") }
+        Text Count : CjkLabel { Text <- Mod.Text("count_text") }
+        HorizontalBox Buttons {
+            Spacing = 8
+            Native.Button Hello : ui.ButtonPrimary {
+                Text : CjkLabel { Text = "打招呼" }
+                OnClicked -> Mod.Emit("hello")
+            }
+            Native.Button Reset : ui.ButtonSecondary {
+                Text : CjkLabel { Text = "歸零" }
+                OnClicked -> Mod.Emit("reset")
+            }
+        }
+    }
+}

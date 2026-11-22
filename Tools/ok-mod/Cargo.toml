@@ -12,6 +12,7 @@ members = [
     "examples/boop",
     "examples/skin-decal",
     "examples/toon-post",
+    "examples/dream-panel",
     "studio",
     "examples/profile",
     "examples/outfit-names",

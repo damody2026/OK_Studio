@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-dream-panel"
+version = "0.1.0"
+edition = "2021"
+description = "A mod's own DreamGUI panel (.dui) on the card reader's mod page (Docs/OK_MOD_FRAMEWORK_PLAN.md §6.13 D2)."
+publish = false
+
+[lib]
+name = "ok_dream_panel"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde_json = { workspace = true }

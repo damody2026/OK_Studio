@@ -1,0 +1,2 @@
+# The widget asset is the ModKit's output (Tools/modkit_cook.lua compiles it from DUI/ every run): never kept.
+Content/UI/
