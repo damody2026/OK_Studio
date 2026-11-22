@@ -7173,3 +7173,10 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 先用「材質是不是共用母材質實例」找頭髮網格，HairDeck 頭髮走自己的材質圖、刻晴的頭髮戴在飾品槽（role accessory），兩者都找不到（日誌「0 hair meshes」），重編了三次。改成建材質時依部件 role／名稱／shader 記錄部件編號，再用元件的 `KKSessionPart_` 標籤對應。
   - 要停讀卡器時下了「停掉所有 UnrealEditor」的指令（被擋下）；只能停自己啟動的那個 pid。
   - 教訓：先列出卡片部件的 role 與實際畫它的元件，再決定怎麼辨認；寫一個 dump 開關（`OK_FOREGROUND_DUMP=1`）比猜測重編快。
+
+## 2026-11-23 讀卡對話的角色身分和街區不一致（C 組 c-mod-2，OK Mod 工作項 2）
+
+- **既有問題**：`OKReaderTalk.cpp` 的 `OKReaderCardId` 對沒有 `okId` 的卡算**整檔 MD5**、ID 寫成 `reader:<MD5>`，連 `okVo`（語音）都沒扣；街區（`prepare_street_social_selection.lua`）與 ok-extract（`oklib.rs`）是 `apng-<扣掉 okVo 的 sha256>`。同一張卡在讀卡對話與街區是兩個人，記憶與關係對不上；換語音也會讓讀卡對話認不得她。盤點（`Docs/OK_MOD_HOOK_INVENTORY.md` §5.3）時發現。
+- **修正**：三處統一為「`okId`，否則扣掉 `okVo`／`okMx`／`okMr` 的 sha256」，C++ 用新檔 `OKCardIdentity.{h,cpp}`＋`OKCardIdentityCore.inl`，ID 一律 `apng-<身分>`，只有不是 PNG 時才退回 `reader:<MD5>`。368 張現有卡三種實作結果逐張相同，Rust／Lua 新舊結果也逐張相同（`Docs/OK_MOD_S2_CARD_CHUNKS.md`）。
+- **行為改變（協調者已同意）**：沒有 `okId` 的卡，讀卡對話以前存在 `mind` 的 `reader:<MD5>` 記憶不會搬到新 ID，這些卡在讀卡對話裡等於重新認識；有 `okId` 的卡（所有 OK 卡）不受影響。
+- **教訓**：同一個「身分」有多處實作時，新增排除規則要一次改齊並用同一批卡交叉比對；C++ 端的雜湊寫成不含 UE 型別的 `.inl`，才能單獨編成小工具和 Rust、Lua 對照。
