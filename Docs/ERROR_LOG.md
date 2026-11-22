@@ -7183,3 +7183,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - pak 白名單檢查器第一版假設 cooked 套件的 header 是 unversioned（版本欄全 0）、export 表每筆 96 bytes；實際 UE 5.8 cook 出來的 header 帶版本（ue4 522／ue5 1018、10 筆 custom version），export 表每筆 112 bytes（多了 ScriptSerializationStart/EndOffset）。只有一個 export 的材質包看不出錯，到 Blueprint 反例（5 個 export）才讀出亂碼名稱。改成接受帶版本的 header，export 每筆大小由「cell export 表起點 − export 表起點」÷ 筆數算出並只認 96／112。
   - Custom 節點 `#include` 的檔案不存在時，cook 仍回報 `Success - 0 error(s)`，只有警告（include 路徑 invalid、Failed to compile Material、沒有 valid ShaderMap），pak 照樣產生，遊戲裡就是預設材質。`modkit_cook.lua` 改成掃 cook log，遇到這三種警告就失敗。
   - 教訓：cook 的成功碼不代表材質有 shader；cooked 套件格式以實際檔案為準，不憑記憶。
+
+- 2026-11-23 OK mod 工作項 6（UE 宿主，`Docs/OK_MOD_S6_UE_HOST.md`）：
+  - 用 `lua.exe -e '...'` 把含 `§` 的註解寫進 `Tools/stage_street_social.lua`，命令列字串走主控台字碼頁，檔案變成非 UTF-8，commit hook 擋下。修正：改成 ASCII 的 `section 8`。教訓：要寫非 ASCII 的內容用 Write／Edit 工具，不用命令列字串。
+  - 多模式整合測試第一版拿 hello 的 DLL 改 id 當第二個 mod，宿主正確地以「DLL 與 mod.toml 不符」拒載，測試失敗。是測試寫錯：換成另一個真的不同的 fixture（panic mod，只改 targets）。
+  - 在 `OKGameControl.cpp` 第一次把 `OKModControlRoutes()` 的宣告放進匿名 namespace 裡，會和全域定義對不上（連結失敗）；建置前發現，移到檔案層級。
