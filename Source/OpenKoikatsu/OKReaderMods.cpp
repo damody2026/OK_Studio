@@ -319,6 +319,21 @@ bool OKReaderMods::Set(UOKCharacterController* G,const FString& Key,const TShare
 	return true;
 }
 
+bool OKReaderMods::Emit(UOKCharacterController* G,const FString& Mod,const FString& Event,const FString& Value,FString& Error)
+{
+	if(!Active()){Error=TEXT("mods are off");return false;}
+	auto R=Op(TEXT("hook"));R->SetStringField(TEXT("hook"),TEXT("ui.")+Mod+TEXT(".")+Event);
+	R->SetArrayField(TEXT("mods"),{MakeShared<FJsonValueString>(Mod)});
+	auto P=MakeShared<FJsonObject>();P->SetStringField(TEXT("event"),Event);P->SetStringField(TEXT("value"),Value);R->SetObjectField(TEXT("payload"),P);
+	const TSharedPtr<FJsonObject> Answer=Ask(R);
+	const TArray<TSharedPtr<FJsonValue>>* Replies=nullptr;
+	if(!Answer.IsValid()||!Answer->TryGetArrayField(TEXT("replies"),Replies)||Replies->IsEmpty()){Error=TEXT("no answer from the mod host");return false;}
+	const TSharedPtr<FJsonObject> O=(*Replies)[0]->AsObject();bool bOk=false;if(O.IsValid())O->TryGetBoolField(TEXT("ok"),bOk);
+	if(!bOk){Error=O.IsValid()?O->GetStringField(TEXT("error")):TEXT("bad reply");return false;}
+	FollowReplies(G,Answer);RefreshValues();
+	return true;
+}
+
 FString OKReaderMods::OutfitName(const FString& Card,int32 Outfit)
 {
 	if(Card.IsEmpty()||FPaths::ConvertRelativePathToFull(Card)!=GCard)return FString();
