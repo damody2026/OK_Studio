@@ -48,3 +48,23 @@ Studio（編輯器版，`-ModDev`），場景 `ill_ss_sample_00.okscene`（兩�
 - frame id 對照靠 mod 被呼叫與 0.5 秒計時器，角色重建後最多半秒用預設強度。
 - 時間軸播放逐物件強度時，mod 不會每幀被呼叫，靠計時器每 0.5 秒同步，所以強度變化是一段一段跟上的。
 - 1 對 1 裡沒有確認 `kind = 1` 的配對幀與 `dt`（只看到呼叫數增加與外力生效）。
+
+## F 這份 boop 範例的內容（給最後整合對照 C 的 7eb48e001）
+
+協調者通知：C 已做讀卡器的 `input.pointer` 掛點，並在 C 的 `Tools/ok-mod/examples/boop` 放了 boop。F 不再寫 boop 的 UE 端或另一份範例；整合時以兩邊合併為準。F 這份只有 Rust 部分（提交 `f770f5b1b`，之後只有 workspace 一起變動）：
+
+- **檔案**：`Tools/ok-mod/examples/boop/` 的 `Cargo.toml`（`ok-mod-boop`，lib `ok_boop`，`ok-mod-sdk` 開 feature `frame`、`serde`、`serde_json`）、`mod.toml`、`locale/en/boop.toml`、`locale/zh-CN/boop.toml`、`src/lib.rs`。
+- **mod.toml**：`id = "org.openkoikatsu.boop"`，`0.1.0`，`dll = "ok_boop.dll"`，`targets = ["reader", "studio", "pair"]`，`category = "feature"`。
+- **登記**：
+  - 設定 `strength`（0.02，0～0.5）、`decay`（0.8 秒）、`frequency`（每秒 3 下），文字 id 都是 `mod.org.openkoikatsu.boop.config.*`；
+  - 指令 `poke`（`mod.org.openkoikatsu.boop.poke [head|chest|skirt|all]`）；
+  - 訂閱 `input.pointer` 與 `config_changed`。
+- **`input.pointer` 的 payload**：`{"origin": [x,y,z], "dir": [x,y,z], "velocity": [x,y,z]}`，Unity 世界座標，速度是每秒世界單位。速度 > 1e-4 才算一戳，力道 `clamp(速度, 0.2, 3.0)`，推的方向跟著速度。要和 C 的掛點實際送的欄位對一次。
+- **幀函式**（`ok_mod_frame!(frame)`）：
+  - 只推外力（`Frame::push`），不改骨骼，回傳一律 `false`；
+  - 戳的紀錄放在 `static POKES: Mutex<Vec<Poke>>`，設定放在 atomics；超過 `decay` 秒的戳丟掉；
+  - 每個角色的錨點骨骼依 `(Frame::character, 骨骼數)` 快取在 `static ANCHORS`：頭 `cf_j_head`，胸 `cf_j_bust01_L`／`_R`，裙 `cf_j_waist02`、`cf_d_sk_top`；
+  - 頭到腰的距離當角色尺寸。射線戳到離射線 `0.35 × 尺寸` 以內的錨點；`poke` 指令戳整個部位。
+  - 每個命中的錨點推一個球（半徑 `0.6 × 尺寸`），力 = `strength × gain × cos(2π·frequency·age) × (1 − age/decay)` 沿推的方向。
+- **測試**：`src/lib.rs` 有射線距離、錨點等單元測試；`Tools/ok-mod/host/tests/frame.rs` 實際載入 boop，戳一下後檢查 `okm_frame` 推出胸部的外力、停用後不再推。
+- full profile 列了 `org.openkoikatsu.boop 0.1.0`（`a75561b01`）。
