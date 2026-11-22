@@ -5,6 +5,7 @@
 #include "Dom/JsonValue.h"
 
 class UOKCharacterController;
+class AKKPreviewActor;
 
 // The card reader's side of the OK mod Character API and reader UI API (Docs/OK_MOD_HOOKS.md, plan §6.2–§6.4).
 // Everything goes to the mod host as JSON (FOKModHost, Tools/ok-mod/host/src/card.rs); nothing here runs mod code
@@ -30,7 +31,7 @@ namespace OKReaderMods
 	// A voice line started; Text is what she says (as the reader lists it).
 	void Speech(UOKCharacterController* G,const FString& Text);
 	// Every reader tick: the mouse sweeping over the shown character goes to input.pointer subscribers (boop).
-	void Pointer(UOKCharacterController* G,class AKKPreviewActor* Actor,float DeltaSeconds);
+	void Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,float DeltaSeconds);
 
 	// The registry rows of every mod control (kind, label, value, options; category "mods").
 	TArray<TSharedPtr<FJsonValue>> Rows(UOKCharacterController* G);
