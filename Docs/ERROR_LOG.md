@@ -7214,3 +7214,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 用 `lua.exe -e '...'` 把含 `§` 的註解寫進 `Tools/stage_street_social.lua`，命令列字串走主控台字碼頁，檔案變成非 UTF-8，commit hook 擋下。修正：改成 ASCII 的 `section 8`。教訓：要寫非 ASCII 的內容用 Write／Edit 工具，不用命令列字串。
   - 多模式整合測試第一版拿 hello 的 DLL 改 id 當第二個 mod，宿主正確地以「DLL 與 mod.toml 不符」拒載，測試失敗。是測試寫錯：換成另一個真的不同的 fixture（panic mod，只改 targets）。
   - 在 `OKGameControl.cpp` 第一次把 `OKModControlRoutes()` 的宣告放進匿名 namespace 裡，會和全域定義對不上（連結失敗）；建置前發現，移到檔案層級。
+
+- 2026-11-23 OK mod 工作項 8（Studio API，`Docs/OK_MOD_S8_STUDIO_API.md`）：
+  - `Plugins/OKStudio/.../OKStudioGame.cpp` 是 CRLF 夾少數 LF 的混合行尾。用 `sed -i`、`unix2dos` 與 Edit 工具改一行，整個檔案的行尾都被統一，diff 變成上千行。修正：`git checkout --` 還原，改用逐位元組替換的 Lua 小腳本（錨點與替換文字都用 CRLF），diff 回到 4 行。教訓：改之前先用 `od -c`／Lua 看行尾（git bash 的 `cat -A` 看不出 `\r`），混合行尾的檔案只做位元組層級的替換；Windows 上 Lua 的命令列參數不能帶換行，替換規格要放檔案。
+  - 橋接第一次建置 C2446：`cond ? nullptr : MakeShared<FJsonValueString>(...)` 兩邊型別不同（`TSharedRef` 不能和 `nullptr` 合成一個型別）。改成分開的 `return`。
+  - 橋接在 mod 回 panic 時，於那個 mod 自己的指令執行中就 `RemoveOwner`，刪掉正在執行的 `TFunction`（自我測試「panic 的 mod 離開」失敗才看出來）。改成標記後下一幀移除。教訓：回呼裡不要移除擁有這個回呼的登錄項。
+  - 自我測試直接呼叫面板列的 `Set` 卻沒有像面板一樣 `NotifyChanged`，復原紀錄沒記到，重做失敗。是測試寫錯，改成照面板的流程。
