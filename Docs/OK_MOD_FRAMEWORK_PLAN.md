@@ -452,13 +452,15 @@ pub trait ModInstance: Send + Sync {
 已定（2026-11-22）：
 
 1. `Mods/` 放 **stage 根**（`Saved/StreetSocial/Build/<名>.stage/Mods/` 這一層；開發時是 checkout 根的 `Mods/`），隨遊戲版本走。`.stage` 目錄裡有 junction，`Mods/` 必須是普通目錄，換版本時由 `ok-mod-pack profile apply` 重新裝，不跨 stage 共用。
-2. **E 線同時開掛點**：1 對 1（`pair`）與 OK Studio 都納入，不只 C 線的讀卡＋街區。`ok-mod-api` 的掛點因此要在 C、E 兩個 checkout 都編得過、連結得過。
+2. **E 線同時開掛點**：1 對 1（`pair`）與 OK Studio 都納入，不只 C 線的讀卡＋街區。`ok-mod-api` 的掛點因此要在 C、E、F 三個檢出都編得過、連結得過。
 3. M0 先做哪個模式：**先完整盤點**再決定，見 [OK_MOD_HOOK_INVENTORY.md](OK_MOD_HOOK_INVENTORY.md)。
+6. **在 F 做 mod 框架，三個檢出分工**（2026-11-23）：F（`F:\OpenKoikatsu`，引擎 `F:\UE5.8`）做框架本體並維護本計畫，C 做卡片、讀卡器、街區，E 做 OK Studio 與 1 對 1；三邊之間只在使用者同意的同步點合併，見 §15。
+7. **全部授權協調者自己做，72 小時無人值守**（2026-11-23 00:52～11-26 00:52）：同步點、最後整合、設計決定、1 對 1 工作都授權，不推送；三個長期子對話各對應一個檢出，見 §15.0。
 
 待定：
 
 4. 每幀回呼：第一版不開通用 tick，只給計時器、按鍵事件、時間軸事件；Rust 後姿勢掛點放 M4 之後，只對有 Rust session 的角色（讀卡、Studio、1 對 1）。依據見盤點 §4。
-5. M0 先做哪個模式：盤點建議讀卡器（理由與前置工作見盤點 §6），待使用者決定。
+5. M0 先做哪個模式：三個檢出分工後，各模式的前置在第一波同時進行（§15），M0 的驗收是四個模式都載入 `hello`，不再需要擇一（2026-11-23）。
 
 ## 13. 盤點後補上的前置工作
 
@@ -540,114 +542,185 @@ OK Studio 核心已經有的功能不做成範例：姿勢庫（`SOKStudioPanel.
 | 語音事件、跨模式 | `subtitles` |
 | 打包、profile、obsolete | `starter`、`full` |
 
-## 15. 分工：子對話（2026-11-22）
+## 15. 分工：三個檢出、三個子對話（2026-11-23）
 
-實作拆成 **12 個子對話**，分三波開。本對話當協調者，不寫功能程式。
+### 15.0 執行方式：三個長期子對話、72 小時無人值守（2026-11-23 定案）
 
-### 15.1 怎麼切
+**使用者授權（2026-11-23 00:52）**：「全部授權你自己做，用三個子對話分別對應三個專案位置來做」。授權範圍：
 
-切分依據，照重要性排：
+- 同步點 A、B 由協調者自己做：三邊合進 C → C 混合編譯通過 → E、F 從 C 快轉。**不推送**；
+- 最後整合由協調者自己做：完整 cook、新 tag 的 base 與 stage、兩個 `.cmd` 編過並實際啟動；
+- API 細節、範例取捨等設計決定由協調者自己決定，記在本計畫與 `Docs/ERROR_LOG.md`，不停下來問；
+- E 的 1 對 1 工作（含 H 場景 `Note()` 事件、`pair-counter`）照做；
+- 期間：2026-11-23 00:52 起到 **2026-11-26 00:52**，或全部做完時提早結束。結束時協調者把進度、未完成項目與恢復方法寫進 F 的 `Docs/OK_MOD_HANDOFF.md`。
 
-1. **檔案歸屬不重疊**：同一時間，一個檔案只有一個子對話會改（§15.4）。所有子對話共用 C 檢出，不開 worktree：UE 在 worktree 要整份重編，太重。
-2. **依賴先後**：要用到別人產物的子對話，等對方提交後才開（§15.2 的圖）。
-3. **Unreal 名額**：全機最多 2 個 Unreal（`unreal_slot.lua`）。不需要 Unreal 的工作（純 Rust、文件）可以多開；需要 Unreal 的同一波最多 3 個，彼此錯開建置。
-4. **每個子對話有自己的驗收**，對到 §10 的里程碑；完成時要有提交和一份「做了什麼、驗了什麼、沒驗什麼」的回報。
+**三個子對話**（取代 §15.4 的 13 個子對話；那 13 項改為各子對話依序要做的**工作項**）：
 
-**在哪個檢出做**：全部在 C（`C:\portable\OpenKoikatsu`，master，引擎 `D:\PhysX\UE5.8`）。
+| 子對話 | 檢出／引擎 | 依序要做的工作項 |
+|---|---|---|
+| `[F組] mod 框架本體` | `F:\OpenKoikatsu`／`F:\UE5.8` | 1 → 6 → 3 →（同步點 A）→ 12 →（同步點 B）→ 9 → 11 → 12 收尾 |
+| `[C組] mod 卡片／讀卡器／街區` | `C:\portable\OpenKoikatsu`／`D:\PhysX\UE5.8` | 2 → 4 →（同步點 A）→ 7 → 10 →（同步點 B）→ 修 9／11 回報的問題 |
+| `[E組] mod OK Studio／1 對 1` | `E:\OpenKoikatsu`／`E:\PhysX\UE5.8` | 5 →（同步點 A）→ 8 → 13 →（同步點 B）→ 修 9／11 回報的問題 |
 
-- OK Studio 與 1 對 1 的程式在 C、E 目前相同（盤點 §0），E 照雙線規則把 master 合併進來就拿得到；
-- 改到 Studio 與 1 對 1 時照 [雙線開發](DUAL_LINE_DEVELOPMENT.md)：新程式寫在新檔案（`OKStudioMod*.cpp`、`OKInteractionMod*.cpp`），既有大檔案只加一行呼叫或 include，降低 E 合併時的衝突；
-- 動到 `Plugins/OKStudio`、`OKInteraction*`、`OKHScene*` 之前，先看 E 檢出最近有沒有改同一檔。
+規則：
 
-### 15.2 依賴與波次
+- 每個子對話只在自己的檢出寫，同一檢出只有它一個寫入者。§15.6 的檔案歸屬改成「哪個檢出的子對話負責」；
+- 同一檢出內不衝突的工作，可以用子代理平行處理（例如 F 的 3 和 1 同時做）；
+- 每個工作項做完：提交、寫回報（`Docs/OK_MOD_S<n>_*.md`），然後**結束這一輪**，交給協調者檢查；協調者回覆「繼續」後做下一項；
+- 走到同步點時停下等協調者；同步完成、協調者通知後才往下；
+- 卡住（建置失敗修不好、等 Unreal 名額超過 30 分鐘）：寫明原因後結束這一輪，由協調者決定；
+- 其餘照 §15.5、§15.7。
+
+**協調者**（建立計畫的那個對話，在 C 執行）：
+
+- 每 10 分鐘巡查：三個子對話的狀態、Unreal 名額、各檢出的提交；
+- 子對話一輪結束就檢查提交與驗收，回覆下一步；
+- 三邊都到同步點時做同步；
+- 72 小時到或全部完成時寫交接文件。
+
+### 15.1 三個檢出
+
+| 檢出 | 引擎 | 負責 | 子對話標題前綴／Unreal agent 名 |
+|---|---|---|---|
+| **F**：`F:\OpenKoikatsu` | `F:\UE5.8` | **mod 框架本體**：Rust crate、UE 宿主、材質 mod、每幀掛點、打包發布；本計畫與協調 | `[F組]`／`f-mod-<n>` |
+| C：`C:\portable\OpenKoikatsu` | `D:\PhysX\UE5.8` | 卡片與讀卡器、街區 | `[C組]`／`c-mod-<n>` |
+| E：`E:\OpenKoikatsu` | `E:\PhysX\UE5.8` | OK Studio 與 1 對 1 | `[E組]`／`e-mod-<n>` |
+
+- 三個檢出目前都在 `57fd839f6`（整合 #20），各自在自己的 `master` 上提交；E、F 的 remote `local` 指向 C；
+- **三套引擎各自建置**，不會互搶同一個引擎的 UBT 鎖，可以三邊同時編譯；
+- **Unreal 名額仍是全機共用**：最多 2 個 Unreal 同時執行，不論在哪個檢出都用 C 這份 `C:\portable\OpenKoikatsu\Tools\lua\lua.exe C:\portable\OpenKoikatsu\Tools\unreal_slot.lua`；建置前一樣先 `may-build`；
+- 腳本用各自檢出的 lua（`F:\OpenKoikatsu\Tools\lua\lua.exe`、`E:\OpenKoikatsu\Tools\lua\lua.exe`），否則會建到別的檢出；
+- 本計畫與盤點文件從 2026-11-23 起在 **F** 維護，C、E 的副本等同步時跟著更新。
+
+### 15.2 怎麼切
+
+1. **同一條依賴鏈放同一個檢出**：下游要用上游的提交，同檢出內直接拿得到；跨檢出要等同步點（§15.3）。
+2. **同一檢出內，檔案歸屬不重疊**（§15.6）。同一檢出的子對話共用工作樹，不開 worktree：UE 在 worktree 要整份重編。
+3. **照各檢出原本的分工**：C 做大世界與讀卡器，E 做 1 對 1 與 OK Studio（[雙線開發](DUAL_LINE_DEVELOPMENT.md)），F 做 mod 框架本體。
+4. **每個子對話有自己的驗收**，對到 §10 的里程碑；完成時要有提交，加一份「做了什麼、驗了什麼、沒驗什麼」的回報。
+
+### 15.3 波次與同步點
 
 ```mermaid
-flowchart LR
-    S1[1 Rust 骨架] --> S6[6 UE 宿主]
-    S1 --> S12[12 打包與發布]
-    S2[2 卡片 chunk 與身分] --> S7[7 讀卡 API＋範例]
-    S4[4 讀卡器前置] --> S7
-    S6 --> S7
-    S5[5 Studio 前置] --> S8[8 Studio API＋範例]
-    S6 --> S8
-    S3[3 材質可行性實測] --> S9[9 材質 mod]
-    S2 --> S9
-    S6 --> S9
-    S8 --> S9
-    S6 --> S10[10 街區＋1 對 1]
-    S7 --> S11[11 每幀掛點]
-    S8 --> S11
-    S7 --> S12
-    S8 --> S12
-    S9 --> S12
-    S10 --> S12
+flowchart TB
+    subgraph F[F：F:\UE5.8]
+        F1[1 Rust 骨架] --> F6[6 UE 宿主]
+        F3[3 材質可行性實測]
+        F12[12 打包與發布]
+        F9[9 材質 mod]
+        F11[11 每幀掛點]
+    end
+    subgraph C[C：D:\PhysX\UE5.8]
+        C2[2 卡片 chunk 與身分] --> C7[7 讀卡 API＋範例]
+        C4[4 讀卡器前置] --> C7
+        C10[10 街區]
+    end
+    subgraph E[E：E:\PhysX\UE5.8]
+        E5[5 Studio 前置] --> E8[8 Studio API＋範例]
+        E13[13 1 對 1]
+    end
+    F6 -.同步點 A.-> C7
+    F6 -.同步點 A.-> E8
+    F6 -.同步點 A.-> C10
+    F6 -.同步點 A.-> E13
+    C2 -.同步點 A.-> F9
+    E8 -.同步點 B.-> F9
+    C7 -.同步點 B.-> F11
+    E8 -.同步點 B.-> F11
+    F1 --> F12
 ```
 
-| 波次 | 子對話 | 開始條件 | 同時用 Unreal 的 |
-|---|---|---|---|
-| 第一波 | 1、2、3、4、5 | 計畫定案即開 | 2、3、4、5（錯開；1 不用 Unreal） |
-| 第二波 | 6，然後 7、8、10 | 6 等 1 提交；7 等 2、4、6；8 等 5、6；10 等 6 | 最多 3 個並行 |
-| 第三波 | 9、11、12 | 9 等 3、2、6、8；11 等 7、8；12 等 1 開始、等 7～10 收尾 | 11 要獨占量測，期間其他人不量效能 |
-
-### 15.3 各子對話
-
-| # | 名稱（標題前綴 `[C組]`） | 工作 | 驗收 | 里程碑 |
+| 波次 | F | C | E | 結束時 |
 |---|---|---|---|---|
-| 1 | mod-1 Rust 骨架 | `Tools/ok-mod/` workspace：`ok-mod-api`、`ok-mod-sdk`、`ok-mod-host`（cdylib＋rlib）；`ok_mod!` 巨集與 `catch_unwind`；`okm_*` C ABI 標頭；`hello` 與故意 panic 的測試 mod；先做 abi_stable spike（版面檢查、不同 rustc 版本編的 mod、panic 隔離） | `cargo test`：hello 載入、panic mod 被停用、版本不符被拒；不同 rustc 版本編的 mod 能載入 | M0（Rust 部分） |
-| 2 | mod-2 卡片 chunk 與身分 | 身分三處統一（Rust `oklib.rs`、Lua `prepare_street_social_selection.lua`、C++ `OKReaderTalk.cpp`），排除 `okVo`／`okMx`／`okMr`；`okMx`／`okMr` 編解碼與原樣保留（新檔 `okmods.rs`）；開卡快取鍵加「啟用的 mod 與版本」 | 舊卡身分不變（現有卡逐張比對）；手工加 `okMx`／`okMr` 的卡另存、重製後都還在；開卡基準差異 < 3% | M1 前置 |
-| 3 | mod-3 材質可行性實測 | 做一個樣本內容外掛（Custom HLSL＋`#include`），cook 成 pak；從 `Mods/` 掛載＋`OpenLibrary`＋載入；UnrealPak 列表做白名單檢查；寫 `Tools/modkit_cook.lua` 雛形；結果寫進文件 | 打包後遊戲畫出樣本材質；`#include` 那一版能否載入有明確結論；含 Blueprint 的 pak 被檢出 | M3.5 第一步 |
-| 4 | mod-4 讀卡器前置 | `pages.json` 補 toggle／dropdown／color／text／button；讀卡器 ICU 格式化與 plugin 群組標題翻譯 | 新控制項種類能用、MCP `ui_set` 改得到；群組標題依語言顯示 | M2 前置 |
-| 5 | mod-5 Studio 前置 | `.okscene` 加 `mods` 欄位（FormatVersion 4，舊檔照讀）；Studio 的指令表、工具列、右鍵選單、CurrentState／SceneEffects 面板、時間軸 `Owner` 留出「外部登記」的介面（先用 C++ 測試登記驗證） | 舊場景照開；`mods` 欄位存讀、undo 都保留；測試登記的指令、按鈕、面板項出現並能用 | M4 前置 |
-| 6 | mod-6 UE 宿主 | `Plugins/OKModding`、`FOKModHost`（照 `OKStreetRules.cpp` 載入）、`StartupModule` 開宿主；`-NoMods`；執行期主控台指令登記；`mod.list`；`OkUnrealBindings` 轉發回呼；`/mod` 控制通道路由與 ok-game-mcp 工具；staging 帶上 `ok_mod_host.dll`；`Mods/` 在 stage 根 | 讀卡器、Studio、1 對 1、街區四個模式啟動 log 都列出 hello；`-NoMods` 行為與現在相同；遊戲與編輯器兩個目標都連結成功 | M0 |
-| 7 | mod-7 讀卡 API＋範例 | Character API、讀卡 UI API、`okMx` character／outfit／part、`on_kkex` 轉卡掛點、`on_upgrade`、載入套用開關、缺 mod 提示；範例 `profile`、`outfit-names`、`random-chara` | §10 M1～M3 驗收；三個範例照 §14.1 運作 | M1～M3 |
-| 8 | mod-8 Studio API＋範例 | 把 5 留的介面接到宿主：場景控制器、面板、工具列、右鍵選單、指令、時間軸、計時器、按鍵事件；範例 `object-hotkeys`、`studio-autosave`、`scene-notes`、`timeline-flow` | 四個範例照 §14.2 運作；mod 改的東西能 undo／redo；匯入、複製、刪除物件時 id 對照正確 | M4（Studio） |
-| 9 | mod-9 材質 mod | A 層參數材質、B 層掛載（照 3 的結論）、shader 家族登記、逐角色材質覆蓋、卡內退回材質、`post_texture`、`okMr` 寫入上限；範例 `glass-shader`、`skin-decal`、`toon-post` | §10 M3.5 驗收；沒裝 mod 時卡用退回材質 | M3.5 |
-| 10 | mod-10 街區＋1 對 1 | 命名空間規則、`ext.mods.<id>`、街區事件、`Note()` 事件、語音播放事件；範例 `birthday`、`pair-counter`、`subtitles` | 三個範例照 §14.1／§14.3 運作；街區存讀檔保留 mod 狀態 | M4（街區、1 對 1） |
-| 11 | mod-11 每幀掛點 | Rust 後姿勢掛點（`session.rs` 3241～3248、配對 `ffi.rs` 1598）、物理外力輸入、預算與超時停用；範例 `boop`、`idle-breath` | 範例運作；沒裝 mod 時每幀耗時與現在相同；裝了時在預算內 | M4 之後 |
-| 12 | mod-12 打包與發布 | `ok-mod-pack`：pack／install／verify／profile、`obsolete.toml`、`.installed.toml`；`starter`、`full` profile；開發模式熱重載 | §10 M5 驗收 | M5 |
+| 第一波 | 1 → 6；3 | 2、4 | 5 | **同步點 A** |
+| 第二波 | 12（打包工具先做） | 7、10 | 8、13 | **同步點 B** |
+| 第三波 | 9、11、12 收尾 | 修 9／11 回報的問題 | 修 9／11 回報的問題 | **最後整合** |
 
-### 15.4 檔案歸屬
+**同步點**：把三邊的提交合在一起，再讓三邊回到同一個提交，做法照整合規則：
 
-同一列的檔案同一時間只歸一個子對話。前一個提交完，下一個才接手。
+1. 先提交全部已完成的工作；
+2. 三邊合進 C；
+3. C 混合編譯通過；
+4. E、F 從 C 快轉。
 
-| 檔案／目錄 | 依序歸屬 |
+同步點 A、B 只做到「三邊都編得過」為止，不跑完整 cook。**最後整合**照 AGENTS「整合 C／E 時一律跑完整流程」：新 tag、重新 cook 與 base，`CardReaderDevelopment.cmd`、`StreetSocial.cmd` 編過並實際啟動。
+
+**每個同步點都要使用者同意才做**（整合、推送只在使用者說了才做）。協調者在一波結束時回報，再請使用者決定。
+
+### 15.4 各子對話
+
+| # | 檢出 | 名稱 | 工作 | 驗收 | 里程碑 |
+|---|---|---|---|---|---|
+| 1 | F | mod-1 Rust 骨架 | `Tools/ok-mod/` workspace：`ok-mod-api`、`ok-mod-sdk`、`ok-mod-host`（cdylib＋rlib）；`ok_mod!` 巨集與 `catch_unwind`；`okm_*` C ABI 標頭；`hello` 與故意 panic 的測試 mod；先做 abi_stable spike（版面檢查、不同 rustc 版本、panic 隔離） | `cargo test`：hello 載入、panic mod 被停用、版本不符被拒；不同 rustc 版本編的 mod 能載入 | M0（Rust） |
+| 6 | F | mod-6 UE 宿主 | `Plugins/OKModding`、`FOKModHost`（照 `OKStreetRules.cpp` 載入）、`StartupModule` 開宿主；`-NoMods`；執行期主控台指令登記；`mod.list`；`OkUnrealBindings` 轉發回呼；`/mod` 控制通道路由與 ok-game-mcp 工具；staging 帶上 `ok_mod_host.dll`；`Mods/` 在 stage 根 | 四個模式啟動 log 都列出 hello；`-NoMods` 行為與現在相同；遊戲與編輯器兩個目標連結成功 | M0 |
+| 3 | F | mod-3 材質可行性實測 | 樣本內容外掛（Custom HLSL＋`#include`）cook 成 pak；從 `Mods/` 掛載＋`OpenLibrary`＋載入；UnrealPak 列表做白名單檢查；`Tools/modkit_cook.lua` 雛形 | 打包後遊戲畫出樣本材質；`#include` 能否載入有明確結論；含 Blueprint 的 pak 被檢出 | M3.5 第一步 |
+| 12 | F | mod-12 打包與發布 | `ok-mod-pack`：pack／install／verify／profile、`obsolete.toml`、`.installed.toml`；`starter`、`full` profile；開發模式熱重載 | §10 M5 驗收 | M5 |
+| 9 | F | mod-9 材質 mod | A 層參數材質、B 層掛載（照 3 的結論）、shader 家族登記、逐角色材質覆蓋、卡內退回材質、`post_texture`、`okMr` 上限；範例 `glass-shader`、`skin-decal`、`toon-post` | §10 M3.5 驗收；沒裝 mod 時卡用退回材質 | M3.5 |
+| 11 | F | mod-11 每幀掛點 | Rust 後姿勢掛點（`session.rs` 3241～3248、配對 `ffi.rs` 1598）、物理外力、預算與超時停用；範例 `boop`、`idle-breath` | 範例運作；沒裝 mod 時每幀耗時與現在相同；裝了時在預算內（要獨占量測） | M4 之後 |
+| 2 | C | mod-2 卡片 chunk 與身分 | 身分三處統一（`oklib.rs`、`prepare_street_social_selection.lua`、`OKReaderTalk.cpp`），排除 `okVo`／`okMx`／`okMr`；`okMx`／`okMr` 編解碼與原樣保留（新檔 `okmods.rs`）；開卡快取鍵加「啟用的 mod 與版本」 | 舊卡身分不變（現有卡逐張比對）；手工加 `okMx`／`okMr` 的卡另存、重製後都還在；開卡基準差異 < 3% | M1 前置 |
+| 4 | C | mod-4 讀卡器前置 | `pages.json` 補 toggle／dropdown／color／text／button；讀卡器 ICU 格式化與 plugin 群組標題翻譯 | 新控制項種類能用、MCP `ui_set` 改得到；群組標題依語言顯示 | M2 前置 |
+| 7 | C | mod-7 讀卡 API＋範例 | Character API、讀卡 UI API、`okMx` character／outfit／part、`on_kkex`、`on_upgrade`、載入套用開關、缺 mod 提示；範例 `profile`、`outfit-names`、`random-chara`、`subtitles`（讀卡部分） | §10 M1～M3 驗收；範例照 §14.1 運作 | M1～M3 |
+| 10 | C | mod-10 街區 | 命名空間規則、`ext.mods.<id>`、街區事件、語音播放事件；範例 `birthday`、`subtitles`（街區部分） | 範例照 §14 運作；存讀檔保留 mod 狀態 | M4（街區） |
+| 5 | E | mod-5 Studio 前置 | `.okscene` 加 `mods` 欄位（FormatVersion 4，舊檔照讀）；指令表、工具列、右鍵選單、CurrentState／SceneEffects 面板、時間軸 `Owner` 留出外部登記介面（先用 C++ 測試登記驗證） | 舊場景照開；`mods` 欄位存讀、undo 都保留；測試登記的指令、按鈕、面板項能用 | M4 前置 |
+| 8 | E | mod-8 Studio API＋範例 | 把 5 的介面接到宿主：場景控制器、面板、工具列、右鍵選單、指令、時間軸、計時器、按鍵事件；範例 `object-hotkeys`、`studio-autosave`、`scene-notes`、`timeline-flow` | 範例照 §14.2 運作；mod 改的東西能 undo／redo；匯入、複製、刪除物件時 id 對照正確 | M4（Studio） |
+| 13 | E | mod-13 1 對 1 | `Note()` 事件、進出事件、1 對 1 的語音事件；範例 `pair-counter`、`subtitles`（1 對 1 部分） | 範例照 §14.3 運作 | M4（1 對 1） |
+
+`subtitles` 跨三個模式：由 7 建立範例，10、13 各自接上自己模式的語音事件。
+
+### 15.5 跨檢出時怎麼拿到上游的東西
+
+- **同步點之前要用別的檢出的 API**：只能讀，不能改。例如 C 的 7 在同步點 A 之前要先寫程式，就讀 F 的 `Tools/ok-mod/api` 照著寫，但等同步點 A 之後才編譯驗收；
+- **不准私下互相合併**：E、F 不自己從 C 拉，C 也不自己從 E、F 拉；都等同步點；
+- **`SESSION_CACHE_REVISION`**：要升號時照雙線規則，先看另外兩邊用到幾號，取最大值加一。
+
+### 15.6 檔案歸屬
+
+同一列的檔案，同一時間只歸一個子對話。跨檢出時每邊改自己那份，同步點合併時衝突由協調者處理。
+
+| 檔案／目錄 | 歸屬（依序） |
 |---|---|
-| `Tools/ok-mod/{api,sdk,host}`、`examples/hello` | 1 → 之後改 API 要經協調者 |
-| `Tools/ok-mod/pack` | 12 |
+| `Tools/ok-mod/{api,sdk,host}`、`examples/hello` | F：1 → 之後改 API 要經協調者 |
+| `Tools/ok-mod/pack` | F：12 |
 | `Tools/ok-mod/examples/<名稱>` | 該範例所屬的子對話 |
-| `Tools/ok-extract/src/oklib.rs`、新檔 `okmods.rs` | 2 → 7（`on_kkex`）→ 9（快取鍵細節） |
-| `Tools/ok-extract/src/ffi.rs`、`include/ok_extract.h` | 6（轉發回呼）→ 11（每幀掛點） |
-| `Tools/ok-extract/src/session.rs`、`dbone*` | 11 |
-| `head_body.rs`、`face_texture.rs`、`catalog_textures.rs` | 9 |
-| `OKReaderTalk.cpp`、`prepare_street_social_selection.lua`、`Plugins/KKCard` | 2 |
-| `OKReaderScreen.cpp`、`OKGalleryProperties.cpp`、`Config/ReaderEditor/pages.json` | 4 → 7 |
-| `OKGalleryWidget.cpp` 與其他 `OKGallery*` | 7 |
-| `Plugins/OKStudio/**` | 5 → 8 → 9（`toon-post` 的面板項） |
-| `Plugins/OKModding/**`（新）、`OpenKoikatsu.cpp`、`OKGameControl.cpp`、`OpenKoikatsu.uproject` | 6 |
-| `Tools/ok-game-mcp/src/control.rs` | 6 |
-| `KKPreviewActor.cpp` 材質分派段、`KKRuntimeSharedMaterial.cpp` | 9 |
-| `OKStreetSocial*`、`Tools/ok-rules/src/lib.rs`、`OKHScene.cpp`、`OKInteraction*`、`KKSpeech*` | 10 |
-| 樣本內容外掛、`Tools/modkit_cook.lua` | 3 → 9 |
-| `Tools/stage_street_social.lua`、`run_*_development.lua` | 6 → 12 |
-| `Docs/OK_MOD_FRAMEWORK_PLAN.md`、`Docs/OK_MOD_HOOK_INVENTORY.md` | 協調者；子對話把結果寫在自己的文件（`Docs/OK_MOD_S<n>_*.md`），協調者再併進計畫 |
+| `Plugins/OKModding/**`（新）、`OpenKoikatsu.cpp`、`OKGameControl.cpp`、`OpenKoikatsu.uproject`、`Tools/ok-game-mcp/src/control.rs` | F：6 |
+| `Tools/ok-extract/src/ffi.rs`、`include/ok_extract.h` | F：6 → 11 |
+| `Tools/ok-extract/src/session.rs`、`dbone*` | F：11 |
+| `head_body.rs`、`face_texture.rs`、`catalog_textures.rs`、`KKPreviewActor.cpp` 材質分派段、`KKRuntimeSharedMaterial.cpp` | F：9 |
+| 樣本內容外掛、`Tools/modkit_cook.lua` | F：3 → 9 |
+| `Tools/stage_street_social.lua`、`run_*_development.lua` | F：6 → 12 |
+| `Tools/ok-extract/src/oklib.rs`、新檔 `okmods.rs` | C：2 → 7；F 的 9 在同步點 B 之後才碰 |
+| `OKReaderTalk.cpp`、`prepare_street_social_selection.lua`、`Plugins/KKCard` | C：2 |
+| `OKReaderScreen.cpp`、`OKGalleryProperties.cpp`、`Config/ReaderEditor/pages.json`、其他 `OKGallery*` | C：4 → 7 |
+| `OKStreetSocial*`、`Tools/ok-rules/src/lib.rs`、`KKSpeech*` | C：10 |
+| `Plugins/OKStudio/**` | E：5 → 8；F 的 9（`toon-post` 面板項）在同步點 B 之後才碰 |
+| `OKHScene*`、`OKInteraction*`、`KKPairedPlayback*` | E：13 |
+| `Docs/OK_MOD_FRAMEWORK_PLAN.md`、`Docs/OK_MOD_HOOK_INVENTORY.md` | F 的協調者；子對話把結果寫在自己的 `Docs/OK_MOD_S<n>_*.md`，協調者再併進計畫 |
 
-### 15.5 每個子對話都要遵守
+**兩個檢出都可能改到的共用檔**：`OpenKoikatsu.uproject`、`*.Build.cs`、`Cargo.lock`、`Localization/*`。
 
-- 標題前綴 `[C組]`，名稱 `mod-<n> <名稱>`；Unreal 名額的 agent 名稱用 `c-mod-<n>`；
-- 只提交自己的 hunk，一種改動一個提交；**不推送、不整合**；
+- 新增內容各自加在自己功能的區段；
+- 同步點合併時兩邊新增都保留。
+
+### 15.7 每個子對話都要遵守
+
+- 標題用自己檢出的前綴（`[F組]`／`[C組]`／`[E組]`），名稱 `mod-<n> <名稱>`；Unreal 名額的 agent 名稱用 `f-mod-<n>`／`c-mod-<n>`／`e-mod-<n>`；
+- 只在自己的檢出工作，用自己檢出的 lua 與引擎；
+- 只提交自己的 hunk，一種改動一個提交；**不推送、不整合、不在檢出之間合併**；
 - 改到共用程式碼（`Tools/ok-extract`、`Plugins/`、`Source/`、`Cargo.toml`／`Cargo.lock`、`.Build.cs`），提交前要過這三項：
   - `cargo check`；
   - Rust 另跑 `--no-default-features`；
-  - 建 `OpenKoikatsu` Development 與編輯器兩個目標，確認連結成功；
+  - 用自己檢出的引擎建 `OpenKoikatsu` Development 與編輯器兩個目標，確認連結成功；
 - 建置前跑 `unreal_slot.lua may-build`；開 Unreal 前 `claim`，用完馬上 `release`，一次最多占 20 分鐘；
 - ok-* 程式與 cargo 最多 8 執行緒；
 - 腳本用 Lua，交付工具用 Rust；
+- 新程式寫在新檔案，既有大檔案只加一行呼叫或 include（雙線規則）；
 - 文件用繁體中文；做錯的事記進 `Docs/ERROR_LOG.md`；
-- 要改 `ok-mod-api` 的型別或掛點（第一個 API 定版之後）：先告訴協調者，由協調者決定並通知其他子對話。
+- 要改 `ok-mod-api` 的型別或掛點（子對話 1 提交、API 定為 0.1 之後）：先告訴協調者。
 
-### 15.6 協調者（本對話）
+### 15.8 協調者
 
-- 依 §15.2 開子對話；每個子對話的開場說明照 §15.3 那一列，加上 §15.4、§15.5；
-- 子對話回報後檢查提交與驗收結果，再開下游子對話；
-- 子對話 1 提交後，把 `ok-mod-api` 定為 0.1。之後的 API 改動由協調者集中決定；
-- 整合 C／E、推送，只在使用者說了才做。
+- 協調者是本對話，計畫在 F 維護；
+- 依 §15.3 開子對話。開場說明包含 §15.4 那一列，加上 §15.6、§15.7，並寫明檢出路徑、引擎與 lua 路徑；
+- 子對話回報後檢查提交與驗收，再開同檢出的下游；
+- 一波結束時回報三邊狀態，**請使用者決定要不要做同步點**；
+- 子對話 1 提交後把 `ok-mod-api` 定為 0.1。之後的 API 改動由協調者集中決定，並通知三邊。

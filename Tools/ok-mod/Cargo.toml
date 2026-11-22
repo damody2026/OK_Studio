@@ -1,0 +1,28 @@
+# OK mod framework (Docs/OK_MOD_FRAMEWORK_PLAN.md): the stable ABI types, the SDK for mod authors,
+# the host Unreal loads (ok_mod_host.dll), example mods and test fixtures.
+[workspace]
+resolver = "2"
+members = [
+    "api",
+    "sdk",
+    "host",
+    "examples/hello",
+    "fixtures/panic-mod",
+    "fixtures/bad-layout",
+]
+
+[workspace.dependencies]
+abi_stable = "0.11.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+semver = { version = "1", features = ["serde"] }
+
+[profile.dev]
+# Mods must unwind: the SDK turns a panic into an error and the host disables the mod.
+# With "abort" a panic would take Unreal down with it.
+panic = "unwind"
+
+[profile.release]
+debug = 1
+panic = "unwind"

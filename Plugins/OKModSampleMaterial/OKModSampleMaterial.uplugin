@@ -1,0 +1,10 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1",
+  "FriendlyName": "OK Mod Sample Material",
+  "Description": "OK mod framework sample (work item 3): a content-only plugin whose material uses a Custom HLSL node that #includes this plugin's Shaders/OKModSample.usf. Cooked on its own by Tools/modkit_cook.lua --mod OKModSampleMaterial; not enabled in the game or the editor.",
+  "Category": "OKMod",
+  "EnabledByDefault": false,
+  "CanContainContent": true
+}

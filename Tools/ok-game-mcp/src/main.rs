@@ -216,7 +216,7 @@ fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
     if name == "game_select" {
         game::prune_stale_channels(&game.root);
     }
-    if matches!(name, "game_select" | "reader_call" | "pair_call") || name.starts_with("ui_") {
+    if matches!(name, "game_select" | "reader_call" | "pair_call" | "mod_call") || name.starts_with("ui_") {
         return control::run(&game.root, name, a);
     }
     Ok(match name {

@@ -36,6 +36,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "OKModding",
+			"Enabled": true
+		},
+		{
 			"Name": "KKCard",
 			"Enabled": true
 		},

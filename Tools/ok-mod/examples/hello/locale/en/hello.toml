@@ -1,0 +1,3 @@
+"mod.org.openkoikatsu.hello.description" = "Smallest example mod: logs on start, one config entry, one console command."
+"mod.org.openkoikatsu.hello.config.greeting" = "Greeting written to the log when the mod is enabled"
+"mod.org.openkoikatsu.hello.cmd.ping" = "Answers pong and how many times it was called"

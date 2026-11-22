@@ -1,0 +1,11 @@
+[package]
+name = "ok-mod-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "OK mod framework SDK: the ok_mod! macro (root module export, panic isolation), host access, config and logging helpers."
+
+[lib]
+name = "ok_mod_sdk"
+
+[dependencies]
+ok-mod-api = { path = "../api" }

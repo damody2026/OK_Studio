@@ -36,6 +36,7 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
 
+void OKModControlRoutes(); // OKModModes.cpp
 extern ENGINE_API float GAverageFPS;
 
 namespace
@@ -142,6 +143,7 @@ void Bind(const TCHAR* Path,EHttpServerRequestVerbs Verb,OKControl::FHandler Fn)
 void Routes()
 {
  constexpr auto Get=EHttpServerRequestVerbs::VERB_GET;constexpr auto Post=EHttpServerRequestVerbs::VERB_POST;
+ OKModControlRoutes(); // POST /mod: the mod host (ok-game-mcp mod_call)
  Bind(TEXT("/health"),Get,[](const FHttpServerRequest&,const FHttpResultCallback& Done){Reply(Done,Result(true));});
  Bind(TEXT("/state"),Get,[](const FHttpServerRequest&,const FHttpResultCallback& Done){
   FObject O=Result(true);O->SetNumberField(TEXT("pid"),FPlatformProcess::GetCurrentProcessId());O->SetNumberField(TEXT("fps"),GAverageFPS);O->SetStringField(TEXT("mode"),GMode);

@@ -12,6 +12,7 @@
 void OKHSceneInstallPrecacheAhead(); // OKHScene.h
 void OKStartMemoryDiagnostics(); // OKMemoryDiagnostics.cpp
 void OKStartNavCollisionTrim(); // OKLowMemoryNavCollision.cpp
+void OKModStart(); // OKModModes.cpp
 
 class FOpenKoikatsuModule final : public FDefaultGameModuleImpl {
 public:
@@ -21,6 +22,7 @@ public:
         // registrations before any World is created, including minimal runtime stages.
         FModuleManager::LoadModuleChecked<INiagaraModule>(TEXT("Niagara"));
         OKGameControl::Start();
+        OKModStart(); // OK mod host (Plugins/OKModding): opens when the first game mode starts; -NoMods keeps it off
         // OKMachine / OKMem lines in game.log (machine, memory and VRAM every 30 s, out-of-memory), so a tester's crash
         // can be read from the log.
         OKStartMemoryDiagnostics();

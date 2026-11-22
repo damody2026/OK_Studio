@@ -1,0 +1,13 @@
+[package]
+name = "ok-mod-hello"
+version = "0.1.0"
+edition = "2021"
+description = "Smallest OK mod: logs on start, one config entry, console command mod.org.openkoikatsu.hello.ping."
+publish = false
+
+[lib]
+name = "ok_hello"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }

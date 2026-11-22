@@ -1,0 +1,16 @@
+[package]
+name = "ok-mod-host"
+version = "0.1.0"
+edition = "2021"
+description = "OK mod host: discovers Mods/, resolves dependencies, loads mod DLLs through abi_stable, dispatches events, isolates panics. Unreal loads it as ok_mod_host.dll (okm_* C ABI); the ok-extract CLI links the rlib."
+
+[lib]
+name = "ok_mod_host"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ok-mod-api = { path = "../api" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+semver = { workspace = true }
