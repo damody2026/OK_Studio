@@ -7298,3 +7298,5 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - `ok-mod-pack` 的 pak 檢查把 mod id 當 `--mod` 傳給 `modkit_cook.lua`，id 有 `.` 一定被拒，任何帶 pak 的 mod 都打不了包。工作項 12 的測試只打包 hello（沒有 pak），一直沒發現，到這次打包全部範例才看到。教訓：打包流程的測試要包含帶 B 層內容的 mod。
   - 新增的主控台指令用了 `FConsoleCommandWithOutputDeviceDelegate`（不帶參數），編譯在 `Tuple.h` 報 `Invoke` 找不到多載；要參數與輸出要用 `FConsoleCommandWithArgsAndOutputDeviceDelegate`。
   - idle-breath 第一版寫了 `Mod::on_disable`，SDK 的 trait 沒有這個方法。
+
+- 2026-11-23 OK mod 快取追加項（`Docs/OK_MOD_S9c_CACHES.md`）：遊戲端 `OKModModes.cpp` `SyncExtract` 推給 ok-extract 的「會改開卡結果的 mod」清單只認 `extract.*`，漏了 `material.post_texture`，和 Rust 的 `okmods::changes_opens` 不同步：skin-decal 的掛點照跑，開卡快取鍵卻不含它。教訓：同一條規則在 C++ 與 Rust 各寫一份時，改一邊要搜另一邊（這次是加 `material.post_texture` 進 `changes_opens` 時沒找 C++ 的那份）。子代理的盤點也漏看了這處，它只看了 Rust 的鍵。
