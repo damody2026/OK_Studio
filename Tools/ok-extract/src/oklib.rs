@@ -874,6 +874,8 @@ pub fn with_card_identity(bytes: &[u8], id: &str) -> Result<Vec<u8>, String> {
 /// An OK card made again keeps the identity it had; an original KKS card made into an OK card for the first time
 /// has none to keep (its identity is that of the OK card made).
 fn keep_identity(input: &[u8], made: Vec<u8>) -> Result<Vec<u8>, String> {
+    // HairDeck hair the card keeps (okHk) is hers, not made from zipmods: it stays.
+    let made = match crate::portable::hairdeck::card_payload(input) { Some(p) => crate::cardbake::with_chunk(&made, crate::portable::hairdeck::CHUNK, p)?, None => made };
     if png_chunk(input, CARD_CHUNK).is_none() && png_chunk(input, IDENTITY_CHUNK).is_none() { return Ok(made); }
     match card_identity(input) { Some(id) => with_card_identity(&made, &id), None => Ok(made) }
 }

@@ -371,6 +371,10 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
 
     let card = crate::appearance::write_blocks(base_card, blocks)?;
     let card = without(&card, &[crate::oklib::IDENTITY_CHUNK, b"okVo", b"okPv", DNA_CHUNK])?;
+    // HairDeck hair (okHk) goes with the hair: the parent her hairstyle came from, whoever the base is.
+    let hair_parent = if hair_from_father { father } else { mother };
+    let card = crate::portable::hairdeck::inherit(&card, hair_parent)?;
+    let hairdeck = crate::portable::hairdeck::card_payload(hair_parent).is_some();
     let card = crate::oklib::with_card_identity(&card, &id)?;
     let side = |b: bool| if b { "father" } else { "mother" };
     let generation = rm["generation"].as_u64().unwrap_or(0).max(rf["generation"].as_u64().unwrap_or(0)) + 1;
@@ -378,9 +382,11 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
         "format": "ok-breed", "version": 1, "name": format!("{last} {first}").trim(), "seed": seed, "generation": generation, "mother": rm, "father": rf,
         "base": side(from_father), "picks": mixer.picks.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
         "changed": forced.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
+        "hairdeck": if hairdeck { serde_json::Value::from(side(hair_from_father)) } else { serde_json::Value::Null },
     });
     let card = crate::tree_answers::with_chunk(&card, DNA_CHUNK, &serde_json::to_vec(&record).unwrap())?;
-    let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {}, hair from the {})", side(from_father), side(hair_from_father));
+    let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {}, hair from the {}{})", side(from_father), side(hair_from_father),
+        if hairdeck { ", HairDeck hair" } else { "" });
     Ok(Bred { card, from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources })
 }
 

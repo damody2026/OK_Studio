@@ -356,6 +356,20 @@ pub fn apply(s: &mut OkSession, cards_json: &[u8], chains_json: Option<&[u8]>, o
     }
     report["hidden_hair_tinted"] = serde_json::json!(hidden);
     install(s, &mesh, &png, None)?;
+    // A runtime accessory's vertices are drawn where they are (world): the display takes them as they stand until the
+    // first solve moves them. Installed head-local, a card opened with this hair showed it at her feet (2026-11-22):
+    // placed with the head as it is now.
+    let head_world = s.body_skel.as_ref().and_then(|sk| head(sk).ok().map(|h| sk.worlds[h]));
+    if let (Some(hw), Some(p)) = (head_world, s.parts.iter_mut().find(|p| p.name == part_name(&mesh) && p.render_visible)) {
+        let o = crate::pose::mat_vec(&hw, [0.0; 3]);
+        p.positions = p.rest_positions.iter().map(|v| crate::pose::mat_vec(&hw, *v)).collect();
+        p.normals = p.rest_normals.iter().map(|n| {
+            let w = crate::pose::mat_vec(&hw, *n);
+            let d = [w[0] - o[0], w[1] - o[1], w[2] - o[2]];
+            let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-12);
+            [d[0] / l, d[1] / l, d[2] / l]
+        }).collect();
+    }
     if let Some(p) = s.parts.iter_mut().find(|p| p.name == part_name(&mesh) && p.render_visible) {
         // Without a native hair shader on the character the hair is drawn with the item shader: its colour atlas is
         // sRGB like any colour texture (read raw it came out pale violet), and the item outline traces every card.
@@ -427,4 +441,134 @@ pub fn preview_obj(lib: &Path, card: &Path, cards: &Path, opts: &HairDeckOpts, o
     if let Some(png) = &hair.png { std::fs::write(out.with_extension("png"), png).map_err(|e| e.to_string())?; }
     report["obj"] = serde_json::json!(out);
     Ok(report)
+}
+
+// ------------------------------------------------------------------ HairDeck hair kept in the card
+
+/// A card's own HairDeck hair (`okHk`): zstd of a JSON `{"format":"ok-hairdeck","version":1,"cards":[...],
+/// "chains":[...]|null,"opts":{...},"hair_color":[r,g,b],"source":"..."}` (`cards`/`chains` as HairDeck writes them,
+/// `hair_color` the card's hair colour when the hair was put in). The display puts it on every session of the card
+/// (`ok_session_apply_card_hairdeck`, where the reader's own HairDeck hair goes on); a card whose hair colour changed since (a bred child's mixed colour, the salon's dye) gets the
+/// cards' colours moved by that difference.
+pub const CHUNK: &[u8; 4] = b"okHk";
+const FORMAT: &str = "ok-hairdeck";
+
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    format: String,
+    version: u32,
+    cards: serde_json::Value,
+    #[serde(default)] chains: Option<serde_json::Value>,
+    #[serde(default)] opts: HairDeckOpts,
+    #[serde(default)] hair_color: Option<[f32; 3]>,
+    #[serde(default)] source: Option<String>,
+}
+
+fn read_saved(payload: &[u8]) -> Result<Saved, String> {
+    let json = zstd::stream::decode_all(payload).map_err(|e| format!("okHk: {e}"))?;
+    let s: Saved = serde_json::from_slice(&json).map_err(|e| format!("okHk: {e}"))?;
+    if s.format != FORMAT { return Err("okHk: not HairDeck hair".into()); }
+    if s.version != 1 { return Err(format!("okHk: version {} (supported 1)", s.version)); }
+    Ok(s)
+}
+
+/// The card's hair colour (as `card::parse_card_outfit` picks it), from its bytes.
+fn card_hair_color(bytes: &[u8]) -> Option<[f32; 3]> {
+    let info = crate::card::parse_card_bytes_mode(bytes, 0, false).ok()?;
+    Some([info.hair_color[0], info.hair_color[1], info.hair_color[2]])
+}
+
+/// The HairDeck hair a card carries: its `okHk` payload (None: the card's own hair).
+pub fn card_payload(bytes: &[u8]) -> Option<&[u8]> { crate::oklib::png_chunk(bytes, CHUNK) }
+
+/// `card` (bytes) with this HairDeck hair (`cards_seed<s>.json`, its `chains_seed<s>.json` beside it) kept in it; None
+/// takes the card's own hair back.
+pub fn with_hair(card: &[u8], cards: Option<&Path>, opts: &HairDeckOpts) -> Result<Vec<u8>, String> {
+    // (her identity stays what it was: a card without `okId` is known by its bytes)
+    let Some(cards) = cards else {
+        if card_payload(card).is_none() { return Ok(card.to_vec()); }
+        let id = crate::oklib::card_identity(card);
+        let plain = crate::cardbake::strip_kinds(card, &[CHUNK]).into_owned();
+        return match id { Some(id) if crate::oklib::png_chunk(card, crate::oklib::IDENTITY_CHUNK).is_none() => crate::oklib::with_card_identity(&plain, &id), _ => Ok(plain) };
+    };
+    let read_json = |p: &Path| -> Result<serde_json::Value, String> {
+        serde_json::from_slice(&crate::gamefs::read(p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display()))
+    };
+    let deck = read_json(cards)?;
+    if !deck.as_array().is_some_and(|a| !a.is_empty()) { return Err(format!("{}: no hair cards", cards.display())); }
+    let name = cards.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let chains_path = cards.with_file_name(name.replacen("cards_", "chains_", 1));
+    let chains = if name.starts_with("cards_") && chains_path.ok_is_file() { Some(read_json(&chains_path)?) } else { None };
+    let saved = Saved { format: FORMAT.into(), version: 1, cards: deck, chains, opts: opts.clone(), hair_color: card_hair_color(card),
+        source: cards.parent().and_then(|d| d.file_name()).map(|d| format!("{}/{name}", d.to_string_lossy())) };
+    let payload = zstd::stream::encode_all(&serde_json::to_vec(&saved).map_err(|e| e.to_string())?[..], 9).map_err(|e| e.to_string())?;
+    crate::tree_answers::with_chunk(card, CHUNK, &payload)
+}
+
+/// `with_hair` on files: `card` with the hair of `cards` (None: without HairDeck hair), written to `out` (may be `card`).
+pub fn put_into_card(card: &Path, cards: Option<&Path>, opts: &HairDeckOpts, out: &Path) -> Result<String, String> {
+    let bytes = crate::gamefs::read(card).map_err(|e| format!("{}: {e}", card.display()))?;
+    let made = with_hair(&bytes, cards, opts)?;
+    std::fs::write(out, &made).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok(match card_payload(&made) {
+        Some(p) => format!("HairDeck hair kept in the card ({} bytes)", p.len()),
+        None => "the card's own hair".into(),
+    })
+}
+
+/// Cards whose colours are moved by `shift` (clamped to 0..1).
+fn shifted_cards(cards: &serde_json::Value, shift: [f32; 3]) -> serde_json::Value {
+    let mut out = cards.clone();
+    for card in out.as_array_mut().into_iter().flatten() {
+        for c in card.get_mut("colors").and_then(|c| c.as_array_mut()).into_iter().flatten() {
+            if let Some(rgb) = c.as_array_mut() {
+                for (i, v) in rgb.iter_mut().take(3).enumerate() {
+                    if let Some(x) = v.as_f64() { *v = serde_json::json!((x + shift[i] as f64).clamp(0.0, 1.0)); }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The HairDeck hair kept in the card `bytes` (`okHk`) put on her session: Ok(None) when the card has none.
+pub fn apply_card(s: &mut OkSession, card: &Path, bytes: &[u8]) -> Result<Option<serde_json::Value>, String> {
+    let Some(payload) = card_payload(bytes) else { return Ok(None) };
+    let saved = read_saved(payload)?;
+    let shift = match (saved.hair_color, card_hair_color(bytes)) {
+        (Some(was), Some(now)) => [now[0] - was[0], now[1] - was[1], now[2] - was[2]],
+        _ => [0.0; 3],
+    };
+    let moved = shift.iter().any(|d| d.abs() > 0.002);
+    let cards = if moved { shifted_cards(&saved.cards, shift) } else { saved.cards };
+    let cards = serde_json::to_vec(&cards).map_err(|e| e.to_string())?;
+    let chains = saved.chains.as_ref().map(serde_json::to_vec).transpose().map_err(|e| e.to_string())?;
+    // (the hair slots and colour of her card: apply reads them by the card's path)
+    if s.card_path.is_none() { s.card_path = Some(card.to_path_buf()); }
+    let mut report = apply(s, &cards, chains.as_deref(), &saved.opts)?;
+    report["from_card"] = serde_json::json!(saved.source);
+    if moved { report["colour_shift"] = serde_json::json!(shift); }
+    Ok(Some(report))
+}
+
+/// For breeding: `child` (bytes) with the HairDeck hair of the parent her hair came from (`hair_parent`), or none.
+pub fn inherit(child: &[u8], hair_parent: &[u8]) -> Result<Vec<u8>, String> {
+    match card_payload(hair_parent) {
+        Some(p) => crate::cardbake::with_chunk(child, CHUNK, p),
+        None => Ok(crate::cardbake::strip_kinds(child, &[CHUNK]).into_owned()),
+    }
+}
+
+#[cfg(test)]
+mod card_tests {
+    use super::*;
+    #[test]
+    fn colours_move_with_the_card() {
+        let cards = serde_json::json!([{"seq": [[0.0]], "colors": [[0.5, 0.2, 0.9], [0.1, 0.0, 1.0]]}]);
+        let out = shifted_cards(&cards, [0.1, -0.1, 0.2]);
+        let c = &out[0]["colors"];
+        assert!((c[0][0].as_f64().unwrap() - 0.6).abs() < 1e-6 && (c[0][1].as_f64().unwrap() - 0.1).abs() < 1e-6);
+        assert_eq!(c[1][1].as_f64().unwrap(), 0.0);
+        assert_eq!(c[1][2].as_f64().unwrap(), 1.0);
+    }
 }

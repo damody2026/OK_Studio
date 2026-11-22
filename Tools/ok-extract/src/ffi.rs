@@ -555,6 +555,33 @@ pub unsafe extern "C" fn ok_session_apply_hairdeck(s:*mut OkSession,cards:*const
     })).unwrap_or_else(|_|Err("HairDeck hair panicked".into()));
     match result { Ok(r)=>{write_err(out,cap,&r.to_string());0}, Err(e)=>{write_err(out,cap,&e);1} }
 }
+/// Puts the HairDeck hair her card keeps (`okHk`) on the session, as `ok_session_apply_hairdeck` does a file's: 0 put
+/// on (report JSON in `out`, `"already":true` when it was), 2 the card keeps none, 1 error. The caller rebuilds her
+/// meshes. Called where the display puts the reader's own HairDeck hair on (AKKPreviewActor::ApplyHairDeckToSession).
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_apply_card_hairdeck(s:*mut OkSession,out:*mut c_char,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let Some(card)=s.card_path.clone() else{return 2;};
+    let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+        let bytes=crate::card::card_file_bytes(&card).map_err(|e|format!("{}: {e}",card.display()))?;
+        crate::portable::hairdeck::apply_card(s,&card,&bytes[..])
+    })).unwrap_or_else(|_|Err("HairDeck hair panicked".into()));
+    match result { Ok(Some(r))=>{write_err(out,cap,&r.to_string());0}, Ok(None)=>2, Err(e)=>{write_err(out,cap,&e);1} }
+}
+/// Keeps HairDeck hair in a card (`okHk`, `portable::hairdeck::with_hair`): `card` with the hair of `cards` (a
+/// `cards_seed<s>.json`, chains beside it; empty: the card's own hair back) and `opts` (HairDeckOpts JSON, empty: the
+/// defaults), written to `out` (may be `card`). 0 and a one-line summary in `msg`, or 1 and the error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_hairdeck(card:*const c_char,cards:*const c_char,opts:*const c_char,out:*const c_char,msg:*mut c_char,cap:i32)->i32 {
+    let result=std::panic::catch_unwind(||{
+        let (Some(card),Some(out))=(cstr_opt(card),cstr_opt(out)) else{return Err("HairDeck card: path missing".to_string());};
+        let cards=cstr_opt(cards).filter(|c|!c.trim().is_empty());
+        let opts=cstr_opt(opts).filter(|o|!o.trim().is_empty()).unwrap_or_else(||"{}".into());
+        let o:crate::portable::hairdeck::HairDeckOpts=serde_json::from_str(&opts).map_err(|e|format!("hairdeck opts: {e}"))?;
+        crate::portable::hairdeck::put_into_card(std::path::Path::new(&card),cards.as_deref().map(std::path::Path::new),&o,std::path::Path::new(&out))
+    }).unwrap_or_else(|_|Err("HairDeck card: panic".into()));
+    match result{Ok(s)=>{write_err(msg,cap,&s);0},Err(e)=>{write_err(msg,cap,&e);1}}
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_prepare_studio_ik(s:*mut OkSession,root:*const c_char,err:*mut c_char,cap:i32)->i32 {
     let Some(s)=sess_ref(s) else{return -1;};

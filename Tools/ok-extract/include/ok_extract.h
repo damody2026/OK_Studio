@@ -94,6 +94,10 @@ int32_t ok_session_bone_euler(OkSession* s,const char* name,float* out3);
 /* Studio IK (FullBodyBipedIK): prepare from the shared resources root; targets are effector indexes 0..8 (body, L/R
    shoulder, L/R thigh, L/R hand, L/R foot) with skeleton-space positions (Unity metres); count 0 clears. */
 int32_t ok_session_apply_hairdeck(OkSession* s,const char* cards,const char* opts,char* out,int32_t cap);
+/* HairDeck hair kept in a card (okHk): card with the hair of cards (empty: the card's own hair back), written to out. */
+/* The HairDeck hair her card keeps (okHk) put on the session: 0 put on (report in out), 2 none, 1 error. */
+int32_t ok_session_apply_card_hairdeck(OkSession* s,char* out,int32_t cap);
+int32_t ok_card_hairdeck(const char* card,const char* cards,const char* opts,const char* out,char* msg,int32_t cap);
 int32_t ok_session_prepare_studio_ik(OkSession* s,const char* root,char* err,int32_t cap);
 int32_t ok_session_set_studio_ik(OkSession* s,const int32_t* effectors,const float* positions,int32_t count);
 int32_t ok_session_set_studio_ik_pose(OkSession* s,const int32_t* effectors,const float* positions,const float* rotations,const uint8_t* enabled,int32_t count);
