@@ -277,7 +277,7 @@ pub(super) fn build(s: &OkSession, cards_json: &[u8], chains_json: Option<&[u8]>
     }
     let chains: Vec<DeckChain> = match chains_json { Some(b) if !opts.rigid => serde_json::from_slice(b).map_err(|e| format!("chains json: {e}"))?, _ => Vec::new() };
     let soft_rig = if chains.is_empty() { None } else { Some(rig(&chains, &fit, &positions, &card_of, &ring_of, &lines)?) };
-    let gloss_uvs = if opts.native { ring_uv(&positions) } else { Vec::new() };
+    let gloss_uvs = if opts.native { ring_uv(&positions, &card_of, &ring_of, &lines) } else { Vec::new() };
     let gloss_mask = if opts.native { Some(gloss_mask()?) } else { None };
     let mut png = Vec::new();
     atlas.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
@@ -301,17 +301,50 @@ const RING_DU_DAZ: f64 = 0.45;
 /// The ring drops this much per unit forward (+Z) and per unit sideways (|x|).
 const RING_FRONT: f64 = 0.33;
 const RING_SIDE: f64 = 0.45;
-fn ring_uv(positions: &[[f32; 3]]) -> Vec<[f32; 2]> {
+///
+/// The streaks run along each card (the user, 2026-11-22: 頭髮光澤要順著頭髮的方向): v is the arc length along the
+/// card's centreline from where it crosses the ring (v = 0.5 there, rising toward its root), and u is the card's own
+/// place round the head at that crossing plus where the vertex sits across the card, so a streak (constant u) follows
+/// the strand instead of standing upright in head space and cutting across strands that sweep sideways.
+fn ring_uv(positions: &[[f32; 3]], card_of: &[usize], ring_of: &[usize], lines: &[Vec<V3>]) -> Vec<[f32; 2]> {
     let mut crown: Vec<f64> = positions.iter().filter(|p| p[0] * p[0] + p[2] * p[2] < 0.06 * 0.06).map(|p| p[1] as f64).collect();
     if crown.is_empty() { crown = positions.iter().map(|p| p[1] as f64).collect(); }
     crown.sort_by(|a, b| a.total_cmp(b));
     let top = crown.get(crown.len().saturating_sub(1) * 95 / 100).copied().unwrap_or(0.22);
     let a = (top - 0.03).clamp(0.17, 0.24);
-    positions.iter().map(|p| {
-        let (x, y, z) = (p[0] as f64, p[1] as f64, p[2] as f64);
-        let ring = a - RING_FRONT * z - RING_SIDE * x.abs();
-        let v = (0.5 + RING_DV_DY * (y - ring)).clamp(0.01, 0.99);
-        let u = 0.5 + RING_DU_DAZ * x.atan2(z.abs());
+    // Height over the ring (head units) of a point.
+    let over = |p: V3| p[1] - (a - RING_FRONT * p[2] - RING_SIDE * p[0].abs());
+    let azimuth = |p: V3| p[0].atan2(p[2].abs());
+    // Per card: arc length at each centreline point, the arc length where it crosses the ring (outside the card: the
+    // root's or the tip's height over it continues the line), its u there and its radius round the head there.
+    let cards: Vec<(Vec<f64>, f64, f64, f64)> = lines.iter().map(|line| {
+        let mut s = vec![0.0; line.len()];
+        for k in 1..line.len() { s[k] = s[k - 1] + norm(sub(line[k], line[k - 1])); }
+        let f: Vec<f64> = line.iter().map(|p| over(*p)).collect();
+        let (mut at, mut point) = (None, line[0]);
+        for k in 1..line.len() {
+            if (f[k - 1] >= 0.0) != (f[k] >= 0.0) {
+                let t = f[k - 1] / (f[k - 1] - f[k]);
+                at = Some(s[k - 1] + t * (s[k] - s[k - 1]));
+                point = [0, 1, 2].map(|i| line[k - 1][i] + t * (line[k][i] - line[k - 1][i]));
+                break;
+            }
+        }
+        let last = line.len() - 1;
+        let at = at.unwrap_or_else(|| if f[0] < 0.0 { f[0] } else { point = line[last]; s[last] + f[last] });
+        let radius = (point[0] * point[0] + point[2] * point[2]).sqrt().max(0.05);
+        (s, at, 0.5 + RING_DU_DAZ * azimuth(point), radius)
+    }).collect();
+    (0..positions.len()).map(|i| {
+        let (s, at, u0, radius) = &cards[card_of[i]];
+        let r = ring_of[i].min(s.len() - 1);
+        let v = (0.5 - RING_DV_DY * (s[r] - at)).clamp(0.01, 0.99);
+        // Across the card: corners 0 and 2 are its edges, 1 and 3 its middle (card_vf); the half width at this ring.
+        let base = i - i % 4;
+        let q = |k: usize| { let x = positions[k]; [x[0] as f64, x[1] as f64, x[2] as f64] };
+        let half = if base + 2 < positions.len() { norm(sub(q(base + 2), q(base))) / 2.0 } else { 0.0 };
+        let side = [-1.0, 0.0, 1.0, 0.0][i % 4];
+        let u = u0 + side * RING_DU_DAZ * half / radius;
         [u as f32, v as f32]
     }).collect()
 }
