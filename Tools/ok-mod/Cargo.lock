@@ -276,6 +276,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-birthday"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ok-mod-fixture-bad-layout"
 version = "0.1.0"
 dependencies = [
