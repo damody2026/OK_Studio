@@ -7214,3 +7214,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 用 `lua.exe -e '...'` 把含 `§` 的註解寫進 `Tools/stage_street_social.lua`，命令列字串走主控台字碼頁，檔案變成非 UTF-8，commit hook 擋下。修正：改成 ASCII 的 `section 8`。教訓：要寫非 ASCII 的內容用 Write／Edit 工具，不用命令列字串。
   - 多模式整合測試第一版拿 hello 的 DLL 改 id 當第二個 mod，宿主正確地以「DLL 與 mod.toml 不符」拒載，測試失敗。是測試寫錯：換成另一個真的不同的 fixture（panic mod，只改 targets）。
   - 在 `OKGameControl.cpp` 第一次把 `OKModControlRoutes()` 的宣告放進匿名 namespace 裡，會和全域定義對不上（連結失敗）；建置前發現，移到檔案層級。
+
+- 2026-11-23 OK mod 第二波（讀卡器 ui_widgets 修正、工作項 12，`Docs/OK_MOD_S12_PACK.md`）：
+  - 修讀卡器 ui_widgets 為空時，第一版只把「模型層」的 Collapsed 根節點放行，`/widgets` 一呼叫讀卡器就崩潰：`Buttons()` 對從沒建出 Slate 的 UMG 按鈕做 `GetCachedWidget().ToSharedRef()`（SharedPointer `IsValid()` 斷言）。原本的程式只會遇到畫過的按鈕，所以沒出事。修正：沒有 Slate 時從 UMG 子樹取文字。教訓：放寬過濾條件前，先看下游每個用到這批物件的地方假設了什麼。
+  - 第二版用 UMG 自己的可見旗標判斷，只列出 7 個控制項：DreamGUI 會照樣鏡像 UMG 裡收起的面板，所以 UMG 旗標不代表畫面。改成看顯示中的 DreamGUI 鏡像（`UOKDreamControl::Source`）。
+  - 從 Git Bash 用 `curl -d '{"value":"繁體中文"}'` 送中文，參數被轉了字碼頁，遊戲回「not one of the choices」，差點誤判成 ui_set 有問題。改用 `--data-binary @<UTF-8 檔>`。
