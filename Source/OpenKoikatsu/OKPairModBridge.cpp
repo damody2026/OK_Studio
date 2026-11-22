@@ -7,9 +7,15 @@
 // ("section": {"version", "data_b64"}, as reader.character_load hands it). A reply {"version", "data_b64"} (ok-mod-sdk
 // hooks::save) writes the mod's section back into the card file, {"remove": true} removes it (FOkSession::
 // SetCardModSection: every other section and the card's identity stay). Other replies are kept for ok.PairModTrace.
+//
+// Her spoken line (the TTS voice of the line just shown, pair.line then pair.voice) also goes out as pair.speech_start
+// {"mode": "pair", "text", "card", "path"} as the reader's and the street's speech_start do; a reply
+// {"subtitle": {"text", "seconds"}} (the subtitles example) is shown in her subtitle bar of the H scene.
 #include "OKInteractionMod.h"
 #include "OKModHost.h"
 #include "KKRustExtract.h"
+#include "OKCharacterController.h"
+#include "OKHScene.h"
 #include "Misc/Base64.h"
 #include "Misc/CoreDelegates.h"
 #include "HAL/FileManager.h"
@@ -50,6 +56,8 @@ namespace OKPairModBridge
 			double Next = 0.0;
 		};
 		TArray<FPendingWrite> Pending;
+		/** Her line shown last (pair.line): the text of the TTS voice that follows it. */
+		FString LastLine;
 	};
 
 	FState& State()
@@ -175,6 +183,47 @@ namespace OKPairModBridge
 		}
 	}
 
+	/** Her line spoken: pair.speech_start to the mods, a subtitle they answer shown on the screen. */
+	void SendSpeech(const FOKPairModEvent& E, const FString& Text)
+	{
+		TSharedRef<FJsonObject> P = MakeShared<FJsonObject>();
+		P->SetNumberField(TEXT("pair"), 1);
+		P->SetStringField(TEXT("event"), TEXT("speech_start"));
+		P->SetStringField(TEXT("mode"), TEXT("pair"));
+		P->SetStringField(TEXT("text"), Text);
+		P->SetStringField(TEXT("card"), E.Card);
+		P->SetStringField(TEXT("source"), E.Source);
+		P->SetStringField(TEXT("path"), E.Path);
+		P->SetBoolField(TEXT("fitting"), E.bFitting);
+		TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
+		Request->SetStringField(TEXT("op"), TEXT("hook"));
+		Request->SetStringField(TEXT("hook"), TEXT("pair.speech_start"));
+		Request->SetObjectField(TEXT("payload"), P);
+		FString Error;
+		const TSharedPtr<FJsonObject> Answer = Dispatch(Request, Error);
+		Note(FString::Printf(TEXT("pair.speech_start %s -> %s"), *Condensed(Request).Left(300), Answer.IsValid() ? *Condensed(Answer.ToSharedRef()).Left(300) : *Error));
+		const TArray<TSharedPtr<FJsonValue>>* Replies = nullptr;
+		if (!Answer.IsValid() || !Answer->TryGetArrayField(TEXT("replies"), Replies)) return;
+		for (const TSharedPtr<FJsonValue>& V : *Replies)
+		{
+			const TSharedPtr<FJsonObject> R = V->AsObject();
+			const TSharedPtr<FJsonObject>* Json = nullptr;
+			const TSharedPtr<FJsonObject>* Subtitle = nullptr;
+			if (!R || !R->TryGetObjectField(TEXT("json"), Json) || !(*Json)->TryGetObjectField(TEXT("subtitle"), Subtitle)) continue;
+			FString Shown;
+			double Seconds = 4.0;
+			(*Subtitle)->TryGetNumberField(TEXT("seconds"), Seconds);
+			if (!(*Subtitle)->TryGetStringField(TEXT("text"), Shown) || Shown.IsEmpty()) continue;
+			// In the H scene her subtitle bar is where it goes (the engine's on-screen messages are not drawn there).
+			UOKCharacterController* C = E.Controller.Get();
+			UOKHScenePanel* Panel = C ? C->HPanel.Get() : nullptr;
+			if (Panel) Panel->ShowHerSubtitle(Shown);
+			else if (C) C->ScreenNote(41, float(FMath::Clamp(Seconds, .5, 30.)), FColor::White, Shown);
+			UE_LOG(LogOKPairMods, Display, TEXT("%s: subtitle \"%s\" (%.1f s) %s"), *R->GetStringField(TEXT("mod")), *Shown.Left(60), Seconds,
+				Panel ? TEXT("in her subtitle bar") : C ? TEXT("as a screen note") : TEXT("not shown (no scene)"));
+		}
+	}
+
 	TArray<FString> EnabledMods()
 	{
 		TArray<FString> Out;
@@ -246,6 +295,9 @@ namespace OKPairModBridge
 			Host.EnterMode(TEXT("pair"));
 		}
 		Send(E);
+		if (E.Kind == EOKPairModEvent::Line) S.LastLine = E.Text;
+		// The TTS voice is the line shown just before it; her cries (hvoice) have no text.
+		if (E.Kind == EOKPairModEvent::Voice && E.Source == TEXT("tts") && !S.LastLine.IsEmpty()) { SendSpeech(E, S.LastLine); S.LastLine.Empty(); }
 		if (E.Kind == EOKPairModEvent::Exit && S.bEnteredPair)
 		{
 			S.bEnteredPair = false;
