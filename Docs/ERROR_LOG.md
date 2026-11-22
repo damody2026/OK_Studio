@@ -7227,3 +7227,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **修正**：`.usf` 改收 `float3 Tint, float TintAlpha`，`GlassTint` 的 `A` 輸出另接一個 Custom 輸入。重 cook 成功（`Cook3`）。
 - **症狀 2**：重跑製作腳本時 `EditorAssetLibrary.delete_asset("M_OKGlass")` 沒刪掉（被 `MI_OKGlass_Smoky` 引用），接著 `create_asset` 在 unattended 下回 `None`，腳本中斷。處置：重做前先刪外掛 `Content/` 的 `.uasset` 檔再跑腳本。
 - **教訓**：Custom 節點的 `.usf` 函式簽章要照產生碼的實際型別寫（向量參數是 float3，alpha 另接），寫完先看一次 ShaderDebugInfo 的產生碼；編輯器 Python 重建互相引用的資產，先刪檔案，不要靠 `delete_asset`。
+
+- 2026-11-23 OK mod 工作項 9（mod 材質，`Docs/OK_MOD_S9_MATERIALS.md`）：
+  - content_build 的引擎部分第一版用 `FEngineVersion::CompatibleWith()`，以為會是 Build.version 的 CompatibleChangelist（55116800）；打包遊戲裡實際是 `5.8.0-0`（log 的 `Compatible Engine Version`），probe stage 一律判成不符。改用 `FEngineVersion::Current()`（`5.8.4-0`），`modkit_cook.lua` 對應讀 Build.version 的 `Changelist`。教訓：版本字串先在打包遊戲裡印出來再定格式。
+  - pak 白名單檢查假設 `IPakFile::PakVisitPrunedFilenames` 給的是含掛載點的完整路徑，實際是相對於掛載點，第一次把合法的 `M_OKGlass.uasset` 判成「在 mod 資料夾外」而拒絕整個 pak（拒絕流程與退回 A 層倒是因此驗到了）。改成兩種都接受，再擋 `..`、`/./`、絕對路徑與磁碟代號。
+  - 讀卡器的 shader 家族分派第一版只改了 `Part.Comp`（程序網格）；GPU 蒙皮路徑真正畫的是 tag 為 `KKSessionPart_<n>` 的 follower，程序網格是隱藏的，所以畫面沒變。`mod.material.apply` 也一樣，第一次回報套了 3 個部件但畫面不變。修正：分派在 follower 套完材質後再做一次；覆蓋指令依 session 索引連 follower 一起改。教訓：讀卡器的「部件」與「畫它的元件」不是同一個物件，改材質要以截圖確認。
+  - 改 LF 檔案時用 Lua 腳本找含 `\r\n` 的字串，找不到而中止（`OKModding.Build.cs`、`.uplugin` 是 LF）。改用 Edit 工具。
