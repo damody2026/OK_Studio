@@ -11,6 +11,8 @@
 #include "OKModHost.h"
 #include "KKRustExtract.h"
 #include "Misc/Base64.h"
+#include "Misc/CoreDelegates.h"
+#include "HAL/FileManager.h"
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
 #include "HAL/IConsoleManager.h"
@@ -37,6 +39,17 @@ namespace OKPairModBridge
 		TArray<FString> Trace;
 		/** Per mod, the hooks the host said it did not subscribe to (not asked again while the host stays open). */
 		TMap<FString, TSet<FString>> NotSubscribed;
+		/** Card data a mod gave that could not be written yet (the card file in use): tried again until it is. */
+		struct FPendingWrite
+		{
+			FString Card, Mod;
+			int32 Version = 1;
+			TArray<uint8> Bytes;
+			bool bRemove = false;
+			int32 Tries = 0;
+			double Next = 0.0;
+		};
+		TArray<FPendingWrite> Pending;
 	};
 
 	FState& State()
@@ -81,7 +94,19 @@ namespace OKPairModBridge
 		return S.FakeDispatch ? S.FakeDispatch(Request) : FOKModHost::Get().DispatchJson(Request, Error);
 	}
 
-	/** A mod's reply: write or remove its section of the card. */
+	bool TryWrite(const FState::FPendingWrite& W)
+	{
+		FString Error;
+		if (!FOkSession::SetCardModSection(W.Card, W.Mod, W.Version, W.Bytes, W.bRemove, Error))
+		{
+			UE_LOG(LogOKPairMods, Warning, TEXT("%s: card data of %s not written (try %d, kept to try again): %s"), *W.Mod, *W.Card, W.Tries + 1, *Error);
+			return false;
+		}
+		UE_LOG(LogOKPairMods, Display, TEXT("%s: %s its card data in %s (%d bytes, version %d)"), *W.Mod, W.bRemove ? TEXT("removed") : TEXT("wrote"), *W.Card, W.Bytes.Num(), W.Version);
+		return true;
+	}
+
+	/** A mod's reply: write or remove its section of the card (kept and tried again while the card file is in use). */
 	void ApplyReply(const FString& Mod, const FJsonObject& Reply, const FString& Card)
 	{
 		const TSharedPtr<FJsonObject>* Json = nullptr;
@@ -95,15 +120,36 @@ namespace OKPairModBridge
 		(*Json)->TryGetNumberField(TEXT("version"), Version);
 		TArray<uint8> Bytes;
 		if (bSave && !FBase64::Decode(Base64, Bytes)) { UE_LOG(LogOKPairMods, Warning, TEXT("%s: data_b64 is not base64"), *Mod); return; }
-		FString Error;
-		if (!FOkSession::SetCardModSection(Card, Mod, Version, Bytes, bRemove, Error))
+		FState::FPendingWrite W;
+		W.Card = Card;
+		W.Mod = Mod;
+		W.Version = Version;
+		W.Bytes = MoveTemp(Bytes);
+		W.bRemove = bRemove;
+		// The newest data of a mod for a card is the one to write: an older one still waiting goes.
+		State().Pending.RemoveAll([&](const FState::FPendingWrite& P) { return P.Card == Card && P.Mod == Mod; });
+		if (!TryWrite(W)) { W.Tries = 1; W.Next = FPlatformTime::Seconds() + 2.0; State().Pending.Add(MoveTemp(W)); }
+	}
+
+	/** The writes still waiting: each when its time comes, waiting longer after each failure (2 s, 4 s … 60 s). */
+	void RetryPending(bool bNow)
+	{
+		FState& S = State();
+		const double Now = FPlatformTime::Seconds();
+		for (int32 I = S.Pending.Num() - 1; I >= 0; --I)
 		{
-			UE_LOG(LogOKPairMods, Warning, TEXT("%s: card data of %s: %s"), *Mod, *Card, *Error);
+			FState::FPendingWrite& W = S.Pending[I];
+			if (!bNow && Now < W.Next) continue;
+			if (TryWrite(W)) { S.Pending.RemoveAt(I); continue; }
+			++W.Tries;
+			W.Next = Now + FMath::Min(60.0, 2.0 * double(1 << FMath::Min(W.Tries, 5)));
 		}
-		else
-		{
-			UE_LOG(LogOKPairMods, Display, TEXT("%s: %s its card data in %s (%d bytes, version %d)"), *Mod, bRemove ? TEXT("removed") : TEXT("wrote"), *Card, Bytes.Num(), Version);
-		}
+	}
+
+	/** A write still waiting for this card and mod (its data is newer than the card file's). */
+	const FState::FPendingWrite* PendingFor(const FString& Card, const FString& Mod)
+	{
+		return State().Pending.FindByPredicate([&](const FState::FPendingWrite& P) { return P.Card == Card && P.Mod == Mod; });
 	}
 
 	/** Sends the request and handles each reply; the mods that did not subscribe are remembered. */
@@ -168,7 +214,8 @@ namespace OKPairModBridge
 				int32 Version = 0;
 				TArray<uint8> Bytes;
 				FString Error;
-				if (!FOkSession::CardModSection(Card, Mod, bFound, Version, Bytes, Error)) UE_LOG(LogOKPairMods, Warning, TEXT("%s: card data of %s: %s"), *Mod, *Card, *Error);
+				if (const FState::FPendingWrite* W = PendingFor(Card, Mod)) { bFound = !W->bRemove; Version = W->Version; Bytes = W->Bytes; }
+				else if (!FOkSession::CardModSection(Card, Mod, bFound, Version, Bytes, Error)) UE_LOG(LogOKPairMods, Warning, TEXT("%s: card data of %s: %s"), *Mod, *Card, *Error);
 				if (bFound)
 				{
 					TSharedRef<FJsonObject> Section = MakeShared<FJsonObject>();
@@ -215,6 +262,7 @@ namespace OKPairModBridge
 		if (!bWant) S.NotSubscribed.Reset();
 		if (bWant && !S.Subscription) S.Subscription = FOKInteractionModEvents::Get().Subscribe(TEXT("mod-host"), [](const FOKPairModEvent& E) { OnEvent(E); });
 		else if (!bWant && S.Subscription) { FOKInteractionModEvents::Get().Unsubscribe(S.Subscription); S.Subscription = 0; }
+		if (S.Pending.Num()) RetryPending(false);
 		return true;
 	}
 
@@ -222,6 +270,12 @@ namespace OKPairModBridge
 	{
 		if (!FApp::IsGame() || IsRunningCommandlet()) return;
 		FTSTicker::GetCoreTicker().AddTicker(TEXT("OKPairMods"), 0.5f, [](float Delta) { return Tick(Delta); });
+		FCoreDelegates::OnEnginePreExit.AddLambda([]
+		{
+			if (State().Pending.IsEmpty()) return;
+			RetryPending(true);
+			for (const FState::FPendingWrite& W : State().Pending) UE_LOG(LogOKPairMods, Error, TEXT("%s: card data of %s lost at exit (the file stayed in use)"), *W.Mod, *W.Card);
+		});
 	});
 
 	FAutoConsoleCommand TraceCommand(TEXT("ok.PairModTrace"), TEXT("Logs the last one-on-one hooks sent to the mods and their answers."),
@@ -290,6 +344,39 @@ namespace OKPairModBridge
 					bool bCancelled = false;
 					Check(P.IsValid() && P->TryGetBoolField(TEXT("cancelled"), bCancelled) && bCancelled, TEXT("pair.exit carries cancelled"));
 				}
+			}
+			// A card held open by someone else: the write waits and is done once the file is free.
+			const FString Card = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKInteraction/pair_retry_selftest.png"));
+			FString Source;
+			for (const TCHAR* Png : { TEXT("Plugins/DreamGUI/Resources/Icon128.png"), TEXT("Plugins/KawaiiPhysics/Resources/Icon128.png") })
+				if (IFileManager::Get().FileExists(*(FPaths::ProjectDir() / Png))) { Source = FPaths::ProjectDir() / Png; break; }
+			if (Source.IsEmpty()) Lines.Add(TEXT("SKIP retry: no PNG to copy"));
+			else if (IFileManager::Get().Copy(*Card, *Source) != COPY_OK) Check(false, TEXT("retry: copy the PNG"));
+			else
+			{
+				const FString Mod = TEXT("org.test.pair_retry");
+				TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+				Json->SetNumberField(TEXT("version"), 1);
+				Json->SetStringField(TEXT("data_b64"), FBase64::Encode(FString(TEXT("{\"times\":1}"))));
+				TSharedRef<FJsonObject> Reply = MakeShared<FJsonObject>();
+				Reply->SetObjectField(TEXT("json"), Json);
+				bool bFound = false;
+				int32 Version = 0;
+				TArray<uint8> Bytes;
+				FString Error;
+				{
+					TUniquePtr<FArchive> Held(IFileManager::Get().CreateFileReader(*Card));
+					ApplyReply(Mod, *Reply, Card);
+					Check(PendingFor(Card, Mod) != nullptr, TEXT("retry: the write is kept while the card file is open"));
+					FOkSession::CardModSection(Card, Mod, bFound, Version, Bytes, Error);
+					Check(!bFound, TEXT("retry: nothing written yet"));
+				}
+				RetryPending(true);
+				Check(PendingFor(Card, Mod) == nullptr, TEXT("retry: done once the file is free"));
+				FOkSession::CardModSection(Card, Mod, bFound, Version, Bytes, Error);
+				const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
+				Check(bFound && Version == 1 && FString(Text.Length(), Text.Get()) == TEXT("{\"times\":1}"), FString::Printf(TEXT("retry: the card has the data (%s)"), *Error));
+				IFileManager::Get().Delete(*Card);
 			}
 			Lines.Insert(FString::Printf(TEXT("ok.PairModBridgeSelfTest: %d failed of %d"), Failed, Lines.Num()), 0);
 			const FString Out = FPaths::ProjectSavedDir() / TEXT("OKInteraction/pair_mod_bridge_selftest.txt");
