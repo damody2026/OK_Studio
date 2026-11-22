@@ -33,6 +33,10 @@ pub struct CardScope(Option<String>);
 impl CardScope {
     pub fn new(path: Option<&std::path::Path>) -> CardScope {
         let path = path.map(|p| p.to_string_lossy().replace('\\', "/"));
+        CardScope::named(path)
+    }
+    /// The same for a path already in the form `current_card` gives (carried to another thread).
+    pub fn named(path: Option<String>) -> CardScope {
         CardScope(CARD.with(|c| c.replace(path)))
     }
 }
