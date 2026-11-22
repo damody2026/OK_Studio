@@ -2780,3 +2780,9 @@ pushup_body_backup = "这是 Pushup 存的「推挤前」身体滑杆备份。�
 foreground_config = "跟随游戏设定"
 foreground_off = "画在后面"
 foreground_on = "画在前面"
+
+[reader.settings]
+language = "语言"
+
+[reader.properties]
+plugin_group_rows = "{group}（{count, plural, other {# 项}}）"

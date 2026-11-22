@@ -2780,3 +2780,9 @@ pushup_body_backup = "Pushup's copy of the body sliders before the push. Edit th
 foreground_config = "Follow the game setting"
 foreground_off = "Behind"
 foreground_on = "In front"
+
+[reader.settings]
+language = "Language"
+
+[reader.properties]
+plugin_group_rows = "{group} ({count, plural, one {# row} other {# rows}})"

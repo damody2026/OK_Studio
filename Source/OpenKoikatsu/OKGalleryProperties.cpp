@@ -5,6 +5,7 @@
 #include "Misc/ConfigCacheIni.h"
 #include "OKComboBox.h"
 #include "OKPropertyInput.h"
+#include "OKReaderText.h"
 #include "OKAppearanceCardJob.h"
 #include "KKCardReader.h"
 #include "KKCardWriter.h"
@@ -84,7 +85,15 @@ void UOKCharacterController::RebuildPropertyControls(){
  const FString PreviousColor=PropertyColorKey;PropertyColorGroups.Reset();PropertyColorLabels.Reset();PropertyColorTarget->ClearOptions();PropertyColorKey=PreviousColor;TMap<FString,FString> GroupLabels;
  for(auto P:EditorProperties)if(PropertyInScope(P)&&P->GetStringField(TEXT("kind"))==TEXT("color")){const FString Key=P->GetStringField(TEXT("key"));int32 Dot;if(!Key.FindLastChar(TEXT('.'),Dot))continue;const FString Component=Key.Mid(Dot+1);int32 Index=INDEX_NONE;if(Component.Len()==1&&Component[0]>=TEXT('0')&&Component[0]<=TEXT('3'))Index=Component[0]-TEXT('0');else for(int32 I=0;I<4;++I)if(Component==TArray<FString>{TEXT("r"),TEXT("g"),TEXT("b"),TEXT("a")}[I])Index=I;if(Index==INDEX_NONE)continue;const FString Prefix=Key.Left(Dot);auto& Keys=PropertyColorGroups.FindOrAdd(Prefix);Keys.SetNum(4);Keys[Index]=Key;FString L=P->GetStringField(TEXT("label"));int32 Slash;if(L.FindLastChar(TEXT('／'),Slash))L=L.Left(Slash);GroupLabels.Add(Prefix,L);}
  TArray<FString> ColorKeys;PropertyColorGroups.GetKeys(ColorKeys);ColorKeys.Sort();FString CurrentOption;for(const FString& Key:ColorKeys){const auto& Keys=PropertyColorGroups[Key];if(Keys.Num()!=4||Keys.Contains(FString()))continue;const FString L=GroupLabels[Key];PropertyColorLabels.Add(L,Key);PropertyColorTarget->AddOption(L);if(Key==PropertyColorKey)CurrentOption=L;}if(CurrentOption.IsEmpty()&&PropertyColorTarget->GetOptionCount()>0)CurrentOption=PropertyColorTarget->GetOptionAtIndex(0);PropertyColorTarget->SetSelectedOption(CurrentOption);OnPropertyColorTarget(CurrentOption,ESelectInfo::Direct);
+ // A plugin's rows (plugins.<id>.*, ok-extract plugins.rs) under a heading: its section's title (group_id, a text id of
+ // the reader's language) and how many rows it has here, an ICU message (reader.properties.plugin_group_rows).
+ TMap<FString,int32> GroupRows;for(auto P:EditorProperties){FString GroupId;if(PropertyInScope(P)&&P->TryGetStringField(TEXT("group_id"),GroupId)&&!GroupId.IsEmpty())++GroupRows.FindOrAdd(GroupId);}
+ FString ShownGroup;
  for(auto P:EditorProperties){const FString Key=P->GetStringField(TEXT("key")),Label=P->GetStringField(TEXT("label")),Kind=P->GetStringField(TEXT("kind"));if(!PropertyInScope(P))continue;if(!Search.IsEmpty()&&!Label.Contains(Search)&&!Key.Contains(Search))continue;const int32 Match=Count++;if(Match<PropertyPage*64||Match>=(PropertyPage+1)*64)continue;
+  if(FString GroupId;P->TryGetStringField(TEXT("group_id"),GroupId)&&!GroupId.IsEmpty()&&GroupId!=ShownGroup){
+   ShownGroup=GroupId;auto Args=MakeShared<FJsonObject>();Args->SetStringField(TEXT("group"),OKReaderT(GroupId));Args->SetNumberField(TEXT("count"),GroupRows.FindRef(GroupId));
+   FString Heading=OKReaderMsg(TEXT("reader.properties.plugin_group_rows"),Args);if(Heading==TEXT("reader.properties.plugin_group_rows"))Heading=OKReaderT(GroupId);
+   auto* Header=WidgetTree->ConstructWidget<UTextBlock>();Header->SetText(FText::FromString(Heading));Header->SetToolTipText(FText::FromString(GroupId));Header->SetFont(FCoreStyle::GetDefaultFontStyle("Bold",15));PropertyRows->AddChild(Header);}
   auto* Row=WidgetTree->ConstructWidget<UHorizontalBox>();auto* Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetText(FText::FromString(Label));Text->SetAutoWrapText(true);Text->SetToolTipText(FText::FromString(Key));Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Row->AddChildToHorizontalBox(Text)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
   auto V=PendingProperties.Contains(Key)?PendingProperties[Key]:P->Values[TEXT("value")];
   auto* Width=WidgetTree->ConstructWidget<USizeBox>();Width->SetWidthOverride(130);Row->AddChild(Width);

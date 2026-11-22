@@ -2781,3 +2781,9 @@ pushup_body_backup = "這是 Pushup 存的「推擠前」身體滑桿備份。�
 foreground_config = "跟隨遊戲設定"
 foreground_off = "畫在後面"
 foreground_on = "畫在前面"
+
+[reader.settings]
+language = "語言"
+
+[reader.properties]
+plugin_group_rows = "{group}（{count, plural, other {# 項}}）"
