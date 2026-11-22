@@ -49,6 +49,7 @@ Event::Hook { name: RString, payload: RString }   // payload 是 JSON
 | `reader.values` | 開卡、改值之後 | `{}` | `{"<鍵>": 值, ...}`（不含前綴） |
 | `reader.control` | 某個控制項改了（頁面或 `reader_call set`） | `{"key", "value"}`（不含前綴） | 可帶讀卡器動作；回錯誤表示拒絕 |
 | `reader.speech_start` | 一句語音開始播放 | `{"mode": "reader", "text", "card"}` | `{"subtitle": {"text", "seconds"}}` 等（§5） |
+| `input.pointer` | 讀卡器：滑鼠（沒按鍵）掃過角色，最多每秒 20 次；只在有 mod 訂閱時送 | `{"mode": "reader", "card", "origin", "dir", "velocity"}`（她的 Unity 骨架空間，公尺） | 可帶讀卡器動作；範例 `examples/boop` |
 
 `apply` 是「載入卡片時套用此 mod 資料」開關（MakerLoadToggle 對應），關掉時 `section` 照給、`apply=false`，`CharacterLoad::data` 回 `None`。
 

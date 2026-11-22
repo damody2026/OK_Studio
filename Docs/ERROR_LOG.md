@@ -7287,3 +7287,14 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **修正**：那一步改用 `pack_parallel`，和開卡其他會讀卡片資料的平行步驟一樣。曾考慮把整個開卡放進卡自己的池，但開卡執行緒上有不少執行緒區域的旗標與快取（`DEFER_STORE`、`BACKGROUND_OPEN`、`STATE_VARIANT`、`VIEW_MEMO`），搬過去就看不到了，所以沒有這樣做。開卡路徑上其他沒包的平行迭代都只處理像素或幾何，不讀檔。
 - **驗證**：街區 `OK_NOCACHE=1` 冷開：修正前貞德·Alter、雷電將軍載不出（3981 個缺口）；修正後 log 沒有任何 unanswered，全部女角都載入。ok-extract `cargo check`（含 `--no-default-features`）、pack_scope／okstrict 單元測試、D: 引擎的編輯器與遊戲兩個目標都通過。
 - **教訓**：退路（只有一張卡在開時才給）在「一次開一張」的工具與讀卡器裡永遠看起來是對的；並行開卡的場景要用冷開實測。開卡途中會讀卡片資料的平行工作，一律要放在卡自己的池（`pack_parallel`／`native_parallel_work`），不能靠退路。
+
+## 2026-11-23 讀卡器 input.pointer：建置「成功」其實沒建、射線一直打不中（C 組，OK mod 第三波 5.）
+
+- **假的建置成功**：我在 Git Bash 裡用 `MSYS_NO_PATHCONV=1 cmd //c "D:/.../Build.bat ... -waitmutex"` 建置。這次 cmd 沒有執行指令，而是開了互動提示字元，結束碼卻是 0，所以 7eb48e001 在沒編過的情況下被當成「兩個目標都建好」提交。
+  - 真正建置時錯在 `OKReaderMods.h`：在 `namespace OKReaderMods` 裡寫參數 `class AKKPreviewActor*`，宣告出另一個型別 `OKReaderMods::AKKPreviewActor`。
+  - 359d7174e 改成在全域前置宣告。
+  - **教訓**：建置一律在 PowerShell 直接呼叫 `Build.bat`，並看 log 裡的 `Result: Succeeded`，不能只看結束碼。
+- **射線打不中**（be6d575e1）：
+  - `PlayerController::DeprojectMousePositionToWorld`：讀卡器畫面蓋在 viewport 上時，viewport 只在滑鼠移動的那一幀知道游標位置，之後就失敗。改用 Slate 游標位置對遊戲 viewport 的幾何換算，再 `DeprojectScreenPositionToWorld`。
+  - `GetComponentsBoundingBox(false, …)`：第一個參數 `bNonColliding=false` 只算有碰撞的元件。預覽角色的網格都沒有碰撞，算出來只剩一個點。改成 `true`。
+  - 這兩個都是靠新加的略過原因 log 找到的（`LogOKMod Verbose`，原因改變時寫一次）。
