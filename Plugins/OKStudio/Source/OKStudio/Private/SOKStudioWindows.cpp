@@ -724,6 +724,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 			Button(FText::FromString(Tip(I.Label, Command)), [this, Command] { FSlateApplication::Get().DismissAllMenus(); RunCommand(Command); }, 190.f, 18.f, false, 10.f)
 		];
 	}
+	AddModMenuItems(Box);
 	return MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]);
 }
 
@@ -2841,6 +2842,7 @@ void SOKStudioPanel::ShowAddInterpolableMenu(const FVector2D& At)
 			AddItem(FString::Printf(TEXT("约束 #%d 旋转权重"), Con.LoadId), TEXT("NodesConstraints"), TEXT("constraintRot"), -1, FString(), FString(), -1, Con.LoadId);
 		}
 	}
+	for (const FOKStudioModRegistry::FMenuInterpolable& M : FOKStudioModRegistry::Get().InterpolableMenu(*Game->Document, Game->SelectedId)) AddItem(M.Title, M.Owner, M.Id, M.ObjectId);
 
 	TSharedRef<SWidget> MenuBody = SNew(SBorder).BorderImage(Brush(Panel())).Padding(5.f)
 		[SNew(SBox).WidthOverride(252.f).MaxDesiredHeight(420.f)[SNew(SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot()[Box]]];

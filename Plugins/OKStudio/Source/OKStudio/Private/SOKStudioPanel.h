@@ -2,6 +2,7 @@
 
 // OK Studio in-game Slate UI: the scene view and the studio panel. Shared by OKStudioGame.cpp and its self tests.
 #include "OKStudioGame.h"
+#include "OKStudioMod.h"
 #include "OKStudioStyle.h"
 #include "OKStudioSettings.h"
 #include "OKStudioThumbnails.h"
@@ -530,10 +531,21 @@ public:
 	TArray<FString> CommandOrder;
 
 	void AddCommand(const FString& Id, const FString& Label, TFunction<bool(const FString&)> Run) { Commands.Add(Id, { Label, MoveTemp(Run) }); CommandOrder.Add(Id); }
+
+	// Mods (OKStudioMod.h): their commands join this table, buttons the top tools, entries the tree menu, rows the 狀態
+	// and 畫面設定 pages, values the timeline. Defined in SOKStudioMod.cpp; each place here only calls in.
+	int32 ModCommandGeneration = -1;
+	TArray<FString> ModCommandIds;
+	void SyncModCommands();
+	void AddModTools(const TSharedRef<SHorizontalBox>& Box);
+	void AddModMenuItems(const TSharedRef<SVerticalBox>& Box);
+	void ModRows(EOKStudioModPanel Where, int32 ObjectId);
+	int32 ModRowsShown = 0;
 	TFunction<void()> Cmd(const FString& Id, const FString& Arg = FString()) { return [this, Id, Arg] { RunCommand(Id, Arg); }; }
 
 	bool RunCommand(const FString& Id, const FString& Arg = FString())
 	{
+		SyncModCommands();
 		FCommand* C = Commands.Find(Id);
 		if (!C || !Game.IsValid()) return false;
 		// A command is one undo step: not joined to the edit just before it, nor to the next one.
@@ -1583,6 +1595,7 @@ public:
 			Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
 				[Tagged(*FString::Printf(TEXT("TopTool_%d"), I), IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 33.f, 33.f, TAttribute<bool>::CreateLambda([On] { return On(); }), ButtonFill(), ToolOn()))];
 		}
+		AddModTools(Box);
 		return Box;
 	}
 
@@ -3349,6 +3362,7 @@ public:
 				for (int32 Slot = 0; Slot < 21; ++Slot)
 					Check(Slot < 20 ? FString::Printf(TEXT("飾品 %d"), Slot + 1) : FString(TEXT("擴充飾品（MoreAccessories）")), [Slot](FOKSceneObject& X) { return X.Character.AccessoriesShown.IsValidIndex(Slot) && X.Character.AccessoriesShown[Slot] != 0; },
 						[Slot](FOKSceneObject& X, bool bOn) { if (X.Character.AccessoriesShown.IsValidIndex(Slot)) X.Character.AccessoriesShown[Slot] = bOn ? 1 : 0; });
+		ModRows(EOKStudioModPanel::CurrentState, O->Id);
 	}
 
 	/** The selected characters: what the 動畫 page does goes to all of them (U192). */

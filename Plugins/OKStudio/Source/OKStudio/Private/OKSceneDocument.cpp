@@ -3,6 +3,7 @@
 #include "OKStudioCatalog.h"
 #include "OKStudioPost.h"
 #include "OKStudioBloom.h"
+#include "OKStudioMod.h"
 #include "ok_extract.h"
 #include "Dom/JsonObject.h"
 #include "JsonObjectConverter.h"
@@ -1259,6 +1260,7 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 				Factor = EvalTimelineCurve(K0->Curve, RawU);
 			}
 			if (K0->Values.IsEmpty()) continue;
+			if (FOKStudioModRegistry::IsModTrack(Tr)) { bAny |= FOKStudioModRegistry::Get().EvaluateTimeline(*this, Tr, K0, K1, Factor); continue; }
 			auto Sample1 = [&]() -> float
 			{
 				return K1 && K1->Values.Num() >= 1 ? FMath::Lerp(K0->Values[0], K1->Values[0], Factor) : K0->Values[0];
@@ -1898,6 +1900,7 @@ bool UOKSceneDocument::SampleCurrentTimelineValue(const FOKSceneTimelineTrack& T
 {
 	OutValues.Reset();
 	if (OutNames) OutNames->Reset();
+	if (FOKStudioModRegistry::IsModTrack(Track)) return FOKStudioModRegistry::Get().SampleTimeline(*this, Track, OutValues);
 	auto PushUnityQuatFromEuler = [&](const FVector& EulerDeg)
 	{
 		const FQuat Qx(FVector(1, 0, 0), FMath::DegreesToRadians(EulerDeg.X));

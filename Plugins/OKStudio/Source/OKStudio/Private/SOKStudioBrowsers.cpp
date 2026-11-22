@@ -1012,6 +1012,7 @@ void SOKStudioPanel::SceneSettingsPage()
 		PostFloat(TEXT("描邊深淺（-1 照材質）"), &FOKScenePost::LineColorG, -1.f, 1.f, 0.01f);
 		PostFloat(TEXT("描邊寬度（-1 照材質）"), &FOKScenePost::LineWidthG, -1.f, 4.f, 0.01f);
 		Props->AddSlot().AutoHeight().Padding(0.f, 4.f)[Button(FText::FromString(TEXT("相機與視角書籤…")), Cmd(TEXT("page.camera")), 0.f, 20.f)];
+		ModRows(EOKStudioModPanel::SceneEffects, -1);
 		break;
 	case 1:
 	{
