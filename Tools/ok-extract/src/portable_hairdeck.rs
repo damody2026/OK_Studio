@@ -200,7 +200,7 @@ pub(super) fn build(s: &OkSession, cards_json: &[u8], chains_json: Option<&[u8]>
     let width = CW * PER_ROW;
     let height = CH * rows.len().div_ceil(PER_ROW);
     let mut atlas = image::RgbaImage::new(width as u32, height as u32);
-    let (mut positions, mut uvs, mut gloss_uvs, mut indices, mut card_of, mut ring_of) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut positions, mut uvs, mut indices, mut card_of, mut ring_of) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut lines: Vec<Vec<V3>> = Vec::new();
     for (ci, (r, tri, colors)) in rows.iter().enumerate() {
         let Some((v, f)) = card_vf(r, *tri) else { continue };
@@ -222,7 +222,6 @@ pub(super) fn build(s: &OkSession, cards_json: &[u8], chains_json: Option<&[u8]>
             // Unity v runs up the texture; PNG rows run down.
             let y = cy as f64 + 0.5 + along * (CH as f64 - 1.0);
             uvs.push([((cx as f64 + 0.5 + u * (CW as f64 - 1.0)) / width as f64) as f32, (1.0 - y / height as f64) as f32]);
-            gloss_uvs.push([u as f32, along as f32]);
             card_of.push(lines.len());
             ring_of.push(ring);
         }
@@ -253,26 +252,100 @@ pub(super) fn build(s: &OkSession, cards_json: &[u8], chains_json: Option<&[u8]>
         let ring_base = i - i % 4;
         let pos = |k: usize| { let q = positions[k]; [q[0] as f64, q[1] as f64, q[2] as f64] };
         let across = sub(pos(ring_base + 2), pos(ring_base));
-        let mut t = sub(across, mul(nn, dot(across, nn)));
+        // Native hair: the tangent frame of UV1 (ring_uv), u round the head and the bitangent up the UV1 v, as on the
+        // game's hair. The hair program moves the gloss band along v by (_SpeclarHeight - 1) * dot(view, bitangent):
+        // with each card's own across / along frame every card moved its band its own way and the ring broke into
+        // blocks along the strands (2026-11-22).
+        let q = pos(i);
+        let (dir, up) = if opts.native {
+            let sz = if q[2] < 0.0 { -1.0 } else { 1.0 };
+            let gu = if q[0].abs() + q[2].abs() < 1e-9 { [1.0, 0.0, 0.0] } else { [q[2].abs(), 0.0, -q[0] * sz] };
+            (gu, [RING_SIDE * q[0].signum(), 1.0, RING_FRONT])
+        } else {
+            let line = &lines[card_of[i]];
+            let r = ring_of[i].min(line.len() - 1);
+            (across, sub(line[(r + 1).min(line.len() - 1)], line[r.saturating_sub(1)]))
+        };
+        let mut t = sub(dir, mul(nn, dot(dir, nn)));
         if norm(t) < 1e-9 { t = if nn[0].abs() < 0.9 { cross(nn, [1.0, 0.0, 0.0]) } else { cross(nn, [0.0, 1.0, 0.0]) }; }
         let t = unit(t);
-        let line = &lines[card_of[i]];
-        let r = ring_of[i].min(line.len() - 1);
-        let along = sub(line[(r + 1).min(line.len() - 1)], line[r.saturating_sub(1)]);
-        let w = if dot(cross(nn, t), along) >= 0.0 { 1.0 } else { -1.0 };
+        let w = if dot(cross(nn, t), up) >= 0.0 { 1.0 } else { -1.0 };
         out_normals.push([nn[0] as f32, nn[1] as f32, nn[2] as f32]);
         tangents.push([t[0] as f32, t[1] as f32, t[2] as f32, w]);
     }
     let chains: Vec<DeckChain> = match chains_json { Some(b) if !opts.rigid => serde_json::from_slice(b).map_err(|e| format!("chains json: {e}"))?, _ => Vec::new() };
     let soft_rig = if chains.is_empty() { None } else { Some(rig(&chains, &fit, &positions, &card_of, &ring_of, &lines)?) };
+    let gloss_uvs = if opts.native { ring_uv(&positions) } else { Vec::new() };
+    let gloss_mask = if opts.native { Some(gloss_mask()?) } else { None };
     let mut png = Vec::new();
     atlas.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
     let report = serde_json::json!({"cards": lines.len(), "vertices": n, "triangles": indices.len() / 3, "control_points_cap": cap,
         "atlas": [width, height], "chains_in": chains.len(), "chains_used": soft_rig.as_ref().map_or(0, |r| r.chains.len()), "fit": fit_report});
     let mesh = HairMesh { positions, normals: out_normals, tangents, uvs, indices, texture: String::new(), normal: None, roughness: None, metallic: None,
-        native_material_card: None, native_gloss_asset: None, gloss_uvs: if opts.native { gloss_uvs } else { Vec::new() },
-        soft_rig, hide_source_accessory: false, layer: None, native_self: opts.native };
+        native_material_card: None, native_gloss_asset: None, gloss_uvs,
+        soft_rig, hide_source_accessory: false, layer: None, native_self: opts.native, gloss_mask };
     Ok((mesh, png, report))
+}
+
+/// UV1 of HairDeck hair laid out like the game's hair (2026-11-22, measured on C001, C002, C020 and Megumin's hair):
+/// the native hair program reads `_HairGloss` at UV1 and at UV1 + 0.008 in v and lights their difference, and every
+/// game gloss mask is a band of streaks at v = 0.5. On the game's hair v rises with head height (3.3..4.5 per unit
+/// on the bangs) and the band (v = 0.5) lies on a tilted ring round the crown, y = a - 0.25..0.4 z - 0.3..0.7 |x| in
+/// head space (+Y up, +Z to the face), a 0.19..0.22, about 0.03 under the top of the hair; u runs round the head at
+/// 0.35..0.6 per radian. Here u is folded (front and back alike) so no seam runs down the back, and v is clamped
+/// inside the black of the mask so long hair does not wrap round into the band again.
+const RING_DV_DY: f64 = 3.6;
+const RING_DU_DAZ: f64 = 0.45;
+/// The ring drops this much per unit forward (+Z) and per unit sideways (|x|).
+const RING_FRONT: f64 = 0.33;
+const RING_SIDE: f64 = 0.45;
+fn ring_uv(positions: &[[f32; 3]]) -> Vec<[f32; 2]> {
+    let mut crown: Vec<f64> = positions.iter().filter(|p| p[0] * p[0] + p[2] * p[2] < 0.06 * 0.06).map(|p| p[1] as f64).collect();
+    if crown.is_empty() { crown = positions.iter().map(|p| p[1] as f64).collect(); }
+    crown.sort_by(|a, b| a.total_cmp(b));
+    let top = crown.get(crown.len().saturating_sub(1) * 95 / 100).copied().unwrap_or(0.22);
+    let a = (top - 0.03).clamp(0.17, 0.24);
+    positions.iter().map(|p| {
+        let (x, y, z) = (p[0] as f64, p[1] as f64, p[2] as f64);
+        let ring = a - RING_FRONT * z - RING_SIDE * x.abs();
+        let v = (0.5 + RING_DV_DY * (y - ring)).clamp(0.01, 0.99);
+        let u = 0.5 + RING_DU_DAZ * x.atan2(z.abs());
+        [u as f32, v as f32]
+    }).collect()
+}
+
+/// A gloss mask drawn like the game's (mt_hairgloss): black, with a band of vertical streak groups across v = 0.5,
+/// each group pinched like an hourglass (C001's mask), grey about 0.38. Used when none of her hair has a mask of its
+/// own (mod hair has none); it tiles in u.
+fn gloss_mask() -> Result<Vec<u8>, String> {
+    const N: usize = 512;
+    let rnd = |k: u64| ((k.wrapping_add(1).wrapping_mul(0x9E3779B97F4A7C15) >> 40) as f64) / (1u64 << 24) as f64;
+    let mut img = image::RgbaImage::from_pixel(N as u32, N as u32, image::Rgba([0, 0, 0, 255]));
+    let half = 0.13 * N as f64;
+    let (mut x0, mut g) = (0usize, 0u64);
+    while x0 < N {
+        let w = 10 + (rnd(g * 3) * 16.0) as usize;
+        let gap = 3 + (rnd(g * 3 + 1) * 6.0) as usize;
+        let (level, tall) = (0.38 * (0.8 + 0.4 * rnd(g * 3 + 2)), 0.85 + 0.3 * rnd(g * 7 + 5));
+        let c = x0 as f64 + w as f64 / 2.0;
+        for x in x0..x0 + w {
+            let t = ((x as f64 + 0.5 - c) / (w as f64 / 2.0)).abs().min(1.0);
+            let h = half * tall * (0.55 + 0.45 * t * t);
+            let side = 1.0 - ((t - 0.8) / 0.2).clamp(0.0, 1.0);
+            for y in 0..N {
+                let d = (y as f64 + 0.5 - N as f64 / 2.0).abs();
+                let k = 1.0 - ((d - 0.45 * h) / (0.55 * h)).clamp(0.0, 1.0);
+                let k = k * k * (3.0 - 2.0 * k);
+                let val = ((level * k * side).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                if val > 0 { img.put_pixel((x % N) as u32, y as u32, image::Rgba([val, val, val, 255])); }
+            }
+        }
+        x0 += w + gap;
+        g += 1;
+    }
+    let mut png = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(png)
 }
 
 /// HairDeck's chains as the private soft rig: at most 32 chains, 3..12 joints each, 256 bones with the root; every
@@ -413,6 +486,21 @@ pub fn preview_obj(lib: &Path, card: &Path, cards: &Path, opts: &HairDeckOpts, o
     s.card_path = Some(card.to_path_buf());
     let before: Vec<serde_json::Value> = s.parts.iter().filter(|p| p.role == "accessory" || p.role.starts_with("hair"))
         .map(|p| serde_json::json!([p.role, p.name, p.source_renderer_names, p.source_material.as_ref().map(|m| m.shader.clone()), p.render_visible, p.source_property])).collect();
+    // OK_HAIR_INSPECT=<file.json>: her own native hair (shader 1 / 10) as it is before the new hair goes on — head-space
+    // positions, UV0, UV1 and indices — and its _HairGloss beside it (<file>.gloss<i>.png); for studying the game's hair.
+    if let Ok(dump) = std::env::var("OK_HAIR_INSPECT") {
+        let sk = s.body_skel.as_ref().ok_or("missing body skeleton")?;
+        let inv = crate::pose::mat_inv_pub(&sk.worlds[head(sk)?]);
+        let dump = Path::new(&dump);
+        let mut parts = Vec::new();
+        for (i, p) in s.parts.iter().enumerate().filter(|(_, p)| matches!(p.shader_kind, 1 | 10)) {
+            if let Some(g) = &p.hair_gloss { std::fs::write(dump.with_extension(format!("gloss{i}.png")), g).map_err(|e| e.to_string())?; }
+            parts.push(serde_json::json!({"index": i, "name": p.name, "role": p.role, "visible": p.render_visible, "shader_kind": p.shader_kind,
+                "positions": p.positions.iter().map(|q| crate::pose::mat_vec(&inv, *q)).collect::<Vec<_>>(), "uvs": p.uvs, "uv2": p.uv2, "indices": p.indices,
+                "gloss": p.hair_gloss.as_ref().map(|g| g.len()), "gloss_st": p.hair_gloss_st}));
+        }
+        std::fs::write(dump, serde_json::to_vec(&serde_json::json!({"card": card, "parts": parts})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    }
     let mut report = apply_files(&mut s, cards, opts)?;
     report["hair_parts_before"] = serde_json::json!(before);
     let sk = s.body_skel.as_ref().ok_or("missing body skeleton")?;
@@ -432,10 +520,14 @@ pub fn preview_obj(lib: &Path, card: &Path, cards: &Path, opts: &HairDeckOpts, o
     let name = report["part"].as_str().unwrap_or("").to_string();
     let hair = s.parts.iter().find(|p| p.name == name).ok_or("hair part missing")?;
     emit("hair", &hair.rest_positions, &hair.indices, &mut obj);
+    // (the gloss mask beside the OBJ, for a look)
+    if let Some(g) = &hair.hair_gloss { std::fs::write(out.with_extension("gloss.png"), g).map_err(|e| e.to_string())?; }
     report["hair_material"] = serde_json::json!({"shader_kind": hair.shader_kind, "shader": hair.source_material.as_ref().map(|m| m.shader.clone()),
         "png": hair.png.as_ref().map(|p| p.len()), "shader_textures": hair.shader_textures.iter().map(|(k, v)| (k.clone(), v.len())).collect::<Vec<_>>(),
-        "runtime_textures": hair.runtime_textures, "blend": hair.blend, "unlit": hair.unlit, "item_draw": hair.item_draw.is_some(),
+        "runtime_textures": hair.runtime_textures, "floats": hair.source_material.as_ref().map(|m| m.floats.clone()), "gloss_st": hair.hair_gloss_st, "blend": hair.blend, "unlit": hair.unlit, "item_draw": hair.item_draw.is_some(),
         "overtex": hair.overtex_png.as_ref().map(|p| p.len()), "renderer_names": hair.source_renderer_names, "skel_kind": hair.skel_kind,
+        // the gloss mask and the range of UV1 (ring_uv)
+        "gloss_png": hair.hair_gloss.as_ref().map(|g| g.len()), "uv1_range": hair.uv2.iter().fold([f32::MAX, f32::MAX, f32::MIN, f32::MIN], |r, q| [r[0].min(q[0]), r[1].min(q[1]), r[2].max(q[0]), r[3].max(q[1])]),
         "visible_after": s.parts.iter().filter(|p| p.render_visible && (p.role == "accessory" || p.role.starts_with("hair"))).map(|p| serde_json::json!([p.role, p.name, p.source_material.as_ref().map(|m| m.shader.clone())])).collect::<Vec<_>>(),
         "visible_hair": s.parts.iter().filter(|p| p.render_visible && (p.role.starts_with("hair") || p.name.to_ascii_lowercase().contains("hair"))).map(|p| p.name.clone()).collect::<Vec<_>>()});
     std::fs::write(out, obj).map_err(|e| e.to_string())?;
