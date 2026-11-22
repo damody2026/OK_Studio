@@ -27,7 +27,7 @@ TWeakObjectPtr<UWorld> GModeWorld;
 
 // ok-extract's enabled-mod list (okmods::set_enabled, the open-cache key) for this module's copy and KKUnityBundle's,
 // which runs the opens; set after every mode change, because each mode loads its own mods. Only mods that can change an
-// open count (a hook extract.* other than the conversion-only extract.kkex / extract.kkex_keys; okmods::changes_opens):
+// open count (a hook extract.* other than the conversion-only extract.kkex / extract.kkex_keys, or material.post_texture; okmods::changes_opens):
 // a street or reader mod would make every cached open miss for nothing.
 void SyncExtract()
 {
@@ -40,7 +40,9 @@ void SyncExtract()
 				if (const TSharedPtr<FJsonObject> O = M->AsObject(); O.IsValid() && O->GetStringField(TEXT("state")) == TEXT("enabled"))
 				{
 					TArray<FString> Subs;O->TryGetStringArrayField(TEXT("subscriptions"), Subs);
-					if (Subs.ContainsByPredicate([](const FString& S) { return S.StartsWith(TEXT("extract.")) && S != TEXT("extract.kkex") && S != TEXT("extract.kkex_keys"); }))
+					// The same rule as okmods::changes_opens: material.post_texture draws into the textures an open makes
+					// (skin-decal), so a cached open from before the mod lacks them.
+					if (Subs.ContainsByPredicate([](const FString& S) { return (S.StartsWith(TEXT("extract.")) && S != TEXT("extract.kkex") && S != TEXT("extract.kkex_keys")) || S == TEXT("material.post_texture"); }))
 						Lines += O->GetStringField(TEXT("id")) + TEXT("@") + O->GetStringField(TEXT("version")) + TEXT("\n");
 				}
 	}
