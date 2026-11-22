@@ -88,6 +88,56 @@ pub unsafe extern "C" fn ok_card_absent_mods(card:*const c_char,msg:*mut c_char,
     match result{Ok(absent)=>{write_err(msg,cap,&absent.join("\n"));0},Err(e)=>{write_err(msg,cap,&e);-1}}
 }
 
+/// One mod's section of a card's `okMx` (Tools/ok-extract/src/okmods.rs; the mod host's card data, e.g. `pair-counter`
+/// written when a one-on-one ends): its data bytes into `data` (up to `cap`) and its version into `version`. Returns the
+/// data length (more than `cap`: nothing copied, call again with that much room), -2 when the card has no section for
+/// the mod, -1 and the error in `err`.
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_mod_section_get(card:*const c_char,mod_id:*const c_char,version:*mut u32,data:*mut u8,cap:i32,err:*mut c_char,err_cap:i32)->i32 {
+    let result=std::panic::catch_unwind(||->Result<Option<crate::okmods::Section>,String>{
+        let card=cstr_opt(card).ok_or("card path missing")?;
+        let id=cstr_opt(mod_id).ok_or("mod id missing")?;
+        let bytes=std::fs::read(&card).map_err(|e|format!("{card}: {e}"))?;
+        crate::okmods::read_data(&bytes)?.get(&id).transpose()
+    }).unwrap_or_else(|_|Err("card_mod_section_get: panic".into()));
+    match result{
+        Ok(None)=>-2,
+        Ok(Some(section))=>{
+            if !version.is_null(){*version=section.version;}
+            let n=section.data.len();
+            if n<=cap.max(0) as usize && !data.is_null(){std::ptr::copy_nonoverlapping(section.data.as_ptr(),data,n);}
+            n as i32
+        }
+        Err(e)=>{write_err(err,err_cap,&e);-1}
+    }
+}
+
+/// Sets (or with `remove` != 0 removes) one mod's section of a card's `okMx` in place: every other section and the
+/// card's identity stay (okmods::with_data writes `okId` when the card had none). The file is replaced through a
+/// temporary file next to it. 0, or -1 and the error in `err`.
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_mod_section_set(card:*const c_char,mod_id:*const c_char,version:u32,data:*const u8,len:i32,remove:i32,err:*mut c_char,err_cap:i32)->i32 {
+    let result=std::panic::catch_unwind(||->Result<(),String>{
+        let card=cstr_opt(card).ok_or("card path missing")?;
+        let id=cstr_opt(mod_id).ok_or("mod id missing")?;
+        if id.is_empty(){return Err("mod id missing".into());}
+        let bytes=std::fs::read(&card).map_err(|e|format!("{card}: {e}"))?;
+        let mut mods=crate::okmods::read_data(&bytes)?;
+        if remove!=0{
+            if !mods.remove(&id){return Ok(());}
+        }else{
+            let payload=if data.is_null()||len<=0{Vec::new()}else{std::slice::from_raw_parts(data,len as usize).to_vec()};
+            let requires=mods.get(&id).and_then(Result::ok).and_then(|s|s.requires);
+            mods.set(&id,&crate::okmods::Section{version,requires,data:payload});
+        }
+        let out=crate::okmods::with_data(&bytes,&mods)?;
+        let tmp=format!("{card}.okmx.tmp");
+        std::fs::write(&tmp,&out).map_err(|e|format!("{tmp}: {e}"))?;
+        std::fs::rename(&tmp,&card).map_err(|e|{let _=std::fs::remove_file(&tmp);format!("{card}: {e}")})
+    }).unwrap_or_else(|_|Err("card_mod_section_set: panic".into()));
+    match result{Ok(())=>0,Err(e)=>{write_err(err,err_cap,&e);-1}}
+}
+
 /// Convert a card to an OK card (`out`): an original KKS card with its zipmods (OK_GAME_ROOT, or `game`), or an
 /// edited OK card made again. Uses the configured base library. Returns 0 and "digest parts pack-bytes" in `msg`.
 #[no_mangle]
@@ -2716,6 +2766,60 @@ pub unsafe extern "C" fn ok_register_bindings(
         studio_pv_bone,
     };
     0
+}
+
+#[cfg(test)]
+mod card_mod_section_tests {
+    use super::*;
+    use std::ffi::CString;
+
+    fn png(chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        for (kind, data) in chunks {
+            out.extend((data.len() as u32).to_be_bytes());
+            let mut c = kind.to_vec();
+            c.extend_from_slice(data);
+            out.extend(&c);
+            out.extend(crc32fast::hash(&c).to_be_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn card_mod_section_round_trip_keeps_identity_and_others() {
+        let dir = std::env::temp_dir().join(format!("ok_card_mod_section_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("card.png");
+        let plain = png(&[(b"IHDR", &[0; 13]), (b"IDAT", b"pixels"), (b"IEND", b"")]);
+        let id = crate::oklib::card_identity(&plain).unwrap();
+        let mut others = crate::okmods::ModData::default();
+        others.set("com.example.other", &crate::okmods::Section { version: 3, requires: None, data: b"keep".to_vec() });
+        std::fs::write(&path, crate::okmods::with_data(&plain, &others).unwrap()).unwrap();
+        let card = CString::new(path.to_string_lossy().as_ref()).unwrap();
+        let me = CString::new("org.example.counter").unwrap();
+        let mut err = [0 as c_char; 256];
+        let mut version = 0u32;
+        let mut buf = [0u8; 64];
+        unsafe {
+            assert_eq!(ok_card_mod_section_get(card.as_ptr(), me.as_ptr(), &mut version, buf.as_mut_ptr(), 64, err.as_mut_ptr(), 256), -2);
+            assert_eq!(ok_card_mod_section_set(card.as_ptr(), me.as_ptr(), 2, b"{\"n\":1}".as_ptr(), 7, 0, err.as_mut_ptr(), 256), 0);
+            assert_eq!(ok_card_mod_section_get(card.as_ptr(), me.as_ptr(), &mut version, buf.as_mut_ptr(), 64, err.as_mut_ptr(), 256), 7);
+            assert_eq!((version, &buf[..7]), (2, &b"{\"n\":1}"[..]));
+            // Too small a buffer: the length, nothing copied.
+            assert_eq!(ok_card_mod_section_get(card.as_ptr(), me.as_ptr(), &mut version, buf.as_mut_ptr(), 3, err.as_mut_ptr(), 256), 7);
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(crate::oklib::card_identity(&bytes).unwrap(), id, "identity kept");
+        let data = crate::okmods::read_data(&bytes).unwrap();
+        assert_eq!(data.get("com.example.other").unwrap().unwrap().data, b"keep", "other mods' sections kept");
+        unsafe {
+            assert_eq!(ok_card_mod_section_set(card.as_ptr(), me.as_ptr(), 0, ptr::null(), 0, 1, err.as_mut_ptr(), 256), 0);
+            assert_eq!(ok_card_mod_section_get(card.as_ptr(), me.as_ptr(), &mut version, buf.as_mut_ptr(), 64, err.as_mut_ptr(), 256), -2);
+            let missing = CString::new(dir.join("none.png").to_string_lossy().as_ref()).unwrap();
+            assert_eq!(ok_card_mod_section_set(missing.as_ptr(), me.as_ptr(), 1, b"x".as_ptr(), 1, 0, err.as_mut_ptr(), 256), -1);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
