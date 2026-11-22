@@ -16,6 +16,8 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/StrongObjectPtr.h"
 #include "OKSceneDocument.h"
+#include "OKSceneActor.h"
+#include "KKPreviewActor.h"
 #include "OKStreetSocialText.h"
 #include "OKStudioGame.h"
 #include "OKStudioMod.h"
@@ -345,6 +347,10 @@ namespace OKStudioModBridge
 				J->SetStringField(TEXT("name"), O.Name);
 				J->SetNumberField(TEXT("parent"), O.Parent);
 				J->SetBoolField(TEXT("visible"), O.bVisible);
+				// A shown character: the id its per-frame mod calls carry (a string: a u64 does not fit a JSON number).
+				if (Game->SceneActor)
+					if (const AKKPreviewActor* P = Game->SceneActor->PreviewOf(O.Id); P && P->Session.ModFrameId() && O.Kind == EOKSceneObjectKind::Character)
+						J->SetStringField(TEXT("frame"), FString::Printf(TEXT("%llu"), P->Session.ModFrameId()));
 				Objects.Add(MakeShared<FJsonValueObject>(J));
 			}
 			C->SetArrayField(TEXT("objects"), Objects);
@@ -1074,6 +1080,24 @@ namespace OKStudioModBridge
 		{
 			for (const FMod& M : State().Mods) UE_LOG(LogOKStudioMods, Display, TEXT("mod %s: %d keys, %d timers, marks \"%s\""), *M.Id, M.Keys.Num(), M.Timers.Num(), *M.MarksPath);
 			for (const FString& Line : State().Trace) UE_LOG(LogOKStudioMods, Display, TEXT("%s"), *Line);
+		}));
+
+	// What a mod's 狀態 / 畫面設定 row shows and sets, for MCP and scripts (ui_exec): one undo step like the row.
+	FAutoConsoleCommand SetCommand(TEXT("OKStudio.ModSet"),
+		TEXT("OKStudio.ModSet <mod id> <control id> <object id or -1> [value] -- a mod's panel row: prints its value, or sets it"),
+		FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, FOutputDevice& Out)
+		{
+			UOKStudioGame* Game = State().Game.Get();
+			if (Args.Num() < 3 || !Game || !Game->Document) { Out.Log(TEXT("usage: OKStudio.ModSet <mod id> <control id> <object id or -1> [value] (in the studio)")); return; }
+			const FOKStudioModControl* C = FOKStudioModRegistry::Get().Controls().FindByPredicate([&](const FOKStudioModControl& X) { return X.Owner == Args[0] && X.Id == Args[1]; });
+			if (!C) { Out.Logf(TEXT("%s has no control %s"), *Args[0], *Args[1]); return; }
+			const int32 Object = FCString::Atoi(*Args[2]);
+			if (Args.Num() >= 4)
+			{
+				if (!C->Set || !C->Set(*Game->Document, Object, Args[3])) { Out.Logf(TEXT("%s %s: not set"), *Args[0], *Args[1]); return; }
+				Game->Document->NotifyChanged();
+			}
+			Out.Logf(TEXT("%s %s [%d] = %s"), *Args[0], *Args[1], Object, C->Get ? *C->Get(*Game->Document, Object) : TEXT(""));
 		}));
 }
 
