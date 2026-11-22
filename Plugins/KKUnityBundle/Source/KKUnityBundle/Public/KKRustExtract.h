@@ -119,6 +119,10 @@ public:
  /** The mods an original card names that opening it would not find (base library, zipmods beside the card, the KKS
   *  installation). Empty for OK cards. Reads manifests: call off the game thread. */
  static bool AbsentCardMods(const FString& Card,TArray<FString>& Absent,FString& Error);
+ /** One mod's section of a card's okMx (the mod host's card data): bFound false when the card has none for the mod.
+  *  Set (or bRemove) rewrites the card file in place, every other section and the card's identity kept. */
+ static bool CardModSection(const FString& Card,const FString& ModId,bool& bFound,int32& Version,TArray<uint8>& Data,FString& Error);
+ static bool SetCardModSection(const FString& Card,const FString& ModId,int32 Version,TConstArrayView<uint8> Data,bool bRemove,FString& Error);
  static bool CopyPortableClothingStates(const FString& Source,const FString& Output,FString& Error);
  static TArray<FString> AnimationSourceNames(const FString& Root,const FString& Source);
  static bool PrepareStudioAnimation(const FString& Root,const FString& Key,const FString& Source,const FString& Owner);
