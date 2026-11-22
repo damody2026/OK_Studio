@@ -15,7 +15,7 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 
 ## 遺傳規則（`Tools/ok-extract/src/breed.rs`）
 
-孩子以其中一位父母的卡為底（隨機），沿用那位的衣服、飾品、卡片資料與外掛資料；身體、臉、頭髮（卡片的 `Custom` 區塊：face、body、hair 三段）逐項混合：
+孩子以其中一位父母的卡為底（隨機），沿用那位的服裝（上衣、下衣、內衣另外混搭，見下表）、飾品、卡片資料與外掛資料；身體、臉、頭髮（卡片的 `Custom` 區塊：face、body、hair 三段）逐項混合：
 
 | 基因 | 遺傳 |
 |---|---|
@@ -24,12 +24,15 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 | 顏色（四個浮點數：膚色、髮色、瞳色等） | 整個顏色一起混合；5% 機率小幅偏色 |
 | 模型編號（頭、眼睛、眉毛、鼻、嘴、膚質…） | 來自其中一人；頭與臉部膚質一起，左右眼一起 |
 | 髮型 | 四個部位（後、前、側、附加）一起來自其中一人，髮色仍然混合 |
+| 衣服（2026-11-22 起） | 每套服裝以當底那位的為主；**上衣**（含水手服／外套子部件）、**下衣**、**內衣**（胸罩＋內褲一起）各自抽一次，抽到另一位就在每一套都換成另一位那套的那件（顏色、花樣跟著件走）。另一位那套沒穿那件就不換（不會換成光著）。手套、褲襪、襪子、鞋子、飾品、妝仍是當底那位的。那件衣服的 Sideloader 對照（`outfitN.ChaFileClothes.ClothesTop…`）與 Material Editor 列（服裝、第幾套、第幾件）跟著件走 |
 | HairDeck 頭髮（卡片的 `okHk`，[HAIRDECK.md](HAIRDECK.md)） | 跟著髮型：髮型來自的那位有就帶上，沒有就不帶；每片頭髮的顏色依孩子混出來的髮色平移 |
 | 名字 | 姓來自當底的那位；名是一人名字的前半加另一人的後半（刻晴＋雷電 → 刻電） |
 | 其他角色參數（個性、聲音高低…） | 數值混合，選項來自其中一人 |
 
 - 用到 mod 部件時，孩子的臉／身體／頭髮 Sideloader 對照（一筆只在數值等於它的 `Slot` 時生效）只留「她的值來自那位、且值等於 `Slot`」的那筆；兩人值相同時用當底那位的。原本兩人的對照全帶上，一位父母沒在用的 mod 對照剛好等於另一位的原作編號時，孩子就戴上沒人戴過的 mod 部件（第二代的眼睛高光 cat 410 1919，封裝時開不了卡）。頭髮的 Material Editor 設定跟著頭髮那一方。
 - ABMX 骨骼、膚色貼圖疊加（KSOX）、UncensorSelector 等仍是當底那位的。
+- 混搭的那套服裝封裝時開不了（上衣、下衣來自不同父母，要一張兩人的卡都沒問過的身體遮罩：`texture_payload … bodymask`），那一套改回當底那位的整套再封（`okDn` 的 `clothes_not_mixed` 記哪幾套）；和缺目錄項目的基因同一個重試迴圈，最多 7 次。
+- 衣服混搭的抽籤排在所有基因之後：同一對父母、同一個種子，臉、身體、頭髮和加入混搭前一樣。KoiClothesOverlay（KCOX）的衣服疊圖還沒跟著件走：仍是當底那位的，換來的那件原本的疊圖會不見，當底那位的疊圖可能疊到換來的那件上。
 - 卡片多一個 `okDn` chunk（JSON）：父母的身分、名字、檔名、第幾代、種子、當底的是誰、每組基因來自誰。孩子有自己的 `okId`（由父母身分與種子算出），KKS 卡的 `About.dataID` 也換成她自己的。
 - 同一對父母、同一個種子永遠生出同一個孩子。
 
@@ -82,6 +85,13 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 | 第 4 代 | 第 3 代的兩人 → 1 個，7.9 MB；匯出完整卡 145.6 MB |
 
 每次 51～107 秒（封裝含逐套服裝嚴格開卡）。依賴卡在讀卡器裡開卡顯示「OK card from OK data only (card pack mounted…)」，不讀 zipmod。圖：`Saved/OKBreed/family_tree.png`（清單 `Saved/OKBreed/family_cards.txt`，用上面的指令重產）。
+
+### HairDeck 頭髮＋衣服混搭的大家族（2026-11-22，F）
+
+同樣的家族結構重配一次：刻晴、雷電、惠惠、貞德先換上 HairDeck 頭髮（四張參考圖 `output/characters-2026-09-30-anime/references/0[1-4]-*.png` 生成，`ok-hair-pack card` 存成 `UserData/okbreed/hairdeck_family/*_hd.png`，讀卡器 MCP `breed_picture` 拍新頭髮的照片），胡桃、三月七保留原本頭髮。13 個孩子在讀卡器配出（每次 40～106 秒），其中 12 個帶著 HairDeck 頭髮：只有髮型來自三月七的那個沒有。上衣、下衣、內衣各自來自不同父母。命令列試配（刻晴 × 雷電，種子 102）時有兩套服裝因身體遮罩缺資料改回不混搭，封裝成功。
+
+- 圖：`Saved/OKBreed/family_tree_hairdeck.png`（清單 `Saved/OKBreed/family_cards_hairdeck.txt`，第一行 `#title`、第二行 `#subtitle`）。家族樹工具在卡片帶 `okHk` 的照片左上角標「HairDeck 頭髮」。
+- 讀卡器拍照時兩次出現 GPU page fault（D3D12 裝置遺失，`TexturePoolCopyOps`／畫面輸出階段），都在換卡後幾秒內拍照時；重開讀卡器後同一張卡、同一步都正常，沒有重現。Aftermath dump：`Saved/Logs/D3D12.0.2026.11.22-11.46.34.nv-gpudmp` 等；當時另一個 Unreal（C 組布料場景）也在用 GPU。原因未查。
 
 ## 未做
 
