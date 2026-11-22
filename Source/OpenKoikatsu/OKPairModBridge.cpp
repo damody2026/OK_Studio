@@ -288,6 +288,7 @@ namespace OKPairModBridge
 	{
 		FState& S = State();
 		FOKModHost& Host = FOKModHost::Get();
+		if (!S.FakeDispatch && !Host.IsOpen()) return;
 		if (E.Kind == EOKPairModEvent::Enter && !E.bFitting && !S.FakeDispatch && Host.IsOpen() && Host.CurrentMode() != TEXT("pair"))
 		{
 			S.ModeBefore = Host.CurrentMode();
@@ -306,14 +307,13 @@ namespace OKPairModBridge
 		}
 	}
 
-	/** Subscribed to the one-on-one's events while the host is open (or a fake stands in). */
+	/** Retries the card writes still waiting. The bridge is subscribed from the start (OnEvent skips while the host is
+	 *  closed): subscribing here once the host is seen open came seconds late while the game loaded, and the standalone
+	 *  one-on-one's pair.enter (half a second after BeginPlay) was lost. */
 	bool Tick(float)
 	{
 		FState& S = State();
-		const bool bWant = S.FakeDispatch || FOKModHost::Get().IsOpen();
-		if (!bWant) S.NotSubscribed.Reset();
-		if (bWant && !S.Subscription) S.Subscription = FOKInteractionModEvents::Get().Subscribe(TEXT("mod-host"), [](const FOKPairModEvent& E) { OnEvent(E); });
-		else if (!bWant && S.Subscription) { FOKInteractionModEvents::Get().Unsubscribe(S.Subscription); S.Subscription = 0; }
+		if (!S.FakeDispatch && !FOKModHost::Get().IsOpen()) S.NotSubscribed.Reset();
 		if (S.Pending.Num()) RetryPending(false);
 		return true;
 	}
@@ -321,6 +321,7 @@ namespace OKPairModBridge
 	FDelayedAutoRegisterHelper Start(EDelayedRegisterRunPhase::EndOfEngineInit, []
 	{
 		if (!FApp::IsGame() || IsRunningCommandlet()) return;
+		State().Subscription = FOKInteractionModEvents::Get().Subscribe(TEXT("mod-host"), [](const FOKPairModEvent& E) { OnEvent(E); });
 		FTSTicker::GetCoreTicker().AddTicker(TEXT("OKPairMods"), 0.5f, [](float Delta) { return Tick(Delta); });
 		FCoreDelegates::OnEnginePreExit.AddLambda([]
 		{
@@ -333,7 +334,7 @@ namespace OKPairModBridge
 	FAutoConsoleCommand TraceCommand(TEXT("ok.PairModTrace"), TEXT("Logs the last one-on-one hooks sent to the mods and their answers."),
 		FConsoleCommandDelegate::CreateLambda([]
 		{
-			UE_LOG(LogOKPairMods, Display, TEXT("pair hooks: %s"), State().Subscription ? TEXT("subscribed") : TEXT("not subscribed (host closed)"));
+			UE_LOG(LogOKPairMods, Display, TEXT("pair hooks: %s"), !State().Subscription ? TEXT("not subscribed") : FOKModHost::Get().IsOpen() ? TEXT("subscribed") : TEXT("subscribed, host closed (events skipped)"));
 			for (const FString& Line : State().Trace) UE_LOG(LogOKPairMods, Display, TEXT("%s"), *Line);
 		}));
 
@@ -366,12 +367,36 @@ namespace OKPairModBridge
 				E.Seconds = 12.5;
 				FOKInteractionModEvents::Get().Broadcast(E);
 			}
+			// Her line, then its TTS voice: the line goes out again as pair.speech_start.
+			TArray<TSharedRef<FJsonObject>> Speech;
+			{
+				FOKPairModEvent Line;
+				Line.Kind = EOKPairModEvent::Line;
+				Line.Text = TEXT("her line");
+				FOKInteractionModEvents::Get().Broadcast(Line);
+				FOKPairModEvent Voice;
+				Voice.Kind = EOKPairModEvent::Voice;
+				Voice.Source = TEXT("tts");
+				Voice.Path = TEXT("line.wav");
+				const int32 Before = Seen.Num();
+				FOKInteractionModEvents::Get().Broadcast(Voice);
+				for (int32 I = Before; I < Seen.Num(); ++I) Speech.Add(Seen[I]);
+				Seen.SetNum(Before - 1);
+			}
 			S.FakeDispatch = nullptr;
 			Tick(0.f);
 			TArray<FString> Lines;
 			int32 Failed = 0;
 			auto Check = [&](bool bOk, const FString& What) { Lines.Add(FString::Printf(TEXT("%s %s"), bOk ? TEXT("PASS") : TEXT("FAIL"), *What)); Failed += !bOk; };
 			Check(Seen.Num() == Kinds, FString::Printf(TEXT("%d hooks sent for %d kinds"), Seen.Num(), Kinds));
+			Check(S.Subscription != 0, TEXT("subscribed from the start (an early pair.enter is not lost)"));
+			{
+				const TSharedPtr<FJsonObject>* P = nullptr;
+				FString Text, Mode;
+				const bool bSpeech = Speech.Num() == 2 && Speech[1]->GetStringField(TEXT("hook")) == TEXT("pair.speech_start") && Speech[1]->TryGetObjectField(TEXT("payload"), P)
+					&& (*P)->TryGetStringField(TEXT("text"), Text) && Text == TEXT("her line") && (*P)->TryGetStringField(TEXT("mode"), Mode) && Mode == TEXT("pair");
+				Check(bSpeech, FString::Printf(TEXT("tts voice after a line: pair.voice then pair.speech_start with the line (%d requests)"), Speech.Num()));
+			}
 			for (int32 K = 0; K < Seen.Num() && K < Kinds; ++K)
 			{
 				const FString Want = FString(TEXT("pair.")) + OKPairModEventName(EOKPairModEvent(K));
