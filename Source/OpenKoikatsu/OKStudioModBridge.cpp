@@ -187,6 +187,8 @@ namespace OKStudioModBridge
 		FVector2D Drag = FVector2D::ZeroVector;
 		FString DragId;
 		bool bDragShift = false;
+		/** Failed for good: no more calls; removed from the studio on the next tick (not inside the call that failed). */
+		bool bDropped = false;
 	};
 
 	struct FState
@@ -202,12 +204,34 @@ namespace OKStudioModBridge
 		TArray<TPair<FString, TSharedPtr<FJsonObject>>> Deferred;
 		/** The last calls and answers, for OKStudio.ModTrace and the tests. */
 		TArray<FString> Trace;
+		TArray<FString> DropQueue;
 	};
 
 	FState& State()
 	{
 		static FState S;
 		return S;
+	}
+
+	/** A stand-in for the mod host (OKStudio.ModBridgeSelfTest): its listing and its answers to dispatch requests. */
+	struct FFakeHost
+	{
+		TSharedPtr<FJsonObject> List;
+		TFunction<TSharedPtr<FJsonObject>(const FJsonObject& Request)> Dispatch;
+	};
+
+	TOptional<FFakeHost>& Fake()
+	{
+		static TOptional<FFakeHost> F;
+		return F;
+	}
+
+	bool HostOpen() { return Fake().IsSet() || FOKModHost::Get().IsOpen(); }
+	TSharedPtr<FJsonObject> HostList() { return Fake().IsSet() ? Fake()->List : FOKModHost::Get().List(); }
+	TSharedPtr<FJsonObject> HostDispatch(const TSharedRef<FJsonObject>& Request, FString& Error)
+	{
+		if (Fake().IsSet()) return Fake()->Dispatch(*Request);
+		return FOKModHost::Get().DispatchJson(Request, Error);
 	}
 
 	FMod* FindMod(const FString& Id) { return State().Mods.FindByPredicate([&](const FMod& M) { return M.Id == Id; }); }
@@ -333,7 +357,8 @@ namespace OKStudioModBridge
 		Request->SetStringField(TEXT("payload"), Condensed(Ctx));
 		Request->SetArrayField(TEXT("mods"), { MakeShared<FJsonValueString>(Id) });
 		FString Error;
-		const TSharedPtr<FJsonObject> Answer = FOKModHost::Get().DispatchJson(Request, Error);
+		if (const FMod* Known = FindMod(Id); Known && Known->bDropped) return nullptr;
+		const TSharedPtr<FJsonObject> Answer = HostDispatch(Request, Error);
 		if (!Answer.IsValid()) { UE_LOG(LogOKStudioMods, Warning, TEXT("%s %s: %s"), *Id, *Hook, *Error); return nullptr; }
 		Note(FString::Printf(TEXT("%s %s -> %s"), *Id, *Hook, *Condensed(Answer.ToSharedRef()).Left(300)));
 		// The mod's reply: an entry of "replies" ({mod, json|text|error}); a host answering one mod flat is read the same.
@@ -417,7 +442,7 @@ namespace OKStudioModBridge
 		IFileManager::Get().FindFiles(Files, *(Dir / TEXT("*.okscene")), true, false);
 		Files.Sort();
 		for (int32 I = 0; I < Files.Num() - FMath::Clamp(Keep, 1, 100); ++I) IFileManager::Get().Delete(*(Dir / Files[I]));
-		UE_LOG(LogOKStudioMods, Display, TEXT("%s: scene copy %s"), *Mod, *(Dir / Safe + TEXT(".okscene")));
+		UE_LOG(LogOKStudioMods, Display, TEXT("%s: scene copy %s"), *Mod, *FPaths::ConvertRelativePathToFull(Dir / Safe + TEXT(".okscene")));
 	}
 
 	/** The data part of an effect (applied at once, inside the change the mod answered). */
@@ -686,6 +711,7 @@ namespace OKStudioModBridge
 		for (const FMod& M : S.Mods) FOKStudioModRegistry::Get().RemoveOwner(M.Id);
 		S.Mods.Reset();
 		S.Deferred.Reset();
+		S.DropQueue.Reset();
 		FOKStudioModRegistry::Get().SceneEventSink = nullptr;
 		S.bBuilt = false;
 	}
@@ -693,9 +719,21 @@ namespace OKStudioModBridge
 	void Drop(const FString& Id, const FString& Why)
 	{
 		UE_LOG(LogOKStudioMods, Warning, TEXT("%s left the studio: %s"), *Id, *Why);
-		FOKStudioModRegistry::Get().RemoveOwner(Id);
-		State().Mods.RemoveAll([&](const FMod& M) { return M.Id == Id; });
+		// Its command may be the one running now: the registry entry and FMod go on the next tick.
+		if (FMod* M = FindMod(Id)) M->bDropped = true;
+		State().DropQueue.AddUnique(Id);
 		if (FOKStudioModRegistry::Get().ShowStatus) FOKStudioModRegistry::Get().ShowStatus(FString::Printf(TEXT("mod %s 已停用：%s"), *Id, *Why));
+	}
+
+	void RemoveDropped()
+	{
+		FState& S = State();
+		for (const FString& Id : S.DropQueue)
+		{
+			FOKStudioModRegistry::Get().RemoveOwner(Id);
+			S.Mods.RemoveAll([&](const FMod& M) { return M.Id == Id; });
+		}
+		S.DropQueue.Reset();
 	}
 
 	void Build()
@@ -703,7 +741,7 @@ namespace OKStudioModBridge
 		Teardown();
 		FState& S = State();
 		S.bBuilt = true;
-		const TSharedPtr<FJsonObject> List = FOKModHost::Get().List();
+		const TSharedPtr<FJsonObject> List = HostList();
 		const TArray<TSharedPtr<FJsonValue>>* Mods = nullptr;
 		if (!List.IsValid() || !List->TryGetArrayField(TEXT("mods"), Mods)) return;
 		for (const TSharedPtr<FJsonValue>& V : *Mods)
@@ -846,16 +884,17 @@ namespace OKStudioModBridge
 			S.bReload = false;
 			if (S.bBuilt) Teardown();
 			S.Game = Game;
-			if (Game && FOKModHost::Get().IsOpen()) Build();
+			if (Game && HostOpen()) Build();
 			if (Game && !S.Input.IsValid() && FSlateApplication::IsInitialized())
 			{
 				S.Input = MakeShared<FInput>();
 				FSlateApplication::Get().RegisterInputPreProcessor(S.Input);
 			}
 		}
+		RemoveDropped();
 		if (!Game) return true;
 		// The host opens when the studio mode starts, which may be after the studio itself.
-		if (!S.bBuilt && FOKModHost::Get().IsOpen()) Build();
+		if (!S.bBuilt && HostOpen()) Build();
 		if (!Game->Document) return true;
 		if (S.Deferred.Num())
 		{
@@ -911,6 +950,35 @@ namespace OKStudioModBridge
 // For the tests (OKStudioModBridgeTest.cpp): drive the bridge without real input.
 namespace OKStudioModBridgeTest
 {
+	/** Puts a fake host in place of the real one (and rebuilds on the next tick); an unset Dispatch puts the real one back. */
+	void SetFakeHost(TSharedPtr<FJsonObject> List, TFunction<TSharedPtr<FJsonObject>(const FJsonObject&)> Dispatch)
+	{
+		if (Dispatch) OKStudioModBridge::Fake() = OKStudioModBridge::FFakeHost{ List, MoveTemp(Dispatch) };
+		else OKStudioModBridge::Fake().Reset();
+		OKStudioModBridge::State().bReload = true;
+	}
+	void Tick() { OKStudioModBridge::Tick(0.f); }
+	/** The value a mod's control shows for an object, as the panel row reads it. */
+	FString ControlValue(const FString& Mod, const FString& Control, int32 Object)
+	{
+		UOKStudioGame* Game = OKStudioModBridge::State().Game.Get();
+		const FOKStudioModControl* C = FOKStudioModRegistry::Get().Controls().FindByPredicate([&](const FOKStudioModControl& X) { return X.Owner == Mod && X.Id == Control; });
+		return C && C->Get && Game && Game->Document ? C->Get(*Game->Document, Object) : FString(TEXT("<none>"));
+	}
+	bool SetControl(const FString& Mod, const FString& Control, int32 Object, const FString& Value)
+	{
+		UOKStudioGame* Game = OKStudioModBridge::State().Game.Get();
+		const FOKStudioModControl* C = FOKStudioModRegistry::Get().Controls().FindByPredicate([&](const FOKStudioModControl& X) { return X.Owner == Mod && X.Id == Control; });
+		// As the panel row does: the change is noted for undo (SOKStudioPanel::Changed).
+		if (!C || !C->Set || !Game || !Game->Document || !C->Set(*Game->Document, Object, Value)) return false;
+		Game->Document->NotifyChanged();
+		return true;
+	}
+	FString DataText(const FString& Mod)
+	{
+		UOKStudioGame* Game = OKStudioModBridge::State().Game.Get();
+		return Game && Game->Document ? OKStudioModBridge::DataText(*Game->Document, Mod) : FString();
+	}
 	bool Built() { return OKStudioModBridge::State().bBuilt; }
 	int32 ModCount() { return OKStudioModBridge::State().Mods.Num(); }
 	bool HasMod(const FString& Id) { return OKStudioModBridge::FindMod(Id) != nullptr; }
