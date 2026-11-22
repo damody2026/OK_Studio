@@ -7237,3 +7237,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 最後仍不觸發：編輯器（模組化）建置裡 KKUnityBundle 與 OpenKoikatsu 各自靜態連結一份 `ok_extract.lib`，`OKModModes` 的 `ok_set_mod_dispatch` 設的是 OpenKoikatsu 那份，開卡的 KKUnityBundle 那份一直是空的（工作項 6 就埋下了，當時沒有 hook 用到它）。改由 KKUnityBundle 匯出 `KKModMaterials::SetExtractDispatch`。教訓：靜態庫裡的全域狀態在模組化建置是每個 DLL 一份，設定要從實際使用它的模組做。
   - 用 `sed -i` 刪 `extract.rs` 自己加的行，檔案的 CRLF 變成 LF（內容沒變，`git status` 卻顯示修改），用 Lua 轉回 CRLF。
   - cherry-pick C 的通用 Hook 後，Hook 之前編的 mod DLL 全被新宿主拒載（abi_stable：`Event` 變體數 6 對 5，`too many variants`）。追加 non-exhaustive 變體對「舊 mod、新宿主」不相容，已寫進 S9 回報給協調者決定；F 這邊重編 hello、glass-shader。
+
+- 2026-11-23 OK mod 工作項 11（每幀掛點，`Docs/OK_MOD_S11_FRAME.md`）：
+  - 第一版只要宿主匯出 `okm_frame`，ok-extract 每幀就建整份 frame（拷骨骼、算 world），即使沒有任何 mod 要幀。量測前發現，改成先以 null 問宿主有幾個 mod 要幀。
+  - 改了宿主 `frame.rs`（null 詢問）後只跑了 debug 測試，沒重編 release 的 `ok_mod_host.dll`，遊戲用的是舊版，null 一律回 0，boop 的 `calls` 一直是 0。教訓：改到遊戲載入的 DLL 後，實測前要重編 release 並重開遊戲（DLL 被執行中的遊戲鎖住）。
+  - 用 Lua 腳本做多處替換時，`"        let gravity..."`（8 格縮排）是 16 格縮排那兩行的子字串，比對到 3 處而中止；前面幾處替換已經寫進檔案，只好另寫一份只跑剩下部分的腳本。教訓：替換字串前面加換行錨定縮排；多處替換的腳本要能重跑（或先全部檢查再一起寫）。
