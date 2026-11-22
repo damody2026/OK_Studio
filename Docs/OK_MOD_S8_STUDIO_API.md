@@ -124,12 +124,23 @@ mod 回錯誤會顯示在狀態列；mod 被停用或 panic 後橋接把它從 S
 - 第一次跑 26/29：重做失敗與連帶的複製失敗是測試沒有像面板一樣 `NotifyChanged`；「panic 的 mod 離開」失敗是橋接在 mod 自己的指令執行中就移除登錄（刪掉正在跑的 `TFunction`），已改成下一幀移除（提交 786595702）。
 - `ok.PairModBridgeSelfTest`：假宿主收到 7 種事件對應的 `pair.*` hook 與 payload 欄位，**17/17 通過**（`Saved/OKInteraction/pair_mod_bridge_selftest.txt`）。
 
+## 第三波：四個 Studio 範例一起開（2026-11-23，同步點 B 之後）
+
+`Mods/` 裝 object-hotkeys、scene-notes、studio-autosave、timeline-flow（加上非 Studio 的 pair-counter、subtitles），`studio_launch no_build`：
+
+- **共存**：log 為 `mode studio: 4 mod(s) enabled`，四個各自 `joined the studio`：object-hotkeys 3 鍵、studio-autosave 1 計時器。指令表同時有三個 mod 的 9 個指令，互不干擾。選取時四個都沒訂閱 `studio.objects_selected`，各回一次「did not subscribe」，之後就不再送。
+- **各自的資料**：選角色後 scene-notes `add`（寫 `notes.2`）、timeline-flow `loop_start`（寫 `marks`）、studio-autosave `save_now`（匯出 okscene）。匯出檔的 `mods` 有前兩個 mod 的資料，各在自己的鍵下。
+- **復原／重做**：復原兩步後存檔（`E:\OpenKoikatsu\UserData\Studio\scene\emod8_undo.png`），重開後匯出的 okscene 沒有 `mods`（備註與迴圈標記都回復掉了）。重做兩步後存檔（`emod8_redo.png`），重開後 `{"notes":{"2":"E組共存測試"}}` 與 `{"marks":[{"kind":"loop_start","time":0}]}` 都在。
+- **存讀檔**：上面兩個檔都是存檔、在同一個 Studio 裡重開後再匯出比對，兩個 mod 的資料都照存照讀。
+- F 的 toon-post 還沒有（F 的檢出只有 skin-decal），等 F 做好再一起開。
+
 ## 沒驗證的
 
 - object-hotkeys 的拖曳：按鍵經過真的 Slate 前處理器（`studio_key V`），但按住鍵同時移動滑鼠沒辦法用控制通道做，移動／旋轉／縮放只在自我測試（直接呼叫橋接）驗過；文字框有焦點時不送按鍵也沒測。
-- studio-autosave 的「備」按鈕（指令 `save_now`）與 `keep` 份數修剪。
+- studio-autosave 的 `keep` 份數修剪（`save_now` 指令第三波已實機用過）。
 - timeline-flow 的跳躍標記；scene-notes 的狀態頁文字列畫面、刪除備註。
-- 1 對 1 的實際場景：骨架只用假宿主與合成事件測過，沒有進 1 對 1 跑。
+- 1 對 1：已實機驗證，見 [OK_MOD_S13_PAIR.md](OK_MOD_S13_PAIR.md)。
+- 第三波：object-hotkeys 的拖曳仍不能用控制通道做（`studio_key` 是按下立刻放開，狀態列停在「移動：移動滑鼠（放開鍵結束）」）；和 F 的 toon-post 一起開還沒做。
 
 ## 狀態
 
