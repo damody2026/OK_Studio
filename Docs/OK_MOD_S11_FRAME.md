@@ -55,6 +55,19 @@ ok-extract worker（每角色每幀）
 2. host／SDK 的 `frame` feature 何時改成預設開；
 3. 配對要不要另外在接觸求解之後再開一個點。
 
+## 協調者決定（2026-11-23，同步點 B）與後續改動
+
+- 採用上面的設計：另外匯出 C 函式 `ok_mod_frame`，SDK 以 `ok_mod_frame!` 包裝；不動 abi_stable 型別。
+- 規定 `Event` 不再加變體，新功能只加 hook 名。
+- **`OkModFrame` 開頭改成 `struct_size`、`version`**（`FRAME_VERSION = 1`，v1 為 80 位元組，ok-extract 以編譯期斷言固定）。之後只在結尾加欄位。
+  - 宿主 `okm_frame`：版本不是 1 或大小不足 80 時不交給任何 mod，log 只報一次。
+  - SDK `Frame::from_raw`：版本不同或比自己的 `RawFrame` 小時回 None，`ok_mod_frame!` 直接回 0。
+  - 為了對齊，`sex` 移到 `kind` 後面、`character` 前面。
+- **配對的 `dt`**：改成配對播放時鐘實際走了多少，也就是這個角色上一次配對幀到這一次的 `time` 差（`KKPairedPlayback` 的 elapsed 差）。
+  - 第一幀、倒退（seek 回去）或間隔超過一秒時給 0。
+  - 只在有 mod 要幀時記錄。
+- 配對只保留現在這一個掛點；GPU 動態骨的外力留到之後。
+
 ## 量測（獨占：`claim --need-gb 60`，機器上只有這一個 Unreal）
 
 讀卡器（編輯器建置 `-game`）：
@@ -106,6 +119,5 @@ ok-extract worker（每角色每幀）
 - **後姿勢改骨骼沒有實機示範**：boop 只推外力。改骨骼的路徑只有 ok-extract 單元測試驗過寫回；實機要等 idle-breath。
 - **Studio、1 對 1 沒實測**，只量了讀卡器。配對多角色並行（rayon）時，幀函式的並行安全只靠設計與單元測試。
 - **GPU 動態骨路徑**（`GpuChainView` 把 `db.force` 交給 GPU）沒有加外力。
-- **配對 `dt` 是 0**，見上。
 - **用 Hook 之前 SDK 編的 mod**：照前一段的發現，要用新 SDK 重編才載得進新宿主（與這項無關，提醒一次）。
 - `Mods/boop` 只裝在本機 `F:\OpenKoikatsu\Mods`（不進版控）；full profile 還沒加 boop，因為 frame feature 還沒定案。
