@@ -108,6 +108,9 @@ public:
  static bool BreedPicture(const FString& Card,const FString& Picture,const FString& Out,FString& Summary);
  /** A child that depends on her parents' cards (okDn depends) written as a whole card to Out (opens without them). */
  static bool BreedExport(const FString& Card,const FString& Out,FString& Summary);
+ /** Card with HairDeck hair kept in it (okHk; every open puts it on, children inherit it with the hair), written to Out
+  * (may be Card). CardsJson empty: the card's own hair back. */
+ static bool CardHairDeck(const FString& Card,const FString& CardsJson,const FString& OptsJson,const FString& Out,FString& Summary);
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);
@@ -342,6 +345,8 @@ public:
 	int32 HangHair(bool bOn);
 	/** Replaces her hair with a HairDeck result (cards_seed<s>.json, chains beside it); rebuild the meshes after. */
 	bool ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
+	/** The HairDeck hair her card keeps (okHk) put on: 0 put on, 2 the card keeps none, 1 error (OutReport). */
+	int32 ApplyCardHairDeck(FString& OutReport);
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
 	// pair contacts. False: no penis. OutDegrees: turned now.
 	bool AimPenis(const FVector& UnityDir,float& OutDegrees);

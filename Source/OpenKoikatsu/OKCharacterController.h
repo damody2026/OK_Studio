@@ -366,6 +366,8 @@ public:
  bool OpenDroppedCard(const FString& Path);
  // HairDeck hair (OKGalleryHairDeck.cpp): replace her hair with a generated cards_seed<s>.json and rebuild her meshes.
  bool ApplyHairDeckHair(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
+ // Keeps the HairDeck hair she wears in her card (Out empty: the card itself); bRemove: the card's own hair back.
+ bool SaveHairDeckToCard(const FString& Out,bool bRemove,FString& OutReport);
  bool HasPreviewCharacter() const { return PreviewActor!=nullptr; }
  void StartCardDrop();
  void StopCardDrop();

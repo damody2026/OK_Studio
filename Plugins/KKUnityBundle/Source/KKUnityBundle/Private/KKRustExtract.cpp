@@ -293,6 +293,15 @@ bool FOkSession::ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,
 	if(R==0&&!OutReport.Contains(TEXT("\"already\":true")))RuntimeMaterials.Reset();
 	return R==0;
 }
+int32 FOkSession::ApplyCardHairDeck(FString& OutReport)
+{
+	if(!Handle){OutReport=TEXT("no session");return 1;}
+	TArray<ANSICHAR> Buf;Buf.SetNumZeroed(1<<16);
+	const int32 R=ok_session_apply_card_hairdeck(Handle,Buf.GetData(),Buf.Num());
+	OutReport=UTF8_TO_TCHAR(Buf.GetData());
+	if(R==0&&!OutReport.Contains(TEXT("\"already\":true")))RuntimeMaterials.Reset();
+	return R;
+}
 
 bool FOkSession::AimPenis(const FVector& UnityDir,float& OutDegrees){OutDegrees=0.f;const float D[3]={float(UnityDir.X),float(UnityDir.Y),float(UnityDir.Z)};return Handle&&ok_aim_penis(Handle,D,&OutDegrees)==0;}
 bool FOkSession::SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const{
@@ -1779,6 +1788,11 @@ static bool OKBreedFile(int32 Op,const FString& A,const FString& B,uint64 Seed,c
 bool FOkSession::Breed(const FString& Mother,const FString& Father,uint64 Seed,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKBreedFile(0,Mother,Father,Seed,Out,Summary);}
 bool FOkSession::BreedPicture(const FString& Card,const FString& Picture,const FString& Out,FString& Summary){return OKBreedFile(1,Card,Picture,0,Out,Summary);}
 bool FOkSession::BreedExport(const FString& Card,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKBreedFile(2,Card,Card,0,Out,Summary);}
+extern "C" int32_t ok_card_hairdeck(const char*,const char*,const char*,const char*,char*,int32_t);
+bool FOkSession::CardHairDeck(const FString& Card,const FString& CardsJson,const FString& OptsJson,const FString& Out,FString& Summary){
+ char Buffer[4096]{};const int32 Result=ok_card_hairdeck(TCHAR_TO_UTF8(*Card),TCHAR_TO_UTF8(*CardsJson),TCHAR_TO_UTF8(*OptsJson),TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
+ Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
+}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){
  OKPrepareCardEnvironment();char Buffer[2048]{};
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));

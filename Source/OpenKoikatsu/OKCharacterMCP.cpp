@@ -530,6 +530,14 @@ void UOKCharacterController::TickCharacterMCP()
    BreedChild(uint64(FMath::Max(0.0,Seed)),[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   else if(Command==TEXT("breed_export")){FString Path;S.Request->TryGetStringField(TEXT("path"),Path);
    ExportBredChild(Path,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  // HairDeck hair: "hairdeck" puts a cards_seed<s>.json on her ("cards", "opts" JSON text); "hairdeck_save" keeps what
+  // she wears in her card ("out": another file; "remove": the card's own hair back).
+  else if(Command==TEXT("hairdeck")){FString Cards,Opts;if(!S.Request->TryGetStringField(TEXT("cards"),Cards)||!IFileManager::Get().FileExists(*Cards)){Finish(S,nullptr,TEXT("Provide an existing cards_seed<s>.json path"));return;}
+   S.Request->TryGetStringField(TEXT("opts"),Opts);FString Report;const bool bOk=ApplyHairDeckHair(Cards,Opts,Report);
+   UE_LOG(LogTemp,Display,TEXT("MCP hairdeck %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*Report);if(!bOk){Finish(S,nullptr,Report);return;}}
+  else if(Command==TEXT("hairdeck_save")){FString Out;bool bRemove=false;S.Request->TryGetStringField(TEXT("out"),Out);S.Request->TryGetBoolField(TEXT("remove"),bRemove);
+   FString Report;const bool bOk=SaveHairDeckToCard(Out,bRemove,Report);
+   UE_LOG(LogTemp,Display,TEXT("MCP hairdeck_save %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*Report);if(!bOk){Finish(S,nullptr,Report);return;}}
   else if(Command==TEXT("clothes_export")){FString Out;S.Request->TryGetStringField(TEXT("out"),Out);ExportOkClothesTo(Out,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP clothes_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   else if(Command==TEXT("clothes_wear")){FString Path;bool bOnly=false;S.Request->TryGetBoolField(TEXT("clothes_only"),bOnly);if(!S.Request->TryGetStringField(TEXT("path"),Path)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Provide an existing .okclothes path"));return;}
    WearOkClothesFrom(Path,bOnly,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP clothes_wear %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
