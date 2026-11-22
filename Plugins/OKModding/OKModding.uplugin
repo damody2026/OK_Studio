@@ -1,0 +1,14 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1",
+  "FriendlyName": "OK Modding",
+  "Description": "Loads the OK mod host (ok_mod_host.dll, Tools/ok-mod) and with it the Rust mods in Mods/ (Docs/OK_MOD_FRAMEWORK_PLAN.md).",
+  "Category": "OpenKoikatsu",
+  "EnabledByDefault": false,
+  "CanContainContent": false,
+  "SupportedTargetPlatforms": [ "Win64" ],
+  "Modules": [
+    { "Name": "OKModding", "Type": "Runtime", "LoadingPhase": "Default" }
+  ]
+}
