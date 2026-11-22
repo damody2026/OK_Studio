@@ -7178,3 +7178,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - SDK 的 `ok_mod!` 自己展開 abi_stable 的 `LibHeader` 匯出（mod 不必直接相依 abi_stable），匯出名先憑印象寫成 `_as_lib_header_root_module_loader`，測試比對 `abi_stable::library::ROOT_MODULE_LOADER_NAME` 才發現真正的是混淆過的 `_1as_0lib_1header_0root_bmodule_bloader`。寫錯的話所有 mod 都會「找不到 root module」被拒。修正：照常量改，並留著那個比對測試。
   - abi_stable 的 `NonExhaustive` 儲存大小要自己估，`RString` 是 4 個 word（指標、長度、容量、vtable）不是 3 個，第一次估小了編不過（編譯期就會報，不會到執行期）。
   - 教訓：跨 DLL 的符號名、版面大小一律以 abi_stable 的常數與編譯期檢查為準，不憑記憶；abi_stable 0.x 的版本相容規則是「宿主 patch ≤ mod patch」，所以 RootModule 的版本字串和 crate 版本分開（見報告「設計上的決定」第 1 點）。
+
+- 2026-11-23 OK mod 框架工作項 3 材質可行性（`Tools/modkit_cook.lua`，`Docs/OK_MOD_S3_材質可行性.md`）：
+  - pak 白名單檢查器第一版假設 cooked 套件的 header 是 unversioned（版本欄全 0）、export 表每筆 96 bytes；實際 UE 5.8 cook 出來的 header 帶版本（ue4 522／ue5 1018、10 筆 custom version），export 表每筆 112 bytes（多了 ScriptSerializationStart/EndOffset）。只有一個 export 的材質包看不出錯，到 Blueprint 反例（5 個 export）才讀出亂碼名稱。改成接受帶版本的 header，export 每筆大小由「cell export 表起點 − export 表起點」÷ 筆數算出並只認 96／112。
+  - Custom 節點 `#include` 的檔案不存在時，cook 仍回報 `Success - 0 error(s)`，只有警告（include 路徑 invalid、Failed to compile Material、沒有 valid ShaderMap），pak 照樣產生，遊戲裡就是預設材質。`modkit_cook.lua` 改成掃 cook log，遇到這三種警告就失敗。
+  - 教訓：cook 的成功碼不代表材質有 shader；cooked 套件格式以實際檔案為準，不憑記憶。
