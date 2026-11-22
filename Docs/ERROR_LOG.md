@@ -7021,3 +7021,12 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - 真正原因：HairDeck 頭髮是執行期飾品，顯示端照部件頂點現有的位置畫（世界座標），要等第一次求解才會更新。`install` 留下的是頭部局部座標，剛開卡、角色沒動作時就畫在原點附近。舊的換髮流程之後會 `ApplyShapes` 觸發重算，所以看不出來；從卡片一開就帶頭髮時沒有這一步。修法：換上後把頂點與法線放到目前頭骨的位置（`hairdeck::apply`）。
 - 套用位置仍留在 `ApplyHairDeckToSession`（不放 `session::open`），封裝與 digest 的嚴格開卡才不會每套服裝重做頭髮。
 - 教訓：命令列驗證只看 session 的資料，看不到顯示端；這次也是先猜原因就改、重編了才發現沒用。先在讀卡器比對「能動的路徑」和「不能動的路徑」差在哪一步（這次是載入後有沒有重算姿勢），再動手。
+
+## 2026-11-22 讀卡器 GPU PageFault：F 引擎沒有根因補丁，先做了已撤回的止血（F 組 f-breed）
+
+- 配種時讀卡器兩次 GPU PageFault（DreamGUI `MainPS`，`Shader Hash = E6753E1E…`）。11-20 已用引擎補丁 `ClearRecycledOnlineDescriptors.patch` 修掉根因，C、E 引擎都有，**F 引擎（`F:\UE5.8`）沒有套**。`OpenKoikatsu.Build.cs` 只檢查群眾與排序那幾個補丁，這個沒有標記，所以 F 建置一直成功、看不出缺。
+  - 修正：F 引擎套上補丁；`Build.cs` 加上它的標記檢查，引擎缺補丁就建置失敗。
+- 我先讀了 `CARD_READER_DREAMGUI.md` 的長篇查找紀錄，沒讀到最後的結案文件（`CARD_READER_GPU_PAGEFAULT_SLOTS_20261120.md` 第 10 節），就自己改引擎讓空 pool heap 不銷毀並重編、跑趟次——那正是 11-20 已撤回的止血 `RetainEmptyPoolHeaps`。
+  - 教訓：查已知問題時先找 `Tools/EnginePatches/README.md` 與結案文件，確認自己的引擎有沒有那些補丁，再動手。
+- 套上補丁後用 `-ParallelRDG` 驗證照樣當（第 11 張），一度以為補丁在 F 失效；其實 11-20 的驗證全是序列 RDG（讀卡器啟動器預設），並行從沒在補丁下驗過。序列兩趟 60 張都乾淨。
+  - 教訓：拿別人的修正來驗證時，要照他們驗證時的條件（看當時 log 的命令列），不同條件的結果要分開講。並行 RDG 下仍未解，見該文件第 11 節。
