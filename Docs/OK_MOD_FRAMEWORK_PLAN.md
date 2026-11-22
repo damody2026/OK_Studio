@@ -354,6 +354,44 @@ mod pak 和補丁 pak 不同的地方：放在 `Mods/<id>/content/`，不在 `Co
 
 **卡片大小**：mod 寫進 `okMr` 的資料計入卡片大小。宿主對每個 mod、每張卡設上限（預設 100 MiB，2026-11-22 定案；超過就拒寫並在 log 講明），同一份貼圖多個 mod 用到也只存一份（sha256 去重）。
 
+### 6.13 DreamGUI 支援（2026-11-23 使用者要求）
+
+讀卡器畫面是 DreamGUI 畫的（`Plugins/DreamGUI`，MIT，見 [CARD_READER_DREAMGUI.md](CARD_READER_DREAMGUI.md)）。
+
+- 目前 mod 控制項先建成 UMG，再由 `UOKReaderScreen::Mirror` 鏡像成 `UOKDreamControl`，種類只有 Label／Button／Slider／Toggle／Choice／Input／Image／Drawer；
+- `.dui` 原始檔要在編輯器裡用 `DreamUICompileWidgets` 編成 widget Blueprint，打包後的遊戲不能直接讀 `.dui`。
+
+所以分兩層：
+
+| 層級 | mod 作者需要 | 能做什麼 | 做法 |
+|---|---|---|---|
+| D1 宣告式 | 不需要 UE | 用 DreamGUI 原生控制項畫 mod 頁：Slider、SpinBox、Toggle、Dropdown、RadioButton、TextInput、Button、ProgressBar、顏色、圖片（mod 的 PNG）、分頁（TabView）、清單（ListView）；版面可分組、橫列、捲動；樣式用讀卡器主題 `DUI/Theme.dui` 的 class 名 | `reader.ui` 回覆的頁面 JSON 加 `layout`、`kind`、`style`；宿主（C++）直接建 DreamGUI 控制項，不再經過 UMG；值與事件照舊走 `reader.values`／`reader.control`；每個控制項都登記給 `ui_widgets`／`ui_set` |
+| D2 `.dui` 畫面 | ModKit | mod 自帶 `.dui` 原始檔，畫自己的面板或整頁 | ModKit 用 `DreamUICompileWidgets` 編成 widget Blueprint，cook 進 mod 的內容 pak（§6.11 B 層）；宿主掛載後依 mod 宣告的路徑建立 |
+
+D2 的規則：
+
+- **程式仍然只能是 Rust**：`.dui` 的 events／routes 一律轉成宿主的 hook `ui.<mod id>.<事件名>` 交給 mod 的 Rust 程式；
+- `.dui` 裡的 bindings 只能綁宿主提供的值（`mod.<id>.<key>`）；
+- **白名單放寬一類**：`WidgetBlueprintGeneratedClass`，但只限 `.dui` 編出來的。`ok-mod-pack verify` 與宿主掛載時要確認：
+  - 每個 widget 都有同名 `.dui` 附在 mod 內；
+  - ModKit 重編後結果一致；
+  - 圖裡只有 DreamGUI 編譯器產生的節點（沒有手寫的 Blueprint 圖）；
+  - 否則整包拒絕；
+- `.dui` 的 `use` 只能引用讀卡器主題與 DreamGUI 內建庫，不能引用核心以外的 `/Game/` 資產；
+- 版本鎖與 B 層相同（`content_build`）。
+
+範圍：讀卡器（DreamGUI）優先；之後其他改用 DreamGUI 的畫面照同樣規則開放。OK Studio 用 Slate，不在這一節。
+
+範例：
+
+- `profile`、`outfit-names` 改用 D1 新種類（分頁、TextInput）；
+- 新增 `dream-panel`：D2 範例，一個自帶 `.dui` 的小面板，含按鈕事件回到 Rust、綁定一個設定值。
+
+分工：
+
+- D1 → C 的子對話，工作項 10 之後、同步點 B 之前（C 擁有 `OKReaderScreen`、`OKReaderMods`）；
+- D2 → F 的子對話，同步點 B 之後（F 擁有 ModKit 與 pak 白名單）。
+
 ## 7. ABI 細節
 
 ### 7.1 入口
@@ -558,8 +596,8 @@ OK Studio 核心已經有的功能不做成範例：姿勢庫（`SOKStudioPanel.
 
 | 子對話 | 檢出／引擎 | 依序要做的工作項 |
 |---|---|---|
-| `[F組] mod 框架本體` | `F:\OpenKoikatsu`／`F:\UE5.8` | 1 → 6 → 3 →（同步點 A）→ 12 →（同步點 B）→ 9 → 11 → 12 收尾 |
-| `[C組] mod 卡片／讀卡器／街區` | `C:\portable\OpenKoikatsu`／`D:\PhysX\UE5.8` | 2 → 4 →（同步點 A）→ 7 → 10 →（同步點 B）→ 修 9／11 回報的問題 |
+| `[F組] mod 框架本體` | `F:\OpenKoikatsu`／`F:\UE5.8` | 1 → 6 → 3 →（同步點 A）→ 12 →（同步點 B）→ 9 → 9b DreamGUI D2（§6.13）→ 11 → 12 收尾 |
+| `[C組] mod 卡片／讀卡器／街區` | `C:\portable\OpenKoikatsu`／`D:\PhysX\UE5.8` | 2 → 4 →（同步點 A）→ 7 → 10 → 7b DreamGUI D1（§6.13）→（同步點 B）→ 修 9／11 回報的問題 |
 | `[E組] mod OK Studio／1 對 1` | `E:\OpenKoikatsu`／`E:\PhysX\UE5.8` | 5 →（同步點 A）→ 8 → 13 →（同步點 B）→ 修 9／11 回報的問題 |
 
 規則：
