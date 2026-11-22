@@ -4,6 +4,12 @@
 //!
 //!   ok-hairdeck generate --image IMG --out DIR [--box x0,y0,x1,y1] [--seed 0] [--n 1] [--steps 50] [--cfg 2]
 //!                        [--weights F:/HairDeckData] [--noise N.npy] [--chain-noise N.npy] [--no-chains] [--no-colors]
+//!                        [--mix IMG2 [--mix-box x0,y0,x1,y1] [--mix-weight 0.5]]
+//!
+//! --mix: hair between two characters (bred children, Docs/OK_BREEDING.md). Both images go through DINOv3 and the image
+//! and colour models' encoded contexts are blended token by token, (1 - w) of the first and w of the second; the sampler
+//! then draws one head of hair from that context. Both crops are head-centred squares, so token k of one and of the
+//! other cover the same part of the head.
 //!
 //! Writes DIR/model_input.png, DIR/cards_seed<s>.json ([{shape, seq, colors}], HairDeck's format), DIR/chains_seed<s>.json
 //! and DIR/info.json. The weights folder is a HairDeck workspace (scripts/setup/download_weights.py).
@@ -31,19 +37,32 @@ struct Args {
     chains: bool,
     colors: bool,
     cpu: bool,
+    mix: Option<PathBuf>,
+    mix_box: Option<[f32; 4]>,
+    mix_weight: f32,
+}
+
+fn parse_box(s: &str) -> R<[f32; 4]> {
+    let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    if v.len() != 4 { return Err("框要 x0,y0,x1,y1".into()); }
+    Ok([v[0], v[1], v[2], v[3]])
 }
 
 fn parse(a: &[String]) -> R<Args> {
     let mut r = Args { image: PathBuf::new(), out: PathBuf::new(), boxx: None, seed: 0, n: 1, steps: 50, cfg: 2.0,
         weights: std::env::var_os("HAIRDECK_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("F:/HairDeckData")),
-        noise: None, chain_noise: None, chains: true, colors: true, cpu: false };
+        noise: None, chain_noise: None, chains: true, colors: true, cpu: false,
+        mix: None, mix_box: None, mix_weight: 0.5 };
     let mut i = 0;
     let val = |i: &mut usize| -> R<String> { *i += 1; a.get(*i).cloned().ok_or_else(|| format!("{} 後面少了值", a[*i - 1])) };
     while i < a.len() {
         match a[i].as_str() {
             "--image" => r.image = val(&mut i)?.into(),
             "--out" => r.out = val(&mut i)?.into(),
-            "--box" => { let v: Vec<f32> = val(&mut i)?.split(',').filter_map(|x| x.trim().parse().ok()).collect(); if v.len() != 4 { return Err("--box 要 x0,y0,x1,y1".into()); } r.boxx = Some([v[0], v[1], v[2], v[3]]); }
+            "--box" => r.boxx = Some(parse_box(&val(&mut i)?)?),
+            "--mix" => r.mix = Some(val(&mut i)?.into()),
+            "--mix-box" => r.mix_box = Some(parse_box(&val(&mut i)?)?),
+            "--mix-weight" => r.mix_weight = val(&mut i)?.parse::<f32>().map_err(e)?.clamp(0.0, 1.0),
             "--seed" => r.seed = val(&mut i)?.parse().map_err(e)?,
             "--n" => r.n = val(&mut i)?.parse::<usize>().map_err(e)?.clamp(1, 4),
             "--steps" => r.steps = val(&mut i)?.parse().map_err(e)?,
@@ -90,10 +109,26 @@ fn matte_from_background(img: &mut image::RgbaImage) {
     if img.pixels().any(|p| p.0[3] < 250) { return; }
     let (w, h) = (img.width(), img.height());
     let corners: Vec<[u8; 4]> = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)].iter().map(|&(x, y)| img.get_pixel(x, y).0).collect();
-    let bg: [i32; 3] = std::array::from_fn(|c| { let mut v: Vec<i32> = corners.iter().map(|p| p[c] as i32).collect(); v.sort(); (v[1] + v[2]) / 2 });
-    let spread: i32 = corners.iter().map(|p| (0..3).map(|c| (p[c] as i32 - bg[c]).abs()).sum::<i32>()).max().unwrap_or(0);
-    if spread > 60 { return; } // not a flat background: keep the whole image
-    for p in img.pixels_mut() { if (0..3).map(|c| (p.0[c] as i32 - bg[c]).abs()).sum::<i32>() <= 40 { p.0[3] = 0; } }
+    // The background is the colour most corners share, the top ones on a tie (a head-and-shoulders picture has the
+    // character in its bottom corners); fewer than two agreeing corners: not a flat background, keep the whole image.
+    let near = |a: [u8; 4], b: [u8; 4], t: i32| (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>() <= t;
+    let Some(bg) = corners.iter().copied().rev().max_by_key(|a| corners.iter().filter(|b| near(*a, **b, 30)).count())
+        .filter(|a| corners.iter().filter(|b| near(*a, **b, 30)).count() >= 2) else { return };
+    // Flood from the border through background-coloured pixels: grey or silver hair inside the figure stays.
+    let mut seen = vec![false; (w * h) as usize];
+    let mut stack: Vec<(u32, u32)> = Vec::new();
+    for x in 0..w { stack.push((x, 0)); stack.push((x, h - 1)); }
+    for y in 0..h { stack.push((0, y)); stack.push((w - 1, y)); }
+    while let Some((x, y)) = stack.pop() {
+        let i = (y * w + x) as usize;
+        if seen[i] || !near(img.get_pixel(x, y).0, bg, 40) { continue; }
+        seen[i] = true;
+        img.get_pixel_mut(x, y).0[3] = 0;
+        if x > 0 { stack.push((x - 1, y)); }
+        if y > 0 { stack.push((x, y - 1)); }
+        if x + 1 < w { stack.push((x + 1, y)); }
+        if y + 1 < h { stack.push((x, y + 1)); }
+    }
 }
 
 /// Without SAM 3's hair and face masks: the character is the alpha (or what differs from the corners' colour), the
@@ -153,14 +188,15 @@ fn run(a: Args) -> R<()> {
     } else { None };
     let load_sec = t0.elapsed().as_secs_f64();
 
-    let mut rgba = image::open(&a.image).map_err(|x| format!("{}：{x}", a.image.display()))?.to_rgba8();
-    matte_from_background(&mut rgba);
-    let b = a.boxx.unwrap_or_else(|| auto_box(&rgba));
-    let (crop, matte, crop_img) = prep(&rgba, b, res);
     std::fs::create_dir_all(&a.out).map_err(e)?;
-    crop_img.save(a.out.join("model_input.png")).map_err(e)?;
-
     let t1 = Instant::now();
+    // The image and colour models' contexts of one image, its crop saved as `name`.
+    let contexts = |path: &Path, boxx: Option<[f32; 4]>, name: &str| -> R<(Tensor, Option<Tensor>, [f32; 4])> {
+    let mut rgba = image::open(path).map_err(|x| format!("{}：{x}", path.display()))?.to_rgba8();
+    matte_from_background(&mut rgba);
+    let b = boxx.unwrap_or_else(|| auto_box(&rgba));
+    let (crop, matte, crop_img) = prep(&rgba, b, res);
+    crop_img.save(a.out.join(name)).map_err(e)?;
     let feats = enc.forward(&crop)?;
     let ctx = model.encode_image(&feats)?;
     let color_ctx = match &color {
@@ -193,6 +229,18 @@ fn run(a: Args) -> R<()> {
         }
         None => None,
     };
+    Ok((ctx, color_ctx, b))
+    };
+    let (mut ctx, mut color_ctx, b) = contexts(&a.image, a.boxx, "model_input.png")?;
+    let mut mix_box = None;
+    if let Some(m) = &a.mix {
+        let (ctx2, color2, b2) = contexts(m, a.mix_box, "model_input_mix.png")?;
+        let w = a.mix_weight as f64;
+        let lerp = |x: &Tensor, y: &Tensor| -> R<Tensor> { ((x * (1.0 - w)).map_err(e)? + (y * w).map_err(e)?).map_err(e) };
+        ctx = lerp(&ctx, &ctx2)?;
+        if let (Some(c1), Some(c2)) = (&color_ctx, &color2) { color_ctx = Some(lerp(c1, c2)?); }
+        mix_box = Some(b2);
+    }
     let mut samples = Vec::new();
     for k in 0..a.n {
         let seed = a.seed + k as u64;
@@ -244,7 +292,7 @@ fn run(a: Args) -> R<()> {
         println!("seed {seed}: {} cards, {:?} chains, {:.1}s", cards.len(), n_chains, ts.elapsed().as_secs_f64());
         samples.push(serde_json::json!({"seed": seed, "n_cards": cards.len(), "n_chains": n_chains, "colors": card_colors.is_some()}));
     }
-    let info = serde_json::json!({"image": a.image, "box": b, "res": res, "steps": a.steps, "cfg": a.cfg, "device": format!("{dev:?}"),
+    let info = serde_json::json!({"image": a.image, "box": b, "mix": a.mix, "mix_box": mix_box, "mix_weight": a.mix.as_ref().map(|_| a.mix_weight), "res": res, "steps": a.steps, "cfg": a.cfg, "device": format!("{dev:?}"),
         "load_sec": load_sec, "generate_sec": t1.elapsed().as_secs_f64(), "samples": samples});
     std::fs::write(a.out.join("info.json"), serde_json::to_vec_pretty(&info).map_err(e)?).map_err(e)?;
     Ok(())
@@ -254,7 +302,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("generate") => parse(&args[1..]).and_then(run),
-        _ => Err("用法：ok-hairdeck generate --image IMG --out DIR [--box x0,y0,x1,y1] [--seed 0] [--n 1] [--weights F:/HairDeckData]".into()),
+        _ => Err("用法：ok-hairdeck generate --image IMG --out DIR [--box x0,y0,x1,y1] [--seed 0] [--n 1] [--weights F:/HairDeckData] [--mix IMG2 --mix-weight 0.5]".into()),
     };
     if let Err(x) = r { eprintln!("ok-hairdeck: {x}"); std::process::exit(1); }
 }
