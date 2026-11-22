@@ -336,6 +336,33 @@ fn mix_clothes(blocks: &mut BTreeMap<String, Vec<u8>>, other: &BTreeMap<String, 
     taken
 }
 
+/// Her lower body covered where mixing left it bare (the user, 2026-11-22: 下體沒穿就補上裙子): an outfit without a
+/// bottom whose top came from a parent who wore a bottom with it in that outfit gets that bottom (a top that does not
+/// cover her; a parent who wore it without one, a one-piece or a swimsuit, is left as she was). Hers, not one of the
+/// game's skirts: a garment neither parent wore asks the sealed open questions neither parent's data answers (the
+/// game's プリーツスカートA: skel:bone_implants of co_bot_00), and the outfit went back to the base parent's whole.
+/// Returns the (outfit, bottom gene) taken from the other parent, for her Sideloader and Material Editor entries.
+fn cover_bare_outfits(blocks: &mut BTreeMap<String, Vec<u8>>, base: &BTreeMap<String, Vec<u8>>, other: &BTreeMap<String, Vec<u8>>,
+    taken: &[(usize, ClothesGene)]) -> Vec<(usize, ClothesGene)> {
+    let (mut mine, base_c, other_c) = (coordinate_entries(blocks), coordinate_entries(base), coordinate_entries(other));
+    let mut out = Vec::new();
+    for (o, entry) in mine.iter_mut().enumerate() {
+        let Some((mut clothes, rest)) = split_coordinate(entry) else { continue };
+        if wears(&clothes, 1) || !wears(&clothes, 0) { continue; }
+        let top_from_other = taken.iter().any(|(t, g)| *t == o && g.0 == "top");
+        let Some((source, _)) = (if top_from_other { other_c.get(o) } else { base_c.get(o) }).and_then(|e| split_coordinate(e)) else { continue };
+        if !wears(&source, 1) { continue; }
+        let mut parts = clothes_parts(&clothes);
+        let (Some(d), Some(v)) = (parts.get_mut(1), clothes_parts(&source).get(1).cloned()) else { continue };
+        *d = v;
+        map_set(&mut clothes, "parts", Value::Array(parts));
+        *entry = join_coordinate(&clothes, &rest);
+        if top_from_other { out.push((o, CLOTHES_GENES[1])); }
+    }
+    if !out.is_empty() { blocks.insert("Coordinate".into(), encode(&Value::Array(mine.into_iter().map(Value::Binary).collect()))); }
+    out
+}
+
 // ------------------------------------------------------------------ chunks
 
 fn chunks(bytes: &[u8]) -> Result<Vec<(usize, usize, [u8; 4])>, String> {
@@ -427,7 +454,10 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
     // Her top, bottom and underwear, each from either parent (drawn after everything above: a seed's earlier genes
     // stay what they were before clothes were mixed).
     let unmixed: Vec<usize> = (0..64).filter(|o| forced.contains_key(&unmixed_key(*o))).collect();
-    let clothes_taken = mix_clothes(&mut blocks, other, from_father, &mut mixer, &unmixed);
+    let mut clothes_taken = mix_clothes(&mut blocks, other, from_father, &mut mixer, &unmixed);
+    let covered = cover_bare_outfits(&mut blocks, base, other, &clothes_taken);
+    let skirted: Vec<usize> = covered.iter().map(|(o, _)| *o).collect();
+    clothes_taken.extend(covered);
     let mut mixed_outfits: Vec<usize> = clothes_taken.iter().map(|(o, _)| *o).collect();
     mixed_outfits.dedup();
 
@@ -479,12 +509,14 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
         "base": side(from_father), "picks": mixer.picks.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
         "changed": forced.iter().filter(|(k, _)| !k.starts_with("clothes.")).map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
         "clothes_not_mixed": unmixed,
+        "bottom_added": skirted,
         "hairdeck": if hairdeck { serde_json::Value::from(side(hair_from_father)) } else { serde_json::Value::Null },
     });
     let card = crate::tree_answers::with_chunk(&card, DNA_CHUNK, &serde_json::to_vec(&record).unwrap())?;
     let pick = |g: &str| side(mixer.picks.get(g).copied().unwrap_or(from_father));
-    let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {} with the top from the {}, bottom from the {}, underwear from the {}, hair from the {}{})",
-        side(from_father), pick("top"), pick("bottom"), pick("underwear"), side(hair_from_father), if hairdeck { ", HairDeck hair" } else { "" });
+    let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {} with the top from the {}, bottom from the {}, underwear from the {}, hair from the {}{}{})",
+        side(from_father), pick("top"), pick("bottom"), pick("underwear"), side(hair_from_father), if hairdeck { ", HairDeck hair" } else { "" },
+        if skirted.is_empty() { String::new() } else { format!(", the bottom worn with her top where her lower body was bare (outfits {skirted:?})") });
     Ok(Bred { card, from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources, mixed_outfits })
 }
 
@@ -732,6 +764,7 @@ pub mod file {
                         for o in failing_outfits(&e) { if bred.mixed_outfits.contains(&o) { more.insert(unmixed_key(o), true); } }
                     }
                     if attempt >= 6 || more.is_empty() || more.iter().all(|(k, v)| forced.get(k) == Some(v)) { return Err(e); }
+                    eprintln!("ok-extract: breed: sealing failed: {}", e.chars().take(800).collect::<String>());
                     eprintln!("ok-extract: breed: {} gene(s) her parents' data cannot show, taken from the other parent: {more:?}", more.len());
                     forced.extend(more);
                 }
@@ -836,6 +869,21 @@ mod tests {
         assert!(mix_clothes(&mut mine, &theirs, false, &mut m, &[0]).is_empty());
         assert_eq!(ids(&mine), [1, 2, 3, 4]);
         assert_eq!(failing_outfits("sealing open failed: outfit 4: x | outfit 4 clothes [1] | outfit 12: y"), [4, 12]);
+        // Bare below: the base (father) wears a one-piece 11 and no bottom; with the mother's top 1 she gets the bottom 2
+        // the mother wore with it. With his own one-piece she stays as he wore it.
+        let mut skirted_seen = false;
+        for seed in 0..64 {
+            let (base, other) = (blocks([11, 0, 13, 14]), blocks([1, 2, 3, 4]));
+            let mut mine = base.clone();
+            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+            let taken = mix_clothes(&mut mine, &other, true, &mut m, &[]);
+            let skirted = cover_bare_outfits(&mut mine, &base, &other, &taken);
+            let got = ids(&mine);
+            if got[0] == 1 { assert_eq!(got[1], 2, "bare below: {got:?}"); } else { assert!(skirted.is_empty(), "{got:?}"); }
+            assert!(skirted.iter().all(|(o, g)| *o == 0 && g.0 == "bottom"));
+            skirted_seen |= !skirted.is_empty();
+        }
+        assert!(skirted_seen);
     }
 
     #[test]
