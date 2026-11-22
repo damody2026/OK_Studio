@@ -91,13 +91,19 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 同樣的家族結構重配一次：刻晴、雷電、惠惠、貞德先換上 HairDeck 頭髮（四張參考圖 `output/characters-2026-09-30-anime/references/0[1-4]-*.png` 生成，`ok-hair-pack card` 存成 `UserData/okbreed/hairdeck_family/*_hd.png`，讀卡器 MCP `breed_picture` 拍新頭髮的照片），胡桃、三月七保留原本頭髮。13 個孩子在讀卡器配出（每次 40～106 秒），其中 12 個帶著 HairDeck 頭髮：只有髮型來自三月七的那個沒有。上衣、下衣、內衣各自來自不同父母。命令列試配（刻晴 × 雷電，種子 102）時有兩套服裝因身體遮罩缺資料改回不混搭，封裝成功。
 
 - 圖：`Saved/OKBreed/family_tree_hairdeck.png`（清單 `Saved/OKBreed/family_cards_hairdeck.txt`，第一行 `#title`、第二行 `#subtitle`）。家族樹工具在卡片帶 `okHk` 的照片左上角標「HairDeck 頭髮」。
-- 讀卡器拍照時兩次出現 GPU page fault（D3D12 裝置遺失，`TexturePoolCopyOps`／畫面輸出階段），都在換卡後幾秒內拍照時；重開讀卡器後同一張卡、同一步都正常，沒有重現。Aftermath dump：`Saved/Logs/D3D12.0.2026.11.22-11.46.34.nv-gpudmp` 等；當時另一個 Unreal（C 組布料場景）也在用 GPU。原因未查。
+- 讀卡器拍照時兩次出現 GPU page fault（D3D12 裝置遺失），都在換卡後幾秒內拍照時。是讀卡器已知的 DreamGUI PageFault（同一顆著色器 `E6753E1E…`、`fragment_02 @ 0x45f90`，見 [CARD_READER_DREAMGUI.md](CARD_READER_DREAMGUI.md)）：F 的引擎 `F:\UE5.8` 原本少了根因補丁 `ClearRecycledOnlineDescriptors.patch`，已補上；補上後用 RDG 並行執行連開仍會在第 11 張當，另開 session 追查中。
+
+### 大圖：每張卡正面、側面、斜側面（2026-11-22，F）
+
+使用者要「最終合出來的圖要大、人臉清楚、正面／側面／站姿斜側面」。每張卡在讀卡器拍三張（視窗 3200×2000，`鏡頭›全身`、`鏡頭›正面`，動作選單第 3 項 `custom_pose Stand_00_00` 站姿；正面、鏡頭 yaw −90 的側面、yaw +35 的斜側面，MCP `screenshot target=preview`，每張 1579×1876），合成時每張卡三格並排。
+
+`breed_family_tree.lua --views <檔>`：一行「卡片路徑<TAB>正面<TAB>側面<TAB>斜側面」，截圖裁掉左右空白與右下角名牌（`CROP` 1180×1730），`--panel-height`（預設 1000）是每格在圖上的高度，字、線、間距照比例放大。圖約 13000 像素寬。圖：`Saved/OKBreed/family_tree_views.png`（清單 `Saved/OKBreed/family_views.txt`，截圖在 `Saved/OKBreed/views/`）。
 
 ## 未做
 
 - 資源包裁剪：匯出的完整卡帶所有祖先的整包資源，代數越多越大（第 4 代 145 MB；與服裝卡同一個待辦）。依賴卡不受影響。
 - 孩子卡的父母卡被刪或搬走（相對位置也變）就開不了；讀卡器沒有「找父母」的介面，只在錯誤訊息列出找過的路徑。
 - 在讀卡器編輯依賴卡後另存，會走「編輯過的 OK 卡」流程，結果是完整卡（不再依賴父母）。
-- 拍照是 T 字姿勢的正面照。
+- 卡片圖（`breed_picture`）是 T 字姿勢的正面照；三視角大圖用讀卡器的站姿另外拍。
 - 用飾品做的頭髮跟著衣服那一方（飾品在服裝裡），不跟「髮型」基因走；要讓它跟頭髮走，得把頭部飾品從另一方的服裝搬過來。
 - ABMX 骨骼、膚色貼圖疊加的混合；顯性／隱性等位基因（隔代遺傳）；能力值與比賽。

@@ -42,6 +42,15 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
   - 同一個頭髮網格在同配件再畫一次的疊層：半透明材質（`main_item_studio_alpha`、`main_alpha`）、MaterialEditor 的 copy，或同一張貼圖。
   - 原本用飾品做的頭髮整個藏掉（使用者 2026-11-22：換 HairDeck 後不需要原來的頭髮飾品，會重疊）：卡片上類別 121（髮）的飾品、掛在頭髮掛點（`a_n_hair_*`）上的飾品，以及 HairAccessoryCustomizer 有資料、掛在頭上（`a_n_head*`、`a_n_hair*`）的飾品槽，不管顏色與名稱。這些槽裡的髮夾、緞帶、貓耳也一起藏：它們是照舊髮型擺的，在新頭髮上會浮起或陷進去。之前只藏顏色等於髮色的 renderer，刻晴的雙馬尾、貓耳這類照樣留著。這條要知道卡片路徑，session 開卡時記下（`OkSession::card_path`）。
 - 材質：角色原髮是原生頭髮 shader 時沿用它的 ramp 與高光。否則用 main_item，顏色圖集標成 sRGB、不畫外框；直接讀會讓深藍變淡紫，外框會描出每一片頭髮。新部件不留原 renderer 名稱，卡片的 MaterialEditor 設定不會套到它身上。
+- 天使環（2026-11-22，使用者：「髮型對了但髮色沒有動漫髮的光澤」、「這光澤是錯誤的光澤，你應該參考更多原作的頭髮」）：照原作頭髮做。量過 C001、C002、C020 與惠惠的遊戲頭髮（`OK_HAIR_INSPECT=<檔.json> ok-hair-pack deck …` 會把角色原髮的頭部座標頂點、UV0、UV1 和光澤貼圖寫出來）：
+  - 原生頭髮 shader 在 UV1 與 UV1 往 v 偏 0.008 處各取一次 `_HairGloss`，亮度是兩次的差（亮帶的上下緣），u 隨光線方向微移、v 隨 `_SpeclarHeight` 移。
+  - 原作的光澤貼圖都是黑底、v = 0.5 一條橫向的直條紋帶（C001 是沙漏形的灰色條紋群，C002 是細白線）。
+  - 遊戲頭髮的 UV1：v 隨頭部座標高度上升（瀏海每單位 3.3～4.5）；亮帶 v = 0.5 落在一個前低後高、兩側低的斜環上，y ≈ a − 0.25～0.4·z − 0.3～0.7·|x|（+Y 往上、+Z 往臉），a 0.19～0.22，約在髮頂下 0.03；u 繞頭每弧度 0.35～0.6。
+  - HairDeck 照這個鋪 UV1（`portable_hairdeck::ring_uv`：斜環 a = 頭頂附近髮頂 − 0.03、z 係數 0.33、|x| 係數 0.45，v 每單位 3.6，u 每弧度 0.45 且前後對折、背後沒有接縫，v 夾在 0.01～0.99 免得長髮又繞回亮帶）。遮罩用原髮的：donor 頭髮的 `_HairGloss`，沒有就找她其他原生頭髮部件的；都沒有（mod 頭髮）才用 `gloss_mask` 畫的仿原作條紋帶（照 C001 的沙漏條紋）。
+  - tangent 也照 UV1：u 繞頭、bitangent 朝 v 增加（往上）。shader 依「視線 · bitangent」把亮帶沿 v 移 `(_SpeclarHeight − 1)` 倍，每片頭髮自己的 tangent 會讓亮帶各移各的、碎成一塊塊；donor 的 `_SpeclarHeight` 不在 0.8～1（刻晴的 mod 頭髮是 0）時用 0.96（原作 0.95～0.98）。報告 `hair_material.floats` 是 donor 材質的數值。
+  - 之前錯的做法：把亮帶烘進顏色圖集、用 UV0 取樣（變成每片頭髮各自發亮的白點和等高線）；自己畫的高斯亮帶（成塊）。
+- `ok-hair-pack deck` 報告的 `gloss_png` 是用上的遮罩大小、`uv1_range` 是 UV1 的範圍，遮罩另存在 `<輸出>.gloss.png`。
+- 原髮不是原生頭髮 shader 的角色（例如貞德的頭髮是 main_item）沒有天使環：HairDeck 頭髮沿用 main_item。
 - 再次套用同一份頭髮不做事（材質名稱記著頭髮檔與選項的雜湊）；換另一份頭髮時取代上一份。
 
 離線檢查：`ok-hair-pack deck <基礎庫> <角色卡> <cards_seed0.json> <輸出.obj>` 輸出頭部與頭髮的 OBJ（頭部座標）。
