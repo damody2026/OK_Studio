@@ -443,7 +443,7 @@ impl Chain {
             }
             count
         } else { 1 };
-        let force = vscale(vadd(self.gravity, self.force), scale);
+        let force = vscale(vadd(self.gravity, crate::mod_frame::with_force(self.force, pos_of(&root_w))), scale);
         (movement, steps, force, scale)
     }
     fn finish(&mut self, skel: &mut Skeleton, movement: [f32; 3], steps: usize, force: [f32; 3], scale: f32, px_done: bool, suppress_skip_update: bool) {

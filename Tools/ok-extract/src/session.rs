@@ -3074,7 +3074,7 @@ impl OkSession {
             if self.anim_crossfade.as_ref().is_some_and(|f|f.weight(self.anim_time)==1.) {self.anim_crossfade=None;}
             self.anim_layer_crossfades.retain(|_,f|f.weight(self.anim_time)<1.);
         }
-        let sample=start.elapsed();{let _trace=crate::native_profile::Scope::new(17);self.finish_animator_transforms(sampled);}
+        let sample=start.elapsed();{let _trace=crate::native_profile::Scope::new(17);self.finish_animator_transforms(sampled,0.,1);}
         if profile {eprintln!("OK animation sample reset_ms={:.3} curves_ms={:.3} modifiers_ms={:.3}",reset.as_secs_f64()*1000.,(sample-reset).as_secs_f64()*1000.,(start.elapsed()-sample).as_secs_f64()*1000.);}
     }
 
@@ -3117,7 +3117,7 @@ impl OkSession {
         let t0=std::time::Instant::now();
         self.reset_animator_pose();
         let t1=std::time::Instant::now();
-        self.finish_animator_transforms(false);
+        self.finish_animator_transforms(false,dt,0);
         let t2=std::time::Instant::now();
         self.apply_body_interaction(dt);
         let t3=std::time::Instant::now();
@@ -3178,7 +3178,7 @@ impl OkSession {
     }
 
     fn finish_animator_pose(&mut self,delta_seconds:f32,sampled:bool){
-        self.finish_animator_transforms(sampled);
+        self.finish_animator_transforms(sampled,delta_seconds,0);
         let t=std::time::Instant::now();
         self.apply_body_interaction(delta_seconds);
         crate::okanim::prof::add(17,t);
@@ -3204,8 +3204,12 @@ impl OkSession {
         sk.sk.rebuild_worlds();
     }
 
-    fn finish_animator_transforms(&mut self, sampled: bool) {
+    /// `dt` and `kind` only reach the mods' frame (crate::mod_frame): 0 for a lone character, 1 in a pair frame (whose
+    /// sampling passes no frame time, dt 0).
+    fn finish_animator_transforms(&mut self, sampled: bool, dt: f32, kind: u32) {
         use crate::okanim::prof;
+        // The character's id for mods: the same key the dynamics use for it (crate::px::current_group).
+        let (character, sex, anim_time) = (self as *const Self as u64, self.sex as i32, self.anim_time);
         if let Some(sk) = self.body_skel.as_mut() {
             let mut locals = false;
             let t = std::time::Instant::now();
@@ -3243,6 +3247,12 @@ impl OkSession {
                 apply_mmdd_world_lock_post_deform(sk, root_id, root_rot, &saved, run_expr, &base, &self.abm);
             }
             prof::add(15, t);
+            // Mods' post-pose bones (crate::mod_frame; one atomic load without a mod host).
+            if crate::mod_frame::active() {
+                let t = std::time::Instant::now();
+                crate::mod_frame::post_pose(sk, character, sex, kind, dt, anim_time);
+                prof::add(41, t);
+            }
             let t = std::time::Instant::now();
             // Studio IK after the bone modifiers: a target is where the limb ends up.
             apply_studio_ik(sk, &mut self.studio_ik_solver, &self.studio_ik, &self.studio_ik_rotations, &self.studio_ik_weights);

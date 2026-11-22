@@ -474,6 +474,12 @@ int32_t ok_register_bindings(OkUnrealBindings unreal, OkRustBindings* out_rust);
 typedef const char* (*OkModDispatchFn)(const char* request_json);
 typedef void (*OkModFreeFn)(const char* text);
 void ok_set_mod_dispatch(OkModDispatchFn dispatch, OkModFreeFn free_text);
+
+/* Per-frame mod calls (src/mod_frame.rs): the mod host's frame function, called from worker threads once per
+   character per frame with an OkModFrame (layout in mod_frame.rs); returns bit 0 when it changed bones, and with a
+   NULL frame the number of mods taking frames. NULL clears. */
+typedef uint32_t (*OkModFrameFn)(void* frame);
+void ok_set_mod_frame(OkModFrameFn frame);
 /* Immediate source-authored trigger self re-entry; existing binding table unchanged. */
 int32_t ok_animation_trigger_count(OkSession* s);
 int32_t ok_animation_trigger_at(OkSession* s, int32_t index, char* name, int32_t cap);

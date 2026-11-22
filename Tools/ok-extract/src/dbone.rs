@@ -1396,7 +1396,7 @@ fn simulate_dynamic(
         let lhs = mul_dir(&trs([0.0; 3], world_rot_of(db.root, &skel.tfs), [1.0; 3]), local_gravity);
         let subtract = vscale(normalized, vdot(lhs, normalized).max(0.0));
         let source_gravity = if db.ver01 { db.gravity } else { vsub(db.gravity, subtract) };
-        let gravity = vscale(vadd(source_gravity, db.force), object_scale);
+        let gravity = vscale(vadd(source_gravity, crate::mod_frame::with_force(db.force, pos_of(&component_w0))), object_scale);
 
         let mut num = 1i32;
         if db.update_rate > 0.0 {
@@ -2210,7 +2210,7 @@ fn simulate(skel: &mut Skeleton, db: &DBone, steps: u32) -> usize {
     } else {
         db.gravity
     };
-    let gravity = vscale(vadd(grav, db.force), root_scale);
+    let gravity = vscale(vadd(grav, crate::mod_frame::with_force(db.force, pos_of(&root_w))), root_scale);
     for _ in 0..steps {
         for i in 0..particles.len() {
             if particles[i].parent < 0 {
@@ -3286,7 +3286,7 @@ impl AttachedDynamicSet {
                 let subtract = vscale(normalized,
                     vdot(root_direction, normalized).max(0.0));
                 let source_gravity = if db.ver01 { db.gravity } else { vsub(db.gravity, subtract) };
-                let gravity = vscale(vadd(source_gravity, db.force), object_scale);
+                let gravity = vscale(vadd(source_gravity, crate::mod_frame::with_force(db.force, component_pos)), object_scale);
                 let mut num = 1i32;
                 if db.update_rate > 0.0 {
                     let step = 1.0 / db.update_rate;
@@ -3384,7 +3384,7 @@ impl AttachedDynamicSet {
                 let subtract = vscale(normalized,
                     vdot(root_direction, normalized).max(0.0));
                 let source_gravity = if db.ver01 { db.gravity } else { vsub(db.gravity, subtract) };
-                let gravity = vscale(vadd(source_gravity, db.force), object_scale);
+                let gravity = vscale(vadd(source_gravity, crate::mod_frame::with_force(db.force, component_pos)), object_scale);
                 let mut num = 1i32;
                 if db.update_rate > 0.0 {
                     let step = 1.0 / db.update_rate;

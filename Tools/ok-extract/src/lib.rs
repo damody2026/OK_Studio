@@ -66,6 +66,7 @@ pub mod paired_library;
 pub mod studio_status;
 pub mod eye_set;
 pub mod mod_forward;
+pub mod mod_frame;
 mod portable_resources;
 mod portable_outfits;
 #[cfg(feature = "three-export")]
