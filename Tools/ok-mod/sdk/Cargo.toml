@@ -9,3 +9,7 @@ name = "ok_mod_sdk"
 
 [dependencies]
 ok-mod-api = { path = "../api" }
+# Hook payloads and replies are JSON; mod data travels as base64 (hooks.rs).
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"

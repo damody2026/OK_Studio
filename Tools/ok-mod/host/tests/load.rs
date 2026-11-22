@@ -139,6 +139,33 @@ fn logged(logs: &Logs, id: &str, needle: &str) -> bool {
 }
 
 #[test]
+fn hooks_reach_their_subscribers() {
+    let _g = serial();
+    let dlls = build(Build::Current).unwrap();
+    let s = Scratch::new("hooks");
+    s.hello(&dlls);
+    let (mut host, _logs) = open(&s, "reader");
+    assert_eq!(host.subscribers("reader.character_load"), vec![HELLO.to_string()]);
+    assert!(host.subscribers("reader.character_save").is_empty());
+
+    let ask = |host: &mut ModHost, req: serde_json::Value| ffi::handle(host, &req).unwrap();
+    let all = ask(&mut host, serde_json::json!({"op": "hook", "hook": "reader.character_load", "payload": {"card": "a.png"}}));
+    assert_eq!(all, serde_json::json!({"replies": [{"mod": HELLO, "ok": true, "json": {"greeting": "hello", "card": "a.png"}}]}));
+    // Nobody subscribed: nobody called.
+    let none = ask(&mut host, serde_json::json!({"op": "hook", "hook": "reader.character_save", "payload": {}}));
+    assert_eq!(none, serde_json::json!({"replies": []}));
+    // To listed mods only; one that did not subscribe, or is not here, answers an error.
+    let listed = ask(&mut host, serde_json::json!({"op": "hook", "hook": "reader.character_save", "payload": {}, "mods": [HELLO, "org.x.absent"]}));
+    let replies = listed["replies"].as_array().unwrap();
+    assert_eq!(replies.len(), 2);
+    assert!(replies.iter().all(|r| r["ok"] == false), "{listed}");
+    // A bad payload is the mod's error, not a crash.
+    let bad = ask(&mut host, serde_json::json!({"op": "hook", "hook": "reader.character_load", "payload": 3}));
+    assert_eq!(bad["replies"][0]["ok"], false, "{bad}");
+    host.close();
+}
+
+#[test]
 fn hello_loads_answers_and_keeps_config() {
     let _g = serial();
     let dlls = build(Build::Current).unwrap();

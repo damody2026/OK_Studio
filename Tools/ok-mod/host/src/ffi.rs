@@ -197,6 +197,18 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
             Ok(text) => json!({"ok": true, "text": text}),
             Err(e) => json!({"ok": false, "error": e}),
         },
+        // {"op":"hook","hook","payload","mods"?}: a named hook (Event::Hook) to its subscribers, or to the listed mods.
+        "hook" => {
+            let name = str_field(req, "hook")?;
+            let payload = req.get("payload").cloned().unwrap_or(Value::Null).to_string();
+            let replies = match req.get("mods").and_then(Value::as_array) {
+                Some(ids) => ids.iter().filter_map(Value::as_str)
+                    .map(|id| ModReply { id: id.into(), result: host.hook_one(id, name, &payload) })
+                    .collect(),
+                None => host.hook(name, &payload),
+            };
+            json!({"replies": replies_json(replies)})
+        }
         "disable" => match host.disable(str_field(req, "mod")?) {
             Ok(()) => json!({"ok": true}),
             Err(e) => json!({"ok": false, "error": e}),

@@ -46,10 +46,13 @@ use api::{
 
 pub use api::{ConfigValue, Event, LogLevel, Reply};
 
+pub mod hooks;
+
 pub type ModResult<T> = Result<T, String>;
 
 pub mod prelude {
     pub use crate::{ok_mod, ConfigValue, Event, Host, LogLevel, Mod, ModResult, Registrar, Reply};
+    pub use crate::hooks::{self, ExtSection};
 }
 
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -189,7 +192,8 @@ impl Registrar {
         self
     }
     /// Receive an event (`mode_enter`, `mode_exit`, `config_changed`; `enabled` and `command`
-    /// always arrive).
+    /// always arrive), or a hook by its name (`reader.character_load`, `reader.ui`, `extract.kkex`, ...;
+    /// Docs/OK_MOD_HOOKS.md).
     pub fn subscribe(&mut self, event: &str) -> &mut Self {
         self.declarations.push(Declaration::Subscribe(event.into()));
         self

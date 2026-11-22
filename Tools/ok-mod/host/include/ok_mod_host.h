@@ -57,6 +57,11 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 //                     "scalars","vectors":{name:[r,g,b,a]},"textures":{name:abs png}}],"problems"}]}  (enabled mods only)
 //   {"op":"reload","mod"} -> {"ok":true,"text"} | {"ok":false,"error"}   (dev only: loads a fresh copy of the rebuilt DLL;
 //       the old copy stays loaded but unused, the mod starts over without its previous state)
+//   {"op":"hook","hook":"reader.character_load","payload":{...},"mods":["<id>",...]?}
+//       -> {"replies":[{"mod","ok":true,"json"} | {"mod","ok":false,"error"}]}
+//       A named hook (Event::Hook, mode-prefixed snake_case names; Docs/OK_MOD_HOOKS.md) to every enabled mod that
+//       subscribed to it, in load order; with "mods" only to those (each must have subscribed). Each reply as for
+//       "command": "json" (Reply::Json parsed), "text" (Reply::Text), neither for Reply::None.
 // Returns NULL for a malformed request (see okm_last_error).
 const char* okm_dispatch(okm_host* host, const char* request_json);
 
