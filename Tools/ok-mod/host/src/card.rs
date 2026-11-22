@@ -101,11 +101,13 @@ fn split_key<'a>(key: &'a str, ids: &std::collections::HashMap<String, String>) 
 }
 
 /// A reader page's items and every container's under them: keys and actions get the mod's prefix, images become full
-/// paths inside the mod's folder (anything else is removed: a mod shows only its own pictures).
+/// paths inside the mod's folder (anything else is removed: a mod shows only its own pictures). A `.dui` panel item
+/// (`"kind": "dui"`, plan §6.13 D2) gets `"mod"`: its panel, values and hooks are always this mod's.
 fn rewrite_items(node: &mut Value, id: &str, dir: Option<&std::path::Path>) {
     for item in node.get_mut("items").and_then(Value::as_array_mut).into_iter().flatten() {
         if let Some(k) = item.get("key").and_then(Value::as_str).map(str::to_owned) { item["key"] = format!("mod.{id}.{k}").into(); }
         if let Some(a) = item.get("action").and_then(Value::as_str).map(str::to_owned) { item["action"] = format!("mod.{id}.{a}").into(); }
+        if item.get("kind").and_then(Value::as_str) == Some("dui") { item["mod"] = id.into(); }
         if let Some(image) = item.get("image").and_then(Value::as_str).map(str::to_owned) {
             match dir.and_then(|d| mod_file(d, &image)) {
                 Some(full) => item["image"] = full.into(),
@@ -354,6 +356,7 @@ mod tests {
                 {"kind": "image", "image": "pics/icon.png"},
                 {"kind": "image", "image": "../secret.png"},
                 {"kind": "image", "image": "missing.png"},
+                {"kind": "dui", "widget": "Panel", "mod": "org.other"},
             ]},
         ]});
         rewrite_items(&mut page, "org.x", Some(&dir));
@@ -362,6 +365,7 @@ mod tests {
         assert_eq!(g[0]["items"][1]["action"], "mod.org.x.go");
         assert!(g[1]["image"].as_str().unwrap().ends_with("pics/icon.png"), "{page}");
         assert!(g[2].get("image").is_none() && g[3].get("image").is_none(), "{page}");
+        assert_eq!(g[4]["mod"], "org.x", "a panel is always the page's own mod's");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
