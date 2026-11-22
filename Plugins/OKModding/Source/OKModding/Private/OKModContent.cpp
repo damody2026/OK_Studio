@@ -270,6 +270,48 @@ void OKModContent::Refresh()
 	const int32 FamilyCount = Families.Num();
 	KKModMaterials::SetFamilies(MoveTemp(Families));
 	if (GMaterials.Num() || FamilyCount) UE_LOG(LogOKMod, Display, TEXT("Mod materials: %d, shader families: %d"), GMaterials.Num(), FamilyCount);
+
+	// material.resolve_shader: a mod picks the material per part ({"shader","part"} -> {"material":"<mod>/<name>"} or
+	// nothing). Only installed while someone subscribed, so parts cost nothing otherwise. Asked on every part build (no
+	// cache): a mod's answer may follow its settings.
+	TSharedRef<FJsonObject> Who = MakeShared<FJsonObject>();
+	Who->SetStringField(TEXT("op"), TEXT("subscribers"));
+	Who->SetStringField(TEXT("hook"), TEXT("material.resolve_shader"));
+	const TSharedPtr<FJsonObject> Subscribers = FOKModHost::Get().DispatchJson(Who, Error);
+	const TArray<TSharedPtr<FJsonValue>>* Names = nullptr;
+	if (!Subscribers.IsValid() || !Subscribers->TryGetArrayField(TEXT("mods"), Names) || Names->IsEmpty())
+	{
+		KKModMaterials::SetResolver(nullptr);
+		return;
+	}
+	UE_LOG(LogOKMod, Display, TEXT("material.resolve_shader: %d mod(s) choose materials per part"), Names->Num());
+	KKModMaterials::SetResolver([](const FString& Shader, const FString& Part) -> TSharedPtr<FKKModMaterial>
+	{
+		TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("shader"), Shader);
+		Payload->SetStringField(TEXT("part"), Part);
+		TSharedRef<FJsonObject> Hook = MakeShared<FJsonObject>();
+		Hook->SetStringField(TEXT("op"), TEXT("hook"));
+		Hook->SetStringField(TEXT("hook"), TEXT("material.resolve_shader"));
+		Hook->SetObjectField(TEXT("payload"), Payload);
+		FString HookError;
+		TSharedPtr<FKKModMaterial> Chosen;
+		const TSharedPtr<FJsonObject> Answer = FOKModHost::Get().DispatchJson(Hook, HookError);
+		const TArray<TSharedPtr<FJsonValue>>* Replies = nullptr;
+		if (Answer.IsValid() && Answer->TryGetArrayField(TEXT("replies"), Replies))
+			for (const TSharedPtr<FJsonValue>& R : *Replies)
+			{
+				const TSharedPtr<FJsonObject> Reply = R->AsObject();
+				const TSharedPtr<FJsonObject>* Json = nullptr;
+				FString Id;
+				// The first mod (load order) that names a material wins.
+				if (!Reply.IsValid() || !Reply->TryGetObjectField(TEXT("json"), Json) || !(*Json)->TryGetStringField(TEXT("material"), Id)) continue;
+				Chosen = OKModContent::Find(Id);
+				if (Chosen) break;
+				UE_LOG(LogOKMod, Warning, TEXT("material.resolve_shader: %s named %s, which is not a loaded mod material"), *Reply->GetStringField(TEXT("mod")), *Id);
+			}
+		return Chosen;
+	});
 }
 
 TSharedPtr<FKKModMaterial> OKModContent::Find(const FString& Id) { return GMaterials.FindRef(Id); }

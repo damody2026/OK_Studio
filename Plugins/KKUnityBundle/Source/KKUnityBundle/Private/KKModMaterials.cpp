@@ -1,6 +1,7 @@
 #include "KKModMaterials.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "ok_extract.h"
 
 namespace
 {
@@ -26,6 +27,30 @@ TSharedPtr<FKKModMaterial> KKModMaterials::FindFamily(const FString& ShaderName)
 }
 
 int32 KKModMaterials::FamilyCount() { return Families().Num(); }
+
+void KKModMaterials::SetExtractDispatch(const char* (*Dispatch)(const char*), void (*Free)(const char*))
+{
+	ok_set_mod_dispatch(Dispatch, Free);
+}
+
+static TFunction<TSharedPtr<FKKModMaterial>(const FString&, const FString&)>& KKModResolver()
+{
+	static TFunction<TSharedPtr<FKKModMaterial>(const FString&, const FString&)> Resolver;
+	return Resolver;
+}
+
+void KKModMaterials::SetResolver(TFunction<TSharedPtr<FKKModMaterial>(const FString& ShaderName, const FString& Part)> Resolver)
+{
+	check(IsInGameThread());
+	KKModResolver() = MoveTemp(Resolver);
+}
+
+TSharedPtr<FKKModMaterial> KKModMaterials::Resolve(const FString& ShaderName, const FString& Part)
+{
+	if (KKModResolver() && IsInGameThread())
+		if (TSharedPtr<FKKModMaterial> Found = KKModResolver()(ShaderName, Part)) return Found;
+	return FindFamily(ShaderName);
+}
 
 UMaterialInstanceDynamic* KKModMaterials::MakeInstance(const FKKModMaterial& M, UObject* Outer, UTexture* PartTexture,
 	TFunctionRef<bool(const FString& Property, FLinearColor& Out)> SourceValue)

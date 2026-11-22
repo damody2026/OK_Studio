@@ -10,7 +10,7 @@
 #include "OKStreetSocialScene.h"
 #include "OKStudioGameMode.h"
 #include "OpenKoikatsuGameMode.h"
-#include "ok_extract.h"
+#include "KKModMaterials.h"
 #include "Containers/Ticker.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -72,14 +72,15 @@ void OKModStart()
 	if (!FApp::IsGame() || IsRunningCommandlet()) return;
 	FOKModHost::Get().Startup();
 	if (FOKModHost::Get().IsTurnedOff()) return;
-	ok_set_mod_dispatch(&FOKModHost::RustDispatch, &FOKModHost::RustFree);
+	// KKUnityBundle's ok-extract (the one that opens cards), not this module's own copy of the static library.
+	KKModMaterials::SetExtractDispatch(&FOKModHost::RustDispatch, &FOKModHost::RustFree);
 	// ok-mod-pack install refuses to change a Mods folder a running game uses (Saved/OKControl/<pid>.json).
 	OKControl::Publish(TEXT("mods_dir"), FOKModHost::ModsDir());
 	FWorldDelegates::OnPostWorldInitialization.AddStatic(&WorldReady);
 	FWorldDelegates::OnWorldCleanup.AddStatic(&WorldGone);
 	FCoreDelegates::OnEnginePreExit.AddLambda([]
 	{
-		ok_set_mod_dispatch(nullptr, nullptr);
+		KKModMaterials::SetExtractDispatch(nullptr, nullptr);
 		FOKModHost::Get().Close();
 	});
 }

@@ -31,6 +31,15 @@ namespace KKModMaterials
 	KKUNITYBUNDLE_API void SetFamilies(TMap<FString, TSharedPtr<FKKModMaterial>> ByShader);
 	KKUNITYBUNDLE_API TSharedPtr<FKKModMaterial> FindFamily(const FString& ShaderName);
 	KKUNITYBUNDLE_API int32 FamilyCount();
+	/** Hands the game's mod host to the ok-extract this module links (its texture hooks, material.post_texture), or
+	 *  clears it with nulls. Must be this module's copy: in a modular build every module that links ok_extract.lib has
+	 *  its own, and only this one opens cards. */
+	KKUNITYBUNDLE_API void SetExtractDispatch(const char* (*Dispatch)(const char* RequestJson), void (*Free)(const char* Text));
+	/** A resolver asked before the family table (OKModding sets it while a mod subscribes to material.resolve_shader);
+	 *  null to clear. Game thread. */
+	KKUNITYBUNDLE_API void SetResolver(TFunction<TSharedPtr<FKKModMaterial>(const FString& ShaderName, const FString& Part)> Resolver);
+	/** The mod material for this Unity shader on this part: the resolver's answer, else the shader's family. */
+	KKUNITYBUNDLE_API TSharedPtr<FKKModMaterial> Resolve(const FString& ShaderName, const FString& Part);
 
 	/**
 	 * The instance a part draws with: the material's own parameter values, then (bCopySourceValues) the card's values
