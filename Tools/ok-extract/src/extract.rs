@@ -1364,8 +1364,13 @@ pub(crate) fn extract_session_from_info(
         if *SERIAL.get_or_init(|| std::env::var_os("OK_SERIAL_HEAD_DETAIL").is_some()) {
             todo.into_iter().map(run_one).collect()
         } else {
+            // In the open's own pool (oklib::pack_parallel), as every other parallel step of an open that reads the card:
+            // on rayon's shared pool these threads reached the card only through pack_scope's fallback, which works while
+            // it is the one card opening. The street opens five at once: the head-detail textures found no scope, missed
+            // the card's tree answers (okLt "override") and scanned the whole mods tree, and the last card still opening
+            // was charged ~4000 gaps ("GAMEFS zip mods/sideloader modpack - animations/...", 2026-11-23).
             use rayon::prelude::*;
-            todo.into_par_iter().map(run_one).collect()
+            crate::oklib::pack_parallel(|| todo.into_par_iter().map(run_one).collect())
         }
     };
     for (i, mesh, keep) in made {

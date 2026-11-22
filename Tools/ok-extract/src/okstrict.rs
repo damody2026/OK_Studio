@@ -113,7 +113,13 @@ pub fn gap(what: impl FnOnce() -> String) {
     GAPS_ON_THREAD.with(|n| n.set(n.get() + 1));
     let what = what();
     // OK_STRICT_TRACE=<text>: where a gap containing it comes from.
-    if std::env::var("OK_STRICT_TRACE").is_ok_and(|t| what.contains(&t)) { eprintln!("ok-extract: strict gap {what} at\n{}", std::backtrace::Backtrace::force_capture()); }
+    // In the game the trace goes to its log too (no console there): which thread, its own open or the fallback.
+    if std::env::var("OK_STRICT_TRACE").is_ok_and(|t| what.contains(&t)) {
+        let line = format!("ok-extract: strict gap {what} on thread {:?} (own pack scope: {}) at\n{}",
+            std::thread::current().name(), crate::oklib::pack_scope_here(), std::backtrace::Backtrace::force_capture());
+        eprintln!("{line}");
+        crate::ffi::ffi_log(2, &line);
+    }
     s.gaps.lock().unwrap_or_else(|e| e.into_inner()).insert(what);
 }
 

@@ -7279,3 +7279,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 第一版 S13 回報寫「`ok.PairModBridgeSelfTest` 17/17 仍通過」，其實那是改動前跑的，最後的改動之後沒重跑。統籌指出後重跑（21/21）並更正。教訓：回報裡的「通過」要是在最後的程式上跑的。
   - 13 前置把 `FireFinish` 只放在 `UOKHScenePanel::Finish`；她愛撫與獨自的高潮走 `CountHerOrgasm` 不經 `Finish`，`pair.finish` 漏送。實機查高潮計數時讀程式才發現。另 `OKInteractionMod.h` 的種類範例（`org_in`、`same_out`）是憑印象寫的，實際是 `orgW`、`outside` 等，一併改正。
 - 2026-11-23 同步點 B（F 合併 C 的 78928db23）：合併後編輯器與遊戲建置都在 `KKModMaterials.cpp` 失敗（`'Linear'` 呼叫不明確）。工作項 9 在檔內匿名命名空間定義了 `Linear()`，合併進來的程式讓 unity build 把它和另一個同名函式編進同一個編譯單元。改名為 `ModSrgbToLinear`。教訓：檔內的小工具函式不要用 `Linear` 這種泛用名稱；在 unity build 裡，匿名命名空間擋不住同一個編譯單元內的撞名。
+
+## 2026-11-23 遊戲內重新開街區女角卡報 unanswered question(s)：已修（C 組，OK mod 第三波）
+
+- **原因**：街區同時開 5 張卡。開卡時「頭部細節貼圖」那一步（`extract.rs` 的 head-detail `into_par_iter`）沒有包在 `oklib::pack_parallel` 裡，跑在 rayon 的全域池。全域池的執行緒只能靠 `pack_scope()` 的退路找到卡，而退路只有「剛好一張卡在開」時才給。好幾張一起開時它們找不到卡：查不到卡內的樹答案（okLt `override`），`override_lookup` 就去掃整棵 mods 樹；等到只剩最後一張卡還在開，這些讀取又被當成那張卡的缺口（約 4000 個 `GAMEFS zip …`，按字母排動畫 mod 在最前面，所以看起來像只問動畫 mod）。讀卡器、`ok_cards verify`、`strict-check` 一次只開一張，所以從來沒碰到；有開卡快取時這一步不跑，所以平常被快取擋住。
+- **怎麼找到的**：`OK_STRICT_TRACE` 的追蹤原本只寫 stderr，遊戲裡看不到；改成也寫進遊戲 log（`ffi_log`）。以 `OK_NOCACHE=1 OK_STRICT_TRACE=johnbbob_la_petite` 開街區，堆疊顯示 `rayon_core::registry … extract_session_from_info … resolve_head_detail_texture → override_bundle_source → override_lookup_in_tree → build_override_index`，執行緒「own pack scope: false」。
+- **修正**：那一步改用 `pack_parallel`，和開卡其他會讀卡片資料的平行步驟一樣。曾考慮把整個開卡放進卡自己的池，但開卡執行緒上有不少執行緒區域的旗標與快取（`DEFER_STORE`、`BACKGROUND_OPEN`、`STATE_VARIANT`、`VIEW_MEMO`），搬過去就看不到了，所以沒有這樣做。開卡路徑上其他沒包的平行迭代都只處理像素或幾何，不讀檔。
+- **驗證**：街區 `OK_NOCACHE=1` 冷開：修正前貞德·Alter、雷電將軍載不出（3981 個缺口）；修正後 log 沒有任何 unanswered，全部女角都載入。ok-extract `cargo check`（含 `--no-default-features`）、pack_scope／okstrict 單元測試、D: 引擎的編輯器與遊戲兩個目標都通過。
+- **教訓**：退路（只有一張卡在開時才給）在「一次開一張」的工具與讀卡器裡永遠看起來是對的；並行開卡的場景要用冷開實測。開卡途中會讀卡片資料的平行工作，一律要放在卡自己的池（`pack_parallel`／`native_parallel_work`），不能靠退路。
