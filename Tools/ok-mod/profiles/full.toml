@@ -5,3 +5,7 @@ description_id = "mod.profile.full.description"
 [[mod]]
 id = "org.openkoikatsu.hello"
 version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.glass-shader"
+version = "0.1.0"
