@@ -338,6 +338,8 @@ pub fn tools() -> Vec<Value> {
         t("ui_screenshot", "Any mode: a screenshot of the window (ui=false leaves the UI out).", json!({"ui": {"type": "boolean"}}), &[]),
         t("reader_call", "The card reader through its mailbox. action: state, cards (the card wall: offset, limit, query), select (index), load (path), parameters (query; shape.*, bone.*, physics.*, pregnancy.*, style.* and properties), eye_page (page: eye_scale2 | eyes -- one eye detail page in one answer), appearance_page (page: eyebrow | hair | accessory -- one picker page's kinds, slots and counts), thumbnails (keys: 1-48 item keys from catalog -- each one's picture as a local PNG path), get (keys), set (edits [{key, value}]), reset (keys), apply, ops (the original editor's composite actions, each applied as one write -- Docs/READER_UI_APPEARANCE_API.md section 10), controls, control_set (key, value), action (command), camera, screenshot, views, measure, catalog, appearance, snapshot, restore, save, studio, video_import, partner. session and revision are filled in. Docs/CHARACTER_EDITOR_MCP_USAGE.md.",
           json!({"action": {"type": "string"}, "timeout_s": {"type": "number"}}), &["action"]),
+        t("mod_call", "Any mode: the OK mod host (Rust mods in Mods/, Docs/OK_MOD_FRAMEWORK_PLAN.md). op: list (every mod: version, state enabled/skipped/rejected/faulted/disabled, reason, commands), command (command \"mod.<id>.<name>\", args), config (mod: its settings), config_set (mod, key, value), event (event mode_enter|mode_exit, mode), disable (mod). Without op: list.",
+          json!({"op": {"type": "string", "enum": ["list", "command", "config", "config_set", "event", "disable"]}, "command": {"type": "string"}, "args": {"type": "string"}, "mod": {"type": "string"}, "key": {"type": "string"}, "value": {}, "event": {"type": "string"}, "mode": {"type": "string"}}), &[]),
         t("pair_call", "The 1-on-1 interaction scene's channel: /stats, /reset, /exec?cmd=<url-encoded command>, /pose?filter=<text>. Returns its text.", json!({"path": {"type": "string"}}), &["path"]),
     ]
 }
@@ -372,6 +374,13 @@ pub fn run(root: &Path, name: &str, a: &Value) -> Result<Value> {
             json!({"content": [{"type": "text", "text": file}, crate::image_part(&file)?], "isError": false})
         }
         "reader_call" => text(&reader(root, a)?),
+        "mod_call" => {
+            let mut req = if a.is_object() { a.clone() } else { json!({}) };
+            if req.get("op").is_none() {
+                req["op"] = json!("list");
+            }
+            text(&ui(root, "/mod", Some(&req))?)
+        }
         "pair_call" => {
             let port = port(root, "pair", base(root) + 11)?;
             let path = a["path"].as_str().context("path is required")?;
