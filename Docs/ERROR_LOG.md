@@ -7230,3 +7230,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **修正**：快取鍵只算訂閱了開卡時會跑的 `extract.*` 掛點的 mod（`okmods::changes_opens`；`extract.kkex`／`extract.kkex_keys` 只影響轉卡，不算），`OKModModes.cpp` 送給 ok-extract 的清單同樣過濾。遊戲內重新開卡失敗是既有問題，未修，已寫進 `Docs/OK_MOD_S10_STREET.md`。
 - **教訓**：快取鍵要放「真的會改變結果的東西」，不是「所有可能相關的東西」；鍵放太寬會讓平常被快取遮住的冷路徑問題一次全部冒出來。改快取鍵之後要在遊戲裡實際開一次，不能只看單元測試。
 - 另：`unreal_slot.lua claim` 回「queued」時沒看結果就啟動了街區（約 1 分鐘），發現後立刻停掉，改用 `claim --wait` 拿到名額才重開。
+
+## 2026-11-23 遊戲內重新開街區女角卡報 unanswered question(s)（既有、待修；C 組，同步點 B 之後處理）
+
+- **症狀**：不用開卡快取時（快取被清掉、或快取鍵改變），街區開 `jeanne_alter.png`、`raiden_shogun.png` 都報 `the OK card has N unanswered question(s)`，問的是 `mods/sideloader modpack - animations/…zipmod`。`-NoMods`＋`OK_NOCACHE=1` 也一樣，和 mod 框架無關；`Tools/ok_cards.lua verify` 在遊戲外開同一張卡是好的。
+- **推測**：街區執行時讀動畫 mod 的掃描落進了卡片的嚴格開卡範圍。
+- **狀態**：既有問題，未修。協調者指派給 C 組，排在同步點 B 之後（街區屬 C 的範圍）。發現經過見上一條與 `Docs/OK_MOD_S10_STREET.md`。

@@ -23,7 +23,7 @@
 1. 工作項 2 讓開卡快取鍵包含「所有啟用的 mod 與版本」，裝了 birthday 之後鍵就變了，所有快取都沒命中；
 2. 街區那幾張卡在遊戲內**重新開**本來就會失敗（`unanswered question(s)`，問的是 `mods/sideloader modpack - animations/*.zipmod`）。用 `-NoMods` 加 `OK_NOCACHE=1` 也一樣失敗，所以這不是 mod 造成的，平常只是被快取擋住；`ok_cards.lua verify`（不在遊戲內）開同一張卡是好的。
 
-修正：快取鍵只算訂閱了「開卡時會跑的 `extract.*` 掛點」的 mod（`extract.kkex`／`extract.kkex_keys` 只影響轉卡，不算）。現在街區、讀卡器的 mod 都不會讓快取失效；之後真的會改開卡結果的 mod（貼圖後處理之類）仍然會換鍵。宿主清單裡已經有 `subscriptions`，不用改 api。**這改變了工作項 2 驗收過的行為，請協調者確認。**
+修正：快取鍵只算訂閱了「開卡時會跑的 `extract.*` 掛點」的 mod（`extract.kkex`／`extract.kkex_keys` 只影響轉卡，不算）。現在街區、讀卡器的 mod 都不會讓快取失效；之後真的會改開卡結果的 mod（貼圖後處理之類）仍然會換鍵。宿主清單裡已經有 `subscriptions`，不用改 api。**這改變了工作項 2 驗收過的行為；協調者 2026-11-23 已採納。**
 
 第 2 點（遊戲內重新開卡失敗）是既有問題，沒有修，見下方「發現的問題」。
 
@@ -55,10 +55,19 @@
 
 - **遊戲內重新開街區女角卡會失敗（既有問題，未修）**：不用快取時，`jeanne_alter.png`、`raiden_shogun.png` 在街區開卡都報 `the OK card has N unanswered question(s)`，問的是 `mods/sideloader modpack - animations/…zipmod`；`ok_cards.lua verify` 在遊戲外開同一張卡是好的。推測是街區執行時讀動畫 mod 的掃描落進了卡片的嚴格開卡範圍。快取被清掉（或快取鍵改變）的機器上街區女角會載不出來。開卡路徑不在工作項 10 範圍，交給協調者決定由誰處理。
 - `street.talk_end`、`street.invite`、`street.phone` 在遊戲裡有送出，但兩個範例都沒訂閱，只有程式路徑與 `talk_end` 的觸發確認，沒有 mod 回覆可看。送禮（`street.gift`）沒在遊戲裡實際送過，只有宿主測試。
-- 開卡快取鍵的修正改變了工作項 2 的行為（見第 3 節），請協調者確認。
+- 開卡快取鍵的修正改變了工作項 2 的行為（見第 3 節），協調者已採納。
 - 打包的 stage 沒有重建驗證，只用 `-Editor` 跑。
 - 讀卡器 mod 頁的數字滑桿與顏色控制項還沒做：協調者已把它併進工作項 7b（DreamGUI 宣告式），在那裡完成。
 
 ## 開卡基準（S2 補量）
 
 機器沒有 Unreal 在跑時量的（含本工作項的快取鍵修正）：總計 5.39 秒，對照上一份 7.84 秒 -31.3%，工作量計數 473 → 472，沒有變慢。細節寫在 `Docs/OK_MOD_S2_CARD_CHUNKS.md` 最後一節。
+
+## 給計畫 §6.7 的補充（協調者要併進計畫）
+
+§6.7 寫「開卡基準不得因『裝了但沒訂閱』的 mod 變慢」。實作上的意思是：
+
+- **開卡快取鍵只包含會改變開卡結果的 mod**：訂閱了開卡時會跑的 `extract.*` 掛點（例如之後的 `extract.post_texture`）的已啟用 mod 與其版本。`extract.kkex`、`extract.kkex_keys` 只在轉原作卡時跑，不算。判斷式在 ok-extract `okmods::changes_opens`，`OKModModes.cpp` 送給 ok-extract 的啟用清單也照這個條件過濾。
+- 只訂閱 `reader.*`、`street.*`、`pair.*`、`studio.*` 的 mod（讀卡器頁、街區記錄、字幕等）不影響開卡快取，裝再多也不會讓已快取的卡重新冷開。
+- 會改開卡結果的 mod 一裝上或換版本，快取鍵就變，舊快取不會被誤用。
+- 協調者 2026-11-23 採納。
