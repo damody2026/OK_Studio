@@ -221,8 +221,10 @@ for _, n in ipairs(placed) do
   ops[#ops + 1] = text(n.name ~= '' and n.name or '?', n.cx, n.y + TH + z(8), z(20), 'white', true, true)
   ops[#ops + 1] = text(mb(n.size) .. (n.depends and '・依賴父母' or '・完整卡'), n.cx, n.y + TH + z(36), z(15), n.depends and '0x8fd3f4' or '0xf6d58e', false, true)
   if n.hairdeck then
-    badges[#badges + 1] = box(n.x + z(4), n.y + z(4), z(112), z(26), '0x1f6b3a@0.9')
-    ops[#ops + 1] = text('HairDeck 頭髮', n.x + z(60), n.y + z(9), z(15), 'white', true, true)
+    -- (with three views at the bottom left: at the top it covered the front view's face)
+    local by = n.views and n.y + TH - z(30) or n.y + z(4)
+    badges[#badges + 1] = box(n.x + z(4), by, z(112), z(26), '0x1f6b3a@0.9')
+    ops[#ops + 1] = text('HairDeck 頭髮', n.x + z(60), by + z(5), z(15), 'white', true, true)
   end
   if n.views then
     for v, name in ipairs({ '正面', '側面', '斜側面' }) do
