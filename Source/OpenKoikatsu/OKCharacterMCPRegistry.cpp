@@ -181,7 +181,9 @@ bool SetParameters(UOKCharacterController* G,const FRows& Edits,FString& Error)
  if(ChangedMods&&!G->CommitEditorMods(M)){Error=TEXT("Modifier encoding failed; batch was not applied");return false;}
  for(auto E:Normalized){auto O=E->AsObject();const FString Key=O->GetStringField(TEXT("key"));const auto V=O->TryGetField(TEXT("value"));
   if(Key.StartsWith(TEXT("shape."))){TArray<FString> Parts;Key.ParseIntoArray(Parts,TEXT("."));G->OnShapeChanged(Parts[1]==TEXT("body"),FCString::Atoi(*Parts[2]),V->AsNumber());}
-  else if(Key.StartsWith(TEXT("physics.")))G->OnBodyPhysicsChanged(Key.Mid(8),V->AsNumber());
+  // physics.bustSoftness／bustWeight are the body's sliders; the card's own physics rows (physics.hair.back, okPh choices)
+  // are properties like the rest and are staged for apply (writing them as body physics dropped them).
+  else if(Key.StartsWith(TEXT("physics."))&&Catalog[Key]->GetStringField(TEXT("category"))!=TEXT("properties"))G->OnBodyPhysicsChanged(Key.Mid(8),V->AsNumber());
   else if(Key.StartsWith(TEXT("style."))){for(auto S:G->StyleSliders)if(S&&S->StyleParameter==Key.Mid(6)){S->SetValue(V->AsNumber());S->OnSliderMoved(S->GetValue());}}
   else if(!Key.StartsWith(TEXT("bone."))&&!Key.StartsWith(TEXT("pregnancy.")))G->SetEditorProperty(Key,V);
  }
