@@ -1,0 +1,17 @@
+// One option of a mod's radio group and its caption (OKReaderModPage keeps only one of a group on).
+class /Game/UI/Reader/Controls/WBP_OKRadio
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (200, 32)
+    + HorizontalBox { Spacing = 8 }
+    Native.RadioButton Radio {
+        bAutoGroupWithSiblings = false
+        @slot { VerticalAlignment = Center  MinDesiredSize = (24, 24) }
+    }
+    Text Label : ui.Body {
+        Text = ""
+        FontSize = @ui.SizeCaption
+        @slot { VerticalAlignment = Center  SizeRule = Fill }
+    }
+}

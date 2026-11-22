@@ -98,6 +98,31 @@ const TSharedPtr<FJsonObject>& Ui()
 	return GUi;
 }
 
+// The items under a page or a container (group, row, tabs, scroll: Docs/OK_MOD_HOOKS.md §4), containers left out.
+void LeafItems(const TArray<TSharedPtr<FJsonObject>>& In,TArray<TSharedPtr<FJsonObject>>& Out)
+{
+	for(const TSharedPtr<FJsonObject>& I:In)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Kids=nullptr;
+		if(!I->TryGetArrayField(TEXT("items"),Kids)){Out.Add(I);continue;}
+		TArray<TSharedPtr<FJsonObject>> Objects;
+		for(const TSharedPtr<FJsonValue>& K:*Kids)if(K.IsValid()&&K->Type==EJson::Object)Objects.Add(K->AsObject());
+		LeafItems(Objects,Out);
+	}
+}
+// The registry kind of a mod item that holds a value a person sets; empty for one that only shows (label, progress, a
+// list with nothing to pick, an image, a button).
+FString RowKind(const TSharedPtr<FJsonObject>& I)
+{
+	FString Kind;I->TryGetStringField(TEXT("kind"),Kind);
+	if(Kind==TEXT("toggle")||Kind==TEXT("bool"))return TEXT("bool");
+	if(Kind==TEXT("dropdown")||Kind==TEXT("choice")||Kind==TEXT("radio"))return TEXT("choice");
+	if(Kind==TEXT("list"))return I->HasField(TEXT("options"))?TEXT("choice"):FString();
+	// A mod colour is "#RRGGBB" text (format says so), not the registry's 0..1 colour component.
+	if(Kind==TEXT("text")||Kind==TEXT("color"))return TEXT("text");
+	if(Kind.IsEmpty()||Kind==TEXT("number")||Kind==TEXT("slider"))return TEXT("number");
+	return FString();
+}
 FString Text(const TSharedPtr<FJsonObject>& O,const TCHAR* Field)
 {
 	FString Id,Plain;O->TryGetStringField(*(FString(Field)+TEXT("_id")),Id);O->TryGetStringField(Field,Plain);
@@ -198,7 +223,7 @@ TArray<OKReaderMods::FPage> OKReaderMods::Pages()
 		for(const auto& P:*PageList)
 		{
 			const auto PO=P->AsObject();if(!PO.IsValid())continue;
-			FPage Page;Page.Mod=MO->GetStringField(TEXT("mod"));Page.Name=Text(PO,TEXT("name"));
+			FPage Page;Page.Mod=MO->GetStringField(TEXT("mod"));Page.Name=Text(PO,TEXT("name"));Page.Spec=PO;
 			if(Page.Name.IsEmpty())MO->TryGetStringField(TEXT("name"),Page.Name);
 			const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;
 			if(PO->TryGetArrayField(TEXT("items"),Items))for(const auto& I:*Items)if(I->AsObject().IsValid())Page.Items.Add(I->AsObject());
@@ -224,20 +249,31 @@ TArray<TPair<FString,FString>> OKReaderMods::CardMods()
 }
 
 bool OKReaderMods::IsModKey(const FString& Key){return Key.StartsWith(TEXT("mod."));}
+TSharedPtr<FJsonValue> OKReaderMods::Value(const FString& Key)
+{
+	if(!Active())return nullptr;
+	if(!GValues.IsValid())RefreshValues();
+	return GValues.IsValid()?GValues->TryGetField(Key):nullptr;
+}
+FString OKReaderMods::ItemText(const TSharedPtr<FJsonObject>& Item,const TCHAR* Field){return Item.IsValid()?Text(Item,Field):FString();}
 
 TArray<TSharedPtr<FJsonValue>> OKReaderMods::Rows(UOKCharacterController* G)
 {
 	FRows Out;
 	if(!Active())return Out;
 	if(!GValues.IsValid())RefreshValues();
-	for(const FPage& Page:Pages())for(const TSharedPtr<FJsonObject>& I:Page.Items)
+	for(const FPage& Page:Pages())
 	{
-		FString Key,Kind;
+	TArray<TSharedPtr<FJsonObject>> Leaves;LeafItems(Page.Items,Leaves);
+	for(const TSharedPtr<FJsonObject>& I:Leaves)
+	{
+		FString Key;
 		if(!I->TryGetStringField(TEXT("key"),Key)||Key.IsEmpty())continue;
-		I->TryGetStringField(TEXT("kind"),Kind);if(Kind==TEXT("toggle"))Kind=TEXT("bool");if(Kind==TEXT("dropdown"))Kind=TEXT("choice");if(Kind.IsEmpty())Kind=TEXT("number");
+		const FString Kind=RowKind(I);if(Kind.IsEmpty())continue;
 		auto Row=MakeShared<FJsonObject>();
 		Row->SetStringField(TEXT("key"),Key);Row->SetStringField(TEXT("kind"),Kind);Row->SetStringField(TEXT("label"),Page.Name+TEXT("／")+Text(I,TEXT("label")));
 		Row->SetStringField(TEXT("category"),TEXT("mods"));Row->SetStringField(TEXT("mod"),Page.Mod);
+		{FString ItemKind;I->TryGetStringField(TEXT("kind"),ItemKind);if(ItemKind==TEXT("color"))Row->SetStringField(TEXT("format"),TEXT("#RRGGBB"));}
 		Row->SetBoolField(TEXT("supported"),true);Row->SetBoolField(TEXT("requires_apply"),false);
 		TSharedPtr<FJsonValue> Value=GValues.IsValid()?GValues->TryGetField(Key):nullptr;
 		if(!Value.IsValid()||Value->Type==EJson::Null)
@@ -252,6 +288,7 @@ TArray<TSharedPtr<FJsonValue>> OKReaderMods::Rows(UOKCharacterController* G)
 			Row->SetArrayField(TEXT("options"),Made);
 		}
 		Out.Add(MakeShared<FJsonValueObject>(Row));
+	}
 	}
 	for(const auto& M:CardMods())
 	{

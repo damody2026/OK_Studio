@@ -1,0 +1,14 @@
+// A mod's colour: the colour itself and its #RRGGBB text, typed (OKReaderModPage).
+class /Game/UI/Reader/Controls/WBP_OKColor
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (220, 36)
+    + HorizontalBox { Spacing = 8 }
+    RectBlock Swatch : ui.Card {
+        @slot { VerticalAlignment = Fill  Size = (48, 0) }
+    }
+    Native.TextInput Input {
+        @slot { VerticalAlignment = Fill  SizeRule = Fill }
+    }
+}

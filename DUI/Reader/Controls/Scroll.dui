@@ -1,0 +1,11 @@
+// A mod's scrolling box of a fixed height (OKReaderModPage fills it in code).
+class /Game/UI/Reader/Controls/WBP_OKScroll
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (400, 240)
+    + Overlay { }
+    Native.ScrollBox Scroll {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

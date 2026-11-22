@@ -1,0 +1,11 @@
+// A number box for a mod's control (OKReaderModPage): type a number or drag it, between the mod's min and max.
+class /Game/UI/Reader/Controls/WBP_OKSpin
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (200, 36)
+    + Overlay { }
+    Native.SpinBox Spin {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

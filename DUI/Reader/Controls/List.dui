@@ -1,0 +1,11 @@
+// A list of lines for a mod (OKReaderModPage): pick one of its options, or only read what it lists.
+class /Game/UI/Reader/Controls/WBP_OKList
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (300, 180)
+    + Overlay { }
+    Native.List List {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

@@ -9,5 +9,12 @@
   { "asset": "/Game/UI/Reader/Controls/WBP_OKDrawer", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Drawer.dui" },
   { "asset": "/Game/UI/Reader/Controls/WBP_OKCardTile", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/CardTile.dui" },
   { "asset": "/Game/UI/Reader/Controls/WBP_OKPickTile", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/PickTile.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKSpin", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Spin.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKProgress", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Progress.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKRadio", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Radio.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKColor", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Color.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKList", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/List.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKTabs", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Tabs.dui" },
+  { "asset": "/Game/UI/Reader/Controls/WBP_OKScroll", "parent": "/Script/OpenKoikatsu.OKDreamControl", "source": "Reader/Controls/Scroll.dui" },
   { "asset": "/Game/UI/Reader/WBP_ReaderScreen",      "parent": "/Script/OpenKoikatsu.OKReaderScreen", "source": "Reader/ReaderScreen.dui" }
 ] }

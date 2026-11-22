@@ -33,11 +33,16 @@ namespace OKReaderMods
 	// The registry rows of every mod control (kind, label, value, options; category "mods").
 	TArray<TSharedPtr<FJsonValue>> Rows(UOKCharacterController* G);
 	bool IsModKey(const FString& Key);
+	// A mod control's value now (reader.values, asked again after a card loads and after each change); null when none.
+	TSharedPtr<FJsonValue> Value(const FString& Key);
+	// An item's text field, from the reader's text table when it gives "<field>_id" (label, text, name).
+	FString ItemText(const TSharedPtr<FJsonObject>& Item,const TCHAR* Field);
 	// One mod control changed (registry write). False with Error when the mod refused.
 	bool Set(UOKCharacterController* G,const FString& Key,const TSharedPtr<FJsonValue>& Value,FString& Error);
 
 	// The reader screen's "Mods" pages: name and items (pages.json item objects, keys already mod.<id>.*).
-	struct FPage {FString Mod,Name;TArray<TSharedPtr<FJsonObject>> Items;};
+	// Spec: the whole page object (its layout and style; Docs/OK_MOD_HOOKS.md §4).
+	struct FPage {FString Mod,Name;TArray<TSharedPtr<FJsonObject>> Items;TSharedPtr<FJsonObject> Spec;};
 	TArray<FPage> Pages();
 	// Mods that take card data on load (character_load subscribers): id and name.
 	TArray<TPair<FString,FString>> CardMods();
