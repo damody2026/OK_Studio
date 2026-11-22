@@ -466,3 +466,12 @@
 
 - `ok.ClothSolver 0` 走路多餘翻折：雷電 3 11.40%、雷電 5 25.07%／9.94%／14.93%、惠惠 4 5.13%（只有大衣一件布料）、千佳 1 11.49%／4.91%／7.75%，比 FleX 高很多。
 - 雷電 5 把今天加的地面、層次回饋、讀不到沿用上次、層次維持全關，各兩趟：24.65–23.77%／9.13–9.96%／13.29–16.41%，全開：24.68–25.06%／8.30–12.68%／13.00–15.88%，一樣。PhysX 本來就比 FleX 粗，不是今天的改動造成的；FleX 仍是預設。
+
+### 錄影：今天最後的預設（11-22 10:10）
+
+左 FleX、右原始物理，20 秒，每 5 秒轉 90°：
+
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\raiden_outfit2_compare_20s.mp4`（走路）
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\raiden_outfit3_compare_20s.mp4`（走路）
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\raiden_outfit5_compare_20s.mp4`（走路）
+- `C:\portable\OpenKoikatsu\Saved\OKControl\videos\raiden_flex10\megumin_outfit4_compare_20s.mp4`（跑步；原始物理的粉紅裙從大衣前面露出、靴子穿過大衣）
