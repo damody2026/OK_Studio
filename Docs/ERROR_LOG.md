@@ -7173,3 +7173,7 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 先用「材質是不是共用母材質實例」找頭髮網格，HairDeck 頭髮走自己的材質圖、刻晴的頭髮戴在飾品槽（role accessory），兩者都找不到（日誌「0 hair meshes」），重編了三次。改成建材質時依部件 role／名稱／shader 記錄部件編號，再用元件的 `KKSessionPart_` 標籤對應。
   - 要停讀卡器時下了「停掉所有 UnrealEditor」的指令（被擋下）；只能停自己啟動的那個 pid。
   - 教訓：先列出卡片部件的 role 與實際畫它的元件，再決定怎麼辨認；寫一個 dump 開關（`OK_FOREGROUND_DUMP=1`）比猜測重編快。
+
+- 2026-11-23 OK mod 工作項 5（OK Studio 前置，`Docs/OK_MOD_S5_STUDIO_PREREQ.md`）：
+  - `SOKStudioMod.cpp` 的區域變數取名 `Tag`，和 `SWidget::Tag` 同名，C4458 被當錯誤，第一次編輯器建置失敗（約 7 分鐘）。改名 `RowTag`。教訓：寫在 `SOKStudioPanel` 成員函式裡的新程式，區域變數不要用 `Tag`、`Text`、`Label` 這類 Slate 成員名。
+  - 拆提交時用 `git diff -U0` 挑 hunk 再 `git apply --cached --unidiff-zero`，略過了前面一個 hunk（多一行的 `#include`），後面的 hunk 行號全部差一行，第一個提交裡 `WriteMods`／`ReadMods`／`Mods.Reset` 插在錯的位置（第二個提交又把它們搬回來）。未推送，`reset --soft` 後重做：從基準版本的檔案手動加上該提交的行，再 `git hash-object -w` 加 `update-index` 放進暫存區。教訓：`--unidiff-zero` 只能在前面的 hunk 全部一起套用時用；要跳過 hunk 就從舊版檔案重建，或保留上下文讓 git 自己對位。
