@@ -445,6 +445,9 @@ public:
 	FString BreedParentName(const FString& Path) const;
 	/** The child at Output, shown now, pictured by the front view of the card capture (her own picture on the wall). */
 	void PictureBredChild(const FString& Output, TFunction<void(bool, const FString&)> Done);
+	/** A child carries only what her parents' cards do not and opens with theirs: the selected card (or Path) written as
+	 *  a whole card to UserData/okbreed/export (opens without her parents), on a worker thread. */
+	void ExportBredChild(const FString& Path = FString(), TFunction<void(bool, const FString&)> Done = nullptr);
 	UFUNCTION()
 	void OnOpenCardFolder();
 	UFUNCTION()

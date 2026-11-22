@@ -528,6 +528,8 @@ void UOKCharacterController::TickCharacterMCP()
    const bool bSet=SetBreedParent(Role==TEXT("father"),Path);UE_LOG(LogTemp,Display,TEXT("MCP breed_parent %s %s: %s"),*Role,bSet?TEXT("ok"):TEXT("failed"),*BreedStatus);}
   else if(Command==TEXT("breed")){double Seed=0;S.Request->TryGetNumberField(TEXT("seed"),Seed);
    BreedChild(uint64(FMath::Max(0.0,Seed)),[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  else if(Command==TEXT("breed_export")){FString Path;S.Request->TryGetStringField(TEXT("path"),Path);
+   ExportBredChild(Path,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   else if(Command==TEXT("clothes_export")){FString Out;S.Request->TryGetStringField(TEXT("out"),Out);ExportOkClothesTo(Out,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP clothes_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   else if(Command==TEXT("clothes_wear")){FString Path;bool bOnly=false;S.Request->TryGetBoolField(TEXT("clothes_only"),bOnly);if(!S.Request->TryGetStringField(TEXT("path"),Path)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Provide an existing .okclothes path"));return;}
    WearOkClothesFrom(Path,bOnly,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP clothes_wear %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}

@@ -106,6 +106,8 @@ public:
   *  either parent is one: both packs, sealed). BreedPicture: Card shown by Picture (a PNG), written to Out. */
  static bool Breed(const FString& Mother,const FString& Father,uint64 Seed,const FString& Out,FString& Summary);
  static bool BreedPicture(const FString& Card,const FString& Picture,const FString& Out,FString& Summary);
+ /** A child that depends on her parents' cards (okDn depends) written as a whole card to Out (opens without them). */
+ static bool BreedExport(const FString& Card,const FString& Out,FString& Summary);
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);

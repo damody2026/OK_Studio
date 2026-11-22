@@ -1778,6 +1778,7 @@ static bool OKBreedFile(int32 Op,const FString& A,const FString& B,uint64 Seed,c
 }
 bool FOkSession::Breed(const FString& Mother,const FString& Father,uint64 Seed,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKBreedFile(0,Mother,Father,Seed,Out,Summary);}
 bool FOkSession::BreedPicture(const FString& Card,const FString& Picture,const FString& Out,FString& Summary){return OKBreedFile(1,Card,Picture,0,Out,Summary);}
+bool FOkSession::BreedExport(const FString& Card,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKBreedFile(2,Card,Card,0,Out,Summary);}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){
  OKPrepareCardEnvironment();char Buffer[2048]{};
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));

@@ -92,6 +92,33 @@ void UOKCharacterController::BreedChild(uint64 SeedIn,TFunction<void(bool,const 
 	});
 }
 
+void UOKCharacterController::ExportBredChild(const FString& PathIn,TFunction<void(bool,const FString&)> Done)
+{
+	if(!Done)Done=[](bool,const FString&){};
+	const FString Card=!PathIn.IsEmpty()?PathIn:(Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString());
+	if(Card.IsEmpty()){BreedStatus=TEXT("請先在卡片牆點一張配出來的卡，再按「匯出完整卡」。");Done(false,BreedStatus);return;}
+	if(bBreeding){BreedStatus=TEXT("上一次配種還在進行。");Done(false,BreedStatus);return;}
+	const FString Output=FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()/TEXT("UserData/okbreed/export")/FPaths::GetCleanFilename(Card));
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
+	bBreeding=true;
+	BreedStatus=FString::Printf(TEXT("匯出完整卡：%s …（合併父母的資源並逐套服裝檢查，約半分鐘）"),*BreedParentName(Card));
+	TWeakObjectPtr<UOKCharacterController> Weak(this);
+	Async(EAsyncExecution::Thread,[Weak,Card,Output,Done]()
+	{
+		FString Summary;
+		const bool Ok=FOkSession::BreedExport(Card,Output,Summary);
+		AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Done]()
+		{
+			UE_LOG(LogTemp,Display,TEXT("OK breed export -> %s: %s"),*Output,*Summary);
+			UOKCharacterController* Self=Weak.Get();
+			if(!Self)return;
+			Self->bBreeding=false;
+			Self->BreedStatus=Ok?FString::Printf(TEXT("已匯出完整卡（不需要父母卡就能開）：\n%s"),*Output):TEXT("匯出失敗：")+Summary;
+			Done(Ok,Ok?Output:Summary);
+		});
+	});
+}
+
 void UOKCharacterController::PictureBredChild(const FString& Output,TFunction<void(bool,const FString&)> Done)
 {
 	const FString Picture=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKBreed/picture.png"));

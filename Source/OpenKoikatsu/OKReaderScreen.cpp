@@ -2056,13 +2056,15 @@ void UOKReaderScreen::BuildBreedPage(UDreamWidget* Page)
 		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
 		return C;
 	};
-	Text(Page,TEXT("在下面的卡片牆點一張卡按「設為母親」，再點另一張按「設為父親」，然後按「配種」。孩子混合兩人的臉、身材、髮型與顏色，偶爾突變；衣服與飾品來自其中一人。每按一次都是不同的孩子，存在 UserData/okbreed，生出來直接打開，並拍一張她自己的照片當卡片圖。"));
+	Text(Page,TEXT("在下面的卡片牆點一張卡按「設為母親」，再點另一張按「設為父親」，然後按「配種」。孩子混合兩人的臉、身材、髮型與顏色，偶爾突變；衣服與飾品來自其中一人。每按一次都是不同的孩子，存在 UserData/okbreed，生出來直接打開，並拍一張她自己的照片當卡片圖。孩子的卡只放父母沒有的資源，開卡時讀父母的卡（父母卡要留著）；要給別人或單獨帶走時，選她按「匯出完整卡」。"));
 	TWeakObjectPtr<UOKCharacterController> Weak(G);
 	UDreamWidget* Row=MakePanel(Page,true,6.f);
 	MakeOwnButton(Row,TEXT("設為母親"),[Weak](){if(Weak.IsValid())Weak->SetBreedParent(false);});
 	MakeOwnButton(Row,TEXT("設為父親"),[Weak](){if(Weak.IsValid())Weak->SetBreedParent(true);});
 	MakeOwnButton(Row,TEXT("對調"),[Weak](){if(UOKCharacterController* C=Weak.Get())Swap(C->BreedMother,C->BreedFather);});
 	MakeOwnButton(Row,TEXT("配種"),[Weak](){if(Weak.IsValid())Weak->BreedChild(0);});
+	UDreamWidget* Row2=MakePanel(Page,true,6.f);
+	MakeOwnButton(Row2,TEXT("匯出完整卡"),[Weak](){if(Weak.IsValid())Weak->ExportBredChild();});
 	BreedLabel=Text(Page,FString());
 }
 
