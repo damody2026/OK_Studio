@@ -12,7 +12,7 @@
 | `data/token_stats_head.json`、`data/spring/chain_stats_head.json` | 同上 |
 | `third_party/weights/dinov3/model.safetensors` | DINOv3 ViT-L/16（DINOv3 License，需在 Hugging Face 同意授權；`--gated-source modelscope` 可從 ModelScope 下載，SHA-256 `dcb2e451…8179`） |
 
-SAM 3 與 BiRefNet 不需要：Rust 版的前處理改用圖片自己的 alpha（或從純色背景算出遮罩）與自動／手動的裁切框。
+SAM 3 與 BiRefNet 不需要：Rust 版的前處理改用圖片自己的 alpha（或從純色背景算出遮罩）與自動／手動的裁切框。純色背景：四角裡顏色相同的最多的那個（同數時取上面的角；頭肩照的下面兩角是角色），從圖的邊緣往內填滿同色的像素當背景，角色身上的灰髮、銀髮不會被當成背景。
 
 權重與 DINOv3 都不進版控。
 
@@ -24,6 +24,8 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 ```
 
 輸出 `model_input.png`（模型看到的 448×448 裁切）、`cards_seed<s>.json`、`chains_seed<s>.json`、`info.json`，格式與 HairDeck 相同。RTX 5090 上載入約 12 秒、每個變化約 2 秒。
+
+兩人之間的頭髮（配種，2026-11-22）：`--mix <第二張圖> [--mix-box x0,y0,x1,y1] [--mix-weight 0.5]`。兩張圖各自裁切、過 DINOv3，頭髮模型與顏色模型編碼後的條件逐 token 混合（第一張 1 − w、第二張 w），再取樣一次；兩張都要以頭為中心的正方形，同一個 token 才對到頭的同一處。第二張的裁切存成 `model_input_mix.png`，`info.json` 記 `mix`、`mix_box`、`mix_weight`。讀卡器配種用父母的正臉照呼叫它，見 [OK_BREEDING.md](OK_BREEDING.md)「頭髮：父母混合生成」。
 
 不給 `--box` 時從角色遮罩估頭部：取角色上方、寬度與角色上半一致的正方形（全身圖取身高的三分之一）。原作是 SAM 3 找頭髮＋臉的範圍再外擴 8%；長髮或構圖特殊時請手動給框。
 
@@ -73,7 +75,7 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 - 重新轉 OK 卡（`remake_ok_card`，`keep_identity`）與讀卡器另存（`appearance.rs`）都保留 `okHk`。卡片沒有 `okId` 時，存頭髮不會改變它的身分（`tree_answers::with_chunk`）。
 - 讀卡器：先 `ok.ReaderHairDeck <cards_seed0.json>` 換上，再 `ok.ReaderHairDeckSave` 存進目前這張卡（給路徑則另存一張；`-` 把頭髮從卡片拿掉）。MCP：`{"action":"action","command":"hairdeck","cards":"<cards_seed0.json>","opts":"<可省略>"}`、`{"action":"action","command":"hairdeck_save","out":"<可省略>","remove":false}`。存進目前這張卡後，角色身上記的頭髮清掉，之後照卡片的。
 - 命令列：`ok-hair-pack card <卡> <cards_seed0.json 或 -> <輸出卡> [選項 JSON]`。
-- 配種：孩子的髮型來自哪一位，就帶那一位的 `okHk`（沒有就不帶），`okDn` 記 `hairdeck`（來自 mother／father）。見 [OK_BREEDING.md](OK_BREEDING.md)。
+- 配種：讀卡器配種時孩子的頭髮用父母正臉照混合生成（`--mix`），存進孩子卡，選項 `mix` 記父母與父親比例；生成不了時照舊，孩子的髮型來自哪一位，就帶那一位的 `okHk`（沒有就不帶），`okDn` 記 `hairdeck`（來自 mother／father）。見 [OK_BREEDING.md](OK_BREEDING.md)。
 - OK Studio 場景另外記的 HairDeck 頭髮優先於卡片的；「原本頭髮」回到卡片帶的頭髮。
 
 ## 驗證
