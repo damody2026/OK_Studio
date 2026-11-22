@@ -6,6 +6,7 @@ members = [
     "api",
     "sdk",
     "host",
+    "pack",
     "examples/hello",
     "fixtures/panic-mod",
     "fixtures/bad-layout",

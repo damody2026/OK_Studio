@@ -1,0 +1,8 @@
+# Starter profile (Docs/OK_MOD_FRAMEWORK_PLAN.md section 14.4): the mods a new player gets.
+# Planned: profile, outfit-names, studio-autosave, object-hotkeys, toon-post -- added here as each example exists.
+name = "starter"
+description_id = "mod.profile.starter.description"
+
+[[mod]]
+id = "org.openkoikatsu.hello"
+version = "0.1.0"

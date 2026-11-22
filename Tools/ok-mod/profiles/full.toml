@@ -1,0 +1,7 @@
+# Full profile (section 14.4): every example mod, all enabled together. Added here as each example exists.
+name = "full"
+description_id = "mod.profile.full.description"
+
+[[mod]]
+id = "org.openkoikatsu.hello"
+version = "0.1.0"

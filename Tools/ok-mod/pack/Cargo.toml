@@ -1,0 +1,21 @@
+[package]
+name = "ok-mod-pack"
+version = "0.1.0"
+edition = "2021"
+description = "OK mod packages (the HF_Patch counterpart, Docs/OK_MOD_FRAMEWORK_PLAN.md section 9): pack a mod into .okmod, install, verify a Mods folder, profiles, obsolete list."
+
+[lib]
+name = "ok_mod_pack"
+
+[[bin]]
+name = "ok-mod-pack"
+path = "src/main.rs"
+
+[dependencies]
+ok-mod-host = { path = "../host" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+semver = { workspace = true }
+sha2 = "0.10"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }

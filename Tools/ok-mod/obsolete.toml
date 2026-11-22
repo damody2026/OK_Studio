@@ -1,0 +1,17 @@
+# Mods the core knows to be obsolete or harmful (HF_Patch's [InstallDelete]). ok-mod-pack install refuses them and
+# ok-mod-pack verify moves them to Mods/.old/ with the reason. A Mods/obsolete.toml next to the mods adds entries.
+#
+# [[obsolete]]
+# id = "com.example.mod"
+# versions = "<1.2"        # semver requirement; "*" = every version
+# reason = "why"
+
+[[obsolete]]
+id = "org.openkoikatsu.test.panic"
+versions = "*"
+reason = "test fixture that panics on purpose (Tools/ok-mod/fixtures/panic-mod); not for players"
+
+[[obsolete]]
+id = "org.openkoikatsu.test.badlayout"
+versions = "*"
+reason = "test fixture with a wrong ABI layout (Tools/ok-mod/fixtures/bad-layout); not for players"
