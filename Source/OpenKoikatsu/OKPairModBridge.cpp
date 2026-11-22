@@ -7,9 +7,15 @@
 // ("section": {"version", "data_b64"}, as reader.character_load hands it). A reply {"version", "data_b64"} (ok-mod-sdk
 // hooks::save) writes the mod's section back into the card file, {"remove": true} removes it (FOkSession::
 // SetCardModSection: every other section and the card's identity stay). Other replies are kept for ok.PairModTrace.
+//
+// Her spoken line (the TTS voice of the line just shown, pair.line then pair.voice) also goes out as pair.speech_start
+// {"mode": "pair", "text", "card", "path"} as the reader's and the street's speech_start do; a reply
+// {"subtitle": {"text", "seconds"}} (the subtitles example) is shown in her subtitle bar of the H scene.
 #include "OKInteractionMod.h"
 #include "OKModHost.h"
 #include "KKRustExtract.h"
+#include "OKCharacterController.h"
+#include "OKHScene.h"
 #include "Misc/Base64.h"
 #include "Misc/CoreDelegates.h"
 #include "HAL/FileManager.h"
@@ -50,6 +56,8 @@ namespace OKPairModBridge
 			double Next = 0.0;
 		};
 		TArray<FPendingWrite> Pending;
+		/** Her line shown last (pair.line): the text of the TTS voice that follows it. */
+		FString LastLine;
 	};
 
 	FState& State()
@@ -175,6 +183,47 @@ namespace OKPairModBridge
 		}
 	}
 
+	/** Her line spoken: pair.speech_start to the mods, a subtitle they answer shown on the screen. */
+	void SendSpeech(const FOKPairModEvent& E, const FString& Text)
+	{
+		TSharedRef<FJsonObject> P = MakeShared<FJsonObject>();
+		P->SetNumberField(TEXT("pair"), 1);
+		P->SetStringField(TEXT("event"), TEXT("speech_start"));
+		P->SetStringField(TEXT("mode"), TEXT("pair"));
+		P->SetStringField(TEXT("text"), Text);
+		P->SetStringField(TEXT("card"), E.Card);
+		P->SetStringField(TEXT("source"), E.Source);
+		P->SetStringField(TEXT("path"), E.Path);
+		P->SetBoolField(TEXT("fitting"), E.bFitting);
+		TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
+		Request->SetStringField(TEXT("op"), TEXT("hook"));
+		Request->SetStringField(TEXT("hook"), TEXT("pair.speech_start"));
+		Request->SetObjectField(TEXT("payload"), P);
+		FString Error;
+		const TSharedPtr<FJsonObject> Answer = Dispatch(Request, Error);
+		Note(FString::Printf(TEXT("pair.speech_start %s -> %s"), *Condensed(Request).Left(300), Answer.IsValid() ? *Condensed(Answer.ToSharedRef()).Left(300) : *Error));
+		const TArray<TSharedPtr<FJsonValue>>* Replies = nullptr;
+		if (!Answer.IsValid() || !Answer->TryGetArrayField(TEXT("replies"), Replies)) return;
+		for (const TSharedPtr<FJsonValue>& V : *Replies)
+		{
+			const TSharedPtr<FJsonObject> R = V->AsObject();
+			const TSharedPtr<FJsonObject>* Json = nullptr;
+			const TSharedPtr<FJsonObject>* Subtitle = nullptr;
+			if (!R || !R->TryGetObjectField(TEXT("json"), Json) || !(*Json)->TryGetObjectField(TEXT("subtitle"), Subtitle)) continue;
+			FString Shown;
+			double Seconds = 4.0;
+			(*Subtitle)->TryGetNumberField(TEXT("seconds"), Seconds);
+			if (!(*Subtitle)->TryGetStringField(TEXT("text"), Shown) || Shown.IsEmpty()) continue;
+			// In the H scene her subtitle bar is where it goes (the engine's on-screen messages are not drawn there).
+			UOKCharacterController* C = E.Controller.Get();
+			UOKHScenePanel* Panel = C ? C->HPanel.Get() : nullptr;
+			if (Panel) Panel->ShowHerSubtitle(Shown);
+			else if (C) C->ScreenNote(41, float(FMath::Clamp(Seconds, .5, 30.)), FColor::White, Shown);
+			UE_LOG(LogOKPairMods, Display, TEXT("%s: subtitle \"%s\" (%.1f s) %s"), *R->GetStringField(TEXT("mod")), *Shown.Left(60), Seconds,
+				Panel ? TEXT("in her subtitle bar") : C ? TEXT("as a screen note") : TEXT("not shown (no scene)"));
+		}
+	}
+
 	TArray<FString> EnabledMods()
 	{
 		TArray<FString> Out;
@@ -239,6 +288,7 @@ namespace OKPairModBridge
 	{
 		FState& S = State();
 		FOKModHost& Host = FOKModHost::Get();
+		if (!S.FakeDispatch && !Host.IsOpen()) return;
 		if (E.Kind == EOKPairModEvent::Enter && !E.bFitting && !S.FakeDispatch && Host.IsOpen() && Host.CurrentMode() != TEXT("pair"))
 		{
 			S.ModeBefore = Host.CurrentMode();
@@ -246,6 +296,9 @@ namespace OKPairModBridge
 			Host.EnterMode(TEXT("pair"));
 		}
 		Send(E);
+		if (E.Kind == EOKPairModEvent::Line) S.LastLine = E.Text;
+		// The TTS voice is the line shown just before it; her cries (hvoice) have no text.
+		if (E.Kind == EOKPairModEvent::Voice && E.Source == TEXT("tts") && !S.LastLine.IsEmpty()) { SendSpeech(E, S.LastLine); S.LastLine.Empty(); }
 		if (E.Kind == EOKPairModEvent::Exit && S.bEnteredPair)
 		{
 			S.bEnteredPair = false;
@@ -254,14 +307,13 @@ namespace OKPairModBridge
 		}
 	}
 
-	/** Subscribed to the one-on-one's events while the host is open (or a fake stands in). */
+	/** Retries the card writes still waiting. The bridge is subscribed from the start (OnEvent skips while the host is
+	 *  closed): subscribing here once the host is seen open came seconds late while the game loaded, and the standalone
+	 *  one-on-one's pair.enter (half a second after BeginPlay) was lost. */
 	bool Tick(float)
 	{
 		FState& S = State();
-		const bool bWant = S.FakeDispatch || FOKModHost::Get().IsOpen();
-		if (!bWant) S.NotSubscribed.Reset();
-		if (bWant && !S.Subscription) S.Subscription = FOKInteractionModEvents::Get().Subscribe(TEXT("mod-host"), [](const FOKPairModEvent& E) { OnEvent(E); });
-		else if (!bWant && S.Subscription) { FOKInteractionModEvents::Get().Unsubscribe(S.Subscription); S.Subscription = 0; }
+		if (!S.FakeDispatch && !FOKModHost::Get().IsOpen()) S.NotSubscribed.Reset();
 		if (S.Pending.Num()) RetryPending(false);
 		return true;
 	}
@@ -269,6 +321,7 @@ namespace OKPairModBridge
 	FDelayedAutoRegisterHelper Start(EDelayedRegisterRunPhase::EndOfEngineInit, []
 	{
 		if (!FApp::IsGame() || IsRunningCommandlet()) return;
+		State().Subscription = FOKInteractionModEvents::Get().Subscribe(TEXT("mod-host"), [](const FOKPairModEvent& E) { OnEvent(E); });
 		FTSTicker::GetCoreTicker().AddTicker(TEXT("OKPairMods"), 0.5f, [](float Delta) { return Tick(Delta); });
 		FCoreDelegates::OnEnginePreExit.AddLambda([]
 		{
@@ -281,7 +334,7 @@ namespace OKPairModBridge
 	FAutoConsoleCommand TraceCommand(TEXT("ok.PairModTrace"), TEXT("Logs the last one-on-one hooks sent to the mods and their answers."),
 		FConsoleCommandDelegate::CreateLambda([]
 		{
-			UE_LOG(LogOKPairMods, Display, TEXT("pair hooks: %s"), State().Subscription ? TEXT("subscribed") : TEXT("not subscribed (host closed)"));
+			UE_LOG(LogOKPairMods, Display, TEXT("pair hooks: %s"), !State().Subscription ? TEXT("not subscribed") : FOKModHost::Get().IsOpen() ? TEXT("subscribed") : TEXT("subscribed, host closed (events skipped)"));
 			for (const FString& Line : State().Trace) UE_LOG(LogOKPairMods, Display, TEXT("%s"), *Line);
 		}));
 
@@ -314,12 +367,36 @@ namespace OKPairModBridge
 				E.Seconds = 12.5;
 				FOKInteractionModEvents::Get().Broadcast(E);
 			}
+			// Her line, then its TTS voice: the line goes out again as pair.speech_start.
+			TArray<TSharedRef<FJsonObject>> Speech;
+			{
+				FOKPairModEvent Line;
+				Line.Kind = EOKPairModEvent::Line;
+				Line.Text = TEXT("her line");
+				FOKInteractionModEvents::Get().Broadcast(Line);
+				FOKPairModEvent Voice;
+				Voice.Kind = EOKPairModEvent::Voice;
+				Voice.Source = TEXT("tts");
+				Voice.Path = TEXT("line.wav");
+				const int32 Before = Seen.Num();
+				FOKInteractionModEvents::Get().Broadcast(Voice);
+				for (int32 I = Before; I < Seen.Num(); ++I) Speech.Add(Seen[I]);
+				Seen.SetNum(Before - 1);
+			}
 			S.FakeDispatch = nullptr;
 			Tick(0.f);
 			TArray<FString> Lines;
 			int32 Failed = 0;
 			auto Check = [&](bool bOk, const FString& What) { Lines.Add(FString::Printf(TEXT("%s %s"), bOk ? TEXT("PASS") : TEXT("FAIL"), *What)); Failed += !bOk; };
 			Check(Seen.Num() == Kinds, FString::Printf(TEXT("%d hooks sent for %d kinds"), Seen.Num(), Kinds));
+			Check(S.Subscription != 0, TEXT("subscribed from the start (an early pair.enter is not lost)"));
+			{
+				const TSharedPtr<FJsonObject>* P = nullptr;
+				FString Text, Mode;
+				const bool bSpeech = Speech.Num() == 2 && Speech[1]->GetStringField(TEXT("hook")) == TEXT("pair.speech_start") && Speech[1]->TryGetObjectField(TEXT("payload"), P)
+					&& (*P)->TryGetStringField(TEXT("text"), Text) && Text == TEXT("her line") && (*P)->TryGetStringField(TEXT("mode"), Mode) && Mode == TEXT("pair");
+				Check(bSpeech, FString::Printf(TEXT("tts voice after a line: pair.voice then pair.speech_start with the line (%d requests)"), Speech.Num()));
+			}
 			for (int32 K = 0; K < Seen.Num() && K < Kinds; ++K)
 			{
 				const FString Want = FString(TEXT("pair.")) + OKPairModEventName(EOKPairModEvent(K));

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class AOKInteractionMode;
 class UOKCharacterController;
@@ -43,6 +44,8 @@ struct FOKPairModEvent
 	/** The street's fitting room (she alone, trying clothes on), not a one-on-one with him. */
 	bool bFitting = false;
 	double Seconds = 0.0;
+	/** The scene's controller (Note, Finish, Voice, Line): where the mod host shows what a mod answers, e.g. a subtitle. */
+	TWeakObjectPtr<UOKCharacterController> Controller;
 };
 
 /** Event name for logs and the mod host: "enter", "ready", "exit", "note", "finish", "voice", "line". */

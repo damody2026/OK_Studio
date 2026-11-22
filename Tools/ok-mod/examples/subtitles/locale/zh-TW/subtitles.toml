@@ -1,0 +1,3 @@
+"mod.org.openkoikatsu.subtitles.description" = "角色說話時在畫面上顯示字幕。"
+"mod.org.openkoikatsu.subtitles.config.seconds_per_char" = "字幕每個字停留的秒數"
+"mod.org.openkoikatsu.subtitles.config.min_seconds" = "字幕最短停留秒數"

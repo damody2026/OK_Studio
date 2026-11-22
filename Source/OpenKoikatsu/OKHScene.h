@@ -147,6 +147,8 @@ public:
     bool Hear(const FString& Text,FString& Context);
     void ShowLine(const FString& Text);
     void ShowPlayerLine(const FString& Text);
+    // A subtitle for her line from elsewhere (a mod's answer to pair.speech_start): her subtitle bar, nothing else changes.
+    void ShowHerSubtitle(const FString& Text){ShowSubtitle(0,Text);}
     void SpokeLine(){bTalkSpoken=true;}
     void SetReplyPending(bool bPending){bReplyPending=bPending;}
     UFUNCTION() void OnInputCommitted(const FText& Text,ETextCommit::Type Commit);

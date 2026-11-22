@@ -98,6 +98,7 @@ void FOKInteractionModEvents::FireNote(const UOKCharacterController* Gallery, co
 	FOKPairModEvent E;
 	E.Kind = EOKPairModEvent::Note;
 	E.Card = GalleryCard(Gallery);
+	E.Controller = const_cast<UOKCharacterController*>(Gallery);
 	E.Text = Text;
 	E.bReact = bReact;
 	Get().Broadcast(E);
@@ -109,6 +110,7 @@ void FOKInteractionModEvents::FireFinish(const UOKCharacterController* Gallery, 
 	FOKPairModEvent E;
 	E.Kind = EOKPairModEvent::Finish;
 	E.Card = GalleryCard(Gallery);
+	E.Controller = const_cast<UOKCharacterController*>(Gallery);
 	E.Text = Kind ? Kind : TEXT("");
 	Get().Broadcast(E);
 }
@@ -119,6 +121,7 @@ void FOKInteractionModEvents::FireVoice(const UOKCharacterController* Gallery, c
 	FOKPairModEvent E;
 	E.Kind = EOKPairModEvent::Voice;
 	E.Card = GalleryCard(Gallery);
+	E.Controller = const_cast<UOKCharacterController*>(Gallery);
 	E.Source = Source ? Source : TEXT("");
 	E.Path = Path;
 	E.Text = Name;
@@ -132,6 +135,7 @@ void FOKInteractionModEvents::FireLine(const UOKCharacterController* Gallery, co
 	FOKPairModEvent E;
 	E.Kind = EOKPairModEvent::Line;
 	E.Card = GalleryCard(Gallery);
+	E.Controller = const_cast<UOKCharacterController*>(Gallery);
 	E.Text = Text;
 	Get().Broadcast(E);
 }

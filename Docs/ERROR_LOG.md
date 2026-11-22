@@ -7318,3 +7318,5 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - idle-breath 第一版寫了 `Mod::on_disable`，SDK 的 trait 沒有這個方法。
 
 - 2026-11-23 OK mod 快取追加項（`Docs/OK_MOD_S9c_CACHES.md`）：遊戲端 `OKModModes.cpp` `SyncExtract` 推給 ok-extract 的「會改開卡結果的 mod」清單只認 `extract.*`，漏了 `material.post_texture`，和 Rust 的 `okmods::changes_opens` 不同步：skin-decal 的掛點照跑，開卡快取鍵卻不含它。教訓：同一條規則在 C++ 與 Rust 各寫一份時，改一邊要搜另一邊（這次是加 `material.post_texture` 進 `changes_opens` 時沒找 C++ 的那份）。子代理的盤點也漏看了這處，它只看了 Rust 的鍵。
+- 2026-11-23 第三波（E 組，mod 工作項 13 字幕）：1 對 1 的 mod 字幕先照讀卡器用 `UOKCharacterController::ScreenNote`（舊讀卡器沒有 `ReaderScreen` 時走 `GEngine->AddOnScreenDebugMessage`），log 寫「subtitle …」但實機截圖畫面上沒有字（`EnableAllScreenMessages` 也一樣）。只看 log 就會誤報「字幕出現」。改成 H 場景自己的字幕列（`UOKHScenePanel::ShowHerSubtitle`），截圖確認，log 也寫明顯示在哪裡。教訓：「畫面上出現」要用截圖確認，不能只看 log。
+- 2026-11-23 第三波（E 組，mod 工作項 13 三條路線）：只用讀卡器進 1 對 1 驗過，另外兩條路各有一個錯。(1) 街區先開 1 對 1 再載入她，`pair.enter` 的 `card` 是空的，`pair-counter` 離開時卡片對不上，把高潮次數丟掉了（her 0）。改成用第一個帶卡片的 `pair.finish` 補上。(2) 獨立 1 對 1 遊戲模式在 BeginPlay 後半秒就送 `pair.enter`，橋接卻要等 0.5 秒的 ticker 看到宿主開了才訂閱，載入中來不及，enter 遺失。改成引擎啟動時就訂閱。教訓：同一個事件有幾條進場路線，就每條都跑一次；「進場那一刻有沒有卡片、有沒有人在聽」不能拿一條路代表全部。

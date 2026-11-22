@@ -172,6 +172,11 @@ impl Mod for Counter {
                 Ok(Reply::None)
             }
             "pair.finish" => {
+                // The street opens the one-on-one before her card is known (pair.enter with no card): the first
+                // event that has it tells whose one-on-one this is.
+                if self.card.is_empty() {
+                    self.card = e.card;
+                }
                 let (her, him) = finish_of(&e.text);
                 self.her += her;
                 self.him += him;

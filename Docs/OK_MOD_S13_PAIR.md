@@ -39,7 +39,15 @@
 
 ### `subtitles` 的 1 對 1 部分
 
-`pair.voice`（以及文字台詞 `pair.line`）已經送到訂閱的 mod；範例本體由 C 建立，同步點 B 後讓它訂閱 `pair.voice`。字幕的回覆要在 1 對 1 畫面上怎麼顯示（宣告式畫面文字）還沒有介面，等 C 的範例定形狀後在橋接加。
+C 的 `subtitles` 範例（`org.openkoikatsu.subtitles`，訂閱 `reader.speech_start`／`street.speech_start`／`pair.speech_start`）已在。橋接把 `pair.line` 的台詞記下，接著那句的 TTS `pair.voice` 出來時（她開口說那句）另送 `pair.speech_start`：
+
+```json
+{"pair": 1, "event": "speech_start", "mode": "pair", "text": "<台詞>", "card", "source": "tts", "path": "<語音檔>", "fitting"}
+```
+
+和讀卡器、街區的 `speech_start` 同形，同一個 mod 不用分模式。她的喘息與叫聲（`hvoice`）沒有文字，不送。回覆 `{"subtitle": {"text", "seconds"}}` 顯示在 H 場景她的字幕列（`UOKHScenePanel::ShowHerSubtitle`，新加的公開方法；字幕列本身停 15 秒，`seconds` 目前不用）。沒有 H 面板時退回 `ScreenNote`。`FOKPairModEvent` 多帶場景的 controller（Note／Finish／Voice／Line）。
+
+範例補了 zh-TW locale。
 
 ## 驗證（2026-11-23）
 
@@ -54,10 +62,30 @@
 - **高潮計數**（同一張卡片副本，`ok.HScene.HisRate 20`、`ok.HScene.HerRate 20` 加快量表）：奉仕·手「單手交」開始 → `pair.finish outside`；插入「正常位」→ 插入 → 開始動 → `pair.finish orgW`。離開後 pair-counter 寫入 `{"times":3,"seconds":427.0,"her":1,"him":1}`。
 - 實機中發現：愛撫與她獨自的高潮不經 `Finish()`，`pair.finish` 沒送。已補 `orgTouch`／`orgSolo`（提交 5b425d791）。
 
+## 第三波驗證（2026-11-23，同步點 B 之後）
+
+- 建置：E 先在 351002ba5 用 E 引擎建一次（`OpenKoikatsuEditor`、`OpenKoikatsu` Development、`Tools/ok-mod` `cargo build -j 8 --release --workspace` 都成功）。字幕改動後兩個目標再建一次，成功（提交 4f7358111）。
+- **字幕**（讀卡器 `-LegacyReader`，同一張卡片副本，`subtitles` 與 `pair-counter` 裝在 `Mods/`）：進 1 對 1 時 log 為 `mode reader/pair: 2 mod(s) enabled: org.openkoikatsu.subtitles, org.openkoikatsu.pair_counter`；摸頭、摸胸部後她每說一句，log 有 `org.openkoikatsu.subtitles: subtitle "Yvonne：嗯…你手放在那別動…這樣慢慢來就好。" (3.8 s) in her subtitle bar`。在那一刻截圖，畫面下方字幕列就是這句（`E:\OpenKoikatsu\Saved\OKControl\shots\40152-0002.png`）。
+  - 第一版用 `ScreenNote`（引擎 on-screen message），log 有字幕但畫面上沒有，所以改到字幕列（見 ERROR_LOG）。
+  - 字幕列的文字和場景本來顯示的是同一句，截圖分不出是 mod 寫的還是場景寫的。「是 mod 寫進去的」靠 log 的 `in her subtitle bar`（`ShowHerSubtitle` 呼叫後才記）。
+- **愛撫高潮 `orgTouch`**：面板的愛撫模式是「持續」，`ok.HScene.HerRate 20` 後按「摸私處」，她高潮時橋接送出 `pair.finish {"text":"orgTouch"}`，`pair-counter` 回 ok。
+- **她獨自高潮 `orgSolo`**：「自慰」→「站立自慰」，量表加快後高潮了 5 次，每次都送 `pair.finish {"text":"orgSolo"}`。
+- 離開後 `pair-counter` 寫入 `{"times":6,"seconds":730.4,"her":7,"him":1}`。上次是 her 1，這次加 1 次 `orgTouch` 和 5 次 `orgSolo`，剛好 7。
+- **從街區進 1 對 1**（`game_launch` 加 `-Editor -Sandbox EMod8 -PortBase 48130 -Heroine 1 -NoCloud`，用剛建的編輯器執行檔，不用 stage；`hscene open=1`）：
+  - 宿主 `mode street` → 進 1 對 1 時切成 `mode street/pair: 2 mod(s) enabled: …subtitles, …pair_counter`，離開後 `target` 回到 `street`（mod 照宿主的設計留著載入，只收到 `mode_exit`）。
+  - 依序送出 `pair.enter`、`pair.ready`、`pair.note`、`pair.finish`（`orgTouch`）、`pair.exit`。
+  - **發現的錯**：街區先開 1 對 1 再載入她，`pair.enter` 的 `card` 是空的。`pair-counter` 離開時卡片對不上，把這次的高潮丟掉了（寫入 `her: 0`）。改成用第一個帶卡片的 `pair.finish` 補上（提交 fdaefd3a6）。重跑後寫入 `{"times":2,…,"her":1}`。
+  - 卡片是街區女主角自己的卡（`Content/CharacterCards/StreetHeroines/jeanne_alter.png`，只在本機）。`pair-counter` 的區段寫進這張卡，卡片身分不變。
+  - `-NoCloud` 下她沒有台詞，所以這條路沒有 `pair.line`／`pair.voice`，字幕只在讀卡器那條路驗。
+- **獨立 1 對 1 遊戲模式**（`Tools/run_interaction_pair.lua --female <卡片副本> --control`，`AOKInteractionPairGameMode`）：
+  - 宿主一開始就是 `mode pair`。
+  - **發現的錯**：第一次跑沒有 `pair.enter`。橋接原本由 0.5 秒的 ticker 看到宿主開了才訂閱，這個模式在 BeginPlay 後半秒就進 1 對 1，載入中 ticker 還沒訂閱。改成引擎啟動就訂閱、宿主沒開時略過（提交 b1b4bb8f5）。
+  - 重跑：`ok.PairModBridgeSelfTest` **23/23**（新加「一開始就訂閱」與「TTS 語音接在台詞後送 `pair.speech_start`」兩項）。
+  - 按「結束」（這個模式會關掉遊戲）後，`pair-counter` 收到 `pair.exit` 和卡片區段，寫入 7 次、739 秒（讀卡器那輪是 6 次、730 秒）。
+
 ## 沒驗證的
 
+- 獨立 1 對 1 的 `pair.enter` 本身：修正後那輪按「結束」會連遊戲一起關，trace 沒來得及印出來。有送出靠的是自我測試的「一開始就訂閱」，加上 exit 正常。
 - 讀卡器顯示這張卡的統計：要 C 的 reader hook（同步點 B 後）。卡片裡的資料目前只用 log 與 payload 的 `section` 確認，沒有在畫面上看。
-- 愛撫高潮（`orgTouch`）與她獨自高潮（`orgSolo`）：新加的兩處只確認建置。實機用面板按鈕「摸私處」只摸一下，量表沒滿；持續愛撫要在她身上按住滑鼠，控制通道做不到。
-- 從街區進的 1 對 1（`street` → `pair` → `street`）與獨立 1 對 1 遊戲模式：只跑了讀卡器進的那條路。
-- `subtitles` 的 1 對 1 部分：事件有送，範例要等 C 建好（同步點 B 後接上並實測）。
+- 字幕的 `seconds`：字幕列固定停 15 秒或到下一句，mod 給的秒數沒用上。
 - 重試只在同一次執行內：遊戲結束時檔案仍被占用，那筆資料遺失（記錯誤）。
