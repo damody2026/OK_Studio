@@ -10,6 +10,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "ok_extract.h"
+#include "Containers/Ticker.h"
 
 namespace
 {
@@ -48,7 +49,37 @@ void RefreshValues()
 	if(!GValues.IsValid())GValues=MakeShared<FJsonObject>();	// asked again on the next card, not every frame
 }
 
-// What a mod's reply asks of the reader: {"set":[{key,value}]} registry edits, {"notice": text},
+// {"ops":[...]}: the original editor's composite actions (hair_base_color, ...; Docs/READER_UI_APPEARANCE_API.md §10),
+// applied the way the detailed editor applies them (UOKCharacterController::ApplyPropertyOps: one write of the card, then
+// it opens again). The detailed editor need not have been opened: ops work on the card file, not on its rows, so the
+// source is taken to be the card shown now (rows read for another card are dropped and read again when it opens).
+// While the reader is busy (a load, the slider edits of the same reply) they wait for it, up to 30 seconds.
+void ApplyOps(UOKCharacterController* G,const FString& Mod,const TArray<TSharedPtr<FJsonValue>>& Ops)
+{
+	if(!G)return;
+	const double Until=FPlatformTime::Seconds()+30;
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak=TWeakObjectPtr<UOKCharacterController>(G),Mod,Ops,Until](float)
+	{
+		UOKCharacterController* C=Weak.Get();if(!C)return false;
+		const bool bBusy=C->bPropertyBusy||C->bAppearanceBusy||C->bLoadInFlight||C->bAnimationPreparing;
+		if(bBusy&&FPlatformTime::Seconds()<Until)return true;
+		FString Refused=bBusy?FString(TEXT("the reader stayed busy for 30 seconds")):FString();
+		if(Refused.IsEmpty()&&C->Entries.IsValidIndex(C->SelectedIndex)&&(C->PropertySource!=C->Entries[C->SelectedIndex].Path||C->PropertyOutfit!=C->OutfitIndex))
+		{
+			if(!C->PendingProperties.IsEmpty())Refused=TEXT("the detailed editor has edits not applied yet");
+			else{C->EditorProperties.Reset();C->PropertySource=C->Entries[C->SelectedIndex].Path;C->PropertyOutfit=C->OutfitIndex;}
+		}
+		if(Refused.IsEmpty())Refused=C->ApplyPropertyOps(Ops);
+		if(!Refused.IsEmpty())
+		{
+			UE_LOG(LogOKMod,Warning,TEXT("[%s] ops not applied: %s"),*Mod,*Refused);
+			C->ScreenNote(43,8.f,FColor::Yellow,FString::Printf(TEXT("[%s] %s"),*Mod,*Refused));
+		}
+		else UE_LOG(LogOKMod,Display,TEXT("[%s] %d op(s) applied"),*Mod,Ops.Num());
+		return false;
+	}));
+}
+// What a mod's reply asks of the reader: {"set":[{key,value}]} registry edits, {"ops":[...]}, {"notice": text},
 // {"subtitle":{"text","seconds"}}.
 void Follow(UOKCharacterController* G,const FString& Mod,const TSharedPtr<FJsonObject>& Json)
 {
@@ -59,6 +90,8 @@ void Follow(UOKCharacterController* G,const FString& Mod,const TSharedPtr<FJsonO
 		FString Error;
 		if(!OKCharacterMCPRegistry::SetParameters(G,*Edits,Error))UE_LOG(LogOKMod,Warning,TEXT("[%s] edits not applied: %s"),*Mod,*Error);
 	}
+	const TArray<TSharedPtr<FJsonValue>>* Ops=nullptr;
+	if(Json->TryGetArrayField(TEXT("ops"),Ops)&&Ops->Num())ApplyOps(G,Mod,*Ops);
 	FString Notice;
 	if(Json->TryGetStringField(TEXT("notice"),Notice)&&!Notice.IsEmpty())G->ScreenNote(40,6.f,FColor::Cyan,FString::Printf(TEXT("[%s] %s"),*Mod,*Notice));
 	const TSharedPtr<FJsonObject>* Names=nullptr;
