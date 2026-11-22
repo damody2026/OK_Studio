@@ -10,6 +10,11 @@
 #include "Components/EditableTextBox.h"
 #include "Components/Slider.h"
 #include "Components/SpinBox.h"
+#include "OKReaderScreen.h"
+#include "Core/Components/DreamWidget.h"
+
+#include "Components/TextBlock.h"
+#include "Components/PanelWidget.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
@@ -85,8 +90,38 @@ FScreen Screen()
 }
 template<class T> bool IsA(UWidget* W){return Cast<T>(W)!=nullptr;}
 // The Slate tree does not lead into what a player's layer holds, so UMG is found by its objects and judged by its own parents.
-bool OnScreen(UWidget* W)
+// A user widget kept only as the model of another screen: the card reader's gallery under its DreamGUI screen
+// (OKGalleryWidget.cpp: opacity 0, hit-test invisible, its content collapsed so Slate neither lays out nor paints it).
+// Its controls have no geometry, yet they are what that screen shows and drives.
+bool IsModelLayer(const UUserWidget* U)
 {
+ return U&&U->GetRenderOpacity()<=0.f&&U->GetVisibility()==ESlateVisibility::HitTestInvisible&&U->GetRootWidget()&&U->GetRootWidget()->GetVisibility()==ESlateVisibility::Collapsed;
+}
+bool InModelLayer(UWidget* W)
+{
+ for(UWidget* At=W;At;){
+  if(UWidget* Parent=At->GetParent()){At=Parent;continue;}
+  auto* Tree=At->GetTypedOuter<UWidgetTree>();auto* Owner=Tree?Cast<UUserWidget>(Tree->GetOuter()):nullptr;
+  if(IsModelLayer(Owner))return true;
+  At=Owner;
+ }
+ return false;
+}
+// The UMG controls the DreamGUI screen shows now: each shown mirror (UOKDreamControl, OKReaderScreen.h) names its source.
+// A model layer's control is on screen exactly when one of them shows it -- the page and drawer the person has open.
+TSet<const UWidget*> Mirrored()
+{
+ TSet<const UWidget*> Out;
+ for(TObjectIterator<UOKDreamControl> It;It;++It){
+  UOKDreamControl* C=*It;if(!IsValid(C)||!C->Source.IsValid())continue;
+  bool bShown=true;for(UDreamWidget* At=C;At&&bShown;At=At->GetParent())bShown=At->GetShown();
+  if(bShown)Out.Add(C->Source.Get());
+ }
+ return Out;
+}
+bool OnScreen(UWidget* W,const TSet<const UWidget*>& Mirror)
+{
+ if(InModelLayer(W))return Mirror.Contains(W);
  if(!W->GetCachedWidget().IsValid()||W->GetCachedGeometry().GetLocalSize().IsNearlyZero())return false;
  for(UWidget* At=W;At;){
   const ESlateVisibility V=At->GetVisibility();if(V==ESlateVisibility::Collapsed||V==ESlateVisibility::Hidden)return false;
@@ -96,16 +131,23 @@ bool OnScreen(UWidget* W)
 }
 TArray<UWidget*> Operable()
 {
- TArray<UWidget*> Out;UWorld* Now=World();
+ TArray<UWidget*> Out;UWorld* Now=World();const TSet<const UWidget*> Mirror=Mirrored();
  for(TObjectIterator<UWidget> It;It;++It){UWidget* W=*It;
-  if(!IsValid(W)||!(IsA<UButton>(W)||IsA<USlider>(W)||IsA<UComboBoxString>(W)||IsA<UCheckBox>(W)||IsA<UEditableTextBox>(W)||IsA<USpinBox>(W))||W->GetWorld()!=Now||!OnScreen(W))continue;Out.Add(W);}
+  if(!IsValid(W)||!(IsA<UButton>(W)||IsA<USlider>(W)||IsA<UComboBoxString>(W)||IsA<UCheckBox>(W)||IsA<UEditableTextBox>(W)||IsA<USpinBox>(W))||W->GetWorld()!=Now||!OnScreen(W,Mirror))continue;Out.Add(W);}
  Out.Sort([](const UWidget& A,const UWidget& B){return A.GetName()<B.GetName();});return Out;
 }
 struct FButton {FString Label;TSharedPtr<SWidget> Slate;UButton* Umg=nullptr;bool Enabled=true;};
+// A UMG button's text from its UMG children: a model layer's buttons were never built into Slate (no cached widget).
+FString UmgText(UWidget* W)
+{
+ if(auto* T=Cast<UTextBlock>(W))return T->GetText().ToString();
+ if(auto* P=Cast<UPanelWidget>(W))for(int32 I=0;I<P->GetChildrenCount();++I){FString Text=UmgText(P->GetChildAt(I));if(!Text.IsEmpty())return Text;}
+ return FString();
+}
 TArray<FButton> Buttons(const FScreen& S,const TArray<UWidget*>& Widgets)
 {
  TArray<FButton> Out;TSet<const SWidget*> Seen;
- for(UWidget* W:Widgets)if(auto* B=Cast<UButton>(W)){const TSharedPtr<SWidget> Slate=B->GetCachedWidget();Seen.Add(Slate.Get());Out.Add({TextIn(Slate.ToSharedRef()),nullptr,B,B->GetIsEnabled()});}
+ for(UWidget* W:Widgets)if(auto* B=Cast<UButton>(W)){const TSharedPtr<SWidget> Slate=B->GetCachedWidget();if(Slate.IsValid())Seen.Add(Slate.Get());Out.Add({Slate.IsValid()?TextIn(Slate.ToSharedRef()):UmgText(B),nullptr,B,B->GetIsEnabled()});}
  for(const auto& P:S.Buttons)if(!Seen.Contains(&P.Value.Get())&&!P.Value->GetCachedGeometry().GetLocalSize().IsNearlyZero())Out.Add({P.Key,P.Value,nullptr,P.Value->IsEnabled()});
  return Out;
 }
