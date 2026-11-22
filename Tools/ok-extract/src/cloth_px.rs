@@ -474,6 +474,11 @@ struct Sim {
     /// The other garments paired with (their keys) and, per particle, (garment slot, its particle) found inside it there.
     layer_keys: Vec<u64>,
     layer_pairs: Vec<Vec<(u32, u32)>>,
+    /// Each paired garment (by slot) as last read: shown positions.
+    layer_seen: Vec<Vec<[f32; 3]>>,
+    /// Debug: last frame's layer push of each particle, and the sums logged (`cloth px pushes`).
+    push_prev: Vec<f32>,
+    push_acc: [f64; 4],
     shown: Vec<[f32; 3]>,
     /// Time passed since the last job was launched (the next one simulates it).
     pending: f32,
@@ -822,7 +827,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
-        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead, rest_r: Vec::new(), rest_at: Vec::new(), layer_keys: Vec::new(), layer_pairs: Vec::new(), shown: Vec::new() })
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead, rest_r: Vec::new(), rest_at: Vec::new(), layer_keys: Vec::new(), layer_pairs: Vec::new(), push_prev: Vec::new(), layer_seen: Vec::new(), push_acc: [0.; 4], shown: Vec::new() })
 }
 
 /// For each particle of a layer that follows another (see `build`): the particle it moves as; u32::MAX for the rest.
@@ -1303,7 +1308,23 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     }
     let (clamped, pushed) = constrain(sim, &d, &targets, normals, &caps, &live, skin_arg, &mut sim_pos);
     let t_layers = std::time::Instant::now();
+    // How much the layers move each particle, and how much that changes frame to frame (debug only).
+    let before_layers = if debug_on() { sim_pos.clone() } else { Vec::new() };
     let layered = keep_layers(session, index, sim, skel, &mut sim_pos);
+    if before_layers.len() == np {
+        let push: Vec<f32> = (0..np).map(|p| len(sub(sim_pos[p], before_layers[p]))).collect();
+        let prev = std::mem::replace(&mut sim.push_prev, push.clone());
+        if prev.len() == np {
+            let (mut n, mut sum, mut dsum) = (0usize, 0f64, 0f64);
+            for p in 0..np { if push[p] > 0. || prev[p] > 0. { n += 1; sum += push[p] as f64; dsum += (push[p] - prev[p]).abs() as f64; } }
+            sim.push_acc[0] += n as f64; sim.push_acc[1] += sum; sim.push_acc[2] += dsum; sim.push_acc[3] += 1.;
+        }
+        if debug_due(sim.key ^ 0x1A) && sim.push_acc[3] > 0. {
+            let a = sim.push_acc;
+            log(1, &format!("OK cloth px pushes: cloth {} {:.0} particles pushed a frame, {:.2} mm each, changing {:.2} mm a frame", sim.key, a[0] / a[3], a[1] / a[0].max(1.) * 1000., a[2] / a[0].max(1.) * 1000.));
+            sim.push_acc = [0.; 4];
+        }
+    }
     above_floor(sim, skel, &mut sim_pos);
     if layered > 0 && debug_on() { log(1, &format!("OK cloth px layers: cloth {} {layered} particles kept outside the garment under them ({} us)", sim.key, t_layers.elapsed().as_micros())); }
     if debug_due(sim.key ^ 0xF1) {
@@ -1392,7 +1413,7 @@ fn layer_feed() -> bool { static E: std::sync::OnceLock<bool> = std::sync::OnceL
 /// outermost. FleX's particles alone, 6 mm round and 25 mm apart, let Megumin's pink pleated skirt out through the back
 /// of her coat in stripes while she ran (2026-11-22). The pairs are found once (again when another garment of hers is
 /// made); a grid of the others each frame took 1.5-3.5 ms for her coat. Uses the others as shown last frame, read only
-/// when not locked (no garment waits on another).
+/// when not locked (no garment waits on another; a locked one as last read).
 fn keep_layers(session: usize, index: usize, sim: &mut Sim, skel: &crate::pose::Skeleton, pos: &mut [[f32; 3]]) -> usize {
     if env_f("OK_CLOTH_PX_LAYER_ORDER", 1.) < 0.5 { return 0; }
     let Some(h) = bone_pos(skel, "cf_j_hips") else { return 0 };
@@ -1403,6 +1424,7 @@ fn keep_layers(session: usize, index: usize, sim: &mut Sim, skel: &crate::pose::
         sim.rest_at = pos.to_vec();
         sim.layer_keys.clear();
         sim.layer_pairs.clear();
+        sim.layer_seen.clear();
     }
     let others: Vec<Arc<Mutex<Entry>>> = STATES.lock().unwrap().as_ref().map(|m| m.iter()
         .filter(|((s, i), _)| *s == session && *i != index).map(|(_, e)| e.clone()).collect()).unwrap_or_default();
@@ -1444,8 +1466,20 @@ fn keep_layers(session: usize, index: usize, sim: &mut Sim, skel: &crate::pose::
             }
         }
     }
-    if sim.layer_pairs.len() != np || shown.is_empty() { return 0; }
-    let now: Vec<Option<&Vec<[f32; 3]>>> = sim.layer_keys.iter().map(|k| shown.iter().find(|(s, _)| s == k).map(|(_, v)| v)).collect();
+    // Each other garment as last read (OK_CLOTH_PX_LAYER_CACHE, default on): one being worked on by another thread right
+    // now is not readable, and its pairs left out that frame, the push came and went frame by frame (5-7 mm a frame on
+    // the bow on the back of Raiden's kimono, standing still: it shook 2-3 mm; 2026-11-22).
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let cache = *CACHE.get_or_init(|| env_f("OK_CLOTH_PX_LAYER_CACHE", 1.) > 0.5);
+    sim.layer_seen.resize(sim.layer_keys.len(), Vec::new());
+    for (slot, k) in sim.layer_keys.iter().enumerate() {
+        match shown.iter().find(|(s, _)| s == k) {
+            Some((_, v)) => sim.layer_seen[slot] = v.clone(),
+            None => if !cache { sim.layer_seen[slot].clear(); },
+        }
+    }
+    if sim.layer_pairs.len() != np || sim.layer_seen.iter().all(|v| v.is_empty()) { return 0; }
+    let now: Vec<Option<&Vec<[f32; 3]>>> = sim.layer_seen.iter().map(|v| if v.is_empty() { None } else { Some(v) }).collect();
     let keep = env_f("OK_CLOTH_PX_LAYER_KEEP", 0.006);
     let pairs = &sim.layer_pairs;
     let needs: Vec<f32> = (0..np).into_par_iter().map(|p| {
