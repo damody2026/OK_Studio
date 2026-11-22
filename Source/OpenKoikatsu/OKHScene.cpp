@@ -1859,7 +1859,7 @@ void UOKHScenePanel::TickScene(float Delta){
     if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&BodyTouching()&&!Base.EndsWith(TEXT("Dislikes"))&&!Base.StartsWith(TEXT("Orgasm"))){
         bPlayed=true;AreaSeconds[TouchArea]+=Delta;if(FPlatformTime::Seconds()>=FlinchNext)Flinch(TouchArea);
         Her+=Delta*(1.f+Dev(TouchArea==0?TEXT("kiss"):HBodyKey(TouchArea)))*CVarHHerRate.GetValueOnGameThread();if(bLockHer)Her=FMath::Min(Her,95.f);
-        if(Her>=100.f){Her=0.f;++AreaClimaxes[TouchArea];TouchArea=INDEX_NONE;bLipsTouch=false;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
+        if(Her>=100.f){Her=0.f;++AreaClimaxes[TouchArea];TouchArea=INDEX_NONE;bLipsTouch=false;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();FOKInteractionModEvents::FireFinish(Gallery,TEXT("orgTouch"));}
     }
     else if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&(Base.EndsWith(TEXT("_Idle"))||Base==TEXT("K_Loop"))){
         bPlayed=true;AreaSeconds[TouchArea]+=Delta;
@@ -1868,7 +1868,7 @@ void UOKHScenePanel::TickScene(float Delta){
         // level8): two points a second, fifty seconds to her climax.
         Her+=Delta*2.f*CVarHHerRate.GetValueOnGameThread();if(bLockHer)Her=FMath::Min(Her,95.f);
         if(Rate>=.7f&&Used<=0.f&&TouchArea!=0){Note(OKT(TEXT("ui.hscene.too_hard")));Chain({TouchArea>=3&&TouchArea<=4?TEXT("Back_Dislikes"):TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;}
-        else if(Her>=100.f){Her=0.f;++AreaClimaxes[TouchArea];TouchArea=INDEX_NONE;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
+        else if(Her>=100.f){Her=0.f;++AreaClimaxes[TouchArea];TouchArea=INDEX_NONE;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();FOKInteractionModEvents::FireFinish(Gallery,TEXT("orgTouch"));}
     }else if(Mode==0&&SoloInfo){ // she plays by herself: TickSolo has her gauge (here it rose twice and finished as with him)
     }else if(Queue.IsEmpty()&&HIsLoop(Base)){
         if(Mode==1){His+=Delta*(2.5f+8.f*Rate)*Strong*CVarHHisRate.GetValueOnGameThread();if(bLockHis)His=FMath::Min(His,69.f);Her=FMath::Min(69.f,Her+Delta*.8f);if(His>=70.f&&Wanted.IsEmpty())Want(TEXT("OLoop"));}
@@ -2118,7 +2118,7 @@ void UOKHScenePanel::TickSolo(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTi
         else if(State==TEXT("MLoop")&&Her>=70.f)PlaySolo(TEXT("SLoop"));
         else if(State==TEXT("SLoop")&&Her>=100.f)PlaySolo(TEXT("OLoop"));
     }else if(State==TEXT("OLoop")&&Spent>=3.f){
-        ReleaseHeld();CountHerOrgasm();ClimaxUntil=FPlatformTime::Seconds()+6.;Note(OKT(TEXT("ui.hscene.event_her_orgasm")));PlaySolo(TEXT("Orgasm"));
+        ReleaseHeld();CountHerOrgasm();FOKInteractionModEvents::FireFinish(Gallery,TEXT("orgSolo"));ClimaxUntil=FPlatformTime::Seconds()+6.;Note(OKT(TEXT("ui.hscene.event_her_orgasm")));PlaySolo(TEXT("Orgasm"));
     }else if(State==TEXT("Orgasm")&&Spent>=Length)PlaySolo(TEXT("Orgasm_A"));
     else if(State==TEXT("Orgasm_A")){Her=FMath::Max(0.f,Her-Delta*12.f);if(Spent>=FMath::Min(6.f*Length,8.f))PlaySolo(TEXT("Orgasm_B"));}
     else if(State==TEXT("Orgasm_B")){Her=FMath::Max(0.f,Her-Delta*12.f);if(Spent>=4.f){Her=0.f;PlaySolo(TEXT("WLoop"));}}
