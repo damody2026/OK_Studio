@@ -7279,3 +7279,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 第一版 S13 回報寫「`ok.PairModBridgeSelfTest` 17/17 仍通過」，其實那是改動前跑的，最後的改動之後沒重跑。統籌指出後重跑（21/21）並更正。教訓：回報裡的「通過」要是在最後的程式上跑的。
   - 13 前置把 `FireFinish` 只放在 `UOKHScenePanel::Finish`；她愛撫與獨自的高潮走 `CountHerOrgasm` 不經 `Finish`，`pair.finish` 漏送。實機查高潮計數時讀程式才發現。另 `OKInteractionMod.h` 的種類範例（`org_in`、`same_out`）是憑印象寫的，實際是 `orgW`、`outside` 等，一併改正。
 - 2026-11-23 同步點 B（F 合併 C 的 78928db23）：合併後編輯器與遊戲建置都在 `KKModMaterials.cpp` 失敗（`'Linear'` 呼叫不明確）。工作項 9 在檔內匿名命名空間定義了 `Linear()`，合併進來的程式讓 unity build 把它和另一個同名函式編進同一個編譯單元。改名為 `ModSrgbToLinear`。教訓：檔內的小工具函式不要用 `Linear` 這種泛用名稱；在 unity build 裡，匿名命名空間擋不住同一個編譯單元內的撞名。
+
+- 2026-11-23 OK mod 工作項 9 收尾（卡內資源、skin-decal、toon-post，`Docs/OK_MOD_S9_FINISH.md`）：
+  - `material.post_texture` 有一個訂閱者時，每張貼圖都先解碼再交給 mod，讀卡器屬性工作從幾秒變成約 8 分鐘（約 2400 CPU 秒）。改成先問（不含像素、`"query": true`），只有回 want 的 mod 才拿像素。教訓：會對每個部件觸發的 hook，先讓 mod 說要不要，再做花時間的準備。
+  - 貼紙一直沒畫上去，有兩個原因：身體與臉的主貼圖不經 `push.rs` 的 emit（在 `extract.rs` 另外輸出），以及卡片路徑放在執行緒區域變數，開卡的部件工作在池執行緒上跑，拿到的是空的。分別在 `extract.rs` 補呼叫、`native_parallel_work` 把路徑帶進池執行緒。是暫時加 `OK_DECAL_DEBUG` log 與手動 `mod.call` 送 query 才查出來（log 已移除）。另外第一次提交漏了 `CardScope::named`，補了一個提交。教訓：執行緒區域變數要確認實際跑的執行緒；提交前 `git diff` 看一次有沒有漏掉的檔案。
+  - 讀卡器把核心區段 `ok.materials` 當成缺少的 mod 列出來。宿主的缺 mod 清單改為略過 `ok.*`。
+  - Lua 長字串 `[[ ]]` 裡有 `]]` 時提早結束，改用 `[==[ ]==]`；Lua 字串 `'\'` 經命令列轉了一次變成 `'\'`，改用 Edit 工具直接改。
+  - toon-post 第一次在 Studio 測，`-ModDevContent` 找不到內容外掛：`EnabledByDefault false` 又沒人啟用的外掛，以 `-game` 啟動時不在外掛管理器的清單裡，`FindPlugin` 回空；`MountExplicitlyLoadedPlugin` 也要 descriptor 有 `ExplicitlyLoaded`。改成先 `AddToPluginsList(<外掛>.uplugin)` 再 `MountNewlyCreatedPlugin`。
+  - 只建了編輯器就先測，`FMaterialResource::FinishCompilation` 只在 `WITH_EDITOR` 有，遊戲目標編不過；包 `#if WITH_EDITOR` 後兩個目標重建通過。教訓：共用外掛改完兩個目標都建過才算完成（規則本來就這樣寫）。
