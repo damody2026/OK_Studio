@@ -63,6 +63,9 @@ pub struct Object {
     pub name: String,
     pub parent: i64,
     pub visible: bool,
+    /// A shown character: the id its per-frame calls carry (`ok_mod_sdk::frame::Frame::character`). Changes when the
+    /// character is built again (outfit, card); None for other objects.
+    pub frame: Option<u64>,
 }
 
 /// The context of one call from the studio.
@@ -148,6 +151,7 @@ impl Call {
                             name: o.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
                             parent: o.get("parent").and_then(Value::as_i64).unwrap_or(-1),
                             visible: o.get("visible").and_then(Value::as_bool).unwrap_or(true),
+                            frame: o.get("frame").and_then(Value::as_str).and_then(|s| s.parse().ok()),
                         })
                     })
                     .collect()
