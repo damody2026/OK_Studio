@@ -606,6 +606,9 @@ impl<'a, 's> PushCtx<'a, 's> {
             _ => format!("{}_{}_{}_{}_sub{}", role, slot.unwrap_or(0), i, sanitize(&mesh.name), mesh.submesh_index),
         };
         if role.starts_with("clothes") { apply_clothes_default_main_texture(&mut mesh); }
+        // Mods' texture post-processing, the last step for every card kind (original, OK card, portable) before the
+        // texture reaches the session; nothing to do when no mod subscribed to material.post_texture.
+        crate::mod_forward::post_texture(role, &mesh.name, outfit, &mut mesh.texture_png);
         let (blend, unlit) = blend_for_mesh(role, &mesh);
         let (pth, tex) = emit_part(out_dir, session_parts, &stem, role, &mesh, &blend, unlit)?;
         if let Some(part)=session_parts.last_mut(){part.source_property=property.clone();}
