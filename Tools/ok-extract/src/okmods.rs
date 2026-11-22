@@ -24,13 +24,23 @@ pub fn set_enabled(mut mods: Vec<(String, String)>) {
     *ENABLED.write().unwrap_or_else(|e| e.into_inner()) = Some(mods);
 }
 
-/// The enabled mods (id, version), sorted: as set, else the game's host's `list` (`state: enabled`), else none.
+/// Whether a mod with these subscriptions can change what an open makes: it takes a hook that runs inside an open
+/// (`extract.*`), other than the conversion-only `extract.kkex` / `extract.kkex_keys`. Only those count in the open-cache
+/// key: a street or reader mod (birthday, subtitles, profile) changes nothing an open makes, and counting it made every
+/// cached open miss once a mod was installed (street heroines whose in-game cold open fails then never loaded; S10).
+pub fn changes_opens<'a>(subscriptions: impl IntoIterator<Item = &'a str>) -> bool {
+    subscriptions.into_iter().any(|s| s.starts_with("extract.") && s != "extract.kkex" && s != "extract.kkex_keys")
+}
+
+/// The enabled mods that can change an open (`changes_opens`), with their versions, sorted: as set, else the game's
+/// host's `list` (`state: enabled`), else none.
 pub fn enabled() -> Vec<(String, String)> {
     if let Some(set) = ENABLED.read().unwrap_or_else(|e| e.into_inner()).clone() { return set; }
     let Some(answer) = crate::mod_forward::dispatch(r#"{"op":"list"}"#) else { return Vec::new() };
     let Ok(list) = serde_json::from_str::<serde_json::Value>(&answer) else { return Vec::new() };
     let mut out: Vec<(String, String)> = list["mods"].as_array().into_iter().flatten()
         .filter(|m| m["state"] == "enabled")
+        .filter(|m| changes_opens(m["subscriptions"].as_array().into_iter().flatten().filter_map(|s| s.as_str())))
         .filter_map(|m| Some((m["id"].as_str()?.to_owned(), m["version"].as_str().unwrap_or_default().to_owned())))
         .collect();
     out.sort();
@@ -144,6 +154,11 @@ pub unsafe extern "C" fn ok_kkex_mod_sections(card_path: *const std::ffi::c_char
 mod tests {
     use super::*;
 
+    #[test]
+    fn only_open_changing_mods_count() {
+        assert!(!changes_opens(["street.day_change", "reader.ui", "extract.kkex", "extract.kkex_keys"]));
+        assert!(changes_opens(["reader.ui", "extract.post_texture"]));
+    }
     #[test]
     fn cache_key_bytes_only_with_mods() {
         // (the process-wide list is left alone: other tests compute open-cache keys meanwhile)
