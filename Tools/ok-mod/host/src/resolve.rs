@@ -31,7 +31,8 @@ pub struct Resolved {
     pub verdict: Verdict,
 }
 
-pub fn resolve(candidates: Vec<Candidate>, target: &str, disabled: &HashSet<String>, host_api: (u64, u64)) -> Vec<Resolved> {
+/// `targets`: the modes this process runs (a mod loads if it targets any of them).
+pub fn resolve(candidates: Vec<Candidate>, targets: &[String], disabled: &HashSet<String>, host_api: (u64, u64)) -> Vec<Resolved> {
     let mut out: Vec<Resolved> = candidates
         .into_iter()
         .map(|c| {
@@ -66,8 +67,8 @@ pub fn resolve(candidates: Vec<Candidate>, target: &str, disabled: &HashSet<Stri
 
     for r in out.iter_mut() {
         let (Some(m), Verdict::Load(_)) = (&r.manifest, &r.verdict) else { continue };
-        if !m.targets.iter().any(|t| t == target) {
-            r.verdict = Verdict::Skip(format!("not for mode {target} (targets: {})", m.targets.join(", ")));
+        if !m.targets.iter().any(|t| targets.contains(t)) {
+            r.verdict = Verdict::Skip(format!("not for mode {} (targets: {})", targets.join("/"), m.targets.join(", ")));
         } else if !api_compatible(parse_api(&m.api).unwrap_or((u64::MAX, 0)), host_api) {
             r.verdict = Verdict::Reject(format!("needs ok-mod-api {}, this host has {}.{}", m.api, host_api.0, host_api.1));
         } else if disabled.contains(&m.id) {
@@ -221,7 +222,7 @@ mod tests {
                 cand("id = \"a.d\"\nversion = \"1.0.0\"\n[dependencies]\n\"a.c\" = \"*\""),
                 cand("id = \"a.e\"\nversion = \"1.0.0\"\n[load_order]\nbefore = [\"a.core\"]"),
             ],
-            "reader",
+            &["reader".to_string()],
             &HashSet::new(),
             (0, 1),
         );
@@ -256,7 +257,7 @@ mod tests {
                 cand("id = \"a.hater\"\nversion = \"1.0.0\"\n[incompatible]\n\"a.off2\" = \"*\""),
                 cand("id = \"a.off2\"\nversion = \"1.0.0\""),
             ],
-            "reader",
+            &["reader".to_string()],
             &["a.off".to_string()].into_iter().collect(),
             (0, 1),
         );

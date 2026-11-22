@@ -38,11 +38,13 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 
 // request_json, by "op":
 //   {"op":"list"}
-//       -> {"host_version","api_version","abi_version","target","no_mods",
+//       -> {"host_version","api_version","abi_version","target","modes":[modes this process ran],"no_mods",
 //           "mods":[{"id","name","version","dir","state":"enabled|skipped|rejected|faulted|disabled",
 //                    "reason"?,"order"?,"rustc"?,"commands":["mod.<id>.<name>",...],"subscriptions":[...]}]}
 //   {"op":"event","event":"mode_enter"|"mode_exit","mode":"reader"}
 //       -> {"replies":[{"mod","ok",("text"|"json"|"error")?}]}   (only mods that subscribed)
+//       mode_enter for a mode this process has not run yet first loads the mods that target it (the street hands
+//       over to the 1-on-1 scene in the same process); mode_exit leaves every mod loaded.
 //   {"op":"command","command":"mod.<id>.<name>","args":"..."}  or  {"op":"command","mod","name","args"}
 //       -> {"ok":true,"text"?|"json"?} | {"ok":false,"error"}
 //   {"op":"config","mod":"<id>"}

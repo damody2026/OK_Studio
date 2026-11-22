@@ -374,3 +374,32 @@ fn c_abi_round_trip() {
     assert!(logs.iter().any(|l| l.contains("[org.openkoikatsu.hello] hello from hello")), "{logs:?}");
     assert!(logs.iter().any(|l| l.starts_with("1 [org.openkoikatsu.test.panic] disabled after a panic")), "{logs:?}");
 }
+
+#[test]
+fn entering_another_mode_loads_its_mods() {
+    let _g = serial();
+    let dlls = build(Build::Current).unwrap();
+    let s = Scratch::new("modes");
+    s.hello(&dlls);
+    // The panic fixture (told not to panic) stands in for a studio-only mod.
+    std::env::set_var("OK_MOD_TEST_PANIC_AT", "never");
+    s.install("studio-only", "fixtures/panic-mod", &dlls, "ok_fixture_panic.dll", |t| {
+        t.replace("targets = [\"reader\", \"studio\", \"pair\", \"street\", \"extract\"]", "targets = [\"studio\"]")
+    });
+    let (mut host, logs) = open(&s, "street");
+    assert_eq!(status(&host.statuses(), "org.openkoikatsu.test.panic").state, "skipped");
+    let replies = host.enter_mode("street");
+    assert_eq!(replies.len(), 1, "hello subscribed to mode_enter");
+    // The same process goes on to the studio: its mods load then, and both subscribers hear of it.
+    let replies = host.enter_mode("studio");
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(status(&host.statuses(), "org.openkoikatsu.test.panic").state, "enabled");
+    assert!(logged(&logs, "org.openkoikatsu.test.panic", "loaded Panic test"));
+    assert!(logged(&logs, "", "mode street/studio: 2 mod(s) enabled"));
+    assert_eq!(host.modes(), ["street".to_string(), "studio".to_string()]);
+    // Entering it again loads nothing twice.
+    host.enter_mode("studio");
+    assert_eq!(host.statuses().iter().filter(|m| m.state == "enabled").count(), 2);
+    assert_eq!(host.exit_mode("studio").len(), 1, "only hello subscribed to mode_exit");
+    std::env::remove_var("OK_MOD_TEST_PANIC_AT");
+}

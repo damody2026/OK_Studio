@@ -9,7 +9,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use ok_mod_api::{Event, LogLevel, Reply};
+use ok_mod_api::{LogLevel, Reply};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -141,16 +141,19 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
             "api_version": ok_mod_api::API_VERSION,
             "abi_version": ok_mod_api::ABI_VERSION,
             "target": host.target(),
+            "modes": host.modes(),
             "no_mods": host.no_mods(),
             "mods": host.statuses(),
         }),
         "event" => {
-            let event = match str_field(req, "event")? {
-                "mode_enter" => Event::ModeEnter { mode: str_field(req, "mode")?.into() },
-                "mode_exit" => Event::ModeExit { mode: str_field(req, "mode")?.into() },
+            let mode = str_field(req, "mode")?;
+            let replies = match str_field(req, "event")? {
+                // Also loads the mods for that mode when this process had not run it yet.
+                "mode_enter" => host.enter_mode(mode),
+                "mode_exit" => host.exit_mode(mode),
                 other => return Err(format!("unknown event \"{other}\"")),
             };
-            json!({"replies": replies_json(host.dispatch(&event))})
+            json!({"replies": replies_json(replies)})
         }
         "command" => {
             let args = req.get("args").and_then(Value::as_str).unwrap_or("");

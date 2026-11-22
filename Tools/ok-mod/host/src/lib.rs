@@ -173,6 +173,8 @@ struct ModEntry {
     state: State,
     order: Option<usize>,
     loaded: Option<Loaded>,
+    /// Load was attempted (successfully or not).
+    tried: bool,
 }
 
 /// Result of one mod's handling of an event or command.
@@ -188,6 +190,8 @@ pub struct ModHost {
     mods: Vec<ModEntry>,
     /// Indices into `mods`, in load order.
     order: Vec<usize>,
+    /// Modes this process has run (`HostConfig::target` first).
+    targets: Vec<String>,
     closed: bool,
 }
 
@@ -195,49 +199,92 @@ impl ModHost {
     /// Discovers, resolves and loads the mods, then sends `Enabled` to each loaded mod in order.
     /// Never fails as a whole: every problem only affects the mod it belongs to.
     pub fn open(config: HostConfig, log: LogSink) -> ModHost {
-        let mut host = ModHost { config, log, mods: Vec::new(), order: Vec::new(), closed: false };
+        let targets = vec![config.target.clone()];
+        let mut host = ModHost { config, log, mods: Vec::new(), order: Vec::new(), targets, closed: false };
         if host.config.no_mods {
             host.host_log(LogLevel::Info, "mods are off (-NoMods)");
             return host;
         }
-        let candidates = discover(&host.config.mods_dir);
-        let resolved = resolve::resolve(candidates, &host.config.target, &host.config.disabled, host_api());
-        let mut load_order: Vec<(usize, usize)> = Vec::new();
+        host.scan();
+        host
+    }
+
+    /// Discovers and resolves for every mode of this process, then loads what may load and was not
+    /// tried yet, in order, and sends those `Enabled`. A mod tried once (loaded, refused at load,
+    /// faulted) is never tried again in this process.
+    fn scan(&mut self) {
+        let candidates = discover(&self.config.mods_dir);
+        let resolved = resolve::resolve(candidates, &self.targets, &self.config.disabled, host_api());
+        let mut to_load: Vec<(usize, usize)> = Vec::new();
         for r in resolved {
-            let idx = host.mods.len();
             let (state, order) = match r.verdict {
-                Verdict::Load(n) => {
-                    load_order.push((n, idx));
-                    (State::Enabled, Some(n))
-                }
+                Verdict::Load(n) => (State::Enabled, Some(n)),
                 Verdict::Skip(why) => (State::Skipped(why), None),
                 Verdict::Reject(why) => (State::Rejected(why), None),
             };
-            host.mods.push(ModEntry { id: r.id, manifest: r.manifest, dir: r.dir, state, order, loaded: None });
-        }
-        load_order.sort();
-        for (_, idx) in load_order {
-            host.load(idx);
-            if host.mods[idx].state == State::Enabled {
-                host.order.push(idx);
+            let idx = match self.mods.iter().position(|m| m.dir == r.dir) {
+                Some(i) if self.mods[i].tried => continue,
+                Some(i) => i,
+                None => {
+                    self.mods.push(ModEntry { id: r.id.clone(), manifest: None, dir: r.dir.clone(), state: State::Skipped(String::new()), order: None, loaded: None, tried: false });
+                    self.mods.len() - 1
+                }
+            };
+            let m = &mut self.mods[idx];
+            m.id = r.id;
+            m.manifest = r.manifest;
+            m.state = state;
+            m.order = order;
+            if let Some(n) = order {
+                to_load.push((n, idx));
             }
         }
-        for m in &host.mods {
+        to_load.sort();
+        let mut fresh = Vec::new();
+        for (_, idx) in to_load {
+            self.mods[idx].tried = true;
+            self.load(idx);
+            if self.mods[idx].state == State::Enabled {
+                self.order.push(idx);
+                fresh.push(idx);
+            }
+        }
+        for m in &self.mods {
             match &m.state {
-                State::Rejected(why) => host.host_log(LogLevel::Warn, &format!("{} not loaded: {why}", m.id)),
-                State::Skipped(why) => host.host_log(LogLevel::Verbose, &format!("{} skipped: {why}", m.id)),
+                State::Rejected(why) if !m.tried || m.loaded.is_none() => self.host_log(LogLevel::Warn, &format!("{} not loaded: {why}", m.id)),
+                State::Skipped(why) => self.host_log(LogLevel::Verbose, &format!("{} skipped: {why}", m.id)),
                 _ => {}
             }
         }
-        for idx in host.order.clone() {
-            let _ = host.call_event(idx, &Event::Enabled);
+        for idx in fresh {
+            let _ = self.call_event(idx, &Event::Enabled);
         }
-        let enabled: Vec<&str> = host.order.iter().filter(|i| host.mods[**i].state == State::Enabled).map(|i| host.mods[*i].id.as_str()).collect();
-        host.host_log(
+        let enabled: Vec<&str> = self.order.iter().filter(|i| self.mods[**i].state == State::Enabled).map(|i| self.mods[*i].id.as_str()).collect();
+        self.host_log(
             LogLevel::Info,
-            &format!("mode {}: {} mod(s) enabled{}{}", host.config.target, enabled.len(), if enabled.is_empty() { "" } else { ": " }, enabled.join(", ")),
+            &format!("mode {}: {} mod(s) enabled{}{}", self.targets.join("/"), enabled.len(), if enabled.is_empty() { "" } else { ": " }, enabled.join(", ")),
         );
-        host
+    }
+
+    /// A game mode starts in this process (`reader`, `studio`, `pair`, `street`): mods for it that
+    /// are not loaded yet are loaded, then subscribers get `mode_enter`. The street hands over to the
+    /// 1-on-1 scene in the same process, so a process can run several modes.
+    pub fn enter_mode(&mut self, mode: &str) -> Vec<ModReply> {
+        if !self.config.no_mods && !self.targets.iter().any(|t| t == mode) {
+            self.targets.push(mode.to_string());
+            self.scan();
+        }
+        self.dispatch(&Event::ModeEnter { mode: mode.into() })
+    }
+
+    /// Subscribers get `mode_exit`; the mods stay loaded.
+    pub fn exit_mode(&mut self, mode: &str) -> Vec<ModReply> {
+        self.dispatch(&Event::ModeExit { mode: mode.into() })
+    }
+
+    /// The modes this process has run, first one first.
+    pub fn modes(&self) -> &[String] {
+        &self.targets
     }
 
     fn host_log(&self, level: LogLevel, message: &str) {
