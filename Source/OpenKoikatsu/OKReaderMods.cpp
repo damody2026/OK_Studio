@@ -4,6 +4,7 @@
 #include "Misc/Paths.h"
 #include "OKCharacterController.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKModContent.h"
 #include "OKModHost.h"
 #include "OKReaderText.h"
 #include "Serialization/JsonReader.h"
@@ -141,6 +142,8 @@ void OKReaderMods::Loaded(UOKCharacterController* G,const FString& Card,int32 Ou
 	if(!Active()||Card.IsEmpty())return;
 	const FString Full=FPaths::ConvertRelativePathToFull(Card);
 	if(Full==GCard&&Outfit==GOutfit)return;
+	// The card's mod material overrides (ok.materials), with its own fallback where the mod is not here.
+	OKModContent::CardLoaded(Full);
 	if(Full==GCard)
 	{
 		GOutfit=Outfit;
@@ -194,6 +197,7 @@ void OKReaderMods::Saved(UOKCharacterController* G,const FString& Path)
 	if(!Active())return;
 	auto R=Op(TEXT("card_store"));R->SetStringField(TEXT("card"),FPaths::ConvertRelativePathToFull(Path));R->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);
 	const TSharedPtr<FJsonObject> Answer=Ask(R);
+	OKModContent::CardSaved(FPaths::ConvertRelativePathToFull(Path));
 	if(!Answer.IsValid())return;
 	const TArray<TSharedPtr<FJsonValue>>* Errors=nullptr;
 	if(Answer->TryGetArrayField(TEXT("errors"),Errors))for(const auto& E:*Errors)if(const auto O=E->AsObject())UE_LOG(LogOKMod,Warning,TEXT("[%s] not saved into the card: %s"),*O->GetStringField(TEXT("mod")),*O->GetStringField(TEXT("error")));

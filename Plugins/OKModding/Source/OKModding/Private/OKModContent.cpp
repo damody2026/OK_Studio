@@ -32,6 +32,9 @@
 #include "UObject/Package.h"
 #include "UObject/UObjectHash.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
+#include "Misc/Base64.h"
 #include "Containers/Ticker.h"
 #include "HAL/PlatformTime.h"
 #include "UnrealClient.h"
@@ -39,6 +42,15 @@
 namespace
 {
 TMap<FString, TSharedPtr<FKKModMaterial>> GMaterials;
+// Every enabled mod's material declaration by id ({"op":"content"}), for the A-layer fallback a card keeps.
+TMap<FString, TSharedPtr<FJsonObject>> GDecls;
+// The card reader's overrides on the character shown (mod.material.apply, or read from the card).
+struct FCardOverride { FString Part; FString Material; TSharedPtr<FJsonObject> Fallback; };
+TArray<FCardOverride> GOverrides;
+// The card shown had an "ok.materials" section: a save without overrides removes it.
+bool GCardHadOverrides = false;
+// Fallback materials built from cards, by material id.
+TMap<FString, TSharedPtr<FKKModMaterial>> GFallbacks;
 // Mods whose content was handled (mounted or refused) in this process: B layer is set up once.
 TMap<FString, bool> GContentUsable;
 
@@ -226,6 +238,7 @@ void OKModContent::Refresh()
 	if (!Answer.IsValid() || !Answer->TryGetArrayField(TEXT("mods"), Mods)) return;
 	TMap<FString, TSharedPtr<FKKModMaterial>> Materials;
 	TMap<FString, TSharedPtr<FKKModMaterial>> Families;
+	GDecls.Reset();
 	for (const TSharedPtr<FJsonValue>& Value : *Mods)
 	{
 		const TSharedPtr<FJsonObject> Mod = Value->AsObject();
@@ -247,6 +260,7 @@ void OKModContent::Refresh()
 		for (const TSharedPtr<FJsonValue>& D : *Decls)
 		{
 			const TSharedPtr<FJsonObject> M = D->AsObject();
+			if (M.IsValid()) GDecls.Add(M->GetStringField(TEXT("id")), M);
 			// Built once per process: a refresh after another mode loaded keeps the existing instances.
 			TSharedPtr<FKKModMaterial> Material = GMaterials.FindRef(M->GetStringField(TEXT("id")));
 			if (!Material) Material = BuildMaterial(Id, bContent, M);
@@ -351,13 +365,11 @@ static void OKModMaterialList(const TArray<FString>&, FOutputDevice& Out)
 	Out.Log(FString::Printf(TEXT("%d material(s), %d shader famil(ies); content build %s"), OKModContent::MaterialIds().Num(), KKModMaterials::FamilyCount(), *OKModContent::ContentBuild()));
 }
 
-// mod.material.apply <material id> <part name substring>: that material on every matching part of the characters shown
-// (MaterialEditor's shader swap, for this session; kept on the card once card data is open to mods).
-static void OKModMaterialApply(const TArray<FString>& Args, FOutputDevice& Out)
+// Material M on every part of the characters shown whose role or component name contains PartName (and on what draws
+// it). Returns the material slots changed.
+static int32 OKModApplyToParts(const FKKModMaterial& Material, const FString& PartName)
 {
-	if (Args.Num() < 2) { Out.Log(TEXT("mod.material.apply <mod id>/<name> <part name substring>")); return; }
-	const TSharedPtr<FKKModMaterial> M = OKModContent::Find(Args[0]);
-	if (!M) { Out.Log(TEXT("no mod material ") + Args[0] + TEXT(" (mod.material.list)")); return; }
+	const FKKModMaterial* M = &Material;
 	UWorld* World = OKModGameWorld();
 	int32 Applied = 0;
 	if (World)
@@ -370,7 +382,7 @@ static void OKModMaterialApply(const TArray<FString>& Args, FOutputDevice& Out)
 			TMap<UMeshComponent*, FString> RoleOf;
 			for (const FKKLoadedPart& Part : It->Parts)
 			{
-				if (!Part.Comp || !(Part.Role.Contains(Args[1]) || Part.Comp->GetName().Contains(Args[1]))) continue;
+				if (!Part.Comp || !(Part.Role.Contains(PartName) || Part.Comp->GetName().Contains(PartName))) continue;
 				Targets.Add(Part.Comp);
 				RoleOf.Add(Part.Comp, Part.Role);
 				if (Part.SessionIndex != INDEX_NONE) Sessions.Add(Part.SessionIndex);
@@ -401,7 +413,45 @@ static void OKModMaterialApply(const TArray<FString>& Args, FOutputDevice& Out)
 				UE_LOG(LogOKMod, Display, TEXT("mod.material.apply %s on %s.%s slot %d (%s)"), *M->Id, *It->GetName(), *Mesh->GetName(), Slot, *RoleOf.FindRef(Mesh));
 			}
 		}
+	return Applied;
+}
+
+// The A-layer fallback a card keeps for a mod material: its declaration without the mod's own asset and textures (a
+// core parent with its parameter values), so the card draws without that mod.
+static TSharedPtr<FJsonObject> OKModFallbackOf(const FString& Id)
+{
+	const TSharedPtr<FJsonObject>* Decl = GDecls.Find(Id);
+	auto Out = MakeShared<FJsonObject>();
+	Out->SetStringField(TEXT("id"), Id);
+	FString Parent = TEXT("translucent");
+	if (Decl) (*Decl)->TryGetStringField(TEXT("parent"), Parent);
+	Out->SetStringField(TEXT("parent"), Parent.IsEmpty() ? TEXT("translucent") : Parent);
+	bool bCopy = true;
+	if (Decl) (*Decl)->TryGetBoolField(TEXT("copy_source_values"), bCopy);
+	Out->SetBoolField(TEXT("copy_source_values"), bCopy);
+	for (const TCHAR* Field : { TEXT("scalars"), TEXT("vectors") })
+	{
+		const TSharedPtr<FJsonObject>* Obj = nullptr;
+		if (Decl && (*Decl)->TryGetObjectField(Field, Obj)) Out->SetObjectField(Field, *Obj);
+	}
+	return Out;
+}
+
+// mod.material.apply <material id> <part name substring>: that material on every matching part of the characters shown
+// (MaterialEditor's shader swap). The card reader keeps it in the card on the next save (OKModContent::CardSaved).
+static void OKModMaterialApply(const TArray<FString>& Args, FOutputDevice& Out)
+{
+	if (Args.Num() < 2) { Out.Log(TEXT("mod.material.apply <mod id>/<name> <part name substring>")); return; }
+	const TSharedPtr<FKKModMaterial> M = OKModContent::Find(Args[0]);
+	if (!M) { Out.Log(TEXT("no mod material ") + Args[0] + TEXT(" (mod.material.list)")); return; }
+	UWorld* World = OKModGameWorld();
+	const int32 Applied = OKModApplyToParts(*M, Args[1]);
 	Out.Log(FString::Printf(TEXT("%s on %d material slot(s)"), *M->Id, Applied));
+	if (Applied)
+	{
+		GOverrides.RemoveAll([&](const FCardOverride& O) { return O.Part == Args[1]; });
+		GOverrides.Add({ Args[1], M->Id, OKModFallbackOf(M->Id) });
+	}
 	if (!Applied && World)
 	{
 		TArray<FString> Roles;
@@ -460,3 +510,106 @@ static FAutoConsoleCommandWithArgsAndOutputDevice GOKModMaterialApply(TEXT("mod.
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModMaterialApply));
 static FAutoConsoleCommandWithArgsAndOutputDevice GOKModMaterialPreview(TEXT("mod.material.preview"), TEXT("Mods: mod.material.preview <mod id>/<name>... -- each on a plane in front of the camera"),
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModMaterialPreview));
+
+// mod.material.clear: forget the reader's overrides (the parts keep their look until the card is opened again; the next
+// save removes them from the card).
+static void OKModMaterialClear(const TArray<FString>&, FOutputDevice& Out)
+{
+	Out.Log(FString::Printf(TEXT("%d override(s) cleared"), GOverrides.Num()));
+	GOverrides.Reset();
+}
+static FAutoConsoleCommandWithArgsAndOutputDevice GOKModMaterialClear(TEXT("mod.material.clear"), TEXT("Mods: forget the card reader's material overrides (the next save removes them from the card)"),
+	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModMaterialClear));
+
+// ---------------------------------------------------------------------------------------------- overrides in the card
+
+static const TCHAR* GOverrideSection = TEXT("ok.materials");
+
+void OKModContent::CardLoaded(const FString& Card)
+{
+	check(IsInGameThread());
+	GOverrides.Reset();
+	GCardHadOverrides = false;
+	TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
+	Request->SetStringField(TEXT("op"), TEXT("card_core"));
+	Request->SetStringField(TEXT("card"), Card);
+	Request->SetStringField(TEXT("id"), GOverrideSection);
+	FString Error, Data64;
+	const TSharedPtr<FJsonObject> Answer = FOKModHost::Get().DispatchJson(Request, Error);
+	if (!Answer.IsValid() || !Answer->TryGetStringField(TEXT("data_b64"), Data64)) return;
+	GCardHadOverrides = true;
+	TArray<uint8> Bytes;
+	FBase64::Decode(Data64, Bytes);
+	const FUTF8ToTCHAR Conv(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
+	const FString Text(Conv.Length(), Conv.Get());
+	TSharedPtr<FJsonObject> Doc;
+	const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Doc) || !Doc.IsValid() || !Doc->TryGetArrayField(TEXT("overrides"), List))
+	{
+		UE_LOG(LogOKMod, Warning, TEXT("%s: %s is not readable; overrides not applied"), *Card, GOverrideSection);
+		return;
+	}
+	for (const TSharedPtr<FJsonValue>& V : *List)
+	{
+		const TSharedPtr<FJsonObject> O = V->AsObject();
+		if (!O.IsValid()) continue;
+		FCardOverride Override;
+		O->TryGetStringField(TEXT("part"), Override.Part);
+		O->TryGetStringField(TEXT("material"), Override.Material);
+		const TSharedPtr<FJsonObject>* Fallback = nullptr;
+		if (O->TryGetObjectField(TEXT("fallback"), Fallback)) Override.Fallback = *Fallback;
+		if (Override.Part.IsEmpty() || Override.Material.IsEmpty()) continue;
+		TSharedPtr<FKKModMaterial> M = Find(Override.Material);
+		const TCHAR* Source = TEXT("mod");
+		if (!M && Override.Fallback.IsValid())
+		{
+			// The mod is not here: the card's own A-layer material (a core parent with the saved values).
+			M = GFallbacks.FindRef(Override.Material);
+			if (!M)
+			{
+				TSharedRef<FJsonObject> Decl = MakeShared<FJsonObject>(*Override.Fallback);
+				Decl->SetStringField(TEXT("id"), Override.Material);
+				M = BuildMaterial(TEXT("card"), false, Decl);
+				if (M) GFallbacks.Add(Override.Material, M);
+			}
+			Source = TEXT("the card's fallback (mod material not here)");
+		}
+		const int32 Slots = M ? OKModApplyToParts(*M, Override.Part) : 0;
+		UE_LOG(LogOKMod, Display, TEXT("%s: %s on %s from %s: %d material slot(s)"), *FPaths::GetCleanFilename(Card), *Override.Material, *Override.Part, M ? Source : TEXT("nowhere (no fallback)"), Slots);
+		GOverrides.Add(MoveTemp(Override));
+	}
+}
+
+void OKModContent::CardSaved(const FString& Card)
+{
+	check(IsInGameThread());
+	if (GOverrides.IsEmpty() && !GCardHadOverrides) return;
+	TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
+	Request->SetStringField(TEXT("op"), TEXT("card_core"));
+	Request->SetStringField(TEXT("card"), Card);
+	Request->SetStringField(TEXT("id"), GOverrideSection);
+	if (GOverrides.IsEmpty()) Request->SetField(TEXT("data_b64"), MakeShared<FJsonValueNull>());
+	else
+	{
+		TArray<TSharedPtr<FJsonValue>> List;
+		for (const FCardOverride& O : GOverrides)
+		{
+			auto Item = MakeShared<FJsonObject>();
+			Item->SetStringField(TEXT("part"), O.Part);
+			Item->SetStringField(TEXT("material"), O.Material);
+			if (O.Fallback.IsValid()) Item->SetObjectField(TEXT("fallback"), O.Fallback);
+			List.Add(MakeShared<FJsonValueObject>(Item));
+		}
+		auto Doc = MakeShared<FJsonObject>();
+		Doc->SetArrayField(TEXT("overrides"), List);
+		FString Text;
+		FJsonSerializer::Serialize(Doc, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Text));
+		const FTCHARToUTF8 Utf8(*Text);
+		Request->SetStringField(TEXT("data_b64"), FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length()));
+	}
+	FString Error;
+	const TSharedPtr<FJsonObject> Answer = FOKModHost::Get().DispatchJson(Request, Error);
+	if (!Answer.IsValid()) { UE_LOG(LogOKMod, Warning, TEXT("%s: material overrides not saved: %s"), *Card, *Error); return; }
+	GCardHadOverrides = !GOverrides.IsEmpty();
+	UE_LOG(LogOKMod, Display, TEXT("%s: %d material override(s) saved into the card"), *FPaths::GetCleanFilename(Card), GOverrides.Num());
+}
