@@ -97,6 +97,10 @@ public:
 	// On screen now: itself and every parent shown and active. GetShown is only its own flag, and a control on a
 	// hidden tab or in a folded drawer keeps it (e-cardload 2026-11-19: no control was ever marked [not shown]).
 	bool IsOnScreen() const;
+	// A control of the screen's own that a person operates, with no UMG behind it (a mod page's): number, bool, choice,
+	// text or button; empty for any other. The game MCP's ui_widgets lists these with the UMG controls.
+	FString BoundKind() const;
+	void DescribeBound(FJsonObject& Out) const;
 	const FString& GetShownText() const { return ShownText; }
 
 protected:
@@ -165,6 +169,10 @@ public:
 
 	// Show this screen for the controller, whose UMG tree must already be built.
 	static UOKReaderScreen* Open(UOKCharacterController* Controller);
+	// The reader screen up now, or null.
+	static UOKReaderScreen* Shown();
+	// Its controls a person operates that no UMG control stands behind (BoundKind), on screen now.
+	TArray<UOKDreamControl*> BoundControls() const;
 	// Every frame from the controller's tick.
 	void Tick(float DeltaSeconds);
 	// The screen's own state, for the game MCP's reader state.

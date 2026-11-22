@@ -38,6 +38,7 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Controls/DreamSpinBox.h"
 #include "Controls/DreamRadioButton.h"
 #include "Controls/DreamListView.h"
+#include "Controls/DreamTabView.h"
 #include "Event/DreamEventSystem.h"
 #include "Event/DreamPointerEventData.h"
 #include "Event/DreamUIInputTypes.h"
@@ -288,8 +289,41 @@ bool OKReaderPicturesShown(){return CVarReaderPictures.GetValueOnGameThread()!=0
 bool UOKDreamControl::IsOnScreen() const
 {
 	if(!GetWidgetActiveInHierarchy())return false;
-	for(const UDreamWidget* At=this;At;At=At->GetParent())if(!At->GetShown())return false;
+	TArray<const UDreamWidget*> Up;
+	for(const UDreamWidget* At=this;At;At=At->GetParent()){if(!At->GetShown())return false;Up.Add(At);}
+	// A tab view keeps its other pages shown and only switches which one it draws: under one, the open page must be ours.
+	for(const UDreamWidget* At:Up)if(const auto* View=Cast<UDreamTabView>(At))if(const UDreamWidget* Open=View->GetActivePage())if(!Up.Contains(Open))return false;
 	return true;
+}
+// A control of the screen's own that a person operates (no UMG behind it): a mod page's value controls and buttons.
+FString UOKDreamControl::BoundKind() const
+{
+	if(Source.IsValid())return FString();
+	if(Push)
+	{
+		if(Slider||Spin)return TEXT("number");
+		if(Toggle||Radio)return TEXT("bool");
+		if(Choice||List)return TEXT("choice");
+		if(Input)return TEXT("text");
+	}
+	if(Button&&OnPressed)return TEXT("button");
+	return FString();
+}
+void UOKDreamControl::DescribeBound(FJsonObject& Out) const
+{
+	const FString Kind=BoundKind();Out.SetStringField(TEXT("kind"),Kind==TEXT("button")?TEXT("button"):Kind);
+	Out.SetBoolField(TEXT("enabled"),GetIsEnabled());
+	if(Slider){Out.SetNumberField(TEXT("value"),Slider->GetValue());Out.SetNumberField(TEXT("min"),Slider->GetMinValue());Out.SetNumberField(TEXT("max"),Slider->GetMaxValue());}
+	else if(Spin){Out.SetNumberField(TEXT("value"),Spin->GetValue());Out.SetNumberField(TEXT("min"),Spin->GetMinValue());Out.SetNumberField(TEXT("max"),Spin->GetMaxValue());}
+	else if(Radio)Out.SetBoolField(TEXT("value"),Radio->GetIsOn());
+	else if(Toggle)Out.SetBoolField(TEXT("value"),Toggle->GetIsOn());
+	else if(Choice||List)
+	{
+		const int32 I=Choice?Choice->GetSelectedIndex():List->GetSelectedIndex();
+		Out.SetStringField(TEXT("value"),BoundOptions.IsValidIndex(I)?BoundOptions[I]:FString());
+		TArray<TSharedPtr<FJsonValue>> Choices;for(const FString& O:BoundOptions)Choices.Add(MakeShared<FJsonValueString>(O));Out.SetArrayField(TEXT("choices"),Choices);
+	}
+	else if(Input)Out.SetStringField(TEXT("value"),Input->GetText());
 }
 bool UOKDreamControl::IsOperable() const
 {
@@ -608,6 +642,14 @@ UDreamWidget* UOKReaderScreen::MakePanel(UDreamWidget* Into,bool bHorizontal,flo
 	W->SetSizeDelta(FVector2D::ZeroVector);
 	if(Into)AddToHost(Into,W,false);
 	return W;
+}
+
+UOKReaderScreen* UOKReaderScreen::Shown(){UOKReaderScreen* S=GScreen.Get();return IsValid(S)?S:nullptr;}
+TArray<UOKDreamControl*> UOKReaderScreen::BoundControls() const
+{
+	TArray<UOKDreamControl*> Out;
+	for(UOKDreamControl* C:Controls)if(IsValid(C)&&!C->BoundKind().IsEmpty()&&C->IsOnScreen())Out.Add(C);
+	return Out;
 }
 
 void UOKReaderScreen::AddToHost(UDreamWidget* Host,UDreamWidget* Child,bool bFill)

@@ -178,6 +178,18 @@ bool SetValue(UWidget* W,const TSharedPtr<FJsonValue>& V,FString& Error)
  if(auto* G=W->GetTypedOuter<UOKCharacterController>())G->ApplyPendingEditorMods();
  return true;
 }
+// The card reader's DreamGUI controls that no UMG control stands behind (a mod page's, OKReaderModPage.cpp): listed and set
+// beside the UMG ones. Key "Dream/<path>", the path the reader screen gives (ok.ReaderScreen controls).
+TArray<UOKDreamControl*> DreamBound(){UOKReaderScreen* R=UOKReaderScreen::Shown();return R?R->BoundControls():TArray<UOKDreamControl*>();}
+FString DreamKey(UOKDreamControl* C){UOKReaderScreen* R=UOKReaderScreen::Shown();return TEXT("Dream/")+(R?R->ControlPath(C):C->GetName());}
+FObject DescribeDream(UOKDreamControl* C){FObject O=MakeShared<FJsonObject>();const FString Key=DreamKey(C);O->SetStringField(TEXT("key"),Key);O->SetStringField(TEXT("label"),Key.Mid(6));C->DescribeBound(*O);return O;}
+bool SetDream(UOKDreamControl* C,const TSharedPtr<FJsonValue>& V,FString& Error)
+{
+ if(!V.IsValid()){Error=TEXT("value is required");return false;}
+ FString T;double N=0;bool B=false;
+ if(V->TryGetString(T)){}else if(V->Type==EJson::Boolean&&V->TryGetBool(B))T=B?TEXT("1"):TEXT("0");else if(V->TryGetNumber(N))T=FString::SanitizeFloat(N,0);else{Error=TEXT("a number, true/false or text");return false;}
+ return C->SetValue(T,&Error);
+}
 TArray<TSharedPtr<FJsonValue>> Vec(double X,double Y,double Z){return {MakeShared<FJsonValueNumber>(X),MakeShared<FJsonValueNumber>(Y),MakeShared<FJsonValueNumber>(Z)};}
 
 void Bind(const TCHAR* Path,EHttpServerRequestVerbs Verb,OKControl::FHandler Fn){OKControl::Bind(TEXT("ui"),Path,Verb,MoveTemp(Fn));}
@@ -198,13 +210,22 @@ void Routes()
   const FScreen S=Screen();const auto Widgets=Operable();FRows Pressable,Values;TMap<FString,int32> Seen;
   for(const FButton& B:Buttons(S,Widgets)){FObject O=MakeShared<FJsonObject>();O->SetStringField(TEXT("label"),B.Label);O->SetNumberField(TEXT("index"),Seen.FindOrAdd(B.Label)++);O->SetBoolField(TEXT("enabled"),B.Enabled);Pressable.Add(MakeShared<FJsonValueObject>(O));}
   for(UWidget* W:Widgets)if(!IsA<UButton>(W))Values.Add(MakeShared<FJsonValueObject>(Describe(W)));
+  for(UOKDreamControl* C:DreamBound())
+  {
+   if(C->BoundKind()==TEXT("button")){FObject O=MakeShared<FJsonObject>();const FString Label=C->GetShownText();O->SetStringField(TEXT("label"),Label);O->SetNumberField(TEXT("index"),Seen.FindOrAdd(Label)++);O->SetBoolField(TEXT("enabled"),C->GetIsEnabled());Pressable.Add(MakeShared<FJsonValueObject>(O));}
+   else Values.Add(MakeShared<FJsonValueObject>(DescribeDream(C)));
+  }
   FObject O=Result(true);O->SetArrayField(TEXT("buttons"),Pressable);O->SetArrayField(TEXT("controls"),Values);Reply(Done,O);});
  // {label, index}: press that button. {key | label, index, value}: set that control.
  Bind(TEXT("/widget"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   FObject B=Body(Req);FString Key,Label;B->TryGetStringField(TEXT("key"),Key);B->TryGetStringField(TEXT("label"),Label);double Index=0;B->TryGetNumberField(TEXT("index"),Index);
   const auto Widgets=Operable();
-  if(!B->HasField(TEXT("value"))){int32 Nth=0;for(const FButton& Button:Buttons(Screen(),Widgets))if(Button.Label==Label&&Nth++==int32(Index)){if(!Button.Enabled){Reply(Done,Result(false,TEXT("disabled")));return;}if(Button.Umg)Button.Umg->OnClicked.Broadcast();else StaticCastSharedPtr<SButton>(Button.Slate)->SimulateClick();Reply(Done,Result(true));return;}Reply(Done,Result(false,TEXT("no such button on screen")));return;}
+  if(!B->HasField(TEXT("value"))){int32 Nth=0;for(const FButton& Button:Buttons(Screen(),Widgets))if(Button.Label==Label&&Nth++==int32(Index)){if(!Button.Enabled){Reply(Done,Result(false,TEXT("disabled")));return;}if(Button.Umg)Button.Umg->OnClicked.Broadcast();else StaticCastSharedPtr<SButton>(Button.Slate)->SimulateClick();Reply(Done,Result(true));return;}
+   // Then the reader's own DreamGUI buttons (a mod page's), counted on after the others, as /widgets lists them.
+   for(UOKDreamControl* C:DreamBound())if(C->BoundKind()==TEXT("button")&&C->GetShownText()==Label&&Nth++==int32(Index)){Reply(Done,C->Press()?Result(true):Result(false,TEXT("disabled")));return;}
+   Reply(Done,Result(false,TEXT("no such button on screen")));return;}
   int32 Nth=0;for(UWidget* W:Widgets)if(!IsA<UButton>(W)&&(Key.IsEmpty()?(OKCharacterMCPRegistry::Label(W)==Label&&Nth++==int32(Index)):KeyOf(W)==Key)){FString Error;const bool Ok=SetValue(W,B->TryGetField(TEXT("value")),Error);Reply(Done,Ok?Describe(W):Result(false,Error));return;}
+  for(UOKDreamControl* C:DreamBound())if(C->BoundKind()!=TEXT("button")&&(Key.IsEmpty()?(DreamKey(C).Mid(6)==Label&&Nth++==int32(Index)):DreamKey(C)==Key)){FString Error;const bool Ok=SetDream(C,B->TryGetField(TEXT("value")),Error);Reply(Done,Ok?DescribeDream(C):Result(false,Error));return;}
   Reply(Done,Result(false,TEXT("no such control on screen")));});
  Bind(TEXT("/exec"),Post,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   FString Command;Body(Req)->TryGetStringField(TEXT("command"),Command);Command.TrimStartAndEndInline();if(Command.IsEmpty()){Reply(Done,Result(false,TEXT("command is required")));return;}
