@@ -210,7 +210,7 @@ FString UOKSceneDocument::ToJson() const
 	const bool bFades = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimBlend > 0.f; }); });
 	const bool bClips = Objects.ContainsByPredicate([](const FOKSceneObject& O) { return !O.Character.VoiceClips.IsEmpty(); });
 	const bool bOrbits = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.bOrbitPath; });
-	Root->SetNumberField(TEXT("version"), bFades || bClips || bOrbits ? 3 : bMotionKeys ? 2 : 1);
+	Root->SetNumberField(TEXT("version"), !Mods.IsEmpty() ? 4 : bFades || bClips || bOrbits ? 3 : bMotionKeys ? 2 : 1);
 	Root->SetNumberField(TEXT("active_camera"), ActiveCamera);
 	Root->SetNumberField(TEXT("next_id"), NextId);
 	Root->SetNumberField(TEXT("map"), Map);
@@ -263,6 +263,7 @@ FString UOKSceneDocument::ToJson() const
 		for (const FOKSceneBookmark& B : Bookmarks) if (TSharedPtr<FJsonObject> J = FJsonObjectConverter::UStructToJsonObject(B)) MarkJson.Add(MakeShared<FJsonValueObject>(J));
 		Root->SetArrayField(TEXT("bookmarks"), MarkJson);
 	}
+	WriteMods(*Root);
 	TArray<TSharedPtr<FJsonValue>> Items;
 	for (const FOKSceneObject& O : Objects)
 	{
@@ -322,6 +323,7 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 				O.Effect.Effect = Best->Id;
 			}
 	Objects = MoveTemp(Loaded);
+	ReadMods(*Root);
 	ActiveCamera = Root->HasField(TEXT("active_camera")) ? int32(Root->GetNumberField(TEXT("active_camera"))) : -1;
 	Map = Root->HasField(TEXT("map")) ? int32(Root->GetNumberField(TEXT("map"))) : -1;
 	MapTransform = FTransform::Identity;

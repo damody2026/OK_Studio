@@ -564,6 +564,7 @@ public:
 				// The timeline starts over too (the playhead stayed where the last scene was paused).
 				Game->Document->Duration = 10.f; Game->bTimelinePlaying = false; Game->TimelineTime = Game->Document->Playhead = 0.f; Game->LoopStart = Game->LoopEnd = 0.f;
 				Game->Document->TimelineSpeed = 1.f; Game->Document->TimelineDivisions = 10; Game->Document->Vnge = FOKSceneVngeData();
+				Game->Document->Mods.Reset();
 				Game->Vnge().OnSceneOpened();
 				if (VngeUi) { VngeUi->ResetTransientCaches(); VngeUi->RefreshAllOpenVngeWindows(); }
 				if (CurveView) CurveView->RefreshContent();
