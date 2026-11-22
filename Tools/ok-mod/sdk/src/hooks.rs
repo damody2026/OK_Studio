@@ -65,6 +65,10 @@ pub struct CharacterLoad {
     pub apply: bool,
     #[serde(default)]
     pub section: Option<ExtSection>,
+    /// `section` was made from the original card's KKEx (`extract.kkex`), not read from the card's okMx: the card does
+    /// not have it yet, so the mod should write it on the next save.
+    #[serde(default)]
+    pub imported: bool,
 }
 fn yes() -> bool { true }
 

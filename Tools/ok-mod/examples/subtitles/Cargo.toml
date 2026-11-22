@@ -1,0 +1,16 @@
+[package]
+name = "ok-mod-subtitles"
+version = "0.1.0"
+edition = "2021"
+description = "Shows what she says as a subtitle when a voice line plays."
+publish = false
+
+[lib]
+name = "ok_subtitles"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+

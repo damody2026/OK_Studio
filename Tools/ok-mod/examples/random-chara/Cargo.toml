@@ -1,0 +1,16 @@
+[package]
+name = "ok-mod-random-chara"
+version = "0.1.0"
+edition = "2021"
+description = "A reader page with a button that randomizes body and face sliders."
+publish = false
+
+[lib]
+name = "ok_random_chara"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+

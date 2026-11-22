@@ -7,6 +7,10 @@ members = [
     "sdk",
     "host",
     "examples/hello",
+    "examples/profile",
+    "examples/outfit-names",
+    "examples/random-chara",
+    "examples/subtitles",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
 ]
