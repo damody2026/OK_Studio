@@ -48,7 +48,7 @@
   - 再進一次、摸頭、離開：`pair.exit` 的 payload 帶回上一筆區段，結果 `2 time(s), 100 s`（第二次停留約 94 秒）。
   - `pair.voice` 有送出（`source: tts`，`path` 是語音檔）；目前沒有 mod 訂閱，回覆是空的。
   - 回到讀卡器後卡片照常載入（`status: applied`）。
-- `ok.PairModBridgeSelfTest` 17/17 仍通過（假宿主，七種事件與 payload 欄位）。
+- `ok.PairModBridgeSelfTest`（假宿主，七種事件與 payload 欄位）17/17 是加卡片資料與模式切換**之前**跑的；之後的改動（逐 mod 送、切模式）只有上面的實機，自我測試沒有重跑。
 
 ## 沒驗證的
 
