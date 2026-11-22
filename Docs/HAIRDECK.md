@@ -54,6 +54,19 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 
 選項 JSON（`HairDeckOpts`）：`scale`（再乘的縮放）、`offset`（頭部座標的位移，公尺）、`native`（沿用原髮 shader，預設 true）、`rigid`（不用骨鏈）、`hair_color`。
 
+## 存進卡片（2026-11-22）
+
+卡片多一個 `okHk` chunk：zstd 壓的 JSON，內含 HairDeck 的頭髮片（`cards`）、骨鏈（`chains`）、選項、存進去時卡片的髮色（`hair_color`）與來源檔名；77 片頭髮約 190 KB。
+
+- 顯示時套上：角色身上沒有另外指定 HairDeck 頭髮時，`AKKPreviewActor::ApplyHairDeckToSession`（`LoadSession`／`BeginSessionLoad` 前，讀卡器原本換髮的同一處）改套卡片的 `okHk`（`ok_session_apply_card_hairdeck` → `portable::hairdeck::apply_card`）。不放在 `session::open`：封裝與 digest 的嚴格開卡每套服裝都會再做一次頭髮。換不上時保留原本頭髮，log 寫 `OK card HairDeck hair not applied`。命令列開卡（digest、封裝）不套。
+- 換上時頭髮頂點直接放到目前頭骨的位置（世界座標）：頭髮是執行期飾品，顯示端照頂點現有位置畫，第一次求解前若還是頭部局部座標，剛開卡、角色沒動時頭髮會堆在腳邊。
+- 髮色跟著卡片：卡片目前的髮色和存進去時不同（配種混出來的髮色、街區髮廊染髮），每片頭髮的顏色平移同樣的差。
+- 重新轉 OK 卡（`remake_ok_card`，`keep_identity`）與讀卡器另存（`appearance.rs`）都保留 `okHk`。卡片沒有 `okId` 時，存頭髮不會改變它的身分（`tree_answers::with_chunk`）。
+- 讀卡器：先 `ok.ReaderHairDeck <cards_seed0.json>` 換上，再 `ok.ReaderHairDeckSave` 存進目前這張卡（給路徑則另存一張；`-` 把頭髮從卡片拿掉）。MCP：`{"action":"action","command":"hairdeck","cards":"<cards_seed0.json>","opts":"<可省略>"}`、`{"action":"action","command":"hairdeck_save","out":"<可省略>","remove":false}`。存進目前這張卡後，角色身上記的頭髮清掉，之後照卡片的。
+- 命令列：`ok-hair-pack card <卡> <cards_seed0.json 或 -> <輸出卡> [選項 JSON]`。
+- 配種：孩子的髮型來自哪一位，就帶那一位的 `okHk`（沒有就不帶），`okDn` 記 `hairdeck`（來自 mother／father）。見 [OK_BREEDING.md](OK_BREEDING.md)。
+- OK Studio 場景另外記的 HairDeck 頭髮優先於卡片的；「原本頭髮」回到卡片帶的頭髮。
+
 ## 驗證
 
 `F:\OpenKoikatsu\output\characters-2026-09-30-anime\references\02-nightclub-face-reference.png`，同一裁切框與同一組初始雜訊，對照 HairDeck 原版（PyTorch bf16）：
@@ -79,4 +92,4 @@ CrowdAPNG 101 張批次（2026-11-15，讀卡器，nightclub 頭髮）：100 張
 - 雜訊用自己的亂數，同一個 seed 不會和 Python 版相同（要重現時用 `--noise`）。
 - 沒有 SAM 3：參考圖背景要單純，或自己去背成透明 PNG，或手動給框。
 - 頭髮材質目前是顏色圖集；沒有法線圖與 HairDeck 的 VRM 材質。
-- 只換到目前的 session：讀卡器換的頭髮不會存回卡片；OK Studio 存在場景裡。
+- 讀卡器換的頭髮要 `ok.ReaderHairDeckSave` 才存進卡片；還沒有畫面上的按鈕。OK Studio 存在場景裡。
