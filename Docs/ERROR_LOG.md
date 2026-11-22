@@ -7222,3 +7222,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 自我測試直接呼叫面板列的 `Set` 卻沒有像面板一樣 `NotifyChanged`，復原紀錄沒記到，重做失敗。是測試寫錯，改成照面板的流程。
   - 工作項 5 把 mod 工具列按鈕接在上方工具列（固定寬 398 的 slot）後面，只用登錄後的元件清單驗過；接真 mod 後 7 顆按鈕全在視窗外，`ui_widgets` 列得到、畫面看不到。改成獨立 slot 往左長。教訓：UI 的驗收要截圖看畫面，元件存在不等於看得到。
   - 橋接先照通知把 hook 的 payload 當字串送；宿主實作是把 `payload` 欄位當 JSON 值再序列化，送字串 mod 會拿到雙重編碼。對 `ok_mod_host.h` 後改送物件（在實機前發現）。教訓：跨組介面以對方提交的標頭為準，通知只是摘要。
+
+- 2026-11-23 OK mod 工作項 13（1 對 1，`Docs/OK_MOD_S13_PAIR.md`）：
+  - 工作項 6 的模式切換只看遊戲模式；讀卡器與街區世界裡開的 1 對 1 不會進 `pair`，第一次實機進 1 對 1 時 log 一直是 `mode reader: 0 mod(s)`，pair-counter 沒載入。改成 pair 橋接在 Enter／Exit 切宿主模式。教訓：先確認 mod 在那個情境真的會被載入，再看事件。
+  - 往 CRLF 工作檔（`Tools/ok-extract/src/ffi.rs`）用 Lua 插入 LF 文字，檔案變成混合行尾；git bash 的 `sed`／`od` 顯示時把 `\r` 去掉，錨點對不上卻看不出原因。用 Lua 數 `\r\n` 與 `\n` 才看出來，整檔統一成 CRLF（倉庫內是 LF，提交時正規化，diff 不受影響）。
+  - pair 橋接 `if (...) UE_LOG(...); else UE_LOG(...);` 編譯錯 C2181：`UE_LOG` 展開成區塊，不能接 `else`。加大括號。
+  - zh-TW 的提交用 `examples/*/locale/zh-TW` 萬用字元，把 pair-counter 的 zh-TW 檔也一起提交（早了一個提交）。內容無害，未改寫歷史。

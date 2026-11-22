@@ -113,6 +113,12 @@ mod 回錯誤會顯示在狀態列；mod 被停用或 panic 後橋接把它從 S
 
 - 建置：`OpenKoikatsuEditor`、`OpenKoikatsu` Development，E 引擎（`E:\PhysX\UE5.8`）每次提交前都建過，成功。`Tools/ok-mod`：`cargo build -j 8 --release --workspace`、`cargo test --workspace`（全部通過，含宿主 9 項整合測試）、`cargo check --no-default-features`。
 - **真宿主實機**（Studio，`ok_mod_host.dll` 來自 `Tools/ok-mod/target/release`，四個範例裝在 `Mods/`）：四個 mod 都經 `studio.panel_ui` 登錄（指令表 9 個 `mod.*` 指令、7 顆工具列按鈕）；`scene_notes.add` 加註記 → 複製物件 → 工具列「註」顯示「備註 1／2」（複製事件把註記帶到新物件）；`timeline_flow.stop` 在 1.0 秒放停止標記，從 0 播放後停在 1.00；按 V 由 `key.move` 回狀態列「移動：移動滑鼠（放開鍵結束）」（locale 標籤也是）；`timer.minute` 會觸發。截圖 `E:\OpenKoikatsu\Saved\OKStudio\mcp_ui\mod8_toolbar.png`。
+- **第二輪實機（統籌要求的補驗，2026-11-23）**：
+  - 存檔重開：「甲物件」加備註 → 存成 `E:\OpenKoikatsu\UserData\Studio\scene\mod8_notes_a.png` → 開新場景（`next` 回「場景裡沒有備註」）→ 開回存檔，`next` 回「備註 1／1：甲物件：甲的備註」。
+  - 匯入 id 對照：新場景先有「乙物件」(2)、「丙物件」(3)，乙加備註，再疊加 `mod8_notes_a.png`：`studio.scene_load`（import）回 `{"2": 乙的備註, "4": 甲的備註}`，甲物件匯入後是 id 4，備註跟著它；`next` 依序選到 4（甲）與 2（乙）。（備註文字帶引號，是 MCP `studio_cmd` 的 arg 用 JSON 傳字串造成的，不是 mod 的問題。）
+  - timeline-flow 循環：0.5 秒放 A、1.5 秒放 B，從 0 播放 4 秒以上，播放頭一直在 0.98～1.31 之間。
+  - studio-autosave：用 `mod.call {"op":"config_set",…,"key":"minutes","value":1}` 改成 1 分鐘，場景有未存修改時 `timer.minute` 寫出 `E:\OpenKoikatsu\Saved\OKStudio\ModExports\org.openkoikatsu.studio_autosave\autosave-20261122-190139.okscene`（含 scene_notes 與 timeline_flow 的 mods 資料），狀態列「已自動備份 … （保留最新 5 份）」。
+  - zh-TW：四個範例加了 `locale/zh-TW`，右鍵選單顯示「加備註／刪除備註」（截圖 `E:\OpenKoikatsu\Saved\OKStudio\mcp_ui\mod8_menu_zhtw.png`）。
 - 實機發現：mod 工具列按鈕接在固定寬的上方工具列後面，全被裁到視窗外（`ui_widgets` 有、畫面沒有），改成上方工具列左邊自己一列（提交 f792ce205）；每次選取都對沒訂閱的 mod 白送一次 hook，加了 NotSubscribed 快取。
 - `OKStudio.ModBridgeSelfTest`（`Source/OpenKoikatsu/OKStudioModBridgeTest.cpp`）：在執行中的 Studio（`SceneEditor`，`-NoBuild`）用 C++ 假 mod 取代宿主，**29/29 通過**（`Saved/OKStudio/mod_bridge_selftest.txt`）。項目：`studio.panel_ui` 登錄 7 指令、工具列、右鍵選單（限資料夾）、2 面板列、1 可內插值；`studio.objects_selected`；文字列寫 `notes.<id>`、`studio.panel_control`、復原清掉、重做回來；滑桿列存數字；指令表執行 mod 指令；效果 data／data_version／status／timeline／run／select／export；`key.<id>` nudge 沿視角 10；拖曳縮放；`timer.<id>`；`studio.objects_copied` 複製註記、`studio.object_deleted` 刪除；播放經過標記送 `studio.timeline_event` 並停止播放；可內插值 Apply／Sample；panic 的 mod 離開 Studio、場景資料保留。
 - 第一次跑 26/29：重做失敗與連帶的複製失敗是測試沒有像面板一樣 `NotifyChanged`；「panic 的 mod 離開」失敗是橋接在 mod 自己的指令執行中就移除登錄（刪掉正在跑的 `TFunction`），已改成下一幀移除（提交 786595702）。
@@ -121,10 +127,8 @@ mod 回錯誤會顯示在狀態列；mod 被停用或 panic 後橋接把它從 S
 ## 沒驗證的
 
 - object-hotkeys 的拖曳：按鍵經過真的 Slate 前處理器（`studio_key V`），但按住鍵同時移動滑鼠沒辦法用控制通道做，移動／旋轉／縮放只在自我測試（直接呼叫橋接）驗過；文字框有焦點時不送按鍵也沒測。
-- studio-autosave 實際另存：計時器有觸發，但沒等到 `minutes` 分鐘、也沒按「備」看檔案。
-- timeline-flow 的循環（A／B）與跳躍；scene-notes 的狀態頁文字列與右鍵選單畫面、刪除、匯入合併。
-- `studio.scene_load`／`studio.scene_save` 實際開檔存檔後 mod 資料的往返、`import` 的 id 對照。
-- 範例只有 zh-CN 與 en 的 locale，Studio 預設 zh-TW 時回落到 zh-CN（畫面是簡體）。
+- studio-autosave 的「備」按鈕（指令 `save_now`）與 `keep` 份數修剪。
+- timeline-flow 的跳躍標記；scene-notes 的狀態頁文字列畫面、刪除備註。
 - 1 對 1 的實際場景：骨架只用假宿主與合成事件測過，沒有進 1 對 1 跑。
 
 ## 狀態
