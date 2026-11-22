@@ -67,3 +67,11 @@ C++ 的 SHA-256 寫在不含 Unreal 型別的 `OKCardIdentityCore.inl`，可以�
 - **行為改變：讀卡對話的舊記憶**（協調者已同意，也記在 `Docs/ERROR_LOG.md`）：沒有 `okId` 的卡，讀卡對話以前用 `reader:<MD5>` 存在 `mind` 的記憶，現在改用 `apng-<sha256>`（與街區一致），那些舊記憶不會自動搬過去，這些卡在讀卡對話裡等於重新認識。有 `okId` 的卡（所有 OK 卡）不受影響。
 - `set_enabled` 還沒有呼叫者，快取鍵「裝了 mod 會變」只有單元測試，等 F 的宿主接上後在同步點 A 之後實測。
 - `okMr` 的 100 MiB 上限、`okMx` 的 `on_upgrade` 都不在本項（工作項 9、7）。
+
+## 開卡基準補量（2026-11-23，機器閒時）
+
+`Tools\lua\lua.exe Tools\card_open_baseline.lua -Compare latest`，量之前 `unreal_slot status` 顯示沒有任何 Unreal 在跑。程式是 C master 工作項 7、10 之後（含本工作項的 `okmods` 快取鍵，以及工作項 10 的 `changes_opens` 修正）。
+
+- 總計（5 輪中位數）5.39 秒（各輪 5.36、5.46、5.36、5.60、5.39），對照上一份 `latest.json`（57fd839f6）7.84 秒：**-31.3%，沒有變慢**。上一份是在較忙的機器上量的，變快的幅度不代表本工作項讓開卡變快。
+- 和機器忙不忙無關的工作量計數：`work from scratch` 473 → 472（-1）。
+- 報告：`C:\portable\OpenKoikatsu\Saved\Reports\card-open-baseline\20261122-194638.json`。

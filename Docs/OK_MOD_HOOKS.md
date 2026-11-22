@@ -93,3 +93,43 @@ mod 不直接動模型或 UI 物件，一律經這些要求。
 | `examples/subtitles` | `reader.speech_start`、`subtitle` 回覆、設定項；`targets` 含 pair、street（那兩邊的掛點在工作項 10、13） |
 
 `Tools/ok-mod/host/tests/card_mods.rs` 載入這四個 DLL，走一遍轉卡、開卡、編輯、存卡、再開、關掉套用開關、停用 mod（缺 mod）、按鈕與語音。
+
+## 8. 街區（工作項 10）
+
+街區的掛點都是 `street.*`，`targets` 要含 `street`。遊戲端在 `Source/OpenKoikatsu/OKStreetSocialMods.inl`，mod 關掉（`-NoMods`、沒有宿主、自我測試）時都不做事。設計守則照計畫 §6.6：**規則只記錄，說什麼由 AI 判斷**；mod 不讀玩家說的話；不加需求壓力。
+
+每個 payload 都帶 `day`（遊戲第幾天）、`date`（`YYYY-MM-DD`）、`minute`（當天第幾分鐘）、`lang`（`zh-TW`／`zh-CN`／`en`）。女角是 `{"id", "name", "birthday": "MM-DD"?}`，`id` 是她的穩定身分（`apng-…`）。
+
+| 掛點 | 何時 | 另外的 payload | 回覆 |
+|---|---|---|---|
+| `street.load` | 場景讀好存檔後、其他街區掛點之前（新遊戲、讀檔都會重開場景），每個 mod 各送一次 | `state`（自己的 `ext.mods.<id>`，沒有就是 null）、`heroines` | — |
+| `street.day_change` | 換日（`NextDay`，存檔之前） | `heroines` | 可帶下表欄位 |
+| `street.talk_begin`／`street.talk_end` | 對話開始／他結束對話 | `heroine` | 同上 |
+| `street.invite` | 邀約被答應或拒絕（`InviteAllowed`） | `heroine`、`action`、`accepted` | 同上 |
+| `street.phone` | 他打電話給她 | `heroine`、`kind: "call"`、`from: "him"`、`answered` | 同上 |
+| `street.gift` | 送禮結束（`FinishGift`） | `heroine`、`item`、`accepted`、`birthday` | 同上 |
+| `street.speech_start` | 她的回話開始唸（`SpeakFreeTalk`） | `heroine`、`text`（多行以換行接） | 同上 |
+| `street.talk_facts` | 組她這一回合的提示（【今天】那行） | `heroine` | `{"facts": ["…", …]}`（最多 8 條、每條 200 字） |
+| `street.rule` | 有人叫規則 `"<mod id>.<rule>"`（`OKRulesEval`、控制通道 `/rules eval`） | `rule`（不含前綴）、`request`（整個規則請求） | 規則的答案（JSON 物件） |
+
+回覆裡街區會做的事：
+
+| 欄位 | 街區做什麼 |
+|---|---|
+| `"state": {…}` | 寫進存檔 `ext.mods.<id>`（null 移除）；跟著下一次存檔寫出，讀檔後由 `street.load` 還給 mod |
+| `"notice": "文字"` | 街區的提示行（`S.Message`） |
+| `"subtitle": {"text", "seconds"}` | 同一條提示行（她的對話框本來就有字，字幕 mod 主要是給對話框看不到的時候） |
+| `"facts": [...]` | 只在 `street.talk_facts`：接在她的【今天】那行後面。那一段本來就每回合變，不會破壞 DeepSeek 的前綴快取 |
+
+- **命名空間規則**：規則名含 `.` 而且前綴是訂閱了 `street.rule` 的已啟用 mod 時，交給那個 mod，不經 ok-rules；其他照舊。
+- **開卡快取**：只有訂閱「開卡時會跑的 `extract.*` 掛點」（`extract.kkex`、`extract.kkex_keys` 只影響轉卡，不算）的 mod 會算進開卡快取鍵（`okmods::changes_opens`），街區、讀卡器的 mod 不會讓已快取的開卡失效。
+- **模式切換**：`OKModModes.cpp` 每 0.5 秒看一次宿主目前的模式，變了就重送 ok-extract 的啟用清單，所以街區程式自己 `EnterMode("pair")` 也會跟上。
+
+範例：
+
+| 範例 | 用到 |
+|---|---|
+| `examples/birthday` | `street.load`／`day_change`／`talk_begin`／`gift`／`talk_facts`、`ext.mods` 存讀檔、命名空間規則 `org.openkoikatsu.birthday.upcoming`。核心已經會在她生日那天告訴她「今天是你的生日」、送禮加成；這個 mod 補核心沒有的「每年生日他有沒有來、她有沒有收下禮物」，存在存檔裡，之後的回合當事實交給她，生日早上給玩家一則提示。沒來的那年什麼都不說，也不倒數。 |
+| `examples/subtitles` | `street.speech_start`（和讀卡器、1 對 1 同一個 mod） |
+
+`Tools/ok-mod/host/tests/street_mods.rs` 用真的 DLL 走一遍：讀檔、換日提示、對話與送禮記錄、事實、規則、字幕、存檔後重開宿主再讀回。

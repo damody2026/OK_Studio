@@ -7222,3 +7222,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **修正**：開原作卡時，讀卡器先用 ok-extract 新的 `ok_kkex_mod_sections` 拿到 mod 從 KKEx 做出的區段，經 `card_load` 的 `imported` 交給 mod（payload `imported: true`）；mod 看到的就是轉卡會得到的內容，存檔時照寫。實測 `Alice_keiyuu.png`：開卡即顯示簡介，另存的 OK 卡有 profile 區段，改簡介後 MCP `save` 再重開仍在。
 - **教訓**：「轉卡時寫入」和「存檔時寫入」兩條路寫同一份資料時，mod 的狀態要從開卡那一刻就和轉卡結果一致，不能只在轉卡那一側處理；端對端要用真的有資料的原作卡測（第一張測試卡 `KK_103512.png` 的 `ProfileText` 是空字串，看不出問題）。
 - 另：用 Git Bash 的 `sed -i` 改 `examples/*/mod.toml` 時，沒有命中的 `hello/mod.toml` 也被改成 LF 行尾（內容沒變），提交前發現已還原。
+
+## 2026-11-23 裝了任何 mod，街區女角就載不出來（C 組 c-mod-10，OK Mod 工作項 10）
+
+- **症狀**：街區啟用 birthday、subtitles 兩個 mod 時，貞德·Alter、雷電將軍開卡失敗（`the OK card has N unanswered question(s)`，問的是 `mods/sideloader modpack - animations/…zipmod`）；`-NoMods` 正常。
+- **原因**：工作項 2 讓開卡快取鍵包含所有啟用的 mod，裝了 mod 鍵就變、快取全部沒命中；而這幾張卡在遊戲內重新開本來就會失敗（`-NoMods`＋`OK_NOCACHE=1` 也一樣），平常只是被快取擋住。
+- **修正**：快取鍵只算訂閱了開卡時會跑的 `extract.*` 掛點的 mod（`okmods::changes_opens`；`extract.kkex`／`extract.kkex_keys` 只影響轉卡，不算），`OKModModes.cpp` 送給 ok-extract 的清單同樣過濾。遊戲內重新開卡失敗是既有問題，未修，已寫進 `Docs/OK_MOD_S10_STREET.md`。
+- **教訓**：快取鍵要放「真的會改變結果的東西」，不是「所有可能相關的東西」；鍵放太寬會讓平常被快取遮住的冷路徑問題一次全部冒出來。改快取鍵之後要在遊戲裡實際開一次，不能只看單元測試。
+- 另：`unreal_slot.lua claim` 回「queued」時沒看結果就啟動了街區（約 1 分鐘），發現後立刻停掉，改用 `claim --wait` 拿到名額才重開。
