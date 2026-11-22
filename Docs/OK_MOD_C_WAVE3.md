@@ -32,3 +32,30 @@
 
 - `ui_press {"label":"恢復初始值"}`：mod 指令執行，值回到初始。
 - 用 D: 引擎建編輯器與遊戲兩個目標，都成功。
+
+## 2. 街區女角冷開報 unanswered question(s)：已修（ff61e59f5）
+
+**原因**：
+
+- 街區同時開 5 張卡。開卡的頭部細節貼圖那一步（`extract.rs`）是 rayon 平行迭代，沒有包在 `oklib::pack_parallel` 裡，所以跑在全域池。
+- 全域池的執行緒只能靠 `pack_scope()` 的退路找到卡，而退路只有剛好一張卡在開時才給。好幾張一起開時，這一步找不到卡，查不到卡內的樹答案（okLt `override`），就去掃整棵 mods 樹。
+- 等到只剩最後一張卡還在開，這些讀取又被算成那張卡的缺口：約 4000 個 `GAMEFS zip …`。動畫 mod 按字母排在最前面，所以錯誤訊息看起來像只問動畫 mod。
+- 讀卡器、`ok_cards verify`、`strict-check` 一次只開一張；有快取時又不跑這一步。所以只有街區冷開會出事。
+
+**怎麼找到的**：`OK_STRICT_TRACE` 的追蹤原本只寫到 stderr，遊戲裡看不到。改成也寫進遊戲 log 之後，以 `OK_NOCACHE=1` 開街區，從堆疊可以看到執行緒在全域池上，而且「own pack scope: false」。
+
+**修正**：那一步改用 `pack_parallel`，和開卡其他會讀卡片資料的平行步驟一樣。開卡路徑上其他沒包的平行迭代，我逐一看過，都只處理像素或幾何，不讀檔。
+
+**沒採用的做法**：把整個開卡搬進卡自己的池。開卡執行緒上有不少執行緒區域的旗標與快取，搬過去就看不到了。
+
+**驗證**：
+
+- 街區 `-Editor -Sandbox cmod10 -PortBase 48160`、`OK_NOCACHE=1`：
+  - 修正前：貞德·Alter、雷電將軍載不出，3981 個缺口；
+  - 修正後：log 沒有任何 unanswered，全部女角都載入（胡桃、貞德、貞德·Alter、雷電將軍、克拉拉、嵐、邱無忌、刻晴、洛天依、三月七）。
+- ok-extract `cargo check`，含 `--no-default-features`。
+- pack_scope 與 okstrict 的單元測試。
+- 用 D: 引擎建編輯器與遊戲兩個目標，都成功。
+- ERROR_LOG 已補一條「已修」。
+
+**沒驗**：`-NoMods` 冷開沒有另外跑；同一條程式路徑，只是不載 mod。打包的 stage 沒有重建。
