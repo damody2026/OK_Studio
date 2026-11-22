@@ -80,6 +80,9 @@ end
 -- removing it gives the card's bytes back exactly, so a card with a voice keeps the id it had without one.
 -- A card made again from an OK card (`ok-extract --oklib card/cards`, new resource pack, new bytes) carries the identity
 -- it had in an okId chunk (64 hex digits, Tools/ok-extract/src/oklib.rs `card_identity`): that one is her identity.
+-- What mods store in a card (okMx data, okMr resources: Tools/ok-extract/src/okmods.rs) is left out too, so saving a
+-- mod's data never makes her a stranger. The same three chunks as oklib.rs and Source/OpenKoikatsu/OKCardIdentity.cpp.
+local IDENTITY_EXCLUDED = { okVo = true, okMx = true, okMr = true }
 function M.card_identity(p)
   local f = assert(io.open(p, "rb")); local data = f:read("a"); f:close()
   if data:sub(1, 8) == "\137PNG\r\n\26\n" and data:find("okId", 1, true) then
@@ -95,12 +98,14 @@ function M.card_identity(p)
       at = at + 12 + len
     end
   end
-  if data:sub(1, 8) ~= "\137PNG\r\n\26\n" or not data:find("okVo", 1, true) then return ok.hash.file(p, "sha256") end
+  if data:sub(1, 8) ~= "\137PNG\r\n\26\n" or not (data:find("okVo", 1, true) or data:find("okMx", 1, true) or data:find("okMr", 1, true)) then
+    return ok.hash.file(p, "sha256")
+  end
   local parts, at, found = { data:sub(1, 8) }, 9, false
   while at + 8 <= #data do
     local len = string.unpack(">I4", data, at)
     local kind, stop = data:sub(at + 4, at + 7), at + 12 + len
-    if kind == "okVo" then found = true else parts[#parts + 1] = data:sub(at, stop - 1) end
+    if IDENTITY_EXCLUDED[kind] then found = true else parts[#parts + 1] = data:sub(at, stop - 1) end
     at = stop
     if kind == "IEND" then break end
   end

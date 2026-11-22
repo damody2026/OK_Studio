@@ -1,5 +1,7 @@
 #include "OKReaderTalk.h"
 
+#include "OKCardIdentity.h"
+
 #include "OKInteractionMode.h"
 #include "OKStreetMind.h"
 #include "OKStreetSocialFreeTalk.h"
@@ -19,18 +21,12 @@
 
 namespace {
 FString OKReaderJson(const TSharedRef<FJsonObject>& Object){FString Json;FJsonSerializer::Serialize(Object,TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json));return Json;}
-// The card's identity as the street knows her ("apng-" + its okId chunk, Tools/prepare_street_social_selection.lua):
-// her memory and relation there are kept under it. A card without one (not made by ok-extract): her own identity here.
+// The card's identity as the street knows her ("apng-" + OKCardIdentity, Tools/prepare_street_social_selection.lua):
+// her memory and relation there are kept under it, with or without an okId chunk. Not a PNG card: its own id here.
 FString OKReaderCardId(const FString& Card){
  TArray<uint8> Bytes;if(!FFileHelper::LoadFileToArray(Bytes,*Card)||Bytes.Num()<8)return FString();
- for(int64 At=8;At+12<=Bytes.Num();){
-  const uint32 Len=(uint32(Bytes[At])<<24)|(uint32(Bytes[At+1])<<16)|(uint32(Bytes[At+2])<<8)|uint32(Bytes[At+3]);
-  if(At+12+int64(Len)>Bytes.Num())break;
-  const bool bId=Bytes[At+4]=='o'&&Bytes[At+5]=='k'&&Bytes[At+6]=='I'&&Bytes[At+7]=='d';
-  if(bId&&Len==64){FString Hex;for(uint32 I=0;I<Len;++I)Hex.AppendChar(FChar::ToLower(TCHAR(Bytes[At+8+I])));return TEXT("apng-")+Hex;}
-  if(Bytes[At+4]=='I'&&Bytes[At+5]=='E'&&Bytes[At+6]=='N'&&Bytes[At+7]=='D')break;
-  At+=12+int64(Len);}
- return TEXT("reader:")+FMD5::HashBytes(Bytes.GetData(),Bytes.Num());
+ const FString Identity=OKCardIdentity(Bytes);
+ return Identity.IsEmpty()?TEXT("reader:")+FMD5::HashBytes(Bytes.GetData(),Bytes.Num()):TEXT("apng-")+Identity;
 }
 // ok-tts and its voice settings as the street has them: the launcher's endpoint, else player.json's voice section.
 FString OKReaderTtsEndpoint(int32& Age){
