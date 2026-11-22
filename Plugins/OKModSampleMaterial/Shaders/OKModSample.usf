@@ -1,0 +1,20 @@
+// OK mod sample (work item 3): included by the Custom node of /OKModSampleMaterial/M_OKModSample through the virtual
+// path /Project/OKMod/OKModSampleMaterial/OKModSample.usf (Tools/modkit_cook.lua maps the cook host's Shaders/OKMod/<id>
+// to this folder). Only the cook reads this file: the packaged game gets the compiled bytecode in the mod's shader library.
+#pragma once
+
+// Magenta / cyan diagonal stripes with a yellow border: nothing like the engine's grey default material, so a screenshot
+// tells at once whether the mod material drew or fell back.
+float3 OKModSampleStripes(float2 UV, float Count)
+{
+	const float Stripe = frac((UV.x + UV.y) * Count);
+	const float3 Magenta = float3(1.0, 0.05, 0.8);
+	const float3 Cyan = float3(0.0, 0.9, 1.0);
+	float3 Color = Stripe < 0.5 ? Magenta : Cyan;
+	const float2 Edge = min(UV, 1.0 - UV);
+	if (min(Edge.x, Edge.y) < 0.06)
+	{
+		Color = float3(1.0, 0.85, 0.0);
+	}
+	return Color;
+}
