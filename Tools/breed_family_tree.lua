@@ -3,6 +3,8 @@
 -- 依賴父母的子卡（okDn depends）標「依賴父母」，原卡與匯出的完整卡標「完整卡」。Docs/OK_BREEDING.md。
 -- Usage: Tools\lua\lua.exe Tools\breed_family_tree.lua --out <圖.png> [--title <標題>] [--subtitle <副標>] [--list <清單檔>] <卡或資料夾>...
 -- 清單檔一行一張卡；「#title …」「#subtitle …」行給標題（中文標題從命令列傳不進來）。帶 HairDeck 頭髮（okHk）的卡標綠標。
+-- --views <檔>：每張卡改放三張讀卡器截圖（正面、側面、斜側面），一行「卡片路徑<TAB>正面.png<TAB>側面.png<TAB>斜側面.png」；
+--   截圖是讀卡器 MCP screenshot（target=preview）的原尺寸，裁掉左右空白與右下角名牌。--panel-height 每張截圖在圖上的高度（預設 1000）。
 package.path = 'Tools/lua/?.lua;' .. package.path
 local json = require 'ok.json'
 local lfs = require 'lfs'
@@ -15,7 +17,7 @@ do
   local i = 1
   while i <= #arg do
     local a = arg[i]
-    if a == '--out' or a == '--title' or a == '--subtitle' then args[a:sub(3)] = arg[i + 1]; i = i + 2
+    if a == '--out' or a == '--title' or a == '--subtitle' or a == '--views' or a == '--panel-height' then args[a:sub(3)] = arg[i + 1]; i = i + 2
     elseif a == '--list' then
       -- a UTF-8 file, one card a line (card names such as 刻晴×雷電 do not survive the command line)
       -- (and "#title ..." / "#subtitle ..." lines: Chinese titles do not survive the command line either)
@@ -101,9 +103,29 @@ for _, id in ipairs(order) do
   if n.picture then rows[n.generation] = rows[n.generation] or {}; table.insert(rows[n.generation], n); maxgen = math.max(maxgen, n.generation) end
 end
 local TW, TH, GAP, LABEL, ROWGAP, LEFT, TOP = 170, 238, 34, 62, 92, 150, 150
+-- Font and line scale: 1 for the card-picture tree, larger when every card shows three big screenshots.
+local S = 1
+-- Three views a card: the reader screenshot cropped to the figure (CROP), each PH high.
+local VIEWS, CROP, PW, PH, PGAP = {}, { x = 200, y = 0, w = 1180, h = 1730 }, 0, 0, 0
+if args.views then
+  local function key(p) return slash(p):lower() end
+  for line in io.lines(args.views) do
+    line = line:gsub('^\239\187\191', ''):gsub('%s+$', '')
+    local c, f, s, q = line:match('^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$')
+    if c then VIEWS[key(c)] = { f, s, q } end
+  end
+  for _, id in ipairs(order) do local n = nodes[id]; if n.path then n.views = VIEWS[key(n.path)] end end
+  PH = math.tointeger(tonumber(args['panel-height'] or 1000)) or 1000
+  PW = math.floor(PH * CROP.w / CROP.h + 0.5)
+  PGAP = math.max(6, PH // 100)
+  S = PH / 238
+  TW, TH = 3 * PW + 2 * PGAP, PH
+  GAP, LABEL, ROWGAP, LEFT, TOP = math.floor(34 * S), math.floor(62 * S), math.floor(92 * S), math.floor(150 * S), math.floor(150 * S)
+end
+local function z(v) return math.floor(v * S + 0.5) end
 local width = 0
 for g = 0, maxgen do width = math.max(width, #(rows[g] or {}) * (TW + GAP) - GAP) end
-width = width + LEFT + 60
+width = width + LEFT + z(60)
 local function place(g)
   local row = rows[g] or {}
   if g > 0 then
@@ -114,14 +136,14 @@ local function place(g)
     table.sort(row, function(a, b) return a.key < b.key end)
   end
   local w = #row * (TW + GAP) - GAP
-  local x0 = LEFT + math.floor((width - LEFT - 60 - w) / 2)
+  local x0 = LEFT + math.floor((width - LEFT - z(60) - w) / 2)
   for i, n in ipairs(row) do
     n.x, n.y = x0 + (i - 1) * (TW + GAP), TOP + g * (TH + LABEL + ROWGAP)
     n.cx = n.x + TW // 2
   end
 end
 for g = 0, maxgen do place(g) end
-local height = TOP + (maxgen + 1) * (TH + LABEL + ROWGAP) - ROWGAP + 40
+local height = TOP + (maxgen + 1) * (TH + LABEL + ROWGAP) - ROWGAP + z(40)
 
 -- ffmpeg filter graph.
 local work = args.out .. '.parts'
@@ -141,10 +163,25 @@ local function box(x, y, w, h, color) return string.format('drawbox=x=%d:y=%d:w=
 local inputs_args, ops, overlays, badges = {}, {}, {}, {}
 local placed = {}
 for g = 0, maxgen do for _, n in ipairs(rows[g] or {}) do placed[#placed + 1] = n end end
+-- Inputs: the card picture, or its three screenshots (n.inputs = ffmpeg input indices).
 for i, n in ipairs(placed) do
-  local file = string.format('%s/p%d.png', work, i)
-  write(file, n.picture)
-  inputs_args[#inputs_args + 1] = string.format('-i "%s"', file)
+  n.inputs = {}
+  local sources = {}
+  if n.views then
+    for v, p in ipairs(n.views) do
+      local file = string.format('%s/p%d_%d.png', work, i, v)
+      write(file, assert(read(p), 'cannot read view ' .. p))
+      sources[#sources + 1] = file
+    end
+  else
+    local file = string.format('%s/p%d.png', work, i)
+    write(file, n.picture)
+    sources[1] = file
+  end
+  for _, file in ipairs(sources) do
+    inputs_args[#inputs_args + 1] = string.format('-i "%s"', file)
+    n.inputs[#n.inputs + 1] = #inputs_args - 1
+  end
 end
 local palette = { '0xf2a7c3', '0x8fd3f4', '0xf6d58e', '0xa9e5a0', '0xc6a8f0', '0xf3a98a', '0x9ce0d8', '0xe8c0a0' }
 -- Connectors: a bar under each couple, a line from its middle to each child.
@@ -162,46 +199,65 @@ for ci, k in ipairs(couple_order) do
   local color = palette[(ci - 1) % #palette + 1]
   local bottom = math.max(c.m.y, c.f.y) + TH + LABEL
   local lane = (lanes[bottom] or 0); lanes[bottom] = lane + 1
-  local bar = bottom + 10 + lane * 9
+  local L = z(4)
+  local bar = bottom + z(10) + lane * z(9)
   local x1, x2 = math.min(c.m.cx, c.f.cx), math.max(c.m.cx, c.f.cx)
-  ops[#ops + 1] = box(c.m.cx - 2, math.min(c.m.y + TH + LABEL, bar), 4, math.abs(bar - (c.m.y + TH + LABEL)) + 4, color)
-  ops[#ops + 1] = box(c.f.cx - 2, math.min(c.f.y + TH + LABEL, bar), 4, math.abs(bar - (c.f.y + TH + LABEL)) + 4, color)
-  ops[#ops + 1] = box(x1, bar, x2 - x1 + 4, 4, color)
+  ops[#ops + 1] = box(c.m.cx - L // 2, math.min(c.m.y + TH + LABEL, bar), L, math.abs(bar - (c.m.y + TH + LABEL)) + L, color)
+  ops[#ops + 1] = box(c.f.cx - L // 2, math.min(c.f.y + TH + LABEL, bar), L, math.abs(bar - (c.f.y + TH + LABEL)) + L, color)
+  ops[#ops + 1] = box(x1, bar, x2 - x1 + L, L, color)
   local mid = (x1 + x2) // 2
   for _, kid in ipairs(c.kids) do
-    local bus = kid.y - 18 - lane * 7
-    ops[#ops + 1] = box(mid, bar, 4, bus - bar + 4, color)
-    ops[#ops + 1] = box(math.min(mid, kid.cx), bus, math.abs(kid.cx - mid) + 4, 4, color)
-    ops[#ops + 1] = box(kid.cx, bus, 4, kid.y - bus, color)
+    local bus = kid.y - z(18) - lane * z(7)
+    ops[#ops + 1] = box(mid, bar, L, bus - bar + L, color)
+    ops[#ops + 1] = box(math.min(mid, kid.cx), bus, math.abs(kid.cx - mid) + L, L, color)
+    ops[#ops + 1] = box(kid.cx, bus, L, kid.y - bus, color)
   end
 end
 local function mb(bytes) return string.format('%.1f MB', bytes / 1048576) end
 for _, n in ipairs(placed) do
-  ops[#ops + 1] = box(n.x - 3, n.y - 3, TW + 6, TH + 6, n.depends and '0x8fd3f4' or '0xf6d58e')
-  ops[#ops + 1] = text(n.name ~= '' and n.name or '?', n.cx, n.y + TH + 8, 20, 'white', true, true)
-  ops[#ops + 1] = text(mb(n.size) .. (n.depends and '・依賴父母' or '・完整卡'), n.cx, n.y + TH + 36, 15, n.depends and '0x8fd3f4' or '0xf6d58e', false, true)
+  local B = z(3)
+  ops[#ops + 1] = box(n.x - B, n.y - B, TW + 2 * B, TH + 2 * B, n.depends and '0x8fd3f4' or '0xf6d58e')
+  if n.views then ops[#ops + 1] = box(n.x, n.y, TW, TH, '0x1b1d2a') end
+  ops[#ops + 1] = text(n.name ~= '' and n.name or '?', n.cx, n.y + TH + z(8), z(20), 'white', true, true)
+  ops[#ops + 1] = text(mb(n.size) .. (n.depends and '・依賴父母' or '・完整卡'), n.cx, n.y + TH + z(36), z(15), n.depends and '0x8fd3f4' or '0xf6d58e', false, true)
   if n.hairdeck then
-    badges[#badges + 1] = box(n.x + 4, n.y + 4, 112, 26, '0x1f6b3a@0.9')
-    ops[#ops + 1] = text('HairDeck 頭髮', n.x + 60, n.y + 9, 15, 'white', true, true)
+    badges[#badges + 1] = box(n.x + z(4), n.y + z(4), z(112), z(26), '0x1f6b3a@0.9')
+    ops[#ops + 1] = text('HairDeck 頭髮', n.x + z(60), n.y + z(9), z(15), 'white', true, true)
+  end
+  if n.views then
+    for v, name in ipairs({ '正面', '側面', '斜側面' }) do
+      ops[#ops + 1] = text(name, n.x + v * (PW + PGAP) - PGAP - z(36), n.y + z(8), z(16), '0xe8eaf4', false, true)
+    end
   end
 end
 for g = 0, maxgen do
-  if rows[g] then ops[#ops + 1] = text(g == 0 and '原卡' or string.format('第 %d 代', g), 30, TOP + g * (TH + LABEL + ROWGAP) + TH // 2 - 14, 26, '0xd0d4e8', true, false) end
+  if rows[g] then ops[#ops + 1] = text(g == 0 and '原卡' or string.format('第 %d 代', g), z(30), TOP + g * (TH + LABEL + ROWGAP) + TH // 2 - z(14), z(26), '0xd0d4e8', true, false) end
 end
-ops[#ops + 1] = text(args.title, width // 2, 36, 44, 'white', true, true)
-if args.subtitle ~= '' then ops[#ops + 1] = text(args.subtitle, width // 2, 96, 20, '0xb8bcd0', false, true) end
+ops[#ops + 1] = text(args.title, width // 2, z(36), z(44), 'white', true, true)
+if args.subtitle ~= '' then ops[#ops + 1] = text(args.subtitle, width // 2, z(96), z(20), '0xb8bcd0', false, true) end
 
 local graph = { string.format('color=c=0x1b1d2a:s=%dx%d,format=rgb24[bg0]', width, height) }
 local last = 'bg0'
-for i, n in ipairs(placed) do
-  graph[#graph + 1] = string.format('[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,format=rgb24[p%d]', i - 1, TW, TH, TW, TH, i)
+-- Each input becomes a panel with its position on the picture.
+local panels = {}
+for _, n in ipairs(placed) do
+  for v, input in ipairs(n.inputs) do
+    local label = 'p' .. input
+    if n.views then
+      graph[#graph + 1] = string.format('[%d:v]crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos,format=rgb24[%s]', input, CROP.w, CROP.h, CROP.x, CROP.y, PW, PH, label)
+      panels[#panels + 1] = { label = label, x = n.x + (v - 1) * (PW + PGAP), y = n.y }
+    else
+      graph[#graph + 1] = string.format('[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,format=rgb24[%s]', input, TW, TH, TW, TH, label)
+      panels[#panels + 1] = { label = label, x = n.x, y = n.y }
+    end
+  end
 end
 local chain = {}
 for _, op in ipairs(ops) do if op:find('^drawbox') then chain[#chain + 1] = op end end
 graph[#graph + 1] = string.format('[%s]%s[lines]', last, table.concat(chain, ','))
 last = 'lines'
-for i, n in ipairs(placed) do
-  graph[#graph + 1] = string.format('[%s][p%d]overlay=x=%d:y=%d[o%d]', last, i, n.x, n.y, i)
+for i, p in ipairs(panels) do
+  graph[#graph + 1] = string.format('[%s][%s]overlay=x=%d:y=%d[o%d]', last, p.label, p.x, p.y, i)
   last = 'o' .. i
 end
 -- (badges over the pictures, then every label)
