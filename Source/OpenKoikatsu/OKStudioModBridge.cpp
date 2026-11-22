@@ -189,6 +189,8 @@ namespace OKStudioModBridge
 		bool bDragShift = false;
 		/** Failed for good: no more calls; removed from the studio on the next tick (not inside the call that failed). */
 		bool bDropped = false;
+		/** Hooks the host said it did not subscribe to: not asked again (the context is not even built). */
+		TSet<FString> NotSubscribed;
 	};
 
 	struct FState
@@ -347,6 +349,21 @@ namespace OKStudioModBridge
 		return TEXT("studio.") + Event;
 	}
 
+	/** Whether the host still lists the mod as enabled (after a panic it is "faulted"). */
+	bool StillEnabled(const FString& Id)
+	{
+		const TSharedPtr<FJsonObject> List = HostList();
+		const TArray<TSharedPtr<FJsonValue>>* Mods = nullptr;
+		if (!List.IsValid() || !List->TryGetArrayField(TEXT("mods"), Mods)) return false;
+		for (const TSharedPtr<FJsonValue>& V : *Mods)
+		{
+			const TSharedPtr<FJsonObject> M = V->AsObject();
+			FString MId, StateName;
+			if (M && M->TryGetStringField(TEXT("id"), MId) && MId == Id) return M->TryGetStringField(TEXT("state"), StateName) && StateName == TEXT("enabled");
+		}
+		return false;
+	}
+
 	/** Runs the mod's hook with the context as payload ({"op":"hook"} of the host); its JSON answer (null when it did
 	 *  not answer — not subscribed — or failed; an object with "status" for a text answer). */
 	TSharedPtr<FJsonObject> Call(const FString& Id, const FString& Hook, const TSharedRef<FJsonObject>& Ctx)
@@ -354,14 +371,14 @@ namespace OKStudioModBridge
 		TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
 		Request->SetStringField(TEXT("op"), TEXT("hook"));
 		Request->SetStringField(TEXT("hook"), Hook);
-		Request->SetStringField(TEXT("payload"), Condensed(Ctx));
+		Request->SetObjectField(TEXT("payload"), Ctx);
 		Request->SetArrayField(TEXT("mods"), { MakeShared<FJsonValueString>(Id) });
 		FString Error;
 		if (const FMod* Known = FindMod(Id); Known && Known->bDropped) return nullptr;
 		const TSharedPtr<FJsonObject> Answer = HostDispatch(Request, Error);
 		if (!Answer.IsValid()) { UE_LOG(LogOKStudioMods, Warning, TEXT("%s %s: %s"), *Id, *Hook, *Error); return nullptr; }
 		Note(FString::Printf(TEXT("%s %s -> %s"), *Id, *Hook, *Condensed(Answer.ToSharedRef()).Left(300)));
-		// The mod's reply: an entry of "replies" ({mod, json|text|error}); a host answering one mod flat is read the same.
+		// The mod's reply: its entry of "replies" ({mod, ok, json|text|error}, ok_mod_host.h).
 		TSharedPtr<FJsonObject> Reply;
 		const TArray<TSharedPtr<FJsonValue>>* Replies = nullptr;
 		if (Answer->TryGetArrayField(TEXT("replies"), Replies))
@@ -380,9 +397,11 @@ namespace OKStudioModBridge
 		if (!bOk || (Reply.IsValid() && Reply->TryGetStringField(TEXT("error"), Why)))
 		{
 			if (Why.IsEmpty()) Answer->TryGetStringField(TEXT("error"), Why);
+			// Not subscribed to this hook: the mod does not want it (not an error).
+			if (Why.Contains(TEXT("did not subscribe"))) { if (FMod* M = FindMod(Id)) M->NotSubscribed.Add(Hook); return nullptr; }
 			UE_LOG(LogOKStudioMods, Warning, TEXT("%s %s failed: %s"), *Id, *Hook, *Why);
-			// A mod that panicked (or was turned off) is gone from the studio; its data stays in the scene.
-			if (Why.Contains(TEXT("not enabled")) || Why.Contains(TEXT("panicked"))) Drop(Id, Why);
+			// A mod that panicked (the host faults it) or was turned off is gone from the studio; its data stays in the scene.
+			if (!StillEnabled(Id)) Drop(Id, Why);
 			else if (FOKStudioModRegistry::Get().ShowStatus) FOKStudioModRegistry::Get().ShowStatus(FString::Printf(TEXT("%s：%s"), *Id, *Why));
 			return nullptr;
 		}
@@ -509,6 +528,8 @@ namespace OKStudioModBridge
 	/** A scene event to one mod: its answer's data now, the rest after the change. */
 	void SendEvent(FMod& Mod, const FString& Event, const TSharedRef<FJsonObject>& Args, bool bDeferRest)
 	{
+		const FString Hook = HookName(Event, Args);
+		if (Mod.NotSubscribed.Contains(Hook)) return;
 		TSharedRef<FJsonObject> Ctx = Context(Mod);
 		for (const TPair<FString, TSharedPtr<FJsonValue>>& P : Args->Values) Ctx->SetField(P.Key, P.Value);
 		Ctx->SetStringField(TEXT("event"), Event);
@@ -527,7 +548,7 @@ namespace OKStudioModBridge
 			}
 		}
 		const FString Id = Mod.Id;
-		Apply(Id, Call(Id, HookName(Event, Args), Ctx), bDeferRest);
+		Apply(Id, Call(Id, Hook, Ctx), bDeferRest);
 	}
 
 	void Broadcast(const FString& Event, const TSharedRef<FJsonObject>& Args, bool bDeferRest)

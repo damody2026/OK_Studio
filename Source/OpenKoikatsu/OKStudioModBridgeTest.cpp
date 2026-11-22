@@ -41,6 +41,8 @@ namespace
 	struct FFakeMod
 	{
 		TMap<FString, int32> Count;
+		/** The host's listing (a panic marks the mod faulted in it). */
+		TSharedPtr<FJsonObject> List;
 		TArray<int32> PassedMarks;
 		FString LastCommandName;
 
@@ -153,14 +155,15 @@ namespace
 		/** The host's answer to a dispatch request ({"op":"hook"} only). */
 		TSharedPtr<FJsonObject> Dispatch(const FJsonObject& Request)
 		{
-			FString Op, Hook, PayloadText;
+			FString Op, Hook;
 			Request.TryGetStringField(TEXT("op"), Op);
 			Request.TryGetStringField(TEXT("hook"), Hook);
-			Request.TryGetStringField(TEXT("payload"), PayloadText);
+			const TSharedPtr<FJsonObject>* PayloadObject = nullptr;
+			Request.TryGetObjectField(TEXT("payload"), PayloadObject);
 			TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 			Out->SetBoolField(TEXT("ok"), true);
 			TArray<TSharedPtr<FJsonValue>> Replies;
-			const TSharedPtr<FJsonObject> Payload = Parse(PayloadText);
+			const TSharedPtr<FJsonObject> Payload = PayloadObject ? *PayloadObject : nullptr;
 			if (Op != TEXT("hook") || !Payload.IsValid()) { Out->SetBoolField(TEXT("ok"), false); Out->SetStringField(TEXT("error"), TEXT("fake host: bad request")); return Out; }
 			FString Name;
 			Payload->TryGetStringField(TEXT("name"), Name);
@@ -169,11 +172,15 @@ namespace
 			if (Hook == TEXT("studio.command") && Name == TEXT("boom"))
 			{
 				Count.FindOrAdd(Hook)++;
-				Reply->SetStringField(TEXT("error"), TEXT("mod panicked: fake"));
+				// As the host does: the panic's message, and the mod listed as faulted from now on.
+				Reply->SetBoolField(TEXT("ok"), false);
+				Reply->SetStringField(TEXT("error"), TEXT("fake panic"));
+				if (List.IsValid()) for (const TSharedPtr<FJsonValue>& V : List->GetArrayField(TEXT("mods"))) V->AsObject()->SetStringField(TEXT("state"), TEXT("faulted"));
 				Replies.Add(MakeShared<FJsonValueObject>(Reply));
 			}
 			else if (const TSharedPtr<FJsonObject> Json = Answer(Hook, *Payload))
 			{
+				Reply->SetBoolField(TEXT("ok"), true);
 				Reply->SetObjectField(TEXT("json"), Json);
 				Replies.Add(MakeShared<FJsonValueObject>(Reply));
 			}
@@ -208,6 +215,7 @@ namespace
 
 		// Registration.
 		TSharedRef<FJsonObject> List = Parse(FString::Printf(TEXT(R"({"mods": [{"id": "%s", "state": "enabled", "dir": "", "commands": []}]})"), FakeId)).ToSharedRef();
+		Mod->List = List;
 		SetFakeHost(List, [Mod](const FJsonObject& Request) { return Mod->Dispatch(Request); });
 		Tick();
 		auto Owned = [](const auto& Items) { int32 N = 0; for (const auto& I : Items) N += I.Owner == FakeId; return N; };

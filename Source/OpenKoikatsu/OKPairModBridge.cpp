@@ -66,7 +66,7 @@ namespace OKPairModBridge
 		const FString Hook = FString(TEXT("pair.")) + OKPairModEventName(E.Kind);
 		Request->SetStringField(TEXT("op"), TEXT("hook"));
 		Request->SetStringField(TEXT("hook"), Hook);
-		Request->SetStringField(TEXT("payload"), Condensed(Payload(E)));
+		Request->SetObjectField(TEXT("payload"), Payload(E));
 		FString Error;
 		const TSharedPtr<FJsonObject> Answer = S.FakeDispatch ? S.FakeDispatch(Request) : FOKModHost::Get().DispatchJson(Request, Error);
 		const FString Line = FString::Printf(TEXT("%s %s -> %s"), *Hook, *Condensed(Request).Left(300), Answer.IsValid() ? *Condensed(Answer.ToSharedRef()).Left(300) : *Error);
@@ -137,13 +137,14 @@ namespace OKPairModBridge
 			for (int32 K = 0; K < Seen.Num() && K < Kinds; ++K)
 			{
 				const FString Want = FString(TEXT("pair.")) + OKPairModEventName(EOKPairModEvent(K));
-				FString Op, Hook, PayloadText;
+				FString Op, Hook;
 				Seen[K]->TryGetStringField(TEXT("op"), Op);
 				Seen[K]->TryGetStringField(TEXT("hook"), Hook);
-				Seen[K]->TryGetStringField(TEXT("payload"), PayloadText);
+				const TSharedPtr<FJsonObject>* PayloadObject = nullptr;
+				Seen[K]->TryGetObjectField(TEXT("payload"), PayloadObject);
+				const TSharedPtr<FJsonObject> P = PayloadObject ? *PayloadObject : nullptr;
+				const FString PayloadText = P.IsValid() ? Condensed(P.ToSharedRef()) : FString(TEXT("<no payload object>"));
 				Check(Op == TEXT("hook") && Hook == Want, FString::Printf(TEXT("%s (%s)"), *Want, *PayloadText));
-				TSharedPtr<FJsonObject> P;
-				FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(PayloadText), P);
 				FString Card;
 				Check(P.IsValid() && P->TryGetStringField(TEXT("card"), Card) && Card == TEXT("selftest.png"), Want + TEXT(" payload carries the card"));
 				if (EOKPairModEvent(K) == EOKPairModEvent::Voice)
