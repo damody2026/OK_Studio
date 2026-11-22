@@ -824,7 +824,8 @@ pub const PACK_CHUNK: &[u8; 4] = b"okLc";
 pub const IDENTITY_CHUNK: &[u8; 4] = b"okId";
 
 /// A card's identity: its `okId` chunk when it has one, else the sha256 of its bytes without the `okVo` chunk (its
-/// own TTS voice), as `card_identity` in Tools/prepare_street_social_selection.lua computes it.
+/// own TTS voice) and the mods' `okMx`/`okMr` (okmods.rs `IDENTITY_EXCLUDED`), as `card_identity` in
+/// Tools/prepare_street_social_selection.lua and `OKCardIdentity` (Source/OpenKoikatsu/OKCardIdentity.h) compute it.
 pub fn card_identity(bytes: &[u8]) -> Option<String> {
     use sha2::Digest;
     if let Some(id) = png_chunk(bytes, IDENTITY_CHUNK) {
@@ -838,7 +839,7 @@ pub fn card_identity(bytes: &[u8]) -> Option<String> {
         let len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
         let end = pos.checked_add(12 + len).filter(|e| *e <= bytes.len())?;
         let kind = &bytes[pos + 4..pos + 8];
-        if kind != b"okVo" { hash.update(&bytes[pos..end]); }
+        if !crate::okmods::IDENTITY_EXCLUDED.iter().any(|k| &k[..] == kind) { hash.update(&bytes[pos..end]); }
         pos = end;
         if kind == b"IEND" { break; }
     }
@@ -876,6 +877,8 @@ pub fn with_card_identity(bytes: &[u8], id: &str) -> Result<Vec<u8>, String> {
 fn keep_identity(input: &[u8], made: Vec<u8>) -> Result<Vec<u8>, String> {
     // HairDeck hair the card keeps (okHk) is hers, not made from zipmods: it stays.
     let made = match crate::portable::hairdeck::card_payload(input) { Some(p) => crate::cardbake::with_chunk(&made, crate::portable::hairdeck::CHUNK, p)?, None => made };
+    // What mods stored in the card (okMx/okMr) is kept exactly as it was.
+    let made = crate::okmods::carry_over(input, made)?;
     if png_chunk(input, CARD_CHUNK).is_none() && png_chunk(input, IDENTITY_CHUNK).is_none() { return Ok(made); }
     match card_identity(input) { Some(id) => with_card_identity(&made, &id), None => Ok(made) }
 }
@@ -1573,6 +1576,8 @@ pub fn session_cache_key(lib: &Path, card: &Path, outfit: i32) -> Option<String>
     h.update(env!("OK_EXTRACT_SOURCE_HASH").as_bytes());
     // An OK Studio character state is another entry; without one the key stays as before.
     if let Some(status) = crate::studio_status::cache_key_bytes() { h.update(b"studio-status"); h.update(&status); }
+    // The mods enabled in this process and their versions (okmods.rs); with none the key stays as before.
+    if let Some(mods) = crate::okmods::cache_key_bytes() { h.update(b"mods"); h.update(&mods); }
     // Raw texture containers (OK_RAW_TEXTURES=1) are a different entry from the PNG one.
     if crate::teximg::raw_enabled() { h.update(b"raw-textures"); }
     // A GPU-skinned open (the live reader) is another entry, and so is its head with OK_HEAD_GPUSKIN: without it the
