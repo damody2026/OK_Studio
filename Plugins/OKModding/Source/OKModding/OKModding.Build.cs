@@ -8,8 +8,10 @@ public class OKModding : ModuleRules
 	public OKModding(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Json" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "Engine", "ApplicationCore" });
+		// KKUnityBundle: the shader family table (KKModMaterials.h) the card reader's parts consult.
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Json", "KKUnityBundle" });
+		// RenderCore: the mods' shader libraries (FShaderCodeLibrary); RHI: GMaxRHIShaderPlatform.
+		PrivateDependencyModuleNames.AddRange(new string[] { "Engine", "ApplicationCore", "RenderCore", "RHI" });
 		// The C ABI header lives with the Rust host.
 		PrivateIncludePaths.Add(Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Tools", "ok-mod", "host", "include")));
 	}

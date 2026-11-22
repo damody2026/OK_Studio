@@ -1,4 +1,5 @@
 #include "OKModHost.h"
+#include "OKModContent.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformProcess.h"
@@ -191,6 +192,8 @@ void FOKModHost::EnterMode(const FString& Mode)
 	FString Error;
 	if (!DispatchJson(Request, Error).IsValid()) UE_LOG(LogOKMod, Warning, TEXT("mode_enter %s: %s"), *Mode, *Error);
 	RegisterCommands();
+	// Materials and shader families of the mods this mode loaded (B-layer paks mount once per process).
+	OKModContent::Refresh();
 }
 
 void FOKModHost::ExitMode(const FString& Mode)
@@ -338,7 +341,7 @@ bool FOKModHost::Reload(const FString& Id, FString& Out)
 	if (!Reply.IsValid()) { Out = Error; return false; }
 	const bool bOk = Reply->GetBoolField(TEXT("ok"));
 	Out = Reply->GetStringField(bOk ? TEXT("text") : TEXT("error"));
-	if (bOk) RegisterCommands();
+	if (bOk) { RegisterCommands(); OKModContent::Refresh(); }
 	return bOk;
 }
 
@@ -349,6 +352,14 @@ static void OKModConsoleReload(const TArray<FString>& Args, FOutputDevice& Out)
 	FOKModHost::Get().Reload(Args[0], Text);
 	Out.Log(Text);
 	UE_LOG(LogOKMod, Display, TEXT("mod.reload %s: %s"), *Args[0], *Text);
+}
+
+// For a map no mode recognises (the ModKit probe stage's Entry): load the mods of a mode by hand.
+static void OKModConsoleEnter(const TArray<FString>& Args, FOutputDevice& Out)
+{
+	if (Args.Num() != 1) { Out.Log(TEXT("mod.enter <reader|studio|pair|street>")); return; }
+	FOKModHost::Get().EnterMode(Args[0]);
+	Out.Log(TEXT("entered ") + Args[0]);
 }
 
 static void OKModConsoleCall(const TArray<FString>& Args, FOutputDevice& Out)
@@ -362,6 +373,8 @@ static FAutoConsoleCommandWithArgsAndOutputDevice GOKModList(TEXT("mod.list"), T
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleList));
 static FAutoConsoleCommandWithArgsAndOutputDevice GOKModReload(TEXT("mod.reload"), TEXT("Mods (development, -ModDev): load a rebuilt mod DLL again, e.g. mod.reload org.openkoikatsu.hello"),
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleReload));
+static FAutoConsoleCommandWithArgsAndOutputDevice GOKModEnter(TEXT("mod.enter"), TEXT("Mods: enter a mode by hand (maps no mode recognises), e.g. mod.enter reader"),
+	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleEnter));
 static FAutoConsoleCommandWithArgsAndOutputDevice GOKModCall(TEXT("mod.call"), TEXT("Mods: one raw mod host request, e.g. mod.call {\"op\":\"config\",\"mod\":\"org.openkoikatsu.hello\"}"),
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleCall));
 

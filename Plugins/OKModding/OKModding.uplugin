@@ -8,6 +8,9 @@
   "EnabledByDefault": false,
   "CanContainContent": false,
   "SupportedTargetPlatforms": [ "Win64" ],
+  "Plugins": [
+    { "Name": "KKUnityBundle", "Enabled": true }
+  ],
   "Modules": [
     { "Name": "OKModding", "Type": "Runtime", "LoadingPhase": "Default" }
   ]

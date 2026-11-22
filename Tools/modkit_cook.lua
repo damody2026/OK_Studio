@@ -3,6 +3,8 @@
 --
 --   Tools\lua\lua.exe Tools\modkit_cook.lua --mod <id> [--plugin-dir DIR] [--engine DIR] [--out DIR]
 --       cook Plugins/<id>/Content in a per-mod cook host, pak it, verify it; the last stdout line is the pak
+--       and prints the content_build line for the mod.toml (the game build the pak was cooked for)
+--   Tools\lua\lua.exe Tools\modkit_cook.lua --mod <id> --content-build   only print that value
 --   Tools\lua\lua.exe Tools\modkit_cook.lua --mod <id> --prepare-only      lay out the cook host, print its .uproject
 --   Tools\lua\lua.exe Tools\modkit_cook.lua --mod <id> --python <file.py>  run an editor Python script in the cook host
 --       (authoring without the GUI; the script saves into the plugin through the host's junction)
@@ -286,6 +288,18 @@ end
 -- ---------------------------------------------------------------------------------------------------------------
 -- cook + pak
 -- ---------------------------------------------------------------------------------------------------------------
+-- What the game's OKModContent::ContentBuild() returns for this engine: "<Config/DefaultGame.ini [OKModding]
+-- ContentBuild>@<major>.<minor>.<patch>-<Changelist>" (Engine/Build/Build.version, FEngineVersion::Current()). A mod's mod.toml content_build must equal it, else
+-- the game does not mount its pak (the shaders would not match the game's).
+local function content_build(engine)
+  local build = "0"
+  local ini = path.exists(path.join(ok.root, "Config/DefaultGame.ini")) and path.read_bytes(path.join(ok.root, "Config/DefaultGame.ini")) or ""
+  local section = ini:match("%[OKModding%]([^%[]*)")
+  if section then build = section:match("\nContentBuild=([^\r\n]+)") or build end
+  local v = json.decode(path.read_bytes(path.join(engine, "Engine/Build/Build.version")))
+  return string.format("%s@%d.%d.%d-%d", build, v.MajorVersion, v.MinorVersion, v.PatchVersion, v.Changelist)
+end
+
 local function cook(engine, id, host, work)
   step("cook " .. id)
   local cooked = path.join(work, "cook")
@@ -348,12 +362,14 @@ local function main()
   p:opt("--verify", { default = "" })
   p:opt("--python", { default = "" })
   p:flag("--prepare-only")
+  p:flag("--content-build")
   local a = p:parse(arg)
   if not a.mod:match("^[A-Za-z][A-Za-z0-9_]*$") then error("--mod must match ^[A-Za-z][A-Za-z0-9_]*$ (it names the plugin and its package root)", 0) end
   local engine = path.norm(a.engine)
   local id = a.mod
   local plugin_dir = a.plugin_dir ~= "" and path.abs(a.plugin_dir) or path.join(ok.root, "Plugins/" .. id)
   local work = a.out ~= "" and path.abs(a.out) or path.join(ok.root, "Saved/ModKit/" .. id .. "/Cook-" .. os.date("%Y%m%d%H%M%S"))
+  if a.content_build then io.write(content_build(engine), "\n"); return end
   path.mkdir(work)
 
   if a.verify ~= "" then
@@ -390,6 +406,9 @@ local function main()
     error("the cooked pak fails the mod check: " .. win(path.join(work, "verify.json")), 0)
   end
   step("done")
+  local stamp = content_build(engine)
+  path.write_text(path.join(work, "content_build.txt"), stamp .. "\n")
+  io.write('content_build = "', stamp, '"   (put this in the mod.toml)\n')
   io.write(win(pak), "\n")
 end
 
