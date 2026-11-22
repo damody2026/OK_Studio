@@ -11,3 +11,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
