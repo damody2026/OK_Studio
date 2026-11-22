@@ -2,6 +2,7 @@
 -- 祖先卡不用列：從孩子的紀錄找到父母的卡（路徑），一路找到原卡。每張卡標名字與檔案大小；
 -- 依賴父母的子卡（okDn depends）標「依賴父母」，原卡與匯出的完整卡標「完整卡」。Docs/OK_BREEDING.md。
 -- Usage: Tools\lua\lua.exe Tools\breed_family_tree.lua --out <圖.png> [--title <標題>] [--subtitle <副標>] [--list <清單檔>] <卡或資料夾>...
+-- 清單檔一行一張卡；「#title …」「#subtitle …」行給標題（中文標題從命令列傳不進來）。帶 HairDeck 頭髮（okHk）的卡標綠標。
 package.path = 'Tools/lua/?.lua;' .. package.path
 local json = require 'ok.json'
 local lfs = require 'lfs'
@@ -17,7 +18,13 @@ do
     if a == '--out' or a == '--title' or a == '--subtitle' then args[a:sub(3)] = arg[i + 1]; i = i + 2
     elseif a == '--list' then
       -- a UTF-8 file, one card a line (card names such as 刻晴×雷電 do not survive the command line)
-      for line in io.lines(arg[i + 1]) do line = line:gsub('^\239\187\191', ''):gsub('%s+$', ''); if line ~= '' then inputs[#inputs + 1] = line end end
+      -- (and "#title ..." / "#subtitle ..." lines: Chinese titles do not survive the command line either)
+      for line in io.lines(arg[i + 1]) do
+        line = line:gsub('^\239\187\191', ''):gsub('%s+$', '')
+        local key, value = line:match('^#(%a+)%s+(.+)$')
+        if key == 'title' or key == 'subtitle' then args[key] = value
+        elseif line ~= '' and not line:find('^#') then inputs[#inputs + 1] = line end
+      end
       i = i + 2
     else inputs[#inputs + 1] = a; i = i + 1 end
   end
@@ -56,6 +63,8 @@ local nodes, order = {}, {}
 local function node(id) if not nodes[id] then nodes[id] = { id = id }; order[#order + 1] = id end; return nodes[id] end
 local function fill(n, path, c)
   n.path, n.size, n.picture = path, c.size, c.picture
+  -- HairDeck hair kept in the card (okHk, Docs/HAIRDECK.md): a badge on her picture
+  n.hairdeck = c.chunks.okHk ~= nil
 end
 local pending = {}
 for _, path in ipairs(files) do
@@ -129,7 +138,7 @@ local function text(s, x, y, size, color, bold, center)
 end
 local function box(x, y, w, h, color) return string.format('drawbox=x=%d:y=%d:w=%d:h=%d:color=%s:t=fill', x, y, w, h, color) end
 
-local inputs_args, ops, overlays = {}, {}, {}
+local inputs_args, ops, overlays, badges = {}, {}, {}, {}
 local placed = {}
 for g = 0, maxgen do for _, n in ipairs(rows[g] or {}) do placed[#placed + 1] = n end end
 for i, n in ipairs(placed) do
@@ -171,6 +180,10 @@ for _, n in ipairs(placed) do
   ops[#ops + 1] = box(n.x - 3, n.y - 3, TW + 6, TH + 6, n.depends and '0x8fd3f4' or '0xf6d58e')
   ops[#ops + 1] = text(n.name ~= '' and n.name or '?', n.cx, n.y + TH + 8, 20, 'white', true, true)
   ops[#ops + 1] = text(mb(n.size) .. (n.depends and '・依賴父母' or '・完整卡'), n.cx, n.y + TH + 36, 15, n.depends and '0x8fd3f4' or '0xf6d58e', false, true)
+  if n.hairdeck then
+    badges[#badges + 1] = box(n.x + 4, n.y + 4, 112, 26, '0x1f6b3a@0.9')
+    ops[#ops + 1] = text('HairDeck 頭髮', n.x + 60, n.y + 9, 15, 'white', true, true)
+  end
 end
 for g = 0, maxgen do
   if rows[g] then ops[#ops + 1] = text(g == 0 and '原卡' or string.format('第 %d 代', g), 30, TOP + g * (TH + LABEL + ROWGAP) + TH // 2 - 14, 26, '0xd0d4e8', true, false) end
@@ -191,7 +204,9 @@ for i, n in ipairs(placed) do
   graph[#graph + 1] = string.format('[%s][p%d]overlay=x=%d:y=%d[o%d]', last, i, n.x, n.y, i)
   last = 'o' .. i
 end
+-- (badges over the pictures, then every label)
 local labels = {}
+for _, op in ipairs(badges) do labels[#labels + 1] = op end
 for _, op in ipairs(ops) do if op:find('^drawtext') then labels[#labels + 1] = op end end
 graph[#graph + 1] = string.format('[%s]%s[out]', last, table.concat(labels, ','))
 local script = work .. '/graph.txt'
