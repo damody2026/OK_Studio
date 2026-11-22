@@ -11735,6 +11735,7 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 			if (OKFaceFlattenChanged(FlatFaceState, Head, View)) for (const auto& M : FlatFaceMaterials) if (M.IsValid()) OKApplyFaceFlatten(M.Get(), FlatFaceState);
 		}
 	}
+	UpdateForegroundHair();
     bool BatchFace=CVarOkFaceFrameBatch.GetValueOnGameThread()!=0;
     if(BatchFace)BeginFaceDisplayUpdate();
     ON_SCOPE_EXIT{if(BatchFace)EndFaceDisplayUpdate();};

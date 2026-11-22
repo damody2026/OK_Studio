@@ -925,6 +925,12 @@ public:
     UPROPERTY() TArray<TObjectPtr<class UMaterialInstanceDynamic>> CookedRoleOutlines;
     // The head instances on their _Flat parents (ok.FaceFlatten): given the head and the camera every tick.
     TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> FlatFaceMaterials;FKKFaceFlattenState FlatFaceState;
+    // Eyes, eyelines and eyebrows mixed with her hair (KKPreviewRuntimeMaterials.inl): their instances on the
+    // <Parent>_Fg parents (her hair meshes draw into custom depth / stencil ForegroundStencil),
+    // and what UpdateForegroundHair last saw (component count, ok.ForegroundThrough / ok.ForegroundNear).
+    TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> ForegroundFaceMaterials;TSet<int32> ForegroundHairParts;
+    uint8 ForegroundStencil=0;int32 ForegroundSeenComponents=-1;float ForegroundSeenThrough=-1.f,ForegroundSeenNear=-1.f;
+    void UpdateForegroundHair();
     /** Sets a vector parameter (a Unity uniform such as _WorldSpaceLightPos0) on every shared parent instance of this
      *  actor, outlines included; instances without it are left alone. */
     void SetSharedVectorParameter(FName Name, const FLinearColor& Value);
