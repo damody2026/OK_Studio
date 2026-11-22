@@ -198,6 +198,8 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
             Err(e) => json!({"ok": false, "error": e}),
         },
         // {"op":"hook","hook","payload","mods"?}: a named hook (Event::Hook) to its subscribers, or to the listed mods.
+        // {"op":"subscribers","hook"}: who would get that hook, so callers skip preparing a payload nobody reads.
+        "subscribers" => json!({"mods": host.subscribers(str_field(req, "hook")?)}),
         "hook" => {
             let name = str_field(req, "hook")?;
             let payload = req.get("payload").cloned().unwrap_or(Value::Null).to_string();
