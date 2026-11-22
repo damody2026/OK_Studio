@@ -36,11 +36,11 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 - 對位：HairDeck 的頭骨橢球（半徑 0.405W、0.5W、0.5W）對到角色臉部網格：縮放用頭頂 45% 的頭寬（排除耳朵），前後用額頭，高度用頭頂。遊戲的 `cf_O_face` 沒有後腦，不能用網格深度。遊戲的頭頂比 HairDeck 的頭骨方，照原尺寸額頭上緣會從瀏海間露出來，所以再放大 4%、上移 0.13 個半徑、前移 0.07 個半徑（C041 實測）。
 - 顏色：每片頭髮 16 段顏色畫進一張圖集（每片 4×32 像素）。
 - 骨鏈：最多 32 條、每條 3–12 個點，成為私有柔性髮骨（`portable_hair_soft`），每片頭髮跟最近的骨鏈，髮根跟頭。
-- 取代角色原本的頭髮（同一個配件裡的角、緞帶保留）：
+- 取代角色原本的頭髮（其他飾品槽的角、帽子、衣服保留）：
   - 頭髮部件，以及部件名稱、renderer 名稱或 shader 名稱含 hair、名稱含 `_kami`（日文「髪」）的配件。
   - 同配件中名稱含 shadow／kage 的頭髮陰影。
   - 同一個頭髮網格在同配件再畫一次的疊層：半透明材質（`main_item_studio_alpha`、`main_alpha`）、MaterialEditor 的 copy，或同一張貼圖。
-  - 卡片上類別 121（髮）的配件、HairAccessoryCustomizer 有資料的配件槽：其中 `_Color` 等於卡片髮色的 renderer（原作把髮色染到 `rendHair`）。這兩種槽位也有髮夾、緞帶、兜帽、項鍊，它們保留自己的顏色，所以不會被藏。卡片髮色是純白時不用這條：沒染色的材質也是白色。這條要知道卡片路徑，session 開卡時記下（`OkSession::card_path`）。
+  - 原本用飾品做的頭髮整個藏掉（使用者 2026-11-22：換 HairDeck 後不需要原來的頭髮飾品，會重疊）：卡片上類別 121（髮）的飾品、掛在頭髮掛點（`a_n_hair_*`）上的飾品，以及 HairAccessoryCustomizer 有資料、掛在頭上（`a_n_head*`、`a_n_hair*`）的飾品槽，不管顏色與名稱。這些槽裡的髮夾、緞帶、貓耳也一起藏：它們是照舊髮型擺的，在新頭髮上會浮起或陷進去。之前只藏顏色等於髮色的 renderer，刻晴的雙馬尾、貓耳這類照樣留著。這條要知道卡片路徑，session 開卡時記下（`OkSession::card_path`）。
 - 材質：角色原髮是原生頭髮 shader 時沿用它的 ramp 與高光。否則用 main_item，顏色圖集標成 sRGB、不畫外框；直接讀會讓深藍變淡紫，外框會描出每一片頭髮。新部件不留原 renderer 名稱，卡片的 MaterialEditor 設定不會套到它身上。
 - 再次套用同一份頭髮不做事（材質名稱記著頭髮檔與選項的雜湊）；換另一份頭髮時取代上一份。
 
@@ -49,7 +49,7 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 ## OK Studio 與讀卡器
 
 - OK Studio：選角色 → 物件屬性「髮型生成（HairDeck）」：填參考圖路徑，按「生成」，完成後自動換上；「頭髮檔」可直接填既有的 `cards_seed<s>.json`；「原本頭髮」換回角色卡的頭髮。場景會記住 `HairDeck`／`HairDeckOpts`／`HairDeckImage`，重開場景時重新套用。指令：`chara.hairdeck <參考圖>`、`chara.hairdeck.apply <cards json>`（MCP `studio_cmd` 可用）。生成結果在 `Saved/OKStudio/HairDeck/<時間>/`。
-- 讀卡器：主控台 `ok.ReaderHairDeck <cards_seed0.json> [選項 JSON]`。角色身上記著這份頭髮（`AKKPreviewActor::HairDeckCards`），之後這個角色載入的每個 session（換衣服狀態、重開）都會再套上。
+- 讀卡器：編輯 › 頭髮 › **HairDeck 生成**（`Config/ReaderEditor/pages.json` 的 builder `hairdeck`）：參考圖路徑欄、「選參考圖…」、「生成並換上」（`ok-hairdeck.exe`，結果在 `Saved/HairDeck/<時間>/`）、「換上頭髮檔…」（選 `cards_seed<s>.json`）、「存進卡片」、「從卡片拿掉」（拿掉後重新載入原本的頭髮），下方顯示上一步的結果。MCP `hairdeck` 給 `image` 走同一個生成。主控台 `ok.ReaderHairDeck <cards_seed0.json> [選項 JSON]`。角色身上記著這份頭髮（`AKKPreviewActor::HairDeckCards`），之後這個角色載入的每個 session（換衣服狀態、重開）都會再套上。
 - 換頭髮後要清掉 session 的 `RuntimeMaterials` 與角色的共用材質實例（`CookedRoleMaterials`）：讀卡器用預先烘好的共用材質，不清的話新頭髮會拿舊頭髮的材質與貼圖。
 
 選項 JSON（`HairDeckOpts`）：`scale`（再乘的縮放）、`offset`（頭部座標的位移，公尺）、`native`（沿用原髮 shader，預設 true）、`rigid`（不用骨鏈）、`hair_color`。
@@ -92,4 +92,4 @@ CrowdAPNG 101 張批次（2026-11-15，讀卡器，nightclub 頭髮）：100 張
 - 雜訊用自己的亂數，同一個 seed 不會和 Python 版相同（要重現時用 `--noise`）。
 - 沒有 SAM 3：參考圖背景要單純，或自己去背成透明 PNG，或手動給框。
 - 頭髮材質目前是顏色圖集；沒有法線圖與 HairDeck 的 VRM 材質。
-- 讀卡器換的頭髮要 `ok.ReaderHairDeckSave` 才存進卡片；還沒有畫面上的按鈕。OK Studio 存在場景裡。
+- 讀卡器換的頭髮要按「存進卡片」（或 `ok.ReaderHairDeckSave`）才存進卡片，存的是目前這張卡本身。OK Studio 存在場景裡。
