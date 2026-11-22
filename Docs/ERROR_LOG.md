@@ -7219,3 +7219,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 修讀卡器 ui_widgets 為空時，第一版只把「模型層」的 Collapsed 根節點放行，`/widgets` 一呼叫讀卡器就崩潰：`Buttons()` 對從沒建出 Slate 的 UMG 按鈕做 `GetCachedWidget().ToSharedRef()`（SharedPointer `IsValid()` 斷言）。原本的程式只會遇到畫過的按鈕，所以沒出事。修正：沒有 Slate 時從 UMG 子樹取文字。教訓：放寬過濾條件前，先看下游每個用到這批物件的地方假設了什麼。
   - 第二版用 UMG 自己的可見旗標判斷，只列出 7 個控制項：DreamGUI 會照樣鏡像 UMG 裡收起的面板，所以 UMG 旗標不代表畫面。改成看顯示中的 DreamGUI 鏡像（`UOKDreamControl::Source`）。
   - 從 Git Bash 用 `curl -d '{"value":"繁體中文"}'` 送中文，參數被轉了字碼頁，遊戲回「not one of the choices」，差點誤判成 ui_set 有問題。改用 `--data-binary @<UTF-8 檔>`。
+
+## 2026-11-23 glass-shader 材質第一次 cook 編不過、重做時刪不掉舊材質（F 組 f-mod-9b，OK Mod 工作項 9 範例）
+
+- **症狀 1**：`M_OKGlass` 的 Custom 節點呼叫 `OKGlass.usf` 的 `OKGlassShade(float3 N, float3 V, float4 Tint, ...)`，cook 時 `no matching function for call to 'OKGlassShade'`、`Failed to compile Material ... Default Material will be used in game`，cook 結尾照樣 `Success`；`modkit_cook.lua` 掃 log 擋下，沒產生 pak（`Saved/ModKit/org_openkoikatsu_glass_shader/Cook1/cook.log`）。
+- **原因**：Vector Parameter 的預設輸出接到 Custom 節點的輸入時是 **float3**（RGB），產生的 `CustomExpression0(... float3 Tint ...)`；`.usf` 函式要 `float4`，HLSL 找不到相符的多載（`Host/Saved/ShaderDebugInfo/.../BasePassPixelShader.usf` 看得到產生的簽章）。
+- **修正**：`.usf` 改收 `float3 Tint, float TintAlpha`，`GlassTint` 的 `A` 輸出另接一個 Custom 輸入。重 cook 成功（`Cook3`）。
+- **症狀 2**：重跑製作腳本時 `EditorAssetLibrary.delete_asset("M_OKGlass")` 沒刪掉（被 `MI_OKGlass_Smoky` 引用），接著 `create_asset` 在 unattended 下回 `None`，腳本中斷。處置：重做前先刪外掛 `Content/` 的 `.uasset` 檔再跑腳本。
+- **教訓**：Custom 節點的 `.usf` 函式簽章要照產生碼的實際型別寫（向量參數是 float3，alpha 另接），寫完先看一次 ShaderDebugInfo 的產生碼；編輯器 Python 重建互相引用的資產，先刪檔案，不要靠 `delete_asset`。
