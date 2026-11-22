@@ -467,6 +467,13 @@ typedef struct OkRustBindings {
 } OkRustBindings;
 
 int32_t ok_register_bindings(OkUnrealBindings unreal, OkRustBindings* out_rust);
+
+/* The game's OK mod host for hooks that run in ok-extract (src/mod_forward.rs): dispatch takes an okm_dispatch request
+   (Tools/ok-mod/host/include/ok_mod_host.h) and returns the answer as UTF-8 released with free, or NULL. Null functions
+   clear it. Both are called from any thread. */
+typedef const char* (*OkModDispatchFn)(const char* request_json);
+typedef void (*OkModFreeFn)(const char* text);
+void ok_set_mod_dispatch(OkModDispatchFn dispatch, OkModFreeFn free_text);
 /* Immediate source-authored trigger self re-entry; existing binding table unchanged. */
 int32_t ok_animation_trigger_count(OkSession* s);
 int32_t ok_animation_trigger_at(OkSession* s, int32_t index, char* name, int32_t cap);
