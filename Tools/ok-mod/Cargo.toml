@@ -10,6 +10,7 @@ members = [
     "examples/hello",
     "examples/glass-shader",
     "examples/boop",
+    "examples/skin-decal",
     "studio",
     "examples/profile",
     "examples/outfit-names",
