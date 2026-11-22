@@ -237,6 +237,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-pair-counter"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ok-mod-scene-notes"
 version = "0.1.0"
 dependencies = [

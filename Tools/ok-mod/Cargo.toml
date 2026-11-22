@@ -12,6 +12,7 @@ members = [
     "examples/studio-autosave",
     "examples/scene-notes",
     "examples/timeline-flow",
+    "examples/pair-counter",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
 ]
