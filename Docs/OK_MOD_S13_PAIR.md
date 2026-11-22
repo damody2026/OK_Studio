@@ -71,10 +71,21 @@ C 的 `subtitles` 範例（`org.openkoikatsu.subtitles`，訂閱 `reader.speech_
 - **愛撫高潮 `orgTouch`**：面板的愛撫模式是「持續」，`ok.HScene.HerRate 20` 後按「摸私處」，她高潮時橋接送出 `pair.finish {"text":"orgTouch"}`，`pair-counter` 回 ok。
 - **她獨自高潮 `orgSolo`**：「自慰」→「站立自慰」，量表加快後高潮了 5 次，每次都送 `pair.finish {"text":"orgSolo"}`。
 - 離開後 `pair-counter` 寫入 `{"times":6,"seconds":730.4,"her":7,"him":1}`。上次是 her 1，這次加 1 次 `orgTouch` 和 5 次 `orgSolo`，剛好 7。
+- **從街區進 1 對 1**（`game_launch` 加 `-Editor -Sandbox EMod8 -PortBase 48130 -Heroine 1 -NoCloud`，用剛建的編輯器執行檔，不用 stage；`hscene open=1`）：
+  - 宿主 `mode street` → 進 1 對 1 時切成 `mode street/pair: 2 mod(s) enabled: …subtitles, …pair_counter`，離開後 `target` 回到 `street`（mod 照宿主的設計留著載入，只收到 `mode_exit`）。
+  - 依序送出 `pair.enter`、`pair.ready`、`pair.note`、`pair.finish`（`orgTouch`）、`pair.exit`。
+  - **發現的錯**：街區先開 1 對 1 再載入她，`pair.enter` 的 `card` 是空的。`pair-counter` 離開時卡片對不上，把這次的高潮丟掉了（寫入 `her: 0`）。改成用第一個帶卡片的 `pair.finish` 補上（提交 fdaefd3a6）。重跑後寫入 `{"times":2,…,"her":1}`。
+  - 卡片是街區女主角自己的卡（`Content/CharacterCards/StreetHeroines/jeanne_alter.png`，只在本機）。`pair-counter` 的區段寫進這張卡，卡片身分不變。
+  - `-NoCloud` 下她沒有台詞，所以這條路沒有 `pair.line`／`pair.voice`，字幕只在讀卡器那條路驗。
+- **獨立 1 對 1 遊戲模式**（`Tools/run_interaction_pair.lua --female <卡片副本> --control`，`AOKInteractionPairGameMode`）：
+  - 宿主一開始就是 `mode pair`。
+  - **發現的錯**：第一次跑沒有 `pair.enter`。橋接原本由 0.5 秒的 ticker 看到宿主開了才訂閱，這個模式在 BeginPlay 後半秒就進 1 對 1，載入中 ticker 還沒訂閱。改成引擎啟動就訂閱、宿主沒開時略過（提交 b1b4bb8f5）。
+  - 重跑：`ok.PairModBridgeSelfTest` **23/23**（新加「一開始就訂閱」與「TTS 語音接在台詞後送 `pair.speech_start`」兩項）。
+  - 按「結束」（這個模式會關掉遊戲）後，`pair-counter` 收到 `pair.exit` 和卡片區段，寫入 7 次、739 秒（讀卡器那輪是 6 次、730 秒）。
 
 ## 沒驗證的
 
+- 獨立 1 對 1 的 `pair.enter` 本身：修正後那輪按「結束」會連遊戲一起關，trace 沒來得及印出來。有送出靠的是自我測試的「一開始就訂閱」，加上 exit 正常。
 - 讀卡器顯示這張卡的統計：要 C 的 reader hook（同步點 B 後）。卡片裡的資料目前只用 log 與 payload 的 `section` 確認，沒有在畫面上看。
-- 從街區進的 1 對 1（`street` → `pair` → `street`）與獨立 1 對 1 遊戲模式：只跑了讀卡器進的那條路。
 - 字幕的 `seconds`：字幕列固定停 15 秒或到下一句，mod 給的秒數沒用上。
 - 重試只在同一次執行內：遊戲結束時檔案仍被占用，那筆資料遺失（記錯誤）。
