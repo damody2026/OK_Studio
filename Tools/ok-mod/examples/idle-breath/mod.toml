@@ -1,0 +1,10 @@
+id = "org.openkoikatsu.idle-breath"
+name = "Idle breath"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_idle_breath.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.idle-breath.description"
+targets = ["studio"]
+ext_data = ["scene"]
+category = "content"

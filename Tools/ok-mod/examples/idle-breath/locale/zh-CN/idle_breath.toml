@@ -1,0 +1,5 @@
+"mod.org.openkoikatsu.idle-breath.description" = "OK Studio：摆好的角色会呼吸（胸口起伏、肩膀跟着动），每个角色可调强度，存进场景。"
+"mod.org.openkoikatsu.idle-breath.cmd.reset" = "呼吸设定回到预设"
+"mod.org.openkoikatsu.idle-breath.row.enabled" = "呼吸"
+"mod.org.openkoikatsu.idle-breath.row.speed" = "每分钟呼吸次数"
+"mod.org.openkoikatsu.idle-breath.row.strength" = "呼吸强度"

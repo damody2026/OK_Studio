@@ -13,6 +13,7 @@ members = [
     "examples/skin-decal",
     "examples/toon-post",
     "examples/dream-panel",
+    "examples/idle-breath",
     "studio",
     "examples/profile",
     "examples/outfit-names",
