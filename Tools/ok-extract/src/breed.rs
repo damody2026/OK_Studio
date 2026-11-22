@@ -92,8 +92,9 @@ fn write_sections(parts: &[Value], form: &Form) -> Vec<u8> {
 
 // ------------------------------------------------------------------ genes
 
-/// What the mixing decided: per group, whether the father's (`true`) or the mother's value was taken.
-struct Mixer { rng: Rng, picks: BTreeMap<String, bool> }
+/// What the mixing decided: per group, whether the father's (`true`) or the mother's value was taken; per whole-number
+/// field ("face.pupil.0.id"), whose value it has (None: both had it).
+struct Mixer { rng: Rng, picks: BTreeMap<String, bool>, sources: BTreeMap<String, Option<bool>>, forced: BTreeMap<String, bool> }
 
 /// The group a whole-number field belongs to: decided once for all of it.
 fn group(section: &str, path: &str) -> String {
@@ -151,10 +152,16 @@ impl Mixer {
                 if xa.len() == 4 && floats(xa) && floats(xb) && path.to_ascii_lowercase().contains("color") {
                     Value::Array(self.colour(xa, xb))
                 } else {
-                    Value::Array(xa.iter().zip(xb).map(|(x, y)| self.mix(section, &format!("{path}[]"), x, y)).collect())
+                    Value::Array(xa.iter().zip(xb).enumerate().map(|(i, (x, y))| self.mix(section, &format!("{path}.{i}"), x, y)).collect())
                 }
             }
-            _ => if a == b || !self.pick(group(section, path)) { a.clone() } else { b.clone() },
+            _ => {
+                let mut father = a != b && self.pick(group(section, path));
+                // (a gene her parents' data could not show, taken from the other parent: ile::breed_whole)
+                if a != b { if let Some(f) = self.forced.get(&format!("{section}.{path}")) { father = *f; } }
+                self.sources.insert(format!("{section}.{path}"), (a != b).then_some(father));
+                if father { b.clone() } else { a.clone() }
+            }
         }
     }
 }
@@ -179,23 +186,45 @@ fn child_first_name(a: &str, b: &str, rng: &mut Rng) -> String {
 
 // ----------------------------------------------------------------- plugins
 
-/// The other parent's face/body/hair Sideloader entries added to the base's (an entry applies only where the value is
-/// its `Slot`, so the parent whose part was not taken costs nothing); outfit entries stay the base's.
-fn sideloader_union(base: &mut Value, other: &Value) {
+/// A field of the mixed `Custom` sections by section and path ("face", "pupil.0.id").
+fn custom_value<'a>(custom: &'a [Value], section: &str, path: &str) -> Option<&'a Value> {
+    let mut v = &custom[["face", "body", "hair"].iter().position(|s| *s == section)?];
+    for part in path.split('.') {
+        v = match part.parse::<usize>() { Ok(i) => v.as_array()?.get(i)?, Err(_) => map_get(v, part)? };
+    }
+    Some(v)
+}
+
+/// The child's Sideloader entries (an entry applies where the field's value is its `Slot`). A face/body/hair entry is
+/// kept when the child's value is its slot and comes from the parent who had it (both parents having the value: the
+/// base's entry, else the other's); an entry of a value she does not have is dropped. Kept, a parent's entry whose slot
+/// the other parent's value happened to equal (a mod's slot and an original id alike) gave her a mod part neither parent
+/// wore, and her strict open asked about it (an eye highlight, cat 410 1919, 2026-11-22). Outfit entries stay the base's.
+fn sideloader_select(base: &mut Value, other: &Value, base_is_father: bool, custom: &[Value], sources: &BTreeMap<String, Option<bool>>) {
     let entries = |v: &Value| -> Vec<Value> {
         map_get(v, SIDELOADER).and_then(|p| match p { Value::Array(a) if a.len() == 2 => Some(&a[1]), other => Some(other) })
             .and_then(|d| map_get(d, "info")).and_then(|i| i.as_array()).cloned().unwrap_or_default()
     };
     let key = |e: &Value| { let i = unbin(e); (map_get(&i, "Property").and_then(|p| p.as_str()).unwrap_or("").to_owned(), map_get(&i, "Slot").and_then(|s| s.as_i64()).unwrap_or(0)) };
-    let mut info = entries(base);
-    let had: Vec<(String, i64)> = info.iter().map(key).collect();
-    for e in entries(other) {
+    let mut info: Vec<Value> = Vec::new();
+    let mut had: Vec<(String, i64)> = Vec::new();
+    for (e, from_base) in entries(base).into_iter().map(|e| (e, true)).chain(entries(other).into_iter().map(|e| (e, false))) {
         let k = key(&e);
-        if k.0.starts_with("outfit") || had.contains(&k) { continue; }
+        if had.contains(&k) { continue; }
+        if k.0.starts_with("outfit") { if !from_base { continue; } }
+        else if let Some((section, path)) = crate::appearance::custom_field_of_property(&k.0) {
+            if custom_value(custom, &section, &path).and_then(|v| v.as_i64()) != Some(k.1) { continue; }
+            let from_father = if from_base { base_is_father } else { !base_is_father };
+            if let Some(Some(source)) = sources.get(&format!("{section}.{path}")) { if *source != from_father { continue; } }
+        }
+        had.push(k);
         info.push(e);
     }
     let version = match map_get(base, SIDELOADER).or_else(|| map_get(other, SIDELOADER)) { Some(Value::Array(a)) if a.len() == 2 => a[0].clone(), _ => Value::from(0) };
-    if info.is_empty() { return; }
+    if info.is_empty() {
+        if let Value::Map(m) = base { m.retain(|(k, _)| k.as_str() != Some(SIDELOADER)); }
+        return;
+    }
     map_set(base, SIDELOADER, Value::Array(vec![version, Value::Map(vec![("info".into(), Value::Array(info))])]));
 }
 
@@ -282,7 +311,15 @@ fn parent_record(bytes: &[u8], file: &Path) -> serde_json::Value {
 /// The child of `mother` and `father` (card bytes), from `seed`: the card (on the base parent's PNG and chunks, with
 /// her own `okId` and an `okDn` record), which parent is the base (`true`: the father), and a one-line summary.
 pub fn breed(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path)) -> Result<(Vec<u8>, bool, String), String> {
-    let mut mixer = Mixer { rng: Rng(seed ^ 0x6F6B_4272_6565_6421), picks: BTreeMap::new() };
+    breed_forced(mother, father, seed, files, &BTreeMap::new()).map(|b| (b.card, b.from_father, b.summary))
+}
+
+/// A child as reed makes her, with what file::breed_whole needs to change genes.
+pub struct Bred { pub card: Vec<u8>, pub from_father: bool, pub summary: String, custom: Vec<Value>, sources: BTreeMap<String, Option<bool>> }
+
+/// reed with some whole-number fields (section.path) taken from the father (	rue) or the mother whatever the draw.
+fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), forced: &BTreeMap<String, bool>) -> Result<Bred, String> {
+    let mut mixer = Mixer { rng: Rng(seed ^ 0x6F6B_4272_6565_6421), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: forced.clone() };
     let (bm, bf) = (crate::appearance::blocks_from_card(mother)?, crate::appearance::blocks_from_card(father)?);
     let from_father = mixer.rng.chance(0.5);
     let (base_card, base, other) = if from_father { (father, &bf, &bm) } else { (mother, &bm, &bf) };
@@ -312,7 +349,7 @@ pub fn breed(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path)) -> 
     let hair_from_father = mixer.picks.get("hair").copied().unwrap_or(false);
     let mut kkex = base.get("KKEx").and_then(|k| decode(k)).unwrap_or(Value::Map(Vec::new()));
     let other_kkex = other.get("KKEx").and_then(|k| decode(k)).unwrap_or(Value::Map(Vec::new()));
-    sideloader_union(&mut kkex, &other_kkex);
+    sideloader_select(&mut kkex, &other_kkex, from_father, &mixed, &mixer.sources);
     if hair_from_father != from_father { hair_material_rows(&mut kkex, &other_kkex); }
     blocks.insert("KKEx".into(), encode(&kkex));
 
@@ -338,12 +375,145 @@ pub fn breed(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path)) -> 
     let side = |b: bool| if b { "father" } else { "mother" };
     let generation = rm["generation"].as_u64().unwrap_or(0).max(rf["generation"].as_u64().unwrap_or(0)) + 1;
     let record = serde_json::json!({
-        "format": "ok-breed", "version": 1, "seed": seed, "generation": generation, "mother": rm, "father": rf,
+        "format": "ok-breed", "version": 1, "name": format!("{last} {first}").trim(), "seed": seed, "generation": generation, "mother": rm, "father": rf,
         "base": side(from_father), "picks": mixer.picks.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
+        "changed": forced.iter().map(|(k, v)| (k.clone(), side(*v))).collect::<BTreeMap<_, _>>(),
     });
     let card = crate::tree_answers::with_chunk(&card, DNA_CHUNK, &serde_json::to_vec(&record).unwrap())?;
     let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {}, hair from the {})", side(from_father), side(hair_from_father));
-    Ok((card, from_father, summary.replace("  ", " ")))
+    Ok(Bred { card, from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources })
+}
+
+/// The list entries (category, id) an OK card's strict open lacked, as its error names them ("okLt cat 410 1919").
+fn catalogue_gaps(error: &str) -> Vec<(i64, i64)> {
+    let mut out: Vec<(i64, i64)> = error.match_indices("okLt cat ").filter_map(|(at, m)| {
+        let mut words = error[at + m.len()..].split(|c: char| !c.is_ascii_digit()).filter(|w| !w.is_empty());
+        Some((words.next()?.parse().ok()?, words.next()?.parse().ok()?))
+    }).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Genes to take from the other parent: the fields of the child whose value is a list entry (category, id) her open
+/// lacked and that came from one parent (`sources`).
+fn genes_to_change(bred: &Bred, gaps: &[(i64, i64)]) -> BTreeMap<String, bool> {
+    let mut out = BTreeMap::new();
+    for &(category, id) in gaps {
+        for (section, path) in crate::appearance::custom_fields_of_category(category as i32) {
+            if custom_value(&bred.custom, &section, &path).and_then(Value::as_i64) != Some(id) { continue; }
+            let key = format!("{section}.{path}");
+            if let Some(Some(father)) = bred.sources.get(&key) { out.insert(key, !father); }
+        }
+    }
+    out
+}
+
+// ------------------------------------------------------------------ depending on the parents
+
+/// The `okDn` record of a card (None: not a bred child).
+fn dna(bytes: &[u8]) -> Option<serde_json::Value> {
+    crate::oklib::png_chunk(bytes, DNA_CHUNK).and_then(|d| serde_json::from_slice(d).ok())
+}
+/// The parents a child depends on, in the order their packs go (the base parent first): ("mother"|"father").
+fn depended_parents(record: &serde_json::Value) -> Vec<&'static str> {
+    let base_is_father = record["base"].as_str() == Some("father");
+    let order = if base_is_father { ["father", "mother"] } else { ["mother", "father"] };
+    order.into_iter().filter(|p| record["depends"][*p].as_bool() == Some(true)).collect()
+}
+/// A child that depends on her parents: her card carries only what they do not (okDn `depends`).
+pub fn is_dependent(bytes: &[u8]) -> bool { dna(bytes).is_some_and(|r| !depended_parents(&r).is_empty()) }
+
+fn absolute(p: &Path) -> std::path::PathBuf {
+    if p.is_absolute() { p.to_owned() } else { std::env::current_dir().map(|d| d.join(p)).unwrap_or_else(|_| p.to_owned()) }
+}
+/// `to` relative to the folder `from` (None: another drive).
+fn relative_path(from: &Path, to: &Path) -> Option<String> {
+    use std::path::Component;
+    let norm = |p: &Path| -> Vec<String> { p.components().filter(|c| !matches!(c, Component::CurDir)).map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect() };
+    let (a, b) = (norm(&absolute(from)), norm(&absolute(to)));
+    if a.first() != b.first() { return None; }
+    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let names: Vec<String> = absolute(to).components().filter(|c| !matches!(c, Component::CurDir)).map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+    let mut parts: Vec<String> = std::iter::repeat("..".to_owned()).take(a.len() - common).collect();
+    parts.extend(names.into_iter().skip(common));
+    Some(parts.join("/"))
+}
+
+/// The parent's card file a child names: by the path relative to the child, the absolute path, then the same file name
+/// beside the child (that one only when it is the same person, `okId`).
+fn find_parent(record: &serde_json::Value, child: &Path) -> Result<(std::path::PathBuf, Vec<u8>), String> {
+    let dir = child.parent().unwrap_or(Path::new("."));
+    let id = record["id"].as_str().unwrap_or("");
+    let mut tried = Vec::new();
+    let candidates = [record["relative"].as_str().map(|r| dir.join(r)), record["path"].as_str().map(std::path::PathBuf::from)];
+    for path in candidates.into_iter().flatten() {
+        if let Ok(bytes) = std::fs::read(&path) {
+            if crate::oklib::card_identity(&bytes).as_deref() != Some(id) {
+                eprintln!("ok-extract: breed: {} is not the card the child was bred from (its identity changed); used anyway", path.display());
+            }
+            return Ok((path, bytes));
+        }
+        tried.push(path.display().to_string());
+    }
+    if let Some(name) = record["file"].as_str() {
+        let path = dir.join(name);
+        if let Ok(bytes) = std::fs::read(&path) { if crate::oklib::card_identity(&bytes).as_deref() == Some(id) { return Ok((path, bytes)); } }
+        tried.push(path.display().to_string());
+    }
+    Err(format!("{}: her parent {} is missing (looked for {})", child.display(), record["name"].as_str().unwrap_or("?"), tried.join(", ")))
+}
+
+/// Gathers the packs and answers a card opens with, in precedence order: her own, then each parent's (the base parent
+/// first), an ancestor met twice once.
+fn gather(bytes: &[u8], path: &Path, depth: usize, seen: &mut Vec<std::path::PathBuf>, packs: &mut Vec<Vec<u8>>, answers: &mut Vec<Vec<u8>>,
+          stamps: &mut Vec<(std::path::PathBuf, u64, Option<std::time::SystemTime>)>) -> Result<(), String> {
+    if depth > 64 { return Err(format!("{}: lineage deeper than 64 generations (a card that is its own ancestor?)", path.display())); }
+    if let Some(p) = crate::oklib::png_chunk(bytes, crate::oklib::PACK_CHUNK) { packs.push(p.to_vec()); }
+    if let Some(a) = crate::oklib::png_chunk(bytes, crate::tree_answers::CHUNK) { answers.push(a.to_vec()); }
+    let Some(record) = dna(bytes) else { return Ok(()) };
+    for side in depended_parents(&record) {
+        let (parent, parent_bytes) = find_parent(&record[side], path)?;
+        let key = absolute(&parent);
+        if seen.iter().any(|s| s.as_os_str().eq_ignore_ascii_case(key.as_os_str())) { continue; }
+        seen.push(key);
+        let m = std::fs::metadata(&parent).ok();
+        stamps.push((parent.clone(), m.as_ref().map_or(0, |m| m.len()), m.and_then(|m| m.modified().ok())));
+        gather(&parent_bytes, &parent, depth + 1, seen, packs, answers, stamps)?;
+    }
+    Ok(())
+}
+
+type Stamps = Vec<(std::path::PathBuf, u64, Option<std::time::SystemTime>)>;
+fn stamps_current(stamps: &Stamps) -> bool {
+    stamps.iter().all(|(p, len, t)| std::fs::metadata(p).ok().is_some_and(|m| m.len() == *len && m.modified().ok() == *t))
+}
+
+/// A card as it opens: a child that depends on her parents gets her own pack and answers merged with theirs (read from
+/// their cards now, generations up), an OK card carrying everything; any other card as it is. The last few are kept
+/// while none of their files changed.
+pub fn with_parents(bytes: Vec<u8>, path: &Path) -> Result<std::sync::Arc<Vec<u8>>, String> {
+    use std::sync::{Arc, Mutex};
+    if !is_dependent(&bytes) { return Ok(Arc::new(bytes)); }
+    static LAST: Mutex<Vec<(Stamps, Arc<Vec<u8>>)>> = Mutex::new(Vec::new());
+    let own = { let m = std::fs::metadata(path).ok(); (absolute(path), m.as_ref().map_or(0, |m| m.len()), m.and_then(|m| m.modified().ok())) };
+    if let Some(hit) = LAST.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(s, _)| s.first() == Some(&own) && stamps_current(s)).map(|e| e.1.clone()) {
+        return Ok(hit);
+    }
+    let t = std::time::Instant::now();
+    let (mut seen, mut packs, mut answers, mut stamps) = (vec![absolute(path)], Vec::new(), Vec::new(), vec![own]);
+    gather(&bytes, path, 0, &mut seen, &mut packs, &mut answers, &mut stamps)?;
+    let packs_ref: Vec<&[u8]> = packs.iter().map(Vec::as_slice).collect();
+    let answers_ref: Vec<&[u8]> = answers.iter().map(Vec::as_slice).collect();
+    let mut card = without(&bytes, &[crate::oklib::PACK_CHUNK, crate::tree_answers::CHUNK])?;
+    if let Some(pack) = crate::oklib::merge_pack_payloads(&packs_ref)? { card = crate::tree_answers::with_chunk(&card, crate::oklib::PACK_CHUNK, &pack)?; }
+    if let Some(table) = crate::tree_answers::merge_payloads(&answers_ref)? { card = crate::tree_answers::with_chunk(&card, crate::tree_answers::CHUNK, &table)?; }
+    eprintln!("ok-extract: breed: {} opens with {} ancestor card(s) ({} packs, {} bytes) in {:.2}s", path.display(), stamps.len() - 1, packs.len(), card.len(), t.elapsed().as_secs_f64());
+    let card = Arc::new(card);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.len() >= 2 { last.remove(0); }
+    last.push((stamps, card.clone()));
+    Ok(card)
 }
 
 /// File operations for the CLI (`--oklib breed`) and the reader (`ok_breed_file`).
@@ -359,16 +529,100 @@ pub mod file {
     /// that is not one is made one first (from the game's zipmods), both packs and answers go into her card, and it is
     /// sealed and made again so it opens from her own data and the shared library alone.
     pub fn breed_into(lib: Option<&Path>, game: &Path, mother: &Path, father: &Path, seed: u64, out: &Path) -> Result<String, String> {
+        breed_into_with(lib, game, mother, father, seed, out, true)
+    }
+
+    /// `breed_into`; `depend`: the child carries only what her OK card parents' cards do not (okDn `depends`, the
+    /// parents' packs and answers read from their cards when she opens, `with_parents`), else everything (a whole card).
+    pub fn breed_into_with(lib: Option<&Path>, game: &Path, mother: &Path, father: &Path, seed: u64, out: &Path, depend: bool) -> Result<String, String> {
+        let summary = breed_whole(lib, game, mother, father, seed, out)?;
+        let made = read(out)?;
+        let Some(mut record) = dna(&made) else { return Ok(summary) };
+        let ok = (crate::oklib::is_library_card(mother), crate::oklib::is_library_card(father));
+        if !depend || !(ok.0 || ok.1) || crate::oklib::png_chunk(&made, crate::oklib::CARD_CHUNK).is_none() { return Ok(summary); }
+        // Where her parents are, and which of them she opens with (an OK card file: a parent that was an original card was
+        // made into one only for her, and what that gave stays in her own card).
+        let dir = absolute(out).parent().map(Path::to_owned).unwrap_or_default();
+        for (side, path, is_ok) in [("mother", mother, ok.0), ("father", father, ok.1)] {
+            let abs = absolute(path);
+            record[side]["path"] = abs.display().to_string().into();
+            record[side]["relative"] = relative_path(&dir, &abs).map_or(serde_json::Value::Null, Into::into);
+            record["depends"][side] = is_ok.into();
+        }
+        let mut theirs: Vec<std::sync::Arc<Vec<u8>>> = Vec::new();
+        for side in depended_parents(&record) {
+            let path = if side == "mother" { mother } else { father };
+            theirs.push(with_parents(read(path)?, path)?);
+        }
+        let packs: Vec<&[u8]> = theirs.iter().filter_map(|b| crate::oklib::png_chunk(b, crate::oklib::PACK_CHUNK)).collect();
+        let answers: Vec<&[u8]> = theirs.iter().filter_map(|b| crate::oklib::png_chunk(b, crate::tree_answers::CHUNK)).collect();
+        let own_pack = match crate::oklib::png_chunk(&made, crate::oklib::PACK_CHUNK) { Some(full) => crate::oklib::pack_delta(full, &packs)?, None => None };
+        let own_answers = match crate::oklib::png_chunk(&made, crate::tree_answers::CHUNK) {
+            Some(full) if answers.is_empty() => Some(full.to_vec()),
+            Some(full) => crate::tree_answers::delta(full, &answers)?,
+            None => None,
+        };
+        let mut card = without(&made, &[crate::oklib::PACK_CHUNK, crate::tree_answers::CHUNK])?;
+        if let Some(p) = &own_pack { card = crate::tree_answers::with_chunk(&card, crate::oklib::PACK_CHUNK, p)?; }
+        if let Some(a) = &own_answers { card = crate::tree_answers::with_chunk(&card, crate::tree_answers::CHUNK, a)?; }
+        card = crate::tree_answers::with_chunk(&card, DNA_CHUNK, &serde_json::to_vec(&record).unwrap())?;
+        write(out, &card)?;
+        Ok(format!("{summary}; depends on her parents: card {} bytes (whole {}), own pack {} bytes, own answers {} bytes", card.len(), made.len(),
+            own_pack.as_ref().map_or(0, Vec::len), own_answers.as_ref().map_or(0, Vec::len)))
+    }
+
+    /// A child that depends on her parents written as a whole card to `out`: her pack and answers with theirs, every
+    /// outfit opened strictly from it (opens from her own data and the shared library alone, the parents not needed).
+    pub fn export_into(lib: Option<&Path>, game: &Path, card: &Path, out: &Path) -> Result<String, String> {
+        let bytes = read(card)?;
+        if !is_dependent(&bytes) { return Err(format!("{}: not a child that depends on her parents (already a whole card)", card.display())); }
+        let whole = with_parents(bytes, card)?;
+        let mut record = dna(&whole).unwrap_or_default();
+        record["depends"] = serde_json::Value::Null;
+        record["exported_from"] = absolute(card).display().to_string().into();
+        let whole = crate::tree_answers::with_chunk(&whole, DNA_CHUNK, &serde_json::to_vec(&record).unwrap())?;
+        write(out, &whole)?;
+        let lib = lib.map(Path::to_owned).or_else(crate::oklib::configured_library).ok_or("OK base library not configured")?;
+        let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
+        write(out, &made)?;
+        Ok(format!("whole card {} bytes, pack {pack} bytes, digest {digest}", made.len()))
+    }
+
+    fn breed_whole(lib: Option<&Path>, game: &Path, mother: &Path, father: &Path, seed: u64, out: &Path) -> Result<String, String> {
         let ok = (crate::oklib::is_library_card(mother), crate::oklib::is_library_card(father));
         let needs_ok = ok.0 || ok.1;
         let lib = if needs_ok { Some(lib.map(Path::to_owned).or_else(crate::oklib::configured_library).ok_or("OK base library not configured")?) } else { None };
         let parent = |path: &Path, is_ok: bool| -> Result<Vec<u8>, String> {
-            if needs_ok && !is_ok { let (_, _, made, _) = crate::oklib::remake_ok_card(lib.as_deref().unwrap(), game, path)?; Ok(made) } else { read(path) }
+            // (a parent that depends on her own parents: with theirs, as she opens)
+            if needs_ok && !is_ok { let (_, _, made, _) = crate::oklib::remake_ok_card(lib.as_deref().unwrap(), game, path)?; Ok(made) }
+            else { Ok(std::sync::Arc::unwrap_or_clone(with_parents(read(path)?, path)?)) }
         };
         let (m, f) = (parent(mother, ok.0)?, parent(father, ok.1)?);
-        let (child, from_father, summary) = breed(&m, &f, seed, (mother, father))?;
-        let Some(lib) = lib else { write(out, &child)?; return Ok(summary); };
-        let other = if from_father { &m } else { &f };
+        let Some(lib) = lib else { let (child, _, summary) = breed(&m, &f, seed, (mother, father))?; write(out, &child)?; return Ok(summary); };
+        // A gene whose part neither parent's data can show (a mod's list entry neither of them read: Raiden's mod eye
+        // highlight, which her Material Editor rows cover, on a granddaughter without them) is taken from the other parent.
+        let mut forced = BTreeMap::new();
+        for attempt in 0.. {
+            let bred = breed_forced(&m, &f, seed, (mother, father), &forced)?;
+            match seal(&lib, game, &bred, if bred.from_father { &m } else { &f }, out) {
+                Ok(sealing) => {
+                    let changed = if forced.is_empty() { String::new() } else { format!("; genes from the other parent (her parents' data could not show them): {}", forced.keys().cloned().collect::<Vec<_>>().join(", ")) };
+                    return Ok(format!("{}; {sealing}{changed}", bred.summary));
+                }
+                Err(e) => {
+                    let more = genes_to_change(&bred, &catalogue_gaps(&e));
+                    if attempt >= 2 || more.is_empty() || more.iter().all(|(k, v)| forced.get(k) == Some(v)) { return Err(e); }
+                    eprintln!("ok-extract: breed: {} gene(s) her parents' data cannot show, taken from the other parent: {more:?}", more.len());
+                    forced.extend(more);
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    /// The child sealed as an OK card with the other parent's pack and answers, written to `out`.
+    fn seal(lib: &Path, game: &Path, bred: &Bred, other: &[u8], out: &Path) -> Result<String, String> {
+        let child = bred.card.clone();
         let merged = match crate::oklib::png_chunk(other, crate::oklib::PACK_CHUNK) { Some(pack) => crate::oklib::merge_card_pack(&child, pack)?, None => child };
         // Both parents' answers (her questions ask about both): recorded again from the shared library they would lose
         // the third-party mods of the parent whose pack is not the base's.
@@ -376,11 +630,12 @@ pub mod file {
             (Some(answers), true) => (crate::tree_answers::merge(&merged, answers)?, true),
             _ => (crate::cardbake::strip_answers(&merged).into_owned(), false),
         };
-        let (sealed, sealing) = crate::oklib::seal_card_with(&lib, &merged, !keep)?;
+        // (her mix asks questions neither parent did: those the shared library can answer are)
+        let (sealed, sealing) = if keep { crate::oklib::seal_card_adding_answers(lib, &merged)? } else { crate::oklib::seal_card_with(lib, &merged, true)? };
         write(out, &sealed)?;
-        let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
+        let (digest, _, made, pack) = crate::oklib::remake_ok_card(lib, game, out)?;
         write(out, &made)?;
-        Ok(format!("{summary}; sealed: {sealing}; digest {digest} pack={pack}"))
+        Ok(format!("sealed: {sealing}; digest {digest} pack={pack}"))
     }
 
     /// `card` shown by `picture` (a PNG), written to `out` (may be `card`).
@@ -398,7 +653,7 @@ mod tests {
     #[test]
     fn mixing_is_repeatable_and_between_the_parents() {
         let face = |v: f32| Value::Map(vec![("shapeValueFace".into(), Value::Array((0..52).map(|_| Value::F32(v)).collect())), ("headId".into(), Value::from(if v < 0.5 { 1 } else { 2 }))]);
-        let run = |seed| { let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new() }; m.mix("face", "", &face(0.2), &face(0.8)) };
+        let run = |seed| { let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() }; m.mix("face", "", &face(0.2), &face(0.8)) };
         assert_eq!(run(7), run(7));
         let child = run(7);
         let values: Vec<f64> = map_get(&child, "shapeValueFace").unwrap().as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
@@ -409,11 +664,29 @@ mod tests {
 
     #[test]
     fn colours_blend_as_one() {
-        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new() };
+        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
         let c = |r: f32| Value::Array(vec![Value::F32(r), Value::F32(r), Value::F32(r), Value::F32(1.0)]);
         let out = m.mix("hair", "baseColor", &c(0.0), &c(1.0));
         let v: Vec<f64> = out.as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
         assert!((v[0] - v[1]).abs() < 0.2 && (v[1] - v[2]).abs() < 0.2 && v[3] == 1.0, "{v:?}");
+    }
+
+    #[test]
+    fn sideloader_entries_follow_the_value() {
+        let entry = |slot: i64, guid: &str| Value::Binary(encode(&Value::Map(vec![("ModID".into(), guid.into()), ("Slot".into(), slot.into()), ("Property".into(), "ChaFileFace.hlUpId".into())])));
+        let kkex = |rows: Vec<Value>| Value::Map(vec![(SIDELOADER.into(), Value::Array(vec![Value::from(1), Value::Map(vec![("info".into(), Value::Array(rows))])]))]);
+        let custom = |v: i64| vec![Value::Map(vec![("hlUpId".into(), Value::from(v))]), Value::Map(vec![]), Value::Map(vec![])];
+        let guids = |k: &Value| -> Vec<String> { map_get(k, SIDELOADER).and_then(|p| p.as_array()).map(|a| map_get(&a[1], "info").unwrap().as_array().unwrap().iter()
+            .map(|e| map_get(&unbin(e), "ModID").unwrap().as_str().unwrap().to_owned()).collect()).unwrap_or_default() };
+        // Her highlight 5 is her father's original one: her mother's dormant mod entry for slot 5 must not take it.
+        let sources = BTreeMap::from([("face.hlUpId".to_owned(), Some(true))]);
+        let mut base = kkex(vec![entry(5, "mother.mod")]);
+        sideloader_select(&mut base, &kkex(vec![]), false, &custom(5), &sources);
+        assert!(guids(&base).is_empty());
+        // Her father's mod highlight (slot 5) comes with its entry; one for a value she lacks does not.
+        let mut base = kkex(vec![entry(9, "mother.mod")]);
+        sideloader_select(&mut base, &kkex(vec![entry(5, "father.mod")]), false, &custom(5), &sources);
+        assert_eq!(guids(&base), ["father.mod"]);
     }
 
     #[test]

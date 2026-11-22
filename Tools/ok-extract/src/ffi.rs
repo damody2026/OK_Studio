@@ -47,7 +47,7 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
 }
 
 /// Breeding (breed.rs) for the reader. op 0: the child of cards `a` (mother) and `b` (father) from `seed`, written to
-/// `out`; 1: card `a` shown by picture `b` (a PNG), written to `out`. Returns 0 and a one-line summary in `msg`, or -1
+/// `out`; 1: card `a` shown by picture `b` (a PNG), written to `out`; 2: child `a` exported as a whole card. Returns 0 and a one-line summary in `msg`, or -1
 /// and the error.
 #[no_mangle]
 pub unsafe extern "C" fn ok_breed_file(op:i32,a:*const c_char,b:*const c_char,seed:u64,out:*const c_char,msg:*mut c_char,cap:i32)->i32 {
@@ -57,6 +57,8 @@ pub unsafe extern "C" fn ok_breed_file(op:i32,a:*const c_char,b:*const c_char,se
         match op {
             0=>crate::breed::file::breed_into(None,&installed_game_root(),a,b,seed,out),
             1=>crate::breed::file::repicture_into(a,b,out),
+            // 2: the child `a` (depending on her parents) exported as a whole card to `out` (`b` unused)
+            2=>crate::breed::file::export_into(None,&installed_game_root(),a,out),
             _=>Err(format!("breed: unknown op {op}")),
         }
     }).unwrap_or_else(|_|Err("breed: panic".into()));

@@ -161,6 +161,30 @@ pub fn merge(card: &[u8], other: &[u8]) -> Result<Vec<u8>, String> {
     with_answers(card, &encode(table)?)
 }
 
+fn read_payload(chunk: &[u8]) -> Result<Table, String> {
+    let raw = zstd::stream::decode_all(chunk).map_err(|e| e.to_string())?;
+    let saved: Saved = bincode::deserialize(&raw).map_err(|e| e.to_string())?;
+    if saved.version != VERSION { return Err(format!("okLt version {}", saved.version)); }
+    Ok(saved.rows.into_iter().map(|(k, key, v)| ((k, key), v)).collect())
+}
+
+/// `okLt` payloads merged into one in precedence order (the first answer to a question wins); None when there are none.
+pub fn merge_payloads(payloads: &[&[u8]]) -> Result<Option<Vec<u8>>, String> {
+    if payloads.is_empty() { return Ok(None); }
+    let mut table = Table::new();
+    for p in payloads { for (key, value) in read_payload(p)? { table.entry(key).or_insert(value); } }
+    encode(table).map(Some)
+}
+
+/// The answers of `full` that `parents` (merged in precedence order) lack or answer otherwise; None: none.
+pub fn delta(full: &[u8], parents: &[&[u8]]) -> Result<Option<Vec<u8>>, String> {
+    let mut theirs = Table::new();
+    for p in parents { for (key, value) in read_payload(p)? { theirs.entry(key).or_insert(value); } }
+    let own: Table = read_payload(full)?.into_iter().filter(|(k, v)| theirs.get(k) != Some(v)).collect();
+    if own.is_empty() { return Ok(None); }
+    encode(own).map(Some)
+}
+
 /// How many outfits (coordinates) the card saves.
 pub fn outfit_count(card: &[u8]) -> usize {
     crate::card::parse_card_bytes_mode(card, 0, false).map(|c| c.coordinate_count).unwrap_or(1).max(1)

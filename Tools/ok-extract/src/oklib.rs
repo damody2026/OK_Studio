@@ -1055,6 +1055,53 @@ pub fn merge_card_pack(card: &[u8], other: &[u8]) -> Result<Vec<u8>, String> {
     crate::tree_answers::with_chunk(card, PACK_CHUNK, &encode_card_pack(&pack)?)
 }
 
+fn decode_pack(chunk: &[u8]) -> Result<CardPack, String> {
+    let pack: CardPack = bincode::deserialize(&decode_card_pack_bytes(chunk)?).map_err(|e| format!("card pack: {e}"))?;
+    if pack.version != CARD_PACK_VERSION { return Err(format!("card pack version {} (expected {CARD_PACK_VERSION})", pack.version)); }
+    Ok(pack)
+}
+
+/// `okLc` payloads merged into one, in precedence order (the first that has an entry keeps it), encoded once; None
+/// when there are none. A bred child that depends on her parents (breed.rs) opens with her own pack and theirs.
+pub fn merge_pack_payloads(payloads: &[&[u8]]) -> Result<Option<Vec<u8>>, String> {
+    use rayon::prelude::*;
+    if payloads.is_empty() { return Ok(None); }
+    let packs = payloads.par_iter().map(|p| decode_pack(p)).collect::<Result<Vec<_>, _>>()?;
+    let mut out = CardPack { version: CARD_PACK_VERSION, index: Default::default(), records: Vec::new() };
+    let mut have = std::collections::HashSet::new();
+    for add in packs {
+        for (key, entry) in add.index.files { out.index.files.entry(key).or_insert(entry); }
+        for (key, dir) in add.index.dirs { out.index.dirs.entry(key).or_insert(dir); }
+        for (key, zip) in add.index.zips {
+            let own = out.index.zips.entry(key).or_insert_with(|| crate::gamefs::ZipIndex { names: zip.names.clone(), entries: Default::default() });
+            for (i, entry) in zip.entries { own.entries.entry(i).or_insert(entry); }
+        }
+        for r in add.records { if have.insert((r.0, r.1.clone(), r.2.clone())) { out.records.push(r); } }
+    }
+    out.records.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
+    encode_card_pack(&out).map(Some)
+}
+
+/// What the pack `full` (an `okLc` payload) holds beyond `parents` merged in precedence order: the entries they lack or
+/// hold otherwise. None: nothing (the parents' packs give the whole of it).
+pub fn pack_delta(full: &[u8], parents: &[&[u8]]) -> Result<Option<Vec<u8>>, String> {
+    let full = decode_pack(full)?;
+    let base = match merge_pack_payloads(parents)? { Some(merged) => decode_pack(&merged)?, None => CardPack { version: CARD_PACK_VERSION, index: Default::default(), records: Vec::new() } };
+    let same = |a: &crate::gamefs::Entry, b: Option<&crate::gamefs::Entry>| b.is_some_and(|b| bincode::serialize(a).ok() == bincode::serialize(b).ok());
+    let mut out = CardPack { version: CARD_PACK_VERSION, index: Default::default(), records: Vec::new() };
+    for (key, entry) in full.index.files { if !same(&entry, base.index.files.get(&key)) { out.index.files.insert(key, entry); } }
+    for (key, dir) in full.index.dirs { if base.index.dirs.get(&key) != Some(&dir) { out.index.dirs.insert(key, dir); } }
+    for (key, zip) in full.index.zips {
+        let theirs = base.index.zips.get(&key);
+        let entries: BTreeMap<usize, crate::gamefs::Entry> = zip.entries.into_iter().filter(|(i, e)| !same(e, theirs.and_then(|z| z.entries.get(i)))).collect();
+        if theirs.is_none() || !entries.is_empty() { out.index.zips.insert(key, crate::gamefs::ZipIndex { names: zip.names, entries }); }
+    }
+    let theirs: HashMap<(Id, &str, &[u8]), &[u8]> = base.records.iter().map(|r| ((r.0, r.1.as_str(), r.2.as_slice()), r.3.as_slice())).collect();
+    out.records = full.records.into_iter().filter(|r| theirs.get(&(r.0, r.1.as_str(), r.2.as_slice())) != Some(&r.3.as_slice())).collect();
+    if out.records.is_empty() && out.index.files.is_empty() && out.index.dirs.is_empty() && out.index.zips.is_empty() { return Ok(None); }
+    encode_card_pack(&out).map(Some)
+}
+
 /// The `ok-extract` program the sealing steps run in (one process per step): this one when it is ok-extract, else
 /// OK_EXTRACT_EXE, else the project's release build beside the base library (<project>/Content/IndependentResources/
 /// <library>): inside Unreal the current program is the editor or the game.
@@ -2167,6 +2214,19 @@ pub fn seal_card(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> {
 /// `seal_card`; `record_answers` false keeps the answers the card carries (it must have them): a card wearing another
 /// card's outfit carries both cards' answers, and the shared library's tree cannot answer for the outfit's mods.
 pub fn seal_card_with(lib: &Path, card: &[u8], record_answers: bool) -> Result<(Vec<u8>, String), String> {
+    seal_card_mode(lib, card, if record_answers { Answers::Record } else { Answers::Keep })
+}
+
+/// `seal_card` for a card carrying answers that may not cover every question it asks (a bred child: her mix of her
+/// parents asks what neither of them did): answers recorded from the shared library too, hers kept where both answer.
+pub fn seal_card_adding_answers(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> {
+    seal_card_mode(lib, card, Answers::Add)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Answers { Record, Keep, Add }
+
+fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>, String), String> {
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = lib.join("work");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -2182,8 +2242,16 @@ pub fn seal_card_with(lib: &Path, card: &[u8], record_answers: bool) -> Result<(
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         if out.status.success() { Ok(text) } else { Err(text.lines().filter(|l| l.starts_with("OK")).collect::<Vec<_>>().join(" ")) }
     };
-    if record_answers { run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?; }
-    else { std::fs::copy(&input.0, &answered.0).map_err(|e| e.to_string())?; }
+    match answers {
+        Answers::Record => { run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?; }
+        Answers::Keep => { std::fs::copy(&input.0, &answered.0).map_err(|e| e.to_string())?; }
+        Answers::Add => {
+            run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?;
+            let fresh = std::fs::read(&answered.0).map_err(|e| e.to_string())?;
+            let both = match png_chunk(&fresh, crate::tree_answers::CHUNK) { Some(table) => crate::tree_answers::merge(card, table)?, None => card.to_vec() };
+            std::fs::write(&answered.0, both).map_err(|e| e.to_string())?;
+        }
+    }
     let mut summary = run(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()])?;
     // A read made by an open's background work (entry prefetch) can land after its step took what it copied (seen
     // under load): the strict check names it, and completing the sealed card again copies it.
@@ -3270,8 +3338,17 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             let father = PathBuf::from(args.get(2).ok_or("father card required")?);
             let seed: u64 = args.get(3).and_then(|v| v.parse().ok()).ok_or("seed required (a whole number)")?;
             let out = PathBuf::from(args.get(4).ok_or("output required")?);
-            let summary = crate::breed::file::breed_into(None, game, &mother, &father, seed, &out)?;
+            // (a fifth argument `whole`: she carries everything instead of depending on her parents' cards)
+            let depend = args.get(5).map(String::as_str) != Some("whole");
+            let summary = crate::breed::file::breed_into_with(None, game, &mother, &father, seed, &out, depend)?;
             println!("OKBREED {summary} -> {}", out.display());
+        }
+        "breed-export" => {
+            // breed-export <child card> <out card>: a child that depends on her parents written as a whole card.
+            let card = PathBuf::from(args.get(1).ok_or("child card required")?);
+            let out = PathBuf::from(args.get(2).ok_or("output required")?);
+            let summary = crate::breed::file::export_into(None, game, &card, &out)?;
+            println!("OKBREEDEXPORT {summary} -> {}", out.display());
         }
         "clothes-test" => {
             // clothes-test <work dir> <card> [outfit]: export -> wear back -> same session.
