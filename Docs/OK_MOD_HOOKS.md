@@ -114,6 +114,7 @@ Event::Hook { name: RString, payload: RString }   // payload 是 JSON
 | `"notice": "文字"` | 畫面提示 6 秒 |
 | `"subtitle": {"text", "seconds"}` | 畫面字幕 |
 | `"outfit_names": {"0": "制服"}` | 服裝下拉顯示「服裝 1：制服」；空字串移除 |
+| `"ops": [{"op": "hair_base_color", "rgba": [r, g, b]}, ...]` | 原作編輯器的組合動作，走詳細編輯的套用流程（`UOKCharacterController::ApplyPropertyOps`，見 `Docs/READER_UI_APPEARANCE_API.md` §10）；讀卡器忙（載入中、套用中）時最多等 30 秒再套；被拒時畫面提示原因 |
 
 mod 不直接動模型或 UI 物件，一律經這些要求。
 
@@ -132,7 +133,7 @@ mod 不直接動模型或 UI 物件，一律經這些要求。
 |---|---|
 | `examples/profile` | `extract.kkex_keys`／`extract.kkex`（`KK_Profile` 的 `ProfileText`）、`okMx`、讀卡 text、`reader_call` 讀寫 `mod.org.openkoikatsu.profile.text` |
 | `examples/outfit-names` | 服裝範圍資料、`reader.outfit_change`、資料版本 1→2 的 `upgrade`、`outfit_names` 回覆 |
-| `examples/random-chara` | bool／choice／button、指令回覆 `set` 改身形與臉型 |
+| `examples/random-chara` | bool／radio／button、指令回覆 `set` 改身形與臉型、`ops` 換髮色（`hair_base_color`） |
 | `examples/subtitles` | `reader.speech_start`、`subtitle` 回覆、設定項；`targets` 含 pair、street（那兩邊的掛點在工作項 10、13） |
 
 `Tools/ok-mod/host/tests/card_mods.rs` 載入這四個 DLL，走一遍轉卡、開卡、編輯、存卡、再開、關掉套用開關、停用 mod（缺 mod）、按鈕與語音。
