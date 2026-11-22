@@ -70,6 +70,8 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Misc/ScopeExit.h"
 #include "Containers/Ticker.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKReaderMods.h"
+#include "OKReaderText.h"
 #include "OKReaderPageItems.h"
 #include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
@@ -708,10 +710,50 @@ static UWidget* OKRegistryControl(UOKCharacterController* G,const TSharedPtr<FJs
 
 void UOKReaderScreen::BuildCategories()
 {
-	UOKCharacterController* G=Controller.Get();if(!G)return;
-	Categories.Reset();
+	if(!Controller.IsValid())return;
 	// The pages' own UMG controls (bool／choice／color／text／button items) are made again with the pages.
 	OKReaderPageItems::Reset();
+	BuildBaseCategories();
+	AddModCategory();
+}
+
+void UOKReaderScreen::AddModCategory()
+{
+	UOKCharacterController* G=Controller.Get();
+	if(!G||!OKReaderMods::Active())return;
+	FCategory Mods;Mods.Name=TEXT("Mods");Mods.Tab=3;
+	auto AddPage=[&](const FString& Name,const TArray<TSharedPtr<FJsonObject>>& Items)
+	{
+		FGroup Out;Out.Name=Name;UVerticalBox* Box=nullptr;
+		for(const TSharedPtr<FJsonObject>& Spec:Items)
+		{
+			FString Kind,Error;Spec->TryGetStringField(TEXT("kind"),Kind);
+			if(!OKReaderPageItems::IsItemKind(Kind)||Kind==TEXT("color")){PagesErrors.Add(TEXT("Mods›")+Name+TEXT("：mod 的控制項只能是 bool、choice、text、button，略過 ")+Kind);continue;}
+			if(UWidget* Row=OKReaderPageItems::Build(G,Box,Spec,Error))Out.Sources.Add(Row);
+			else PagesErrors.Add(TEXT("Mods›")+Name+TEXT("：")+Error);
+		}
+		if(!Box)return;
+		Out.OnEnter=[Weak=TWeakObjectPtr<UVerticalBox>(Box)](){OKReaderPageItems::ShowOnly(Weak.Get());};
+		Mods.Groups.Add(MoveTemp(Out));
+	};
+	// "Apply on load" first: one switch per mod that reads card data (MakerLoadToggle's counterpart).
+	{
+		TArray<TSharedPtr<FJsonObject>> Switches;
+		for(const auto& M:OKReaderMods::CardMods())
+		{
+			auto S=MakeShared<FJsonObject>();S->SetStringField(TEXT("kind"),TEXT("bool"));S->SetStringField(TEXT("key"),TEXT("reader.mod_apply.")+M.Key);
+			S->SetStringField(TEXT("label"),M.Value.IsEmpty()?M.Key:M.Value);Switches.Add(S);
+		}
+		if(Switches.Num())AddPage(OKReaderT(TEXT("reader.mods.apply_on_load")),Switches);
+	}
+	for(const OKReaderMods::FPage& Page:OKReaderMods::Pages())AddPage(Page.Name.IsEmpty()?Page.Mod:Page.Name,Page.Items);
+	if(Mods.Groups.Num())Categories.Add(MoveTemp(Mods));
+}
+
+void UOKReaderScreen::BuildBaseCategories()
+{
+	UOKCharacterController* G=Controller.Get();if(!G)return;
+	Categories.Reset();
 	// Body and face sliders, grouped as the separators in KKShapeRows group them.
 	auto ShapeGroups=[&](bool bBody,const TArray<FString>& Names)
 	{

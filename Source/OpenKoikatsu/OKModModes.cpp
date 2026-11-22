@@ -11,6 +11,7 @@
 #include "OKStudioGameMode.h"
 #include "OpenKoikatsuGameMode.h"
 #include "ok_extract.h"
+#include "KKRustExtract.h"
 #include "Containers/Ticker.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -23,11 +24,31 @@ namespace
 FString GWorldMode;
 TWeakObjectPtr<UWorld> GModeWorld;
 
+// ok-extract's enabled-mod list (okmods::set_enabled, the open-cache key) for this module's copy and KKUnityBundle's,
+// which runs the opens; set after every mode change, because each mode loads its own mods.
+void SyncExtract()
+{
+	FString Lines;
+	if (const TSharedPtr<FJsonObject> L = FOKModHost::Get().List())
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Mods = nullptr;
+		if (L->TryGetArrayField(TEXT("mods"), Mods))
+			for (const TSharedPtr<FJsonValue>& M : *Mods)
+				if (const TSharedPtr<FJsonObject> O = M->AsObject(); O.IsValid() && O->GetStringField(TEXT("state")) == TEXT("enabled"))
+					Lines += O->GetStringField(TEXT("id")) + TEXT("@") + O->GetStringField(TEXT("version")) + TEXT("\n");
+	}
+	const FTCHARToUTF8 Utf8(*Lines);
+	ok_set_enabled_mods(Utf8.Get());
+	FOkSession::SetModDispatch(&FOKModHost::RustDispatch, &FOKModHost::RustFree);
+	FOkSession::SetEnabledMods(Utf8.Get());
+}
+
 void Enter(UWorld* World, const FString& Mode)
 {
 	GWorldMode = Mode;
 	GModeWorld = World;
 	FOKModHost::Get().EnterMode(Mode);
+	SyncExtract();
 }
 
 void BeganPlay(TWeakObjectPtr<UWorld> Weak)
@@ -63,6 +84,7 @@ void WorldGone(UWorld* World, bool, bool)
 		FOKModHost::Get().ExitMode(GWorldMode);
 		GWorldMode.Empty();
 		GModeWorld = nullptr;
+		SyncExtract();
 	}
 }
 }
@@ -78,6 +100,7 @@ void OKModStart()
 	FCoreDelegates::OnEnginePreExit.AddLambda([]
 	{
 		ok_set_mod_dispatch(nullptr, nullptr);
+		FOkSession::SetModDispatch(nullptr, nullptr);
 		FOKModHost::Get().Close();
 	});
 }

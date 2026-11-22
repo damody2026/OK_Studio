@@ -4,6 +4,7 @@
 #include "OKShapeDefaults.h"
 #include "OKBoneControls.h"
 #include "OKPropertyInput.h"
+#include "OKReaderMods.h"
 #include "KKPreviewActor.h"
 #include "ok_extract.h"
 #include "Blueprint/WidgetTree.h"
@@ -112,6 +113,8 @@ FRows Parameters(UOKCharacterController* G)
   bool RowSupported=true;P->TryGetBoolField(TEXT("supported"),RowSupported);
   Copy->SetBoolField(TEXT("supported"),RowSupported);Copy->SetBoolField(TEXT("requires_apply"),true);Copy->SetStringField(TEXT("category"),TEXT("properties"));Add(Copy);
  }
+ // The mods' reader controls (mod.<id>.<key>) and their apply-on-load switches (reader.mod_apply.<id>).
+ for(auto& R:OKReaderMods::Rows(G))Rows.Add(R);
  // A value outside its slider range (an ABMX card, or one set past the slider through the API) is shown as it is and
  // marked, the way the maker shows it with slider unlocker; it is never clamped. Recomputed here because a pending
  // property value replaces the one the row came with.
@@ -185,6 +188,9 @@ bool SetParameters(UOKCharacterController* G,const FRows& Edits,FString& Error)
   // are properties like the rest and are staged for apply (writing them as body physics dropped them).
   else if(Key.StartsWith(TEXT("physics."))&&Catalog[Key]->GetStringField(TEXT("category"))!=TEXT("properties"))G->OnBodyPhysicsChanged(Key.Mid(8),V->AsNumber());
   else if(Key.StartsWith(TEXT("style."))){for(auto S:G->StyleSliders)if(S&&S->StyleParameter==Key.Mid(6)){S->SetValue(V->AsNumber());S->OnSliderMoved(S->GetValue());}}
+  // A mod control goes to its mod; a refusal there is logged (the other edits of the batch already went through).
+  else if(OKReaderMods::IsModKey(Key)){FString ModError;if(!OKReaderMods::Set(G,Key,V,ModError))UE_LOG(LogTemp,Warning,TEXT("%s: %s"),*Key,*ModError);}
+  else if(OKReaderMods::IsApplyKey(Key))OKReaderMods::SetApplyOnLoad(Key.Mid(17),V->AsBool());
   else if(!Key.StartsWith(TEXT("bone."))&&!Key.StartsWith(TEXT("pregnancy.")))G->SetEditorProperty(Key,V);
  }
  G->ApplyPendingEditorMods();G->SyncShapeSliders();G->RebuildPropertyControls();return true;

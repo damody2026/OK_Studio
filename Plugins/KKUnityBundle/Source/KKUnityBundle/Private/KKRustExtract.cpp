@@ -1804,6 +1804,8 @@ bool FOkSession::CardHairDeck(const FString& Card,const FString& CardsJson,const
  char Buffer[4096]{};const int32 Result=ok_card_hairdeck(TCHAR_TO_UTF8(*Card),TCHAR_TO_UTF8(*CardsJson),TCHAR_TO_UTF8(*OptsJson),TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
  Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
 }
+void FOkSession::SetModDispatch(const char*(*Dispatch)(const char*),void(*Free)(const char*)){ok_set_mod_dispatch(Dispatch,Free);}
+void FOkSession::SetEnabledMods(const char* Lines){ok_set_enabled_mods(Lines);}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){
  OKPrepareCardEnvironment();char Buffer[2048]{};
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));

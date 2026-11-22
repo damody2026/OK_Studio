@@ -115,6 +115,11 @@ public:
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);
+ // The game's mod host for this module's ok-extract (ok_set_mod_dispatch): in a modular (editor) build each module links
+ // its own copy, so the opens and conversions run from here need it set here too (Docs/OK_MOD_S7_READER_API.md).
+ static void SetModDispatch(const char*(*Dispatch)(const char*),void(*Free)(const char*));
+ // ok_set_enabled_mods for this module's copy: "id@version" lines, or null to ask the host.
+ static void SetEnabledMods(const char* Lines);
  static bool MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary,const FString& GameRoot=FString());
  /** The mods an original card names that opening it would not find (base library, zipmods beside the card, the KKS
   *  installation). Empty for OK cards. Reads manifests: call off the game thread. */

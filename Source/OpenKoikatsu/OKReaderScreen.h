@@ -289,6 +289,11 @@ private:
 	TOptional<TArray<FString>> WantedTargets,WantedProperties;
 
 	void BuildCategories();
+	// The pages without the mods' (pages.json, else the built-in ones).
+	void BuildBaseCategories();
+	// A "Mods" category after the others when the mod host runs in the reader (OKReaderMods): each mod's reader_ui
+	// pages, and one page of "apply this mod's data when a card loads" switches.
+	void AddModCategory();
 	// The pages from Config/ReaderEditor/pages.json (-ReaderPages=<file> overrides; Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md).
 	// A file that cannot be read keeps the built-in pages (BuildCategories' own) with the error in red; a bad entry is
 	// left out and named. Never the old UMG screen.

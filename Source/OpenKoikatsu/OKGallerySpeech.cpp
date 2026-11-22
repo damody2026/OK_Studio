@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKReaderMods.h"
 #include "OKInteractionScene.h"
 #include "KKPreviewActor.h"
 #include "KKPairedPlayback.h"
@@ -79,7 +80,7 @@ void UOKCharacterController::OnSpeak() {
     FString Error;
     if(!PreviewActor->SpeakGeneralLine(SpeechIds[Index],Error)){
         if(SpeechStatus)SpeechStatus->SetText(FText::FromString(Error));
-    }else {bSpeechWasPlaying=true;if(SpeechStatus)SpeechStatus->SetText(FText::FromString(TEXT("說話中")));}
+    }else {bSpeechWasPlaying=true;if(SpeechStatus)SpeechStatus->SetText(FText::FromString(TEXT("說話中")));OKReaderMods::Speech(this,SpeechCombo->GetSelectedOption());}
 }
 void UOKCharacterController::OnStopSpeech() {
     bSpeechWasPlaying=false;

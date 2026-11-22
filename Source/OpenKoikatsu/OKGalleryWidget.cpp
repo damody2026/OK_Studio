@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKReaderMods.h"
 #include "KKTextureLifetimeLog.h"
 #include "OKHScene.h"
 #include "OKComboBox.h"
@@ -1603,7 +1604,9 @@ void UOKCharacterController::FinishOkCardSave(const FString& Output,const FStrin
   const bool Made=FOkSession::MakeOkCard(Output,Output,Summary);
   UE_LOG(LogTemp,Display,TEXT("OK card save made=%d seconds=%.3f output=%s summary=%s"),Made,FPlatformTime::Seconds()-Start,*Output,*Summary);
   const FString Note=Made?TEXT("\n已轉成 OK 卡（OK 共用資源 + 卡內資源）。"):TEXT("\nOK 卡轉換失敗：")+Summary;
-  AsyncTask(ENamedThreads::GameThread,[Weak,Message,Note,Made](){
+  AsyncTask(ENamedThreads::GameThread,[Weak,Output,Message,Note,Made](){
+   // The mods' card data goes in last: the OK card is made again from the file above (okMx carried over).
+   if(auto* Widget=Weak.Get())OKReaderMods::Saved(Widget,Output);
    if(auto* Widget=Weak.Get()){Widget->bPortableSaveInFlight=false;if(Widget->InspectorText)Widget->InspectorText->SetText(FText::FromString(Message+Note));}
    if(auto* Widget=Weak.Get())Widget->ScreenNote(1,10.f,Made?FColor::Green:FColor::Yellow,Message+Note);
   });
@@ -1612,7 +1615,7 @@ void UOKCharacterController::FinishOkCardSave(const FString& Output,const FStrin
 
 void UOKCharacterController::FinishPortableSave(const FString& Source,const FString& Output,const FString& Message,bool CopyStates)
 {
- if(!CopyStates){if(InspectorText)InspectorText->SetText(FText::FromString(Message));return;}
+ if(!CopyStates){OKReaderMods::Saved(this,Output);if(InspectorText)InspectorText->SetText(FText::FromString(Message));return;}
  bPortableSaveInFlight=true;
  if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("卡片已寫入，正在背景保存服裝資源…")));
  const TWeakObjectPtr<UOKCharacterController> Weak(this);
@@ -1621,7 +1624,8 @@ void UOKCharacterController::FinishPortableSave(const FString& Source,const FStr
   const bool Copied=FOkSession::CopyPortableClothingStates(Source,Output,Warning);
   if(!Copied)Warning=TEXT("\n衣服狀態資源複製失敗：")+Warning;
   UE_LOG(LogTemp,Display,TEXT("Portable save resources copied=%d background_seconds=%.3f output=%s warning=%s"),Copied,FPlatformTime::Seconds()-Start,*Output,*Warning);
-  AsyncTask(ENamedThreads::GameThread,[Weak,Message,Warning,Copied](){
+  AsyncTask(ENamedThreads::GameThread,[Weak,Output,Message,Warning,Copied](){
+   if(auto* Widget=Weak.Get())OKReaderMods::Saved(Widget,Output);
    if(auto* Widget=Weak.Get()){Widget->bPortableSaveInFlight=false;if(Widget->InspectorText)Widget->InspectorText->SetText(FText::FromString(Message+Warning));}
    if(auto* Widget=Weak.Get())Widget->ScreenNote(1,10.f,Copied?FColor::Green:FColor::Yellow,Message+Warning);
   });
@@ -2314,6 +2318,8 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	SetModelLayout(bModelLayout);
 	RestorePairAfterReload();
     if(bOk)WarmClothingPreviews();
+	// The mods hear of the card (character_load, or outfit_change for another outfit of the same card).
+	if(bOk)OKReaderMods::Loaded(this,CardPath,OutfitIndex);
 	ProfileStep(TEXT("studio"));
 	const bool Enter=bEnterInteractionAfterLoad;bEnterInteractionAfterLoad=false;
 	if(bOk&&Enter)OnEnterInteraction();
@@ -2331,7 +2337,9 @@ void UOKCharacterController::RefreshOutfitList()
 	const int32 N = FMath::Max(Selected.Outfits.Num(), 1);
 	for (int32 i = 0; i < N; ++i)
 	{
-		OutfitCombo->AddOption(FString::Printf(TEXT("服裝 %d"), i + 1));
+		// A mod may name the outfit (outfit-names); the number stays, so every option is still unique.
+		const FString Name = Entries.IsValidIndex(SelectedIndex) ? OKReaderMods::OutfitName(Entries[SelectedIndex].Path, i) : FString();
+		OutfitCombo->AddOption(Name.IsEmpty() ? FString::Printf(TEXT("服裝 %d"), i + 1) : FString::Printf(TEXT("服裝 %d：%s"), i + 1, *Name));
 	}
 	const int32 Index = FMath::Clamp(OutfitIndex, 0, N - 1);
 	OutfitIndex = Index;
