@@ -1,4 +1,5 @@
 #include "OKHScene.h"
+#include "OKInteractionMod.h"
 #include "KKTextureLifetimeLog.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Camera/CameraActor.h"
@@ -473,7 +474,7 @@ void UOKHScenePanel::Flinch(int32 Area){
     FlinchTurn=FVector(FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f)).GetSafeNormal()*Amp[I]*(Area==0?.6f:1.f)*(1.f-.6f*Dev(Area==0?TEXT("kiss"):HBodyKey(Area)));
     const double Now=FPlatformTime::Seconds();FlinchUntil=Now+.45;FlinchNext=Now+FMath::FRandRange(2.f,3.5f);
 }
-void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(Gallery)Gallery->NoteAction(TEXT("h"),Text);if(bReact)React(Text);if(Hint)Hint->SetText(FText::FromString(Text));UE_LOG(LogTemp,Display,TEXT("H scene: %s"),*Text);}
+void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);FOKInteractionModEvents::FireNote(Gallery,Text,bReact);if(Gallery)Gallery->NoteAction(TEXT("h"),Text);if(bReact)React(Text);if(Hint)Hint->SetText(FText::FromString(Text));UE_LOG(LogTemp,Display,TEXT("H scene: %s"),*Text);}
 
 TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     if(!WidgetTree)WidgetTree=NewObject<UWidgetTree>(this);
@@ -1046,6 +1047,7 @@ void UOKHScenePanel::AskNoCondoms(){
 }
 void UOKHScenePanel::Finish(const TCHAR* Kind){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFinish);
     const FString K=Kind;++LineEpoch;
+    FOKInteractionModEvents::FireFinish(Gallery,Kind);
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
     if(Mode==1){
         ++ServiceFinishes;++HisFinishes;His=0.f;const float OralBefore=Dev(TEXT("oral"));
@@ -1369,6 +1371,7 @@ bool UOKHScenePanel::PlayHVoice(int32 Row){
     if(KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,Row+(Pose.FemaleLead?38:0),AnimId,Context,Lines,Error)){
         const FKKHBreathCue& Line=Lines[FMath::RandHelper(Lines.Num())];ShowLineFace(Line);if(!bSpeak)return false;Girl->StopHBreath();
         if(Girl->PlaySpeechFile(Line.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;OKHNoteCry(Line.Path);
+            FOKInteractionModEvents::FireVoice(Gallery,TEXT("hvoice"),Line.Path,Line.Name,300+Row);
             if(!Line.Mouths.IsEmpty()&&!Girl->bManualSpeechPattern)Girl->SetMouthPattern(Line.Mouths[0],true); // the line's mouth (ChangeMouthPtn)
             UE_LOG(LogTemp,Display,TEXT("H scene: her line %d (bank %d) %s"),300+Row,Gallery->HBreath.Experience,*Line.Name);return true;}}
     UE_LOG(LogTemp,Display,TEXT("H scene: no line %d: %s"),300+Row,*Error);return false;
@@ -2138,6 +2141,7 @@ bool UOKHScenePanel::Hear(const FString& Raw,FString& Out){
 }
 void UOKHScenePanel::ShowLine(const FString& Text){
     bStaleLine=SentEpoch!=LineEpoch;if(bStaleLine){UE_LOG(LogTemp,Display,TEXT("H scene: her line from before the last climax / finish / pose not shown: %s"),*Text.Left(60));return;}
+    FOKInteractionModEvents::FireLine(Gallery,Text);
     if(Caption)Caption->SetText(FText::FromString(Text));
     ShowSubtitle(0,Text);
     QuietSince=FPlatformTime::Seconds();

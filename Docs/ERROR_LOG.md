@@ -7193,3 +7193,10 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **症狀**：讀卡器（DreamGUI 新畫面）開著時，`ui_widgets` 回傳 `buttons: []`、`controls: []`，原本鏡像的滑桿與按鈕也不在；`Docs/CARD_READER_DREAMGUI.md` 說 `ui_*` 照舊能操作透明的 UMG 層，目前不成立。
 - **推測（未證實）**：UMG 層設成 `RenderOpacity 0`（`OKGalleryWidget.cpp:1077`），`OKGameControl.cpp` `OnScreen()` 要求 cached geometry 不為 0，透明的控制項可能從沒被量過大小，全被濾掉。
 - **處置**：`OKGameControl.cpp` 歸 F 組（OK Mod 工作項 6），C 組沒改，已在 `Docs/OK_MOD_S4_READER_PREREQ.md` 回報。讀卡器的 MCP 操作暫時用 `ui_exec` 的 `ok.ReaderScreen set／press` 與 `reader_call`。
+- 2026-11-23 OK mod 工作項 5（OK Studio 前置，`Docs/OK_MOD_S5_STUDIO_PREREQ.md`）：
+  - `SOKStudioMod.cpp` 的區域變數取名 `Tag`，和 `SWidget::Tag` 同名，C4458 被當錯誤，第一次編輯器建置失敗（約 7 分鐘）。改名 `RowTag`。教訓：寫在 `SOKStudioPanel` 成員函式裡的新程式，區域變數不要用 `Tag`、`Text`、`Label` 這類 Slate 成員名。
+  - 拆提交時用 `git diff -U0` 挑 hunk 再 `git apply --cached --unidiff-zero`，略過了前面一個 hunk（多一行的 `#include`），後面的 hunk 行號全部差一行，第一個提交裡 `WriteMods`／`ReadMods`／`Mods.Reset` 插在錯的位置（第二個提交又把它們搬回來）。未推送，`reset --soft` 後重做：從基準版本的檔案手動加上該提交的行，再 `git hash-object -w` 加 `update-index` 放進暫存區。教訓：`--unidiff-zero` 只能在前面的 hunk 全部一起套用時用；要跳過 hunk 就從舊版檔案重建，或保留上下文讓 git 自己對位。
+
+- 2026-11-23 OK mod 工作項 13 前置（1 對 1 事件，`Docs/OK_MOD_S13a_PAIR_PREREQ.md`）：
+  - 跑自動化測試前用 `unreal_slot.lua claim` 要名額，它回「queued: 2 Unreal processes of slot holders already run」（C 與 F 都占著），我沒看回應就直接開了 UnrealEditor-Cmd，機器上同時有三個 Unreal（約 30 秒）。教訓：`claim` 的輸出要是 `slot1`／`slot2` 才能開；要等就用 `claim ... --wait`（之後的實機測試就是這樣等到的）。
+  - 實機驗證想用既有的 `ok.AuditSharedInteraction`（環境變數 `OK_SHARED_INTERACTION_*` 經 `reader_launch` 的 env 傳入），讀卡器一收到指令就以 exit 1 結束，環境變數或 world 沒拿到，原因沒查。改用 `-LegacyReader` 開舊 UMG 讀卡器，`ui_press` 按「進入1對1互動場景」。預設的 DreamGUI 畫面 `ui_widgets` 列不出任何按鈕。

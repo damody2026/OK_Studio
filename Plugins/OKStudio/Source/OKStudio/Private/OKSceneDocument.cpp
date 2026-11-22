@@ -3,6 +3,7 @@
 #include "OKStudioCatalog.h"
 #include "OKStudioPost.h"
 #include "OKStudioBloom.h"
+#include "OKStudioMod.h"
 #include "ok_extract.h"
 #include "Dom/JsonObject.h"
 #include "JsonObjectConverter.h"
@@ -210,7 +211,7 @@ FString UOKSceneDocument::ToJson() const
 	const bool bFades = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimBlend > 0.f; }); });
 	const bool bClips = Objects.ContainsByPredicate([](const FOKSceneObject& O) { return !O.Character.VoiceClips.IsEmpty(); });
 	const bool bOrbits = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.bOrbitPath; });
-	Root->SetNumberField(TEXT("version"), bFades || bClips || bOrbits ? 3 : bMotionKeys ? 2 : 1);
+	Root->SetNumberField(TEXT("version"), !Mods.IsEmpty() ? 4 : bFades || bClips || bOrbits ? 3 : bMotionKeys ? 2 : 1);
 	Root->SetNumberField(TEXT("active_camera"), ActiveCamera);
 	Root->SetNumberField(TEXT("next_id"), NextId);
 	Root->SetNumberField(TEXT("map"), Map);
@@ -263,6 +264,7 @@ FString UOKSceneDocument::ToJson() const
 		for (const FOKSceneBookmark& B : Bookmarks) if (TSharedPtr<FJsonObject> J = FJsonObjectConverter::UStructToJsonObject(B)) MarkJson.Add(MakeShared<FJsonValueObject>(J));
 		Root->SetArrayField(TEXT("bookmarks"), MarkJson);
 	}
+	WriteMods(*Root);
 	TArray<TSharedPtr<FJsonValue>> Items;
 	for (const FOKSceneObject& O : Objects)
 	{
@@ -322,6 +324,7 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 				O.Effect.Effect = Best->Id;
 			}
 	Objects = MoveTemp(Loaded);
+	ReadMods(*Root);
 	ActiveCamera = Root->HasField(TEXT("active_camera")) ? int32(Root->GetNumberField(TEXT("active_camera"))) : -1;
 	Map = Root->HasField(TEXT("map")) ? int32(Root->GetNumberField(TEXT("map"))) : -1;
 	MapTransform = FTransform::Identity;
@@ -1257,6 +1260,7 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 				Factor = EvalTimelineCurve(K0->Curve, RawU);
 			}
 			if (K0->Values.IsEmpty()) continue;
+			if (FOKStudioModRegistry::IsModTrack(Tr)) { bAny |= FOKStudioModRegistry::Get().EvaluateTimeline(*this, Tr, K0, K1, Factor); continue; }
 			auto Sample1 = [&]() -> float
 			{
 				return K1 && K1->Values.Num() >= 1 ? FMath::Lerp(K0->Values[0], K1->Values[0], Factor) : K0->Values[0];
@@ -1896,6 +1900,7 @@ bool UOKSceneDocument::SampleCurrentTimelineValue(const FOKSceneTimelineTrack& T
 {
 	OutValues.Reset();
 	if (OutNames) OutNames->Reset();
+	if (FOKStudioModRegistry::IsModTrack(Track)) return FOKStudioModRegistry::Get().SampleTimeline(*this, Track, OutValues);
 	auto PushUnityQuatFromEuler = [&](const FVector& EulerDeg)
 	{
 		const FQuat Qx(FVector(1, 0, 0), FMath::DegreesToRadians(EulerDeg.X));

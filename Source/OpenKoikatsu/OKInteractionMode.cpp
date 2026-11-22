@@ -1,4 +1,5 @@
 #include "OKInteractionMode.h"
+#include "OKInteractionMod.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "OKCharacterController.h"
 #include "OKInteractionScene.h"
@@ -83,6 +84,7 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
         GEngine->GameViewport->AddViewportWidgetContent(Mode->PreparingOverlay.ToSharedRef(),120);
     }
     Input->InteractionReturned=[Weak=TWeakObjectPtr<AOKInteractionMode>(Mode)](){if(Weak.IsValid())Weak->Exit();};
+    FOKInteractionModEvents::FireEnter(Mode);
     return Mode;
 }
 // What the street's rules (ok-rules hexp.rs h_experience) answer for a lover who has done everything: every pose, kiss,
@@ -520,6 +522,7 @@ bool AOKInteractionMode::HSceneSpeak(const FString& Path){
     if(!Ok)UE_LOG(LogTemp,Warning,TEXT("H scene: her line did not play: %s"),*Why);
     if(Ok)UE_LOG(LogTemp,Display,TEXT("H scene: her line spoken on her (%s)"),*FPaths::GetCleanFilename(Path));
     if(Ok&&Controller->HPanel)Controller->HPanel->SpokeLine();
+    if(Ok)FOKInteractionModEvents::FireVoice(Controller,TEXT("tts"),Path,FPaths::GetCleanFilename(Path),-1);
     return Ok;
 }
 void AOKInteractionMode::HSceneReplyPending(bool bPending){if(Controller&&Controller->HPanel)Controller->HPanel->SetReplyPending(bPending);}
@@ -623,6 +626,7 @@ void AOKInteractionMode::Tick(float Delta){
         if(PreparingOverlay&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(PreparingOverlay.ToSharedRef());PreparingOverlay.Reset();
         Ready=true;ReadyAt=FPlatformTime::Seconds();Evidence=MakeShared<FJsonObject>();Evidence->SetStringField(TEXT("state"),TEXT("ready"));Evidence->SetBoolField(TEXT("partner_ready"),true);Evidence->SetBoolField(TEXT("same_process"),true);Evidence->SetNumberField(TEXT("process_id"),FPlatformProcess::GetCurrentProcessId());Evidence->SetStringField(TEXT("scene_class"),Controller->InteractionScene->GetClass()->GetPathName());Evidence->SetNumberField(TEXT("source_parts"),Controller->PreviewActor->Session.PartCount());Evidence->SetBoolField(TEXT("source_geometry"),true);
         UE_LOG(LogTemp,Display,TEXT("Shared interaction ready pid=%u female_parts=%d male_parts=%d"),FPlatformProcess::GetCurrentProcessId(),Controller->PreviewActor->Session.PartCount(),Controller->PartnerActor->Session.PartCount());
+        FOKInteractionModEvents::FireReady(this);
         Evidence->SetStringField(TEXT("card"),Controller->PreviewCardPath);Evidence->SetStringField(TEXT("partner"),MalePath);
         Evidence->SetStringField(TEXT("widget_class"),Controller->InteractionWidget->GetClass()->GetPathName());
         int64 Vertices=0;int32 Components=0;for(const auto& Part:Controller->PreviewActor->Parts){Vertices+=Part.BaseVertices.Num();if(IsValid(Part.Comp))++Components;}
@@ -658,6 +662,7 @@ void AOKInteractionMode::Exit(bool WasCancelled){
     for(const auto& State:SourceActors)if(auto* Actor=State.Actor.Get()){Actor->SetActorHiddenInGame(State.Hidden);Actor->SetActorEnableCollision(State.Collision);Actor->SetActorTickEnabled(State.Tick);}
     for(const auto& State:SourceAudio)if(auto* Audio=State.Audio.Get())Audio->SetPaused(State.Paused);SourceAudio.Reset();
     SourceActors.Reset();
+    FOKInteractionModEvents::FireExit(this,WasCancelled||!Activated,Ready?FPlatformTime::Seconds()-ReadyAt:0.);
     if(!ReportPath.IsEmpty()){FString Json;FJsonSerializer::Serialize(Evidence.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));FFileHelper::SaveStringToFile(Json,*ReportPath,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);}
     Finished=true;if(Returned)Returned(Evidence.ToSharedRef());Destroy();
 }

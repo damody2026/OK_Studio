@@ -1372,6 +1372,24 @@ struct OKSTUDIO_API FOKSceneTrack
 	bool bOrbitPath = false;
 };
 
+/** One mod's data in a scene (okMx scene scope, OK_MOD_FRAMEWORK_PLAN §6.2 / §6.5): written back unchanged by builds
+ *  that do not have the mod, and covered by undo like the rest of the document. */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneModData
+{
+	GENERATED_BODY()
+
+	/** The mod's own format version of Data. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mods")
+	int32 Version = 0;
+
+	/** The mod's bytes, base64. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mods")
+	FString Data;
+
+	bool operator==(const FOKSceneModData& O) const = default;
+};
+
 /**
  * The scene object tree shared by the in-game studio and the Unreal editor studio, stored as a .okscene file (JSON).
  * Objects reference OK cards and OK base library models only.
@@ -1382,8 +1400,9 @@ class OKSTUDIO_API UOKSceneDocument : public UObject
 	GENERATED_BODY()
 
 public:
-	/** 2: keys hold a motion (U230). A scene with no such key is still written as 1, and reads as it did. */
-	static constexpr int32 FormatVersion = 3;
+	/** 2: keys hold a motion (U230). A scene with no such key is still written as 1, and reads as it did.
+	 *  4: the scene holds mod data ("mods"); a scene without it is written as before. */
+	static constexpr int32 FormatVersion = 4;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FOKSceneObject> Objects;
@@ -1418,6 +1437,16 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float Duration = 10.f;
+
+	/** Mod data by mod id ("mods", FormatVersion 4). Entries of mods this build does not have are kept as read.
+	 *  The functions are in OKSceneDocumentMods.cpp. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mods")
+	TMap<FString, FOKSceneModData> Mods;
+	bool GetModData(const FString& Mod, TArray<uint8>& OutBytes, int32* OutVersion = nullptr) const;
+	void SetModData(const FString& Mod, int32 Version, TConstArrayView<uint8> Bytes);
+	bool RemoveModData(const FString& Mod);
+	void WriteMods(class FJsonObject& Root) const;
+	void ReadMods(const class FJsonObject& Root);
 
 	/** The timeline playhead (seconds), saved with the scene: the objects hold their values at that time. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
