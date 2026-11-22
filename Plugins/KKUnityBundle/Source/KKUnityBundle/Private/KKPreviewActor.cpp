@@ -9,6 +9,11 @@
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
 #include "Materials/MaterialExpressionTextureObject.h"
 #include "OKPhysXSecondary.h"
+#include "Engine/OverlapResult.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/StaticMesh.h"
+#include "Components/StaticMeshComponent.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "ShaderCompiler.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "RenderingThread.h"
@@ -8614,6 +8619,189 @@ bool AKKPreviewActor::AppendJointFramePoints(TArray<FVector>& Points) const
 	return Found >= 6;
 }
 
+static TAutoConsoleVariable<int32> CVarOkClothScene(TEXT("ok.ClothScene"),1,TEXT("FleX cloth collides with the scene round the character (chairs, benches, beds): the simple collision (box, sphere, capsule; convex as its box) of WorldStatic/WorldDynamic components near her, every ok.ClothScene.Frames frames. 0 off."));
+static TAutoConsoleVariable<int32> CVarOkClothSceneFrames(TEXT("ok.ClothScene.Frames"),10,TEXT("Frames between two looks for the scene round a character with FleX cloth (at once when she moves)."));
+static TAutoConsoleVariable<float> CVarOkClothSceneReach(TEXT("ok.ClothScene.Reach"),35.f,TEXT("How far past her joints (cm) the scene is looked for: how far her cloth can swing off its pose (OK_CLOTH_PX_FREE_MAX 30 cm) and a margin."));
+static TAutoConsoleVariable<int32> CVarOkClothSceneLog(TEXT("ok.ClothScene.Log"),1,TEXT("1: log the scene shapes given to the cloth each time they change."));
+
+void AKKPreviewActor::PublishFlexScene()
+{
+	const uint64 Group = Session.PhysicsGroup();
+	if (Group != FlexSceneGroup) { FlexSceneGroup = Group; FlexSceneCountSent = -1; FlexSceneCountdown = 0; }
+	if (!Group) return;
+	// Both solvers: the FleX host collides with it, Rust keeps the cloth shown (FleX's or PhysX's) out of it.
+	const bool bWanted = CVarOkClothScene.GetValueOnGameThread() != 0 && OKClothPxMode() > 0;
+	if (!bWanted)
+	{
+		if (FlexSceneCountSent != 0) { OKPhysXSecondary::SetFlexSceneShapes(Group, {}); Session.SetClothScene(nullptr, 0); FlexSceneCountSent = 0; }
+		return;
+	}
+	const FTransform World = SkeletonWorldTransform();
+	const bool bMoved = !World.Equals(FlexSceneFrame, 0.5);
+	if (!bMoved && --FlexSceneCountdown > 0) return;
+	FlexSceneCountdown = FMath::Max(1, CVarOkClothSceneFrames.GetValueOnGameThread());
+	FlexSceneFrame = World;
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_FlexScene);
+	// Only a character with FleX cloth looks (an item, a man without skirts: nothing to collide).
+	bool bCloth = false;
+	for (const FKKLoadedPart& P : Parts) if (P.SessionIndex != INDEX_NONE && Session.ClothPxPart(P.SessionIndex)) { bCloth = true; break; }
+	TArray<OKPhysXSecondary::FFlexSceneShape> Shapes;
+	TArray<FVector> Points;
+	UWorld* W = GetWorld();
+	if (bCloth && W && AppendJointFramePoints(Points))
+	{
+		const FBox Around = FBox(Points).ExpandBy(FMath::Max(0.f, CVarOkClothSceneReach.GetValueOnGameThread()) * World.GetScale3D().GetAbsMax());
+		FCollisionObjectQueryParams Objects;
+		Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+		Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(OKFlexClothScene), false, this);
+		TArray<FOverlapResult> Hits;
+		W->OverlapMultiByObjectType(Hits, Around.GetCenter(), FQuat::Identity, Objects, FCollisionShape::MakeBox(Around.GetExtent()), Query);
+		// World (cm) -> her skeleton space (metres, X Y Z of Unity): the inverse of PublishPhysicsFrame's map.
+		FMatrix Map = FMatrix::Identity;
+		Map.M[0][0] = -100.; Map.M[1][1] = 0.; Map.M[1][2] = 100.; Map.M[2][2] = 0.; Map.M[2][1] = 100.;
+		const FMatrix WorldToSkel = (Map * World.ToMatrixWithScale()).Inverse();
+		TSet<const UPrimitiveComponent*> Seen;
+		int32 NoSimple = 0;
+		constexpr int32 MaxShapes = 64;
+		for (const FOverlapResult& Hit : Hits)
+		{
+			const UPrimitiveComponent* Comp = Hit.GetComponent();
+			if (!Comp || Seen.Contains(Comp)) continue;
+			Seen.Add(Comp);
+			// Characters (theirs is not furniture) and pawns stay out.
+			const AActor* CompOwner = Comp->GetOwner();
+			if (Cast<AKKPreviewActor>(CompOwner) || Cast<APawn>(CompOwner)) continue;
+			const UBodySetup* Setup = const_cast<UPrimitiveComponent*>(Comp)->GetBodySetup();
+			if (!Setup || Setup->AggGeom.GetElementCount() == 0) { ++NoSimple; continue; }
+			const FTransform CompTM = Comp->GetComponentTransform();
+			auto ToSkel = [&](const FTransform& ElemTM) { return (ElemTM * CompTM).ToMatrixWithScale() * WorldToSkel; };
+			auto AddBox = [&](const FMatrix& M, const FVector& Center, const FVector& Half)
+			{
+				OKPhysXSecondary::FFlexSceneShape S;
+				S.Kind = OKPhysXSecondary::FFlexSceneShape::Box;
+				S.Center = FVector3f(FVector(M.TransformPosition(Center)));
+				FVector Axis[3] = {FVector(M.TransformVector(FVector(Half.X, 0, 0))), FVector(M.TransformVector(FVector(0, Half.Y, 0))), FVector(M.TransformVector(FVector(0, 0, Half.Z)))};
+				const FVector Len(Axis[0].Size(), Axis[1].Size(), Axis[2].Size());
+				if (Len.GetMin() < 1e-6) return;
+				for (int32 K = 0; K < 3; ++K) Axis[K] /= Len[K];
+				// A mirrored component: flip one axis (a box is symmetric) so the axes stay a rotation.
+				if (FVector::DotProduct(FVector::CrossProduct(Axis[0], Axis[1]), Axis[2]) < 0.) Axis[2] = -Axis[2];
+				S.Rotation = FQuat4f(FQuat(FMatrix(Axis[0], Axis[1], Axis[2], FVector::ZeroVector)));
+				S.HalfExtents = FVector3f(Len);
+				Shapes.Add(S);
+			};
+			const FKAggregateGeom& Geom = Setup->AggGeom;
+			for (const FKBoxElem& E : Geom.BoxElems) if (Shapes.Num() < MaxShapes) AddBox(ToSkel(E.GetTransform()), FVector::ZeroVector, FVector(E.X, E.Y, E.Z) * 0.5);
+			for (const FKConvexElem& E : Geom.ConvexElems) if (Shapes.Num() < MaxShapes && E.ElemBox.IsValid) AddBox(ToSkel(E.GetTransform()), E.ElemBox.GetCenter(), E.ElemBox.GetExtent());
+			for (const FKSphereElem& E : Geom.SphereElems)
+			{
+				if (Shapes.Num() >= MaxShapes) break;
+				const FMatrix M = ToSkel(FTransform(E.Center));
+				OKPhysXSecondary::FFlexSceneShape S;
+				S.Kind = OKPhysXSecondary::FFlexSceneShape::Sphere;
+				S.Center = FVector3f(FVector(M.TransformPosition(FVector::ZeroVector)));
+				S.Radius = float(E.Radius * M.GetScaleVector().GetAbsMax());
+				Shapes.Add(S);
+			}
+			for (const FKSphylElem& E : Geom.SphylElems)
+			{
+				if (Shapes.Num() >= MaxShapes) break;
+				const FMatrix M = ToSkel(E.GetTransform());
+				const FVector A(M.TransformPosition(FVector(0, 0, E.Length * 0.5))), B(M.TransformPosition(FVector(0, 0, -E.Length * 0.5)));
+				OKPhysXSecondary::FFlexSceneShape S;
+				S.Kind = OKPhysXSecondary::FFlexSceneShape::Capsule;
+				S.Center = FVector3f((A + B) * 0.5);
+				S.HalfHeight = float((A - B).Size() * 0.5);
+				S.Radius = float(E.Radius * FMath::Max(FVector(M.TransformVector(FVector(1, 0, 0))).Size(), FVector(M.TransformVector(FVector(0, 1, 0))).Size()));
+				const FVector Dir = (A - B).GetSafeNormal();
+				S.Rotation = Dir.IsNearlyZero() ? FQuat4f::Identity : FQuat4f(FQuat::FindBetweenNormals(FVector(1, 0, 0), Dir));
+				Shapes.Add(S);
+			}
+		}
+		if (CVarOkClothSceneLog.GetValueOnGameThread() && (Shapes.Num() != FlexSceneCountSent || NoSimple != FlexSceneNoSimple))
+		{
+			FString List;
+			for (const auto& S : Shapes)
+				List += FString::Printf(TEXT(" [%s c(%.2f %.2f %.2f) e(%.2f %.2f %.2f) r%.2f]"), S.Kind == S.Box ? TEXT("box") : S.Kind == S.Sphere ? TEXT("sphere") : TEXT("capsule"),
+					S.Center.X, S.Center.Y, S.Center.Z, S.HalfExtents.X, S.HalfExtents.Y, S.HalfExtents.Z, S.Radius);
+			UE_LOG(LogTemp, Display, TEXT("OK cloth scene %s: %d shapes from %d components (%d with no simple collision)%s"), *GetName(), Shapes.Num(), Seen.Num(), NoSimple, *List);
+		}
+		FlexSceneNoSimple = NoSimple;
+	}
+	if (Shapes.Num() == 0 && FlexSceneCountSent == 0) return;
+	OKPhysXSecondary::SetFlexSceneShapes(Group, Shapes);
+	TArray<OkClothSceneShape> ForRust;
+	ForRust.Reserve(Shapes.Num());
+	for (const OKPhysXSecondary::FFlexSceneShape& S : Shapes)
+	{
+		OkClothSceneShape& R = ForRust.AddZeroed_GetRef();
+		R.kind = S.Kind == S.Sphere ? 0u : S.Kind == S.Capsule ? 1u : 2u;
+		R.center[0] = S.Center.X; R.center[1] = S.Center.Y; R.center[2] = S.Center.Z;
+		R.rot[0] = S.Rotation.X; R.rot[1] = S.Rotation.Y; R.rot[2] = S.Rotation.Z; R.rot[3] = S.Rotation.W;
+		R.half[0] = S.HalfExtents.X; R.half[1] = S.HalfExtents.Y; R.half[2] = S.HalfExtents.Z;
+		R.radius = S.Radius; R.half_height = S.HalfHeight;
+	}
+	Session.SetClothScene(ForRust.GetData(), ForRust.Num());
+	FlexSceneCountSent = Shapes.Num();
+}
+
+// Test furniture for the cloth (the reader has none): a grey box with simple collision placed round the character.
+static FAutoConsoleCommandWithWorldAndArgs GOKClothSceneBox(TEXT("ok.ClothSceneBox"),
+	TEXT("ok.ClothSceneBox <forward> <right> <up> <length> <width> <height> [yaw]: a box with simple collision (cm) centred that far from the "
+		"loaded character's hips (up from her feet), along her facing (yaw turns it, degrees), for her cloth to rest on. ok.ClothSceneBox clear removes them, hide / show stops / starts drawing them (they still collide)."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (!World) return;
+		static const FName Tag(TEXT("OKClothSceneBox"));
+		if (Args.Num() >= 1 && (Args[0] == TEXT("clear") || Args[0] == TEXT("hide") || Args[0] == TEXT("show")))
+		{
+			// hide: not drawn, still collides (to see the cloth resting on it).
+			for (TActorIterator<AActor> It(World); It; ++It) if (It->ActorHasTag(Tag))
+			{
+				if (Args[0] == TEXT("clear")) It->Destroy();
+				else It->SetActorHiddenInGame(Args[0] == TEXT("hide"));
+			}
+			return;
+		}
+		if (Args.Num() < 6) { UE_LOG(LogTemp, Warning, TEXT("ok.ClothSceneBox: forward right up length width height [yaw]")); return; }
+		AKKPreviewActor* Her = nullptr;
+		for (TActorIterator<AKKPreviewActor> It(World); It; ++It)
+		{
+			if (!It->Session.IsOpen() || It->bStudioItemShading || It->IsHidden()) continue;
+			bool bCloth = false;
+			for (const FKKLoadedPart& P : It->Parts) if (P.SessionIndex != INDEX_NONE && It->Session.ClothPxPart(P.SessionIndex)) { bCloth = true; break; }
+			if (!Her || bCloth) Her = *It;
+			if (bCloth) break;
+		}
+		UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+		if (!Her || !Cube) { UE_LOG(LogTemp, Warning, TEXT("ok.ClothSceneBox: no character or no cube mesh")); return; }
+		float V[7] = {0, 0, 0, 0, 0, 0, 0};
+		for (int32 I = 0; I < 7 && I < Args.Num(); ++I) V[I] = FCString::Atof(*Args[I]);
+		const FTransform Skel = Her->SkeletonWorldTransform();
+		float M[16];
+		FVector Hips = Her->GetActorLocation();
+		if (Her->Session.BoneWorldMatrix(TEXT("cf_j_hips"), M)) Hips = Skel.TransformPosition(OKSkinPaletteToUnreal(M).GetOrigin());
+		const FRotator Facing(0.f, Her->GetActorRotation().Yaw + V[6], 0.f);
+		const FVector At = FVector(Hips.X, Hips.Y, Skel.GetLocation().Z) + Facing.RotateVector(FVector(V[0], V[1], 0.f)) + FVector(0.f, 0.f, V[2]);
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AStaticMeshActor* Box = World->SpawnActor<AStaticMeshActor>(At, Facing, Params);
+		if (!Box) return;
+		Box->Tags.Add(Tag);
+		Box->SetMobility(EComponentMobility::Movable);
+		UStaticMeshComponent* Comp = Box->GetStaticMeshComponent();
+		Comp->SetStaticMesh(Cube);
+		Comp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		Comp->SetCollisionObjectType(ECC_WorldStatic);
+		Comp->SetCollisionResponseToAllChannels(ECR_Overlap);
+		Comp->SetCastShadow(false);
+		if (UMaterialInterface* Shape = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+			if (UMaterialInstanceDynamic* Grey = UMaterialInstanceDynamic::Create(Shape, Box)) { Grey->SetVectorParameterValue(TEXT("Color"), FLinearColor(.45f, .5f, .55f)); Comp->SetMaterial(0, Grey); }
+		Box->SetActorScale3D(FVector(V[3], V[4], V[5]) / 100.f);
+		UE_LOG(LogTemp, Display, TEXT("ok.ClothSceneBox: %s at %s (hips %s), %.0f x %.0f x %.0f cm"), *Box->GetName(), *At.ToString(), *Hips.ToString(), V[3], V[4], V[5]);
+	}));
+
 bool AKKPreviewActor::PairedFrameGpuParts(AKKPreviewActor& Female,AKKPreviewActor& Male,TArray<int32>& FemaleParts,TArray<uint64>& FemaleRevisions,
     TArray<int32>& MaleParts,TArray<uint64>& MaleRevisions)
 {
@@ -8633,6 +8821,7 @@ bool AKKPreviewActor::ApplyPairedFrameWithDisplay(AKKPreviewActor& Female,AKKPre
     check(IsInGameThread());
     // Both roles are solved here (the partner may not tick on its own): publish both frames first.
     Female.PublishPhysicsFrame();Male.PublishPhysicsFrame();
+    Female.PublishFlexScene();Male.PublishFlexScene();
     AKKPreviewActor* Roles[]={&Female,&Male};
     for(auto* RoleIndex:Roles){RoleIndex->bNativeSkinReady=false;for(auto& Part:RoleIndex->Parts)Part.bNativeDisplayPrepared=false;}
     auto Legacy=[&](){return FOkSession::ApplyPairedFrame(Female.Session,Male.Session,Time,Delta,State,FemaleMotion,MaleMotion,Error);};
@@ -11743,6 +11932,7 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	OKClothPxMode();
 	PublishPhysicsFrame();
+	PublishFlexScene();
 	// The face pressed flat along the view (ok.FaceFlatten): the head and the player camera.
 	if (!FlatFaceMaterials.IsEmpty() && BodySkel)
 	{

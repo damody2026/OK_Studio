@@ -310,6 +310,13 @@ pub unsafe extern "C" fn ok_cloth_px_part(s:*mut OkSession,part:i32)->i32 {
     crate::cloth_px::is_cloth(&*s as *const OkSession as usize,part as usize,p) as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_cloth_px_scene(s:*mut OkSession,shapes:*const crate::cloth_px::OkClothSceneShape,n:u32) {
+    // The furniture round her (her skeleton space): her cloth is kept out of it, and loose of a pose that lies in it.
+    let Some(s)=sess_ref(s) else{return;};
+    let list=if shapes.is_null()||n==0 {&[][..]} else {std::slice::from_raw_parts(shapes,n as usize)};
+    crate::cloth_px::set_scene(&*s as *const OkSession as usize,list);
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_cloth_px_stats(out:*mut f32,max:u32)->i32 {
     // Since the last call: [cloths, particles, free particles, steps, mean step ms, largest offset mm, clamped, pushed].
     if out.is_null() {return 0;}

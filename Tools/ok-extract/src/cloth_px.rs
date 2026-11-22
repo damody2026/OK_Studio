@@ -480,6 +480,9 @@ struct Sim {
     push_prev: Vec<f32>,
     push_acc: [f64; 4],
     shown: Vec<[f32; 3]>,
+    /// Particles whose pose lies inside the scene round her (furniture): the pose is no guide there, so no limit to how
+    /// far off it they go and no pull back to it.
+    scene_loose: Vec<bool>,
     /// Time passed since the last job was launched (the next one simulates it).
     pending: f32,
 }
@@ -589,6 +592,7 @@ pub(crate) fn has_cloth(session: usize) -> bool {
 
 pub fn forget(session: usize) {
     crate::cloth_skin::forget(session);
+    set_scene(session, &[]);
     if let Some(m) = LAYERS.lock().unwrap().as_mut() { m.retain(|(s, _), _| *s != session); }
     let gone: Vec<Arc<Mutex<Entry>>> = {
         let mut all = STATES.lock().unwrap();
@@ -827,7 +831,7 @@ fn build(d: &Detect, indices: &[u32], targets: &[[f32; 3]], skel: &crate::pose::
         offsets: vec![[0.; 3]; np], launch_target: pos.clone(), last_target: pos, free, last_step: None, nbr, cap_fit: Vec::new(), cap_n: 0, gpu_rad: Vec::new(),
         skirt: kind_of.iter().map(|k| *k == KIND_SKIRT || *k == KIND_CHAIN).collect(), anchor, anchor_len,
         sleeve: kind_of.iter().map(|k| *k == KIND_SLEEVE_L || *k == KIND_SLEEVE_R).collect(), straight, built: std::time::Instant::now(), made_still: false,
-        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead, rest_r: Vec::new(), rest_at: Vec::new(), layer_keys: Vec::new(), layer_pairs: Vec::new(), push_prev: Vec::new(), layer_seen: Vec::new(), push_acc: [0.; 4], shown: Vec::new() })
+        links: adj.iter().map(|l| { let mut v: Vec<u32> = l.iter().map(|x| x.0).collect(); v.sort_unstable(); v.dedup(); v }).collect(), last_ok: -1, last_jump: 0., jit_hist: Vec::new(), jit: [0.; 5], cap_forced: Vec::new(), goal: Vec::new(), shown_raw: Vec::new(), shown_vel: Vec::new(), since_result: 0., interval: 0., pending: 0., lead, rest_r: Vec::new(), rest_at: Vec::new(), layer_keys: Vec::new(), layer_pairs: Vec::new(), push_prev: Vec::new(), layer_seen: Vec::new(), push_acc: [0.; 4], shown: Vec::new(), scene_loose: Vec::new() })
 }
 
 /// For each particle of a layer that follows another (see `build`): the particle it moves as; u32::MAX for the rest.
@@ -1160,6 +1164,11 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     // moved it: too little let Raiden's gauze sleeves fall into her hips (outfit 2), too much pushed cloth out past its
     // pose every frame (outfits 3, 5, 2026-11-21).
     let t = tune();
+    // The furniture round her (ok_cloth_px_scene): where her pose lies inside it the cloth is loose of that pose.
+    let scene = scene_of(session);
+    if scene.is_empty() { sim.scene_loose.clear(); } else {
+        sim.scene_loose = (0..np).map(|p| !sim.pinned[p] && in_scene(&scene, targets[p])).collect();
+    }
     let live: Vec<f32> = if t.live_push {
         let mut v = vec![0f32; np * caps.len()];
         for p in 0..np {
@@ -1225,11 +1234,14 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             // 2026-11-22).
             if layer_feed() { keep_layers(session, index, sim, skel, &mut fixed); }
             above_floor(sim, skel, &mut fixed);
+            out_of_scene(&scene, sim, &targets, &mut fixed);
             let back = 1. - (-(if t.free { t.free_pull } else { t.pull }) * sim.pending).exp();
             let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
             let delta: Vec<[f32; 3]> = (0..np).map(|p| {
                 if sim.pinned[p] { return [0.; 3]; }
                 let c = sub(sub(fixed[p], targets[p]), sim.goal[p]);
+                // Not pulled back toward a pose inside the furniture.
+                let back = if sim.scene_loose.get(p).copied().unwrap_or(false) { 0. } else { back };
                 let c = sub(c, scale(sub(fixed[p], targets[p]), back));
                 carry(c, &now_frames[p], &launch_frames[p])
             }).collect();
@@ -1326,6 +1338,10 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
         }
     }
     above_floor(sim, skel, &mut sim_pos);
+    let in_scene_n = out_of_scene(&scene, sim, &targets, &mut sim_pos);
+    if !scene.is_empty() && debug_due(sim.key ^ 0x5CE) {
+        log(1, &format!("OK cloth px scene: cloth {} {} shapes, {} particles posed inside them (loose), {in_scene_n} pushed out of them", sim.key, scene.len(), sim.scene_loose.iter().filter(|x| **x).count()));
+    }
     if layered > 0 && debug_on() { log(1, &format!("OK cloth px layers: cloth {} {layered} particles kept outside the garment under them ({} us)", sim.key, t_layers.elapsed().as_micros())); }
     if debug_due(sim.key ^ 0xF1) {
         // How low the cloth shown reaches against the floor she stands on (her root bone).
@@ -1401,6 +1417,113 @@ fn above_floor(sim: &Sim, skel: &crate::pose::Skeleton, pos: &mut [[f32; 3]]) ->
     let mut n = 0;
     for (p, at) in pos.iter_mut().enumerate() {
         if !sim.pinned[p] && at[1] < floor { at[1] = floor; n += 1; }
+    }
+    n
+}
+
+/// A piece of the scene round her (a chair, a bench, a bed) in her skeleton space (metres, Y up, her root at 0), from
+/// Unreal's simple collision (ok_cloth_px_scene). kind 0 sphere (centre, radius), 1 capsule (centre, along its rotated X
+/// axis, half_height between the end centres, radius), 2 box (centre, rotation, half extents). rot is x y z w.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OkClothSceneShape { pub kind: u32, pub center: [f32; 3], pub rot: [f32; 4], pub half: [f32; 3], pub radius: f32, pub half_height: f32 }
+static SCENE: Mutex<Option<HashMap<usize, Vec<OkClothSceneShape>>>> = Mutex::new(None);
+/// The scene round the character `session` (replaces the last; empty clears it).
+pub fn set_scene(session: usize, shapes: &[OkClothSceneShape]) {
+    let mut all = SCENE.lock().unwrap();
+    let map = all.get_or_insert_with(HashMap::new);
+    if shapes.is_empty() { map.remove(&session); } else { map.insert(session, shapes.to_vec()); }
+}
+fn scene_of(session: usize) -> Vec<OkClothSceneShape> {
+    SCENE.lock().unwrap().as_ref().and_then(|m| m.get(&session).cloned()).unwrap_or_default()
+}
+fn quat_rotate(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let u = [q[0], q[1], q[2]];
+    let t = scale(cross(u, v), 2.);
+    add(add(v, scale(t, q[3])), cross(u, t))
+}
+/// How deep `p` is inside the shape (negative: that far outside), and the way out (unit, her space).
+fn scene_depth(s: &OkClothSceneShape, p: [f32; 3]) -> (f32, [f32; 3]) {
+    let inv = [-s.rot[0], -s.rot[1], -s.rot[2], s.rot[3]];
+    let l = quat_rotate(inv, sub(p, s.center));
+    let out = |local: [f32; 3]| quat_rotate(s.rot, local);
+    match s.kind {
+        0 | 1 => {
+            let hh = if s.kind == 1 { s.half_height.max(0.) } else { 0. };
+            let v = [l[0] - l[0].clamp(-hh, hh), l[1], l[2]];
+            let d = len(v);
+            let way = if d > 1e-6 { scale(v, 1. / d) } else { [0., 1., 0.] };
+            (s.radius - d, out(way))
+        }
+        _ => {
+            // Inside: out through the nearest face. Outside: the distance to the box (negative).
+            let gap = [s.half[0] - l[0].abs(), s.half[1] - l[1].abs(), s.half[2] - l[2].abs()];
+            if gap.iter().all(|g| *g > 0.) {
+                let k = (0..3).fold(0, |b, k| if gap[k] < gap[b] { k } else { b });
+                let mut n = [0f32; 3];
+                n[k] = if l[k] >= 0. { 1. } else { -1. };
+                (gap[k], out(n))
+            } else {
+                let v = [l[0] - l[0].clamp(-s.half[0], s.half[0]), l[1] - l[1].clamp(-s.half[1], s.half[1]), l[2] - l[2].clamp(-s.half[2], s.half[2])];
+                let d = len(v);
+                (-d, out(if d > 1e-9 { scale(v, 1. / d) } else { [0., 1., 0.] }))
+            }
+        }
+    }
+}
+/// A point inside the box moved onto the face whose outward normal points most toward `toward` (None: not inside).
+fn box_exit_toward(s: &OkClothSceneShape, p: [f32; 3], toward: [f32; 3]) -> Option<[f32; 3]> {
+    let inv = [-s.rot[0], -s.rot[1], -s.rot[2], s.rot[3]];
+    let mut l = quat_rotate(inv, sub(p, s.center));
+    if (0..3).any(|k| l[k].abs() >= s.half[k]) { return None; }
+    let dir = quat_rotate(inv, sub(toward, p));
+    let k = (0..3).fold(0, |b, k| if dir[k].abs() > dir[b].abs() { k } else { b });
+    l[k] = if dir[k] >= 0. { s.half[k] } else { -s.half[k] };
+    Some(add(s.center, quat_rotate(s.rot, l)))
+}
+fn in_scene(scene: &[OkClothSceneShape], p: [f32; 3]) -> bool { scene.iter().any(|s| scene_depth(s, p).0 > 0.) }
+/// Out of the scene round her (OK_CLOTH_PX_SCENE_GAP mm off its surface, default 5): the furniture FleX also collides
+/// with. Its DynamicBone pose knows no furniture (lying on a bench Raiden's maid skirt hangs straight through it); FleX
+/// held the cloth on the bench (817 particles staged inside, 3 after the solve) but the clamps to the pose put them back
+/// every frame (2026-11-22). Also handed back to the solver with the other corrections.
+/// A particle deep in the furniture leaves it back along the line to the pin it hangs from, where that line went in: out
+/// through its nearest face, the part of Raiden's skirt hanging through a bench came out of the bench's side as a
+/// curtain beside it instead of lying on its seat (2026-11-22). A pin inside the furniture too: the nearest face.
+fn out_of_scene(scene: &[OkClothSceneShape], sim: &Sim, targets: &[[f32; 3]], pos: &mut [[f32; 3]]) -> usize {
+    if scene.is_empty() { return 0; }
+    static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    let gap = *E.get_or_init(|| env_f("OK_CLOTH_PX_SCENE_GAP", 5.)) * 0.001;
+    let mut n = 0;
+    for (p, at) in pos.iter_mut().enumerate() {
+        if sim.pinned[p] { continue; }
+        if in_scene(scene, *at) {
+            if let Some(pin) = sim.anchor.get(p).filter(|a| **a != u32::MAX).and_then(|a| targets.get(*a as usize)).copied() {
+                if !in_scene(scene, pin) {
+                    // Where the line from the pin (outside) to it (inside) goes in.
+                    let (mut lo, mut hi) = (0f32, 1f32);
+                    for _ in 0..14 {
+                        let mid = (lo + hi) * 0.5;
+                        if in_scene(scene, add(pin, scale(sub(*at, pin), mid))) { hi = mid } else { lo = mid }
+                    }
+                    *at = add(pin, scale(sub(*at, pin), lo));
+                } else {
+                    // The pin is in it too (her waist on the bench she lies on): out of each box through the face toward
+                    // the pin. The nearest face sent the kimono's lower half out under the bench (2026-11-22).
+                    for s in scene.iter().filter(|s| s.kind == 2) {
+                        if let Some(out) = box_exit_toward(s, *at, pin) { *at = out; }
+                    }
+                }
+            }
+        }
+        // Twice: out of one piece into the next (a seat on its legs).
+        let mut moved = false;
+        for _ in 0..2 {
+            for s in scene {
+                let (d, way) = scene_depth(s, *at);
+                if d > -gap { *at = add(*at, scale(way, d + gap)); moved = true; }
+            }
+        }
+        n += moved as usize;
     }
     n
 }
@@ -1517,7 +1640,7 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
             if sim.pinned[p] || !pos[p].iter().all(|x| x.is_finite()) { pos[p] = targets[p]; continue; }
             let off = sub(pos[p], targets[p]);
             let l = len(off);
-            if l > sim.max_dist[p] { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
+            if l > sim.max_dist[p] && !sim.scene_loose.get(p).copied().unwrap_or(false) { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
         }
         return (clamped, pushed);
     }
@@ -1541,8 +1664,10 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
             }
         }
         let l = len(off);
-        if l > sim.max_dist[p] { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
-        if sim.skirt[p] && !t.free && pos[p][1] > targets[p][1] + t.up_max { pos[p][1] = targets[p][1] + t.up_max; clamped += 1; }
+        // A pose inside the furniture round her is no guide: no limit off it (the anchor's length above still holds).
+        let loose = sim.scene_loose.get(p).copied().unwrap_or(false);
+        if l > sim.max_dist[p] && !loose { pos[p] = add(targets[p], scale(off, sim.max_dist[p] / l)); clamped += 1; }
+        if sim.skirt[p] && !t.free && !loose && pos[p][1] > targets[p][1] + t.up_max { pos[p][1] = targets[p][1] + t.up_max; clamped += 1; }
     }
     // Out of her real skin (cloth_skin) before the smoothing too, so the smoothing spreads the push over the cloth round
     // it instead of leaving one particle poking out: `need`, how far out of it each particle must stay (the margin, or as
@@ -1607,6 +1732,28 @@ fn constrain(sim: &Sim, d: &Detect, targets: &[[f32; 3]], normals: &[[f32; 3]], 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scene_shapes_push_out_nearest_way() {
+        // A bench 1.6 x 0.44 x 0.44 m, top at 0.44, turned 90 degrees about Y.
+        let h = std::f32::consts::FRAC_PI_4;
+        let bench = OkClothSceneShape { kind: 2, center: [0., 0.22, 0.], rot: [0., h.sin(), 0., h.cos()], half: [0.8, 0.22, 0.22], ..Default::default() };
+        let (d, way) = scene_depth(&bench, [0.1, 0.40, 0.5]);
+        assert!((d - 0.04).abs() < 1e-4 && (way[1] - 1.).abs() < 1e-4, "{d} {way:?}");
+        // Its long side is along Z now: 0.5 m along Z is inside, 0.5 m along X is outside by 0.28.
+        assert!(scene_depth(&bench, [0.5, 0.2, 0.]).0 < -0.27);
+        let (d, way) = scene_depth(&bench, [0.2, 0.2, 0.]);
+        assert!((d - 0.02).abs() < 1e-4 && (way[0] - 1.).abs() < 1e-4, "{d} {way:?}");
+        // A capsule along X (a bar), radius 5 cm.
+        let bar = OkClothSceneShape { kind: 1, center: [0., 1., 0.], rot: [0., 0., 0., 1.], radius: 0.05, half_height: 0.5, ..Default::default() };
+        let (d, way) = scene_depth(&bar, [0.4, 1.03, 0.]);
+        assert!((d - 0.02).abs() < 1e-4 && (way[1] - 1.).abs() < 1e-4);
+        assert!(scene_depth(&bar, [0.7, 1., 0.]).0 < 0.);
+        assert!(in_scene(&[bench], [0., 0.1, 0.]) && !in_scene(&[bench], [0., 0.5, 0.]));
+        // Deep in the bench, its pin just inside the seat above: out through the seat, not the nearer side.
+        let out = box_exit_toward(&bench, [0.18, 0.05, 0.], [0.0, 0.43, 0.]).unwrap();
+        assert!((out[1] - 0.44).abs() < 1e-4 && (out[0] - 0.18).abs() < 1e-4, "{out:?}");
+        assert!(box_exit_toward(&bench, [0.0, 0.5, 0.], [0., 1., 0.]).is_none());
+    }
     #[test]
     fn orient_flips_disagreeing_neighbour() {
         let mut t = [[0u32, 1, 2], [1, 2, 3]];

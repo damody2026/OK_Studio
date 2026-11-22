@@ -88,4 +88,20 @@ namespace OKPhysXSecondary
 	using FSetFlexClothFn = void (*)(FClothCreateFn, FClothStepFn, FClothReleaseFn, FClothBindFn, FClothBodyFn);
 	OKPHYSXSECONDARY_API void RegisterFlexCloth(FSetFlexClothFn SetCloth);
 	void ShutdownFlexCloth();
+	/**
+	 * The scene round a character (chairs, benches, beds) that her FleX cloth collides with, in her skeleton space (the
+	 * session's metres, Y up, her root at 0). Replaces the last set; an empty set clears it. Session is the one the cloth is
+	 * bound to (FOkSession::PhysicsGroup()).
+	 */
+	struct FFlexSceneShape
+	{
+		enum EKind : uint8 { Sphere, Capsule, Box };
+		EKind Kind = Box;
+		FVector3f Center = FVector3f::ZeroVector;
+		FQuat4f Rotation = FQuat4f::Identity; // Box: its axes; Capsule: along its X axis
+		FVector3f HalfExtents = FVector3f::ZeroVector; // Box
+		float Radius = 0.f;                   // Sphere, Capsule
+		float HalfHeight = 0.f;               // Capsule: half the distance between its two end centres
+	};
+	OKPHYSXSECONDARY_API void SetFlexSceneShapes(uint64 Session, TConstArrayView<FFlexSceneShape> Shapes);
 }

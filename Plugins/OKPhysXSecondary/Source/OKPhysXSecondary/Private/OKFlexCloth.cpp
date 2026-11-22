@@ -47,6 +47,7 @@ static TAutoConsoleVariable<int32> CVarFlexSelf(TEXT("OKFlexCloth.SelfCollide"),
 // Rust keeps the cloth out of her skin itself (cloth_skin).
 static TAutoConsoleVariable<int32> CVarFlexBody(TEXT("OKFlexCloth.BodyMesh"), 0, TEXT("1: her posed body mesh is a collision shape too (0: capsules only; Rust keeps the cloth out of her skin)."));
 static TAutoConsoleVariable<int32> CVarFlexCapsules(TEXT("OKFlexCloth.Capsules"), 1, TEXT("1: her body capsules are collision shapes too."));
+static TAutoConsoleVariable<int32> CVarFlexScene(TEXT("OKFlexCloth.Scene"), 1, TEXT("1: the scene round her (chairs, benches, beds: SetFlexSceneShapes) is a collision shape too."));
 static TAutoConsoleVariable<int32> CVarFlexAsync(TEXT("OKFlexCloth.Async"), 1, TEXT("1: the solve runs while the frame renders, collected next frame. 0: wait for it."));
 static TAutoConsoleVariable<int32> CVarFlexLog(TEXT("OKFlexCloth.Log"), 0, TEXT("1: log each solve."));
 static TAutoConsoleVariable<int32> CVarFlexBackend(TEXT("OKFlexCloth.Backend"), 0, TEXT("0: CUDA, then D3D11 if CUDA fails; 1: CUDA only; 2: D3D11 only. Read once."));
@@ -230,6 +231,8 @@ namespace
 	TMap<uint64, TUniquePtr<FCloth>> GCloths;
 	TMap<uint64, TUniquePtr<FSolver>> GSolvers;
 	TMap<uint64, uint64> GBound;        // cloth key -> session
+	using FSceneShape = OKPhysXSecondary::FFlexSceneShape;
+	TMap<uint64, TArray<FSceneShape>> GScene; // session -> the furniture round her (her skeleton space)
 
 	struct FContext { FContext() { GApi.AcquireContext(GLib); } ~FContext() { GApi.RestoreContext(GLib); } };
 
@@ -389,8 +392,8 @@ namespace
 		return FQuat4f::FindBetweenNormals(FVector3f(1.f, 0.f, 0.f), Dir / L);
 	}
 
-	/** Her body mesh and capsules as the solver's shapes. */
-	void Shapes(FSolver& S, const TArray<FCapsule>& Caps, const TArray<FVector3f>& Body, const TArray<int32>& BodyTris, bool bBodyNew)
+	/** Her body mesh and capsules, and the scene round her, as the solver's shapes. */
+	void Shapes(FSolver& S, const TArray<FCapsule>& Caps, const TArray<FVector3f>& Body, const TArray<int32>& BodyTris, bool bBodyNew, const TArray<FSceneShape>& Scene)
 	{
 		const bool bBody = CVarFlexBody.GetValueOnAnyThread() != 0 && (S.BodyMesh != 0 || (BodyTris.Num() >= 3 && Body.Num() > 0));
 		if (bBody && bBodyNew && BodyTris.Num() >= 3 && Body.Num() > 0)
@@ -411,7 +414,7 @@ namespace
 			GApi.UpdateTriangleMesh(GLib, S.BodyMesh, S.BodyVerts.B, S.BodyIdx.B, Body.Num(), BodyTris.Num() / 3, &Lo.X, &Hi.X);
 		}
 		const int32 NumCaps = CVarFlexCapsules.GetValueOnAnyThread() ? Caps.Num() : 0;
-		const int32 Num = (bBody ? 1 : 0) + NumCaps;
+		const int32 Num = (bBody ? 1 : 0) + NumCaps + Scene.Num();
 		S.Geometry.Ensure(Num, sizeof(NvFlexCollisionGeometry));
 		S.ShapePos.Ensure(Num, sizeof(float) * 4); S.ShapeRot.Ensure(Num, sizeof(float) * 4);
 		S.ShapePrevPos.Ensure(Num, sizeof(float) * 4); S.ShapePrevRot.Ensure(Num, sizeof(float) * 4);
@@ -441,6 +444,30 @@ namespace
 			G[I].capsule.halfHeight = FMath::Max((B - A).Length() * 0.5f, 0.0005f);
 			Put((A + B) * 0.5f, FromX(B - A));
 			F[I] = NvFlexMakeShapeFlags(eNvFlexShapeCapsule, true);
+			++I;
+		}
+		// Static furniture: not dynamic (FleX takes no velocity from it).
+		for (const FSceneShape& Sh : Scene)
+		{
+			switch (Sh.Kind)
+			{
+			case FSceneShape::Sphere:
+				G[I].sphere.radius = FMath::Max(Sh.Radius, 0.002f);
+				F[I] = NvFlexMakeShapeFlags(eNvFlexShapeSphere, false);
+				break;
+			case FSceneShape::Capsule:
+				G[I].capsule.radius = FMath::Max(Sh.Radius, 0.002f);
+				G[I].capsule.halfHeight = FMath::Max(Sh.HalfHeight, 0.0005f);
+				F[I] = NvFlexMakeShapeFlags(eNvFlexShapeCapsule, false);
+				break;
+			default:
+				G[I].box.halfExtents[0] = FMath::Max(Sh.HalfExtents.X, 0.001f);
+				G[I].box.halfExtents[1] = FMath::Max(Sh.HalfExtents.Y, 0.001f);
+				G[I].box.halfExtents[2] = FMath::Max(Sh.HalfExtents.Z, 0.001f);
+				F[I] = NvFlexMakeShapeFlags(eNvFlexShapeBox, false);
+				break;
+			}
+			Put(Sh.Center, Sh.Rotation);
 			++I;
 		}
 		S.Geometry.Unmap(); S.ShapePos.Unmap(); S.ShapeRot.Unmap(); S.ShapePrevPos.Unmap(); S.ShapePrevRot.Unmap(); S.ShapeFlags.Unmap();
@@ -490,10 +517,12 @@ namespace
 		TArray<FCapsule> Caps;
 		TArray<FVector3f> Body;
 		TArray<int32> BodyTris;
+		TArray<FSceneShape> Scene;
 		bool bBodyNew = false;
 		int32 Total = 0;
 		{
 			FScopeLock Guard(&GLock);
+			if (CVarFlexScene.GetValueOnAnyThread() != 0) if (const TArray<FSceneShape>* Found = GScene.Find(S.Session)) Scene = *Found;
 			for (FCloth* C : S.Ptrs) Total += C->N;
 			PosIn.SetNumUninitialized(Total * 4);
 			VelIn.SetNumUninitialized(Total * 3);
@@ -538,7 +567,7 @@ namespace
 			GApi.SetParticles(S.Solver, S.Particles.B, nullptr);
 			GApi.SetVelocities(S.Solver, S.Velocities.B, nullptr);
 			Params(S);
-			Shapes(S, Caps, Body, BodyTris, bBodyNew);
+			Shapes(S, Caps, Body, BodyTris, bBodyNew, Scene);
 			if (H > 0.f) GApi.UpdateSolver(S.Solver, H, Steps, false);
 			GApi.GetParticles(S.Solver, S.Particles.B, nullptr);
 			GApi.GetVelocities(S.Solver, S.Velocities.B, nullptr);
@@ -566,7 +595,28 @@ namespace
 		}
 		S.JobSeconds = FPlatformTime::Seconds() - Start;
 		if (CVarFlexLog.GetValueOnAnyThread())
-			UE_LOG(LogOKFlexCloth, Display, TEXT("FleX solver %llu: %d particles, %d substeps of %.2f ms, %d capsules%s, %.2f ms"), S.Session, Total, Steps, H / Steps * 1000.f, Caps.Num(), bBodyNew ? TEXT(", body updated") : TEXT(""), S.JobSeconds * 1000.0);
+		{
+			// Particles inside the scene shapes before (as staged) and after the solve: whether the furniture holds them.
+			auto Inside = [&Scene](const float* P4, int32 Stride, int32 N)
+			{
+				int32 Count = 0;
+				for (int32 I = 0; I < N; ++I)
+				{
+					const FVector3f At(P4[I * Stride], P4[I * Stride + 1], P4[I * Stride + 2]);
+					for (const FSceneShape& Sh : Scene)
+					{
+						const FVector3f L = Sh.Rotation.UnrotateVector(At - Sh.Center);
+						const bool bIn = Sh.Kind == FSceneShape::Box ? FMath::Abs(L.X) < Sh.HalfExtents.X && FMath::Abs(L.Y) < Sh.HalfExtents.Y && FMath::Abs(L.Z) < Sh.HalfExtents.Z
+							: Sh.Kind == FSceneShape::Sphere ? L.Length() < Sh.Radius
+							: FVector3f(FMath::Max(FMath::Abs(L.X) - Sh.HalfHeight, 0.f), L.Y, L.Z).Length() < Sh.Radius;
+						if (bIn) { ++Count; break; }
+					}
+				}
+				return Count;
+			};
+			const int32 InBefore = Scene.Num() ? Inside(PosIn.GetData(), 4, Total) : 0, InAfter = Scene.Num() ? Inside(PosOut.GetData(), 4, Total) : 0;
+			UE_LOG(LogOKFlexCloth, Display, TEXT("FleX solver %llu: %d particles, %d substeps of %.2f ms, %d capsules, %d scene shapes (particles in them %d -> %d)%s, %.2f ms"), S.Session, Total, Steps, H / Steps * 1000.f, Caps.Num(), Scene.Num(), InBefore, InAfter, bBodyNew ? TEXT(", body updated") : TEXT(""), S.JobSeconds * 1000.0);
+		}
 	}
 
 	void Launch(FSolver& S)
@@ -710,7 +760,7 @@ namespace
 			(*S)->Cloths.Remove(Key);
 			(*S)->Ptrs.Remove(Found->Get());
 			(*S)->bLayout = true;
-			if ((*S)->Cloths.Num() == 0) { FScopeLock Flex(&GFlexLock); FContext Context; (*S)->FreeAll(); GSolvers.Remove(Session); }
+			if ((*S)->Cloths.Num() == 0) { FScopeLock Flex(&GFlexLock); FContext Context; (*S)->FreeAll(); GSolvers.Remove(Session); GScene.Remove(Session); }
 		}
 		GCloths.Remove(Key);
 	}
@@ -742,6 +792,14 @@ namespace OKPhysXSecondary
 		FModuleManager::Get().LoadModuleChecked<IModuleInterface>(TEXT("OKPhysXSecondary"));
 		if (SetCloth) SetCloth(&CreateAbi, &StepAbi, &ReleaseAbi, &BindAbi, &BodyAbi);
 	}
+	void SetFlexSceneShapes(uint64 Session, TConstArrayView<FFlexSceneShape> Shapes)
+	{
+		if (!Session) return;
+		FScopeLock Guard(&GLock);
+		// Taken by her next solve (copied under GLock there).
+		if (Shapes.IsEmpty()) GScene.Remove(Session);
+		else GScene.FindOrAdd(Session) = TArray<FFlexSceneShape>(Shapes);
+	}
 	void ShutdownFlexCloth()
 	{
 		FScopeLock Guard(&GLock);
@@ -754,6 +812,7 @@ namespace OKPhysXSecondary
 		}
 		GSolvers.Empty();
 		GCloths.Empty();
+		GScene.Empty();
 		if (GLib) { GApi.Shutdown(GLib); GLib = nullptr; }
 	}
 }
@@ -762,5 +821,6 @@ namespace OKPhysXSecondary
 {
 	void RegisterFlexCloth(FSetFlexClothFn) {}
 	void ShutdownFlexCloth() {}
+	void SetFlexSceneShapes(uint64, TConstArrayView<FFlexSceneShape>) {}
 }
 #endif

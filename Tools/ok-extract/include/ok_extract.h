@@ -177,6 +177,11 @@ int32_t ok_thigh_jiggle_cloth(OkSession* s,uint32_t* out_part,uint32_t* out_idx,
 void ok_cloth_px_set(int32_t mode); /* skirts/sleeves as PhysX cloth: 0 off (DynamicBone), 1 both, 2 skirts, 3 sleeves */
 int32_t ok_cloth_px_part(OkSession* s, int32_t part); /* 1: this garment is PhysX cloth now (draw from CPU vertices) */
 int32_t ok_cloth_px_stats(float* out, uint32_t max);
+/* The furniture round her for her cloth, in her skeleton space (metres, Y up, root at 0); replaces the last, n 0 clears.
+   kind 0 sphere (center, radius), 1 capsule (center, along rot's X axis, half_height between end centres, radius),
+   2 box (center, rot, half). rot is x y z w. */
+typedef struct OkClothSceneShape { uint32_t kind; float center[3]; float rot[4]; float half[3]; float radius; float half_height; } OkClothSceneShape;
+void ok_cloth_px_scene(OkSession* s, const OkClothSceneShape* shapes, uint32_t n);
 /* PhysX cloth host (OKPhysXSecondary): create(key, n, xyz[n], invMass[n], triN, tris[triN*3]); step(key, n, targets, capsules, capN, dt (<0 reset), out) */
 void ok_set_physx_cloth(int32_t (*create)(uint64_t key, uint32_t n, const float* pos, const float* inv_mass, uint32_t tri_n, const uint32_t* tris, uint32_t flags),
 	int32_t (*step)(uint64_t key, uint32_t n, const float* targets, const float* prev, const void* capsules, uint32_t cap_n, float dt, float* out),

@@ -842,6 +842,9 @@ public:
     bool bNativeSkinReady=false;
     /** Publishes where this character's skeleton space sits in the world to the PhysX secondary dynamics (every pose update). */
     void PublishPhysicsFrame() const;
+    /** Gives the FleX cloth the simple collision of the scene round her (ok.ClothScene), every few frames. */
+    void PublishFlexScene();
+    uint64 FlexSceneGroup=0;int32 FlexSceneCountSent=-1,FlexSceneCountdown=0,FlexSceneNoSimple=0;FTransform FlexSceneFrame;
     static bool ApplyPairedFrameWithDisplay(AKKPreviewActor& Female,AKKPreviewActor& Male,float Time,float Delta,
         const FString& State,const FString& FemaleMotion,const FString& MaleMotion,FString& Error);
     /** The GPU-owned parts of a pair, when ApplyPairedFrameWithDisplay would solve it with the GPU path only (a Rust call

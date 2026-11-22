@@ -387,6 +387,7 @@ void FOkSession::SetClothGpu(int32 Mode){ok_cloth_gpu_set(Mode);}
 void FOkSession::SetClothPx(int32 Mode){ok_cloth_px_set(Mode);}
 void FOkSession::SetClothSolver(int32 Solver){ok_cloth_px_solver(Solver);}
 bool FOkSession::ClothPxPart(int32 Part) const{return Handle&&Part>=0&&ok_cloth_px_part(Handle,Part)==1;}
+void FOkSession::SetClothScene(const OkClothSceneShape* Shapes,int32 Num) const{if(Handle)ok_cloth_px_scene(Handle,Shapes,uint32(FMath::Max(Num,0)));}
 int32 FOkSession::ClothPxStats(float* Out,int32 Max){return Out&&Max>0?ok_cloth_px_stats(Out,uint32(Max)):0;}
 int32 FOkSession::ClothGpuJob(int32 Part) const {return Handle&&Part>=0?ok_cloth_gpu_job(Handle,Part):-1;}
 // Read once at the size last seen (a field is read every frame and is bigger than any first guess: read twice otherwise).
