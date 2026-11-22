@@ -7099,3 +7099,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - **錯過的路**：先以為是推出量跟著內層晃動，試了「慢慢退」、層間距離上限、上下距離限制，都沒用。
 - **處置**：記住每件衣服上次讀到的位置，讀不到時沿用（`50ceda3fc`）。
 - **教訓**：為了不互相等待而用 `try_lock` 時，讀不到的那幀要有替代值；抖動先量「修正量每幀變多少」，分清是輸入在晃還是修正本身在開關。
+
+## 2026-11-22：原作卡「只讀用到的 mod」只做了目錄一項，其他全樹查詢照樣讀遍 7300 個 zipmod
+
+- **現象**：11-18（`60c0aaea3`）把原作卡開卡的 mods 目錄改成先讀卡片指名的 zipmod，但使用者再次指出讀原作卡仍在掃所有 mod。實測（`OK_TREE_TRACE=1`、`OK_PROFILE` 的 SPOT）一張 Alice 冷開 8.9 s：`open_zip` 60596 次、`me_section` 29192 次、`guids_and_versions_from_zipmod` 14594 次、`zipmod_files` 7327 次，目錄的延後建置也照樣被肌膚細節類的 id 逼出來整棵建。
+- **原因**：讀卡器開原作卡時，基礎庫的 `mods/` 是它錄下的整棵樹（約 7300 個 zipmod）加上安裝目錄。MaterialEditor shader 註冊、StripAll 遷移、bundle 覆寫索引、UncensorSelector 來源、GUID 索引、zip 清單簽章各自走一遍整棵樹；ME 段落在同一次開卡被四條執行緒同時各建一次。基礎庫的跨行程掃描快取依 10-28 的決定預設關閉，所以每個新行程都重讀。另外安裝目錄的 GUID 索引檔（`.ok_tree_guid_index.bin`）只在沒有基礎庫時才用，而讀卡器永遠有基礎庫，所以找卡片的 GUID 也讀遍 7296 個 manifest。
+- **錯過的路**：11-18 只處理了「目錄」這一個問題，而且是「答不出來再建整棵」，沒去數其他問題各自讀了多少個 zipmod。
+- **處置**：`gamefs::NarrowMods`——原作卡開卡（`oklib::with_zipmods`）時 `mods/` 只列出卡片需要的 zipmod：卡片旁邊的、安裝目錄裡宣告卡片 GUID 的（沒有安裝目錄才查基礎庫），以及 `shared_mods.txt` 的共用 mod；所有全樹查詢都經 `read_dir`，因此自動只讀這些。卡片指名的 uncensor 不在其中時這張卡退回整棵樹。安裝目錄的 GUID 索引改成逐個 zipmod 記路徑、大小、修改時間，有基礎庫時也用，只重讀有變動的。轉 OK 卡（`make_ok_card`）不變，仍看整棵樹。`OK_WHOLE_MODS_TREE=1` 回到舊行為。
+- **教訓**：「只讀需要的」要用計數驗收（`open_zip`／`guids_and_versions_from_zipmod` 的次數、`OK_TREE_TRACE` 的呼叫堆疊），而不是只看一個階段的耗時；每一個「問整棵樹」的地方都要列出來。

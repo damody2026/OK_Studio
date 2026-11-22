@@ -301,6 +301,103 @@ pub fn set_fallback(roots: Vec<Fallback>) {
     *FALLBACK.write().unwrap() = roots;
     FALLBACK_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// What an original card's open sees under the library's `mods/` (oklib::with_zipmods): only the archives the card
+/// needs -- the shared mods (okstrict::shared_mods_visible), the archives beside the card, and the ones declaring the
+/// GUIDs it names. Every question about "the whole mods tree" (list catalogue, GUID index, StripAll migrations,
+/// MaterialEditor shaders, bundle overrides, UncensorSelector sources, the zip-list signature) walks the tree through
+/// `read_dir`, so they all read just these. Without it an original card's open read the manifests and listings of all
+/// ~7300 archives the library records, several times over (2026-11-22, the user: reading an original card should not
+/// scan every mod, only the mods it needs). OK_WHOLE_MODS_TREE=1: the whole tree again.
+pub struct NarrowMods {
+    /// Logical keys (`mods/...`, lower case) of the archives the card needs.
+    zips: std::collections::HashSet<String>,
+    /// Their file names (lower case): the fallback exposes a card's archives as `mods/<file name>` too.
+    names: std::collections::HashSet<String>,
+    /// Every folder on the way to one of `zips`.
+    dirs: std::collections::HashSet<String>,
+    /// Sorted keys, for `fallback_identity`.
+    identity: String,
+}
+impl NarrowMods {
+    /// The view of the archives at `paths` (installation files, the card's directory) and the library-relative
+    /// `keys` (`mods/...`). The library's records of the same archives (same file name, its own folders) join them.
+    pub fn new(game: &Path, paths: &[PathBuf], keys: &[String]) -> NarrowMods {
+        let mut zips: std::collections::HashSet<String> = keys.iter().map(|k| k.to_ascii_lowercase()).collect();
+        let mut names = std::collections::HashSet::new();
+        let game = normalize(game);
+        for p in paths {
+            let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) else { continue };
+            zips.insert(format!("mods/{name}"));
+            // The installation's own folders (its mods/ is the last fallback, listed with the library's).
+            let n = normalize(p);
+            if let Some(rest) = n.strip_prefix(&game).and_then(|r| r.strip_prefix('/')).filter(|r| r.starts_with("mods/")) { zips.insert(rest.to_owned()); }
+            names.insert(name);
+        }
+        for k in zips.clone() { if let Some(name) = k.rsplit('/').next() { names.insert(name.to_owned()); } }
+        // The library's records of these archives, wherever its tree keeps them.
+        if let Some(st) = state() {
+            let index = st.index.lock().unwrap();
+            for k in index.zips.keys() {
+                if k.rsplit('/').next().is_some_and(|n| names.contains(n)) { zips.insert(k.clone()); }
+            }
+        }
+        let mut dirs = std::collections::HashSet::new();
+        for k in &zips {
+            let mut d = k.as_str();
+            while let Some((parent, _)) = d.rsplit_once('/') { dirs.insert(parent.to_owned()); d = parent; }
+        }
+        let mut sorted: Vec<&String> = zips.iter().collect();
+        sorted.sort();
+        let identity = sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(";");
+        NarrowMods { zips, names, dirs, identity }
+    }
+    /// The archives the card needs (logical keys), for logs.
+    pub fn len(&self) -> usize { self.zips.len() }
+    fn visible(&self, key: &str, dir: bool) -> bool {
+        if dir { self.dirs.contains(key) || crate::okstrict::shared_mods_visible(key, true) }
+        else {
+            self.zips.contains(key) || key.rsplit('/').next().is_some_and(|n| self.names.contains(n))
+                || crate::okstrict::shared_mods_visible(key, false)
+        }
+    }
+}
+static NARROW: RwLock<Option<Arc<NarrowMods>>> = RwLock::new(None);
+/// Sets (or clears) the original card's narrow mods view; a new view for every memo keyed by the fallback.
+pub fn set_narrow_mods(view: Option<NarrowMods>) {
+    *NARROW.write().unwrap() = view.map(Arc::new);
+    FALLBACK_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+/// The narrow view, on the threads of the open that set it (not the reader's prewarm, outside every open).
+fn narrow_mods() -> Option<Arc<NarrowMods>> {
+    if crate::oklib::is_outside_opens() && !crate::oklib::sees_fallback() { return None; }
+    NARROW.read().unwrap().clone()
+}
+/// Whether an original card's narrow mods view is active on this thread (diagnostics, tests).
+pub fn narrow_mods_active() -> bool { narrow_mods().is_some() }
+
+#[cfg(test)]
+mod narrow_mods_tests {
+    use super::*;
+    /// The narrow view shows the card's archives (at the installation's folders, as `mods/<file name>` and under the
+    /// library's own folders by file name) and the folders leading to them, nothing else of the tree.
+    #[test]
+    fn narrow_view_lists_only_the_needed_archives() {
+        let game = Path::new("X:/Game");
+        let view = NarrowMods::new(game, &[PathBuf::from("X:/Game/mods/ZZ Narrow Pack/Sub/[Who] ZZ Narrow Hair.zipmod"),
+            PathBuf::from("X:/Cards/zz-narrow-beside.zipmod")], &["mods/zz narrow lib/zz-narrow-lib.zipmod".to_owned()]);
+        for (key, dir) in [("mods/zz narrow pack", true), ("mods/zz narrow pack/sub", true),
+            ("mods/zz narrow pack/sub/[who] zz narrow hair.zipmod", false), ("mods/[who] zz narrow hair.zipmod", false),
+            ("mods/zz-narrow-beside.zipmod", false), ("mods/zz narrow lib", true), ("mods/zz narrow lib/zz-narrow-lib.zipmod", false),
+            // the same archive under another folder of the library's tree (found by its file name)
+            ("mods/zz elsewhere/zz-narrow-lib.zipmod", false)] {
+            assert!(view.visible(key, dir), "{key} should be listed");
+        }
+        for (key, dir) in [("mods/zz other pack", true), ("mods/zz narrow pack/zz-other.zipmod", false), ("mods/zz narrow pack/other", true)] {
+            assert!(!view.visible(key, dir), "{key} should not be listed");
+        }
+    }
+}
 /// Zipmods exposed by the current fallback (archives named by the card, plus a card directory marker).
 pub fn fallback_summary() -> (usize, usize) {
     let Some(roots) = fallback_roots() else { return Default::default() };
@@ -325,6 +422,9 @@ fn fallback_identity_now() -> String {
     let Some(roots) = fallback_roots() else { return Default::default() };
     let mut out = String::new();
     let mut roots_seen = Vec::new();
+    // An original card's narrow view (NarrowMods) is the tree: its archives, not every one of the installation's.
+    let narrow = NARROW.read().unwrap().clone();
+    if let Some(view) = &narrow { out.push_str(&format!("narrow {};", view.identity)); }
     let mut add = |p: &Path| {
         let m = std::fs::metadata(p).ok();
         out.push_str(&format!("{}|{}|{:?};", normalize(p), m.as_ref().map_or(0, |m| m.len()), m.and_then(|m| m.modified().ok())));
@@ -337,7 +437,9 @@ fn fallback_identity_now() -> String {
             loose.sort();
             for p in &loose { add(p); }
         }
-        if f.installation && !f.root.as_os_str().is_empty() {
+        if f.installation && !f.root.as_os_str().is_empty() && narrow.is_some() {
+            roots_seen.push(normalize(&f.root));
+        } else if f.installation && !f.root.as_os_str().is_empty() {
             roots_seen.push(format!("{} {:016x}", normalize(&f.root), crate::list::zip_list_sig(&f.root.join("mods"))));
         } else if !f.root.as_os_str().is_empty() && !f.loose_mods { roots_seen.push(normalize(&f.root)); }
     }
@@ -1197,7 +1299,11 @@ pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<std::vec::IntoIter<io::Re
                     mark_fallback_used();
                     if let Some(o) = recording_overlay() { o.index.lock().unwrap().dirs.insert(key.clone(), list.clone()); }
                 }
-                list
+                // An original card's open: only the archives it needs (NarrowMods).
+                match narrow_mods().filter(|_| is_mods_key(&key)) {
+                    Some(view) => list.into_iter().filter(|(name, dir)| view.visible(&format!("{key}/{}", name.to_ascii_lowercase()), *dir)).collect(),
+                    None => list,
+                }
             }
         },
     };
@@ -1222,6 +1328,7 @@ fn library_alias(st: &State, key: &str, own: Option<&ZipIndex>) -> Option<ZipInd
 
 pub fn open_zip<P: AsRef<Path>>(path: P) -> Option<Zip> {let _spot=crate::profile::spot("open_zip");
     note_access(path.as_ref());
+    crate::mods::tree_trace_zip(path.as_ref());
     let path = path.as_ref();
     let open_real = |path: &Path, rec: Option<(Sink, String)>| -> Option<Zip> {
         let file = std::fs::File::open(path).ok()?;

@@ -3037,6 +3037,8 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     // machine, with the sqlite cache or without it, and a card's questions are nearly all about the archives it names
     // (2026-11-18, the user: reading an original card should not read every mod, only the mods it uses). Answers do
     // not change: a miss still reaches the whole tree. OK_WHOLE_MODS_CATALOGUE=1 goes back to building it up front.
+    // Since 2026-11-22 "the whole tree" of an original card's open is its narrow view (gamefs::NarrowMods: the shared
+    // mods and the archives it needs), so a miss reads only those too.
     //
     // The archives are `guid_index` above, never a lookup of its own: an OK card answers only the questions its
     // conversion recorded (okstrict / tree_answers), so asking `find_guids` with a different GUID set -- the

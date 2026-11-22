@@ -715,6 +715,44 @@ pub fn open_card_like_reader(lib: &Path, game: &Path, card: &Path, outfit: i32, 
 pub fn release_open_caches() { crate::unity::release_bundle_caches(); }
 /// Regression check for open-path optimisations: (freshly built session bytes, the open cache's entry for the same
 /// key if any). Opens like the reader without reading or writing the cache.
+/// Where two session byte dumps (`open_card_compare_cache`, ok-card-open-bench --fresh-dump) differ: one line per
+/// differing field path (`session.parts[3:cf_O_face].mat.textures...`), at most `limit` lines. Numeric arrays are compared
+/// as wholes (length, largest difference) so a moved mesh is one line, not thousands.
+pub fn session_dump_diff(a: &[u8], b: &[u8], limit: usize) -> Result<Vec<String>, String> {
+    let (a, b) = (crate::session::preview_json(a)?, crate::session::preview_json(b)?);
+    fn walk(path: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut Vec<String>, limit: usize) {
+        use serde_json::Value;
+        if out.len() >= limit || a == b { return; }
+        match (a, b) {
+            (Value::Object(x), Value::Object(y)) => {
+                let mut keys: Vec<&String> = x.keys().chain(y.keys()).collect();
+                keys.sort(); keys.dedup();
+                for k in keys {
+                    match (x.get(k), y.get(k)) {
+                        (Some(p), Some(q)) => walk(&format!("{path}.{k}"), p, q, out, limit),
+                        (p, _) => out.push(format!("{path}.{k}: only in {}", if p.is_some() { "A" } else { "B" })),
+                    }
+                }
+            }
+            (Value::Array(x), Value::Array(y)) if x.iter().chain(y).all(Value::is_number) => {
+                let max = x.iter().zip(y).map(|(p, q)| (p.as_f64().unwrap_or(0.0) - q.as_f64().unwrap_or(0.0)).abs()).fold(0.0, f64::max);
+                out.push(format!("{path}: numbers len {} vs {}, max diff {max}", x.len(), y.len()));
+            }
+            (Value::Array(x), Value::Array(y)) => {
+                if x.len() != y.len() { out.push(format!("{path}: len {} vs {}", x.len(), y.len())); }
+                let name = |v: &Value| v.get("name").and_then(Value::as_str).map(|s| format!(":{s}")).unwrap_or_default();
+                for (i, (p, q)) in x.iter().zip(y).enumerate() { walk(&format!("{path}[{i}{}]", name(p)), p, q, out, limit); }
+            }
+            _ => {
+                let short = |v: &Value| { let s = v.to_string(); if s.len() > 120 { format!("{}...", &s[..s.char_indices().nth(117).map_or(s.len(), |c| c.0)]) } else { s } };
+                out.push(format!("{path}: {} vs {}", short(a), short(b)));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk("", &a, &b, &mut out, limit);
+    Ok(out)
+}
 pub fn open_card_compare_cache(lib: &Path, card: &Path, outfit: i32) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
     let key = crate::oklib::session_cache_key(lib, card, outfit);
     // The entry as stored ("OKC2", fallback identity, lz4), whatever fallback the process that built it had.

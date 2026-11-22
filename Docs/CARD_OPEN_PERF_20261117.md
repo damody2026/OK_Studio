@@ -714,3 +714,71 @@ Tools\lua\lua.exe Tools\card_open_baseline.lua [-Cards DIR] [-Library DIR] [-Rou
 **跑之前确认机器只有一个 Unreal**（`Tools\lua\lua.exe Tools\unreal_slot.lua status` 的 `unreal processes`），
 否则时间数字不可比——同一天就量到另一个 Unreal 遊戏在同一张 GPU 上跑的时候，读卡器的行为整个变了
 （`Docs/CARD_READER_DREAMGUI.md`：防护失效）。机器吵的时候只看 `work from scratch`。
+
+## 八、原作卡只读它需要的 mod（2026-11-22，C 树）
+
+使用者：「读取 KKS 原作卡时不要扫描所有的 mod，只读取需要的 mod。」11-18 的 `60c0aaea3` 只把 mods 目录改成
+先读卡片指名的 zipmod，其他问「整棵 mods 树」的地方照旧每次读遍基础库录下的约 7300 个 zipmod（见
+[ERROR_LOG.md](ERROR_LOG.md) 2026-11-22 那条）。
+
+**做法**：`gamefs::NarrowMods`。读卡器开原作卡（`oklib::with_zipmods`）时，`mods/` 的目录列表只剩：
+
+- 卡片旁边的 zipmod；
+- 安装目录里宣告卡片 GUID 的 zipmod（sideloader resolve 列表＋ uncensor 的三个 GUID），以及基础库里同档名的那份；
+  没有安装目录时才在基础库里找；
+- `shared_mods.txt` 的共用 mod（uncensor 身体、全域修正、阴影 ramp、MaterialEditor shader），和 OK 卡严格开卡同一条规则。
+
+所有「问整棵树」的查询（目录、GUID 索引、StripAll、ME shader 注册、bundle 覆写、UncensorSelector 来源、
+zip 清单签章、外部 CAB 索引）都经 `gamefs::read_dir` 走树，所以自动只读这些。卡片指名的 uncensor 不在其中时，
+这张卡退回整棵树（日志 `opens with the whole mods tree`）。转 OK 卡不变（仍看整棵树，okLt 录的答案照旧）。
+`OK_WHOLE_MODS_TREE=1` 回到旧行为，`OK_TREE_TRACE=1` 印出谁在走整棵树、谁开了很多 zipmod（呼叫堆疊）。
+
+安装目录的 GUID 索引（`mods/.ok_tree_guid_index.bin`，第 4 版）改成逐个 zipmod 记路径、大小、修改时间与它宣告的
+GUID，有基础库时也用；只重读新增或变动的 zipmod。为了确认索引有效仍会列一次安装目录（只 stat，不开档），
+同一个行程里由目录监看记住。
+
+**语义上的变化**（刻意的，和游戏一致）：卡片没有 resolve 资讯的非原版 id 不再从随便哪个 mod 的清单里捡
+（游戏里 Sideloader 把 mod 项目都重新编号，这种 id 只对得到原版）；非共用 mod 覆写原版 bundle、注册的 ME shader、
+StripAll 迁移只在卡片用到那个 mod 时才算；UncensorSelector 设定为 Random 时候选只有共用的 uncensor 包与卡片的 zipmod。
+
+**正确性比对**（13 张 D: 原作卡、全部 80 套服装，`ok-card-open-bench --fresh-dump`，窄视图对 `OK_WHOLE_MODS_TREE=1`；
+差在哪个部件哪个栏位用新加的 `ok-card-open-bench --diff A.bin B.bin`）：窄视图自己跑两次逐字节相同（42/42）；
+和全树比 42 套相同、38 套不同，**每一处都查到原因，全是全树模式捡错了东西**：
+
+- 身体 `alpha_mask`／胸罩贴图：全树的 bundle 覆写索引让排序最前面的 `[A-fan] Mizuha clothes v5.4.zipmod`（一件无关的衣服 mod）
+  覆写了原版 `mt_mask_bra_00`／`mt_mask_body_00`；`shared_mods.txt` 明定的全局覆写是 `kimon_fixed`／`kimono_jacket_t`，
+  OK 卡一直用这两个，窄视图现在也一样。
+- 阴毛（424）、脸部贴图（433）：卡片用原版 id（没有 resolve，例如洛天依的阴毛 5），全树目录里某个刚好也有同 id 的 mod 抢先
+  （`load_catalog_png` 先查 mod 目录）；窄视图给原版那张，和游戏一致。
+- Alice 第 5 套的配件：全树取到 `merline accprim.zipmod`，它宣告的是 `yamadamod.accprim-merline`，不是卡片指名的
+  `yamadamod.accprim`；窄视图取到正确的 `[yamadamod]accprim rev6.zipmod`。
+- March 第 0 套、Hishiro 第 0 套：解成 JSON 完全相同，只差序列化顺序。
+
+**仍然存在**（不是这次引入的）：`load_catalog_png` 一类查询「先 mod 目录、再原版」，所以卡片自己的 zipmod 或共用 mod 里若有
+和原版同 id 的项目，没 resolve 的原版 id 仍会被抢；照游戏应该是「有 resolve 才查那个 GUID 的 mod，没有就只查原版」。
+
+**耗时**（同一张 Alice，冷行程，`OK_PROFILE` SPOT 计数不受机器忙碌影响）：
+
+| | 全树（改前） | 窄视图 |
+|---|---:|---:|
+| 开卡墙钟 | 8.9 s | 1.9 s |
+| `open_zip` | 60596 次 | 604 次 |
+| `guids_and_versions_from_zipmod`（读 manifest 找 GUID） | 14594 次 | 95 次（安装目录 GUID 索引有效时） |
+| `me_section`（MaterialEditor shader 段落） | 29192 次 | 380 次 |
+| `zipmod_files`（mods 目录） | 7327 次 | 124 次 |
+| 视图里的 zipmod | 7298 个 | 95 个（卡片需要的 56 个＋共用） |
+
+安装目录 GUID 索引第一次（或 mod 有增减后）仍要读一次所有新的／变动的 manifest（那一次 2.2 s），之后只 stat。
+
+读卡器式连开（同一行程、启动预热并行，`--sequence`，5 张原作卡）：
+
+| 卡 | 全树 | 窄视图 |
+|---|---:|---:|
+| KK_103551（第一张） | 9.26 s | 2.75 s |
+| 洛天依公式服 (2) | 6.86 s | 5.29 s |
+| March_7th_keiyuu | 3.43 s | 1.90 s |
+| 弹丸论破 - 江之岛盾子 | 3.05 s | 1.50 s |
+| Alice_keiyuu | 2.98 s | 1.06 s |
+| 合计 | 25.6 s | 12.5 s |
+
+OK 卡不经过这条路：标准冷开基准（`card_open_baseline.lua`，3 轮）`work from scratch 474`，在 11-19 校准的 472–475 之内。

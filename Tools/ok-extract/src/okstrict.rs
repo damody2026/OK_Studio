@@ -146,6 +146,21 @@ pub fn library_entry(zip: &str, entry: &str) -> bool {
 }
 /// Under a strict open: the library may serve this archive's listing (a shared mod, or one a shared bundle is in).
 pub fn library_zip(zip: &str) -> bool { shared().is_some_and(|s| s.zip(zip)) }
+/// The active library has a shared-mods list (`shared_mods.txt`); without one nothing under mods/ counts as shared.
+pub fn shared_list_available() -> bool {
+    let Some(lib) = crate::oklib::active_dir() else { return false };
+    [lib.join("shared_mods.txt"), lib.join("../../../Tools/base_library_shared_mods.txt")].iter().any(|p| p.is_file())
+        && lib.join("models").join(".gitignore").is_file()
+}
+/// An original card's narrow mods view (gamefs::NarrowMods): whether `key` (a logical `mods/...` path, lower case) is a
+/// shared mod or a folder on the way to one, so the view lists it. Shared mods count for every card (uncensor bodies,
+/// global fixes, shadow ramps, MaterialEditor shaders), the same rule an OK card's strict open uses.
+pub fn shared_mods_visible(key: &str, dir: bool) -> bool {
+    shared().is_some_and(|s| if dir {
+        let prefix = format!("{key}/");
+        s.lines.iter().any(|l| l.starts_with(&prefix) || (l.ends_with('/') && prefix.starts_with(l.as_str())))
+    } else { s.zip(key) })
+}
 /// Under a strict open: the library may serve this model: it holds it, and not as one only third-party mods use.
 pub fn library_model(id: &Id) -> bool { shared().is_some_and(|s| !s.excluded.contains(id) && s.shared_present(id)) }
 

@@ -60,6 +60,21 @@ fn run() -> Result<serde_json::Value, String> {
         }
         return Ok(serde_json::json!({"fresh": rows}));
     }
+    // ok-card-open-bench --diff A.bin B.bin [LIMIT]: where two --fresh-dump sessions differ (ok_extract::session_dump_diff).
+    if args.get(1).map(String::as_str) == Some("--diff") {
+        let read = |i: usize| std::fs::read(args.get(i).ok_or("usage: --diff A.bin B.bin [LIMIT]")?).map_err(|e| e.to_string());
+        let limit = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(60);
+        let lines = ok_extract::session_dump_diff(&read(2)?, &read(3)?, limit)?;
+        for l in &lines { println!("{l}"); }
+        return Ok(serde_json::json!({"differences": lines.len()}));
+    }
+    // ok-card-open-bench --resolves CARD: the card's sideloader resolve list and body texture ids (diagnostics).
+    if args.get(1).map(String::as_str) == Some("--resolves") {
+        let card = ok_extract::parse_card(Path::new(args.get(2).ok_or("missing CARD")?))?;
+        eprintln!("nip_id={} underhair_id={}", card.nip_id, card.underhair_id);
+        for r in &card.resolves { eprintln!("resolve cat={} slot={} local={} guid={} property={}", r.category_no, r.slot, r.local_slot, r.mod_id, r.property); }
+        return Ok(serde_json::json!({"resolves": card.resolves.len()}));
+    }
     // ok-card-open-bench --abm CARD: the card's bone modifiers (ABMX) and face/body sliders (diagnostics).
     if args.get(1).map(String::as_str) == Some("--abm") {
         let card = ok_extract::parse_card(Path::new(args.get(2).ok_or("missing CARD")?))?;

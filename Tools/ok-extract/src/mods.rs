@@ -455,17 +455,18 @@ fn tree_guid_index(mods_dir: &Path) -> Option<Arc<HashMap<String, PathBuf>>> {le
     let key = format!("{}\n{:016x}\n{}", mods_dir.display(), sig, crate::oklib::mounted_pack_mods_identity());
     static MEMO: Mutex<Vec<(String, Arc<HashMap<String, PathBuf>>)>> = Mutex::new(Vec::new());
     if let Some((_, hit)) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) { return Some(hit.clone()); }
-    // The installation's own tree (no library, no card pack): the index of the previous process when the tree is
-    // unchanged. Reading ~7000 manifests took ~11 s at the start of every process (each okcard-check, each
-    // ok-card-warm worker).
+    // An installation's own tree (a real folder, not the library's recorded one): each archive's GUIDs from the
+    // previous process, by path, size and modification time; only archives added or changed since are read. Reading
+    // ~7000 manifests took ~11 s at the start of every process (each okcard-check, each ok-card-warm worker), and the
+    // reader paid ~0.5 s of it for the first original card of every run: the index was kept only while no library
+    // was active, and the reader always has one -- the one place an original card's open still read every mod
+    // (2026-11-22).
     let installed = crate::oklib::active().is_none() && crate::oklib::mounted_pack_mods_identity().is_empty();
-    if let Some(index) = installed.then(|| load_tree_guid_index(mods_dir, &key)).flatten() {
-        let index = Arc::new(index);
-        let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
-        if memo.len() >= 4 { memo.remove(0); }
-        memo.push((key, index.clone()));
-        return Some(index);
-    }
+    let real_tree = installed || (mods_dir.canonicalize().is_ok() && crate::gamefs::library_records_zips(&walk).iter().all(|r| !r)
+        && mods_dir.parent().is_none_or(|g| !crate::gamefs::serves_from_library(g)));
+    let saved: HashMap<PathBuf, (u64, u64, Vec<(String, String)>)> = if real_tree { load_tree_guid_index(mods_dir) } else { HashMap::new() };
+    let stamp = |p: &Path| fs::metadata(p).ok().map(|m| (m.len(), m.modified().ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as u64)));
     // An archive the active library records cannot change: its GUIDs and versions are kept by path, so a card pack's new view
     // only reads the archives it adds (looking each of ~7000 up through `zip_memo` again cost ~0.3 s per view).
     static RECORDED: Mutex<Option<HashMap<PathBuf, Vec<(String, String)>>>> = Mutex::new(None);
@@ -477,7 +478,22 @@ fn tree_guid_index(mods_dir: &Path) -> Option<Arc<HashMap<String, PathBuf>>> {le
         walk.iter().zip(&recorded).map(|(p, r)| if *r { map.as_ref().and_then(|m| m.get(p).cloned()) } else { None }).collect()
     };
     let fresh_recorded = recorded.iter().zip(&known).any(|(r, k)| *r && k.is_none());
-    let guids: Vec<Vec<(String, String)>> = { use rayon::prelude::*; crate::oklib::pack_parallel(|| walk.par_iter().zip(known.into_par_iter()).map(|(p, k)| k.unwrap_or_else(|| guids_and_versions_from_zipmod(p))).collect()) };
+    // (path's stamp, its GUIDs, whether they were read now)
+    let rows: Vec<(Option<(u64, u64)>, Vec<(String, String)>, bool)> = { use rayon::prelude::*; crate::oklib::pack_parallel(|| walk.par_iter().zip(known.into_par_iter()).map(|(p, k)| {
+        if let Some(k) = k { return (None, k, false); }
+        if !real_tree { return (None, guids_and_versions_from_zipmod(p), true); }
+        let now = stamp(p);
+        match saved.get(p).filter(|(len, time, _)| now == Some((*len, *time))) {
+            Some((_, _, g)) => (now, g.clone(), false),
+            None => (now, guids_and_versions_from_zipmod(p), true),
+        }
+    }).collect()) };
+    if real_tree && (rows.iter().any(|r| r.2) || saved.len() != walk.len()) {
+        let read = rows.iter().filter(|r| r.2).count();
+        if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: tree guid index {} read {read} of {} archives", mods_dir.display(), walk.len()); }
+        save_tree_guid_index(mods_dir, walk.iter().zip(&rows).filter_map(|(p, (st, g, _))| st.map(|(l, t)| (p, l, t, g))).collect());
+    }
+    let guids: Vec<Vec<(String, String)>> = rows.into_iter().map(|r| r.1).collect();
     {
         let mut map = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
         let map = map.get_or_insert_with(HashMap::new);
@@ -501,7 +517,6 @@ fn tree_guid_index(mods_dir: &Path) -> Option<Arc<HashMap<String, PathBuf>>> {le
             }
         }
     }
-    if installed { save_tree_guid_index(mods_dir, &key, &index); }
     let index = Arc::new(index);
     let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
     memo.retain(|(k, _)| *k != key);
@@ -514,18 +529,20 @@ fn guid_candidate_rank(is_unbacked: bool, ver: &str) -> (bool, ParsedModVersion)
     (!is_unbacked, parse_manifest_version(ver))
 }
 
-/// The installed tree's GUID index kept between processes, valid for one tree key (its zips' paths, sizes and
-/// modification times).
+/// An installation's GUIDs kept between processes: each archive's path, size, modification time (ns) and the GUIDs
+/// and versions its manifest declares. An archive whose size or time changed is read again.
 fn tree_guid_index_path(mods_dir: &Path) -> PathBuf { mods_dir.join(".ok_tree_guid_index.bin") }
-const TREE_GUID_INDEX_VERSION: u32 = 3;
-fn load_tree_guid_index(mods_dir: &Path, key: &str) -> Option<HashMap<String, PathBuf>> {
-    let bytes = fs::read(tree_guid_index_path(mods_dir)).ok()?;
-    let (version, stored, entries): (u32, String, Vec<(String, PathBuf)>) = bincode::deserialize(&bytes).ok()?;
-    (version == TREE_GUID_INDEX_VERSION && stored == key).then(|| entries.into_iter().collect())
+const TREE_GUID_INDEX_VERSION: u32 = 4;
+type SavedGuids = Vec<(PathBuf, u64, u64, Vec<(String, String)>)>;
+fn load_tree_guid_index(mods_dir: &Path) -> HashMap<PathBuf, (u64, u64, Vec<(String, String)>)> {
+    let Ok(bytes) = fs::read(tree_guid_index_path(mods_dir)) else { return HashMap::new() };
+    match bincode::deserialize::<(u32, SavedGuids)>(&bytes) {
+        Ok((TREE_GUID_INDEX_VERSION, rows)) => rows.into_iter().map(|(p, l, t, g)| (p, (l, t, g))).collect(),
+        _ => HashMap::new(),
+    }
 }
-fn save_tree_guid_index(mods_dir: &Path, key: &str, index: &HashMap<String, PathBuf>) {
-    let entries: Vec<(&String, &PathBuf)> = index.iter().collect();
-    let Ok(bytes) = bincode::serialize(&(TREE_GUID_INDEX_VERSION, key, entries)) else { return };
+fn save_tree_guid_index(mods_dir: &Path, rows: Vec<(&PathBuf, u64, u64, &Vec<(String, String)>)>) {
+    let Ok(bytes) = bincode::serialize(&(TREE_GUID_INDEX_VERSION, rows)) else { return };
     let path = tree_guid_index_path(mods_dir);
     let tmp = path.with_extension(format!("bin.{}.tmp", std::process::id()));
     if fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, &path).is_err() { let _ = fs::remove_file(&tmp); }
@@ -806,7 +823,23 @@ fn collect_zipmods_checked(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> 
     collect_zipmods_walk(root)
 }
 
+/// OK_TREE_TRACE=1: who walks a whole mods tree, and who opens many archives (the ok_extract frames of the stack,
+/// once per distinct stack). Finds what still reads every mod when an original card opens.
+pub(crate) fn tree_trace(what: &str) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("OK_TREE_TRACE").is_some()) { return; }
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let frames: Vec<&str> = bt.lines().map(str::trim).filter(|l| l.contains("ok_extract::") && !l.contains("tree_trace")
+        && !l.contains("gamefs::open_zip") && !l.contains("zip_memo")).take(10).collect();
+    let key = frames.join("\n");
+    static SEEN: std::sync::Mutex<Option<HashMap<String, usize>>> = std::sync::Mutex::new(None);
+    let n = { let mut g = SEEN.lock().unwrap_or_else(|e| e.into_inner()); let c = g.get_or_insert_with(HashMap::new).entry(key.clone()).or_insert(0); *c += 1; *c };
+    if [1, 20, 200, 2000].contains(&n) { eprintln!("ok-extract: tree-trace #{n} {what}\n{key}"); }
+}
+pub(crate) fn tree_trace_zip(path: &Path) { tree_trace(&format!("zip {}", path.display())); }
+
 fn collect_zipmods_walk(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
+    tree_trace(&format!("walk {}", root.display()));
     let mut out = Vec::new();
     let mut trackable=true;
     fn rec(dir: &Path, out: &mut Vec<PathBuf>,trackable:&mut bool) -> std::io::Result<()> {
@@ -1183,6 +1216,13 @@ fn uncensor_config_default(text:&str,sex:i32)->Option<String> {
         }
     }
     None
+}
+
+/// Whether the mods tree `game_root` shows (an original card's narrow view: its archives and the shared mods) has an
+/// UncensorSelector body or genital with this GUID (oklib::with_zipmods).
+pub(crate) fn uncensor_guid_known(game_root: &Path, guid: &str) -> bool {
+    let sources = uncensor_sources(game_root);
+    sources.0.iter().any(|s| s.guid == guid) || sources.1.iter().any(|s| s.guid == guid)
 }
 
 fn select_uncensor_body<'a>(sources:&'a [UncensorBodySource],explicit:Option<&str>,default:Option<&str>)->Option<&'a UncensorBodySource> {

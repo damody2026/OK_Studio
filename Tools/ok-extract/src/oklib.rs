@@ -1853,7 +1853,7 @@ pub fn card_absent_mods(game: &Path, card: &Path) -> Result<Vec<String>, String>
 /// Runs `f` with the library active and the card's zipmods as fallback (card directory, the game's mods/).
 /// Fallback directories are process-wide: one original card at a time.
 pub fn with_zipmods<R>(lib: &Path, game: &Path, card: &Path, f: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
-    with_zipmods_and(lib, game, card, &[], f)
+    with_zipmods_view(lib, game, card, &[], true, f)
 }
 
 /// Where a card's zipmods come from: an installation (its `mods/` and its settings), or only a zipmod folder named
@@ -1866,20 +1866,37 @@ pub fn zipmod_source(game: &Path) -> (PathBuf, bool) {
     }
 }
 
-/// `with_zipmods` plus game zipmods the card uses without naming them (`extra`).
+/// `with_zipmods` plus game zipmods the card uses without naming them (`extra`). A conversion (make_ok_card) sees
+/// the whole mods tree: its recorded answers (okLt) are what OK cards open with.
 fn with_zipmods_and<R>(lib: &Path, game: &Path, card: &Path, extra: &[PathBuf], f: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
+    with_zipmods_view(lib, game, card, extra, false, f)
+}
+
+/// `with_zipmods_and`; `narrow`: the open sees only the archives the card needs under mods/ (gamefs::NarrowMods).
+fn with_zipmods_view<R>(lib: &Path, game: &Path, card: &Path, extra: &[PathBuf], narrow: bool, f: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
     let _one = ORIGINAL_OPEN.lock().unwrap_or_else(|e| e.into_inner());
     ensure_library(lib)?;
     let (game, settings) = zipmod_source(game);
     let game = game.as_path();
     let mut roots = Vec::new();
     let dir = CARD_DIR.with(|c| c.borrow().clone()).or_else(|| card.parent().map(Path::to_path_buf));
-    if let Some(dir) = dir { roots.push(crate::gamefs::Fallback { root: dir.to_owned(), loose_mods: true, files: Vec::new(), installation: false, settings: false }); }
-    if !game.as_os_str().is_empty() && game.is_dir() && crate::gamefs::normalize(game) != crate::gamefs::normalize(lib) {
+    let narrow = narrow && std::env::var_os("OK_WHOLE_MODS_TREE").is_none() && crate::okstrict::shared_list_available();
+    // The archives the narrow view shows: the card's directory's, and the installation's that declare its GUIDs.
+    let mut needed: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = &dir {
+        if narrow {
+            needed.extend(std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("zipmod") || e.eq_ignore_ascii_case("zip"))));
+        }
+        roots.push(crate::gamefs::Fallback { root: dir.to_owned(), loose_mods: true, files: Vec::new(), installation: false, settings: false });
+    }
+    let installed = !game.as_os_str().is_empty() && game.is_dir() && crate::gamefs::normalize(game) != crate::gamefs::normalize(lib);
+    if installed {
         let t = std::time::Instant::now();
         let mut files = card_zipmods(game, card);
         if std::env::var_os("OK_TIMING").is_some() { eprintln!("OKTIME card_zipmods {:.2}s ({} zips)", t.elapsed().as_secs_f64(), files.len()); }
         for z in extra { if !files.contains(z) { files.push(z.clone()); } }
+        needed.extend(files.iter().cloned());
         roots.push(crate::gamefs::Fallback { root: PathBuf::new(), loose_mods: false, files, installation: false, settings: false });
         // Last: the installation itself, as the game sees it (zipmods the card uses without naming them, its
         // UncensorSelector configuration), for what this checkout's library does not hold.
@@ -1895,23 +1912,75 @@ fn with_zipmods_and<R>(lib: &Path, game: &Path, card: &Path, extra: &[PathBuf], 
         }
     }
     let _guard = FallbackGuard;
-    let fb = crate::gamefs::fallback_identity();
-    if !fb.is_empty() {
-        let fb_id = format!("fallback:{}", hex(&hash16(fb.as_bytes())));
-        *MOUNTED_PACK.lock().unwrap_or_else(|e| e.into_inner()) = fb_id.clone();
-        *MOUNTED_PACK_MODS.lock().unwrap_or_else(|e| e.into_inner()) = fb_id;
+    set_view_pack_ids();
+    if narrow {
+        let t = std::time::Instant::now();
+        // No installation: the card's GUIDs can only be found among the library's records (one lookup over its tree).
+        // With one, the installation is what the game loads: a GUID it does not declare is a mod the game lacks too.
+        let mut keys = Vec::new();
+        if !installed {
+            let wanted = card_wanted_guids(card);
+            if !wanted.is_empty() {
+                let root = crate::gamefs::normalize(lib);
+                for p in crate::mods::find_guids(&lib.join("mods"), Some(&wanted)).into_values() {
+                    if let Some(rest) = crate::gamefs::normalize(&p).strip_prefix(&root).and_then(|r| r.strip_prefix('/')) { keys.push(rest.to_owned()); }
+                }
+            }
+        }
+        let view = crate::gamefs::NarrowMods::new(game, &needed, &keys);
+        let count = view.len();
+        crate::gamefs::set_narrow_mods(Some(view));
+        set_view_pack_ids();
+        // The UncensorSelector body and genitals the card names must be in the view (shared uncensor packs, or an
+        // archive declaring the GUID). One that is not -- a body only some other installed archive describes -- needs
+        // the whole tree's UncensorSelector manifests, as before: this card opens with the whole tree.
+        let absent = card_uncensor_guids(card).into_iter().filter(|g| !crate::mods::uncensor_guid_known(lib, g)).collect::<Vec<_>>();
+        if absent.is_empty() {
+            eprintln!("ok-extract: original card sees {count} archive(s) of mods/ besides the shared mods ({:.0} ms)", t.elapsed().as_secs_f64() * 1000.0);
+        } else {
+            eprintln!("ok-extract: original card names UncensorSelector {absent:?}, not among its archives or the shared mods: \
+                it opens with the whole mods tree");
+            crate::gamefs::set_narrow_mods(None);
+            set_view_pack_ids();
+        }
     }
+    struct NarrowGuard;
+    impl Drop for NarrowGuard { fn drop(&mut self) { crate::gamefs::set_narrow_mods(None); } }
+    let _narrow = NarrowGuard;
     let result = f();
+    drop(_narrow);
     drop(_guard);
     crate::gamefs::set_fallback(Vec::new());
     result
 }
 
-/// The game's zipmods an original card names by GUID (sideloader resolve list, uncensor choices).
-pub fn card_zipmods(game: &Path, card: &Path) -> Vec<PathBuf> {
-    let Ok(info) = crate::card::parse_card(card) else { return Vec::new() };
+/// The pack ids memos of the mods tree key on, from the current fallback (and narrow view).
+fn set_view_pack_ids() {
+    let fb = crate::gamefs::fallback_identity();
+    let fb_id = if fb.is_empty() { String::new() } else { format!("fallback:{}", hex(&hash16(fb.as_bytes()))) };
+    *MOUNTED_PACK.lock().unwrap_or_else(|e| e.into_inner()) = fb_id.clone();
+    *MOUNTED_PACK_MODS.lock().unwrap_or_else(|e| e.into_inner()) = fb_id;
+}
+
+/// The GUIDs an original card names: its sideloader resolve list and its UncensorSelector choices.
+fn card_wanted_guids(card: &Path) -> std::collections::HashSet<String> {
+    let Ok(info) = crate::card::parse_card(card) else { return Default::default() };
     let mut wanted: std::collections::HashSet<String> = info.resolves.iter().map(|r| r.mod_id.clone()).filter(|g| !g.is_empty()).collect();
     wanted.extend([&info.body_guid, &info.penis_guid, &info.balls_guid].into_iter().flatten().filter(|g| !g.is_empty()).cloned());
+    wanted
+}
+
+/// The UncensorSelector body/penis/balls GUIDs an original card names (not the mosaic defaults).
+fn card_uncensor_guids(card: &Path) -> Vec<String> {
+    let Ok(info) = crate::card::parse_card(card) else { return Vec::new() };
+    [&info.body_guid, &info.penis_guid, &info.balls_guid].into_iter().flatten().map(|g| g.trim().to_owned())
+        .filter(|g| !g.is_empty() && !matches!(g.as_str(), "Default.Body.Female" | "Default.Body.Male") && !crate::mods::mosaic_uncensor(g, ""))
+        .collect()
+}
+
+/// The game's zipmods an original card names by GUID (sideloader resolve list, uncensor choices).
+pub fn card_zipmods(game: &Path, card: &Path) -> Vec<PathBuf> {
+    let wanted = card_wanted_guids(card);
     if wanted.is_empty() { return Vec::new(); }
     let mut zips: Vec<PathBuf> = crate::mods::find_guids(&game.join("mods"), Some(&wanted)).into_values().collect();
     zips.sort();
