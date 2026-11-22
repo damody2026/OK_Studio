@@ -1,5 +1,7 @@
 #include "OKModContent.h"
 #include "OKModHost.h"
+#include "OKModDreamPanel.h"
+#include "UObject/StrongObjectPtr.h"
 #include "KKPreviewActor.h"
 #include "Components/MeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -55,6 +57,35 @@ bool GCardHadOverrides = false;
 TMap<FString, TSharedPtr<FKKModMaterial>> GFallbacks;
 // Mods whose content was handled (mounted or refused) in this process: B layer is set up once.
 TMap<FString, bool> GContentUsable;
+// Every mod's folder and content root ({"op":"content"}), for its .dui panels.
+TMap<FString, TPair<FString, FString>> GModFolders;
+// Mod .dui panels by "<mod id>/<name>": the checked widget class, or null when it was refused (asked once).
+TMap<FString, TStrongObjectPtr<UClass>> GWidgets;
+
+// Plan §6.13 D2: a package holding a widget class is a .dui panel. It must be /<root>/UI/WBP_<name>, come with
+// ui/<name>.dui in the mod folder, and hold only what the DreamGUI compiler makes from it (OKModDream::CheckPackage).
+bool CheckModWidget(UPackage* Package, const FString& Root, const FString& Dir, TArray<FString>& Problems)
+{
+	const FString Name = Package->GetName();
+	const FString Prefix = TEXT("/") + Root + TEXT("/UI/WBP_");
+	if (!Name.StartsWith(Prefix)) { Problems.Add(Name + TEXT(": a widget must be /") + Root + TEXT("/UI/WBP_<name>")); return false; }
+	const FString Short = Name.Mid(Prefix.Len());
+	const FString Dui = FPaths::Combine(Dir, TEXT("ui"), Short + TEXT(".dui"));
+	if (!FPaths::FileExists(Dui)) Problems.Add(Name + TEXT(": no ui/") + Short + TEXT(".dui in the mod folder (a widget comes with its .dui)"));
+	OKModDream::CheckPackage(Package, Root, Problems);
+	return Problems.IsEmpty();
+}
+
+bool HasWidgetClass(UPackage* Package)
+{
+	bool bWidget = false;
+	ForEachObjectWithPackage(Package, [&](UObject* Object)
+	{
+		if (const UClass* C = Cast<UClass>(Object); C && OKModDream::IsWidgetClass(C)) bWidget = true;
+		return !bWidget;
+	}, EGetObjectsFlags::None);
+	return bWidget;
+}
 
 const TCHAR* ParentPath(const FString& Short)
 {
@@ -131,6 +162,7 @@ bool MountContent(const FString& Id, const TSharedPtr<FJsonObject>& Mod)
 	TArray<FString> Paks;
 	Mod->TryGetStringArrayField(TEXT("paks"), Paks);
 	TArray<FString> Mounted, Packages;
+	bool bLibrary = false;	// a pak with .dui panels only has none
 	FString MountDir;
 	auto Refuse = [&](const FString& Why)
 	{
@@ -158,7 +190,7 @@ bool MountContent(const FString& Id, const TSharedPtr<FJsonObject>& Mod)
 			const FString Ext = FPaths::GetExtension(Rel).ToLower();
 			if (Ext == TEXT("uasset")) Packages.Add(TEXT("/") + Root + TEXT("/") + FPaths::GetBaseFilename(Rel, false));
 			else if (Ext == TEXT("uexp") || Ext == TEXT("ubulk") || Ext == TEXT("uptnl")) {}
-			else if (Ext == TEXT("ushaderbytecode") && !Rel.Contains(TEXT("/")) && Rel.StartsWith(TEXT("ShaderArchive-") + Mod->GetStringField(TEXT("shader_library")))) {}
+			else if (Ext == TEXT("ushaderbytecode") && !Rel.Contains(TEXT("/")) && Rel.StartsWith(TEXT("ShaderArchive-") + Mod->GetStringField(TEXT("shader_library")))) bLibrary = true;
 			else return Refuse(TEXT("file type not allowed: ") + Rel);
 		}
 	}
@@ -166,11 +198,17 @@ bool MountContent(const FString& Id, const TSharedPtr<FJsonObject>& Mod)
 	if (!FPackageName::MountPointExists(PackageRoot)) FPackageName::RegisterMountPoint(PackageRoot, MountDir);
 	// The library before any material: a material serialized without it has no shaders and falls back to the default
 	// (black characters, 2026-11-17).
-	if (!FShaderCodeLibrary::OpenLibrary(Mod->GetStringField(TEXT("shader_library")), MountDir)) return Refuse(TEXT("shader library ") + Mod->GetStringField(TEXT("shader_library")) + TEXT(" did not open"));
+	if (bLibrary && !FShaderCodeLibrary::OpenLibrary(Mod->GetStringField(TEXT("shader_library")), MountDir)) return Refuse(TEXT("shader library ") + Mod->GetStringField(TEXT("shader_library")) + TEXT(" did not open"));
 	for (const FString& Name : Packages)
 	{
 		UPackage* Package = LoadPackage(nullptr, *Name, LOAD_None);
 		if (!Package) return Refuse(TEXT("could not load ") + Name);
+		if (HasWidgetClass(Package))
+		{
+			TArray<FString> Problems;
+			if (!CheckModWidget(Package, Root, Mod->GetStringField(TEXT("dir")), Problems)) return Refuse(TEXT("panel ") + Name + TEXT(": ") + FString::Join(Problems, TEXT("; ")));
+			continue;
+		}
 		FString Bad;
 		ForEachObjectWithPackage(Package, [&](UObject* Object)
 		{
@@ -271,6 +309,7 @@ void OKModContent::Refresh()
 	{
 		const TSharedPtr<FJsonObject> Mod = Value->AsObject();
 		const FString Id = Mod->GetStringField(TEXT("id"));
+		GModFolders.Add(Id, { Mod->GetStringField(TEXT("dir")), Mod->GetStringField(TEXT("content_root")) });
 		TArray<FString> Problems;
 		Mod->TryGetStringArrayField(TEXT("problems"), Problems);
 		for (const FString& P : Problems) UE_LOG(LogOKMod, Warning, TEXT("[%s] %s"), *Id, *P);
@@ -357,6 +396,36 @@ void OKModContent::Refresh()
 }
 
 TSharedPtr<FKKModMaterial> OKModContent::Find(const FString& Id) { return GMaterials.FindRef(Id); }
+
+UClass* OKModContent::Widget(const FString& ModId, const FString& Name)
+{
+	const FString Key = ModId + TEXT("/") + Name;
+	if (const TStrongObjectPtr<UClass>* Known = GWidgets.Find(Key)) return Known->Get();
+	GWidgets.Add(Key, TStrongObjectPtr<UClass>());
+	const bool* Usable = GContentUsable.Find(ModId);
+	const TPair<FString, FString>* Folder = GModFolders.Find(ModId);
+	if (!Usable || !*Usable || !Folder)
+	{
+		UE_LOG(LogOKMod, Warning, TEXT("[%s] panel %s: the mod's content is not loaded (no pak for this build?)"), *ModId, *Name);
+		return nullptr;
+	}
+	if (!UOKModDreamBridge::IsEventName(Name)) { UE_LOG(LogOKMod, Warning, TEXT("[%s] panel name \"%s\" is not a name"), *ModId, *Name); return nullptr; }
+	const FString PackageName = TEXT("/") + Folder->Value + TEXT("/UI/WBP_") + Name;
+	UPackage* Package = LoadPackage(nullptr, *PackageName, LOAD_None);
+	if (!Package) { UE_LOG(LogOKMod, Warning, TEXT("[%s] panel %s: no package %s"), *ModId, *Name, *PackageName); return nullptr; }
+	// A pak's panels were checked when it was mounted; the editor's uncooked plugin (-ModDevContent) is checked here.
+	TArray<FString> Problems;
+	if (!CheckModWidget(Package, Folder->Value, Folder->Key, Problems))
+	{
+		for (const FString& P : Problems) UE_LOG(LogOKMod, Error, TEXT("[%s] panel refused: %s"), *ModId, *P);
+		return nullptr;
+	}
+	UClass* Class = FindObject<UClass>(Package, *(TEXT("WBP_") + Name + TEXT("_C")));
+	if (!Class || !Class->IsChildOf(UOKModDreamPanel::StaticClass())) { UE_LOG(LogOKMod, Warning, TEXT("[%s] panel %s: no class WBP_%s_C"), *ModId, *Name, *Name); return nullptr; }
+	GWidgets[Key].Reset(Class);
+	UE_LOG(LogOKMod, Display, TEXT("[%s] panel %s ready (%s)"), *ModId, *Name, *Class->GetPathName());
+	return Class;
+}
 
 TArray<FString> OKModContent::MaterialIds()
 {
