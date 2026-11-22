@@ -39,6 +39,8 @@ int32_t ok_card_outfit_gaps(const char* game,const char* card,char* out,int32_t 
 int32_t ok_clothing_transition(const char* root,const char* card,int32_t outfit,const uint8_t* previous,int32_t kind,uint8_t* out,char* error,int32_t error_cap);
 /* OK clothes (.okclothes). op 0 import coordinate card a; 1 export outfit of card a; 2 wear okclothes b as outfit of card a. Writes out; summary or error in msg. */
 int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,const char* out,char* msg,int32_t msg_cap);
+/* Breeding. op 0: the child of cards a (mother) and b (father) from seed, written to out; 1: card a shown by picture b (PNG), written to out. Summary or error in msg. */
+int32_t ok_breed_file(int32_t op,const char* a,const char* b,uint64_t seed,const char* out,char* msg,int32_t msg_cap);
 /* GUIDs (one per line in msg) an original card names that its open finds in no zipmod; 0, or -1 and the error. */
 int32_t ok_card_absent_mods(const char* card, char* msg, int32_t cap);
 int32_t ok_okcard_make(const char* game, const char* card, const char* out, char* msg, int32_t cap);
@@ -92,6 +94,13 @@ int32_t ok_session_bone_euler(OkSession* s,const char* name,float* out3);
 /* Studio IK (FullBodyBipedIK): prepare from the shared resources root; targets are effector indexes 0..8 (body, L/R
    shoulder, L/R thigh, L/R hand, L/R foot) with skeleton-space positions (Unity metres); count 0 clears. */
 int32_t ok_session_apply_hairdeck(OkSession* s,const char* cards,const char* opts,char* out,int32_t cap);
+/* HairDeck hair kept in a card (okHk): card with the hair of cards (empty: the card's own hair back), written to out. */
+/* The HairDeck hair her card keeps (okHk) put on the session: 0 put on (report in out), 2 none, 1 error. */
+int32_t ok_session_apply_card_hairdeck(OkSession* s,char* out,int32_t cap);
+/* Session part indices of accessories that are not her hair (left out of a HairDeck face picture): up to cap into out;
+   returns the count, -1 without a session. */
+int32_t ok_session_non_hair_accessories(OkSession* s,int32_t* out,int32_t cap);
+int32_t ok_card_hairdeck(const char* card,const char* cards,const char* opts,const char* out,char* msg,int32_t cap);
 int32_t ok_session_prepare_studio_ik(OkSession* s,const char* root,char* err,int32_t cap);
 int32_t ok_session_set_studio_ik(OkSession* s,const int32_t* effectors,const float* positions,int32_t count);
 int32_t ok_session_set_studio_ik_pose(OkSession* s,const int32_t* effectors,const float* positions,const float* rotations,const uint8_t* enabled,int32_t count);

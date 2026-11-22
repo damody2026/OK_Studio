@@ -366,6 +366,13 @@ public:
  bool OpenDroppedCard(const FString& Path);
  // HairDeck hair (OKGalleryHairDeck.cpp): replace her hair with a generated cards_seed<s>.json and rebuild her meshes.
  bool ApplyHairDeckHair(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
+ // Keeps the HairDeck hair she wears in her card (Out empty: the card itself); bRemove: the card's own hair back.
+ bool SaveHairDeckToCard(const FString& Out,bool bRemove,FString& OutReport);
+ // Generates hair from a reference picture with ok-hairdeck (a worker thread) and puts it on her; the reader's
+ // HairDeck page shows HairDeckStatus. HairDeckImage is the picture last used (the page's field).
+ void GenerateHairDeckHair(const FString& Image);
+ FString HairDeckImage, HairDeckStatus;
+ bool bHairDeckBusy = false;
  bool HasPreviewCharacter() const { return PreviewActor!=nullptr; }
  void StartCardDrop();
  void StopCardDrop();
@@ -412,8 +419,49 @@ public:
 	void OnExportOkClothes();
 	UFUNCTION()
 	void OnWearOkClothes();
+	/** As OnWearOkClothes, keeping her own accessories (hair ornaments etc.): only the clothes change. */
+	UFUNCTION()
+	void OnWearOkClothesOnly();
 	UFUNCTION()
 	void OnImportClothesCard();
+	/** Export the shown outfit to an outfit card (Out empty: the save folder, else UserData/okclothes), pictured as she
+	 *  wears it now; Done gets (ok, path or error). Wear an outfit card on the shown character as her shown outfit: made
+	 *  into a work card (Saved/OKClothes/Worn, sealed when she is an OK card) on a worker thread and opened at once. */
+	void ExportOkClothesTo(const FString& Out, TFunction<void(bool, const FString&)> Done = nullptr);
+	void WearOkClothesFrom(const FString& Clothes, bool bClothesOnly, TFunction<void(bool, const FString&)> Done = nullptr);
+	/** A wear on a worker thread is running (its card opens when it ends). */
+	bool bWearingOkClothes = false;
+	/** WearOkClothesFrom with what happened told in the inspector and on screen (the outfit-card list's tiles). */
+	void WearOkClothesReported(const FString& Clothes, bool bClothesOnly);
+	/** The outfit cards the reader lists (衣服卡總欄): *.okclothes in the folder 匯出服裝卡 writes to (the save folder, else
+	 *  UserData/okclothes) and in UserData/okclothes, newest first. */
+	TArray<FString> OkClothesFiles() const;
+	/** Raised when an outfit card is written (exported, converted): the list reads its folders again. */
+	int32 OkClothesVersion = 0;
+	/** Breeding (配種, OKGalleryBreed.cpp): the parents chosen (card paths), what the last breeding said, and whether one
+	 *  runs. A child is a new card in UserData/okbreed, opened at once and then pictured as she looks. */
+	FString BreedMother, BreedFather, BreedStatus;
+	bool bBreeding = false;
+	/** Raised when a card's picture changes on disk (a child pictured): the card wall reads its pictures again. */
+	int32 CardPicturesVersion = 0;
+	/** The selected card (or Path) as the father (bFather) or the mother; false when there is none. */
+	bool SetBreedParent(bool bFather, const FString& Path = FString());
+	/** The child of the two parents from Seed (0: a new one): made on a worker thread, opened, then pictured. */
+	void BreedChild(uint64 Seed = 0, TFunction<void(bool, const FString&)> Done = nullptr);
+	/** A card's name as the list shows it, else its file name. */
+	FString BreedParentName(const FString& Path) const;
+	/** Her front face picture (the card capture's face view), the reference HairDeck mixes a child's hair from:
+	 *  Saved/OKBreed/faces/<hash of the path>.png, current while it is newer than the card. */
+	static FString BreedFacePath(const FString& Card);
+	static bool BreedFaceCurrent(const FString& Card);
+	/** Card's face picture kept (BreedFacePath): she is opened and pictured unless a current one is there. Next(true)
+	 *  once there is one. */
+	void EnsureBreedFace(const FString& Card, TFunction<void(bool)> Next);
+	/** The child at Output, shown now, pictured by the front view of the card capture (her own picture on the wall). */
+	void PictureBredChild(const FString& Output, TFunction<void(bool, const FString&)> Done);
+	/** A child carries only what her parents' cards do not and opens with theirs: the selected card (or Path) written as
+	 *  a whole card to UserData/okbreed/export (opens without her parents), on a worker thread. */
+	void ExportBredChild(const FString& Path = FString(), TFunction<void(bool, const FString&)> Done = nullptr);
 	UFUNCTION()
 	void OnOpenCardFolder();
 	UFUNCTION()

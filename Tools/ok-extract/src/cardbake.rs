@@ -46,7 +46,7 @@ pub fn strip(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 pub fn strip_answers(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     strip_kinds(bytes, &[crate::tree_answers::CHUNK])
 }
-fn strip_kinds<'a>(bytes: &'a [u8], kinds: &[&[u8; 4]]) -> std::borrow::Cow<'a, [u8]> {
+pub(crate) fn strip_kinds<'a>(bytes: &'a [u8], kinds: &[&[u8; 4]]) -> std::borrow::Cow<'a, [u8]> {
     let list = chunks(bytes);
     if !list.iter().any(|c| kinds.contains(&&c.2)) { return std::borrow::Cow::Borrowed(bytes); }
     let mut out = bytes[..8].to_vec();

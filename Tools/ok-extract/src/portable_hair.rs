@@ -28,6 +28,9 @@ struct HairMesh {
     #[serde(default)] layer:Option<String>,
     /// Native hair shader (ramps, gloss, constants) of the character's own visible hair instead of a donor card.
     #[serde(default)] native_self:bool,
+    /// `_HairGloss` for HairDeck hair when neither the donor hair nor any other hair of hers has one (mod hair): a
+    /// mask drawn like the game's (a band of streaks at v = 0.5). Her own gloss mask comes first.
+    #[serde(default,skip)] gloss_mask:Option<Vec<u8>>,
 }
 fn part_name(m:&HairMesh)->String {
     match &m.layer {Some(l)=>format!("Tripo_Hair_{l}_{}",m.indices.len()/3),None=>format!("Tripo_Golden_Hair_{}",m.indices.len()/3)}
@@ -57,8 +60,9 @@ pub fn inspect_hair_base(input:&Path,output:&Path)->Result<serde_json::Value,Str
     if output.ok_exists(){return Err("inspection output already exists".into());}
     let s=load(input)?;let sk=s.body_skel.as_ref().ok_or("missing body skeleton")?;let h=head(sk)?;
     let parts:Vec<_>=s.parts.iter().map(|p|serde_json::json!({
-        "role":p.role,"name":p.name,"visible":p.render_visible,"source_property":p.source_property,"parent_bone":p.parent_bone,"skel_kind":p.skel_kind,"positions":p.positions,"normals":p.normals,"uvs":p.uvs,"indices":p.indices
+        "role":p.role,"name":p.name,"visible":p.render_visible,"source_property":p.source_property,"parent_bone":p.parent_bone,"skel_kind":p.skel_kind,"positions":p.positions,"normals":p.normals,"uvs":p.uvs,"uv2":p.uv2,"indices":p.indices,"shader_kind":p.shader_kind,"hair_gloss_png":p.hair_gloss.as_ref().map(|g|g.len())
     })).collect();
+    for(i,p)in s.parts.iter().enumerate(){if let Some(g)=&p.hair_gloss{fs::write(output.with_extension(format!("gloss{i}.png")),g).map_err(|e|e.to_string())?;}}
     let report=serde_json::json!({"source":input,"outfits":s.coordinate_count,"head_bone":sk.names[h],"head_world":sk.worlds[h],"parts":parts});
     let mut f=fs::OpenOptions::new().create_new(true).write(true).open(output).map_err(|e|e.to_string())?;
     f.write_all(&serde_json::to_vec(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
@@ -113,6 +117,8 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
     for i in overlays {s.parts[i].render_visible=false;}
     for p in s.parts.iter_mut().filter(|p|native_hair(p)||hair_shadow(p)){p.render_visible=false;}
     if m.layer.is_none() {for p in s.parts.iter_mut().filter(|p|is_custom(p)){p.render_visible=false;}}
+    // A gloss mask of her own hair for authored hair whose donor has none (HairDeck, gloss_uvs).
+    let other_gloss=if m.gloss_uvs.is_empty(){None}else{s.parts.iter().filter(|q|native_hair(q)).find_map(|q|q.hair_gloss.clone())};
     let p=&mut s.parts[slot];
     p.role=match m.layer.as_deref(){Some(l)=>format!("hair_{l}"),None=>"hair_back".into()};p.role_c=CString::new(p.role.clone()).unwrap();
     p.name=part_name(m);p.name_c=CString::new(p.name.clone()).unwrap();p.render_visible=true;
@@ -162,6 +168,22 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         p.source_property=None;p.runtime_accessory=None;p.item_draw=None;p.render_visible=true;
         p.rest_positions=authored.rest_positions;p.positions=authored.positions;
         p.rest_normals=authored.rest_normals;p.normals=authored.normals;p.rest_tangents=authored.rest_tangents;
+        // HairDeck hair: the game's gloss mask (the donor's, else any hair of hers that has one, else `gloss_mask`)
+        // read with UV1 laid out like the game's hair (portable_hairdeck::ring_uv), so the band at v = 0.5 makes the
+        // angel ring round the crown.
+        // The band moves along v by (_SpeclarHeight - 1) * dot(view, bitangent); game hair has 0.95..0.98. Mod hair
+        // that never drew a gloss keeps 0 there (Keqing): the band slid a whole texture with the view and lit the
+        // ponytail all the way down.
+        if !m.gloss_uvs.is_empty() && !(0.8..=1.0).contains(&p.spec_height) {
+            p.spec_height=0.96;
+            if let Some(mat)=p.source_material.as_mut(){mat.floats.insert("_SpeclarHeight".into(),0.96);}
+        }
+        if p.hair_gloss.is_none() {
+            if let Some(g)=other_gloss.clone().or_else(||m.gloss_mask.clone()) {
+                p.hair_gloss=Some(g.clone());p.shader_textures.insert("_HairGloss".into(),g);
+                p.runtime_textures.insert("_HairGloss".into(),[1,0,0,0,1]);p.hair_gloss_st=[1.,1.,0.,0.];
+            }
+        }
         p.uvs=authored.uvs;p.uv2=if m.gloss_uvs.is_empty(){p.uvs.clone()}else{m.gloss_uvs.clone()};p.uv3.clear();p.uv4.clear();p.vertex_colors=authored.vertex_colors;
         p.indices=authored.indices;p.weights=authored.weights;p.bone_idx=authored.bone_idx;p.bind_poses=authored.bind_poses;
         p.skel_kind=1;p.parent_bone=None;p.rigid_follow_bone=None;p.parent_c=CString::default();p.rigid_follow_c=CString::default();
@@ -277,7 +299,7 @@ pub fn import_hair_card(input:&Path,mesh:&Path,output:&Path)->Result<serde_json:
 mod tests {
     use super::*;
     #[test] fn rejects_invalid_and_over_budget_hair(){
-        let mut m=HairMesh{positions:vec![[0.;3];3],normals:vec![[0.,0.,1.];3],tangents:vec![[1.,0.,0.,1.];3],uvs:vec![[0.;2];3],indices:vec![0,1,2],texture:"x.png".into(),normal:None,roughness:None,metallic:None,native_material_card:None,native_gloss_asset:None,gloss_uvs:Vec::new(),soft_rig:None,hide_source_accessory:false,layer:None,native_self:false};
+        let mut m=HairMesh{positions:vec![[0.;3];3],normals:vec![[0.,0.,1.];3],tangents:vec![[1.,0.,0.,1.];3],uvs:vec![[0.;2];3],indices:vec![0,1,2],texture:"x.png".into(),normal:None,roughness:None,metallic:None,native_material_card:None,native_gloss_asset:None,gloss_uvs:Vec::new(),soft_rig:None,hide_source_accessory:false,layer:None,native_self:false,gloss_mask:None};
         assert!(validate(&m).is_ok());m.indices=vec![0,1,2].repeat(50001);assert!(validate(&m).is_err());m.indices=vec![0,1,3];assert!(validate(&m).is_err());m.indices=vec![0,1,2];m.positions[0][0]=f32::NAN;assert!(validate(&m).is_err());
     }
 }

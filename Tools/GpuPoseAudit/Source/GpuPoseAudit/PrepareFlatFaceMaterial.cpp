@@ -38,7 +38,11 @@ bool PrepareFlatFaceMaterials(const FString& AssetRoot,const FString& Root,const
   const FString SourceFile=FPackageName::LongPackageNameToFilename(Root/Source,FPackageName::GetAssetPackageExtension());
   if(!IFileManager::Get().FileExists(*SourceFile)){Skipped.Add(MakeShared<FJsonValueString>(Name+TEXT(": no source")));continue;}
   const FString File=FPackageName::LongPackageNameToFilename(Path,FPackageName::GetAssetPackageExtension());
-  if(IFileManager::Get().FileExists(*File)){Skipped.Add(MakeShared<FJsonValueString>(Name+TEXT(": exists")));continue;}
+  // Kept unless its source was made again since (a remade _Fg parent).
+  if(IFileManager::Get().FileExists(*File)){
+   if(IFileManager::Get().GetTimeStamp(*File)>=IFileManager::Get().GetTimeStamp(*SourceFile)){Skipped.Add(MakeShared<FJsonValueString>(Name+TEXT(": exists")));continue;}
+   if(auto* Existing=LoadObject<UMaterial>(nullptr,*(Path+TEXT(".")+Name))){Existing->ClearFlags(RF_Public|RF_Standalone);Existing->Rename(nullptr,GetTransientPackage(),REN_DontCreateRedirectors|REN_NonTransactional);}
+  }
   auto* Parent=LoadObject<UMaterial>(nullptr,*(Root/Source+TEXT(".")+Source));
   if(!Parent){UE_LOG(LogTemp,Error,TEXT("Flat face source parent missing: %s"),*Source);return false;}
   auto* Mat=DuplicateObject<UMaterial>(Parent,CreatePackage(*Path),*Name);Mat->SetFlags(RF_Public|RF_Standalone);Keep.Emplace(Mat);

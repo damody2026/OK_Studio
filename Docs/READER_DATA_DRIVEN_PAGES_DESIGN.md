@@ -125,7 +125,7 @@ UMG 的控制項在第二步之後漸漸不再被新版畫面用到，但舊版�
 | `enter` | 進頁時做的事：`first_bone_category`、`accessory_slot_scope`、`all_properties`、`show_inspect_col` |
 | `signature` | `bone_category`：骨骼分類或 X／Y／Z 開關變了就重建這頁 |
 | `shown_only` | 只鏡像現在顯示的來源（骨骼列） |
-| `builder` | 畫面自己的頁：`eye_overlays`、`game_root` |
+| `builder` | 畫面自己的頁：`eye_overlays`、`game_root`、`ui_rate`、`okclothes_grid`（服裝卡搜尋與縮圖清單） |
 | `own_buttons` | 畫面自己的按鈕：`[{"label":"…","action":"add_accessory_slot"}]` |
 | `needs` | `bones`：沒有骨骼列就不建這頁 |
 

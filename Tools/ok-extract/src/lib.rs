@@ -80,6 +80,7 @@ pub mod okchara;
 pub mod okphysics;
 pub mod gamefs;
 pub mod okclothes;
+pub mod breed;
 pub mod motion_catalogue;
 pub mod okmodel_view;
 pub mod okmodel_edit;

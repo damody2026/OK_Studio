@@ -4872,6 +4872,8 @@ pub fn open(game: &Path, card: Option<&Path>, outfit: i32) -> Result<OkSession, 
         sess.physics = crate::okphysics::CardPhysics::read_card(&bytes);
         // An OK character card (okCh) replaces the base character's renderers with its authored parts.
         crate::okchara::apply(&mut sess, &bytes)?;
+        // (HairDeck hair the card keeps, okHk, goes on where the display puts the reader's own: ok_session_apply_card_hairdeck;
+        // not here, where every strict open of a seal or digest would make it again)
     }
     Ok(sess)
 }

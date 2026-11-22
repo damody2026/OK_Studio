@@ -169,3 +169,38 @@
 ### 10.5 驗證
 
 乾淨建置（診斷碼全部移除、`RetainEmptyPoolMB` 不存在、DreamGUI 原樣），ext60 六十張、開完再空跑兩分鐘：**3/3 開完沒有故障**（`final-trip1..3`，15:51–16:12）。加上 10.3 只開清空的 3 趟，修正後共 6/6；修正前同一流程 26 趟中 24 趟故障。報告在 `Saved/Reports/card-reader-pagefault-slots/`。
+
+## 11. F 樹與並行 RDG（2026-11-22，F 樹 `F:\OpenKoikatsu`，引擎 `F:\UE5.8`）
+
+### 11.1 F 引擎漏了這個補丁
+
+配種時讀卡器兩次當機（`Saved/Logs/CardReader/20261122-114412-05145dcc.log`、`20261122-125724-5a80437e.log`），簽章和本文件相同（`Shader Hash = E6753E1E…`、`fragment_02 @ 0x45f90`、DreamGUI `ViewExtension(0)`），當時是 `r.RDG.ParallelExecute=0` 啟動、另有一個 Unreal（C 組布料）共用 GPU。C（`D:\PhysX\UE5.8`）與 E（`E:\PhysX\UE5.8`）引擎已有 `ClearRecycledOnlineDescriptors`，**F 引擎沒有**。已用 `git am -3` 套上（F 引擎本機 commit `2a5e98ac5fa2`，未推送），`D3D12Descriptors.cpp` 和 D: 引擎逐位元相同。
+
+為了不再發生，`Source/OpenKoikatsu/OpenKoikatsu.Build.cs` 加上這個補丁的標記檢查（`OK_D3D12_CLEAR_RECYCLED_DESCRIPTORS`，標記 `ClearRecycledOnlineDescriptors`）：引擎缺補丁時建置直接失敗。三個引擎都已有，不會讓任何一組建置失敗。
+
+### 11.2 量測（RTX 5090，機器上只有這一個 Unreal，`E:/OKPackage/TestCards-20261118` 逐張開不同的卡、每張停 6 秒）
+
+驅動與每趟紀錄：`Saved/Reports/card-reader-pagefault-f-20261122/`（`dwell.lua`、`dwell_<名稱>.txt`，本機）。
+
+| 趟 | 引擎 | RDG | 結果 |
+|---|---|---|---|
+| control | 沒補丁 | 並行（`-ParallelRDG`） | 第 15 張故障 |
+| keep1 | 沒補丁＋空 pool heap 不銷毀（暫時改的，等於已撤回的 `RetainEmptyPoolHeaps`） | 並行 | 60 張開完 |
+| fix1 | 補丁 | 並行 | **第 11 張故障** |
+| age1 | 補丁＋區塊年齡上限 8 幀＋區塊尾端 128 格保護（見 11.4） | 並行 | **第 37 張故障** |
+| serial1 | 補丁（11.4 的兩個開關關掉） | 序列（讀卡器啟動器預設 `r.RDG.ParallelExecute=0`） | **60 張開完** |
+| serial2 | 同上 | 序列 | **60 張開完** |
+
+### 11.3 讀法
+
+- **讀卡器平常的啟動方式（序列 RDG）下，補丁在 F 上成立**，和第 10.5 節一致。配種那兩次當機是 F 引擎沒有補丁。
+- **第 10 節的驗證全部是序列 RDG**（`ext60slots.lua` 經 `reader_launch`，命令列都有 `r.RDG.ParallelExecute=0`），**並行 RDG 從來沒有在補丁下驗過**。並行下補丁擋不住（fix1、age1），所以根因修正只涵蓋序列 RDG；讀卡器啟動器的 `r.RDG.ParallelExecute=0` 不能拿掉。
+- 並行時另有舊描述子的來源。空 pool heap 不銷毀（keep1）在並行下擋得住，因為不管描述子從哪來，它指的記憶體都還有對應；但它是止血、不是根因，這次沒有加回。
+
+### 11.4 試過、已撤回：online 區塊年齡上限與尾端保護
+
+推論：每個 context 的 online 區塊要寫滿才交回，並行 RDG 的 context 很少錄製，區塊裡留著幾百幀前的表，就在新表旁邊；補丁只在交回時清。試做兩個開關：`D3D12.OK.OnlineBlockMaxAgeFrames`（開新 command list 時區塊超過 N 幀就換一塊）、`D3D12.OK.OnlineBlockGuard`（每塊最後 N 格不給表用、保持 null）。age1 照樣在第 37 張故障，所以這不是並行時的來源（或不是唯一的），程式碼已從 F 引擎還原，差異留在 `Saved/Reports/card-reader-pagefault-f-20261122/online-block-age-guard.diff`。
+
+### 11.5 還沒解
+
+並行 RDG 下的舊描述子來源。第 4 節的排除實驗（離線描述子位元組、rename、區塊大小、texture reference）全部是序列 RDG 做的，並行下要重做才算數。

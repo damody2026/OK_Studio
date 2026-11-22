@@ -26,6 +26,14 @@ pub struct Target {pub key:String,pub label:String,pub category:i32,block:String
 fn target(key:&str,label:&str,cat:i32,section:&str,path:&str)->Target {
  Target{key:key.into(),label:label.into(),category:cat,block:"Custom".into(),section:section.into(),path:path.into(),property:format!("{section}.{path}")}
 }
+/// The `Custom` block section and path ("face", "pupil.0.id") a Sideloader `Property` names (None: not a Custom field).
+pub fn custom_field_of_property(property:&str)->Option<(String,String)>{
+ targets().into_iter().find(|t|t.block=="Custom"&&t.property==property).map(|t|(t.section,t.path))
+}
+/// The `Custom` block fields (section, path) that select an entry of this list category.
+pub fn custom_fields_of_category(category:i32)->Vec<(String,String)>{
+ targets().into_iter().filter(|t|t.block=="Custom"&&t.category==category).map(|t|(t.section,t.path)).collect()
+}
 pub fn targets()->Vec<Target>{
  let mut t=Vec::new();
  for (key,label,cat,section,path) in [
@@ -488,6 +496,8 @@ fn export_edited(root:&Path,r:&J,raw:&[u8],output:&Path)->Result<J,String>{
    let mut complete=portable[..end+12].to_vec();complete.extend(&raw[source_end+12..]);
    // The rebuilt preview PNG does not carry the source's chunks: keep its per-component physics (okPh).
    if crate::oklib::png_chunk(raw,crate::okphysics::CHUNK).is_some(){complete=crate::okphysics::write_card(&complete,&crate::okphysics::CardPhysics::read_card(raw))?;}
+   // ... and the HairDeck hair she keeps (okHk).
+   if let Some(p)=crate::portable::hairdeck::card_payload(raw){complete=crate::cardbake::with_chunk(&complete,crate::portable::hairdeck::CHUNK,p)?;}
    let source_hash=hash(&raw);let apng_hash=hash(&complete);
    fs::write(output,complete).map_err(|e|e.to_string())?;
    let card_written=started.elapsed().as_secs_f64()*1000.;

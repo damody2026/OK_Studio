@@ -2138,13 +2138,15 @@ pub(crate) fn card_file_bytes(path: &Path) -> std::io::Result<std::sync::Arc<Vec
     use std::sync::{Arc, Mutex};
     type Stamp = (std::path::PathBuf, u64, std::time::SystemTime);
     static LAST: Mutex<Vec<(Stamp, Arc<Vec<u8>>)>> = Mutex::new(Vec::new());
-    if !crate::oklib::recording_card_pack() { return std::fs::read(path).map(Arc::new); }
+    // A bred child that depends on her parents opens with their packs and answers (breed::with_parents).
+    let read = |path: &Path| crate::breed::with_parents(std::fs::read(path)?, path).map_err(std::io::Error::other);
+    if !crate::oklib::recording_card_pack() { return read(path); }
     let m = std::fs::metadata(path)?;
     let stamp = m.modified().ok().map(|t| (path.to_path_buf(), m.len(), t));
     if let Some(key) = &stamp {
         if let Some((_, hit)) = LAST.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| k == key) { return Ok(hit.clone()); }
     }
-    let bytes = Arc::new(std::fs::read(path)?);
+    let bytes = read(path)?;
     // Read before the stamp is trusted: a file written meanwhile changes its time and is read again next time.
     if let Some(key) = stamp {
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());

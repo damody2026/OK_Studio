@@ -85,7 +85,7 @@ pub(crate) fn apply_strip_all_migrations(game:&Path,card:&mut crate::card::CardI
     let mut question:Vec<&str>=card.resolves.iter().map(|r|r.mod_id.trim()).collect();
     question.sort_unstable();question.dedup();
     let question=question.join("\n");
-    let stripped:HashSet<String>=match crate::tree_answers::lookup_within::<Vec<String>>("strip-all",question.as_bytes()) {
+    let stripped:HashSet<String>=match crate::tree_answers::lookup_covered::<String>("strip-all",question.as_bytes()) {
         Some(answer)=>answer.into_iter().collect(),
         None if crate::tree_answers::unanswered("strip-all",question.as_bytes())=>HashSet::new(),
         None=>{
@@ -378,7 +378,7 @@ fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<S
     names.sort();
     // An OK card's answer (tree_answers.rs): which archive declares each GUID, without the tree's manifests.
     let question = names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n");
-    if let Some(rows) = crate::tree_answers::lookup_within::<Vec<(String, String)>>("guids", question.as_bytes()) {
+    if let Some(rows) = crate::tree_answers::lookup_covered::<(String, String)>("guids", question.as_bytes()) {
         return rows.into_iter().filter(|(guid, _)| w.contains(guid)).map(|(guid, zip)| (guid, crate::tree_answers::rebase(mods_dir, &zip))).collect();
     }
     if crate::tree_answers::unanswered("guids", question.as_bytes()) { return HashMap::new(); }

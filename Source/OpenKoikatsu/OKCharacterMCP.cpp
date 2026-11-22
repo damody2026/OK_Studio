@@ -523,7 +523,30 @@ void UOKCharacterController::TickCharacterMCP()
  }
  if(S.Action==TEXT("control_set")){FString Key,Error;if(!S.Request->TryGetStringField(TEXT("key"),Key)||!OKCharacterMCPRegistry::SetControl(this,Key,S.Request->TryGetField(TEXT("value")),Error)){Finish(S,nullptr,Error.IsEmpty()?TEXT("Missing control key"):Error);return;}S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.Phase=4;S.ReadyAt=0;return;}
  if(S.Action==TEXT("action")){FString Command;S.Request->TryGetStringField(TEXT("command"),Command);
-  if(Command==TEXT("tpose"))OnPoseTpose();else if(Command==TEXT("walk"))OnPoseWalk();else if(Command==TEXT("pause"))OnPausePlayback();else if(Command==TEXT("replay"))OnReplayPlayback();else if(Command==TEXT("blink"))OnForceBlink();else if(Command==TEXT("reset_left_hand"))OnResetLeftHand();else if(Command==TEXT("reset_right_hand"))OnResetRightHand();else if(Command==TEXT("speak"))OnSpeak();else if(Command==TEXT("stop_speech"))OnStopSpeech();else if(Command==TEXT("load_speech"))OnLoadSpeech();else if(Command==TEXT("clothing")){double Kind;if(!S.Request->TryGetNumberField(TEXT("clothing_kind"),Kind)||Kind!=FMath::FloorToDouble(Kind)||!((Kind>=0&&Kind<=8)||(Kind>=100&&Kind<=102))){Finish(S,nullptr,TEXT("Invalid clothing_kind"));return;}OnClothesState(int32(Kind));}else{Finish(S,nullptr,TEXT("Unknown editor command"));return;}S.Phase=4;S.ReadyAt=0;return;
+  if(Command==TEXT("tpose"))OnPoseTpose();else if(Command==TEXT("walk"))OnPoseWalk();else if(Command==TEXT("pause"))OnPausePlayback();else if(Command==TEXT("replay"))OnReplayPlayback();else if(Command==TEXT("blink"))OnForceBlink();else if(Command==TEXT("reset_left_hand"))OnResetLeftHand();else if(Command==TEXT("reset_right_hand"))OnResetRightHand();else if(Command==TEXT("speak"))OnSpeak();else if(Command==TEXT("stop_speech"))OnStopSpeech();else if(Command==TEXT("load_speech"))OnLoadSpeech();else if(Command==TEXT("breed_parent")){FString Role,Path;S.Request->TryGetStringField(TEXT("role"),Role);S.Request->TryGetStringField(TEXT("path"),Path);
+   if(Role!=TEXT("mother")&&Role!=TEXT("father")){Finish(S,nullptr,TEXT("role must be mother or father"));return;}
+   const bool bSet=SetBreedParent(Role==TEXT("father"),Path);UE_LOG(LogTemp,Display,TEXT("MCP breed_parent %s %s: %s"),*Role,bSet?TEXT("ok"):TEXT("failed"),*BreedStatus);}
+  else if(Command==TEXT("breed")){double Seed=0;S.Request->TryGetNumberField(TEXT("seed"),Seed);
+   BreedChild(uint64(FMath::Max(0.0,Seed)),[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  else if(Command==TEXT("breed_export")){FString Path;S.Request->TryGetStringField(TEXT("path"),Path);
+   ExportBredChild(Path,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  // HairDeck hair: "hairdeck" puts a cards_seed<s>.json on her ("cards", "opts" JSON text); "hairdeck_save" keeps what
+  // she wears in her card ("out": another file; "remove": the card's own hair back).
+  // The open card's picture replaced by a photo of her as she shows now (as a bred child is pictured).
+  else if(Command==TEXT("breed_picture")){if(!PreviewActor||PreviewCardPath.IsEmpty()||bBreeding){Finish(S,nullptr,TEXT("No open card, or a breeding is running"));return;}
+   bBreeding=true;PictureBredChild(PreviewCardPath,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_picture %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  else if(Command==TEXT("hairdeck")&&S.Request->HasField(TEXT("image"))){FString Image;S.Request->TryGetStringField(TEXT("image"),Image);GenerateHairDeckHair(Image);
+   UE_LOG(LogTemp,Display,TEXT("MCP hairdeck generate: %s"),*HairDeckStatus);if(!bHairDeckBusy){Finish(S,nullptr,HairDeckStatus);return;}}
+  else if(Command==TEXT("hairdeck")){FString Cards,Opts;if(!S.Request->TryGetStringField(TEXT("cards"),Cards)||!IFileManager::Get().FileExists(*Cards)){Finish(S,nullptr,TEXT("Provide an existing cards_seed<s>.json, or an image to generate from"));return;}
+   S.Request->TryGetStringField(TEXT("opts"),Opts);FString Report;const bool bOk=ApplyHairDeckHair(Cards,Opts,Report);
+   UE_LOG(LogTemp,Display,TEXT("MCP hairdeck %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*Report);if(!bOk){Finish(S,nullptr,Report);return;}}
+  else if(Command==TEXT("hairdeck_save")){FString Out;bool bRemove=false;S.Request->TryGetStringField(TEXT("out"),Out);S.Request->TryGetBoolField(TEXT("remove"),bRemove);
+   FString Report;const bool bOk=SaveHairDeckToCard(Out,bRemove,Report);
+   UE_LOG(LogTemp,Display,TEXT("MCP hairdeck_save %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*Report);if(!bOk){Finish(S,nullptr,Report);return;}}
+  else if(Command==TEXT("clothes_export")){FString Out;S.Request->TryGetStringField(TEXT("out"),Out);ExportOkClothesTo(Out,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP clothes_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  else if(Command==TEXT("clothes_wear")){FString Path;bool bOnly=false;S.Request->TryGetBoolField(TEXT("clothes_only"),bOnly);if(!S.Request->TryGetStringField(TEXT("path"),Path)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Provide an existing .okclothes path"));return;}
+   WearOkClothesFrom(Path,bOnly,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP clothes_wear %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
+  else if(Command==TEXT("clothing")){double Kind;if(!S.Request->TryGetNumberField(TEXT("clothing_kind"),Kind)||Kind!=FMath::FloorToDouble(Kind)||!((Kind>=0&&Kind<=8)||(Kind>=100&&Kind<=102))){Finish(S,nullptr,TEXT("Invalid clothing_kind"));return;}OnClothesState(int32(Kind));}else{Finish(S,nullptr,TEXT("Unknown editor command"));return;}S.Phase=4;S.ReadyAt=0;return;
  }
  if(S.Action==TEXT("parameters")||S.Action==TEXT("get")||S.Action==TEXT("set")||S.Action==TEXT("reset")||S.Action==TEXT("eye_page")){
   if(!PropertyPanel){Finish(S,nullptr,TEXT("Property editor unavailable"));return;}if(EditorProperties.IsEmpty()||PropertySource!=Entries[SelectedIndex].Path||PropertyOutfit!=OutfitIndex){if(S.Phase==1){Finish(S,nullptr,TEXT("Could not read character properties"));return;}PropertyPanel->SetVisibility(ESlateVisibility::Collapsed);OnOpenProperties();S.Phase=1;return;}

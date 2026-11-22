@@ -5669,12 +5669,23 @@ bool AKKPreviewActor::ApplyHairDeckToSession(FString* OutReport)
 {
  // A session put in afterwards (clothing variants, reopened outfits) is the card's own: its HairDeck hair comes back
  // here. Applying it again to a session that has it already changes nothing.
- if (HairDeckCards.IsEmpty()) return true;
  FString Report;
- const bool bOk = Session.ApplyHairDeck(HairDeckCards, HairDeckOpts, Report);
- if (!bOk) { UE_LOG(LogTemp, Warning, TEXT("OK HairDeck hair not applied (%s): %s"), *HairDeckCards, *Report); }
+ bool bOk = true;
+ if (HairDeckCards.IsEmpty())
+ {
+  // No hair given to this character: the HairDeck hair her card keeps (okHk), if any, at the same point.
+  const int32 R = Session.ApplyCardHairDeck(Report);
+  if (R == 2) return true;
+  bOk = R == 0;
+  if (!bOk) { UE_LOG(LogTemp, Warning, TEXT("OK card HairDeck hair not applied: %s"), *Report); }
+ }
+ else
+ {
+  bOk = Session.ApplyHairDeck(HairDeckCards, HairDeckOpts, Report);
+  if (!bOk) { UE_LOG(LogTemp, Warning, TEXT("OK HairDeck hair not applied (%s): %s"), *HairDeckCards, *Report); }
+ }
  // The shared-parent instances made for the old hair (OKPrepareCookedRole keeps them while any exist) are rebuilt.
- else if (!Report.Contains(TEXT("\"already\":true"))) { CookedRoleMaterials.Reset(); CookedRoleOutlines.Reset(); CookedRoleBuild.Reset(); }
+ if (bOk && !Report.Contains(TEXT("\"already\":true"))) { CookedRoleMaterials.Reset(); CookedRoleOutlines.Reset(); CookedRoleBuild.Reset(); }
  if (OutReport) *OutReport = Report;
  return bOk;
 }
@@ -11944,6 +11955,7 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 			if (OKFaceFlattenChanged(FlatFaceState, Head, View)) for (const auto& M : FlatFaceMaterials) if (M.IsValid()) OKApplyFaceFlatten(M.Get(), FlatFaceState);
 		}
 	}
+	UpdateForegroundHair();
     bool BatchFace=CVarOkFaceFrameBatch.GetValueOnGameThread()!=0;
     if(BatchFace)BeginFaceDisplayUpdate();
     ON_SCOPE_EXIT{if(BatchFace)EndFaceDisplayUpdate();};

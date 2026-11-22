@@ -12,6 +12,10 @@
 // front of it: there the eyes depth-test against her face before they mark the stencil, so her face, head and other
 // hair hide them from the side. The scene captures her body without the front hair (OKCrowdRuntimeScene OccluderGpu)
 // into __OK_ForegroundOcclusion; __OK_ForegroundOcclusionOn is 0 where no capture is bound.
+// __OK_ForegroundThrough: how much of them shows through the hair (1 all, the street; the card reader 0.5, mixed with
+// the front hair as the user asked 2026-11-22). __OK_ForegroundNear: only hair less than this far (cm) in front of them
+// lets them through (the reader, which has no occlusion capture: hair further off, a side lock seen from the side, hides
+// them as Koikatsu's face would).
 //
 //   UnrealEditor-Cmd RuntimeMaterialBake.uproject -run=GpuPoseAudit -PrepareForegroundMaterials -AssetRoot=<Content>
 //     -MaterialRoot=/Game/IndependentResources/RuntimeMaterials/<root> -Output=<report.json>
@@ -42,10 +46,10 @@ bool PrepareForegroundMaterials(const FString& AssetRoot,const FString& Root,con
  for(auto Recipe:OKRuntimeSharedMaterialRecipes()){
   const FString Source=OKRuntimeSharedMaterialParentName(Recipe),Name=Source+TEXT("_Fg"),Path=Root/Name;
   const FString File=FPackageName::LongPackageNameToFilename(Path,FPackageName::GetAssetPackageExtension());
-  // Kept when it already tests her own occlusion; an older variant is made again.
+  // Kept when it already has the see-through amount; an older variant is made again.
   if(IFileManager::Get().FileExists(*File)){
    auto* Existing=LoadObject<UMaterial>(nullptr,*(Path+TEXT(".")+Name));float On=0;
-   if(Existing&&Existing->GetScalarParameterDefaultValue(FHashedMaterialParameterInfo(TEXT("__OK_ForegroundOcclusionOn")),On)){Skipped.Add(MakeShared<FJsonValueString>(Name+TEXT(": exists")));continue;}
+   if(Existing&&Existing->GetScalarParameterDefaultValue(FHashedMaterialParameterInfo(TEXT("__OK_ForegroundThrough")),On)){Skipped.Add(MakeShared<FJsonValueString>(Name+TEXT(": exists")));continue;}
    if(Existing){Existing->ClearFlags(RF_Public|RF_Standalone);Existing->Rename(nullptr,GetTransientPackage(),REN_DontCreateRedirectors|REN_NonTransactional);}
   }
   auto* Parent=LoadObject<UMaterial>(nullptr,*(Root/Source+TEXT(".")+Source));
@@ -73,13 +77,15 @@ bool PrepareForegroundMaterials(const FString& AssetRoot,const FString& Root,con
   Occ->Texture=LoadObject<UTexture2D>(nullptr,TEXT("/Engine/EngineResources/Black.Black"));Occ->SamplerType=SAMPLERTYPE_LinearColor;Input(TEXT("Occ"),Occ);
   auto* On=NewObject<UMaterialExpressionScalarParameter>(Mat);On->ParameterName=TEXT("__OK_ForegroundOcclusionOn");On->DefaultValue=0;Input(TEXT("On"),On);
   Input(TEXT("Screen"),NewObject<UMaterialExpressionScreenPosition>(Mat));
+  auto* Through=NewObject<UMaterialExpressionScalarParameter>(Mat);Through->ParameterName=TEXT("__OK_ForegroundThrough");Through->DefaultValue=1;Input(TEXT("Through"),Through);
+  auto* Near=NewObject<UMaterialExpressionScalarParameter>(Mat);Near->ParameterName=TEXT("__OK_ForegroundNear");Near->DefaultValue=1e6f;Input(TEXT("Near"),Near);
   const bool Premultiplied=Mat->BlendMode==BLEND_AlphaComposite;
   // Depths in cm. Scene depth vs custom depth: the same mesh, pose and material drew both, so only precision differs.
   // Occ: the capture's scene depth (cm) of her body without the front hair, from the same camera.
   Test->Code=FString(TEXT("float open=Pixel<=Depth.x+0.05;"
    "float own=On<0.5||Pixel<=Texture2DSampleLevel(Occ,OccSampler,Screen.xy,0).r+max(0.3,Pixel*0.002);"
-   "float hair=Id>0.5&&abs(Stencil.x-Id)<0.5&&abs(Custom.x-Depth.x)<=max(0.5,Depth.x*0.002)&&dot(normalize(Normal),Camera)>0&&own;"
-   "float shown=max(open,hair);"))+(Premultiplied?TEXT("return Color*shown;"):TEXT("return float4(Color.rgb,Color.a*shown);"));
+   "float hair=Id>0.5&&abs(Stencil.x-Id)<0.5&&abs(Custom.x-Depth.x)<=max(0.5,Depth.x*0.002)&&dot(normalize(Normal),Camera)>0&&own&&Pixel-Depth.x<Near;"
+   "float shown=max(open,hair*Through);"))+(Premultiplied?TEXT("return Color*shown;"):TEXT("return float4(Color.rgb,Color.a*shown);"));
   Register(Test);
   Ed->EmissiveColor.Expression=Test;Ed->EmissiveColor.OutputIndex=0;Ed->EmissiveColor.SetMask(1,1,1,1,0);
   Ed->Opacity.Expression=Test;Ed->Opacity.OutputIndex=0;Ed->Opacity.SetMask(1,0,0,0,1);

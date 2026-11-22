@@ -507,3 +507,16 @@ AI 操作：`reader_call controls` 列出 `control.LightingPresetCombo`、`contr
 
 - 實作（`OKGalleryCardDrop.cpp`）：UMG 不把外部拖放交給 UUserWidget，3D 區底下也沒有元件接，所以用 Slate 輸入前處理器：系統拖放在 Slate 裡是滑鼠移動與放開，拖著角色卡時回報「可複製」，放開時取消 Slate 的拖放、下一幀載卡。
 - 測試：`ui_exec ok.ReaderDrop <卡片路徑>` 走同一段載卡。2026-11-15 以真正的 OLE 拖放（模擬右鍵與左鍵拖）實測：原作卡拖到卡片牆、OK 卡 C041 拖到 3D 區都載入成功。
+
+## 眼睛、眼線、眉毛與頭髮半透明混合（2026-11-22）
+
+使用者：「眼睛、眼框、眉毛應該要跟前髮混色，畫出半透明的效果」，隨後更正：「不是前髮半透明，是頭髮跟眼睛相關的元件半透明混合畫」。原作是卡片的前景設定（`ChaForegroundComponent`）把眼睛／眉毛的 render queue 移到前髮之前；讀卡器原本沒有這個，頭髮（尤其 HairDeck 的單一 `Tripo_` 網格）會把眼睛整個蓋住。
+
+- **材質**：眼睛、眼線、眉毛（`cf_O_mayuge`、`cf_O_eyeline(_low)`、`cf_Ohitomi_*`、`cf_O_gag_eye_*`）改用 `<母材質>_Fg`（`_Fg_Flat`），即街區百人房間的前景母材質（`Tools/GpuPoseAudit/Source/GpuPoseAudit/PrepareForegroundMaterial.cpp`）。新增兩個參數：
+  - `__OK_ForegroundThrough`：被頭髮蓋住處顯示多少（街區預設 1＝整個畫在前髮上，讀卡器 0.5＝與頭髮各半混色）。
+  - `__OK_ForegroundNear`：只有在眼睛前方這個距離（cm）以內的頭髮才讓它透出來（街區預設 1e6 不限；讀卡器 12）。
+  - 舊的 `_Fg` 沒有 `__OK_ForegroundThrough` 時 `prepare_face_materials.lua` 會重做；`_Flat` 變體在來源比它新時重做（這次兩個根目錄各重做 38 個 `_Fg` 與 38 個 `_Fg_Flat`）。
+- **頭髮**：她所有的頭髮部件寫入 custom depth／stencil（每個角色自己的 id，1 對 1 的對方頭髮不會讓她的眼睛透出）：頭髮槽（role `hair_*`）、HairDeck／Tripo 頭髮（走自己的材質圖，所以依部件編號而不是材質判斷）、戴在飾品槽的 mod 頭髮（shader 含 hair，或名稱含 hair／kami；刻晴就是這種）。外框殼不寫。`AKKPreviewActor::UpdateForegroundHair` 在 Tick 裡元件數或參數變了才重掃，並把 `r.CustomDepth` 設為 3。`OK_FOREGROUND_DUMP=1` 會列出每個網格的部件編號與是否算頭髮。
+- **主控台變數**（即時）：`ok.ForegroundThrough`（預設 0.5，0 回到被頭髮蓋住）、`ok.ForegroundNear`（預設 12 cm）。
+- 從背後看時眼睛的法線背對鏡頭，不會透出；被臉、鼻子擋住的眼睛（側臉的另一隻眼）因為擋住的不是頭髮，也不會透出。
+- 驗證（2026-11-22，F 讀卡器）：HairDeck 孩子 `keqing×raiden_shogun_101`（1 個頭髮網格）、刻晴（飾品頭髮 4 個網格）、`jeanne×march_7th_301`；正面、側 40°、側 75°，`ok.ForegroundThrough` 0 與 0.5 對照，前髮／側髮下的眼睛與眉毛都以半透明透出。截圖在 `F:\OpenKoikatsu\Saved\OKBreed\fgtest6\`。

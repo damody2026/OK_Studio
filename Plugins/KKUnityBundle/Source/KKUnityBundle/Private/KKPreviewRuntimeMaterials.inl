@@ -6,6 +6,69 @@
 #if !WITH_EDITOR
 #include "ShaderCodeLibrary.h"
 #endif
+// Eyes, eyelines and eyebrows mixed with the hair over them (the user, 2026-11-22: 眼睛、眼框、眉毛應該要跟前髮混色，畫出
+// 半透明的效果), as Koikatsu's foreground eyes / eyebrows draw them through it. Those parts take the <Parent>_Fg
+// variants (Tools/GpuPoseAudit PrepareForegroundMaterial.cpp, made by Tools/prepare_face_materials.lua), and all her
+// hair's meshes draw into custom depth / stencil (UpdateForegroundHair): where her own hair is just in front of
+// them (ok.ForegroundNear) they show at ok.ForegroundThrough over it.
+// 2026-11-22 later: "不是前髮半透明，是頭髮跟眼睛相關的元件半透明混合畫" -- every hair part, not only the front hair.
+static TAutoConsoleVariable<float> CVarOkForegroundThrough(TEXT("ok.ForegroundThrough"),.5f,
+    TEXT("Card reader: how much of the eyes, eyelines and eyebrows shows through her hair (0 hidden by it .. 1 drawn over it). Live."));
+static TAutoConsoleVariable<float> CVarOkForegroundNear(TEXT("ok.ForegroundNear"),12.f,
+    TEXT("Card reader: only hair less than this far (cm) in front of the eyes / eyebrows lets them through. Live."));
+// Koikatsu's foreground parts (ChaForegroundComponent): the eyebrows and the eyes (eyelines, eyeballs, gag eyes).
+static bool OKPreviewForegroundFacePart(const FString& Name){
+    static const TCHAR* Parts[]={TEXT("cf_O_mayuge"),TEXT("cf_O_eyeline"),TEXT("cf_O_eyeline_low"),TEXT("cf_Ohitomi_L"),TEXT("cf_Ohitomi_R"),TEXT("cf_Ohitomi_L02"),TEXT("cf_Ohitomi_R02"),TEXT("cf_O_gag_eye_00"),TEXT("cf_O_gag_eye_01"),TEXT("cf_O_gag_eye_02")};
+    for(const TCHAR* P:Parts)if(Name.Equals(P,ESearchCase::IgnoreCase))return true;return false;
+}
+// Her hair: the hair slots (role hair_*), HairDeck / Tripo hair, and hair worn in an accessory slot (mod hair: a hair
+// shader, or hair / kami in its name; as portable_hairdeck.rs tells hair accessories from the rest).
+static bool OKPreviewHairPart(const FKKRuntimeMaterialPart& P){
+    if(P.Role.Contains(TEXT("hair"))&&!P.Role.Contains(TEXT("acc")))return true;
+    if(P.Role.StartsWith(TEXT("clothes")))return false;
+    if(P.Name.StartsWith(TEXT("Tripo_")))return true;
+    if(P.Role!=TEXT("accessory"))return false;
+    if(P.Name.Contains(TEXT("hair"))||P.Name.Contains(TEXT("kami")))return true;
+    TSharedPtr<FJsonObject> Root;const TSharedPtr<FJsonObject>* Mat=nullptr;FString Shader;
+    return FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(P.SourceMetadataJson),Root)&&Root&&Root->TryGetObjectField(TEXT("material"),Mat)&&(*Mat)->TryGetStringField(TEXT("shader"),Shader)&&Shader.Contains(TEXT("hair"));
+}
+static UMaterialInterface* OKPreviewForegroundParent(const FString& Root,const FString& Name){
+    if(Name.IsEmpty())return nullptr;const FString Fg=Name+TEXT("_Fg");
+    if(!FPackageName::DoesPackageExist(Root/Fg))return nullptr;
+    return LoadObject<UMaterialInterface>(nullptr,*(Root/Fg+TEXT(".")+Fg));
+}
+void AKKPreviewActor::UpdateForegroundHair(){
+    if(ForegroundFaceMaterials.IsEmpty())return;
+    const float Through=FMath::Clamp(CVarOkForegroundThrough.GetValueOnGameThread(),0.f,1.f),Near=FMath::Max(0.f,CVarOkForegroundNear.GetValueOnGameThread());
+    const int32 Count=GetComponents().Num();
+    if(Count==ForegroundSeenComponents&&Through==ForegroundSeenThrough&&Near==ForegroundSeenNear)return;
+    ForegroundSeenComponents=Count;ForegroundSeenThrough=Through;ForegroundSeenNear=Near;
+    // Her own id: another character's front hair (the one-on-one's partner) does not let her eyes through.
+    if(!ForegroundStencil){static uint8 Next=0;Next=uint8(Next%254+1);ForegroundStencil=Next;}
+    for(const auto& M:ForegroundFaceMaterials)if(auto* I=M.Get()){
+        I->SetScalarParameterValue(TEXT("__OK_ForegroundStencil"),ForegroundStencil);
+        I->SetScalarParameterValue(TEXT("__OK_ForegroundThrough"),Through);I->SetScalarParameterValue(TEXT("__OK_ForegroundNear"),Near);
+    }
+    // Every hair mesh of hers (role hair_*, not hair accessories; HairDeck / Tripo hair too, which draws on its own
+    // graph): the user corrected "the front hair" to all hair over the eyes (2026-11-22). Parts by session index;
+    // outline shells are left out (they would let the eyes through a rim around the hair).
+    TSet<int32> HairParts(ForegroundHairParts);for(const FKKLoadedPart& Part:Parts)if(Part.SessionIndex!=INDEX_NONE&&Part.Role.Contains(TEXT("hair"))&&!Part.Role.Contains(TEXT("acc")))HairParts.Add(Part.SessionIndex);
+    static const FString Prefixes[]={TEXT("KKSessionPart_"),TEXT("KKMorphPart_")};
+    int32 Drawn=0;
+    for(UActorComponent* C:GetComponents()){
+        auto* Mesh=Cast<UMeshComponent>(C);if(!Mesh)continue;int32 Index=INDEX_NONE;
+        for(FName Tag:Mesh->ComponentTags){const FString Text=Tag.ToString();for(const FString& Prefix:Prefixes)if(Text.StartsWith(Prefix)){Index=FCString::Atoi(*Text.Mid(Prefix.Len()));break;}if(Index!=INDEX_NONE)break;}
+        if(Index==INDEX_NONE)for(const FKKLoadedPart& Part:Parts)if(Part.Comp==Mesh){Index=Part.SessionIndex;break;}
+        const bool bHair=Index!=INDEX_NONE&&HairParts.Contains(Index)&&!Mesh->GetName().Contains(TEXT("Outline"));
+        Drawn+=bHair;
+        if(FPlatformMisc::GetEnvironmentVariable(TEXT("OK_FOREGROUND_DUMP"))==TEXT("1"))UE_LOG(LogTemp,Display,TEXT("OK foreground mesh %s part=%d hair=%d"),*Mesh->GetName(),Index,bHair?1:0);
+        if(Mesh->bRenderCustomDepth!=bHair)Mesh->SetRenderCustomDepth(bHair);
+        if(bHair&&Mesh->CustomDepthStencilValue!=ForegroundStencil)Mesh->SetCustomDepthStencilValue(ForegroundStencil);
+    }
+    // The stencil half of custom depth (r.CustomDepth 3) is off by default.
+    if(auto* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.CustomDepth")))if(V->GetInt()!=3)V->Set(3,ECVF_SetByCode);
+    UE_LOG(LogTemp,Display,TEXT("OK foreground eyes: %d parts through %d hair meshes, stencil=%d through=%.2f near=%.1f"),ForegroundFaceMaterials.Num(),Drawn,ForegroundStencil,Through,Near);
+}
 // OKPrepareCookedRole's progress across load batches: the textures and the part instances (a character's ~160 MIDs took
 // ~40 ms, and with its textures up to ~200 ms, in one frame) are made a few milliseconds at a time.
 struct FOKCookedRoleBuild {FString Root;bool HG=false;FKKRuntimeMaterialScene Scene;TArray<UTexture2D*> Textures;int32 NextTexture=0,NextPart=0,Uncovered=0;};
@@ -75,13 +138,16 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         if(FPlatformTime::Seconds()>=Deadline)return 0;
     }}
     if(Role.NextPart==0&&To.Materials.IsEmpty()){
-        if(!To.bWardrobe){Actor->FlatFaceMaterials.Reset();Actor->FlatFaceState=FKKFaceFlattenState();}
+        if(!To.bWardrobe){Actor->FlatFaceMaterials.Reset();Actor->FlatFaceState=FKKFaceFlattenState();Actor->ForegroundFaceMaterials.Reset();Actor->ForegroundHairParts.Reset();}
+        Actor->ForegroundSeenComponents=-1;
         To.Materials.SetNum(To.Source.PartCount());To.Outlines.SetNum(To.Source.PartCount());
     }
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_CookedRoleParts);
     auto BuildPart=[&](const FKKRuntimeMaterialPart& SourcePart)->int32{
         auto& Textures=Role.Textures;auto& Scene=Role.Scene;const FString& Root=Role.Root;const bool HG=Role.HG;int32& Uncovered=Role.Uncovered;
         OkMeshView View{};if(!To.Source.PartAt(SourcePart.NativePart,View)||(!View.render_visible&&OKTearLevel(View.name)==0)||View.n_verts<=0)return 1; // the tears are built hidden and shown live (ApplyTears): they need theirs
+        // Her hair parts by session index, whatever draws them (HairDeck hair takes its own graph): UpdateForegroundHair.
+        if(!To.bWardrobe&&OKPreviewHairPart(SourcePart))Actor->ForegroundHairParts.Add(SourcePart.NativePart);
         // OK Studio item state (AKKPreviewActor::ItemColorOverrides, ItemShadowColorOverride: sRGB, the values the game
         // writes to _Color.._Color4 and _ShadowColor) reaches the shared parent as the part's own material values.
         FKKRuntimeMaterialPart Part=SourcePart;
@@ -111,9 +177,13 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         // OK_SHARED_DUMP=<part name part>: every value the shared parent gets for that part (diagnostic).
         {static const FString Dump=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHARED_DUMP"));if(!Dump.IsEmpty()&&Part.Name.Contains(Dump)){FKKRuntimeMaterialBinding B;FString E;if(OKPrepareRuntimeSharedMaterialBinding(Part,Scene,B,E)){for(const auto& V:B.Vectors)UE_LOG(LogTemp,Display,TEXT("OK shared dump %s %s=%s"),*Part.Name,*V.Key.ToString(),*V.Value.ToString());for(const auto& V:B.Scalars)UE_LOG(LogTemp,Display,TEXT("OK shared dump %s %s=%g"),*Part.Name,*V.Key.ToString(),V.Value);for(const auto& T:B.Textures)UE_LOG(LogTemp,Display,TEXT("OK shared dump %s %s=texture %d source=%d avgBGRA=%s (%dx%d srgb=%d)"),*Part.Name,*T.Key.ToString(),T.Value,Data.Textures.IsValidIndex(T.Value)?Data.Textures[T.Value].SourceWidth:-1,Data.Textures.IsValidIndex(T.Value)&&!Data.Textures[T.Value].Mips.IsEmpty()&&Data.Textures[T.Value].Mips.Last().BGRA.Num()>=4?*FString::Printf(TEXT("%d,%d,%d,%d"),Data.Textures[T.Value].Mips.Last().BGRA[0],Data.Textures[T.Value].Mips.Last().BGRA[1],Data.Textures[T.Value].Mips.Last().BGRA[2],Data.Textures[T.Value].Mips.Last().BGRA[3]):TEXT("?"),Textures.IsValidIndex(T.Value)&&Textures[T.Value]?Textures[T.Value]->GetSizeX():0,Textures.IsValidIndex(T.Value)&&Textures[T.Value]?Textures[T.Value]->GetSizeY():0,Textures.IsValidIndex(T.Value)&&Textures[T.Value]?int32(Textures[T.Value]->SRGB):-1);}UE_LOG(LogTemp,Display,TEXT("OK shared dump %s recipe=%s outline=%d"),*Part.Name,*Name,Part.Outline?1:0);FKKRuntimeMaterialBinding OB;FString OE;if(Part.Outline&&OKPrepareRuntimeSharedMaterialBinding(Part,Scene,OB,OE,true)){for(const auto& V:OB.Scalars)UE_LOG(LogTemp,Display,TEXT("OK shared outline dump %s %s=%g"),*Part.Name,*V.Key.ToString(),V.Value);for(const auto& T:OB.Textures)UE_LOG(LogTemp,Display,TEXT("OK shared outline dump %s %s=texture %d"),*Part.Name,*T.Key.ToString(),T.Value);}else if(Part.Outline)UE_LOG(LogTemp,Display,TEXT("OK shared outline dump %s failed: %s"),*Part.Name,*OE);}}
         // The head (face, eyes, brows, nose, tears) pressed flat along the view, as in the street (ok.FaceFlatten).
+        // Eyes, eyelines and eyebrows on the <Parent>_Fg variant: mixed with her hair (UpdateForegroundHair).
+        UMaterialInterface* Fore=Parent&&OKPreviewForegroundFacePart(Part.Name)?OKPreviewForegroundParent(Root,Name):nullptr;
+        if(Fore)Parent=Fore;
         UMaterialInterface* Flat=Part.Role==TEXT("head")?FlatParent(Parent):nullptr;
         auto* Material=OKCreateRuntimeSharedMaterial(Part,Textures,Flat?Flat:Parent,Scene,Error);
         if(Material&&Flat)Actor->FlatFaceMaterials.Add(Material);
+        if(Material&&Fore)Actor->ForegroundFaceMaterials.Add(Material);
         // Its PSOs asked for now, while the high model is still loading: asked when its part first drew, a cold driver
         // cache had them still compiling and the one-on-one's first frame waited 100-200 ms each (2026-11-12).
         UKKAffineProceduralMeshComponent::PrecacheAhead(Flat?Flat:Parent);

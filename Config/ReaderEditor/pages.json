@@ -30,7 +30,8 @@
       "name": "頭髮",
       "subs": [
         { "name": "髮型", "pickers": { "targets": ["hair0", "hair1", "hair2", "hair3", "hair_gloss"], "properties": [] } },
-        { "name": "髮色與設定", "pickers": { "targets": [], "properties": ["hair", "髮"] } }
+        { "name": "髮色與設定", "pickers": { "targets": [], "properties": ["hair", "髮"] } },
+        { "name": "HairDeck 生成", "builder": "hairdeck" }
       ]
     },
     {
@@ -77,13 +78,14 @@
     {
       "name": "人物卡總欄", "tab": 1,
       "subs": [
-        { "name": "人物卡", "sources": [{ "widget": "card_col" }] }
+        { "name": "人物卡", "sources": [{ "widget": "card_col" }] },
+        { "name": "配種", "builder": "breed" }
       ]
     },
     {
       "name": "衣服卡總欄", "tab": 2,
       "subs": [
-        { "name": "服裝卡", "sources": [{ "named": "OkClothesRow" }] }
+        { "name": "服裝卡", "sources": [{ "named": "OkClothesRow" }], "builder": "okclothes_grid" }
       ]
     },
     {
