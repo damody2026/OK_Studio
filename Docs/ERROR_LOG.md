@@ -7228,3 +7228,5 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 往 CRLF 工作檔（`Tools/ok-extract/src/ffi.rs`）用 Lua 插入 LF 文字，檔案變成混合行尾；git bash 的 `sed`／`od` 顯示時把 `\r` 去掉，錨點對不上卻看不出原因。用 Lua 數 `\r\n` 與 `\n` 才看出來，整檔統一成 CRLF（倉庫內是 LF，提交時正規化，diff 不受影響）。
   - pair 橋接 `if (...) UE_LOG(...); else UE_LOG(...);` 編譯錯 C2181：`UE_LOG` 展開成區塊，不能接 `else`。加大括號。
   - zh-TW 的提交用 `examples/*/locale/zh-TW` 萬用字元，把 pair-counter 的 zh-TW 檔也一起提交（早了一個提交）。內容無害，未改寫歷史。
+  - 第一版 S13 回報寫「`ok.PairModBridgeSelfTest` 17/17 仍通過」，其實那是改動前跑的，最後的改動之後沒重跑。統籌指出後重跑（21/21）並更正。教訓：回報裡的「通過」要是在最後的程式上跑的。
+  - 13 前置把 `FireFinish` 只放在 `UOKHScenePanel::Finish`；她愛撫與獨自的高潮走 `CountHerOrgasm` 不經 `Finish`，`pair.finish` 漏送。實機查高潮計數時讀程式才發現。另 `OKInteractionMod.h` 的種類範例（`org_in`、`same_out`）是憑印象寫的，實際是 `orgW`、`outside` 等，一併改正。
