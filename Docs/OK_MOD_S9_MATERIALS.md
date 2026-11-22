@@ -132,9 +132,61 @@ _DetailTex = "textures/detail.png"                          # mod 資料夾內�
 - **逐部件覆蓋**：`mod.material.apply org.openkoikatsu.glass-shader/smoky clothes_top` 回 `on 6 material slot(s)`，白外套變成半透明煙灰，保留原本的布料貼圖：`F:\OpenKoikatsu\Saved\ModKit\S9\reader-apply-smoky.png`。
 - log：`F:\OpenKoikatsu\Saved\Logs\CardReader\20261123-024050-01b1f4da.log`。
 
+## 第二段：材質 hook（Hook cherry-pick 之後）
+
+協調者授權 cherry-pick C 的 `be18a313c`（通用 Hook）。F 上是 `3797e3e40`；`ffi.rs`、`ok_mod_host.h` 的衝突兩邊都保留。
+
+| 提交 | 內容 |
+|---|---|
+| `1e5771a2b` | 宿主 `{"op":"subscribers","hook"}`：回傳訂閱者，給呼叫端在準備 payload 前先問 |
+| `c3d51b03f` | ok-extract：`material.post_texture` |
+| `418960c57` | `material.resolve_shader`；ok-extract 分派器改設到開卡的那份（見下方「發現的問題」） |
+| `5a322fe86` | 測試 fixture `Tools/ok-mod/fixtures/material-hooks`，列入 `obsolete.toml` |
+
+**`material.post_texture`**（`Tools/ok-extract/src/mod_forward.rs`）：
+
+- 位置：`push.rs` 的 `emit`。這是原作卡、OK 卡、portable 卡共同的出口，在核心所有處理（合成、KSOX／KCOX、徽章、Material Editor）之後。
+  - 一開始照計畫接在 `head_body.rs`／`face_texture.rs`／`catalog_textures.rs` 的合成點，但 OK 卡的貼圖來自卡內資源包，不經過那些合成，所以改到這裡。
+- payload：`{"slot":"<部件 role：body、head、hair、clothes_top、accessory…>","part":"<網格名>","outfit","width","height","rgba":<位址>,"len"}`。
+  - `rgba` 是 8 位元 RGBA（列由上到下）的位址，mod 只能在這次呼叫期間原地改寫。
+  - 回 `{"changed":true}` 時，以開卡路徑的編碼（PNG 或 `OK_RAW_TEXTURES` 的 raw）寫回。
+- 沒人訂閱時只多一次 `subscribers` 詢問，不解碼；沒有宿主時（CLI、測試）直接略過。
+
+**`material.resolve_shader`**：
+
+- payload `{"shader","part"}`，回 `{"material":"<mod>/<名>"}`；依載入順序，第一個指名已載入材質的 mod 勝出。
+- 只有在有人訂閱時，`OKModContent::Refresh` 才裝上解析器（`KKModMaterials::SetResolver`）。
+- 部件建立時先問解析器，沒答才查 shader 家族表。不快取，所以 mod 改了設定後，下次開卡就生效。
+
+**實測**（讀卡器，`F:\OpenKoikatsu\Content\CharacterCards\CrowdAPNG\C011.png`，Mods 裡有 glass-shader、hello、material-hooks）：
+
+- resolve_shader：fixture 設定 `glass_part = mimi` 後，log 有：
+  - `OK mod material part=o_mimi_fox shader=Koikano/main_clothes_item material=org.openkoikatsu.glass-shader/smoky`；
+  - `o_mimi_fox_r` 同樣一行。
+  - log：`F:\OpenKoikatsu\Saved\Logs\CardReader\20261123-030209-7bb411dd.log`。
+- post_texture：log 有 `[org.openkoikatsu.test.material-hooks] tinted clothes_top (4194304 bytes)`，白襯衫與外套變成綠色：`F:\OpenKoikatsu\Saved\ModKit\S9\reader-post-texture.png`。
+  - log：`F:\OpenKoikatsu\Saved\Logs\CardReader\20261123-033429-6541f096.log`。
+- `cargo test`：`Tools/ok-mod` 全部通過；`ok-extract` 的 `mod_forward` 測試通過，涵蓋兩種情況：沒人訂閱時只問 subscribers、不送 hook；有人訂閱時原地改寫並重新編碼。
+- `cargo check`（含 `--no-default-features`）通過；F:\UE5.8 的 `OpenKoikatsuEditor`（`F:\OpenKoikatsu\Saved\ModKit\S9\editor9.log`）與 `OpenKoikatsu`（`F:\OpenKoikatsu\Saved\ModKit\S9\game5.log`）都 `Result: Succeeded`。
+
+**發現的問題**：
+
+1. **追加 `Event::Hook` 不是 ABI 相容的**。Hook 之前編出來的 mod DLL（F 的 hello、glass-shader），新宿主全部以 `not a compatible ok_mod DLL` 拒載。
+   - abi_stable 比對 `Event` 時，宿主有 6 個變體、mod 只有 5 個，報 `too many variants`；完整比對：`F:\OpenKoikatsu\Saved\ModKit\S9\abi-old-glass-vs-hook-host.txt`。
+   - 用新 SDK 重編後就能載入。
+   - 影響：Hook 進來之前發出去的 mod 都要重編。之後再加變體也一樣，除非照 abi_stable 的規則調整（例如宿主傳給 mod 的列舉不能比 mod 編譯時的多）。這要協調者決定，我沒動 api。
+2. **模組化（編輯器）建置裡 ok-extract 有兩份**：KKUnityBundle 與 OpenKoikatsu 各自靜態連結 `ok_extract.lib`。
+   - `OKModModes` 原本呼叫 `ok_set_mod_dispatch`，設的是 OpenKoikatsu 那份，所以開卡時的 hook 永遠不會觸發。
+   - 改成由 KKUnityBundle 匯出 `KKModMaterials::SetExtractDispatch`。
+   - 單一執行檔（打包遊戲）只有一份，舊寫法在那裡本來就能動；打包遊戲裡的 post_texture 沒實測。
+
 ## 沒做／沒驗
 
-- **`post_texture`**（`head_body.rs`／`face_texture.rs`／`catalog_textures.rs`）**沒做**：要 mod 回呼，等 C 的 `Event::Hook` cherry-pick 到 F 再接。
+- **post_texture 對開卡速度的影響**沒跑 `card_open_baseline.lua`。
+  - 沒人訂閱時，每個部件多一次本機 JSON 往返（`subscribers`），估計很小，但沒量；
+  - 有人訂閱時，每個部件要解碼再編碼一次主貼圖，C011 的 2048² 上衣是數十毫秒等級。
+- **post_texture 改過的貼圖與快取**：開卡路徑的 view_memo 與合成快取都在 hook 之前，所以每次開卡都會重新呼叫 mod。但讀卡器之外的快取有沒有把 hook 後的貼圖存下來（例如 GPU 磁碟快取、Studio／街區的角色快取），沒查。換了 mod 或設定後，那些地方可能還是舊圖。
+- **只處理主貼圖**（`texture_png`），沒有法線、遮罩等其他貼圖。
 - 照指示這輪不做：toon-post、okMr 寫入與 skin-decal 的卡片寫入、`oklib.rs`。
 - **覆蓋不會存進卡片**：`mod.material.apply` 只在這次執行有效，換卡、換服裝就沒了。寫進卡片要等 okMr（同步點 B 之後）。
 - **B 層材質畫在角色身上沒驗**：

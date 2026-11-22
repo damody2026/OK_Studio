@@ -7233,3 +7233,7 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - pak 白名單檢查假設 `IPakFile::PakVisitPrunedFilenames` 給的是含掛載點的完整路徑，實際是相對於掛載點，第一次把合法的 `M_OKGlass.uasset` 判成「在 mod 資料夾外」而拒絕整個 pak（拒絕流程與退回 A 層倒是因此驗到了）。改成兩種都接受，再擋 `..`、`/./`、絕對路徑與磁碟代號。
   - 讀卡器的 shader 家族分派第一版只改了 `Part.Comp`（程序網格）；GPU 蒙皮路徑真正畫的是 tag 為 `KKSessionPart_<n>` 的 follower，程序網格是隱藏的，所以畫面沒變。`mod.material.apply` 也一樣，第一次回報套了 3 個部件但畫面不變。修正：分派在 follower 套完材質後再做一次；覆蓋指令依 session 索引連 follower 一起改。教訓：讀卡器的「部件」與「畫它的元件」不是同一個物件，改材質要以截圖確認。
   - 改 LF 檔案時用 Lua 腳本找含 `\r\n` 的字串，找不到而中止（`OKModding.Build.cs`、`.uplugin` 是 LF）。改用 Edit 工具。
+  - （Hook 之後）`material.post_texture` 第一次接在 `extract.rs` 的合成點，OK 卡完全不經過那裡（貼圖來自卡內資源包），改接到 `push.rs` 的 `emit`。接著貼圖解碼用 `image::load_from_memory`，讀卡器開的是 `OK_RAW_TEXTURES` 的 raw 容器，解不開就靜默返回；改用 `crate::teximg`，解不開時記 log。
+  - 最後仍不觸發：編輯器（模組化）建置裡 KKUnityBundle 與 OpenKoikatsu 各自靜態連結一份 `ok_extract.lib`，`OKModModes` 的 `ok_set_mod_dispatch` 設的是 OpenKoikatsu 那份，開卡的 KKUnityBundle 那份一直是空的（工作項 6 就埋下了，當時沒有 hook 用到它）。改由 KKUnityBundle 匯出 `KKModMaterials::SetExtractDispatch`。教訓：靜態庫裡的全域狀態在模組化建置是每個 DLL 一份，設定要從實際使用它的模組做。
+  - 用 `sed -i` 刪 `extract.rs` 自己加的行，檔案的 CRLF 變成 LF（內容沒變，`git status` 卻顯示修改），用 Lua 轉回 CRLF。
+  - cherry-pick C 的通用 Hook 後，Hook 之前編的 mod DLL 全被新宿主拒載（abi_stable：`Event` 變體數 6 對 5，`too many variants`）。追加 non-exhaustive 變體對「舊 mod、新宿主」不相容，已寫進 S9 回報給協調者決定；F 這邊重編 hello、glass-shader。
