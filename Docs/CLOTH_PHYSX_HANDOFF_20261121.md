@@ -500,3 +500,8 @@
 都沒有布料飛走，裙子隨腿擺動、不穿腿。
 
 - 惠惠大衣跑步，彎曲靜止形狀（`OKFlexCloth.FlatBend`）：1（攤平，預設）暗色 2.33%／2.43%，0（建立時的形狀）2.68%／2.64%，粉紅都 0.5–0.7%。沒有更好，不改。
+
+### 巡檢：OK Studio 裡的 FleX
+
+- SceneEditor 開 `UserData/Studio/scene/1537365251587.okscene`：場景裡的角色（縮成 0.1 倍、掛在飛機雲上）沒有走布料的部件，`ok.ClothPxStats` 是 0 件；FleX 後端要等第一件布料建立才載入，所以日誌一開始沒有 FleX 的訊息。
+- 用 `studio_spawn` 加入千佳（`26_kks_haruno_chika.png`）：FleX（CUDA）建立 3 件布料、6248 個粒子，每步 1.43 ms，沒有錯誤，裙子垂得正常。Studio 與讀卡器走同一套布料。
