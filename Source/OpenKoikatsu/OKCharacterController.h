@@ -368,6 +368,11 @@ public:
  bool ApplyHairDeckHair(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
  // Keeps the HairDeck hair she wears in her card (Out empty: the card itself); bRemove: the card's own hair back.
  bool SaveHairDeckToCard(const FString& Out,bool bRemove,FString& OutReport);
+ // Generates hair from a reference picture with ok-hairdeck (a worker thread) and puts it on her; the reader's
+ // HairDeck page shows HairDeckStatus. HairDeckImage is the picture last used (the page's field).
+ void GenerateHairDeckHair(const FString& Image);
+ FString HairDeckImage, HairDeckStatus;
+ bool bHairDeckBusy = false;
  bool HasPreviewCharacter() const { return PreviewActor!=nullptr; }
  void StartCardDrop();
  void StopCardDrop();

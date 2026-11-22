@@ -328,7 +328,11 @@ private:
 	static FString PickFolder(const FString& Title,const FString& Start);
 	// 同一个系统对话框，挑一个 PNG（材質貼圖那页用）。
 	static FString PickFile(const FString& Title,const FString& Start);
-	static FString PickPath(const FString& Title,const FString& Start,bool bFolder);
+	static FString PickPath(const FString& Title,const FString& Start,bool bFolder,const TCHAR* TypeName=TEXT("PNG"),const TCHAR* TypePattern=TEXT("*.png"));
+	// 頭髮 › HairDeck 生成: a reference picture to generate hair from, a HairDeck hair file, keeping it in the card
+	// (HairDeckLabel says what the last step did, kept current by SyncAll).
+	void BuildHairDeckPage(UDreamWidget* Page);
+	TWeakObjectPtr<UOKDreamControl> HairDeckLabel;
 	// 材質貼圖那页输入框里的路径，页面重建时留着（非同步读回来会重建一次）。
 	FString TexturePath;
 	void Layout();

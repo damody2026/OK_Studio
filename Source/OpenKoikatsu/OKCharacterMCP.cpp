@@ -532,7 +532,9 @@ void UOKCharacterController::TickCharacterMCP()
    ExportBredChild(Path,[](bool bOk,const FString& What){UE_LOG(LogTemp,Display,TEXT("MCP breed_export %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*What);});}
   // HairDeck hair: "hairdeck" puts a cards_seed<s>.json on her ("cards", "opts" JSON text); "hairdeck_save" keeps what
   // she wears in her card ("out": another file; "remove": the card's own hair back).
-  else if(Command==TEXT("hairdeck")){FString Cards,Opts;if(!S.Request->TryGetStringField(TEXT("cards"),Cards)||!IFileManager::Get().FileExists(*Cards)){Finish(S,nullptr,TEXT("Provide an existing cards_seed<s>.json path"));return;}
+  else if(Command==TEXT("hairdeck")&&S.Request->HasField(TEXT("image"))){FString Image;S.Request->TryGetStringField(TEXT("image"),Image);GenerateHairDeckHair(Image);
+   UE_LOG(LogTemp,Display,TEXT("MCP hairdeck generate: %s"),*HairDeckStatus);if(!bHairDeckBusy){Finish(S,nullptr,HairDeckStatus);return;}}
+  else if(Command==TEXT("hairdeck")){FString Cards,Opts;if(!S.Request->TryGetStringField(TEXT("cards"),Cards)||!IFileManager::Get().FileExists(*Cards)){Finish(S,nullptr,TEXT("Provide an existing cards_seed<s>.json, or an image to generate from"));return;}
    S.Request->TryGetStringField(TEXT("opts"),Opts);FString Report;const bool bOk=ApplyHairDeckHair(Cards,Opts,Report);
    UE_LOG(LogTemp,Display,TEXT("MCP hairdeck %s: %s"),bOk?TEXT("ok"):TEXT("failed"),*Report);if(!bOk){Finish(S,nullptr,Report);return;}}
   else if(Command==TEXT("hairdeck_save")){FString Out;bool bRemove=false;S.Request->TryGetStringField(TEXT("out"),Out);S.Request->TryGetBoolField(TEXT("remove"),bRemove);

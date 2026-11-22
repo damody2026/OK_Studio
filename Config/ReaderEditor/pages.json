@@ -30,7 +30,8 @@
       "name": "頭髮",
       "subs": [
         { "name": "髮型", "pickers": { "targets": ["hair0", "hair1", "hair2", "hair3", "hair_gloss"], "properties": [] } },
-        { "name": "髮色與設定", "pickers": { "targets": [], "properties": ["hair", "髮"] } }
+        { "name": "髮色與設定", "pickers": { "targets": [], "properties": ["hair", "髮"] } },
+        { "name": "HairDeck 生成", "builder": "hairdeck" }
       ]
     },
     {

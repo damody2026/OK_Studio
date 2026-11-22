@@ -987,6 +987,7 @@ void UOKReaderScreen::BuildCategories()
 						else if(Value==TEXT("ui_rate"))Out.Build=[this](UDreamWidget* Page){BuildUIRatePage(Page);};
 						else if(Value==TEXT("okclothes_grid"))Out.Build=[this](UDreamWidget* Page){BuildCardGrid(Page,true);};
 						else if(Value==TEXT("breed"))Out.Build=[this](UDreamWidget* Page){BuildBreedPage(Page);};
+						else if(Value==TEXT("hairdeck"))Out.Build=[this](UDreamWidget* Page){BuildHairDeckPage(Page);};
 						else Bad(TEXT("不認得的 builder ")+Value);
 					}
 					const TArray<TSharedPtr<FJsonValue>>* Buttons=nullptr;
@@ -1169,6 +1170,7 @@ void UOKReaderScreen::BuildCategories()
 		}
 		// The original's 頭髮共通: the gloss mask kind (`hair.glossId`), which is per character and not per slot.
 		FGroup Common;Common.Name=TEXT("頭髮共通");Pickers(Common,{TEXT("hair_gloss")},{TEXT("glossId")});Hair.Groups.Add(MoveTemp(Common));
+		{FGroup Deck;Deck.Name=TEXT("HairDeck 生成");Deck.Build=[this](UDreamWidget* Page){BuildHairDeckPage(Page);};Hair.Groups.Add(MoveTemp(Deck));}
 		Categories.Add(MoveTemp(Hair));
 	}
 	// 材質貼圖: the PNGs MaterialEditor assigned to material properties. Not a property page -- a texture is a file,
@@ -1547,7 +1549,7 @@ void UOKReaderScreen::ClearCardTiles()
 void UOKReaderScreen::ClearPage()
 {
 	ClearCardTiles();
-	CardGrid=nullptr;GridCount.Reset();ClothesModeButton.Reset();bClothesGrid=false;BreedLabel.Reset();
+	CardGrid=nullptr;GridCount.Reset();ClothesModeButton.Reset();bClothesGrid=false;BreedLabel.Reset();HairDeckLabel.Reset();
 	for(UDreamWidget* W:PageWidgets)if(IsValid(W))W->DestroyWidget();
 	PageWidgets.Reset();
 	ShownPageHeight=-1.f;
@@ -2068,6 +2070,61 @@ void UOKReaderScreen::BuildBreedPage(UDreamWidget* Page)
 	BreedLabel=Text(Page,FString());
 }
 
+void UOKReaderScreen::BuildHairDeckPage(UDreamWidget* Page)
+{
+	UOKCharacterController* G=Controller.Get();if(!G||!Page)return;
+	auto Text=[this](UDreamWidget* Into,const FString& Value)
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);
+		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
+		return C;
+	};
+	Text(Page,TEXT("用一張角色圖生成頭髮（HairDeck），換掉她原本的頭髮與髮飾。背景單純或去背的圖效果最好。換上後按「存進卡片」，之後開這張卡就是新頭髮，配種時孩子也會跟著髮型遺傳。"));
+	TWeakObjectPtr<UOKCharacterController> Weak(G);
+	// The picture's path: kept on the controller, so rebuilding the page does not clear what was typed or picked.
+	UOKDreamControl* Input=MakeControl(TEXT("Input"),Page);
+	if(Input&&Input->Input)
+	{
+		Input->Input->SetText(G->HairDeckImage);
+		Input->Input->SetPlaceholder(FText::FromString(TEXT("參考圖路徑（PNG）")));
+		Input->Input->GetOnTextChangedEvent().AddWeakLambda(this,[Weak](const FString& Typed){if(Weak.IsValid())Weak->HairDeckImage=Typed.TrimStartAndEnd();});
+	}
+	TWeakObjectPtr<UOKDreamControl> WeakInput(Input);
+	UDreamWidget* Row=MakePanel(Page,true,6.f);
+	MakeOwnButton(Row,TEXT("選參考圖…"),[Weak,WeakInput]()
+	{
+		if(!Weak.IsValid())return;
+		const FString Chosen=PickFile(TEXT("選擇參考圖"),Weak->HairDeckImage);
+		if(Chosen.IsEmpty())return;
+		Weak->HairDeckImage=Chosen;if(WeakInput.IsValid()&&WeakInput->Input)WeakInput->Input->SetText(Chosen);
+	});
+	MakeOwnButton(Row,TEXT("生成並換上"),[Weak](){if(Weak.IsValid())Weak->GenerateHairDeckHair(Weak->HairDeckImage);});
+	MakeOwnButton(Row,TEXT("換上頭髮檔…"),[Weak]()
+	{
+		if(!Weak.IsValid())return;
+		const FString Start=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("HairDeck"));
+		const FString Chosen=PickPath(TEXT("選擇 HairDeck 頭髮檔（cards_seed0.json）"),Start,false,TEXT("HairDeck"),TEXT("cards_*.json"));
+		if(Chosen.IsEmpty())return;
+		FString Report;const bool bOk=Weak->ApplyHairDeckHair(Chosen,FString(),Report);
+		Weak->HairDeckStatus=bOk?TEXT("已換上（還沒存進卡片）：\n")+Chosen:TEXT("換不上：")+Report;
+	});
+	UDreamWidget* Row2=MakePanel(Page,true,6.f);
+	MakeOwnButton(Row2,TEXT("存進卡片"),[Weak]()
+	{
+		if(!Weak.IsValid())return;
+		FString Report;const bool bOk=Weak->SaveHairDeckToCard(FString(),false,Report);
+		Weak->HairDeckStatus=bOk?TEXT("已存進卡片：")+Weak->PreviewCardPath:TEXT("存不了：")+Report;
+	});
+	MakeOwnButton(Row2,TEXT("從卡片拿掉"),[Weak]()
+	{
+		if(!Weak.IsValid())return;
+		FString Report;const bool bOk=Weak->SaveHairDeckToCard(FString(),true,Report);
+		Weak->HairDeckStatus=bOk?TEXT("卡片不再帶 HairDeck 頭髮，重新載入她原本的頭髮。"):TEXT("拿不掉：")+Report;
+		if(bOk)Weak->StartLoad3D(false);
+	});
+	HairDeckLabel=Text(Page,FString());
+}
+
 void UOKReaderScreen::FillCardGrid()
 {
 	UOKCharacterController* G=Controller.Get();if(!G||!IsValid(CardGrid))return;
@@ -2179,7 +2236,7 @@ void UOKReaderScreen::TickThumbnails()
 FString UOKReaderScreen::PickFolder(const FString& Title,const FString& Start){return PickPath(Title,Start,true);}
 // A PNG through the same dialog, for the texture a material property is set to.
 FString UOKReaderScreen::PickFile(const FString& Title,const FString& Start){return PickPath(Title,Start,false);}
-FString UOKReaderScreen::PickPath(const FString& Title,const FString& Start,bool bFolder)
+FString UOKReaderScreen::PickPath(const FString& Title,const FString& Start,bool bFolder,const TCHAR* TypeName,const TCHAR* TypePattern)
 {
 	FString Result;
 #if PLATFORM_WINDOWS
@@ -2194,8 +2251,9 @@ FString UOKReaderScreen::PickPath(const FString& Title,const FString& Start,bool
 		{
 			// PNG only: MaterialEditor 存进卡里的是档案的 bytes 原封不动，游戏那边再交给 Unity 的贴图载入，
 			// 所以这里挑的必须是它读得懂的图（原作 SetMaterialTextureFromFile 也只是 File.ReadAllBytes）。
-			const COMDLG_FILTERSPEC Filter[]={{L"PNG",L"*.png"}};
-			Dialog->SetFileTypes(1,Filter);Dialog->SetDefaultExtension(L"png");
+			// (另一种档案：HairDeck 的 cards_seed<s>.json)
+			const COMDLG_FILTERSPEC Filter[]={{TypeName,TypePattern}};
+			Dialog->SetFileTypes(1,Filter);if(FCString::Strcmp(TypePattern,TEXT("*.png"))==0)Dialog->SetDefaultExtension(L"png");
 		}
 		// 给档案时 Start 可能是档案本身，开在它所在的资料夹。
 		const FString StartFolder=Start.IsEmpty()||FPaths::DirectoryExists(Start)?Start:FPaths::GetPath(Start);
@@ -2815,6 +2873,11 @@ void UOKReaderScreen::SyncAll()
 		if(UOKDreamControl* L=BreedLabel.Get())
 		{
 			const FString Say=FString::Printf(TEXT("母親：%s　　父親：%s\n%s"),*G->BreedParentName(G->BreedMother),*G->BreedParentName(G->BreedFather),*G->BreedStatus);
+			if(Say!=L->FixedText){L->FixedText=Say;L->SetText(Say);}
+		}
+		if(UOKDreamControl* L=HairDeckLabel.Get())
+		{
+			const FString Say=G->HairDeckStatus;
 			if(Say!=L->FixedText){L->FixedText=Say;L->SetText(Say);}
 		}
 		MarkCurrentCard();
