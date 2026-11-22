@@ -51,6 +51,11 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 //       -> [{"key","type":"bool|int|float|text|hotkey","value","default","min","max","description_id"}]
 //   {"op":"config_set","mod","key","value"} -> {"ok":true} | {"ok":false,"error"}  (saved; mod gets config_changed)
 //   {"op":"disable","mod"} -> {"ok":true} | {"ok":false,"error"}   (this session only)
+//   {"op":"hook","hook":"reader.character_load","payload":{...},"mods":["<id>",...]?}
+//       -> {"replies":[{"mod","ok":true,"json"} | {"mod","ok":false,"error"}]}
+//       A named hook (Event::Hook, mode-prefixed snake_case names; Docs/OK_MOD_HOOKS.md) to every enabled mod that
+//       subscribed to it, in load order; with "mods" only to those (each must have subscribed). Each reply as for
+//       "command": "json" (Reply::Json parsed), "text" (Reply::Text), neither for Reply::None.
 // Returns NULL for a malformed request (see okm_last_error).
 const char* okm_dispatch(okm_host* host, const char* request_json);
 

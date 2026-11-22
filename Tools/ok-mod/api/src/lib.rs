@@ -170,6 +170,11 @@ pub enum Event {
     Command { name: RString, args: RString },
     /// The player changed one of this mod's config values.
     ConfigChanged { key: RString },
+    /// A named hook with a JSON payload (added 2026-11-23, still ABI 0.1: an appended non-exhaustive variant). Mods
+    /// subscribe to the hook's own name, mode-prefixed snake_case (`reader.character_load`, `reader.ui`,
+    /// `extract.kkex`, `street.*`, `studio.*`, `pair.*`); a reply is `Reply::Json`. Per-frame hooks do not use this.
+    /// The hooks, their payloads and replies: Docs/OK_MOD_HOOKS.md.
+    Hook { name: RString, payload: RString },
 }
 
 impl Event {
@@ -181,6 +186,15 @@ impl Event {
             Event::ModeExit { .. } => "mode_exit",
             Event::Command { .. } => "command",
             Event::ConfigChanged { .. } => "config_changed",
+            Event::Hook { .. } => "hook",
+        }
+    }
+
+    /// What a mod subscribes to for this event: a hook's own name, else [`Event::name`].
+    pub fn subscription(&self) -> &str {
+        match self {
+            Event::Hook { name, .. } => name.as_str(),
+            other => other.name(),
         }
     }
 }

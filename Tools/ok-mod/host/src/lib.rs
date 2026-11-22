@@ -432,7 +432,7 @@ impl ModHost {
 
     /// Sends an event to every enabled mod that subscribed to it, in load order.
     pub fn dispatch(&mut self, event: &Event) -> Vec<ModReply> {
-        let name = event.name();
+        let name = event.subscription();
         let mut replies = Vec::new();
         for idx in self.order.clone() {
             let wants = self.mods[idx].loaded.as_ref().is_some_and(|l| l.subscriptions.contains(name));
@@ -442,6 +442,28 @@ impl ModHost {
             }
         }
         replies
+    }
+
+    /// A named hook (`Event::Hook`) to every enabled mod subscribed to it, in load order.
+    pub fn hook(&mut self, name: &str, payload: &str) -> Vec<ModReply> {
+        self.dispatch(&Event::Hook { name: name.into(), payload: payload.into() })
+    }
+
+    /// Enabled mods subscribed to `name`, in load order.
+    pub fn subscribers(&self, name: &str) -> Vec<String> {
+        self.order.iter().filter(|&&idx| self.mods[idx].state == State::Enabled
+            && self.mods[idx].loaded.as_ref().is_some_and(|l| l.subscriptions.contains(name)))
+            .map(|&idx| self.mods[idx].id.clone()).collect()
+    }
+
+    /// A named hook to one mod; an error when it is not enabled or did not subscribe to the hook.
+    pub fn hook_one(&mut self, id: &str, name: &str, payload: &str) -> Result<Reply, String> {
+        let idx = self.find(id)?;
+        let wants = self.mods[idx].loaded.as_ref().is_some_and(|l| l.subscriptions.contains(name));
+        if !wants {
+            return Err(format!("{id} did not subscribe to {name}"));
+        }
+        self.call_event(idx, &Event::Hook { name: name.into(), payload: payload.into() })
     }
 
     /// Runs `name` of mod `id` (console `mod.<id>.<name>` or `mod_call`).
