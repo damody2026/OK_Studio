@@ -448,6 +448,24 @@ pub trait ModInstance: Send + Sync {
 - `abi_stable` 最後一版是 0.11.x，更新慢。`ok-mod-api` 把它包起來，mod 作者只碰 SDK；真需要時可換成別的穩定 ABI 方案，只影響 api／sdk／host 三個 crate。
 - 兩個 mod 不能直接互叫 Rust 函式；mod 之間的合作走宿主的「服務」登記（`provide("id", trait 物件)` / `require`），列在 M4 之後視需要做。
 
+### 7.6 實作後定下的規則（2026-11-23，同步點 B）
+
+- **`Event` 不再加變體**：工作項 11 實測，在 `Event` 追加變體會讓用舊 SDK 編的 mod 被新宿主拒載（abi_stable 的 `too many variants`），`NonExhaustive` 擋不住這一點。新功能一律走通用 Hook：
+  - `Event::Hook { name, payload }`，payload 是 JSON；
+  - mod 以 `Declaration::Subscribe("<hook 名>")` 訂閱，用 `Reply::Json` 回覆；
+  - hook 名帶模式前綴：`reader.*`、`extract.*`、`studio.*`、`pair.*`、`street.*`、`material.*`、`timer.*`、`key.*`、`ui.<mod id>.*`；
+  - 舊資料升級在 SDK 的 `ExtSection::data(version, upgrade)` 就地做，不另發 hook；
+  - 加入 Hook 之前用舊 SDK 編的 mod 要用新 SDK 重編（0.1 發布前的唯一一次）。
+- **每幀呼叫不走 Hook 也不走 abi_stable**：
+  - mod 另外匯出 C 函式 `ok_mod_frame(OkModFrame*)`，由 SDK 的 `ok_mod_frame!` 產生並包 `catch_unwind`，mod 作者不手寫 C ABI；
+  - `OkModFrame` 開頭是 `struct_size` 與 `version`（版本 1，80 位元組），宿主與 SDK 兩邊都檢查，之後只在結尾加欄位；
+  - 只在 ok-extract 的 worker 上呼叫，可能多角色並行，共用狀態只能放 `static`；
+  - 每個 mod 每次呼叫預算 500 µs，連續 30 次超過或 panic 就停掉它的幀函式；
+  - 配對的 `dt` 是配對播放時鐘實際走過的時間；
+  - 掛點只有一個：ABM 之後、Studio IK 之前（單人與配對共用）；GPU 動態骨的外力留到之後。
+- **開卡快取鍵**只計入訂閱了「開卡時會改結果」的 `extract.*` 掛點的 mod（`extract.kkex`、`extract.kkex_keys` 只在轉卡時用，不算）。不影響開卡結果的 mod 不讓快取失效（工作項 10 實測：原本一裝 `birthday`，街區的開卡快取就全部沒命中）。
+- **ok-mod-api 的追加由協調者決定**：只有一個子對話實作成獨立提交，再分到其他檢出，避免同步時衝突。
+
 ## 8. UE 側
 
 - 新 UE 外掛 `Plugins/OKModding`（Runtime 模組），`FOKModHost` 照 `FOKStreetRules` 的寫法載入 `ok_mod_host.dll`、檢查 `okm_abi_version`；
