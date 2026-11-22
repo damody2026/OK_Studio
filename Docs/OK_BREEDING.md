@@ -21,7 +21,7 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 |---|---|
 | 臉 52 項、身體 44 項滑桿（`shapeValueFace`／`shapeValueBody`） | 每一項各自在兩人之間取一個點（10%～90%）；6% 機率突變，可以略超出兩人（最多超出 0.2，限制在 -1～2） |
 | 其他數值（光澤、胸部柔軟度等） | 兩人之間 25%～75% |
-| 顏色（四個浮點數：膚色、髮色、瞳色等） | 整個顏色一起混合；5% 機率小幅偏色 |
+| 顏色（四個浮點數：膚色、髮色、瞳色等） | 整個顏色一起混合；5% 機率小幅偏色。頭髮的顏色用 HSV 混（色相走較短的那一邊，一方接近灰色時用另一方的色相；飽和度、亮度直接內插）：RGB 取中間會變灰變暗，一代代混下去愈來愈黑（使用者 2026-11-22） |
 | 模型編號（頭、眼睛、眉毛、鼻、嘴、膚質…） | 來自其中一人；頭與臉部膚質一起，左右眼一起 |
 | 髮型 | 四個部位（後、前、側、附加）一起來自其中一人，髮色仍然混合 |
 | 衣服（2026-11-22 起） | 每套服裝以當底那位的為主；**上衣**（含水手服／外套子部件）、**下衣**、**內衣**（胸罩＋內褲一起）各自抽一次，抽到另一位就在每一套都換成另一位那套的那件（顏色、花樣跟著件走）。另一位那套沒穿那件就不換（不會換成光著）。混完下身沒穿（使用者：「下體沒穿幫我補上裙子」）：那套有上衣沒下衣，就補上衣那位在那套穿的下衣，她沒穿就補另一位那套的（多半是裙子；Sideloader 對照與 Material Editor 列跟著件走，`okDn` 的 `bottom_added` 記哪幾套，`cover_bare_outfits`）。兩人那套都沒穿下衣才照原樣（雷電的兔女郎上衣前面是開的，原本「她自己就這樣穿」的例外讓孩子只穿內褲）。不用遊戲本身的裙子：兩人都沒穿過的衣服，封裝時的嚴格開卡要問兩人資料裡都沒有的問題（プリーツスカートA 的 `skel:bone_implants`），那套就退回當底那位的整套，裙子等於沒補。手套、褲襪、襪子、鞋子、飾品、妝仍是當底那位的。那件衣服的 Sideloader 對照（`outfitN.ChaFileClothes.ClothesTop…`）與 Material Editor 列（服裝、第幾套、第幾件）跟著件走 |
@@ -43,7 +43,7 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 1. 父母的正臉照：`Saved/OKBreed/faces/<卡片路徑的 MD5>.png`，比卡片新就直接用（使用者：「已經拍過的角色復用就好，不要重複一直拍照」）；沒有或卡片改過才打開她拍一張（`OKCardPreviewCapture::BeginHairReference`：正面、以臉部網格為中心、寬 1.5 個臉部網格寬，768×1024）。孩子生出、拍完卡片圖後也拍她的臉，她當父母時就不用再拍。
 2. 臉照裡不是頭髮的飾品不拍（兔耳、帽子、髮夾）：使用者「不應該把兔耳飾品當頭髮」，HairDeck 會把頭上的東西都當頭髮生成。用頭髮 shader（`main_hair`）、網格／renderer 名稱有 hair、kami，或類別 121 的飾品槽算頭髮，整槽留著（雷電的長髮同一網格還有一層 main_item）；其他飾品藏起來（`portable::hairdeck::non_hair_accessory_parts`，`ok_session_non_hair_accessories`）。不看掛點：雷電的兔耳掛在頭髮掛點、長髮掛在頭上。
 3. 配出孩子後，`ok-hairdeck generate --image <母親臉> --mix <父親臉> --mix-weight <父親比例> --box 0,143,768,911 --mix-box 0,143,768,911 --seed <種子>`：兩張圖各過 DINOv3，頭髮模型與顏色模型的條件逐 token 線性混合後取樣一次（結果在 `Saved/OKBreed/hair/<孩子檔名>/`）。父親比例 = 0.4 + 0.2 ×（種子雜湊），同種子同結果。
-4. 生成的頭髮存進孩子卡（`okHk`，`FOkSession::CardHairDeck`），選項記 `mix`（母親、父親檔名、`father_share`）。log：`OK breed seed … HairDeck hair mixed from both (father 48%)`。
+4. 生成的頭髮存進孩子卡（`okHk`，`FOkSession::CardHairDeck`），選項記 `mix`（母親、父親檔名、`father_share`）。基準髮色存生成頭髮的平均色（不是卡片髮色），開卡時每片頭髮整體平移到卡片的髮色（HSV 混出來的），頭髮顏色跟著遺傳走。log：`OK breed seed … HairDeck hair mixed from both (father 48%)`。
 
 所以第一代父母用原卡（沒有 HairDeck 頭髮），孩子起每一代都是 HairDeck 頭髮。
 
