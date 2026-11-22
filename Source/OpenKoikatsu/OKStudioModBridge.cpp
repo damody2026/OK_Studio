@@ -9,7 +9,12 @@
 // A mod never touches the document: the bridge reads and writes the mod's own entry of the scene's "mods" (as JSON
 // text) and applies what the mod asks for. Rows and timeline values are bound to paths in that JSON, so painting a row
 // or playing the timeline never calls the mod, and undo / redo bring everything back with the document.
+#include "OKModContent.h"
 #include "OKModHost.h"
+#include "Engine/PostProcessVolume.h"
+#include "Engine/World.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "UObject/StrongObjectPtr.h"
 #include "OKSceneDocument.h"
 #include "OKStreetSocialText.h"
 #include "OKStudioGame.h"
@@ -191,11 +196,24 @@ namespace OKStudioModBridge
 		bool bDropped = false;
 		/** Hooks the host said it did not subscribe to: not asked again (the context is not even built). */
 		TSet<FString> NotSubscribed;
+		/** Post-process materials over the studio view (registration `post_process`), driven by the mod's data. */
+		struct FPostProcess
+		{
+			FString Material;
+			FString Enabled;
+			TArray<TPair<FName, FString>> Scalars;
+			TArray<TPair<FName, FString>> Colors;
+			TStrongObjectPtr<UMaterialInstanceDynamic> Instance;
+			bool bMissingLogged = false;
+		};
+		TArray<FPostProcess> PostProcess;
 	};
 
 	struct FState
 	{
 		TArray<FMod> Mods;
+		/** The unbound volume carrying the mods' post-process materials (spawned when one is on). */
+		TWeakObjectPtr<APostProcessVolume> PostVolume;
 		TWeakObjectPtr<UOKStudioGame> Game;
 		bool bBuilt = false;
 		bool bReload = false;
@@ -722,6 +740,22 @@ namespace OKStudioModBridge
 			const double Every = FMath::Max(Ms, 50.0) / 1000.0;
 			Mod.Timers.Add({ Str(T, TEXT("id")), Every, FPlatformTime::Seconds() + Every });
 		});
+		Each(TEXT("post_process"), [&](const FJsonObject& P)
+		{
+			FMod::FPostProcess Post;
+			Post.Material = Str(P, TEXT("material"));
+			Post.Enabled = Str(P, TEXT("enabled"));
+			for (const TCHAR* Field : { TEXT("scalars"), TEXT("colors") })
+			{
+				const TSharedPtr<FJsonObject>* Map = nullptr;
+				if (P.TryGetObjectField(Field, Map))
+					for (const auto& KV : (*Map)->Values)
+						(FCString::Strcmp(Field, TEXT("scalars")) == 0 ? Post.Scalars : Post.Colors).Add({ FName(*KV.Key), KV.Value->AsString() });
+			}
+			// Only the mod's own materials ("<mod id>/<name>").
+			if (Post.Material.StartsWith(Id + TEXT("/"))) Mod.PostProcess.Add(MoveTemp(Post));
+			else UE_LOG(LogOKStudioMods, Warning, TEXT("%s: post_process material %s is not one of its own"), *Id, *Post.Material);
+		});
 		Ui.TryGetStringField(TEXT("timeline_marks"), Mod.MarksPath);
 		Ui.TryGetBoolField(TEXT("objects"), Mod.bObjects);
 	}
@@ -729,6 +763,8 @@ namespace OKStudioModBridge
 	void Teardown()
 	{
 		FState& S = State();
+		if (APostProcessVolume* V = S.PostVolume.Get()) V->Destroy();
+		S.PostVolume.Reset();
 		for (const FMod& M : S.Mods) FOKStudioModRegistry::Get().RemoveOwner(M.Id);
 		S.Mods.Reset();
 		S.Deferred.Reset();
@@ -896,6 +932,78 @@ namespace OKStudioModBridge
 		}
 	}
 
+	/** "#RRGGBB" (sRGB) as a linear colour; false when it is not one. */
+	bool ParseHexColor(const FString& Text, FLinearColor& Out)
+	{
+		const FString Hex = Text.TrimStartAndEnd().Replace(TEXT("#"), TEXT(""));
+		if (Hex.Len() != 6 && Hex.Len() != 8) return false;
+		Out = FLinearColor(FColor::FromHex(Hex));
+		return true;
+	}
+
+	/**
+	 * The mods' post-process materials: each frame their settings come from the mod's scene data (rows and timeline
+	 * keys write it), so the look follows undo, redo and playback without calls to the mod.
+	 */
+	void TickPostProcess(UOKStudioGame& Game)
+	{
+		FState& S = State();
+		TArray<FWeightedBlendable> Blendables;
+		for (FMod& Mod : S.Mods)
+		{
+			if (Mod.PostProcess.IsEmpty()) continue;
+			const TSharedRef<FJsonObject> Data = DataObject(*Game.Document, Mod.Id);
+			for (FMod::FPostProcess& Post : Mod.PostProcess)
+			{
+				const TSharedPtr<FJsonValue> On = ReadPath(Data, Post.Enabled, INDEX_NONE);
+				if (!On.IsValid() || !On->AsBool()) continue;
+				if (!Post.Instance.IsValid())
+				{
+					const TSharedPtr<FKKModMaterial> M = OKModContent::Find(Post.Material);
+					if (!M.IsValid() || !M->Material.IsValid())
+					{
+						if (!Post.bMissingLogged) UE_LOG(LogOKStudioMods, Warning, TEXT("%s: post-process material %s is not loaded (no pak for this build?): no look"), *Mod.Id, *Post.Material);
+						Post.bMissingLogged = true;
+						continue;
+					}
+					Post.Instance.Reset(UMaterialInstanceDynamic::Create(M->Material.Get(), GetTransientPackage()));
+				}
+				UMaterialInstanceDynamic* Mid = Post.Instance.Get();
+				for (const TPair<FName, FString>& P : Post.Scalars)
+				{
+					const TSharedPtr<FJsonValue> V = ReadPath(Data, P.Value, INDEX_NONE);
+					if (V.IsValid() && V->Type == EJson::Number) Mid->SetScalarParameterValue(P.Key, float(V->AsNumber()));
+				}
+				for (const TPair<FName, FString>& P : Post.Colors)
+				{
+					const TSharedPtr<FJsonValue> V = ReadPath(Data, P.Value, INDEX_NONE);
+					FLinearColor C = FLinearColor::Black;
+					if (V.IsValid() && V->Type == EJson::String && ParseHexColor(V->AsString(), C)) Mid->SetVectorParameterValue(P.Key, C);
+				}
+				Blendables.Add(FWeightedBlendable(1.f, Mid));
+			}
+		}
+		APostProcessVolume* Volume = S.PostVolume.Get();
+		if (Blendables.IsEmpty())
+		{
+			if (Volume && Volume->Settings.WeightedBlendables.Array.Num()) Volume->Settings.WeightedBlendables.Array.Reset();
+			return;
+		}
+		if (!Volume)
+		{
+			UWorld* World = Game.GetTickableGameObjectWorld();
+			if (!World) return;
+			FActorSpawnParameters Params;
+			Params.ObjectFlags |= RF_Transient;
+			Volume = World->SpawnActor<APostProcessVolume>(Params);
+			if (!Volume) return;
+			Volume->bUnbound = true;
+			Volume->Priority = 1000.f;
+			S.PostVolume = Volume;
+		}
+		Volume->Settings.WeightedBlendables.Array = MoveTemp(Blendables);
+	}
+
 	bool Tick(float)
 	{
 		FState& S = State();
@@ -948,6 +1056,7 @@ namespace OKStudioModBridge
 				SendInputEvent(*Mod, TEXT("drag"), Args, false);
 			}
 		TickMarks(*Game);
+		TickPostProcess(*Game);
 		return true;
 	}
 
