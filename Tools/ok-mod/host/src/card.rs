@@ -203,7 +203,7 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
                 let result = host.hook_one(&id, "reader.character_load", &body);
                 replies.push(crate::ModReply { id, result });
             }
-            let missing: Vec<Value> = data.ids().filter(|id| !mods.contains_key(*id)).map(|id| {
+            let missing: Vec<Value> = data.ids().filter(|id| !id.starts_with("ok.") && !mods.contains_key(*id)).map(|id| {
                 let r = data.get(id).and_then(Result::ok).and_then(|s| s.requires);
                 json!({"id": id, "version": r.map(|r| r.version)})
             }).collect();

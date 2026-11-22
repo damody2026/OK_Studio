@@ -248,6 +248,7 @@ impl Mod for SkinDecal {
                 // SAFETY: the host hands over `len` writable bytes for this call (ok-extract mod_forward.rs).
                 let rgba = unsafe { std::slice::from_raw_parts_mut(p.rgba as *mut u8, p.len) };
                 if draw(rgba, p.width, p.height, &decal, &pic) {
+                    self.host.info(format!("decal drawn on {} ({}x{})", p.slot, p.width, p.height));
                     hooks::json(&serde_json::json!({"changed": true}))
                 } else {
                     Ok(Reply::None)
