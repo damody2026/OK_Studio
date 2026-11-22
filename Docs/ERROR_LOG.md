@@ -7293,3 +7293,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 面板檢查在編輯器資產上誤報，連改四次：藍圖下的 widget 樹（外層是藍圖，`IsEditorOnlyObject` 不算）、`SKEL_` 骨架類別被選成面板類別、編譯器的 EdGraph 節點（外層直接是包）、`SKEL_` 類別的 CDO。最後一律依外層鏈判斷編輯器殘留，面板類別依名字 `WBP_<Name>_C` 選。教訓：檢查 cooked 資產的規則先在未 cook 的資產上跑一次，把「不是面板的一部分」的物件連完整路徑印出來再改，不要一次猜一種。
   - 把 `editor_cmd` 用在定義它的那行之前的函式裡（Lua 區域函式要先定義），ModKit 第一次執行就停；移到檔案前面。
   - 用 bash heredoc 寫含大量引號的 Lua 腳本，bash 解析失敗（`unexpected EOF while looking for matching`），檔案沒寫出來；改用 Write 工具寫腳本。
+
+- 2026-11-23 OK mod 工作項 11、12 收尾（`Docs/OK_MOD_S11_FINISH.md`、`Docs/OK_MOD_S12_FINISH.md`）：
+  - `ok-mod-pack` 的 pak 檢查把 mod id 當 `--mod` 傳給 `modkit_cook.lua`，id 有 `.` 一定被拒，任何帶 pak 的 mod 都打不了包。工作項 12 的測試只打包 hello（沒有 pak），一直沒發現，到這次打包全部範例才看到。教訓：打包流程的測試要包含帶 B 層內容的 mod。
+  - 新增的主控台指令用了 `FConsoleCommandWithOutputDeviceDelegate`（不帶參數），編譯在 `Tuple.h` 報 `Invoke` 找不到多載；要參數與輸出要用 `FConsoleCommandWithArgsAndOutputDeviceDelegate`。
+  - idle-breath 第一版寫了 `Mod::on_disable`，SDK 的 trait 沒有這個方法。
