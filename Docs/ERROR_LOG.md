@@ -7287,3 +7287,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - Lua 長字串 `[[ ]]` 裡有 `]]` 時提早結束，改用 `[==[ ]==]`；Lua 字串 `'\'` 經命令列轉了一次變成 `'\'`，改用 Edit 工具直接改。
   - toon-post 第一次在 Studio 測，`-ModDevContent` 找不到內容外掛：`EnabledByDefault false` 又沒人啟用的外掛，以 `-game` 啟動時不在外掛管理器的清單裡，`FindPlugin` 回空；`MountExplicitlyLoadedPlugin` 也要 descriptor 有 `ExplicitlyLoaded`。改成先 `AddToPluginsList(<外掛>.uplugin)` 再 `MountNewlyCreatedPlugin`。
   - 只建了編輯器就先測，`FMaterialResource::FinishCompilation` 只在 `WITH_EDITOR` 有，遊戲目標編不過；包 `#if WITH_EDITOR` 後兩個目標重建通過。教訓：共用外掛改完兩個目標都建過才算完成（規則本來就這樣寫）。
+
+- 2026-11-23 OK mod 工作項 9b（DreamGUI D2，`Docs/OK_MOD_S9b_DREAMGUI_D2.md`）：
+  - `Mod.Text` 第一版回傳 `FString`，DreamGUI 的 `Text` 屬性是 `FText`，編譯報 `has to take no arguments and return the type of "Greeting.Text"`（訊息說「不帶參數」，實際是型別不符）。改回傳 `FText`，另留 `Raw` 給 `Number`／`Flag`。
+  - 面板檢查在編輯器資產上誤報，連改四次：藍圖下的 widget 樹（外層是藍圖，`IsEditorOnlyObject` 不算）、`SKEL_` 骨架類別被選成面板類別、編譯器的 EdGraph 節點（外層直接是包）、`SKEL_` 類別的 CDO。最後一律依外層鏈判斷編輯器殘留，面板類別依名字 `WBP_<Name>_C` 選。教訓：檢查 cooked 資產的規則先在未 cook 的資產上跑一次，把「不是面板的一部分」的物件連完整路徑印出來再改，不要一次猜一種。
+  - 把 `editor_cmd` 用在定義它的那行之前的函式裡（Lua 區域函式要先定義），ModKit 第一次執行就停；移到檔案前面。
+  - 用 bash heredoc 寫含大量引號的 Lua 腳本，bash 解析失敗（`unexpected EOF while looking for matching`），檔案沒寫出來；改用 Write 工具寫腳本。
