@@ -35,6 +35,8 @@
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Misc/Base64.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/CommandLine.h"
 #include "Containers/Ticker.h"
 #include "HAL/PlatformTime.h"
 #include "UnrealClient.h"
@@ -96,6 +98,28 @@ bool MountContent(const FString& Id, const TSharedPtr<FJsonObject>& Mod)
 	}
 	if (!FPlatformProperties::RequiresCookedData())
 	{
+		// Mod authors (-ModDevContent): the mod's uncooked content plugin, when this project has it (Plugins/<root>,
+		// EnabledByDefault false), mounted as it is; its materials compile here like any editor material.
+		if (FParse::Param(FCommandLine::Get(), TEXT("ModDevContent")))
+		{
+			// A plugin nothing enables is not always discovered when the game starts: add it by its file, then mount it
+			// as a newly created one (the explicit-load path needs "ExplicitlyLoaded" in the descriptor).
+			IPluginManager& Plugins = IPluginManager::Get();
+			const FString File = FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / Root / (Root + TEXT(".uplugin")));
+			if (!Plugins.FindPlugin(Root).IsValid() && FPaths::FileExists(File)) Plugins.AddToPluginsList(File);
+			TSharedPtr<IPlugin> Plugin = Plugins.FindPlugin(Root);
+			if (Plugin.IsValid() && !Plugin->IsMounted())
+			{
+				Plugins.MountNewlyCreatedPlugin(Root);
+				Plugin = Plugins.FindPlugin(Root);
+			}
+			if (Plugin.IsValid() && Plugin->IsMounted())
+			{
+				UE_LOG(LogOKMod, Display, TEXT("[%s] -ModDevContent: uncooked content plugin %s mounted instead of its pak"), *Id, *Root);
+				return true;
+			}
+			UE_LOG(LogOKMod, Warning, TEXT("[%s] -ModDevContent: no content plugin %s in this project"), *Id, *Root);
+		}
 		UE_LOG(LogOKMod, Display, TEXT("[%s] content pak not used in the editor (cooked content only loads in a packaged game); materials use their A-layer fallback"), *Id);
 		return false;
 	}
@@ -175,7 +199,11 @@ TSharedPtr<FKKModMaterial> BuildMaterial(const FString& ModId, bool bContent, co
 	if (!Asset.IsEmpty() && bContent)
 	{
 		Material = LoadObject<UMaterialInterface>(nullptr, *Asset);
-		const FMaterialResource* Resource = Material ? Material->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
+		FMaterialResource* Resource = Material ? const_cast<FMaterialResource*>(Material->GetMaterialResource(GMaxRHIShaderPlatform)) : nullptr;
+		// An uncooked material (-ModDevContent in the editor) compiles now; wait for it rather than call it shaderless.
+#if WITH_EDITOR
+		if (Resource && !FPlatformProperties::RequiresCookedData()) Resource->FinishCompilation();
+#endif
 		const UMaterial* Base = Material ? Material->GetMaterial() : nullptr;
 		if (!Material || !Resource || !Resource->GetGameThreadShaderMap() || (Base && Base->IsDefaultMaterial()))
 		{

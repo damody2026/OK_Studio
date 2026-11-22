@@ -12,6 +12,8 @@ public class OKModding : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Json", "KKUnityBundle" });
 		// RenderCore: the mods' shader libraries (FShaderCodeLibrary); RHI: GMaxRHIShaderPlatform.
 		PrivateDependencyModuleNames.AddRange(new string[] { "Engine", "ApplicationCore", "RenderCore", "RHI" });
+		// Projects: -ModDevContent mounts a mod's uncooked content plugin in the editor (IPluginManager).
+		PrivateDependencyModuleNames.Add("Projects");
 		// The C ABI header lives with the Rust host.
 		PrivateIncludePaths.Add(Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Tools", "ok-mod", "host", "include")));
 	}
