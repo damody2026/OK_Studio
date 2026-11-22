@@ -45,21 +45,64 @@ Event::Hook { name: RString, payload: RString }   // payload 是 JSON
 | `reader.outfit_change` | 同一張卡換服裝 | `{"card", "outfit"}` | 可帶讀卡器動作 |
 | `reader.character_unload` | 讀卡器換到另一張卡之前 | `{"card"}`（離開的那張） | 可帶讀卡器動作 |
 | `reader.character_save` | 讀卡器另存卡片之後 | `{"card", "outfit"}` | `null` 不變；`{"remove": true}` 移除；`{"version", "data_b64"}` 寫入 |
-| `reader.ui` | 讀卡器建頁面時（一次） | `{}` | `{"pages": [{"name", "items": [...]}]}`（§4） |
+| `reader.ui` | 讀卡器建頁面時（一次） | `{}` | `{"pages": [{"name", "layout"?, "items": [...]}]}`（§4） |
 | `reader.values` | 開卡、改值之後 | `{}` | `{"<鍵>": 值, ...}`（不含前綴） |
 | `reader.control` | 某個控制項改了（頁面或 `reader_call set`） | `{"key", "value"}`（不含前綴） | 可帶讀卡器動作；回錯誤表示拒絕 |
 | `reader.speech_start` | 一句語音開始播放 | `{"mode": "reader", "text", "card"}` | `{"subtitle": {"text", "seconds"}}` 等（§5） |
 
 `apply` 是「載入卡片時套用此 mod 資料」開關（MakerLoadToggle 對應），關掉時 `section` 照給、`apply=false`，`CharacterLoad::data` 回 `None`。
 
-## 4. 讀卡器控制項
+## 4. 讀卡器控制項（DreamGUI 宣告式，工作項 7b）
 
-`reader.ui` 的 items 用 pages.json 的格式：`bool`（`toggle`）、`choice`（`dropdown`，`options: [{value, label}]`）、`text`、`button`（`action` 是 mod 的指令名）。宿主把 `key` 改成 `mod.<id>.<key>`、`action` 改成 `mod.<id>.<action>`。
+`reader.ui` 回 `{"pages": [頁, ...]}`。讀卡器用 DreamGUI 原生控制項直接建出每一頁（`Source/OpenKoikatsu/OKReaderModPage.cpp`，控制項的外觀在 `DUI/Reader/Controls/*.dui`），不經 UMG。值從 `reader.values` 讀、改值走 `reader.control`，和 `reader_call get/set` 是同一條路。宿主把每一層的 `key` 改成 `mod.<id>.<key>`、`action` 改成 `mod.<id>.<action>`、`image` 改成 mod 資料夾裡那個檔案的完整路徑（資料夾外的路徑、`..`、不存在的檔案會被拿掉，讀卡器在頁首標紅說哪一項）。
+
+**頁**：`{"name", "layout"?, "items": [...]}`。`layout` 是 `column`（預設，由上往下）、`row`（橫排）、`tabs`（每個子項目一個分頁）、`scroll`（固定高度的捲動區，`height`）。
+
+**容器**（可以再放容器）：
+
+| `kind` | 欄位 | 說明 |
+|---|---|---|
+| `group` | `label`?、`layout`?、`fold`?、`folded`?、`items` | 一組控制項；有 `label` 時上面一行標題，`fold: true` 時標題可以按下摺疊（`folded: true` 一開始收起） |
+| `row` | `items` | 橫排（每項有 `label` 時是「標題＋控制項」一格） |
+| `tabs` | `items`、`height`? | 分頁；每個子項目一頁，子項目是 `group` 時它的 `label` 是分頁名、`items` 是內容 |
+| `scroll` | `items`、`height`（預設 240） | 固定高度、可捲動 |
+
+**控制項**（有值的都要 `key`；`label` 是左邊的標題，可用 `label_id` 指讀卡器文字表）：
+
+| `kind` | 欄位 | 值 | 原生控制項 |
+|---|---|---|---|
+| `bool`（`toggle`） | | `true`／`false` | Toggle |
+| `choice`（`dropdown`） | `options: [{value, label}]` 或字串陣列 | 選中的 `value`（字串） | Dropdown |
+| `radio` | `options`、`layout: "column"`? | 選中的 `value` | RadioButton（一組只會有一個開著） |
+| `text` | `placeholder`?、`multiline`?、`height`?、`max_length`? | 字串 | TextInput |
+| `number` | `min`、`max`（預設 0～100）、`step`? | 數字（`step` 是整數時取整） | SpinBox |
+| `slider` | `min`、`max`（預設 0～1）、`step`? | 數字；旁邊顯示目前值 | Slider |
+| `color` | | `"#RRGGBB"`（或 `#RRGGBBAA`，送出時轉大寫） | 色塊＋TextInput |
+| `list` | `options`?、`height`?（預設 180） | 有 `options`：選中的 `value`；沒有：字串陣列，只顯示 | ListView |
+| `progress` | `min`、`max`（預設 0～1）；或不給 `key`、給 `value` | 數字，只顯示 | ProgressBar |
+| `label` | `text`?、`key`?、`style`? | 有 `key` 時顯示值（接在 `text` 後面） | 文字 |
+| `image` | `image`（mod 資料夾內的 PNG）、`width`?、`height`? | | 圖片（讀卡器開著期間留著，不會被回收） |
+| `button` | `action` | 按下執行 `mod.<id>.<action>` 指令 | Button |
+
+`style` 用主題（`DUI/Theme.dui` 指的 DreamGUI Default preset）的文字樣式名稱：`Heading`、`Title`、`Lead`、`Body`、`Caption`、`Overline`、`Figure`、`AccentText`、`GoodText`、`BadText`、`WarnText`；讀卡器照 preset 的顏色與字級畫（執行時不能套 `.dui` 的 style，所以表格寫在 `OKReaderModPage.cpp`）。目前只有 `label` 吃 `style`；按鈕、容器的外觀樣式還沒開放。
+
+例（`examples/profile`）：
+
+```json
+{"pages": [{"name": "角色簡介", "layout": "tabs", "items": [
+  {"kind": "group", "label": "簡介", "items": [
+    {"kind": "text", "key": "text", "label": "簡介", "multiline": true, "height": 160},
+    {"kind": "label", "key": "length", "style": "Caption"}]},
+  {"kind": "group", "label": "說明", "items": [{"kind": "label", "text": "簡介存在卡片裡……", "style": "Body"}]}
+]}]}
+```
 
 - 讀卡器畫面多一個「Mods」分類（設定那一欄）：第一頁是各 mod 的「載入卡片時套用」開關（鍵 `reader.mod_apply.<id>`，存在 `Saved/CardReader/mod_apply.json`），接著是每個 mod 的頁。
-- 每個控制項也是登錄（`OKCharacterMCPRegistry`）的一列，`category: "mods"`。所以 `reader_call get/set`、`ui_set` 都能讀寫，和內建參數一樣。
+- 有值的控制項（`bool`、`choice`、`radio`、`text`、`number`、`slider`、`color`、有 `options` 的 `list`）也是登錄（`OKCharacterMCPRegistry`）的一列，`category: "mods"`，`kind` 是 `bool`、`choice`、`text`、`number`（`color` 是 `text`，另帶 `format: "#RRGGBB"`，和內建 0～1 的顏色分量分開）。`reader_call get/set` 讀寫它們，和內建參數一樣；巢狀在分頁、群組裡的也算。只顯示的（`label`、`progress`、沒有 `options` 的 `list`、`image`、`button`）不是登錄列。
+- 畫面上的控制項也登記在讀卡器畫面的控制項清單（`ok.ReaderScreen controls`／`press`／`set`），路徑是「Mods›頁名›…›標題」。`ui_widgets`／`ui_set` 列舉 DreamGUI 畫面的部分在 F 的 9a63c5401，同步點 B 之後才有。
 - 按鈕：`mod.<id>.<名>` 走宿主的 `command`，`Reply::Text` 顯示成提示，`Reply::Json` 照 §5 處理。
-- 數字滑桿與顏色還沒有給 mod 用（數字列目前沿用既有控制項的鏡像，mod 沒有對應的 UMG 控制項）；要用時在讀卡器補 `OKReaderPageItems` 的數字種類。
+- 值的顯示：每一幀從讀卡器保存的 `reader.values` 結果拿（開卡、換服裝、每次 `reader.control` 之後重新問一次），所以 mod 改了別的鍵的值（例如 `length`）也會跟著變。輸入框、數字框只在 mod 那邊的值變了時才覆蓋畫面上的內容，正在打的字不會被蓋掉。
+- 舊格式（只有 `items`、`bool`／`choice`／`text`／`button`）照樣能用。
 
 ## 5. 回覆裡讀卡器會做的事
 
