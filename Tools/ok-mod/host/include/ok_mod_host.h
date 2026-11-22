@@ -52,6 +52,9 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 //       -> [{"key","type":"bool|int|float|text|hotkey","value","default","min","max","description_id"}]
 //   {"op":"config_set","mod","key","value"} -> {"ok":true} | {"ok":false,"error"}  (saved; mod gets config_changed)
 //   {"op":"disable","mod"} -> {"ok":true} | {"ok":false,"error"}   (this session only)
+//   {"op":"content"} -> {"mods":[{"id","dir","content_root","content_build"?,"paks":[abs],"shader_library",
+//       "materials":[{"id":"<mod>/<name>","asset"?,"parent"?,"families","main_texture"?,"copy_source_values",
+//                     "scalars","vectors":{name:[r,g,b,a]},"textures":{name:abs png}}],"problems"}]}  (enabled mods only)
 //   {"op":"reload","mod"} -> {"ok":true,"text"} | {"ok":false,"error"}   (dev only: loads a fresh copy of the rebuilt DLL;
 //       the old copy stays loaded but unused, the mod starts over without its previous state)
 // Returns NULL for a malformed request (see okm_last_error).

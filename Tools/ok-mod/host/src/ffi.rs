@@ -192,6 +192,7 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
                 Err(e) => json!({"ok": false, "error": e}),
             }
         }
+        "content" => json!({"mods": host.content()}),
         "reload" => match host.reload(str_field(req, "mod")?) {
             Ok(text) => json!({"ok": true, "text": text}),
             Err(e) => json!({"ok": false, "error": e}),

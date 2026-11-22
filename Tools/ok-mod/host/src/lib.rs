@@ -7,6 +7,7 @@
 //! directly.
 
 pub mod config;
+pub mod content;
 pub mod ffi;
 pub mod manifest;
 pub mod resolve;
@@ -530,6 +531,19 @@ impl ModHost {
             lock(registry()).remove(&loaded.handle.0);
             drop(loaded);
         }
+    }
+
+    /// Content of every enabled mod (cooked pak, material declarations), in load order (plan section 6.11).
+    pub fn content(&self) -> Vec<content::ModContent> {
+        self.order
+            .iter()
+            .filter(|i| self.mods[**i].state == State::Enabled)
+            .filter_map(|i| {
+                let m = &self.mods[*i];
+                let manifest = m.manifest.as_ref()?;
+                Some(content::read(&m.id, &m.dir, manifest.content_build.as_deref()))
+            })
+            .collect()
     }
 
     pub fn statuses(&self) -> Vec<ModStatus> {
