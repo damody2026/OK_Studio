@@ -1219,6 +1219,7 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
             // the coat's dark inside showing in patches while she swung a sword (2.5% of her coat's back, 1.0% fed back;
             // 2026-11-22).
             if layer_feed() { keep_layers(session, index, sim, skel, &mut fixed); }
+            above_floor(sim, skel, &mut fixed);
             let back = 1. - (-(if t.free { t.free_pull } else { t.pull }) * sim.pending).exp();
             let launch_frames = frames(&sim.launch_target, &sim.tris, &sim.nbr);
             let delta: Vec<[f32; 3]> = (0..np).map(|p| {
@@ -1303,7 +1304,15 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     let (clamped, pushed) = constrain(sim, &d, &targets, normals, &caps, &live, skin_arg, &mut sim_pos);
     let t_layers = std::time::Instant::now();
     let layered = keep_layers(session, index, sim, skel, &mut sim_pos);
+    above_floor(sim, skel, &mut sim_pos);
     if layered > 0 && debug_on() { log(1, &format!("OK cloth px layers: cloth {} {layered} particles kept outside the garment under them ({} us)", sim.key, t_layers.elapsed().as_micros())); }
+    if debug_due(sim.key ^ 0xF1) {
+        // How low the cloth shown reaches against the floor she stands on (her root bone).
+        let root = bone_pos(skel, "cf_j_root").map_or(f32::NAN, |r| r[1]);
+        let low = |v: &[[f32; 3]]| v.iter().fold(f32::MAX, |a, p| a.min(p[1]));
+        let under = sim_pos.iter().filter(|p| p[1] < root - 0.005).count();
+        log(1, &format!("OK cloth px floor: cloth {} lowest shown y {:.3}, pose {:.3}, root {:.3}, {under} particles under the floor", sim.key, low(&sim_pos), low(&targets), root));
+    }
     sim.shown = sim_pos.clone();
     let most = (0..np).map(|p| len(sub(sim_pos[p], targets[p]))).fold(0f32, f32::max);
     for p in 0..np { sim.offsets[p] = sub(sim_pos[p], targets[p]); }
@@ -1357,6 +1366,22 @@ pub(crate) fn apply(session: usize, index: usize, part: &crate::session::Session
     }
     let mut st = STATS.lock().unwrap();
     st.clamped += clamped; st.pushed += pushed; st.max_offset_mm = st.max_offset_mm.max(most * 1000.);
+}
+
+/// Above the floor she stands on (her root bone, OK_CLOTH_PX_FLOOR mm over it, default 3; negative: off): FleX has no
+/// ground, and sitting on the floor Raiden's kimono went 25 cm under it (1580 particles; her pose's own hem 6 cm),
+/// Megumin's dress 9 cm (2026-11-22). Also handed back to the solver with the other corrections.
+fn above_floor(sim: &Sim, skel: &crate::pose::Skeleton, pos: &mut [[f32; 3]]) -> usize {
+    static E: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    let gap = *E.get_or_init(|| env_f("OK_CLOTH_PX_FLOOR", 3.));
+    if gap < 0. { return 0; }
+    let Some(root) = bone_pos(skel, "cf_j_root") else { return 0 };
+    let floor = root[1] + gap * 0.001;
+    let mut n = 0;
+    for (p, at) in pos.iter_mut().enumerate() {
+        if !sim.pinned[p] && at[1] < floor { at[1] = floor; n += 1; }
+    }
+    n
 }
 
 fn layer_feed() -> bool { static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new(); *E.get_or_init(|| env_f("OK_CLOTH_PX_LAYER_FEED", 1.) > 0.5) }
