@@ -13,6 +13,8 @@ static FString GOKLastRule;
 TSharedPtr<FJsonObject> OKRulesEval(const FOKStreetSceneState& S,const TSharedRef<FJsonObject>& Request){
  if(!S.Rules)return nullptr;FString Error;const bool Game=IsInGameThread();if(Game)GOKLastRule=Request->GetStringField(TEXT("rule"));
  const double T0=FPlatformTime::Seconds();
+ // "<mod id>.<rule>": a mod's own rule (OKStreetSocialMods.inl), never ok-rules'.
+ if(Game&&Request->GetStringField(TEXT("rule")).Contains(TEXT("."))){TSharedPtr<FJsonObject> OKStreetModRule(const TSharedRef<FJsonObject>&);if(const TSharedPtr<FJsonObject> Mod=OKStreetModRule(Request))return Mod;}
  TSharedPtr<FJsonObject> Out=S.Rules->Eval(Request,Error);
  if(!Out.IsValid())UE_LOG(LogTemp,Warning,TEXT("Street rules: %s failed: %s"),*Request->GetStringField(TEXT("rule")),*Error);
  // A rule that held the game thread over 2 ms (a candidate for OKRulesEvalAsync).

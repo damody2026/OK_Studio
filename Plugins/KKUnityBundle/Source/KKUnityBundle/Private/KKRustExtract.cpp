@@ -1804,6 +1804,8 @@ bool FOkSession::CardHairDeck(const FString& Card,const FString& CardsJson,const
  char Buffer[4096]{};const int32 Result=ok_card_hairdeck(TCHAR_TO_UTF8(*Card),TCHAR_TO_UTF8(*CardsJson),TCHAR_TO_UTF8(*OptsJson),TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
  Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
 }
+void FOkSession::SetModDispatch(const char*(*Dispatch)(const char*),void(*Free)(const char*)){ok_set_mod_dispatch(Dispatch,Free);}
+void FOkSession::SetEnabledMods(const char* Lines){ok_set_enabled_mods(Lines);}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){
  OKPrepareCardEnvironment();char Buffer[2048]{};
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));
@@ -1821,6 +1823,21 @@ bool FOkSession::AbsentCardMods(const FString& Card,TArray<FString>& Absent,FStr
  const FString Text=UTF8_TO_TCHAR(Buffer.GetData());Absent.Reset();
  if(Result!=0){Error=Text;return false;}
  Text.ParseIntoArrayLines(Absent);return true;
+}
+bool FOkSession::CardModSection(const FString& Card,const FString& ModId,bool& bFound,int32& Version,TArray<uint8>& Data,FString& Error){
+ const FTCHARToUTF8 CardUtf8(*FPaths::ConvertRelativePathToFull(Card));const FTCHARToUTF8 IdUtf8(*ModId);
+ char Buffer[1024]{};uint32_t V=0;bFound=false;Data.SetNumUninitialized(4096);
+ int32 N=ok_card_mod_section_get(CardUtf8.Get(),IdUtf8.Get(),&V,Data.GetData(),Data.Num(),Buffer,UE_ARRAY_COUNT(Buffer));
+ if(N>Data.Num()){Data.SetNumUninitialized(N);N=ok_card_mod_section_get(CardUtf8.Get(),IdUtf8.Get(),&V,Data.GetData(),Data.Num(),Buffer,UE_ARRAY_COUNT(Buffer));}
+ if(N==-2){Data.Reset();return true;}
+ if(N<0||N>Data.Num()){Data.Reset();Error=UTF8_TO_TCHAR(Buffer);return false;}
+ Data.SetNum(N);Version=int32(V);bFound=true;return true;
+}
+bool FOkSession::SetCardModSection(const FString& Card,const FString& ModId,int32 Version,TConstArrayView<uint8> Data,bool bRemove,FString& Error){
+ char Buffer[1024]{};
+ const int32 Result=ok_card_mod_section_set(TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*ModId),uint32_t(FMath::Max(Version,0)),Data.GetData(),Data.Num(),bRemove?1:0,Buffer,UE_ARRAY_COUNT(Buffer));
+ if(Result!=0){Error=UTF8_TO_TCHAR(Buffer);return false;}
+ return true;
 }
 // The native library reads its OK_* switches from the process environment as it runs: this flips one in a running game
 // (in-process A/B of a switch, without restarting between the two halves).

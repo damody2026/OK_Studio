@@ -78,6 +78,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "autocfg"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -100,9 +106,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.20.3"
+version = "3.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+checksum = "87a0cf66fd1eb2fb7b822cb78370d82303750809bc6ba855f3f58e517d3238db"
 
 [[package]]
 name = "cfg-if"
@@ -303,10 +309,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
+name = "ok-card-mods"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "rmpv",
+ "sha2",
+]
+
+[[package]]
 name = "ok-mod-api"
 version = "0.1.0"
 dependencies = [
  "abi_stable",
+]
+
+[[package]]
+name = "ok-mod-birthday"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -361,11 +394,30 @@ dependencies = [
 name = "ok-mod-host"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "ok-card-mods",
  "ok-mod-api",
  "semver",
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "ok-mod-object-hotkeys"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
+name = "ok-mod-outfit-names"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -382,12 +434,89 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-pair-counter"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-profile"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "rmpv",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-random-chara"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-scene-notes"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
 name = "ok-mod-sdk"
 version = "0.1.0"
 dependencies = [
  "base64",
  "ok-mod-api",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-studio"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-studio-autosave"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
+name = "ok-mod-subtitles"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ok-mod-timeline-flow"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
+name = "ok-mod-ui-sample"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
  "serde_json",
 ]
 
@@ -454,6 +583,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb1070755bd29dffc19d0971cab794e607839ba2ef4b69a9e6fbc8733c1b72ea"
 dependencies = [
  "tstr",
+]
+
+[[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmpv"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a4e1d4b9b938a26d2996af33229f0ca0956c652c1375067f0b45291c1df8417"
+dependencies = [
+ "rmp",
 ]
 
 [[package]]

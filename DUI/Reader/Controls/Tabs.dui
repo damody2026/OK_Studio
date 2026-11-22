@@ -1,0 +1,11 @@
+// A mod page's tabs (OKReaderModPage puts one page per tab in code).
+class /Game/UI/Reader/Controls/WBP_OKTabs
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (400, 300)
+    + Overlay { }
+    Native.TabView Tabs {
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Fill }
+    }
+}

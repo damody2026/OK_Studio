@@ -23,6 +23,7 @@ UOKReaderScreen（DUI/Reader/ReaderScreen.dui → /Game/UI/Reader/WBP_ReaderScre
 ```
 
 - 程式：`Source/OpenKoikatsu/OKReaderScreen.h/.cpp`。`UOKDreamControl` 是一個鏡像控制項（Label／Button／Slider／Toggle／Choice／Input／Image／Drawer，由各自的 `.dui` 決定有哪些部件）；`UOKReaderScreen::Mirror` 把一棵 UMG 子樹轉成 DreamGUI 控制項，橫向列（`UHorizontalBox`）保留成橫列，UMG 面板的子項增減時整段重建。
+- mod 頁（「設定」欄的 Mods 分類）不鏡像：`OKReaderModPage.cpp` 依 mod 的 `reader.ui` 宣告直接建 DreamGUI 控制項，多了 Spin／Progress／Radio／Color／List／Tabs／Scroll 七種 `.dui`（`DUI/Reader/Controls/`）。這些控制項沒有 UMG 來源，`UOKDreamControl::Pull` 每幀從 mod 的值顯示，`Push` 把改動送回 mod；格式見 [OK_MOD_HOOKS.md](OK_MOD_HOOKS.md) §4（工作項 7b，2026-11-23）。
 - 版面與外觀改 `.dui`（`DUI/Reader/`，主題 `DUI/Theme.dui` 用 DreamGUI 的 Default preset），改完執行：
 
   ```powershell

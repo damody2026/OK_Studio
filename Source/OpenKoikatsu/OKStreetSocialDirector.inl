@@ -101,6 +101,8 @@ FString AOKStreetSocialScene::TodayText(int32 Character) const{
    Earlier.Add(FString::Printf(TEXT("%02d:%02d %s"),Said/60%24,Said%60,*OKMsg(TEXT("ui.director.plan_block"),{{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),P?FString(P->Name):B.Place}})));}
   if(Earlier.Num())Parts.Add(OKMsg(TEXT("ui.director.your_day_so_far_line"),{{TEXT("done"),FString::Join(Earlier,OKT(TEXT("ui.bank.list_separator")))}}));}
  if(BirthdayOf(Character,Day))Parts.Add(OKT(TEXT("ui.director.today_is_birthday")));else if(BirthdayOf(Character,Day+1))Parts.Add(OKT(TEXT("ui.director.tomorrow_birthday_hint")));
+ // What the mods recorded for her (street.talk_facts): facts only, what she makes of them is hers.
+ if(IsInGameThread())Parts.Append(ModsTalkFacts(Character));
  return FString::Join(Parts,OKT(TEXT("ui.bank.list_separator")));
 }
 

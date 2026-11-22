@@ -11,8 +11,15 @@ class UDreamToggle;
 class UDreamDropdown;
 class UDreamTextInput;
 class UDreamScrollBox;
+class UDreamSpinBox;
+class UDreamProgressBar;
+class UDreamRadioButton;
+class UDreamTabView;
+class UDreamListView;
 class UWidget;
 class UPanelWidget;
+class FJsonValue;
+class FJsonObject;
 
 // The card reader's DreamGUI screen (DUI/Reader/ReaderScreen.dui) and its controls (DUI/Reader/Controls/*.dui).
 //
@@ -41,6 +48,14 @@ public:
 	UPROPERTY() TObjectPtr<UDreamWidget> Body;
 	// A drawer's fold sign (▼ open, ▶ folded).
 	UPROPERTY() TObjectPtr<UDreamWidget> Arrow;
+	// The kinds a mod's page has and no mirrored control does (OKReaderModPage.cpp).
+	UPROPERTY() TObjectPtr<UDreamSpinBox> Spin;
+	UPROPERTY() TObjectPtr<UDreamProgressBar> Progress;
+	UPROPERTY() TObjectPtr<UDreamRadioButton> Radio;
+	UPROPERTY() TObjectPtr<UDreamTabView> Tabs;
+	UPROPERTY() TObjectPtr<UDreamListView> List;
+	UPROPERTY() TObjectPtr<UDreamScrollBox> Scroll;
+	UPROPERTY() TObjectPtr<UDreamWidget> Swatch;
 
 	// The UMG control this one shows (null for a control of the screen's own).
 	TWeakObjectPtr<UWidget> Source;
@@ -49,6 +64,15 @@ public:
 	// Switched when there is no UMG source (the screen's own toggles, e.g. the hair colour settings, which are the
 	// player's and belong to no card field, so there is no property row to mirror).
 	TFunction<void(bool)> OnToggled;
+	// A control bound to a value kept elsewhere rather than to a UMG control (a mod's control, OKReaderModPage): Pull shows
+	// the value now (every Sync), Push hands on a value the person set here, as text -- a number, "1"/"0", an option's
+	// index, the typed text, "#RRGGBB" -- and says why not when it is refused.
+	TFunction<void(UOKDreamControl&)> Pull;
+	TFunction<bool(const FString&,FString&)> Push;
+	// A bound drop-down's or list's options as shown (set takes an option's text or index).
+	TArray<FString> BoundOptions;
+	// Pull now, as Sync does: the values it puts in fire no change of the person's.
+	void PullNow(){if(Pull){TGuardValue<bool> Guard(bPushing,true);Pull(*this);}}
 	// Text shown instead of the source's own (a drawer's title, a tab).
 	FString FixedText;
 	// A drop-down: only the options matching this show (a search field above it sets it).
@@ -83,6 +107,10 @@ protected:
 	UFUNCTION() void HandleToggle(bool bOn);
 	UFUNCTION() void HandleChoice(int32 Index);
 	UFUNCTION() void HandleInputCommitted(const FString& Text);
+	UFUNCTION() void HandleSpin(float Value);
+	UFUNCTION() void HandleRadio(bool bOn);
+	UFUNCTION() void HandleList(int32 Index);
+	bool PushValue(const FString& Value,FString* OutNote);
 
 private:
 	bool bPushing=false;
@@ -289,6 +317,20 @@ private:
 	TOptional<TArray<FString>> WantedTargets,WantedProperties;
 
 	void BuildCategories();
+	// The pages without the mods' (pages.json, else the built-in ones).
+	void BuildBaseCategories();
+	// A "Mods" category after the others when the mod host runs in the reader (OKReaderMods): each mod's reader_ui
+	// pages, and one page of "apply this mod's data when a card loads" switches.
+	void AddModCategory();
+	// One mod page's items (OKReaderModPage.cpp, Docs/OK_MOD_HOOKS.md §4): DreamGUI controls made here, bound to the mod's
+	// values (OKReaderMods::Value／Set) with no UMG behind them. Returns the height it took, roughly (a tab view is as
+	// tall as its tallest page).
+	float BuildModItems(UDreamWidget* Into,const TArray<TSharedPtr<FJsonValue>>& Items,const FString& Where,bool bRow);
+	float BuildModItem(UDreamWidget* Into,const TSharedPtr<FJsonObject>& Item,const FString& Where,bool bRow);
+	// A caption beside a value control: the row and the caption (null when the item has no label).
+	UDreamWidget* ModRow(UDreamWidget* Into,const TSharedPtr<FJsonObject>& Item,bool bRow);
+	// The pictures mod pages show, by file: kept for the screen's life (never collected while DreamGUI may draw one).
+	UPROPERTY() TMap<FString,TObjectPtr<class UTexture2D>> ModPictures;
 	// The pages from Config/ReaderEditor/pages.json (-ReaderPages=<file> overrides; Docs/READER_DATA_DRIVEN_PAGES_DESIGN.md).
 	// A file that cannot be read keeps the built-in pages (BuildCategories' own) with the error in red; a bad entry is
 	// left out and named. Never the old UMG screen.

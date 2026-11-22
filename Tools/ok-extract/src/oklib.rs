@@ -826,51 +826,10 @@ pub const IDENTITY_CHUNK: &[u8; 4] = b"okId";
 /// A card's identity: its `okId` chunk when it has one, else the sha256 of its bytes without the `okVo` chunk (its
 /// own TTS voice) and the mods' `okMx`/`okMr` (okmods.rs `IDENTITY_EXCLUDED`), as `card_identity` in
 /// Tools/prepare_street_social_selection.lua and `OKCardIdentity` (Source/OpenKoikatsu/OKCardIdentity.h) compute it.
-pub fn card_identity(bytes: &[u8]) -> Option<String> {
-    use sha2::Digest;
-    if let Some(id) = png_chunk(bytes, IDENTITY_CHUNK) {
-        return std::str::from_utf8(id).ok().filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())).map(str::to_owned);
-    }
-    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" { return None; }
-    let mut hash = sha2::Sha256::new();
-    hash.update(&bytes[..8]);
-    let mut pos = 8usize;
-    while pos + 12 <= bytes.len() {
-        let len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
-        let end = pos.checked_add(12 + len).filter(|e| *e <= bytes.len())?;
-        let kind = &bytes[pos + 4..pos + 8];
-        if !crate::okmods::IDENTITY_EXCLUDED.iter().any(|k| &k[..] == kind) { hash.update(&bytes[pos..end]); }
-        pos = end;
-        if kind == b"IEND" { break; }
-    }
-    hash.update(&bytes[pos..]);
-    Some(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
-}
+pub fn card_identity(bytes: &[u8]) -> Option<String> { ok_card_mods::card_identity(bytes) }
 
 /// The card with its `okId` chunk set to `id` (placed right before IEND, replacing one it had).
-pub fn with_card_identity(bytes: &[u8], id: &str) -> Result<Vec<u8>, String> {
-    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" { return Err("not a PNG card".into()); }
-    let mut out = Vec::with_capacity(bytes.len() + 12 + IDENTITY_CHUNK.len() + id.len());
-    out.extend_from_slice(&bytes[..8]);
-    let mut pos = 8usize;
-    while pos + 12 <= bytes.len() {
-        let len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
-        let end = pos.checked_add(12 + len).filter(|e| *e <= bytes.len()).ok_or("truncated PNG chunk")?;
-        let kind = &bytes[pos + 4..pos + 8];
-        if kind == b"IEND" {
-            let mut chunk = IDENTITY_CHUNK.to_vec();
-            chunk.extend_from_slice(id.as_bytes());
-            out.extend_from_slice(&(id.len() as u32).to_be_bytes());
-            out.extend_from_slice(&chunk);
-            out.extend_from_slice(&crc32fast::hash(&chunk).to_be_bytes());
-            out.extend_from_slice(&bytes[pos..]);
-            return Ok(out);
-        }
-        if kind != IDENTITY_CHUNK { out.extend_from_slice(&bytes[pos..end]); }
-        pos = end;
-    }
-    Err("missing PNG IEND".into())
-}
+pub fn with_card_identity(bytes: &[u8], id: &str) -> Result<Vec<u8>, String> { ok_card_mods::with_card_identity(bytes, id) }
 
 /// An OK card made again keeps the identity it had; an original KKS card made into an OK card for the first time
 /// has none to keep (its identity is that of the OK card made).
@@ -2256,6 +2215,8 @@ fn make_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i32) ->
     let bytes = library_card_with_pack(&original, &payload, pack.as_deref())?;
     let bytes = crate::tree_answers::with_answers(&bytes, &answers?)?;
     let bytes = if absent_gaps.is_empty() { bytes } else { crate::tree_answers::with_chunk(&bytes, ABSENT_CHUNK, absent_gaps.join("\n").as_bytes())? };
+    // Mods that read original plugin data (KKEx) make their okMx sections now (okmods.rs, the kkex hook).
+    let bytes = crate::okmods::with_kkex_mods(&original, bytes)?;
     lap("card");
     Ok((digest, parts, bytes, pack.map_or(0, |p| p.len())))
 }

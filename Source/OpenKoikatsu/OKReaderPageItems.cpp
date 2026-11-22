@@ -9,6 +9,7 @@
 #include "Dom/JsonObject.h"
 #include "OKCharacterController.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKReaderMods.h"
 #include "OKReaderText.h"
 #include "Styling/CoreStyle.h"
 
@@ -84,7 +85,8 @@ bool OKReaderPageItems::IsKnownAction(const FString& Action)
 {
 	static const TSet<FString> Known={TEXT("add_accessory_slot"),TEXT("apply_properties"),TEXT("reset_properties"),TEXT("tpose"),TEXT("walk"),
 		TEXT("pause"),TEXT("replay"),TEXT("blink"),TEXT("reset_left_hand"),TEXT("reset_right_hand"),TEXT("speak")};
-	return Known.Contains(Action);
+	// mod.<id>.<command>: a mod's button (its reader_ui page), run through the mod host.
+	return Known.Contains(Action)||Action.StartsWith(TEXT("mod."));
 }
 
 bool OKReaderPageItems::RunAction(UOKCharacterController* G,const FString& Action,FString& Error)
@@ -101,6 +103,7 @@ bool OKReaderPageItems::RunAction(UOKCharacterController* G,const FString& Actio
 	else if(Action==TEXT("reset_left_hand"))G->OnResetLeftHand();
 	else if(Action==TEXT("reset_right_hand"))G->OnResetRightHand();
 	else if(Action==TEXT("speak"))G->OnSpeak();
+	else if(Action.StartsWith(TEXT("mod.")))return OKReaderMods::RunCommand(G,Action,Error);
 	else{Error=TEXT("unknown action ")+Action;return false;}
 	return true;
 }

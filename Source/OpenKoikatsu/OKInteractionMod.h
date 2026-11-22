@@ -19,7 +19,8 @@ enum class EOKPairModEvent : uint8
 	Exit,
 	/** The H scene notes something that happened (UOKHScenePanel::Note): Text as shown, bReact whether she reacts. */
 	Note,
-	/** One of them comes (UOKHScenePanel::Finish): Text is the kind (e.g. "org_in", "same_out"). */
+	/** One of them comes: Text is the kind. Hers: "orgW"/"orgS" (with him in her), "orgTouch" (his caress), "orgSolo"
+	 *  (by herself); both: "sameW"/"sameS"; his: "inside"/"outside" (UOKHScenePanel::Finish and its caress / solo climaxes). */
 	Finish,
 	/** Her voice plays: Source "hvoice" (the original's H line, Row of its table, Text its clip name) or "tts" (her spoken
 	 *  line), Path the sound file. */

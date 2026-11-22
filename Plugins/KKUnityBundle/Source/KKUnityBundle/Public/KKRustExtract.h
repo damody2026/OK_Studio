@@ -115,10 +115,19 @@ public:
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);
+ // The game's mod host for this module's ok-extract (ok_set_mod_dispatch): in a modular (editor) build each module links
+ // its own copy, so the opens and conversions run from here need it set here too (Docs/OK_MOD_S7_READER_API.md).
+ static void SetModDispatch(const char*(*Dispatch)(const char*),void(*Free)(const char*));
+ // ok_set_enabled_mods for this module's copy: "id@version" lines, or null to ask the host.
+ static void SetEnabledMods(const char* Lines);
  static bool MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary,const FString& GameRoot=FString());
  /** The mods an original card names that opening it would not find (base library, zipmods beside the card, the KKS
   *  installation). Empty for OK cards. Reads manifests: call off the game thread. */
  static bool AbsentCardMods(const FString& Card,TArray<FString>& Absent,FString& Error);
+ /** One mod's section of a card's okMx (the mod host's card data): bFound false when the card has none for the mod.
+  *  Set (or bRemove) rewrites the card file in place, every other section and the card's identity kept. */
+ static bool CardModSection(const FString& Card,const FString& ModId,bool& bFound,int32& Version,TArray<uint8>& Data,FString& Error);
+ static bool SetCardModSection(const FString& Card,const FString& ModId,int32 Version,TConstArrayView<uint8> Data,bool bRemove,FString& Error);
  static bool CopyPortableClothingStates(const FString& Source,const FString& Output,FString& Error);
  static TArray<FString> AnimationSourceNames(const FString& Root,const FString& Source);
  static bool PrepareStudioAnimation(const FString& Root,const FString& Key,const FString& Source,const FString& Owner);

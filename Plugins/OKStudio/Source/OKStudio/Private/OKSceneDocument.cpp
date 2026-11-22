@@ -32,6 +32,7 @@ bool UOKSceneDocument::RemoveObject(int32 Id)
 	TArray<int32> Doomed = { Id };
 	for (int32 I = 0; I < Doomed.Num(); ++I) Doomed.Append(Children(Doomed[I]));
 	Objects.RemoveAll([&](const FOKSceneObject& O) { return Doomed.Contains(O.Id); });
+	FOKStudioModRegistry::Get().NotifyObjectsDeleted(Doomed);
 	if (Doomed.Contains(ActiveCamera)) ActiveCamera = -1;
 	NotifyChanged();
 	return true;
@@ -87,6 +88,7 @@ int32 UOKSceneDocument::Duplicate(int32 Id)
 			Constraints.Add(MoveTemp(Copy));
 		}
 	}
+	FOKStudioModRegistry::Get().NotifyObjectsCopied(IdMap);
 	NotifyChanged();
 	return IdMap[Id];
 }
@@ -434,6 +436,7 @@ namespace
 	{
 		TMap<int32, int32> IdMap;
 		for (FOKSceneObject& O : In) IdMap.Add(O.Id, Doc.NextId++);
+		FOKStudioModRegistry::Get().LastRemap = IdMap;
 		TArray<int32> Tops;
 		for (FOKSceneObject& O : In)
 		{
@@ -579,6 +582,7 @@ TArray<int32> UOKSceneDocument::PasteFragment(const FString& Json, int32 Parent,
 	TArray<FOKSceneTrack> InTracks;
 	if (!ParseObjects(Root, In, InTracks, OutError)) return {};
 	TArray<int32> Tops = AddObjectsRemapped(*this, MoveTemp(In), InTracks, Parent, Root);
+	FOKStudioModRegistry::Get().NotifyObjectsCopied(FOKStudioModRegistry::Get().LastRemap);
 	NotifyChanged();
 	return Tops;
 }
@@ -595,6 +599,7 @@ TArray<int32> UOKSceneDocument::Merge(const FString& SceneJson, FString& OutErro
 	for (FOKSceneObject& O : In) if (!Ids.Contains(O.Parent)) O.Parent = -1;
 	TArray<int32> Tops = AddObjectsRemapped(*this, MoveTemp(In), InTracks, -1, Root);
 	if (Root->HasField(TEXT("duration"))) Duration = FMath::Max(Duration, float(Root->GetNumberField(TEXT("duration"))));
+	FOKStudioModRegistry::Get().NotifySceneLoad(TEXT("import"), &FOKStudioModRegistry::Get().LastRemap, Root);
 	NotifyChanged();
 	return Tops;
 }

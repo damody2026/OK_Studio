@@ -638,7 +638,9 @@ void AOKStreetSocialScene::StartControlServer(){
   if(Action==TEXT("reload")){FString Out;const bool Ok=S.Rules->Reload(Out,Error);O=OKControlResult(Ok,Error);O->SetStringField(TEXT("result"),Out);if(Ok){LoadUiTexts();RefreshUI();}}
   else if(Action==TEXT("eval")){const TSharedPtr<FJsonObject>* Request=nullptr;
    if(!Body->TryGetObjectField(TEXT("request"),Request)||!Request->IsValid()){OKControlReply(Done,OKControlResult(false,TEXT("request object required")));return;}
-   const TSharedPtr<FJsonObject> Answer=S.Rules->Eval(Request->ToSharedRef(),Error);O=OKControlResult(Answer.IsValid(),Error);if(Answer.IsValid())O->SetObjectField(TEXT("answer"),Answer);}
+   // A mod's namespaced rule ("<mod id>.<rule>") is answered by that mod, as in the game (OKStreetModRule).
+   TSharedPtr<FJsonObject> OKStreetModRule(const TSharedRef<FJsonObject>&);TSharedPtr<FJsonObject> Answer=(*Request)->GetStringField(TEXT("rule")).Contains(TEXT("."))?OKStreetModRule(Request->ToSharedRef()):nullptr;
+   if(!Answer.IsValid())Answer=S.Rules->Eval(Request->ToSharedRef(),Error);O=OKControlResult(Answer.IsValid(),Error);if(Answer.IsValid())O->SetObjectField(TEXT("answer"),Answer);}
   else{auto Request=MakeShared<FJsonObject>();Request->SetStringField(TEXT("rule"),TEXT("status"));const TSharedPtr<FJsonObject> Answer=S.Rules->Eval(Request,Error);
    O=OKControlResult(Answer.IsValid(),Error);if(Answer.IsValid())O->SetObjectField(TEXT("status"),Answer);}
   O->SetStringField(TEXT("dll"),S.Rules->DllPath());O->SetNumberField(TEXT("generation"),S.Rules->Generation());

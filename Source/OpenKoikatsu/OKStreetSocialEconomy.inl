@@ -949,6 +949,7 @@ void AOKStreetSocialScene::FinishGift(int32 Her,const FString& ItemId,const FStr
   if(const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Got))OKRulesTakeExt(Candidate,*Out);}
  ApplyRulesEffects(Candidate,*Answer);
  if(CommitStore(MoveTemp(Candidate))){FlushRulesEffects();S.FreeTalkNotice=Answer->GetStringField(TEXT("notice"));}
+ ModsHeroineEvent(TEXT("street.gift"),Her,[&](FJsonObject& P){P.SetStringField(TEXT("item"),ItemId);P.SetBoolField(TEXT("accepted"),Answer->GetBoolField(TEXT("accepted")));P.SetBoolField(TEXT("birthday"),BirthdayOf(Her,S.Store.CalendarDay));});
  RefreshUI();
 }
 

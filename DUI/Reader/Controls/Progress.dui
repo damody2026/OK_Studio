@@ -1,0 +1,12 @@
+// A bar showing how far along a mod's value is (OKReaderModPage); it takes no input.
+class /Game/UI/Reader/Controls/WBP_OKProgress
+use "Theme.dui" as ui
+
+Widget Root {
+    AnchorData.SizeDelta = (240, 20)
+    + Overlay { }
+    Native.ProgressBar Progress {
+        Percent = 0
+        @slot { HorizontalAlignment = Fill  VerticalAlignment = Center  MinDesiredSize = (0, 16) }
+    }
+}

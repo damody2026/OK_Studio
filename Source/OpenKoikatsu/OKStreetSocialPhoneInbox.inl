@@ -215,6 +215,7 @@ void AOKStreetSocialScene::PhoneCall(int32 Girl){
   const FOKStreetRelation R=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Girl]),S.Manifest.TalkBudget);
   if(R.Stage!=TEXT("stranger")&&R.Resentment<60&&!S.PendingTexts.ContainsByPredicate([Girl](const FOKStreetSceneState::FPendingText& T){return T.Girl==Girl;})){const FOKStreetPlanBlock* B=OnPhoneWithHim(Girl)?nullptr:LifeBlock(Girl,int32(OKStreetMindNow(S)%1440)); // texting him just now: not "asleep"
    QueueHerText(Girl,OKMsg(TEXT("ui.phone_inbox.missed_call_while_doing"), {{TEXT("doing"), B?OKPhoneDoingWord(B->Kind):OKT(TEXT("ui.phone_inbox.busy_word"))}}),TEXT("missed_call"),FMath::FRandRange(20.0,60.0));}
+  ModsHeroineEvent(TEXT("street.phone"),Girl,[](FJsonObject& P){P.SetStringField(TEXT("kind"),TEXT("call"));P.SetStringField(TEXT("from"),TEXT("him"));P.SetBoolField(TEXT("answered"),false);});
   UE_LOG(LogTemp,Display,TEXT("Street phone: call to actor %d not answered"),Girl);RefreshUI();return;
  }
  if(S.App==TEXT("phone"))CloseApp();
@@ -227,6 +228,7 @@ void AOKStreetSocialScene::PhoneCall(int32 Girl){
  S.FreeTalkOpen=true;FreeTalkLiveSet(true);
  S.SystemNote=true;S.FreeTalkDraft=OKT(TEXT("ui.phone_inbox.he_called_you_prompt"));SendFreeTalk();
  S.Message=OKMsg(TEXT("ui.phone_inbox.in_call_with"), {{TEXT("name"), *Name}});
+ ModsHeroineEvent(TEXT("street.phone"),Girl,[](FJsonObject& P){P.SetStringField(TEXT("kind"),TEXT("call"));P.SetStringField(TEXT("from"),TEXT("him"));P.SetBoolField(TEXT("answered"),true);});
  UE_LOG(LogTemp,Display,TEXT("Street phone: call to actor %d answered"),Girl);RefreshUI();
 }
 

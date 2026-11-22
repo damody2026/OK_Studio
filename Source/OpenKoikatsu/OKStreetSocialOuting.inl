@@ -281,6 +281,7 @@ bool AOKStreetSocialScene::NextDay(){
  TickVentures(Candidate);
  CompanyDaily(Candidate); // buildings, morale, applicants (OKStreetSocialCompany.inl)
  S.Store=MoveTemp(Candidate);
+ ModsDayChanged(); // before the save: a mod's answer may change its ext.mods state
  if(!S.SelfTest&&!S.Manifest.SavePath.IsEmpty())OKStreetAtomicSaveStoreAsync(S.Manifest.SavePath,S.Store);
  FlushRulesEffects();return true;
 }

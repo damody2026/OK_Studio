@@ -10,7 +10,7 @@ TMap<FString, TSharedPtr<FKKModMaterial>>& Families()
 	static TMap<FString, TSharedPtr<FKKModMaterial>> Table;
 	return Table;
 }
-float Linear(float C) { return C <= .04045f ? C / 12.92f : FMath::Pow((C + .055f) / 1.055f, 2.4f); }
+float ModSrgbToLinear(float C) { return C <= .04045f ? C / 12.92f : FMath::Pow((C + .055f) / 1.055f, 2.4f); }
 }
 
 void KKModMaterials::SetFamilies(TMap<FString, TSharedPtr<FKKModMaterial>> ByShader)
@@ -82,7 +82,7 @@ UMaterialInstanceDynamic* KKModMaterials::MakeInstance(const FKKModMaterial& M, 
 		for (const FMaterialParameterInfo& Info : Infos)
 		{
 			FLinearColor V;
-			if (SourceValue(Info.Name.ToString(), V)) Dynamic->SetVectorParameterValue(Info.Name, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
+			if (SourceValue(Info.Name.ToString(), V)) Dynamic->SetVectorParameterValue(Info.Name, FLinearColor(ModSrgbToLinear(V.R), ModSrgbToLinear(V.G), ModSrgbToLinear(V.B), V.A));
 		}
 	}
 	if (PartTexture && !M.MainTexture.IsNone()) Dynamic->SetTextureParameterValue(M.MainTexture, PartTexture);

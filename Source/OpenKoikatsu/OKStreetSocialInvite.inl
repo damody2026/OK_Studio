@@ -45,13 +45,14 @@ bool AOKStreetSocialScene::InviteAllowed(int32 Character,const FString& Action,F
  auto& S=*State;const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
  const int32 C=OKRulesInviteKind(S,Action);
  const TArray<bool>* Stance=S.InviteStance.Find(Id);
- if(!Stance||!Stance->IsValidIndex(C)||(*Stance)[C]){S.InviteRefusals.Remove(Id);return true;}
+ if(!Stance||!Stance->IsValidIndex(C)||(*Stance)[C]){S.InviteRefusals.Remove(Id);ModsHeroineEvent(TEXT("street.invite"),Character,[&](FJsonObject& P){P.SetStringField(TEXT("action"),Action);P.SetBoolField(TEXT("accepted"),true);});return true;}
  const FString Key=Id+FString::Printf(TEXT("|%d"),C);const bool Again=S.InviteRefusedAt.Contains(Key)&&SceneTime()-S.InviteRefusedAt[Key]<600;
  S.InviteRefusedAt.Add(Key,SceneTime());
  // Her reason, and what asking again and again after a no costs (invite.rs invite_refused).
  auto Request=OKRulesHeroineRequest(S,TEXT("invite_refused"),Id);Request->SetStringField(TEXT("action"),Action);Request->SetNumberField(TEXT("shift_until"),ShiftUntil(Character));Request->SetBoolField(TEXT("again"),Again);Request->SetNumberField(TEXT("refusals"),S.InviteRefusals.FindRef(Id));
  const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);if(!Out.IsValid()){Why=OKT(TEXT("ui.invite.not_in_mood"));return false;}
  Why=Out->GetStringField(TEXT("why"));S.InviteRefusals.Add(Id,int32(Out->GetNumberField(TEXT("refusals"))));
+ ModsHeroineEvent(TEXT("street.invite"),Character,[&](FJsonObject& P){P.SetStringField(TEXT("action"),Action);P.SetBoolField(TEXT("accepted"),false);});
  ApplyRulesRelation(Id,*Out);
  for(const auto& V:Out->GetArrayField(TEXT("notes"))){const TSharedPtr<FJsonObject> N=V->AsObject();HeroineNote(Character,*N->GetStringField(TEXT("act")),N->GetStringField(TEXT("text")),PlaceHere(S.Male),float(N->GetNumberField(TEXT("importance"))));}
  return false;

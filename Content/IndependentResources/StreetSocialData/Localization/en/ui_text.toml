@@ -2786,3 +2786,6 @@ language = "Language"
 
 [reader.properties]
 plugin_group_rows = "{group} ({count, plural, one {# row} other {# rows}})"
+[reader.mods]
+missing = "This card uses {count, plural, one {a mod} other {# mods}} that {count, plural, one {is} other {are}} not installed: {mods}. Its data stays in the card."
+apply_on_load = "Apply mod data on card load"

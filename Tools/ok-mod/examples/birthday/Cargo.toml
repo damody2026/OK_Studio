@@ -1,0 +1,15 @@
+[package]
+name = "ok-mod-birthday"
+version = "0.1.0"
+edition = "2021"
+description = "Street: remembers what happened on her birthdays (met, gift) in the save and tells her as facts; a morning notice."
+publish = false
+
+[lib]
+name = "ok_birthday"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }

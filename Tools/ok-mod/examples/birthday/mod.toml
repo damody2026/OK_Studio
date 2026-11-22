@@ -1,0 +1,9 @@
+id = "org.openkoikatsu.birthday"
+name = "Birthday"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_birthday.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.birthday.description"
+targets = ["street"]
+category = "feature"

@@ -11,6 +11,8 @@
 #include "OKStudioGameMode.h"
 #include "OpenKoikatsuGameMode.h"
 #include "KKModMaterials.h"
+#include "ok_extract.h"
+#include "KKRustExtract.h"
 #include "Containers/Ticker.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -23,11 +25,37 @@ namespace
 FString GWorldMode;
 TWeakObjectPtr<UWorld> GModeWorld;
 
+// ok-extract's enabled-mod list (okmods::set_enabled, the open-cache key) for this module's copy and KKUnityBundle's,
+// which runs the opens; set after every mode change, because each mode loads its own mods. Only mods that can change an
+// open count (a hook extract.* other than the conversion-only extract.kkex / extract.kkex_keys; okmods::changes_opens):
+// a street or reader mod would make every cached open miss for nothing.
+void SyncExtract()
+{
+	FString Lines;
+	if (const TSharedPtr<FJsonObject> L = FOKModHost::Get().List())
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Mods = nullptr;
+		if (L->TryGetArrayField(TEXT("mods"), Mods))
+			for (const TSharedPtr<FJsonValue>& M : *Mods)
+				if (const TSharedPtr<FJsonObject> O = M->AsObject(); O.IsValid() && O->GetStringField(TEXT("state")) == TEXT("enabled"))
+				{
+					TArray<FString> Subs;O->TryGetStringArrayField(TEXT("subscriptions"), Subs);
+					if (Subs.ContainsByPredicate([](const FString& S) { return S.StartsWith(TEXT("extract.")) && S != TEXT("extract.kkex") && S != TEXT("extract.kkex_keys"); }))
+						Lines += O->GetStringField(TEXT("id")) + TEXT("@") + O->GetStringField(TEXT("version")) + TEXT("\n");
+				}
+	}
+	const FTCHARToUTF8 Utf8(*Lines);
+	ok_set_enabled_mods(Utf8.Get());
+	FOkSession::SetModDispatch(&FOKModHost::RustDispatch, &FOKModHost::RustFree);
+	FOkSession::SetEnabledMods(Utf8.Get());
+}
+
 void Enter(UWorld* World, const FString& Mode)
 {
 	GWorldMode = Mode;
 	GModeWorld = World;
 	FOKModHost::Get().EnterMode(Mode);
+	SyncExtract();
 }
 
 void BeganPlay(TWeakObjectPtr<UWorld> Weak)
@@ -63,6 +91,7 @@ void WorldGone(UWorld* World, bool, bool)
 		FOKModHost::Get().ExitMode(GWorldMode);
 		GWorldMode.Empty();
 		GModeWorld = nullptr;
+		SyncExtract();
 	}
 }
 }
@@ -77,10 +106,20 @@ void OKModStart()
 	// ok-mod-pack install refuses to change a Mods folder a running game uses (Saved/OKControl/<pid>.json).
 	OKControl::Publish(TEXT("mods_dir"), FOKModHost::ModsDir());
 	FWorldDelegates::OnPostWorldInitialization.AddStatic(&WorldReady);
+	// A mode entered or left by other code (the street hands over to the 1-on-1 scene with EnterMode("pair") in its own
+	// world, E's OKInteraction): the enabled list is sent again whenever the host's mode changes, whoever changed it.
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Last = FString()](float) mutable
+	{
+		const FString& Now = FOKModHost::Get().CurrentMode();
+		if (Now != Last) { Last = Now; if (FOKModHost::Get().IsOpen()) SyncExtract(); }
+		return true;
+	}), 0.5f);
 	FWorldDelegates::OnWorldCleanup.AddStatic(&WorldGone);
 	FCoreDelegates::OnEnginePreExit.AddLambda([]
 	{
 		KKModMaterials::SetExtractDispatch(nullptr, nullptr);
+		ok_set_mod_dispatch(nullptr, nullptr);
+		FOkSession::SetModDispatch(nullptr, nullptr);
 		FOKModHost::Get().Close();
 	});
 }

@@ -7242,3 +7242,40 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 第一版只要宿主匯出 `okm_frame`，ok-extract 每幀就建整份 frame（拷骨骼、算 world），即使沒有任何 mod 要幀。量測前發現，改成先以 null 問宿主有幾個 mod 要幀。
   - 改了宿主 `frame.rs`（null 詢問）後只跑了 debug 測試，沒重編 release 的 `ok_mod_host.dll`，遊戲用的是舊版，null 一律回 0，boop 的 `calls` 一直是 0。教訓：改到遊戲載入的 DLL 後，實測前要重編 release 並重開遊戲（DLL 被執行中的遊戲鎖住）。
   - 用 Lua 腳本做多處替換時，`"        let gravity..."`（8 格縮排）是 16 格縮排那兩行的子字串，比對到 3 處而中止；前面幾處替換已經寫進檔案，只好另寫一份只跑剩下部分的腳本。教訓：替換字串前面加換行錨定縮排；多處替換的腳本要能重跑（或先全部檢查再一起寫）。
+## 2026-11-23 原作卡另存成 OK 卡時，mod 從 KKEx 匯入的資料被存檔掛點刪掉（C 組 c-mod-7，OK Mod 工作項 7）
+
+- **症狀**：讀卡器開原作卡（有 `KK_Profile`）、按「另存新卡」，轉出的 OK 卡沒有 `profile` 的 `okMx` 區段。
+- **原因**：轉卡時 `extract.kkex` 確實把簡介寫進新卡，但接著的 `reader.character_save` 是依 mod 的記憶體狀態回覆；開原作卡時 mod 只收到「卡上沒有區段」，簡介是空的，於是回 `remove`，把剛轉出的區段刪掉。
+- **修正**：開原作卡時，讀卡器先用 ok-extract 新的 `ok_kkex_mod_sections` 拿到 mod 從 KKEx 做出的區段，經 `card_load` 的 `imported` 交給 mod（payload `imported: true`）；mod 看到的就是轉卡會得到的內容，存檔時照寫。實測 `Alice_keiyuu.png`：開卡即顯示簡介，另存的 OK 卡有 profile 區段，改簡介後 MCP `save` 再重開仍在。
+- **教訓**：「轉卡時寫入」和「存檔時寫入」兩條路寫同一份資料時，mod 的狀態要從開卡那一刻就和轉卡結果一致，不能只在轉卡那一側處理；端對端要用真的有資料的原作卡測（第一張測試卡 `KK_103512.png` 的 `ProfileText` 是空字串，看不出問題）。
+- 另：用 Git Bash 的 `sed -i` 改 `examples/*/mod.toml` 時，沒有命中的 `hello/mod.toml` 也被改成 LF 行尾（內容沒變），提交前發現已還原。
+
+## 2026-11-23 裝了任何 mod，街區女角就載不出來（C 組 c-mod-10，OK Mod 工作項 10）
+
+- **症狀**：街區啟用 birthday、subtitles 兩個 mod 時，貞德·Alter、雷電將軍開卡失敗（`the OK card has N unanswered question(s)`，問的是 `mods/sideloader modpack - animations/…zipmod`）；`-NoMods` 正常。
+- **原因**：工作項 2 讓開卡快取鍵包含所有啟用的 mod，裝了 mod 鍵就變、快取全部沒命中；而這幾張卡在遊戲內重新開本來就會失敗（`-NoMods`＋`OK_NOCACHE=1` 也一樣），平常只是被快取擋住。
+- **修正**：快取鍵只算訂閱了開卡時會跑的 `extract.*` 掛點的 mod（`okmods::changes_opens`；`extract.kkex`／`extract.kkex_keys` 只影響轉卡，不算），`OKModModes.cpp` 送給 ok-extract 的清單同樣過濾。遊戲內重新開卡失敗是既有問題，未修，已寫進 `Docs/OK_MOD_S10_STREET.md`。
+- **教訓**：快取鍵要放「真的會改變結果的東西」，不是「所有可能相關的東西」；鍵放太寬會讓平常被快取遮住的冷路徑問題一次全部冒出來。改快取鍵之後要在遊戲裡實際開一次，不能只看單元測試。
+- 另：`unreal_slot.lua claim` 回「queued」時沒看結果就啟動了街區（約 1 分鐘），發現後立刻停掉，改用 `claim --wait` 拿到名額才重開。
+
+## 2026-11-23 遊戲內重新開街區女角卡報 unanswered question(s)（既有、待修；C 組，同步點 B 之後處理）
+
+- **症狀**：不用開卡快取時（快取被清掉、或快取鍵改變），街區開 `jeanne_alter.png`、`raiden_shogun.png` 都報 `the OK card has N unanswered question(s)`，問的是 `mods/sideloader modpack - animations/…zipmod`。`-NoMods`＋`OK_NOCACHE=1` 也一樣，和 mod 框架無關；`Tools/ok_cards.lua verify` 在遊戲外開同一張卡是好的。
+- **推測**：街區執行時讀動畫 mod 的掃描落進了卡片的嚴格開卡範圍。
+- **狀態**：既有問題，未修。協調者指派給 C 組，排在同步點 B 之後（街區屬 C 的範圍）。發現經過見上一條與 `Docs/OK_MOD_S10_STREET.md`。
+- 2026-11-23 OK mod 工作項 8（Studio API，`Docs/OK_MOD_S8_STUDIO_API.md`）：
+  - `Plugins/OKStudio/.../OKStudioGame.cpp` 是 CRLF 夾少數 LF 的混合行尾。用 `sed -i`、`unix2dos` 與 Edit 工具改一行，整個檔案的行尾都被統一，diff 變成上千行。修正：`git checkout --` 還原，改用逐位元組替換的 Lua 小腳本（錨點與替換文字都用 CRLF），diff 回到 4 行。教訓：改之前先用 `od -c`／Lua 看行尾（git bash 的 `cat -A` 看不出 `\r`），混合行尾的檔案只做位元組層級的替換；Windows 上 Lua 的命令列參數不能帶換行，替換規格要放檔案。
+  - 橋接第一次建置 C2446：`cond ? nullptr : MakeShared<FJsonValueString>(...)` 兩邊型別不同（`TSharedRef` 不能和 `nullptr` 合成一個型別）。改成分開的 `return`。
+  - 橋接在 mod 回 panic 時，於那個 mod 自己的指令執行中就 `RemoveOwner`，刪掉正在執行的 `TFunction`（自我測試「panic 的 mod 離開」失敗才看出來）。改成標記後下一幀移除。教訓：回呼裡不要移除擁有這個回呼的登錄項。
+  - 自我測試直接呼叫面板列的 `Set` 卻沒有像面板一樣 `NotifyChanged`，復原紀錄沒記到，重做失敗。是測試寫錯，改成照面板的流程。
+  - 工作項 5 把 mod 工具列按鈕接在上方工具列（固定寬 398 的 slot）後面，只用登錄後的元件清單驗過；接真 mod 後 7 顆按鈕全在視窗外，`ui_widgets` 列得到、畫面看不到。改成獨立 slot 往左長。教訓：UI 的驗收要截圖看畫面，元件存在不等於看得到。
+  - 橋接先照通知把 hook 的 payload 當字串送；宿主實作是把 `payload` 欄位當 JSON 值再序列化，送字串 mod 會拿到雙重編碼。對 `ok_mod_host.h` 後改送物件（在實機前發現）。教訓：跨組介面以對方提交的標頭為準，通知只是摘要。
+
+- 2026-11-23 OK mod 工作項 13（1 對 1，`Docs/OK_MOD_S13_PAIR.md`）：
+  - 工作項 6 的模式切換只看遊戲模式；讀卡器與街區世界裡開的 1 對 1 不會進 `pair`，第一次實機進 1 對 1 時 log 一直是 `mode reader: 0 mod(s)`，pair-counter 沒載入。改成 pair 橋接在 Enter／Exit 切宿主模式。教訓：先確認 mod 在那個情境真的會被載入，再看事件。
+  - 往 CRLF 工作檔（`Tools/ok-extract/src/ffi.rs`）用 Lua 插入 LF 文字，檔案變成混合行尾；git bash 的 `sed`／`od` 顯示時把 `\r` 去掉，錨點對不上卻看不出原因。用 Lua 數 `\r\n` 與 `\n` 才看出來，整檔統一成 CRLF（倉庫內是 LF，提交時正規化，diff 不受影響）。
+  - pair 橋接 `if (...) UE_LOG(...); else UE_LOG(...);` 編譯錯 C2181：`UE_LOG` 展開成區塊，不能接 `else`。加大括號。
+  - zh-TW 的提交用 `examples/*/locale/zh-TW` 萬用字元，把 pair-counter 的 zh-TW 檔也一起提交（早了一個提交）。內容無害，未改寫歷史。
+  - 第一版 S13 回報寫「`ok.PairModBridgeSelfTest` 17/17 仍通過」，其實那是改動前跑的，最後的改動之後沒重跑。統籌指出後重跑（21/21）並更正。教訓：回報裡的「通過」要是在最後的程式上跑的。
+  - 13 前置把 `FireFinish` 只放在 `UOKHScenePanel::Finish`；她愛撫與獨自的高潮走 `CountHerOrgasm` 不經 `Finish`，`pair.finish` 漏送。實機查高潮計數時讀程式才發現。另 `OKInteractionMod.h` 的種類範例（`org_in`、`same_out`）是憑印象寫的，實際是 `orgW`、`outside` 等，一併改正。
+- 2026-11-23 同步點 B（F 合併 C 的 78928db23）：合併後編輯器與遊戲建置都在 `KKModMaterials.cpp` 失敗（`'Linear'` 呼叫不明確）。工作項 9 在檔內匿名命名空間定義了 `Linear()`，合併進來的程式讓 unity build 把它和另一個同名函式編進同一個編譯單元。改名為 `ModSrgbToLinear`。教訓：檔內的小工具函式不要用 `Linear` 這種泛用名稱；在 unity build 裡，匿名命名空間擋不住同一個編譯單元內的撞名。

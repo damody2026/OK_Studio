@@ -6,6 +6,7 @@
 //! (`include/ok_mod_host.h`, `src/ffi.rs`); the ok-extract CLI links the rlib and uses [`ModHost`]
 //! directly.
 
+pub mod card;
 pub mod config;
 pub mod content;
 #[cfg(feature = "frame")]

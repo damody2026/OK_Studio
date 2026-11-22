@@ -1,0 +1,16 @@
+[package]
+name = "ok-mod-profile"
+version = "0.1.0"
+edition = "2021"
+description = "Character profile text in the card (KK_Profile): imported from original cards, edited in the reader."
+publish = false
+
+[lib]
+name = "ok_profile"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmpv = "1"

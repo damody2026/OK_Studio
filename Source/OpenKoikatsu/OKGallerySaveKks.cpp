@@ -1,4 +1,5 @@
 #include "OKCharacterController.h"
+#include "OKReaderMods.h"
 #include "OKStudioCharacterStyle.h"
 #include "KKCardWriter.h"
 #include "KKCardWorkspace.h"
@@ -152,6 +153,8 @@ void UOKCharacterController::OnSaveKks()
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), true);
 	FString Error;
 	if (!UKKCardWriter::SaveWithEdits(Card, OutPath, Error)) { Report(TEXT("存成 KKS 卡失敗：") + Error); return; }
+	// The mods' card data rides along (okMx; the original game ignores the chunk).
+	OKReaderMods::Saved(this, OutPath);
 	UE_LOG(LogTemp, Display, TEXT("KKS card saved: %s style=%.2f face_style=%.2f"), *OutPath, CharacterStyle, CharacterFaceStyle);
 	Report(FString::Printf(TEXT("已存成 KKS 卡：%s\n身材、臉部與骨骼調整已寫入。"), *OutPath) + Note);
 }

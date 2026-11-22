@@ -1,0 +1,3 @@
+"mod.org.openkoikatsu.subtitles.description" = "Shows what she says as a subtitle while a voice line plays."
+"mod.org.openkoikatsu.subtitles.config.seconds_per_char" = "Seconds a subtitle stays per character"
+"mod.org.openkoikatsu.subtitles.config.min_seconds" = "Shortest time a subtitle stays"

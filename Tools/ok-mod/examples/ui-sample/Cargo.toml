@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-ui-sample"
+version = "0.1.0"
+edition = "2021"
+description = "Every kind of reader control a mod can declare (Docs/OK_MOD_HOOKS.md §4), with values kept in memory."
+publish = false
+
+[lib]
+name = "ok_ui_sample"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde_json = { workspace = true }

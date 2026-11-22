@@ -1,0 +1,16 @@
+[package]
+name = "ok-mod-outfit-names"
+version = "0.1.0"
+edition = "2021"
+description = "A name for each outfit of a card, shown in the reader's outfit list."
+publish = false
+
+[lib]
+name = "ok_outfit_names"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+

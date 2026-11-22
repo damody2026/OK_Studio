@@ -1,0 +1,9 @@
+id = "org.openkoikatsu.random-chara"
+name = "Random character"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_random_chara.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.random-chara.description"
+targets = ["reader"]
+category = "tool"

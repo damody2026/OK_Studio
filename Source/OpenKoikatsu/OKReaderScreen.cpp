@@ -35,6 +35,9 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Controls/DreamDropdown.h"
 #include "Controls/DreamTextInput.h"
 #include "Controls/DreamScrollBox.h"
+#include "Controls/DreamSpinBox.h"
+#include "Controls/DreamRadioButton.h"
+#include "Controls/DreamListView.h"
 #include "Event/DreamEventSystem.h"
 #include "Event/DreamPointerEventData.h"
 #include "Event/DreamUIInputTypes.h"
@@ -70,6 +73,8 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Misc/ScopeExit.h"
 #include "Containers/Ticker.h"
 #include "OKCharacterMCPRegistry.h"
+#include "OKReaderMods.h"
+#include "OKReaderText.h"
 #include "OKReaderPageItems.h"
 #include "Dom/JsonValue.h"
 #include "Tasks/Task.h"
@@ -150,6 +155,9 @@ void UOKDreamControl::NativeOnInitialized()
 	if(Toggle)Toggle->OnToggleChanged.AddDynamic(this,&UOKDreamControl::HandleToggle);
 	if(Choice)Choice->OnSelectionChanged.AddDynamic(this,&UOKDreamControl::HandleChoice);
 	if(Input)Input->OnTextCommitted.AddDynamic(this,&UOKDreamControl::HandleInputCommitted);
+	if(Spin)Spin->OnValueCommitted.AddDynamic(this,&UOKDreamControl::HandleSpin);
+	if(Radio)Radio->OnToggleChanged.AddDynamic(this,&UOKDreamControl::HandleRadio);
+	if(List)List->OnSelectionChanged.AddDynamic(this,&UOKDreamControl::HandleList);
 }
 
 void UOKDreamControl::SetText(const FString& Text)
@@ -167,7 +175,12 @@ void UOKDreamControl::SetOpen(bool bNewOpen)
 void UOKDreamControl::Sync()
 {
 	UWidget* S=Source.Get();
-	if(!S){if(!FixedText.IsEmpty())SetText(FixedText);return;}
+	if(!S)
+	{
+		if(Pull){TGuardValue<bool> Guard(bPushing,true);Pull(*this);}
+		else if(!FixedText.IsEmpty())SetText(FixedText);
+		return;
+	}
 	SetShown(IsUmgShown(S));
 	// The search field only for a list long enough to need one (the lighting presets are OKMotionComboBoxes of a few
 	// entries, and showed "搜尋動作" over them), and while it holds a filter.
@@ -288,6 +301,12 @@ bool UOKDreamControl::Press()
 {
 	if(!IsOnScreen())return false;
 	if(Header){HandleHeader();return true;}
+	// A bound control (a mod's): a toggle flips, a radio option is chosen.
+	if(!Source.IsValid()&&Push&&GetIsEnabled())
+	{
+		if(Radio){HandleRadio(true);return true;}
+		if(Toggle){HandleToggle(!Toggle->GetIsOn());return true;}
+	}
 	if(auto* U=Cast<UCheckBox>(Source.Get()))
 	{
 		if(!Toggle||!U->GetIsEnabled())return false;
@@ -301,6 +320,36 @@ bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
 	auto Fail=[OutNote](const FString& Why){if(OutNote)*OutNote=Why;return false;};
 	if(!IsOnScreen())return Fail(TEXT("not shown now"));
 	UWidget* S=Source.Get();
+	// A control bound to a value elsewhere (a mod's): checked as its kind takes values, then handed on.
+	if(!S&&Push)
+	{
+		if(!GetIsEnabled())return Fail(TEXT("disabled"));
+		if(Slider||Spin)
+		{
+			if(!Value.IsNumeric())return Fail(TEXT("it takes a number"));
+			const float V=FCString::Atof(*Value);
+			const float Lo=Slider?Slider->GetMinValue():Spin->GetMinValue(),Hi=Slider?Slider->GetMaxValue():Spin->GetMaxValue();
+			if(V<Lo-1e-4f||V>Hi+1e-4f)return Fail(FString::Printf(TEXT("out of range %g..%g"),Lo,Hi));
+			return PushValue(Value,OutNote);
+		}
+		if(Toggle||Radio)
+		{
+			const FString L=Value.ToLower();
+			const bool bOn=L==TEXT("1")||L==TEXT("on")||L==TEXT("true");
+			if(!bOn&&L!=TEXT("0")&&L!=TEXT("off")&&L!=TEXT("false"))return Fail(TEXT("a toggle takes on/off/1/0"));
+			if(Radio&&!bOn)return Fail(TEXT("a radio option is turned off by choosing another"));
+			return PushValue(bOn?TEXT("1"):TEXT("0"),OutNote);
+		}
+		if(Choice||List)
+		{
+			int32 Index=BoundOptions.IndexOfByKey(Value);
+			if(Index==INDEX_NONE&&Value.IsNumeric())Index=FCString::Atoi(*Value);
+			if(!BoundOptions.IsValidIndex(Index))return Fail(TEXT("no option ")+Value);
+			return PushValue(FString::FromInt(Index),OutNote);
+		}
+		if(Input)return PushValue(Value,OutNote);
+		return Fail(TEXT("it takes no value"));
+	}
 	// The screen's own field (the card and outfit-card searches): no UMG control behind it, set as typed and committed.
 	if(!S&&Input){Input->SetText(Value);Input->GetOnTextChangedEvent().Broadcast(Value);Input->GetOnTextCommittedEvent().Broadcast(Value);return true;}
 	if(!S||!S->GetIsEnabled())return Fail(TEXT("no enabled control behind it"));
@@ -347,20 +396,43 @@ void UOKDreamControl::HandleHeader()
 void UOKDreamControl::HandleSlider(float Value)
 {
 	if(bPushing)return;
+	if(!Source.IsValid()&&Push){PushValue(FString::SanitizeFloat(Value,0),nullptr);return;}
 	if(auto* U=Cast<USlider>(Source.Get())){U->SetValue(Value);U->OnValueChanged.Broadcast(Value);}
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
+}
+void UOKDreamControl::HandleSpin(float Value){if(!bPushing&&Push)PushValue(FString::SanitizeFloat(Value,0),nullptr);}
+// A radio option: on is the choice (the group's others go off when the value comes back, Pull); a click on the one
+// already on turns nothing off.
+void UOKDreamControl::HandleRadio(bool bOn)
+{
+	if(bPushing||!Push)return;
+	if(bOn)PushValue(TEXT("1"),nullptr);
+	else{TGuardValue<bool> Guard(bPushing,true);Radio->SetIsOn(true);}
+}
+void UOKDreamControl::HandleList(int32 Index){if(!bPushing&&Push&&Index>=0)PushValue(FString::FromInt(Index),nullptr);}
+bool UOKDreamControl::PushValue(const FString& Value,FString* OutNote)
+{
+	FString Why;
+	const bool bOk=Push(Value,Why);
+	if(!bOk)UE_LOG(LogTemp,Warning,TEXT("ok.ReaderScreen: %s refused %s: %s"),*GetName(),*Value,*Why);
+	if(OutNote&&!bOk)*OutNote=Why;
+	// What the mod keeps now (it may have changed or refused the value): shown at once, not on the next frame.
+	if(Pull){TGuardValue<bool> Guard(bPushing,true);Pull(*this);}
+	return bOk;
 }
 void UOKDreamControl::HandleToggle(bool bOn)
 {
 	if(bPushing)return;
 	// The screen's own toggle (no UMG source to mirror): its own handler is the whole behaviour.
 	if(OnToggled){OnToggled(bOn);return;}
+	if(!Source.IsValid()&&Push){PushValue(bOn?TEXT("1"):TEXT("0"),nullptr);return;}
 	if(auto* U=Cast<UCheckBox>(Source.Get())){U->SetIsChecked(bOn);U->OnCheckStateChanged.Broadcast(bOn);}
 	if(auto* G=Source.IsValid()?Source->GetTypedOuter<UOKCharacterController>():nullptr)G->ApplyPendingEditorMods();
 }
 void UOKDreamControl::HandleChoice(int32 Index)
 {
 	if(bPushing)return;
+	if(!Source.IsValid()&&Push){if(Index>=0)PushValue(FString::FromInt(Index),nullptr);return;}
 	if(OptionMap.IsValidIndex(Index))Index=OptionMap[Index];
 	if(auto* U=Cast<UComboBoxString>(Source.Get()))if(Index>=0&&Index<U->GetOptionCount())
 	{
@@ -373,6 +445,7 @@ void UOKDreamControl::HandleChoice(int32 Index)
 void UOKDreamControl::HandleInputCommitted(const FString& Text)
 {
 	if(bPushing)return;
+	if(!Source.IsValid()&&Push){PushValue(Text,nullptr);return;}
 	if(auto* U=Cast<UEditableTextBox>(Source.Get()))
 	{
 		auto Changed=U->OnTextChanged;U->OnTextChanged.Clear();U->SetText(FText::FromString(Text));U->OnTextChanged=Changed;
@@ -708,10 +781,19 @@ static UWidget* OKRegistryControl(UOKCharacterController* G,const TSharedPtr<FJs
 
 void UOKReaderScreen::BuildCategories()
 {
-	UOKCharacterController* G=Controller.Get();if(!G)return;
-	Categories.Reset();
+	if(!Controller.IsValid())return;
 	// The pages' own UMG controls (bool／choice／color／text／button items) are made again with the pages.
 	OKReaderPageItems::Reset();
+	BuildBaseCategories();
+	AddModCategory();
+}
+
+// AddModCategory: OKReaderModPage.cpp, with the mod pages' own controls.
+
+void UOKReaderScreen::BuildBaseCategories()
+{
+	UOKCharacterController* G=Controller.Get();if(!G)return;
+	Categories.Reset();
 	// Body and face sliders, grouped as the separators in KKShapeRows group them.
 	auto ShapeGroups=[&](bool bBody,const TArray<FString>& Names)
 	{
