@@ -55,11 +55,13 @@ pub struct HostConfig {
     pub no_mods: bool,
     /// Mod ids the player turned off.
     pub disabled: HashSet<String>,
+    /// Development mode (`-ModDev`): `reload` swaps in a rebuilt DLL. Never in a normal game.
+    pub dev: bool,
 }
 
 impl HostConfig {
     pub fn new(mods_dir: impl Into<PathBuf>, target: &str) -> Self {
-        HostConfig { mods_dir: mods_dir.into(), config_dir: None, target: target.into(), no_mods: false, disabled: HashSet::new() }
+        HostConfig { mods_dir: mods_dir.into(), config_dir: None, target: target.into(), no_mods: false, disabled: HashSet::new(), dev: false }
     }
 }
 
@@ -292,38 +294,19 @@ impl ModHost {
     }
 
     fn load(&mut self, idx: usize) {
-        match self.try_load(idx) {
+        match self.try_load(idx, None) {
             Ok(loaded) => self.mods[idx].loaded = Some(loaded),
             Err(state) => self.mods[idx].state = state,
         }
     }
 
-    fn try_load(&mut self, idx: usize) -> Result<Loaded, State> {
+    fn try_load(&mut self, idx: usize, dll_override: Option<PathBuf>) -> Result<Loaded, State> {
         let entry = &self.mods[idx];
         let manifest = entry.manifest.clone().expect("only resolved mods load");
-        let dll = entry.dir.join(&manifest.dll);
-        let reject = |why: String| State::Rejected(why);
-        if !dll.is_file() {
-            return Err(reject(format!("{} is missing", dll.display())));
-        }
-        let header = lib_header_from_path(&dll).map_err(|e| reject(format!("cannot load {}: {}", dll.display(), first_lines(&e.to_string(), 6))))?;
-        let root = header.init_root_module::<OkModRef>().map_err(|e| {
-            let text = e.to_string();
-            self.host_log(LogLevel::Verbose, &format!("{}: abi_stable says:\n{text}", manifest.id));
-            reject(format!("not a compatible ok_mod DLL (ok-mod-api ABI {}): {}", ok_mod_api::ABI_VERSION, first_lines(&text, 6)))
-        })?;
-        let build = (root.build_info())();
-        let rustc = build.rustc_version.to_string();
-        if !build.panic_unwind {
-            return Err(reject("built with panic = \"abort\"; mods must use panic = \"unwind\" so a panic cannot take the game down".into()));
-        }
-        let embedded = Manifest::parse((root.manifest())().as_str()).map_err(|e| reject(format!("mod.toml compiled into the DLL: {e}")))?;
-        if embedded.id != manifest.id || embedded.version != manifest.version {
-            return Err(reject(format!(
-                "DLL is {} {} but mod.toml says {} {}",
-                embedded.id, embedded.version, manifest.id, manifest.version
-            )));
-        }
+        let dll = dll_override.unwrap_or_else(|| entry.dir.join(&manifest.dll));
+        let log = self.log.clone();
+        let (root, info) = open_dll(&dll, &manifest, &|text| log(LogLevel::Verbose, &manifest.id, text)).map_err(State::Rejected)?;
+        let rustc = info.rustc;
 
         let handle = ModHandle(NEXT_HANDLE.fetch_add(1, Ordering::Relaxed));
         let shared = Arc::new(Shared { id: manifest.id.clone(), log: self.log.clone(), config: Mutex::new(Store::default()) });
@@ -484,6 +467,52 @@ impl ModHost {
         Ok(())
     }
 
+    /// Development mode only: loads the mod again from a fresh copy of its DLL (Windows keeps the
+    /// loaded file locked and abi_stable never unloads, so the old copy stays in memory, unused),
+    /// re-reading mod.toml. The old instance gets `shutdown`; the new one starts from scratch (its
+    /// state is not carried over) and gets `Enabled`.
+    pub fn reload(&mut self, id: &str) -> Result<String, String> {
+        if !self.config.dev {
+            return Err("reload is for development mode only (-ModDev)".into());
+        }
+        let idx = self.find(id)?;
+        let dir = self.mods[idx].dir.clone();
+        let manifest = std::fs::read_to_string(dir.join("mod.toml")).map_err(|e| format!("mod.toml: {e}")).and_then(|t| Manifest::parse(&t))?;
+        if manifest.id != id {
+            return Err(format!("{} now says id {}", dir.display(), manifest.id));
+        }
+        let source = dir.join(&manifest.dll);
+        let copies = dir.join(".reload");
+        std::fs::create_dir_all(&copies).map_err(|e| format!("{}: {e}", copies.display()))?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let stem = Path::new(&manifest.dll).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "mod".into());
+        let copy = copies.join(format!("{stem}-{stamp}.dll"));
+        std::fs::copy(&source, &copy).map_err(|e| format!("copy {} -> {}: {e}", source.display(), copy.display()))?;
+        if self.mods[idx].state == State::Enabled {
+            self.shutdown_one(idx);
+        }
+        self.mods[idx].manifest = Some(manifest.clone());
+        self.mods[idx].tried = true;
+        match self.try_load(idx, Some(copy.clone())) {
+            Ok(loaded) => {
+                self.mods[idx].loaded = Some(loaded);
+                self.mods[idx].state = State::Enabled;
+                if !self.order.contains(&idx) {
+                    self.order.push(idx);
+                }
+                let _ = self.call_event(idx, &Event::Enabled);
+                let msg = format!("reloaded {id} {} from {}", manifest.version, copy.display());
+                self.host_log(LogLevel::Info, &msg);
+                Ok(msg)
+            }
+            Err(state) => {
+                let why = match &state { State::Rejected(w) | State::Faulted(w) => w.clone(), _ => String::new() };
+                self.mods[idx].state = state;
+                Err(format!("reload of {id} failed: {why}"))
+            }
+        }
+    }
+
     /// Turns a mod off for this session (it gets `shutdown`; the DLL stays loaded).
     pub fn disable(&mut self, id: &str) -> Result<(), String> {
         let idx = self.find(id)?;
@@ -600,4 +629,43 @@ fn discover(mods_dir: &Path) -> Vec<Candidate> {
             Candidate { dir, manifest }
         })
         .collect()
+}
+
+/// What a mod DLL says about itself once its layout is accepted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DllInfo {
+    pub rustc: String,
+    pub sdk_version: String,
+    pub api_version: String,
+}
+
+/// Loads `dll` and checks it the way the host does before calling it (abi_stable version and
+/// layout, `panic = "unwind"`, the embedded mod.toml against `manifest`), without creating the mod:
+/// none of its code beyond the root module constructor runs. For `ok-mod-pack pack/verify`.
+pub fn check_dll(dll: &Path, manifest: &Manifest) -> Result<DllInfo, String> {
+    open_dll(dll, manifest, &|_| {}).map(|(_, info)| info)
+}
+
+fn open_dll(dll: &Path, manifest: &Manifest, verbose: &dyn Fn(&str)) -> Result<(OkModRef, DllInfo), String> {
+    if !dll.is_file() {
+        return Err(format!("{} is missing", dll.display()));
+    }
+    let header = lib_header_from_path(dll).map_err(|e| format!("cannot load {}: {}", dll.display(), first_lines(&e.to_string(), 6)))?;
+    let root = header.init_root_module::<OkModRef>().map_err(|e| {
+        let text = e.to_string();
+        verbose(&format!("abi_stable says:\n{text}"));
+        format!("not a compatible ok_mod DLL (ok-mod-api ABI {}): {}", ok_mod_api::ABI_VERSION, first_lines(&text, 6))
+    })?;
+    let build = (root.build_info())();
+    if !build.panic_unwind {
+        return Err("built with panic = \"abort\"; mods must use panic = \"unwind\" so a panic cannot take the game down".into());
+    }
+    let embedded = Manifest::parse((root.manifest())().as_str()).map_err(|e| format!("mod.toml compiled into the DLL: {e}"))?;
+    if embedded.id != manifest.id || embedded.version != manifest.version {
+        return Err(format!("DLL is {} {} but mod.toml says {} {}", embedded.id, embedded.version, manifest.id, manifest.version));
+    }
+    Ok((
+        root,
+        DllInfo { rustc: build.rustc_version.to_string(), sdk_version: build.sdk_version.to_string(), api_version: build.api_version.to_string() },
+    ))
 }

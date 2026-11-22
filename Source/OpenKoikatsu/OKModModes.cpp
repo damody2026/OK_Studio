@@ -73,6 +73,8 @@ void OKModStart()
 	FOKModHost::Get().Startup();
 	if (FOKModHost::Get().IsTurnedOff()) return;
 	ok_set_mod_dispatch(&FOKModHost::RustDispatch, &FOKModHost::RustFree);
+	// ok-mod-pack install refuses to change a Mods folder a running game uses (Saved/OKControl/<pid>.json).
+	OKControl::Publish(TEXT("mods_dir"), FOKModHost::ModsDir());
 	FWorldDelegates::OnPostWorldInitialization.AddStatic(&WorldReady);
 	FWorldDelegates::OnWorldCleanup.AddStatic(&WorldGone);
 	FCoreDelegates::OnEnginePreExit.AddLambda([]

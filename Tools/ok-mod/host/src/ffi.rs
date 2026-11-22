@@ -72,6 +72,8 @@ struct OpenConfig {
     no_mods: bool,
     #[serde(default)]
     disabled: Vec<String>,
+    #[serde(default)]
+    dev: bool,
 }
 
 #[no_mangle]
@@ -100,6 +102,7 @@ pub unsafe extern "C" fn okm_open(config_json: *const c_char, log: OkmLogFn, use
                 target: cfg.target,
                 no_mods: cfg.no_mods,
                 disabled: cfg.disabled.into_iter().collect::<HashSet<_>>(),
+                dev: cfg.dev,
             },
             sink,
         );
@@ -189,6 +192,10 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
                 Err(e) => json!({"ok": false, "error": e}),
             }
         }
+        "reload" => match host.reload(str_field(req, "mod")?) {
+            Ok(text) => json!({"ok": true, "text": text}),
+            Err(e) => json!({"ok": false, "error": e}),
+        },
         "disable" => match host.disable(str_field(req, "mod")?) {
             Ok(()) => json!({"ok": true}),
             Err(e) => json!({"ok": false, "error": e}),

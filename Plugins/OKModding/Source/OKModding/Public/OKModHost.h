@@ -34,6 +34,8 @@ public:
 	/** One okm_dispatch request (JSON text in, JSON text out); false with Error when the host is closed or refuses. */
 	bool Dispatch(const FString& Request, FString& Answer, FString& Error);
 	TSharedPtr<FJsonObject> DispatchJson(const TSharedRef<FJsonObject>& Request, FString& Error);
+	/** Development (-ModDev): loads mod Id again from its rebuilt DLL. Out: what happened. */
+	bool Reload(const FString& Id, FString& Out);
 	/** {"op":"list"}, or null when the host is not open. */
 	TSharedPtr<FJsonObject> List();
 

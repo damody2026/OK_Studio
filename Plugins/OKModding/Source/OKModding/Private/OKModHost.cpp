@@ -160,6 +160,8 @@ bool FOKModHost::Open(const FString& Mode)
 	Config->SetStringField(TEXT("mods_dir"), ModsDir());
 	Config->SetStringField(TEXT("config_dir"), ConfigDir());
 	Config->SetStringField(TEXT("target"), Mode);
+	// -ModDev: mod.reload swaps in a rebuilt mod DLL (development only; a normal game never reloads).
+	Config->SetBoolField(TEXT("dev"), FParse::Param(FCommandLine::Get(), TEXT("ModDev")));
 	UE_LOG(LogOKMod, Display, TEXT("Mod host %s, mods in %s, mode %s"), *Path, *ModsDir(), *Mode);
 	okm_host* NewHandle = Api->Open(TCHAR_TO_UTF8(*OKModJson(Config)), &OKModLog, nullptr);
 	if (!NewHandle)
@@ -326,6 +328,29 @@ static void OKModConsoleList(const TArray<FString>&, FOutputDevice& Out)
 		}
 }
 
+bool FOKModHost::Reload(const FString& Id, FString& Out)
+{
+	TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
+	Request->SetStringField(TEXT("op"), TEXT("reload"));
+	Request->SetStringField(TEXT("mod"), Id);
+	FString Error;
+	const TSharedPtr<FJsonObject> Reply = DispatchJson(Request, Error);
+	if (!Reply.IsValid()) { Out = Error; return false; }
+	const bool bOk = Reply->GetBoolField(TEXT("ok"));
+	Out = Reply->GetStringField(bOk ? TEXT("text") : TEXT("error"));
+	if (bOk) RegisterCommands();
+	return bOk;
+}
+
+static void OKModConsoleReload(const TArray<FString>& Args, FOutputDevice& Out)
+{
+	if (Args.Num() != 1) { Out.Log(TEXT("mod.reload <mod id>   (needs -ModDev)")); return; }
+	FString Text;
+	FOKModHost::Get().Reload(Args[0], Text);
+	Out.Log(Text);
+	UE_LOG(LogOKMod, Display, TEXT("mod.reload %s: %s"), *Args[0], *Text);
+}
+
 static void OKModConsoleCall(const TArray<FString>& Args, FOutputDevice& Out)
 {
 	FString Answer, Error;
@@ -335,6 +360,8 @@ static void OKModConsoleCall(const TArray<FString>& Args, FOutputDevice& Out)
 
 static FAutoConsoleCommandWithArgsAndOutputDevice GOKModList(TEXT("mod.list"), TEXT("Mods: each one's version and state (enabled, skipped, rejected, faulted) with the reason."),
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleList));
+static FAutoConsoleCommandWithArgsAndOutputDevice GOKModReload(TEXT("mod.reload"), TEXT("Mods (development, -ModDev): load a rebuilt mod DLL again, e.g. mod.reload org.openkoikatsu.hello"),
+	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleReload));
 static FAutoConsoleCommandWithArgsAndOutputDevice GOKModCall(TEXT("mod.call"), TEXT("Mods: one raw mod host request, e.g. mod.call {\"op\":\"config\",\"mod\":\"org.openkoikatsu.hello\"}"),
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(&OKModConsoleCall));
 

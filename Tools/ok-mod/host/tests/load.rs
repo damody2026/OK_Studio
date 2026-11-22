@@ -403,3 +403,29 @@ fn entering_another_mode_loads_its_mods() {
     assert_eq!(host.exit_mode("studio").len(), 1, "only hello subscribed to mode_exit");
     std::env::remove_var("OK_MOD_TEST_PANIC_AT");
 }
+
+#[test]
+fn dev_mode_reload_swaps_in_a_fresh_copy() {
+    let _g = serial();
+    let dlls = build(Build::Current).unwrap();
+    let s = Scratch::new("reload");
+    s.hello(&dlls);
+    let (mut host, _logs) = open(&s, "reader");
+    assert!(host.reload(HELLO).unwrap_err().contains("development mode"));
+    drop(host);
+
+    let logs: Logs = Default::default();
+    let sink_logs = logs.clone();
+    let mut cfg = HostConfig::new(s.mods(), "reader");
+    cfg.dev = true;
+    let mut host = ModHost::open(cfg, Arc::new(move |l, id, m| sink_logs.lock().unwrap().push((l, id.to_string(), m.to_string()))));
+    assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 1 (hello)".into()));
+    assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 2 (hello)".into()));
+    // The DLL on disk is in use; the reload loads a copy under a new name and starts the mod over.
+    let text = host.reload(HELLO).unwrap();
+    assert!(text.contains(".reload"), "{text}");
+    assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 1 (hello)".into()));
+    assert_eq!(status(&host.statuses(), HELLO).state, "enabled");
+    assert_eq!(logs.lock().unwrap().iter().filter(|(_, id, m)| id == HELLO && m.contains("hello from hello")).count(), 2);
+    assert!(std::fs::read_dir(s.mods().join("hello/.reload")).unwrap().count() == 1);
+}

@@ -31,7 +31,8 @@ typedef void (*okm_log_fn)(void* user, int32_t level, const char* mod_id, const 
 // config_json:
 //   {"mods_dir": "<stage root>/Mods", "config_dir": "<...>/UserData/config/mods" (optional),
 //    "target": "reader" | "studio" | "pair" | "street" | "extract",
-//    "no_mods": false (-NoMods: load nothing), "disabled": ["mod.id", ...] (optional)}
+//    "no_mods": false (-NoMods: load nothing), "disabled": ["mod.id", ...] (optional),
+//    "dev": false (-ModDev: allows "reload")}
 // Discovers, resolves and loads the mods and sends them "enabled". A broken mod never makes this
 // fail; it shows up as rejected/faulted in "list". Returns NULL only for a bad config_json.
 okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
@@ -51,6 +52,8 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 //       -> [{"key","type":"bool|int|float|text|hotkey","value","default","min","max","description_id"}]
 //   {"op":"config_set","mod","key","value"} -> {"ok":true} | {"ok":false,"error"}  (saved; mod gets config_changed)
 //   {"op":"disable","mod"} -> {"ok":true} | {"ok":false,"error"}   (this session only)
+//   {"op":"reload","mod"} -> {"ok":true,"text"} | {"ok":false,"error"}   (dev only: loads a fresh copy of the rebuilt DLL;
+//       the old copy stays loaded but unused, the mod starts over without its previous state)
 // Returns NULL for a malformed request (see okm_last_error).
 const char* okm_dispatch(okm_host* host, const char* request_json);
 
