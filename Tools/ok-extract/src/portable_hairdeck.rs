@@ -337,24 +337,21 @@ pub fn apply(s: &mut OkSession, cards_json: &[u8], chains_json: Option<&[u8]>, o
     }
     let (mesh, png, mut report) = build(s, cards_json, chains_json, opts)?;
     validate(&mesh)?;
-    // Hair accessories whatever their meshes and shaders are called (C031's hair is a main_item named Body.049): the
-    // renderers of a hair-category accessory (121) the game tints with her hair colour (ChaAccessoryComponent.rendHair
-    // gets the hair's base colour). The category alone is too wide: ribbons, pins and hoods are hair accessories too,
-    // and keep their own colours. HairAccessoryCustomizer's slots count too (C071's hair cap 53_mesh is in one), by the same
-    // colour test: necklaces and pins have such slots as well.
-    let (slots, hair_color) = card_hair_slots(s);
+    // Her old hair made of accessories goes, whatever its meshes and shaders are called (C031's hair is a main_item
+    // named Body.049): every hair-category accessory (121), every slot HairAccessoryCustomizer keeps data for (C071's
+    // hair cap 53_mesh) and every accessory on a hair socket (a_n_hair_*). The user, 2026-11-22: with HairDeck hair
+    // the original hair accessories are not wanted, they overlap it. Ribbons and pins of those slots go with them:
+    // they were placed for the old hair and float or sink in the new one. (Until then only renderers tinted with her
+    // hair colour went, and Keqing's twin tails and the like stayed through the new hair.)
+    let slots = card_hair_slots(s);
     let mut hidden = Vec::new();
     for p in s.parts.iter_mut().filter(|p| p.role == "accessory" && p.render_visible) {
         let Some(sp) = p.source_property.as_ref() else { continue };
         if !slots.iter().any(|k| sp == k || sp.strip_prefix(k.as_str()).is_some_and(|r| r.starts_with('.'))) { continue; }
-        let Some(c) = p.source_material.as_ref().and_then(|m| m.colors.get("_Color").copied()) else { continue };
-        // White is also every untinted material's colour (C095's white hair matched her horn): no guide then.
-        if hair_color[..3].iter().any(|v| *v < 0.99) && (0..3).all(|i| (c[i] - hair_color[i]).abs() < 0.004) {
-            p.render_visible = false;
-            hidden.push(p.name.clone());
-        }
+        p.render_visible = false;
+        hidden.push(p.name.clone());
     }
-    report["hidden_hair_tinted"] = serde_json::json!(hidden);
+    report["hidden_hair_accessories"] = serde_json::json!(hidden);
     install(s, &mesh, &png, None)?;
     // A runtime accessory's vertices are drawn where they are (world): the display takes them as they stand until the
     // first solve moves them. Installed head-local, a card opened with this hair showed it at her feet (2026-11-22):
@@ -379,19 +376,23 @@ pub fn apply(s: &mut OkSession, cards_json: &[u8], chains_json: Option<&[u8]>, o
     report["part"] = serde_json::json!(part_name(&mesh));
     Ok(report)
 }
-/// `outfit<o>.accessory<k>` of every hair-category (121, 髪) accessory of the session's card and every slot
-/// HairAccessoryCustomizer keeps data for, and her hair's base colour. Nothing without the card file.
-fn card_hair_slots(s: &OkSession) -> (Vec<String>, [f32; 4]) {
-    let Some(path) = s.card_path.as_deref() else { return (Vec::new(), [0.0; 4]) };
-    let Ok(first) = crate::card::parse_card_outfit(path, 0) else { return (Vec::new(), [0.0; 4]) };
+/// `outfit<o>.accessory<k>` of the session's card that are her hair: every hair-category (121, 髪) accessory, every
+/// accessory on a hair socket (`a_n_hair_*`), and the slots HairAccessoryCustomizer keeps data for that sit on her head
+/// (it keeps data for necklaces too). Nothing without the card file.
+fn card_hair_slots(s: &OkSession) -> Vec<String> {
+    let Some(path) = s.card_path.as_deref() else { return Vec::new() };
+    let Ok(first) = crate::card::parse_card_outfit(path, 0) else { return Vec::new() };
     let mut out = Vec::new();
     for o in 0..first.coordinate_count.max(1) as i32 {
         let info = if o == 0 { first.clone() } else { match crate::card::parse_card_outfit(path, o) { Ok(i) => i, Err(_) => continue } };
         for (k, a) in info.accessory.iter().enumerate() {
-            if a.type_id == 121 || info.hair_acc.contains_key(&(o, k as i32)) { out.push(format!("outfit{o}.accessory{k}")); }
+            let socket = a.parent_key.to_ascii_lowercase();
+            let on_hair = socket.starts_with("a_n_hair");
+            let on_head = on_hair || socket.starts_with("a_n_head");
+            if a.type_id == 121 || on_hair || (on_head && info.hair_acc.contains_key(&(o, k as i32))) { out.push(format!("outfit{o}.accessory{k}")); }
         }
     }
-    (out, first.hair_color)
+    out
 }
 
 /// `apply` from files: `cards_seed<s>.json`, and `chains_seed<s>.json` beside it when it exists.
