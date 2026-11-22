@@ -72,6 +72,15 @@ function M.stage(executable, destination, base_dir)
   -- Conversation presentation (Tools/ok-story): optional; without it the old dialogue box is used.
   local story = path.join(root, "Tools/ok-story/target/release/ok_story.dll")
   if path.exists(story) then path.copy(story, path.join(path.parent(exe), "ok_story.dll")) end
+  -- OK mod host (Tools/ok-mod, Docs/OK_MOD_FRAMEWORK_PLAN.md section 8): optional, loaded from beside the executable; without it
+  -- mods are off. Mods/ is a plain folder in the stage root (the rest of the stage is junctions) for the player to fill.
+  if proc.which("cargo") then
+    local r = proc.run({ "cargo", "build", "--release", "--quiet", "-j", "8", "-p", "ok-mod-host" }, { cwd = path.join(root, "Tools/ok-mod"), capture = true })
+    if not r.ok then io.stderr:write("WARNING: cargo build --release -p ok-mod-host in Tools/ok-mod failed; staging the previous build\n") end
+  end
+  local mod_host = path.join(root, "Tools/ok-mod/target/release/ok_mod_host.dll")
+  if path.exists(mod_host) then path.copy(mod_host, path.join(path.parent(exe), "ok_mod_host.dll")) end
+  path.mkdir(path.join(target, "Mods"))
   -- stage.json last: until it is there the launcher, scene editor and packer skip this stage as still being made
   -- (Tools/street_stage.lua). Written here so a stage made by this tool alone has it too, not only one made through
   -- stage_interaction_runtime.lua.
