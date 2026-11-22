@@ -35,9 +35,14 @@ pub struct ExtSection {
     #[serde(default)]
     pub requires: Option<Value>,
     pub data_b64: String,
+    /// The card's resources (okMr) this section's data names, by sha256 hex, as base64 (character_load only).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub resources: std::collections::BTreeMap<String, String>,
 }
 
 impl ExtSection {
+    /// Resource `hash` (named in this section's data) as the card stores it.
+    pub fn resource(&self, hash: &str) -> Option<Vec<u8>> { self.resources.get(hash).and_then(|b| b64().decode(b).ok()) }
     /// The data as `T` (written by `save`/`section`), first brought up to `version` by `upgrade(old version, data)` when
     /// an older version of the mod wrote it (ExtendedSave's `CardBeingImported` counterpart). Newer than `version`:
     /// an error (this mod is older than the card's data), so the caller keeps its defaults and does not save over it.
@@ -90,6 +95,43 @@ pub fn section<T: Serialize>(version: u32, value: &T) -> ModResult<Value> {
 
 /// Reply to `reader.character_save` / `extract.kkex`: store `value` as this mod's section.
 pub fn save<T: Serialize>(version: u32, value: &T) -> ModResult<Reply> { json(&section(version, value)?) }
+
+/// The name a resource is stored under in the card (okMr): its sha256, lowercase hex. Write it into your data to keep
+/// the resource; the host drops resources no section names (plan §6.12).
+pub fn resource_hash(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Reply to `reader.character_save`: store `value` as this mod's section, with `resources` (pictures, masks...) put in
+/// the card once each. `value` must name each one by `resource_hash`; together they may weigh at most 100 MiB per card.
+pub fn save_with_resources<T: Serialize>(version: u32, value: &T, resources: &[&[u8]]) -> ModResult<Reply> {
+    let mut v = section(version, value)?;
+    v["resources_b64"] = resources.iter().map(|r| Value::String(b64().encode(r))).collect();
+    json(&v)
+}
+
+/// A card file's section of one mod and the resources it names, read straight from the file (feature `card-file`), for
+/// hooks that only get the card's path, such as `material.post_texture`.
+#[cfg(feature = "card-file")]
+pub struct CardMod {
+    pub section: ExtSection,
+}
+#[cfg(feature = "card-file")]
+impl CardMod {
+    /// Mod `id`'s section of the card at `path` (None: the card has none).
+    pub fn read(path: &str, id: &str) -> ModResult<Option<CardMod>> {
+        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let data = ok_card_mods::read_data(&bytes)?;
+        let Some(section) = data.get(id) else { return Ok(None) };
+        let section = section?;
+        let res = ok_card_mods::read_resources(&bytes)?;
+        let resources = res.by_hash.iter()
+            .filter(|(h, _)| section.data.windows(h.len()).any(|w| w == h.as_bytes()))
+            .map(|(h, b)| (h.clone(), b64().encode(b))).collect();
+        Ok(Some(CardMod { section: ExtSection { version: section.version, requires: None, data_b64: b64().encode(&section.data), resources } }))
+    }
+}
 
 /// Reply to `reader.character_save`: remove this mod's section from the card.
 pub fn remove() -> ModResult<Reply> { json(&serde_json::json!({"remove": true})) }

@@ -19,6 +19,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 semver = { workspace = true }
-# okMx and the card identity, the same code as ok-extract (Tools/ok-card-mods); okMr is not written here yet.
-ok-card-mods = { path = "../../ok-card-mods", default-features = false }
+# okMx, okMr and the card identity, the same code as ok-extract (Tools/ok-card-mods).
+ok-card-mods = { path = "../../ok-card-mods" }
 base64 = "0.22"
