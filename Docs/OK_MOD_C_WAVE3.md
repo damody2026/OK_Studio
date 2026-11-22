@@ -137,3 +137,40 @@ S11 回報寫明：boop 的 UE 部分（滑鼠掃過角色時送 `input.pointer`
 ### 工作項 9（材質）留下的問題
 
 S9 回報寫「post_texture 與其他快取（GPU 磁碟快取、街區／Studio 角色快取）的關係沒查」。這需要統籌決定由誰查，C 這輪沒有動。S9 提到的 Event 變體 ABI 備註也是統籌的決定，C 沒有要處理的部分。
+
+## 6. 讀卡器／街區 mod API 的缺口（KKAPI 有、我們沒有；只列，沒動手）
+
+依統籌要求，等整合期間整理。對照的是 KKAPI 的 MakerAPI、GameAPI、ExtendedSave，以及常見插件實際在用的功能。每項附上大概要做什麼。
+
+### 讀卡器（MakerAPI 對應）
+
+1. **逐飾品槽控制項與飾品事件**：KKAPI 有 `AccessoryControlWrapper`，以及 `AccessoryKindChanged`、`AccessoriesCopied`、`AccessoryTransferred`。
+   - 我們沒有飾品範圍的卡片資料，也沒有 `reader.accessory_*` 掛點。
+   - 計畫 §1 表第 51 列說要加，目前沒做。換飾品、複製飾品時，mod 的逐槽資料會對不上。
+2. **衣服卡（coordinate）的存讀掛點**：KKAPI 有 `OnCoordinateBeingLoaded`、`OnCoordinateBeingSaved`。
+   - 讀卡器的「衣服卡」頁存讀衣服卡時，mod 收不到事件，資料也不會寫進衣服卡。
+   - 目前只有 `outfit_change`（換到同一張卡的另一套服裝）。
+3. **核心屬性改變的通知**：讀卡器的滑桿、顏色、詳細編輯改了，mod 不知道。
+   - KKAPI 的插件靠 Harmony 或 `MakerAPI` 事件做連動，例如 ABMX 跟著身形、Material Editor 跟著換衣服。
+   - 可以加 `reader.property_change`，payload 是改了哪些登錄鍵。
+4. **mod 讀目前的角色數值**：mod 只能透過回覆裡的 `set`／`ops` 寫，不能讀登錄。
+   - 例如 random-chara 想「在目前數值附近隨機」就做不到。KKAPI 的 `ChaControl` 是直接可讀的。
+   - 可以在宿主加請求，讓 mod 呼叫讀卡器的 `get`；或在 `reader.values`、`character_load` 的 payload 附上 mod 宣告要看的鍵。
+5. **控制項種類少 Separator**：MakerAPI 的 10 種裡只缺 `MakerSeparator`，目前得用空的 label 代替。
+6. **主畫面上的開關與按鈕**：KKAPI 有 `MakerSidebarToggle`、`CustomToolbarButtons`。我們的 mod 控制項只能放在「Mods」分類裡，3D 畫面旁沒有 mod 的快捷開關。
+7. **快捷鍵**：BepInEx 的 `KeyboardShortcut` 在 KK 插件裡很常見。讀卡器沒有 `input.key` 掛點，mod 不能綁鍵。
+8. **服裝穿脫狀態**：KKAPI 有 `ClothesStateChanged`。讀卡器的穿脫、遮罩改變時，mod 收不到事件。
+
+### 街區（GameAPI 對應）
+
+1. **時段變化**：GameAPI 有 `PeriodChange`。街區只有 `day_change`；一天之中只能在別的掛點的 `minute` 欄位看到時間，沒有「到了傍晚」這類事件。
+2. **新遊戲與讀檔分不出來**：GameAPI 有 `NewGame`。`street.load` 兩種情況都送，payload 沒有 `new_game` 旗標。
+3. **街區寫她的卡片資料（okMx）**：GameAPI 的 `GameCustomFunctionController` 可以存逐女角資料；我們的 `state` 是整個存檔一份。mod 自己用女角 id 分開存還可以，但：
+   - 沒辦法像 1 對 1 那樣寫回她的卡；
+   - 換一個存檔就看不到。
+4. **觸碰、互動動作、移動到某個地點的事件**：KKS 的 `EventApi`、`TopicApi` 類插件靠這些觸發。街區有觸碰、數個互動動作與地點，但沒有對應掛點（例如 `street.touch`、`street.action`、`street.arrive`）。
+5. **擴充資料表**：計畫 §1 表第 56 列寫「商店、話題、事件劇本改成資料表擴充」。目前 mod 不能加禮物、商品、話題，只能用 `talk_facts` 補事實。這一項我沒有查到已經實作，需要確認。
+6. **她打來的電話**：`street.phone` 目前只寫了 `from: "him"`。她主動打來時要不要送，沒有確認。
+7. **街區的 mod UI**：讀卡器有宣告式頁面，街區只有提示行。設定頁、狀態面板（例如生日 mod 想列「今年誰的生日快到了」）都做不到。
+
+以上都是 API 缺口，不代表要照抄。第 3、4 類的事件仍要守「規則只記錄，說什麼由 AI 判斷」，也不能加需求壓力。
