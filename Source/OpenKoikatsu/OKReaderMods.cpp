@@ -12,7 +12,9 @@
 #include "ok_extract.h"
 #include "Containers/Ticker.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Engine/GameViewportClient.h"
 #include "GameFramework/PlayerController.h"
+#include "Widgets/SViewport.h"
 #include "KKPreviewActor.h"
 
 namespace
@@ -246,6 +248,9 @@ void OKReaderMods::Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,floa
 {
 	static double AskedAt=-1e9,SentAt=0;static bool bListened=false;
 	static TWeakObjectPtr<AKKPreviewActor> LastActor;static FVector LastPoint=FVector::ZeroVector;static bool bHadPoint=false;
+	// Why nothing is sent (log LogOKMod Verbose), once per change.
+	static const TCHAR* LastWhy=nullptr;
+	auto Why=[](const TCHAR* W){if(W!=LastWhy){LastWhy=W;UE_LOG(LogOKMod,Verbose,TEXT("input.pointer: %s"),W);}};
 	if(!Active()||!G||!IsValid(Actor)){bHadPoint=false;return;}
 	const double Now=FPlatformTime::Seconds();
 	if(Now-AskedAt>2)
@@ -256,15 +261,34 @@ void OKReaderMods::Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,floa
 		const TArray<TSharedPtr<FJsonValue>>* Mods=nullptr;
 		bListened=A.IsValid()&&A->TryGetArrayField(TEXT("mods"),Mods)&&Mods->Num()>0;
 	}
-	if(!bListened){bHadPoint=false;return;}
+	if(!bListened){bHadPoint=false;Why(TEXT("no subscriber"));return;}
 	APlayerController* PC=G->GetOwningPlayer();
-	if(!PC||!FSlateApplication::IsInitialized()){bHadPoint=false;return;}
+	if(!PC||!FSlateApplication::IsInitialized()){bHadPoint=false;Why(TEXT("no player controller"));return;}
 	const TSet<FKey>& Down=FSlateApplication::Get().GetPressedMouseButtons();
 	FVector Origin,Dir;
-	if(Down.Num()||!PC->DeprojectMousePositionToWorld(Origin,Dir)){bHadPoint=false;return;}
-	const FBox Box=Actor->GetComponentsBoundingBox(false,true);
+	if(Down.Num()){bHadPoint=false;Why(TEXT("a mouse button is down"));return;}
+	// The cursor from Slate, not the viewport's own mouse position: with the reader screen on top the viewport only
+	// knows the mouse for the frame it moved.
+	UGameViewportClient* VC=G->GetWorld()?G->GetWorld()->GetGameViewport():nullptr;
+	const TSharedPtr<SViewport> Widget=VC?VC->GetGameViewportWidget():nullptr;
+	FVector2D Pixel=FVector2D::ZeroVector;bool bInside=false;
+	if(Widget.IsValid()&&VC->Viewport)
+	{
+		const FGeometry& Geo=Widget->GetTickSpaceGeometry();
+		const FVector2D Local=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos()),Size=Geo.GetLocalSize();
+		const FIntPoint ViewSize=VC->Viewport->GetSizeXY();
+		bInside=Size.X>0&&Size.Y>0&&Local.X>=0&&Local.Y>=0&&Local.X<Size.X&&Local.Y<Size.Y;
+		if(bInside)Pixel=Local*FVector2D(ViewSize.X/Size.X,ViewSize.Y/Size.Y);
+	}
+	if(!bInside||!PC->DeprojectScreenPositionToWorld(Pixel.X,Pixel.Y,Origin,Dir)){bHadPoint=false;Why(TEXT("the mouse is not in the viewport"));return;}
+	const FBox Box=Actor->GetComponentsBoundingBox(true,true);
 	FVector Hit,Normal;float Time=0;
-	if(!Box.IsValid||!FMath::LineExtentBoxIntersection(Box,Origin,Origin+Dir*100000.,FVector::ZeroVector,Hit,Normal,Time)){bHadPoint=false;return;}
+	if(!Box.IsValid||!FMath::LineExtentBoxIntersection(Box,Origin,Origin+Dir*100000.,FVector::ZeroVector,Hit,Normal,Time))
+	{
+		static double ToldAt=0;
+		if(Now-ToldAt>1){ToldAt=Now;UE_LOG(LogOKMod,VeryVerbose,TEXT("input.pointer: ray %s %s pixel %s, her bounds %s"),*Origin.ToString(),*Dir.ToString(),*Pixel.ToString(),*Box.ToString());}
+		bHadPoint=false;Why(TEXT("not over her"));return;
+	}
 	// The ray's point nearest her middle: its movement is the sweep.
 	const FVector Point=Origin+Dir*FMath::Max(0.,FVector::DotProduct(Box.GetCenter()-Origin,Dir));
 	const bool bSame=bHadPoint&&LastActor.Get()==Actor;
@@ -272,7 +296,8 @@ void OKReaderMods::Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,floa
 	if(bSame&&Now-SentAt<.05)return;	// keep LastPoint: the next send measures the whole stretch
 	const double Seconds=FMath::Max(Now-SentAt,1e-3);
 	LastPoint=Point;LastActor=Actor;bHadPoint=true;SentAt=Now;
-	if(!bSame||Moved.IsNearlyZero(.05))return;	// the first point only starts the measure
+	if(!bSame||Moved.IsNearlyZero(.05)){Why(TEXT("over her, not moving"));return;}	// the first point only starts the measure
+	Why(TEXT("sending"));
 	const FTransform& T=Actor->GetActorTransform();
 	const FVector UOrigin=AKKPreviewActor::ActorLocalToUnity(T.InverseTransformPosition(Origin));
 	const FVector UDir=(AKKPreviewActor::ActorLocalToUnity(T.InverseTransformVectorNoScale(Dir)*100.)).GetSafeNormal();
