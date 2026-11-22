@@ -1,5 +1,6 @@
 #include "OKModHost.h"
 #include "OKModContent.h"
+#include "KKModMaterials.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformProcess.h"
@@ -31,7 +32,10 @@ struct FOKModHost::FApi
 	using FFree = void (*)(const char*);
 	using FLastError = const char* (*)();
 	using FClose = void (*)(okm_host*);
+	using FFrame = uint32 (*)(void*);
 	FAbi Abi = nullptr; FOpen Open = nullptr; FDispatch Dispatch = nullptr; FFree Free = nullptr; FLastError LastError = nullptr; FClose Close = nullptr;
+	/** okm_frame: only in a host built with the `frame` feature (per-frame mod calls, Docs/OK_MOD_S11_FRAME.md). */
+	FFrame Frame = nullptr;
 
 	FString Take(const char* Text) const
 	{
@@ -128,6 +132,7 @@ static FOKModHost::FApi* OKModLoadApi(const FString& Path, FString& Error)
 	Api->Free = (FOKModHost::FApi::FFree)Get(TEXT("okm_free"));
 	Api->LastError = (FOKModHost::FApi::FLastError)Get(TEXT("okm_last_error"));
 	Api->Close = (FOKModHost::FApi::FClose)Get(TEXT("okm_close"));
+	Api->Frame = (FOKModHost::FApi::FFrame)Get(TEXT("okm_frame"));
 	if (!Api->Abi || !Api->Open || !Api->Dispatch || !Api->Free || !Api->LastError || !Api->Close)
 	{
 		Error = TEXT("missing okm_* exports in ") + Path;
@@ -172,6 +177,12 @@ bool FOKModHost::Open(const FString& Mode)
 	}
 	FWriteScopeLock Locked(Lock);
 	Handle = NewHandle;
+	// Per-frame mod calls go straight from ok-extract's workers to the host (never JSON, never the game thread).
+	if (Api->Frame)
+	{
+		KKModMaterials::SetExtractFrame(Api->Frame);
+		UE_LOG(LogOKMod, Display, TEXT("Mod host takes frames (okm_frame)"));
+	}
 	return true;
 }
 
@@ -283,6 +294,7 @@ void FOKModHost::RegisterCommands()
 
 void FOKModHost::Close()
 {
+	KKModMaterials::SetExtractFrame(nullptr);
 	FWriteScopeLock Locked(Lock);
 	if (Handle && Api) Api->Close(static_cast<okm_host*>(Handle));
 	Handle = nullptr;

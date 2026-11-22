@@ -33,6 +33,11 @@ void KKModMaterials::SetExtractDispatch(const char* (*Dispatch)(const char*), vo
 	ok_set_mod_dispatch(Dispatch, Free);
 }
 
+void KKModMaterials::SetExtractFrame(uint32 (*Frame)(void*))
+{
+	ok_set_mod_frame(reinterpret_cast<OkModFrameFn>(Frame));
+}
+
 static TFunction<TSharedPtr<FKKModMaterial>(const FString&, const FString&)>& KKModResolver()
 {
 	static TFunction<TSharedPtr<FKKModMaterial>(const FString&, const FString&)> Resolver;

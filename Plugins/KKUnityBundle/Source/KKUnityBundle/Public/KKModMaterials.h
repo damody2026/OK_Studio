@@ -35,6 +35,9 @@ namespace KKModMaterials
 	 *  clears it with nulls. Must be this module's copy: in a modular build every module that links ok_extract.lib has
 	 *  its own, and only this one opens cards. */
 	KKUNITYBUNDLE_API void SetExtractDispatch(const char* (*Dispatch)(const char* RequestJson), void (*Free)(const char* Text));
+	/** Hands the mod host's per-frame function (okm_frame) to this module's ok-extract (ok_set_mod_frame), or clears it
+	 *  with null. Called from ok-extract's worker threads once per character per frame. */
+	KKUNITYBUNDLE_API void SetExtractFrame(uint32 (*Frame)(void* FrameView));
 	/** A resolver asked before the family table (OKModding sets it while a mod subscribes to material.resolve_shader);
 	 *  null to clear. Game thread. */
 	KKUNITYBUNDLE_API void SetResolver(TFunction<TSharedPtr<FKKModMaterial>(const FString& ShaderName, const FString& Part)> Resolver);
