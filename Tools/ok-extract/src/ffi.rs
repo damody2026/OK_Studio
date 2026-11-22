@@ -1790,6 +1790,8 @@ pub(crate) unsafe extern "C" fn session_open(
         // A foreground open makes background opens (clothing variant warm-up) yield the card pack mount.
         let _foreground = crate::ForegroundOpen::begin();
         let _defer = crate::oklib::DeferCacheStore::begin();
+        // Hooks inside this open (material.post_texture) name the card, whichever path opens it.
+        let _card = crate::mod_forward::CardScope::new(card_for_meta.as_deref().map(std::path::Path::new));
         let game = cstr_opt(game_root_utf8).ok_or_else(|| "null game_root".to_string())?;
         let card = card_for_meta.clone();
         // Original KKS card with a base library configured: the library plus the card's zipmods.
