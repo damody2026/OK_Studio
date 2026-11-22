@@ -8,6 +8,7 @@ members = [
     "host",
     "pack",
     "examples/hello",
+    "examples/glass-shader",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
 ]

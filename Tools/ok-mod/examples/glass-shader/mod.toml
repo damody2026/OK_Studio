@@ -1,0 +1,12 @@
+id = "org.openkoikatsu.glass-shader"
+name = "Glass shader"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_glass_shader.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.glass-shader.description"
+targets = ["reader", "studio", "pair", "street"]
+category = "content"
+# The game build content/*.pak was cooked for (Tools/modkit_cook.lua prints it). Another build does not mount the pak
+# and the material falls back to its A-layer parent.
+content_build = "1@5.8.4-0"

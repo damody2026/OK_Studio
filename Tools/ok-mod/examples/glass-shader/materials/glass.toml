@@ -1,0 +1,32 @@
+# Materials of org.openkoikatsu.glass-shader (format: Tools/ok-mod/host/src/content.rs).
+# The cooked material comes from Plugins/org_openkoikatsu_glass_shader (Tools/modkit_cook.lua --mod
+# org_openkoikatsu_glass_shader; copy the pak into content/). In the editor, or when the pak's content_build does not
+# match the game, the `parent` below is used with the same parameters.
+
+[[material]]
+name = "glass"
+asset = "/org_openkoikatsu_glass_shader/M_OKGlass.M_OKGlass"
+parent = "translucent"
+# Glasses lenses (accessories and the face's glasses) draw with this material instead of the toon glasses shader.
+families = ["Koikano/main_clothes_item_glasses", "Shader Forge/toon_glasses_lod0"]
+main_texture = "_MainTex"
+# The card's lens colour has another meaning (toon tint); keep the glass's own look.
+copy_source_values = false
+[material.scalars]
+GlassOpacity = 0.35
+FresnelPower = 3.0
+RimStrength = 1.5
+
+[material.vectors]
+GlassTint = [0.75, 0.9, 1.0, 1.0]
+# The A-layer parent's colour (alpha is its opacity), so the fallback still reads as glass.
+PreviewTint = [0.75, 0.9, 1.0, 0.35]
+
+[[material]]
+name = "smoky"
+asset = "/org_openkoikatsu_glass_shader/MI_OKGlass_Smoky.MI_OKGlass_Smoky"
+parent = "translucent"
+main_texture = "_MainTex"
+copy_source_values = false
+[material.vectors]
+PreviewTint = [0.4, 0.4, 0.42, 0.5]

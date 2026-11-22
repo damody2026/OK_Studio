@@ -1,0 +1,13 @@
+[package]
+name = "ok-mod-glass-shader"
+version = "0.1.0"
+edition = "2021"
+description = "Example content mod: a cooked glass material (B layer) for glasses lenses, with an A-layer fallback."
+publish = false
+
+[lib]
+name = "ok_glass_shader"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
