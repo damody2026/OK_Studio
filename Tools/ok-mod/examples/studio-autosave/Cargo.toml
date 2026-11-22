@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-studio-autosave"
+version = "0.1.0"
+edition = "2021"
+description = "OK Studio: every N minutes a copy of the scene in the mod's backup folder, the newest few kept (Autosave)."
+publish = false
+
+[lib]
+name = "ok_studio_autosave"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+ok-mod-studio = { path = "../../studio" }

@@ -6,7 +6,12 @@ members = [
     "api",
     "sdk",
     "host",
+    "studio",
     "examples/hello",
+    "examples/object-hotkeys",
+    "examples/studio-autosave",
+    "examples/scene-notes",
+    "examples/timeline-flow",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
 ]

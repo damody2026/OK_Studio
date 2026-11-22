@@ -1,0 +1,10 @@
+id = "org.openkoikatsu.studio_autosave"
+name = "Studio Autosave"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_studio_autosave.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.studio_autosave.description"
+targets = ["studio"]
+ext_data = []
+category = "tool"

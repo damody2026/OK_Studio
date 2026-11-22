@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-timeline-flow"
+version = "0.1.0"
+edition = "2021"
+description = "OK Studio: timeline marks that loop a stretch, jump or stop and wait (TimelineFlowControl)."
+publish = false
+
+[lib]
+name = "ok_timeline_flow"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+ok-mod-studio = { path = "../../studio" }

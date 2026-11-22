@@ -1,0 +1,10 @@
+[package]
+name = "ok-mod-studio"
+version = "0.1.0"
+edition = "2021"
+description = "OK Studio helpers for mods: studio.* / key.* / timer.* hook subscriptions, call context and effects (Docs/OK_MOD_S8_STUDIO_API.md)."
+publish = false
+
+[dependencies]
+ok-mod-sdk = { path = "../sdk" }
+serde_json = { workspace = true }

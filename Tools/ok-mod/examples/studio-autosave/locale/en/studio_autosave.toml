@@ -1,0 +1,6 @@
+"mod.org.openkoikatsu.studio_autosave.description" = "OK Studio: a copy of the scene every few minutes, the newest few kept."
+"mod.org.openkoikatsu.studio_autosave.config.enabled" = "Autosave"
+"mod.org.openkoikatsu.studio_autosave.config.minutes" = "Minutes between copies"
+"mod.org.openkoikatsu.studio_autosave.config.keep" = "Copies kept"
+"mod.org.openkoikatsu.studio_autosave.cmd.save_now" = "Save a copy now"
+"mod.org.openkoikatsu.studio_autosave.tool.save_now" = "Save a copy of the scene now (autosave mod)"

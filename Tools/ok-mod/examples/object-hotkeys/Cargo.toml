@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-object-hotkeys"
+version = "0.1.0"
+edition = "2021"
+description = "OK Studio: hold a key and move the mouse to move, turn or scale the selected objects (StudioObjectMoveHotkeys)."
+publish = false
+
+[lib]
+name = "ok_object_hotkeys"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+ok-mod-studio = { path = "../../studio" }

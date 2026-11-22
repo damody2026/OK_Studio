@@ -1,0 +1,5 @@
+"mod.org.openkoikatsu.object_hotkeys.description" = "OK Studio: hold a key and move the mouse to move, turn or scale the selection."
+"mod.org.openkoikatsu.object_hotkeys.config.hotkey_move" = "Key to hold for moving"
+"mod.org.openkoikatsu.object_hotkeys.config.hotkey_rotate" = "Key to hold for turning"
+"mod.org.openkoikatsu.object_hotkeys.config.hotkey_scale" = "Key to hold for scaling"
+"mod.org.openkoikatsu.object_hotkeys.config.speed" = "Centimetres (degrees) per pixel"
