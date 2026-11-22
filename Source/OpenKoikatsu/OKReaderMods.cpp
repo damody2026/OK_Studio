@@ -11,6 +11,9 @@
 #include "Serialization/JsonWriter.h"
 #include "ok_extract.h"
 #include "Containers/Ticker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "GameFramework/PlayerController.h"
+#include "KKPreviewActor.h"
 
 namespace
 {
@@ -232,6 +235,54 @@ void OKReaderMods::Saved(UOKCharacterController* G,const FString& Path)
 	if(Answer->TryGetArrayField(TEXT("errors"),Errors))for(const auto& E:*Errors)if(const auto O=E->AsObject())UE_LOG(LogOKMod,Warning,TEXT("[%s] not saved into the card: %s"),*O->GetStringField(TEXT("mod")),*O->GetStringField(TEXT("error")));
 	const TArray<TSharedPtr<FJsonValue>>* Written=nullptr;
 	if(Answer->TryGetArrayField(TEXT("written"),Written))UE_LOG(LogOKMod,Display,TEXT("reader: %d mod section(s) saved into %s"),Written->Num(),*Path);
+}
+
+// input.pointer (the boop example, Docs/OK_MOD_S11_FRAME.md): while the mouse sweeps over the character with no button
+// down (a drag turns the camera), at most 20 times a second, and only while some mod subscribed (asked every 2 s).
+// "Over" is the mouse ray crossing her bounds; the mod decides which bones the ray is near. Origin, direction and
+// velocity are in her Unity skeleton space (metres, the space a frame call's world matrices use); the velocity is how
+// the ray's point nearest her moved.
+void OKReaderMods::Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,float DeltaSeconds)
+{
+	static double AskedAt=-1e9,SentAt=0;static bool bListened=false;
+	static TWeakObjectPtr<AKKPreviewActor> LastActor;static FVector LastPoint=FVector::ZeroVector;static bool bHadPoint=false;
+	if(!Active()||!G||!IsValid(Actor)){bHadPoint=false;return;}
+	const double Now=FPlatformTime::Seconds();
+	if(Now-AskedAt>2)
+	{
+		AskedAt=Now;
+		auto R=Op(TEXT("subscribers"));R->SetStringField(TEXT("hook"),TEXT("input.pointer"));
+		FString Error;const TSharedPtr<FJsonObject> A=FOKModHost::Get().DispatchJson(R,Error);
+		const TArray<TSharedPtr<FJsonValue>>* Mods=nullptr;
+		bListened=A.IsValid()&&A->TryGetArrayField(TEXT("mods"),Mods)&&Mods->Num()>0;
+	}
+	if(!bListened){bHadPoint=false;return;}
+	APlayerController* PC=G->GetOwningPlayer();
+	if(!PC||!FSlateApplication::IsInitialized()){bHadPoint=false;return;}
+	const TSet<FKey>& Down=FSlateApplication::Get().GetPressedMouseButtons();
+	FVector Origin,Dir;
+	if(Down.Num()||!PC->DeprojectMousePositionToWorld(Origin,Dir)){bHadPoint=false;return;}
+	const FBox Box=Actor->GetComponentsBoundingBox(false,true);
+	FVector Hit,Normal;float Time=0;
+	if(!Box.IsValid||!FMath::LineExtentBoxIntersection(Box,Origin,Origin+Dir*100000.,FVector::ZeroVector,Hit,Normal,Time)){bHadPoint=false;return;}
+	// The ray's point nearest her middle: its movement is the sweep.
+	const FVector Point=Origin+Dir*FMath::Max(0.,FVector::DotProduct(Box.GetCenter()-Origin,Dir));
+	const bool bSame=bHadPoint&&LastActor.Get()==Actor;
+	const FVector Moved=bSame?Point-LastPoint:FVector::ZeroVector;
+	if(bSame&&Now-SentAt<.05)return;	// keep LastPoint: the next send measures the whole stretch
+	const double Seconds=FMath::Max(Now-SentAt,1e-3);
+	LastPoint=Point;LastActor=Actor;bHadPoint=true;SentAt=Now;
+	if(!bSame||Moved.IsNearlyZero(.05))return;	// the first point only starts the measure
+	const FTransform& T=Actor->GetActorTransform();
+	const FVector UOrigin=AKKPreviewActor::ActorLocalToUnity(T.InverseTransformPosition(Origin));
+	const FVector UDir=(AKKPreviewActor::ActorLocalToUnity(T.InverseTransformVectorNoScale(Dir)*100.)).GetSafeNormal();
+	const FVector UVel=AKKPreviewActor::ActorLocalToUnity(T.InverseTransformVector(Moved))/Seconds;
+	auto Vec=[](const FVector& V){TArray<TSharedPtr<FJsonValue>> A;for(double C:{V.X,V.Y,V.Z})A.Add(MakeShared<FJsonValueNumber>(C));return A;};
+	auto R=Op(TEXT("hook"));R->SetStringField(TEXT("hook"),TEXT("input.pointer"));
+	auto P=MakeShared<FJsonObject>();P->SetStringField(TEXT("mode"),TEXT("reader"));P->SetStringField(TEXT("card"),GCard);
+	P->SetArrayField(TEXT("origin"),Vec(UOrigin));P->SetArrayField(TEXT("dir"),Vec(UDir));P->SetArrayField(TEXT("velocity"),Vec(UVel));
+	R->SetObjectField(TEXT("payload"),P);
+	FollowReplies(G,Ask(R));
 }
 
 void OKReaderMods::Speech(UOKCharacterController* G,const FString& Line)

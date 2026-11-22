@@ -1778,6 +1778,7 @@ void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSec
  }
  TickClothingPreviews();
  TickNeighborPreload();
+ if(!InteractionWidget&&!InteractionScene&&!PairedPlayback)OKReaderMods::Pointer(this,PreviewActor,DeltaSeconds);
  if(VideoMotionPanel)VideoMotionPanel->Tick();
  // Video pair: the partner owns the clock. A reloaded main character drops its first
  // (hitched) frame, so copy the clock every frame; both then advance by the same delta.

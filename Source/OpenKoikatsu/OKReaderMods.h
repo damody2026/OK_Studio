@@ -29,6 +29,8 @@ namespace OKReaderMods
 	void Saved(UOKCharacterController* G,const FString& Path);
 	// A voice line started; Text is what she says (as the reader lists it).
 	void Speech(UOKCharacterController* G,const FString& Text);
+	// Every reader tick: the mouse sweeping over the shown character goes to input.pointer subscribers (boop).
+	void Pointer(UOKCharacterController* G,class AKKPreviewActor* Actor,float DeltaSeconds);
 
 	// The registry rows of every mod control (kind, label, value, options; category "mods").
 	TArray<TSharedPtr<FJsonValue>> Rows(UOKCharacterController* G);
