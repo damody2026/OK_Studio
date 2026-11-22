@@ -7220,3 +7220,5 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - 橋接第一次建置 C2446：`cond ? nullptr : MakeShared<FJsonValueString>(...)` 兩邊型別不同（`TSharedRef` 不能和 `nullptr` 合成一個型別）。改成分開的 `return`。
   - 橋接在 mod 回 panic 時，於那個 mod 自己的指令執行中就 `RemoveOwner`，刪掉正在執行的 `TFunction`（自我測試「panic 的 mod 離開」失敗才看出來）。改成標記後下一幀移除。教訓：回呼裡不要移除擁有這個回呼的登錄項。
   - 自我測試直接呼叫面板列的 `Set` 卻沒有像面板一樣 `NotifyChanged`，復原紀錄沒記到，重做失敗。是測試寫錯，改成照面板的流程。
+  - 工作項 5 把 mod 工具列按鈕接在上方工具列（固定寬 398 的 slot）後面，只用登錄後的元件清單驗過；接真 mod 後 7 顆按鈕全在視窗外，`ui_widgets` 列得到、畫面看不到。改成獨立 slot 往左長。教訓：UI 的驗收要截圖看畫面，元件存在不等於看得到。
+  - 橋接先照通知把 hook 的 payload 當字串送；宿主實作是把 `payload` 欄位當 JSON 值再序列化，送字串 mod 會拿到雙重編碼。對 `ok_mod_host.h` 後改送物件（在實機前發現）。教訓：跨組介面以對方提交的標頭為準，通知只是摘要。
