@@ -109,6 +109,8 @@ fn out(text: String) -> *const c_char {
 pub struct Rules {
     tuning_dir: Option<PathBuf>,
     tuning: RwLock<Tuning>,
+    /// Catalogue items from mods (`catalog_extend`), kept across reloads.
+    extra_items: RwLock<Vec<Value>>,
     /// The dialogue catalogues (talk.rs), once Unreal named them (`talk_load`); read again on reload.
     talk: RwLock<Option<talk::TalkData>>,
 }
@@ -121,11 +123,12 @@ impl Rules {
         tr::install(&tuning.texts);
         region::install(&tuning.regions);
         events::install(&tuning.events);
-        Ok(Rules { tuning_dir, tuning: RwLock::new(tuning), talk: RwLock::new(None) })
+        Ok(Rules { tuning_dir, tuning: RwLock::new(tuning), extra_items: RwLock::new(Vec::new()), talk: RwLock::new(None) })
     }
 
     pub fn reload(&self) -> Result<(), String> {
-        let fresh = Tuning::load(self.tuning_dir.as_deref())?;
+        let extra = self.extra_items.read().map_err(|_| "extra_items_lock_poisoned")?.clone();
+        let fresh = Tuning::load_with(self.tuning_dir.as_deref(), &extra)?;
         tr::install(&fresh.texts);
         region::install(&fresh.regions);
         events::install(&fresh.events);
@@ -154,6 +157,19 @@ impl Rules {
         // Which rule answers: `rule` (Unreal always sends it), else `kind` for hand-written requests. A request's own data
         // may then use `kind` freely (a rumour's kind, an activity's kind) without changing which rule answers it.
         let kind = request.get("rule").or_else(|| request.get("kind")).and_then(Value::as_str).unwrap_or_default().to_string();
+        // {"rule":"catalog_extend","items":[catalog.json item rows]}: the mods' street goods (Docs/OK_MOD_C_WAVE6.md),
+        // kept and the tables loaded again with them. The same list again changes nothing; an empty list takes them out.
+        if kind == "catalog_extend" {
+            let items: Vec<Value> = request.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+            let same = *self.extra_items.read().map_err(|_| "extra_items_lock_poisoned")? == items;
+            if !same {
+                *self.extra_items.write().map_err(|_| "extra_items_lock_poisoned")? = items.clone();
+                self.reload()?;
+            }
+            let tuning = self.tuning.read().map_err(|_| "tuning_lock_poisoned")?;
+            let known = items.iter().filter(|i| i.get("id").and_then(Value::as_str).is_some_and(|id| tuning.catalog.find(id).is_some())).count();
+            return serde_json::to_string(&json!({"items": items.len(), "known": known, "reloaded": !same})).map_err(|e| e.to_string());
+        }
         let tuning = self.tuning.read().map_err(|_| "tuning_lock_poisoned")?;
         let answer = match kind.as_str() {
             "status" => json!({"abi": ABI_VERSION, "version": env!("CARGO_PKG_VERSION"), "tuning": tuning.sources()}),
@@ -293,6 +309,29 @@ mod tests {
         assert_eq!(act["minutes"], 25);
         let ent: Value = serde_json::from_str(&rules.eval(r#"{"rule":"entrust_start","kind":"help","amount":500,"relation":{"id":"a"}}"#).unwrap()).unwrap();
         assert!(ent.is_object());
+    }
+
+    /// Mods' street goods (catalog_extend) join every region's catalogue, priced like the rest; a built-in id is not
+    /// shadowed; the same list again does not reload; an empty one takes them out.
+    #[test]
+    fn catalog_extend_adds_mod_items_in_every_region() {
+        let rules = Rules::open("{}").unwrap();
+        let cake = json!({"id": "org.x.cake", "name": "小蛋糕", "place": "conveni", "category": "gift", "price": {"": 100}, "giftable": true, "consumable": false});
+        let built_in = rules.tuning.read().unwrap().catalog.items[0].clone();
+        let shadow = json!({"id": built_in.id, "name": "x", "place": "conveni", "price": {"": 1}});
+        let answer: Value = serde_json::from_str(&rules.eval(&json!({"rule": "catalog_extend", "items": [cake, shadow]}).to_string()).unwrap()).unwrap();
+        assert_eq!((answer["items"].as_u64(), answer["known"].as_u64(), answer["reloaded"].as_bool()), (Some(2), Some(2), Some(true)));
+        {
+            let t = rules.tuning.read().unwrap();
+            assert_eq!(t.catalog.find("org.x.cake").unwrap().price_of(""), 100);
+            assert_eq!(t.catalog.find(&built_in.id).unwrap().name, built_in.name, "a built-in item stays as it is");
+            let us = t.catalog_in("US", "en").find("org.x.cake").expect("in the US catalogue too").price_of("");
+            assert!(us > 0 && us != 100, "converted to dollars: {us}");
+        }
+        let again: Value = serde_json::from_str(&rules.eval(&json!({"rule": "catalog_extend", "items": [cake, shadow]}).to_string()).unwrap()).unwrap();
+        assert_eq!(again["reloaded"], false);
+        rules.eval(r#"{"rule":"catalog_extend","items":[]}"#).unwrap();
+        assert!(rules.tuning.read().unwrap().catalog.find("org.x.cake").is_none());
     }
 
     #[test]

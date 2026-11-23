@@ -57,7 +57,11 @@ pub struct Tuning {
 }
 
 impl Tuning {
-    pub fn load(dir: Option<&Path>) -> Result<Tuning, String> {
+    pub fn load(dir: Option<&Path>) -> Result<Tuning, String> { Tuning::load_with(dir, &[]) }
+
+    /// `load` with `extra_items` (catalog.json item rows, mods' street tables: Docs/OK_MOD_C_WAVE6.md) after the
+    /// catalogue's own, so they are priced in each region and named like the rest.
+    pub fn load_with(dir: Option<&Path>, extra_items: &[serde_json::Value]) -> Result<Tuning, String> {
         let mut sources = Vec::new();
         let bonds: BondTuning = load_into(dir, "bonds", BONDS_BUILTIN, &mut sources)?;
         let needs = load_into(dir, "needs", NEEDS_BUILTIN, &mut sources)?;
@@ -69,7 +73,15 @@ impl Tuning {
         let anchors = crate::anchors::AnchorIndex::new(load_data(dir, "city_anchors.json", CITY_ANCHORS_BUILTIN, &mut sources)?, load_into(dir, "anchor_kinds", ANCHOR_KINDS_BUILTIN, &mut sources)?)?;
         let property_json = load_property(dir, &mut sources)?;
         let property = PropertyData::parse(&property_json);
-        let catalog = Catalog::parse(&load_data(dir, "catalog.json", CATALOG_BUILTIN, &mut sources)?);
+        let mut catalog_json = load_data(dir, "catalog.json", CATALOG_BUILTIN, &mut sources)?;
+        if !extra_items.is_empty() {
+            if let Some(items) = catalog_json.get_mut("items").and_then(serde_json::Value::as_array_mut) {
+                let own: std::collections::HashSet<String> = items.iter().filter_map(|i| i.get("id").and_then(serde_json::Value::as_str).map(str::to_owned)).collect();
+                items.extend(extra_items.iter().filter(|i| i.get("id").and_then(serde_json::Value::as_str).is_some_and(|id| !own.contains(id))).cloned());
+            }
+            sources.push(("catalog_extra", format!("{} item(s)", extra_items.len())));
+        }
+        let catalog = Catalog::parse(&catalog_json);
         let texts = crate::locale::Texts::load(dir)?;
         sources.push(("texts", texts.sources.join(";")));
         let regions = Regions::load(dir)?;
