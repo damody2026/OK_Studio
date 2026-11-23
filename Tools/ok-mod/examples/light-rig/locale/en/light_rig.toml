@@ -9,3 +9,6 @@
 "mod.org.openkoikatsu.light_rig.menu.aim" = "Move the fill light here"
 "mod.org.openkoikatsu.light_rig.menu.smile" = "Smile"
 "mod.org.openkoikatsu.light_rig.row.height" = "Fill light height (cm)"
+"mod.org.openkoikatsu.light_rig.cmd.tilt" = "FK: tilt the bone"
+"mod.org.openkoikatsu.light_rig.cmd.reach" = "IK: move the effector"
+"mod.org.openkoikatsu.light_rig.cmd.anim" = "Play a studio animation"

@@ -9,3 +9,6 @@
 "mod.org.openkoikatsu.light_rig.menu.aim" = "补光移到这里"
 "mod.org.openkoikatsu.light_rig.menu.smile" = "微笑"
 "mod.org.openkoikatsu.light_rig.row.height" = "补光高度（cm）"
+"mod.org.openkoikatsu.light_rig.cmd.tilt" = "FK：转动骨骼"
+"mod.org.openkoikatsu.light_rig.cmd.reach" = "IK：移动控制点"
+"mod.org.openkoikatsu.light_rig.cmd.anim" = "播放 Studio 动作"

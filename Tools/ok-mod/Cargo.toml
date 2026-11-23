@@ -30,6 +30,7 @@ members = [
     "fixtures/panic-mod",
     "fixtures/bad-layout",
     "fixtures/material-hooks",
+    "fixtures/pair-gauges",
 ]
 
 [workspace.dependencies]

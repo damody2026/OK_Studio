@@ -8,6 +8,8 @@
 //!   with an `inspect` op (`transform`);
 //! - the eye button shows only the selection (hides the other top-level objects, `patch` `bVisible`), again shows them;
 //! - numbered names (`rename`), a smile and the top half off for the selected characters (`expression`, `clothes`);
+//! - FK, IK and a studio animation for the selected character (`fk`, `ik`, `anim`; the argument names the bone, the
+//!   effector or the animation key);
 //! - the light's height is a row of the Mod page (系統 → Mod), in the mod's data;
 //! - a character's new card, outfit, clothes or animation shows in the status line (`studio.character_changed`).
 //!
@@ -62,6 +64,9 @@ impl Rig {
             .command("solo", &format!("{P}.cmd.solo"))
             .command("rename", &format!("{P}.cmd.rename"))
             .command("smile", &format!("{P}.cmd.smile"))
+            .command("tilt", &format!("{P}.cmd.tilt"))
+            .command("reach", &format!("{P}.cmd.reach"))
+            .command("anim", &format!("{P}.cmd.anim"))
             .toolbar_icon("toggle", "light", &format!("{P}.tool.toggle"), &format!("mod.{ID}.toggle"), "", "rig")
             .toolbar_icon("solo", "eye", &format!("{P}.tool.solo"), &format!("mod.{ID}.solo"), "", "solo")
             .menu("aim", &format!("{P}.menu.aim"), &format!("mod.{ID}.aim"), "", &[])
@@ -151,6 +156,35 @@ impl Rig {
         e.into_reply()
     }
 
+    /// The primary character (FK / IK / animation work on one).
+    fn character(&self, call: &Call) -> Option<i64> {
+        let objects = call.objects();
+        call.primary().filter(|id| objects.iter().any(|o| o.id == *id && o.kind == "character"))
+    }
+
+    /// FK: the bone named by the argument (default the neck) tilted 20 degrees.
+    fn tilt(&self, call: &Call) -> Reply {
+        let Some(id) = self.character(call) else { return Effect::new().status("先選一個角色").into_reply() };
+        let bone = if call.arg().is_empty() { "cf_j_neck" } else { call.arg() };
+        Effect::new().op(op::fk(id, &[(bone, [0.0, 0.0, 20.0])])).tag("tilt").status(format!("#{id} 的 {bone} 轉 20°")).into_reply()
+    }
+
+    /// IK: the effector named by the argument (default 3) moved to (30, -20, 140) cm, full weight.
+    fn reach(&self, call: &Call) -> Reply {
+        let Some(id) = self.character(call) else { return Effect::new().status("先選一個角色").into_reply() };
+        let effector: u8 = call.arg().parse().unwrap_or(3);
+        Effect::new().op(op::ik(id, &[(effector, [30.0, -20.0, 140.0], 1.0)])).tag("reach").status(format!("#{id} 的 IK {effector} 移動")).into_reply()
+    }
+
+    /// A studio animation by its key (`kind/group/category/no`, the argument).
+    fn anim(&self, call: &Call) -> Reply {
+        let Some(id) = self.character(call) else { return Effect::new().status("先選一個角色").into_reply() };
+        if call.arg().is_empty() {
+            return Effect::new().status("要給動作的 kind/group/category/no").into_reply();
+        }
+        Effect::new().op(op::anim(id, call.arg())).tag("anim").into_reply()
+    }
+
     /// What the ops answered: a new light's id to remember, a position to move the light to.
     fn results(&self, call: &Call) -> Reply {
         let results = call.results();
@@ -166,6 +200,11 @@ impl Rig {
             d.insert("target".into(), target.into());
             // The light stays selected as the spawn op left it; the status says where it went.
             return save(d).status(format!("補光 #{rig} 加在 #{target} 上方 {h:.0} cm")).into_reply();
+        }
+        if matches!(call.tag(), "tilt" | "reach" | "anim") {
+            return Effect::new()
+                .status(if ok { format!("{}：完成", call.tag()) } else { format!("{} 沒做成：{}", call.tag(), first.get("error").and_then(Value::as_str).unwrap_or("?")) })
+                .into_reply();
         }
         if let Some(target) = call.tag().strip_prefix("aim:").and_then(|t| t.parse::<i64>().ok()) {
             let (Some(rig), Some([x, y, z])) = (d.get("rig").and_then(Value::as_i64), first.get("object").and_then(location)) else {
@@ -225,6 +264,9 @@ impl Mod for Rig {
             Some("solo") => self.solo(&call),
             Some("rename") => self.rename(&call),
             Some("smile") => self.smile(&call),
+            Some("tilt") => self.tilt(&call),
+            Some("reach") => self.reach(&call),
+            Some("anim") => self.anim(&call),
             Some(other) => return Err(format!("unknown command {other}")),
             None => self.event(&call),
         })
