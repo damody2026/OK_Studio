@@ -10,6 +10,7 @@ pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
 mod eye_overlay;
 mod ops;
+mod accessory_ops;
 mod textures;
 mod overlays;
 mod model_flags;
@@ -587,6 +588,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   // button, copying one eye to the other) expanded into the fields it writes, then patched in ONE call -- so the
   // card never holds a half-applied action and the open happens once. `edits` is still the plain per-field list.
   let raw=if text(&r,"action")?=="accessory_slot_add"{original}
+   // The accessory copy and transfer windows: whole slots, not fields (appearance/accessory_ops.rs); alone in the list.
+   else if let Some(list)=r["ops"].as_array().filter(|l|l.iter().any(|o|o["op"].as_str().is_some_and(|n|accessory_ops::NAMES.contains(&n)))){
+    if r["edits"].as_array().is_some_and(|e|!e.is_empty())||!list.iter().all(|o|o["op"].as_str().is_some_and(|n|accessory_ops::NAMES.contains(&n))){return Err("飾品複製／轉移要單獨送出".into());}
+    accessory_ops::apply(&original,outfit,list)?}
    else if let Some(list)=r["ops"].as_array(){
     // Both together is the editor's normal case, not a mistake: the person drags the main hair colour (a staged
     // `edits` row, which is what they see) and applying it runs the action that colour implies. The staged row wins.

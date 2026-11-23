@@ -13,7 +13,7 @@ fn label(key: &str) -> String {
 }
 
 /// Mutate one decoded section at a time; retain section prefixes and trailing bytes.
-fn sections(blocks: &mut BTreeMap<String,Vec<u8>>, outfit: usize, mut f: impl FnMut(&str,&mut Value)->Result<(),String>) -> Result<(),String> {
+pub(super) fn sections(blocks: &mut BTreeMap<String,Vec<u8>>, outfit: usize, mut f: impl FnMut(&str,&mut Value)->Result<(),String>) -> Result<(),String> {
  let raw=blocks.get("Custom").ok_or("缺少外觀區塊")?.clone();
  if let Some(mut v)=decode(&raw).ok().filter(Value::is_map) {
   for name in ["face","body","hair"] {f(name,at(&mut v,name)?)?;}
