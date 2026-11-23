@@ -26,6 +26,7 @@ members = [
     "examples/scene-notes",
     "examples/timeline-flow",
     "examples/pair-counter",
+    "fixtures/hook-probe",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
     "fixtures/material-hooks",

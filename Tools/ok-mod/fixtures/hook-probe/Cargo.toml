@@ -1,0 +1,15 @@
+[package]
+name = "ok-mod-hook-probe"
+version = "0.1.0"
+edition = "2021"
+description = "Test mod: logs the reader and street hooks added in wave 4 and answers a few of them (get, cards, coordinate_save) so they can be checked in the running game."
+publish = false
+
+[lib]
+name = "ok_hook_probe"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
