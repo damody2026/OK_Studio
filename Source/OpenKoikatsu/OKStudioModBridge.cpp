@@ -658,6 +658,13 @@ namespace OKStudioModBridge
 		if (bStep && State().Game.IsValid()) Game->EndStep();
 	}
 
+	/** A text id of a mod in the studio from its locale files (the text itself when the mod is not in the studio). */
+	FString ModText(const FString& ModId, const FString& Id)
+	{
+		const FMod* M = FindMod(ModId);
+		return M ? Label(*M, Id) : Id;
+	}
+
 	/** A mod hotkey's reply (FOKModKeys, OKModeHotkeys.cpp): applied as a key of the mod's panel is, one undo step. */
 	void ApplyHotkeyReply(const FString& Mod, const TSharedPtr<FJsonObject>& Reply)
 	{

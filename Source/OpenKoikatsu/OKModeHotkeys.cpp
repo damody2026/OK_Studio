@@ -8,18 +8,45 @@
 #include "OKModKeys.h"
 #include "OKCharacterController.h"
 #include "OKHScene.h"
+#include "OKStudioMod.h"
 #include "Components/TextBlock.h"
 #include "Dom/JsonObject.h"
 
 namespace OKStudioModBridge
 {
 	void ApplyHotkeyReply(const FString& Mod, const TSharedPtr<FJsonObject>& Reply);
+	FString ModText(const FString& ModId, const FString& Id);
 }
 
 namespace OKModeHotkeys
 {
 	void StudioStart()
 	{
+		// Settings › Mod 熱鍵 (SOKStudioMod.cpp) lists and rebinds through these.
+		FOKStudioModRegistry& R = FOKStudioModRegistry::Get();
+		R.ListHotkeys = []
+		{
+			TArray<FOKStudioModRegistry::FHotkey> Out;
+			for (const FOKModKeys::FHotkey& K : FOKModKeys::List())
+			{
+				const FString Text = K.DescriptionId.IsEmpty() ? K.Name : OKStudioModBridge::ModText(K.Mod, K.DescriptionId);
+				Out.Add({ K.Mod, K.Name, Text == K.DescriptionId ? K.Name : Text, FOKModKeys::Display(K.Chord), FOKModKeys::Display(K.Default) });
+			}
+			return Out;
+		};
+		R.CaptureHotkey = [](const FString& Mod, const FString& Name, TFunction<void()> Done)
+		{
+			FOKModKeys::Capture(Mod, Name, [Done](const FString&, bool) { if (Done) Done(); });
+		};
+		R.BindHotkey = [](const FString& Mod, const FString& Name, const FString& Chord)
+		{
+			FString Use = Chord, Error;
+			if (Chord == TEXT("default"))
+				for (const FOKModKeys::FHotkey& K : FOKModKeys::List()) if (K.Mod == Mod && K.Name == Name) Use = K.Default;
+			if (FOKModKeys::Bind(Mod, Name, Use == TEXT("default") ? FString() : Use, Error)) return true;
+			UE_LOG(LogTemp, Warning, TEXT("bind %s %s: %s"), *Mod, *Name, *Error);
+			return false;
+		};
 		FOKModKeys::Listen(TEXT("studio"), [](const FString& Mod, const TSharedPtr<FJsonObject>& Reply)
 		{
 			// The bridge checks that the studio is still up (its state, not a captured pointer).
@@ -27,7 +54,14 @@ namespace OKModeHotkeys
 		});
 	}
 
-	void StudioStop() { FOKModKeys::Stop(TEXT("studio")); }
+	void StudioStop()
+	{
+		FOKModKeys::Stop(TEXT("studio"));
+		FOKStudioModRegistry& R = FOKStudioModRegistry::Get();
+		R.ListHotkeys = nullptr;
+		R.CaptureHotkey = nullptr;
+		R.BindHotkey = nullptr;
+	}
 
 	void PairStart(UOKCharacterController* Controller)
 	{
