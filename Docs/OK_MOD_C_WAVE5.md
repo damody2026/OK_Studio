@@ -67,8 +67,8 @@ hook-probe（`Tools/ok-mod/fixtures/hook-probe`）改用 F 的 SDK 輔助：
 - 1 對 1 的 `"pair"` 熱鍵屬 E。
 
 ## 4. 提交
--` `1e0ec2006 hook-probe：改用 SDK 的 hooks::reader／street 型別與 get、cards 輔助
--` `c583fcfd4 街區控制端點 /ring：讓她現在打電話來（測 street.phone from her）
--` `e9004ce7f 街區 mod：接上按鍵服務（FOKModKeys street，EndPlay 停止），回覆處理抽成 ModsFollow 與掛點共用
+- `1e0ec2006` hook-probe：改用 SDK 的 hooks::reader／street 型別與 get、cards 輔助
+- `c583fcfd4` 街區控制端點 /ring：讓她現在打電話來（測 street.phone from her）
+- `e9004ce7f` 街區 mod：接上按鍵服務（FOKModKeys street，EndPlay 停止），回覆處理抽成 ModsFollow 與掛點共用
 
 文件本身是最後一個提交。
