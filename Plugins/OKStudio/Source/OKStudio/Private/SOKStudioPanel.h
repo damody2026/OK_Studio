@@ -2539,9 +2539,21 @@ public:
 	bool bHairDeckBusy = false;
 	static FString HairDeckExe()
 	{
-		for (const FString& P : { FPaths::ProjectDir() / TEXT("Tools/ok-hairdeck/target/release/ok-hairdeck.exe"), FPaths::ProjectDir() / TEXT("Tools/ok-hairdeck/ok-hairdeck.exe"),
-			FPaths::LaunchDir() / TEXT("ok-hairdeck/ok-hairdeck.exe") })
-			if (FPaths::FileExists(P)) return FPaths::ConvertRelativePathToFull(P);
+		// The project directory, then up from the game executable (a package's Tools/ sits above its stage).
+		TArray<FString> Roots = { FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()) };
+		FString Walk = FPaths::ConvertRelativePathToFull(FPlatformProcess::BaseDir());
+		for (int32 Up = 0; Up < 9 && !Walk.IsEmpty(); ++Up)
+		{
+			FPaths::NormalizeDirectoryName(Walk);
+			Roots.AddUnique(Walk);
+			FString Parent = FPaths::GetPath(Walk);
+			if (Parent == Walk) break;
+			Walk = MoveTemp(Parent);
+		}
+		Roots.AddUnique(FPaths::ConvertRelativePathToFull(FPaths::LaunchDir()));
+		for (const FString& Root : Roots)
+			for (const TCHAR* Rel : { TEXT("Tools/ok-hairdeck/target/release/ok-hairdeck.exe"), TEXT("Tools/ok-hairdeck/ok-hairdeck.exe"), TEXT("ok-hairdeck/ok-hairdeck.exe") })
+				if (FPaths::FileExists(Root / Rel)) return FPaths::ConvertRelativePathToFull(Root / Rel);
 		return FString();
 	}
 	/** Generates hair from the character's reference picture with ok-hairdeck (a worker thread), then puts it on her. */

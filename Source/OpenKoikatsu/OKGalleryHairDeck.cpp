@@ -9,6 +9,7 @@
 #include "Misc/DateTime.h"
 #include "Async/Async.h"
 #include "HAL/PlatformProcess.h"
+#include "OKToolPaths.h"
 
 // HairDeck hair on the reader's character: a generated cards_seed<s>.json (chains_seed<s>.json beside it) replaces her
 // hair in the open session, then her meshes are rebuilt like an editor geometry change.
@@ -29,12 +30,10 @@ bool UOKCharacterController::ApplyHairDeckHair(const FString& CardsJson,const FS
 }
 
 // ok-hairdeck (Tools/ok-hairdeck, Docs/HAIRDECK.md) as OK Studio finds it; breeding (OKGalleryBreed.cpp) uses it too.
+// A package carries it (CPU build) and its weights (HairDeckData at the package's root, which ok-hairdeck finds itself).
 FString OKHairDeckExe()
 {
-	for(const FString& P:{FPaths::ProjectDir()/TEXT("Tools/ok-hairdeck/target/release/ok-hairdeck.exe"),FPaths::ProjectDir()/TEXT("Tools/ok-hairdeck/ok-hairdeck.exe"),
-		FPaths::LaunchDir()/TEXT("ok-hairdeck/ok-hairdeck.exe")})
-		if(FPaths::FileExists(P))return FPaths::ConvertRelativePathToFull(P);
-	return FString();
+	return OKFindTool(TEXT("ok-hairdeck"));
 }
 
 void UOKCharacterController::GenerateHairDeckHair(const FString& ImageIn)
@@ -45,7 +44,7 @@ void UOKCharacterController::GenerateHairDeckHair(const FString& ImageIn)
 	if(!PreviewActor){HairDeckStatus=TEXT("請先打開一張卡。");return;}
 	if(ImageIn.TrimStartAndEnd().IsEmpty()||!FPaths::FileExists(Image)){HairDeckStatus=TEXT("找不到參考圖：")+Image;return;}
 	const FString Exe=OKHairDeckExe();
-	if(Exe.IsEmpty()){HairDeckStatus=TEXT("找不到 ok-hairdeck.exe（Tools/ok-hairdeck 用 cargo-cuda.cmd build --release 建置）。");return;}
+	if(Exe.IsEmpty()){TArray<FString> Tried;OKFindTool(TEXT("ok-hairdeck"),&Tried);HairDeckStatus=TEXT("找不到 ok-hairdeck.exe，找過：\n")+FString::Join(Tried,TEXT("\n"));return;}
 	const FString Out=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("HairDeck")/FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
 	const FString Args=FString::Printf(TEXT("generate --image \"%s\" --out \"%s\""),*Image,*Out);
 	bHairDeckBusy=true;
@@ -61,7 +60,7 @@ void UOKCharacterController::GenerateHairDeckHair(const FString& ImageIn)
 			if(!Self)return;
 			Self->bHairDeckBusy=false;
 			const FString Cards=Out/TEXT("cards_seed0.json");
-			if(Code!=0||!FPaths::FileExists(Cards)){Self->HairDeckStatus=TEXT("頭髮生成失敗：")+StdErr.TrimStartAndEnd().Right(300);UE_LOG(LogTemp,Warning,TEXT("OK HairDeck generate failed (%d): %s"),Code,*StdErr);return;}
+			if(Code!=0||!FPaths::FileExists(Cards)){Self->HairDeckStatus=TEXT("頭髮生成失敗：")+StdErr.TrimStartAndEnd().Right(1200);UE_LOG(LogTemp,Warning,TEXT("OK HairDeck generate failed (%d): %s"),Code,*StdErr);return;}
 			FString Report;const bool bOk=Self->ApplyHairDeckHair(Cards,FString(),Report);
 			UE_LOG(LogTemp,Display,TEXT("OK HairDeck generated %s: %s"),*Cards,*Report);
 			Self->HairDeckStatus=bOk?TEXT("已換上生成的頭髮（還沒存進卡片）：\n")+Cards:TEXT("頭髮已生成，但換不上：")+Report;

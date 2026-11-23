@@ -86,14 +86,19 @@ local TOOLS = {
   { name = "ok-character-mcp", exe = "Tools/character_mcp/bin/ok-character-mcp.exe", build = { "lua", "Tools/character_mcp/build.lua" } },
   -- CPU builds (--no-default-features drops candle's CUDA): the player's machine may have no CUDA.
   { name = "ok-hairdeck", exe = "Tools/ok-hairdeck/target/release/ok-hairdeck.exe", manifest = "Tools/ok-hairdeck/Cargo.toml",
-    build = { "cargo", "build", "--release", "-j", "8", "--no-default-features" },
-    weights = "HairDeck hair (reader, breeding's hair mix) needs the HairDeck weights (HAIRDECK_ROOT, 5.8 GB, DINOv3 inside); "
-      .. "they are not in the package, so it is unavailable there" },
+    build = { "cargo", "build", "--release", "-j", "8", "--no-default-features" } },
   { name = "ok-video", exe = "Tools/ok-video/target/release/ok-video.exe", manifest = "Tools/ok-video/Cargo.toml",
     build = { "cargo", "build", "--release", "-j", "8", "--no-default-features" },
-    weights = "video import needs the GVHMR checkpoints (ref/GVHMR/inputs/checkpoints, 9.9 GB, SMPL-X inside, not "
-      .. "redistributable); they are not in the package, so it is unavailable there" },
+    weights = "video import needs the player's own SMPL-X / GVHMR weights (SMPL-X may not be redistributed, GVHMR is "
+      .. "non-commercial only): not in the package; Docs/VIDEO_WEIGHTS.md says where they go (or OK_GVHMR_MODELS)" },
 }
+
+-- The HairDeck weights ok-hairdeck generate reads (Docs/HAIRDECK.md), copied from --hairdeck-data to the package's
+-- HairDeckData/ (ok-hairdeck finds it up from its exe). Not in git. DINOv3 is redistributed under its license, which
+-- goes in with it (Licenses/, Tools/package_licenses/THIRD_PARTY.md).
+local HAIRDECK_FILES = { "ckpt/image_model", "ckpt/color_model", "ckpt/chain_model", "ckpt/card_vae",
+  "data/token_stats_head.json", "data/spring/chain_stats_head.json", "third_party/weights/dinov3/model.safetensors" }
+local DINOV3_LICENSE = "third_party/dinov3_src/LICENSE.md"
 
 local function main()
   local p = ok.args.parser("Build, stage and package OK Studio + card reader + OK mods in one run")
@@ -108,6 +113,7 @@ local function main()
   p:flag("--skip-stage")
   p:flag("--skip-modkit")
   p:opt("--content-from")
+  p:opt("--hairdeck-data", { default = "F:/HairDeckData" })
   local a = p:parse(arg)
   if not a.tag:match("^[%w_%-]+$") then fail("--tag must match ^[A-Za-z0-9_-]+$") end
   local tag = a.tag
@@ -136,6 +142,11 @@ local function main()
   if a.zip and path.exists(out .. ".zip") then missing[#missing + 1] = "no " .. win(out .. ".zip") .. " yet (--zip writes it)" end
   if a.skip_modkit and not a.content_from then missing[#missing + 1] = "--content-from <folder> with --skip-modkit (<example>/content/*.pak, <example>/ui/*.dui)" end
   if a.skip_stage and not path.is_dir(stage) then missing[#missing + 1] = "the stage " .. win(stage) .. " for --skip-stage" end
+  local hairdeck = path.abs(a.hairdeck_data)
+  for _, rel in ipairs(HAIRDECK_FILES) do
+    if not path.exists(path.join(hairdeck, rel)) then missing[#missing + 1] = "HairDeck weights " .. win(path.join(hairdeck, rel)) .. " (--hairdeck-data)" end
+  end
+  if not path.is_file(path.join(hairdeck, DINOV3_LICENSE)) then missing[#missing + 1] = "the DINOv3 license " .. win(path.join(hairdeck, DINOV3_LICENSE)) .. " (it goes in with the weights)" end
   if #missing > 0 then fail("missing:\n  - " .. table.concat(missing, "\n  - ")) end
 
   -- Features the package cannot offer, said here and not first in the UI.
@@ -234,6 +245,12 @@ local function main()
   say("7/8 package -> ", win(out))
   local pargs = { "--studio", "--private", "--cards", win(cards), "--max-cards", a.max_cards, "--mods", win(packages),
     "--readme", "Docs/OK_STUDIO_MOD_PACKAGE.md", "--stage", win(stage), "--out", win(out) }
+  local function extra(src, dest) pargs[#pargs + 1] = "--extra"; pargs[#pargs + 1] = win(src) .. "=" .. dest end
+  for _, rel in ipairs(HAIRDECK_FILES) do extra(path.join(hairdeck, rel), "HairDeckData/" .. rel) end
+  extra(path.join(hairdeck, DINOV3_LICENSE), "Licenses/DINOv3-LICENSE.md")
+  extra(path.join(root, "Tools/package_licenses/Apache-2.0.txt"), "Licenses/Apache-2.0.txt")
+  extra(path.join(root, "Tools/package_licenses/THIRD_PARTY.md"), "Licenses/THIRD_PARTY.md")
+  extra(path.join(root, "Docs/VIDEO_WEIGHTS.md"), "Docs/VIDEO_WEIGHTS.md")
   if a.zip then pargs[#pargs + 1] = "--zip"; pargs[#pargs + 1] = win(out .. ".zip") end
   run_lua("package", "Tools/package_street_social.lua", pargs)
 
@@ -262,6 +279,31 @@ local function main()
         [-1073741511] = "entry point not found (0xC0000139)" }
       if loader[r.code] then problems[#problems + 1] = ("tool does not start: %s: %s (%s)"):format(t.name, loader[r.code], win(log)) end
     end
+  end
+  for _, rel in ipairs({ "Licenses/THIRD_PARTY.md", "Licenses/DINOv3-LICENSE.md", "Licenses/Apache-2.0.txt", "Docs/VIDEO_WEIGHTS.md" }) do need(rel) end
+  for _, rel in ipairs(HAIRDECK_FILES) do need("HairDeckData/" .. rel, "HairDeck weights missing") end
+  -- HairDeck really runs from the package: its own exe, its own weights (HAIRDECK_ROOT cleared, and the weights it
+  -- reports must be the package's), one generate on a packaged card (CPU, about 40 s).
+  do
+    local exe = path.join(out, "Tools/ok-hairdeck/target/release/ok-hairdeck.exe")
+    local card
+    for _, f in ipairs(path.rglob(path.join(out, "Content/CharacterCards"), "*.png")) do card = f; break end
+    local test = path.join(logs, "selfcheck-hairdeck")
+    if path.is_dir(test) then path.rmtree(test) end
+    local log = path.join(logs, "selfcheck-hairdeck.log")
+    if path.is_file(exe) and card then
+      say("  HairDeck generate on ", path.name(card), " (CPU)")
+      local r = proc.run({ win(exe), "generate", "--image", win(card), "--out", win(test) },
+        { stdout_file = log, merge = true, env = { HAIRDECK_ROOT = false, RAYON_NUM_THREADS = "8" }, timeout = 900 })
+      local text = path.is_file(log) and path.read_text(log) or ""
+      local used = text:match("weights ([^\r\n]+)")
+      local inside = used and path.norm(used):lower():sub(1, #out + 1) == (out:lower() .. "/")
+      if not r.ok or not path.is_file(path.join(test, "cards_seed0.json")) then
+        problems[#problems + 1] = "HairDeck generate failed in the package: " .. win(log)
+      elseif not inside then
+        problems[#problems + 1] = "HairDeck used weights outside the package (" .. tostring(used) .. "): " .. win(log)
+      end
+    else problems[#problems + 1] = "HairDeck generate not tried (no exe or no card in the package)" end
   end
   if path.exists(path.join(out, "StreetSocial.cmd")) then problems[#problems + 1] = "StreetSocial.cmd is in a Studio package" end
   -- The ok-extract.exe search (oklib.rs ok_extract_exe): up from the base library and from the game executable.

@@ -212,6 +212,9 @@ local function main()
   p:opt("--skip-group", { multiple = true })
   p:flag("--studio")
   p:opt("--mods")
+  -- --extra <source>=<package path>: a file or a whole folder put into the package as it is (data that is not in git:
+  -- the HairDeck weights, a third-party license text; Tools/package_studio_release.lua).
+  p:opt("--extra", { multiple = true })
   local a = p:parse(arg)
   local skip_groups = (a.skip_group and #a.skip_group > 0) and a.skip_group or (a.studio and STUDIO_SKIP or { "h-voices", "studio-scenes" })
   if a.voice and a.voice ~= "cloud" and a.voice ~= "builtin" then error("--voice must be cloud or builtin", 0) end
@@ -283,6 +286,19 @@ local function main()
       -- weights are not packed (Tools/package_studio_release.lua says so).
       "Tools/ok-hairdeck/target/release/ok-hairdeck.exe", "Tools/ok-video/target/release/ok-video.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
+  end
+  for _, spec in ipairs(a.extra or {}) do
+    local src, dest = spec:match("^(.-)=(.+)$")
+    if not src or src == "" then error("--extra must be <source>=<package path>: " .. spec, 0) end
+    src = path.abs(src)
+    dest = dest:gsub("\\", "/"):gsub("^/+", ""):gsub("/+$", "")
+    if dest:match("%.%.") then error("--extra package path must stay inside the package: " .. dest, 0) end
+    if path.is_dir(src) then
+      local files = files_under(src)
+      for _, f in ipairs(files) do add(f[1], dest .. "/" .. f[2]) end
+      say(("Extra: %s -> %s (%d files)"):format(win(src), dest, #files))
+    elseif path.is_file(src) then add(src, dest); say(("Extra: %s -> %s"):format(win(src), dest))
+    else error("--extra source missing: " .. win(src), 0) end
   end
   local mod_count = 0
   if a.mods then package_mods(root, stage, stage_rel, path.abs(a.mods), add, function(n) mod_count = n end) end

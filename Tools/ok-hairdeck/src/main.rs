@@ -50,7 +50,7 @@ fn parse_box(s: &str) -> R<[f32; 4]> {
 
 fn parse(a: &[String]) -> R<Args> {
     let mut r = Args { image: PathBuf::new(), out: PathBuf::new(), boxx: None, seed: 0, n: 1, steps: 50, cfg: 2.0,
-        weights: std::env::var_os("HAIRDECK_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("F:/HairDeckData")),
+        weights: PathBuf::new(),
         noise: None, chain_noise: None, chains: true, colors: true, cpu: false,
         mix: None, mix_box: None, mix_weight: 0.5 };
     let mut i = 0;
@@ -165,9 +165,33 @@ fn noise(path: Option<&Path>, seed: u64, shape: (usize, usize)) -> R<Vec<f32>> {
     }
 }
 
+/// A HairDeck workspace with the weights generate reads (the image DiT stands for them all).
+fn has_weights(dir: &Path) -> bool { dir.join("ckpt/image_model/model.safetensors").is_file() }
+
+/// The weights folder: --weights, HAIRDECK_ROOT, a HairDeckData folder beside the executable or up from it (a package
+/// carries one at its root, Tools/package_studio_release.lua), then F:/HairDeckData. Names every place it looked.
+fn find_weights(given: &Path) -> R<PathBuf> {
+    let mut tried: Vec<PathBuf> = Vec::new();
+    if !given.as_os_str().is_empty() { tried.push(given.to_path_buf()); }
+    else {
+        if let Some(v) = std::env::var_os("HAIRDECK_ROOT") { tried.push(PathBuf::from(v)); }
+        if let Ok(me) = std::env::current_exe() {
+            for d in me.ancestors().skip(1).take(6) { tried.push(d.join("HairDeckData")); }
+        }
+        tried.push(PathBuf::from("F:/HairDeckData"));
+    }
+    if let Some(found) = tried.iter().find(|d| has_weights(d)) {
+        eprintln!("ok-hairdeck: weights {}", found.display());
+        return Ok(found.clone());
+    }
+    let list: Vec<String> = tried.iter().map(|d| d.display().to_string()).collect();
+    Err(format!("找不到 HairDeck 權重（ckpt/image_model/model.safetensors），找過：{}", list.join("；")))
+}
+
 fn run(a: Args) -> R<()> {
     let dev = if a.cpu { Device::Cpu } else { Device::new_cuda(0).unwrap_or(Device::Cpu) };
-    let root = &a.weights;
+    let weights = find_weights(&a.weights)?;
+    let root = &weights;
     let t0 = Instant::now();
     let img_w = nn::Weights::load(&root.join("ckpt/image_model/model.safetensors"), &dev, "image DiT")?;
     let (dim_, depth, heads, res, nmax) = (img_w.arg_usize("dim")?, img_w.arg_usize("depth")?, img_w.arg_usize("heads")?, img_w.arg_usize("res")?, img_w.arg_usize("nmax")?);

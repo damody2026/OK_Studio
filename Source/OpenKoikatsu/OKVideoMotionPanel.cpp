@@ -23,6 +23,7 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/Input/SEditableText.h"
 #include "Misc/ConfigCacheIni.h"
+#include "OKToolPaths.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -192,8 +193,11 @@ void UOKVideoMotionPanel::Build(UWidgetTree* Tree, UPanelWidget* Column, UOKChar
 	SetAdvancedOpen(bOpen);
 	Refresh();
 	const FString Exe = ImporterExe();
-	SetStatus(!Exe.IsEmpty() ? TEXT("選擇影片後按「開始轉換」。")
-		: TEXT("找不到影片轉換程式 ok-video.exe，請先建置 Tools/ok-video（cargo-cuda.cmd build --release），見 Docs/VIDEO_MOTION.md。"), Exe.IsEmpty());
+	// Two different cases: no ok-video.exe is a broken install; no weights is what every package is (SMPL-X and GVHMR
+	// cannot be redistributed), so it says what to bring instead of looking like a bug.
+	if (Exe.IsEmpty()) SetStatus(TEXT("找不到影片轉換程式 ok-video.exe，請先建置 Tools/ok-video（cargo-cuda.cmd build --release），見 Docs/VIDEO_MOTION.md。"), true);
+	else if (OKVideoWeights(Exe).IsEmpty()) SetStatus(TEXT("此功能需要自備 SMPL-X／GVHMR 權重（僅限非商業用途），發佈包不附。取得方法與放置位置見發佈包的 Docs/VIDEO_WEIGHTS.md，或用環境變數 OK_GVHMR_MODELS 指向你的 checkpoints 資料夾。"), true);
+	else SetStatus(TEXT("選擇影片後按「開始轉換」。"));
 }
 
 TArray<UOKVideoMotionPanel::FPair> UOKVideoMotionPanel::ReadPairs(TArray<FString>* Problems)
@@ -330,16 +334,8 @@ void UOKVideoMotionPanel::OnBrowse()
 
 FString UOKVideoMotionPanel::ImporterExe()
 {
-	// Rust converter (Docs/VIDEO_MOTION_NATIVE_PLAN.md): no Python. Development build first, then a staged copy.
-	for (const FString& Candidate : {
-		FPaths::ProjectDir() / TEXT("Tools/ok-video/target/release/ok-video.exe"),
-		FPaths::ProjectDir() / TEXT("Tools/ok-video/ok-video.exe"),
-		FPaths::LaunchDir() / TEXT("ok-video/ok-video.exe") })
-	{
-		const FString Full = FPaths::ConvertRelativePathToFull(Candidate);
-		if (FPaths::FileExists(Full)) return Full;
-	}
-	return FString();
+	// Rust converter (Docs/VIDEO_MOTION_NATIVE_PLAN.md): no Python. The checkout's build, or a package's (above its stage).
+	return OKFindTool(TEXT("ok-video"));
 }
 
 bool UOKVideoMotionPanel::StartImport(const FString& Path, const FString& Name, bool bStatic, bool bPair, bool bMaleLeft, const FString& Method)
@@ -376,6 +372,11 @@ void UOKVideoMotionPanel::OnStart()
 	const FString Exe = ImporterExe();
 	if (Exe.IsEmpty())
 	{ SetStatus(TEXT("找不到影片轉換程式 ok-video.exe，請先建置 Tools/ok-video（cargo-cuda.cmd build --release），見 Docs/VIDEO_MOTION.md。"), true); return; }
+	{
+		TArray<FString> Tried;
+		if (OKVideoWeights(Exe, &Tried).IsEmpty())
+		{ SetStatus(FString(TEXT("此功能需要自備 SMPL-X／GVHMR 權重（僅限非商業用途），發佈包不附。取得方法與放置位置見發佈包的 Docs/VIDEO_WEIGHTS.md，或用環境變數 OK_GVHMR_MODELS 指向你的 checkpoints 資料夾。\n找過：")) + FString::Join(Tried, TEXT("；")), true); return; }
+	}
 	auto Number = [](UEditableTextBox* Box, float Default, float Lo, float Hi)
 	{
 		const FString Text = Box->GetText().ToString().TrimStartAndEnd();

@@ -96,13 +96,33 @@ fn import(args: &[String]) -> Result<(), String> {
     }
     let video = video.ok_or_else(|| format!("缺少影片路徑。用法：{IMPORT_USAGE}"))?;
     let out_dir = value("--out-dir").map(Into::into).unwrap_or_else(|| root.join("Saved").join("VideoMotions"));
-    // Model root: --models, OK_GVHMR_MODELS, local-instance.json "gvhmr_models", then <project>/ref/GVHMR/inputs/checkpoints.
+    // Model root: --models, OK_GVHMR_MODELS, local-instance.json "gvhmr_models", a GVHMR/checkpoints folder up from the
+    // executable (where a package's player puts their own, Docs/VIDEO_WEIGHTS.md), then <project>/ref/GVHMR/inputs/checkpoints.
+    // The weights (SMPL-X, GVHMR) are not redistributable: nothing ships them, the player brings them.
     let local = std::fs::read_to_string(root.join("local-instance.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    let models_root = value("--models")
+    let named: Option<std::path::PathBuf> = value("--models")
         .or_else(|| std::env::var("OK_GVHMR_MODELS").ok())
         .or_else(|| local.as_ref().and_then(|v| v["gvhmr_models"].as_str().map(String::from)))
-        .map(Into::into)
-        .unwrap_or_else(|| root.join("ref/GVHMR/inputs/checkpoints"));
+        .map(Into::into);
+    let mut tried: Vec<std::path::PathBuf> = Vec::new();
+    match named {
+        Some(p) => tried.push(p),
+        None => {
+            if let Ok(me) = std::env::current_exe() {
+                for d in me.ancestors().skip(1).take(6) { tried.push(d.join("GVHMR/checkpoints")); }
+            }
+            tried.push(root.join("ref/GVHMR/inputs/checkpoints"));
+        }
+    }
+    let has_models = |d: &std::path::Path| d.join("body_models").is_dir() && d.join("gvhmr").is_dir();
+    let models_root = match tried.iter().find(|d| has_models(d)) {
+        Some(d) => d.clone(),
+        None => {
+            let list: Vec<String> = tried.iter().map(|d| d.display().to_string()).collect();
+            return Err(format!("影片匯入需要自備 SMPL-X／GVHMR 權重（僅限非商業用途），發佈包不附。取得方法與放置位置見 Docs/VIDEO_WEIGHTS.md；\
+                或用環境變數 OK_GVHMR_MODELS 指向你的 checkpoints 資料夾（要有 body_models 與 gvhmr）。找過：{}", list.join("；")));
+        }
+    };
     let game: Option<std::path::PathBuf> = value("--game").map(Into::into);
     // Validation card: --card; the bundled portable card when it still has a snapshot; else the game's first female card.
     let card = if no_validate {

@@ -97,3 +97,14 @@
   - 要用 ModKit（同一個引擎與 OpenKoikatsu 原始碼）cook pak，指令是 `Tools/modkit_cook.lua`；
   - pak 綁定遊戲建置（`mod.toml` 的 `content_build`），換了版本的遊戲要重新 cook。
 - **安全**：裝 mod 等於信任作者，DLL 是原生碼，沒有沙箱。
+
+## 生成頭髮與影片匯入
+
+- **參考圖生成頭髮（HairDeck）**：裝好即用。
+  - 權重放在包根目錄的 `HairDeckData/`，`Tools/ok-hairdeck` 是不需要 CUDA 的 CPU 版，生成一次約 40 秒。
+  - 讀卡器、OK Studio 與配種的頭髮混合都用它。
+  - 權重的授權：HairDeck 是 Apache-2.0；其中的 DINOv3 依 Meta 的 DINOv3 License 再散布。全文與清單在 `Licenses/`（`THIRD_PARTY.md`）。
+- **影片匯入**：要**自備權重**，包裡沒有。
+  - SMPL-X 不允許再散布，GVHMR 只限非商業用途。
+  - 怎麼取得、放在哪裡（`GVHMR\checkpoints\`，或用環境變數 `OK_GVHMR_MODELS` 指定），見 [VIDEO_WEIGHTS.md](VIDEO_WEIGHTS.md)。
+  - 沒放好時，面板會直接說明要自備權重。
