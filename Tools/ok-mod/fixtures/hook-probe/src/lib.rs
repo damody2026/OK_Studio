@@ -91,6 +91,9 @@ impl Mod for Probe {
     }
 
     fn register(&mut self, reg: &mut Registrar) -> ModResult<()> {
+        // F9: a JSON answer to a hotkey (a notice, and removing this mod's section of a heroine's card, which writes
+        // nothing when there is none), the road a hotkey's {"notice", "cards"} takes in the street.
+        reg.hotkey("probe_notice", "F9", "mod.org.openkoikatsu.hook_probe.config.probe_notice");
         for hook in [
             "reader.character_load", "reader.character_save", "reader.ui", "reader.values", "reader.control",
             "reader.accessory_change", "reader.accessory_copy", "reader.accessory_transfer",
@@ -105,6 +108,15 @@ impl Mod for Probe {
     fn on_event(&mut self, event: &Event) -> ModResult<Reply> {
         let Event::Hook { name, payload } = event else { return Ok(Reply::None) };
         let name = name.as_str();
+        if hooks::hotkey(name) == Some("probe_notice") {
+            let key: hooks::KeyPress = hooks::parse(payload)?;
+            self.record(name, &json!({"mode": key.mode, "chord": key.chord}));
+            let mut reply = json!({"notice": format!("hook-probe: {} in {}", key.chord, key.mode)});
+            if let Some(id) = self.touches.keys().next() {
+                reply = hooks::street::with_cards(reply, &[hooks::street::CardWrite::remove(id)])?;
+            }
+            return hooks::json(&reply);
+        }
         let p: Value = hooks::parse(payload)?;
         if !matches!(name, "reader.ui" | "reader.values") { self.record(name, &p); }
         // The SDK's payload types (hooks::reader, hooks::street) read what the game sent: a mismatch is logged.
