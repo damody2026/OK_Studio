@@ -5,16 +5,23 @@
 --   3. UAT staging with -pak into --base-dir (default Saved/StreetSocial/Base): Windows/Engine and OpenKoikatsu/Content/Paks.
 --      Running stages link to their base, so a different engine build goes to a new --base-dir (old stages keep working).
 --   4. A stage under Saved/StreetSocial/Build/<Tag>.stage (stage_interaction_runtime.lua links Paks/Engine from Base)
+--   5. Its own runtime patch in <Tag>.stage/Patch (Tools/rebuild_street_social_patch.lua --output; --skip-patch leaves it
+--      out): the launchers mount it instead of Launch/runtime.json's shared patch (Tools/street_stage.lua own_patch), so a
+--      global shader added since the shared patch was made (DreamGUI's, the crowd rig's) is not taken away again.
+--      The cook and the patch both use the main project's editor build: build OpenKoikatsuEditor first.
 --
 -- The StreetSocial/material/audio patch (Launch/runtime.json patch, e.g. Saved/StreetSocial/Build/StreetDisplay25HG.patch)
 -- is mounted on top; the base pak carries the map and the older StreetDisplay23 materials only, so the current material
 -- roots (Launch/materials.json) come from the patch, which the launcher rebuilds when it is missing.
 --
 --   Tools\lua\lua.exe Tools\rebuild_street_social_runtime.lua --tag HeroineMind13
---     [--engine DIR] [--skip-exe] [--skip-cook] [--skip-base] [--base-dir Saved/StreetSocial/Base] [--studio]
+--     [--engine DIR] [--skip-exe] [--skip-cook] [--skip-base] [--skip-patch] [--base-dir Saved/StreetSocial/Base] [--studio]
 -- --studio: the OK Studio-only build (Tools/package_street_social.lua --studio): the cook gets /Engine/Maps/Entry (the
 -- studio runs there with OKStudioGameMode, Tools/run_scene_editor.lua) and the always-cook directories, no street or city
 -- map; the tag must start with Studio, so StreetSocial.cmd never picks it (Tools/street_stage.lua).
+-- A street stage runs OK Studio and the 1-on-1 too (its cook has /Engine/Maps/Entry and Template_Default, OKStudio has no
+-- content of its own): one full run gives the stage the final integration tests every mode on; --studio is only the
+-- smaller Studio-only package, with its own --base-dir (base staging replaces the paks in the base it is given).
 -- Logs go to Saved/StreetSocial/Rebuild-<tag>/; the last stdout line is the staged executable.
 local ok = require "ok"
 local path, proc = ok.path, ok.proc
@@ -60,6 +67,7 @@ local function main()
   p:flag("--skip-base")
   p:opt("--base-dir", { default = "Saved/StreetSocial/Base" })
   p:flag("--studio")
+  p:flag("--skip-patch")
   local a = p:parse(arg)
   if not a.tag:match("^[%w_%-]+$") then error("--tag must match ^[A-Za-z0-9_-]+$", 0) end
   if a.studio ~= (a.tag:lower():match("^studio") ~= nil) then error("--studio and a tag starting with Studio go together", 0) end
@@ -145,6 +153,15 @@ local function main()
     "--destination", "Saved/StreetSocial/Build/" .. a.tag .. ".stage", "--base-dir", a.base_dir },
     { stdout_file = path.join(logs, "stage.log"), merge = true })
   if not staged.ok then error("stage failed: " .. win(path.join(logs, "stage.log")), 0) end
+  if not a.skip_patch then
+    -- The stage's own runtime patch, made by the same editor build as its base (Tools/street_stage.lua own_patch: the
+    -- launchers mount it instead of Launch/runtime.json's shared patch, whose global shader map would override the base's).
+    step("runtime patch -> " .. a.tag .. ".stage/Patch")
+    local patch = proc.lua(path.join(root, "Tools/rebuild_street_social_patch.lua"), { "--engine", engine,
+      "--output", path.join(root, "Saved/StreetSocial/Build/" .. a.tag .. ".stage/Patch") },
+      { stdout_file = path.join(logs, "patch.log"), merge = true })
+    if not patch.ok then error("runtime patch failed: " .. win(path.join(logs, "patch.log")), 0) end
+  end
   step("done")
   io.write(win(path.join(root, "Saved/StreetSocial/Build/" .. a.tag .. ".stage/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")), "\n")
 end
