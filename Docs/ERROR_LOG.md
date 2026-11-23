@@ -7334,3 +7334,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - `Reply` 是 `NonExhaustive`，宿主裡 `match` 它要有 `_` 分支（E0004），第一次編譯失敗。
   - 熱鍵頁的改綁按鈕只呼叫 `SetText`，DreamGUI 按鈕每幀以 `FixedText` 重設文字，畫面一直停在舊綁定（綁定本身已改成 F9）。單元測試與 `OKMod.Keys` 都看不出來，實機截圖才發現；改成同時設 `FixedText`。另外「請按鍵…（Esc 保留，Backspace 清除）」在按鈕裡被截斷，縮成「請按鍵…」。
   - 當機前的按鍵服務讓宿主把 mod 的短名訂閱 `key.<entry>` 改寫成 `key.<mod id>.<entry>`。OK Studio 的面板按鍵用的正是短名（`ok-mod-studio::subscribe` 訂 `key.<k>`，`OKStudioModBridge` 送 `key.<k>`），改寫後宿主 `hook_one` 會以「沒訂閱」拒絕，Studio mod 的按鍵全部失效。我照原樣驗過就提交了（`4c6fc245e`），寫回報整理 API 變動時才發現，`e4cd5ad3f` 改回訂閱原樣保留、熱鍵服務兩種名字都認。教訓：改到訂閱或 hook 名的處理時，先 grep 全部 SDK（`Tools/ok-mod/studio`）與 UE 端送 hook 的地方（`HookName`）。
+
+- 2026-11-23 第五波（F 組，乾淨 stage 安裝測試，`Docs/OK_MOD_F_WAVE5.md`）：
+  - `ok-mod-pack` 的 `PACKED_DIRS` 沒有 `ui/`。帶面板的 mod（dream-panel）打包後少了 `ui/Panel.dui`，遊戲因此拒掛它的 pak。S12 收尾時用 profile 裝過 dream-panel，當時是直接從 Mods 複製、沒經過 `.okmod`，所以沒發現。加上 `ui` 與測試 `panels_go_into_the_package`。
+  - `verify` 把 obsolete／重複的 mod 移到 `.old/` 後沒更新 `.installed.toml`，紀錄還列著已移走的 mod。改成 `retire` 一律刪掉該筆。
+  - 打包全部範例的腳本，第一版把範例裡的空 `content/` 當成「有內容」，沒去 `Mods/` 拿 pak，glass-shader 的包裡沒有 pak（打包版退回 A 層材質）。看實機 log 的材質路徑（`/Game/...M_PreviewTranslucent`，不是 mod 自己的）才發現。
