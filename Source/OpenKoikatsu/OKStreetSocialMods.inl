@@ -216,11 +216,14 @@ void AOKStreetSocialScene::ModsTick()
 	if(!State||!OKStreetModsOn(*State))return;
 	auto& S=*State;const double Now=FPlatformTime::Seconds();
 	if(Now<S.ModsTickAt)return;
+	const bool bFirst=S.ModsTickAt<=0;
 	S.ModsTickAt=Now+.5;
 	const int32 Minute=int32(OKStreetMindNow(S)%1440);
 	const FString Period=OKStreetModPeriod(Minute);
-	if(S.ModsPeriod.IsEmpty())S.ModsPeriod=Period;
-	else if(Period!=S.ModsPeriod)
+	// The first look records the period and his place; arrivals count from there. (It used to wait for street.load,
+	// which only another hook sends: with no talk or day change first, no arrival was ever told.)
+	if(bFirst){S.ModsPeriod=Period;S.ModsPlace=PlaceHere(S.Male);return;}
+	if(Period!=S.ModsPeriod)
 	{
 		auto P=ModsPayload();P->SetStringField(TEXT("period"),Period);P->SetStringField(TEXT("previous"),S.ModsPeriod);
 		S.ModsPeriod=Period;ModsHook(TEXT("street.period_change"),P);
@@ -229,7 +232,7 @@ void AOKStreetSocialScene::ModsTick()
 	const FString Here=PlaceHere(S.Male);
 	if(Here==S.ModsPlace)return;
 	const FString Was=S.ModsPlace;S.ModsPlace=Here;
-	if(Here.IsEmpty()||!S.ModsLoaded)return;
+	if(Here.IsEmpty())return;	// ModsHook sends street.load first when it was not yet
 	auto P=ModsPayload();P->SetStringField(TEXT("who"),TEXT("him"));P->SetStringField(TEXT("place"),Here);P->SetStringField(TEXT("from"),Was);
 	if(const FOKStreetPlace* Place=OKStreetFindPlace(Here))P->SetStringField(TEXT("place_name"),Place->Name);
 	// Who is with him (the girl on an outing or in a talk): the heroine a place event is about, when there is one.
