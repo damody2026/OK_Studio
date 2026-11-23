@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKBusyProgress.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "KKPreviewActor.h"
 #include "KKSkeletalBuilder.h"
@@ -265,11 +266,18 @@ void UOKCharacterController::ExportOkClothesTo(const FString& OutIn,TFunction<vo
  const FString Output=!OutIn.IsEmpty()?OutIn:OKClothesFolder(OutputDirectoryInput)/FString::Printf(TEXT("%s_outfit%d.okclothes"),*FPaths::GetBaseFilename(Card),Outfit);
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
  TWeakObjectPtr<UOKCharacterController> Weak(this);
+ // An OK card's outfit carries its resources with it (tens of megabytes): off the game thread, with a progress bar,
+ // or the whole window stops for seconds with nothing to show for it.
  auto Export=[Weak,Card,Outfit,Output,Done](const FString& Picture){
-  FString Summary;const bool Ok=Picture.IsEmpty()?FOkSession::ClothesExport(Card,Outfit,Output,Summary):FOkSession::ClothesExportPictured(Card,Outfit,Picture,Output,Summary);
-  UE_LOG(LogTemp,Display,TEXT("OK clothes export %s outfit %d -> %s: %s"),*Card,Outfit,*Output,*Summary);
-  if(Ok&&Weak.IsValid()){++Weak->OkClothesVersion;OKReaderMods::ClothesSaved(Weak.Get(),Output,Card,Outfit);}	// reader.coordinate_save
-  Done(Ok,Ok?Output:Summary);
+  const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("匯出服裝卡"));
+  Async(EAsyncExecution::Thread,[Weak,Card,Outfit,Output,Done,Picture,Busy](){
+   FString Summary;const bool Ok=Picture.IsEmpty()?FOkSession::ClothesExport(Card,Outfit,Output,Summary):FOkSession::ClothesExportPictured(Card,Outfit,Picture,Output,Summary);
+   UE_LOG(LogTemp,Display,TEXT("OK clothes export %s outfit %d -> %s: %s"),*Card,Outfit,*Output,*Summary);
+   AsyncTask(ENamedThreads::GameThread,[Weak,Card,Outfit,Output,Done,Ok,Summary,Busy](){
+    if(Ok&&Weak.IsValid()){++Weak->OkClothesVersion;OKReaderMods::ClothesSaved(Weak.Get(),Output,Card,Outfit);}	// reader.coordinate_save
+    Done(Ok,Ok?Output:Summary);
+   });
+  });
  };
  // Pictured as she wears it now (the front view of the card capture); the card's own picture when she is not shown.
  if(!IsValid(PreviewActor)||!FPaths::IsSamePath(PreviewCardPath,Card)){Export(FString());return;}
@@ -344,19 +352,18 @@ TArray<FString> UOKCharacterController::OkClothesFiles() const{
  TArray<FString> Out;for(const auto& F:Found)Out.Add(F.Value);
  return Out;
 }
-// While an outfit card is being worn, say what the native job is doing and how far it is. The two sealing steps are
-// child processes that take seconds each; they stream their own progress back (ok-extract progress.rs), so the
-// percentage keeps moving inside them instead of sitting at one number.
-void UOKCharacterController::TickClothesWearProgress(){
- if(!bWearingOkClothes)return;
+// The action on screen now takes its step and its fraction from ok-extract's own progress slot when it said it would
+// (OKBusy::Begin(..., bFollowsExtract)). The sealing steps are child processes of seconds each and stream their
+// progress back (ok-extract progress.rs), so the percentage keeps moving inside them instead of sitting at one number.
+void UOKCharacterController::TickBusyProgress(){
  const double Now=FPlatformTime::Seconds();
- if(Now<WearProgressAt)return;
- WearProgressAt=Now+.1;
- FString Label;float Done=0.f;int64 Generation=0;
- if(!FOkSession::JobProgress(Label,Done,Generation))return;
- const FString Text=FString::Printf(TEXT("套用服裝卡 %d%%：%s（%.0f 秒）"),FMath::RoundToInt(Done*100.f),*Label,Now-WearProgressBegan);
- if(InspectorText)InspectorText->SetText(FText::FromString(Text));
- ScreenNote(1,1.f,FColor::Cyan,Text);
+ if(Now<BusyProgressAt)return;
+ BusyProgressAt=Now+.1;
+ OKBusy::FJob Job;
+ if(!OKBusy::Current(Job)||!Job.bFollowsExtract)return;
+ FString Stage;float Done=0.f;int64 Generation=0;
+ if(!FOkSession::JobProgress(Stage,Done,Generation))return;
+ OKBusy::Progress(Job.Id,Done,Stage);
 }
 void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClothesOnly,TFunction<void(bool,const FString&)> Done){
  if(!Done)Done=[](bool,const FString&){};
@@ -367,18 +374,22 @@ void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClot
  // A work card: the card shown stays as it was; saving keeps the result (the reader's save).
  const FString Output=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKClothes/Worn")/FString::Printf(TEXT("%s+%s.png"),*FPaths::GetBaseFilename(Card).Left(60),*FPaths::GetBaseFilename(Clothes).Left(60)));
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
- bWearingOkClothes=true;WearProgressBegan=FPlatformTime::Seconds();WearProgressAt=0.;
+ bWearingOkClothes=true;WearProgressBegan=FPlatformTime::Seconds();BusyProgressAt=0.;
+ // The whole of it, from the press to her standing there dressed: the reseal here and the open OnLoad3D does after.
+ const int64 BusyId=OKBusy::Begin(TEXT("套用服裝卡"),true);
  TWeakObjectPtr<UOKCharacterController> Weak(this);
  // An OK card is sealed again for her new clothes (ok-extract.exe, seconds): off the game thread.
  // The two halves of "點縮圖到她換好衣服" are timed and logged, always: the wear (resealing the card, which is
  // nearly all of it -- Docs/OK_CLOTHES_CARD.md) and the open that follows. OK_PROFILE=1 splits the wear further.
  const double Pressed=FPlatformTime::Seconds();
- Async(EAsyncExecution::Thread,[Weak,Card,Clothes,Outfit,Output,bClothesOnly,Done,Pressed](){
+ Async(EAsyncExecution::Thread,[Weak,Card,Clothes,Outfit,Output,bClothesOnly,Done,Pressed,BusyId](){
   FString Summary;
   const bool Ok=bClothesOnly?FOkSession::ClothesWearClothesOnly(Card,Clothes,Outfit,Output,Summary):FOkSession::ClothesWear(Card,Clothes,Outfit,Output,Summary);
   const double Worn=FPlatformTime::Seconds();
-  AsyncTask(ENamedThreads::GameThread,[Weak,Card,Clothes,Outfit,Output,Ok,Summary,Done,Pressed,Worn](){
+  AsyncTask(ENamedThreads::GameThread,[Weak,Card,Clothes,Outfit,Output,Ok,Summary,Done,Pressed,Worn,BusyId](){
    UE_LOG(LogTemp,Display,TEXT("OK clothes wear %s on %s outfit %d -> %s: %s"),*Clothes,*Card,Outfit,*Output,*Summary);
+   // Ended last of all, after OnLoad3D has begun its own job, so the bar hands over instead of blinking out.
+   ON_SCOPE_EXIT{OKBusy::End(BusyId);};
    ON_SCOPE_EXIT{UE_LOG(LogTemp,Display,TEXT("OK clothes wear timing: wear %.2fs + open %.2fs = %.2fs"),Worn-Pressed,FPlatformTime::Seconds()-Worn,FPlatformTime::Seconds()-Pressed);};
    UOKCharacterController* Self=Weak.Get();
    if(!Self){return;}
@@ -394,8 +405,7 @@ void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClot
    Self->SelectIndex(Index);
    if(Self->SelectedIndex!=Index){Done(false,TEXT("套好的卡讀不出來：")+Output);return;}
    // The wear is done but she is not on screen yet; the open and the display build are the last ~20% of the wait.
-   {const FString Note=FString::Printf(TEXT("套用服裝卡 97%%：開卡並建立顯示（%.0f 秒）"),FPlatformTime::Seconds()-Self->WearProgressBegan);
-    if(Self->InspectorText)Self->InspectorText->SetText(FText::FromString(Note));Self->ScreenNote(1,8.f,FColor::Cyan,Note);}
+   OKBusy::Progress(BusyId,.97f,TEXT("開卡並建立顯示"));
    Self->OutfitIndex=FMath::Max(0,Outfit);Self->RefreshOutfitList();Self->OnLoad3D();
    Done(true,Output);
   });
@@ -408,8 +418,19 @@ void UOKCharacterController::OnImportClothesCard(){
  FString Coordinate;if(!OKPickFile(TEXT("服裝卡\0*.png\0所有檔案\0*.*\0"),TEXT("選擇遊戲的服裝卡"),Coordinate))return;
  const FString Output=FPaths::ConvertRelativePathToFull(Directory)/(FPaths::GetBaseFilename(Coordinate)+TEXT(".okclothes"));
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
- FString Summary;const bool Ok=FOkSession::ClothesImport(Coordinate,Output,Summary);
- UE_LOG(LogTemp,Display,TEXT("OK clothes import %s -> %s: %s"),*Coordinate,*Output,*Summary);
- if(Ok)++OkClothesVersion;
- Report(Ok?TEXT("已轉成 OK 服裝：")+Output:TEXT("轉換服裝卡失敗：")+Summary);
+ // Reading a game coordinate card and writing an .okclothes takes seconds: off the game thread, with a progress bar.
+ Report(TEXT("轉換服裝卡中…"));
+ TWeakObjectPtr<UOKCharacterController> Weak(this);
+ const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("轉換服裝卡"));
+ Async(EAsyncExecution::Thread,[Weak,Coordinate,Output,Busy](){
+  FString Summary;const bool Ok=FOkSession::ClothesImport(Coordinate,Output,Summary);
+  UE_LOG(LogTemp,Display,TEXT("OK clothes import %s -> %s: %s"),*Coordinate,*Output,*Summary);
+  AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Busy](){
+   UOKCharacterController* Self=Weak.Get();if(!Self)return;
+   if(Ok)++Self->OkClothesVersion;
+   const FString Text=Ok?TEXT("已轉成 OK 服裝：")+Output:TEXT("轉換服裝卡失敗：")+Summary;
+   if(Self->InspectorText)Self->InspectorText->SetText(FText::FromString(Text));
+   Self->ScreenNote(1,8.f,FColor::Cyan,Text);
+  });
+ });
 }
