@@ -319,8 +319,11 @@ fn sideloader(from: &Value, to: &mut Value, outfit: usize, wear: bool, acc: Acce
 /// Material Editor: list entries carry CoordinateIndex; clothing (1) and
 /// accessory (2) objects follow the outfit, with their textures.
 fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool, acc: Accessories) {
-    let Some((version, src)) = plugin_data(from, MATERIAL_EDITOR) else { return };
-    let src = src.clone();
+    let src = plugin_data(from, MATERIAL_EDITOR);
+    // As in `per_outfit_maps`: worn, her own clothing entries for this outfit go even when the outfit brings none.
+    if src.is_none() && (!wear || plugin_data(to, MATERIAL_EDITOR).is_none()) { return; }
+    let version = src.as_ref().map(|(v, _)| v.clone()).or_else(|| plugin_data(to, MATERIAL_EDITOR).map(|(v, _)| v)).unwrap_or_else(|| Value::from(0));
+    let src = src.map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new()));
     let mut dst = if wear { plugin_data(to, MATERIAL_EDITOR).map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new())) } else { Value::Map(Vec::new()) };
     let src_tex = map_get(&src, "TextureDictionary").map(unbin).unwrap_or(Value::Nil);
     let mut dst_tex = if wear { map_get(&dst, "TextureDictionary").map(unbin).unwrap_or(Value::Map(Vec::new())) } else { Value::Map(Vec::new()) };
@@ -328,7 +331,10 @@ fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool, acc:
     let mut next_id = dst_tex.as_map().map(|m| m.iter().filter_map(|(k, _)| int_key(k)).max().unwrap_or(-1) + 1).unwrap_or(0);
     let mut tex_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     let outfit = outfit as i64;
-    let lists: Vec<String> = src.as_map().map(|m| m.iter().filter_map(|(k, _)| k.as_str().filter(|k| k.ends_with("List")).map(str::to_owned)).collect()).unwrap_or_default();
+    let names = |v: &Value| -> Vec<String> { v.as_map().map(|m| m.iter().filter_map(|(k, _)| k.as_str().filter(|k| k.ends_with("List")).map(str::to_owned)).collect()).unwrap_or_default() };
+    let mut lists = names(&src);
+    // Worn: also the lists only she has, so her entries for this outfit are cleared from them.
+    if wear { for list in names(&dst) { if !lists.contains(&list) { lists.push(list); } } }
     for list in lists {
         let incoming = map_get(&src, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default();
         let mut out: Vec<Value> = if wear { map_get(&dst, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default() } else { Vec::new() };
@@ -369,20 +375,28 @@ fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool, acc:
 
 /// Overlays (KCOX) and Pushup: the character keeps one entry per outfit index.
 fn per_outfit_maps(from: &Value, to: &mut Value, outfit: usize, wear: bool, key: &str, fields: &[(&str, &str)]) {
-    let Some((version, src)) = plugin_data(from, key) else { return };
-    let src = src.clone();
+    let src = plugin_data(from, key);
+    // Worn, hers for this outfit goes whether or not the outfit brings its own: an overlay belongs to the clothes it
+    // was painted on. Alice's KCOX `ct_bra` (override with no texture, which blanks the bra) stayed behind and made
+    // the bra of every outfit worn on her invisible (2026-11-24).
+    if src.is_none() && (!wear || plugin_data(to, key).is_none()) { return; }
+    let version = src.as_ref().map(|(v, _)| v.clone()).or_else(|| plugin_data(to, key).map(|(v, _)| v)).unwrap_or_else(|| Value::from(0));
+    let src = src.map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new()));
     let mut dst = if wear { plugin_data(to, key).map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new())) } else { Value::Map(Vec::new()) };
     for (coordinate_field, character_field) in fields {
         let (src_field, dst_field) = if wear { (*coordinate_field, *character_field) } else { (*character_field, *coordinate_field) };
-        let Some(value) = map_get(&src, src_field).map(unbin) else { continue };
+        let value = map_get(&src, src_field).map(unbin);
         if wear {
-            let mut table = map_get(&dst, dst_field).map(unbin).filter(|v| v.is_map()).unwrap_or(Value::Map(Vec::new()));
+            let existing = map_get(&dst, dst_field).map(unbin).filter(|v| v.is_map());
+            // Nothing coming and nothing of hers: this field is not touched (no empty table written).
+            if value.is_none() && existing.is_none() { continue; }
+            let mut table = existing.unwrap_or(Value::Map(Vec::new()));
             if let Value::Map(m) = &mut table {
                 m.retain(|(k, _)| int_key(k) != Some(outfit as i64));
-                if !value.is_nil() { m.push((Value::from(outfit), value)); }
+                if let Some(value) = value.filter(|v| !v.is_nil()) { m.push((Value::from(outfit), value)); }
             }
             map_set(&mut dst, dst_field, bin(&table));
-        } else if let Some(entry) = value.as_map().and_then(|m| m.iter().find(|(k, _)| int_key(k) == Some(outfit as i64)).map(|(_, v)| v.clone())) {
+        } else if let Some(entry) = value.as_ref().and_then(Value::as_map).and_then(|m| m.iter().find(|(k, _)| int_key(k) == Some(outfit as i64)).map(|(_, v)| v.clone())) {
             map_set(&mut dst, dst_field, bin(&entry));
         }
     }
@@ -452,8 +466,16 @@ fn set_outfit_xml(to: &mut Value, outfit: usize, elements: &[String], version: V
 /// moreAccessories: the character XML groups extra slots by
 /// `<accessorySet type="outfit">`; a coordinate lists them directly.
 fn more_accessories(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
-    let Some((version, src)) = plugin_data(from, MORE_ACCESSORIES) else { return };
-    let Some(xml) = map_get(src, "additionalAccessories").and_then(|v| v.as_str()).map(str::to_owned) else { return };
+    let src = plugin_data(from, MORE_ACCESSORIES);
+    let hers_version = plugin_data(to, MORE_ACCESSORIES).map(|(v, _)| v);
+    // As in `per_outfit_maps`: worn, her extra accessories for this outfit go even when the outfit brings none.
+    if src.is_none() && (!wear || hers_version.is_none()) { return; }
+    let version = src.as_ref().map(|(v, _)| v.clone()).or(hers_version).unwrap_or_else(|| Value::from(2));
+    let xml = match src.and_then(|(_, d)| map_get(d, "additionalAccessories").and_then(|v| v.as_str()).map(str::to_owned)) {
+        Some(xml) => xml,
+        None if wear => format!("{}></additionalAccessories>", xml_header("")),
+        None => return,
+    };
     let result = if wear {
         let target = plugin_data(to, MORE_ACCESSORIES).and_then(|(_, d)| map_get(d, "additionalAccessories").and_then(|v| v.as_str()).map(str::to_owned));
         let base = target.unwrap_or_else(|| format!("{}></additionalAccessories>", xml_header(&xml)));
@@ -522,13 +544,18 @@ fn accessory_states_slots(from: &Value, to: &mut Value, outfit: usize, plan: &Sl
 /// Worn per slot (`SlotPlan`), an entry with a `Slot` follows its accessory: hers stay with the slots that stay, the
 /// outfit's move with theirs.
 fn indexed_lists(from: &Value, to: &mut Value, outfit: usize, wear: bool, key: &str, field: &str, coordinate_value: i64, acc: Accessories) {
-    let Some((version, src)) = plugin_data(from, key) else { return };
-    let src = src.clone();
+    let src = plugin_data(from, key);
+    // As in `per_outfit_maps`: worn, hers for this outfit goes even when the outfit brings none of this plugin.
+    if src.is_none() && (!wear || plugin_data(to, key).is_none()) { return; }
+    let version = src.as_ref().map(|(v, _)| v.clone()).or_else(|| plugin_data(to, key).map(|(v, _)| v)).unwrap_or_else(|| Value::from(0));
+    let src = src.map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new()));
     let mut dst = if wear { plugin_data(to, key).map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new())) } else { Value::Map(Vec::new()) };
-    let lists: Vec<String> = src.as_map().map(|m| m.iter().filter_map(|(k, v)| {
+    let names = |v: &Value| -> Vec<String> { v.as_map().map(|m| m.iter().filter_map(|(k, v)| {
         let k = k.as_str()?;
         unbin(v).as_array().filter(|a| a.is_empty() || a.iter().any(|e| map_get(e, field).is_some())).map(|_| k.to_owned())
-    }).collect()).unwrap_or_default();
+    }).collect()).unwrap_or_default() };
+    let mut lists = names(&src);
+    if wear { for list in names(&dst) { if !lists.contains(&list) { lists.push(list); } } }
     let index = |e: &Value| map_get(e, field).and_then(int_key);
     let mut any = false;
     for list in lists {
@@ -1157,6 +1184,24 @@ pub mod file {
 
 #[cfg(test)]
 mod tests {
+    /// Hers for the outfit goes even when the outfit brings none of that plugin. Alice's KCOX `ct_bra` (an override
+    /// with no texture, which blanks the bra) stayed behind, so the bra of every outfit worn on her was invisible
+    /// while its mesh was there and shown (2026-11-24).
+    #[test]
+    fn wearing_clears_her_overlays_for_that_outfit() {
+        use super::*;
+        let blank_bra = Value::Map(vec![("ct_bra".into(), Value::Array(vec![Value::Nil, Value::Boolean(true)]))]);
+        let mut overlays = Value::Map(Vec::new());
+        map_set(&mut overlays, "Overlays", bin(&Value::Map(vec![(0.into(), blank_bra.clone()), (3.into(), blank_bra)])));
+        let mut character = Value::Map(Vec::new());
+        set_plugin(&mut character, OVERLAYS, Value::from(1), overlays);
+        // An outfit with no KCOX data of its own.
+        super::wear_plugins(&Value::Map(Vec::new()), &mut character, 0, Accessories::Outfit);
+        let table = plugin_data(&character, OVERLAYS).and_then(|(_, d)| map_get(d, "Overlays").map(unbin)).expect("KCOX kept");
+        let outfits: Vec<i64> = table.as_map().expect("overlay table").iter().filter_map(|(k, _)| int_key(k)).collect();
+        assert_eq!(outfits, vec![3], "outfit 0's overlay goes with her old clothes; her other outfits stay");
+    }
+
     /// R3-10: March 7th and Alice keep the template uniform (no shoes) in outfit 0 and their own outfit in 4.
     #[test]
     fn shown_outfit_first_exchanges_outfit_data() {

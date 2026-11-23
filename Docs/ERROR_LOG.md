@@ -7488,3 +7488,15 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 **修正**：三個 `.cmd` 改成只用 ASCII，也加一行註解說明原因；`Tools/package_studio_release.lua` 自檢時，包裡任何一個 `.cmd` 有非 ASCII 字元就算失敗。
 
 **下次怎麼避免**：`.cmd`／`.bat` 裡一律不寫中文，連註解也不行，說明寫在它呼叫的 Lua 腳本或文件裡。測試啟動檔時，65001 與 950 兩種字碼頁都要跑過。
+
+## 2026-11-24（F）穿服裝卡：原角色自己的 overlay 留在身上，把別人的胸罩擦掉
+
+**現象**：Denia（crowd_C049）的服裝 1 匯出成服裝卡，穿到 Alice（crowd_C001）身上，外套、短褲、涼鞋都在，胸罩不見了，上身全裸。
+
+**原因**：Alice 自己的 KKEx 有 `KCOX`（KoiClothesOverlayX）`Overlays{0: {"ct_bra": [nil, true]}}`——她第 0 套服裝的胸罩「覆蓋貼圖，但沒有貼圖」，也就是把胸罩的 MainTex 擦成空白（她原本那套就是要露）。`okclothes.rs` 的 `per_outfit_maps`／`material_editor`／`indexed_lists`／`more_accessories` 都是「服裝卡沒有這個外掛的資料就直接 return」，於是她自己這一套的 overlay 原封不動留下來，套到 Denia 的胸罩上。網格有、`render_visible` 是 true、形狀也跟著 Alice 的身形長大了（bra bbox x±0.086→±0.108），只是貼圖被擦成全透明，所以看起來像整件消失。
+
+**怎麼找到的**：先用 `ok-chara skeleton` 把穿好的卡與來源卡各開一次，兩邊的可見部件清單與 bra 包圍盒都正常——排除「掉了模型」「被隱藏」「沒跟著身形」。再用 `--oklib kkex` 把三張卡的 KKEx 列出來對照，才看到 `ct_bra`。（過程中有一次誤判：舊的 `ok-chara.exe` 對穿好的卡報「嚴格檢查缺 4 項」，重編之後就沒有了——**比對前先確認手上的 exe 是現在的原始碼編的**。）
+
+**修正**：這四個函式在「穿」的方向改成：服裝卡沒有該外掛資料時，仍然要把角色自己這一套的資料清掉（`material_editor`／`indexed_lists` 另外把只有角色才有的清單也列進要清的範圍）。加了單元測試 `okclothes::tests::wearing_clears_her_overlays_for_that_outfit`。
+
+**下次怎麼避免**：「把 B 的某一套穿到 A 身上」這種合併，每一項 per-coordinate 的資料都要問「B 沒有的時候，A 的要不要留」。預設答案是**不留**——那是跟著舊衣服走的，不是跟著人走的。`let Some(x) = 來源 else { return }` 在合併程式裡幾乎都是 bug。
