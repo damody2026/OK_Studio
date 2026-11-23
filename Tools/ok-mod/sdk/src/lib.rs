@@ -185,6 +185,13 @@ impl Registrar {
     pub fn config_hotkey(&mut self, key: &str, default: &str, description_id: &str) -> &mut Self {
         self.config(key, ConfigValue::Hotkey(default.into()), None, description_id)
     }
+    /// A hotkey the game watches in every mode (Docs/OK_MOD_HOOKS.md §5): a `config_hotkey` entry the player can
+    /// rebind, plus the hook `key.<id>.<key>` sent when it is pressed (`hooks::hotkey` tells which; payload
+    /// `hooks::KeyPress`). `default` is Unreal key names joined by `+` (`"F7"`, `"LeftControl+K"`); empty is unbound.
+    pub fn hotkey(&mut self, key: &str, default: &str, description_id: &str) -> &mut Self {
+        self.config_hotkey(key, default, description_id);
+        self.subscribe(&format!("key.{key}"))
+    }
     /// Console command `mod.<id>.<name>`, also reachable through the control channel's `mod_call`.
     pub fn command(&mut self, name: &str, description_id: &str) -> &mut Self {
         self.declarations.push(Declaration::Command(CommandDecl {

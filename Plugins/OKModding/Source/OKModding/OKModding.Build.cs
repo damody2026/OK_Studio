@@ -16,6 +16,8 @@ public class OKModding : ModuleRules
 		PrivateDependencyModuleNames.Add("Projects");
 		// OKModDream: the check of a mod's .dui panel packages (plan §6.13 D2) when its pak is mounted.
 		PrivateDependencyModuleNames.Add("OKModDream");
+		// Slate, InputCore: the mod hotkeys (OKModKeys), one input pre-processor for every mode.
+		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore", "InputCore" });
 		// The C ABI header lives with the Rust host.
 		PrivateIncludePaths.Add(Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Tools", "ok-mod", "host", "include")));
 	}

@@ -12,6 +12,7 @@ pub mod content;
 #[cfg(feature = "frame")]
 pub mod frame;
 pub mod ffi;
+pub mod keys;
 pub mod manifest;
 pub mod resolve;
 
@@ -385,7 +386,7 @@ impl ModHost {
                     }
                 }
                 Ok(Declaration::Subscribe(name)) => {
-                    subscriptions.insert(name.to_string());
+                    subscriptions.insert(keys::expand_subscription(&manifest.id, name.as_str()));
                 }
                 Err(_) => problems.push("a declaration of a kind this host does not know (mod built for a newer API?)".into()),
                 Ok(_) => problems.push("a declaration of a kind this host does not handle".into()),

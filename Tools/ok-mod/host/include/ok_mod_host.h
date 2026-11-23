@@ -66,6 +66,10 @@ okm_host* okm_open(const char* config_json, okm_log_fn log, void* user);
 //       calls over budget, worst call (us), stopped; frame_budget sets the per-mod per-call budget (0 = 500 us).
 //   {"op":"subscribers","hook"} -> {"mods":["<id>",...]}   enabled mods subscribed to that hook, in load order (check
 //       before building an expensive payload: a hook nobody subscribed to must cost nothing)
+//   {"op":"hotkeys"} -> {"keys":[{"mod","name","hook":"key.<id>.<name>","chord","normalized","default","description_id"}]}
+//       hotkey config entries of enabled mods that subscribed to their key.<id>.<name> hook (host/src/keys.rs)
+//   {"op":"key","chord":"LeftControl+K","mode"} -> {"replies":[...]}   a chord pressed in a mode: the hook
+//       key.<id>.<name> with {"mode","chord"} to every hotkey bound to it (modifier side, case and order ignored)
 // Returns NULL for a malformed request (see okm_last_error).
 const char* okm_dispatch(okm_host* host, const char* request_json);
 

@@ -14,6 +14,7 @@
 #include "OKCharacterController.h"
 #include "OKReaderText.h"
 #include "OKModContent.h"
+#include "OKModKeys.h"
 #include "OKModDreamPanel.h"
 #include "DreamUIBPLibrary.h"
 #include "Core/DreamWidgetTree.h"
@@ -134,6 +135,16 @@ void UOKReaderScreen::AddModCategory()
 			S->SetStringField(TEXT("label"),M.Value.IsEmpty()?M.Key:M.Value);Switches.Add(MakeShared<FJsonValueObject>(S));
 		}
 		if(Switches.Num()){auto Page=MakeShared<FJsonObject>();Page->SetArrayField(TEXT("items"),Switches);AddPage(OKReaderT(TEXT("reader.mods.apply_on_load")),Page);}
+	}
+	// Mod hotkeys (FOKModKeys, Docs/OK_MOD_HOOKS.md §5): one row per key, its button waits for the new chord.
+	{
+		TArray<TSharedPtr<FJsonValue>> Keys;
+		for(const FOKModKeys::FHotkey& K:FOKModKeys::List())
+		{
+			auto S=MakeShared<FJsonObject>();S->SetStringField(TEXT("kind"),TEXT("hotkey"));S->SetStringField(TEXT("mod"),K.Mod);S->SetStringField(TEXT("name"),K.Name);
+			S->SetStringField(TEXT("label_id"),K.DescriptionId);S->SetStringField(TEXT("label"),K.Mod+TEXT(" ")+K.Name);Keys.Add(MakeShared<FJsonValueObject>(S));
+		}
+		if(Keys.Num()){auto Page=MakeShared<FJsonObject>();Page->SetArrayField(TEXT("items"),Keys);AddPage(OKReaderT(TEXT("reader.mods.hotkeys")),Page);}
 	}
 	for(const OKReaderMods::FPage& Page:OKReaderMods::Pages())
 	{
@@ -335,6 +346,27 @@ float UOKReaderScreen::BuildModItem(UDreamWidget* Into,const FItem& Item,const F
 		if(UDreamPanelSlot* Slot=Panel->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(0,H));Slot->SetMaxDesiredSize(FVector2D(0,H));}
 		if(bRow)Fill(Panel);
 		return H;
+	}
+	if(Kind==TEXT("hotkey"))
+	{
+		// The key shown on a button; pressing it waits for the next chord (Escape keeps the old one, Backspace unbinds).
+		const FString Mod=Str(Item,TEXT("mod")),Name=Str(Item,TEXT("name"));
+		if(Mod.IsEmpty()||Name.IsEmpty())return Bad(TEXT("熱鍵沒有 mod／name"));
+		UDreamWidget* Row=ModRow(Into,Item,bRow);
+		auto Shown=[Mod,Name]()
+		{
+			for(const FOKModKeys::FHotkey& K:FOKModKeys::List())if(K.Mod==Mod&&K.Name==Name)return FOKModKeys::Display(K.Chord);
+			return FString(TEXT("—"));
+		};
+		TSharedRef<TWeakObjectPtr<UOKDreamControl>> Self=MakeShared<TWeakObjectPtr<UOKDreamControl>>();
+		UOKDreamControl* C=MakeOwnButton(Row,Shown(),[Mod,Name,Self,Shown]()
+		{
+			if(UOKDreamControl* B=Self->Get())B->SetText(OKReaderT(TEXT("reader.mods.press_key")));
+			FOKModKeys::Capture(Mod,Name,[Self,Shown](const FString&,bool){if(UOKDreamControl* B=Self->Get())B->SetText(Shown());});
+		});
+		*Self=C;
+		if(C)Fill(C);
+		return C?C->GetSizeDelta().Y:0;
 	}
 	if(Kind==TEXT("button"))
 	{

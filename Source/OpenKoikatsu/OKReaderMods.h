@@ -32,6 +32,9 @@ namespace OKReaderMods
 	void Speech(UOKCharacterController* G,const FString& Text);
 	// Every reader tick: the mouse sweeping over the shown character goes to input.pointer subscribers (boop).
 	void Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,float DeltaSeconds);
+	// The reader takes mod hotkeys (FOKModKeys): a reply is followed like any other (notice, set, ops, subtitle); a text
+	// reply shows as a note. Once, when the reader screen starts.
+	void Keys(UOKCharacterController* G);
 
 	// The registry rows of every mod control (kind, label, value, options; category "mods").
 	TArray<TSharedPtr<FJsonValue>> Rows(UOKCharacterController* G);

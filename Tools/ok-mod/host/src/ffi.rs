@@ -220,6 +220,13 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
             };
             json!({"replies": replies_json(replies)})
         }
+        // {"op":"hotkeys"}: the mod hotkeys the game watches (host/src/keys.rs), bound or not.
+        "hotkeys" => json!({"keys": host.hotkeys().iter().map(crate::keys::Hotkey::json).collect::<Vec<_>>()}),
+        // {"op":"key","chord","mode"}: a chord pressed in a mode; the hook key.<id>.<name> of every hotkey bound to it.
+        "key" => {
+            let replies = host.key(str_field(req, "chord")?, req.get("mode").and_then(Value::as_str).unwrap_or(""));
+            json!({"replies": replies_json(replies)})
+        }
         "disable" => match host.disable(str_field(req, "mod")?) {
             Ok(()) => json!({"ok": true}),
             Err(e) => json!({"ok": false, "error": e}),

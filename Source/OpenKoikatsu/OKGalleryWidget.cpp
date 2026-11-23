@@ -1014,6 +1014,7 @@ void UOKGalleryWidget::NativeConstruct()
  AKKPreviewActor::PreparePreviewMaterialParents();
 	ApplyClickInputMode();
 	StartCardDrop();
+	OKReaderMods::Keys(this);	// mod hotkeys (FOKModKeys)
 
 	ScanAndShow();
 	// Once per process: build the native memos every open shares (lists, mods scans, pair metadata) while the

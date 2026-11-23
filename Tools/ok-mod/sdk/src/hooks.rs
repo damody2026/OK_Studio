@@ -168,3 +168,25 @@ mod tests {
         assert!(s.data::<String>(0, |_, v| Ok(v)).is_err(), "data newer than the mod");
     }
 }
+
+/// The hotkey a `key.<id>.<entry>` hook is for (declared with `Registrar::hotkey`): `Some(entry)`, else `None`.
+///
+/// ```ignore
+/// Event::Hook { name, payload } => match hooks::hotkey(name) {
+///     Some("toggle") => { let k: hooks::KeyPress = hooks::parse(payload)?; self.toggle(&k.mode); Ok(Reply::None) }
+///     _ => Ok(Reply::None),
+/// },
+/// ```
+pub fn hotkey(hook: &str) -> Option<&str> {
+    let rest = hook.strip_prefix("key.")?;
+    rest.rsplit_once('.').map(|(_, entry)| entry)
+}
+
+/// The payload of a hotkey hook: the mode it was pressed in (reader, studio, pair, street) and the chord as bound.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct KeyPress {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub chord: String,
+}
