@@ -99,6 +99,10 @@ public:
  static bool ClothesExport(const FString& Card,int32 Outfit,const FString& Out,FString& Summary);
  // As ClothesExport, pictured by Picture (a PNG of the outfit as worn) instead of the card's picture.
  static bool ClothesExportPictured(const FString& Card,int32 Outfit,const FString& Picture,const FString& Out,FString& Summary);
+ /** What the long native job running right now is doing, for a UI to show while it waits (ok-extract's progress.rs):
+  *  true while one runs, with Label (what it is doing), Done (0..1 of the whole job) and Generation (raised on every
+  *  change, so an unchanged text can be told from a stalled job). Cheap: call it once a frame, from any thread. */
+ static bool JobProgress(FString& Label,float& Done,int64& Generation);
  static bool ClothesWear(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary);
  // Only the clothes worn: the character keeps that outfit's accessories and makeup (the maker's coordinate load with its
  // accessories unticked).

@@ -997,6 +997,21 @@ pub fn shown_outfit_first(card: &[u8]) -> Result<Option<(Vec<u8>, usize)>, Strin
 pub mod file {
     use super::*;
     fn read(p: &Path) -> Result<Vec<u8>, String> { std::fs::read(p).map_err(|e| format!("{}: {e}", p.display())) }
+    /// An outfit to wear: an `.okclothes` file, or **a game coordinate card** (`【KoiKatuClothes】`) as it comes, so the
+    /// player can drop the game's own outfit cards into the clothes folder and wear them without converting first.
+    /// A coordinate card carries no pack (its third-party models come from the installation's zipmods, as always).
+    pub fn read_outfit(path: &Path) -> Result<OkClothes, String> {
+        let bytes = read(path)?;
+        match OkClothes::from_bytes(&bytes) {
+            Ok(clothes) => Ok(clothes),
+            Err(own) => match import_coordinate(&bytes) {
+                Ok((clothes, _thumbnail)) => Ok(clothes),
+                Err(coordinate) => Err(format!("{}: not an outfit card ({own}; as a game coordinate card: {coordinate})", path.display())),
+            },
+        }
+    }
+    /// Whether `path` is an outfit card this can wear (an `.okclothes` or a game coordinate card). Reads the file.
+    pub fn is_outfit_card(path: &Path) -> bool { read_outfit(path).is_ok() }
     fn write(p: &Path, bytes: &[u8]) -> Result<(), String> { std::fs::write(p, bytes).map_err(|e| format!("{}: {e}", p.display())) }
     /// Coordinate card (【KoiKatuClothes】) -> .okclothes.
     pub fn import(coordinate: &Path, out: &Path) -> Result<String, String> {
@@ -1025,7 +1040,7 @@ pub mod file {
     }
     /// .okclothes worn as outfit `outfit` of a character card, written as a new card.
     pub fn wear_file(card: &Path, okclothes: &Path, outfit: usize, out: &Path) -> Result<String, String> {
-        let clothes = OkClothes::from_bytes(&read(okclothes)?)?;
+        let clothes = read_outfit(okclothes)?;
         let (bytes, dropped) = wear(&read(card)?, &clothes, outfit)?;
         write(out, &bytes)?;
         Ok(format!("wear outfit={outfit} dropped={dropped:?}"))
@@ -1036,37 +1051,104 @@ pub mod file {
     /// an outfit that carries a pack is made an OK card first (from its own zipmods), since the outfit's third-party
     /// models exist only in that pack. `scope`: what of the outfit she wears (`WearScope`). Returns a one-line summary.
     pub fn wear_into(lib: Option<&Path>, game: &Path, card: &Path, okclothes: &Path, outfit: usize, scope: WearScope, out: &Path) -> Result<String, String> {
-        let clothes = OkClothes::from_bytes(&read(okclothes)?)?;
+        // Stage timings with OK_PROFILE=1 (zero cost otherwise): what a clothing-card click pays on this side.
+        // Every row is one stage that really ran, so an absent row means that stage was skipped, not unmeasured.
+        let t_all = std::time::Instant::now();
+        crate::profile_mark_open_start(t_all);
+        // What the reader shows while it waits (progress.rs). The shares are the measured ones, so the bar moves at
+        // roughly one speed; the guard ends the job on every way out, including an error.
+        let _progress = crate::progress::Guard::begin("讀取服裝卡", "套用結束");
+        let mut t = std::time::Instant::now();
+        let clothes = read_outfit(okclothes)?;
+        crate::profile_tick("wear: read the outfit card", t);
         let ok_card = crate::oklib::is_library_card(card);
         let needs_ok = ok_card || clothes.pack.is_some();
         let lib = if needs_ok { Some(lib.map(Path::to_owned).or_else(crate::oklib::configured_library).ok_or("OK base library not configured")?) } else { None };
+        crate::progress::step("讀取角色卡", 0.03);
+        t = std::time::Instant::now();
         let base = if !ok_card && needs_ok {
             // Her own data made into an OK card first (the outfit's models come in its pack, hers from her zipmods).
             let (_, _, made, _) = crate::oklib::remake_ok_card(lib.as_deref().unwrap(), game, card)?;
+            crate::profile_tick("wear: her card made an OK card", t);
             made
-        } else { read(card)? };
+        } else {
+            let bytes = read(card)?;
+            crate::profile_tick("wear: read her card", t);
+            bytes
+        };
+        crate::progress::step("把這套服裝寫進她的卡", 0.06);
+        t = std::time::Instant::now();
         let (worn, dropped) = wear_scoped(&base, &clothes, outfit, scope)?;
+        crate::profile_tick("wear: outfit written into her card", t);
         if !needs_ok {
             write(out, &worn)?;
+            crate::profile_tick("wear TOTAL (plain card)", t_all);
             return Ok(format!("wear outfit={outfit} scope={} dropped={dropped:?}", scope.name()));
         }
         let lib = lib.unwrap();
+        crate::progress::step("合併服裝卡的資源包", 0.09);
+        t = std::time::Instant::now();
         let merged = match &clothes.pack { Some(pack) => crate::oklib::merge_card_pack(&worn, pack)?, None => worn };
+        crate::profile_tick("wear: outfit pack merged in", t);
         // The outfit's answers with hers: recorded again from the shared library they would lose the outfit's
-        // third-party mods (not in its tree). An outfit without answers (a game coordinate card): recorded again.
-        let (merged, keep) = match (&clothes.answers, crate::oklib::png_chunk(&merged, crate::tree_answers::CHUNK).is_some()) {
-            (Some(answers), true) => (crate::tree_answers::merge(&merged, answers)?, true),
-            _ => (crate::cardbake::strip_answers(&merged).into_owned(), false),
+        // third-party mods (not in its tree). **Hers are kept whenever she has them**, even when the outfit brings
+        // none (a game coordinate card): her answers are still the right ones for her own hair, body and accessories,
+        // and recording again from the shared library threw them away -- a vanilla coordinate card worn on an OK card
+        // then failed to seal with "5 unanswered question(s): okLt cat 403 1881; 410 4; 411 2; 423 702; 424 9017",
+        // every one of them hers, not the outfit's (2026-11-23). The outfit's own new questions are asked of the tree
+        // as before. Only a card with no answers at all records them.
+        t = std::time::Instant::now();
+        // `add`: hers kept **and** recorded again from the shared library on top, because an outfit that brings no
+        // answers (a coordinate card) still changes the questions -- the worn card asks about a different set of mod
+        // GUIDs than she did, which no single record of hers covers. That is what `Answers::Add` is for.
+        enum Answers { Merged, Add, Record }
+        let (merged, answers) = match (&clothes.answers, crate::oklib::png_chunk(&merged, crate::tree_answers::CHUNK).is_some()) {
+            (Some(a), true) => (crate::tree_answers::merge(&merged, a)?, Answers::Merged),
+            (None, true) => (merged, Answers::Add),
+            _ => (crate::cardbake::strip_answers(&merged).into_owned(), Answers::Record),
         };
-        let (sealed, sealing) = crate::oklib::seal_card_with(&lib, &merged, !keep)?;
-        write(out, &sealed)?;
-        let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
+        crate::profile_tick(match answers { Answers::Merged => "wear: answers merged (kept)",
+            Answers::Add => "wear: answers kept, more recorded", _ => "wear: answers stripped" }, t);
+        // Only outfit `outfit` changed, and neither merge above removes anything, so the sealing, strict-check and
+        // remake passes need not open her other outfits again (oklib::OnlyOutfitScope). Three whole-wardrobe passes
+        // were 97% of a clothing-card click (2026-11-23: 126 opens, 47.9 s of 48.0 s for a seven-outfit card).
+        crate::progress::step("準備封裝", 0.15);
+        let _only = crate::oklib::OnlyOutfitScope::begin(outfit);
+        t = std::time::Instant::now();
+        let (sealed, sealing, report) = match answers {
+            Answers::Merged => crate::oklib::seal_card_reporting(&lib, &merged, false)?,
+            Answers::Add => crate::oklib::seal_card_adding_answers_reporting(&lib, &merged)?,
+            Answers::Record => crate::oklib::seal_card_reporting(&lib, &merged, true)?,
+        };
+        crate::profile_tick("wear: seal (ok-extract.exe steps)", t);
+        t = std::time::Instant::now();
+        // The sealing's strict check just opened this very card, every garment state, and told us both things `okLb`
+        // needs: the library models those opens read, and outfit 0's digest. Opening it again here only to learn the
+        // same two things cost 4.4 s of a 12.8 s click (2026-11-23), so take the report when there is one. Without it
+        // (an older ok-extract.exe beside the library, OK_SEAL_NO_REPORT=1, or the narrowing is on another outfit so
+        // outfit 0 was never opened) fall back to making the card again, exactly as before.
+        let (digest, made, pack) = match (&report.digest, report.reported) {
+            (Some((digest, _)), true) => {
+                let made = crate::oklib::ok_card_with_answers(&sealed, &report.models, digest)?;
+                let pack = crate::oklib::png_chunk(&made, crate::oklib::PACK_CHUNK).map_or(0, <[u8]>::len);
+                crate::profile_tick("wear: okLb from the seal's report (no open)", t);
+                (digest.clone(), made, pack)
+            }
+            _ => {
+                write(out, &sealed)?; // remake_ok_card reads the card back from disk
+                let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
+                crate::profile_tick("wear: made again (digest+models)", t);
+                (digest, made, pack)
+            }
+        };
+        crate::progress::step("寫入卡片", 0.97);
         write(out, &made)?;
+        crate::profile_tick("wear TOTAL", t_all);
         Ok(format!("wear outfit={outfit} scope={} dropped={dropped:?} sealed: {sealing}; digest {digest} pack={pack}", scope.name()))
     }
     /// Only the clothes of .okclothes worn as outfit `outfit` (her accessories kept), written as a new card.
     pub fn wear_clothes_only_file(card: &Path, okclothes: &Path, outfit: usize, out: &Path) -> Result<String, String> {
-        let clothes = OkClothes::from_bytes(&read(okclothes)?)?;
+        let clothes = read_outfit(okclothes)?;
         let (bytes, dropped) = wear_clothes_only(&read(card)?, &clothes, outfit)?;
         write(out, &bytes)?;
         Ok(format!("wear clothes only outfit={outfit} dropped={dropped:?}"))
