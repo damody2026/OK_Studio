@@ -52,6 +52,29 @@ fn slot_of(v: &Value) -> (u64, u64) {
     (v["accessory"]["outfit"].as_u64().unwrap_or(0), v["accessory"]["slot"].as_u64().unwrap_or(0))
 }
 
+/// `payload` read as the SDK's type for hook `name`, where it has one.
+fn typed(name: &str, payload: &str) -> ModResult<()> {
+    use hooks::{reader as r, street as s};
+    match name {
+        r::ACCESSORY_CHANGE => { hooks::parse::<r::AccessoryChange>(payload)?; }
+        r::ACCESSORY_TRANSFER => { hooks::parse::<r::AccessoryTransfer>(payload)?; }
+        r::ACCESSORY_COPY => { hooks::parse::<r::AccessoryCopy>(payload)?; }
+        r::COORDINATE_SAVE => { hooks::parse::<r::CoordinateSave>(payload)?; }
+        r::COORDINATE_LOAD => { hooks::parse::<r::CoordinateLoad>(payload)?; }
+        r::CLOTHES_STATE => { hooks::parse::<r::ClothesState>(payload)?; }
+        r::PROPERTY_CHANGE => { hooks::parse::<r::PropertyChange>(payload)?; }
+        r::GET_RESULT => { hooks::parse::<r::GetResult>(payload)?; }
+        s::LOAD => { hooks::parse::<s::Load>(payload)?; }
+        s::PERIOD_CHANGE => { hooks::parse::<s::PeriodChange>(payload)?; }
+        s::TOUCH => { hooks::parse::<s::Touch>(payload)?; }
+        s::ACTION => { hooks::parse::<s::Action>(payload)?; }
+        s::ARRIVE => { hooks::parse::<s::Arrive>(payload)?; }
+        s::PHONE => { hooks::parse::<s::Phone>(payload)?; }
+        _ => {}
+    }
+    Ok(())
+}
+
 impl Probe {
     fn record(&self, hook: &str, payload: &Value) {
         let line = json!({"hook": hook, "payload": brief(payload)});
@@ -84,6 +107,8 @@ impl Mod for Probe {
         let name = name.as_str();
         let p: Value = hooks::parse(payload)?;
         if !matches!(name, "reader.ui" | "reader.values") { self.record(name, &p); }
+        // The SDK's payload types (hooks::reader, hooks::street) read what the game sent: a mismatch is logged.
+        if let Err(e) = typed(name, payload) { self.host.warn(format!("probe {name}: SDK type does not read it: {e}")); }
         match name {
             "reader.character_load" => {
                 self.notes.clear();
@@ -134,7 +159,7 @@ impl Mod for Probe {
             "reader.coordinate_save" => hooks::save(1, &json!({"from": p["card"], "outfit": p["outfit"]})),
             "reader.property_change" if !self.asked_get => {
                 self.asked_get = true;
-                hooks::json(&json!({"get": ["shape.body.*", "nickname"]}))
+                hooks::reader::get(&["shape.body.*", "nickname"])
             }
             "reader.get_result" => {
                 let n = p["values"].as_object().map_or(0, |o| o.len());
@@ -152,10 +177,8 @@ impl Mod for Probe {
                 let Some(id) = p["heroine"]["id"].as_str() else { return Ok(Reply::None) };
                 if !self.written.insert(id.to_owned()) { return Ok(Reply::None); }
                 let n = self.touches.get(id).copied().unwrap_or(0) + 1;
-                let mut sec = hooks::section(1, &json!({"touches": n}))?;
-                sec["heroine"] = json!(id);
                 self.host.info(format!("probe writes touches={n} into {id}'s card"));
-                hooks::json(&json!({"cards": [sec]}))
+                hooks::street::cards(&[hooks::street::CardWrite::write(id, 1, &json!({"touches": n}))?])
             }
             _ => Ok(Reply::None),
         }
