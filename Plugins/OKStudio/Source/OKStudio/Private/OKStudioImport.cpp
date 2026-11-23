@@ -3,6 +3,7 @@
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformMemory.h"
+#include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/ConfigCacheIni.h"
 #include "KKCardReader.h"
@@ -222,15 +223,38 @@ namespace
 		if (O->TryGetArrayField(TEXT("children"), Kids)) for (const TSharedPtr<FJsonValue>& K : *Kids) CollectCardJobs(K->AsObject(), CardDirectory, Out);
 	}
 
-	/** `ok-extract.exe` beside this checkout's Rust crate, or empty: a build without it converts in process. */
+	/**
+	 * `ok-extract.exe` beside this checkout's Rust crate, or empty: a build without it converts in process.
+	 *
+	 * A package keeps the tool in its own root while the game runs out of a staged project several folders below it
+	 * (`<package>/Saved/StreetSocial/Build/<tag>.stage/Windows/OpenKoikatsu`), and that staged project has no `Tools`,
+	 * so the search walks up from the running program as well as asking the project. OK_EXTRACT_EXE still wins, as it
+	 * does in the Rust side (oklib.rs ok_extract_exe).
+	 */
 	const FString& OkExtractExe()
 	{
 		static const FString Found = []
 		{
-			const FString Release = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/ok-extract/target/release/ok-extract.exe"));
-			if (FPaths::FileExists(Release)) return Release;
-			const FString Beside = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/ok-extract/ok-extract.exe"));
-			if (FPaths::FileExists(Beside)) return Beside;
+			const FString Named = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_EXTRACT_EXE"));
+			if (!Named.IsEmpty() && FPaths::FileExists(Named)) return Named;
+			TArray<FString> Roots;
+			Roots.Add(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+			FString Walk = FPaths::ConvertRelativePathToFull(FPlatformProcess::BaseDir());
+			for (int32 Up = 0; Up < 9 && !Walk.IsEmpty(); ++Up)
+			{
+				Roots.AddUnique(Walk);
+				FString Parent = FPaths::GetPath(Walk);
+				if (Parent == Walk) break;
+				Walk = MoveTemp(Parent);
+			}
+			for (const FString& Root : Roots)
+			{
+				for (const TCHAR* Rel : { TEXT("Tools/ok-extract/target/release/ok-extract.exe"), TEXT("Tools/ok-extract/ok-extract.exe"), TEXT("ok-extract.exe") })
+				{
+					const FString Candidate = FPaths::ConvertRelativePathToFull(Root / Rel);
+					if (FPaths::FileExists(Candidate)) return Candidate;
+				}
+			}
 			return FString();
 		}();
 		return Found;

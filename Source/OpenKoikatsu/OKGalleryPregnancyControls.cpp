@@ -67,6 +67,11 @@ void UOKCharacterController::OnPregnancyPreset(FString Value,ESelectInfo::Type T
 void UOKCharacterController::ApplyPendingEditorMods(){
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryEditorMods);
  if(!bEditorModsDirty||!PreviewActor||!bModelLayout)return;
+ // These values belong to the SELECTED card; the character here is the one that was LOADED. When the selection has
+ // moved on (the user clicked another card in the list), applying them would put new numbers on the old mesh with no
+ // geometry rebuild -- which is what distorted the breast and broke its physics (the user, 2026-11-23). The dirty flag
+ // stays as it is: loading that card applies everything from it.
+ if(PreviewIndex!=INDEX_NONE&&SelectedIndex!=PreviewIndex)return;
  PreviewActor->Session.ApplyBodyPhysics(Selected.Body.BustSoftness,Selected.Body.BustWeight);
  bool GeometryChanged=false;
  if(!PreviewActor->Session.ApplyEditorMods(EditorModsJson(),OutfitIndex,&GeometryChanged))return;

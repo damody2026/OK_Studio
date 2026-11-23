@@ -842,6 +842,12 @@ public:
   *  beside it. Saved/AppearanceEditor itself when the card has none. */
  static FString AppearanceWorkFolder(const FString& CardPath);
 	FString PreviewCardPath;
+	/**
+	 * Which list entry the character ON SCREEN came from, INDEX_NONE when none is loaded. Selecting a card moves
+	 * SelectedIndex at once, while the character stays until it is loaded, so "the selected card" and "the card being
+	 * shown" are two different things and the edit path has to ask for the second one (see ApplyPendingEditorMods).
+	 */
+	int32 PreviewIndex = INDEX_NONE;
 	void RestoreStaleAfterFailedLoad(bool bSameCharacter);
 	FString PreviewResourceSignature,PendingPreviewResourceSignature;
 	int32 PreviewOutfitIndex = INDEX_NONE;

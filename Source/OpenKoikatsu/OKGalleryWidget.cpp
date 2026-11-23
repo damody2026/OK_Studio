@@ -1353,7 +1353,12 @@ void UOKCharacterController::SelectIndex(int32 Index)
 	// A card folder lists OK cards and original ones together: an OK card opens from its own resources, an original
 	// card as the KKS source does (game folder when set, else the shared library alone).
 	else if(!CurrentCardDirectory.IsEmpty())bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Entries[Index].Path).IsEmpty();
-	SelectedIndex = Index;Selected=MoveTemp(LoadedCard);bEditorModsDirty=true;
+	SelectedIndex = Index;Selected=MoveTemp(LoadedCard);
+	// Only when the card being selected is the one already on screen. Selecting ANOTHER card used to mark the mods
+	// dirty too, and the next ApplyPendingEditorMods then pushed that card's shape, ABM bones and bust physics onto the
+	// character still displayed: breast distorted, physics wrong (the user, 2026-11-23). Loading applies the whole card
+	// anyway, so there is nothing to apply on selection.
+	bEditorModsDirty = (Index == PreviewIndex);
     OutfitIndex=0;FMemory::Memzero(ClothesStates,sizeof(ClothesStates));
  OKRequestCardWarm(bIndependentCards?UKKCardWorkspace::PortableSourcePath(Entries[Index].Path):Entries[Index].Path);
  AppearanceSelectedKeys.Reset();
@@ -1482,6 +1487,10 @@ void UOKCharacterController::SelectIndex(int32 Index)
 
 void UOKCharacterController::SyncShapeSliders()
 {
+	// Writing values INTO the sliders must not come back out as edits: USlider's setter reaches the row's own change
+	// handler, and selecting a card then applied all 96 of its numbers to the character still on screen (measured
+	// 2026-11-23). The same flag the bone and physics rows already honour, held for the whole sync.
+	TGuardValue<bool> Guard(bSyncingBoneControls,true);
 	SyncBoneSliders();
 	for (UOKShapeSlider* Slider : ShapeSliders)
 	{
@@ -2283,6 +2292,7 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 		StalePreview = nullptr;
 		Report = FString::Printf(TEXT("已加载3D\n"));
 		PreviewCardPath=CardPath;
+		PreviewIndex=SelectedIndex;
 		PreviewResourceSignature=PendingPreviewResourceSignature;
 		FMemory::Memcpy(LoadedClothesStates,ClothesStates,sizeof(ClothesStates));
 		FMemory::Memcpy(Actor->DisplayClothesStates,ClothesStates,sizeof(ClothesStates));
@@ -3701,6 +3711,10 @@ void UOKCharacterController::OnShapeChanged(bool bBody, int32 Index, float Value
 	// Interaction owns immutable body/face parameters. Block callbacks too,
 	// including stale editor input queued during the scene transition.
 	if(InteractionWidget||InteractionScene||bEnterInteractionAfterLoad)return;
+	// A slider being SET from code (SyncShapeSliders) is not the user moving it: without this, selecting a card
+	// reshaped the character that was still loaded (OKTRACE, 2026-11-23). The bone, physics and pregnancy rows have
+	// always checked this flag; the shape rows did not.
+	if(bSyncingBoneControls)return;
 	ApplyShapeValue(bBody,Index,Value);
 }
 
