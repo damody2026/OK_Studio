@@ -100,3 +100,21 @@
 發佈包沒有容量上限（使用者 2026-11-23）。`--studio --private` 預設只排除 `h-voices`、`studio-scenes`、`street-voices`、`street-dialogue`、`h-poses`：這些是街區或 1 對 1 才用的資料，或是含角色的範例場景。
 
 Studio 音效道具（`base-sounds`，約 2.3 GB）與動作片段（`runtime-clips`，約 362 MB）以前為了壓在 10 GB 內被排除，現在會放進包。2026-11-23 的 `Studio-20261123-mods-full` 是 15.2 GB，zip 是 12.7 GB。
+
+## 一條命令打工作室＋mod 發佈包（`package_studio_release.lua`，2026-11-23）
+
+```powershell
+.\Tools\lua\lua.exe Tools\package_studio_release.lua --tag <名稱> --cards <OK 卡資料夾> --out <新資料夾> --zip
+```
+
+腳本依序跑八步，每步一個 log，放在 `Saved/StudioRelease/<tag>/`：
+1. 預檢：引擎、cargo、卡片、`--out` 是新資料夾、`unreal_slot.lua may-build`；
+2. 建置工具：`ok-extract.exe`、`ok-game-mcp`、ok-mod workspace，`-j 8`。執行中的 exe 會先改名移開；
+3. Editor 建置；
+4. `rebuild_street_social_runtime.lua --studio`，產生 stage `Studio<tag>`，base 為 `BaseStudio<tag>`；
+5. `modkit_cook.lua` 重新 cook 每個 `Plugins/org_openkoikatsu_*`，取得 pak 與 `ui/*.dui`；
+6. `pack_mod_examples.lua`，再用 `ok-mod-pack profile apply full` 裝進 stage，然後 `verify`；
+7. `package_street_social.lua --studio --private --mods`；
+8. 自檢：入口、工具、mod、pak 與面板、地圖，並確認從包裡的基礎庫和遊戲執行檔往上都找得到 `ok-extract.exe`。
+
+失敗時會列出缺什麼，或指出要看哪個 log。`--skip-build`、`--skip-stage`、`--skip-modkit --content-from <資料夾>` 可以沿用已有的產物。
