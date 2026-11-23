@@ -7334,3 +7334,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - `Reply` 是 `NonExhaustive`，宿主裡 `match` 它要有 `_` 分支（E0004），第一次編譯失敗。
   - 熱鍵頁的改綁按鈕只呼叫 `SetText`，DreamGUI 按鈕每幀以 `FixedText` 重設文字，畫面一直停在舊綁定（綁定本身已改成 F9）。單元測試與 `OKMod.Keys` 都看不出來，實機截圖才發現；改成同時設 `FixedText`。另外「請按鍵…（Esc 保留，Backspace 清除）」在按鈕裡被截斷，縮成「請按鍵…」。
   - 當機前的按鍵服務讓宿主把 mod 的短名訂閱 `key.<entry>` 改寫成 `key.<mod id>.<entry>`。OK Studio 的面板按鍵用的正是短名（`ok-mod-studio::subscribe` 訂 `key.<k>`，`OKStudioModBridge` 送 `key.<k>`），改寫後宿主 `hook_one` 會以「沒訂閱」拒絕，Studio mod 的按鍵全部失效。我照原樣驗過就提交了（`4c6fc245e`），寫回報整理 API 變動時才發現，`e4cd5ad3f` 改回訂閱原樣保留、熱鍵服務兩種名字都認。教訓：改到訂閱或 hook 名的處理時，先 grep 全部 SDK（`Tools/ok-mod/studio`）與 UE 端送 hook 的地方（`HookName`）。
+
+## 2026-11-23 排不到 Unreal 名額時腳本照樣開了遊戲（E 組，OK mod 第五波）
+
+- **做錯**：我寫的指令是「最多排 20 次 claim，然後啟動開發版街區」，迴圈結束時並沒有檢查到底排到了沒有。20 次都在排隊（F 的 stage cook 占著 slot1、另一個名額被別人持有），遊戲卻照樣啟動，在沒占名額的情況下吃掉約 52 GB 記憶體，連帶讓名額工具因記憶體不足擋住後面排隊的人。發現後立刻停掉遊戲。
+- **修正**：啟動一律放在 `claim` 成功之後（輸出是 `slot1`／`slot2` 才往下），沒排到就停下來，不要接著執行。
