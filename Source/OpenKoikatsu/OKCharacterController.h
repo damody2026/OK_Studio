@@ -434,8 +434,12 @@ public:
 	/** WearOkClothesFrom with what happened told in the inspector and on screen (the outfit-card list's tiles). */
 	void WearOkClothesReported(const FString& Clothes, bool bClothesOnly);
 	/** The outfit cards the reader lists (衣服卡總欄): *.okclothes in the folder 匯出服裝卡 writes to (the save folder, else
-	 *  UserData/okclothes) and in UserData/okclothes, newest first. */
+	 *  UserData/okclothes) and in UserData/okclothes, plus the game's own coordinate cards (*.png marked
+	 *  【KoiKatuClothes】) dropped into those folders, newest first. */
 	TArray<FString> OkClothesFiles() const;
+	/** The folder 匯出服裝卡 writes to and 開啟資料夾 opens: the save folder when one is typed, else UserData/okclothes.
+	 *  Made when it does not exist, so the button always opens something. */
+	FString OkClothesFolderPath() const;
 	/** Raised when an outfit card is written (exported, converted): the list reads its folders again. */
 	int32 OkClothesVersion = 0;
 	/** Breeding (配種, OKGalleryBreed.cpp): the parents chosen (card paths), what the last breeding said, and whether one

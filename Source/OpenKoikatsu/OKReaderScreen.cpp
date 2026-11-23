@@ -4,6 +4,7 @@
 #include "RHIStats.h"
 #include "DynamicRHI.h"
 #include "Misc/FileHelper.h"
+#include "HAL/PlatformProcess.h"
 bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "DreamUIRender/DreamUIShaderGate.h"
 // Before the controller's header, which has inline code building JSON (`NoteAction`) and so needs the type complete;
@@ -2167,6 +2168,15 @@ void UOKReaderScreen::BuildCardGrid(UDreamWidget* Page,bool bClothes)
 			if(UOKDreamControl* B=Self->ClothesModeButton.Get()){B->FixedText=ModeText(Self->bWearClothesOnly);B->SetText(B->FixedText);B->SetWidth(FMath::Max(64.f,TextWidth(B->FixedText,20.f)+36.f));}
 		});
 		MakeOwnButton(Row,TEXT("重新整理"),[WeakSelf](){if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();});
+		// The folder the tiles come from, so the player can drop the game's own outfit cards (*.png) straight in.
+		TWeakObjectPtr<UOKCharacterController> WeakG(G);
+		MakeOwnButton(Row,TEXT("開啟資料夾"),[WeakG,WeakSelf]()
+		{
+			UOKCharacterController* C=WeakG.Get();if(!C)return;
+			const FString Folder=C->OkClothesFolderPath();
+			FPlatformProcess::ExploreFolder(*Folder);
+			if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();
+		});
 	}
 	if(UOKDreamControl* Search=MakeControl(TEXT("Input"),Page);Search&&Search->Input)
 	{
@@ -2314,7 +2324,7 @@ void UOKReaderScreen::FillCardGrid()
 	if(UOKDreamControl* Count=GridCount.Get())
 	{
 		FString Say;
-		if(bClothesGrid&&All==0)Say=TEXT("還沒有服裝卡：在「編輯」載入角色後按「匯出服裝卡」，或把 .okclothes 放進另存資料夾／UserData/okclothes。點縮圖會套到目前選的角色身上。");
+		if(bClothesGrid&&All==0)Say=TEXT("還沒有服裝卡：在「編輯」載入角色後按「匯出服裝卡」，或按「開啟資料夾」把 .okclothes 或遊戲原版的服裝卡（*.png）放進去。點縮圖會套到目前選的角色身上。");
 		else if(bClothesGrid)Say=Filter.IsEmpty()?FString::Printf(TEXT("服裝卡 %d 張，點縮圖套到目前選的角色身上。"),All):FString::Printf(TEXT("服裝卡 %d 張，符合 %d 張。"),All,Paths.Num());
 		else Say=Filter.IsEmpty()?FString::Printf(TEXT("人物卡 %d 張。"),All):FString::Printf(TEXT("人物卡 %d 張，符合 %d 張。"),All,Paths.Num());
 		if(Paths.Num()>MaxTiles)Say+=FString::Printf(TEXT("只列前 %d 張，請用搜尋縮小範圍。"),MaxTiles);

@@ -107,6 +107,8 @@ Tools/ilspy/
 # 角色卡不進版控（只留在本機）：街頭女主、群眾卡、Demo 卡、Studio 場景拆出的角色卡、含角色的 Studio 樣本場景
 /Content/CharacterCards/
 /UserData/CharacterExports/
+# 服裝卡資料夾（衣服卡總欄的「開啟資料夾」）：玩家自己的 .okclothes 與放進去的原版服裝卡，都是原作／mod 衍生資料
+/UserData/okclothes/
 /UserData/Studio/scene/*_cards/
 /UserData/Studio/import/
 /output/StreetSocialAPNG/Male01.png

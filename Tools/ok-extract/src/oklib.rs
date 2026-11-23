@@ -1713,7 +1713,10 @@ fn refresh_edited_ok_card(lib: &Path, card: &Path) -> Result<Option<(String, usi
     crate::unity::release_bundle_caches();
     crate::clear_entry_memo();
     store.forget_models();
+    let t_refresh = std::time::Instant::now();
     open_outfits(lib, &bytes, "refresh")?;
+    crate::profile_tick("refresh: every outfit opened", t_refresh);
+    let t_digest = std::time::Instant::now();
     let mut models: Vec<String> = card_models(&bytes).unwrap_or_default();
     models.extend(store.touched().iter().map(id_hex));
     models.sort();
@@ -1723,6 +1726,7 @@ fn refresh_edited_ok_card(lib: &Path, card: &Path) -> Result<Option<(String, usi
     let digest = session_hash_outfit(lib, card, 0);
     if nocache.is_none() { std::env::remove_var("OK_NOCACHE"); }
     let (digest, parts, _) = digest?;
+    crate::profile_tick("refresh: models+digest (outfit 0)", t_digest);
     let payload = serde_json::to_vec(&serde_json::json!({"format":"oklib-card","version":1,"digest":digest,"models":models})).unwrap();
     let made = crate::tree_answers::with_chunk(&bytes, CARD_CHUNK, &payload)?;
     let pack = png_chunk(&made, PACK_CHUNK).map_or(0, <[u8]>::len);
@@ -2279,6 +2283,8 @@ fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>,
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         if out.status.success() { Ok(text) } else { Err(text.lines().filter(|l| l.starts_with("OK")).collect::<Vec<_>>().join(" ")) }
     };
+    // With OK_PROFILE=1: one row per step that really ran, so a missing row means the step was skipped.
+    let mut t = std::time::Instant::now();
     match answers {
         Answers::Record => { run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?; }
         Answers::Keep => { std::fs::copy(&input.0, &answered.0).map_err(|e| e.to_string())?; }
@@ -2289,7 +2295,11 @@ fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>,
             std::fs::write(&answered.0, both).map_err(|e| e.to_string())?;
         }
     }
+    crate::profile_tick("seal: answers step", t);
+    t = std::time::Instant::now();
     let mut summary = run(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()])?;
+    crate::profile_tick("seal: complete step", t);
+    t = std::time::Instant::now();
     // A read made by an open's background work (entry prefetch) can land after its step took what it copied (seen
     // under load): the strict check names it, and completing the sealed card again copies it.
     let mut check = run(&["strict-check".as_ref(), lib.as_os_str(), sealed.0.as_os_str()]);
@@ -2299,6 +2309,7 @@ fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>,
         summary.push_str(&run(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()])?);
         check = run(&["strict-check".as_ref(), lib.as_os_str(), sealed.0.as_os_str()]);
     }
+    crate::profile_tick("seal: strict-check step(s)", t);
     check?;
     let summary = summary.lines().filter_map(|l| l.strip_prefix("OKSEALSTEP ")).collect::<Vec<_>>().join("; then ");
     Ok((std::fs::read(&sealed.0).map_err(|e| e.to_string())?, summary))
@@ -2355,6 +2366,31 @@ fn gag_eye_sets(lib: &Path) -> Vec<i32> {
 
 pub(crate) const CLOTHES_STATE_VARIANTS: [[u8; 9]; 5] = [[1; 9], [2; 9], [3; 9], [1, 1, 1, 1, 0, 0, 0, 0, 0], [1, 1, 1, 1, 3, 3, 3, 3, 3]];
 
+/// Wearing an outfit card changes one outfit of a character card; the others keep the very bytes they were sealed and
+/// checked with, and nothing is ever removed from the card's pack or its answers (both merges only add). So the
+/// sealing, strict-check and remake passes may be narrowed to the outfit that changed: `OK_SEAL_ONLY_OUTFIT=<n>`,
+/// set by `okclothes::file::wear_into` for the whole seal + remake (child processes inherit it) and cleared after.
+/// An out-of-range value opens every outfit, as before. `OK_SEAL_EVERY_OUTFIT=1` turns the narrowing off (A/B).
+pub(crate) struct OnlyOutfitScope(Option<std::ffi::OsString>);
+impl OnlyOutfitScope {
+    pub(crate) fn begin(outfit: usize) -> Self {
+        let previous = std::env::var_os(ONLY_OUTFIT);
+        std::env::set_var(ONLY_OUTFIT, outfit.to_string());
+        Self(previous)
+    }
+}
+impl Drop for OnlyOutfitScope {
+    fn drop(&mut self) {
+        match self.0.take() { Some(v) => std::env::set_var(ONLY_OUTFIT, v), None => std::env::remove_var(ONLY_OUTFIT) }
+    }
+}
+const ONLY_OUTFIT: &str = "OK_SEAL_ONLY_OUTFIT";
+/// The one outfit the sealing passes may restrict themselves to, when it is one of this card's `outfits`.
+fn only_outfit(outfits: i32) -> Option<i32> {
+    if std::env::var_os("OK_SEAL_EVERY_OUTFIT").is_some() { return None; }
+    std::env::var(ONLY_OUTFIT).ok()?.trim().parse::<i32>().ok().filter(|o| *o >= 0 && *o < outfits)
+}
+
 fn open_outfits(lib: &Path, card: &[u8], what: &str) -> Result<(), String> {
     ensure_library(lib)?;
     static N: AtomicU64 = AtomicU64::new(0);
@@ -2366,12 +2402,17 @@ fn open_outfits(lib: &Path, card: &[u8], what: &str) -> Result<(), String> {
     std::env::set_var("OK_NOCACHE", "1");
     crate::unity::release_bundle_caches();
     let mut errors = Vec::new();
-    for outfit in 0..crate::tree_answers::outfit_count(card) as i32 {
+    let outfits = crate::tree_answers::outfit_count(card) as i32;
+    let only = only_outfit(outfits);
+    if let Some(o) = only { eprintln!("ok-extract: {what}: only outfit {o} of {outfits} (the others are unchanged)"); }
+    for outfit in only.unwrap_or(0)..only.map_or(outfits, |o| o + 1) {
+        let t = std::time::Instant::now();
         if let Err(e) = crate::session::open(lib, Some(&temp.0), outfit) { errors.push(format!("outfit {outfit}: {e}")); }
         for states in CLOTHES_STATE_VARIANTS {
             let _states = crate::unity::request_clothes_states(states);
             if let Err(e) = crate::session::open(lib, Some(&temp.0), outfit) { errors.push(format!("outfit {outfit} clothes {states:?}: {e}")); }
         }
+        crate::profile_tick(&format!("{what}: outfit {outfit} (6 opens)"), t);
     }
     if nocache.is_none() { std::env::remove_var("OK_NOCACHE"); }
     if errors.is_empty() { Ok(()) } else { Err(format!("{what} open failed: {}", errors.join(" | "))) }

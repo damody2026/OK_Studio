@@ -14,9 +14,12 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/ScopeExit.h"
 #include "Widgets/SWindow.h"
 #include "KKRustExtract.h"
 #include "OKCardPreviewCapture.h"
@@ -294,6 +297,37 @@ void UOKCharacterController::WearOkClothesReported(const FString& Clothes,bool b
  Report((bClothesOnly?TEXT("只換衣服中…："):TEXT("套用服裝卡中…："))+FPaths::GetBaseFilename(Clothes));
  WearOkClothesFrom(Clothes,bClothesOnly,[Report](bool bOk,const FString& What){Report(bOk?TEXT("已套用服裝卡（工作卡，要保留請另存）：")+What:TEXT("套用服裝卡失敗：")+What);});
 }
+FString UOKCharacterController::OkClothesFolderPath() const{
+ const FString Folder=OKClothesFolder(OutputDirectoryInput);
+ IFileManager::Get().MakeDirectory(*Folder,true);
+ return Folder;
+}
+// A game coordinate card (【KoiKatuClothes】) rather than a character card, told without reading the file: the PNG
+// chunks are walked by seeking (a character card carries tens of megabytes of resources in its chunks), then the
+// marker is read from the bytes right after IEND, where the trailer puts it (okclothes::read_coordinate_file).
+static bool OKIsCoordinateCardFile(const FString& Path){
+ TUniquePtr<IFileHandle> File(FPlatformFileManager::Get().GetPlatformFile().OpenRead(*Path));
+ if(!File)return false;
+ static const uint8 Signature[8]={137,80,78,71,13,10,26,10};
+ uint8 Head[8];
+ if(!File->Read(Head,8)||FMemory::Memcmp(Head,Signature,8)!=0)return false;
+ for(int32 Chunks=0;Chunks<4096;++Chunks){
+  if(!File->Read(Head,8))return false;
+  const uint32 Length=(uint32(Head[0])<<24)|(uint32(Head[1])<<16)|(uint32(Head[2])<<8)|uint32(Head[3]);
+  if(FMemory::Memcmp(Head+4,"IEND",4)==0){
+   // int32 product, then a .NET string: its length is a varint of one or two bytes, so the name is well inside this.
+   uint8 Trailer[64]={};
+   if(!File->Seek(File->Tell()+int64(Length)+4))return false;
+   const int64 Read=FMath::Min<int64>(sizeof(Trailer),FMath::Max<int64>(0,File->Size()-File->Tell()));
+   if(Read<20||!File->Read(Trailer,Read))return false;
+   const ANSICHAR* Marker="KoiKatuClothes";const int32 MarkerLength=14;
+   for(int64 At=0;At+MarkerLength<=Read;++At)if(FMemory::Memcmp(Trailer+At,Marker,MarkerLength)==0)return true;
+   return false;
+  }
+  if(!File->Seek(File->Tell()+int64(Length)+4))return false;
+ }
+ return false;
+}
 TArray<FString> UOKCharacterController::OkClothesFiles() const{
  TArray<FString> Folders{OKClothesFolder(OutputDirectoryInput),FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()/TEXT("UserData/okclothes"))};
  TArray<TPair<FDateTime,FString>> Found;
@@ -301,6 +335,10 @@ TArray<FString> UOKCharacterController::OkClothesFiles() const{
   if(Folders.IndexOfByPredicate([&](const FString& F){return FPaths::IsSamePath(F,Folders[I]);})!=I)continue;
   TArray<FString> Names;IFileManager::Get().FindFiles(Names,*(Folders[I]/TEXT("*.okclothes")),true,false);
   for(const FString& Name:Names){const FString Path=Folders[I]/Name;Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
+  // The game's own outfit cards as they come: the folder may also hold character cards (the save folder does), so
+  // only the ones marked as a coordinate card are listed.
+  TArray<FString> Pngs;IFileManager::Get().FindFiles(Pngs,*(Folders[I]/TEXT("*.png")),true,false);
+  for(const FString& Name:Pngs){const FString Path=Folders[I]/Name;if(OKIsCoordinateCardFile(Path))Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
  }
  Found.Sort([](const auto& A,const auto& B){return A.Key>B.Key;});
  TArray<FString> Out;for(const auto& F:Found)Out.Add(F.Value);
@@ -318,11 +356,16 @@ void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClot
  bWearingOkClothes=true;
  TWeakObjectPtr<UOKCharacterController> Weak(this);
  // An OK card is sealed again for her new clothes (ok-extract.exe, seconds): off the game thread.
- Async(EAsyncExecution::Thread,[Weak,Card,Clothes,Outfit,Output,bClothesOnly,Done](){
+ // The two halves of "點縮圖到她換好衣服" are timed and logged, always: the wear (resealing the card, which is
+ // nearly all of it -- Docs/OK_CLOTHES_CARD.md) and the open that follows. OK_PROFILE=1 splits the wear further.
+ const double Pressed=FPlatformTime::Seconds();
+ Async(EAsyncExecution::Thread,[Weak,Card,Clothes,Outfit,Output,bClothesOnly,Done,Pressed](){
   FString Summary;
   const bool Ok=bClothesOnly?FOkSession::ClothesWearClothesOnly(Card,Clothes,Outfit,Output,Summary):FOkSession::ClothesWear(Card,Clothes,Outfit,Output,Summary);
-  AsyncTask(ENamedThreads::GameThread,[Weak,Card,Clothes,Outfit,Output,Ok,Summary,Done](){
+  const double Worn=FPlatformTime::Seconds();
+  AsyncTask(ENamedThreads::GameThread,[Weak,Card,Clothes,Outfit,Output,Ok,Summary,Done,Pressed,Worn](){
    UE_LOG(LogTemp,Display,TEXT("OK clothes wear %s on %s outfit %d -> %s: %s"),*Clothes,*Card,Outfit,*Output,*Summary);
+   ON_SCOPE_EXIT{UE_LOG(LogTemp,Display,TEXT("OK clothes wear timing: wear %.2fs + open %.2fs = %.2fs"),Worn-Pressed,FPlatformTime::Seconds()-Worn,FPlatformTime::Seconds()-Pressed);};
    UOKCharacterController* Self=Weak.Get();
    if(!Self){return;}
    Self->bWearingOkClothes=false;

@@ -12,8 +12,11 @@
 | 套用服裝卡 | 選一張 `.okclothes`，穿成目前角色的這套服裝：衣服與身上的飾品換成服裝卡的，**頭髮與頭上的飾品保留角色自己的**（見下方「保留頭髮」）。結果是工作卡 `Saved/OKClothes/Worn/<角色>+<服裝卡>.png`，套完立刻開啟；原卡不變，要保留請另存。 |
 | 只換衣服 | 同上，但角色自己的飾品全部保留，服裝卡的飾品都不穿。 |
 | 轉換服裝卡 | 遊戲的服裝卡（KoiKatuClothes PNG）→ `.okclothes`。 |
+| 開啟資料夾（2026-11-23） | 用檔案總管開啟服裝卡資料夾（另存資料夾，沒填就是 `UserData/okclothes/`；不存在就先建）。把檔案丟進去再回來，按下它或「重新整理」就會出現。 |
 
-按鈕下方是**服裝卡清單**：另存資料夾（匯出服裝卡寫到的地方）與 `UserData/okclothes/` 裡的 `.okclothes`，新的在前，每張顯示縮圖與檔名。點縮圖就套到目前選的角色身上；上方的「點縮圖＝換衣服（保留頭髮）／只換衣服（飾品全保留）」切換點下去的做法。匯出或轉換完的服裝卡馬上出現在清單最前面；自己把檔案放進資料夾，或換了另存資料夾，按「重新整理」。
+按鈕下方是**服裝卡清單**：另存資料夾（匯出服裝卡寫到的地方）與 `UserData/okclothes/` 裡的 `.okclothes`，**以及直接丟進這兩個資料夾的遊戲原版服裝卡**（`*.png`，2026-11-23），新的在前，每張顯示縮圖與檔名。
+
+**原版服裝卡不用先轉換**（2026-11-23）：把遊戲 `UserData/coordinate/` 的服裝卡 PNG 複製進資料夾就會列出來，點縮圖直接套（`okclothes::file::read_outfit`：先當 `.okclothes` 讀，不是就當 coordinate card 讀）。資料夾裡也可能放著**角色卡**（另存資料夾就是），所以清單只收**檔尾標記是 `【KoiKatuClothes】`** 的 PNG：讀的時候只 seek 走過 PNG 的 chunk 找到 `IEND`，再讀它後面 64 個位元組看標記，不會為了判斷而讀進一張上百 MB 的角色卡。原版服裝卡沒有自帶資源包，它的第三方 mod 和以前一樣來自安裝目錄的 zipmod；「轉換服裝卡」按鈕仍然留著（想先存成 `.okclothes` 時用）。點縮圖就套到目前選的角色身上；上方的「點縮圖＝換衣服（保留頭髮）／只換衣服（飾品全保留）」切換點下去的做法。匯出或轉換完的服裝卡馬上出現在清單最前面；自己把檔案放進資料夾，或換了另存資料夾，按「重新整理」。
 
 **保留頭髮**（2026-11-22）：很多卡的頭髮是用飾品做的（刻晴、雷電、Alice 的雙馬尾），遊戲套服裝卡會連飾品一起換，頭髮就變成服裝卡那位的。讀卡器套用時逐格決定：
 
@@ -72,4 +75,98 @@ OK 卡只能用卡內資源包＋共用基礎庫開（strict），所以換了�
 
 ## 未做
 
-- 資源包裁切（只帶這套服裝用到的模型）與套用速度（OK 卡要重新封裝，數十秒）。
+- 資源包裁切（只帶這套服裝用到的模型）。套用速度見下一節（2026-11-23：47.9 → 11.7 s，還有一步可做）。
+
+## 套用很慢：時間花在哪，與只重封一套（2026-11-23，F）
+
+使用者：「在衣服卡總欄點一張服裝卡縮圖套到角色身上，套用之後明顯很慢。」**先量再改**：量的是
+`okclothes::file::wear_into`（讀卡器點縮圖 → `WearOkClothesReported` → `FOkSession::ClothesWear` →
+`ok_clothes_file` op 2 走的就是這一段）加上它之後讀卡器重開那張卡。
+
+量法：`ok-clothes-bench`（新增，`Tools/ok-extract/src/bin/ok-clothes-bench.rs`），全新程序、`OK_NOCACHE=1`、
+`RAYON_NUM_THREADS=8`、一次一個行程，`OK_PROFILE=1` 印出 `wear:` 各段。題目用讀卡器實際會遇到的組合：
+`crowd_C020`（OK 卡，**7 套服裝**）穿 `raiden_outfit1.okclothes`（60 MB，帶資源包），scope `keephair`
+（畫面上寫「點縮圖＝換衣服（保留頭髮）」那個做法）。走的是和讀卡器同一段 Rust 程式與同一個基礎庫，
+UE 那邊只是把結果的卡重開一次（量到 0.64 s，見下表）。
+
+**改前的分解**（47.9 s，每一行都是真的跑過的那一段，沒跑的階段就不印那一行）：
+
+| 階段 | ms | 占比 |
+|---|---:|---:|
+| 讀服裝卡＋讀角色卡＋寫入 coordinate＋`merge_card_pack`＋answers | 838 | 1.7% |
+| `seal: answers step`（answers 保留，沒重錄） | 43 | 0.1% |
+| **`seal: complete step`**（獨立 `ok-extract.exe`，**7 套 × 6 次開卡 = 42 次**） | **13 353** | 27.9% |
+| **`seal: strict-check step`**（又一個獨立程序，再 42 次＋gag eyes） | **14 665** | 30.6% |
+| **`refresh: every outfit opened`**（`remake_ok_card`，再 42 次） | **17 859** | 37.3% |
+| `refresh: models+digest (outfit 0)` | 466 | 1.0% |
+| **合計** | **47 913** | |
+| 之後讀卡器重開那張卡 | 640 | — |
+
+也就是**97% 是三趟「整個衣櫃」的重複開卡，共 126 次**，而使用者只換了其中一套；而且封裝的結果是
+`added files=0 zips=40 zip entries=0 model records=0 (0 bytes)` —— **28.6 秒的封裝什麼都沒加進去**。
+讀卡器重開卡只占 1.3%，所以**慢的不是「整張卡重開」，是重新封裝**。
+
+**改動：只重封換掉的那一套**（`oklib::OnlyOutfitScope` / `OK_SEAL_ONLY_OUTFIT`）。穿服裝卡只改一套
+coordinate，其他幾套的位元組完全沒動，而上面第 3、4 步的兩個合併都**只會加不會刪**，所以封裝、
+strict-check 與 remake 這三趟只需要開那一套。`open_outfits` 是這三趟共同的瓶頸點，所以改一處就夠；
+`with_tree_answers`（重錄 answers）有自己的迴圈，**不受影響**，answers 仍然涵蓋全部服裝。
+`OK_SEAL_EVERY_OUTFIT=1` 回到舊行為（A/B 用）。
+
+**同一把尺重量**（同一個執行檔、環境變數切換、同時段）：
+
+| | 舊（每套都開） | 新（只開換掉的那一套） |
+|---|---:|---:|
+| `wear` | 47.9 / 45.7 / 57.3 / 60.9 s | 11.7 / 11.2 / 14.2 / 14.6 s |
+| 之後重開卡 | 0.64 s | 0.63 s |
+| **點縮圖到可互動** | **57.9 s** / **61.6 s**（兩對同時段的） | **14.8 s（−74.5%）** / **15.3 s（−75.2%）** |
+| `seal: complete` / `strict-check` / `refresh` | 13.4 / 14.7 / 17.9 s | 3.5 / 3.0 / 3.2 s |
+
+**開關是活的**：log 多一行 `refresh: only outfit 0 of 7 (the others are unchanged)`，封裝摘要的 `zips` 40 → 20。
+
+**正確性**：
+- 兩邊的卡 `digest` 相同（`4c1587cdf942b99d8f7b043699430b24`），資源包長度相同（103 670 502），
+  兩邊都 `added ... 0 bytes`，重開的 parts 都是 63。
+- 兩張卡各跑一次**完整**的 `--oklib strict-check`（7 套 × 每種服裝狀態，不是只檢查那一套）：都 `OKSTRICT ok`
+  （15.8 s / 15.0 s）。
+- **唯一的差別**：`okLb` 的 models 清單少一個 id（`8892020000000000af5ef8844f4b4331`，35 bytes）。那是
+  **別的服裝**才會碰到、而且**她原本那張卡的清單裡本來就沒有**的模型（原卡 91 個，舊做法變 97 個，新做法 96 個）：
+  舊做法順手補的是「這張卡封裝時還沒有這筆」留下的舊缺口，和這次換衣服無關。這份清單**只被開卡快取的
+  鍵用到**（`session_cache_key`），而開卡磁碟快取在這個專案永久關閉，所以今天沒有任何可見影響；要補那個
+  缺口就是對整張卡重封（`--oklib seal`）。
+
+**還能拿的（下一步怎麼查）**：剩下的 14 s 裡約 11 s 還是**同一套服裝被開了 18 次**（三趟各 6 種服裝狀態）
+＋digest 那一次。要再縮就得讓後兩趟不必重開：封裝那個子程序已經知道「自己碰了哪些模型」與
+「嚴格開卡過不過」，把這兩樣從子程序的 stdout 帶回父程序，取代 strict-check 與 refresh 的重開。
+這會動到 strict 開卡之間的狀態共享，而那正是花火（11-12）與 alice（11-16）兩個 bug 的來源，所以要先把
+「每趟各自冷開」這條不變式想清楚再動，不要為了省時間讓兩趟共用解析結果。
+
+## 服裝卡資料夾與原版服裝卡（2026-11-23，F）
+
+使用者：「還要能打開衣服卡的資料夾，放原版的衣服卡。」
+
+- **開啟資料夾**按鈕（衣服卡總欄 › 服裝卡，和「重新整理」同一排）：用檔案總管開啟服裝卡資料夾
+  （`UOKCharacterController::OkClothesFolderPath`，不存在就先建），按下它回來時順手重讀清單。
+- **原版服裝卡直接列、直接套**：`okclothes::file::read_outfit` 先把檔案當 `.okclothes` 讀，不是就當遊戲的
+  coordinate card 讀（`import_coordinate`）；`wear_into`／`wear_file`／`wear_clothes_only_file` 都走它，所以讀卡器、
+  命令列 `--oklib clothes-wear` 與 FFI 都一樣。清單只收檔尾標記 `【KoiKatuClothes】` 的 PNG（`OKIsCoordinateCardFile`：
+  只 seek 走 chunk 找 `IEND`，再讀後面 64 bytes，不把上百 MB 的角色卡讀進來）。
+- **連帶修掉一個真的 bug**：原本只要服裝卡沒有自己的 answers（原版服裝卡就是），就把**角色自己的 answers 整個丟掉重錄**
+  （`strip_answers` ＋ `Answers::Record`），而共用基礎庫的樹答不出她自己那些題，於是封裝直接失敗：
+  `5 unanswered question(s): okLt cat 403 1881; 410 4; 411 2; 423 702; 424 9017` —— **五題全是她自己的**（體毛、臉、
+  身體貼圖），和服裝無關。現在：她有 answers 就一定保留，服裝卡沒帶 answers 時改用 `Answers::Add`
+  （保留她的，再從共用基礎庫補錄），因為穿上別人的衣服之後問的 mod GUID 集合變了，她原本那一筆蓋不住。
+  帶 answers 的 `.okclothes` 走的還是原本的 merge，**量測那條路一個位元組都沒變**。
+
+**驗證**（2026-11-23，F，`crowd_C020` 7 套服裝，基礎庫 `base_v1`）：
+
+| 題目 | 結果 |
+|---|---|
+| `KKCoordeF_20201021052531777.png`（遊戲原版服裝卡，只用原版與共用資源） | 套成功，封裝 `added files=1 zips=18 zip entries=3 model records=21 (2 718 661 bytes)`；worn 卡跑**完整** `--oklib strict-check`（7 套 × 每種服裝狀態）`OKSTRICT ok` 11.4 s |
+| `raiden_outfit1.okclothes`（帶資源包） | 不受影響（走 merge 那條），parts 63，`digest` 與改前相同 |
+| `Chun.png`（原版服裝卡，衣服來自非共用的 `[makise]chun.zipmod`） | **還是不行**：`1 unanswered question: GAMEFS zip-entry mods/.../[makise]chun.zipmod\|abdata/chara/[makise]chun.unity3d`（修之前是 6 題） |
+
+**沒做、卡在哪**：原版服裝卡**用到非共用 mod** 時套不到 OK 卡上。原因是封裝那兩個子程序是用 `X:/NoGame` 跑的
+（OK 卡的嚴格封裝本來就不該看安裝目錄），所以那個 zipmod 的 entry 沒人能提供。下一步是把安裝目錄
+（`wear_into` 已經有的 `game`）傳進 `seal_card_with` 的子程序，讓封裝**把那筆 entry 複製進 worn 卡的資源包**
+（和原作卡轉 OK 卡時一樣），封完的卡仍然自足；要先確認 `okstrict` 對「來自遊戲根目錄的讀取」是記成 addition
+還是只是答掉（只答掉就白做）。現成的替代做法：從**有那個 mod 的角色卡**匯出服裝卡，那樣的 `.okclothes` 自帶資源包。
