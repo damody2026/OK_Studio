@@ -13,7 +13,9 @@ struct FOKSceneTimelineTrack;
 struct FOKSceneTimelineKeyframe;
 
 /** Which page a mod row is drawn on: 狀態 of the selected character (KKAPI CurrentStateCategory) or 畫面設定 (SceneEffectsCategory). */
-enum class EOKStudioModPanel : uint8 { CurrentState, SceneEffects };
+enum class EOKStudioModPanel : uint8 { CurrentState, SceneEffects,
+	/** The Mod page (系統 → Mod): the mods' own page, rows for the selected object of any kind (ObjectId -1: none). */
+	Mods };
 
 /** The control a mod row shows. Values travel as text: Toggle "0"/"1", Slider a number, Dropdown the option index,
  *  Color FLinearColor::ToString(), Text the text; Button has no value and runs its Command. */
@@ -41,6 +43,10 @@ struct FOKStudioModToolbarButton
 	FString Tooltip;
 	FString Command;
 	FString Arg;
+	/** One of the studio's own icons (SIcon names: "light", "eye", "camera", …) in place of the label; none: the label. */
+	FName Icon;
+	/** Drawn pressed while this says so (a toggle's state; none: never). */
+	TFunction<bool()> IsOn;
 };
 
 /** An entry of the object tree's context menu (KKAPI StudioContextMenus). */
@@ -159,3 +165,13 @@ private:
 	TArray<FOKStudioModInterpolable> InterpolableList;
 	int32 GenerationCounter = 0;
 };
+
+/**
+ * One edit of the studio's control channel for a mod's answer (Docs/OK_MOD_E_WAVE4.md): spawn, transform, reparent,
+ * delete, select, pose, patch, duplicate, the short forms show / rename / dress (patch of bVisible, name, outfit and
+ * clothes states), and the reads inspect, bones, bounds and get (studio.get: the scene state, with "id" that object).
+ * The same ops and arguments as the control
+ * channel's /studio/<op> (studio_spawn, studio_transform, studio_patch, … of ok-game-mcp), so an edit a mod asks for is
+ * one undo step (nested in the step it belongs to) and is refused while the studio is busy. Returns {ok, error?, …}.
+ */
+OKSTUDIO_API TSharedRef<class FJsonObject> OKStudioRunModOp(const FString& Op, const TSharedRef<class FJsonObject>& Args);

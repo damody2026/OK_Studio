@@ -190,6 +190,8 @@ namespace OKStudioModBridge
 		TArray<FTimer> Timers;
 		FString MarksPath;
 		bool bObjects = false;
+		/** Registration "details": every call carries the selected objects in full ("details", as studio_inspect). */
+		bool bDetails = false;
 		TMap<FString, FString> Text;
 		FVector2D Drag = FVector2D::ZeroVector;
 		FString DragId;
@@ -227,6 +229,12 @@ namespace OKStudioModBridge
 		/** The last calls and answers, for OKStudio.ModTrace and the tests. */
 		TArray<FString> Trace;
 		TArray<FString> DropQueue;
+		/** What each character was last tick (card, outfit, clothes, animation, its shown actor), for studio.character_changed. */
+		struct FCharacterSeen { FString Card; int32 Outfit = 0; FString Clothes; FString Anim; const void* Shown = nullptr; };
+		TMap<int32, FCharacterSeen> Characters;
+		bool bCharactersSeen = false;
+		/** How deep ops results are being answered (an ops_result reply with more ops): stops a mod looping on itself. */
+		int32 OpsDepth = 0;
 	};
 
 	FState& State()
@@ -336,6 +344,22 @@ namespace OKStudioModBridge
 		C->SetBoolField(TEXT("playing"), Game->bTimelinePlaying);
 		C->SetBoolField(TEXT("dirty"), Game->bDirty);
 		C->SetStringField(TEXT("scene_file"), Game->File);
+		// The studio's text language (what the mod's own locale files should follow).
+		C->SetStringField(TEXT("lang"), OKStreetCppText().Lang);
+		if (Mod.bDetails)
+		{
+			// The selected objects in full (FOKSceneObject as the control channel's inspect gives it), at most 16.
+			TSharedRef<FJsonObject> Details = MakeShared<FJsonObject>();
+			for (int32 I = 0; I < Game->Selection.Num() && I < 16; ++I)
+			{
+				TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+				Args->SetNumberField(TEXT("id"), Game->Selection[I]);
+				const TSharedRef<FJsonObject> Out = OKStudioRunModOp(TEXT("inspect"), Args);
+				const TSharedPtr<FJsonObject>* Object = nullptr;
+				if (Out->TryGetObjectField(TEXT("object"), Object) && Object) Details->SetObjectField(FString::FromInt(Game->Selection[I]), *Object);
+			}
+			C->SetObjectField(TEXT("details"), Details);
+		}
 		if (Mod.bObjects)
 		{
 			TArray<TSharedPtr<FJsonValue>> Objects;
@@ -441,6 +465,8 @@ namespace OKStudioModBridge
 
 	// --- Effects ---
 
+	void SendEvent(FMod& Mod, const FString& Event, const TSharedRef<FJsonObject>& Args, bool bDeferRest);
+
 	void Nudge(UOKStudioGame& Game, const FJsonObject& N)
 	{
 		UOKSceneDocument& Doc = *Game.Document;
@@ -539,6 +565,45 @@ namespace OKStudioModBridge
 				R->TryGetStringField(TEXT("arg"), Arg);
 				if (!Game.RunUiCommand(Command, Arg)) UE_LOG(LogOKStudioMods, Warning, TEXT("%s: studio command %s failed"), *Mod, *Command);
 			}
+		// Edits of objects through the control channel's ops (OKStudioRunModOp): all of them one undo step, nested in
+		// the step of the command or key this answer belongs to. The results go back to the mod (studio.ops_result).
+		const TArray<TSharedPtr<FJsonValue>>* Ops = nullptr;
+		if (Effect.TryGetArrayField(TEXT("ops"), Ops) && Ops->Num())
+		{
+			TArray<TSharedPtr<FJsonValue>> Results;
+			Game.BeginStep();
+			for (const TSharedPtr<FJsonValue>& V : *Ops)
+			{
+				const TSharedPtr<FJsonObject> O = V->AsObject();
+				FString Op;
+				if (!O || !O->TryGetStringField(TEXT("op"), Op)) { Results.Add(MakeShared<FJsonValueObject>(MakeShared<FJsonObject>())); continue; }
+				TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>(*O);
+				Args->RemoveField(TEXT("op"));
+				const TSharedRef<FJsonObject> R = OKStudioRunModOp(Op, Args);
+				R->SetStringField(TEXT("op"), Op);
+				bool bOk = false;
+				R->TryGetBoolField(TEXT("ok"), bOk);
+				FString Why;
+				if (!bOk && R->TryGetStringField(TEXT("error"), Why)) UE_LOG(LogOKStudioMods, Warning, TEXT("%s: op %s: %s"), *Mod, *Op, *Why);
+				Note(FString::Printf(TEXT("%s op %s -> %s"), *Mod, *Op, *Condensed(R).Left(200)));
+				Results.Add(MakeShared<FJsonValueObject>(R));
+			}
+			FState& S = State();
+			FMod* M = FindMod(Mod);
+			if (M && !M->bDropped && S.OpsDepth < 4)
+			{
+				TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+				Args->SetArrayField(TEXT("results"), Results);
+				FString Tag;
+				if (Effect.TryGetStringField(TEXT("tag"), Tag)) Args->SetStringField(TEXT("tag"), Tag);
+				// Still inside the step: what the mod writes with the results joins the edit it asked for.
+				++S.OpsDepth;
+				SendEvent(*M, TEXT("ops_result"), Args, false);
+				--S.OpsDepth;
+			}
+			else if (S.OpsDepth >= 4) UE_LOG(LogOKStudioMods, Warning, TEXT("%s: ops answered four times in a row, results not sent again"), *Mod);
+			if (State().Game.IsValid()) Game.EndStep();
+		}
 	}
 
 	void Apply(const FString& Mod, const TSharedPtr<FJsonObject>& Effect, bool bDeferRest)
@@ -646,7 +711,18 @@ namespace OKStudioModBridge
 		});
 		Each(TEXT("toolbar"), [&](const FJsonObject& B)
 		{
-			R.AddToolbarButton({ Id, Str(B, TEXT("id")), Label(Mod, Str(B, TEXT("label"))), Label(Mod, Str(B, TEXT("tooltip"))), Str(B, TEXT("command")), Str(B, TEXT("arg")) });
+			FOKStudioModToolbarButton Button{ Id, Str(B, TEXT("id")), Label(Mod, Str(B, TEXT("label"))), Label(Mod, Str(B, TEXT("tooltip"))), Str(B, TEXT("command")), Str(B, TEXT("arg")) };
+			if (const FString Icon = Str(B, TEXT("icon")); !Icon.IsEmpty()) Button.Icon = FName(*Icon);
+			// "on": a path in the mod's data; the button shows pressed while the value there is true (a toggle).
+			if (const FString On = Str(B, TEXT("on")); !On.IsEmpty())
+				Button.IsOn = [Id, On]
+				{
+					const UOKStudioGame* Game = State().Game.Get();
+					if (!Game || !Game->Document) return false;
+					const TSharedPtr<FJsonValue> V = ReadPath(DataObject(*Game->Document, Id), On, INDEX_NONE);
+					return V.IsValid() && ((V->Type == EJson::Boolean && V->AsBool()) || (V->Type == EJson::Number && V->AsNumber() != 0.0) || (V->Type == EJson::String && !V->AsString().IsEmpty()));
+				};
+			R.AddToolbarButton(MoveTemp(Button));
 		});
 		Each(TEXT("menu"), [&](const FJsonObject& M)
 		{
@@ -667,7 +743,8 @@ namespace OKStudioModBridge
 			Control.Owner = Id;
 			Control.Id = Str(C, TEXT("id"));
 			Control.Label = Label(Mod, Str(C, TEXT("label")));
-			Control.Panel = Str(C, TEXT("panel")) == TEXT("scene") ? EOKStudioModPanel::SceneEffects : EOKStudioModPanel::CurrentState;
+			const FString PanelName = Str(C, TEXT("panel"));
+			Control.Panel = PanelName == TEXT("scene") ? EOKStudioModPanel::SceneEffects : PanelName == TEXT("mods") ? EOKStudioModPanel::Mods : EOKStudioModPanel::CurrentState;
 			Control.Kind = ControlKind(Str(C, TEXT("kind")));
 			double Min = 0, Max = 1, Step = 0.01;
 			C.TryGetNumberField(TEXT("min"), Min); C.TryGetNumberField(TEXT("max"), Max); C.TryGetNumberField(TEXT("step"), Step);
@@ -764,6 +841,7 @@ namespace OKStudioModBridge
 		});
 		Ui.TryGetStringField(TEXT("timeline_marks"), Mod.MarksPath);
 		Ui.TryGetBoolField(TEXT("objects"), Mod.bObjects);
+		Ui.TryGetBoolField(TEXT("details"), Mod.bDetails);
 	}
 
 	void Teardown()
@@ -775,6 +853,8 @@ namespace OKStudioModBridge
 		S.Mods.Reset();
 		S.Deferred.Reset();
 		S.DropQueue.Reset();
+		S.Characters.Reset();
+		S.bCharactersSeen = false;
 		FOKStudioModRegistry::Get().SceneEventSink = nullptr;
 		S.bBuilt = false;
 	}
@@ -1010,6 +1090,72 @@ namespace OKStudioModBridge
 		Volume->Settings.WeightedBlendables.Array = MoveTemp(Blendables);
 	}
 
+	/**
+	 * studio.character_changed: a character got another card, outfit, clothes state or animation, or was built again
+	 * (its shown actor changed). Sent from the tick after the change; undo and redo cause it too, so the answer may only
+	 * show a status line: data, ops and the rest are not applied (they would make a step that drops the redo history).
+	 */
+	void TickCharacters(UOKStudioGame& Game)
+	{
+		FState& S = State();
+		const FString Hook = TEXT("studio.character_changed");
+		const bool bAnyone = S.Mods.ContainsByPredicate([&](const FMod& M) { return !M.NotSubscribed.Contains(Hook) && !M.bDropped; });
+		TMap<int32, FState::FCharacterSeen> Now;
+		for (const FOKSceneObject& O : Game.Document->Objects)
+		{
+			if (O.Kind != EOKSceneObjectKind::Character) continue;
+			FState::FCharacterSeen& C = Now.Add(O.Id);
+			C.Card = O.Character.Card;
+			C.Outfit = O.Character.Outfit;
+			C.Clothes = BytesToHex(O.Character.ClothesStates.GetData(), O.Character.ClothesStates.Num());
+			C.Anim = FString::Printf(TEXT("%d/%d/%d/%d|%s|%s"), O.Character.StudioAnimeKind, O.Character.StudioAnimeGroup, O.Character.StudioAnimeCategory, O.Character.StudioAnimeNo, *O.Character.AnimFile, *O.Character.Animation.ToString());
+			C.Shown = Game.SceneActor ? static_cast<const void*>(Game.SceneActor->PreviewOf(O.Id)) : nullptr;
+		}
+		TMap<int32, FState::FCharacterSeen> Before = MoveTemp(S.Characters);
+		S.Characters = Now;
+		// The first look (the studio or the mods just came up) is the baseline, not a change.
+		if (!S.bCharactersSeen) { S.bCharactersSeen = true; return; }
+		if (!bAnyone) return;
+		for (const TPair<int32, FState::FCharacterSeen>& P : Now)
+		{
+			const FState::FCharacterSeen* Was = Before.Find(P.Key);
+			const FState::FCharacterSeen& C = P.Value;
+			TArray<TSharedPtr<FJsonValue>> Changes;
+			if (!Was) Changes.Add(MakeShared<FJsonValueString>(TEXT("added")));
+			else
+			{
+				if (Was->Card != C.Card) Changes.Add(MakeShared<FJsonValueString>(TEXT("card")));
+				if (Was->Outfit != C.Outfit) Changes.Add(MakeShared<FJsonValueString>(TEXT("outfit")));
+				if (Was->Clothes != C.Clothes) Changes.Add(MakeShared<FJsonValueString>(TEXT("clothes")));
+				if (Was->Anim != C.Anim) Changes.Add(MakeShared<FJsonValueString>(TEXT("animation")));
+				if (Was->Shown != C.Shown && C.Shown) Changes.Add(MakeShared<FJsonValueString>(TEXT("loaded")));
+			}
+			if (Changes.IsEmpty()) continue;
+			TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
+			Args->SetNumberField(TEXT("object"), P.Key);
+			Args->SetArrayField(TEXT("changes"), Changes);
+			Args->SetStringField(TEXT("card"), C.Card);
+			Args->SetNumberField(TEXT("outfit"), C.Outfit);
+			Args->SetStringField(TEXT("clothes"), C.Clothes);
+			Args->SetStringField(TEXT("animation"), C.Anim);
+			Args->SetBoolField(TEXT("shown"), C.Shown != nullptr);
+			TArray<FString> Ids;
+			for (const FMod& M : S.Mods) if (!M.NotSubscribed.Contains(Hook) && !M.bDropped) Ids.Add(M.Id);
+			for (const FString& Id : Ids)
+				if (FMod* M = FindMod(Id))
+				{
+					TSharedRef<FJsonObject> Ctx = Context(*M);
+					for (const TPair<FString, TSharedPtr<FJsonValue>>& A : Args->Values) Ctx->SetField(A.Key, A.Value);
+					Ctx->SetStringField(TEXT("event"), TEXT("character_changed"));
+					const TSharedPtr<FJsonObject> Answer = Call(Id, Hook, Ctx);
+					FString Status;
+					if (Answer.IsValid() && Answer->TryGetStringField(TEXT("status"), Status) && FOKStudioModRegistry::Get().ShowStatus) FOKStudioModRegistry::Get().ShowStatus(Status);
+					static const TCHAR* Ignored[] = { TEXT("data"), TEXT("clear_data"), TEXT("ops"), TEXT("run"), TEXT("select"), TEXT("nudge"), TEXT("timeline"), TEXT("export") };
+					if (Answer.IsValid()) for (const TCHAR* F : Ignored) if (Answer->HasField(F)) { UE_LOG(LogOKStudioMods, Warning, TEXT("%s: %s answers only with a status (\"%s\" ignored)"), *Id, *Hook, F); break; }
+				}
+		}
+	}
+
 	bool Tick(float)
 	{
 		FState& S = State();
@@ -1063,6 +1209,7 @@ namespace OKStudioModBridge
 			}
 		TickMarks(*Game);
 		TickPostProcess(*Game);
+		TickCharacters(*Game);
 		return true;
 	}
 
