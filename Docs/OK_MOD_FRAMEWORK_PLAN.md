@@ -796,6 +796,8 @@ flowchart TB
 | C | `573a1c6bb` | 工作項 9、9b、9c、11、12 收尾；第三波 C／E 補缺 |
 | D | `6e46210be` | 第四波（2026-11-23 接手後）：C 讀卡器飾品／服裝卡／property_change／get／街區六個掛點與 hook-probe 實測；E Studio 物件操作 op、light-rig、1 對 1 量表與補驗；F 按鍵服務、熱重載保留狀態、`ok-mod-pack new`、作者入門、第四波掛點 SDK 輔助。回報 `OK_MOD_C_WAVE4.md`、`OK_MOD_E_WAVE4.md`、`OK_MOD_F_WAVE4.md`。混合編譯：`cargo test`（ok-mod）、`cargo check`（ok-extract，含 `--no-default-features`）、D: 引擎 `OpenKoikatsuEditor`／`OpenKoikatsu` Development 全過 |
 
+| E | `294cae12d` | 第五、六波：三個模式接上熱鍵（街區、Studio、1 對 1）與 Studio「Mod 熱鍵」設定頁；街區 mod 資料表 `street/*.toml`（商品併進目錄 `catalog_extend`、話題素材進 system prompt 靜態段，`birthday` 示範）；hook-probe 實測讀卡器／街區新掛點；乾淨 stage 安裝 starter／full、打包版讀卡器／街區／Studio、`-NoMods`、Shift、release／debug 互通；stage 自帶 runtime patch；`game_stop` 等進程結束。回報 `OK_MOD_{C,E,F}_WAVE{5,6}.md`。混合編譯：ok-mod／ok-rules `cargo test`、ok-extract `cargo check`（含 `--no-default-features`）、ok-game-mcp `cargo check --release`、D: 引擎兩個目標全過 |
+
 協調者決定（同步點 D）：GPU 動態骨外力不做，設計留在 `OK_MOD_HOOKS.md` §11；Studio／1 對 1／街區的熱鍵 Listen 在第五波由 E、C 各自接。
 
 本計畫 §1–§15 與 F 的同一份一致（同步點 C 時完全相同）。之後由 C 的這份當主本，F 那份不再單獨改。
