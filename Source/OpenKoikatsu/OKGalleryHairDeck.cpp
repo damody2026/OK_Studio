@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKBusyProgress.h"
 #include "KKPreviewActor.h"
 #include "HAL/IConsoleManager.h"
 #include "Engine/Engine.h"
@@ -50,11 +51,12 @@ void UOKCharacterController::GenerateHairDeckHair(const FString& ImageIn)
 	bHairDeckBusy=true;
 	HairDeckStatus=TEXT("生成頭髮中…（載入模型約半分鐘）");
 	TWeakObjectPtr<UOKCharacterController> Weak(this);
-	Async(EAsyncExecution::Thread,[Weak,Exe,Args,Out]()
+	const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("生成頭髮"));
+	Async(EAsyncExecution::Thread,[Weak,Exe,Args,Out,Busy]()
 	{
 		int32 Code=-1;FString StdOut,StdErr;
 		FPlatformProcess::ExecProcess(*Exe,*Args,&Code,&StdOut,&StdErr);
-		AsyncTask(ENamedThreads::GameThread,[Weak,Out,Code,StdErr]()
+		AsyncTask(ENamedThreads::GameThread,[Weak,Out,Code,StdErr,Busy]()
 		{
 			UOKCharacterController* Self=Weak.Get();
 			if(!Self)return;

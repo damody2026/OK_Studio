@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKBusyProgress.h"
 #include "KKTextureLifetimeLog.h"
 #include "OKComboBox.h"
 #include "OKAppearanceButton.h"
@@ -314,9 +315,10 @@ bool UOKCharacterController::MaterializeAppearance(TFunction<void(UOKCharacterCo
  const FString Output=AppearanceWorkFolder(Entries[SelectedIndex].Path)/(FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".png"));
  const FString Before=Entries[SelectedIndex].Path;const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
  bAppearanceBusy=true;SetIsEnabled(false);TWeakObjectPtr<UOKCharacterController> Weak(this);
- Async(EAsyncExecution::ThreadPool,[Weak,Job,Output,Before,Selection,Generation,Outfit,Complete=MoveTemp(Complete)]() mutable {
+ const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("寫入人物卡"));
+ Async(EAsyncExecution::ThreadPool,[Weak,Job,Output,Before,Selection,Generation,Outfit,Busy,Complete=MoveTemp(Complete)]() mutable {
   FString Error;const bool Saved=UKKCardWriter::SaveWithEdits(Job->Card,Output,Error);
-  AsyncTask(ENamedThreads::GameThread,[Weak,Job,Output,Before,Selection,Generation,Outfit,Saved,Error,Complete=MoveTemp(Complete)]() mutable {
+  AsyncTask(ENamedThreads::GameThread,[Weak,Job,Output,Before,Selection,Generation,Outfit,Saved,Error,Busy,Complete=MoveTemp(Complete)]() mutable {
    auto* G=Weak.Get();if(!G)return;G->bAppearanceBusy=false;G->SetIsEnabled(true);
    if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
    if(!Saved){if(G->AppearanceStatus)G->AppearanceStatus->SetText(FText::FromString(TEXT("保存目前外觀失敗，保留編輯供重試：")+Error));return;}
@@ -347,7 +349,8 @@ bool UOKCharacterController::ApplyPreparedAppearance(const FString& Key){
  AppearanceStatus->SetText(FText::FromString(TEXT("正在套用外觀…")));
  TWeakObjectPtr<UOKCharacterController> Weak(this);
  const double Queued=FPlatformTime::Seconds();
- Async(EAsyncExecution::ThreadPool,[Weak,Context,Job,Selection,Generation,Outfit,Target,Key,Queued]{
+ const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("套用外觀"));
+ Async(EAsyncExecution::ThreadPool,[Weak,Context,Job,Selection,Generation,Outfit,Target,Key,Queued,Busy]{
   Job->QueueMs=(FPlatformTime::Seconds()-Queued)*1000.;
   FString Error;double Start=FPlatformTime::Seconds();auto Candidate=Context->Prepare(Target,Key,Error);
   Job->RequestMs=(FPlatformTime::Seconds()-Start)*1000.;
@@ -370,7 +373,7 @@ bool UOKCharacterController::ApplyPreparedAppearance(const FString& Key){
     Job->Card=MoveTemp(Loaded);
    }
   }
-  AsyncTask(ENamedThreads::GameThread,[Weak,Context,Job,Candidate,Ready,Error,MetadataCopyMs,Preparation,Selection,Generation,Outfit,Target,Key]{
+  AsyncTask(ENamedThreads::GameThread,[Weak,Context,Job,Candidate,Ready,Error,MetadataCopyMs,Preparation,Selection,Generation,Outfit,Target,Key,Busy]{
    auto* G=Weak.Get();if(!G)return;
    G->bAppearanceBusy=false;if(G->ShapePanel)G->ShapePanel->SetIsEnabled(true);G->AppearanceTarget->SetIsEnabled(true);G->AppearanceSearch->SetIsEnabled(true);
    if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
@@ -412,7 +415,8 @@ bool UOKCharacterController::ApplyPreparedGeometry(const FString& Key){
  bAppearanceBusy=true;if(ShapePanel)ShapePanel->SetIsEnabled(false);AppearanceTarget->SetIsEnabled(false);AppearanceSearch->SetIsEnabled(false);
  AppearanceStatus->SetText(FText::FromString(TEXT("正在套用外觀…")));
  TWeakObjectPtr<UOKCharacterController> Weak(this);const double Queued=FPlatformTime::Seconds();
- Async(EAsyncExecution::ThreadPool,[Weak,Context,Job,Selection,Generation,Outfit,Target,Key,Queued]{
+ const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("套用外觀"));
+ Async(EAsyncExecution::ThreadPool,[Weak,Context,Job,Selection,Generation,Outfit,Target,Key,Queued,Busy]{
   Job->QueueMs=(FPlatformTime::Seconds()-Queued)*1000.;
   FString Error;double Start=FPlatformTime::Seconds();auto Candidate=Context->PrepareGeometry(Target,Key,Error);
   Job->RequestMs=(FPlatformTime::Seconds()-Start)*1000.;
@@ -425,7 +429,7 @@ bool UOKCharacterController::ApplyPreparedGeometry(const FString& Key){
    FKKCharacterFile Loaded;Start=FPlatformTime::Seconds();Ready=UKKCardReader::LoadFromBytes(Raw,Loaded,Error);Job->ReadMs=(FPlatformTime::Seconds()-Start)*1000.;
    if(Ready){CopyPendingHeadEdits(Job->Card,Loaded);Loaded.DeferredPreview=MakeShared<FOKAppearanceDeferredPreview,ESPMode::ThreadSafe>(Checkpoint);Job->Card=MoveTemp(Loaded);}
   }
-  AsyncTask(ENamedThreads::GameThread,[Weak,Context,Job,Candidate,Ready,Error,MetadataCopyMs,Preparation,Selection,Generation,Outfit,Target,Key]{
+  AsyncTask(ENamedThreads::GameThread,[Weak,Context,Job,Candidate,Ready,Error,MetadataCopyMs,Preparation,Selection,Generation,Outfit,Target,Key,Busy]{
    auto* G=Weak.Get();if(!G)return;
    G->bAppearanceBusy=false;if(G->ShapePanel)G->ShapePanel->SetIsEnabled(true);G->AppearanceTarget->SetIsEnabled(true);G->AppearanceSearch->SetIsEnabled(true);
    if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
