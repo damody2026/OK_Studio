@@ -10,6 +10,7 @@ void AOKStreetSocialScene::LoadCatalog(){
  S.Catalog=OKStreetLoadCatalog(Path);
  if(!S.Catalog.Error.IsEmpty()){UE_LOG(LogTemp,Warning,TEXT("StreetSocial catalog: %s"),*S.Catalog.Error);}
  else{UE_LOG(LogTemp,Display,TEXT("StreetSocial catalog: %d items, %d places from %s"),S.Catalog.Items.Num(),S.Catalog.Places.Num(),*Path);}
+ ModsMergeStreetData(); // the mods' goods and gifts (OKStreetSocialMods.inl)
 }
 
 FDateTime AOKStreetSocialScene::StreetNow() const{

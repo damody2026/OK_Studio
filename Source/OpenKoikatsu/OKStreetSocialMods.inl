@@ -180,6 +180,57 @@ void AOKStreetSocialScene::ModsFollow(const FString& Mod,const TSharedPtr<FJsonO
 	if(!Notice.IsEmpty())RefreshUI();
 }
 
+// The mods' street tables (Mods/<id>/street/*.toml, the host's street_data op; Docs/OK_MOD_C_WAVE6.md), asked once:
+// - goods and gifts go into the catalog the shops sell from, after the built-in ones (an item whose shop is not a known
+//   place, or whose id is a built-in one, is left out and logged); the rules get the same rows (catalog_extend, in
+//   ModsTick once they are up) so prices, gifts and taste work on them too;
+// - topics become a block of material at the end of her system prompt's world part: the same every turn (the cached
+//   prefix stays whole), used by the AI when they fit, never rules.
+// Called after every LoadCatalog (a new region reads the catalog again) and on the first ModsTick.
+void AOKStreetSocialScene::ModsMergeStreetData()
+{
+	if(!State||!OKStreetModsOn(*State))return;
+	auto& S=*State;
+	if(!S.ModsStreetData.IsValid())
+	{
+		auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("op"),TEXT("street_data"));
+		FString Error;S.ModsStreetData=FOKModHost::Get().DispatchJson(R,Error);
+		if(!S.ModsStreetData.IsValid()){UE_LOG(LogOKMod,Warning,TEXT("street data: %s"),*Error);S.ModsStreetData=MakeShared<FJsonObject>();return;}
+		const TArray<TSharedPtr<FJsonValue>>* Problems=nullptr;
+		if(S.ModsStreetData->TryGetArrayField(TEXT("problems"),Problems))for(const auto& P:*Problems)if(const auto O=P->AsObject())
+			UE_LOG(LogOKMod,Warning,TEXT("[%s] street/%s: %s"),*O->GetStringField(TEXT("mod")),*O->GetStringField(TEXT("file")),*O->GetStringField(TEXT("error")));
+	}
+	int32 Added=0;S.ModsRuleItems.Reset();
+	const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;
+	if(S.ModsStreetData->TryGetArrayField(TEXT("items"),Items))for(const auto& V:*Items)
+	{
+		const TSharedPtr<FJsonObject> O=V->AsObject();FOKStreetCatalogItem I;
+		if(!OKStreetCatalogItemFrom(O,I))continue;
+		const FString Mod=O->GetStringField(TEXT("mod"));
+		const FOKStreetCatalogItem* Same=S.Catalog.Find(I.Id);
+		if(Same&&!Same->Id.StartsWith(Mod+TEXT(".")))continue;	// a built-in id: not shadowed
+		if(!S.Catalog.Places.Contains(I.Place)&&!OKStreetFindPlace(I.Place)){UE_LOG(LogOKMod,Warning,TEXT("[%s] street item %s: no shop \"%s\""),*Mod,*I.Id,*I.Place);continue;}
+		// Its name in the street's language when the table gives one ({"names": {"en": ...}}).
+		const TSharedPtr<FJsonObject>* Names=nullptr;FString Local;
+		if(O->TryGetObjectField(TEXT("names"),Names)&&(*Names)->TryGetStringField(GOKStreetLang,Local)&&!Local.IsEmpty())I.Name=Local;
+		S.ModsRuleItems.Add(V);
+		if(Same)continue;	// merged before (LoadCatalog again keeps it)
+		S.Catalog.Items.Add(MoveTemp(I));++Added;
+	}
+	// Topics of this language (or of every language), one line each.
+	TArray<FString> Lines;
+	const TArray<TSharedPtr<FJsonValue>>* Topics=nullptr;
+	if(S.ModsStreetData->TryGetArrayField(TEXT("topics"),Topics))for(const auto& V:*Topics)if(const auto O=V->AsObject())
+	{
+		FString Lang;O->TryGetStringField(TEXT("lang"),Lang);
+		// "zh-TW" is zh-TW's only; a bare "en" any English.
+		if(!Lang.IsEmpty()&&Lang!=GOKStreetLang&&!(Lang.Len()==2&&GOKStreetLang.StartsWith(Lang)))continue;
+		Lines.Add(TEXT("- ")+O->GetStringField(TEXT("text")));
+	}
+	S.ModsTopics=Lines.Num()?FString(TEXT("\n\n"))+OKT(TEXT("ui.director.mod_topics_header"))+TEXT("\n")+FString::Join(Lines,TEXT("\n")):FString();
+	if(Added||Lines.Num())UE_LOG(LogOKMod,Display,TEXT("street data: %d item(s) into the catalog, %d topic line(s) for her prompt"),Added,Lines.Num());
+}
+
 // Mod hotkeys (FOKModKeys, Docs/OK_MOD_F_WAVE4.md §5): heard while the street runs, each answer followed like a hook's
 // (a plain text answer shown on the message line). Stopped in EndPlay.
 void AOKStreetSocialScene::ModsListenKeys()
@@ -243,7 +294,18 @@ void AOKStreetSocialScene::ModsTick()
 	const FString Period=OKStreetModPeriod(Minute);
 	// The first look records the period and his place; arrivals count from there. (It used to wait for street.load,
 	// which only another hook sends: with no talk or day change first, no arrival was ever told.)
-	if(bFirst){S.ModsPeriod=Period;S.ModsPlace=PlaceHere(S.Male);ModsListenKeys();return;}
+	if(bFirst){S.ModsPeriod=Period;S.ModsPlace=PlaceHere(S.Male);ModsListenKeys();ModsMergeStreetData();return;}
+	// The rules learn the mods' goods once they are up (catalog_extend: priced per region, found by the gift rules).
+	if(!S.ModsRulesExtended&&S.Rules&&S.ModsStreetData.IsValid())
+	{
+		S.ModsRulesExtended=true;
+		if(S.ModsRuleItems.Num())
+		{
+			auto R=OKRulesRequest(TEXT("catalog_extend"));R->SetArrayField(TEXT("items"),S.ModsRuleItems);
+			const TSharedPtr<FJsonObject> A=OKRulesEval(S,R);
+			UE_LOG(LogOKMod,Display,TEXT("street data: the rules know %d of %d mod item(s)"),A.IsValid()?int32(A->GetNumberField(TEXT("known"))):0,S.ModsRuleItems.Num());
+		}
+	}
 	if(Period!=S.ModsPeriod)
 	{
 		auto P=ModsPayload();P->SetStringField(TEXT("period"),Period);P->SetStringField(TEXT("previous"),S.ModsPeriod);

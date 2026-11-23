@@ -94,6 +94,26 @@ struct FOKStreetCatalog {
  const FOKStreetCatalogItem* Find(const FString& Id) const { return Items.FindByPredicate([&](const FOKStreetCatalogItem& I) { return I.Id == Id; }); }
 };
 
+// One catalog.json item row (also a mod's street table row, OKStreetSocialMods.inl). False when it has no id or price.
+inline bool OKStreetCatalogItemFrom(const TSharedPtr<FJsonObject>& O, FOKStreetCatalogItem& I) {
+  if (!O) return false;
+  O->TryGetStringField(TEXT("id"), I.Id); O->TryGetStringField(TEXT("place"), I.Place); O->TryGetStringField(TEXT("name"), I.Name);
+  O->TryGetStringField(TEXT("category"), I.Category); O->TryGetStringField(TEXT("prop"), I.Prop);
+  O->TryGetBoolField(TEXT("giftable"), I.Giftable); O->TryGetBoolField(TEXT("consumable"), I.Consumable);
+  { double Floor = 0; if (O->TryGetNumberField(TEXT("floor"), Floor)) I.Floor = int32(Floor); }
+  { const TSharedPtr<FJsonObject>* Wear = nullptr; if (O->TryGetObjectField(TEXT("clothes"), Wear)) {
+    const TArray<TSharedPtr<FJsonValue>>* Parts = nullptr; if ((*Wear)->TryGetArrayField(TEXT("parts"), Parts)) for (const auto& P : *Parts) for (const auto& V : P->AsArray()) I.ClothesParts.Add(int32(V->AsNumber()));
+    double Outfit = -1; if ((*Wear)->TryGetNumberField(TEXT("outfit"), Outfit)) I.ClothesOutfit = int32(Outfit);
+    (*Wear)->TryGetStringField(TEXT("color"), I.ClothesColor); } }
+  const TSharedPtr<FJsonObject>* Price = nullptr; if (O->TryGetObjectField(TEXT("price"), Price)) for (const auto& P : (*Price)->Values) I.Price.Add(FString(*P.Key), int32(P.Value->AsNumber()));
+  const TSharedPtr<FJsonObject>* Effects = nullptr; if (O->TryGetObjectField(TEXT("effects"), Effects)) for (const auto& E : (*Effects)->Values) I.Effects.Add(FString(*E.Key), float(E.Value->AsNumber()));
+  const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+  if (O->TryGetArrayField(TEXT("season"), List)) for (const auto& M : *List) I.Season.Add(int32(M->AsNumber()));
+  if (O->TryGetArrayField(TEXT("tags"), List)) for (const auto& T : *List) I.Tags.Add(T->AsString());
+  if (O->TryGetArrayField(TEXT("options"), List)) for (const auto& T : *List) I.Options.Add(T->AsString());
+  return !I.Id.IsEmpty() && !I.Price.IsEmpty();
+}
+
 inline FOKStreetCatalog OKStreetLoadCatalog(const FString& Path) {
  FOKStreetCatalog Out;
  FString Body;
@@ -113,23 +133,8 @@ inline FOKStreetCatalog OKStreetLoadCatalog(const FString& Path) {
  }
  const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
  if (Root->TryGetArrayField(TEXT("items"), Items)) for (const auto& Row : *Items) {
-  const TSharedPtr<FJsonObject> O = Row->AsObject(); if (!O) continue;
   FOKStreetCatalogItem I;
-  O->TryGetStringField(TEXT("id"), I.Id); O->TryGetStringField(TEXT("place"), I.Place); O->TryGetStringField(TEXT("name"), I.Name);
-  O->TryGetStringField(TEXT("category"), I.Category); O->TryGetStringField(TEXT("prop"), I.Prop);
-  O->TryGetBoolField(TEXT("giftable"), I.Giftable); O->TryGetBoolField(TEXT("consumable"), I.Consumable);
-  { double Floor = 0; if (O->TryGetNumberField(TEXT("floor"), Floor)) I.Floor = int32(Floor); }
-  { const TSharedPtr<FJsonObject>* Wear = nullptr; if (O->TryGetObjectField(TEXT("clothes"), Wear)) {
-    const TArray<TSharedPtr<FJsonValue>>* Parts = nullptr; if ((*Wear)->TryGetArrayField(TEXT("parts"), Parts)) for (const auto& P : *Parts) for (const auto& V : P->AsArray()) I.ClothesParts.Add(int32(V->AsNumber()));
-    double Outfit = -1; if ((*Wear)->TryGetNumberField(TEXT("outfit"), Outfit)) I.ClothesOutfit = int32(Outfit);
-    (*Wear)->TryGetStringField(TEXT("color"), I.ClothesColor); } }
-  const TSharedPtr<FJsonObject>* Price = nullptr; if (O->TryGetObjectField(TEXT("price"), Price)) for (const auto& P : (*Price)->Values) I.Price.Add(FString(*P.Key), int32(P.Value->AsNumber()));
-  const TSharedPtr<FJsonObject>* Effects = nullptr; if (O->TryGetObjectField(TEXT("effects"), Effects)) for (const auto& E : (*Effects)->Values) I.Effects.Add(FString(*E.Key), float(E.Value->AsNumber()));
-  const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
-  if (O->TryGetArrayField(TEXT("season"), List)) for (const auto& M : *List) I.Season.Add(int32(M->AsNumber()));
-  if (O->TryGetArrayField(TEXT("tags"), List)) for (const auto& T : *List) I.Tags.Add(T->AsString());
-  if (O->TryGetArrayField(TEXT("options"), List)) for (const auto& T : *List) I.Options.Add(T->AsString());
-  if (!I.Id.IsEmpty() && !I.Price.IsEmpty()) Out.Items.Add(MoveTemp(I));
+  if (OKStreetCatalogItemFrom(Row->AsObject(), I)) Out.Items.Add(MoveTemp(I));
  }
  const TArray<TSharedPtr<FJsonValue>>* Jobs = nullptr;
  if (Root->TryGetArrayField(TEXT("jobs"), Jobs)) for (const auto& Row : *Jobs) {

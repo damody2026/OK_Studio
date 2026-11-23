@@ -691,7 +691,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  bool TalkMarkerShown=false;FVector2D TalkMarkerAt=FVector2D::ZeroVector;
  FOKStreetCandidateProbeSnapshot Probe;
  bool ModsLoaded=false; // street.load sent to the mods for this scene's save (OKStreetSocialMods.inl)
- bool ModsNewGame=false;FString ModsPeriod,ModsPlace;double ModsTickAt=0; // street.load new_game; the period and his place last told (OKStreetSocialMods.inl)
+ bool ModsNewGame=false;FString ModsPeriod,ModsPlace;double ModsTickAt=0;TSharedPtr<FJsonObject> ModsStreetData;TArray<TSharedPtr<FJsonValue>> ModsRuleItems;bool ModsRulesExtended=false;FString ModsTopics; /* the mods' street tables (OKStreetSocialMods.inl ModsMergeStreetData) */ // street.load new_game; the period and his place last told (OKStreetSocialMods.inl)
  bool Started=false,SelfTest=false,RetargetSelfTest=false,Reported=false,ClipStarted=false,AllReady=false,ConversationShot=false;
  int32 IdentityRetargetApplied=0,IdentityRetargetReplayed=0,IdentityRetargetRejected=0,ActiveActorInterrupts=0,ActiveActorInterruptCommits=0,InterruptPhase=0,InjectFaultSlot=INDEX_NONE;
  bool InjectActiveFault=false,InterruptEndedThisTick=false;
@@ -1400,7 +1400,7 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  // at satiety 23 she is hungry there too).
  // Nor the street place's scene line (the lounge, the crowd, who of hers is standing a few metres away): the room is theirs.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Menu.Reset();Status.Choices.Reset();Status.Invite.Reset();Status.Scene=OKT(TEXT("ui.free_talk.private_scene"));}
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkSystemPrompt);System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkUserMessage);UserMessage=OKStreetFreeTalkUserMessage(Status,Text);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkSystemPrompt);System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue()+S.ModsTopics);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkUserMessage);UserMessage=OKStreetFreeTalkUserMessage(Status,Text);}
  return true;
 }
 
