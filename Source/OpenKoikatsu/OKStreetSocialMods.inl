@@ -1,4 +1,5 @@
 #include "Misc/Base64.h"
+#include "OKModKeys.h"
 // The street's side of the OK mod hooks (Docs/OK_MOD_HOOKS.md §8, OK mod plan §6.6). Everything goes to the mod host as
 // JSON hooks named street.*; with mods off (-NoMods, no host, a self-test) nothing here does anything.
 //
@@ -141,36 +142,56 @@ TSharedPtr<FJsonObject> AOKStreetSocialScene::ModsHook(const TCHAR* Name,const T
 	const TArray<TSharedPtr<FJsonValue>>* Replies=nullptr;
 	if(!Answer.IsValid()||!Answer->TryGetArrayField(TEXT("replies"),Replies))return Answer;
 	if(Replies->Num()&&FCString::Strcmp(Name,TEXT("street.talk_facts"))!=0)UE_LOG(LogOKMod,Display,TEXT("street hook %s: %d mod(s)"),Name,Replies->Num());
-	TSharedPtr<FJsonObject> Ext;bool bExtChanged=false;
 	for(const auto& R:*Replies)
 	{
 		const TSharedPtr<FJsonObject> O=R->AsObject();if(!O.IsValid())continue;
 		const FString Mod=O->GetStringField(TEXT("mod"));bool bOk=false;O->TryGetBoolField(TEXT("ok"),bOk);
 		if(!bOk){UE_LOG(LogOKMod,Warning,TEXT("[%s] %s: %s"),*Mod,Name,*O->GetStringField(TEXT("error")));continue;}
-		const TSharedPtr<FJsonObject>* Json=nullptr;if(!O->TryGetObjectField(TEXT("json"),Json))continue;
-		const TArray<TSharedPtr<FJsonValue>>* Cards=nullptr;
-		if((*Json)->TryGetArrayField(TEXT("cards"),Cards))OKStreetModWriteCards(S,Mod,*Cards);
-		// Its state: ext.mods.<id> (null removes it).
-		if(const TSharedPtr<FJsonValue> State_=(*Json)->TryGetField(TEXT("state")))
-		{
-			if(!Ext.IsValid())Ext=OKStreetParseExt(S.Store.Ext);
-			const TSharedPtr<FJsonObject>* ModsObj=nullptr;TSharedPtr<FJsonObject> Mods=Ext->TryGetObjectField(TEXT("mods"),ModsObj)?*ModsObj:MakeShared<FJsonObject>();
-			if(State_->Type==EJson::Null)Mods->RemoveField(Mod);else Mods->SetField(Mod,State_);
-			Ext->SetObjectField(TEXT("mods"),Mods);bExtChanged=true;
-		}
-		FString Notice;
-		if((*Json)->TryGetStringField(TEXT("notice"),Notice)&&!Notice.IsEmpty()){S.Message=Notice;UE_LOG(LogOKMod,Display,TEXT("[%s] street notice: %s"),*Mod,*Notice);}
-		const TSharedPtr<FJsonObject>* Subtitle=nullptr;FString Line;
-		if((*Json)->TryGetObjectField(TEXT("subtitle"),Subtitle)&&(*Subtitle)->TryGetStringField(TEXT("text"),Line)&&!Line.IsEmpty())
-		{
-			// The street's own message line (screen debug messages are off in a shipped game); her dialogue box shows the
-			// line too, so a subtitle mod matters most where that box is hidden.
-			S.Message=Line.Replace(TEXT("\n"),TEXT(" "));Notice=S.Message;
-		}
-		if(!Notice.IsEmpty())RefreshUI();
+		const TSharedPtr<FJsonObject>* Json=nullptr;if(O->TryGetObjectField(TEXT("json"),Json))ModsFollow(Mod,*Json);
 	}
-	if(bExtChanged){FString Out;auto W=TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);FJsonSerializer::Serialize(Ext.ToSharedRef(),W);S.Store.Ext=Out;}
 	return Answer;
+}
+
+// What one mod's answer asks of the street (a hook's or a hotkey's): {"cards": [...]} her card data, {"state": ...}
+// its ext.mods.<id> (null removes it), {"notice": text}, {"subtitle": {"text"}}.
+void AOKStreetSocialScene::ModsFollow(const FString& Mod,const TSharedPtr<FJsonObject>& Json)
+{
+	if(!State||!Json.IsValid())return;
+	auto& S=*State;
+	const TArray<TSharedPtr<FJsonValue>>* Cards=nullptr;
+	if(Json->TryGetArrayField(TEXT("cards"),Cards))OKStreetModWriteCards(S,Mod,*Cards);
+	if(const TSharedPtr<FJsonValue> State_=Json->TryGetField(TEXT("state")))
+	{
+		const TSharedPtr<FJsonObject> Ext=OKStreetParseExt(S.Store.Ext);
+		const TSharedPtr<FJsonObject>* ModsObj=nullptr;TSharedPtr<FJsonObject> Mods=Ext->TryGetObjectField(TEXT("mods"),ModsObj)?*ModsObj:MakeShared<FJsonObject>();
+		if(State_->Type==EJson::Null)Mods->RemoveField(Mod);else Mods->SetField(Mod,State_);
+		Ext->SetObjectField(TEXT("mods"),Mods);
+		FString Out;auto W=TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);FJsonSerializer::Serialize(Ext.ToSharedRef(),W);S.Store.Ext=Out;
+	}
+	FString Notice;
+	if(Json->TryGetStringField(TEXT("notice"),Notice)&&!Notice.IsEmpty()){S.Message=Notice;UE_LOG(LogOKMod,Display,TEXT("[%s] street notice: %s"),*Mod,*Notice);}
+	const TSharedPtr<FJsonObject>* Subtitle=nullptr;FString Line;
+	if(Json->TryGetObjectField(TEXT("subtitle"),Subtitle)&&(*Subtitle)->TryGetStringField(TEXT("text"),Line)&&!Line.IsEmpty())
+	{
+		// The street's own message line (screen debug messages are off in a shipped game); her dialogue box shows the
+		// line too, so a subtitle mod matters most where that box is hidden.
+		S.Message=Line.Replace(TEXT("\n"),TEXT(" "));Notice=S.Message;
+	}
+	if(!Notice.IsEmpty())RefreshUI();
+}
+
+// Mod hotkeys (FOKModKeys, Docs/OK_MOD_F_WAVE4.md §5): heard while the street runs, each answer followed like a hook's
+// (a plain text answer shown on the message line). Stopped in EndPlay.
+void AOKStreetSocialScene::ModsListenKeys()
+{
+	FOKModKeys::Listen(TEXT("street"),[Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FString& Mod,const TSharedPtr<FJsonObject>& Reply)
+	{
+		AOKStreetSocialScene* Self=Weak.Get();if(!Self||!Self->State||!Reply.IsValid())return;
+		const TSharedPtr<FJsonObject>* Json=nullptr;
+		if(Reply->TryGetObjectField(TEXT("json"),Json)){Self->ModsFollow(Mod,*Json);return;}
+		const FString Text=FOKModKeys::ShownText(Reply);
+		if(!Text.IsEmpty()){Self->State->Message=FString::Printf(TEXT("[%s] %s"),*Mod,*Text);Self->RefreshUI();}
+	});
 }
 
 // After a save was read (the scene starts with it): street.load, each mod with its own ext.mods.<id> (null: a new game or a
@@ -222,7 +243,7 @@ void AOKStreetSocialScene::ModsTick()
 	const FString Period=OKStreetModPeriod(Minute);
 	// The first look records the period and his place; arrivals count from there. (It used to wait for street.load,
 	// which only another hook sends: with no talk or day change first, no arrival was ever told.)
-	if(bFirst){S.ModsPeriod=Period;S.ModsPlace=PlaceHere(S.Male);return;}
+	if(bFirst){S.ModsPeriod=Period;S.ModsPlace=PlaceHere(S.Male);ModsListenKeys();return;}
 	if(Period!=S.ModsPeriod)
 	{
 		auto P=ModsPayload();P->SetStringField(TEXT("period"),Period);P->SetStringField(TEXT("previous"),S.ModsPeriod);

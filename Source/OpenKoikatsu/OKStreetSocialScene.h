@@ -357,6 +357,8 @@ private:
  void ModsDayChanged();
  TArray<FString> ModsTalkFacts(int32 Character) const;
  void ModsTick(); // street.period_change, street.arrive (OKStreetSocialMods.inl)
+ void ModsFollow(const FString& Mod,const TSharedPtr<class FJsonObject>& Json); // one mod's answer (OKStreetSocialMods.inl)
+ void ModsListenKeys(); // mod hotkeys (FOKModKeys, OKStreetSocialMods.inl)
  void ModsAction(int32 Girl,const FString& ActId,const struct FOKHeroineArgs& Args,const struct FOKHeroineResult& Out,const FString& Here); // street.action (OKStreetSocialHeroine.inl)
  void TickInitiative();
  void TickDirector();
