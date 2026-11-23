@@ -55,6 +55,8 @@ namespace
 	{
 		FString Root, Card;
 		if (Mode) Mode->OpenedSource(Root, Card);
+		// The street opens the one-on-one before it knows her card: once she is loaded her controller has it.
+		if (Card.IsEmpty() && Mode && Mode->Controller) Card = Mode->Controller->PreviewCardPath;
 		return Card;
 	}
 	FString GalleryCard(const UOKCharacterController* Gallery) { return Gallery ? Gallery->PreviewCardPath : FString(); }
@@ -67,6 +69,7 @@ void FOKInteractionModEvents::FireEnter(const AOKInteractionMode* Mode)
 	E.Kind = EOKPairModEvent::Enter;
 	E.Card = ModeCard(Mode);
 	E.bFitting = Mode && Mode->bFitting;
+	if (Mode) E.Controller = Mode->Controller.Get();
 	Get().Broadcast(E);
 }
 
@@ -77,6 +80,7 @@ void FOKInteractionModEvents::FireReady(const AOKInteractionMode* Mode)
 	E.Kind = EOKPairModEvent::Ready;
 	E.Card = ModeCard(Mode);
 	E.bFitting = Mode && Mode->bFitting;
+	if (Mode) E.Controller = Mode->Controller.Get();
 	Get().Broadcast(E);
 }
 
@@ -87,6 +91,7 @@ void FOKInteractionModEvents::FireExit(const AOKInteractionMode* Mode, bool bCan
 	E.Kind = EOKPairModEvent::Exit;
 	E.Card = ModeCard(Mode);
 	E.bFitting = Mode && Mode->bFitting;
+	if (Mode) E.Controller = Mode->Controller.Get();
 	E.bCancelled = bCancelled;
 	E.Seconds = Seconds;
 	Get().Broadcast(E);

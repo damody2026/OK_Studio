@@ -1,0 +1,14 @@
+[package]
+name = "ok-mod-light-rig"
+version = "0.1.0"
+edition = "2021"
+description = "OK Studio: a mod that edits the scene itself (adds and deletes a light, moves it, hides and shows objects, renames, changes a character's expression) through the studio's ops, one undo step each."
+publish = false
+
+[lib]
+name = "ok_light_rig"
+crate-type = ["cdylib"]
+
+[dependencies]
+ok-mod-sdk = { path = "../../sdk" }
+ok-mod-studio = { path = "../../studio" }

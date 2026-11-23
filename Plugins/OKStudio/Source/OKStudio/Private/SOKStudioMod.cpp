@@ -82,16 +82,24 @@ void SOKStudioPanel::AddModTools(const TSharedRef<SHorizontalBox>& Box)
 			for (const FOKStudioModToolbarButton& B : FOKStudioModRegistry::Get().ToolbarButtons())
 			{
 				const FString Tooltip = B.Tooltip.IsEmpty() ? B.Label : B.Tooltip;
-				Row->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
-					[Tagged(*FString::Printf(TEXT("ModTool_%s.%s"), *B.Owner, *B.Id), SNew(SBox).MinDesiredWidth(33.f).ToolTipText(FText::FromString(Tip(Tooltip, B.Command)))
-						[OKStudioStyle::Button(FText::FromString(B.Label), Cmd(B.Command, B.Arg), 0.f, 33.f, false, 10.f)])];
+				// Looked up each frame: a toggle of a mod removed since shows off.
+				const FString Owner = B.Owner, Id = B.Id;
+				const TAttribute<bool> On = TAttribute<bool>::CreateLambda([Owner, Id]
+				{
+					const FOKStudioModToolbarButton* X = FOKStudioModRegistry::Get().ToolbarButtons().FindByPredicate([&](const FOKStudioModToolbarButton& T) { return T.Owner == Owner && T.Id == Id; });
+					return X && X->IsOn && X->IsOn();
+				});
+				const TSharedRef<SWidget> Button = B.Icon.IsNone()
+					? SNew(SBox).MinDesiredWidth(33.f).ToolTipText(FText::FromString(Tip(Tooltip, B.Command)))[OKStudioStyle::Button(FText::FromString(B.Label), Cmd(B.Command, B.Arg), 0.f, 33.f, On, 10.f)]
+					: OKStudioStyle::IconButton(B.Icon, Tip(Tooltip, B.Command), Cmd(B.Command, B.Arg), 33.f, 33.f, On);
+				Row->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)[Tagged(*FString::Printf(TEXT("ModTool_%s.%s"), *B.Owner, *B.Id), Button)];
 			}
 		})
 		.OnRegistryChanged([this]
 		{
 			SyncModCommands();
 			// The open page shows the rows of what is registered now.
-			if (Page == EPage::State || Page == EPage::Scene) DeferRebuild();
+			if (Page == EPage::State || Page == EPage::Scene || Page == EPage::Mods) DeferRebuild();
 		})
 	];
 }
@@ -157,4 +165,12 @@ void SOKStudioPanel::ModRows(EOKStudioModPanel Where, int32 ObjectId)
 		}
 		++ModRowsShown;
 	}
+}
+
+void SOKStudioPanel::ModsPage()
+{
+	// The mods' own page: every mod's rows for the selected object (any kind), or the scene's when nothing is selected.
+	const int32 ObjectId = Game.IsValid() && Game->Document && Game->Document->Find(Game->SelectedId) ? Game->SelectedId : -1;
+	ModRows(EOKStudioModPanel::Mods, ObjectId);
+	if (ModRowsShown == 0) Label(TEXT("沒有 mod 在這一頁加項目。"));
 }

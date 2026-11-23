@@ -1,0 +1,10 @@
+id = "org.openkoikatsu.light_rig"
+name = "Light Rig"
+version = "0.1.0"
+api = "0.1"
+dll = "ok_light_rig.dll"
+authors = ["OpenKoikatsu"]
+description_id = "mod.org.openkoikatsu.light_rig.description"
+targets = ["studio"]
+ext_data = ["scene"]
+category = "feature"

@@ -2003,6 +2003,92 @@ namespace
 	}
 }
 
+TSharedRef<FJsonObject> OKStudioRunModOp(const FString& Op, const TSharedRef<FJsonObject>& Args)
+{
+	// The edits of objects only: no files, windows, input, camera, undo or quitting from a mod's answer.
+	static const TSet<FString> Open = { TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"), TEXT("pose"), TEXT("patch"), TEXT("duplicate"), TEXT("inspect"), TEXT("bones"), TEXT("bounds") };
+	// studio.get: the scene as studio_state gives it (objects, selection, camera, timeline); with "id" that object as well.
+	if (Op == TEXT("get"))
+	{
+		TSharedRef<FJsonObject> Out = Run(TEXT("state"), MakeShared<FJsonObject>());
+		double Id = -1;
+		if (Args->TryGetNumberField(TEXT("id"), Id) && Id >= 0)
+		{
+			TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
+			One->SetNumberField(TEXT("id"), Id);
+			const TSharedRef<FJsonObject> Inspected = Run(TEXT("inspect"), One);
+			const TSharedPtr<FJsonObject>* Object = nullptr;
+			if (Inspected->TryGetObjectField(TEXT("object"), Object) && Object) Out->SetObjectField(TEXT("object"), *Object);
+			else return Result(false, TEXT("no such object"));
+		}
+		return Out;
+	}
+	// Short forms of patch for what mods change most: shown, name, outfit and clothes states.
+	if (Op == TEXT("show") || Op == TEXT("rename") || Op == TEXT("dress"))
+	{
+		TSharedRef<FJsonObject> Fields = MakeShared<FJsonObject>();
+		bool bShown = true;
+		FString Name;
+		if (Op == TEXT("show")) { if (!Args->TryGetBoolField(TEXT("visible"), bShown)) return Result(false, TEXT("visible (bool) required")); Fields->SetBoolField(TEXT("bVisible"), bShown); }
+		if (Op == TEXT("rename")) { if (!Args->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty()) return Result(false, TEXT("name required")); Fields->SetStringField(TEXT("name"), Name); }
+		if (Op == TEXT("dress"))
+		{
+			UOKStudioGame* G = UOKStudioGame::Get();
+			const FOKSceneObject* X = G && G->Document ? G->Document->Find(ReadId(Args, TEXT("id"))) : nullptr;
+			if (!X || X->Kind != EOKSceneObjectKind::Character) return Result(false, TEXT("not a character"));
+			TSharedRef<FJsonObject> Character = MakeShared<FJsonObject>();
+			double Outfit = -1;
+			if (Args->TryGetNumberField(TEXT("outfit"), Outfit))
+			{
+				if (Outfit < 0 || Outfit > 6) return Result(false, TEXT("outfit must be 0..6"));
+				Character->SetNumberField(TEXT("outfit"), Outfit);
+			}
+			// clothes: nine states (0 on, 1 half, 2 / 3 off; top, bottom, bra, shorts, gloves, pantyhose, socks, inner shoes, outer shoes), or one part.
+			TArray<uint8> States = X->Character.ClothesStates;
+			States.SetNumZeroed(FMath::Max(States.Num(), 9));
+			bool bClothes = false;
+			const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+			if (Args->TryGetArrayField(TEXT("clothes"), List))
+			{
+				for (int32 I = 0; I < List->Num() && I < States.Num(); ++I) States[I] = uint8(FMath::Clamp(int32((*List)[I]->AsNumber()), 0, 3));
+				bClothes = true;
+			}
+			double Part = -1, Value = 0;
+			if (Args->TryGetNumberField(TEXT("part"), Part))
+			{
+				if (Part < 0 || Part >= States.Num() || !Args->TryGetNumberField(TEXT("state"), Value)) return Result(false, TEXT("part 0..8 with state 0..3"));
+				States[int32(Part)] = uint8(FMath::Clamp(int32(Value), 0, 3));
+				bClothes = true;
+			}
+			if (bClothes)
+			{
+				TArray<TSharedPtr<FJsonValue>> Out;
+				for (uint8 S : States) Out.Add(MakeShared<FJsonValueNumber>(S));
+				Character->SetArrayField(TEXT("clothesStates"), Out);
+			}
+			if (Character->Values.IsEmpty()) return Result(false, TEXT("outfit, clothes or part/state required"));
+			Fields->SetObjectField(TEXT("character"), Character);
+		}
+		TSharedRef<FJsonObject> Patch = MakeShared<FJsonObject>();
+		Patch->SetNumberField(TEXT("id"), ReadId(Args, TEXT("id")));
+		Patch->SetObjectField(TEXT("fields"), Fields);
+		return Run(TEXT("patch"), Patch);
+	}
+	if (!Open.Contains(Op)) return Result(false, TEXT("op not open to mods: ") + Op);
+	// pose selects the character it changes (the panel's animation pickers work on the selection): a mod's pose of one
+	// character must not drop the others the user had selected, the next op of the answer still reads that selection.
+	if (Op == TEXT("pose"))
+	{
+		UOKStudioGame* G = UOKStudioGame::Get();
+		const TArray<int32> Selection = G ? G->Selection : TArray<int32>();
+		const int32 Primary = G ? G->SelectedId : -1;
+		TSharedRef<FJsonObject> Out = Run(Op, Args);
+		if ((G = UOKStudioGame::Get()) != nullptr && G->Selection != Selection) G->SelectMany(Selection, Primary);
+		return Out;
+	}
+	return Run(Op, Args);
+}
+
 namespace OKStudioControl
 {
 	void Start()

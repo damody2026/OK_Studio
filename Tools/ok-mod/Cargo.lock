@@ -471,6 +471,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ok-mod-fixture-pair-gauges"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "ok-mod-fixture-panic"
 version = "0.1.0"
 dependencies = [
@@ -517,6 +525,14 @@ dependencies = [
 
 [[package]]
 name = "ok-mod-idle-breath"
+version = "0.1.0"
+dependencies = [
+ "ok-mod-sdk",
+ "ok-mod-studio",
+]
+
+[[package]]
+name = "ok-mod-light-rig"
 version = "0.1.0"
 dependencies = [
  "ok-mod-sdk",

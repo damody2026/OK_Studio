@@ -27,9 +27,11 @@ members = [
     "examples/timeline-flow",
     "examples/pair-counter",
     "fixtures/hook-probe",
+    "examples/light-rig",
     "fixtures/panic-mod",
     "fixtures/bad-layout",
     "fixtures/material-hooks",
+    "fixtures/pair-gauges",
 ]
 
 [workspace.dependencies]

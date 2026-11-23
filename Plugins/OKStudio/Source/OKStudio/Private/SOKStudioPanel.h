@@ -310,7 +310,7 @@ public:
 	struct FRow { int32 Id = -1; int32 Depth = 0; };
 
 	/** Detail windows (one at a time, HS2Studio6's menu windows) and their spec rects (canvas units, top-left anchored). */
-	enum class EPage : uint8 { None, Object, State, Bones, Anim, Scene, Files, CharLoader, ItemAdd, LightAdd, Camera };
+	enum class EPage : uint8 { None, Object, State, Bones, Anim, Scene, Files, CharLoader, ItemAdd, LightAdd, Camera, Mods };
 
 	struct FMenuEntry { FString Label; FString Command; TFunction<bool()> On; bool bEnabled = true; };
 
@@ -542,6 +542,8 @@ public:
 	void AddModTools(const TSharedRef<SHorizontalBox>& Box);
 	void AddModMenuItems(const TSharedRef<SVerticalBox>& Box);
 	void ModRows(EOKStudioModPanel Where, int32 ObjectId);
+	/** The Mod page: rows mods put on their own page (EOKStudioModPanel::Mods). */
+	void ModsPage();
 	int32 ModRowsShown = 0;
 	TFunction<void()> Cmd(const FString& Id, const FString& Arg = FString()) { return [this, Id, Arg] { RunCommand(Id, Arg); }; }
 
@@ -932,6 +934,7 @@ public:
 		Page_(TEXT("page.bones"), TEXT("骨骼"), EPage::Bones);
 		Page_(TEXT("page.anim"), TEXT("動畫"), EPage::Anim);
 		Page_(TEXT("page.scene"), TEXT("畫面設定"), EPage::Scene);
+		Page_(TEXT("page.mods"), TEXT("Mod"), EPage::Mods);
 		Simple(TEXT("page.files"), TEXT("讀取／儲存"), [this] { bSceneSaveMode = false; OpenFloat(TEXT("scenes"), true); });
 		Simple(TEXT("page.charloader"), TEXT("角色載入"), [this] { OpenFloat(TEXT("cards"), true); });
 		Page_(TEXT("page.items"), TEXT("道具目錄"), EPage::ItemAdd);
@@ -1518,7 +1521,7 @@ public:
 			{ TEXT("屬性"), TEXT("page.object"), On(EPage::Object), O != nullptr }, { TEXT("姿勢庫"), TEXT("app.poselibrary"), Win(TEXT("poselib")), bChar }, { TEXT("語音"), TEXT("app.voice"), Win(TEXT("voice")), bChar }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) } };
 		case 2: return { { TEXT("背景音樂"), TEXT("app.bgm"), Win(TEXT("bgm")) }, { TEXT("外部音源"), TEXT("app.outsidesound"), Win(TEXT("outside")) } };
 		case 3: return { { TEXT("新場景"), TEXT("scene.new"), nullptr }, { TEXT("開啟／儲存"), TEXT("scene.browser"), Win(TEXT("scenes")) }, { TEXT("另存新檔"), TEXT("scene.saveas"), nullptr },
-			{ TEXT("畫面設定"), TEXT("page.scene"), On(EPage::Scene) }, { TEXT("時間軸"), TEXT("toggle.timeline"), Win(TEXT("timeline")) }, { TEXT("VNGE 工作台"), TEXT("toggle.vnge"), Win(TEXT("vnge_hub")) }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) },
+			{ TEXT("畫面設定"), TEXT("page.scene"), On(EPage::Scene) }, { TEXT("Mod"), TEXT("page.mods"), On(EPage::Mods) }, { TEXT("時間軸"), TEXT("toggle.timeline"), Win(TEXT("timeline")) }, { TEXT("VNGE 工作台"), TEXT("toggle.vnge"), Win(TEXT("vnge_hub")) }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) },
 			{ TEXT("截圖"), TEXT("app.screenshot"), Win(TEXT("shot")) },
 			{ TEXT("備份恢復"), TEXT("scene.backups"), Win(TEXT("backups")) }, { TEXT("資源檢查"), TEXT("scene.resources"), Win(TEXT("resources")) }, { TEXT("匯入原作"), TEXT("scene.import"), nullptr },
 			{ TEXT("播放故事"), TEXT("app.story"), Win(TEXT("stories")) }, { TEXT("設定"), TEXT("app.settings"), Win(TEXT("settings")) }, { TEXT("最近場景"), TEXT("scene.recent"), Win(TEXT("recent")) }, { TEXT("返回標題"), TEXT("app.quit"), nullptr } };
@@ -1966,6 +1969,7 @@ public:
 		case EPage::Bones: return TEXT("骨骼　") + Who;
 		case EPage::Anim: return TEXT("動畫　") + (Characters > 1 ? FString::Printf(TEXT("%d 個角色"), Characters) : Who);
 		case EPage::Scene: return TEXT("畫面設定");
+		case EPage::Mods: return TEXT("Mod　") + Who;
 		case EPage::Files: return TEXT("場景檔");
 		case EPage::CharLoader: return TEXT("角色載入器");
 		case EPage::ItemAdd: return TEXT("道具目錄");
@@ -3067,6 +3071,7 @@ public:
 		{
 		case EPage::None: case EPage::Files: case EPage::CharLoader: return;
 		case EPage::Scene: SceneSettingsPage(); return;
+		case EPage::Mods: ModsPage(); return;
 		case EPage::ItemAdd: ItemCatalog(); return;
 		case EPage::LightAdd: LightCatalog(); return;
 		case EPage::Camera: CameraPage(); return;

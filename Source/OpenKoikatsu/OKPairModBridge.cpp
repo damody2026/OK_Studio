@@ -11,6 +11,9 @@
 // Her spoken line (the TTS voice of the line just shown, pair.line then pair.voice) also goes out as pair.speech_start
 // {"mode": "pair", "text", "card", "path"} as the reader's and the street's speech_start do; a reply
 // {"subtitle": {"text", "seconds"}} (the subtitles example) is shown in her subtitle bar of the H scene.
+//
+// In the H scene every payload also carries "her_gauge", "his_gauge" (0..100) and "inserted"; a reply
+// {"pair": {"her": n, "his": n}} sets the gauges (UOKHScenePanel::SetGauges).
 #include "OKInteractionMod.h"
 #include "OKModHost.h"
 #include "KKRustExtract.h"
@@ -86,6 +89,14 @@ namespace OKPairModBridge
 		if (E.Kind == EOKPairModEvent::Note) P->SetBoolField(TEXT("react"), E.bReact);
 		if (E.Kind == EOKPairModEvent::Exit) { P->SetBoolField(TEXT("cancelled"), E.bCancelled); P->SetNumberField(TEXT("seconds"), E.Seconds); }
 		P->SetBoolField(TEXT("fitting"), E.bFitting);
+		// In the H scene: the two gauges (0..100) and whether he is inside her now.
+		if (const UOKCharacterController* C = E.Controller.Get(); C && C->HPanel.Get())
+		{
+			const UOKHScenePanel& H = *C->HPanel.Get();
+			P->SetNumberField(TEXT("her_gauge"), H.HerGaugeValue());
+			P->SetNumberField(TEXT("his_gauge"), H.HisGaugeValue());
+			P->SetBoolField(TEXT("inserted"), H.InsertedNow());
+		}
 		return P;
 	}
 
@@ -115,10 +126,22 @@ namespace OKPairModBridge
 	}
 
 	/** A mod's reply: write or remove its section of the card (kept and tried again while the card file is in use). */
-	void ApplyReply(const FString& Mod, const FJsonObject& Reply, const FString& Card)
+	void ApplyReply(const FString& Mod, const FJsonObject& Reply, const FString& Card, UOKCharacterController* Controller)
 	{
 		const TSharedPtr<FJsonObject>* Json = nullptr;
-		if (!Reply.TryGetObjectField(TEXT("json"), Json) || !Json || !Json->IsValid() || Card.IsEmpty()) return;
+		if (!Reply.TryGetObjectField(TEXT("json"), Json) || !Json || !Json->IsValid()) return;
+		// {"pair": {"her": n, "his": n}}: the H scene's gauges set (0..100; one left out stays).
+		const TSharedPtr<FJsonObject>* Gauges = nullptr;
+		if ((*Json)->TryGetObjectField(TEXT("pair"), Gauges) && Gauges && Gauges->IsValid())
+		{
+			double HerValue = -1.0, HisValue = -1.0;
+			(*Gauges)->TryGetNumberField(TEXT("her"), HerValue);
+			(*Gauges)->TryGetNumberField(TEXT("his"), HisValue);
+			UOKHScenePanel* Panel = Controller ? Controller->HPanel.Get() : nullptr;
+			if (Panel) Panel->SetGauges(float(HerValue), float(HisValue));
+			Note(FString::Printf(TEXT("%s gauges her=%.0f his=%.0f %s"), *Mod, HerValue, HisValue, Panel ? TEXT("set") : TEXT("(no H scene)")));
+		}
+		if (Card.IsEmpty()) return;
 		bool bRemove = false;
 		FString Base64;
 		int32 Version = 1;
@@ -161,7 +184,7 @@ namespace OKPairModBridge
 	}
 
 	/** Sends the request and handles each reply; the mods that did not subscribe are remembered. */
-	void SendRequest(const FString& Hook, const TSharedRef<FJsonObject>& Request, const FString& Card)
+	void SendRequest(const FString& Hook, const TSharedRef<FJsonObject>& Request, const FString& Card, UOKCharacterController* Controller)
 	{
 		FString Error;
 		const TSharedPtr<FJsonObject> Answer = Dispatch(Request, Error);
@@ -179,7 +202,7 @@ namespace OKPairModBridge
 				else UE_LOG(LogOKPairMods, Warning, TEXT("%s %s: %s"), *Mod, *Hook, *Why);
 				continue;
 			}
-			ApplyReply(Mod, *R, Card);
+			ApplyReply(Mod, *R, Card, Controller);
 		}
 	}
 
@@ -274,11 +297,11 @@ namespace OKPairModBridge
 				}
 				TSharedRef<FJsonObject> Request = MakeRequest(P);
 				Request->SetArrayField(TEXT("mods"), { MakeShared<FJsonValueString>(Mod) });
-				SendRequest(Hook, Request, Card);
+				SendRequest(Hook, Request, Card, E.Controller.Get());
 			}
 			return;
 		}
-		SendRequest(Hook, MakeRequest(Payload(E)), Card);
+		SendRequest(Hook, MakeRequest(Payload(E)), Card, E.Controller.Get());
 	}
 
 	/** One event: a one-on-one opened inside the reader's or the street's world switches the host to "pair" first (its
@@ -443,7 +466,7 @@ namespace OKPairModBridge
 				FString Error;
 				{
 					TUniquePtr<FArchive> Held(IFileManager::Get().CreateFileReader(*Card));
-					ApplyReply(Mod, *Reply, Card);
+					ApplyReply(Mod, *Reply, Card, nullptr);
 					Check(PendingFor(Card, Mod) != nullptr, TEXT("retry: the write is kept while the card file is open"));
 					FOkSession::CardModSection(Card, Mod, bFound, Version, Bytes, Error);
 					Check(!bFound, TEXT("retry: nothing written yet"));
