@@ -185,6 +185,29 @@ pub fn scan(game: &Path, card: &Path) -> Result<Vec<OutfitGaps>, String> {
     Ok(outfits)
 }
 
+/// The hairstyle slots (categories 101..104) a card asks for and nothing provides. Breeding asks it of each parent:
+/// the hair gene must not come from a parent whose own hairstyle cannot be shown, or the child is bald (crowd_C011
+/// names a back hair his card has no entry for, 2026-11-23). Read only, and nothing is reported: these are the
+/// parent's gaps, not the child's. Hair is in the `Custom` block, the same for every outfit, so outfit 0 answers it.
+/// An original card under a base library (whose zipmods this cannot see) reports none, as `scan` does.
+pub fn hairstyle_gaps(game: &Path, card: &Path) -> Result<Vec<Gap>, String> {
+    let root = crate::oklib::root_for_card(game, Some(card));
+    let library = crate::oklib::ensure_library(&root)?;
+    if library && !crate::oklib::is_library_card(card) { return Ok(Vec::new()); }
+    let _pack = if library { crate::oklib::mount_card_pack(card)? } else { None };
+    let bytes = crate::card::card_file_bytes(card).map_err(|e| format!("{}: {e}", card.display()))?;
+    let vanilla = crate::list::load_characustom_dir_shared(&root.join("abdata/list/characustom"));
+    let mods_dir = root.join("mods");
+    let mods = crate::list::load_mods_catalog_shared(&mods_dir);
+    let mut info = crate::card::parse_card_bytes_mode(&bytes, 0, false).map_err(|e| format!("{}: {e}", card.display()))?;
+    crate::mods::apply_strip_all_migrations(&root, &mut info);
+    let wanted: HashSet<String> = info.resolves.iter().map(|r| r.mod_id.clone()).collect();
+    let index = if wanted.is_empty() { HashMap::new() } else { crate::mods::find_guids(&mods_dir, Some(&wanted)) };
+    let mut gaps = of_outfit(&info, 0, &vanilla, &mods, &index);
+    gaps.retain(|g| g.part == "hair");
+    Ok(gaps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

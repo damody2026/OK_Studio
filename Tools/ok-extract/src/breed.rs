@@ -94,7 +94,10 @@ fn write_sections(parts: &[Value], form: &Form) -> Vec<u8> {
 
 /// What the mixing decided: per group, whether the father's (`true`) or the mother's value was taken; per whole-number
 /// field ("face.pupil.0.id"), whose value it has (None: both had it).
-struct Mixer { rng: Rng, picks: BTreeMap<String, bool>, sources: BTreeMap<String, Option<bool>>, forced: BTreeMap<String, bool> }
+struct Mixer { rng: Rng, picks: BTreeMap<String, bool>, sources: BTreeMap<String, Option<bool>>, forced: BTreeMap<String, bool>,
+    /// Groups (`group`) whose parent is settled before the draw: the hair of a parent whose own hairstyle cannot be
+    /// shown is no hair at all, so it comes from the other one (`file::breed_whole`).
+    groups: BTreeMap<String, bool> }
 
 /// The group a whole-number field belongs to: decided once for all of it.
 fn group(section: &str, path: &str) -> String {
@@ -109,8 +112,11 @@ fn group(section: &str, path: &str) -> String {
 
 impl Mixer {
     fn pick(&mut self, group: String) -> bool {
-        let rng = &mut self.rng;
-        *self.picks.entry(group).or_insert_with(|| rng.chance(0.5))
+        if let Some(&picked) = self.picks.get(&group) { return picked; }
+        let settled = self.groups.get(&group).copied();
+        // (drawn even for a settled group, exactly once per group as before: the seed's later genes must not move)
+        let drawn = self.rng.chance(0.5);
+        *self.picks.entry(group).or_insert(settled.unwrap_or(drawn))
     }
     fn blend(&mut self, a: f64, b: f64, shape: bool) -> f64 {
         let w = if shape { self.rng.range(0.1, 0.9) } else { self.rng.range(0.25, 0.75) };
@@ -440,7 +446,7 @@ fn parent_record(bytes: &[u8], file: &Path) -> serde_json::Value {
 /// The child of `mother` and `father` (card bytes), from `seed`: the card (on the base parent's PNG and chunks, with
 /// her own `okId` and an `okDn` record), which parent is the base (`true`: the father), and a one-line summary.
 pub fn breed(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path)) -> Result<(Vec<u8>, bool, String), String> {
-    breed_forced(mother, father, seed, files, &BTreeMap::new()).map(|b| (b.card, b.from_father, b.summary))
+    breed_forced(mother, father, seed, files, &BTreeMap::new(), &BTreeMap::new()).map(|b| (b.card, b.from_father, b.summary))
 }
 
 /// A child as reed makes her, with what file::breed_whole needs to change genes.
@@ -450,8 +456,9 @@ pub struct Bred { pub card: Vec<u8>, pub from_father: bool, pub summary: String,
 fn unmixed_key(outfit: usize) -> String { format!("clothes.outfit{outfit}") }
 
 /// reed with some whole-number fields (section.path) taken from the father (	rue) or the mother whatever the draw.
-fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), forced: &BTreeMap<String, bool>) -> Result<Bred, String> {
-    let mut mixer = Mixer { rng: Rng(seed ^ 0x6F6B_4272_6565_6421), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: forced.clone() };
+fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), forced: &BTreeMap<String, bool>,
+    groups: &BTreeMap<String, bool>) -> Result<Bred, String> {
+    let mut mixer = Mixer { rng: Rng(seed ^ 0x6F6B_4272_6565_6421), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: forced.clone(), groups: groups.clone() };
     let (bm, bf) = (crate::appearance::blocks_from_card(mother)?, crate::appearance::blocks_from_card(father)?);
     let from_father = mixer.rng.chance(0.5);
     let (base_card, base, other) = if from_father { (father, &bf, &bm) } else { (mother, &bm, &bf) };
@@ -776,8 +783,22 @@ pub mod file {
         // A gene whose part neither parent's data can show (a mod's list entry neither of them read: Raiden's mod eye
         // highlight, which her Material Editor rows cover, on a granddaughter without them) is taken from the other parent.
         let mut forced = BTreeMap::new();
+        // Her hair comes from one parent whole. A parent whose own hairstyle cannot be shown (his card names a back
+        // hair no list has: crowd_C011, 2026-11-23) would make her bald, so her hair comes from the other one. Nothing
+        // to choose when neither can show hers: the draw stands.
+        let mut groups = BTreeMap::new();
+        let bald = |path: &Path| match crate::outfit_gaps::hairstyle_gaps(game, path) {
+            Ok(gaps) => { if !gaps.is_empty() { eprintln!("ok-extract: breed: {} cannot show her own hairstyle: {}", path.display(),
+                gaps.iter().map(|g| format!("cat {} id {} guid {}", g.category, g.id, g.guid)).collect::<Vec<_>>().join(", ")); } !gaps.is_empty() }
+            Err(e) => { eprintln!("ok-extract: breed: {}: hairstyle not checked ({e})", path.display()); false }
+        };
+        match (bald(mother), bald(father)) {
+            (false, true) => { groups.insert("hair".to_owned(), false); }
+            (true, false) => { groups.insert("hair".to_owned(), true); }
+            _ => {}
+        }
         for attempt in 0.. {
-            let bred = breed_forced(&m, &f, seed, (mother, father), &forced)?;
+            let bred = breed_forced(&m, &f, seed, (mother, father), &forced, &groups)?;
             match seal(&lib, game, &bred, if bred.from_father { &m } else { &f }, out) {
                 Ok(sealing) => {
                     let changed = if forced.is_empty() { String::new() } else { format!("; genes from the other parent (her parents' data could not show them): {}", forced.keys().cloned().collect::<Vec<_>>().join(", ")) };
@@ -833,7 +854,7 @@ mod tests {
     #[test]
     fn mixing_is_repeatable_and_between_the_parents() {
         let face = |v: f32| Value::Map(vec![("shapeValueFace".into(), Value::Array((0..52).map(|_| Value::F32(v)).collect())), ("headId".into(), Value::from(if v < 0.5 { 1 } else { 2 }))]);
-        let run = |seed| { let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() }; m.mix("face", "", &face(0.2), &face(0.8)) };
+        let run = |seed| { let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new(), groups: BTreeMap::new() }; m.mix("face", "", &face(0.2), &face(0.8)) };
         assert_eq!(run(7), run(7));
         let child = run(7);
         let values: Vec<f64> = map_get(&child, "shapeValueFace").unwrap().as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
@@ -844,14 +865,14 @@ mod tests {
 
     #[test]
     fn colours_blend_as_one() {
-        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new(), groups: BTreeMap::new() };
         let c = |r: f32| Value::Array(vec![Value::F32(r), Value::F32(r), Value::F32(r), Value::F32(1.0)]);
         let out = m.mix("hair", "baseColor", &c(0.0), &c(1.0));
         let v: Vec<f64> = out.as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
         assert!((v[0] - v[1]).abs() < 0.2 && (v[1] - v[2]).abs() < 0.2 && v[3] == 1.0, "{v:?}");
         // Hair in HSV: red and blue meet as a bright purple, not RGB's darker half.
         for seed in 0..32 {
-            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new(), groups: BTreeMap::new() };
             let rgb = |r: f32, g: f32, b: f32| Value::Array(vec![Value::F32(r), Value::F32(g), Value::F32(b), Value::F32(1.0)]);
             let out = m.mix("hair", "parts.0.baseColor", &rgb(0.9, 0.1, 0.1), &rgb(0.1, 0.1, 0.9));
             let v: Vec<f64> = out.as_array().unwrap().iter().map(|v| as_f64(v).unwrap()).collect();
@@ -891,7 +912,7 @@ mod tests {
             clothes_parts(&c).iter().take(4).map(|p| map_get(p, "id").unwrap().as_i64().unwrap()).collect::<Vec<_>>() };
         for seed in 0..64 {
             let (mut mine, theirs) = (blocks([1, 2, 3, 4]), blocks([11, 0, 13, 14]));
-            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new(), groups: BTreeMap::new() };
             let taken = mix_clothes(&mut mine, &theirs, false, &mut m, &[]);
             let got = ids(&mine);
             // Never undressed: the father wears no bottom, so hers stays. Bra and shorts go together.
@@ -902,7 +923,7 @@ mod tests {
         }
         // An outfit kept whole: nothing taken.
         let (mut mine, theirs) = (blocks([1, 2, 3, 4]), blocks([11, 12, 13, 14]));
-        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+        let mut m = Mixer { rng: Rng(3), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new(), groups: BTreeMap::new() };
         assert!(mix_clothes(&mut mine, &theirs, false, &mut m, &[0]).is_empty());
         assert_eq!(ids(&mine), [1, 2, 3, 4]);
         assert_eq!(failing_outfits("sealing open failed: outfit 4: x | outfit 4 clothes [1] | outfit 12: y"), [4, 12]);
@@ -911,7 +932,7 @@ mod tests {
         for seed in 0..64 {
             let (base, other) = (blocks([11, 0, 13, 14]), blocks([1, 2, 3, 4]));
             let mut mine = base.clone();
-            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new() };
+            let mut m = Mixer { rng: Rng(seed), picks: BTreeMap::new(), sources: BTreeMap::new(), forced: BTreeMap::new(), groups: BTreeMap::new() };
             let taken = mix_clothes(&mut mine, &other, true, &mut m, &[]);
             let skirted = cover_bare_outfits(&mut mine, &base, &other, &taken);
             let got = ids(&mine);

@@ -7433,3 +7433,48 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
   （視窗標題是不是你給的資料夾？），不要只看「數字有沒有變」。
 - **連續失敗 N 次都指向同一個「不可能」的結論時，先懷疑觀測，不要再改程式**。我第二次沒視窗時就該停。
 - 這和 `Docs/CARD_OPEN_PERF_20261117.md` 第三節「先證明開關是活的」是同一條，只是這次失效的是**觀測端**。
+
+## 2026-11-23（E）配種封卡 `UNMEMOIZED`：卡片 pack 裡有那個模型的幾筆記錄，就不算「模型缺」了
+
+**症狀**：打包版（`Studio-20261123-release`）配種 Ahri(C006)×Alice(C001) 封卡成功、`strict-check` 失敗，
+每套服裝每個 clothes state 都是同兩筆：`UNMEMOIZED ParsedBundle::with_texture_sources` 與 `UNMEMOIZED bundle`。
+後者沒有 bundle 名稱，看起來像「被問的 bundle 連名字都沒有」。
+
+**真相（兩件事，都不是空名字）**：
+1. `UNMEMOIZED bundle` 的 `bundle` 不是名稱，是 vendor 端 `oklib_hook::check(data, "bundle")` 的**呼叫點標籤**；
+   後面本來要接呼叫堆疊，打包版 release 沒有符號所以是空的（本機 build 看得到完整堆疊）。
+   它是 `named_png_cached_fallback` 的 legacy 退路把**基礎庫 token**（`OKLIB001`+id，不是 Unity 資料）
+   丟去 `load_bundle_source` 原生解析 —— token 永遠解不出東西，這條退路本身是多餘的。
+2. `UNMEMOIZED ParsedBundle::with_texture_sources` 的模型是
+   `[moderchan]More Noses.zipmod|abdata/chara/_kero/mt_nose_NT.unity3d`，要的貼圖是 `cw_t_noseline_000`。
+   打包庫沒有這個 `.okmodel`（非共用，`models/.gitignore`），dev 庫才有。母卡／父卡的 okLc 只有
+   `texture_directory2` 與 `texture_sampling_named` 兩筆，**沒有解貼圖那筆** —— 和 11-23 早上那條 absent-model
+   一樣，是子卡的混合第一次問的新問題，不是 merge 漏了。
+   但 `library_internals` 判「模型缺不缺」用的是 `oklib::has_model`，而它**把卡片自己 pack 裡有幾筆記錄也算成「有這個模型」**，
+   於是報成 `UNMEMOIZED`（錄製面有洞）而不是 `absent-model`（這台機器沒有這份資料），
+   早上那條針對 absent-model 的 `okAb` 規則就認不出它。而 `note_missing` 對 `UNMEMOIZED` 在 completing 時不算缺口、
+   在 strict 時算缺口 —— 所以封卡過、檢查掛。
+
+**修正**：
+- `library_internals` 改用新的 `oklib::library_has_model`（只看**基礎庫**有沒有那個 `.okmodel`）。
+  卡片 pack 有幾筆記錄不代表那份 bundle 在這台機器上 —— 答不出的查詢同樣算不出來。
+- `each_legacy_texture` 遇到基礎庫 token 直接返回：token 沒有 bundle，原生再解一次只會多報一筆自己的缺口。
+
+**一般教訓**：**診斷用的謂詞（「這份資料在不在」）不要和「有沒有一些相關記錄」混在一起** ——
+一旦混了，後面所有按類別分流的規則都會分到錯的那一邊，而且症狀會長得像另一個 bug。
+缺口訊息裡的「標籤」也要分清是資料名稱還是呼叫點名稱；release 沒符號時空白的是堆疊，不是名稱。
+
+## 2026-11-23（E）孩子光頭：父卡自己開不出後髮，頭髮基因還是整組從他身上拿
+
+**症狀**：Ahri(C006)×crowd_C011 封卡成功但孩子光頭。父卡 crowd_C011 自己開的時候就
+`item missing part=hair cat=101 id=500 guid=`（卡裡沒有那個 mod 的 UAR 列），他的「頭髮」其實大半掛在飾品槽
+（`cf_hair_f_34_*`，`role=accessory`），而孩子的服裝／飾品整組取自母方 —— 頭髮取自父方等於什麼都沒有。
+
+**修正**：`breed_whole` 在混合前先問每一方「你自己的髮型開得出來嗎」
+（新的 `outfit_gaps::hairstyle_gaps`，只看 101..104 這四個髮型槽，不報進孩子的缺件清單）；
+只有一方開不出來就把 `hair` 這一組釘到另一方。兩邊都開不出來就照原本的抽籤。
+`Mixer::pick` 加了 `groups`（釘住的組），**抽籤照抽一次**，所以同一顆種子後面的基因完全不動
+（同一組父母、同一種子，digest 與修正前一模一樣，只有頭髮那組換邊）。
+
+**一般教訓**：**「取自某一方」的基因，要先確認那一方真的拿得出來**；
+卡自己缺件是卡的問題，但混出一個光頭不是合理結果。這和既有的 `cover_bare_outfits`（下半身光著就補上）是同一條規則。

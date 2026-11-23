@@ -3929,7 +3929,7 @@ impl ParsedBundle {
             // A model this checkout does not have (a third-party zipmod's, out of version control): a gap naming it,
             // so the zipmod it comes from is reported (and, while an OK card is made, taken from the game).
             match self.lib {
-                Some(id) if !crate::oklib::has_model(&id) => crate::oklib::note_absent_model(&id, what),
+                Some(id) if !crate::oklib::library_has_model(&id) => crate::oklib::note_absent_model(&id, what),
                 Some(_) => crate::oklib::note_unmemoized(what),
                 None => {}
             }

@@ -247,6 +247,12 @@ pub fn has_model(id: &Id) -> bool {
     let Some(store) = active() else { return false };
     model_file(&store.dir, id).is_file() || store.pack().is_some_and(|p| p.has_own_model(id))
 }
+/// Whether the **library** of this checkout has model `id`. A card's pack holding some records of a model is not the
+/// model: a query those records do not answer cannot be computed either (the bundle itself is a third-party mod's,
+/// out of version control), so a reach into such a model's internals is an absent model, not a recording-surface gap.
+pub fn library_has_model(id: &Id) -> bool {
+    active().is_some_and(|store| model_file(&store.dir, id).is_file())
+}
 /// Directory of the active library.
 pub fn active_dir() -> Option<PathBuf> { active().map(|s| s.dir.clone()) }
 
