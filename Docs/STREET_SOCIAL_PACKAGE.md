@@ -94,3 +94,9 @@
 - `Docs/OK_MOD_*.md`。
 
 `PACKAGE.json` 的 `mods` 是已安裝的 mod 數。
+
+## 工作室包放哪些原作資料（2026-11-23）
+
+發佈包沒有容量上限（使用者 2026-11-23）。`--studio --private` 預設只排除 `h-voices`、`studio-scenes`、`street-voices`、`street-dialogue`、`h-poses`：這些是街區或 1 對 1 才用的資料，或是含角色的範例場景。
+
+Studio 音效道具（`base-sounds`，約 2.3 GB）與動作片段（`runtime-clips`，約 362 MB）以前為了壓在 10 GB 內被排除，現在會放進包。2026-11-23 的 `Studio-20261123-mods-full` 是 15.2 GB，zip 是 12.7 GB。

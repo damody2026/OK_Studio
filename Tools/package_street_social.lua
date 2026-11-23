@@ -153,12 +153,10 @@ local function local_keys(root)
 end
 
 -- Original data groups a Studio package leaves out unless --skip-group says otherwise: the street's dialogue, voices
--- and H poses, the H voices, the studio sample scenes (they carry characters), and, to keep it under 10 GB (user
--- 2026-11-16), the studio sound items (base-sounds, 2.3 GB) and the street
--- runtime clips (runtime-clips). base-paired (1.5 GB) stays: it is the card reader's game motion list (base_v1/paired; left
--- out, the list was empty; user 2026-11-18: over 10 GB is fine).
-local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses", "base-sounds",
-  "runtime-clips" }
+-- and H poses, the H voices and the studio sample scenes (they carry characters). No size limit (user 2026-11-23):
+-- the studio sound items (base-sounds, 2.3 GB) and the runtime clips (runtime-clips) go in; base-paired is the card
+-- reader's game motion list.
+local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses" }
 
 -- --mods: the stage's installed mods, the .okmod packages, the mod sources, ok-mod-pack and the mod documents.
 -- counted(n) gets the number of installed mods.
