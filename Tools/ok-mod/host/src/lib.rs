@@ -15,6 +15,7 @@ pub mod ffi;
 pub mod keys;
 pub mod manifest;
 pub mod resolve;
+pub mod street_data;
 
 /// Development-mode hot reload (plan section 7.5): the old instance hands its state over, the new one takes it.
 pub const SAVE_STATE: &str = "dev.save_state";

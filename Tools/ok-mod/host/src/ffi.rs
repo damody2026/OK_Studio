@@ -233,6 +233,7 @@ pub fn handle(host: &mut ModHost, req: &Value) -> Result<Value, String> {
         },
         // Cards, the reader and conversion (host/src/card.rs, Docs/OK_MOD_HOOKS.md).
         other if crate::card::OPS.contains(&other) => crate::card::handle(host, other, req)?,
+        other if crate::street_data::OPS.contains(&other) => crate::street_data::handle(host, other, req)?,
         other => return Err(format!("unknown op \"{other}\"")),
     })
 }
