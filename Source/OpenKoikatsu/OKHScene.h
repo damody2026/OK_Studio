@@ -152,6 +152,8 @@ public:
     // A mod's answer ({"pair": {"her": n, "his": n}}, OKPairModBridge): her / his gauge set to n (0..100; negative leaves it).
     void SetGauges(float HerValue,float HisValue){if(HerValue>=0.f)Her=FMath::Clamp(HerValue,0.f,100.f);if(HisValue>=0.f)His=FMath::Clamp(HisValue,0.f,100.f);}
     bool InsertedNow() const {return bInsertedNow;}
+    // A line for the hint bar from elsewhere (a mod hotkey's reply; defined in OKModeHotkeys.cpp): not an event of the scene.
+    void ShowHint(const FString& Text);
     float HerGaugeValue() const {return Her;}
     float HisGaugeValue() const {return His;}
     void SpokeLine(){bTalkSpoken=true;}

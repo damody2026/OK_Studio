@@ -3234,7 +3234,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 TSharedRef<SWidget> SOKStudioPanel::BuildSettings()
 {
 	FOKStudioSettings& S = FOKStudioSettings::Get();
-	static const TCHAR* Tabs[] = { TEXT("一般"), TEXT("相機與 Gizmo"), TEXT("備份"), TEXT("資源目錄"), TEXT("快捷鍵"), TEXT("快捷鍵一覽") };
+	static const TCHAR* Tabs[] = { TEXT("一般"), TEXT("相機與 Gizmo"), TEXT("備份"), TEXT("資源目錄"), TEXT("快捷鍵"), TEXT("快捷鍵一覽"), TEXT("Mod 熱鍵") };
 	TSharedRef<SVerticalBox> Menu = SNew(SVerticalBox);
 	for (int32 I = 0; I < UE_ARRAY_COUNT(Tabs); ++I)
 		Menu->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)[Button(FText::FromString(Tabs[I]), [this, I] { SettingsTab = I; DeferFloat(TEXT("settings")); }, 110.f, 20.f, SettingsTab == I, 10.f)];
@@ -3361,6 +3361,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSettings()
 		}
 		break;
 	}
+	case 6: ModHotkeySettings(Body, Find); break;
 	default: break;
 	}
 	return SNew(SVerticalBox)

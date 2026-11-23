@@ -154,7 +154,9 @@ void Install()
 {
 	if (GProcessor.IsValid() || !FSlateApplication::IsInitialized()) return;
 	GProcessor = MakeShared<FProcessor>();
-	FSlateApplication::Get().RegisterInputPreProcessor(GProcessor);
+	// First in line: a mode's own shortcuts (the studio panel's, registered before the first Listen) must not take a
+	// chord the player bound to a mod (Docs/OK_MOD_E_WAVE5.md).
+	FSlateApplication::Get().RegisterInputPreProcessor(GProcessor, 0);
 	FCoreDelegates::OnEnginePreExit.AddLambda([]
 	{
 		if (GProcessor.IsValid() && FSlateApplication::IsInitialized()) FSlateApplication::Get().UnregisterInputPreProcessor(GProcessor);

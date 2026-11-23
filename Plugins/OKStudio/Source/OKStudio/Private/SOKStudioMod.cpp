@@ -174,3 +174,39 @@ void SOKStudioPanel::ModsPage()
 	ModRows(EOKStudioModPanel::Mods, ObjectId);
 	if (ModRowsShown == 0) Label(TEXT("沒有 mod 在這一頁加項目。"));
 }
+
+void SOKStudioPanel::ModHotkeySettings(const TSharedRef<SVerticalBox>& Body, const FString& Find)
+{
+	// The same buttons as the reader's Mods › 熱鍵 page: the key on a button; pressing it waits for the next chord.
+	FOKStudioModRegistry& R = FOKStudioModRegistry::Get();
+	const TArray<FOKStudioModRegistry::FHotkey> Keys = R.ListHotkeys ? R.ListHotkeys() : TArray<FOKStudioModRegistry::FHotkey>();
+	if (Keys.IsEmpty())
+	{
+		Body->AddSlot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("沒有 mod 宣告熱鍵。")), 10.f, OKStudioStyle::TextHint())];
+		return;
+	}
+	Body->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)[OKStudioStyle::Label(FText::FromString(TEXT("按鍵上的字是目前的綁定，按一下再按新的組合鍵（Esc 保留、Backspace 清除）。和工作室快捷鍵同鍵時 mod 優先。")), 9.f, OKStudioStyle::TextHint())];
+	TWeakPtr<SOKStudioPanel> Weak = StaticCastSharedRef<SOKStudioPanel>(AsShared());
+	for (const FOKStudioModRegistry::FHotkey& K : Keys)
+	{
+		if (!Find.IsEmpty() && !K.Label.Contains(Find) && !K.Mod.Contains(Find) && !K.Name.Contains(Find) && !K.Chord.Contains(Find)) continue;
+		const FString Key = K.Mod + TEXT(".") + K.Name;
+		const FString Mod = K.Mod, Name = K.Name;
+		const bool bCapturing = CapturingHotkey == Key;
+		TSharedRef<SHorizontalBox> Line = SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(K.Label), 10.f)]
+			+ SHorizontalBox::Slot().FillWidth(0.28f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(Key), 9.f, OKStudioStyle::TextHint())];
+		Line->AddSlot().FillWidth(0.3f)[Tagged(*(TEXT("ModHotkey_") + Key), OKStudioStyle::Button(FText::FromString(bCapturing ? FString(TEXT("按新按鍵…（Esc 取消）")) : K.Chord),
+			[this, Weak, Key, Mod, Name]
+			{
+				FOKStudioModRegistry& Reg = FOKStudioModRegistry::Get();
+				if (!Reg.CaptureHotkey) return;
+				CapturingHotkey = Key;
+				DeferFloat(TEXT("settings"));
+				Reg.CaptureHotkey(Mod, Name, [Weak] { if (TSharedPtr<SOKStudioPanel> P = Weak.Pin()) { P->CapturingHotkey.Reset(); P->DeferFloat(TEXT("settings")); } });
+			}, 0.f, 18.f, bCapturing, 10.f))];
+		Line->AddSlot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("清除")), [this, Mod, Name] { if (FOKStudioModRegistry::Get().BindHotkey) FOKStudioModRegistry::Get().BindHotkey(Mod, Name, FString()); DeferFloat(TEXT("settings")); }, 34.f, 18.f, false, 9.f)];
+		Line->AddSlot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("預設 ") + K.Default), [this, Mod, Name] { if (FOKStudioModRegistry::Get().BindHotkey) FOKStudioModRegistry::Get().BindHotkey(Mod, Name, TEXT("default")); DeferFloat(TEXT("settings")); }, 0.f, 18.f, false, 9.f)];
+		Body->AddSlot().AutoHeight().Padding(0.f, 1.f)[Line];
+	}
+}

@@ -7340,3 +7340,7 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - `OKStreetSocialMods.inl` 寫了 `TEXT("\n\n")+OKT(...)`，結果是兩個指標相加，報 C2110。改成 `FString(TEXT("\n\n"))+…` 後重新建置。**教訓**：字串字面量放在 `+` 左邊時，先包成 `FString`。
 - 用 sed 在三語 `ui_text.toml` 插入 `mod_topics_header`，`\n` 被 sed 展開成真的換行，toml 字串斷成三行。用 Lua 腳本把它換回單行字串，換行改由程式碼加。**教訓**：toml／原始碼裡的字串跳脫不要經過 sed，用 Edit 工具或 Lua 直接寫。
 - 讀卡器字幕 mod「缺 `comm_lines.json`」不是檔案不存在：它在 `<GameRoot>/voice_extract/`，但 `DefaultVoiceRoot()` 先選了只有 H 語音的 `base_v1/h/voice`。以 `OK_VOICE_ROOT` 指定後就通了（`Docs/OK_MOD_C_WAVE6.md` §6）。
+## 2026-11-23 排不到 Unreal 名額時腳本照樣開了遊戲（E 組，OK mod 第五波）
+
+- **做錯**：我寫的指令是「最多排 20 次 claim，然後啟動開發版街區」，迴圈結束時並沒有檢查到底排到了沒有。20 次都在排隊（F 的 stage cook 占著 slot1、另一個名額被別人持有），遊戲卻照樣啟動，在沒占名額的情況下吃掉約 52 GB 記憶體，連帶讓名額工具因記憶體不足擋住後面排隊的人。發現後立刻停掉遊戲。
+- **修正**：啟動一律放在 `claim` 成功之後（輸出是 `slot1`／`slot2` 才往下），沒排到就停下來，不要接著執行。

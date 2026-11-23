@@ -544,6 +544,10 @@ public:
 	void ModRows(EOKStudioModPanel Where, int32 ObjectId);
 	/** The Mod page: rows mods put on their own page (EOKStudioModPanel::Mods). */
 	void ModsPage();
+	/** Settings › Mod 熱鍵: each mod hotkey with its key, rebind / clear / default (SOKStudioMod.cpp). */
+	void ModHotkeySettings(const TSharedRef<SVerticalBox>& Body, const FString& Find);
+	/** "<mod>.<name>" waiting for its new chord. */
+	FString CapturingHotkey;
 	int32 ModRowsShown = 0;
 	TFunction<void()> Cmd(const FString& Id, const FString& Arg = FString()) { return [this, Id, Arg] { RunCommand(Id, Arg); }; }
 

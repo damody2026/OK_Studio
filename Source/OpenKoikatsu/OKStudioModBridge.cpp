@@ -21,6 +21,7 @@
 #include "OKStreetSocialText.h"
 #include "OKStudioGame.h"
 #include "OKStudioMod.h"
+#include "OKModeHotkeys.h"
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
 #include "Framework/Application/IInputProcessor.h"
@@ -657,6 +658,39 @@ namespace OKStudioModBridge
 		if (bStep && State().Game.IsValid()) Game->EndStep();
 	}
 
+	/** A text id of a mod in the studio from its locale files (the text itself when the mod is not in the studio). */
+	FString ModText(const FString& ModId, const FString& Id)
+	{
+		const FMod* M = FindMod(ModId);
+		return M ? Label(*M, Id) : Id;
+	}
+
+	/** A mod hotkey's reply (FOKModKeys, OKModeHotkeys.cpp): applied as a key of the mod's panel is, one undo step. */
+	void ApplyHotkeyReply(const FString& Mod, const TSharedPtr<FJsonObject>& Reply)
+	{
+		UOKStudioGame* Game = State().Game.Get();
+		if (!Game || !Game->Document || !Reply.IsValid()) return;
+		TSharedPtr<FJsonObject> Effect;
+		const TSharedPtr<FJsonObject>* Json = nullptr;
+		FString Text;
+		if (Reply->TryGetObjectField(TEXT("json"), Json) && Json && Json->IsValid())
+		{
+			Effect = MakeShared<FJsonObject>(**Json);
+			// A hotkey written for every mode may answer with "notice": the studio shows it in the status line.
+			if (!Effect->HasField(TEXT("status")) && Effect->TryGetStringField(TEXT("notice"), Text)) Effect->SetStringField(TEXT("status"), Text);
+		}
+		else if (Reply->TryGetStringField(TEXT("text"), Text) && !Text.IsEmpty())
+		{
+			Effect = MakeShared<FJsonObject>();
+			Effect->SetStringField(TEXT("status"), Text);
+		}
+		if (!Effect.IsValid()) return;
+		Note(FString::Printf(TEXT("%s hotkey -> %s"), *Mod, *Condensed(Effect.ToSharedRef()).Left(300)));
+		Game->BeginStep();
+		Apply(Mod, Effect, false);
+		if (State().Game.IsValid()) Game->EndStep();
+	}
+
 	// --- Registration ---
 
 	bool RunModCommand(const FString& Id, const FString& Name, const FString& Arg)
@@ -856,6 +890,7 @@ namespace OKStudioModBridge
 		S.Characters.Reset();
 		S.bCharactersSeen = false;
 		FOKStudioModRegistry::Get().SceneEventSink = nullptr;
+		if (S.bBuilt) OKModeHotkeys::StudioStop();
 		S.bBuilt = false;
 	}
 
@@ -908,6 +943,7 @@ namespace OKStudioModBridge
 			UE_LOG(LogOKStudioMods, Display, TEXT("%s joined the studio (%d keys, %d timers)"), *Id, S.Mods.Last().Keys.Num(), S.Mods.Last().Timers.Num());
 		}
 		FOKStudioModRegistry::Get().SceneEventSink = [](const FString& Event, const TSharedRef<FJsonObject>& Args) { Broadcast(Event, Args, true); };
+		OKModeHotkeys::StudioStart();
 		S.LastTime = S.Game.IsValid() ? S.Game->TimelineTime : 0.f;
 	}
 

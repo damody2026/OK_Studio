@@ -156,6 +156,15 @@ public:
 	/** Shows a line in the studio's status bar (set by the panel while it is open). */
 	TFunction<void(const FString&)> ShowStatus;
 
+	// --- Mod hotkeys (FOKModKeys, set by Source/OpenKoikatsu/OKModeHotkeys.cpp): the settings' Mod 熱鍵 tab. ---
+	struct FHotkey { FString Mod; FString Name; FString Label; FString Chord; FString Default; };
+	/** The mods' hotkeys now: Label is the mod's text for it, Chord / Default as the player reads them ("—": none). */
+	TFunction<TArray<FHotkey>()> ListHotkeys;
+	/** The next chord pressed becomes the binding (Escape keeps it, Backspace unbinds); Done when it is over. */
+	TFunction<void(const FString& Mod, const FString& Name, TFunction<void()> Done)> CaptureHotkey;
+	/** Sets the binding: a chord ("F8", "Ctrl+K"), empty unbinds, "default" back to the mod's default. */
+	TFunction<bool(const FString& Mod, const FString& Name, const FString& Chord)> BindHotkey;
+
 private:
 	bool Check(const FString& Owner, const FString& Name, const TCHAR* What, bool bTaken) const;
 	TArray<FOKStudioModCommand> CommandList;
