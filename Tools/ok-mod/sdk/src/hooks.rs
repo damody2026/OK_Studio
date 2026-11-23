@@ -16,6 +16,13 @@ use serde_json::Value;
 
 use crate::{ModResult, Reply};
 
+/// Card reader hooks of wave 4 (accessories, outfit cards, clothes state, property changes, `get`).
+pub mod reader;
+/// Street hooks of wave 4 (period, touch, action, arrive, phone, `street.load`) and the `cards` reply.
+pub mod street;
+/// Ask the reader for registry values (`reader::get`): they come back as `reader.get_result`.
+pub use reader::get;
+
 fn b64() -> base64::engine::GeneralPurpose { base64::engine::general_purpose::STANDARD }
 
 /// A hook's payload as `T`.
@@ -166,5 +173,67 @@ mod tests {
         let upgraded: String = s.data(2, |old, v| Ok(Value::String(format!("{}+v{old}", v.as_str().unwrap())))).unwrap();
         assert_eq!(upgraded, "hello+v1");
         assert!(s.data::<String>(0, |_, v| Ok(v)).is_err(), "data newer than the mod");
+    }
+}
+
+/// The hotkey a `key.<entry>` hook is for (declared with `Registrar::hotkey`; also the long form `key.<id>.<entry>`, and
+/// the name OK Studio sends for a panel key of that id): `Some(entry)`, else `None`.
+///
+/// ```ignore
+/// Event::Hook { name, payload } => match hooks::hotkey(name) {
+///     Some("toggle") => { let k: hooks::KeyPress = hooks::parse(payload)?; self.toggle(&k.mode); Ok(Reply::None) }
+///     _ => Ok(Reply::None),
+/// },
+/// ```
+pub fn hotkey(hook: &str) -> Option<&str> {
+    let rest = hook.strip_prefix("key.")?;
+    let entry = rest.rsplit_once('.').map_or(rest, |(_, entry)| entry);
+    (!entry.is_empty()).then_some(entry)
+}
+
+/// The payload of a hotkey hook: the mode it was pressed in (reader, studio, pair, street) and the chord as bound.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct KeyPress {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub chord: String,
+}
+
+/// Development-mode hot reload (`Registrar::keep_state`): the old copy answers this hook with its state (`hooks::json`;
+/// `Reply::None` keeps nothing). Payload `{"version"}`, the version being replaced.
+pub const SAVE_STATE: &str = "dev.save_state";
+/// The new copy gets the state the old one saved: payload `RestoreState`.
+pub const RESTORE_STATE: &str = "dev.restore_state";
+
+/// The payload of `dev.restore_state`. `state` is what the old copy answered (a text answer arrives as a JSON string);
+/// a mod whose state layout changed checks `from_version`, and an `Err` reply fails the reload (the new copy keeps
+/// running from scratch).
+///
+/// ```ignore
+/// Event::Hook { name, .. } if name == hooks::SAVE_STATE => hooks::json(&self.counts),
+/// Event::Hook { name, payload } if name == hooks::RESTORE_STATE => {
+///     let r: hooks::RestoreState<Counts> = hooks::parse(payload)?;
+///     self.counts = r.state;
+///     Ok(Reply::None)
+/// }
+/// ```
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RestoreState<T> {
+    #[serde(default)]
+    pub from_version: String,
+    #[serde(default)]
+    pub to_version: String,
+    pub state: T,
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    #[test]
+    fn both_forms() {
+        assert_eq!(super::hotkey("key.toggle"), Some("toggle"));
+        assert_eq!(super::hotkey("key.org.a.toggle"), Some("toggle"));
+        assert_eq!(super::hotkey("key."), None);
+        assert_eq!(super::hotkey("timer.toggle"), None);
     }
 }

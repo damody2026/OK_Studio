@@ -2790,3 +2790,5 @@ plugin_group_rows = "{group}（{count, plural, other {# 項}}）"
 [reader.mods]
 missing = "這張卡用到未安裝的 mod：{mods}。它們的資料會原樣留在卡裡。"
 apply_on_load = "載入卡片時套用 mod 資料"
+hotkeys = "熱鍵"
+press_key = "請按鍵…"

@@ -7326,3 +7326,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 
 - **pose 改選取**：控制通道的 `pose` 先 `Select` 那個角色（面板的動作選取依選取運作）。mod 一個回覆裡對兩個角色發 `pose`（light-rig 的微笑），之後選取只剩最後一個，下一個指令（改名）只改到一個物件。修正（`3312b37b0`）：`OKStudioRunModOp` 在 `pose` 前後記下並還原選取。**教訓**：把給人用的 op 開給 mod 時，要看 op 的副作用（選取、相機、頁面），mod 的一批 op 會在同一幀連續跑。
 - **toon-post 效果不出現**：E 的 `Mods/toon-post` 只有 dll 與 `materials/`，沒有 `content/*.pak`。宿主依 pak 決定 `content_root`，沒有 pak 就不會走 `-ModDevContent` 掛未 cook 外掛的路，log 只有一行「no usable material」，畫面上沒有任何效果。從 F 的 `Mods/toon-post/content/` 複製 pak 後正常。**再試前檢查**：裝內容 mod 測試時，比對 `mod.toml` 的 `content_build` 與 `content/` 是否齊全，並在 log 找「material … ready」。
+
+- 2026-11-23 第四波（F 組，按鍵服務收尾、熱重載狀態、`ok-mod-pack new`，`Docs/OK_MOD_F_WAVE4.md`）：
+  - 當機前沒提交的按鍵服務，讀卡器熱鍵頁用了文字 id `reader.mods.hotkeys`／`reader.mods.press_key`，但三語 `ui_text.toml` 都沒有這兩條，畫面會直接顯示 id。收尾時補上。教訓：新增 `OKReaderT(...)` 的 id 時同一個提交加進 `Content/IndependentResources/StreetSocialData/Localization/*/ui_text.toml`。
+  - 程式碼註解把熱鍵說明指到 `Docs/OK_MOD_HOOKS.md §5`，那節其實是「回覆裡讀卡器會做的事」；熱鍵與熱重載說明寫成新的 §9，註解改指 §9。
+  - 在 Git Bash 用 `perl -pi` 寫入含 `§` 的字串，寫成 Latin-1 的 `0xA7` 而不是 UTF-8（`cat -A` 看到 `M-'`），提交前發現並改成英文。Rust 原始碼裡的非 ASCII 字一律用 Edit／Write 工具寫。
+  - `Reply` 是 `NonExhaustive`，宿主裡 `match` 它要有 `_` 分支（E0004），第一次編譯失敗。
+  - 熱鍵頁的改綁按鈕只呼叫 `SetText`，DreamGUI 按鈕每幀以 `FixedText` 重設文字，畫面一直停在舊綁定（綁定本身已改成 F9）。單元測試與 `OKMod.Keys` 都看不出來，實機截圖才發現；改成同時設 `FixedText`。另外「請按鍵…（Esc 保留，Backspace 清除）」在按鈕裡被截斷，縮成「請按鍵…」。
+  - 當機前的按鍵服務讓宿主把 mod 的短名訂閱 `key.<entry>` 改寫成 `key.<mod id>.<entry>`。OK Studio 的面板按鍵用的正是短名（`ok-mod-studio::subscribe` 訂 `key.<k>`，`OKStudioModBridge` 送 `key.<k>`），改寫後宿主 `hook_one` 會以「沒訂閱」拒絕，Studio mod 的按鍵全部失效。我照原樣驗過就提交了（`4c6fc245e`），寫回報整理 API 變動時才發現，`e4cd5ad3f` 改回訂閱原樣保留、熱鍵服務兩種名字都認。教訓：改到訂閱或 hook 名的處理時，先 grep 全部 SDK（`Tools/ok-mod/studio`）與 UE 端送 hook 的地方（`HookName`）。

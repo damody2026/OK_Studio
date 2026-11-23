@@ -6,6 +6,7 @@
 #include "OKCharacterMCPRegistry.h"
 #include "OKModContent.h"
 #include "OKModHost.h"
+#include "OKModKeys.h"
 #include "OKReaderText.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -371,6 +372,17 @@ void OKReaderMods::Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,floa
 	P->SetArrayField(TEXT("origin"),Vec(UOrigin));P->SetArrayField(TEXT("dir"),Vec(UDir));P->SetArrayField(TEXT("velocity"),Vec(UVel));
 	R->SetObjectField(TEXT("payload"),P);
 	FollowReplies(G,Ask(R));
+}
+
+void OKReaderMods::Keys(UOKCharacterController* G)
+{
+	FOKModKeys::Listen(TEXT("reader"),[WeakG=TWeakObjectPtr<UOKCharacterController>(G)](const FString& Mod,const TSharedPtr<FJsonObject>& Reply)
+	{
+		UOKCharacterController* C=WeakG.Get();if(!C)return;
+		const TSharedPtr<FJsonObject>* Json=nullptr;
+		if(Reply->TryGetObjectField(TEXT("json"),Json)){Follow(C,Mod,*Json);return;}
+		FString Text;if(Reply->TryGetStringField(TEXT("text"),Text)&&!Text.IsEmpty())C->ScreenNote(40,4.f,FColor::Cyan,FString::Printf(TEXT("[%s] %s"),*Mod,*Text));
+	});
 }
 
 void OKReaderMods::Speech(UOKCharacterController* G,const FString& Line)

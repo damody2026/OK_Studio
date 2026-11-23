@@ -1,6 +1,6 @@
 //! Test fixture: panics on purpose so the host must disable it and keep running.
 //! Where it panics comes from the `OK_MOD_TEST_PANIC_AT` environment variable:
-//! `create`, `register`, `enabled`, `mode_enter` or `command` (default `command`, i.e. the
+//! `create`, `register`, `enabled`, `mode_enter`, `command`, `dev.save_state` or `dev.restore_state` (default `command`, i.e. the
 //! console command `mod.org.openkoikatsu.test.panic.boom`).
 
 use ok_mod_sdk::prelude::*;
@@ -24,13 +24,16 @@ impl Mod for PanicMod {
 
     fn register(&mut self, reg: &mut Registrar) -> ModResult<()> {
         maybe_panic(&self.at, "register");
-        reg.command("boom", "mod.org.openkoikatsu.test.panic.cmd.boom").subscribe("mode_enter");
+        reg.command("boom", "mod.org.openkoikatsu.test.panic.cmd.boom").subscribe("mode_enter").keep_state();
         Ok(())
     }
 
     fn on_event(&mut self, event: &Event) -> ModResult<Reply> {
-        maybe_panic(&self.at, event.name());
-        Ok(Reply::None)
+        maybe_panic(&self.at, event.subscription());
+        match event {
+            Event::Hook { name, .. } if name.as_str() == hooks::SAVE_STATE => Ok(Reply::Text("panic state".into())),
+            _ => Ok(Reply::None),
+        }
     }
 }
 

@@ -196,3 +196,82 @@ mod 不直接動模型或 UI 物件，一律經這些要求。
 | `examples/subtitles` | `street.speech_start`（和讀卡器、1 對 1 同一個 mod） |
 
 `Tools/ok-mod/host/tests/street_mods.rs` 用真的 DLL 走一遍：讀檔、換日提示、對話與送禮記錄、事實、規則、字幕、存檔後重開宿主再讀回。
+
+## 9. 跨模式熱鍵與熱重載狀態（第四波 F）
+
+### 熱鍵 `key.<name>`（只送給宣告它的 mod）
+
+- mod 用 `Registrar::hotkey("toggle", "F7", "<文字 id>")` 宣告：等於一個熱鍵型設定項（`config_hotkey`，玩家可改綁）加上訂閱 `key.toggle`。hook 只送給宣告它的 mod，名字不必帶 mod id；這也是 OK Studio 面板按鍵送的名字（`OKStudioModBridge` 送 `key.<id>`），同一個 mod 的鍵 `toggle` 不論在哪裡按都是同一個 hook。訂了長名 `key.<mod id>.toggle` 也認。宿主不改寫訂閱（第一版改寫過，害 Studio 面板按鍵失效，`e4cd5ad3f` 修正）。
+- 預設值與存的值都是 Unreal 鍵名以 `+` 連接（`"F7"`、`"LeftControl+K"`）；空字串＝沒綁。比對時左右修飾鍵視為同一個（`LeftControl`／`RightControl`／`Control`／`Ctrl`），字母不分大小寫、順序不計，修飾鍵要完全相同（`K` 不等於 `Control+K`）。
+- 按下時 mod 收到 `Event::Hook { name: "key.<name>", payload: {"mode", "chord"} }`（SDK：`hooks::hotkey(name) == Some("toggle")`、`hooks::KeyPress`）。回覆照該模式一般 mod 回覆處理（讀卡器：§5 的 `set`／`notice`／`ops`…；文字回覆顯示為畫面提示）。
+- 宿主請求：`{"op":"hotkeys"}` 列出已啟用且訂閱了自己熱鍵的項目；`{"op":"key","chord","mode"}` 送出（`ok_mod_host.h`）。
+- UE：`Plugins/OKModding` 的 `FOKModKeys` 是全遊戲一個 Slate 輸入前處理器。模式呼叫一次 `FOKModKeys::Listen("<模式>", 回覆處理)` 才收熱鍵，沒呼叫的畫面（百人房間）不受影響。打字中（焦點在文字框）、按住滑鼠、重複鍵不觸發；比中的鍵被吃掉。
+  - 讀卡器：`OKReaderMods::Keys`（Gallery `NativeConstruct`），Mods › 熱鍵頁每列一個按鈕，按下後等下一個組合鍵（Esc 保留、Backspace 清除）。
+  - 主控台：`OKMod.Keys` 列出、`OKMod.Bind <mod> <name> [chord|-]` 綁定（不給 chord 就等下一個鍵）。
+  - **Studio、1 對 1、街區還沒接 `Listen`**（那些檔案屬 E／C），各加一行即可。
+- 範例：`hello` 的 `greet`（F8）。測試 `host/tests/load.rs` `hotkeys_reach_their_mod_in_any_mode_and_rebind`。
+
+### 熱重載保留狀態 `dev.save_state`／`dev.restore_state`
+
+只在開發模式（`-ModDev`，主控台 `mod.reload <id>`）。`abi_stable` 不卸載 DLL（計畫 §7.5），重載是載入新副本、舊副本留在記憶體不再呼叫。
+
+1. 換之前：舊實例若訂閱 `dev.save_state`，收到 `{"version": "<舊版本>"}`，回 `Reply::Json`（狀態，任意 JSON）或 `Reply::Text`（當 JSON 字串）；`Reply::None`＝沒有狀態。
+2. 舊實例 `shutdown`，載入新副本，送 `Enabled`。
+3. 新實例若訂閱 `dev.restore_state`，收到 `{"from_version", "to_version", "state"}`。
+
+- 舊副本存狀態失敗（錯誤或 panic）：照樣換上新副本，從頭開始，`reload` 的回答註明 `dev.save_state failed`。
+- 新副本還原失敗：`reload` 回錯；panic 時新副本 faulted（不會半套狀態地跑）。
+- 新版本不訂閱 `dev.restore_state`：回答註明它從頭開始。
+- SDK：`Registrar::keep_state()` 一次訂閱兩個；`hooks::SAVE_STATE`、`hooks::RESTORE_STATE`、`hooks::RestoreState<T>`。狀態格式改了的 mod 看 `from_version`。
+- 範例：`hello` 保留 ping 次數。測試 `dev_mode_reload_swaps_in_a_fresh_copy`、`reload_state_survives_failures_of_either_copy`。
+
+## 10. 第四波新增的讀卡器與街區掛點（C 實作，F 補 SDK）
+
+欄位以 C 的程式為準（`OKReaderMods.cpp`、`Tools/ok-mod/host/src/card.rs` 的 `clothes_store`／`clothes_load`、`OKStreetSocialMods.inl` 與呼叫點；C 的回報 `Docs/OK_MOD_C_WAVE4.md`）。SDK 型別與常數在 `ok_mod_sdk::hooks::reader`、`hooks::street`。
+
+### 讀卡器
+
+每個 payload 都帶 `card`（目前角色的卡片路徑）。
+
+| 掛點（SDK 常數） | 何時 | payload（SDK 型別） | 回覆 |
+|---|---|---|---|
+| `reader.accessory_change`（`ACCESSORY_CHANGE`） | 外觀頁套用飾品後；新增飾品欄也送 | `{outfit, slot?, item, added}`；新增欄時沒有 `slot`、`added: true`（`AccessoryChange`） | 讀卡器動作（§5） |
+| `reader.accessory_transfer`（`ACCESSORY_TRANSFER`） | `ops` 的 `accessory_transfer` 套用成功後 | `{outfit, from, to}`（`AccessoryTransfer`） | 同上 |
+| `reader.accessory_copy`（`ACCESSORY_COPY`） | `ops` 的 `accessory_copy` 套用成功後 | `{from_outfit, to_outfit, slots: [..]}`（`AccessoryCopy`） | 同上 |
+| `reader.coordinate_save`（`COORDINATE_SAVE`） | 匯出服裝卡成功後（宿主 `clothes_store`） | `{clothes, card, outfit}`（`CoordinateSave`） | `{version, data_b64, accessories?: [{slot, version, data_b64}]}` 寫進服裝卡（`reader::coordinate_save`）；服裝卡的飾品區段沒有 `outfit` |
+| `reader.coordinate_load`（`COORDINATE_LOAD`） | 套用服裝卡成功後（宿主 `clothes_load`） | `{clothes, card, outfit, section, accessories}`（`CoordinateLoad`） | 讀卡器動作 |
+| `reader.clothes_state`（`CLOTHES_STATE`） | 穿脫按鈕改變狀態後 | `{outfit, kind, states: [9]}`（`ClothesState`） | 讀卡器動作 |
+| `reader.property_change`（`PROPERTY_CHANGE`） | 滑桿、詳細編輯、登錄寫入；最後一次改動 0.25 秒後合成一次 | `{outfit, keys: [..], values: {鍵: 現值}}`（`PropertyChange`）；不含 `mod.*`、`reader.mod_apply.*`，也不含這個 mod 自己回覆造成的改動 | 讀卡器動作 |
+| `reader.get_result`（`GET_RESULT`） | 回覆帶 `"get"` 之後，只送給那個 mod | `{outfit, values: {鍵: 值}}`（`GetResult`） | 讀卡器動作，但不能再 `get`（一輪） |
+
+- **讀登錄值**：任何讀卡器回覆可帶 `"get": ["body.height", "shape.face.*", ...]`（鍵，或以 `*` 結尾的前綴；最多 256 個；`mod.*` 不給）。SDK：`hooks::get(&[...])` 單獨回覆，`hooks::reader::with_get(json, &[...])` 和其他欄位一起。
+- **飾品範圍的資料**：`reader.character_load` 多帶 `accessories: [{outfit, slot, version, data_b64}]`（這個 mod 的 `<mod>/acc/<outfit>/<slot>` 區段）。`reader.character_save` 的回覆帶 `accessories` 時整批取代這個 mod 的飾品區段（`hooks::reader::AccessorySection`）。
+- **每格控制項**：頁面宣告 `"accessory": true` 時，頁首加「飾品欄」選單。`reader.values`／`reader.control` 多帶 `accessory: {outfit, slot}`，登錄鍵 `reader.mod_accessory_slot`（0–19）。
+- **分隔線**：項目 `{"kind": "separator", "label"?}`。
+- **工作卡**：外觀／屬性套用、穿服裝卡產生的新工作卡被當成同一個角色，不再送 `character_unload` + `character_load`。
+
+### 街區
+
+每個 payload 都帶當天：`day`、`date`（YYYY-MM-DD）、`minute`（一天中的分鐘）、`lang`（SDK `street::Day`，各型別以 `#[serde(flatten)]` 帶著）。`heroine` 是 `{id, name, birthday?}`（`street::Heroine`；`id` 存檔與改卡都不變，用它當 mod 資料的鍵）。
+
+| 掛點（SDK 常數） | 何時 | payload（SDK 型別） |
+|---|---|---|
+| `street.load`（`LOAD`） | 讀存檔（只送給各訂閱者自己） | `{heroines: [{id, name, birthday?, section}], new_game, state}`（`Load`）。`section` 是這個 mod 在她卡片 `okMx` 的區段，沒有是 null；`new_game`：存檔還沒有日曆；`state`：這個 mod 存在存檔的 `ext.mods.<id>` |
+| `street.period_change`（`PERIOD_CHANGE`） | 時段變了（每 0.5 秒檢查）：morning 5–11、day 11–17、evening 17–20、night 20–5 | `{period, previous}`（`PeriodChange`） |
+| `street.touch`（`TOUCH`） | 觸碰結算成功後 | `{heroine, part: head/cheek/hand_l/hand_r/chest_l/chest_r, look, repeat}`（`Touch`） |
+| `street.action`（`ACTION`） | 互動結束：做了、只記錄、被拒絕都送 | `{heroine, act, hers, record_only, done, refused, why?, reaction, place}`（`Action`） |
+| `street.arrive`（`ARRIVE`） | 他走進另一個地點；一次遊玩的第一個地點不送 | `{who: "him", place, place_name?, from, heroine?}`（`Arrive`；`heroine`：約會中或對話中的她） |
+| `street.phone`（`PHONE`） | 電話，雙向：`from: "him"`／`"her"`；她打來時他接了、掛掉（`declined`）或沒接（20 秒） | `{heroine, kind: "call", from, answered, declined?}`（`Phone`） |
+
+- **寫回她的卡**：任何街區回覆可帶 `{"cards": [{"heroine": id, "version", "data_b64"} | {"heroine": id, "remove": true}]}`，寫進（或移除）這個 mod 在她自己卡片的區段，每筆上限 1 MiB。SDK：`street::CardWrite::write(id, version, &value)`、`CardWrite::remove(id)`、`street::cards(&[...])`，或 `street::with_cards(json, &[...])` 和其他欄位一起。
+- 寫卡會改變卡片檔的大小與時間，診所改造卡會因此重做：只在少數時候寫（換日、一段關係的節點），不要每個事件都寫。
+
+## 11. 將來（有需要時再開）
+
+- **GPU 動態骨外力**（人群場景的路人；調查見 `Docs/OK_MOD_F_WAVE4.md` §3）。協調者 2026-11-23 決定：**現在不做**，有 mod 需要對路人施力時再開。
+  - 人群角色沒有 ok-extract Session，不經過 `ok_mod_frame`，現有外力（`OkModForce`）到不了她們。
+  - 屆時的做法：
+    1. `ok_mod_frame` 加一種「整個場景每幀一次」的呼叫（例如 `kind = 2`、沒有骨骼），mod 回世界座標外力球；
+    2. `OKCrowdRuntimeScene` 依每個 actor 的擺放把外力球換到她自己的空間，上傳 per-actor 外力緩衝；
+    3. `KKCrowdGpuPacking/Shaders/GpuRig.usf` 的 `PhysicsCS` 把根節點落在球內的外力加進鏈的 `force`。
+  - 牽涉 `ok_mod_frame` 語義與三組共用的 shader，開工前先經協調者。

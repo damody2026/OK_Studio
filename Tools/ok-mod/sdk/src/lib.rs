@@ -185,6 +185,13 @@ impl Registrar {
     pub fn config_hotkey(&mut self, key: &str, default: &str, description_id: &str) -> &mut Self {
         self.config(key, ConfigValue::Hotkey(default.into()), None, description_id)
     }
+    /// A hotkey the game watches in every mode (Docs/OK_MOD_HOOKS.md §9): a `config_hotkey` entry the player can
+    /// rebind, plus the hook `key.<key>` sent to this mod when it is pressed (`hooks::hotkey` tells which; payload
+    /// `hooks::KeyPress`). `default` is Unreal key names joined by `+` (`"F7"`, `"LeftControl+K"`); empty is unbound.
+    pub fn hotkey(&mut self, key: &str, default: &str, description_id: &str) -> &mut Self {
+        self.config_hotkey(key, default, description_id);
+        self.subscribe(&format!("key.{key}"))
+    }
     /// Console command `mod.<id>.<name>`, also reachable through the control channel's `mod_call`.
     pub fn command(&mut self, name: &str, description_id: &str) -> &mut Self {
         self.declarations.push(Declaration::Command(CommandDecl {
@@ -199,6 +206,14 @@ impl Registrar {
     pub fn subscribe(&mut self, event: &str) -> &mut Self {
         self.declarations.push(Declaration::Subscribe(event.into()));
         self
+    }
+
+    /// Development-mode hot reload keeps this mod's state (plan §7.5): before the old copy stops it gets the hook
+    /// `dev.save_state` (answer the state with `hooks::json`), after the new copy starts it gets `dev.restore_state`
+    /// (`hooks::RestoreState`). Without it a reload starts the mod over. The release game never reloads.
+    pub fn keep_state(&mut self) -> &mut Self {
+        self.subscribe(hooks::SAVE_STATE);
+        self.subscribe(hooks::RESTORE_STATE)
     }
 
     fn finish(self) -> Registration {
