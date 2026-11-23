@@ -29,6 +29,9 @@ const PACKED_DIRS: &[&str] = &["locale", "assets", "materials", "content"];
 
 pub type Result<T> = std::result::Result<T, String>;
 
+pub mod new;
+pub use new::{new_mod, NewOptions, NewReport};
+
 fn io<T>(what: &Path, r: std::io::Result<T>) -> Result<T> {
     r.map_err(|e| format!("{}: {e}", what.display()))
 }

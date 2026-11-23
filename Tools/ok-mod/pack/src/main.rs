@@ -2,9 +2,12 @@
 
 use std::path::PathBuf;
 
-use ok_mod_pack::{install, pack, profile_apply, profile_save, verify, InstallOptions, PackOptions};
+use ok_mod_pack::{install, new_mod, pack, profile_apply, profile_save, verify, InstallOptions, NewOptions, PackOptions};
 
 const USAGE: &str = "\
+ok-mod-pack new <folder> --id <org.example.my-mod> [--name <shown name>] [--author <name>] [--sdk <Tools/ok-mod/sdk>]
+    a new mod that builds and packs as it is: Cargo.toml, mod.toml, src/lib.rs (config entry, command, hotkey,
+    state kept across a hot reload), locale/en and locale/zh-CN (Docs/OK_MOD_AUTHORING.md)
 ok-mod-pack pack <mod folder> [--dll <built dll>] [--out <file.okmod>] [--skip-pak-check]
     check a mod (mod.toml, ABI layout and panic=unwind of the DLL, locale ids, content pak) and write <id>-<version>.okmod
 ok-mod-pack install <file.okmod>... --to <Mods> [--force]
@@ -26,7 +29,7 @@ struct Args {
 }
 
 fn parse(argv: Vec<String>) -> Args {
-    const VALUED: &[&str] = &["--dll", "--out", "--to", "--mods", "--packages"];
+    const VALUED: &[&str] = &["--dll", "--out", "--to", "--mods", "--packages", "--id", "--name", "--author", "--sdk"];
     let mut a = Args { positional: Vec::new(), flags: Default::default(), switches: Default::default() };
     let mut it = argv.into_iter();
     while let Some(x) = it.next() {
@@ -62,6 +65,21 @@ fn run() -> Result<i32, String> {
     let pos = |i: usize, what: &str| a.positional.get(i).cloned().ok_or_else(|| format!("missing {what}\n\n{USAGE}"));
     let flag = |name: &str| a.flags.get(name).filter(|v| !v.is_empty()).map(PathBuf::from);
     match pos(0, "command")?.as_str() {
+        "new" => {
+            let id = a.flags.get("--id").filter(|v| !v.is_empty()).cloned().ok_or("new needs --id <org.example.my-mod>")?;
+            let text = |n: &str| a.flags.get(n).filter(|v| !v.is_empty()).cloned();
+            let opt = NewOptions { name: text("--name"), author: text("--author"), sdk: flag("--sdk") };
+            let r = new_mod(&PathBuf::from(pos(1, "folder")?), &id, &opt)?;
+            print(json, &r, |r| {
+                let mut s = format!("{} -> {} ({})", r.id, r.dir, r.files.join(", "));
+                match &r.workspace_member {
+                    Some(m) => s += &format!("\ninside the ok-mod workspace: add \"{m}\" to members in Tools/ok-mod/Cargo.toml, then cargo build -p {}", r.crate_name),
+                    None => s += &format!("\nbuild: cargo build --release (in that folder), then ok-mod-pack pack <folder> --dll target/release/{}", r.dll),
+                }
+                s
+            });
+            Ok(0)
+        }
         "pack" => {
             let opt = PackOptions { dll: flag("--dll"), out: flag("--out"), skip_dll_check: false, skip_pak_check: a.switches.contains("--skip-pak-check") };
             let r = pack(&PathBuf::from(pos(1, "mod folder")?), &opt)?;
