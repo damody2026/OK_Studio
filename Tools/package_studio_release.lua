@@ -284,6 +284,14 @@ local function main()
     end
   end
   for _, f in ipairs(path.rglob(out, "*.pdb")) do problems[#problems + 1] = "a .pdb is in the package: " .. win(f) end
+  -- Launchers must be ASCII only: with the console in UTF-8 (65001) cmd misreads non-ASCII lines and runs pieces of
+  -- them ("'H' is not recognized ..." after the card reader started, 2026-11-24).
+  for _, f in ipairs(path.rglob(out, "*.cmd")) do
+    local fh = io.open(f, "rb")
+    local body = fh and fh:read("a") or ""
+    if fh then fh:close() end
+    if body:find("[\128-\255]") then problems[#problems + 1] = "a launcher has non-ASCII text (cmd misreads it under code page 65001): " .. win(f) end
+  end
   for _, rel in ipairs({ "Licenses/THIRD_PARTY.md", "Licenses/DINOv3-LICENSE.md", "Licenses/Apache-2.0.txt", "Docs/VIDEO_WEIGHTS.md" }) do need(rel) end
   for _, rel in ipairs(HAIRDECK_FILES) do need("HairDeckData/" .. rel, "HairDeck weights missing") end
   -- HairDeck really runs from the package: its own exe, its own weights (HAIRDECK_ROOT cleared, and the weights it
