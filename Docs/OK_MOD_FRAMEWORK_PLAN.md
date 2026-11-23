@@ -780,3 +780,200 @@ flowchart TB
 - 子對話回報後檢查提交與驗收，再開同檢出的下游；
 - 一波結束時回報三邊狀態，**請使用者決定要不要做同步點**；
 - 子對話 1 提交後把 `ok-mod-api` 定為 0.1。之後的 API 改動由協調者集中決定，並通知三邊。
+
+## 16. 交接（2026-11-23 當機後，換 AI 接手）
+
+### 16.1 現況
+
+- 72 小時無人值守（§15.0）從 2026-11-23 00:52 開始，**第四波進行中，約 06:57 電腦當機**。協調者的 10 分鐘巡查排程與三個子對話都已停止，之後沒有任何新提交。
+- 三個檢出都停在**同步點 C 的 `573a1c6bb`**（C 的 `master`；E、F 已快轉到同一點），工作樹裡留著第四波**沒提交**的改動（見 §16.4）。
+- 從沒推送過；最後整合（完整 cook、新 base／stage）**還沒做**。
+
+| 同步點 | C 的提交 | 內容 |
+|---|---|---|
+| A | `2640da679` | 工作項 1–6 |
+| B | `351002ba5` | 工作項 7、8、10、12、13、7b；§7.6 規則 |
+| C | `573a1c6bb` | 工作項 9、9b、9c、11、12 收尾；第三波 C／E 補缺 |
+
+本計畫 §1–§15 與 F 的同一份一致（同步點 C 時完全相同）。之後由 C 的這份當主本，F 那份不再單獨改。
+
+### 16.2 已完成的工作項與回報
+
+都在 `Docs/` 下：
+
+| 工作項 | 回報 |
+|---|---|
+| 1 Rust 骨架（ok-mod-api／sdk／host、abi_stable） | `OK_MOD_S1_Rust骨架.md` |
+| 2 卡片 `okMx`／`okMr` chunk | `OK_MOD_S2_CARD_CHUNKS.md` |
+| 3 材質可行性 | `OK_MOD_S3_材質可行性.md` |
+| 4 讀卡器前置 | `OK_MOD_S4_READER_PREREQ.md` |
+| 5 Studio 前置 | `OK_MOD_S5_STUDIO_PREREQ.md` |
+| 6 UE 宿主 `Plugins/OKModding` | `OK_MOD_S6_UE_HOST.md` |
+| 7 讀卡器 API；7b DreamGUI D1 | `OK_MOD_S7_READER_API.md`、`OK_MOD_S7b_DREAMGUI.md` |
+| 8 Studio API | `OK_MOD_S8_STUDIO_API.md` |
+| 9 材質 A／B 層；9b DreamGUI D2；9c 快取 | `OK_MOD_S9_MATERIALS.md`、`OK_MOD_S9_FINISH.md`、`OK_MOD_S9b_DREAMGUI_D2.md`、`OK_MOD_S9c_CACHES.md` |
+| 10 街區 | `OK_MOD_S10_STREET.md` |
+| 11 每幀呼叫 | `OK_MOD_S11_FRAME.md`、`OK_MOD_S11_FINISH.md` |
+| 12 打包 `ok-mod-pack` | `OK_MOD_S12_PACK.md`、`OK_MOD_S12_FINISH.md` |
+| 13 1 對 1（含前置 13a） | `OK_MOD_S13a_PAIR_PREREQ.md`、`OK_MOD_S13_PAIR.md` |
+| 第三波 C 補缺 | `OK_MOD_C_WAVE3.md`（第 6 節是讀卡器／街區相對 KKAPI 的缺口清單，第四波 C 的工作來源） |
+| 掛點總表／盤點 | `OK_MOD_HOOKS.md`、`OK_MOD_HOOK_INVENTORY.md` |
+
+當中修掉的既有 bug：
+
+- 讀卡器 `ui_widgets` 是空的（F `9a63c5401`）；
+- 街區冷開時出現的 unanswered question(s)（C）；
+- 貼紙類 `material.post_texture` mod 沒算進開卡快取鍵（`be9cf31c3`、`5c9be1f2b`）。
+
+### 16.3 實作中定下、接手時一定要守的規則
+
+- §7.6 全部，尤其：
+  - **`Event` 不能再加變體**，新功能一律走 `Event::Hook { name, payload }`；
+  - 每幀呼叫走 C 函式 `ok_mod_frame`；
+  - 開卡快取鍵只算會改開卡結果的 mod（`extract.*` 開卡掛點加上 `material.post_texture`）。
+- `okMx`／`okMr` 不算進卡片身分 sha256。三處要一致：
+  - `Tools/ok-extract` 的 `oklib.rs`；
+  - `Tools/prepare_street_social_selection.lua`；
+  - C++ 的 `OKCardIdentity`。
+- **同步點流程**：
+  1. E、F 各自提交；
+  2. 合進 C；
+  3. C 混合編譯，要全過：
+     - `cargo test`（`Tools/ok-mod`）；
+     - `cargo check`（`Tools/ok-extract`，另加 `--no-default-features`）；
+     - D: 引擎建 `OpenKoikatsuEditor` 與 `OpenKoikatsu` Development；
+  4. E、F 從 C 快轉。
+
+  `Docs/ERROR_LOG.md` 每次都會衝突：先把三方都轉成 LF，再 `git merge-file --union`，並核對兩邊的列都在。
+- **不要提交的檔案**：
+  - 各檢出的 `OKExtractBuildStamp.h`（自動產生）；
+  - F 的 `Tools/ok-extract/src/entries.rs`（別人的改動，不屬 mod 工作）；
+  - `grok-media/`、`UserData/`；
+  - 角色卡。
+- Unreal 名額全機最多 2 個，一律用 C 的 `Tools/lua/lua.exe Tools/unreal_slot.lua`：建置前 `may-build`，開 Unreal 前 `claim`，用完馬上 `release`。
+- cargo `-j 8`、`RAYON_NUM_THREADS=8`；腳本只用 Lua；各檢出用自己的 lua 與引擎。
+  - C → `D:\PhysX\UE5.8`
+  - E → `E:\PhysX\UE5.8`
+  - F → `F:\UE5.8`
+- 不推送。
+
+### 16.4 第四波：分派內容與當機時沒提交的改動
+
+接手第一步：在各檢出看 `git diff`，判斷能不能直接收尾提交。沒有任何一邊寫出第四波回報。
+
+**C（`C:\portable\OpenKoikatsu`）：讀卡器／街區補 KKAPI 缺口，回報 `Docs/OK_MOD_C_WAVE4.md`**
+
+分派的事：
+
+- 讀卡器：
+  - 飾品的 `okMx` 範圍，加上 `reader.accessory_change`／`accessory_copy`／`accessory_transfer` 掛點與每格控制項；
+  - `reader.coordinate_load`／`reader.coordinate_save`；
+  - `reader.property_change`；
+  - mod 讀登錄值的方法；
+  - 分隔線控制項；
+  - `reader.clothes_state`。
+- 街區：
+  - `street.period_change`；
+  - `street.load` 加 `new_game` 旗標；
+  - 街區把資料寫回女角卡的 `okMx`；
+  - `street.touch`／`street.action`／`street.arrive`；
+  - 她打來的電話發 `street.phone`（`from: her`）；
+  - 資料表擴充（先調查）。
+
+當機時的改動，只做到**讀卡器飾品範圍與服裝存讀**：
+
+| 檔案 | 改動 |
+|---|---|
+| `Tools/ok-mod/host/src/card.rs` | +167：飾品區段整段取代、依所屬命名 |
+| 新 `Tools/ok-extract/src/appearance/accessory_ops.rs`（155 行） | `acc_sections`、`store_acc`、`remove_all`；含測試 |
+| `Tools/ok-extract/src/appearance.rs`、`appearance/properties.rs` | 接上 |
+| `Source/OpenKoikatsu/OKReaderMods.h`、`OKReaderModPage.cpp` | `reader.coordinate_load`／`coordinate_save` |
+
+街區部分一項都還沒動。
+
+**E（`E:\OpenKoikatsu`）：Studio 物件操作與共存測試，回報 `Docs/OK_MOD_E_WAVE4.md`**
+
+分派的事：
+
+- `toon-post`、`idle-breath` 與 4 個 Studio 範例的共存測試：存讀檔、undo、`frame_stats`；
+- Studio 物件操作：位移、顯示、名稱、服裝狀態、動作、表情、FK／IK。一律走命令表，才能 undo；
+- 新增與刪除物件；`studio.get`；
+- 完整缺口清單。
+
+當機時的改動：
+
+| 檔案 | 改動 |
+|---|---|
+| `Source/OpenKoikatsu/OKStudioModBridge.cpp` | +151：mod 的 op 批次、`studio.ops_result`、`studio.character_changed` |
+| `Tools/ok-mod/studio/src/lib.rs` | +130：SDK 端的物件操作 |
+| `Plugins/OKStudio/...`（`OKStudioControl.cpp`、`SOKStudioMod.cpp`、`SOKStudioPanel.h`、`Public/OKStudioMod.h`） | |
+| `Source/OpenKoikatsu/OKHScene.h`、`OKInteractionMod.cpp` | |
+| `Tools/ok-mod/Cargo.toml`／`Cargo.lock` | 加了新範例 |
+| 新範例 `Tools/ok-mod/examples/light-rig/` | |
+
+共存測試還沒跑。
+
+**F（`F:\OpenKoikatsu`）：框架本體收尾**
+
+分派的事：
+
+- 跨模式按鍵服務 `key.<mod id>.<name>`；
+- 熱重載保留狀態（`dev.save_state`／`dev.restore_state` 掛點）；
+- GPU 動態骨外力；
+- `Docs/OK_MOD_AUTHORING.md` 加上 `ok-mod-pack new` 範本。
+
+當機時只做到**按鍵服務**：
+
+| 檔案 | 改動 |
+|---|---|
+| 新 `Tools/ok-mod/host/src/keys.rs`（140 行） | |
+| `host/src/ffi.rs`、`host/src/lib.rs`、`include/ok_mod_host.h` | |
+| SDK `hooks.rs`、`lib.rs` | |
+| 新 `Plugins/OKModding/.../OKModKeys.{h,cpp}` | 283 行 |
+| `OKModding.Build.cs` | |
+| `Source/OpenKoikatsu/OKReaderMods.{h,cpp}`、`OKReaderModPage.cpp`、`OKGalleryWidget.cpp` | 讀卡器的 `reader.mods.hotkeys`／`reader.mods.press_key` |
+| `hello` 範例 | 加 `greet` 熱鍵與 locale |
+| `host/tests/load.rs` | 測試 |
+
+熱重載、GPU 外力、`OK_MOD_AUTHORING.md` 都還沒開始。
+
+**會衝突的檔案**：C 與 F 都改了 `Source/OpenKoikatsu/OKReaderModPage.cpp` 與 `OKReaderMods.h`，同步點 D 合併時要兩邊都保留。
+
+### 16.5 剩下的事（依序）
+
+1. **第四波收尾**：三邊把 §16.4 沒提交的改動驗過再提交，一種改動一個提交。接著補完各自沒做的項目，寫回報。
+2. **同步點 D**：照 §16.3 的流程。
+3. **E 的共存測試**：Studio 範例全部一起裝。
+4. **乾淨 stage 測安裝**：用 `ok-mod-pack install` 裝 starter／full 兩組（§14），讀卡器、街區、Studio、1 對 1 各開一次。
+5. **最後整合**：照 AGENTS.md「打包街區交流 demo」：
+   - `Tools\lua\lua.exe Tools\rebuild_street_social_runtime.lua --tag <新 tag>`，完整 cook 與 base；
+   - `CardReaderDevelopment.cmd`、`StreetSocial.cmd` 都要編過並實際啟動；
+   - 確認後刪掉舊 stage、base、host。刪 base 前先列出所有 `.stage` 的 junction 目標。
+6. 結束時把結果補進本節，或另寫 `Docs/OK_MOD_HANDOFF.md`。
+
+**已知沒驗到的**：
+
+- 讀卡器裡的字幕 mod 沒實測（缺 `comm_lines.json`）；
+- Shift 跳過只在開發版測過，打包版沒測；
+- Release 建置的 mod 互通沒測。
+
+### 16.6 怎麼接手
+
+三個舊子對話（都已停止）：
+
+| 檢出 | 子對話 | session id |
+|---|---|---|
+| C | `[C組] mod 卡片／讀卡器／街區` | `local_2f6fcc47-c442-431a-8f9b-89fdce0e0690` |
+| F | `[F組] mod 框架本體` | `local_836c4c15-bfb1-4610-86e2-0cefaa3a88d2` |
+| E | `[E組] mod OK Studio／1 對 1` | `local_1ed45189-1000-4174-867b-db87945222e2` |
+
+協調者是 `local_ffcd0606-0c50-4140-a5fe-b22b1d22d965`。換別的 AI 時不必沿用。
+
+接手步驟：
+
+1. 在三個檢出各跑一次 `git status`，對照 §16.4；
+2. 先確認當機沒留下壞檔：各檢出跑 `cargo check`（`Tools/ok-mod`、`Tools/ok-extract`）。Unreal 中間檔若有問題，重建該目標；
+3. 檢查 `unreal_slot.lua status`。當機前占用的名額要手動 `release`，只放掉這次 mod 工作的 `f-mod-*`／`c-mod-*`／`e-mod-*`，別人的不動；
+4. 依 §16.5 繼續。
+
+授權仍照 §15.0：到 2026-11-26 00:52 為止可以自己決定、自己做同步與整合，但不推送。
