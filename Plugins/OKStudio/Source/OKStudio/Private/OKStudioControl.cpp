@@ -2075,6 +2075,17 @@ TSharedRef<FJsonObject> OKStudioRunModOp(const FString& Op, const TSharedRef<FJs
 		return Run(TEXT("patch"), Patch);
 	}
 	if (!Open.Contains(Op)) return Result(false, TEXT("op not open to mods: ") + Op);
+	// pose selects the character it changes (the panel's animation pickers work on the selection): a mod's pose of one
+	// character must not drop the others the user had selected, the next op of the answer still reads that selection.
+	if (Op == TEXT("pose"))
+	{
+		UOKStudioGame* G = UOKStudioGame::Get();
+		const TArray<int32> Selection = G ? G->Selection : TArray<int32>();
+		const int32 Primary = G ? G->SelectedId : -1;
+		TSharedRef<FJsonObject> Out = Run(Op, Args);
+		if ((G = UOKStudioGame::Get()) != nullptr && G->Selection != Selection) G->SelectMany(Selection, Primary);
+		return Out;
+	}
 	return Run(Op, Args);
 }
 
