@@ -1283,6 +1283,7 @@ void UOKCharacterController::SetWorkingCardPath(const FString& Path)
 {
  if(!Entries.IsValidIndex(SelectedIndex))return;
  if(!CardSources.Contains(SelectedIndex))CardSources.Add(SelectedIndex,TPair<FString,bool>(Entries[SelectedIndex].Path,bIndependentCards));
+ OKReaderMods::WorkingCard(Entries[SelectedIndex].Path,Path);	// the same character for the mods
  Entries[SelectedIndex].Path=Path;
 }
 
@@ -2792,6 +2793,7 @@ void UOKCharacterController::OnClothesState(int32 Kind)
  }
  FMemory::Memcpy(ClothesStates,Next,sizeof(ClothesStates));
 	RefreshClothesStateLabels();
+	OKReaderMods::ClothesState(this,ClothesStates,Kind);
  bool VisibilityOnly=false;
  if(IsValid(PreviewActor)&&Kind==102)VisibilityOnly=PreviewActor->SetClothingHidden(true);
  else if(IsValid(PreviewActor)){

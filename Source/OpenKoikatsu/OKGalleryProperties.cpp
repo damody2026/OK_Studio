@@ -22,6 +22,7 @@
 #include "Components/Border.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "OKReaderMods.h"
 
 void UOKPropertyInput::Changed(float V){if(!Owner||Generation!=Owner->PropertyGeneration)return;if(bBoolean)Owner->SetEditorProperty(Key,MakeShared<FJsonValueBoolean>(V>=.5f));else Owner->SetEditorProperty(Key,MakeShared<FJsonValueNumber>(V));}
 void UOKPropertyParent::Committed(const FText& V,ETextCommit::Type Type){if(Owner&&Generation==Owner->PropertyGeneration&&Type!=ETextCommit::OnCleared)Owner->SetEditorProperty(Key,MakeShared<FJsonValueString>(V.ToString()));}
@@ -67,7 +68,7 @@ void UOKCharacterController::OnOpenProperties(){
 void UOKCharacterController::OnPropertySearch(const FText& Value){PropertyPage=0;RebuildPropertyControls();}
 void UOKCharacterController::OnPropertyPrev(){PropertyPage=FMath::Max(0,PropertyPage-1);RebuildPropertyControls();}
 void UOKCharacterController::OnPropertyNext(){PropertyPage=FMath::Min(FMath::Max(0,(PropertyMatches-1)/64),PropertyPage+1);RebuildPropertyControls();}
-void UOKCharacterController::SetEditorProperty(const FString& Key,TSharedPtr<FJsonValue> Value){if(bPropertyBusy)return;bool Same=false;for(auto P:EditorProperties)if(P->GetStringField(TEXT("key"))==Key){auto Base=P->Values[TEXT("value")];if(Base->Type==Value->Type){if(Value->Type==EJson::Number)Same=FMath::Abs(Base->AsNumber()-Value->AsNumber())<1.e-7;else if(Value->Type==EJson::Boolean)Same=Base->AsBool()==Value->AsBool();else if(Value->Type==EJson::String)Same=Base->AsString()==Value->AsString();}break;}if(Same)PendingProperties.Remove(Key);else PendingProperties.Add(Key,Value);RefreshPropertyColor();PropertyStatus->SetText(FText::FromString(FString::Printf(TEXT("已修改 %d 項；按「套用並更新角色」產生可保存的外觀。"),PendingProperties.Num())));}
+void UOKCharacterController::SetEditorProperty(const FString& Key,TSharedPtr<FJsonValue> Value){if(bPropertyBusy)return;OKReaderMods::PropertyChanged(this,Key);bool Same=false;for(auto P:EditorProperties)if(P->GetStringField(TEXT("key"))==Key){auto Base=P->Values[TEXT("value")];if(Base->Type==Value->Type){if(Value->Type==EJson::Number)Same=FMath::Abs(Base->AsNumber()-Value->AsNumber())<1.e-7;else if(Value->Type==EJson::Boolean)Same=Base->AsBool()==Value->AsBool();else if(Value->Type==EJson::String)Same=Base->AsString()==Value->AsString();}break;}if(Same)PendingProperties.Remove(Key);else PendingProperties.Add(Key,Value);RefreshPropertyColor();PropertyStatus->SetText(FText::FromString(FString::Printf(TEXT("已修改 %d 項；按「套用並更新角色」產生可保存的外觀。"),PendingProperties.Num())));}
 void UOKCharacterController::OnResetProperties(){if(bPropertyBusy)return;PendingProperties.Reset();RebuildPropertyControls();}
 void UOKCharacterController::ResetEditorProperty(const FString& Key){if(bPropertyBusy)return;PendingProperties.Remove(Key);RebuildPropertyControls();}
 void UOKCharacterController::OnPropertyColorTarget(FString Option,ESelectInfo::Type SelectionType){PropertyColorKey=PropertyColorLabels.FindRef(Option);RefreshPropertyColor();}
@@ -205,10 +206,11 @@ FString UOKCharacterController::ApplyPropertyOps(const TArray<TSharedPtr<FJsonVa
  bPropertyBusy=true;bAppearanceBusy=true;if(PropertyPanel)PropertyPanel->SetIsEnabled(false);if(ShapePanel)ShapePanel->SetIsEnabled(false);
  if(PropertyStatus)PropertyStatus->SetText(FText::FromString(TEXT("正在套用這個動作並產生外觀…")));
  const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
- RunAppearanceRequest(R,[Selection,Generation,Outfit,Output,CardJob](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
+ RunAppearanceRequest(R,[Selection,Generation,Outfit,Output,CardJob,Ops](UOKCharacterController* G,TSharedPtr<FJsonObject> Data,const FString& Failure){
   G->bPropertyBusy=false;G->bAppearanceBusy=false;if(G->PropertyPanel)G->PropertyPanel->SetIsEnabled(true);if(G->ShapePanel)G->ShapePanel->SetIsEnabled(true);
   if(Selection!=G->SelectedIndex||Generation!=G->LoadGeneration||Outfit!=G->OutfitIndex)return;
   if(!Data){if(G->PropertyStatus)G->PropertyStatus->SetText(FText::FromString(TEXT("這個動作沒有套用，角色保持原樣：")+Failure));return;}
+  OKReaderMods::AccessoriesMoved(G,Ops);	// reader.accessory_copy／accessory_transfer (other ops are ignored there)
   // The rows are stale in a way we cannot repair from here, so they are re-read rather than guessed.
   G->EditorProperties.Reset();G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->PropertySource=Output;G->bIndependentCards=true;G->PreviewResourceSignature.Empty();G->OnLoad3D();
   if(G->PropertyStatus)G->PropertyStatus->SetText(FText::FromString(TEXT("已套用這個動作並保存外觀。")));

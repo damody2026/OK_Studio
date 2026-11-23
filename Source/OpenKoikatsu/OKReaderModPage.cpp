@@ -52,11 +52,13 @@ double Num(const FItem& I,const TCHAR* Field,double Default){double N=Default;I-
 TSharedPtr<FJsonValue> ValueOf(const FString& Key)
 {
 	if(OKReaderMods::IsApplyKey(Key))return MakeShared<FJsonValueBoolean>(OKReaderMods::ApplyOnLoad(Key.Mid(17)));
+	if(OKReaderMods::IsAccessorySlotKey(Key))return MakeShared<FJsonValueString>(FString::FromInt(OKReaderMods::AccessorySlot()));
 	return OKReaderMods::Value(Key);
 }
 bool SetValueOf(UOKCharacterController* G,const FString& Key,const TSharedPtr<FJsonValue>& V,FString& Error)
 {
 	if(OKReaderMods::IsApplyKey(Key)){OKReaderMods::SetApplyOnLoad(Key.Mid(17),V->AsBool());return true;}
+	if(OKReaderMods::IsAccessorySlotKey(Key)){OKReaderMods::SetAccessorySlot(G,V->Type==EJson::String?FCString::Atoi(*V->AsString()):int32(V->AsNumber()));return true;}
 	return OKReaderMods::Set(G,Key,V,Error);
 }
 FString AsText(const TSharedPtr<FJsonValue>& V)
@@ -139,6 +141,21 @@ void UOKReaderScreen::AddModCategory()
 	{
 		FItem Spec=Page.Spec;
 		if(!Spec.IsValid()){Spec=MakeShared<FJsonObject>();TArray<TSharedPtr<FJsonValue>> Items;for(const FItem& I:Page.Items)Items.Add(MakeShared<FJsonValueObject>(I));Spec->SetArrayField(TEXT("items"),Items);}
+		// A page of per-slot controls ({"accessory": true}): a slot chooser first, then a dividing line; its values are
+		// the chosen slot's (reader.values / reader.control carry {"outfit","slot"}).
+		bool bAccessory=false;
+		if(Spec->TryGetBoolField(TEXT("accessory"),bAccessory)&&bAccessory)
+		{
+			auto Chooser=MakeShared<FJsonObject>();Chooser->SetStringField(TEXT("kind"),TEXT("dropdown"));Chooser->SetStringField(TEXT("key"),TEXT("reader.mod_accessory_slot"));
+			Chooser->SetStringField(TEXT("label"),TEXT("飾品欄"));
+			TArray<TSharedPtr<FJsonValue>> Options;
+			for(int32 S=0;S<20;++S){auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("value"),FString::FromInt(S));O->SetStringField(TEXT("label"),FString::Printf(TEXT("飾品欄 %d"),S+1));Options.Add(MakeShared<FJsonValueObject>(O));}
+			Chooser->SetArrayField(TEXT("options"),Options);
+			auto Rule=MakeShared<FJsonObject>();Rule->SetStringField(TEXT("kind"),TEXT("separator"));
+			TArray<TSharedPtr<FJsonValue>> Items{MakeShared<FJsonValueObject>(Chooser),MakeShared<FJsonValueObject>(Rule)};
+			const TArray<TSharedPtr<FJsonValue>>* Own=nullptr;if(Spec->TryGetArrayField(TEXT("items"),Own))Items.Append(*Own);
+			Spec=MakeShared<FJsonObject>(*Spec);Spec->SetArrayField(TEXT("items"),Items);
+		}
 		AddPage(Page.Name.IsEmpty()?Page.Mod:Page.Name,Spec);
 	}
 	if(Mods.Groups.Num())Categories.Add(MoveTemp(Mods));
@@ -265,6 +282,17 @@ float UOKReaderScreen::BuildModItem(UDreamWidget* Into,const FItem& Item,const F
 		if(!Key.IsEmpty())C->PullNow();
 		const float Line=26.f,Width=FMath::Max(120.f,LeftWidth-80.f);
 		return FMath::Max(30.f,Line*FMath::CeilToFloat(FMath::Max(1,Fixed.Len()+8)*18.f/Width));
+	}
+	// A dividing line (MakerSeparator): a dim rule across the column, or a caption between two rules when it has text.
+	if(Kind==TEXT("separator"))
+	{
+		UOKDreamControl* C=MakeControl(TEXT("Label"),Into);if(!C)return 0;
+		const FString Caption=OKReaderMods::ItemText(Item,TEXT("label"));
+		const int32 Width=FMath::Clamp(int32((LeftWidth-80.f)/14.f),8,60);
+		const FString Rule=Caption.IsEmpty()?FString::ChrN(Width,TEXT('─')):FString::ChrN(3,TEXT('─'))+TEXT(" ")+Caption+TEXT(" ")+FString::ChrN(FMath::Max(3,Width-Caption.Len()*2-5),TEXT('─'));
+		C->FixedText=Rule;C->SetText(Rule);
+		if(UDreamText* T=ModTextOf(C->Label)){T->SetColor(FColor(150,150,160));T->SetFontSize(14.f);}
+		return 24.f;
 	}
 	if(Kind==TEXT("progress"))
 	{

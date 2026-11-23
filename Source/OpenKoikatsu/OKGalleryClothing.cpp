@@ -24,6 +24,7 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <commdlg.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+#include "OKReaderMods.h"
 #endif
 void OKBackgroundWorkerPriority(); // OKGalleryWidget.cpp
 void OKRetireActor(AActor* Actor); // OKGalleryWidget.cpp: hidden now, destroyed over the next frames
@@ -264,7 +265,7 @@ void UOKCharacterController::ExportOkClothesTo(const FString& OutIn,TFunction<vo
  auto Export=[Weak,Card,Outfit,Output,Done](const FString& Picture){
   FString Summary;const bool Ok=Picture.IsEmpty()?FOkSession::ClothesExport(Card,Outfit,Output,Summary):FOkSession::ClothesExportPictured(Card,Outfit,Picture,Output,Summary);
   UE_LOG(LogTemp,Display,TEXT("OK clothes export %s outfit %d -> %s: %s"),*Card,Outfit,*Output,*Summary);
-  if(Ok&&Weak.IsValid())++Weak->OkClothesVersion;
+  if(Ok&&Weak.IsValid()){++Weak->OkClothesVersion;OKReaderMods::ClothesSaved(Weak.Get(),Output,Card,Outfit);}	// reader.coordinate_save
   Done(Ok,Ok?Output:Summary);
  };
  // Pictured as she wears it now (the front view of the card capture); the card's own picture when she is not shown.
@@ -326,6 +327,8 @@ void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClot
    if(!Self){return;}
    Self->bWearingOkClothes=false;
    if(!Ok){Done(false,Summary);return;}
+   // The worn card is a work card of the same character; the mods take the outfit card's data (reader.coordinate_load).
+   OKReaderMods::WorkingCard(Card,Output);OKReaderMods::ClothesWorn(Self,Clothes,Output,Outfit);
    // Opened at once, in the outfit she now wears.
    Self->bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Output).IsEmpty();
    int32 Index=Self->Entries.IndexOfByPredicate([&](const auto& E){return FPaths::IsSamePath(E.Path,Output);});

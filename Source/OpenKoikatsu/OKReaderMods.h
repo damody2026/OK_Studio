@@ -33,6 +33,26 @@ namespace OKReaderMods
 	// Every reader tick: the mouse sweeping over the shown character goes to input.pointer subscribers (boop).
 	void Pointer(UOKCharacterController* G,AKKPreviewActor* Actor,float DeltaSeconds);
 
+	// The reader went on to a work card made from the shown one (an appearance edit, worn outfit card): the same
+	// character for the mods, which keep what they hold instead of loading the work card as another card.
+	void WorkingCard(const FString& From,const FString& To);
+	// The shown outfit's accessory slot `Slot` now holds `Item` (a catalogue key; empty: taken off; Added: a new slot).
+	void AccessoryChanged(UOKCharacterController* G,int32 Slot,const FString& Item,bool bAdded=false);
+	// Accessories copied or transferred (accessory_copy / accessory_transfer ops, done): Ops as sent.
+	void AccessoriesMoved(UOKCharacterController* G,const TArray<TSharedPtr<FJsonValue>>& Ops);
+	// An outfit card exported from the shown outfit (reader.coordinate_save) / put on as it (reader.coordinate_load).
+	void ClothesSaved(UOKCharacterController* G,const FString& Clothes,const FString& Card,int32 Outfit);
+	void ClothesWorn(UOKCharacterController* G,const FString& Clothes,const FString& Card,int32 Outfit);
+	// The clothes states changed (reader.clothes_state): the nine states and the kind pressed.
+	void ClothesState(UOKCharacterController* G,const uint8 (&States)[9],int32 Kind);
+	// A registry key's value changed (slider, detailed editor, appearance, a mod's set): batched into one
+	// reader.property_change a moment later.
+	void PropertyChanged(UOKCharacterController* G,const FString& Key);
+	// The accessory slot the mods' per-slot controls are on (registry reader.mod_accessory_slot).
+	int32 AccessorySlot();
+	bool IsAccessorySlotKey(const FString& Key);
+	void SetAccessorySlot(UOKCharacterController* G,int32 Slot);
+
 	// The registry rows of every mod control (kind, label, value, options; category "mods").
 	TArray<TSharedPtr<FJsonValue>> Rows(UOKCharacterController* G);
 	bool IsModKey(const FString& Key);

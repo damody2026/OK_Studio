@@ -16,6 +16,7 @@
 #include "Components/Button.h"
 #include "Serialization/JsonSerializer.h"
 #include "Styling/CoreStyle.h"
+#include "OKReaderMods.h"
 
 void UOKCharacterController::BuildPregnancyControls(){
  BoneCategoryCombo->AddOption(TEXT("腹部形變"));PregnancyBox=WidgetTree->ConstructWidget<UVerticalBox>();
@@ -83,5 +84,5 @@ void UOKCharacterController::ApplyPendingEditorMods(){
 void UOKCharacterController::OnBodyPhysicsChanged(const FString& Parameter,float NewValue){
  if(bSyncingBoneControls||InteractionWidget||InteractionScene||bEnterInteractionAfterLoad||!FMath::IsFinite(NewValue))return;
  if(Parameter==TEXT("bustSoftness"))Selected.Body.BustSoftness=NewValue;else if(Parameter==TEXT("bustWeight"))Selected.Body.BustWeight=NewValue;else return;
- bEditorModsDirty=true;
+ bEditorModsDirty=true;OKReaderMods::PropertyChanged(this,TEXT("physics.")+Parameter);
 }

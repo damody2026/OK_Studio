@@ -34,6 +34,7 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <windows.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+#include "OKReaderMods.h"
 #endif
 
 FString UOKCharacterController::AppearanceWorkFolder(const FString& CardPath)
@@ -191,7 +192,7 @@ FString UOKCharacterController::CurrentAppearanceNote() const{
 void UOKCharacterController::OnAccessorySlotChoice(FString Value,ESelectInfo::Type Type){
  if(bFillingAccessorySlots||!AccessorySlotChoice)return;
  const int32 At=AccessorySlotChoice->FindOptionIndex(Value);if(!AccessorySlots.IsValidIndex(At))return;
- AccessorySlot=AccessorySlots[At];
+ AccessorySlot=AccessorySlots[At];OKReaderMods::SetAccessorySlot(this,AccessorySlot);
  // The category stays (髮飾 of slot 1 → 髮飾 of slot 2): the same name after the slot's own.
  FString Category=AppearanceTarget?AppearanceTarget->GetSelectedOption():FString();int32 Colon;Category=Category.FindChar(TEXT('：'),Colon)?Category.Mid(Colon):FString();
  AppearanceScope={AccessorySlotScope()};
@@ -465,7 +466,10 @@ void UOKCharacterController::ApplyAppearanceItem(const FString& Key){
   G->AppearanceLastTiming=MakeShared<FJsonObject>();
   G->AppearanceLastTiming->SetNumberField(TEXT("input_save_ms"),CardJob->SaveMs);G->AppearanceLastTiming->SetNumberField(TEXT("native_request_ms"),CardJob->RequestMs);
   G->AppearanceLastTiming->SetNumberField(TEXT("output_read_ms"),CardJob->ReadMs);G->AppearanceLastTiming->SetNumberField(TEXT("preview_session_prepare_ms"),CardJob->PreviewPrepareMs);
-  G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->bIndependentCards=true;if(Key!=TEXT("__add_accessory_slot"))G->AppearanceSelectedKeys.Add(Target,Key);if(Key==TEXT("__add_accessory_slot")){G->RefreshAppearanceCatalog(true);}else{
+  G->Selected=MoveTemp(CardJob->Card);G->SetWorkingCardPath(Output);G->bIndependentCards=true;if(Key!=TEXT("__add_accessory_slot"))G->AppearanceSelectedKeys.Add(Target,Key);
+  // reader.accessory_change: the slot from the target ("accessory<slot>_<category>"); a new slot has none yet.
+  if(Key==TEXT("__add_accessory_slot"))OKReaderMods::AccessoryChanged(G,-1,FString(),true);
+  else if(Target.StartsWith(TEXT("accessory"))){int32 Slot=0,At=9;while(At<Target.Len()&&FChar::IsDigit(Target[At]))Slot=Slot*10+(Target[At++]-'0');if(At>9)OKReaderMods::AccessoryChanged(G,Slot,Key);}if(Key==TEXT("__add_accessory_slot")){G->RefreshAppearanceCatalog(true);}else{
    const double CommitStart=FPlatformTime::Seconds();
    FString UpdateError;const bool Incremental=CardJob->AppearanceSession&&IsValid(G->PreviewActor.Get())&&G->PreviewActor->ApplyHeadTextureSession(*CardJob->AppearanceSession,UpdateError);
    G->PreviewResourceSignature.Empty();

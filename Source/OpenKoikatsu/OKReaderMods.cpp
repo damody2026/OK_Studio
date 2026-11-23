@@ -12,6 +12,7 @@
 #include "Serialization/JsonWriter.h"
 #include "ok_extract.h"
 #include "Containers/Ticker.h"
+#include "Misc/ScopeExit.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/PlayerController.h"
@@ -49,9 +50,25 @@ FJsonObject& ApplySettings()
 	return *GApply;
 }
 
+int32 GSlot=0;						// the accessory slot the per-slot controls are on (reader.mod_accessory_slot)
+const TCHAR* const AccessorySlotKey=TEXT("reader.mod_accessory_slot");
+TSet<FString> GChanged;				// registry keys changed since the last reader.property_change
+bool bPropertyTimer=false;
+int32 GFollowDepth=0;				// replies being followed: a reply's own edits are not sent back as changes
+
+// {"outfit","slot"}: which slot a per-slot control means (reader.values / reader.control).
+TSharedRef<FJsonObject> AccessoryRef(){auto A=MakeShared<FJsonObject>();A->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);A->SetNumberField(TEXT("slot"),GSlot);return A;}
+TSharedRef<FJsonObject> Hook(const TCHAR* Name,const TSharedRef<FJsonObject>& Payload)
+{
+	auto R=Op(TEXT("hook"));R->SetStringField(TEXT("hook"),Name);
+	if(!Payload->HasField(TEXT("card")))Payload->SetStringField(TEXT("card"),GCard);
+	R->SetObjectField(TEXT("payload"),Payload);return R;
+}
+
 void RefreshValues()
 {
-	GValues=Ask(Op(TEXT("reader.values")));
+	auto Request=Op(TEXT("reader.values"));Request->SetObjectField(TEXT("accessory"),AccessoryRef());
+	GValues=Ask(Request);
 	if(!GValues.IsValid())GValues=MakeShared<FJsonObject>();	// asked again on the next card, not every frame
 }
 
@@ -85,11 +102,52 @@ void ApplyOps(UOKCharacterController* G,const FString& Mod,const TArray<TSharedP
 		return false;
 	}));
 }
+void Follow(UOKCharacterController* G,const FString& Mod,const TSharedPtr<FJsonObject>& Json);
+
+// The registry values a mod asked for ({"get": ["body.height", "shape.face.*", ...]}: keys, or a prefix ending in "*"),
+// as {key: value}. Mod controls (mod.*) are the mods' own and not handed out.
+TSharedRef<FJsonObject> RegistryValues(UOKCharacterController* G,const TArray<FString>& Wanted,bool bAll=false)
+{
+	auto Out=MakeShared<FJsonObject>();
+	if(!G||(Wanted.IsEmpty()&&!bAll))return Out;
+	for(const TSharedPtr<FJsonValue>& P:OKCharacterMCPRegistry::Parameters(G))
+	{
+		const TSharedPtr<FJsonObject> O=P.IsValid()?P->AsObject():nullptr;if(!O.IsValid())continue;
+		const FString Key=O->GetStringField(TEXT("key"));
+		if(Key.StartsWith(TEXT("mod.")))continue;
+		const bool bWanted=bAll||Wanted.ContainsByPredicate([&](const FString& W){return W.EndsWith(TEXT("*"))?Key.StartsWith(W.LeftChop(1)):W==Key;});
+		if(!bWanted)continue;
+		if(const TSharedPtr<FJsonValue> V=O->TryGetField(TEXT("value")))Out->SetField(Key,V);
+	}
+	return Out;
+}
+// A reply's "get": the values go back to that mod alone as reader.get_result {"values", "card", "outfit"}; its answer
+// is followed like any reply, except that it cannot ask again (one round per reply).
+void AnswerGet(UOKCharacterController* G,const FString& Mod,const TSharedPtr<FJsonObject>& Json)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Get=nullptr;
+	if(!G||!Json->TryGetArrayField(TEXT("get"),Get)||Get->IsEmpty()||Mod.StartsWith(TEXT("mod."))||GFollowDepth>1)return;
+	TArray<FString> Wanted;for(const auto& K:*Get){FString S;if(K.IsValid()&&K->TryGetString(S)&&!S.IsEmpty())Wanted.Add(S);}
+	if(Wanted.Num()>256)Wanted.SetNum(256);
+	auto P=MakeShared<FJsonObject>();P->SetObjectField(TEXT("values"),RegistryValues(G,Wanted));P->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);
+	auto R=Hook(TEXT("reader.get_result"),P);R->SetArrayField(TEXT("mods"),{MakeShared<FJsonValueString>(Mod)});
+	const TSharedPtr<FJsonObject> Answer=Ask(R);
+	const TArray<TSharedPtr<FJsonValue>>* Replies=nullptr;
+	if(!Answer.IsValid()||!Answer->TryGetArrayField(TEXT("replies"),Replies))return;
+	for(const auto& Reply:*Replies)
+	{
+		const TSharedPtr<FJsonObject> O=Reply->AsObject();bool bOk=false;if(O.IsValid())O->TryGetBoolField(TEXT("ok"),bOk);
+		const TSharedPtr<FJsonObject>* J=nullptr;
+		if(bOk&&O->TryGetObjectField(TEXT("json"),J)){auto Copy=MakeShared<FJsonObject>(**J);Copy->RemoveField(TEXT("get"));Follow(G,Mod,Copy);}
+	}
+}
+
 // What a mod's reply asks of the reader: {"set":[{key,value}]} registry edits, {"ops":[...]}, {"notice": text},
-// {"subtitle":{"text","seconds"}}.
+// {"subtitle":{"text","seconds"}}, {"get":[keys]} (answered with reader.get_result).
 void Follow(UOKCharacterController* G,const FString& Mod,const TSharedPtr<FJsonObject>& Json)
 {
 	if(!G||!Json.IsValid())return;
+	++GFollowDepth;ON_SCOPE_EXIT{--GFollowDepth;};
 	const TArray<TSharedPtr<FJsonValue>>* Edits=nullptr;
 	if(Json->TryGetArrayField(TEXT("set"),Edits)&&Edits->Num())
 	{
@@ -117,6 +175,7 @@ void Follow(UOKCharacterController* G,const FString& Mod,const TSharedPtr<FJsonO
 		FString Text;double Seconds=4;(*Subtitle)->TryGetNumberField(TEXT("seconds"),Seconds);
 		if((*Subtitle)->TryGetStringField(TEXT("text"),Text)&&!Text.IsEmpty())G->ScreenNote(41,float(FMath::Clamp(Seconds,.5,30.)),FColor::White,Text);
 	}
+	AnswerGet(G,Mod,Json);
 }
 void FollowReplies(UOKCharacterController* G,const TSharedPtr<FJsonObject>& Answer)
 {
@@ -411,13 +470,127 @@ TArray<TSharedPtr<FJsonValue>> OKReaderMods::Rows(UOKCharacterController* G)
 		Row->SetBoolField(TEXT("supported"),true);Row->SetBoolField(TEXT("requires_apply"),false);Row->SetBoolField(TEXT("value"),ApplyOnLoad(M.Key));
 		Out.Add(MakeShared<FJsonValueObject>(Row));
 	}
+	// Pages with per-slot controls ({"accessory": true}, AccessoryControlWrapper's counterpart): which slot they are on.
+	if(Pages().ContainsByPredicate([](const FPage& P){bool b=false;return P.Spec.IsValid()&&P.Spec->TryGetBoolField(TEXT("accessory"),b)&&b;}))
+	{
+		auto Row=MakeShared<FJsonObject>();
+		Row->SetStringField(TEXT("key"),AccessorySlotKey);Row->SetStringField(TEXT("kind"),TEXT("number"));
+		Row->SetStringField(TEXT("label"),TEXT("Mods／飾品欄（0 起算）"));Row->SetStringField(TEXT("category"),TEXT("mods"));
+		Row->SetNumberField(TEXT("min"),0);Row->SetNumberField(TEXT("max"),19);Row->SetNumberField(TEXT("decimals"),0);
+		Row->SetBoolField(TEXT("supported"),true);Row->SetBoolField(TEXT("requires_apply"),false);Row->SetNumberField(TEXT("value"),GSlot);
+		Out.Add(MakeShared<FJsonValueObject>(Row));
+	}
 	return Out;
+}
+
+int32 OKReaderMods::AccessorySlot(){return GSlot;}
+bool OKReaderMods::IsAccessorySlotKey(const FString& Key){return Key==AccessorySlotKey;}
+void OKReaderMods::SetAccessorySlot(UOKCharacterController*,int32 Slot)
+{
+	Slot=FMath::Clamp(Slot,0,19);
+	if(Slot==GSlot)return;
+	GSlot=Slot;
+	if(Active())RefreshValues();	// the per-slot controls show this slot's values
+}
+
+void OKReaderMods::WorkingCard(const FString& From,const FString& To)
+{
+	if(!Active()||From.IsEmpty()||To.IsEmpty())return;
+	if(FPaths::ConvertRelativePathToFull(From)!=GCard)return;
+	GCard=FPaths::ConvertRelativePathToFull(To);
+	UE_LOG(LogOKMod,Verbose,TEXT("reader: work card %s, the same character for the mods"),*GCard);
+}
+
+void OKReaderMods::AccessoryChanged(UOKCharacterController* G,int32 Slot,const FString& Item,bool bAdded)
+{
+	if(!Active())return;
+	auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);
+	if(Slot>=0)P->SetNumberField(TEXT("slot"),Slot);
+	P->SetStringField(TEXT("item"),Item);P->SetBoolField(TEXT("added"),bAdded);
+	FollowReplies(G,Ask(Hook(TEXT("reader.accessory_change"),P)));RefreshValues();
+}
+
+void OKReaderMods::AccessoriesMoved(UOKCharacterController* G,const TArray<TSharedPtr<FJsonValue>>& Ops)
+{
+	if(!Active())return;
+	const int32 Outfit=GOutfit<0?0:GOutfit;
+	for(const TSharedPtr<FJsonValue>& V:Ops)
+	{
+		const TSharedPtr<FJsonObject> O=V.IsValid()?V->AsObject():nullptr;if(!O.IsValid())continue;
+		const FString Name=O->GetStringField(TEXT("op"));
+		auto P=MakeShared<FJsonObject>();
+		if(Name==TEXT("accessory_transfer"))
+		{
+			P->SetNumberField(TEXT("outfit"),Outfit);P->SetNumberField(TEXT("from"),O->GetNumberField(TEXT("from")));P->SetNumberField(TEXT("to"),O->GetNumberField(TEXT("to")));
+			FollowReplies(G,Ask(Hook(TEXT("reader.accessory_transfer"),P)));
+		}
+		else if(Name==TEXT("accessory_copy"))
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Slots=nullptr;if(!O->TryGetArrayField(TEXT("slots"),Slots))continue;
+			P->SetNumberField(TEXT("from_outfit"),O->GetNumberField(TEXT("from_outfit")));P->SetNumberField(TEXT("to_outfit"),Outfit);P->SetArrayField(TEXT("slots"),*Slots);
+			FollowReplies(G,Ask(Hook(TEXT("reader.accessory_copy"),P)));
+		}
+	}
+	RefreshValues();
+}
+
+void OKReaderMods::ClothesSaved(UOKCharacterController* G,const FString& Clothes,const FString& Card,int32 Outfit)
+{
+	if(!Active())return;
+	auto R=Op(TEXT("clothes_store"));R->SetStringField(TEXT("clothes"),FPaths::ConvertRelativePathToFull(Clothes));
+	R->SetStringField(TEXT("card"),FPaths::ConvertRelativePathToFull(Card));R->SetNumberField(TEXT("outfit"),Outfit);
+	const TSharedPtr<FJsonObject> Answer=Ask(R);if(!Answer.IsValid())return;
+	const TArray<TSharedPtr<FJsonValue>>* Errors=nullptr;
+	if(Answer->TryGetArrayField(TEXT("errors"),Errors))for(const auto& E:*Errors)if(const auto O=E->AsObject())UE_LOG(LogOKMod,Warning,TEXT("[%s] not saved into the outfit card: %s"),*O->GetStringField(TEXT("mod")),*O->GetStringField(TEXT("error")));
+	const TArray<TSharedPtr<FJsonValue>>* Written=nullptr;
+	if(Answer->TryGetArrayField(TEXT("written"),Written)&&Written->Num())UE_LOG(LogOKMod,Display,TEXT("reader: %d mod section(s) saved into %s"),Written->Num(),*Clothes);
+}
+
+void OKReaderMods::ClothesWorn(UOKCharacterController* G,const FString& Clothes,const FString& Card,int32 Outfit)
+{
+	if(!Active())return;
+	auto R=Op(TEXT("clothes_load"));R->SetStringField(TEXT("clothes"),FPaths::ConvertRelativePathToFull(Clothes));
+	R->SetStringField(TEXT("card"),FPaths::ConvertRelativePathToFull(Card));R->SetNumberField(TEXT("outfit"),Outfit);
+	FollowReplies(G,Ask(R));RefreshValues();
+}
+
+void OKReaderMods::ClothesState(UOKCharacterController* G,const uint8 (&States)[9],int32 Kind)
+{
+	if(!Active())return;
+	auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);P->SetNumberField(TEXT("kind"),Kind);
+	FRows S;for(int32 I=0;I<9;++I)S.Add(MakeShared<FJsonValueNumber>(States[I]));P->SetArrayField(TEXT("states"),S);
+	FollowReplies(G,Ask(Hook(TEXT("reader.clothes_state"),P)));
+}
+
+// Changes from one drag of a slider or one batch of edits come as one reader.property_change, a quarter second after
+// the last: {"keys": [...], "values": {key: value now}}. Edits a mod's own reply makes are not sent back to the mods.
+void OKReaderMods::PropertyChanged(UOKCharacterController* G,const FString& Key)
+{
+	if(!Active()||!G||GFollowDepth>0||Key.IsEmpty()||IsModKey(Key)||IsApplyKey(Key)||Key==AccessorySlotKey)return;
+	GChanged.Add(Key);
+	static double LastAt=0;LastAt=FPlatformTime::Seconds();
+	if(bPropertyTimer)return;
+	bPropertyTimer=true;
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak=TWeakObjectPtr<UOKCharacterController>(G)](float)
+	{
+		if(FPlatformTime::Seconds()-LastAt<.25)return true;
+		bPropertyTimer=false;
+		UOKCharacterController* C=Weak.Get();
+		TArray<FString> Keys=GChanged.Array();GChanged.Reset();
+		if(!C||!Active()||Keys.IsEmpty())return false;
+		Keys.Sort();
+		auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("outfit"),GOutfit<0?0:GOutfit);
+		FRows K;for(const FString& S:Keys)K.Add(MakeShared<FJsonValueString>(S));P->SetArrayField(TEXT("keys"),K);
+		P->SetObjectField(TEXT("values"),RegistryValues(C,Keys));
+		FollowReplies(C,Ask(Hook(TEXT("reader.property_change"),P)));
+		return false;
+	}),.1f);
 }
 
 bool OKReaderMods::Set(UOKCharacterController* G,const FString& Key,const TSharedPtr<FJsonValue>& Value,FString& Error)
 {
 	if(!Active()){Error=TEXT("mods are off");return false;}
-	auto R=Op(TEXT("reader.control"));R->SetStringField(TEXT("key"),Key);R->SetField(TEXT("value"),Value.IsValid()?Value:MakeShared<FJsonValueNull>());
+	auto R=Op(TEXT("reader.control"));R->SetStringField(TEXT("key"),Key);R->SetObjectField(TEXT("accessory"),AccessoryRef());R->SetField(TEXT("value"),Value.IsValid()?Value:MakeShared<FJsonValueNull>());
 	const TSharedPtr<FJsonObject> Answer=Ask(R);
 	bool bOk=false;if(Answer.IsValid())Answer->TryGetBoolField(TEXT("ok"),bOk);
 	if(!bOk){Error=Answer.IsValid()?Answer->GetStringField(TEXT("error")):TEXT("no answer from the mod host");return false;}

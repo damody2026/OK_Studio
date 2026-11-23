@@ -191,8 +191,10 @@ bool SetParameters(UOKCharacterController* G,const FRows& Edits,FString& Error)
   // A mod control goes to its mod; a refusal there is logged (the other edits of the batch already went through).
   else if(OKReaderMods::IsModKey(Key)){FString ModError;if(!OKReaderMods::Set(G,Key,V,ModError))UE_LOG(LogTemp,Warning,TEXT("%s: %s"),*Key,*ModError);}
   else if(OKReaderMods::IsApplyKey(Key))OKReaderMods::SetApplyOnLoad(Key.Mid(17),V->AsBool());
+  else if(OKReaderMods::IsAccessorySlotKey(Key))OKReaderMods::SetAccessorySlot(G,int32(V->AsNumber()));
   else if(!Key.StartsWith(TEXT("bone."))&&!Key.StartsWith(TEXT("pregnancy.")))G->SetEditorProperty(Key,V);
  }
+ for(auto E:Normalized)OKReaderMods::PropertyChanged(G,E->AsObject()->GetStringField(TEXT("key")));	// reader.property_change
  G->ApplyPendingEditorMods();G->SyncShapeSliders();G->RebuildPropertyControls();return true;
 }
 FRows Controls(UOKCharacterController* G,TMap<FString,UWidget*>* Widgets)
