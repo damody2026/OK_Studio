@@ -16,6 +16,13 @@ use serde_json::Value;
 
 use crate::{ModResult, Reply};
 
+/// Card reader hooks of wave 4 (accessories, outfit cards, clothes state, property changes, `get`).
+pub mod reader;
+/// Street hooks of wave 4 (period, touch, action, arrive, phone, `street.load`) and the `cards` reply.
+pub mod street;
+/// Ask the reader for registry values (`reader::get`): they come back as `reader.get_result`.
+pub use reader::get;
+
 fn b64() -> base64::engine::GeneralPurpose { base64::engine::general_purpose::STANDARD }
 
 /// A hook's payload as `T`.
