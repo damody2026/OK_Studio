@@ -35,7 +35,7 @@ fn street_tools() -> Value {
     json!([
         t("game_launch", "Start the StreetSocial game windowed with the control channel and wait until it answers (the first start after Saved/ was cleared rebuilds the build: up to an hour). The reply gives its pid, and the tools act on that game from then on (no game_select needed). options: more launcher options, e.g. [\"-Trace\", \"default,cpu,gpu,frame\"] or [\"-Exec\", \"stat unit\"] or [\"-Sandbox\", \"name\"].",
           json!({"window": {"type": "string", "description": "WxH, default 1280x720"}, "mic": {"type": "boolean", "description": "keep the room microphone (default: ignored, so room noise is not said for him)"}, "options": {"type": "array", "items": {"type": "string"}}, "timeout_s": {"type": "number"}}), &[]),
-        t("game_stop", "Stop the game on this checkout's control port (only that one; other sessions' sandbox games keep running).", json!({}), &[]),
+        t("game_stop", "Stop the game on this checkout's control port (only that one; other sessions' sandbox games keep running). Answers once the process is gone: closed, or terminated after 20 s (how).", json!({}), &[]),
         t("game_state", "What is going on: game time, the player, the talk, cart and table, the heroines (nearest first). full=true returns the whole raw state.",
           json!({"full": {"type": "boolean"}, "girls": {"type": "integer", "description": "how many heroines to list (default 5)"}}), &[]),
         t("game_talk", "Say something to the heroine he is talking with (as typed or spoken), let the clock run until she has answered and stopped speaking, then pause it. Returns her lines and the notice (favor change).",
