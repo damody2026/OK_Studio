@@ -1,7 +1,7 @@
 #pragma once
-// Mod hotkeys in every mode (Docs/OK_MOD_HOOKS.md §5): a mod declares a hotkey config entry (Registrar::hotkey); the
+// Mod hotkeys in every mode (Docs/OK_MOD_HOOKS.md §9): a mod declares a hotkey config entry (Registrar::hotkey); the
 // host lists them ({"op":"hotkeys"}) and this watches the keyboard for the chords bound to them, sending
-// {"op":"key","chord","mode"} when one is pressed -- the mod gets the hook key.<id>.<name>. One Slate input
+// {"op":"key","chord","mode"} when one is pressed -- the mod gets the hook key.<name> (only that mod). One Slate input
 // pre-processor for the whole game: a mode takes mod hotkeys once it calls Listen (one line in each mode's start-up),
 // so a screen that never asked for them (the crowd room) is left alone.
 //

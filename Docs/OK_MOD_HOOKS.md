@@ -196,3 +196,31 @@ mod 不直接動模型或 UI 物件，一律經這些要求。
 | `examples/subtitles` | `street.speech_start`（和讀卡器、1 對 1 同一個 mod） |
 
 `Tools/ok-mod/host/tests/street_mods.rs` 用真的 DLL 走一遍：讀檔、換日提示、對話與送禮記錄、事實、規則、字幕、存檔後重開宿主再讀回。
+
+## 9. 跨模式熱鍵與熱重載狀態（第四波 F）
+
+### 熱鍵 `key.<name>`（只送給宣告它的 mod）
+
+- mod 用 `Registrar::hotkey("toggle", "F7", "<文字 id>")` 宣告：等於一個熱鍵型設定項（`config_hotkey`，玩家可改綁）加上訂閱 `key.toggle`。hook 只送給宣告它的 mod，名字不必帶 mod id；這也是 OK Studio 面板按鍵送的名字（`OKStudioModBridge` 送 `key.<id>`），同一個 mod 的鍵 `toggle` 不論在哪裡按都是同一個 hook。訂了長名 `key.<mod id>.toggle` 也認。宿主不改寫訂閱（第一版改寫過，害 Studio 面板按鍵失效，`e4cd5ad3f` 修正）。
+- 預設值與存的值都是 Unreal 鍵名以 `+` 連接（`"F7"`、`"LeftControl+K"`）；空字串＝沒綁。比對時左右修飾鍵視為同一個（`LeftControl`／`RightControl`／`Control`／`Ctrl`），字母不分大小寫、順序不計，修飾鍵要完全相同（`K` 不等於 `Control+K`）。
+- 按下時 mod 收到 `Event::Hook { name: "key.<name>", payload: {"mode", "chord"} }`（SDK：`hooks::hotkey(name) == Some("toggle")`、`hooks::KeyPress`）。回覆照該模式一般 mod 回覆處理（讀卡器：§5 的 `set`／`notice`／`ops`…；文字回覆顯示為畫面提示）。
+- 宿主請求：`{"op":"hotkeys"}` 列出已啟用且訂閱了自己熱鍵的項目；`{"op":"key","chord","mode"}` 送出（`ok_mod_host.h`）。
+- UE：`Plugins/OKModding` 的 `FOKModKeys` 是全遊戲一個 Slate 輸入前處理器。模式呼叫一次 `FOKModKeys::Listen("<模式>", 回覆處理)` 才收熱鍵，沒呼叫的畫面（百人房間）不受影響。打字中（焦點在文字框）、按住滑鼠、重複鍵不觸發；比中的鍵被吃掉。
+  - 讀卡器：`OKReaderMods::Keys`（Gallery `NativeConstruct`），Mods › 熱鍵頁每列一個按鈕，按下後等下一個組合鍵（Esc 保留、Backspace 清除）。
+  - 主控台：`OKMod.Keys` 列出、`OKMod.Bind <mod> <name> [chord|-]` 綁定（不給 chord 就等下一個鍵）。
+  - **Studio、1 對 1、街區還沒接 `Listen`**（那些檔案屬 E／C），各加一行即可。
+- 範例：`hello` 的 `greet`（F8）。測試 `host/tests/load.rs` `hotkeys_reach_their_mod_in_any_mode_and_rebind`。
+
+### 熱重載保留狀態 `dev.save_state`／`dev.restore_state`
+
+只在開發模式（`-ModDev`，主控台 `mod.reload <id>`）。`abi_stable` 不卸載 DLL（計畫 §7.5），重載是載入新副本、舊副本留在記憶體不再呼叫。
+
+1. 換之前：舊實例若訂閱 `dev.save_state`，收到 `{"version": "<舊版本>"}`，回 `Reply::Json`（狀態，任意 JSON）或 `Reply::Text`（當 JSON 字串）；`Reply::None`＝沒有狀態。
+2. 舊實例 `shutdown`，載入新副本，送 `Enabled`。
+3. 新實例若訂閱 `dev.restore_state`，收到 `{"from_version", "to_version", "state"}`。
+
+- 舊副本存狀態失敗（錯誤或 panic）：照樣換上新副本，從頭開始，`reload` 的回答註明 `dev.save_state failed`。
+- 新副本還原失敗：`reload` 回錯；panic 時新副本 faulted（不會半套狀態地跑）。
+- 新版本不訂閱 `dev.restore_state`：回答註明它從頭開始。
+- SDK：`Registrar::keep_state()` 一次訂閱兩個；`hooks::SAVE_STATE`、`hooks::RESTORE_STATE`、`hooks::RestoreState<T>`。狀態格式改了的 mod 看 `from_version`。
+- 範例：`hello` 保留 ping 次數。測試 `dev_mode_reload_swaps_in_a_fresh_copy`、`reload_state_survives_failures_of_either_copy`。

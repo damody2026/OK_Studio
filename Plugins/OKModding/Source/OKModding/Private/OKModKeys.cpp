@@ -1,4 +1,4 @@
-// Mod hotkeys in every mode (OKModKeys.h, Docs/OK_MOD_HOOKS.md §5; host side Tools/ok-mod/host/src/keys.rs).
+// Mod hotkeys in every mode (OKModKeys.h, Docs/OK_MOD_HOOKS.md §9; host side Tools/ok-mod/host/src/keys.rs).
 #include "OKModKeys.h"
 #include "OKModHost.h"
 #include "Framework/Application/IInputProcessor.h"

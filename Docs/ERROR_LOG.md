@@ -7320,3 +7320,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - 2026-11-23 OK mod 快取追加項（`Docs/OK_MOD_S9c_CACHES.md`）：遊戲端 `OKModModes.cpp` `SyncExtract` 推給 ok-extract 的「會改開卡結果的 mod」清單只認 `extract.*`，漏了 `material.post_texture`，和 Rust 的 `okmods::changes_opens` 不同步：skin-decal 的掛點照跑，開卡快取鍵卻不含它。教訓：同一條規則在 C++ 與 Rust 各寫一份時，改一邊要搜另一邊（這次是加 `material.post_texture` 進 `changes_opens` 時沒找 C++ 的那份）。子代理的盤點也漏看了這處，它只看了 Rust 的鍵。
 - 2026-11-23 第三波（E 組，mod 工作項 13 字幕）：1 對 1 的 mod 字幕先照讀卡器用 `UOKCharacterController::ScreenNote`（舊讀卡器沒有 `ReaderScreen` 時走 `GEngine->AddOnScreenDebugMessage`），log 寫「subtitle …」但實機截圖畫面上沒有字（`EnableAllScreenMessages` 也一樣）。只看 log 就會誤報「字幕出現」。改成 H 場景自己的字幕列（`UOKHScenePanel::ShowHerSubtitle`），截圖確認，log 也寫明顯示在哪裡。教訓：「畫面上出現」要用截圖確認，不能只看 log。
 - 2026-11-23 第三波（E 組，mod 工作項 13 三條路線）：只用讀卡器進 1 對 1 驗過，另外兩條路各有一個錯。(1) 街區先開 1 對 1 再載入她，`pair.enter` 的 `card` 是空的，`pair-counter` 離開時卡片對不上，把高潮次數丟掉了（her 0）。改成用第一個帶卡片的 `pair.finish` 補上。(2) 獨立 1 對 1 遊戲模式在 BeginPlay 後半秒就送 `pair.enter`，橋接卻要等 0.5 秒的 ticker 看到宿主開了才訂閱，載入中來不及，enter 遺失。改成引擎啟動時就訂閱。教訓：同一個事件有幾條進場路線，就每條都跑一次；「進場那一刻有沒有卡片、有沒有人在聽」不能拿一條路代表全部。
+
+- 2026-11-23 第四波（F 組，按鍵服務收尾、熱重載狀態、`ok-mod-pack new`，`Docs/OK_MOD_F_WAVE4.md`）：
+  - 當機前沒提交的按鍵服務，讀卡器熱鍵頁用了文字 id `reader.mods.hotkeys`／`reader.mods.press_key`，但三語 `ui_text.toml` 都沒有這兩條，畫面會直接顯示 id。收尾時補上。教訓：新增 `OKReaderT(...)` 的 id 時同一個提交加進 `Content/IndependentResources/StreetSocialData/Localization/*/ui_text.toml`。
+  - 程式碼註解把熱鍵說明指到 `Docs/OK_MOD_HOOKS.md §5`，那節其實是「回覆裡讀卡器會做的事」；熱鍵與熱重載說明寫成新的 §9，註解改指 §9。
+  - 在 Git Bash 用 `perl -pi` 寫入含 `§` 的字串，寫成 Latin-1 的 `0xA7` 而不是 UTF-8（`cat -A` 看到 `M-'`），提交前發現並改成英文。Rust 原始碼裡的非 ASCII 字一律用 Edit／Write 工具寫。
+  - `Reply` 是 `NonExhaustive`，宿主裡 `match` 它要有 `_` 分支（E0004），第一次編譯失敗。
+  - 熱鍵頁的改綁按鈕只呼叫 `SetText`，DreamGUI 按鈕每幀以 `FixedText` 重設文字，畫面一直停在舊綁定（綁定本身已改成 F9）。單元測試與 `OKMod.Keys` 都看不出來，實機截圖才發現；改成同時設 `FixedText`。另外「請按鍵…（Esc 保留，Backspace 清除）」在按鈕裡被截斷，縮成「請按鍵…」。
+  - 當機前的按鍵服務讓宿主把 mod 的短名訂閱 `key.<entry>` 改寫成 `key.<mod id>.<entry>`。OK Studio 的面板按鍵用的正是短名（`ok-mod-studio::subscribe` 訂 `key.<k>`，`OKStudioModBridge` 送 `key.<k>`），改寫後宿主 `hook_one` 會以「沒訂閱」拒絕，Studio mod 的按鍵全部失效。我照原樣驗過就提交了（`4c6fc245e`），寫回報整理 API 變動時才發現，`e4cd5ad3f` 改回訂閱原樣保留、熱鍵服務兩種名字都認。教訓：改到訂閱或 hook 名的處理時，先 grep 全部 SDK（`Tools/ok-mod/studio`）與 UE 端送 hook 的地方（`HookName`）。
