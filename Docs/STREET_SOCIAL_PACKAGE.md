@@ -74,3 +74,23 @@
 3. 執行 `CardReaderDevelopment.cmd` 開一張卡，再請 AI 照圖調整。兩個 server 都只走本機的控制通道與信箱（`Saved/OKControl`、`Saved/CharacterMCP`），不開網路埠。
 
 打包版的身體由 GPU 顯示，跟隨用的 skeletal component 沒有 mesh object；`FOKPaintPose::Prepare` 以前一律要求它，打包版的 `body_masks`、`character_measure` 都失敗（「no readable CPU data」）。現在只有走引擎 CPU 蒙皮的路徑才需要。驗證：工作室包裡用胡桃的 OK 卡，以 `body_masks` 為目標、打亂身高與兩項體型後背景擬合，loss 0.146 → 0.0076，三個值回到原值附近。
+
+## 帶上 mod（`--mods`，2026-11-23）
+
+`--mods <放 .okmod 的資料夾>` 把 OK mod 框架一起打進包，說明見 [OK_STUDIO_MOD_PACKAGE.md](OK_STUDIO_MOD_PACKAGE.md)。打包前先把 mod 裝進 stage 的 `Mods/`（`.old/` 不會打進去）：
+
+```powershell
+.\Tools\lua\lua.exe Tools\pack_mod_examples.lua --out Saved/mod-integ/packages --content-from <ModKit 產物的 Mods 資料夾> --build
+.\Tools\ok-mod\target\release\ok-mod-pack.exe profile apply Tools/ok-mod/profiles/full.toml --mods Saved/StreetSocial/Build/<stage>/Mods --packages Saved/mod-integ/packages
+.\Tools\lua\lua.exe Tools\package_street_social.lua --studio --private --cards <卡片資料夾> --mods Saved/mod-integ/packages --readme Docs/OK_STUDIO_MOD_PACKAGE.md --out <包> --zip <包.zip>
+```
+
+包裡多出：
+- `<stage>/Mods/`：已安裝的 mod；
+- `ModPackages/`：`.okmod` 安裝包；
+- `Tools/ok-mod/`：版控內的全部原始碼；
+- `Plugins/org_openkoikatsu_*`：ModKit 內容外掛；
+- `ok-mod-pack.exe`；
+- `Docs/OK_MOD_*.md`。
+
+`PACKAGE.json` 的 `mods` 是已安裝的 mod 數。
