@@ -7352,3 +7352,50 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - 2026-11-23 第六波（F 組，`Docs/OK_MOD_F_WAVE6.md`）：
   - 第五波把「打包版讀卡器沒有 DreamGUI global shader」歸給 cook 沒帶。實際上新 cook 的 base 有，是啟動器另外掛的共享 runtime patch（`runtime.json` 的 `NH1115.patch`，比 DreamGUI 早）用 `_P` 的 global shader map 蓋掉了它。看 log 的 `Mounted Pak file` 順序才找到。改成 stage 自帶 patch（`rebuild_street_social_runtime.lua` 第 5 步，`street_stage.patch_for`）。
   - `ok-game-mcp` 的 `game_stop` 只送不帶 `/F` 的 `taskkill` 就回 `stopped`，進程其實還在關；改成等到進程消失，逾時才強制結束。
+
+## 2026-11-23（F）服裝卡：把角色自己的 answers 丟掉重錄
+
+**做錯的事**：`okclothes::file::wear_into` 原本只要服裝卡沒帶 answers，就把角色卡的 `okLt` 整個 strip 掉重錄
+（`strip_answers` ＋ `seal_card_with(..., record_answers=true)`）。共用基礎庫的樹答不出她自己那些題，於是封裝
+直接失敗：`5 unanswered question(s): okLt cat 403 1881; 410 4; 411 2; 423 702; 424 9017` —— **五題全是她自己的**
+（體毛、臉、身體貼圖），和要穿的衣服無關。平常看不到是因為 `.okclothes` 都帶 answers（走 merge 那條）；
+把遊戲原版的服裝卡放進衣服卡資料夾直接點，才踩到。
+
+**修正**：她有 answers 就一定保留；服裝卡沒帶 answers 時用 `Answers::Add`（保留她的，再從共用基礎庫補錄），
+因為穿上別人的衣服之後問的 mod GUID 集合變了，她原本那一筆蓋不住。
+
+**一般教訓**：**既有的、正確的資料不要為了「重新產生一份」而先刪掉** —— 重錄的來源（共用基礎庫的樹）
+比原本錄的時候窄，刪掉就補不回來。`Answers::Add` 這個模式早就為配種的孩子寫好了，是同一個情境。
+
+## 2026-11-23（F）服裝卡資料夾按鈕排在寬按鈕旁邊，被面板邊緣切掉
+
+**做錯的事**：「開啟資料夾」加在「點縮圖＝換衣服（保留頭髮）」那一排。那顆模式按鈕是按文字寬度算的，
+整排已經到面板右緣，新按鈕就排在看不見的地方。`ok.ReaderScreen controls` 列得出它（所以只看控制清單會以為做好了），
+**截圖才看得出它不在畫面上**。
+
+**一般教訓**：加按鈕到既有的一排之前，先看那排現在有多寬；寬度是算出來的就更要看。
+**UI 的驗收是截圖，不是控制清單** —— 清單只證明控制存在，不證明使用者點得到。
+
+## 2026-11-23（F）「檔案總管沒開」這個觀察根本不成立，我卻照它改了三輪程式
+
+**做錯的事**：「開啟資料夾」按鈕按下去，我數不到新的檔案總管視窗，就斷定
+`FPlatformProcess::ExploreFolder` 壞了，接連換成 `CreateProc("explorer.exe")`、
+`LaunchFileInDefaultExternalApplication`，每換一次就重建一次 Editor 與遊戲目標 —— **三輪白做**。
+
+**真相**：**這個環境根本開不出檔案總管視窗**。最後我直接在 PowerShell 跑
+`Start-Process explorer.exe "F:\OpenKoikatsu\Saved\EditedCards"`（資料夾確實存在），一樣**一個視窗都沒有**。
+也就是說「按鈕按了沒反應」這個觀察，從頭到尾沒有測到按鈕。
+
+**更糟的是我以為自己已經驗過觀測管道**：中途我確實跑過一次 `Start-Process explorer.exe`，而且看到多出一個
+「常用」視窗，就認定「管道是通的，所以沒視窗＝按鈕沒作用」。那個視窗**不是我開的**（參數還被吃掉了，
+它開在「常用」而不是我給的資料夾），我把巧合當成對照組。
+
+**收尾**：改回 `FPlatformProcess::ExploreFolder`（專案其他「開啟資料夾」按鈕用的也是它），
+保留 `MakePlatformFilename` 與一行 `OK clothes folder opened: <路徑>` 的 log —— 在這個環境裡，
+那行 log 是唯一拿得到的證據，視窗要人去看。
+
+**一般教訓**：
+- **對照組要真的對照**：用「一定會成功」的動作試你的觀測管道，並且**確認你看到的變化就是那個動作造成的**
+  （視窗標題是不是你給的資料夾？），不要只看「數字有沒有變」。
+- **連續失敗 N 次都指向同一個「不可能」的結論時，先懷疑觀測，不要再改程式**。我第二次沒視窗時就該停。
+- 這和 `Docs/CARD_OPEN_PERF_20261117.md` 第三節「先證明開關是活的」是同一條，只是這次失效的是**觀測端**。

@@ -2278,6 +2278,8 @@ fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>,
     let exe = ok_extract_exe(lib)?;
     let run = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
         let mut command = std::process::Command::new(&exe);
+        // The narrowing travels to the step's own process, not through this one's environment (OnlyOutfitScope).
+        if let Some(o) = only_outfit_here() { command.env(ONLY_OUTFIT, o.to_string()); }
         #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x0800_0000); } // no console window
         let out = command.arg("X:/NoGame").arg("--oklib").args(args).output().map_err(|e| e.to_string())?;
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -2369,26 +2371,32 @@ pub(crate) const CLOTHES_STATE_VARIANTS: [[u8; 9]; 5] = [[1; 9], [2; 9], [3; 9],
 /// Wearing an outfit card changes one outfit of a character card; the others keep the very bytes they were sealed and
 /// checked with, and nothing is ever removed from the card's pack or its answers (both merges only add). So the
 /// sealing, strict-check and remake passes may be narrowed to the outfit that changed: `OK_SEAL_ONLY_OUTFIT=<n>`,
-/// set by `okclothes::file::wear_into` for the whole seal + remake (child processes inherit it) and cleared after.
+/// set by `okclothes::file::wear_into` for the whole seal + remake, and cleared when that returns.
 /// An out-of-range value opens every outfit, as before. `OK_SEAL_EVERY_OUTFIT=1` turns the narrowing off (A/B).
-pub(crate) struct OnlyOutfitScope(Option<std::ffi::OsString>);
+/// **This thread** carries the narrowing, not the whole process: the reader can be saving an edited card (which also
+/// remakes it, and so also runs `open_outfits`) on another thread while a wear runs, and that save must still see every
+/// outfit. The variable is for the sealing child processes only, where the whole process is this one job.
+pub(crate) struct OnlyOutfitScope;
+thread_local! { static ONLY_OUTFIT_HERE: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) }; }
 impl OnlyOutfitScope {
     pub(crate) fn begin(outfit: usize) -> Self {
-        let previous = std::env::var_os(ONLY_OUTFIT);
-        std::env::set_var(ONLY_OUTFIT, outfit.to_string());
-        Self(previous)
+        ONLY_OUTFIT_HERE.with(|o| o.set(i32::try_from(outfit).ok()));
+        Self
     }
 }
-impl Drop for OnlyOutfitScope {
-    fn drop(&mut self) {
-        match self.0.take() { Some(v) => std::env::set_var(ONLY_OUTFIT, v), None => std::env::remove_var(ONLY_OUTFIT) }
-    }
-}
+impl Drop for OnlyOutfitScope { fn drop(&mut self) { ONLY_OUTFIT_HERE.with(|o| o.set(None)); } }
 const ONLY_OUTFIT: &str = "OK_SEAL_ONLY_OUTFIT";
+/// What `seal_card_mode` puts in the environment of each sealing child process it starts, so the narrowing reaches
+/// the steps that run there. Never set on this process: another thread of the card reader may be remaking a card of
+/// its own (a save), and that one must still see every outfit.
+fn only_outfit_here() -> Option<i32> { ONLY_OUTFIT_HERE.with(std::cell::Cell::get) }
 /// The one outfit the sealing passes may restrict themselves to, when it is one of this card's `outfits`.
 fn only_outfit(outfits: i32) -> Option<i32> {
     if std::env::var_os("OK_SEAL_EVERY_OUTFIT").is_some() { return None; }
-    std::env::var(ONLY_OUTFIT).ok()?.trim().parse::<i32>().ok().filter(|o| *o >= 0 && *o < outfits)
+    // This thread's scope (the wear that set it), else what this sealing child process was started with.
+    only_outfit_here()
+        .or_else(|| std::env::var(ONLY_OUTFIT).ok()?.trim().parse::<i32>().ok())
+        .filter(|o| *o >= 0 && *o < outfits)
 }
 
 fn open_outfits(lib: &Path, card: &[u8], what: &str) -> Result<(), String> {

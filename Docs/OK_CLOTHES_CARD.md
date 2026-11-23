@@ -12,7 +12,7 @@
 | 套用服裝卡 | 選一張 `.okclothes`，穿成目前角色的這套服裝：衣服與身上的飾品換成服裝卡的，**頭髮與頭上的飾品保留角色自己的**（見下方「保留頭髮」）。結果是工作卡 `Saved/OKClothes/Worn/<角色>+<服裝卡>.png`，套完立刻開啟；原卡不變，要保留請另存。 |
 | 只換衣服 | 同上，但角色自己的飾品全部保留，服裝卡的飾品都不穿。 |
 | 轉換服裝卡 | 遊戲的服裝卡（KoiKatuClothes PNG）→ `.okclothes`。 |
-| 開啟資料夾（2026-11-23） | 用檔案總管開啟服裝卡資料夾（另存資料夾，沒填就是 `UserData/okclothes/`；不存在就先建）。把檔案丟進去再回來，按下它或「重新整理」就會出現。 |
+| 開啟資料夾（2026-11-23） | 用檔案總管開啟服裝卡資料夾（另存資料夾，沒填就是 `UserData/okclothes/`；不存在就先建），並順手重讀清單。按下去 log 會記一行 `OK clothes folder opened: <路徑>`。**清單仍然同時讀兩個資料夾**，所以 `UserData/okclothes/` 的卡片照樣列出來。 |
 
 按鈕下方是**服裝卡清單**：另存資料夾（匯出服裝卡寫到的地方）與 `UserData/okclothes/` 裡的 `.okclothes`，**以及直接丟進這兩個資料夾的遊戲原版服裝卡**（`*.png`，2026-11-23），新的在前，每張顯示縮圖與檔名。
 
@@ -112,6 +112,10 @@ strict-check 與 remake 這三趟只需要開那一套。`open_outfits` 是這�
 `with_tree_answers`（重錄 answers）有自己的迴圈，**不受影響**，answers 仍然涵蓋全部服裝。
 `OK_SEAL_EVERY_OUTFIT=1` 回到舊行為（A/B 用）。
 
+**範圍只在這條執行緒**（刻意的）：讀卡器可能同時在另一條執行緒上存一張編輯過的卡，那也會 `remake_ok_card`
+→ `open_outfits`，而**那一張必須照樣看全部服裝**。所以 `OnlyOutfitScope` 設的是 thread-local；
+`OK_SEAL_ONLY_OUTFIT` 只放進封裝子程序自己的環境（`Command::env`），本行程永遠不設。
+
 **同一把尺重量**（同一個執行檔、環境變數切換、同時段）：
 
 | | 舊（每套都開） | 新（只開換掉的那一套） |
@@ -144,8 +148,12 @@ strict-check 與 remake 這三趟只需要開那一套。`open_outfits` 是這�
 
 使用者：「還要能打開衣服卡的資料夾，放原版的衣服卡。」
 
-- **開啟資料夾**按鈕（衣服卡總欄 › 服裝卡，和「重新整理」同一排）：用檔案總管開啟服裝卡資料夾
-  （`UOKCharacterController::OkClothesFolderPath`，不存在就先建），按下它回來時順手重讀清單。
+- **開啟資料夾**按鈕（衣服卡總欄 › 服裝卡，和「重新整理」同一排 —— 它們兩個自己一排，排在模式按鈕旁邊會被
+  面板右緣切掉）：用檔案總管開啟服裝卡資料夾（`UOKCharacterController::OkClothesFolderPath`，不存在就先建），
+  按下它回來時順手重讀清單。**只驗到一半**：log 的 `OK clothes folder opened: F:\OpenKoikatsu\Saved\EditedCards`
+  證明按鈕走到了、路徑是對的 Windows 路徑，但**視窗本身沒驗**——這台機器上用自動化開不出檔案總管視窗
+  （連在 PowerShell 直接跑 `explorer.exe <資料夾>` 都開不出來），要人按一次看。見
+  [ERROR_LOG.md](ERROR_LOG.md) 2026-11-23 那條。
 - **原版服裝卡直接列、直接套**：`okclothes::file::read_outfit` 先把檔案當 `.okclothes` 讀，不是就當遊戲的
   coordinate card 讀（`import_coordinate`）；`wear_into`／`wear_file`／`wear_clothes_only_file` 都走它，所以讀卡器、
   命令列 `--oklib clothes-wear` 與 FFI 都一樣。清單只收檔尾標記 `【KoiKatuClothes】` 的 PNG（`OKIsCoordinateCardFile`：
@@ -170,3 +178,18 @@ strict-check 與 remake 這三趟只需要開那一套。`open_outfits` 是這�
 （`wear_into` 已經有的 `game`）傳進 `seal_card_with` 的子程序，讓封裝**把那筆 entry 複製進 worn 卡的資源包**
 （和原作卡轉 OK 卡時一樣），封完的卡仍然自足；要先確認 `okstrict` 對「來自遊戲根目錄的讀取」是記成 addition
 還是只是答掉（只答掉就白做）。現成的替代做法：從**有那個 mod 的角色卡**匯出服裝卡，那樣的 `.okclothes` 自帶資源包。
+
+### 讀卡器裡實測一次（2026-11-23）
+
+上面的數字是 `ok-clothes-bench` 量的（同一段 Rust，冷程序）。在讀卡器裡按一次確認比例：
+`CardReaderDevelopment.cmd -CardDirectory Content/CharacterCards/CrowdAPNG`，選 C020，到衣服卡總欄點
+`raiden_outfit1` 的縮圖（`ui_exec ok.ReaderScreen card 3`）。`WearOkClothesFrom` 現在永遠記一行：
+
+```
+OK clothes wear timing: wear 17.05s + open 0.36s = 17.41s
+```
+
+`open 0.36s` 只是 `SelectIndex` ＋ `OnLoad3D` 的同步那一段；3D 真的好了是日誌的
+`OK load3d result ok=1 已加载3D`，按下到那裡共 **21.4 s**，其中 **wear 17.05 s 占 80%**，
+開卡＋UE 建顯示資源 4.3 s。所以在讀卡器裡的比例和命令列量到的一致：**該減的是重封，不是開卡**。
+（這一張是本機 `CrowdAPNG/C020.png`，和基準用的 `E:/OKPackage` 那張不是同一份，絕對秒數不可直接對照。）

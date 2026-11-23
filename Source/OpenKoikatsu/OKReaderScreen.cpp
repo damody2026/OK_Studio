@@ -2167,13 +2167,20 @@ void UOKReaderScreen::BuildCardGrid(UDreamWidget* Page,bool bClothes)
 			Self->bWearClothesOnly=!Self->bWearClothesOnly;
 			if(UOKDreamControl* B=Self->ClothesModeButton.Get()){B->FixedText=ModeText(Self->bWearClothesOnly);B->SetText(B->FixedText);B->SetWidth(FMath::Max(64.f,TextWidth(B->FixedText,20.f)+36.f));}
 		});
-		MakeOwnButton(Row,TEXT("重新整理"),[WeakSelf](){if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();});
+		// The mode button is wide, so these two go on a row of their own; beside it they fall off the panel's edge.
+		UDreamWidget* Row2=MakePanel(Page,true,6.f);
+		MakeOwnButton(Row2,TEXT("重新整理"),[WeakSelf](){if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();});
 		// The folder the tiles come from, so the player can drop the game's own outfit cards (*.png) straight in.
 		TWeakObjectPtr<UOKCharacterController> WeakG(G);
-		MakeOwnButton(Row,TEXT("開啟資料夾"),[WeakG,WeakSelf]()
+		MakeOwnButton(Row2,TEXT("開啟資料夾"),[WeakG,WeakSelf]()
 		{
 			UOKCharacterController* C=WeakG.Get();if(!C)return;
-			const FString Folder=C->OkClothesFolderPath();
+			// A Windows path: ExploreFolder hands it to ILCreateFromPath, which refuses forward slashes. The log line
+			// says which folder was asked for -- no automated check here can see a File Explorer window (2026-11-23:
+			// not even `explorer.exe <folder>` run by hand opens one that EnumWindows then finds), so that line is
+			// the only evidence available without a person looking at the screen.
+			FString Folder=C->OkClothesFolderPath();FPaths::MakePlatformFilename(Folder);
+			UE_LOG(LogTemp,Display,TEXT("OK clothes folder opened: %s"),*Folder);
 			FPlatformProcess::ExploreFolder(*Folder);
 			if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();
 		});
