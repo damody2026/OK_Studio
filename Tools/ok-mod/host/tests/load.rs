@@ -448,10 +448,11 @@ fn dev_mode_reload_swaps_in_a_fresh_copy() {
     let mut host = ModHost::open(cfg, Arc::new(move |l, id, m| sink_logs.lock().unwrap().push((l, id.to_string(), m.to_string()))));
     assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 1 (hello)".into()));
     assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 2 (hello)".into()));
-    // The DLL on disk is in use; the reload loads a copy under a new name and starts the mod over.
+    // The DLL on disk is in use; the reload loads a copy under a new name; hello keeps its ping count (keep_state).
     let text = host.reload(HELLO).unwrap();
-    assert!(text.contains(".reload"), "{text}");
-    assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 1 (hello)".into()));
+    assert!(text.contains(".reload") && text.contains("state kept"), "{text}");
+    assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 3 (hello)".into()));
+    assert!(logged(&logs, HELLO, "kept 2 pings from 0.1.0"), "{:?}", logs.lock().unwrap());
     assert_eq!(status(&host.statuses(), HELLO).state, "enabled");
     assert_eq!(logs.lock().unwrap().iter().filter(|(_, id, m)| id == HELLO && m.contains("hello from hello")).count(), 2);
     assert!(std::fs::read_dir(s.mods().join("hello/.reload")).unwrap().count() == 1);
@@ -489,5 +490,46 @@ fn hotkeys_reach_their_mod_in_any_mode_and_rebind() {
     // Unbound: nothing matches.
     host.set_config(HELLO, "greet", ConfigValue::Text(String::new().into())).unwrap();
     assert!(host.key("Control+G", "pair").is_empty());
+    host.close();
+}
+
+#[test]
+fn reload_state_survives_failures_of_either_copy() {
+    let _g = serial();
+    let dlls = build(Build::Current).unwrap();
+    let dev_host = |s: &Scratch| {
+        let mut cfg = HostConfig::new(s.mods(), "reader");
+        cfg.dev = true;
+        ModHost::open(cfg, Arc::new(|_, _, _| {}))
+    };
+
+    // The old copy panics while saving: it is replaced anyway and the new copy starts from scratch.
+    std::env::set_var("OK_MOD_TEST_PANIC_AT", "dev.save_state");
+    let s = Scratch::new("reload-save-panic");
+    s.panic(&dlls);
+    let mut host = dev_host(&s);
+    assert_eq!(status(&host.statuses(), PANIC).state, "enabled");
+    let text = host.reload(PANIC).unwrap();
+    assert!(text.contains("dev.save_state failed"), "{text}");
+    assert_eq!(status(&host.statuses(), PANIC).state, "enabled");
+    host.close();
+
+    // The new copy panics while restoring: the reload fails and the mod is faulted, not half alive.
+    std::env::set_var("OK_MOD_TEST_PANIC_AT", "dev.restore_state");
+    let s = Scratch::new("reload-restore-panic");
+    s.panic(&dlls);
+    let mut host = dev_host(&s);
+    let err = host.reload(PANIC).unwrap_err();
+    assert!(err.contains("dev.restore_state failed"), "{err}");
+    assert_eq!(status(&host.statuses(), PANIC).state, "faulted");
+    host.close();
+    std::env::remove_var("OK_MOD_TEST_PANIC_AT");
+
+    // Release (no -ModDev) never reloads, so the hooks never fire there.
+    let s = Scratch::new("reload-release");
+    s.hello(&dlls);
+    let (mut host, logs) = open(&s, "reader");
+    assert!(host.reload(HELLO).is_err());
+    assert!(!logged(&logs, HELLO, "kept"));
     host.close();
 }

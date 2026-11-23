@@ -1,7 +1,8 @@
 //! `hello`: the smallest OK mod (Docs/OK_MOD_FRAMEWORK_PLAN.md §14.1).
 //! Logs when enabled and on every mode change, has one config entry and the console command
 //! `mod.org.openkoikatsu.hello.ping`, and answers the hook `reader.character_load` (Event::Hook, JSON in and out), and greets
-//! in the log when F8 is pressed in any mode (a hotkey the player can rebind).
+//! in the log when F8 is pressed in any mode (a hotkey the player can rebind), and keeps its ping count across a
+//! development-mode hot reload (`keep_state`).
 
 use ok_mod_sdk::prelude::*;
 
@@ -18,6 +19,7 @@ impl Mod for Hello {
     fn register(&mut self, reg: &mut Registrar) -> ModResult<()> {
         reg.config_text("greeting", "hello", "mod.org.openkoikatsu.hello.config.greeting")
             .hotkey("greet", "F8", "mod.org.openkoikatsu.hello.config.greet")
+            .keep_state()
             .command("ping", "mod.org.openkoikatsu.hello.cmd.ping")
             .subscribe("mode_enter")
             .subscribe("mode_exit")
@@ -45,6 +47,13 @@ impl Mod for Hello {
                 let greeting = self.host.config_text("greeting").unwrap_or_default();
                 self.host.info(format!("{greeting} ({} in {})", key.chord, key.mode));
                 return Ok(Reply::Text(format!("{greeting} ({})", key.mode).into()));
+            }
+            // Development-mode hot reload (-ModDev, console mod.reload): the ping count survives the new copy.
+            Event::Hook { name, .. } if name.as_str() == hooks::SAVE_STATE => return hooks::json(&self.pings),
+            Event::Hook { name, payload } if name.as_str() == hooks::RESTORE_STATE => {
+                let r: hooks::RestoreState<u64> = hooks::parse(payload)?;
+                self.pings = r.state;
+                self.host.info(format!("kept {} pings from {}", self.pings, r.from_version));
             }
             Event::Hook { name, payload } if name.as_str() == "reader.character_load" => {
                 #[derive(serde::Deserialize)]

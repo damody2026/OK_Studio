@@ -208,6 +208,14 @@ impl Registrar {
         self
     }
 
+    /// Development-mode hot reload keeps this mod's state (plan §7.5): before the old copy stops it gets the hook
+    /// `dev.save_state` (answer the state with `hooks::json`), after the new copy starts it gets `dev.restore_state`
+    /// (`hooks::RestoreState`). Without it a reload starts the mod over. The release game never reloads.
+    pub fn keep_state(&mut self) -> &mut Self {
+        self.subscribe(hooks::SAVE_STATE);
+        self.subscribe(hooks::RESTORE_STATE)
+    }
+
     fn finish(self) -> Registration {
         Registration {
             declarations: self.declarations.into_iter().map(Declaration_NE::new).collect::<RVec<_>>(),

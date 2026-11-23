@@ -190,3 +190,30 @@ pub struct KeyPress {
     #[serde(default)]
     pub chord: String,
 }
+
+/// Development-mode hot reload (`Registrar::keep_state`): the old copy answers this hook with its state (`hooks::json`;
+/// `Reply::None` keeps nothing). Payload `{"version"}`, the version being replaced.
+pub const SAVE_STATE: &str = "dev.save_state";
+/// The new copy gets the state the old one saved: payload `RestoreState`.
+pub const RESTORE_STATE: &str = "dev.restore_state";
+
+/// The payload of `dev.restore_state`. `state` is what the old copy answered (a text answer arrives as a JSON string);
+/// a mod whose state layout changed checks `from_version`, and an `Err` reply fails the reload (the new copy keeps
+/// running from scratch).
+///
+/// ```ignore
+/// Event::Hook { name, .. } if name == hooks::SAVE_STATE => hooks::json(&self.counts),
+/// Event::Hook { name, payload } if name == hooks::RESTORE_STATE => {
+///     let r: hooks::RestoreState<Counts> = hooks::parse(payload)?;
+///     self.counts = r.state;
+///     Ok(Reply::None)
+/// }
+/// ```
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RestoreState<T> {
+    #[serde(default)]
+    pub from_version: String,
+    #[serde(default)]
+    pub to_version: String,
+    pub state: T,
+}

@@ -16,6 +16,10 @@ pub mod keys;
 pub mod manifest;
 pub mod resolve;
 
+/// Development-mode hot reload (plan section 7.5): the old instance hands its state over, the new one takes it.
+pub const SAVE_STATE: &str = "dev.save_state";
+pub const RESTORE_STATE: &str = "dev.restore_state";
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -516,8 +520,13 @@ impl ModHost {
 
     /// Development mode only: loads the mod again from a fresh copy of its DLL (Windows keeps the
     /// loaded file locked and abi_stable never unloads, so the old copy stays in memory, unused),
-    /// re-reading mod.toml. The old instance gets `shutdown`; the new one starts from scratch (its
-    /// state is not carried over) and gets `Enabled`.
+    /// re-reading mod.toml. The old instance gets `shutdown`; the new one gets `Enabled`.
+    ///
+    /// State carries over when the mod keeps it (plan §7.5, `Registrar::keep_state`): before the old
+    /// instance stops it gets the hook `dev.save_state` (`{"version"}`) and answers its state (JSON,
+    /// or text); after `Enabled` the new one gets `dev.restore_state` with
+    /// `{"from_version","to_version","state"}`. A mod that keeps nothing starts from scratch; a failed
+    /// save starts it from scratch too (said in the answer), a failed restore fails the reload.
     pub fn reload(&mut self, id: &str) -> Result<String, String> {
         if !self.config.dev {
             return Err("reload is for development mode only (-ModDev)".into());
@@ -535,6 +544,8 @@ impl ModHost {
         let stem = Path::new(&manifest.dll).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "mod".into());
         let copy = copies.join(format!("{stem}-{stamp}.dll"));
         std::fs::copy(&source, &copy).map_err(|e| format!("copy {} -> {}: {e}", source.display(), copy.display()))?;
+        let from_version = self.mods[idx].manifest.as_ref().map(|m| m.version.to_string()).unwrap_or_default();
+        let saved = self.save_state(idx, &from_version);
         if self.mods[idx].state == State::Enabled {
             self.shutdown_one(idx);
         }
@@ -548,7 +559,26 @@ impl ModHost {
                     self.order.push(idx);
                 }
                 let _ = self.call_event(idx, &Event::Enabled);
-                let msg = format!("reloaded {id} {} from {}", manifest.version, copy.display());
+                let kept = match saved {
+                    Ok(Some(state)) => {
+                        let wants = self.mods[idx].loaded.as_ref().is_some_and(|l| l.subscriptions.contains(RESTORE_STATE));
+                        if !wants {
+                            " (the new version does not restore state: it starts from scratch)".to_string()
+                        } else {
+                            let payload = serde_json::json!({"from_version": from_version, "to_version": manifest.version.to_string(), "state": state}).to_string();
+                            match self.call_event(idx, &Event::Hook { name: RESTORE_STATE.into(), payload: payload.into() }) {
+                                Ok(_) => " (state kept)".to_string(),
+                                Err(e) => {
+                                    self.publish_frames();
+                                    return Err(format!("reload of {id}: {RESTORE_STATE} failed: {e}"));
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => String::new(),
+                    Err(e) => format!(" ({SAVE_STATE} failed, it starts from scratch: {e})"),
+                };
+                let msg = format!("reloaded {id} {} from {}{kept}", manifest.version, copy.display());
                 self.host_log(LogLevel::Info, &msg);
                 self.publish_frames();
                 Ok(msg)
@@ -559,6 +589,22 @@ impl ModHost {
                 Err(format!("reload of {id} failed: {why}"))
             }
         }
+    }
+
+    /// The old instance's `dev.save_state` answer: `None` when it keeps no state (not subscribed,
+    /// not enabled, or answered nothing), the state as JSON (a text answer becomes a JSON string).
+    fn save_state(&mut self, idx: usize, version: &str) -> Result<Option<serde_json::Value>, String> {
+        let wants = self.mods[idx].loaded.as_ref().is_some_and(|l| l.subscriptions.contains(SAVE_STATE));
+        if self.mods[idx].state != State::Enabled || !wants {
+            return Ok(None);
+        }
+        let payload = serde_json::json!({"version": version}).to_string();
+        Ok(match self.call_event(idx, &Event::Hook { name: SAVE_STATE.into(), payload: payload.into() })? {
+            Reply::None => None,
+            Reply::Text(t) => Some(serde_json::Value::String(t.to_string())),
+            Reply::Json(j) => Some(serde_json::from_str(j.as_str()).map_err(|e| format!("its state is not JSON: {e}"))?),
+            _ => None,
+        })
     }
 
     /// Turns a mod off for this session (it gets `shutdown`; the DLL stays loaded).
