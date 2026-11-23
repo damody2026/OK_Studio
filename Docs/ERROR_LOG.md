@@ -7352,3 +7352,11 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - 2026-11-23 第六波（F 組，`Docs/OK_MOD_F_WAVE6.md`）：
   - 第五波把「打包版讀卡器沒有 DreamGUI global shader」歸給 cook 沒帶。實際上新 cook 的 base 有，是啟動器另外掛的共享 runtime patch（`runtime.json` 的 `NH1115.patch`，比 DreamGUI 早）用 `_P` 的 global shader map 蓋掉了它。看 log 的 `Mounted Pak file` 順序才找到。改成 stage 自帶 patch（`rebuild_street_social_runtime.lua` 第 5 步，`street_stage.patch_for`）。
   - `ok-game-mcp` 的 `game_stop` 只送不帶 `/F` 的 `taskkill` 就回 `stopped`，進程其實還在關；改成等到進程消失，逾時才強制結束。
+
+## 2026-11-23 配種封卡：子卡用到父卡沒讀過的 mod（E 組，打包版 OK Studio）
+
+- **症狀**：打包版 OK Studio 讓 `crowd_C001`（母）× `crowd_C006`（父）配種，封卡每套服裝、每個 clothes state 都失敗：`absent-model b50f6100000000002374ae2c4f4b4331 ParsedBundle::with_texture_sources` 與 `texture_directory2 b50f6100…`。
+- **已證實的原因**（不是 merge 漏了）：那個模型是 `[yamadamod] ymdtexture v2.zipmod|abdata/chara/ymd/mf_ymdtexture.unity3d`，第三方 mod，打包的基礎庫沒有它的 `.okmodel`（`models/.gitignore` 列為非共用）。母卡帶著 `ChaFileMakeup.cheekId=505` 的 UAR 列指向這個 mod，但她自己的頭是 Head Mod，`face_create_source::compose` 從來沒跑過，所以她的 okLc 裡沒有這個模型的任何紀錄，她自己也開得起來。子卡取了母親的妝（`face.baseMakeup`）＋父親的原版頭，compose 第一次真的去解那列腮紅（貼圖 `mf_cheek3kai_3`），於是問了兩張父卡都沒問過的問題——封卡在共用庫裡找不到答案（用 `OK_STRICT_TRACE`／臨時 trace 在 `named_png_from_zip` 查出整條鏈）。
+- **修正**（`Tools/ok-extract/src/oklib.rs`）：封卡的 complete 步驟改成和轉卡同一套規則——只有「本機沒有的第三方壓縮包才能提供」的缺口，記成卡自己的 `okAb`（`sealing_absent_gaps`／`with_absent_parts`），開卡本來就接受 `okAb` 列的那些、而且只接受那些；其他缺口照樣讓封卡失敗。`gap_zipmods` 另外認得 `GAMEFS stat <zipmod>` 這種缺口（答案指到的壓縮包不在本機）。另加 `OK_KEEP_WORK=1` 保留封卡各步驟的工作卡，不然失敗那步拿到的卡會被刪掉、沒辦法重現。
+- **走過的歧路**：先試過「補答案時先用父卡已有的答案」（`tree_answers::begin_knowing`），結果錄答案的那次開卡改走重放路徑，母親的 `okLt cat 411 7` 這類新問題不再去問共用庫、反而被當成缺答案，害子卡白白把 `face.hlDownId` 換成父親的。已整段撤回。
+- **驗證**：同一組卡、同一個打包基礎庫，`--oklib breed` 一次成功（不再需要換基因），產出的子卡 `strict-check` 全服裝全 clothes state 通過，連舊的（修正前）ok-extract.exe 也開得起來，所以打包版只要換掉 `Tools/ok-extract/target/release/ok-extract.exe` 就能配種（已換）。

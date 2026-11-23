@@ -1767,7 +1767,14 @@ pub fn remake_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i
 
 /// A temporary card next to the original, so zipmods kept in the card's folder are still the card's own; removed on drop.
 struct TempCard(PathBuf);
-impl Drop for TempCard { fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); } }
+/// `OK_KEEP_WORK=1`: the work cards of a sealing or conversion stay (the card a failing step was given is what the
+/// failure must be reproduced from, and every step's input is a temporary file).
+impl Drop for TempCard {
+    fn drop(&mut self) {
+        if std::env::var_os("OK_KEEP_WORK").is_some() { eprintln!("ok-extract: kept {}", self.0.display()); return; }
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 
 /// The card an OK card is made from: OK chunks stripped, and the outfit shown moved to outfit 0
 /// (okclothes::shown_outfit_first). None when that is the card itself.
@@ -2327,11 +2334,52 @@ fn seal_step(lib: &Path, step: &str, card: &[u8]) -> Result<(Vec<u8>, String), S
     let completing = open_outfits(lib, &answered, "sealing");
     crate::okstrict::end_sealing();
     let adds = strict.take_additions();
-    completing?;
-    let summary = format!("added files={} zips={} zip entries={} model records={} ({} bytes)", adds.index.files.len(), adds.index.zips.len(),
-        adds.index.zips.values().map(|z| z.entries.len()).sum::<usize>(), adds.records.len(), adds.records.values().map(Vec::len).sum::<usize>());
+    let gaps = strict.gaps();
+    let absent = match &completing { Err(_) => sealing_absent_gaps(lib, &answered, &gaps), Ok(()) => Vec::new() };
+    if completing.is_err() {
+        // What only a third-party archive this checkout has not got could serve becomes a part the card goes without,
+        // recorded in it (okAb) exactly as a conversion on such a machine records it: the open reads nothing there and
+        // the character shows without it. A gene of a bred child can need a mod neither parent's open ever read (her
+        // mother's mod cheek under her father's original head, 2026-11-23), and a library out of version control holds
+        // no model of it. Any other gap still fails the sealing.
+        let left: Vec<String> = gaps.iter().filter(|g| !absent.contains(*g)).cloned().collect();
+        if !left.is_empty() || absent.is_empty() { completing?; }
+        eprintln!("ok-extract: sealing without {} part(s) whose archives this checkout lacks: {}", absent.len(),
+            absent.iter().take(8).map(String::as_str).collect::<Vec<_>>().join("; "));
+    }
+    let summary = format!("added files={} zips={} zip entries={} model records={} ({} bytes){}", adds.index.files.len(), adds.index.zips.len(),
+        adds.index.zips.values().map(|z| z.entries.len()).sum::<usize>(), adds.records.len(), adds.records.values().map(Vec::len).sum::<usize>(),
+        if absent.is_empty() { String::new() } else { format!(", without {} part(s) only absent archives could serve", absent.len()) });
     let sealed = if adds.index.files.is_empty() && adds.index.zips.is_empty() && adds.records.is_empty() { answered } else { extend_card_pack(&answered, adds)? };
+    let sealed = if absent.is_empty() { sealed } else { with_absent_parts(&sealed, &absent)? };
     Ok((sealed, summary))
+}
+
+/// The gaps of a sealing open that only a third-party archive this checkout has not got could fill (`gap_zipmods`
+/// names the archives of a gap; none of them is here). The card's own absent parts (`okAb`) count as well: a strict
+/// open accepts those already.
+fn sealing_absent_gaps(lib: &Path, card: &[u8], gaps: &[String]) -> Vec<String> {
+    if std::env::var_os("OK_STRICT_CONVERT").is_some() { return Vec::new(); }
+    // `gap_zipmods` reads the library's source index (which archive holds a model).
+    let keep = crate::gamefs::state_active() || crate::gamefs::activate(crate::gamefs::Mode::Replay, lib, lib).is_err();
+    let known = absent_parts(card);
+    let mut out: Vec<String> = gaps.iter().filter(|g| known.contains(*g) || {
+        let keys = gap_zipmods(std::slice::from_ref(*g));
+        !keys.is_empty() && keys.iter().all(|k| crate::gamefs::resolve_mod_archive(lib, k).is_none())
+    }).cloned().collect();
+    if !keep { crate::gamefs::deactivate(); }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The card with `parts` added to the parts it opens without (`okAb`, `absent_parts`).
+pub fn with_absent_parts(card: &[u8], parts: &[String]) -> Result<Vec<u8>, String> {
+    let mut all: Vec<String> = absent_parts(card).into_iter().chain(parts.iter().cloned()).collect();
+    all.sort();
+    all.dedup();
+    crate::tree_answers::with_chunk(card, ABSENT_CHUNK, all.join("
+").as_bytes())
 }
 
 /// Opens every saved outfit of the card (bytes) from the library, nothing read from or written to the open cache, with
@@ -2347,6 +2395,9 @@ fn gap_zipmods(gaps: &[String]) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
     for what in gaps {
         if let Some(k) = what.strip_prefix("GAMEFS zip-entry ").and_then(|k| k.split('|').next()) { keys.push(k.to_owned()); continue; }
+        // A stat of an archive itself (a guid the card's answers name lives in an archive this checkout has not got:
+        // the open asks whether it is there): that archive, so the gap counts as one only it could fill.
+        if let Some(k) = what.strip_prefix("GAMEFS stat ").filter(|k| k.ends_with(".zipmod")) { keys.push(k.to_owned()); continue; }
         if (what.starts_with("GAMEFS ") && !what.starts_with("GAMEFS absent-model ")) || what.starts_with("UNMEMOIZED ") { continue; }
         if let Some(id) = what.split_whitespace().find(|w| w.len() == 32).and_then(id_from_hex) { keys.extend(crate::gamefs::zips_with_model(&id)); }
     }

@@ -894,6 +894,9 @@ pub fn save(library: &Path) -> Result<(), String> {
 
 pub fn deactivate() { *STATE.write().unwrap() = None; }
 
+/// Whether an index is mounted (a caller that needs one only for a lookup activates and deactivates its own).
+pub fn state_active() -> bool { state().is_some() }
+
 pub fn stats() -> (usize, usize, usize) {
     state().map(|st| { let i = st.index.lock().unwrap(); (i.files.len(), i.dirs.len(), i.zips.len()) }).unwrap_or_default()
 }
