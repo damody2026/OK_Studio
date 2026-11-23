@@ -44,6 +44,12 @@ local function say(s) io.write(s, "\n"); io.flush() end
 local function win(p) return (path.norm(p):gsub("/", "\\")) end
 local function gb(n) return ("%.2f GB"):format(n / 1073741824) end
 
+--
+-- The mods (--mods <folder of .okmod>, 2026-11-23, Docs/OK_MOD_AUTHORING.md): the mods installed in the stage's Mods/
+-- (ok-mod-pack profile apply ... --mods <stage>/Mods; its .old/ is left out) go to <stage>/Mods, where the packaged game
+-- loads them; the .okmod packages to ModPackages/ (reinstall or pick another profile with ok-mod-pack); the mod sources
+-- (Tools/ok-mod: the API, SDK, host, ok-mod-pack, every example and fixture; the ModKit content plugins
+-- Plugins/org_openkoikatsu_*), ok-mod-pack.exe, and the mod documents (Docs/OK_MOD_*.md).
 -- Files under the repository that git tracks (forward slashes, relative to the root).
 local function tracked(root, specs)
   local args = { "git", "-C", root, "ls-files", "-z", "--" }
@@ -154,6 +160,41 @@ end
 local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses", "base-sounds",
   "runtime-clips" }
 
+-- --mods: the stage's installed mods, the .okmod packages, the mod sources, ok-mod-pack and the mod documents.
+-- counted(n) gets the number of installed mods.
+local function package_mods(root, stage, stage_rel, packages, add, counted)
+  local mods = path.join(stage, "Mods")
+  if not path.is_file(path.join(mods, ".installed.toml")) then
+    error("--mods: the stage has no installed mods (" .. win(mods) .. "); install them first, e.g. ok-mod-pack profile apply "
+      .. "Tools/ok-mod/profiles/full.toml --mods " .. win(mods) .. " --packages " .. win(packages), 0)
+  end
+  local ids = {}
+  for _, f in ipairs(files_under(mods, function(r) return r == ".old" end)) do
+    add(f[1], stage_rel .. "/Mods/" .. f[2])
+    local top = f[2]:match("^([^/]+)/mod%.toml$")
+    if top then ids[#ids + 1] = top end
+  end
+  if not path.is_dir(packages) then error("--mods: no such folder of .okmod packages: " .. win(packages), 0) end
+  local n_pkg = 0
+  for _, name in ipairs(path.list(packages)) do
+    if name:lower():match("%.okmod$") then add(path.join(packages, name), "ModPackages/" .. name); n_pkg = n_pkg + 1 end
+  end
+  local sources = { "Tools/ok-mod" }
+  for _, rel in ipairs(tracked(root, { "Plugins" })) do
+    local plugin = rel:match("^(Plugins/org_openkoikatsu_[^/]+)/")
+    if plugin then add(path.join(root, rel), rel) end
+  end
+  for _, rel in ipairs(tracked(root, sources)) do add(path.join(root, rel), rel) end
+  for _, rel in ipairs(tracked(root, { "Docs" })) do
+    if rel:match("^Docs/OK_MOD_[^/]+%.md$") then add(path.join(root, rel), rel) end
+  end
+  local tool = "Tools/ok-mod/target/release/ok-mod-pack.exe"
+  if not path.is_file(path.join(root, tool)) then error("--mods: " .. tool .. " is not built (cargo build --release -j 8 in Tools/ok-mod)", 0) end
+  add(path.join(root, tool), tool)
+  say(("Mods: %d installed in the stage (%s), %d packages"):format(#ids, table.concat(ids, ", "), n_pkg))
+  counted(#ids)
+end
+
 local TEXT_EXT = { json = true, txt = true, lua = true, ini = true, cmd = true, bat = true, toml = true, md = true, cfg = true, csv = true, tsv = true, xml = true, yaml = true, yml = true, log = true }
 
 local function main()
@@ -172,6 +213,7 @@ local function main()
   p:opt("--readme")
   p:opt("--skip-group", { multiple = true })
   p:flag("--studio")
+  p:opt("--mods")
   local a = p:parse(arg)
   local skip_groups = (a.skip_group and #a.skip_group > 0) and a.skip_group or (a.studio and STUDIO_SKIP or { "h-voices", "studio-scenes" })
   if a.voice and a.voice ~= "cloud" and a.voice ~= "builtin" then error("--voice must be cloud or builtin", 0) end
@@ -240,6 +282,8 @@ local function main()
       "Tools/ok-game-mcp/target/release/ok-game-mcp.exe", "Tools/character_mcp/bin/ok-character-mcp.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
   end
+  local mod_count = 0
+  if a.mods then package_mods(root, stage, stage_rel, path.abs(a.mods), add, function(n) mod_count = n end) end
   if not a.no_voice_servers and not a.studio then
     for _, server in ipairs({ "ok-tts", "ok-asr" }) do
       local dir = path.join(root, "Build", server)
@@ -390,6 +434,7 @@ local function main()
     { "stage", path.name(stage) }, { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
     { "mode", a.studio and "studio" or "street" }, { "private", a.private and true or false },
     { "skip_groups", json.array(a.private and skip_groups or {}) }, { "maps_in_paks", json.array(report.maps) },
+    { "mods", mod_count },
     { "cook", a.studio and "/Engine/Maps/Entry + Template_Default + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua --studio)"
       or "StreetSocial + UniversityCity maps + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua)" },
     { "files", listing } }), { indent = 1, ensure_ascii = false }) .. "\n", { newline = "\n" })
