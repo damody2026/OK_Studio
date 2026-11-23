@@ -7334,3 +7334,9 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - `Reply` 是 `NonExhaustive`，宿主裡 `match` 它要有 `_` 分支（E0004），第一次編譯失敗。
   - 熱鍵頁的改綁按鈕只呼叫 `SetText`，DreamGUI 按鈕每幀以 `FixedText` 重設文字，畫面一直停在舊綁定（綁定本身已改成 F9）。單元測試與 `OKMod.Keys` 都看不出來，實機截圖才發現；改成同時設 `FixedText`。另外「請按鍵…（Esc 保留，Backspace 清除）」在按鈕裡被截斷，縮成「請按鍵…」。
   - 當機前的按鍵服務讓宿主把 mod 的短名訂閱 `key.<entry>` 改寫成 `key.<mod id>.<entry>`。OK Studio 的面板按鍵用的正是短名（`ok-mod-studio::subscribe` 訂 `key.<k>`，`OKStudioModBridge` 送 `key.<k>`），改寫後宿主 `hook_one` 會以「沒訂閱」拒絕，Studio mod 的按鍵全部失效。我照原樣驗過就提交了（`4c6fc245e`），寫回報整理 API 變動時才發現，`e4cd5ad3f` 改回訂閱原樣保留、熱鍵服務兩種名字都認。教訓：改到訂閱或 hook 名的處理時，先 grep 全部 SDK（`Tools/ok-mod/studio`）與 UE 端送 hook 的地方（`HookName`）。
+
+## 2026-11-23 街區 mod 資料表：`TEXT+TEXT` 編譯失敗、sed 把 `\n` 寫成真的換行（C 組，OK mod 第六波）
+
+- `OKStreetSocialMods.inl` 寫了 `TEXT("\n\n")+OKT(...)`，結果是兩個指標相加，報 C2110。改成 `FString(TEXT("\n\n"))+…` 後重新建置。**教訓**：字串字面量放在 `+` 左邊時，先包成 `FString`。
+- 用 sed 在三語 `ui_text.toml` 插入 `mod_topics_header`，`\n` 被 sed 展開成真的換行，toml 字串斷成三行。用 Lua 腳本把它換回單行字串，換行改由程式碼加。**教訓**：toml／原始碼裡的字串跳脫不要經過 sed，用 Edit 工具或 Lua 直接寫。
+- 讀卡器字幕 mod「缺 `comm_lines.json`」不是檔案不存在：它在 `<GameRoot>/voice_extract/`，但 `DefaultVoiceRoot()` 先選了只有 H 語音的 `base_v1/h/voice`。以 `OK_VOICE_ROOT` 指定後就通了（`Docs/OK_MOD_C_WAVE6.md` §6）。
