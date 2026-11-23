@@ -10,6 +10,9 @@
 //!   `studio.objects_selected`, `studio.timeline_event`, `studio.panel_control`; and `key.<id>`, `timer.<id>` for the
 //!   mod's keys and timers. The payload's `event` says which (`scene_load`, …, `objects_deleted`, `timeline_pass`,
 //!   `control`, `key`, `drag`, `timer`).
+//! - `studio.ops_result`: what the edits the mod asked for ([`Effect::op`]) answered; `studio.character_changed`: a
+//!   character got another card, outfit, clothes state or animation, or was built again (status line only: undo and
+//!   redo cause it too).
 //!
 //! Subscribe with [`subscribe`] in `register`; read a call with [`Call::from_event`]. The answer is an [`Effect`]: new
 //! scene data for the mod, a status line, a selection, studio commands to run, the playhead, a nudge of the selected
@@ -203,6 +206,140 @@ impl Call {
             .map(|a| a.iter().filter_map(|v| v.as_u64().map(|u| u as usize)).collect())
             .unwrap_or_default()
     }
+    /// The studio's text language (`zh-TW`, `zh-CN`, `en`, …).
+    pub fn lang(&self) -> &str {
+        self.raw.get("lang").and_then(Value::as_str).unwrap_or("")
+    }
+    /// With `Ui::details(true)`: a selected object in full (`FOKSceneObject` as `studio_inspect` shows it: `name`,
+    /// `bVisible`, `transform`, `character`, `item`, `light`, …); None when it is not selected.
+    pub fn details(&self, id: i64) -> Option<&Value> {
+        self.raw.get("details").and_then(|d| d.get(id.to_string()))
+    }
+    /// `ops_result`: what each op of the mod's last [`Effect::op`]s answered, in order (`{"op", "ok", "error"?, "id"?,
+    /// "ids"?, "object"?}`).
+    pub fn results(&self) -> Vec<Value> {
+        self.raw.get("results").and_then(Value::as_array).cloned().unwrap_or_default()
+    }
+    /// `ops_result`: the [`Effect::tag`] of the answer that asked for the ops.
+    pub fn tag(&self) -> &str {
+        self.raw.get("tag").and_then(Value::as_str).unwrap_or("")
+    }
+    /// `character_changed`: the character's object id.
+    pub fn object(&self) -> Option<i64> {
+        self.raw.get("object").and_then(Value::as_i64)
+    }
+    /// `character_changed`: what changed (`added`, `card`, `outfit`, `clothes`, `animation`, `loaded`).
+    pub fn changes(&self) -> Vec<String> {
+        self.raw
+            .get("changes")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// One edit of the scene a mod asks for ([`Effect::op`]): the studio control channel's ops with the same arguments
+/// (`studio_spawn`, `studio_transform`, `studio_patch`, … of ok-game-mcp). Every op of one answer is one undo step
+/// with the command or key it answers; the results come back as `studio.ops_result` ([`Call::results`]).
+pub mod op {
+    use serde_json::{json, Value};
+
+    /// A new object: `kind` character (`card`: a card file), item (`item`: catalogue key), light (`light_type`:
+    /// directional, point, spot), camera, effect (`effect`), folder, model (`file`). `parent` -1: at the root.
+    pub fn spawn(kind: &str, extra: Value) -> Value {
+        let mut o = json!({"op": "spawn", "kind": kind});
+        merge(&mut o, extra);
+        o
+    }
+    /// Location (cm), rotation (pitch, yaw, roll in degrees) and scale relative to the parent; None leaves it.
+    pub fn transform(id: i64, location: Option<[f64; 3]>, rotation: Option<[f64; 3]>, scale: Option<[f64; 3]>) -> Value {
+        let mut o = json!({"op": "transform", "id": id});
+        if let Some(v) = location { o["location"] = json!(v); }
+        if let Some(v) = rotation { o["rotation"] = json!(v); }
+        if let Some(v) = scale { o["scale"] = json!(v); }
+        o
+    }
+    /// Fields of the object merged in (`{"name": "…", "bVisible": false, "character": {"clothesStates": […]}}`).
+    pub fn patch(id: i64, fields: Value) -> Value {
+        json!({"op": "patch", "id": id, "fields": fields})
+    }
+    /// A character's pose: `fk`, `ik`, `anim` ("kind/group/category/no"), `expression`, `hands`, `look`, … .
+    pub fn pose(id: i64, extra: Value) -> Value {
+        let mut o = json!({"op": "pose", "id": id});
+        merge(&mut o, extra);
+        o
+    }
+    pub fn delete(ids: &[i64]) -> Value {
+        json!({"op": "delete", "ids": ids})
+    }
+    pub fn duplicate(ids: &[i64]) -> Value {
+        json!({"op": "duplicate", "ids": ids})
+    }
+    pub fn reparent(id: i64, parent: i64) -> Value {
+        json!({"op": "reparent", "id": id, "parent": parent})
+    }
+    pub fn inspect(id: i64) -> Value {
+        json!({"op": "inspect", "id": id})
+    }
+    /// `studio.get`: the scene as `studio_state` shows it (`objects`, `selected`, camera, timeline); with `id` also
+    /// that object in full (`object`). Only reads; the answer comes back in `studio.ops_result`.
+    pub fn get(id: Option<i64>) -> Value {
+        match id {
+            Some(id) => json!({"op": "get", "id": id}),
+            None => json!({"op": "get"}),
+        }
+    }
+    /// Shown or hidden (the object tree's eye).
+    pub fn show(id: i64, visible: bool) -> Value {
+        json!({"op": "show", "id": id, "visible": visible})
+    }
+    pub fn rename(id: i64, name: &str) -> Value {
+        json!({"op": "rename", "id": id, "name": name})
+    }
+    /// A character's outfit (0..6); None leaves it.
+    pub fn outfit(id: i64, outfit: u8) -> Value {
+        json!({"op": "dress", "id": id, "outfit": outfit})
+    }
+    /// One clothes part (0 top, 1 bottom, 2 bra, 3 shorts, 4 gloves, 5 pantyhose, 6 socks, 7 inner shoes, 8 outer
+    /// shoes) to a state (0 on, 1 half, 2 / 3 off).
+    pub fn clothes(id: i64, part: u8, state: u8) -> Value {
+        json!({"op": "dress", "id": id, "part": part, "state": state})
+    }
+    /// All nine clothes states at once.
+    pub fn clothes_all(id: i64, states: &[u8]) -> Value {
+        json!({"op": "dress", "id": id, "clothes": states})
+    }
+    /// A studio animation by its catalogue key (`kind/group/category/no`, `studio_catalog` lists them).
+    pub fn anim(id: i64, key: &str) -> Value {
+        json!({"op": "pose", "id": id, "anim": key})
+    }
+    /// Expression patterns (eyebrow, eyes, mouth) and openness (`mouth_open`, `eyes_open` 0..1); None leaves it.
+    pub fn expression(id: i64, eyebrow: Option<i32>, eyes: Option<i32>, mouth: Option<i32>, mouth_open: Option<f64>) -> Value {
+        let mut e = serde_json::Map::new();
+        if let Some(v) = eyebrow { e.insert("eyebrow".into(), v.into()); }
+        if let Some(v) = eyes { e.insert("eyes".into(), v.into()); }
+        if let Some(v) = mouth { e.insert("mouth".into(), v.into()); }
+        if let Some(v) = mouth_open { e.insert("mouth_open".into(), v.into()); }
+        json!({"op": "pose", "id": id, "expression": Value::Object(e)})
+    }
+    /// FK bones (`studio_bones` names them) to euler angles in degrees; a misspelt bone fails the op, nothing changes.
+    pub fn fk(id: i64, bones: &[(&str, [f64; 3])]) -> Value {
+        let list: Vec<Value> = bones.iter().map(|(b, e)| json!({"bone": b, "euler": e})).collect();
+        json!({"op": "pose", "id": id, "fk": list})
+    }
+    /// IK effectors (0..12) to positions (cm, the character's space) with a weight 0..1.
+    pub fn ik(id: i64, targets: &[(u8, [f64; 3], f64)]) -> Value {
+        let list: Vec<Value> = targets.iter().map(|(e, p, w)| json!({"effector": e, "position": p, "weight": w})).collect();
+        json!({"op": "pose", "id": id, "ik": list})
+    }
+
+    fn merge(into: &mut Value, extra: Value) {
+        if let (Value::Object(a), Value::Object(b)) = (into, extra) {
+            for (k, v) in b {
+                a.insert(k, v);
+            }
+        }
+    }
 }
 
 fn ids(v: Option<&Value>) -> Vec<i64> {
@@ -282,6 +419,19 @@ impl Effect {
         self.map.insert("export".into(), json!({"name": name, "keep": keep}));
         self
     }
+    /// An edit of an object ([`op`]); the ops of one answer run in order after the rest of it, as one undo step.
+    pub fn op(mut self, op: Value) -> Self {
+        let list = self.map.entry("ops").or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(a) = list {
+            a.push(op);
+        }
+        self
+    }
+    /// A name for this answer's ops, handed back with their results (`Call::tag`).
+    pub fn tag(mut self, tag: &str) -> Self {
+        self.map.insert("tag".into(), tag.into());
+        self
+    }
     pub fn into_reply(self) -> Reply {
         Reply::Json(Value::Object(self.map).to_string().into())
     }
@@ -320,7 +470,8 @@ impl Ui {
         self.push("menu", json!({"id": id, "label": label, "command": command, "arg": arg, "kinds": kinds}))
     }
     /// A row bound to a value in the mod's data. `panel`: `state` (the selected character's 狀態 page; `{object}` in
-    /// `bind` is its id) or `scene` (畫面設定). `kind`: toggle, slider, dropdown, color, text, button.
+    /// `bind` is its id), `scene` (畫面設定) or `mods` (the Mod page, 系統 → Mod: the selected object of any kind, -1 for
+    /// none). `kind`: toggle, slider, dropdown, color, text, button.
     /// `bind` is a path in the data object, keys separated by `.`.
     pub fn control(&mut self, control: Value) -> &mut Self {
         self.push("controls", control)
@@ -355,6 +506,16 @@ impl Ui {
         self.map.insert("objects".into(), on.into());
         self
     }
+    /// Send the selected objects in full with every call ([`Call::details`]).
+    pub fn details(&mut self, on: bool) -> &mut Self {
+        self.map.insert("details".into(), on.into());
+        self
+    }
+    /// A tool row button drawn as one of the studio's icons (`light`, `eye`, `camera`, `add`, `delete`, …), shown
+    /// pressed while the value at `on` in the mod's data is true (empty: never).
+    pub fn toolbar_icon(&mut self, id: &str, icon: &str, tooltip: &str, command: &str, arg: &str, on: &str) -> &mut Self {
+        self.push("toolbar", json!({"id": id, "label": tooltip, "tooltip": tooltip, "command": command, "arg": arg, "icon": icon, "on": on}))
+    }
     pub fn into_reply(&mut self) -> Reply {
         Reply::Json(Value::Object(std::mem::take(&mut self.map)).to_string().into())
     }
@@ -385,5 +546,37 @@ mod tests {
         assert_eq!(v["data"]["n"], 1);
         assert_eq!(v["data_version"], 2);
         assert_eq!(v["run"][0]["command"], "scene.save");
+    }
+
+    #[test]
+    fn ops_and_their_results() {
+        let Reply::Json(j) = Effect::new().op(op::spawn("light", json!({"light_type": "point", "name": "x"}))).op(op::patch(3, json!({"bVisible": false}))).tag("t").into_reply() else { panic!() };
+        let v: Value = serde_json::from_str(j.as_str()).unwrap();
+        assert_eq!(v["ops"][0]["op"], "spawn");
+        assert_eq!(v["ops"][0]["light_type"], "point");
+        assert_eq!(v["ops"][1]["fields"]["bVisible"], false);
+        assert_eq!(v["tag"], "t");
+        let c = Call::parse("studio.ops_result", r#"{"studio":1,"results":[{"op":"spawn","ok":true,"id":9}],"tag":"t","details":{"9":{"name":"x"}},"lang":"zh-TW"}"#).unwrap();
+        assert_eq!(c.results()[0]["id"], 9);
+        assert_eq!(c.tag(), "t");
+        assert_eq!(c.details(9).unwrap()["name"], "x");
+        assert_eq!(c.lang(), "zh-TW");
+        let c = Call::parse("studio.character_changed", r#"{"studio":1,"object":4,"changes":["outfit","loaded"]}"#).unwrap();
+        assert_eq!(c.object(), Some(4));
+        assert_eq!(c.changes(), vec!["outfit", "loaded"]);
+    }
+
+    #[test]
+    fn short_ops() {
+        assert_eq!(op::show(2, false), json!({"op": "show", "id": 2, "visible": false}));
+        assert_eq!(op::clothes(2, 0, 3)["part"], 0);
+        assert_eq!(op::outfit(2, 4)["outfit"], 4);
+        assert_eq!(op::get(None), json!({"op": "get"}));
+        assert_eq!(op::get(Some(5))["id"], 5);
+        assert_eq!(op::fk(1, &[("cf_j_neck", [0.0, 10.0, 0.0])])["fk"][0]["euler"][1], 10.0);
+        assert_eq!(op::ik(1, &[(3, [1.0, 2.0, 3.0], 0.5)])["ik"][0]["weight"], 0.5);
+        let e = op::expression(1, None, Some(2), None, Some(0.4));
+        assert!(e["expression"].get("eyebrow").is_none());
+        assert_eq!(e["expression"]["eyes"], 2);
     }
 }

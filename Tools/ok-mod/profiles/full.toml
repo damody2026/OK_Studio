@@ -75,3 +75,7 @@ version = "0.1.0"
 [[mod]]
 id = "org.openkoikatsu.ui-sample"
 version = "0.1.0"
+
+[[mod]]
+id = "org.openkoikatsu.light_rig"
+version = "0.1.0"
