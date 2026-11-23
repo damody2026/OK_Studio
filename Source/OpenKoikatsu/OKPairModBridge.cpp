@@ -19,6 +19,7 @@
 #include "KKRustExtract.h"
 #include "OKCharacterController.h"
 #include "OKHScene.h"
+#include "OKModeHotkeys.h"
 #include "Misc/Base64.h"
 #include "Misc/CoreDelegates.h"
 #include "HAL/FileManager.h"
@@ -319,6 +320,10 @@ namespace OKPairModBridge
 			Host.EnterMode(TEXT("pair"));
 		}
 		Send(E);
+		// Mod hotkeys of mode "pair" while a one-on-one is up (OKModeHotkeys.cpp); the fitting room is not one.
+		// Again on ready: the street opens the one-on-one before its controller is set (pair.enter has none).
+		if ((E.Kind == EOKPairModEvent::Enter || E.Kind == EOKPairModEvent::Ready) && !E.bFitting && !S.FakeDispatch) OKModeHotkeys::PairStart(E.Controller.Get());
+		if (E.Kind == EOKPairModEvent::Exit && !E.bFitting && !S.FakeDispatch) OKModeHotkeys::PairStop();
 		if (E.Kind == EOKPairModEvent::Line) S.LastLine = E.Text;
 		// The TTS voice is the line shown just before it; her cries (hvoice) have no text.
 		if (E.Kind == EOKPairModEvent::Voice && E.Source == TEXT("tts") && !S.LastLine.IsEmpty()) { SendSpeech(E, S.LastLine); S.LastLine.Empty(); }
