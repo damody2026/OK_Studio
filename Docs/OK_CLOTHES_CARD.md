@@ -258,3 +258,31 @@ OK clothes wear timing: wear 17.05s + open 0.36s = 17.41s
 
 套用途中畫面上方（截圖確認）：`套用服裝卡 62%：嚴格檢查：確認這張卡自己開得起來（6 秒）`，
 `ok.ReaderScreen state` 的 notice 也跟著變（16% → 24% → 62% → 已套用 → 已加载3D）。
+
+## 穿上去之後胸罩不見了：原角色的 overlay 要跟著舊衣服走（2026-11-24，F）
+
+**回報**：Denia（crowd_C049）的服裝 1 匯出、穿到 Alice（crowd_C001）身上，外套、短褲、涼鞋都對，胸罩整件不見。
+
+**不是什麼**：先把穿好的卡與來源卡各用 `ok-chara skeleton` 開一次（同一個基礎庫、`OK_NOCACHE=1`），兩邊的可見部件清單一字不差，`clothes_bra` 的 `bra_skoneri_op1`、`o_bra_skoneri_a` 都在、都 `visible`，包圍盒也隨 Alice 的身形長大（x ±0.086 → ±0.108）。`bra_visible=true`，`not_bra` 沒有觸發。所以不是掉模型、不是被 AccStateSync 隱藏、也不是沒跟著身形。
+
+**是什麼**：`--oklib kkex` 三張卡對照之後看到——
+
+| 卡 | `KCOX`（KoiClothesOverlayX）`Overlays` |
+|---|---|
+| Alice crowd_C001 | `{0: {BodyMask: […], ct_bra: [nil, true], InnerMask: […]}}` |
+| Denia crowd_C049 | `{1: …, 4: …, 5: …, 6: …}`（**第 0 套沒有**） |
+| 穿好的卡（修正前） | Alice 的那份原封不動 |
+
+`ct_bra: [nil, true]` 是「覆蓋這件的 MainTex，而且沒有貼圖」，`card.rs` 讀成 `(空, clear=true)`，`extract.rs` 的 `apply_clothes_overlay` 就把胸罩的貼圖擦成空白。Alice 原本那套本來就要露，這份 overlay 是給她自己的衣服用的；換上 Denia 的衣服之後它還在，於是把 Denia 的胸罩擦掉了。
+
+**修正**：`okclothes.rs` 的 `per_outfit_maps`（KCOX、Pushup）、`material_editor`、`indexed_lists`（DynamicBoneEditor、ASS）、`more_accessories`，原本都是「服裝卡沒有這個外掛就 `return`」。改成在「穿」的方向，**服裝卡沒有也要把角色自己這一套的資料清掉**；`material_editor` 與 `indexed_lists` 另外把只有角色才有的清單名稱也列進要清的範圍，否則清不到。角色其他套（上表的第 3 套）不動。
+
+**證據**：修正後重跑同一組
+
+```powershell
+$env:OK_BASE_LIBRARY='…\base_v1'; $env:OK_NOCACHE='1'
+.\Tools\ok-extract\target\release\ok-extract.exe X:/NoGame --oklib clothes-wear <Alice卡> <Denia服裝卡> 0 <輸出>
+.\Tools\ok-extract\target\release\ok-extract.exe X:/NoGame --oklib kkex <輸出>
+```
+
+`KCOX` 從 `{0: {BodyMask…, ct_bra: [nil,true], InnerMask…}}` 變成 `{}`。單元測試 `okclothes::tests::wearing_clears_her_overlays_for_that_outfit`。
