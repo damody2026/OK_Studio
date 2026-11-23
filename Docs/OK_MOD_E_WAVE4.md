@@ -106,10 +106,48 @@ mod 在任何回覆（指令、按鍵、事件、`ops_result` 本身）加 `"ops
 
 - `cargo test -j 8`（`Tools/ok-mod`）全過；`cargo check -j 8`（`Tools/ok-extract`，另加 `--no-default-features`）過；`E:\PhysX\UE5.8` 建 `OpenKoikatsuEditor` 與 `OpenKoikatsu` Development 連結成功（修 `pose` 後再建一次，兩個都過）。
 - Studio 共存實機測試如 §3（兩次開 Studio，各在 20 分鐘內，名額 `e-mod-4` 用完即釋放）。
+- 補驗結果見 §7。
 - **沒驗到**：
-  - 1 對 1 的量表讀寫（`5d4ae8b0c`）只建置過，沒開 1 對 1 實測；沒有範例 mod 用到 `{"pair": {...}}`。
-  - `OKStudioModBridgeTest`、`OKInteractionModTest` 等 UE Automation 沒跑。
   - object-hotkeys 的拖曳（控制通道的 `studio_key` 是按下立刻放開，同第三波）。
   - timeline-flow 迴圈在這次只放了標記，沒有播放確認（第三波已測過）。
-  - FK／IK、`anim` 只有 SDK 單元測試與既有控制通道（`studio_pose`）的路徑，light-rig 沒用到，實機沒經 mod 跑過。
+  - 讀卡器開的 1 對 1、試衣間的量表回覆（沒有 H 面板時只記 trace）。
   - 打包版（stage）裡的 mod 與 toon-post pak。
+
+## 7. 補驗（協調者要求，同步點 D 之前）
+
+新增：測試用 mod `Tools/ok-mod/fixtures/pair-gauges`（不進範例與 full 設定檔）；light-rig 加 `tilt`（FK，參數為骨名，預設 `cf_j_neck` 轉 20°）、`reach`（IK，參數為效應器，預設 3 移到 (30, -20, 140)）、`anim`（參數為 `kind/group/category/no`）三個指令，結果以 `ops_result` 回狀態列（失敗時帶原因）。
+
+### 7.1 1 對 1 量表（開發版街區）
+
+`Tools\lua\lua.exe Tools\run_street_social_development.lua -Editor -Control -Sandbox EMod4 -PortBase 48130 -Heroine 1 -NoCloud`（控制埠 48140），`hscene open=1`：
+
+- 宿主進 `street/pair` 模式，3 個 mod：subtitles、pair_counter、pair-gauges。
+- `pair.ready` 的 payload：`"card":"…/StreetHeroines/jeanne_alter.png","her_gauge":0,"his_gauge":0,"inserted":false`；pair-gauges 回 `{"pair": {"her": 77, "his": 33}}`，trace「gauges her=77 his=33 set」。
+- 約 4 秒後 `hscene` 讀到她 64.0、他 20.0：兩條都正好少 13，等於閒置時每秒 3 的衰減（`OKHScene.cpp` 1883 行），沒有 mod 時從 0 開始只會停在 0，所以設定確實生效。
+- 按「摸胸部」後的 `pair.note` 帶 `her 3.0 his 0.0 inserted false`（量表跟著場景走）。
+- **街區開的 1 對 1**：`pair.enter` 的 `card` 仍是空的（街區先開 1 對 1、之後才載入她，控制器那時也還沒有卡路徑）；`pair.ready` 起都有卡。pair-counter 本來就以第一個帶卡的事件補上，行為不變；`5d4ae8b0c` 從控制器補卡的那一行在這條路徑上沒有作用，留著給控制器先有卡的情況。
+- `ok.PairModBridgeSelfTest`（遊戲內）：0 failed of 23。
+
+### 7.2 Studio 的 FK／IK／動作
+
+新場景放 C000（#2），選取後依序執行：
+
+| 指令 | 物件資料 | undo 步驟 |
+|---|---|---|
+| `tilt` | `fk: cf_j_neck (0, 0, 20)` | 1 → 2 |
+| `reach` | `ik: 3 (30, -20, 140)` | 2 → 3 |
+| `anim 0/0/10/1`（あくび） | `studioAnime 0/0/10/1`，`character_changed` 報 `animation` | 3 → 4 |
+| `tilt cf_J_ArmUp00_L`（錯骨名） | 狀態列「tilt 沒做成：unknown FK bone …」，什麼都沒改 | 仍是 4 |
+
+undo 三步依序拿掉動作、IK、FK，redo 三步依序回來，每一步讀回的資料都對。畫面：前 `E:\OpenKoikatsu\Saved\OKControl\shots\emod4b_0_before.png`、FK＋IK `E:\OpenKoikatsu\Saved\OKControl\shots\emod4b_1_fkik.png`（身體前彎、頭偏）、動作 `E:\OpenKoikatsu\Saved\OKControl\shots\emod4b_2_anim.png`、undo 後 `E:\OpenKoikatsu\Saved\OKControl\shots\emod4b_3_undone.png`、redo 後 `E:\OpenKoikatsu\Saved\OKControl\shots\emod4b_4_redone.png`。
+
+### 7.3 自動測試
+
+| 測試 | 結果 |
+|---|---|
+| `OKStudio.ModBridgeSelfTest`（執行中的 Studio） | 0 failed of 29 |
+| `ok.PairModBridgeSelfTest`（執行中的街區） | 0 failed of 23 |
+| UE Automation `OpenKoikatsu.Interaction.ModEvents`、`OpenKoikatsu.Studio.ModData`、`OpenKoikatsu.Gallery.EditorMods`、`OpenKoikatsu.Gallery.EditorModsCoordinates`（`UnrealEditor-Cmd -NullRHI`，log `E:\OpenKoikatsu\Saved\Logs\emod4-automation.log`） | 4 個都 Success |
+| `cargo test -j 8`（`Tools/ok-mod`，含新 fixture） | 全過 |
+
+沒發現新 bug。拖曳與打包版照協調者安排留到乾淨 stage 測試。
