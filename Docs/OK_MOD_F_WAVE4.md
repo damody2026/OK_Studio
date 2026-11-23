@@ -124,3 +124,47 @@ SDK：`Registrar::keep_state()`、`hooks::SAVE_STATE`、`hooks::RESTORE_STATE`�
 - 熱重載只在讀卡器實測。Studio 的物件狀態類 mod 沒有試。
 - 打包版（stage）沒測；`ok-mod-pack new` 只在這台機器、目前的 rustc 測過。
 - GPU 動態骨外力沒做（§3）。
+
+## 5. 熱鍵接線說明（給 E：Studio、1 對 1；給 C：街區）
+
+協調者決定：同步點 D 之後由各檢出自己接。全部 API 在 `Plugins/OKModding/Source/OKModding/Public/OKModKeys.h`（模組 `OKModding`，各模組已依賴它）。
+
+1. **開始收熱鍵**：模式準備好、能處理回覆之後呼叫一次。
+   ```cpp
+   #include "OKModKeys.h"
+   FOKModKeys::Listen(TEXT("studio"), [WeakThis](const FString& Mod, const TSharedPtr<FJsonObject>& Reply) { ... });
+   ```
+   - 第一個參數必須和那個模式 `FOKModHost::Get().EnterMode(...)` 用的名字一樣：`"studio"`、`"pair"`、`"street"`。前處理器只在 `FOKModHost::Get().CurrentMode()` 有登記的模式下攔鍵；1 對 1 從街區進入時 `CurrentMode()` 是 `"pair"`，所以兩個都要登記。
+   - 回覆處理可以是 `nullptr`：那樣只寫 log。
+   - `Reply` 是宿主回覆的一筆 `{"mod", "ok", "text" | "json"}`。照該模式一般 mod 回覆處理就好（Studio：`OKStudioModBridge` 處理 hook 回覆的那段；街區：`OKStreetSocialMods.inl` 跟隨回覆的地方，含 `cards`）。
+   - 要給玩家看的文字用 `FOKModKeys::ShownText(Reply)`：取 `text`，或 JSON 的 `notice`／`status`。
+   - lambda 要抓 weak 指標：處理函式活得比畫面久。
+2. **停止**：模式結束（Actor `EndPlay`、離開 1 對 1、關閉 Studio）時呼叫 `FOKModKeys::Stop(TEXT("<模式>"))`，避免處理函式指向已經不在的畫面。
+3. **設定頁（可選）**：要像讀卡器一樣列出熱鍵並改綁：
+   - 列出：`FOKModKeys::List()`，每筆 `{Mod, Name, Chord, Default, DescriptionId}`；
+   - 顯示：`FOKModKeys::Display(Chord)`；
+   - 改綁：`FOKModKeys::Capture(Mod, Name, Done)`，等下一個組合鍵，Esc 保留、Backspace 清除。
+   - 範本：`OKReaderModPage.cpp` 的 `hotkey` 項目。注意 DreamGUI 按鈕要同時設 `FixedText`。
+   - 不做也行：主控台 `OKMod.Keys`、`OKMod.Bind` 在所有模式都能用。
+4. **注意**：
+   - 熱鍵會吃掉比中的按鍵。Studio 自己的快捷鍵若和 mod 熱鍵相同，mod 熱鍵優先：玩家綁的。
+   - 打字中（Slate 焦點是文字框）不觸發。DreamGUI 文字框編輯中是否也擋住沒有實測，Studio 有很多文字框，接好後請試一次。
+   - Studio 面板按鍵（`ok-mod-studio` 的 `key.<id>`）和全域熱鍵是同一個 hook 名。mod 的熱鍵設定項名稱 `x` 若和面板按鍵 id `x` 相同，兩邊都會送 `key.x`，是刻意的。
+
+## 6. 第二輪：第四波 C 新掛點的 SDK 輔助（協調者指派）
+
+只動 F 擁有的 SDK 與文件，欄位以 C 的程式為準（唯讀參考 `C:\portable\OpenKoikatsu` 的 `fd01247eb`、`864563cd5`、`d1aae0d61`，沒有合併）。`ok-mod-api` 型別沒改。
+
+- **`ok_mod_sdk::hooks::reader`**（新檔 `sdk/src/hooks/reader.rs`）：
+  - 常數：`ACCESSORY_CHANGE`、`ACCESSORY_TRANSFER`、`ACCESSORY_COPY`、`COORDINATE_SAVE`、`COORDINATE_LOAD`、`CLOTHES_STATE`、`PROPERTY_CHANGE`、`GET_RESULT`；
+  - payload 型別：`AccessoryChange`、`AccessoryTransfer`、`AccessoryCopy`、`CoordinateSave`、`CoordinateLoad`、`ClothesState`、`PropertyChange`、`GetResult`、`AccessorySection`（`data`／`new`）；
+  - 回覆：`get`（也以 `hooks::get` 匯出）、`with_get`、`coordinate_save`。
+- **`ok_mod_sdk::hooks::street`**（新檔 `sdk/src/hooks/street.rs`）：
+  - 常數：`LOAD`、`DAY_CHANGE`、`PERIOD_CHANGE`、`TOUCH`、`ACTION`、`ARRIVE`、`PHONE`；
+  - payload 型別：`Day`（flatten 進各型別）、`Heroine`（含 `section`）、`Load`（`new_game`、`state`）、`PeriodChange`、`Touch`、`Action`、`Arrive`、`Phone`；
+  - 寫回她的卡：`CardWrite::write`／`remove`（上限 1 MiB）、`cards`、`with_cards`。
+- **文件**：`Docs/OK_MOD_HOOKS.md` §10 併入這些掛點；§11 記下「GPU 動態骨外力：將來，有 mod 需要對路人施力時再開」與當時的做法。
+- **測試**：SDK 單元測試以 C 程式實際送出的 JSON 形狀解析各 payload，並驗 `get`、`coordinate_save`、`cards` 的回覆格式與限制。`cargo test`（`Tools/ok-mod` 全工作區）通過。
+- **沒驗到**：
+  - 沒有範例 mod 用這些型別，也沒有實機。C 那邊的掛點本身也只過了編譯（見 C 的回報）。
+  - `ClothesState::states` 各值的意義沒有查證，SDK 只說明是「讀卡器保存的狀態」。
