@@ -73,7 +73,7 @@ fn street_tools() -> Value {
           json!({"a": {"type": "string"}, "b": {"type": "string"}, "block": {"type": "integer"}, "crop": {"type": "string"}}), &["a", "b"]),
         t("game_call", "Any other control endpoint, POST with a JSON body (GET when body is omitted): /saves {op: open|save|load|new, slot}, /rules {action: status|reload|eval, request}, /mind {action}, /song {action, girl}, /money {amount}, /cursor {on}, /summon {slots}, /locale {lang, region}, /menu, /camera {actor, bone, yaw, pitch, distance}, /mic {ignore}, /navigate {stop: true}, /bluff {do, cards}, \
 /fps (frame times), /private {girl | off} and /hscene {kind, pose, speed, orbit, ...} (use the hscene tool), /inspect, /stat, /pregnancy, /render {style}, \
-/roster, /activity, /activity_try, /places_check, /text {girl, why, kind}, /wish, /play, /face, /mouse, /type, /hresult_close, /galgame, /clock {paused}, /key, /look, /warp.",
+/roster, /activity, /activity_try, /places_check, /text {girl, why, kind}, /ring {girl, why} (she calls him now), /wish, /play, /face, /mouse, /type, /hresult_close, /galgame, /clock {paused}, /key, /look, /warp.",
           json!({"path": {"type": "string"}, "body": {"type": "object"}}), &["path"]),
     ])
 }

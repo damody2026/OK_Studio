@@ -681,6 +681,16 @@ void AOKStreetSocialScene::StartControlServer(){
   if(!S.Manifest.Characters.IsValidIndex(int32(Girl))||Girl<1||Why.IsEmpty()){OKControlReply(Done,OKControlResult(false,TEXT("girl and why")));return;}
   QueueHerText(int32(Girl),Why,Kind,0.0);OKControlReply(Done,OKControlResult(true));
  });
+ // {girl, why}: she calls him now (what ReachOutByPhone does by chance for a lover far away): the phone rings for 20 s;
+ // the answer and decline buttons, or the timeout, end it (street.phone from: her). A test of her call, not a rule.
+ Bind(TEXT("/ring"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;auto B=OKControlBody(Req);double Girl=0;B->TryGetNumberField(TEXT("girl"),Girl);FString Why;B->TryGetStringField(TEXT("why"),Why);
+  if(!S.Manifest.Characters.IsValidIndex(int32(Girl))||Girl<1){OKControlReply(Done,OKControlResult(false,TEXT("girl")));return;}
+  if(S.RingGirl!=INDEX_NONE||S.RemoteMode!=0){OKControlReply(Done,OKControlResult(false,TEXT("the phone is busy")));return;}
+  S.RingGirl=int32(Girl);S.RingWhy=Why.IsEmpty()?OKT(TEXT("ui.phone_inbox.miss_him_hint")):Why;S.RingUntil=SceneTime()+20.0;
+  S.Message=OKMsg(TEXT("ui.phone_inbox.girl_calling_hint"),{{TEXT("girl_name"),*OKStreetScriptedName(S.Manifest.Characters[int32(Girl)].Name)}});RefreshUI();
+  OKControlReply(Done,OKControlResult(true));
+ });
  // {girl}: the heroine he is talking with says her wish to be close now (what her own wish does by chance), and the
  // choice opens for him to answer.
  Bind(TEXT("/wish"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
