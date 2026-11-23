@@ -136,7 +136,7 @@ void UOKReaderScreen::AddModCategory()
 		}
 		if(Switches.Num()){auto Page=MakeShared<FJsonObject>();Page->SetArrayField(TEXT("items"),Switches);AddPage(OKReaderT(TEXT("reader.mods.apply_on_load")),Page);}
 	}
-	// Mod hotkeys (FOKModKeys, Docs/OK_MOD_HOOKS.md §5): one row per key, its button waits for the new chord.
+	// Mod hotkeys (FOKModKeys, Docs/OK_MOD_HOOKS.md §9): one row per key, its button waits for the new chord.
 	{
 		TArray<TSharedPtr<FJsonValue>> Keys;
 		for(const FOKModKeys::FHotkey& K:FOKModKeys::List())
@@ -361,8 +361,8 @@ float UOKReaderScreen::BuildModItem(UDreamWidget* Into,const FItem& Item,const F
 		TSharedRef<TWeakObjectPtr<UOKDreamControl>> Self=MakeShared<TWeakObjectPtr<UOKDreamControl>>();
 		UOKDreamControl* C=MakeOwnButton(Row,Shown(),[Mod,Name,Self,Shown]()
 		{
-			if(UOKDreamControl* B=Self->Get())B->SetText(OKReaderT(TEXT("reader.mods.press_key")));
-			FOKModKeys::Capture(Mod,Name,[Self,Shown](const FString&,bool){if(UOKDreamControl* B=Self->Get())B->SetText(Shown());});
+			if(UOKDreamControl* B=Self->Get()){B->FixedText=OKReaderT(TEXT("reader.mods.press_key"));B->SetText(B->FixedText);}
+			FOKModKeys::Capture(Mod,Name,[Self,Shown](const FString&,bool){if(UOKDreamControl* B=Self->Get()){B->FixedText=Shown();B->SetText(B->FixedText);}});
 		});
 		*Self=C;
 		if(C)Fill(C);
