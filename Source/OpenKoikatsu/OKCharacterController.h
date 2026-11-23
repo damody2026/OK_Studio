@@ -431,6 +431,10 @@ public:
 	void WearOkClothesFrom(const FString& Clothes, bool bClothesOnly, TFunction<void(bool, const FString&)> Done = nullptr);
 	/** A wear on a worker thread is running (its card opens when it ends). */
 	bool bWearingOkClothes = false;
+	/** While it runs, the reader shows what the native job is doing and how far it is (FOkSession::JobProgress),
+	 *  refreshed from the tick at ~10 Hz. WearProgressBegan is when the thumbnail was pressed. */
+	void TickClothesWearProgress();
+	double WearProgressBegan = 0., WearProgressAt = 0.;
 	/** WearOkClothesFrom with what happened told in the inspector and on screen (the outfit-card list's tiles). */
 	void WearOkClothesReported(const FString& Clothes, bool bClothesOnly);
 	/** The outfit cards the reader lists (衣服卡總欄): *.okclothes in the folder 匯出服裝卡 writes to (the save folder, else

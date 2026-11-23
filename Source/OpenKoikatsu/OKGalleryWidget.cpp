@@ -1778,6 +1778,7 @@ void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSec
   PreviewActor->TickProgressiveMaterials();
   if(PreviewActor->bClothingHidden)for(UMeshComponent* Component:PreviewActor->HiddenClothingComponents)if(IsValid(Component))Component->SetVisibility(false,false);
  }
+ TickClothesWearProgress();
  TickClothingPreviews();
  TickNeighborPreload();
  if(!InteractionWidget&&!InteractionScene&&!PairedPlayback)OKReaderMods::Pointer(this,PreviewActor,DeltaSeconds);

@@ -8,6 +8,23 @@ use std::sync::Mutex;
 
 use crate::session::OkSession;
 
+/// What the long job running right now is doing (progress.rs), for a UI to show while it waits: writes
+/// `<generation>\t<running 0|1>\t<done 0..1>\t<label>` into `buf` and returns its length, -1 when nothing has run.
+/// Safe to call from any thread at any time; it only copies a short string.
+#[no_mangle]
+pub unsafe extern "C" fn ok_progress_text(buf:*mut c_char,cap:i32)->i32 {
+    let Some(p)=crate::progress::current() else{return -1;};
+    let text=format!("{}\t{}\t{:.4}\t{}",p.generation,i32::from(p.running),p.done,p.label);
+    if buf.is_null()||cap<=0{return text.len() as i32;}
+    let bytes=text.as_bytes();
+    let n=bytes.len().min(cap as usize-1);
+    // Never cut a UTF-8 character in half: the UI would show a broken glyph.
+    let n=(0..=n).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+    ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(),buf,n);
+    *buf.add(n)=0;
+    n as i32
+}
+
 // Borrowed by one blocking call only. No pointer is retained in cloneable sessions.
 #[no_mangle]
 pub unsafe extern "C" fn ok_clothing_transition(root:*const c_char,card:*const c_char,outfit:i32,previous:*const u8,kind:i32,out:*mut u8,err:*mut c_char,cap:i32)->i32 {

@@ -1782,6 +1782,15 @@ int32 FOkSession::RefineBelly(){return Handle?ok_session_refine_belly(Handle):-1
 
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);
 extern "C" int32_t ok_clothes_file(int32_t,const char*,const char*,int32_t,const char*,char*,int32_t);
+extern "C" int32_t ok_progress_text(char*,int32_t);
+bool FOkSession::JobProgress(FString& Label,float& Done,int64& Generation){
+ char Buffer[512]{};
+ if(ok_progress_text(Buffer,UE_ARRAY_COUNT(Buffer))<0)return false;
+ TArray<FString> Parts;FString(UTF8_TO_TCHAR(Buffer)).ParseIntoArray(Parts,TEXT("\t"),false);
+ if(Parts.Num()<4)return false;
+ Generation=FCString::Atoi64(*Parts[0]);Done=FCString::Atof(*Parts[2]);Label=Parts[3];
+ return Parts[1]==TEXT("1");
+}
 static bool OKClothesFile(int32 Op,const FString& A,const FString& B,int32 Outfit,const FString& Out,FString& Summary){
  char Buffer[8192]{};const int32 Result=ok_clothes_file(Op,TCHAR_TO_UTF8(*A),B.IsEmpty()?nullptr:static_cast<const char*>(TCHAR_TO_UTF8(*B)),Outfit,TCHAR_TO_UTF8(*Out),Buffer,UE_ARRAY_COUNT(Buffer));
  Summary=UTF8_TO_TCHAR(Buffer);return Result==0;

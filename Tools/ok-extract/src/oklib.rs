@@ -1717,21 +1717,29 @@ fn refresh_edited_ok_card(lib: &Path, card: &Path) -> Result<Option<(String, usi
     open_outfits(lib, &bytes, "refresh")?;
     crate::profile_tick("refresh: every outfit opened", t_refresh);
     let t_digest = std::time::Instant::now();
-    let mut models: Vec<String> = card_models(&bytes).unwrap_or_default();
-    models.extend(store.touched().iter().map(id_hex));
-    models.sort();
-    models.dedup();
+    let touched: Vec<String> = store.touched().iter().map(id_hex).collect();
     let nocache = std::env::var_os("OK_NOCACHE");
     std::env::set_var("OK_NOCACHE", "1");
     let digest = session_hash_outfit(lib, card, 0);
     if nocache.is_none() { std::env::remove_var("OK_NOCACHE"); }
     let (digest, parts, _) = digest?;
     crate::profile_tick("refresh: models+digest (outfit 0)", t_digest);
-    let payload = serde_json::to_vec(&serde_json::json!({"format":"oklib-card","version":1,"digest":digest,"models":models})).unwrap();
-    let made = crate::tree_answers::with_chunk(&bytes, CARD_CHUNK, &payload)?;
+    let made = ok_card_with_answers(&bytes, &touched, &digest)?;
     let pack = png_chunk(&made, PACK_CHUNK).map_or(0, <[u8]>::len);
     eprintln!("ok-extract: {}: edited OK card kept its own pack and answers (digest {digest})", card.display());
     Ok(Some((digest, parts, made, pack)))
+}
+
+/// The `okLb` of an edited OK card written again: the models it already named plus the ones this round's opens read
+/// from the library, and the digest of a strict open of outfit 0. Shared by `refresh_edited_ok_card` (which opens the
+/// card itself) and `okclothes::file::wear_into` (which takes both from the sealing step's report, so it opens nothing).
+pub(crate) fn ok_card_with_answers(bytes: &[u8], touched: &[String], digest: &str) -> Result<Vec<u8>, String> {
+    let mut models: Vec<String> = card_models(bytes).unwrap_or_default();
+    models.extend(touched.iter().cloned());
+    models.sort();
+    models.dedup();
+    let payload = serde_json::to_vec(&serde_json::json!({"format":"oklib-card","version":1,"digest":digest,"models":models})).unwrap();
+    crate::tree_answers::with_chunk(bytes, CARD_CHUNK, &payload)
 }
 
 /// `remake_ok_card` from the card data alone: OK chunks dropped, converted again from the zipmods.
@@ -2255,41 +2263,85 @@ pub fn seal_card(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> {
 /// `seal_card`; `record_answers` false keeps the answers the card carries (it must have them): a card wearing another
 /// card's outfit carries both cards' answers, and the shared library's tree cannot answer for the outfit's mods.
 pub fn seal_card_with(lib: &Path, card: &[u8], record_answers: bool) -> Result<(Vec<u8>, String), String> {
-    seal_card_mode(lib, card, if record_answers { Answers::Record } else { Answers::Keep })
+    seal_card_mode(lib, card, if record_answers { Answers::Record } else { Answers::Keep }, false).map(|(b, s, _)| (b, s))
+}
+
+/// What the sealing's strict check saw, so the caller can write the card's `okLb` without opening it again:
+/// the models those opens read from the library, and the digest of outfit 0 when it was among the outfits opened.
+/// Empty when the check did not report (an older `ok-extract.exe` beside the library, or `OK_SEAL_NO_REPORT=1`):
+/// the caller then falls back to opening the card itself, as before.
+#[derive(Default)]
+pub struct SealReport { pub models: Vec<String>, pub digest: Option<(String, usize)>, pub reported: bool }
+
+/// `seal_card_with`, with that report. The strict check is asked for it only when `report` is set, so every other
+/// caller pays exactly what it did before.
+pub fn seal_card_reporting(lib: &Path, card: &[u8], record_answers: bool) -> Result<(Vec<u8>, String, SealReport), String> {
+    seal_card_mode(lib, card, if record_answers { Answers::Record } else { Answers::Keep }, true)
 }
 
 /// `seal_card` for a card carrying answers that may not cover every question it asks (a bred child: her mix of her
 /// parents asks what neither of them did): answers recorded from the shared library too, hers kept where both answer.
 pub fn seal_card_adding_answers(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String), String> {
-    seal_card_mode(lib, card, Answers::Add)
+    seal_card_mode(lib, card, Answers::Add, false).map(|(b, s, _)| (b, s))
+}
+/// `seal_card_adding_answers` with the strict check's report (see `SealReport`).
+pub fn seal_card_adding_answers_reporting(lib: &Path, card: &[u8]) -> Result<(Vec<u8>, String, SealReport), String> {
+    seal_card_mode(lib, card, Answers::Add, true)
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Answers { Record, Keep, Add }
 
-fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>, String), String> {
+fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers, report: bool) -> Result<(Vec<u8>, String, SealReport), String> {
+    let report = report && std::env::var_os("OK_SEAL_NO_REPORT").is_none();
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = lib.join("work");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let n = N.fetch_add(1, Ordering::Relaxed);
     let step_file = |step: &str| TempCard(dir.join(format!("seal_{}_{n}_{step}.png", std::process::id())));
     let (input, answered, sealed) = (step_file("in"), step_file("answers"), step_file("sealed"));
-    std::fs::write(&input.0, card).map_err(|e| format!("{}: {e}", input.0.display()))?;
+    // Keep writes the card straight to `answered`: an OK card is over a hundred megabytes, and the old path wrote it
+    // to `input` and then copied that to `answered` for nothing (2026-11-23).
+    std::fs::write(if answers == Answers::Keep { &answered.0 } else { &input.0 }, card)
+        .map_err(|e| format!("{}: {e}", input.0.display()))?;
     let exe = ok_extract_exe(lib)?;
-    let run = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
+    // `progress`: where this step sits in the whole job (from, to) and what to call it. The step's own process
+    // prints `OKPROGRESS <0..1> <label>` as it goes (open_outfits_reporting), and those land in that span, so the
+    // reader's bar moves during the seconds this child runs instead of sitting still (Docs/OK_CLOTHES_CARD.md).
+    let run_tracked = |args: &[&std::ffi::OsStr], progress: Option<(f32, f32, &str)>| -> Result<String, String> {
+        use std::io::BufRead;
         let mut command = std::process::Command::new(&exe);
         // The narrowing travels to the step's own process, not through this one's environment (OnlyOutfitScope).
         if let Some(o) = only_outfit_here() { command.env(ONLY_OUTFIT, o.to_string()); }
         #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x0800_0000); } // no console window
-        let out = command.arg("X:/NoGame").arg("--oklib").args(args).output().map_err(|e| e.to_string())?;
-        let text = String::from_utf8_lossy(&out.stdout).into_owned();
-        if out.status.success() { Ok(text) } else { Err(text.lines().filter(|l| l.starts_with("OK")).collect::<Vec<_>>().join(" ")) }
+        // The step's own name and base go up before the child starts: its first open is its slowest (a cold mount),
+        // and without this the label would still say the previous step for a second or two.
+        if let Some((from, _, name)) = progress { crate::progress::step(name, from); }
+        // stdout is read line by line for the progress; stderr is dropped, as `output()` used to drop it.
+        let mut child = command.arg("X:/NoGame").arg("--oklib").args(args)
+            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null())
+            .spawn().map_err(|e| e.to_string())?;
+        let mut text = String::new();
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                if let (Some(rest), Some((from, to, name))) = (line.strip_prefix("OKPROGRESS "), progress) {
+                    let share = rest.split_whitespace().next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                    crate::progress::step(name, from + (to - from) * share.clamp(0.0, 1.0));
+                    continue;
+                }
+                text.push_str(&line);
+                text.push('\n');
+            }
+        }
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if status.success() { Ok(text) } else { Err(text.lines().filter(|l| l.starts_with("OK")).collect::<Vec<_>>().join(" ")) }
     };
+    let run = |args: &[&std::ffi::OsStr]| run_tracked(args, None);
     // With OK_PROFILE=1: one row per step that really ran, so a missing row means the step was skipped.
     let mut t = std::time::Instant::now();
     match answers {
         Answers::Record => { run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?; }
-        Answers::Keep => { std::fs::copy(&input.0, &answered.0).map_err(|e| e.to_string())?; }
+        Answers::Keep => {} // already written straight to `answered` above
         Answers::Add => {
             run(&["seal-step".as_ref(), lib.as_os_str(), "answers".as_ref(), input.0.as_os_str(), answered.0.as_os_str()])?;
             let fresh = std::fs::read(&answered.0).map_err(|e| e.to_string())?;
@@ -2299,22 +2351,41 @@ fn seal_card_mode(lib: &Path, card: &[u8], answers: Answers) -> Result<(Vec<u8>,
     }
     crate::profile_tick("seal: answers step", t);
     t = std::time::Instant::now();
-    let mut summary = run(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()])?;
+    const COMPLETE: (f32, f32, &str) = (0.16, 0.62, "封裝：把卡片缺的共用資源複製進去");
+    const CHECK: (f32, f32, &str) = (0.62, 0.97, "嚴格檢查：確認這張卡自己開得起來");
+    let mut summary = run_tracked(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()], Some(COMPLETE))?;
     crate::profile_tick("seal: complete step", t);
     t = std::time::Instant::now();
     // A read made by an open's background work (entry prefetch) can land after its step took what it copied (seen
     // under load): the strict check names it, and completing the sealed card again copies it.
-    let mut check = run(&["strict-check".as_ref(), lib.as_os_str(), sealed.0.as_os_str()]);
+    let checking: Vec<&std::ffi::OsStr> = if report {
+        vec!["strict-check".as_ref(), lib.as_os_str(), sealed.0.as_os_str(), "--report".as_ref()]
+    } else { vec!["strict-check".as_ref(), lib.as_os_str(), sealed.0.as_os_str()] };
+    let mut check = run_tracked(&checking, Some(CHECK));
     for _ in 0..2 {
         if check.is_ok() { break; }
         std::fs::copy(&sealed.0, &answered.0).map_err(|e| e.to_string())?;
-        summary.push_str(&run(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()])?);
-        check = run(&["strict-check".as_ref(), lib.as_os_str(), sealed.0.as_os_str()]);
+        summary.push_str(&run_tracked(&["seal-step".as_ref(), lib.as_os_str(), "complete".as_ref(), answered.0.as_os_str(), sealed.0.as_os_str()], Some(COMPLETE))?);
+        check = run_tracked(&checking, Some(CHECK));
     }
     crate::profile_tick("seal: strict-check step(s)", t);
-    check?;
+    let checked = check?;
     let summary = summary.lines().filter_map(|l| l.strip_prefix("OKSEALSTEP ")).collect::<Vec<_>>().join("; then ");
-    Ok((std::fs::read(&sealed.0).map_err(|e| e.to_string())?, summary))
+    // The report is only taken from a check that passed, and only when it really printed the lines (an older
+    // ok-extract.exe beside the library prints neither, and then `reported` stays false and the caller opens the card).
+    let mut seal_report = SealReport::default();
+    if report {
+        for line in checked.lines() {
+            if let Some(rest) = line.strip_prefix("OKSTRICTMODELS") {
+                seal_report.models = rest.split_whitespace().map(str::to_owned).collect();
+                seal_report.reported = true;
+            } else if let Some(rest) = line.strip_prefix("OKSTRICTDIGEST ") {
+                let mut it = rest.split_whitespace();
+                if let (Some(d), Some(p)) = (it.next(), it.next().and_then(|p| p.parse().ok())) { seal_report.digest = Some((d.to_owned(), p)); }
+            }
+        }
+    }
+    Ok((std::fs::read(&sealed.0).map_err(|e| e.to_string())?, summary, seal_report))
 }
 
 /// One step of `seal_card` in this process: "answers" (okLt recorded) or "complete" (library data copied in).
@@ -2400,6 +2471,14 @@ fn only_outfit(outfits: i32) -> Option<i32> {
 }
 
 fn open_outfits(lib: &Path, card: &[u8], what: &str) -> Result<(), String> {
+    open_outfits_reporting(lib, card, what, false).map(|_| ())
+}
+
+/// `open_outfits`, and with `digest` the hash of **the open it already makes** of outfit 0 with every garment worn --
+/// the same open `session_hash_outfit` would make, so the digest costs nothing extra. Returns it with the models the
+/// opens read from the library, which is everything `okLb` needs; the digest is None when outfit 0 was not opened
+/// (the narrowing is on another outfit, so outfit 0 did not change and the card's own digest still stands).
+fn open_outfits_reporting(lib: &Path, card: &[u8], what: &str, digest: bool) -> Result<(Option<(String, usize)>, Vec<String>), String> {
     ensure_library(lib)?;
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = lib.join("work");
@@ -2413,17 +2492,48 @@ fn open_outfits(lib: &Path, card: &[u8], what: &str) -> Result<(), String> {
     let outfits = crate::tree_answers::outfit_count(card) as i32;
     let only = only_outfit(outfits);
     if let Some(o) = only { eprintln!("ok-extract: {what}: only outfit {o} of {outfits} (the others are unchanged)"); }
-    for outfit in only.unwrap_or(0)..only.map_or(outfits, |o| o + 1) {
+    let store = active();
+    if digest { if let Some(s) = &store { s.forget_models(); } }
+    // Only while a wear has narrowed this pass to one outfit. A plain `--oklib strict-check` is a correctness gate
+    // other work leans on, so it keeps assembling every variant's session; this is not the place to make it cheaper.
+    let variant_early_out = only.is_some() && std::env::var_os("OK_FULL_STATE_VARIANTS").is_none();
+    let mut hashed = None;
+    // How far this pass is, for whoever started this process to show (seal_card_mode's `run_tracked`). One line per
+    // open; the opens of one outfit cost about the same, so the share is just how many are done.
+    let (first, last) = (only.unwrap_or(0), only.map_or(outfits, |o| o + 1));
+    let total = ((last - first).max(1) * (1 + CLOTHES_STATE_VARIANTS.len() as i32)) as f32;
+    let mut opened = 0.0f32;
+    let mut tick = |opened: f32| println!("OKPROGRESS {:.4}", opened / total);
+    for outfit in first..last {
         let t = std::time::Instant::now();
-        if let Err(e) = crate::session::open(lib, Some(&temp.0), outfit) { errors.push(format!("outfit {outfit}: {e}")); }
+        // Outfit 0 fully worn is the card's digest open; the others are opened only for what they read.
+        let worn = if digest && outfit == 0 {
+            session_hash_outfit(lib, &temp.0, 0).map(|(d, parts, _)| hashed = Some((d, parts))).map(|_| ())
+        } else {
+            crate::session::open(lib, Some(&temp.0), outfit).map(|_| ())
+        };
+        if let Err(e) = worn { errors.push(format!("outfit {outfit}: {e}")); }
+        opened += 1.0;
+        tick(opened);
         for states in CLOTHES_STATE_VARIANTS {
             let _states = crate::unity::request_clothes_states(states);
-            if let Err(e) = crate::session::open(lib, Some(&temp.0), outfit) { errors.push(format!("outfit {outfit} clothes {states:?}: {e}")); }
+            // As a conversion opens its variants (make_ok_card): these opens exist only for what they read, so they
+            // stop at `STATE_VARIANT_READ` -- after every read, before the session is assembled -- and the assembly
+            // is not paid five times per outfit. Anything unanswered still fails before that point.
+            let _variant = if variant_early_out { Some(crate::StateVariantScope::begin()) } else { None };
+            let variant = crate::session::open(lib, Some(&temp.0), outfit).map(|_| ())
+                .or_else(|e| if e == crate::STATE_VARIANT_READ { Ok(()) } else { Err(e) });
+            if let Err(e) = variant { errors.push(format!("outfit {outfit} clothes {states:?}: {e}")); }
+            drop(_variant);
+            opened += 1.0;
+            tick(opened);
         }
         crate::profile_tick(&format!("{what}: outfit {outfit} (6 opens)"), t);
     }
     if nocache.is_none() { std::env::remove_var("OK_NOCACHE"); }
-    if errors.is_empty() { Ok(()) } else { Err(format!("{what} open failed: {}", errors.join(" | "))) }
+    if !errors.is_empty() { return Err(format!("{what} open failed: {}", errors.join(" | "))); }
+    let touched = store.map(|s| s.touched().iter().map(id_hex).collect()).unwrap_or_default();
+    Ok((hashed, touched))
 }
 
 /// The card with what a sealing open copied from the library added to its pack (a pack made when it has none).
@@ -3524,13 +3634,23 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             }
         }
         "strict-check" => {
-            // strict-check <lib> <OK card>...: every outfit opens from the card and the shared resources only.
+            // strict-check <lib> <OK card>... [--report]: every outfit opens from the card and the shared resources
+            // only. --report also prints what `okLb` needs -- OKSTRICTDIGEST <digest> <parts> and OKSTRICTMODELS with
+            // the library models these opens read -- so the caller need not open the card again to write it
+            // (okclothes::file::wear_into). Only for a single card.
             let lib = lib.ok_or("library directory required")?;
+            let report = args.iter().any(|a| a == "--report");
             let mut failed = 0;
-            for card in args[2..].iter().map(PathBuf::from) {
+            for card in args[2..].iter().filter(|a| !a.starts_with("--")).map(PathBuf::from) {
                 let t = std::time::Instant::now();
-                match std::fs::read(&card).map_err(|e| e.to_string()).and_then(|bytes| open_outfits(&lib, &bytes, "strict")) {
-                    Ok(()) => println!("OKSTRICT ok\t{}\t{:.1}s", card.display(), t.elapsed().as_secs_f64()),
+                match std::fs::read(&card).map_err(|e| e.to_string()).and_then(|bytes| open_outfits_reporting(&lib, &bytes, "strict", report)) {
+                    Ok((digest, models)) => {
+                        if report {
+                            if let Some((d, parts)) = digest { println!("OKSTRICTDIGEST {d} {parts}"); }
+                            println!("OKSTRICTMODELS {}", models.join(" "));
+                        }
+                        println!("OKSTRICT ok\t{}\t{:.1}s", card.display(), t.elapsed().as_secs_f64());
+                    }
                     Err(e) => { failed += 1; println!("OKSTRICT error\t{}\t{e}", card.display()); }
                 }
             }

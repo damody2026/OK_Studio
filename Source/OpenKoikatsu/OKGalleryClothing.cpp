@@ -344,6 +344,20 @@ TArray<FString> UOKCharacterController::OkClothesFiles() const{
  TArray<FString> Out;for(const auto& F:Found)Out.Add(F.Value);
  return Out;
 }
+// While an outfit card is being worn, say what the native job is doing and how far it is. The two sealing steps are
+// child processes that take seconds each; they stream their own progress back (ok-extract progress.rs), so the
+// percentage keeps moving inside them instead of sitting at one number.
+void UOKCharacterController::TickClothesWearProgress(){
+ if(!bWearingOkClothes)return;
+ const double Now=FPlatformTime::Seconds();
+ if(Now<WearProgressAt)return;
+ WearProgressAt=Now+.1;
+ FString Label;float Done=0.f;int64 Generation=0;
+ if(!FOkSession::JobProgress(Label,Done,Generation))return;
+ const FString Text=FString::Printf(TEXT("套用服裝卡 %d%%：%s（%.0f 秒）"),FMath::RoundToInt(Done*100.f),*Label,Now-WearProgressBegan);
+ if(InspectorText)InspectorText->SetText(FText::FromString(Text));
+ ScreenNote(1,1.f,FColor::Cyan,Text);
+}
 void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClothesOnly,TFunction<void(bool,const FString&)> Done){
  if(!Done)Done=[](bool,const FString&){};
  if(!Entries.IsValidIndex(SelectedIndex)){Done(false,TEXT("請先選擇一張角色卡。"));return;}
@@ -353,7 +367,7 @@ void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClot
  // A work card: the card shown stays as it was; saving keeps the result (the reader's save).
  const FString Output=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("OKClothes/Worn")/FString::Printf(TEXT("%s+%s.png"),*FPaths::GetBaseFilename(Card).Left(60),*FPaths::GetBaseFilename(Clothes).Left(60)));
  IFileManager::Get().MakeDirectory(*FPaths::GetPath(Output),true);
- bWearingOkClothes=true;
+ bWearingOkClothes=true;WearProgressBegan=FPlatformTime::Seconds();WearProgressAt=0.;
  TWeakObjectPtr<UOKCharacterController> Weak(this);
  // An OK card is sealed again for her new clothes (ok-extract.exe, seconds): off the game thread.
  // The two halves of "點縮圖到她換好衣服" are timed and logged, always: the wear (resealing the card, which is
@@ -379,6 +393,9 @@ void UOKCharacterController::WearOkClothesFrom(const FString& Clothes,bool bClot
    else Self->Entries[Index].FileName=FPaths::GetCleanFilename(Output);
    Self->SelectIndex(Index);
    if(Self->SelectedIndex!=Index){Done(false,TEXT("套好的卡讀不出來：")+Output);return;}
+   // The wear is done but she is not on screen yet; the open and the display build are the last ~20% of the wait.
+   {const FString Note=FString::Printf(TEXT("套用服裝卡 97%%：開卡並建立顯示（%.0f 秒）"),FPlatformTime::Seconds()-Self->WearProgressBegan);
+    if(Self->InspectorText)Self->InspectorText->SetText(FText::FromString(Note));Self->ScreenNote(1,8.f,FColor::Cyan,Note);}
    Self->OutfitIndex=FMath::Max(0,Outfit);Self->RefreshOutfitList();Self->OnLoad3D();
    Done(true,Output);
   });

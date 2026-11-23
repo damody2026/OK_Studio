@@ -61,6 +61,7 @@ pub mod okanim;
 mod dump_outfit_audit;
 #[cfg(test)]
 mod body_articulation_audit;
+pub mod progress;
 pub mod portable;
 pub mod paired_library;
 pub mod studio_status;

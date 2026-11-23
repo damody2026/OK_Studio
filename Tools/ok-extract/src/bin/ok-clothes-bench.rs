@@ -27,6 +27,25 @@ fn run() -> Result<serde_json::Value, String> {
     let no_open = std::env::var_os("OK_CLOTHES_BENCH_NO_OPEN").is_some();
     let out_dir = lib.join("work/clothes-bench");
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+    // What the reader's label would say, printed whenever it changes: the same slot `ok_progress_text` serves
+    // (progress.rs). Here to show that the bar really moves while the sealing child processes run.
+    let watching = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let watcher = {
+        let watching = watching.clone();
+        let started = Instant::now();
+        std::thread::spawn(move || {
+            let mut last = 0u64;
+            while watching.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(p) = ok_extract::progress::current() {
+                    if p.generation != last {
+                        last = p.generation;
+                        eprintln!("ok-clothes-bench: PROGRESS {:5.1}% {:6.2}s {}", p.done * 100.0, started.elapsed().as_secs_f64(), p.label);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+        })
+    };
     let mut rows = Vec::new();
     for round in 0..rounds {
         let out: PathBuf = out_dir.join(format!("worn_{}_{round}.png", std::process::id()));
@@ -42,6 +61,8 @@ fn run() -> Result<serde_json::Value, String> {
         eprintln!("ok-clothes-bench: round {round}: {summary}");
         rows.push(serde_json::json!({"round": round, "wear_s": wear, "open_s": open, "total_s": wear + open, "parts": parts, "summary": summary}));
     }
+    watching.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = watcher.join();
     Ok(serde_json::json!({"card": args[3], "okclothes": args[4], "scope": args[5], "outfit": outfit, "rounds": rows}))
 }
 

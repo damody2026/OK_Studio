@@ -1055,12 +1055,16 @@ pub mod file {
         // Every row is one stage that really ran, so an absent row means that stage was skipped, not unmeasured.
         let t_all = std::time::Instant::now();
         crate::profile_mark_open_start(t_all);
+        // What the reader shows while it waits (progress.rs). The shares are the measured ones, so the bar moves at
+        // roughly one speed; the guard ends the job on every way out, including an error.
+        let _progress = crate::progress::Guard::begin("讀取服裝卡", "套用結束");
         let mut t = std::time::Instant::now();
         let clothes = read_outfit(okclothes)?;
         crate::profile_tick("wear: read the outfit card", t);
         let ok_card = crate::oklib::is_library_card(card);
         let needs_ok = ok_card || clothes.pack.is_some();
         let lib = if needs_ok { Some(lib.map(Path::to_owned).or_else(crate::oklib::configured_library).ok_or("OK base library not configured")?) } else { None };
+        crate::progress::step("讀取角色卡", 0.03);
         t = std::time::Instant::now();
         let base = if !ok_card && needs_ok {
             // Her own data made into an OK card first (the outfit's models come in its pack, hers from her zipmods).
@@ -1072,6 +1076,7 @@ pub mod file {
             crate::profile_tick("wear: read her card", t);
             bytes
         };
+        crate::progress::step("把這套服裝寫進她的卡", 0.06);
         t = std::time::Instant::now();
         let (worn, dropped) = wear_scoped(&base, &clothes, outfit, scope)?;
         crate::profile_tick("wear: outfit written into her card", t);
@@ -1081,6 +1086,7 @@ pub mod file {
             return Ok(format!("wear outfit={outfit} scope={} dropped={dropped:?}", scope.name()));
         }
         let lib = lib.unwrap();
+        crate::progress::step("合併服裝卡的資源包", 0.09);
         t = std::time::Instant::now();
         let merged = match &clothes.pack { Some(pack) => crate::oklib::merge_card_pack(&worn, pack)?, None => worn };
         crate::profile_tick("wear: outfit pack merged in", t);
@@ -1106,18 +1112,36 @@ pub mod file {
         // Only outfit `outfit` changed, and neither merge above removes anything, so the sealing, strict-check and
         // remake passes need not open her other outfits again (oklib::OnlyOutfitScope). Three whole-wardrobe passes
         // were 97% of a clothing-card click (2026-11-23: 126 opens, 47.9 s of 48.0 s for a seven-outfit card).
+        crate::progress::step("準備封裝", 0.15);
         let _only = crate::oklib::OnlyOutfitScope::begin(outfit);
         t = std::time::Instant::now();
-        let (sealed, sealing) = match answers {
-            Answers::Merged => crate::oklib::seal_card_with(&lib, &merged, false)?,
-            Answers::Add => crate::oklib::seal_card_adding_answers(&lib, &merged)?,
-            Answers::Record => crate::oklib::seal_card_with(&lib, &merged, true)?,
+        let (sealed, sealing, report) = match answers {
+            Answers::Merged => crate::oklib::seal_card_reporting(&lib, &merged, false)?,
+            Answers::Add => crate::oklib::seal_card_adding_answers_reporting(&lib, &merged)?,
+            Answers::Record => crate::oklib::seal_card_reporting(&lib, &merged, true)?,
         };
         crate::profile_tick("wear: seal (ok-extract.exe steps)", t);
-        write(out, &sealed)?;
         t = std::time::Instant::now();
-        let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
-        crate::profile_tick("wear: made again (digest+models)", t);
+        // The sealing's strict check just opened this very card, every garment state, and told us both things `okLb`
+        // needs: the library models those opens read, and outfit 0's digest. Opening it again here only to learn the
+        // same two things cost 4.4 s of a 12.8 s click (2026-11-23), so take the report when there is one. Without it
+        // (an older ok-extract.exe beside the library, OK_SEAL_NO_REPORT=1, or the narrowing is on another outfit so
+        // outfit 0 was never opened) fall back to making the card again, exactly as before.
+        let (digest, made, pack) = match (&report.digest, report.reported) {
+            (Some((digest, _)), true) => {
+                let made = crate::oklib::ok_card_with_answers(&sealed, &report.models, digest)?;
+                let pack = crate::oklib::png_chunk(&made, crate::oklib::PACK_CHUNK).map_or(0, <[u8]>::len);
+                crate::profile_tick("wear: okLb from the seal's report (no open)", t);
+                (digest.clone(), made, pack)
+            }
+            _ => {
+                write(out, &sealed)?; // remake_ok_card reads the card back from disk
+                let (digest, _, made, pack) = crate::oklib::remake_ok_card(&lib, game, out)?;
+                crate::profile_tick("wear: made again (digest+models)", t);
+                (digest, made, pack)
+            }
+        };
+        crate::progress::step("寫入卡片", 0.97);
         write(out, &made)?;
         crate::profile_tick("wear TOTAL", t_all);
         Ok(format!("wear outfit={outfit} scope={} dropped={dropped:?} sealed: {sealing}; digest {digest} pack={pack}", scope.name()))
