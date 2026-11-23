@@ -76,7 +76,7 @@
 - `Tools/ok-extract`：`cargo test --release --lib accessory_ops`（2 過；`--ignored` 的真卡測試 `transfer_and_copy_on_a_real_card` 用本機 `CrowdAPNG/C000.png` 過）；`cargo check --release` 與 `--no-default-features` 過。
 - UE：D: 引擎建 `OpenKoikatsuEditor` 與 `OpenKoikatsu` Development，結果見最後一節。
 
-**沒驗到的**：沒開讀卡器或街區實測任何新掛點（沒有訂閱這些掛點的範例 mod）。`reader.get_result`、`reader.property_change` 的合併、街區 `cards` 寫回都只過編譯。
+**沒驗到的**（提交當時）：沒開讀卡器或街區實測任何新掛點。之後用 hook-probe 實測，見第 7 節。
 
 ## 5. 給協調者
 
@@ -95,3 +95,48 @@
 | `864563cd5` | 街區：第 3 節全部 |
 
 建置：D: 引擎 `OpenKoikatsuEditor` 與 `OpenKoikatsu` Development 都是 `Result: Succeeded`（第一次編輯器建置抓到 `OKStreetSocialMods.inl` 裡 `if(...)UE_LOG(...);else` 沒加大括號的 C2181，加上後重建通過）。
+
+## 7. 實機驗證（hook-probe）
+
+測試 mod `Tools/ok-mod/fixtures/hook-probe`（id `org.openkoikatsu.hook_probe`，targets reader＋street）。它把聽到的每個掛點寫成一行 JSON：寫到 `OK_HOOK_PROBE_LOG`，預設是 `%TEMP%\ok-hook-probe.jsonl`，同時寫進遊戲 log。它也回覆其中幾個：
+- `get` 一次；
+- 每格的 `note` 控制項，存卡時寫成飾品區段；
+- `coordinate_save` 寫一段資料進服裝卡；
+- 每位女角第一次觸碰時用 `cards` 寫 `{"touches": n}`。
+
+它放在 `fixtures/`，不在 `examples/`：`ok-mod-pack` 的 `every_example_is_in_full` 要求每個範例都列進給玩家的 full 設定檔，測試 mod 不該進去。
+
+### 讀卡器（C: 編輯器建置，`reader_launch`，測試卡 `Saved/HookProbe/probe.png`，複製自 `CrowdAPNG/C000.png`）
+
+| 項目 | 結果 |
+|---|---|
+| `reader.property_change` | 有送。**bug**：開卡後畫面重建時，送出 56 個沒改過的 `face.*` 鍵。已修，修後只送 `["shape.body.0"]` |
+| `get` → `reader.get_result` | 有送，`shape.body.*` 加 `nickname` 共 44 個值 |
+| 每格控制項 | `reader.mod_accessory_slot=3` 時寫 note，換到 4 讀出空值，換回 3 讀出原值；`reader.control` 帶 `accessory: {outfit: 0, slot: 3}` |
+| 飾品區段存讀 | 另存後重開，`character_load` 的 `accessories` 有 `{outfit: 0, slot: 3, version: 1}`，note 讀回 |
+| `reader.clothes_state` | `{kind: 0, states: [1,0,…]}` |
+| `reader.accessory_transfer` | ops `accessory_transfer 3→5` 送出 `{outfit: 0, from: 3, to: 5}`；slot 5 讀到 slot 3 的 note。之後產生工作卡，沒有再送 `character_load`（同一角色沿用） |
+| `reader.coordinate_save` | 匯出的服裝卡多出 mod 區段（檔案大 295 bytes），log 有 `1 mod section(s) saved into …okclothes` |
+| `reader.coordinate_load` | 穿上該服裝卡，`section` 帶回剛寫入的資料（`data_b64` 144 字元）；之後同樣沒有再送 `character_load` |
+| 工作卡保留 `okMx` | 已查證：外觀工作卡（`Saved/AppearanceEditor/…png`）與穿服裝卡的工作卡（`Saved/OKClothes/Worn/…png`）都保留 hook_probe 的 `okMx` |
+| `reader.accessory_change` | **沒驗到**：這台讀卡器沒設遊戲目錄，`add_accessory` 與外觀目錄都回 `Appearance catalog unavailable; configure source game` |
+| `reader.accessory_copy` | **沒驗到**（掛點和 transfer 走同一段程式） |
+
+### 街區（測試 stage `probe1123c`，`--skip-cook --skip-base`、base `BaseC1118A`；`-Sandbox cmod4 -PortBase 48160`；`staged_at` 改成比 `c1119a` 早，`StreetSocial.cmd` 不會挑到它）
+
+| 項目 | 結果 |
+|---|---|
+| `street.load` | 有送：`new_game: false`（沙盒存檔已有日曆），每個女角都帶 `section`（第一次全是 null） |
+| `street.period_change` | 按「中午」：`{period: "day", previous: "morning"}` |
+| `street.action` | 摸頭：`{act: "head_pat", done: true, place: "girls_dorm", …}`；觸碰結算也送一筆 `act: "touch", record_only: true` |
+| `street.touch` | `{part: "head", look: false, repeat: 0}` |
+| 寫回卡片 `cards` | log `wrote its data in apng-8a6b…'s card (13 bytes)`，卡片裡有 `{"touches":1}`。重開遊戲後 `street.load` 給雷電將軍的 `section` 為 `{version: 1, data_b64: 20 字元}`，讀回了 |
+| `street.arrive` | **bug**：沒有對話也沒有換日時從來不送。已修，但**修後沒有在 stage 上重測**（要再打一次 stage）。修前在 `street.load` 送出之後走進 `boys_dorm`，送出了 `{who: "him", place: "boys_dorm", place_name: "校外男生宿舍", from: "girls_dorm"}` |
+| `street.phone` `from: her` | **沒驗到**：她來電由她自己決定，沒有可以直接觸發的控制端點 |
+
+寫回測試寫進的是她的原卡 `Content/CharacterCards/StreetHeroines/raiden_shogun.png`。測完已移除 `okMx` 區塊還原，見 `Docs/ERROR_LOG.md` 同日那條。
+
+### 修正與建置
+- `OKGalleryProperties.cpp`：`SetEditorProperty` 只在值真的變了才送 `property_change`。
+- `OKStreetSocialMods.inl`：`ModsTick` 第一次只記錄時段與地點，之後的到達不必等 `street.load`。
+- 修正後 D: 引擎的 `OpenKoikatsuEditor` 與 `OpenKoikatsu` Development 都建置成功；`Tools/ok-mod` 的 `cargo test` 全過。
