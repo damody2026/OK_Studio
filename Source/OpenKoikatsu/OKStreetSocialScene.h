@@ -356,6 +356,8 @@ private:
  void ModsHeroineEvent(const TCHAR* Name,int32 Character,const TFunction<void(class FJsonObject&)>& More=nullptr);
  void ModsDayChanged();
  TArray<FString> ModsTalkFacts(int32 Character) const;
+ void ModsTick(); // street.period_change, street.arrive (OKStreetSocialMods.inl)
+ void ModsAction(int32 Girl,const FString& ActId,const struct FOKHeroineArgs& Args,const struct FOKHeroineResult& Out,const FString& Here); // street.action (OKStreetSocialHeroine.inl)
  void TickInitiative();
  void TickDirector();
  void CheckBirthdays();

@@ -279,11 +279,13 @@ void AOKStreetSocialScene::PhoneAnswer(bool Accept){
  auto& S=*State;const int32 Girl=S.RingGirl;if(Girl==INDEX_NONE)return;S.RingGirl=INDEX_NONE;
  if(!Accept){
   HistoryAdd(Girl,TEXT("call_missed"),TEXT("her"),OKT(TEXT("ui.phone_inbox.call_declined")));
+  ModsHeroineEvent(TEXT("street.phone"),Girl,[](FJsonObject& P){P.SetStringField(TEXT("kind"),TEXT("call"));P.SetStringField(TEXT("from"),TEXT("her"));P.SetBoolField(TEXT("answered"),false);P.SetBoolField(TEXT("declined"),true);});
   QueueHerText(Girl,S.RingWhy+OKT(TEXT("ui.phone_inbox.you_called_declined_note")),TEXT("call_rejected"),FMath::FRandRange(5.0,15.0));RefreshUI();return;
  }
  if(S.Target!=INDEX_NONE&&S.Target!=Girl)EndTalk();
  S.RemoteMode=2;S.RemotePeer=Girl;S.CallStarted=SceneTime();
  HistoryAdd(Girl,TEXT("call"),TEXT("her"),OKT(TEXT("ui.phone_inbox.call_answered")));
+ ModsHeroineEvent(TEXT("street.phone"),Girl,[](FJsonObject& P){P.SetStringField(TEXT("kind"),TEXT("call"));P.SetStringField(TEXT("from"),TEXT("her"));P.SetBoolField(TEXT("answered"),true);});
  S.FreeTalkOpen=true;FreeTalkLiveSet(true);
  S.SystemNote=true;S.FreeTalkDraft=OKT(TEXT("ui.phone_inbox.you_call_him_because"))+S.RingWhy+OKT(TEXT("ui.phone_inbox.he_picked_up_hint"));SendFreeTalk();
  S.Message=OKMsg(TEXT("ui.phone_inbox.in_call_with"), {{TEXT("name"), *OKStreetScriptedName(S.Manifest.Characters[Girl].Name)}});RefreshUI();
@@ -342,6 +344,7 @@ void AOKStreetSocialScene::TickPhone(){
  if(S.RingGirl!=INDEX_NONE&&Now>S.RingUntil){
   const int32 Girl=S.RingGirl;S.RingGirl=INDEX_NONE;
   HistoryAdd(Girl,TEXT("call_missed"),TEXT("her"),OKT(TEXT("ui.phone_inbox.call_no_answer")));
+  ModsHeroineEvent(TEXT("street.phone"),Girl,[](FJsonObject& P){P.SetStringField(TEXT("kind"),TEXT("call"));P.SetStringField(TEXT("from"),TEXT("her"));P.SetBoolField(TEXT("answered"),false);});
   QueueHerText(Girl,S.RingWhy+OKT(TEXT("ui.phone_inbox.you_called_no_answer_note")),TEXT("call_missed"),3.0);
   S.Message=OKMsg(TEXT("ui.phone_inbox.missed_call_from"), {{TEXT("girl_name"), *OKStreetScriptedName(S.Manifest.Characters[Girl].Name)}});RefreshUI();
  }

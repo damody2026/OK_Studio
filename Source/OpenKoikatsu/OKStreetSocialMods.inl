@@ -1,3 +1,4 @@
+#include "Misc/Base64.h"
 // The street's side of the OK mod hooks (Docs/OK_MOD_HOOKS.md §8, OK mod plan §6.6). Everything goes to the mod host as
 // JSON hooks named street.*; with mods off (-NoMods, no host, a self-test) nothing here does anything.
 //
@@ -10,6 +11,11 @@
 //   read (a new game, a slot loaded: the scene starts again), street.load hands each mod its state.
 // - Namespaced rules: a rule named "<mod id>.<rule>" asked through OKRulesEval goes to that mod (street.rule), not to
 //   ok-rules (OKRulesGlue: OKStreetModRule).
+// - Her card's mod data (GameCustomFunctionController's per-heroine data, kept with her rather than with one save):
+//   street.load hands each mod its own okMx section of every heroine's card ("section" in each heroine, null when none);
+//   any answer {"cards": [{"heroine": id, "version", "data_b64"} | {"heroine": id, "remove": true}]} writes or removes
+//   that mod's section of her card (FOkSession::SetCardModSection: other mods' sections and her identity stay). Her own
+//   card, not the clinic's copy: the copy is made again from it (OKStreetSocialClinic.inl), so write rarely.
 
 namespace
 {
@@ -70,6 +76,39 @@ TSharedPtr<FJsonObject> OKStreetModRule(const TSharedRef<FJsonObject>& Request)
 	return Reply->TryGetObjectField(TEXT("json"),Json)?*Json:MakeShared<FJsonObject>();
 }
 
+// Her own card (the clinic's copy is made from it), else the card she is shown with.
+static FString OKStreetModCard(const FOKStreetSceneState& S,int32 Girl)
+{
+	if(S.BaseCards.IsValidIndex(Girl)&&!S.BaseCards[Girl].IsEmpty())
+	{
+		const FString Full=FPaths::ConvertRelativePathToFull(S.BaseCards[Girl]);
+		if(IFileManager::Get().FileExists(*Full))return Full;
+	}
+	return OKStreetCardFor(S,Girl);
+}
+
+// A mod's {"cards": [...]}: its section of each named heroine's card written or removed.
+static void OKStreetModWriteCards(const FOKStreetSceneState& S,const FString& Mod,const TArray<TSharedPtr<FJsonValue>>& Cards)
+{
+	for(const TSharedPtr<FJsonValue>& V:Cards)
+	{
+		const TSharedPtr<FJsonObject> O=V.IsValid()?V->AsObject():nullptr;if(!O.IsValid())continue;
+		const FString Her=O->GetStringField(TEXT("heroine"));
+		int32 Girl=INDEX_NONE;
+		for(int32 I=1;I<S.Manifest.Characters.Num();++I)if(OKStreetStableId(S.Manifest.Characters[I])==Her){Girl=I;break;}
+		const FString Card=Girl==INDEX_NONE?FString():OKStreetModCard(S,Girl);
+		if(Card.IsEmpty()){UE_LOG(LogOKMod,Warning,TEXT("[%s] cards: no card for heroine %s"),*Mod,*Her);continue;}
+		bool bRemove=false;O->TryGetBoolField(TEXT("remove"),bRemove);
+		TArray<uint8> Bytes;double Version=1;O->TryGetNumberField(TEXT("version"),Version);
+		FString B64;
+		if(!bRemove&&(!O->TryGetStringField(TEXT("data_b64"),B64)||!FBase64::Decode(B64,Bytes))){UE_LOG(LogOKMod,Warning,TEXT("[%s] cards: %s has no data_b64"),*Mod,*Her);continue;}
+		if(Bytes.Num()>1024*1024){UE_LOG(LogOKMod,Warning,TEXT("[%s] cards: %d bytes for %s, over 1 MiB"),*Mod,Bytes.Num(),*Her);continue;}
+		FString Error;
+		if(!FOkSession::SetCardModSection(Card,Mod,int32(Version),Bytes,bRemove,Error)){UE_LOG(LogOKMod,Warning,TEXT("[%s] cards: %s: %s"),*Mod,*Card,*Error);}
+		else{UE_LOG(LogOKMod,Display,TEXT("[%s] %s its data in %s's card (%d bytes)"),*Mod,bRemove?TEXT("removed"):TEXT("wrote"),*Her,Bytes.Num());}
+	}
+}
+
 // What every street hook carries: the day, the date, the time, the language.
 TSharedRef<FJsonObject> AOKStreetSocialScene::ModsPayload() const
 {
@@ -109,6 +148,8 @@ TSharedPtr<FJsonObject> AOKStreetSocialScene::ModsHook(const TCHAR* Name,const T
 		const FString Mod=O->GetStringField(TEXT("mod"));bool bOk=false;O->TryGetBoolField(TEXT("ok"),bOk);
 		if(!bOk){UE_LOG(LogOKMod,Warning,TEXT("[%s] %s: %s"),*Mod,Name,*O->GetStringField(TEXT("error")));continue;}
 		const TSharedPtr<FJsonObject>* Json=nullptr;if(!O->TryGetObjectField(TEXT("json"),Json))continue;
+		const TArray<TSharedPtr<FJsonValue>>* Cards=nullptr;
+		if((*Json)->TryGetArrayField(TEXT("cards"),Cards))OKStreetModWriteCards(S,Mod,*Cards);
 		// Its state: ext.mods.<id> (null removes it).
 		if(const TSharedPtr<FJsonValue> State_=(*Json)->TryGetField(TEXT("state")))
 		{
@@ -143,11 +184,58 @@ void AOKStreetSocialScene::ModsEnsureLoaded()
 	TArray<TSharedPtr<FJsonValue>> Heroines;for(int32 I=1;I<S.Manifest.Characters.Num();++I)Heroines.Add(MakeShared<FJsonValueObject>(ModsHeroine(I)));
 	for(const FString& Id:OKStreetModSubscribers(TEXT("street.load")))
 	{
-		auto P=ModsPayload();P->SetArrayField(TEXT("heroines"),Heroines);
+		// Each heroine with this mod's section of her card.
+		TArray<TSharedPtr<FJsonValue>> Own;
+		for(int32 I=1;I<S.Manifest.Characters.Num();++I)
+		{
+			auto H=MakeShared<FJsonObject>(*Heroines[I-1]->AsObject());
+			const FString Card=OKStreetModCard(S,I);bool bFound=false;int32 Version=0;TArray<uint8> Bytes;FString Error;
+			if(!Card.IsEmpty()&&FOkSession::CardModSection(Card,Id,bFound,Version,Bytes,Error)&&bFound)
+			{auto Sec=MakeShared<FJsonObject>();Sec->SetNumberField(TEXT("version"),Version);Sec->SetStringField(TEXT("data_b64"),FBase64::Encode(Bytes));H->SetObjectField(TEXT("section"),Sec);}
+			else{H->SetField(TEXT("section"),MakeShared<FJsonValueNull>());if(!Error.IsEmpty())UE_LOG(LogOKMod,Warning,TEXT("[%s] card data of %s: %s"),*Id,*Card,*Error);}
+			Own.Add(MakeShared<FJsonValueObject>(H));
+		}
+		auto P=ModsPayload();P->SetArrayField(TEXT("heroines"),Own);P->SetBoolField(TEXT("new_game"),S.ModsNewGame);
 		const TSharedPtr<FJsonValue> Saved=Mods?(*Mods)->TryGetField(Id):nullptr;P->SetField(TEXT("state"),Saved.IsValid()?Saved:MakeShared<FJsonValueNull>());
 		ModsHook(TEXT("street.load"),P,{Id});
 	}
 	UE_LOG(LogOKMod,Display,TEXT("street: mods given their saved state (%d heroines)"),Heroines.Num());
+}
+
+// The part of the day (GameAPI PeriodChange): morning 5–11, day 11–17, evening 17–20, night 20–5.
+static const TCHAR* OKStreetModPeriod(int32 Minute)
+{
+	const int32 H=(Minute%1440)/60;
+	return H>=5&&H<11?TEXT("morning"):H>=11&&H<17?TEXT("day"):H>=17&&H<20?TEXT("evening"):TEXT("night");
+}
+
+// Twice a second: street.period_change when the part of the day turns, street.arrive when he comes into a place
+// (a named place of the map; walking out of every place is not an arrival). The first look only records.
+void AOKStreetSocialScene::ModsTick()
+{
+	if(!State||!OKStreetModsOn(*State))return;
+	auto& S=*State;const double Now=FPlatformTime::Seconds();
+	if(Now<S.ModsTickAt)return;
+	S.ModsTickAt=Now+.5;
+	const int32 Minute=int32(OKStreetMindNow(S)%1440);
+	const FString Period=OKStreetModPeriod(Minute);
+	if(S.ModsPeriod.IsEmpty())S.ModsPeriod=Period;
+	else if(Period!=S.ModsPeriod)
+	{
+		auto P=ModsPayload();P->SetStringField(TEXT("period"),Period);P->SetStringField(TEXT("previous"),S.ModsPeriod);
+		S.ModsPeriod=Period;ModsHook(TEXT("street.period_change"),P);
+	}
+
+	const FString Here=PlaceHere(S.Male);
+	if(Here==S.ModsPlace)return;
+	const FString Was=S.ModsPlace;S.ModsPlace=Here;
+	if(Here.IsEmpty()||!S.ModsLoaded)return;
+	auto P=ModsPayload();P->SetStringField(TEXT("who"),TEXT("him"));P->SetStringField(TEXT("place"),Here);P->SetStringField(TEXT("from"),Was);
+	if(const FOKStreetPlace* Place=OKStreetFindPlace(Here))P->SetStringField(TEXT("place_name"),Place->Name);
+	// Who is with him (the girl on an outing or in a talk): the heroine a place event is about, when there is one.
+	const int32 With=S.OutingGirl!=INDEX_NONE?S.OutingGirl:S.Target;
+	if(S.Manifest.Characters.IsValidIndex(With)&&With>0)P->SetObjectField(TEXT("heroine"),ModsHeroine(With));
+	ModsHook(TEXT("street.arrive"),P);
 }
 
 // One event with one heroine (talk, invitation, call, gift, voice line).

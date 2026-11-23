@@ -219,6 +219,13 @@ void AOKStreetSocialScene::BuildHeroinePanel(const TSharedRef<SVerticalBox>& Pan
  Panel->AddSlot().AutoHeight()[Row];
 }
 
+// street.action: an interaction with her done or refused (rules only record; what she makes of it is the AI's).
+void AOKStreetSocialScene::ModsAction(int32 Girl,const FString& ActId,const FOKHeroineArgs& Args,const FOKHeroineResult& Out,const FString& Here){
+ ModsHeroineEvent(TEXT("street.action"),Girl,[&](FJsonObject& P){P.SetStringField(TEXT("act"),ActId);P.SetBoolField(TEXT("hers"),Args.Hers);P.SetBoolField(TEXT("record_only"),Args.RecordOnly);
+  P.SetBoolField(TEXT("done"),Out.Done);P.SetBoolField(TEXT("refused"),Out.Refused);if(!Out.Why.IsEmpty())P.SetStringField(TEXT("why"),Out.Why);P.SetNumberField(TEXT("reaction"),Out.Reaction);
+  P.SetStringField(TEXT("place"),Args.Place.IsEmpty()?Here:Args.Place);});
+}
+
 FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,const FOKHeroineArgs& Args){
  FOKHeroineResult Out;
  if(!State||!OKHeroineFind(ActId)){UE_LOG(LogTemp,Warning,TEXT("Street heroine: unknown interaction %s"),*ActId);return Out;}
@@ -240,7 +247,7 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  {int32 Recent=0;const FString Prefix=Id+TEXT("|");for(const auto& P:S.ActDoneAt)if(P.Key.StartsWith(Prefix)&&NowMinute-P.Value<60)++Recent;Request->SetNumberField(TEXT("acts_recent"),Recent);}
  TSharedPtr<FJsonObject> A=OKRulesEval(S,Request);if(!A.IsValid())return Out;
  // Settled elsewhere: only the record (and the rumour).
- if(Args.RecordOnly){HeroineApplyRecord(Girl,*A,Args.Place);Out.Done=true;return Out;}
+ if(Args.RecordOnly){HeroineApplyRecord(Girl,*A,Args.Place);Out.Done=true;ModsAction(Girl,ActId,Args,Out,Here);return Out;}
  // 2. Does she agree: his invitation goes through her invitation rule, then the rules finish the steps.
  FString Consent;
  if(A->TryGetStringField(TEXT("consent"),Consent)){
@@ -256,6 +263,7 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
   if(A->HasField(TEXT("gate")))HeroineRefuseGate(Girl,ActId,*A);
   else if(Out.Why==TEXT("pregnant")){FString Recent;if(A->TryGetStringField(TEXT("recent"),Recent))S.MindRecent.FindOrAdd(Id)+=Recent;UE_LOG(LogTemp,Display,TEXT("Street heroine: actor=%d %s refused (pregnant)"),Girl,*ActId);}
   else UE_LOG(LogTemp,Display,TEXT("Street heroine gate: actor=%d %s not done (her idea, relationship too new)"),Girl,*ActId);
+  ModsAction(Girl,ActId,Args,Out,Here);
   return Out;
  }
  // 3. How she took it here (the place's norms and the crowd against her shyness) and 4. what it did to her values.
@@ -276,6 +284,7 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  // 7. What it looks like.
  if(A->GetBoolField(TEXT("play_act")))PlayLoverAct(Girl,ActId,Out.Reaction);
  Out.Done=A->GetBoolField(TEXT("done"));
+ ModsAction(Girl,ActId,Args,Out,Here);
  RefreshUI();
  return Out;
 }
