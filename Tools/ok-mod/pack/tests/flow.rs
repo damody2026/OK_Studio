@@ -169,6 +169,17 @@ fn verify_retires_and_checks() {
     // "needs" also fails the DLL check (its DLL is hello's); the dependency check reports mods whose DLL passed.
     assert!(r.problems.contains_key("needs"));
     assert_eq!(r.loads["studio"], vec!["org.openkoikatsu.hello".to_string()]);
+
+    // A Mods/obsolete.toml entry retires an installed mod: it leaves .installed.toml too (it used to stay listed).
+    assert_eq!(read_installed(&mods).unwrap().mods.len(), 1);
+    std::fs::write(mods.join("obsolete.toml"), "[[obsolete]]
+id = \"org.openkoikatsu.hello\"
+versions = \"<0.2\"
+reason = \"test\"
+").unwrap();
+    let r = verify(&mods, false).unwrap();
+    assert!(r.retired.iter().any(|l| l.contains("obsolete: test")), "{r:?}");
+    assert!(read_installed(&mods).unwrap().mods.is_empty());
 }
 
 #[test]
@@ -262,4 +273,22 @@ fn locale_ids_must_carry_the_prefix() {
     std::fs::create_dir_all(dir.join("content")).unwrap();
     std::fs::write(dir.join("content/x.pak"), b"pak").unwrap();
     assert!(pack(&dir, &PackOptions { out: Some(s.p("x.okmod")), ..Default::default() }).unwrap_err().contains("content_build"));
+}
+
+#[test]
+fn panels_go_into_the_package() {
+    // ui/<Name>.dui travels with a pak's panel (the game refuses the pak without it; found on a staged install).
+    let _g = serial();
+    let s = Scratch::new("ui");
+    let dir = s.p("variants/panel");
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(dir.join("mod.toml"), std::fs::read_to_string(workspace().join("examples/hello/mod.toml")).unwrap()).unwrap();
+    std::fs::copy(dlls().join("ok_hello.dll"), dir.join("ok_hello.dll")).unwrap();
+    std::fs::write(dir.join("ui/Panel.dui"), "panel").unwrap();
+    let r = pack(&dir, &PackOptions { out: Some(s.p("panel.okmod")), skip_dll_check: true, ..Default::default() }).unwrap();
+    let zip = zip::ZipArchive::new(std::fs::File::open(&r.package).unwrap()).unwrap();
+    assert!(zip.file_names().any(|n| n == "ui/Panel.dui"), "{:?}", zip.file_names().collect::<Vec<_>>());
+    let mods = s.p("Mods");
+    install(&[PathBuf::from(&r.package)], &mods, &InstallOptions::default()).unwrap();
+    assert!(mods.join("org.openkoikatsu.hello/ui/Panel.dui").is_file());
 }

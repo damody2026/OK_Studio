@@ -25,7 +25,8 @@ use sha2::{Digest, Sha256};
 pub const BUILT_IN_OBSOLETE: &str = include_str!("../../obsolete.toml");
 
 /// Folders inside a mod that go into its package besides mod.toml and the DLL.
-const PACKED_DIRS: &[&str] = &["locale", "assets", "materials", "content"];
+/// ui/: the .dui of each panel in the pak (plan section 6.13 D2); the game refuses a pak panel without it.
+const PACKED_DIRS: &[&str] = &["locale", "assets", "materials", "content", "ui"];
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -321,6 +322,13 @@ fn retire(mods: &Path, folder: &Path, version: &str, reason: &str) -> Result<Pat
     }
     io(folder, std::fs::rename(folder, &dest))?;
     let _ = std::fs::write(dest.join("RETIRED.txt"), format!("{reason}\n"));
+    // The record says what is installed: a retired folder is not (verify used to leave it listed).
+    let mut rec = read_installed(mods)?;
+    let before = rec.mods.len();
+    rec.mods.retain(|m| m.folder != name);
+    if rec.mods.len() != before {
+        write_installed(mods, &rec)?;
+    }
     Ok(dest)
 }
 
