@@ -1,0 +1,39 @@
+# The birthday mod's street tables (Docs/OK_MOD_C_WAVE6.md): a gift sold in the department store and a few lines of
+# material for her talk. Prices are in yuan (the base region); other regions convert them like the built-in goods.
+# Ids get the mod's prefix: this cake is org.openkoikatsu.birthday.birthday_cake.
+
+[[items]]
+id = "birthday_cake"
+name = "生日小蛋糕"
+names = { "zh-CN" = "生日小蛋糕", en = "Small birthday cake" }
+place = "department"
+category = "gift"
+price = 88
+giftable = true
+consumable = true
+tags = ["sweet", "birthday"]
+effects = { mood = 8 }
+
+[[topics]]
+lang = "zh-TW"
+text = "生日那天，被記得的人準備一點小東西，比東西本身更讓人開心。"
+
+[[topics]]
+lang = "zh-TW"
+text = "有人會許願、吹蠟燭；也有人覺得生日只是普通的一天，不想被特別對待。"
+
+[[topics]]
+lang = "zh-CN"
+text = "生日那天，被记得的人准备一点小东西，比东西本身更让人开心。"
+
+[[topics]]
+lang = "zh-CN"
+text = "有人会许愿、吹蜡烛；也有人觉得生日只是普通的一天，不想被特别对待。"
+
+[[topics]]
+lang = "en"
+text = "On a birthday, a small thing from someone who remembered can mean more than the thing itself."
+
+[[topics]]
+lang = "en"
+text = "Some people make a wish and blow out candles; others would rather treat the day like any other."

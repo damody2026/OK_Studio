@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 pub const BUILT_IN_OBSOLETE: &str = include_str!("../../obsolete.toml");
 
 /// Folders inside a mod that go into its package besides mod.toml and the DLL.
-const PACKED_DIRS: &[&str] = &["locale", "assets", "materials", "content"];
+const PACKED_DIRS: &[&str] = &["locale", "assets", "materials", "content", "street"];
 
 pub type Result<T> = std::result::Result<T, String>;
 
