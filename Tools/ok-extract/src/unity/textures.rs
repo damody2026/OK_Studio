@@ -496,6 +496,9 @@ pub(crate) fn each_stored_texture_payload(raw: &[u8], mut each: impl FnMut(Strin
 /// The eager loader's Texture2D objects of a bundle in order, each with its texels read when asked for. The
 /// bundle's files are read through the loaded bundle on demand, not copied out whole.
 pub(crate) fn each_legacy_texture(bytes: &[u8], mut each: impl FnMut(String, &dyn Fn() -> Option<unity_asset_decode::texture::Texture2D>)) {
+    // A library token stands in for Unity bytes (`oklib::token`) and holds no bundle: re-reading it as one answers
+    // nothing and would be reported as a raw parse of its own (`oklib_hook`, "bundle"). The name is simply not served.
+    if crate::oklib::token_id(bytes).is_some() { return; }
     // UnityFS: loaded lazily; `check_blocks` fails where decompressing the whole bundle at once would, without
     // keeping the decompressed data (hundreds of MB). Its files are the directory nodes, as the eager loader's.
     let source = bytes.to_source();
