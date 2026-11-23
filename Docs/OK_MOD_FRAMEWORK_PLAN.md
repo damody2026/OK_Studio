@@ -982,3 +982,34 @@ flowchart TB
 4. 依 §16.5 繼續。
 
 授權仍照 §15.0：到 2026-11-26 00:52 為止可以自己決定、自己做同步與整合，但不推送。
+
+### 16.7 接手後的結果（2026-11-23，最後整合完成）
+
+接手的協調者在 E 檢出的 session；三個新子對話各對應一個檢出（C `local_4c682a21-…`、E `local_8d31c694-…`、F `local_c340f69c-…`）。
+
+| 波次 | C | E | F | 回報 |
+|---|---|---|---|---|
+| 第四波收尾 | 飾品範圍、服裝卡存讀、`property_change`、`get`、分隔線、`clothes_state`；街區 `period_change`、`load`（`new_game`、`section`）、`cards` 寫回、`touch`／`action`／`arrive`、`phone`（她打來）；hook-probe 實測修掉 2 個 bug | 物件操作 op、`studio.get`、light-rig、1 對 1 量表；7 個 Studio mod 共存、FK／IK／動作、UE Automation | 按鍵服務、熱重載保留狀態、`ok-mod-pack new`、作者入門、第四波掛點 SDK 輔助 | `OK_MOD_{C,E,F}_WAVE4.md` |
+| 第五波 | 街區熱鍵、`/ring` 測試端點、補驗 | Studio／1 對 1 熱鍵、熱鍵前處理器排第一 | 乾淨 stage 安裝、打包版、Release 互通 | `…_WAVE5.md` |
+| 第六波 | 街區資料表 `street/*.toml`（商品 `catalog_extend`、話題素材）、`birthday` 示範 | Studio「Mod 熱鍵」設定頁、pair-gauges 熱鍵 | stage 自帶 runtime patch、`game_stop` 修正 | `…_WAVE6.md` |
+
+同步點 D `6e46210be`、E `294cae12d`（見 §16.1 表）。
+
+**最後整合**（C，D: 引擎）：
+
+- `rebuild_street_social_runtime.lua --tag Mod1123 --base-dir Saved/StreetSocial/BaseMod1123`：完整 host／執行檔、cook、base、stage、stage 自帶 patch，約 13 分鐘；
+- `Tools/pack_mod_examples.lua --content-from F:/OpenKoikatsu/Mods --build` 打出 19 個 `.okmod`（輸出 `Saved/mod-integ/packages`），`ok-mod-pack profile apply full.toml` 裝到 `Mod1123.stage/Mods`，`verify` OK；F 引擎 cook 的 pak（content_build 相同）在 D: 引擎的 stage 正常掛載；
+- 打包版實測（`Mod1123`）：
+  - 街區（`run_street_social_development.lua`，即 StreetSocial.cmd 的路徑，`-Sandbox ModInteg`）：5 個 mod、glass-shader pak，F8 熱鍵觸發；
+  - 從街區開 1 對 1：進入 `pair` 多載 boop、pair_counter，F8 在 pair 觸發，畫面正常；
+  - Studio（打包版，同 `run_scene_editor.lua` 的 stage 路徑）：11 個 mod、glass-shader 與 toon-post 兩個 pak 與 shader 庫掛載、mod 工具鈕在、F8 觸發；
+- `CardReaderDevelopment.cmd` 實際啟動（編輯器 `-game`，checkout 根 `Mods/`）：8 個 mod 載入，DreamGUI 新畫面與 Mods 頁正常；
+- 清理：只刪本次 mod 工作的測試 stage `probe1123c/d/e`（先拆 junction、確認沒有殘留再刪）。`c1118j`、`c1119a`、`conq1118g`、`lowspec1118l` 與它們連到的 `BaseC1118A` 屬其他工作線，**沒刪**；F 的 `ModInstallF5.stage`／`BaseF5` 也留著。`Saved/Interaction/FreeTalk01Host` 是這次重建用的 host，保留。
+
+**仍然沒做／沒驗的**：
+
+- GPU 動態骨外力（決定不做，設計在 `OK_MOD_HOOKS.md` §11）；ok-rules 規則表疊加（`tuning_overlay`，待辦）；
+- 打包版裡 1 對 1 熱鍵回覆設量表、街區 mod 商品的其他地區價格與分尺寸價格只有單元測試；
+- 讀卡器一般對話自動找 `<GameRoot>/voice_extract`；
+- `Saved/mod-integ/packages` 的 dream-panel／glass-shader／toon-post 的 pak 取自 F 的 `Mods/`（ModKit 產物不進版控），換整合版本要重新 `modkit_cook.lua`；
+- 沒有推送。
