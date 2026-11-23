@@ -135,12 +135,32 @@ function M.link_content(exe, root, names, say)
   end
 end
 
+-- The stage's own runtime patch (<X>.stage/Patch, made by rebuild_street_social_runtime.lua from the same editor build
+-- as its base) for a stage's game exe, or nil. It goes before Launch/runtime.json's shared patch: that one's
+-- RuntimeGlobalShaderPatch-*_P.pak overrides the base's global shader map, so a shared patch made before a new global
+-- shader (DreamGUI, the crowd rig) took them away from a freshly cooked base (2026-11-23, F wave 5: the packaged card
+-- reader fell back to its old screen).
+function M.own_patch(exe)
+  local stage = path.abs(exe):gsub("\\", "/"):match("^(.*%.stage)/[Ww]indows/OpenKoikatsu/Binaries/Win64/[^/]+%.exe$")
+  if not stage then return nil end
+  local patch = path.join(stage, "Patch")
+  if path.is_dir(patch) and #path.glob(patch, "*.pak") > 0 then return patch end
+  return nil
+end
+
+-- The runtime patch to mount for a game exe: the stage's own (M.own_patch), else Launch/runtime.json's.
+function M.patch_for(root, exe, launch)
+  local own = M.own_patch(exe)
+  if own then return own end
+  return launch and launch.patch and path.join(root, launch.patch) or nil
+end
+
 function M.packaged_launch(root, exe)
   M.link_content(exe, root, { "IndependentResources", "KKPreview", "CharacterCards" })
   local args = {}
   local launch_file = path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")
   local launch = path.is_file(launch_file) and json.decode(path.read_text(launch_file)) or {}
-  local patch = launch.patch and path.join(root, launch.patch)
+  local patch = M.patch_for(root, exe, launch)
   if patch and path.exists(patch) then args[#args + 1] = "-pakdir=" .. M.ue_path(exe, patch) end
   -- The cooked shared material parents (in the patch): the editor finds them by itself, a packaged game is told
   -- (KKPreviewRuntimeMaterials.inl; not through -StreetSocialManifest=, which turns the reader's UI off).

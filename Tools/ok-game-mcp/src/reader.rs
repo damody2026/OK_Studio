@@ -27,7 +27,7 @@ fn rand_tag() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0) ^ N.fetch_add(1, Ordering::Relaxed)
 }
 
-fn powershell(script: &str) -> Result<String> {
+pub(crate) fn powershell(script: &str) -> Result<String> {
     let out = Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]).output().context("could not run powershell")?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -51,7 +51,7 @@ fn is_game(pid: u32) -> Result<bool> {
     Ok(name.starts_with("unrealeditor") || name.starts_with("openkoikatsu"))
 }
 
-fn alive(pid: u32) -> bool {
+pub(crate) fn alive(pid: u32) -> bool {
     powershell(&format!("[bool](Get-Process -Id {pid} -ErrorAction SilentlyContinue)")).is_ok_and(|s| s.eq_ignore_ascii_case("true"))
 }
 

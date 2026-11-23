@@ -198,7 +198,16 @@ local function main()
   end)) do add(f[1], stage_rel .. "/Windows/" .. f[2]) end
   local paks = {}
   for _, f in ipairs(files_under(path.join(stage, "Windows/OpenKoikatsu/Content/Paks"))) do if f[1]:lower():match("%.pak$") then paks[#paks + 1] = f[1] end end
-  if path.is_dir(patch) then
+  -- The stage's own patch (X.stage/Patch, street_stage.own_patch) goes with it and is what its launcher mounts; else the
+  -- shared one (Launch/runtime.json).
+  local own = street_stage.own_patch(path.join(stage, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe"))
+  if own then
+    say("Runtime patch: the stage's own " .. win(own))
+    for _, f in ipairs(files_under(own)) do
+      add(f[1], stage_rel .. "/Patch/" .. f[2])
+      if f[1]:lower():match("%.pak$") then paks[#paks + 1] = f[1] end
+    end
+  elseif path.is_dir(patch) then
     for _, f in ipairs(files_under(patch)) do
       add(f[1], launch.patch .. "/" .. f[2])
       if f[1]:lower():match("%.pak$") then paks[#paks + 1] = f[1] end

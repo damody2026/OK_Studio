@@ -276,7 +276,8 @@ impl Game {
             .map(|f| f[4].to_string()))
     }
 
-    /// Stops only the game listening on this checkout's control port (another session's sandbox game keeps running).
+    /// Stops only the game listening on this checkout's control port (another session's sandbox game keeps running) and
+    /// answers once its process is gone: closed, or terminated when it did not close within 20 s.
     pub fn stop(&self) -> Result<Value> {
         // Never the newest game of the checkout by default: that was another session's (see control::OWN). OK_CONTROL_PORT
         // names the port outright; otherwise the game started here or one picked with game_select.
@@ -289,8 +290,22 @@ impl Game {
         if !crate::control::instances(&self.root).iter().any(|v| v["pid"].as_u64().map(|p| p.to_string()) == Some(pid.clone())) {
             bail!("the game on port {} (pid {pid}) is not a game of this checkout; not stopped", self.live_port()?);
         }
-        let status = Command::new("taskkill").args(["/PID", &pid]).output()?;
-        Ok(json!({"ok": status.status.success(), "stopped": pid}))
+        // taskkill without /F only asks the window to close and returns at once: "stopped" used to come back while the
+        // game was still shutting down (seen alive 5 s later, F wave 5). Ask, wait until it is gone, else terminate it.
+        let n: u32 = pid.parse().with_context(|| format!("pid {pid}"))?;
+        let asked = Command::new("taskkill").args(["/PID", &pid]).output()?;
+        let start = Instant::now();
+        if wait_gone(n, Duration::from_secs(20)) {
+            return Ok(json!({"ok": true, "stopped": pid, "how": "closed", "seconds": start.elapsed().as_secs_f64()}));
+        }
+        crate::reader::powershell(&format!(
+            "Get-CimInstance Win32_Process -Filter \"ProcessId={n}\" | Invoke-CimMethod -MethodName Terminate | Out-Null"
+        ))?;
+        if wait_gone(n, Duration::from_secs(15)) {
+            return Ok(json!({"ok": true, "stopped": pid, "how": "terminated after the close request did not end it",
+                "close_request_ok": asked.status.success(), "seconds": start.elapsed().as_secs_f64()}));
+        }
+        bail!("pid {pid} still runs after the close request and Terminate ({:.0} s)", start.elapsed().as_secs_f64())
     }
 
     /// The log of the game on this control port (the Play-* folder whose game.pid is that process), else the newest
@@ -334,5 +349,19 @@ fn unchunk(data: &[u8]) -> Result<Vec<u8>> {
         }
         out.extend_from_slice(&data[end + 2..end + 2 + size]);
         at = end + 2 + size + 2;
+    }
+}
+
+/// Whether `pid` is gone within `timeout` (checked every 300 ms).
+fn wait_gone(pid: u32, timeout: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        if !crate::reader::alive(pid) {
+            return true;
+        }
+        if start.elapsed() > timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(300));
     }
 }

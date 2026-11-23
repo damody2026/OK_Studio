@@ -233,6 +233,8 @@ local function main()
       say("==================================================================")
     end
     build.executable = path.abs(o.executable)
+    -- A stage with its own patch (X.stage/Patch, street_stage.own_patch) mounts that one unless -PatchDir names another.
+    if not o.patchdir then build.patch = street_stage.patch_for(root, build.executable, launch) or build.patch end
     say("StreetSocial build: " .. build.executable)
     say("Patch: " .. build.patch .. (path.exists(build.patch) and "" or " (missing: not mounted)"))
     -- A stage from a package (Tools/package_street_social.lua) comes without its junctions into this folder's Content
