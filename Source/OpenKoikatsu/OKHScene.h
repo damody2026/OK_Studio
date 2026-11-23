@@ -149,6 +149,11 @@ public:
     void ShowPlayerLine(const FString& Text);
     // A subtitle for her line from elsewhere (a mod's answer to pair.speech_start): her subtitle bar, nothing else changes.
     void ShowHerSubtitle(const FString& Text){ShowSubtitle(0,Text);}
+    // A mod's answer ({"pair": {"her": n, "his": n}}, OKPairModBridge): her / his gauge set to n (0..100; negative leaves it).
+    void SetGauges(float HerValue,float HisValue){if(HerValue>=0.f)Her=FMath::Clamp(HerValue,0.f,100.f);if(HisValue>=0.f)His=FMath::Clamp(HisValue,0.f,100.f);}
+    bool InsertedNow() const {return bInsertedNow;}
+    float HerGaugeValue() const {return Her;}
+    float HisGaugeValue() const {return His;}
     void SpokeLine(){bTalkSpoken=true;}
     void SetReplyPending(bool bPending){bReplyPending=bPending;}
     UFUNCTION() void OnInputCommitted(const FText& Text,ETextCommit::Type Commit);
