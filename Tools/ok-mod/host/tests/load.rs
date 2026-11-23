@@ -468,8 +468,12 @@ fn hotkeys_reach_their_mod_in_any_mode_and_rebind() {
     let (mut host, logs) = open(&s, "street");
     let keys = host.hotkeys();
     assert_eq!(keys.len(), 1, "{keys:?}");
-    assert_eq!((keys[0].id.as_str(), keys[0].name.as_str(), keys[0].hook.as_str(), keys[0].chord.as_str()), (HELLO, "greet", "key.org.openkoikatsu.hello.greet", "F8"));
-    assert!(host.subscribers("key.org.openkoikatsu.hello.greet").contains(&HELLO.to_string()));
+    assert_eq!((keys[0].id.as_str(), keys[0].name.as_str(), keys[0].hook.as_str(), keys[0].chord.as_str()), (HELLO, "greet", "key.greet", "F8"));
+    assert!(host.subscribers("key.greet").contains(&HELLO.to_string()));
+    // OK Studio sends a panel key straight to its mod under the same short name (OKStudioModBridge HookName "key.<id>"):
+    // the subscription must stay as the mod wrote it.
+    let studio = host.hook_one(HELLO, "key.greet", r#"{"mode":"studio","chord":""}"#);
+    assert_eq!(studio, Ok(Reply::Text("hello (studio)".into())), "{studio:?}");
 
     let hit = host.key("f8", "street");
     assert_eq!(hit.len(), 1);

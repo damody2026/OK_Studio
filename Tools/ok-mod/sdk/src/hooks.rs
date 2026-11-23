@@ -169,7 +169,8 @@ mod tests {
     }
 }
 
-/// The hotkey a `key.<id>.<entry>` hook is for (declared with `Registrar::hotkey`): `Some(entry)`, else `None`.
+/// The hotkey a `key.<entry>` hook is for (declared with `Registrar::hotkey`; also the long form `key.<id>.<entry>`, and
+/// the name OK Studio sends for a panel key of that id): `Some(entry)`, else `None`.
 ///
 /// ```ignore
 /// Event::Hook { name, payload } => match hooks::hotkey(name) {
@@ -179,7 +180,8 @@ mod tests {
 /// ```
 pub fn hotkey(hook: &str) -> Option<&str> {
     let rest = hook.strip_prefix("key.")?;
-    rest.rsplit_once('.').map(|(_, entry)| entry)
+    let entry = rest.rsplit_once('.').map_or(rest, |(_, entry)| entry);
+    (!entry.is_empty()).then_some(entry)
 }
 
 /// The payload of a hotkey hook: the mode it was pressed in (reader, studio, pair, street) and the chord as bound.
@@ -216,4 +218,15 @@ pub struct RestoreState<T> {
     #[serde(default)]
     pub to_version: String,
     pub state: T,
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    #[test]
+    fn both_forms() {
+        assert_eq!(super::hotkey("key.toggle"), Some("toggle"));
+        assert_eq!(super::hotkey("key.org.a.toggle"), Some("toggle"));
+        assert_eq!(super::hotkey("key."), None);
+        assert_eq!(super::hotkey("timer.toggle"), None);
+    }
 }

@@ -1,10 +1,13 @@
-//! Mod hotkeys across every mode (Docs/OK_MOD_HOOKS.md §5): a config entry of the hotkey type (`config_hotkey`) whose
-//! mod subscribed to `key.<id>.<entry>` is a key the game watches for it. The game sends the chord pressed
-//! (`{"op":"key","chord","mode"}`); every hotkey bound to that chord gets the hook `key.<id>.<entry>` with
-//! `{"mode","chord"}`. The player rebinds with `config_set` (settings page, `OKMod.Bind`).
+//! Mod hotkeys across every mode (Docs/OK_MOD_HOOKS.md §9): a config entry of the hotkey type (`config_hotkey`) whose
+//! mod subscribed to `key.<entry>` (or the long form `key.<id>.<entry>`) is a key the game watches for it. The game
+//! sends the chord pressed (`{"op":"key","chord","mode"}`); every hotkey bound to that chord gets, in its own mod only,
+//! the hook it subscribed to with `{"mode","chord"}`. The player rebinds with `config_set` (settings page,
+//! `OKMod.Bind`).
 //!
-//! A mod subscribes with the short form `key.<entry>` (the SDK's `Registrar::hotkey`); the host makes it
-//! `key.<id>.<entry>` when the mod loads, so the hook name always says whose key it is.
+//! The short form is what the SDK's `Registrar::hotkey` subscribes, and the same name OK Studio sends for a panel key
+//! of that id (`ok-mod-studio::subscribe`, `OKStudioModBridge` `key.<id>`): a hook goes to one mod, so it needs no id
+//! in its name, and a mod's key `x` is the same key wherever it is pressed. Subscriptions are kept as the mod wrote
+//! them (rewriting `key.x` would cut OK Studio's panel keys off).
 //!
 //! Chords are Unreal key names joined by `+` (`"LeftControl+K"`, `"F7"`). Left and right modifiers count as the same
 //! (`LeftControl`, `RightControl`, `Control`, `Ctrl` all mean Control), letters compare without case, the order of the
@@ -19,6 +22,7 @@ use crate::ModHost;
 pub struct Hotkey {
     pub id: String,
     pub name: String,
+    /// The hook it is sent as: the name the mod subscribed to (`key.<name>`, or `key.<id>.<name>`).
     pub hook: String,
     /// As stored (the player's spelling); empty means unbound.
     pub chord: String,
@@ -33,17 +37,9 @@ impl Hotkey {
     }
 }
 
-/// The hook name of hotkey `name` of mod `id`.
-pub fn hook_name(id: &str, name: &str) -> String {
-    format!("key.{id}.{name}")
-}
-
-/// A mod's own subscription `key.<entry>` (no further dot) made `key.<id>.<entry>`; anything else unchanged.
-pub fn expand_subscription(id: &str, name: &str) -> String {
-    match name.strip_prefix("key.") {
-        Some(rest) if !rest.is_empty() && !rest.contains('.') => hook_name(id, rest),
-        _ => name.to_string(),
-    }
+/// The hook names a hotkey `name` of mod `id` may be subscribed under: short first, then long.
+pub fn hook_names(id: &str, name: &str) -> [String; 2] {
+    [format!("key.{name}"), format!("key.{id}.{name}")]
 }
 
 fn modifier(part: &str) -> Option<(u8, &'static str)> {
@@ -88,10 +84,7 @@ impl ModHost {
             let store = crate::lock(&loaded.shared.config);
             for e in &store.entries {
                 let ok_mod_api::ConfigValue::Hotkey(default) = &e.default else { continue };
-                let hook = hook_name(&m.id, &e.key);
-                if !loaded.subscriptions.contains(&hook) {
-                    continue;
-                }
+                let Some(hook) = hook_names(&m.id, &e.key).into_iter().find(|h| loaded.subscriptions.contains(h)) else { continue };
                 let chord = match store.get(&e.key) {
                     Some(ok_mod_api::ConfigValue::Hotkey(s) | ok_mod_api::ConfigValue::Text(s)) => s.to_string(),
                     _ => default.to_string(),
@@ -132,9 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn short_key_subscriptions_get_the_mod_id() {
-        assert_eq!(expand_subscription("org.a", "key.toggle"), "key.org.a.toggle");
-        assert_eq!(expand_subscription("org.a", "key.org.b.toggle"), "key.org.b.toggle");
-        assert_eq!(expand_subscription("org.a", "reader.ui"), "reader.ui");
+    fn both_hook_forms() {
+        assert_eq!(hook_names("org.a", "toggle"), ["key.toggle".to_string(), "key.org.a.toggle".to_string()]);
     }
 }

@@ -390,7 +390,7 @@ impl ModHost {
                     }
                 }
                 Ok(Declaration::Subscribe(name)) => {
-                    subscriptions.insert(keys::expand_subscription(&manifest.id, name.as_str()));
+                    subscriptions.insert(name.to_string());
                 }
                 Err(_) => problems.push("a declaration of a kind this host does not know (mod built for a newer API?)".into()),
                 Ok(_) => problems.push("a declaration of a kind this host does not handle".into()),
