@@ -7339,3 +7339,7 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
   - `ok-mod-pack` 的 `PACKED_DIRS` 沒有 `ui/`。帶面板的 mod（dream-panel）打包後少了 `ui/Panel.dui`，遊戲因此拒掛它的 pak。S12 收尾時用 profile 裝過 dream-panel，當時是直接從 Mods 複製、沒經過 `.okmod`，所以沒發現。加上 `ui` 與測試 `panels_go_into_the_package`。
   - `verify` 把 obsolete／重複的 mod 移到 `.old/` 後沒更新 `.installed.toml`，紀錄還列著已移走的 mod。改成 `retire` 一律刪掉該筆。
   - 打包全部範例的腳本，第一版把範例裡的空 `content/` 當成「有內容」，沒去 `Mods/` 拿 pak，glass-shader 的包裡沒有 pak（打包版退回 A 層材質）。看實機 log 的材質路徑（`/Game/...M_PreviewTranslucent`，不是 mod 自己的）才發現。
+
+- 2026-11-23 第六波（F 組，`Docs/OK_MOD_F_WAVE6.md`）：
+  - 第五波把「打包版讀卡器沒有 DreamGUI global shader」歸給 cook 沒帶。實際上新 cook 的 base 有，是啟動器另外掛的共享 runtime patch（`runtime.json` 的 `NH1115.patch`，比 DreamGUI 早）用 `_P` 的 global shader map 蓋掉了它。看 log 的 `Mounted Pak file` 順序才找到。改成 stage 自帶 patch（`rebuild_street_social_runtime.lua` 第 5 步，`street_stage.patch_for`）。
+  - `ok-game-mcp` 的 `game_stop` 只送不帶 `/F` 的 `taskkill` 就回 `stopped`，進程其實還在關；改成等到進程消失，逾時才強制結束。
