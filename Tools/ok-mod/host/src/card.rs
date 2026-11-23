@@ -16,7 +16,63 @@ use serde_json::{json, Map, Value};
 
 use crate::ModHost;
 
-pub const OPS: &[&str] = &["card_core", "card_mods", "card_load", "card_store", "extract.kkex", "reader.ui", "reader.values", "reader.control"];
+pub const OPS: &[&str] = &["card_core", "card_mods", "card_load", "card_store", "clothes_load", "clothes_store", "extract.kkex", "reader.ui", "reader.values", "reader.control"];
+
+/// Accessory-scoped sections (plan §6.2 "part", ExtendedSave's per-accessory data): a mod's data for one accessory
+/// slot is its own okMx entry, `<mod id>/acc/<outfit>/<slot>` in a character card and `<mod id>/acc/<slot>` in an
+/// `.okclothes` file (one outfit). Like the mod's main section it requires the mod, and a card opened without the mod
+/// keeps it byte for byte.
+const ACC: &str = "/acc/";
+
+/// The mod a section belongs to: `org.x/acc/0/3` -> `org.x`.
+pub fn owner(id: &str) -> &str { id.split_once('/').map_or(id, |(o, _)| o) }
+
+/// `id`'s accessory sections in `data` as `[{outfit?, slot, version, data_b64}]` (outfit only in a character card).
+fn acc_sections(data: &ModData, id: &str) -> Vec<Value> {
+    let prefix = format!("{id}{ACC}");
+    data.ids().filter_map(|key| {
+        let rest = key.strip_prefix(prefix.as_str())?;
+        let s = data.get(key)?.ok()?;
+        let mut v = json!({"version": s.version, "data_b64": b64().encode(&s.data)});
+        match rest.split_once('/') {
+            Some((o, slot)) => { v["outfit"] = o.parse::<u64>().ok()?.into(); v["slot"] = slot.parse::<u64>().ok()?.into(); }
+            None => v["slot"] = rest.parse::<u64>().ok()?.into(),
+        }
+        Some(v)
+    }).collect()
+}
+
+/// A reply's `"accessories": [{outfit?, slot, version, data_b64}]`: every accessory section of `id` in `data` replaced
+/// by these. `outfit` is required in a character card and refused in an .okclothes file (`clothes`).
+fn store_acc(data: &mut ModData, id: &str, mod_version: &str, list: &Value, clothes: bool) -> Result<usize, String> {
+    let list = list.as_array().ok_or("\"accessories\" is a list")?;
+    let mut made = Vec::new();
+    for item in list {
+        let slot = item.get("slot").and_then(Value::as_u64).ok_or("an accessory needs \"slot\"")?;
+        let key = match (item.get("outfit").and_then(Value::as_u64), clothes) {
+            (Some(_), true) => return Err("an outfit card's accessories have no \"outfit\"".into()),
+            (Some(o), false) => format!("{id}{ACC}{o}/{slot}"),
+            (None, true) => format!("{id}{ACC}{slot}"),
+            (None, false) => return Err("an accessory needs \"outfit\"".into()),
+        };
+        made.push((key, section_from_reply(id, mod_version, item)?));
+    }
+    let prefix = format!("{id}{ACC}");
+    let old: Vec<String> = data.ids().filter(|k| k.starts_with(prefix.as_str())).map(str::to_owned).collect();
+    for k in old { data.remove(&k); }
+    let n = made.len();
+    for (k, s) in made { data.set(&k, &s); }
+    Ok(n)
+}
+
+/// Removes `id`'s main and accessory sections; whether any was there.
+fn remove_all(data: &mut ModData, id: &str) -> bool {
+    let prefix = format!("{id}{ACC}");
+    let keys: Vec<String> = data.ids().filter(|k| *k == id || k.starts_with(prefix.as_str())).map(str::to_owned).collect();
+    let mut any = false;
+    for k in keys { any |= data.remove(&k); }
+    any
+}
 
 fn b64() -> base64::engine::GeneralPurpose { base64::engine::general_purpose::STANDARD }
 
@@ -164,8 +220,9 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
                 let mut v = match data.get(id) { Some(Ok(s)) => section_json(&s), Some(Err(e)) => json!({"error": e}), None => Value::Null };
                 v["id"] = id.into();
                 v["bytes"] = data.raw(id).map_or(0, <[u8]>::len).into();
-                v["enabled"] = mods.contains_key(id).into();
-                v["mod_version"] = mods.get(id).cloned().into();
+                v["enabled"] = mods.contains_key(owner(id)).into();
+                v["mod_version"] = mods.get(owner(id)).cloned().into();
+                if owner(id) != id { v["owner"] = owner(id).into(); }
                 v.as_object_mut().map(|o| o.remove("data_b64"));
                 v
             }).collect();
@@ -201,14 +258,18 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
                     }
                     _ => match req.get("imported").and_then(|i| i.get(&id)) { Some(s) if s.is_object() => (s.clone(), true), _ => (Value::Null, false) },
                 };
-                let body = payload(json!({"card": path, "outfit": outfit, "identity": identity, "apply": !skip.contains(&id.as_str()), "section": section, "imported": imported}));
+                let body = payload(json!({"card": path, "outfit": outfit, "identity": identity, "apply": !skip.contains(&id.as_str()), "section": section, "imported": imported,
+                                          "accessories": acc_sections(&data, &id)}));
                 let result = host.hook_one(&id, "reader.character_load", &body);
                 replies.push(crate::ModReply { id, result });
             }
-            let missing: Vec<Value> = data.ids().filter(|id| !id.starts_with("ok.") && !mods.contains_key(*id)).map(|id| {
+            let mut missing: Vec<Value> = Vec::new();
+            for id in data.ids() {
+                let o = owner(id);
+                if o.starts_with("ok.") || mods.contains_key(o) || missing.iter().any(|m| m["id"] == o) { continue; }
                 let r = data.get(id).and_then(Result::ok).and_then(|s| s.requires);
-                json!({"id": id, "version": r.map(|r| r.version)})
-            }).collect();
+                missing.push(json!({"id": o, "version": r.map(|r| r.version)}));
+            }
             json!({"replies": replies_json(replies), "missing": missing})
         }
         // {"op":"card_store","card","outfit"}: character_save to every subscriber; their sections written into the card.
@@ -225,7 +286,14 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
                 let body = payload(json!({"card": path, "outfit": outfit}));
                 match reply_value(&host.hook_one(&id, "reader.character_save", &body)) {
                     Ok(Value::Null) => {}
-                    Ok(v) if v.get("remove").and_then(Value::as_bool) == Some(true) => { if data.remove(&id) { removed.push(id); } }
+                    Ok(v) if v.get("remove").and_then(Value::as_bool) == Some(true) => { if remove_all(&mut data, &id) { removed.push(id); } }
+                    // Only accessory data: the main section stays as the card has it.
+                    Ok(v) if v.get("data_b64").is_none() && v.get("accessories").is_some() => {
+                        match store_acc(&mut data, &id, mods.get(&id).map_or("", String::as_str), &v["accessories"], false) {
+                            Ok(_) => written.push(id),
+                            Err(e) => errors.push(json!({"mod": id, "error": e})),
+                        }
+                    }
                     Ok(v) => match section_from_reply(&id, mods.get(&id).map_or("", String::as_str), &v).and_then(|s| {
                         let added = resources_from_reply(&v)?;
                         Ok((s, added))
@@ -239,6 +307,12 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
                                 host.host_log(LogLevel::Error, &format!("{id}: {path}: {e}"));
                                 errors.push(json!({"mod": id, "error": e}));
                                 continue;
+                            }
+                            if let Some(list) = v.get("accessories") {
+                                if let Err(e) = store_acc(&mut data, &id, mods.get(&id).map_or("", String::as_str), list, false) {
+                                    errors.push(json!({"mod": id, "error": e}));
+                                    continue;
+                                }
                             }
                             for (h, b) in added.by_hash { res.by_hash.entry(h).or_insert(b); }
                             data.set(&id, &s);
@@ -264,6 +338,55 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
             }
             json!({"ok": errors.is_empty(), "written": written, "removed": removed, "errors": errors,
                    "resources": {"count": res.by_hash.len(), "bytes": res.total_bytes(), "pruned": pruned}})
+        }
+        // {"op":"clothes_store","clothes","card","outfit"}: an outfit card (.okclothes) was exported from outfit `outfit` of
+        // `card`: reader.coordinate_save to every subscriber; a reply {version, data_b64} is the mod's section in the
+        // outfit card, "accessories": [{slot, version, data_b64}] its accessory sections (no outfit: the file is one).
+        // null leaves the file as it is, {"remove": true} takes the mod's sections out. Resources stay with the
+        // character card (an outfit card carries none).
+        "clothes_store" => {
+            let path = str_field(req, "clothes")?;
+            let card = req.get("card").and_then(Value::as_str).unwrap_or("");
+            let outfit = req.get("outfit").and_then(Value::as_i64).unwrap_or(0);
+            let (bytes, mut data) = read_card(path)?;
+            let mods = enabled(host);
+            let (mut written, mut errors) = (Vec::new(), Vec::new());
+            for id in host.subscribers("reader.coordinate_save") {
+                let body = payload(json!({"clothes": path, "card": card, "outfit": outfit}));
+                let version = mods.get(&id).map_or("", String::as_str).to_owned();
+                let result = match reply_value(&host.hook_one(&id, "reader.coordinate_save", &body)) {
+                    Ok(Value::Null) => continue,
+                    Ok(v) if v.get("remove").and_then(Value::as_bool) == Some(true) => { remove_all(&mut data, &id); Ok(()) }
+                    Ok(v) => (|| -> Result<(), String> {
+                        if v.get("data_b64").is_some() { data.set(&id, &section_from_reply(&id, &version, &v)?); }
+                        if let Some(list) = v.get("accessories") { store_acc(&mut data, &id, &version, list, true)?; }
+                        Ok(())
+                    })(),
+                    Err(e) => Err(e),
+                };
+                match result { Ok(()) => written.push(id), Err(e) => errors.push(json!({"mod": id, "error": e})) }
+            }
+            if !written.is_empty() {
+                std::fs::write(path, ok_card_mods::with_data(&bytes, &data)?).map_err(|e| format!("{path}: {e}"))?;
+            }
+            json!({"ok": errors.is_empty(), "written": written, "errors": errors})
+        }
+        // {"op":"clothes_load","clothes","card","outfit"}: outfit card `clothes` was put on as outfit `outfit` of `card`:
+        // reader.coordinate_load to every subscriber, with its section and accessory sections from the outfit card
+        // (null / [] when it has none: the mod drops what it kept for that outfit). Replies come back as card_load's.
+        "clothes_load" => {
+            let path = str_field(req, "clothes")?;
+            let card = req.get("card").and_then(Value::as_str).unwrap_or("");
+            let outfit = req.get("outfit").and_then(Value::as_i64).unwrap_or(0);
+            let (_, data) = read_card(path)?;
+            let mut replies = Vec::new();
+            for id in host.subscribers("reader.coordinate_load") {
+                let section = match data.get(&id) { Some(Ok(s)) => section_json(&s), _ => Value::Null };
+                let body = payload(json!({"clothes": path, "card": card, "outfit": outfit, "section": section, "accessories": acc_sections(&data, &id)}));
+                let result = host.hook_one(&id, "reader.coordinate_load", &body);
+                replies.push(crate::ModReply { id, result });
+            }
+            json!({"replies": replies_json(replies)})
         }
         // {"op":"extract.kkex","sections":{"<KKEx key>": "<msgpack b64>"}}: converting an original card. Returns the okMx
         // sections mods made from them; the caller (ok-extract) writes them into the OK card.
@@ -310,7 +433,9 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
         // {"op":"reader.values"}: every mod control's value now, by full key.
         "reader.values" => {
             let mut values = Map::new();
-            for r in host.hook("reader.values", "{}") {
+            // "accessory": {"outfit","slot"} -- the slot the reader's per-slot controls are on now (null: none).
+            let body = payload(json!({"accessory": req.get("accessory").cloned().unwrap_or(Value::Null)}));
+            for r in host.hook("reader.values", &body) {
                 if let Ok(Value::Object(o)) = reply_value(&r.result) {
                     for (k, v) in o { values.insert(format!("mod.{}.{k}", r.id), v); }
                 }
@@ -324,7 +449,8 @@ pub fn handle(host: &mut ModHost, op: &str, req: &Value) -> Result<Value, String
             let mods = enabled(host);
             let (id, field) = split_key(key, &mods).ok_or_else(|| format!("{key} is not mod.<enabled mod id>.<field>"))?;
             let (id, field) = (id.to_owned(), field.to_owned());
-            let body = payload(json!({"key": field, "value": req.get("value").cloned().unwrap_or(Value::Null)}));
+            let body = payload(json!({"key": field, "value": req.get("value").cloned().unwrap_or(Value::Null),
+                                      "accessory": req.get("accessory").cloned().unwrap_or(Value::Null)}));
             match reply_value(&host.hook_one(&id, "reader.control", &body)) {
                 Ok(v) => json!({"ok": true, "mod": id, "json": v}),
                 Err(e) => json!({"ok": false, "mod": id, "error": e}),
@@ -343,6 +469,27 @@ mod tests {
         assert_eq!(split_key("mod.org.a.b.text", &ids), Some(("org.a.b", "text")));
         assert_eq!(split_key("mod.org.a.text", &ids), Some(("org.a", "text")));
         assert_eq!(split_key("mod.org.c.text", &ids), None);
+    }
+
+    #[test]
+    fn accessory_sections_are_replaced_whole_and_named_by_owner() {
+        let mut data = ModData::default();
+        let sec = |b: &[u8]| Section { version: 1, requires: None, data: b.to_vec() };
+        data.set("org.x", &sec(b"main"));
+        data.set("org.x/acc/0/3", &sec(b"old"));
+        data.set("org.y/acc/0/1", &sec(b"other"));
+        let d = |t: &str| b64().encode(t);
+        let n = store_acc(&mut data, "org.x", "1.0", &json!([{"outfit": 1, "slot": 2, "version": 2, "data_b64": d("a")},
+                                                              {"outfit": 0, "slot": 5, "version": 2, "data_b64": d("b")}]), false).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(data.ids().collect::<Vec<_>>(), ["org.x", "org.y/acc/0/1", "org.x/acc/1/2", "org.x/acc/0/5"]);
+        let acc = acc_sections(&data, "org.x");
+        assert_eq!((acc[0]["outfit"].as_u64(), acc[0]["slot"].as_u64()), (Some(1), Some(2)));
+        assert_eq!(owner("org.y/acc/0/1"), "org.y");
+        assert!(store_acc(&mut data, "org.x", "1.0", &json!([{"slot": 1, "version": 1, "data_b64": d("c")}]), false).is_err(), "a card's accessory needs its outfit");
+        assert!(store_acc(&mut data, "org.x", "1.0", &json!([{"outfit": 0, "slot": 1, "version": 1, "data_b64": d("c")}]), true).is_err(), "an outfit card has none");
+        assert!(remove_all(&mut data, "org.x"));
+        assert_eq!(data.ids().collect::<Vec<_>>(), ["org.y/acc/0/1"]);
     }
 
     #[test]
