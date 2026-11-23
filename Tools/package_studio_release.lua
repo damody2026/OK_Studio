@@ -118,6 +118,17 @@ local function main()
   -- 2. tools
   if not a.skip_build then
     say("2/8 tools (cargo -j 8)")
+    -- A running copy (another session's MCP server, a conversion) locks its exe and cargo cannot replace it; a running
+    -- exe can still be renamed, so it is moved aside and keeps running from the new name.
+    for _, rel in ipairs({ "Tools/ok-extract/target/release/ok-extract.exe", "Tools/ok-game-mcp/target/release/ok-game-mcp.exe",
+        "Tools/ok-mod/target/release/ok-mod-pack.exe" }) do
+      local exe = path.join(root, rel)
+      if path.is_file(exe) then
+        local aside = exe .. ".old-" .. os.date("%Y%m%d%H%M%S")
+        if not os.rename(exe, aside) then fail("cannot move " .. win(exe) .. " aside for the build") end
+        if not os.remove(aside) then say("  ", rel, " is running; the old copy stays as ", path.name(aside)) end
+      end
+    end
     run("tools-ok-extract", { "cargo", "build", "--release", "-j", "8", "--bin", "ok-extract", "--manifest-path", win(path.join(root, "Tools/ok-extract/Cargo.toml")) }, { env = CARGO_ENV })
     run("tools-ok-game-mcp", { "cargo", "build", "--release", "-j", "8", "--manifest-path", win(path.join(root, "Tools/ok-game-mcp/Cargo.toml")) }, { env = CARGO_ENV })
     run("tools-ok-mod", { "cargo", "build", "--release", "-j", "8", "--workspace", "--manifest-path", win(path.join(okmod, "Cargo.toml")) }, { env = CARGO_ENV })
