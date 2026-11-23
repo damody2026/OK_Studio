@@ -33,6 +33,8 @@ fn serial() -> MutexGuard<'static, ()> {
 
 enum Build {
     Current,
+    /// The other cargo profile than this test binary (release when the test is debug, debug when it is --release).
+    OtherProfile,
     Toolchain(&'static str),
     PanicAbort,
 }
@@ -43,6 +45,7 @@ fn build(kind: Build) -> Option<PathBuf> {
     static DONE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
     let key = match kind {
         Build::Current => "current".to_string(),
+        Build::OtherProfile => "other-profile".to_string(),
         Build::Toolchain(t) => t.to_string(),
         Build::PanicAbort => "panic-abort".to_string(),
     };
@@ -71,12 +74,16 @@ fn build(kind: Build) -> Option<PathBuf> {
     if let Build::PanicAbort = kind {
         cmd.args(["--config", "profile.dev.panic=\"abort\""]);
     }
+    let other_release = matches!(kind, Build::OtherProfile) && cfg!(debug_assertions);
+    if other_release {
+        cmd.arg("--release");
+    }
     for v in ["RUSTUP_TOOLCHAIN", "RUSTC", "RUSTDOC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
         cmd.env_remove(v);
     }
     let out = cmd.output().expect("run cargo");
     assert!(out.status.success(), "fixture build ({key}) failed:\n{}", String::from_utf8_lossy(&out.stderr));
-    let dir = target_dir.join("debug");
+    let dir = target_dir.join(if other_release { "release" } else { "debug" });
     done.insert(key, Some(dir.clone()));
     Some(dir)
 }
@@ -535,5 +542,24 @@ fn reload_state_survives_failures_of_either_copy() {
     let (mut host, logs) = open(&s, "reader");
     assert!(host.reload(HELLO).is_err());
     assert!(!logged(&logs, HELLO, "kept"));
+    host.close();
+}
+
+#[test]
+fn release_and_debug_builds_interoperate() {
+    // A mod built with the other cargo profile than this host: `cargo test` loads a --release hello into a debug host,
+    // `cargo test --release` a debug hello into a release host (what the game does with a Development or Shipping
+    // ok_mod_host.dll and a mod an author built either way).
+    let _g = serial();
+    let dlls = build(Build::OtherProfile).unwrap();
+    let s = Scratch::new("other-profile");
+    s.hello(&dlls);
+    let (mut host, logs) = open(&s, "reader");
+    assert_eq!(status(&host.statuses(), HELLO).state, "enabled", "{:?}", host.statuses());
+    assert_eq!(host.command(HELLO, "ping", "").unwrap(), Reply::Text("pong 1 (hello)".into()));
+    let load = host.hook_one(HELLO, "reader.character_load", r#"{"card":"x.png"}"#).unwrap();
+    assert_eq!(load, Reply::Json(r#"{"card":"x.png","greeting":"hello"}"#.into()));
+    assert_eq!(host.key("F8", "reader")[0].result, Ok(Reply::Text("hello (reader)".into())));
+    assert!(logged(&logs, HELLO, "hello from hello"));
     host.close();
 }
