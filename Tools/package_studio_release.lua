@@ -114,7 +114,7 @@ local function main()
   p:flag("--skip-modkit")
   p:opt("--content-from")
   p:opt("--hairdeck-data", { default = "F:/HairDeckData" })
-  p:flag("--with-game-pdb")
+
   local a = p:parse(arg)
   if not a.tag:match("^[%w_%-]+$") then fail("--tag must match ^[A-Za-z0-9_-]+$") end
   local tag = a.tag
@@ -252,18 +252,7 @@ local function main()
   extra(path.join(root, "Tools/package_licenses/Apache-2.0.txt"), "Licenses/Apache-2.0.txt")
   extra(path.join(root, "Tools/package_licenses/THIRD_PARTY.md"), "Licenses/THIRD_PARTY.md")
   extra(path.join(root, "Docs/VIDEO_WEIGHTS.md"), "Docs/VIDEO_WEIGHTS.md")
-  -- Symbols: each tool's .pdb beside its exe (a few MB each), so a Rust backtrace or an oklib hook's call stack in the
-  -- package names its functions instead of coming out blank. The game's own .pdb (about 2 GB) only with --with-game-pdb.
-  local pdbs = {}
-  for _, t in ipairs(TOOLS) do
-    local pdb = path.join(path.parent(t.exe), (path.stem(t.exe):gsub("%-", "_")) .. ".pdb")
-    if path.is_file(path.join(root, pdb)) then extra(path.join(root, pdb), pdb); pdbs[#pdbs + 1] = pdb end
-  end
-  if a.with_game_pdb then
-    local game_pdb = path.join(root, "Saved/Interaction/FreeTalk01Host/Binaries/Win64/OpenKoikatsu.pdb")
-    if not path.is_file(game_pdb) then fail("--with-game-pdb: no " .. win(game_pdb)) end
-    extra(game_pdb, "Saved/StreetSocial/Build/" .. stage_tag .. ".stage/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.pdb")
-  end
+  -- No .pdb goes in, the tools' or the game's (user 2026-11-23); the self-check below makes sure.
   if a.zip then pargs[#pargs + 1] = "--zip"; pargs[#pargs + 1] = win(out .. ".zip") end
   run_lua("package", "Tools/package_street_social.lua", pargs)
 
@@ -294,7 +283,7 @@ local function main()
       if loader[r.code] then problems[#problems + 1] = ("tool does not start: %s: %s (%s)"):format(t.name, loader[r.code], win(log)) end
     end
   end
-  for _, pdb in ipairs(pdbs) do need(pdb, "tool symbols missing") end
+  for _, f in ipairs(path.rglob(out, "*.pdb")) do problems[#problems + 1] = "a .pdb is in the package: " .. win(f) end
   for _, rel in ipairs({ "Licenses/THIRD_PARTY.md", "Licenses/DINOv3-LICENSE.md", "Licenses/Apache-2.0.txt", "Docs/VIDEO_WEIGHTS.md" }) do need(rel) end
   for _, rel in ipairs(HAIRDECK_FILES) do need("HairDeckData/" .. rel, "HairDeck weights missing") end
   -- HairDeck really runs from the package: its own exe, its own weights (HAIRDECK_ROOT cleared, and the weights it

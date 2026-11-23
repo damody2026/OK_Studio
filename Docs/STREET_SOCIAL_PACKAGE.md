@@ -119,4 +119,4 @@ Studio 音效道具（`base-sounds`，約 2.3 GB）與動作片段（`runtime-cl
 
 失敗時會列出缺什麼，或指出要看哪個 log。`--skip-build`、`--skip-stage`、`--skip-modkit --content-from <資料夾>` 可以沿用已有的產物。
 
-符號（2026-11-23）：每個工具的 `.pdb` 會放在包裡對應 exe 的旁邊，每個只有 4 到 20 MB。這樣在打包版裡，Rust 的 backtrace 和 oklib 掛點的呼叫堆疊都能顯示函式名稱，不會像以前那樣是空白（配種封卡的 `UNMEMOIZED … bundle` 後面原本該接呼叫堆疊，就是因為少了符號才看不到）。遊戲本體的 `OpenKoikatsu.pdb` 約 2.2 GB，只有加上 `--with-game-pdb` 才會放進包。遊戲行程內的問題（行程內封卡、開卡）需要它，才能在打包版看到完整的呼叫堆疊。
+符號（2026-11-23）：發佈包不放任何 `.pdb`，工具的和遊戲本體的都不放（使用者決定）；`package_studio_release.lua` 的自檢在包裡找到 `.pdb` 就失敗。打包版的 Rust backtrace 與 oklib 掛點呼叫堆疊因此沒有函式名稱（例如配種封卡的 `UNMEMOIZED … bundle` 後面是空的），要看完整堆疊得在本機開發版重現。
