@@ -118,3 +118,5 @@ Studio 音效道具（`base-sounds`，約 2.3 GB）與動作片段（`runtime-cl
 8. 自檢：入口、工具、mod、pak 與面板、地圖，並確認從包裡的基礎庫和遊戲執行檔往上都找得到 `ok-extract.exe`。
 
 失敗時會列出缺什麼，或指出要看哪個 log。`--skip-build`、`--skip-stage`、`--skip-modkit --content-from <資料夾>` 可以沿用已有的產物。
+
+符號（2026-11-23）：每個工具的 `.pdb` 會放在包裡對應 exe 的旁邊，每個只有 4 到 20 MB。這樣在打包版裡，Rust 的 backtrace 和 oklib 掛點的呼叫堆疊都能顯示函式名稱，不會像以前那樣是空白（配種封卡的 `UNMEMOIZED … bundle` 後面原本該接呼叫堆疊，就是因為少了符號才看不到）。遊戲本體的 `OpenKoikatsu.pdb` 約 2.2 GB，只有加上 `--with-game-pdb` 才會放進包。遊戲行程內的問題（行程內封卡、開卡）需要它，才能在打包版看到完整的呼叫堆疊。
