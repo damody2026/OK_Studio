@@ -1067,15 +1067,29 @@ pub fn pack_delta(full: &[u8], parents: &[&[u8]]) -> Result<Option<Vec<u8>>, Str
 }
 
 /// The `ok-extract` program the sealing steps run in (one process per step): this one when it is ok-extract, else
-/// OK_EXTRACT_EXE, else the project's release build beside the base library (<project>/Content/IndependentResources/
-/// <library>): inside Unreal the current program is the editor or the game.
+/// OK_EXTRACT_EXE, else a release build found from the base library or from the running program (inside Unreal the
+/// current program is the editor or the game).
+///
+/// A package reaches its library through a junction: `<package>/Content/IndependentResources` is mounted inside the
+/// staged project, and that project has no `Tools` of its own, so taking the staged path literally is what made a
+/// packaged Studio report the program as missing while it sat in the package root. The link is therefore resolved
+/// before the search, and the program's own folders are searched too, for a layout that ships the tool beside it.
 fn ok_extract_exe(lib: &Path) -> Result<PathBuf, String> {
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
     if current.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s.starts_with("ok-extract")) { return Ok(current); }
     if let Some(exe) = std::env::var_os("OK_EXTRACT_EXE").map(PathBuf::from).filter(|p| p.is_file()) { return Ok(exe); }
-    let project = lib.ancestors().nth(3).ok_or("base library outside a project")?;
-    let exe = project.join("Tools/ok-extract/target/release/ok-extract.exe");
-    if exe.is_file() { Ok(exe) } else { Err(format!("ok-extract.exe not found ({}); set OK_EXTRACT_EXE", exe.display())) }
+    // Beside the program first, then the project layout, from the nearest ancestor outwards.
+    const RELS: [&str; 3] = ["ok-extract.exe", "Tools/ok-extract/ok-extract.exe", "Tools/ok-extract/target/release/ok-extract.exe"];
+    let resolved = std::fs::canonicalize(lib).unwrap_or_else(|_| lib.to_path_buf());
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for base in [lib, resolved.as_path(), current.as_path()] {
+        for anc in base.ancestors().take(8) { if !roots.iter().any(|r| r == anc) { roots.push(anc.to_path_buf()); } }
+    }
+    for root in &roots {
+        for rel in RELS { let exe = root.join(rel); if exe.is_file() { return Ok(exe); } }
+    }
+    Err(format!("ok-extract.exe not found (looked for {} under the base library {} and beside the program {}); \
+        set OK_EXTRACT_EXE", RELS.join(", "), resolved.display(), current.display()))
 }
 
 /// A PNG chunk's data.
