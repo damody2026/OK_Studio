@@ -17,7 +17,15 @@ Widget Root {
         @slot { HorizontalAlignment = Center  VerticalAlignment = Top  Padding = (6, 6, 6, 0)  MinDesiredSize = (144, 201)  MaxDesiredSize = (144, 201) }
     }
     // Over the picture and see-through (hovered or pressed only tints): the whole tile takes the click.
+    // 5 = left and right (one bit per EDreamUIMouseButtonType): a left click selects the card, a right click loads it
+    // at once. Without this the right button is not a use of the button at all and goes through to what is behind.
     Native.Button Button : ui.TabOff {
+        AcceptedMouseButtons = 5
+        // Fired on the PRESS, not on the release: which mouse button is down can only be read while it is down,
+        // and the handler asks that to tell a left click (select) from a right click (load). Measured 2026-11-23:
+        // with the default DownAndUp the right button had already been released by the time the handler ran, so
+        // a right click selected the card like a left one and never loaded it.
+        ClickMethod = MouseDown
         Style.Height = 252
         Style.ContentPadding = (6, 212, 6, 4)
         Style.Hovered = #FFFFFF1F

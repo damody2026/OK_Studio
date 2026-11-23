@@ -14,6 +14,7 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "OKMotionComboBox.h"
 #include "KKShapeRows.h"
 #include "OKShapeSlider.h"
+#include "Framework/Application/SlateApplication.h"
 #include "OKAppearanceButton.h"
 #include "Components/VerticalBox.h"
 #include "KKPreviewActor.h"
@@ -2304,7 +2305,18 @@ void UOKReaderScreen::FillCardGrid()
 		if(B)
 		{
 			if(bClothesGrid)B->OnPressed=[Weak,WeakSelf,Path=Paths[K]](){if(Weak.IsValid()&&WeakSelf.IsValid())Weak->WearOkClothesReported(Path,WeakSelf->bWearClothesOnly);};
-			else B->OnPressed=[Weak,I=Indices[K]](){if(Weak.IsValid())Weak->SelectIndex(I);};
+			else B->OnPressed=[Weak,I=Indices[K]]()
+			{
+				if(!Weak.IsValid())return;
+				// Which button pressed the tile: a left click only SELECTS the card (its data, its picture and its
+				// sliders; the character on screen stays as it is), a right click loads it at once -- the shortcut for
+				// "選一張卡並按載入3D" (the user, 2026-11-23). Read before SelectIndex, which can take a moment.
+				const bool bRight=FSlateApplication::IsInitialized()
+					&&FSlateApplication::Get().GetPressedMouseButtons().Contains(EKeys::RightMouseButton);
+				UOKCharacterController* G=Weak.Get();
+				G->SelectIndex(I);
+				if(bRight&&G->SelectedIndex==I)G->OnLoad3D();
+			};
 			B->FixedText=Texts[K];B->SetText(Texts[K]);
 			if(UDreamPanelSlot* Slot=B->GetPanelSlot()){Slot->SetHorizontalAlignment(EDreamPanelHorizontalAlignment::Left);Slot->SetMinDesiredSize(FVector2D(156,252));Slot->SetMaxDesiredSize(FVector2D(156,252));}
 			if(B->Picture)B->Picture->SetShown(false);
@@ -2316,7 +2328,8 @@ void UOKReaderScreen::FillCardGrid()
 		FString Say;
 		if(bClothesGrid&&All==0)Say=TEXT("還沒有服裝卡：在「編輯」載入角色後按「匯出服裝卡」，或把 .okclothes 放進另存資料夾／UserData/okclothes。點縮圖會套到目前選的角色身上。");
 		else if(bClothesGrid)Say=Filter.IsEmpty()?FString::Printf(TEXT("服裝卡 %d 張，點縮圖套到目前選的角色身上。"),All):FString::Printf(TEXT("服裝卡 %d 張，符合 %d 張。"),All,Paths.Num());
-		else Say=Filter.IsEmpty()?FString::Printf(TEXT("人物卡 %d 張。"),All):FString::Printf(TEXT("人物卡 %d 張，符合 %d 張。"),All,Paths.Num());
+		else Say=Filter.IsEmpty()?FString::Printf(TEXT("人物卡 %d 張。點一下只選取（不動畫面上的角色），按「載入3D」或在卡片上按右鍵才載入。"),All)
+			:FString::Printf(TEXT("人物卡 %d 張，符合 %d 張。點一下只選取，右鍵直接載入。"),All,Paths.Num());
 		if(Paths.Num()>MaxTiles)Say+=FString::Printf(TEXT("只列前 %d 張，請用搜尋縮小範圍。"),MaxTiles);
 		Count->FixedText=Say;Count->SetText(Say);
 	}
