@@ -7320,3 +7320,8 @@ timeout 90 $M call ui_exec '{"command":"rhi.DumpResourceMemory 1"}' >/dev/null 2
 - 2026-11-23 OK mod 快取追加項（`Docs/OK_MOD_S9c_CACHES.md`）：遊戲端 `OKModModes.cpp` `SyncExtract` 推給 ok-extract 的「會改開卡結果的 mod」清單只認 `extract.*`，漏了 `material.post_texture`，和 Rust 的 `okmods::changes_opens` 不同步：skin-decal 的掛點照跑，開卡快取鍵卻不含它。教訓：同一條規則在 C++ 與 Rust 各寫一份時，改一邊要搜另一邊（這次是加 `material.post_texture` 進 `changes_opens` 時沒找 C++ 的那份）。子代理的盤點也漏看了這處，它只看了 Rust 的鍵。
 - 2026-11-23 第三波（E 組，mod 工作項 13 字幕）：1 對 1 的 mod 字幕先照讀卡器用 `UOKCharacterController::ScreenNote`（舊讀卡器沒有 `ReaderScreen` 時走 `GEngine->AddOnScreenDebugMessage`），log 寫「subtitle …」但實機截圖畫面上沒有字（`EnableAllScreenMessages` 也一樣）。只看 log 就會誤報「字幕出現」。改成 H 場景自己的字幕列（`UOKHScenePanel::ShowHerSubtitle`），截圖確認，log 也寫明顯示在哪裡。教訓：「畫面上出現」要用截圖確認，不能只看 log。
 - 2026-11-23 第三波（E 組，mod 工作項 13 三條路線）：只用讀卡器進 1 對 1 驗過，另外兩條路各有一個錯。(1) 街區先開 1 對 1 再載入她，`pair.enter` 的 `card` 是空的，`pair-counter` 離開時卡片對不上，把高潮次數丟掉了（her 0）。改成用第一個帶卡片的 `pair.finish` 補上。(2) 獨立 1 對 1 遊戲模式在 BeginPlay 後半秒就送 `pair.enter`，橋接卻要等 0.5 秒的 ticker 看到宿主開了才訂閱，載入中來不及，enter 遺失。改成引擎啟動時就訂閱。教訓：同一個事件有幾條進場路線，就每條都跑一次；「進場那一刻有沒有卡片、有沒有人在聽」不能拿一條路代表全部。
+
+## 2026-11-23 mod 的 pose op 把使用者的多選換成一個角色；E 的 toon-post 沒有 pak 就不掛開發外掛（E 組，OK mod 第四波）
+
+- **pose 改選取**：控制通道的 `pose` 先 `Select` 那個角色（面板的動作選取依選取運作）。mod 一個回覆裡對兩個角色發 `pose`（light-rig 的微笑），之後選取只剩最後一個，下一個指令（改名）只改到一個物件。修正（`3312b37b0`）：`OKStudioRunModOp` 在 `pose` 前後記下並還原選取。**教訓**：把給人用的 op 開給 mod 時，要看 op 的副作用（選取、相機、頁面），mod 的一批 op 會在同一幀連續跑。
+- **toon-post 效果不出現**：E 的 `Mods/toon-post` 只有 dll 與 `materials/`，沒有 `content/*.pak`。宿主依 pak 決定 `content_root`，沒有 pak 就不會走 `-ModDevContent` 掛未 cook 外掛的路，log 只有一行「no usable material」，畫面上沒有任何效果。從 F 的 `Mods/toon-post/content/` 複製 pak 後正常。**再試前檢查**：裝內容 mod 測試時，比對 `mod.toml` 的 `content_build` 與 `content/` 是否齊全，並在 log 找「material … ready」。
