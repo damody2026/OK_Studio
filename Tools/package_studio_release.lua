@@ -72,6 +72,29 @@ end
 
 local CARGO_ENV = { RAYON_NUM_THREADS = "8", CARGO_BUILD_JOBS = "8" }
 
+-- Every tool the package runs, built in step 2, checked in step 8 (in the package, started once). A missing one stops
+-- the package here, not in the UI. weights: what the tool needs that the package does not carry, printed at preflight.
+local TOOLS = {
+  { name = "ok-extract", exe = "Tools/ok-extract/target/release/ok-extract.exe", manifest = "Tools/ok-extract/Cargo.toml",
+    build = { "cargo", "build", "--release", "-j", "8", "--bin", "ok-extract" } },
+  { name = "ok-game-mcp", exe = "Tools/ok-game-mcp/target/release/ok-game-mcp.exe", manifest = "Tools/ok-game-mcp/Cargo.toml",
+    build = { "cargo", "build", "--release", "-j", "8" } },
+  { name = "ok-mod-pack", exe = "Tools/ok-mod/target/release/ok-mod-pack.exe", manifest = "Tools/ok-mod/Cargo.toml",
+    build = { "cargo", "build", "--release", "-j", "8", "--workspace" } },
+  { name = "ok-luakit", exe = "Tools/ok-luakit/target/release/ok-luakit.exe", manifest = "Tools/ok-luakit/Cargo.toml",
+    build = { "cargo", "build", "--release", "-j", "8" } },
+  { name = "ok-character-mcp", exe = "Tools/character_mcp/bin/ok-character-mcp.exe", build = { "lua", "Tools/character_mcp/build.lua" } },
+  -- CPU builds (--no-default-features drops candle's CUDA): the player's machine may have no CUDA.
+  { name = "ok-hairdeck", exe = "Tools/ok-hairdeck/target/release/ok-hairdeck.exe", manifest = "Tools/ok-hairdeck/Cargo.toml",
+    build = { "cargo", "build", "--release", "-j", "8", "--no-default-features" },
+    weights = "HairDeck hair (reader, breeding's hair mix) needs the HairDeck weights (HAIRDECK_ROOT, 5.8 GB, DINOv3 inside); "
+      .. "they are not in the package, so it is unavailable there" },
+  { name = "ok-video", exe = "Tools/ok-video/target/release/ok-video.exe", manifest = "Tools/ok-video/Cargo.toml",
+    build = { "cargo", "build", "--release", "-j", "8", "--no-default-features" },
+    weights = "video import needs the GVHMR checkpoints (ref/GVHMR/inputs/checkpoints, 9.9 GB, SMPL-X inside, not "
+      .. "redistributable); they are not in the package, so it is unavailable there" },
+}
+
 local function main()
   local p = ok.args.parser("Build, stage and package OK Studio + card reader + OK mods in one run")
   p:opt("--tag", { required = true })
@@ -115,27 +138,35 @@ local function main()
   if a.skip_stage and not path.is_dir(stage) then missing[#missing + 1] = "the stage " .. win(stage) .. " for --skip-stage" end
   if #missing > 0 then fail("missing:\n  - " .. table.concat(missing, "\n  - ")) end
 
+  -- Features the package cannot offer, said here and not first in the UI.
+  for _, t in ipairs(TOOLS) do
+    if t.weights then say("  note: ", t.weights) end
+  end
+
   -- 2. tools
   if not a.skip_build then
-    say("2/8 tools (cargo -j 8)")
-    -- A running copy (another session's MCP server, a conversion) locks its exe and cargo cannot replace it; a running
-    -- exe can still be renamed, so it is moved aside and keeps running from the new name.
-    for _, rel in ipairs({ "Tools/ok-extract/target/release/ok-extract.exe", "Tools/ok-game-mcp/target/release/ok-game-mcp.exe",
-        "Tools/ok-mod/target/release/ok-mod-pack.exe" }) do
-      local exe = path.join(root, rel)
+    say("2/8 tools (-j 8)")
+    for _, t in ipairs(TOOLS) do
+      -- A running copy (another session's MCP server, a conversion) locks its exe and cargo cannot replace it; a running
+      -- exe can still be renamed, so it is moved aside and keeps running from the new name.
+      local exe = path.join(root, t.exe)
       if path.is_file(exe) then
         local aside = exe .. ".old-" .. os.date("%Y%m%d%H%M%S")
         if not os.rename(exe, aside) then fail("cannot move " .. win(exe) .. " aside for the build") end
-        if not os.remove(aside) then say("  ", rel, " is running; the old copy stays as ", path.name(aside)) end
+        if not os.remove(aside) then say("  ", t.exe, " is running; the old copy stays as ", path.name(aside)) end
       end
+      local cmd = {}
+      for _, v in ipairs(t.build) do cmd[#cmd + 1] = v end
+      if cmd[1] == "cargo" then
+        cmd[#cmd + 1] = "--manifest-path"; cmd[#cmd + 1] = win(path.join(root, t.manifest))
+      elseif cmd[1] == "lua" then
+        cmd[1] = lua; cmd[2] = path.join(root, cmd[2])
+      end
+      run("tools-" .. t.name, cmd, { env = CARGO_ENV })
     end
-    run("tools-ok-extract", { "cargo", "build", "--release", "-j", "8", "--bin", "ok-extract", "--manifest-path", win(path.join(root, "Tools/ok-extract/Cargo.toml")) }, { env = CARGO_ENV })
-    run("tools-ok-game-mcp", { "cargo", "build", "--release", "-j", "8", "--manifest-path", win(path.join(root, "Tools/ok-game-mcp/Cargo.toml")) }, { env = CARGO_ENV })
-    run("tools-ok-mod", { "cargo", "build", "--release", "-j", "8", "--workspace", "--manifest-path", win(path.join(okmod, "Cargo.toml")) }, { env = CARGO_ENV })
   else say("2/8 tools: skipped (--skip-build)") end
-  for _, rel in ipairs({ "Tools/ok-extract/target/release/ok-extract.exe", "Tools/ok-game-mcp/target/release/ok-game-mcp.exe",
-      "Tools/ok-mod/target/release/ok-mod-pack.exe" }) do
-    if not path.is_file(path.join(root, rel)) then fail("not built: " .. rel .. " (run without --skip-build)") end
+  for _, t in ipairs(TOOLS) do
+    if not path.is_file(path.join(root, t.exe)) then fail("not built: " .. t.exe .. " (" .. t.name .. "; run without --skip-build)") end
   end
 
   -- 3. editor
@@ -215,10 +246,23 @@ local function main()
   local stage_rel = "Saved/StreetSocial/Build/" .. stage_tag .. ".stage"
   for _, rel in ipairs({ "OKStudio.cmd", "CardReaderDevelopment.cmd", "WriteMcpConfig.cmd", "PACKAGE.json", "OK_STUDIO_MOD_PACKAGE.md",
       stage_rel .. "/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe", stage_rel .. "/Mods/.installed.toml",
-      "Tools/ok-extract/target/release/ok-extract.exe", "Tools/ok-mod/target/release/ok-mod-pack.exe",
-      "Tools/ok-game-mcp/target/release/ok-game-mcp.exe", "Tools/ok-mod/examples", "Docs/OK_MOD_AUTHORING.md",
+      "Tools/ok-mod/examples", "Docs/OK_MOD_AUTHORING.md",
       "Content/IndependentResources/base_v1/sources.okidx", "Content/IndependentResources/base_v1/anims",
       "Content/IndependentResources/base_v1/studio/voice", "Content/IndependentResources/RuntimeAnimations" }) do need(rel) end
+  -- Every tool: in the package and it starts (any exit code; a missing DLL or a bad image cannot start at all).
+  for _, t in ipairs(TOOLS) do
+    local exe = path.join(out, t.exe)
+    if not path.is_file(exe) then problems[#problems + 1] = "tool missing: " .. t.name .. " (" .. t.exe .. ")"
+    else
+      local log = path.join(logs, "selfcheck-" .. t.name .. ".log")
+      -- Empty stdin: an MCP server (stdio) sees EOF and ends. Windows' loader failures come back as NTSTATUS exit codes.
+      local r = proc.run({ win(exe) }, { stdout_file = log, merge = true, input = "", timeout = 30 })
+      local loader = { [-1] = "cannot run", [3221225781] = "a DLL is missing (0xC0000135)", [-1073741515] = "a DLL is missing (0xC0000135)",
+        [3221225595] = "bad image (0xC000007B)", [-1073741701] = "bad image (0xC000007B)", [3221225785] = "entry point not found (0xC0000139)",
+        [-1073741511] = "entry point not found (0xC0000139)" }
+      if loader[r.code] then problems[#problems + 1] = ("tool does not start: %s: %s (%s)"):format(t.name, loader[r.code], win(log)) end
+    end
+  end
   if path.exists(path.join(out, "StreetSocial.cmd")) then problems[#problems + 1] = "StreetSocial.cmd is in a Studio package" end
   -- The ok-extract.exe search (oklib.rs ok_extract_exe): up from the base library and from the game executable.
   local function finds_ok_extract(start)

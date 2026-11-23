@@ -277,7 +277,11 @@ local function main()
       -- Tools/lua/ok/kit.lua: the launcher's card checks (prepare_street_social_selection.lua) decode with it.
       "Tools/ok-luakit/target/release/ok-luakit.exe",
       -- The MCP servers an AI client drives the reader and OK Studio with (WriteMcpConfig.cmd writes their mcp.json).
-      "Tools/ok-game-mcp/target/release/ok-game-mcp.exe", "Tools/character_mcp/bin/ok-character-mcp.exe" }) do
+      "Tools/ok-game-mcp/target/release/ok-game-mcp.exe", "Tools/character_mcp/bin/ok-character-mcp.exe",
+      -- The reader's HairDeck hair (OKGalleryHairDeck.cpp, breeding's hair mix) and video import (OKVideoMotionPanel.cpp);
+      -- a package takes the CPU build (cargo build --no-default-features: no CUDA on the player's machine). Their model
+      -- weights are not packed (Tools/package_studio_release.lua says so).
+      "Tools/ok-hairdeck/target/release/ok-hairdeck.exe", "Tools/ok-video/target/release/ok-video.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
   end
   local mod_count = 0
