@@ -7661,3 +7661,17 @@ claim 时间就在它们启动前两分钟。
 
 **下次怎麼避免**：量測腳本裡出現 `Get-Process <exe 名>` 接 `Stop-Process`、`taskkill /IM`、或任何「順手清乾淨」的
 步驟，就是這個錯。要停東西，先問「這個 PID 是我啟的嗎」，答不出來就不要停。
+
+## 2026-11-24 `cargo test --lib` 說「2 failed」卻只點得出一個，就放著不查
+
+**做錯的事**：那一輪 `cargo test --lib` 回報 2 個失敗，我只認出其中一個（既有的
+`appearance::properties::plugins::tests::known_integer_and_string_fields_are_offered_with_their_type`，
+F 樹 65551a150 帶進來的），另一個沒有記下名字，就說「再觀察」。沒有名字的失敗等於沒有這筆紀錄：
+下次再出現也不知道是不是同一個，提交前的測試就失去判斷力。
+
+**查清楚的結果**：同一個 build 連跑四次，每次都是 `548 passed; 1 failed; 541 ignored`，失敗的永遠是上面那一個
+（`src\appearance\properties\plugins.rs:242` 的 assert：`@_slotinfo.#5.@_binding` 沒被列進候選欄位）——
+它是**穩定失敗**，不是偶發。四次都沒有第二個失敗，所以那一輪的另一筆無法重現、也補不回名字了。
+
+**改法**：測試結果不是只看 `test result:` 那行的數字，要把 `failures:` 底下的每個名字都讀出來存檔
+（`cargo test ... 2>&1 | Out-File <log>`，再從 log 取名字）。沒有名字就不算量過，不能寫「再觀察」。

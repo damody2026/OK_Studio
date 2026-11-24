@@ -872,6 +872,92 @@ pub struct ClothesRendererMap {
 
 /// Read the clothes prefab's `ChaClothesComponent` (same prefab-subtree
 /// association as `accessory_color_use`).
+/// What the three clothing queries each used to scan the whole bundle for: its script names, its GameObjects' names
+/// and its transforms' links. `clothes_option_groups`, `clothes_renderer_map` and `copy_body_material_targets` ask the
+/// **same** bundle in the same open (once per clothing part), and this scan was half of each one's time -- 815 ms of
+/// 1571 ms x6 for the groups query alone on Megumin, whose clothes come from mods the library may not answer for
+/// (`models/.gitignore`; Docs/CARD_OPEN_PERF_20261117.md). Scanned once per (bundle, serialized file) and shared.
+///
+/// Derived data only (ids, names, links): the bundle and its serialized files are not kept alive by it, so the memory
+/// it holds is kilobytes, not the 37 MiB bundle. It lives as long as this thread's parsed-bundle cache -- the same
+/// generation clears both, so it never crosses a card.
+pub(crate) struct ClothesGraph {
+    pub(crate) scripts: HashMap<i64, String>,
+    pub(crate) go_names: HashMap<i64, String>,
+    pub(crate) tf_go: HashMap<i64, i64>,
+    pub(crate) tf_children: HashMap<i64, Vec<i64>>,
+    pub(crate) tf_father: HashMap<i64, i64>,
+}
+
+thread_local! {
+    static CLOTHES_GRAPHS: RefCell<(u64, HashMap<(u64, String), Arc<ClothesGraph>>)> = RefCell::new((0, HashMap::new()));
+}
+
+fn clothes_graph(bundle_key: u64, node: &str, ser: &unity_asset_binary::asset::SerializedFile) -> Arc<ClothesGraph> {
+    // OK_NO_CLOTHES_GRAPH_SHARE=1: scan again for every query, as before the sharing (the A/B switch, and the way to
+    // tell this apart from a change in what the queries read).
+    static SHARE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*SHARE.get_or_init(|| std::env::var_os("OK_NO_CLOTHES_GRAPH_SHARE").is_none()) {
+        return Arc::new(scan_clothes_graph(ser));
+    }
+    sync_bundle_cache();
+    let generation = BUNDLE_CACHE_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    let key = (bundle_key, node.to_owned());
+    if let Some(hit) = CLOTHES_GRAPHS.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.0 != generation { c.0 = generation; c.1.clear(); }
+        c.1.get(&key).cloned()
+    }) { return hit; }
+    let graph = Arc::new(scan_clothes_graph(ser));
+    // What this holds, so nobody has to guess: ids and names only (the bundle itself is not kept alive).
+    if std::env::var_os("OK_PROFILE").is_some() {
+        let bytes: usize = graph.scripts.iter().map(|(_, v)| 8 + v.len()).sum::<usize>()
+            + graph.go_names.iter().map(|(_, v)| 8 + v.len()).sum::<usize>()
+            + graph.tf_go.len() * 16 + graph.tf_father.len() * 16
+            + graph.tf_children.iter().map(|(_, v)| 8 + v.len() * 8).sum::<usize>();
+        crate::profile::line(format!(
+            "ok-extract: PROFILE clothes graph {node} scripts={} objects={} transforms={} ~{:.0} KiB",
+            graph.scripts.len(), graph.go_names.len(), graph.tf_go.len(), bytes as f64 / 1024.0));
+    }
+    CLOTHES_GRAPHS.with(|c| {
+        let mut c = c.borrow_mut();
+        // One card's parts, a handful of bundles: a cap so a batch of cards in one process cannot grow it.
+        if c.1.len() >= 64 { c.1.clear(); }
+        c.1.insert(key, graph.clone());
+    });
+    graph
+}
+
+fn scan_clothes_graph(ser: &unity_asset_binary::asset::SerializedFile) -> ClothesGraph {
+    let _s = crate::profile::spot("clothes bundle: graph scan");
+    let mut scripts: HashMap<i64, String> = HashMap::new();
+    for info in ser.objects_of_type(115) {
+        if let Ok(obj) = ser.scene_object(&info) {
+            let props = obj.class.properties();
+            let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+            scripts.insert(info.path_id, class.to_string());
+        }
+    }
+    let mut go_names: HashMap<i64, String> = HashMap::new();
+    for info in ser.objects_of_type(1) {
+        if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+    }
+    let mut tf_go: HashMap<i64, i64> = HashMap::new();
+    let mut tf_children: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut tf_father: HashMap<i64, i64> = HashMap::new();
+    for info in ser.objects_of_type(4) {
+        if let Ok(obj) = ser.scene_object(&info) {
+            let props = obj.class.properties();
+            if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+            if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
+            if let Some(unity_asset_core::UnityValue::Array(ch)) = props.get("m_Children") {
+                tf_children.insert(info.path_id, ch.iter().filter_map(pptr_path_id).collect());
+            }
+        }
+    }
+    ClothesGraph { scripts, go_names, tf_go, tf_children, tf_father }
+}
+
 pub fn clothes_renderer_map<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesRendererMap> {
     crate::oklib::memo_bytes(bytes.bundle_bytes(),"clothes_renderer_map",prefab_name,||clothes_renderer_map_unity(bytes,prefab_name))
 }
@@ -885,42 +971,11 @@ fn clothes_renderer_map_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &
         let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else {
             continue;
         };
-        let mut scripts: HashMap<i64, String> = HashMap::new();
-        for info in ser.objects_of_type(115) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                let class = props
-                    .get("m_ClassName")
-                    .or_else(|| props.get("m_Name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                scripts.insert(info.path_id, class);
-            }
-        }
-        let mut go_names: HashMap<i64, String> = HashMap::new();
-        let mut tf_go: HashMap<i64, i64> = HashMap::new();
-        let mut tf_children: HashMap<i64, Vec<i64>> = HashMap::new();
-        for info in ser.objects_of_type(1) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                if let Some(n) = obj.name() {
-                    go_names.insert(info.path_id, n);
-                }
-            }
-        }
-        for info in ser.objects_of_type(4) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) {
-                    tf_go.insert(info.path_id, g);
-                }
-                if let Some(unity_asset_core::UnityValue::Array(ch)) = props.get("m_Children") {
-                    tf_children.insert(info.path_id, ch.iter().filter_map(pptr_path_id).collect());
-                }
-            }
-        }
+        let graph = clothes_graph(content_key(bytes.bundle_bytes()), &node.name, &ser);
+        let (scripts, go_names, tf_go, tf_children) =
+            (&graph.scripts, &graph.go_names, &graph.tf_go, &graph.tf_children);
         let mut go_tf: HashMap<i64, i64> = HashMap::new();
-        for (tf, go) in &tf_go {
+        for (tf, go) in tf_go {
             go_tf.insert(*go, *tf);
         }
         let mut subtree: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -1029,35 +1084,20 @@ pub fn clothes_option_groups_recorded<B: BundleInput + ?Sized>(bytes: &B, prefab
     crate::oklib::memo_bytes_recorded(bytes.bundle_bytes(), "clothes_option_groups", prefab_name, || clothes_option_groups_unity(bytes, prefab_name).unwrap_or_default())
 }
 fn clothes_option_groups_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<ClothesOptionGroups> {
-    let bundle = Arc::new(load_bundle_source(bytes.to_source(), false).ok()?);
+    // Where this query's time goes when the library cannot answer it (a third-party mod's model is not a shared
+    // resource, so the open computes it from the installation's own bundle): the bundle's metadata, the pass over its
+    // GameObjects and Transforms, and this query's own pass. `clothes_renderer_map` and `copy_body_material_targets`
+    // repeat the first two over the same bundle (2026-11-24, Docs/CARD_OPEN_PERF_20261117.md).
+    let _spot = crate::profile::spot("clothes groups: whole");
+    let bundle = { let _s = crate::profile::spot("clothes bundle: load"); Arc::new(load_bundle_source(bytes.to_source(), false).ok()?) };
     let want = prefab_name.to_ascii_lowercase();
     let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
     for node in &bundle.nodes {
         let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
         let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
-        let mut scripts: HashMap<i64, String> = HashMap::new();
-        for info in ser.objects_of_type(115) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
-                scripts.insert(info.path_id, class.to_string());
-            }
-        }
-        let mut go_names: HashMap<i64, String> = HashMap::new();
-        for info in ser.objects_of_type(1) {
-            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
-        }
-        let mut tf_go: HashMap<i64, i64> = HashMap::new();
-        let mut tf_children: HashMap<i64, Vec<i64>> = HashMap::new();
-        for info in ser.objects_of_type(4) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
-                if let Some(unity_asset_core::UnityValue::Array(ch)) = props.get("m_Children") {
-                    tf_children.insert(info.path_id, ch.iter().filter_map(pptr_path_id).collect());
-                }
-            }
-        }
+        let graph = clothes_graph(content_key(bytes.bundle_bytes()), &node.name, &ser);
+        let (scripts, go_names, tf_go, tf_children) =
+            (&graph.scripts, &graph.go_names, &graph.tf_go, &graph.tf_children);
         let go_tf: HashMap<i64, i64> = tf_go.iter().map(|(tf, go)| (*go, *tf)).collect();
         let subtree = |roots: &[i64]| -> std::collections::HashSet<i64> {
             let mut seen = std::collections::HashSet::new();
@@ -1132,29 +1172,10 @@ fn copy_body_material_targets_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_n
     for node in &bundle.nodes {
         let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
         let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
-        let mut scripts: HashMap<i64, String> = HashMap::new();
-        for info in ser.objects_of_type(115) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
-                scripts.insert(info.path_id, class.to_string());
-            }
-        }
-        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let graph = clothes_graph(content_key(bytes.bundle_bytes()), &node.name, &ser);
+        let (scripts, go_names, tf_go, tf_father) = (&graph.scripts, &graph.go_names, &graph.tf_go, &graph.tf_father);
         let mut parent_go: HashMap<i64, i64> = HashMap::new();
-        let mut tf_go: HashMap<i64, i64> = HashMap::new();
-        let mut tf_father: HashMap<i64, i64> = HashMap::new();
-        for info in ser.objects_of_type(1) {
-            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
-        }
-        for info in ser.objects_of_type(4) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
-                if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
-            }
-        }
-        for (tf, go) in &tf_go {
+        for (tf, go) in tf_go {
             if let Some(pgo) = tf_father.get(tf).and_then(|f| tf_go.get(f)) { parent_go.insert(*go, *pgo); }
         }
         let in_prefab = |mut go: i64| {
@@ -1206,29 +1227,10 @@ fn foreground_render_queues_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_nam
     for node in &bundle.nodes {
         let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
         let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
-        let mut scripts: HashMap<i64, String> = HashMap::new();
-        for info in ser.objects_of_type(115) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
-                scripts.insert(info.path_id, class.to_string());
-            }
-        }
-        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let graph = clothes_graph(content_key(bytes.bundle_bytes()), &node.name, &ser);
+        let (scripts, go_names, tf_go, tf_father) = (&graph.scripts, &graph.go_names, &graph.tf_go, &graph.tf_father);
         let mut parent_go: HashMap<i64, i64> = HashMap::new();
-        let mut tf_go: HashMap<i64, i64> = HashMap::new();
-        let mut tf_father: HashMap<i64, i64> = HashMap::new();
-        for info in ser.objects_of_type(1) {
-            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
-        }
-        for info in ser.objects_of_type(4) {
-            if let Ok(obj) = ser.scene_object(&info) {
-                let props = obj.class.properties();
-                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
-                if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
-            }
-        }
-        for (tf, go) in &tf_go {
+        for (tf, go) in tf_go {
             if let Some(pgo) = tf_father.get(tf).and_then(|f| tf_go.get(f)) { parent_go.insert(*go, *pgo); }
         }
         let in_prefab = |mut go: i64| {

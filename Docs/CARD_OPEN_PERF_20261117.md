@@ -1122,3 +1122,31 @@ mod 衍生的模型本機才有，開卡要讀真正的 zipmod。bench 那條路
 
 **讀出本身的成本**：`profile::spot` 在沒有 `OK_PROFILE` 時只多一個 `OnceLock` 讀取；兩條 `PROFILE` 行有
 `ms >= 5.0 && OK_PROFILE` 兩層門，正常跑一張卡不會印也不會量。
+
+### 修正：同一顆服裝 bundle 的物件圖掃描，一次開卡只掃一次（2026-11-24）
+
+上一節算出「同一顆 bundle 被解析兩次」之後，實際看了三個查詢在做什麼：`clothes_option_groups_unity`、
+`clothes_renderer_map_unity`、`copy_body_material_targets_unity`、`foreground_render_queues_unity` 都各自把整份
+serialized 走一遍，收同樣三種東西（type 115 的 script 名、type 1 的 GameObject 名、type 4 的 Transform 父子表）。
+把那一趟抽成 `unity::clothes_graph(bundle_key, node, ser)`：掃描的結果（`ClothesGraph`）用
+**thread_local、以 bundle 內容 key ＋ node 名為鍵、跟著 `BUNDLE_CACHE_GENERATION` 作廢、上限 64 筆**的 memo 存著，
+四個查詢共用。這是同一次開卡之內不要把同一件事做四遍，不是按卡快取（沒有任何東西寫到磁碟，generation 一變就丟）。
+關掉的開關是 `OK_NO_CLOTHES_GRAPH_SHARE=1`（量 A／B 用）。
+
+讀卡器、同一張卡（Megumin，outfit 0）、同一個 build，兩種順序各量一次：
+
+| | 共用（share） | 不共用（nosh） |
+|---|---:|---:|
+| `extract_card_outfit TOTAL`（先 nosh 後 share） | 4063 ms | 6580 ms |
+| `extract_card_outfit TOTAL`（先 share 後 nosh） | 2617 ms | 3925 ms |
+| `memo: compute (no record)` | 1415 ms x18 | 2672 ms x18 |
+| `clothes bundle: graph scan` | 695 ms **x6** | 1349 ms **x12** |
+
+兩種順序都是 **−33%～−38%**，掃描次數 12 → 6（六顆 mod 服裝 bundle 各掃一次）。逐位元閘門不變：
+原作卡 `identical=21 differ=0`、OK 卡 `identical=42 differ=0`。
+
+**記憶體**：讓解析好的圖活久一點要付的代價，用 `PROFILE clothes graph` 讀出來——這張卡六顆 bundle 的圖合計
+**約 6.0 MiB**（最大的一顆 `objects=39001` 約 2.6 MiB），上限 64 筆，所以最壞情況是幾十 MiB 這個量級，
+不是幾百 MiB。UE 行程的 peak working set 兩輪分別是 6870 → 7184 MiB 與 7470 → 7603 MiB（共用那邊各高
+314 與 133 MiB），**比圖本身大一個量級且兩輪不一致，不能歸給這個快取**；真正的差別來源沒有查下去，
+在 7.5 GiB 的行程上這是一般的跑次間變動。要再追就得用同一個 build 跑多次取中位數。
