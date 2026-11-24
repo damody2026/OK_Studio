@@ -782,3 +782,55 @@ StripAll 迁移只在卡片用到那个 mod 时才算；UncensorSelector 设定�
 | 合计 | 25.6 s | 12.5 s |
 
 OK 卡不经过这条路：标准冷开基准（`card_open_baseline.lua`，3 轮）`work from scratch 474`，在 11-19 校准的 472–475 之内。
+
+## 九、「原作卡又开不到 5 秒」不是程式码回归，是打包版的基础庫没有第三方模型（2026-11-24，E 树）
+
+使用者在打包版 `E:\OKPackage\Studio-20261124-release-d`（commit `f4fffc528`）开原作 KKS 卡要 6～7 秒，
+和这份文件第一节的「第一张 4.40 s」对不上，所以先被当成回归来追。**追出来的结论：开卡路径没有回归，
+是那个打包版自带的基础庫只录了共用模型**，卡片用到的第三方 mod 模型得在每次开卡时从游戏的 zipmod 现转
+（开卡磁碟快取永久关闭，所以这笔成本每张卡都付一次）。
+
+**量到的数字**（全部同一天、同一台机器、`OK_GAME_ROOT=D:\KoikatuSunshinezz`；游戏根目录换过了，
+README／AGENTS.md 写的 `D:/KoikatuSunshine` 已经不存在，指错会静静地 bundles=0）：
+
+| 量什么 | 怎么量 | 结果 |
+|---|---|---|
+| OK 卡有没有回归 | `card_open_baseline.lua -Compare latest`（5 轮，对 11-19 的 `81f4ae9b8`） | **没有**：`work from scratch 473 → 474`（校准区间 472–475 内），总计 6.07 → 5.34 s |
+| 原作卡的开卡路径有没有回归 | `ok-card-open-bench --sequence` ＋ `OK_BENCH_PREWARM=concurrent`，本机完整基础庫 | **没有，反而更快**：Tohru 1.35 s、KK_091207 0.59 s、Komazoku Megumin (2) 0.62 s（第一节的基准是 4.40／2.32／3.37，第八节的窄视图是主因） |
+| 打包版实际多慢 | 打包版 `CardReaderDevelopment.cmd <卡>`，读 log 的 `OK load3d card=` 到 `OK load3d result` | **6.88／6.87／6.10 s**；其中 Rust 开卡约 **5.1 s**（load3d 起点到第一行 `LogOkExtract`），UE 侧约 1.0 s |
+| 是不是 mod 框架的钱 | 同一个打包执行档、同一张卡，`OK_MODS_DIR` 指到空目录（`0 mod(s) enabled`）对照原本的 `11 mod(s) enabled` | **不是**：6.88 s 对 6.87 s，一模一样 |
+| 是不是基础庫 | 同一个打包执行档、同一张卡，只把 `OK_BASE_LIBRARY` 指到本机完整基础庫 | **就是它**：load3d **2.66 s**、Rust 开卡 **1.65 s** |
+
+**使用者的验收卡 `鸣潮 泱泱.png`（51,030,159 bytes，2026-09-13）在干净机器上量不到 5 秒以上**
+（机器上只有这一个 Unreal，`unreal_slot.lua` 确认没别人；同一张卡、同一个游戏根目录）：
+
+| 跑法 | load3d | 其中 Rust 开卡 |
+|---|---:|---:|
+| `ok-card-open-bench --sequence`（只有 Rust 那段，完整庫） | — | 1.12 s |
+| 打包版 release-d，启动器直开 | 3.44 s／3.95 s | 2.35 s |
+| 本机树读卡器（编辑器 `-game`），启动器直开 | 5.01／4.69／3.72 s | 2.43／1.83／2.32 s |
+| 本机树读卡器，**在画面上点卡再载入**（`reader_call` select＋load，读卡器已暖） | 2.96 s | 1.99 s |
+
+卡大（51 MB）本身不是问题：它只指名 11 个 zipmod，部件在两个庫里都找得到。真正会超过 5 秒的是
+**另一类卡**——指名的第三方 mod 模型打包版的庫里没有（例如 Tohru，43 个 zipmod）：打包版 6.9 s，
+同一个执行档换完整庫 2.66 s。所以「原作卡慢」要看的是**那张卡的部件在不在庫里**，不是卡的档案大小。
+
+**机制**：私有打包的原作资料是照 `Tools/original_data_manifest.json` 的 group 复制的，而清单里只有共用资源
+（`Tools/base_library_shared_mods.txt` 那批）。所以打包版的 `base_v1/models` 是 **229 个目录／6.6 GB**，
+本机是 **256／25 GB**：27 个目录整个不在包里（1.5 GiB），其余同名目录里面少掉的是非共用的 `.okmodel`
+（就是 `base_v1/models/.gitignore` 标出来的那些，每个目录少 100～570 MiB）。卡片指名的第三方 mod 模型库里没有，
+开卡就退回去读游戏 `mods/` 里的真 zipmod 并现场转换——那约 3.5 秒就是这个。
+
+**所以要让打包版的原作卡进 5 秒以内，是打包要不要带非共用模型的决定**（约 18 GB，私有包、使用者本机已有那些
+mod；`package-no-size-limit`：包没有大小上限），不是开卡程式码的事。给公开包或别人的机器，另一条路是把这条
+现转路径本身弄快，但那是独立的工作项，不要再拿「回归」当它的理由。
+
+**两个量测陷阱**（这次就是踩在这上面才看起来像回归）：
+
+1. **`load3d` 不是 `ok-card-open-bench` 量的那个数**。load3d＝Rust 开卡＋UE 侧建资源（这次是 5.1＋1.0），
+   而第一节的基准只有 Rust 开卡那段。拿 6.9 s 去对 4.4 s 等于把两种东西相减。
+2. **打包版的基础庫跟本机的不是同一份**。同一个执行档、同一张卡，只换庫就是 6.9 s 对 2.7 s。
+   报「某个 commit 让开卡变慢」之前，先确认两边的庫一样；`base_v1/models` 的目录数与容量一看就知道。
+
+顺带记一笔：`material.post_texture` 的掛点成本在这条路上量不出来（每个部件贴图先问一次 `want`，
+`skin-decal` 按卡片快取答 false，`glass-shader` 根本没订阅这个 hook），上面 mod 开／关那一列就是它的实测上限。
