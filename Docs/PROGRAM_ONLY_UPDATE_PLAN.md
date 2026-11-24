@@ -11,16 +11,18 @@
   3. 舊 stage 的清理要寫明 junction（安裝說明已寫：先拆 junction 再刪）；
   4. 覆蓋安裝時 `Tools/` 的 exe 可能正在跑（安裝說明已列出要先關哪些）。
 - 在版本檢查定案前，`--program-only` 的自檢用一個實際的檢查代替：用程式包自己的 `ok-extract`，搭配 `--resources-from` 完整包的基礎庫，嚴格開該包最多 10 張 OK 卡（`--oklib strict-check`，新程序、不用快取）。任何一張開不起來就失敗，並要求先發新的完整包。
-- **兩層版本（協調者裁決，2026-11-24）**：
-  - `RESOURCES.json` 帶一個人工維護的整數 `version`：格式維護者遇到不相容的改動就 +1，等於宣告「我知道這版不相容」。
-    - 來源只有一處，就是 `Tools/ok-extract/src/resources.rs` 的 `RESOURCES_VERSION`，打包腳本從那裡讀；
-    - 該檔進樹前暫用 1（涵蓋到 `717297c3b` 為止的格式），`version_from` 會註明這個值從哪來。
-  - 機器讀得到的子版本（`oklib.json` 的 version、`mods_index.db` 的 `meta.schema`）用來兜底：忘了 +1 時也擋得住。兩層都要。
-  - `shared_mods.txt` 與 `mods_index.db` 的 SHA-256 **只記不比**。它們會隨「這台裝了哪些 mod」或「重建過一次」而變，拿來擋會天天誤報。誤報比沒有檢查更糟，因為使用者會學會忽略它。這兩個值只留著出事時對帳用。
-  - 缺 `RESOURCES.json` 時：
-    - 開發樹（沒有 `PACKAGE.json`）只發 **warn**，訊息講明「這個基礎庫不是出貨包，版本檢查跳過」；
-    - 出貨安裝（`PACKAGE.json` 的 `kind` 是 `program` 或 `full`）要 **block**，因為這代表包被破壞或裝錯了。
-  - C 組的結論文字轉來後，照抄取代這一段，兩份文件不各講一套。
+- **版本判準**：以下照抄 C 組定稿 `C:\portable\OpenKoikatsu\Docs\RESOURCE_PROGRAM_COMPAT_GATE_PLAN.md`（C 樹 `853c039c6`）§2.4，兩份文件不各講一套。
+
+  > **版本判準是兩層，兩層都要。**
+  >
+  > 第一層是 `RESOURCES.json` 的人工整數 `version`，對應程式裡的 `[RESOURCES_MIN, RESOURCES_MAX]` 區間。它是**宣告**：「我知道這版不相容」。它存在的理由是有些不相容不落在任何機器讀得到的子版本上——例如模型檔的內部編碼換了，而 `oklib.json` 的 version 沒動；那時整數是唯一的表達方式。資源落在區間外都算不符，**包括比程式新**（訊息方向是「請更新程式」）。
+  >
+  > 第二層是機器實際讀出來的子版本，比對程式原始碼裡的常數：`mods_index.db` 的 `meta.schema` 對 `modsindex::SCHEMA`、`oklib.json` 的 `version`、再加幾個必要檔案的存在性與一個「開庫問一個已知查詢」的 selftest。它是**兜底**：忘了把整數 +1 也照樣擋得住。2026-11-24 第一份程式包撞的就是這一層（schema 1 的資源配要 schema 2 的程式，索引讀成 0 個 GUID，原作卡照樣開起來卻假報缺 42 個 mod）。
+  >
+  > **不比 `shared_mods.txt` 與 `mods_index.db` 的 SHA-256**，雖然 `RESOURCES.json` 會記著它們。記是為了出事時對帳；比會天天假警報：`shared_mods.txt` 的內容跟著「這台裝了哪些 mod」變，`mods_index.db` 重建一次雜湊就變而相容性根本沒變。**假警報比沒有閘更糟，因為使用者會學會忽略它**。這兩個檔只檢查**存在**（缺了會讓庫給出錯的答案，那是 block）。
+
+  一句話：整數是宣告，子版本是兜底，雜湊只記不比。缺 `RESOURCES.json`（`no_resources_json`）是唯一依現場而變等級的項目：出貨安裝（`PACKAGE.json` 的 `kind` 是 `program` 或 `full`）block，開發樹 warn，判的是「這份安裝是不是出貨的」。
+- `RESOURCES.json` 的整數 `version` 只有一個來源：`Tools/ok-extract/src/resources.rs` 的 `RESOURCES_VERSION`，打包腳本從那裡讀。該檔進樹前暫用 1（涵蓋到 `717297c3b` 為止的格式），`version_from` 會註明。
 - `RESOURCES.json` 另外只記事實，供之後的檢查比對：
   - 帶了哪些資源組、各幾個檔、多大；
   - `oklib.json` 的 version；
@@ -148,7 +150,8 @@ Tools\lua\lua.exe Tools\package_studio_release.lua --tag <Name> --out <新資料
 - **`ok_resources_check` 進樹後要接的地方**（e-cardload 負責寫這個檢查，介面已對好）：
   - 讀卡器與 Studio 的畫面通知：`block` 擋下開卡，`warn` 只提示；
   - 啟動器在主控台的檢查；
-  - 把 `--program-only` 自檢裡臨時的 schema 比對，改成呼叫它。
+  - 把 `--program-only` 自檢裡臨時的 schema 比對，改成呼叫它。由它**取代**這項比對，不讓兩套判準並存（C 組文件 §6.2）。
+  - 自檢開卡要 **OK 卡與原作卡各一張**。原作卡要指名第三方 mod：2026-11-24 那次就是只驗 OK 卡，而 OK 卡不經過 mod 索引，所以沒抓到。
 
   版本規則等 C 組定案。
 - **新 stage 沿用舊 stage 的 mod 配置**：
