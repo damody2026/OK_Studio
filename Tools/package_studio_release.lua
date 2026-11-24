@@ -25,7 +25,7 @@
 -- --zip-only zips a package made earlier without --zip: preflight (the folder with its PACKAGE.json, no zip yet), the
 -- self-check, then <out>.zip of what packaging put there -- the files PACKAGE.json lists, PACKAGE.json and the stage's
 -- stage.json -- so what a test run left in the folder since (reader logs, screenshots, settings) stays out, as if --zip
--- had been given. --zip-threads caps 7-Zip's threads (-mmt) for a machine someone is measuring on.
+-- had been given; the zip is then read back once (7z t). --zip-threads caps 7-Zip's threads (-mmt) for a machine someone is measuring on.
 --
 -- All builds use at most 8 threads. Nothing is pushed; the package is private (cards and original data inside).
 local ok = require "ok"
@@ -413,6 +413,9 @@ local function main()
     say(("zip %d files -> %s (7-Zip, %s threads)"):format(#names, win(zip), a.zip_threads))
     -- The same switches package_street_social.lua --zip uses (-tzip -mx=1), the thread count from --zip-threads.
     run("zip", { win(seven), "a", "-tzip", "-mx=1", "-mmt=" .. a.zip_threads, "-scsUTF-8", win(zip), "@" .. win(listfile) }, { cwd = out })
+    -- Read back once before it is handed on (a zip of tens of GB nobody tested is not delivered, 2026-11-24).
+    say("test ", win(zip), " (7z t)")
+    run("zip-test", { win(seven), "t", "-mmt=" .. a.zip_threads, win(zip) })
     say("Zip: ", win(zip), " (", tostring(path.size and path.size(zip) or "?"), " bytes)")
   end
   say(("done: %d mods installed, %d packages, stage %s"):format(installed, okmods, stage_tag))

@@ -461,8 +461,15 @@ local function main()
     local zip = path.abs(a.zip)
     -- 7-Zip when it is installed: Windows' tar crashed (0xC0000005) zipping a 16 GB package with a Chinese file name.
     local seven = "C:/Program Files/7-Zip/7z.exe"
-    if path.is_file(seven) then proc.run({ win(seven), "a", "-tzip", "-mx=1", "-mmt=8", win(zip), win(out) .. "\\*" }, { check = true })
-    else proc.run({ "tar", "-a", "-c", "-f", win(zip), "-C", win(out), "." }, { check = true }) end
+    if path.is_file(seven) then
+      proc.run({ win(seven), "a", "-tzip", "-mx=1", "-mmt=8", win(zip), win(out) .. "\\*" }, { check = true })
+      -- Read back once before it is handed on (a zip of tens of GB nobody tested is not delivered, 2026-11-24).
+      proc.run({ win(seven), "t", "-mmt=8", win(zip) }, { check = true })
+      say("Zip tested (7z t): " .. win(zip))
+    else
+      proc.run({ "tar", "-a", "-c", "-f", win(zip), "-C", win(out), "." }, { check = true })
+      say("Zip not tested: 7-Zip is not installed (" .. win(seven) .. ")")
+    end
     say("Zip: " .. win(zip))
   end
 end
