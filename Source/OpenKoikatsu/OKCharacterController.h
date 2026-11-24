@@ -1009,6 +1009,8 @@ public:
 	// engine's on-screen messages (those draw at the top left, over the screen's left panel). Key replaces a report
 	// with the same key, as AddOnScreenDebugMessage does.
 	void ScreenNote(int32 Key, float Seconds, const FColor& Color, const FString& Text);
+	/** After a load: the mods the card names that its open found nowhere, on screen (worker; OKBusy while it runs). */
+	void CheckAbsentMods(const FString& Card,int32 Generation);
 	// Cards in the list that could not be read or opened: the list marks them instead of leaving them out.
 	TMap<FString, FString> UnopenableCards;
 	double FpsShownAt = 0.;

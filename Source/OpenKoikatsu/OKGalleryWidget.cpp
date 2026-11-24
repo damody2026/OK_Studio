@@ -2469,12 +2469,45 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	// bLoadInFlight is still true, so the sprayer stays off and left-drag orbits.
 	SetModelLayout(bModelLayout);
 	RestorePairAfterReload();
+	if(bOk)CheckAbsentMods(CardPath,LoadGeneration);
     if(bOk)WarmClothingPreviews();
 	// The mods hear of the card (character_load, or outfit_change for another outfit of the same card).
 	if(bOk)OKReaderMods::Loaded(this,CardPath,OutfitIndex);
 	ProfileStep(TEXT("studio"));
 	const bool Enter=bEnterInteractionAfterLoad;bEnterInteractionAfterLoad=false;
 	if(bOk&&Enter)OnEnterInteraction();
+}
+
+// The mods an original card names that its open found in no zipmod (FOkSession::AbsentCardMods, the same answer OK
+// Studio's resources window shows): said on screen after the load, not only as OKMODS lines in the log -- the card
+// opened and just lacked those parts, and 「已加载3D」 alone said nothing (伊莉雅, 2026-11-24). On a worker: the check
+// waits its turn behind other opens of original cards. An OK card carries its own resources and answers nothing here.
+void UOKCharacterController::CheckAbsentMods(const FString& Card,int32 Generation)
+{
+	if(Card.IsEmpty())return;
+	TWeakObjectPtr<UOKCharacterController> Weak(this);
+	const int64 Busy=OKBusy::Begin(TEXT("檢查缺少的 mod"));
+	UE::Tasks::Launch(TEXT("OKAbsentMods"),[Weak,Card,Generation,Busy]()
+	{
+		TArray<FString> Absent;FString Error;
+		const bool bRead=FOkSession::AbsentCardMods(Card,Absent,Error);
+		OKBusy::End(Busy);
+		AsyncTask(ENamedThreads::GameThread,[Weak,Card,Generation,bRead,Absent=MoveTemp(Absent),Error]()
+		{
+			UOKCharacterController* G=Weak.Get();
+			// Another card (or a reload of this one) since: its own check answers for it.
+			if(!G||G->LoadGeneration!=Generation||G->PreviewCardPath!=Card||!IsValid(G->PreviewActor))return;
+			if(!bRead){UE_LOG(LogTemp,Warning,TEXT("OK absent mods: not checked for %s: %s"),*Card,*Error);return;}
+			UE_LOG(LogTemp,Display,TEXT("OK absent mods: %d for %s%s%s"),Absent.Num(),*Card,Absent.IsEmpty()?TEXT(""):TEXT(": "),*FString::Join(Absent,TEXT(", ")));
+			G->PreviewActor->MissingMods=Absent;
+			if(Absent.IsEmpty())return;
+			FString Report=FString::Printf(TEXT("已加载3D，但缺少 %d 個 mod，這些部件沒穿上：\n"),Absent.Num());
+			for(const FString& M:Absent)Report+=FString::Printf(TEXT("  [缺] %s\n"),*M);
+			Report+=TEXT("把這些 zipmod 裝進遊戲目錄的 mods/（或放在卡片旁邊）再載入一次。");
+			if(G->InspectorText)G->InspectorText->SetText(FText::FromString(Report));
+			G->ScreenNote(1,20.f,FColor::Yellow,Report);
+		});
+	});
 }
 
 void UOKCharacterController::RefreshOutfitList()

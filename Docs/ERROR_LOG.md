@@ -7634,3 +7634,13 @@ claim 时间就在它们启动前两分钟。
 **修正**：`BoundKind()` 把讀卡器自建的輸入框算 `text`、自建開關算 `bool`（`SetValue` 也接開關）；`BoundControls()` 也列 `SubButtons`；`UOKDreamControl::PathName` 給沒有顯示文字的控制一個路徑名，兩個欄位成了 `Dream/設定／介面›遊戲目錄›遊戲目錄` 與 `…›本機模型庫`。欄位按 Enter 改走 `ApplyFolderSetting`，和 `ok.ReaderScreen` 的資料夾指令一樣，換遊戲目錄也重讀 mods 索引。
 
 **下次怎麼避免**：新做一個讀卡器自建控制（`MakeControl` 而不是映射 UMG），做完用 `ui_widgets` 看它在不在、key 唯不唯一，再用 `ui_set`／`ui_press` 實際操作一次。
+
+## 2026-11-24（mod-integ）讀卡器開原作卡缺 mod，畫面只說「已加载3D」
+
+**現象**：打包版開 `Fatestay night 伊莉雅…png`，卡片指名的 `kiyoubi. illya` 在遊戲 mods/ 裡找不到，那些部件沒穿上，畫面卻只顯示「已加载3D」；缺件只在 log 的 `OKMODS unanswered` 裡。
+
+**原因**：`FinishPreparedPreview` 的「缺少模组：[缺] …」讀的是 `AKKPreviewActor::MissingMods`，而它只有舊的 OBJ 備援路徑（`LoadDirectory` 讀 manifest.json）會填；現在開卡走 Session，從來沒填過，所以這段永遠不出現。
+
+**修正**：載入成功後在背景跑 `FOkSession::AbsentCardMods`（OK Studio 資源視窗用的同一份答案），掛「檢查缺少的 mod」進度條；回到遊戲執行緒時卡片還是同一張，就寫進 `MissingMods`，並在畫面通知與 Inspector 列出缺的 GUID 和怎麼補。伊莉雅那張載入後 0.8 秒出現「已加载3D，但缺少 1 個 mod…[缺] kiyoubi. illya」，不缺的卡（KK_007604）照舊只有「已加载3D」。GUID 解析本身（e-cardload 在查的截斷）修好後，這裡跟著變準。
+
+**下次怎麼避免**：換掉一條載入路徑時，把舊路徑順帶做的回報（缺件、警告）列出來，一項項搬到新路徑。
