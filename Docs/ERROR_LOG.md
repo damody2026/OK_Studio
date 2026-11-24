@@ -7608,3 +7608,19 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 **教训**：要往清单里**加**东西就用 `manifest-add`；`manifest` 是重建，在这个仓库（原作资料不进版控）跑它等于清空。
 重建完 `verify` 说「全部相同」是因为它只比对清单里剩下的那 18 笔，**自洽不等于正确**——
 改完版控的产生档一定要看笔数有没有合理。
+
+## 18. 把自己残留的两个读卡器认成「别人的」，白等了 50 分钟（2026-11-24）
+
+`OpenKoikatsuEditor` 编不过，只说 `Unable to build while Live Coding is active`。机器上有两个
+`UnrealEditor.exe`（PID 70776／74856，15:13:50 与 15:14:14 起），我用「命令行里有没有 `-Sandbox`」判断是不是自己的
+——没有，就当成别的 session 的，不去动它，改成等它们退出。
+
+**错在哪**：`-Sandbox` 是街区（`game_launch`）才传的参数，`reader_launch` 启的读卡器**本来就不带**。
+这两个其实是我自己 mod 索引 A/B 的冷／暖两轮，`reader_stop` 没关掉；它们各吃 9 GB，还把 slot1 占了 54 分钟
+（上限 20 分钟）。证据本来就在手边：log 路径 `Saved/Logs/CardReader/20261124-151350-*.log` 的时间正是那两轮
+（log 内的 `07:13`／`07:14` 是 UTC，差 8 小时），`Saved/UnrealSlots/slot1/owner.txt` 写的是我的名字与这个用途、
+claim 时间就在它们启动前两分钟。
+
+**下次怎么认自己的 Unreal**：看 `-abslog=` 的 log 路径与建立时间对不对得上自己刚跑的那几条命令，
+再看 `unreal_slot.lua status` 的 owner 与 claim 时间；不要靠 `-Sandbox` 这种只有某一种启动方式才有的参数。
+`reader_stop` 失败就按 PID 停，并在每段测试结束后确认 `unreal processes: 0`。
