@@ -488,9 +488,13 @@ local function main()
     local parts = {}
     local okj, marker = pcall(json.decode, path.read_text(path.join(out, lib, "oklib.json")))
     if okj and type(marker) == "table" then parts[#parts + 1] = { "oklib_version", marker.version } end
+    -- Recorded, never compared (Docs/PROGRAM_ONLY_UPDATE_PLAN.md: the hashes change with the mods this machine has and
+    -- with every rebuild while compatibility does not; a gate on them would cry wolf). For reconciling after a problem.
+    local record = { { "note", "Record only, not a compatibility criterion: shared_mods.txt follows the mods this machine has installed, "
+      .. "and mods_index.db changes with every rebuild (its meta.schema is what is compared, not its hash)." } }
     for _, f in ipairs({ "shared_mods.txt", "mods_index.db" }) do
       local file = path.join(out, lib, f)
-      if path.is_file(file) then parts[#parts + 1] = { f, json.object({ { "bytes", path.size(file) }, { "sha256", hash.sha256_file(file) } }) } end
+      if path.is_file(file) then record[#record + 1] = { f, json.object({ { "bytes", path.size(file) }, { "sha256", hash.sha256_file(file) } }) } end
     end
     local names = {}
     for g in pairs(carried) do names[#names + 1] = g end
@@ -511,7 +515,7 @@ local function main()
       { "version", version }, { "version_from", version_from },
       { "made", os.date("!%Y-%m-%dT%H:%M:%SZ") }, { "package", path.name(out) },
       { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
-      { "groups", json.object(groups) }, { "parts", json.object(parts) } }), { indent = 1 }) .. "\n", { newline = "\n" })
+      { "groups", json.object(groups) }, { "parts", json.object(parts) }, { "record_only", json.object(record) } }), { indent = 1 }) .. "\n", { newline = "\n" })
     listing[#listing + 1] = RESOURCES_FILE
     say("Resources: " .. RESOURCES_FILE .. " (" .. table.concat(names, ", ") .. ")")
   end

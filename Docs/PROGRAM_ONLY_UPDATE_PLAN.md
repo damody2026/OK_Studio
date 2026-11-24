@@ -26,7 +26,7 @@
 - `RESOURCES.json` 另外只記事實，供之後的檢查比對：
   - 帶了哪些資源組、各幾個檔、多大；
   - `oklib.json` 的 version；
-  - `shared_mods.txt` 與 `mods_index.db` 的大小和 sha256。
+  - `shared_mods.txt` 與 `mods_index.db` 的大小和 sha256，放在 `record_only` 底下並附註「只記不比」，避免以後被誤拿來當判準。
 
   「需要哪一版」的欄位等 C 組定。
 
