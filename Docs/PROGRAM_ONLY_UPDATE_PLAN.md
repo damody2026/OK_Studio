@@ -132,3 +132,19 @@ Tools\lua\lua.exe Tools\package_studio_release.lua --tag <Name> --out <新資料
 - 修正：自檢加一項，把 `--resources-from` 的 `mods_index.db` 的 `meta.schema` 和這份原始碼 `modsindex.rs` 的 `SCHEMA` 比對，不同就失敗。重跑後自檢正確擋下（schema 1 對 2），不產生 zip。
 - 第一次產生的 zip 已改名為 `Studio-20261124-program-f.DO-NOT-USE-needs-schema2-resources.zip`，不能疊在 release-e 上。
 - 這也證明協調者的第 2 點：只靠人工 +1 的版本號一定會漏，要比機器讀得到的子版本。e-cardload 的 `resources_check` 做好後，這項臨時檢查改成呼叫它。
+
+## 8. 待辦
+
+- **`ok_resources_check` 進樹後要接的地方**（e-cardload 負責寫這個檢查，介面已對好）：
+  - 讀卡器與 Studio 的畫面通知：`block` 擋下開卡，`warn` 只提示；
+  - 啟動器在主控台的檢查；
+  - 把 `--program-only` 自檢裡臨時的 schema 比對，改成呼叫它。
+
+  版本規則等 C 組定案。
+- **新 stage 沿用舊 stage 的 mod 配置**：
+  - 啟動器第一次用到新 stage 時，比對前一個 stage 的 `Mods/.installed.toml`。
+  - 舊的有新的沒有的 mod，或啟用狀態不同，就在主控台與畫面上講一句，並附上 `ok-mod-pack profile apply` 的指令。
+  - 現在只寫在安裝說明裡，玩家容易漏看。
+- **測試夾具 `E:\OKPackage\overlay-test-1124f`**：release-e 的硬連結複本，上面疊了 program-f。
+  - 版本檢查做好、用它驗過「擋得住」之後才刪。
+  - 裡面有硬連結與 junction，不能遞迴刪除，要照安裝說明「舊 stage 要不要刪」那套先拆 junction 再刪。
