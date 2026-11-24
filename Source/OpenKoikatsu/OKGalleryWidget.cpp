@@ -1152,44 +1152,30 @@ static void OKWriteUserCardFolder(const FString* Value)
 
 void OKBackgroundWorkerPriority();
 
-// Which GUID is in which package of one mods/ folder, built once on a worker and cached in Saved/mod_index.json; the
-// card list and each card's requirement list read it. Only the packages' manifests are read (KKZip::ReadManifests), so
-// a first build over 7,296 packages reads ~466 MiB instead of their 111 GiB, and a repeat build reads nothing but the
-// folder listing. Over half a second, so it is on the progress bar.
+// Which GUID is in which package of one mods/ folder: read from the base library's own index
+// (`<library>/mods_guids.txt`, written with shared_mods.txt by `--oklib shared-ignore`). The card list and each
+// card's requirement list read it.
+//
+// It used to be built here, on a worker, by reading the manifest of all 7,296 packages (~466 MiB, ~2.8 s cold) and
+// kept in Saved/mod_index.json. Both are forbidden: an open never reads the whole mods tree and never caches
+// (2026-11-24). The library's index is ~0.7 MB of text and parses in milliseconds, so there is no worker and no
+// progress bar left; the stale cache file is removed if it is still lying about.
 void UOKCharacterController::StartInstalledModIndex(const FString& Mods)
 {
-	if (Mods.IsEmpty() || bModIndexBuilding || ModIndexDir == Mods) return;
+	if (Mods.IsEmpty() || ModIndexDir == Mods) return;
 	if (!FPaths::DirectoryExists(Mods)) return;
-	bModIndexBuilding = true;
 	ModIndexDir = Mods;
-	const FString Cache = FPaths::ProjectSavedDir() / TEXT("mod_index.json");
-	TWeakObjectPtr<UOKCharacterController> Weak(this);
-	Async(EAsyncExecution::Thread, [Weak, Mods, Cache]()
-	{
-		OKBackgroundWorkerPriority();
-		OKBusy::FScope Busy(TEXT("建立 mod 索引"));
-		TSharedPtr<FKKModIndex, ESPMode::ThreadSafe> Index = MakeShared<FKKModIndex, ESPMode::ThreadSafe>();
-		Index->LoadCache(Cache);
-		FString Err;
-		const double Began = FPlatformTime::Seconds();
-		const bool bOk = Index->Build(Mods, Err, [&Busy](int32 Done, int32 All)
-		{
-			Busy.Report(All > 0 ? float(Done) / float(All) : -1.f,
-				FString::Printf(TEXT("讀 %d/%d 個 zipmod 的 manifest"), Done, All));
-		});
-		if (bOk) Index->SaveCache(Cache);
-		const double Took = FPlatformTime::Seconds() - Began;
-		AsyncTask(ENamedThreads::GameThread, [Weak, Index, bOk, Err, Took, Mods]()
-		{
-			UOKCharacterController* G = Weak.Get();
-			if (!G) return;
-			G->bModIndexBuilding = false;
-			UE_LOG(LogTemp, Display, TEXT("OK reader mod index: %d zipmod, %d GUID, %.1f s, %s%s"),
-				Index->Files.Num(), Index->Num(), Took, *Mods, bOk ? TEXT("") : *(TEXT(" / ") + Err));
-			if (!bOk && Index->Files.IsEmpty()) { G->ModIndexDir.Reset(); return; }
-			G->ModIndex = MoveTemp(*Index);
-		});
-	});
+	const FString Stale = FPaths::ProjectSavedDir() / TEXT("mod_index.json");
+	if (FPaths::FileExists(Stale)) IFileManager::Get().Delete(*Stale);
+	const FString Library = FKKModIndex::DefaultLibraryDir();
+	FKKModIndex Index;
+	FString Err;
+	const double Began = FPlatformTime::Seconds();
+	const bool bOk = Index.LoadLibraryGuids(Library, Mods, Err);
+	UE_LOG(LogTemp, Display, TEXT("OK reader mod index: %d GUID from %s in %.0f ms%s"),
+		Index.Num(), *Library, (FPlatformTime::Seconds() - Began) * 1000.0, bOk ? TEXT("") : *(TEXT(" / ") + Err));
+	if (!bOk) { ModIndexDir.Reset(); return; }
+	ModIndex = MoveTemp(Index);
 }
 
 void UOKCharacterController::ScanAndShow()

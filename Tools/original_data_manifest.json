@@ -893485,6 +893485,18 @@
    "sha256": "06e9a92efbbf5a21fcc3fc3ea5ae013dc3cdc853a016c417fe42b4e09b3bdbb6"
   },
   {
+   "bytes": 707621,
+   "group": "base-index",
+   "path": "Content/IndependentResources/base_v1/mods_guids.txt",
+   "sha256": "97b60556798832ad06cdfec4d01ebf3f8203d498a576c9cd4e8d4b24adf98683"
+  },
+  {
+   "bytes": 2687049,
+   "group": "base-index",
+   "path": "Content/IndependentResources/base_v1/mods_overrides.txt",
+   "sha256": "74880c9a7aa3e7d4c4b3bf062bf03ed49150ea4d489df2c9ac550c8d9fc5a4c6"
+  },
+  {
    "bytes": 39,
    "group": "base-index",
    "path": "Content/IndependentResources/base_v1/oklib.json",

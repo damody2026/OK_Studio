@@ -35,7 +35,10 @@ local SSD = "Content/IndependentResources/StreetSocialData"
 -- part: the zip a group is packed into ("main" when not given; the H voices are a separate download).
 local GROUPS = {
   { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/", LIB .. "/h/caress_items.json" } },
-  { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/oklib.json", LIB .. "/shared_mods.txt" } },
+  { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/oklib.json", LIB .. "/shared_mods.txt",
+      -- Which archive declares each GUID / replaces each bundle: an original card's open reads these instead of
+      -- the installation's manifests (Tools/ok-extract/src/modsindex.rs), so a restored library needs them.
+      LIB .. "/mods_guids.txt", LIB .. "/mods_overrides.txt" } },
   -- What one machine has beside the conversion: the coverage gaps it saw, the time models were last edited, a test
   -- scene that did not come with the game.
   { name = "base-byproducts", need = "no", step = "archive", paths = { LIB .. "/missing.txt", LIB .. "/edits.stamp", LIB .. "/studio/samples/s4432nk.png" } },

@@ -3,6 +3,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformMisc.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -279,6 +280,50 @@ bool FKKModIndex::SaveCache(const FString& CachePath) const
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonStr);
 	FJsonSerializer::Serialize(Root, Writer);
 	return FFileHelper::SaveStringToFile(JsonStr, *CachePath);
+}
+
+FString FKKModIndex::DefaultLibraryDir()
+{
+	const FString Configured = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_BASE_LIBRARY"));
+	if (!Configured.IsEmpty()) return Configured;
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("IndependentResources/base_v1"));
+}
+
+bool FKKModIndex::LoadLibraryGuids(const FString& LibraryDir, const FString& InModsDir, FString& OutError)
+{
+	GuidToMod.Reset();
+	Files.Reset();
+	Unreadable.Reset();
+	ModsDir = InModsDir;
+	const FString Path = LibraryDir / TEXT("mods_guids.txt");
+	FString Text;
+	if (!FFileHelper::LoadFileToString(Text, *Path))
+	{
+		OutError = FString::Printf(TEXT("%s not there: run `ok-extract <game> --oklib shared-ignore %s`"), *Path, *LibraryDir);
+		LastError = OutError;
+		return false;
+	}
+	TArray<FString> Lines;
+	Text.ParseIntoArrayLines(Lines);
+	for (const FString& Line : Lines)
+	{
+		if (Line.IsEmpty() || Line.StartsWith(TEXT("#"))) continue;
+		TArray<FString> Cols;
+		Line.ParseIntoArray(Cols, TEXT("\t"), false);
+		if (Cols.Num() < 3) continue;
+		// Every archive declaring the GUID is listed, in the tree's walk order; the first is the one the index's
+		// own lookup prefers, so a later line does not replace it.
+		if (GuidToMod.Contains(Cols[0])) continue;
+		FKKZipmod Mod;
+		Mod.Guid = Cols[0];
+		Mod.Version = Cols[1];
+		Mod.Path = ModsDir / Cols[2];
+		Mod.Name = FPaths::GetBaseFilename(Cols[2]);
+		Mod.bInSideloaderModpack = PathInModpack(Mod.Path, ModsDir);
+		GuidToMod.Add(Mod.Guid, Mod);
+	}
+	LastError.Reset();
+	return GuidToMod.Num() > 0;
 }
 
 bool FKKModIndex::CoversModsDir(const FString& Mods) const

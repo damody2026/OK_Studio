@@ -7,8 +7,8 @@
 // Which zipmods a card needs and where they are. Two sources: the packages beside the card (its own folder) and, when
 // the card sits inside a game installation, that game's mods/.
 //
-// The game's mods/ is read through the installed index (FKKModIndex: built once on a worker, cached in
-// Saved/mod_index.json) and only for the GUIDs this card names. Building it here, per selection, read every package in
+// The game's mods/ is read through the installed index (FKKModIndex, read from the base library's own
+// mods_guids.txt: no manifest of the tree is opened and nothing is cached) and only for the GUIDs this card names. Building it here, per selection, read every package in
 // mods/ — 7,296 of them, 111 GiB, on the game thread — so dropping a card from the game's own UserData/chara/female
 // froze the reader for minutes with nothing on screen (the user, 2026-11-24). Without an index (tests, other callers)
 // it still scans, which is what the fixtures exercise.
@@ -60,7 +60,7 @@ void FKKLocalModIndex::AddGameMods(const TArray<FKKResolveInfo>& Needed, const F
 		// Only this card's own GUIDs, from the index built once for this mods/ folder.
 		if(!Installed->CoversModsDir(Mods))
 		{
-			SkippedGameMods.Add(Mods+TEXT(": 遊戲 mods 的索引還沒建好，這張卡要的 zipmod 先當成缺少"));
+			SkippedGameMods.Add(Mods+TEXT(": 基礎庫沒有這個 mods 的索引（ok-extract --oklib shared-ignore），這張卡要的 zipmod 先當成缺少"));
 			return;
 		}
 		TSet<FString> Asked;

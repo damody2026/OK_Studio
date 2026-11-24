@@ -7591,3 +7591,20 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 
 **另外**：游戏根目录已经是 `D:\KoikatuSunshinezz`（README／AGENTS.md 里的 `D:/KoikatuSunshine` 不存在了），
 指错不会报错、只会静静地少读东西；这次每一条命令都明写 `OK_GAME_ROOT`，并用「开出几个部件」确认它真的读到了。
+
+## 17. `original_data.lua manifest` 把 157695 笔的清单重写成 18 笔（2026-11-24）
+
+要把基础庫新增的两个索引档（`mods_guids.txt`、`mods_overrides.txt`）列进 `Tools/original_data_manifest.json`，
+我直接跑了 `original_data.lua manifest`。那个子命令是**从头重建**清单，而它只认「git 追踪的原作资料」，
+本机的基础庫不在版控里，于是清单从 157695 笔变成 18 笔（`manifest: 18 files, 0.00 GB`），
+而且 `verify` 还报「18 same, 0 differ」——看起来一切正常。
+
+它一起重写的还有 `Tools/original_data/model_sources.txt`（607 行剩 1 行）与 `Tools/original_data/runtime_clips.tsv`，
+两个也都在版控里；`git status` 才看得出来。
+
+**修正**：`git checkout --` 把这三个版控档都还原（HEAD 的那份是对的，清单 157695 笔），
+再用 `manifest-add <group> <path...>` 只加那两个新档（157697 笔）。
+
+**教训**：要往清单里**加**东西就用 `manifest-add`；`manifest` 是重建，在这个仓库（原作资料不进版控）跑它等于清空。
+重建完 `verify` 说「全部相同」是因为它只比对清单里剩下的那 18 笔，**自洽不等于正确**——
+改完版控的产生档一定要看笔数有没有合理。

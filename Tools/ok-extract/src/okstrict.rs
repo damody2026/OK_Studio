@@ -265,9 +265,10 @@ pub fn failure(card: &Path, gaps: &[String]) -> String {
 mod tests {
     use super::*;
     fn shared() -> Shared {
-        Shared { lines: vec!["mods/sideloader modpack - kks_uncensorselector/".into(), "mods/sideloader modpack/[dak]cgramp.zipmod".into(),
-            "mods/sideloader modpack/tansen/[tansen] eyes skin v2.0.zipmod|abdata/chara/mt_eye_00.unity3d".into()], excluded: HashSet::new(),
-            lib: PathBuf::new(), present: Mutex::default() }
+        let lines: Vec<String> = vec!["mods/sideloader modpack - kks_uncensorselector/".into(), "mods/sideloader modpack/[dak]cgramp.zipmod".into(),
+            "mods/sideloader modpack/tansen/[tansen] eyes skin v2.0.zipmod|abdata/chara/mt_eye_00.unity3d".into()];
+        // No whole-tree `mods/` line here, so the named lines are all of them (see `Shared::named`).
+        Shared { named: lines.clone(), lines, excluded: HashSet::new(), lib: PathBuf::new(), present: Mutex::default() }
     }
     #[test]
     fn shared_mods_rule() {

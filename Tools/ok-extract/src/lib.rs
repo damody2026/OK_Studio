@@ -36,6 +36,7 @@ pub mod lowpoly;
 pub mod vertcolor;
 pub mod video_motion;
 mod mods;
+pub mod modsindex;
 mod pose;
 mod gpu_rig;
 mod ordered;
@@ -692,10 +693,10 @@ pub fn prewarm(game_root: &Path) -> Result<(), String> {
             });
             scope.spawn(|_| { let _ = crate::gamefs::read_source(game_root.join("abdata/chara/mm_base.unity3d")).map(crate::unity::parse_bundle_cached); });
         }
-        // Original KKS cards open from the library plus the installation's zipmods they name (OK_GAME_ROOT).
-        if let Some(game) = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.join("mods").is_dir()) {
-            scope.spawn(move |_| crate::mods::prewarm_guid_index(&game.join("mods")));
-        }
+        // No GUID prewarm any more: an original card's open answers its GUIDs from the library's own index
+        // (modsindex.rs, written by `--oklib shared-ignore`). Building one here meant reading the installation's
+        // ~7300 manifests at every start -- the whole tree, and kept in mods/.ok_tree_guid_index.bin, which is both
+        // of the two things an open may never do (the user, 2026-11-24).
     });
     match pool { Some(pool) => pool.install(work), None => { crate::oklib::mark_outside_opens(); work() } }
     eprintln!("ok-extract: prewarm {} in {:.2}s", game_root.display(), t.elapsed().as_secs_f64());

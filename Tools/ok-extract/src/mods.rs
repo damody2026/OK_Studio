@@ -372,6 +372,11 @@ pub fn find_guids(mods_dir: &Path, wanted: Option<&std::collections::HashSet<Str
 fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<String>>) -> HashMap<String, PathBuf> {
     let Some(w) = wanted else {
         if crate::tree_answers::unanswered("guids", b"(every guid)") { return HashMap::new(); }
+        if crate::modsindex::serves(mods_dir) {
+            let index = crate::modsindex::active().expect("serves() checked it");
+            return index.guids.keys().filter_map(|g| crate::modsindex::guid_archive(mods_dir, g).map(|p| (g.clone(), p))).collect();
+        }
+        if crate::modsindex::tree_scan_forbidden(mods_dir) { crate::modsindex::refuse("guids", "(every guid)"); return HashMap::new(); }
         return crate::okstrict::scanning(|| find_guids_uncached(mods_dir, None));
     };
     let mut names: Vec<&String> = w.iter().collect();
@@ -382,6 +387,23 @@ fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<S
         return rows.into_iter().filter(|(guid, _)| w.contains(guid)).map(|(guid, zip)| (guid, crate::tree_answers::rebase(mods_dir, &zip))).collect();
     }
     if crate::tree_answers::unanswered("guids", question.as_bytes()) { return HashMap::new(); }
+    // The library carries the tree's GUID index (modsindex.rs, written by `--oklib shared-ignore`): the card's few
+    // GUIDs are answered from it, and the installation's ~7300 manifests are not read. A GUID it does not name is a
+    // gap we report; walking the tree to find it is exactly what an open may never do (the user, 2026-11-24).
+    if crate::modsindex::serves(mods_dir) {
+        let mut out = HashMap::new();
+        for g in w {
+            match crate::modsindex::guid_archive(mods_dir, g) {
+                Some(p) => { out.insert(g.clone(), p); }
+                None => crate::modsindex::refuse("guid", g),
+            }
+        }
+        return out;
+    }
+    if crate::modsindex::tree_scan_forbidden(mods_dir) {
+        crate::modsindex::refuse("guids", &format!("{} wanted, library has no index", names.len()));
+        return HashMap::new();
+    }
     let found = crate::okstrict::scanning(|| find_guids_wanted(mods_dir, w, &names));
     if crate::tree_answers::recording() {
         let rows: Option<Vec<(String, String)>> = found.iter().map(|(g, p)| crate::tree_answers::relative(p).map(|z| (g.clone(), z))).collect();
@@ -525,9 +547,16 @@ fn tree_guid_index(mods_dir: &Path) -> Option<Arc<HashMap<String, PathBuf>>> {le
     Some(index)
 }
 
-fn guid_candidate_rank(is_unbacked: bool, ver: &str) -> (bool, ParsedModVersion) {
+fn guid_candidate_rank(is_unbacked: bool, ver: &str) -> GuidRank {
     (!is_unbacked, parse_manifest_version(ver))
 }
+
+/// How two archives declaring the same GUID are ranked: a backed archive over an unbacked one, then the higher
+/// declared version. `modsindex::build` ranks with it too, so the library's index picks the archive the tree scan
+/// used to pick.
+pub(crate) type GuidRank = (bool, ParsedModVersion);
+pub(crate) fn guid_rank_for(ver: &str) -> GuidRank { (true, parse_manifest_version(ver)) }
+pub(crate) fn guid_rank_with(is_unbacked: bool, ver: &str) -> GuidRank { guid_candidate_rank(is_unbacked, ver) }
 
 /// An installation's GUIDs kept between processes: each archive's path, size, modification time (ns) and the GUIDs
 /// and versions its manifest declares. An archive whose size or time changed is read again.
@@ -548,8 +577,9 @@ fn save_tree_guid_index(mods_dir: &Path, rows: Vec<(&PathBuf, u64, u64, &Vec<(St
     if fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, &path).is_err() { let _ = fs::remove_file(&tmp); }
 }
 
-/// Builds the GUID index of a mods tree ahead of the first original card (reader start).
-pub(crate) fn prewarm_guid_index(mods_dir: &Path) { let _ = tree_guid_index(mods_dir); }
+// `prewarm_guid_index` is gone (2026-11-24): nothing prewarms a whole-tree index any more, because no open reads
+// one. `tree_guid_index` below stays for the commands that BUILD the library (no library is active then) and for
+// an installation used without one; `modsindex::tree_scan_forbidden` keeps every open out of it.
 
 fn find_guids_uncached(mods_dir: &Path, wanted: Option<&std::collections::HashSet<String>>) -> HashMap<String, PathBuf> {
     // A library session (no SQL cache): the tree's GUID index answers every wanted GUID at once.
@@ -777,6 +807,10 @@ fn override_lookup(mods_dir:&Path,want:&str)->Option<PathBuf> {
     found
 }
 fn override_lookup_in_tree(mods_dir:&Path,want:&str)->Option<PathBuf> {
+    // The library's own index (modsindex.rs), for the same reason as the GUIDs above: building the whole-tree
+    // override map opened every archive's central directory and kept the result in mods/.ok_override_index.tsv.
+    if crate::modsindex::serves(mods_dir) { return crate::modsindex::override_archive(mods_dir, want); }
+    if crate::modsindex::tree_scan_forbidden(mods_dir) { crate::modsindex::refuse("override", want); return None; }
     if mods_dir.parent().is_some_and(crate::gamefs::serves_from_library) {
         let index=crate::gamefs::library_memo("override_index", mods_dir, || std::sync::Arc::new(build_override_index(mods_dir)));
         return index.get(want).cloned();

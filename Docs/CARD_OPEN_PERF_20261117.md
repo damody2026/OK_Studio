@@ -898,3 +898,56 @@ key 里），拿庫为别张卡录的答案回答这张卡会**静静地给出�
 
 顺带记一笔：`material.post_texture` 的掛点成本在这条路上量不出来（每个部件贴图先问一次 `want`，
 `skin-decal` 按卡片快取答 false，`glass-shader` 根本没订阅这个 hook），上面 mod 开／关那一列就是它的实测上限。
+
+## 十、开卡永不读整棵 mods 树、永不快取（2026-11-24，使用者的硬规定）
+
+使用者的话：**「永远不准快取，永远不能读整颗 mods 树」「只读这卡需要的 mod 啊，为什么你要一直读全部的 mod」**。
+在这之前，一次读卡器冷启动把安装目录的 **7296 个 zipmod 的 manifest 读了两遍**，两边都把结果写成快取：
+
+| 谁读 | 读什么 | 冷的代价 | 写哪个快取 |
+|---|---|---|---|
+| Rust `mods::tree_guid_index`（`prewarm_guid_index` 在 session 开始就排一条） | 7296 个 manifest（约 466 MiB） | 约 2.8 s | `<游戏>/mods/.ok_tree_guid_index.bin` |
+| Rust `mods::build_override_index` | 每个 archive 的中央目录 | 每个视图约 0.3–1.3 s | `<游戏>/mods/.ok_override_index.tsv` |
+| UE `UOKCharacterController::StartInstalledModIndex` | 同样 7296 个 manifest | 约 2.8 s（背景执行绪＋进度条） | `Saved/mod_index.json` |
+
+**现在的规则**：这两张表（哪个 archive 宣告哪个 GUID、哪个 archive 覆盖哪个 `abdata/...unity3d`）是**基础庫自己带的资料**，
+和 `shared_mods.txt` 一样由同一个命令产生：
+
+```powershell
+.\Tools\ok-extract\target\release\ok-extract.exe D:/KoikatuSunshinezz --oklib shared-ignore .\Content\IndependentResources\base_v1
+```
+
+它走一次树（本机 2.0 s）写出 `<庫>/mods_guids.txt`（0.7 MB）与 `<庫>/mods_overrides.txt`（2.6 MB），
+并把上表那两个快取档删掉。开卡只读这两个档（`Tools/ok-extract/src/modsindex.rs`），**一个 manifest 都不开**。
+庫里答不出来的 GUID 当缺口报（`OKMODS unanswered guid: ...`），**不准退回扫树**：`modsindex::tree_scan_forbidden()`
+在有庫的时候（读卡器、打包版、所有 bench）把整棵树的扫描挡掉，建庫的转换命令没有庫在跑，照旧走树。
+
+**每个候选都要记，不能只记赢家。** 原作卡开卡看到的不是整个安装目录，而是**它自己的 archive ＋ 共用 mod**
+（`gamefs::NarrowMods`），而被取代的那两张表本来就是在这个窄视图上建的，所以窄视图里的赢家常常不是全树的赢家。
+第一版只记全树赢家，21 套基准服装里有 **6 套**（Tohru 2／4／5、KK_091207 2、Megumin 2／3）开出来的 session 就不一样了。
+现在每个 GUID／bundle 的全部候选都按走访顺序记着，开卡时在当前视野里挑（GUID 照旧用「有实体档的优先、版本高的优先」排名，
+bundle 取走访顺序第一个）。
+
+**闸门**（干净机器，`ok-card-open-bench --fresh-dump` 逐位元，旧二进位对新二进位，同一个庫同一批卡）：
+
+| | 结果 |
+|---|---|
+| OK 卡六张的全部服装 | **42/42 相同** |
+| 原作卡三张基准的全部服装 | **21/21 相同** |
+| 新开卡读的 manifest／建的全树表 | **0**（旧的：`guids_and_versions_from_zipmod ... x7296`、`tree_guid_index x3`、`build_override_index x3`） |
+| 旧二进位自己对自己（对照组，证明 dump 可重现） | 21/21 相同 |
+
+**时间**（三张基准卡，冷，`--sequence` ＋ `OK_BENCH_PREWARM=concurrent`，丢一轮暖机、交错三轮取中位数）：
+
+| 卡 | 旧 | 新 |
+|---|---:|---:|
+| Tohru | 1.44 s | **1.26 s** |
+| KK_091207 | 0.63 s | 0.63 s |
+| Komazoku Megumin (2) | 0.69 s | 0.69 s |
+
+读卡器那边 `StartInstalledModIndex` 现在只读 `mods_guids.txt`（毫秒级），没有工作执行绪、没有进度条、
+不写 `Saved/mod_index.json`（看到旧档就删）。`FKKModIndex::LoadLibraryGuids` 是新的入口，`Build`（走树）只留给测试与其他呼叫者。
+
+**要记住的边界**：`collect_zipmods` 还是会**列**目录（只拿档名，不开档），窄视图要靠它知道自己有哪些 archive；
+这不算「读 mod」。换了游戏目录或装／移除 mod 之后要重跑一次 `shared-ignore`，不然新 mod 的 GUID 会被当成缺口——
+这就是把它放在和 `shared_mods.txt` 同一个命令里的原因。

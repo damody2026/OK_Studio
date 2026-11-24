@@ -35,6 +35,14 @@ public:
 	/** OnProgress, when bound, is called with (packages done, packages in all) every so often; it must be safe to call
 	 *  from the thread Build runs on. */
 	bool Build(const FString& ModsDir, FString& OutError, TFunction<void(int32, int32)> OnProgress = nullptr);
+	/** The same map read from the base library's own index (`<library>/mods_guids.txt`, written by
+	 *  `ok-extract <game> --oklib shared-ignore <library>`): which archive of `ModsDir` declares each GUID, without
+	 *  opening a single package and without a cache. This is how the reader builds it -- reading the installation's
+	 *  7,296 manifests at every start is a whole-tree read, and keeping the result in Saved/mod_index.json is a
+	 *  cache; an open may do neither (2026-11-24). Err when the library has no index yet. */
+	bool LoadLibraryGuids(const FString& LibraryDir, const FString& ModsDir, FString& OutError);
+	/** OK_BASE_LIBRARY, else Content/IndependentResources/base_v1. */
+	static FString DefaultLibraryDir();
 	bool LoadCache(const FString& CachePath);
 	bool SaveCache(const FString& CachePath) const;
 	const FKKZipmod* Find(const FString& Guid) const;
