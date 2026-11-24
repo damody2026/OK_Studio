@@ -342,11 +342,11 @@ TArray<FString> UOKCharacterController::OkClothesFiles() const{
  for(int32 I=0;I<Folders.Num();++I){
   if(Folders.IndexOfByPredicate([&](const FString& F){return FPaths::IsSamePath(F,Folders[I]);})!=I)continue;
   TArray<FString> Names;IFileManager::Get().FindFiles(Names,*(Folders[I]/TEXT("*.okclothes")),true,false);
-  for(const FString& Name:Names){const FString Path=Folders[I]/Name;Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
+  for(const FString& Name:Names){if(OKIsHiddenCardPath(Name))continue;const FString Path=Folders[I]/Name;Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
   // The game's own outfit cards as they come: the folder may also hold character cards (the save folder does), so
   // only the ones marked as a coordinate card are listed.
   TArray<FString> Pngs;IFileManager::Get().FindFiles(Pngs,*(Folders[I]/TEXT("*.png")),true,false);
-  for(const FString& Name:Pngs){const FString Path=Folders[I]/Name;if(OKIsCoordinateCardFile(Path))Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
+  for(const FString& Name:Pngs){const FString Path=Folders[I]/Name;if(!OKIsHiddenCardPath(Name)&&OKIsCoordinateCardFile(Path))Found.Emplace(IFileManager::Get().GetTimeStamp(*Path),Path);}
  }
  Found.Sort([](const auto& A,const auto& B){return A.Key>B.Key;});
  TArray<FString> Out;for(const auto& F:Found)Out.Add(F.Value);

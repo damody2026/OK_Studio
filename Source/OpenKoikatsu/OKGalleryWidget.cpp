@@ -1212,7 +1212,7 @@ void UOKCharacterController::ScanAndShow()
 		// Visible rows fetch metadata asynchronously; the list never parses every model.
 		TArray<FString> Files;IFileManager::Get().FindFilesRecursive(Files,*Folder,TEXT("*.png"),true,false);Files.Sort();
 		// OK cards and original ones alike: each opens the way it needs when chosen (SelectIndex).
-		for(const FString& Path:Files)if(!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()||OKIsOriginalCharacterCard(Path)){FKKCardListEntry Entry;Entry.Path=Path;Entry.FileName=FPaths::GetCleanFilename(Path);Entries.Add(MoveTemp(Entry));}
+		for(const FString& Path:Files)if(!OKIsHiddenCardPath(Path,Folder)&&(!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()||OKIsOriginalCharacterCard(Path))){FKKCardListEntry Entry;Entry.Path=Path;Entry.FileName=FPaths::GetCleanFilename(Path);Entries.Add(MoveTemp(Entry));}
 	}
 	else if (Root)
 	{
@@ -1225,6 +1225,7 @@ void UOKCharacterController::ScanAndShow()
 			Names.Sort();
 			for (const FString& Name : Names)
 			{
+				if (OKIsHiddenCardPath(Name)) continue; // .okremake-*.png and the like are not the user's cards
 				FKKCardListEntry Entry;
 				Entry.Path = CardFolder / Name;
 				Entry.FileName = Name;
@@ -3019,7 +3020,7 @@ void UOKCharacterController::RefreshPartnerMales(){
     bSuppressPartnerMale=true;PartnerMaleCombo->ClearOptions();PartnerMaleCombo->AddOption(TEXT("選擇男角"));
     if(!CurrentCardDirectory.IsEmpty()){
         TArray<FString> Files;IFileManager::Get().FindFilesRecursive(Files,*CurrentCardDirectory,TEXT("*.png"),true,false);Files.Sort();
-        for(const auto& Path:Files){FKKCharacterFile Card;FString Error;if(UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()||!UKKCardReader::LoadFromFile(Path,Card,Error)||Card.Sex!=0)continue;
+        for(const auto& Path:Files){FKKCharacterFile Card;FString Error;if(OKIsHiddenCardPath(Path,CurrentCardDirectory)||UKKCardWorkspace::PortableSourcePath(Path).IsEmpty()||!UKKCardReader::LoadFromFile(Path,Card,Error)||Card.Sex!=0)continue;
             FString Label=FString::Printf(TEXT("%s %s（%s）"),*Card.LastName,*Card.FirstName,*FPaths::GetBaseFilename(Path));PartnerMalePaths.Add(Path);PartnerMaleLabels.Add(Label);PartnerMaleCombo->AddOption(Label);
         }
     }
@@ -3031,6 +3032,7 @@ void UOKCharacterController::RefreshPartnerMales(){
         for(const TCHAR* Relative:{TEXT("UserData/chara/male"),TEXT("DefaultData/chara/male")}){
             const FString Folder=FPaths::Combine(Root->Root,Relative);TArray<FString> Names;IFileManager::Get().FindFiles(Names,*(Folder/TEXT("*.png")),true,false);Names.Sort();
             for(const FString& Name:Names){
+                if(OKIsHiddenCardPath(Name))continue;
                 const FString Path=Folder/Name;FKKCharacterFile Card;FString Error;if(!UKKCardReader::LoadFromFile(Path,Card,Error)||Card.Sex!=0)continue;
                 FString Who=FString::Printf(TEXT("%s %s"),*Card.LastName,*Card.FirstName).TrimStartAndEnd();if(Who.IsEmpty())Who=FPaths::GetBaseFilename(Name);else Who+=FString::Printf(TEXT("（%s）"),*FPaths::GetBaseFilename(Name));
                 if(!CurrentCardDirectory.IsEmpty())Who+=TEXT("（遊戲卡）");

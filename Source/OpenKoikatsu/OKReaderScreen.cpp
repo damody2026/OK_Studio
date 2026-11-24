@@ -311,6 +311,10 @@ FString UOKDreamControl::BoundKind() const
 		if(Input)return TEXT("text");
 	}
 	if(Button&&OnPressed)return TEXT("button");
+	// The screen's own fields and switches (設定 › 遊戲目錄 and 本機模型庫, the card searches, MakeOwnToggle): no UMG behind
+	// them and no Push, but a person types or flips them all the same, so the game MCP lists and sets them too.
+	if(Input)return TEXT("text");
+	if(Toggle&&OnToggled)return TEXT("bool");
 	return FString();
 }
 void UOKDreamControl::DescribeBound(FJsonObject& Out) const
@@ -390,6 +394,15 @@ bool UOKDreamControl::SetValue(const FString& Value,FString* OutNote)
 	}
 	// The screen's own field (the card and outfit-card searches): no UMG control behind it, set as typed and committed.
 	if(!S&&Input){Input->SetText(Value);Input->GetOnTextChangedEvent().Broadcast(Value);Input->GetOnTextCommittedEvent().Broadcast(Value);return true;}
+	// The screen's own switch (MakeOwnToggle): flipped the way a click flips it.
+	if(!S&&Toggle&&OnToggled)
+	{
+		const FString L=Value.ToLower();
+		const bool bOn=L==TEXT("1")||L==TEXT("on")||L==TEXT("true");
+		if(!bOn&&L!=TEXT("0")&&L!=TEXT("off")&&L!=TEXT("false"))return Fail(TEXT("a toggle takes on/off/1/0"));
+		{TGuardValue<bool> Guard(bPushing,true);Toggle->SetIsOn(bOn);}
+		HandleToggle(bOn);return true;
+	}
 	if(!S||!S->GetIsEnabled())return Fail(TEXT("no enabled control behind it"));
 	if(auto* U=Cast<USlider>(S))
 	{
@@ -653,6 +666,9 @@ TArray<UOKDreamControl*> UOKReaderScreen::BoundControls() const
 {
 	TArray<UOKDreamControl*> Out;
 	for(UOKDreamControl* C:Controls)if(IsValid(C)&&!C->BoundKind().IsEmpty()&&C->IsOnScreen())Out.Add(C);
+	// The second-level menu (設定 › 遊戲目錄／光影／…, 臉 › 臉型／下巴／…) is kept out of Controls, but a person presses it
+	// like any button: listed too, or ui_press could not reach a page under it.
+	for(UOKDreamControl* C:SubButtons)if(IsValid(C)&&!C->BoundKind().IsEmpty()&&C->IsOnScreen())Out.AddUnique(C);
 	return Out;
 }
 
@@ -2652,7 +2668,7 @@ void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 		if(C){C->FixedText=Value;C->SetText(Value);if(UDreamPanelSlot* Slot=C->GetPanelSlot())Slot->SetMaxDesiredSize(FVector2D::ZeroVector);}
 		return C;
 	};
-	auto Field=[this,Text](UDreamWidget* Into,const FString& Caption,const FString& Value,const FString& Hint,
+	auto Field=[this,Text](UDreamWidget* Into,const FString& Name,const FString& Caption,const FString& Value,const FString& Hint,
 		TFunction<void(const FString&)> Changed,TFunction<void(const FString&)> Save,TFunction<FString()> Pick,TFunction<FString()> Reset)
 	{
 		Text(Into,Caption);
@@ -2661,6 +2677,7 @@ void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 		UDreamWidget* Row=MakePanel(Into,true,6.f);
 		if(Input)
 		{
+			Input->PathName=Name;	// the game MCP's key, one per field: Dream/設定／介面›遊戲目錄›<Name>
 			if(Input->Input)
 			{
 				Input->Input->SetText(Value);Input->Input->SetPlaceholder(FText::FromString(Hint));
@@ -2686,16 +2703,17 @@ void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 	};
 	UKKGameRoot* Game=UKKGameRoot::Get();
 	const FString Root=Game?Game->Root:FString();
-	RootInput=Field(Page,TEXT("遊戲目錄（原作 Koikatsu Sunshine 的資料夾：開卡時從它的 mods/ 找 zipmod）"),Root,TEXT("例如 D:/KoikatuSunshine"),
+	RootInput=Field(Page,TEXT("遊戲目錄"),TEXT("遊戲目錄（原作 Koikatsu Sunshine 的資料夾：開卡時從它的 mods/ 找 zipmod）"),Root,TEXT("例如 D:/KoikatuSunshine"),
 		[this](const FString& Typed){CheckGameRoot(Typed);},
-		[](const FString& Typed){UKKGameRoot::SetUserRoot(Typed);},
+		// Saved the same way ok.ReaderScreen's folder command saves it: a new game folder also gets its mods index.
+		[this](const FString& Typed){ApplyFolderSetting(false,Typed,Typed.IsEmpty());},
 		[this](){return PickFolder(TEXT("選擇遊戲目錄"),UKKGameRoot::Get()->Root);},
 		[](){UKKGameRoot::ClearUserRoot();return UKKGameRoot::Get()->Root;});
 	RootStatus=Text(Page,FString());
 	const FString Library=Game?Game->LocalLibrary:FString();
-	LibraryInput=Field(Page,TEXT("本機模型庫（LocalLibrary：在這台電腦轉出的第三方 mod 模型；空白就用基礎庫旁的 local_v1）"),Library,TEXT("空白：基礎庫旁的 local_v1"),
+	LibraryInput=Field(Page,TEXT("本機模型庫"),TEXT("本機模型庫（LocalLibrary：在這台電腦轉出的第三方 mod 模型；空白就用基礎庫旁的 local_v1）"),Library,TEXT("空白：基礎庫旁的 local_v1"),
 		[this](const FString& Typed){CheckLocalLibrary(Typed);},
-		[](const FString& Typed){UKKGameRoot::SetUserLocalLibrary(Typed);},
+		[this](const FString& Typed){ApplyFolderSetting(true,Typed,Typed.IsEmpty());},
 		[this](){return PickFolder(TEXT("選擇本機模型庫"),UKKGameRoot::ResolvedLocalLibrary());},
 		[](){UKKGameRoot::ClearUserLocalLibrary();return UKKGameRoot::Get()->LocalLibrary;});
 	LibraryStatus=Text(Page,FString());
@@ -2910,6 +2928,7 @@ namespace OKReaderPaths
 	// What a control is called: the text it shows, unless that is empty or a value (a number, which changes), then its kind.
 	static FString Name(const UOKDreamControl* C)
 	{
+		if(!C->PathName.IsEmpty())return C->PathName;
 		const FString T=C->GetShownText().TrimStartAndEnd();
 		if(T.IsEmpty())return Kind(C);
 		bool bValue=true;

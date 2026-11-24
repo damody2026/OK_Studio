@@ -75,6 +75,9 @@ public:
 	void PullNow(){if(Pull){TGuardValue<bool> Guard(bPushing,true);Pull(*this);}}
 	// Text shown instead of the source's own (a drawer's title, a tab).
 	FString FixedText;
+	// What the control is called in its path (ControlPath, the game MCP's "Dream/..." key) when it shows no text of its
+	// own: a text field, whose shown text is the value typed into it.
+	FString PathName;
 	// A drop-down: only the options matching this show (a search field above it sets it).
 	FString Filter;
 	// Hidden and shown with this control (its search field), and only for a list of at least SearchMinOptions entries.

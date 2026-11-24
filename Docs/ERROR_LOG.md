@@ -7624,3 +7624,13 @@ claim 时间就在它们启动前两分钟。
 **下次怎么认自己的 Unreal**：看 `-abslog=` 的 log 路径与建立时间对不对得上自己刚跑的那几条命令，
 再看 `unreal_slot.lua status` 的 owner 与 claim 时间；不要靠 `-Sandbox` 这种只有某一种启动方式才有的参数。
 `reader_stop` 失败就按 PID 停，并在每段测试结束后确认 `unreal processes: 0`。
+
+## 2026-11-24（mod-integ）讀卡器設定頁的「遊戲目錄」欄位、二層選單，game MCP 都碰不到
+
+**現象**：在打包版測原作卡要先設遊戲目錄，`ui_widgets` 卻列不出「設定 › 遊戲目錄」的輸入框，只能用 `ui_mouse` 點欄位再 `ui_type` 打字；「遊戲目錄／介面更新率／光影／角色風格／物理／介面」這排子頁按鈕 `ui_press` 也說 no such button。違反 AGENTS.md「新增的控制要讓 MCP 讀得到也改得到」。
+
+**原因**：game MCP 列讀卡器自己的 DreamGUI 控制，靠的是 `UOKReaderScreen::BoundControls()`，它只收 `BoundKind()` 不是空字串的控制；`BoundKind()` 只認有 `Push`（mod 頁）或 `OnPressed`（按鈕）的。設定頁的資料夾欄位是讀卡器自建的輸入框（沒有 UMG、沒有 `Push`），`MakeOwnToggle` 的開關也一樣，所以不列；`SetValue` 其實早就會設這種輸入框，只是沒人找得到它。二層選單的按鈕則在 `ShowCategory` 建好後被移出 `Controls`，`BoundControls()` 根本沒看到。另外兩個資料夾欄位沒有顯示文字，路徑都退回成 `Input`，key 一樣分不出來。
+
+**修正**：`BoundKind()` 把讀卡器自建的輸入框算 `text`、自建開關算 `bool`（`SetValue` 也接開關）；`BoundControls()` 也列 `SubButtons`；`UOKDreamControl::PathName` 給沒有顯示文字的控制一個路徑名，兩個欄位成了 `Dream/設定／介面›遊戲目錄›遊戲目錄` 與 `…›本機模型庫`。欄位按 Enter 改走 `ApplyFolderSetting`，和 `ok.ReaderScreen` 的資料夾指令一樣，換遊戲目錄也重讀 mods 索引。
+
+**下次怎麼避免**：新做一個讀卡器自建控制（`MakeControl` 而不是映射 UMG），做完用 `ui_widgets` 看它在不在、key 唯不唯一，再用 `ui_set`／`ui_press` 實際操作一次。

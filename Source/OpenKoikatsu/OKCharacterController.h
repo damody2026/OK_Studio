@@ -17,6 +17,18 @@ struct FOKAnimationMenuJob;
 struct FOKClothingWarmJob;
 struct FOKAppearanceCardJob;
 struct FOKCharacterMCPState;
+/** Whether a file found under Root is not one of the user's cards: its name, or a folder between Root and it, starts
+ *  with '.' (temporary or tool files such as .okremake-*.png). Card lists skip these and do not count them. */
+inline bool OKIsHiddenCardPath(const FString& Path,const FString& Root=FString())
+{
+	FString Rel=FPaths::ConvertRelativePathToFull(Path);
+	const FString Base=Root.IsEmpty()?FString():FPaths::ConvertRelativePathToFull(Root);
+	// Relative to Root when there is one (folders above Root are the user's choice, not checked); else the name alone.
+	if(Base.IsEmpty()||!FPaths::MakePathRelativeTo(Rel,*(Base/TEXT(""))))Rel=FPaths::GetCleanFilename(Rel);
+	TArray<FString> Parts;Rel.ParseIntoArray(Parts,TEXT("/"),true);
+	for(const FString& Part:Parts)if(Part.StartsWith(TEXT("."))&&Part!=TEXT(".")&&Part!=TEXT(".."))return true;
+	return false;
+}
 // States of one paired pose prepared in the background: the first state plays as soon as it is ready, the others
 // follow on several threads, and a selected state that is not ready yet jumps the queue.
 struct FOKPairProgress {
