@@ -1131,6 +1131,48 @@ void UOKCharacterController::ScreenNote(int32 Key, float Seconds, const FColor& 
 	if(GEngine)GEngine->AddOnScreenDebugMessage(Key,Seconds,Color,Text);
 }
 
+void OKBackgroundWorkerPriority();
+
+// Which GUID is in which package of one mods/ folder, built once on a worker and cached in Saved/mod_index.json; the
+// card list and each card's requirement list read it. Only the packages' manifests are read (KKZip::ReadManifests), so
+// a first build over 7,296 packages reads ~466 MiB instead of their 111 GiB, and a repeat build reads nothing but the
+// folder listing. Over half a second, so it is on the progress bar.
+void UOKCharacterController::StartInstalledModIndex(const FString& Mods)
+{
+	if (Mods.IsEmpty() || bModIndexBuilding || ModIndexDir == Mods) return;
+	if (!FPaths::DirectoryExists(Mods)) return;
+	bModIndexBuilding = true;
+	ModIndexDir = Mods;
+	const FString Cache = FPaths::ProjectSavedDir() / TEXT("mod_index.json");
+	TWeakObjectPtr<UOKCharacterController> Weak(this);
+	Async(EAsyncExecution::Thread, [Weak, Mods, Cache]()
+	{
+		OKBackgroundWorkerPriority();
+		OKBusy::FScope Busy(TEXT("建立 mod 索引"));
+		TSharedPtr<FKKModIndex, ESPMode::ThreadSafe> Index = MakeShared<FKKModIndex, ESPMode::ThreadSafe>();
+		Index->LoadCache(Cache);
+		FString Err;
+		const double Began = FPlatformTime::Seconds();
+		const bool bOk = Index->Build(Mods, Err, [&Busy](int32 Done, int32 All)
+		{
+			Busy.Report(All > 0 ? float(Done) / float(All) : -1.f,
+				FString::Printf(TEXT("讀 %d/%d 個 zipmod 的 manifest"), Done, All));
+		});
+		if (bOk) Index->SaveCache(Cache);
+		const double Took = FPlatformTime::Seconds() - Began;
+		AsyncTask(ENamedThreads::GameThread, [Weak, Index, bOk, Err, Took, Mods]()
+		{
+			UOKCharacterController* G = Weak.Get();
+			if (!G) return;
+			G->bModIndexBuilding = false;
+			UE_LOG(LogTemp, Display, TEXT("OK reader mod index: %d zipmod, %d GUID, %.1f s, %s%s"),
+				Index->Files.Num(), Index->Num(), Took, *Mods, bOk ? TEXT("") : *(TEXT(" / ") + Err));
+			if (!bOk && Index->Files.IsEmpty()) { G->ModIndexDir.Reset(); return; }
+			G->ModIndex = MoveTemp(*Index);
+		});
+	});
+}
+
 void UOKCharacterController::ScanAndShow()
 {
 	if (bLoadInFlight) return;
@@ -1174,16 +1216,9 @@ void UOKCharacterController::ScanAndShow()
 		}
 	}
 
-	FString Err;
-	if (!bIndependentCards && Root)
-	{
-		const FString Cache = FPaths::ProjectSavedDir() / TEXT("mod_index.json");
-		if (!ModIndex.LoadCache(Cache) || ModIndex.ModsDir != Root->Mods())
-		{
-			ModIndex.Build(Root->Mods(), Err);
-			ModIndex.SaveCache(Cache);
-		}
-	}
+	// The installed mods' GUID index is built on a worker: read on the game thread, the manifests of a real mods/
+	// folder (7,296 packages here) froze the reader for minutes with nothing on screen (the user, 2026-11-24).
+	if (!bIndependentCards && Root) StartInstalledModIndex(Root->Mods());
 	RefreshPartnerMales();
 	RefreshCardList();
 	if (Entries.Num() > 0)
@@ -1410,7 +1445,16 @@ void UOKCharacterController::SelectIndex(int32 Index)
 	}
 	else
 	{
-		LocalMods.BuildForCard(Entries[Index].Path);
+		// Only the zipmods this card names, looked up in the installed index (never a scan of mods/ from here: this
+		// runs on the game thread for every selection).
+		LocalMods.BuildForCard(Entries[Index].Path, Selected.Resolves, &ModIndex);
+		if (!LocalMods.GameRoot.IsEmpty() && !ModIndex.CoversModsDir(LocalMods.GameRoot / TEXT("mods")))
+		{
+			// A card inside a game installation (dragged in from its UserData/chara/female, say) while the index is
+			// about another folder or not built yet: index that game's mods/ now, in the background.
+			StartInstalledModIndex(LocalMods.GameRoot / TEXT("mods"));
+			Body += FString::Printf(TEXT("  這張卡在原作遊戲資料夾裡（%s），正在背景建立它的 mods/ 索引；建好後重新選這張卡才列得出 zipmod。\n"), *LocalMods.GameRoot);
+		}
 		for (const FKKLocalModRequirement& Item : LocalMods.Resolve(Selected.Resolves))
 		{
 			const TCHAR* State = Item.Status == EKKLocalModStatus::Found ? TEXT("已找到；3D 轉換尚待支援") :
@@ -1555,7 +1599,7 @@ void UOKCharacterController::OnSave()
 	FString Err;
 	if (bIndependentCards && CopyZipmodsCheck && CopyZipmodsCheck->IsChecked())
 	{
-		LocalMods.BuildForCard(Entries[SelectedIndex].Path);
+		LocalMods.BuildForCard(Entries[SelectedIndex].Path, Selected.Resolves, &ModIndex);
 		if (!LocalMods.CopyFound(Selected.Resolves, FPaths::GetPath(OutPath), Err))
 		{ if (InspectorText) InspectorText->SetText(FText::FromString(Err)); return; }
 	}
@@ -1939,14 +1983,30 @@ void UOKCharacterController::StartLoad3D(bool bAppearanceGeometryOnly)
 	const FString ClothesEnv = FString::Printf(TEXT("%u,%u,%u,%u,%u,%u,%u,%u,%u"),
 		ClothesStates[0], ClothesStates[1], ClothesStates[2], ClothesStates[3], ClothesStates[4],
 		ClothesStates[5], ClothesStates[6], ClothesStates[7], ClothesStates[8]);
+	// Which game this card opens against: its own installation when it sits inside one (that is where its zipmods
+	// are), else the folder in the settings. The cached clothing previews are keyed by it, so it is decided here.
+	FString EffectiveGameRoot;
+	if(!bIndependentCards)
+	{
+		if(const UKKGameRoot* Configured=UKKGameRoot::Get())EffectiveGameRoot=Configured->Root;
+		if(!LocalMods.GameRoot.IsEmpty()&&!FPaths::IsSamePath(LocalMods.GameRoot,EffectiveGameRoot)
+			&&FPaths::DirectoryExists(LocalMods.GameRoot/TEXT("mods")))
+		{
+			// The settings named D:/XKoikatuSunshine, which does not exist, so a card dragged in from
+			// D:/KoikatuSunshine's own UserData/chara/female found 1 of its 19 zipmods and wore the missing-texture
+			// green instead of its clothes (the user, 2026-11-24).
+			UE_LOG(LogTemp,Display,TEXT("OK load3d: the card's own game %s is used, not the folder in the settings (%s)"),
+				*LocalMods.GameRoot,EffectiveGameRoot.IsEmpty()?TEXT("<未設定>"):*EffectiveGameRoot);
+			EffectiveGameRoot=LocalMods.GameRoot;
+		}
+	}
 	PendingPreviewResourceSignature=Entries.IsValidIndex(SelectedIndex)?PortableGallerySignature(Entries[SelectedIndex].Path):FString();
 	if(PendingPreviewResourceSignature.IsEmpty()&&Entries.IsValidIndex(SelectedIndex)){
         const FString Path=FPaths::ConvertRelativePathToFull(Entries[SelectedIndex].Path);const auto Stat=IFileManager::Get().GetStatData(*Path);
         if(Stat.bIsValid)PendingPreviewResourceSignature=FString::Printf(TEXT("%s|%lld|%lld"),*Path,Stat.FileSize,Stat.ModificationTime.GetTicks());
     }
     if(!PendingPreviewResourceSignature.IsEmpty()){
-        const UKKGameRoot* KeyRoot=bIndependentCards?nullptr:UKKGameRoot::Get();
-        PendingPreviewResourceSignature+=FString::Printf(TEXT("|outfit=%d|mode=%s"),OutfitIndex,bIndependentCards?TEXT("portable"):(KeyRoot?*KeyRoot->Root:TEXT("native")));
+        PendingPreviewResourceSignature+=FString::Printf(TEXT("|outfit=%d|mode=%s"),OutfitIndex,bIndependentCards?TEXT("portable"):(EffectiveGameRoot.IsEmpty()?TEXT("native"):*EffectiveGameRoot));
         if(ClothingPreviewContext!=PendingPreviewResourceSignature)ResetClothingPreviews(PendingPreviewResourceSignature);
         PendingPreviewResourceSignature+=TEXT("|clothes=")+ClothesEnv;
     }
@@ -1985,7 +2045,7 @@ void UOKCharacterController::StartLoad3D(bool bAppearanceGeometryOnly)
 	UKKGameRoot* Root = bIndependentCards ? nullptr : UKKGameRoot::Get();
 	const FString CardPath = Entries.IsValidIndex(SelectedIndex) ?
         (bIndependentCards ? UKKCardWorkspace::LoadableSourcePath(Entries[SelectedIndex].Path) : Entries[SelectedIndex].Path) : FString();
-	const FString GameRoot = !bIndependentCards && Root ? Root->Root : FString();
+	const FString GameRoot = !bIndependentCards && Root ? EffectiveGameRoot : FString();
 	OKRequestCardWarm(CardPath);
 	const int32 Outfit = OutfitIndex;
 	const int32 Gen = ++LoadGeneration;

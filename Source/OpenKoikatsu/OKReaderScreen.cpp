@@ -2716,7 +2716,12 @@ void UOKReaderScreen::ApplyFolderSetting(bool bLibrary,const FString& Folder,boo
 	{
 		// A new game folder means a new catalogue: forget the one read from the old folder, or the picker pages keep
 		// answering from it and a root that was just corrected looks as if it changed nothing.
-		if(UOKCharacterController* G=GetController())G->AppearanceCatalogPath.Reset();
+		if(UOKCharacterController* G=GetController())
+		{
+			G->AppearanceCatalogPath.Reset();
+			// And a new mods/ to index (on a worker, with the progress bar): the old folder's GUIDs answer nothing here.
+			if(const UKKGameRoot* R=UKKGameRoot::Get();R&&!R->Root.IsEmpty())G->StartInstalledModIndex(R->Mods());
+		}
 		if(RootStatus.IsValid())CheckGameRoot(Now);
 	}
 }

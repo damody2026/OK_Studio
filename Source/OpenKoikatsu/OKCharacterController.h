@@ -875,7 +875,13 @@ public:
 
 	TArray<FKKCardListEntry> Entries;
 	FKKCharacterFile Selected;
+	/** The installed mods' GUID index, built on a worker (StartInstalledModIndex) and cached in Saved/mod_index.json.
+	 *  Nothing on the game thread may scan mods/ itself: it holds thousands of packages. */
 	FKKModIndex ModIndex;
+	void StartInstalledModIndex(const FString& Mods);
+	bool bModIndexBuilding = false;
+	/** The mods/ folder the index is for, or is being built for. */
+	FString ModIndexDir;
 	int32 SelectedIndex = INDEX_NONE;
 	int32 OutfitIndex = 0;
 	int32 LoadGeneration = 0;
