@@ -4,7 +4,7 @@
 這份只寫方案，**審過才實作**；本輪沒有動任何程式碼。
 
 > 2026-11-24 晚：Rust 那頭的判準已由 e-cardload（`[E組] 開卡片優化`）拍板，§2、§3、§8 已按它的答覆改寫；
-> 原稿與它的差異記在 §7.1；開發樹沒有 `RESOURCES.json` 怎麼算，由協調者裁定在 §7.2（同日），已無待決項。
+> 原稿與它的差異記在 §7.1（它 11-24 晚的兩點補充：mods_index 的 health() 與驗收 10a/10b，已併入 §3.2、§4.5、§8）；開發樹沒有 `RESOURCES.json` 怎麼算，由協調者裁定在 §7.2（同日），已無待決項。
 > 版本判準的結論在 §2.4，那一段是寫給 `PROGRAM_ONLY_UPDATE_PLAN.md` 直接抄的。
 > 分工：Rust（`resources.rs` 的常數、`resources_check`、CLI、C ABI）由 e-cardload 寫；UE 畫面與打包腳本是我們這邊。
 
@@ -121,6 +121,7 @@ pub const RESOURCES_MAX: u32 = 3;
 | `oklib_version` | `base_v1/oklib.json` 的 `version` ∈ 程式的已知集合 | block | 2 |
 | `mods_index_schema` | `mods_index.db` 的 `meta.schema` == `modsindex::SCHEMA` | block | C 樹 1 / E 樹 2 |
 | `mods_index_missing` | `mods_index.db` 在不在 | block | — |
+| `mods_index_empty` | 索引**可用但 0 個 GUID**（退化狀態，不是「這台真的沒裝 mod」） | block | — |
 | `mods_index_foreign` | 玩家設了遊戲目錄，而索引裡**一個 archive 都對不上他的 `mods/`** | **warn** | — |
 | `shared_mods_missing` | `shared_mods.txt` **存在**（不比內容） | block | — |
 | `models_ignore_missing` | `models/.gitignore` **存在** | block | — |
@@ -201,7 +202,15 @@ pub const RESOURCES_MAX: u32 = 3;
 
 `problems[].id` 由 e-cardload 定死這一組，之後只增不改（`library_missing` 併進 `sources_missing`／`no_resources_json`，`card_pack_version` 與 `shared_mods_fingerprint` 依 §2.1 不在資源閘裡）：
 
-`resources_too_old`、`resources_too_new`、`no_resources_json`、`oklib_version`、`mods_index_schema`、`mods_index_missing`、`mods_index_foreign`、`shared_mods_missing`、`models_ignore_missing`、`sources_missing`、`selftest_failed`。
+`resources_too_old`、`resources_too_new`、`no_resources_json`、`oklib_version`、`mods_index_schema`、`mods_index_missing`、`mods_index_empty`、`mods_index_foreign`、`shared_mods_missing`、`models_ignore_missing`、`sources_missing`、`selftest_failed`。
+
+索引那幾項（`mods_index_*`）的**判斷不寫在 `resources.rs`**：e-cardload 會在 `modsindex` 加
+
+```rust
+pub fn health() -> IndexHealth  // Missing / Schema{found, want} / Empty / Ok{guids, overrides, migrations}
+```
+
+`resources_check` 只把它翻成 `problems[]` 項目。理由是開卡路徑本身也要知道索引健不健康（§4.5），兩邊用同一個判斷，不會各寫一套然後慢慢分岔。
 
 每項帶 `what`／`fix`／`fixable_locally`／`command`，文案繁體中文。
 
@@ -303,7 +312,12 @@ mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪�
 | 閘過（或只有 `mods_index_foreign`） | 照 `CheckAbsentMods` 現在那樣列缺的 GUID 與補法 |
 | `mods_index_foreign`（warn） | 列缺件，但**加一句「索引不是這個遊戲目錄建的，這份清單可能不準」** |
 
-實作上：`CheckAbsentMods` 開頭先看閘的結果，有 `block` 級索引問題就**不跑**（連 `OKBusy` 都不用掛），直接讓資源包那則通知說話。另外加一道便宜的健全性檢查——索引**可用但 0 個 GUID**（`available()` 為真而 `all_guids()` 是空的）是退化狀態，不是「這台真的沒裝 mod」，要當成 `block` 講「資源包的 mod 索引是空的」，不要讓它變成一張 42 項的假缺件清單。
+實作上兩側都要改，e-cardload 已認領 Rust 那半：
+
+- **Rust**：`card_absent_mods` 在索引不健康（`IndexHealth` 不是 `Ok`）時回「**不可判定**」，而不是一張長清單。它現在的行為正是把整張卡的 GUID 全算成缺件——那就是實測到的「缺 42 個 mod」。
+- **C++**：`CheckAbsentMods` 開頭先看閘的結果，有 `block` 級索引問題就**不跑**（連 `OKBusy` 都不用掛），直接讓資源包那則通知說話；拿到「不可判定」時也不列清單。
+
+索引**可用但 0 個 GUID** 是退化狀態（`IndexHealth::Empty`），不是「這台真的沒裝 mod」，所以是 `block`（`mods_index_empty`），訊息講「資源包的 mod 索引是空的」。
 
 這一條也是為什麼閘要在開卡**之前**：開完才報的話，使用者已經看到那張假清單了。
 
@@ -433,9 +447,10 @@ warn 的文案要講清楚它是什麼，不要只印一行 skip——否則哪�
 | 7 | `oklib.json` 的 `version` 改成 9 | 退出碼 2；`oklib_version` |
 | 8 | 刪掉 `shared_mods.txt` | 退出碼 2；`shared_mods_missing`；開卡被擋（不是變慢後少件） |
 | 9 | 刪掉 `models/.gitignore` | 退出碼 2；`models_ignore_missing` |
-| 10 | 設一個**別台機器**的遊戲目錄（索引一個 archive 都對不上） | 退出碼 **0**、level `warn`、`mods_index_foreign`；**OK 卡照開**；黃字通知、可收起 |
+| 10a | **反例（不該報）**：把遊戲目錄 junction 成另一個路徑（`D:\KoikatuSunshinezz` → `D:\KoikatuSunshinezz-alt`），設定指到 alt | 退出碼 **0**、**沒有** `mods_index_foreign`。`meta.mods_dir` 的路徑比對不中，但 archive 相對路徑全對得上，退回去的視野檢查會認得——這條是驗「我們沒有誤報」 |
+| 10b | **正例（該報）**：建一棵只有一兩個 zipmod 的假樹（`D:\FakeGame\mods\zz-not-in-index.zipmod`，任何 zipmod 改名即可），遊戲目錄指 `D:\FakeGame` | 退出碼 **0**、level `warn`、`mods_index_foreign`；**OK 卡照開**；黃字通知、可收起。（反向做法也行：`ok-extract D:/FakeGame --oklib mods-index <臨時庫>`，再拿那個庫配真遊戲目錄） |
 | 11 | 把 `sources.okidx` 改名（selftest 失敗） | 退出碼 2；`sources_missing` 或 `selftest_failed` |
-| 11b | 索引**可用但 0 個 GUID**（清空 `guid` 表，schema 留 2） | 退出碼 2；講「mod 索引是空的」；**不出現假缺件清單**（§4.5） |
+| 11b | 索引**可用但 0 個 GUID**（清空 `guid` 表，schema 留 2） | 退出碼 2；`mods_index_empty`；講「mod 索引是空的」；**不出現假缺件清單**（§4.5） |
 | 12 | 情境 5 加上 `OK_RESOURCES_CHECK=off` | 卡開得起來；log 每次開卡都印「相容性閘已關閉」 |
 | 13 | 情境 2 的複本上跑 `--program-only --resources-from <該複本>` | 打包失敗，訊息說要先發新的完整包 |
 | 14 | 把 `modsindex::SCHEMA` 改成 3 但不動 `RESOURCES_MIN/MAX` | `cargo test` 紅，訊息就是 §2.2 那段 |
