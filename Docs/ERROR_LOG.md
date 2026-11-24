@@ -7687,3 +7687,28 @@ F 樹 65551a150 帶進來的），另一個沒有記下名字，就說「再觀�
 **改法**：新增 `ok.find_engine_root()`（找不到回 nil），打包會帶的兩個啟動器改用它，沒有引擎就走 stage；
 `ok.engine_root()` 仍對開發用的腳本報錯。驗證方式：把 `find_engine_root` 換成回 nil 再 `-DryRun`，兩個都選到 stage。
 **教訓**：打包版的啟動器要在「沒有引擎、沒有專案」的條件下測，不能用開發機的實際環境代替。
+
+## 2026-11-24 配種出來的小孩是光頭：接上去的頭髮被共用材質家族丟掉
+
+**現象**：使用者在打包版（`E:\OKPackage\Studio-20261124-release-e`）開配種卡
+`UserData/okbreed/crowd_C001×crowd_C006_680978141.png`，角色整個禿頭，卡照樣開起來（`OK load3d result ok=1`）。
+
+**原因**：配種的小孩卡本身沒有原作頭髮（`skip dummy hair id=500 cat=101 nohairB`，log 裡十幾行
+`OK part source inactive name=cf_hair_*`），頭髮完全靠 HairDeck 接上去的 `Tripo_Golden_Hair_8626`。
+而 `portable_hair.rs` 的原生材質分支（捐贈卡的原作髮材質 ＋ 匯入的網格）把 `p.blend` 硬寫成 `"opaque"`，
+打包／共用材質那條路的頭髮配方（`Plugins/KKRuntimePose/.../KKRuntimeSharedMaterial.cpp`，ShaderKind 1 ＋
+`Shader Forge/main_hair`）**只收 masked 且 unlit 的部件**，所以整個部件被丟掉：
+`Unsupported shared material family: part Tripo_Golden_Hair_8626 (hair_back, shader Shader Forge/main_hair)`。
+唯一的頭髮被丟掉 ＋ 原作髮全關 ＝ 光頭。這是「少一塊照樣開卡」的設計，所以不會失敗，只會禿。
+
+**修正**：原生材質分支沿用捐贈部件自己的 blend（原作頭髮是 masked），不再壓成 opaque；
+捐贈部件沒有 blend 時退回 `masked`。沒有 alpha mask，masked 就依匯入貼圖自己的 alpha 裁切，和捐贈頭髮一樣。
+
+**驗證**：同一張配種卡在讀卡器（走的是同一個 `High model cooked shared materials root=.../StreetDisplay27`）
+重開，`Unsupported shared material family` 0 筆，正面截圖看得到頭髮。
+
+**下次要注意的**：
+- 這已經是第三筆同型的（校徽 `o_emblem_*`、眼線 `cf_O_eyeline_kage`，見上面兩條）。**凡是程式自己組出來的部件，
+  材質旗標要照它宣稱的那個原作 shader 來設**，不能隨手填 opaque：編輯器會自己建每部件材質所以看不出來，
+  只有打包版（或任何走共用材質家族的路徑）會整塊不見。
+- 驗這類問題不能只看「卡開起來了」，要 grep `Unsupported shared material family`。

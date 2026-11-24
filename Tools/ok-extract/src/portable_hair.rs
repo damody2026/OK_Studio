@@ -190,7 +190,16 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         p.blend_shapes.clear();p.morph_idx.clear();p.morph_dxyz.clear();
         p.png=Some(texture.to_vec());p.shader_textures.insert("_MainTex".into(),texture.to_vec());
         p.runtime_textures.insert("_MainTex".into(),[1,0,0,1,1]);p.main_tex_st=[1.,1.,0.,0.];
-        p.alpha_mask=None;p.blend="opaque".into();p.blend_c=CString::new("opaque").unwrap();
+        // The donor's draw blend is kept (game hair is "masked"), not forced to "opaque" as the plain Tripo item pass
+        // above does. The packaged build draws through the shared material families, and its hair recipe
+        // (`KKRuntimeSharedMaterial.cpp`, ShaderKind 1 + `Shader Forge/main_hair`) only matches a **masked, unlit**
+        // part: with "opaque" the part was dropped with `Unsupported shared material family` and the character came
+        // out bald -- only in a package, because the editor builds a material per part and never asks the family.
+        // (2026-11-24, a breeding card whose own hair is `nohairB`, so the imported hair was the only one.)
+        // There is no alpha mask: masked then clips on the imported albedo's own alpha, which is what the donor hair
+        // does with its own texture.
+        let blend=if d.blend.is_empty(){"masked".to_string()}else{d.blend.clone()};
+        p.alpha_mask=None;p.blend_c=CString::new(blend.clone()).map_err(|e|e.to_string())?;p.blend=blend;
         if let Some(mat)=p.source_material.as_mut(){mat.render_queue=2000;for key in ["_Color","_Color2","_Color3"]{mat.colors.insert(key.into(),[1.;4]);}}
         p.overcolor=[1.;4];p.overcolor2=[1.;4];
         if let (Some(id),Some(path))=(&m.native_gloss_asset,&m.native_material_card) {
