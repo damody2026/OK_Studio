@@ -1,13 +1,15 @@
 -- Independent native-frame checks: original image hashes and visible time variation.
 package.path='Tools/lua/?.lua;'..package.path
 local json=require('ok.json')
-local out='C:/portable/OpenKoikatsu/output/street-social-city-production/activity-scenes-v1'
+-- 這條產線的輸出放在工作樹底下，不是某一台機器的位置（使用者 2026-11-24：每台電腦都不一樣）。
+local root=require('ok').root
+local out=root..'/output/street-social-city-production/activity-scenes-v1'
 local code=[====[
 import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-b=Path('C:/portable/OpenKoikatsu/output/street-social-city-production/activity-scenes-v1')
+b=Path('@OKOUT@')
 r=json.loads((b/'render.json').read_text());install=json.loads((b/'install.json').read_text());audit=json.loads((b/'audit.json').read_text())
 assert r['status']==audit['status']=='passed'
 assert r['map_sha256']==install['map_sha256']==audit['map_sha256']
@@ -23,6 +25,6 @@ assert all(q['passed'] for q in rows),rows
 (b/'art-frame-verification.json').write_text(json.dumps(dict(status='passed',map_sha256=r['map_sha256'],native_images=len(r['images']),comparison=rows),indent=2))
 print(json.dumps(rows))
 ]====]
-local f=assert(io.open(out..'/verify-frames-code.txt','wb'));f:write(code);f:close()
+local f=assert(io.open(out..'/verify-frames-code.txt','wb'));f:write((code:gsub('@OKOUT@', out)));f:close()
 -- A command string reads the saved diagnostic text; no new Python script is added to the project.
 assert(os.execute([[python -c "exec(open(']]..out..[[/verify-frames-code.txt',encoding='utf-8').read())"]]))

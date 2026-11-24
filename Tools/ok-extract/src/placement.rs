@@ -150,7 +150,7 @@ pub(crate) fn skin_mesh_impl(mesh:&mut ExtractedMesh,skel:&crate::pose::Skeleton
             }
             out.push_str(&format!("{nm} {:.6} {:.6} {:.6}\n", w[0][3], w[1][3], w[2][3]));
         }
-        let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\our_bones.txt", out);
+        let _ = std::fs::write(crate::dump_path("our_bones.txt"), out);
         let mut loc = String::new();
         for t in skel.tfs.values() {
             let par = t
@@ -164,7 +164,7 @@ pub(crate) fn skin_mesh_impl(mesh:&mut ExtractedMesh,skel:&crate::pose::Skeleton
                 t.scale[0], t.scale[1], t.scale[2], par
             ));
         }
-        let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\our_bone_locals.txt", loc);
+        let _ = std::fs::write(crate::dump_path("our_bone_locals.txt"), loc);
     }
     let binds = if mesh.bind_poses.len() >= n {
         mesh.bind_poses[..n].to_vec()

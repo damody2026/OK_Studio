@@ -468,19 +468,31 @@ pub struct MmddClipTrack {
 
 static ACTION_FILE_INDEX: OnceLock<Mutex<Option<HashMap<String, Vec<PathBuf>>>>> = OnceLock::new();
 
-fn build_file_index() -> HashMap<String, Vec<PathBuf>> {
-    let mut map: HashMap<String, Vec<PathBuf>> = HashMap::new();
-    let mut roots = vec![
-        PathBuf::from(r"E:\02_Mocap_Animation\action"),
-        PathBuf::from(r"E:\action"),
-        PathBuf::from(r"E:\Koikatu\UserData"),
-        PathBuf::from(r"E:\Koikatu\BepInEx\plugins"),
-    ];
+/// Where an MMD scene's VMD and audio are looked for on THIS machine: the folders `OK_MMDD_SEARCH_DIR` names
+/// (`;` separated), and the installation `OK_GAME_ROOT` names (its `UserData` and `BepInEx/plugins`). The scene's own
+/// folder is tried first by `resolve_external_file` itself.
+///
+/// This list used to start with four folders on one developer's E: drive. On anyone else's machine those are four
+/// failed `read_dir`s and nothing else, while the files that are actually there go unfound (the user, 2026-11-24:
+/// 「每台電腦都不一樣」「你應該用相對路徑去找」).
+fn search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
     if let Ok(extra) = std::env::var("OK_MMDD_SEARCH_DIR") {
         for part in extra.split(';').filter(|s| !s.trim().is_empty()) {
             roots.push(PathBuf::from(part.trim()));
         }
     }
+    if let Ok(game) = std::env::var("OK_GAME_ROOT") {
+        let game = PathBuf::from(game);
+        roots.push(game.join("UserData"));
+        roots.push(game.join("BepInEx/plugins"));
+    }
+    roots
+}
+
+fn build_file_index() -> HashMap<String, Vec<PathBuf>> {
+    let mut map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let roots = search_roots();
     fn walk(dir: &Path, depth: usize, out: &mut HashMap<String, Vec<PathBuf>>) {
         if depth > 8 {
             return;
@@ -522,20 +534,18 @@ pub fn resolve_external_file(raw_path: &str, scene_path: Option<&Path>) -> Optio
         return Some(p.to_path_buf());
     }
     let norm = trimmed.replace('/', "\\");
-    // Common relocated action directory: E:\action\... -> E:\02_Mocap_Animation\action\...
-    for prefix in [r"E:\action\", r"e:\action\", r"D:\action\", r"C:\action\"] {
-        if let Some(rest) = norm.strip_prefix(prefix) {
-            let candidate = Path::new(r"E:\02_Mocap_Animation\action").join(rest);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
+    // The scene names the file by the absolute path it had on the machine that made it (`E:\action\...`).
+    // That drive is not this machine, so the part after `\action\` is what carries over: it is looked for under the
+    // folders this machine actually has (search_roots). Naming the other machine's drives here found nothing anywhere
+    // else (the user, 2026-11-24).
     if let Some(idx) = norm.to_ascii_lowercase().find(r"\action\") {
         let rest = &norm[idx + r"\action\".len()..];
-        let candidate = Path::new(r"E:\02_Mocap_Animation\action").join(rest);
-        if candidate.is_file() {
-            return Some(candidate);
+        for root in search_roots() {
+            for candidate in [root.join(rest), root.join("action").join(rest)] {
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
         }
     }
     if let Some(sp) = scene_path {
@@ -1500,7 +1510,6 @@ fn mmdd_resource_candidates() -> Vec<PathBuf> {
     if let Ok(game) = std::env::var("OK_GAME_ROOT") {
         candidates.push(PathBuf::from(game));
     }
-    candidates.push(PathBuf::from(r"E:\Koikatu"));
     candidates
 }
 
@@ -5279,7 +5288,10 @@ mod tests {
 
     #[test]
     fn real_mmdd_and_kkvmdplay_scenes_export_okanim_and_camera() {
-        let mmdd_scene = Path::new(r"E:\Koikatu\UserData\Studio\scene\2025_0113_0056_34_115.png");
+        // The scenes these were recorded from are not in version control and live wherever the person kept them:
+        // OK_MMDD_SCENE / OK_KKVMD_SCENE name them, and without them the test has nothing to check.
+        let mmdd_scene = std::env::var_os("OK_MMDD_SCENE").map(PathBuf::from).unwrap_or_default();
+        let mmdd_scene = mmdd_scene.as_path();
         if mmdd_scene.is_file() {
             let out_dir = std::env::temp_dir().join("ok_mmdd_scene_test");
             let _ = std::fs::remove_dir_all(&out_dir);
@@ -5317,7 +5329,8 @@ mod tests {
             assert!(!cam_kfs.is_empty());
         }
 
-        let kkvmd_scene = Path::new(r"E:\Koikatu\UserData\Studio\scene\2025_1004_1936_39_768.png");
+        let kkvmd_scene = std::env::var_os("OK_KKVMD_SCENE").map(PathBuf::from).unwrap_or_default();
+        let kkvmd_scene = kkvmd_scene.as_path();
         if kkvmd_scene.is_file() {
             let out_dir = std::env::temp_dir().join("ok_kkvmd_scene_test");
             let _ = std::fs::remove_dir_all(&out_dir);

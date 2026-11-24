@@ -152,25 +152,27 @@ local INTERFACE_TYPES = {
   "FInstanceSceneData", "FPrimitiveSceneData", "FNaniteView", "FInstanceDynamicData", "FBoxCull", "FFrustumCullData",
   "FScreenRect", "FVirtualShadowMapHandle", "FVirtualSMLevelOffset", "FSharedMarkingJob",
 }
-local INTERFACE_FILES = {
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\VirtualShadowMaps\\VirtualShadowMapBuildPerPageDrawCommands.usf",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\Common.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\ViewData.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\VirtualShadowMaps\\VirtualShadowMapPageOverlap.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\VirtualShadowMaps\\VirtualShadowMapProjectionCommon.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\Nanite\\NaniteCullingCommon.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\Nanite\\NaniteHZBCull.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\Nanite\\NaniteDataDecode.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\InstanceCulling\\InstanceCullingCommon.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\InstanceCulling\\InstanceCullingLoadBalancer.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\WaveOpUtil.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\DynamicMeshBounds.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Shared\\VirtualShadowMapDefinitions.h",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\VirtualShadowMaps\\VirtualShadowMapStats.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\VirtualShadowMaps\\VirtualShadowMapPageCacheCommon.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\ShaderPrint.ush",
-  "D:\\UE5.8\\Engine\\Shaders\\Private\\SceneData.ush",
-}
+-- 引擎裝在哪每台機器不一樣：ok.engine_root()（OK_ENGINE_ROOT、Tools/engine.local.json、同磁碟探測）。
+local INTERFACE_FILES = {}
+for _, rel in ipairs({
+  "Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapBuildPerPageDrawCommands.usf",
+  "Engine/Shaders/Private/Common.ush",
+  "Engine/Shaders/Private/ViewData.ush",
+  "Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapPageOverlap.ush",
+  "Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjectionCommon.ush",
+  "Engine/Shaders/Private/Nanite/NaniteCullingCommon.ush",
+  "Engine/Shaders/Private/Nanite/NaniteHZBCull.ush",
+  "Engine/Shaders/Private/Nanite/NaniteDataDecode.ush",
+  "Engine/Shaders/Private/InstanceCulling/InstanceCullingCommon.ush",
+  "Engine/Shaders/Private/InstanceCulling/InstanceCullingLoadBalancer.ush",
+  "Engine/Shaders/Private/WaveOpUtil.ush",
+  "Engine/Shaders/Private/DynamicMeshBounds.ush",
+  "Engine/Shaders/Shared/VirtualShadowMapDefinitions.h",
+  "Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapStats.ush",
+  "Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapPageCacheCommon.ush",
+  "Engine/Shaders/Private/ShaderPrint.ush",
+  "Engine/Shaders/Private/SceneData.ush",
+}) do INTERFACE_FILES[#INTERFACE_FILES + 1] = ok.engine_root() .. "/" .. rel end
 
 -- Name presence in the usf include set. Not a type check and not a DXC compile.
 local function interface_check()

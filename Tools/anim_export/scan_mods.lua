@@ -11,7 +11,7 @@ local lfs = require "lfs"
 local path = ok.path
 
 local MODS = arg[1] or ok.game_root(true, "\\") .. "\\mods"
-local OUTDIR = arg[2] or "C:\\portable\\OpenKoikatsu\\Saved\\anim_export"
+local OUTDIR = arg[2] or (ok.root .. "/Saved/anim_export")
 
 local ANIM_DIRS = {
   "h/anim/",

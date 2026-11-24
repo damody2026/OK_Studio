@@ -1,4 +1,4 @@
-// Temporary BepInEx diagnostic for reading the live Maker lighting state.
+﻿// Temporary BepInEx diagnostic for reading the live Maker lighting state.
 // Build against the game's assemblies and remove the compiled DLL after use.
 using System;
 using System.Collections;
@@ -19,13 +19,28 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
         {
             string configured = Environment.GetEnvironmentVariable("OK_PROBE_CARD");
             return String.IsNullOrEmpty(configured)
-                ? @"C:\portable\KoikatuSunshine\UserData\chara\female\Alice_keiyuu.png"
+                ? String.Empty  // no card written here: it is OK_PROBE_CARD's job to say which one (the user, 2026-11-24)
                 : configured;
         }
     }
+    /// <summary>Where this probe writes: OK_PROBE_OUT, else a "OKProbe" folder under the running game. A folder
+    /// written into this file is one machine's and exists on no other (the user, 2026-11-24).</summary>
+    private static string ProbeOutputDir
+    {
+        get
+        {
+            string configured = Environment.GetEnvironmentVariable("OK_PROBE_OUT");
+            string dir = String.IsNullOrEmpty(configured)
+                ? Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? Path.GetTempPath(), "OKProbe")
+                : configured;
+            try { Directory.CreateDirectory(dir); } catch { }
+            return dir;
+        }
+    }
+
     private static string ProbePath(string suffix)
     {
-        return Path.Combine(@"C:\portable\OpenKoikatsu\Saved\DebugShots",
+        return Path.Combine(ProbeOutputDir,
             Path.GetFileNameWithoutExtension(ProbeCardPath) + suffix);
     }
 
@@ -270,7 +285,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
                         }
                         if (material != null && (name == "cf_o_face" || name == "o_body_a" || name == "o_inner_a" || name == "o_top_jacket01_a"))
                         {
-                            string outDir = @"C:\portable\OpenKoikatsu\Saved\DebugShots\GameRuntimeYuuka";
+                            string outDir = Path.Combine(ProbeOutputDir, @"GameRuntimeYuuka");
                             Directory.CreateDirectory(outDir);
                             foreach (string property in new [] { "_MainTex", "_overtex1", "_overtex2", "_overtex3", "_DetailMask", "_LineMask" })
                             {
@@ -306,7 +321,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
                     if (name.Contains("nosetama") && !savedAccessoryTexture)
                     {
                         savedAccessoryTexture = true;
-                        string outDir = @"C:\portable\OpenKoikatsu\Saved\DebugShots\GameRuntimeAlice";
+                        string outDir = Path.Combine(ProbeOutputDir, @"GameRuntimeAlice");
                         Directory.CreateDirectory(outDir);
                         for (int j = 0; j < renderer.sharedMaterials.Length; ++j)
                         {
@@ -340,7 +355,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
                             Vector3 hi = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
                             Vector3[] vertices = mesh.vertices;
                             Vector3[] normals = mesh.normals;
-                            StreamWriter faceNormals = name == "cf_o_face" ? new StreamWriter(@"C:\portable\OpenKoikatsu\Saved\ShaderDxbc\runtime_yuuka_face_normals.tsv", false) : null;
+                            StreamWriter faceNormals = name == "cf_o_face" ? new StreamWriter(Path.Combine(ProbeOutputDir, "runtime_yuuka_face_normals.tsv"), false) : null;
                             for (int i = 0; i < vertices.Length; ++i)
                             {
                                 Vector3 p = renderer.transform.TransformPoint(vertices[i]);
@@ -598,7 +613,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
                         Texture2D readback = new Texture2D(maskSource.width, maskSource.height, TextureFormat.RGBA32, false);
                         readback.ReadPixels(new Rect(0, 0, maskSource.width, maskSource.height), 0, 0);
                         readback.Apply();
-                        string file = @"C:\portable\OpenKoikatsu\Saved\DebugShots\AliceMakerStudio" + key + ".png";
+                        string file = Path.Combine(ProbeOutputDir, @"AliceMakerStudio" + key + ".png");
                         File.WriteAllBytes(file, readback.EncodeToPNG());
                         log.WriteLine("face_studio_texture=" + key + " name=" + maskSource.name + " type=" + maskSource.GetType().Name + " path=" + file);
                         UnityEngine.Object.Destroy(readback);
@@ -615,7 +630,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
                 Texture2D textureCopy = new Texture2D(sourceTexture.width, sourceTexture.height, TextureFormat.RGBA32, false);
                 textureCopy.ReadPixels(new Rect(0, 0, sourceTexture.width, sourceTexture.height), 0, 0);
                 textureCopy.Apply();
-                string texturePath = @"C:\portable\OpenKoikatsu\Saved\DebugShots\AliceMakerRuntimeHair" + copyIndex + "_mat" + materialIndex + ".png";
+                string texturePath = Path.Combine(ProbeOutputDir, @"AliceMakerRuntimeHair" + copyIndex + "_mat" + materialIndex + ".png");
                 File.WriteAllBytes(texturePath, textureCopy.EncodeToPNG());
                 log.WriteLine("face_runtime_texture=" + texturePath + " type=" + sourceTexture.GetType().Name +
                     " size=" + sourceTexture.width + "x" + sourceTexture.height);
@@ -665,7 +680,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
 
     private static void DumpBaked(SkinnedMeshRenderer smr, string tag, StreamWriter log)
     {
-        string skinPath = @"C:\portable\OpenKoikatsu\Saved\DebugShots\AliceRuntimeSkin_" + tag + ".tsv";
+        string skinPath = Path.Combine(ProbeOutputDir, @"AliceRuntimeSkin_" + tag + ".tsv");
         using (StreamWriter skin = new StreamWriter(skinPath, false))
         {
             skin.WriteLine("renderer\t" + MatrixText(smr.transform.localToWorldMatrix));
@@ -705,7 +720,7 @@ public sealed class OpenKoikatsuRuntimeLightProbe : BaseUnityPlugin
         }
         foreach (bool applyRendererScale in new bool[] { false, true })
         {
-            string path = @"C:\portable\OpenKoikatsu\Saved\DebugShots\AliceRuntimeMesh_" + tag + (applyRendererScale ? "_fullworld" : "_noscale") + ".obj";
+            string path = Path.Combine(ProbeOutputDir, @"AliceRuntimeMesh_" + tag + (applyRendererScale ? "_fullworld" : "_noscale") + ".obj");
             using (StreamWriter obj = new StreamWriter(path, false))
                 foreach (Vector3 vertex in mesh.vertices)
                 {

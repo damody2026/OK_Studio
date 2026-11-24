@@ -13,7 +13,7 @@ local function check_run(args)
 end
 
 local rsp = P.norm(arg[1])
-local base = P.join(os.getenv("OK_ENGINE_ROOT") or "E:/PhysX/UE5.8", "Engine/Source")
+local base = P.join(ok.engine_root(), "Engine/Source")
 local compiler = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64"
 local imports = P.parent(rsp) == "." and "Imports" or P.join(P.parent(rsp), "Imports")
 if not P.is_dir(imports) then

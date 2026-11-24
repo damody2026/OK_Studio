@@ -32,7 +32,10 @@ local CARDS = {
   "crowd_C001.png", "crowd_C006.png", "crowd_C049.png",
   "demo_C050.png", "heroine_klara.png", "heroine_megumin.png",
 }
-local DEFAULT_CARDS = { "E:/OKPackage/TestCards-20261118", root .. "/Content/CharacterCards/CrowdAPNG" }
+-- 測試卡不進版控，放哪是本機的事：OK_TEST_CARDS 指定，否則用專案裡的 CrowdAPNG。
+local DEFAULT_CARDS = {}
+if os.getenv("OK_TEST_CARDS") then DEFAULT_CARDS[#DEFAULT_CARDS + 1] = os.getenv("OK_TEST_CARDS") end
+DEFAULT_CARDS[#DEFAULT_CARDS + 1] = root .. "/Content/CharacterCards/CrowdAPNG"
 local USAGE = [[
 Tools\lua\lua.exe Tools\card_open_baseline.lua [-Cards DIR] [-Library DIR] [-Rounds N]
   [-Out FILE] [-Compare FILE|latest] [-NoBuild]

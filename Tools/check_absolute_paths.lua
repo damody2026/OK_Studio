@@ -23,9 +23,37 @@ local ALLOW = {
   { file = "Source/OpenKoikatsu/OKInteractionModTest.cpp", prefix = "C:/h/" },
   -- 作業系統自己的位置。
   { prefix = "C:/Windows" },
+  { prefix = "C:/Program Files" },
+  -- 刻意不存在的假路徑（Rust 測試的 fixture：開不起來才是重點）。
+  { prefix = "X:/" },
+  { prefix = "C:/game/" }, { prefix = "C:/mods/" }, { prefix = "c:/mods/" }, { prefix = "C:/owned/" },
+  { prefix = "C:/cards/" }, { prefix = "C:/Temp/" }, { prefix = "C:/a/" }, { prefix = "D:/sdk" }, { prefix = "F:/x/" },
+  { prefix = "C:/__missing" }, { prefix = "C:/v/" }, { prefix = "C:/h/" }, { prefix = "C:/fixture/" }, { prefix = "C:/manifest" }, { prefix = "C:/card.png" },
+  -- 另一個專案（StreetSocialCity）的產線腳本與它的素材磁碟：那不是這個程式的一部分，資料也只在那台機器上。
+  -- 2026-11-24 盤點：46 個 Tools/*street_city*.lua，共約 145 處（E:/StreetSocialCityProduction、E:/PhysX）。
+  { prefix = "E:/StreetSocialCityProduction" },
+  -- 這份檢查器自己：ALLOW 的規則與說明文字裡本來就要寫出路徑。
+  { file = "Tools/check_absolute_paths.lua", prefix = "D:/" },
+  { file = "Tools/check_absolute_paths.lua", prefix = "C:/" },
+  { file = "Tools/check_absolute_paths.lua", prefix = "E:/" },
+  { file = "Tools/check_absolute_paths.lua", prefix = "F:/" },
+  { file = "Tools/check_absolute_paths.lua", prefix = "X:/" },
+  -- C／E／F 三個工作樹共用同一個 Unreal 名額檔：那是跨工作樹的約定，必須是同一個絕對位置
+  -- （放在各自的 Saved/ 底下就互相看不到了，三個樹會同時開 Unreal 把機器壓死）。
+  { file = "Tools/unreal_slot.lua", prefix = "C:/portable/OpenKoikatsu/" },
+  { file = "Tools/reader_jump_check.lua", prefix = "C:/portable/OpenKoikatsu/Tools/unreal_slot.lua" },
+  { file = "Tools/reader_package_sweep.lua", prefix = "C:/portable/OpenKoikatsu/Tools/" },
+  { file = "Tools/ok-game-mcp/src/guard.rs", prefix = "C:/portable/OpenKoikatsu/Saved/UnrealSlots" },
+  { file = "Tools/package_studio_release.lua", prefix = "C:/portable/OpenKoikatsu" },
+  -- gamefs.rs 自己檔案裡的 #[test]：路徑正規化的假輸入（重點是字串怎麼被拆，不會去開它）。
+  { file = "Tools/ok-extract/src/gamefs.rs", prefix = "D:/KoikatuSunshine/Mods/A.zipmod" },
+  { file = "Tools/ok-extract/src/gamefs.rs", prefix = "E:/OpenKoikatsu/Content/IndependentResources/base_v1" },
 }
+-- 另一個專案的產線腳本整個跳過（檔名帶 street_city）。
+local function other_project(rel) return rel:find("street_city") ~= nil end
 
 local function allowed(file, found)
+  if other_project(file) then return true end
   for _, rule in ipairs(ALLOW) do
     if (not rule.file or rule.file == file) and found:sub(1, #rule.prefix):lower() == rule.prefix:lower() then return true end
   end
@@ -34,8 +62,12 @@ end
 
 -- 會編進執行檔的程式：排除測試與建置產物。
 local function shipped(rel)
-  if rel:find("/Intermediate/") or rel:find("/Binaries/") then return false end
+  if rel:find("/Intermediate/") or rel:find("/Binaries/") or rel:find("/target/") then return false end
   if rel:find("%.spec%.cpp$") or rel:find("/Tests/") or rel:find("Tests%.cpp$") then return false end
+  -- Rust: 測試與 fixture 另算（tests.rs、*_tests.rs、fixtures/、examples/）。
+  if rel:find("tests%.rs$") or rel:find("_tests%.rs$") or rel:find("/fixtures/") or rel:find("/examples/") then return false end
+  -- Lua: 測試腳本（Tools/tests/、test_*.lua）也不出貨，裡面的路徑是刻意的假值。
+  if rel:find("/tests/") or rel:find("/test_[^/]*%.lua$") then return false end
   return true
 end
 
@@ -52,6 +84,15 @@ local function files()
   walk(ok.root .. "/Source", function(f) return code(f) and shipped(f) end)
   walk(ok.root .. "/Plugins", function(f) return code(f) and shipped(f) end)
   walk(ok.root .. "/Config", function(f) return f:find("%.ini$") end)
+  -- Rust 也會出貨：ok-extract 靜態連結進遊戲（ok_extract.lib），ok-mod／ok-song 是交付的工具。
+  for _, crate in ipairs({ "ok-extract", "ok-mod", "ok-song", "ok-game-mcp", "character_mcp" }) do
+    local dir = ok.root .. "/Tools/" .. crate .. "/src"
+    if path.is_dir(dir) then walk(dir, function(f) return f:find("%.rs$") and shipped(f) end) end
+  end
+  -- 專案自己的 Lua 工具（ok.root 之下的 Tools/*.lua，不含別的專案的產線腳本：見 ALLOW 的 street_city）。
+  walk(ok.root .. "/Tools", function(f) return f:find("%.lua$") and not f:find("/lua/") and shipped(f) end)
+  -- 專案自己的 Lua 函式庫（ok.*）：所有腳本都靠它找遊戲與引擎，寫死在這裡影響最大。vendor 不是我們的。
+  walk(ok.root .. "/Tools/lua/ok", function(f) return f:find("%.lua$") and shipped(f) end)
   for _, name in ipairs(path.list(ok.root) or {}) do
     if name:find("%.cmd$") then out[#out + 1] = ok.root .. "/" .. name end
   end
@@ -62,7 +103,7 @@ end
 local function is_comment(line)
   local t = line:gsub("^%s+", "")
   return t:sub(1, 2) == "//" or t:sub(1, 2) == "/*" or t:sub(1, 1) == "*" or t:sub(1, 1) == ";"
-    or t:lower():sub(1, 4) == "rem "
+    or t:sub(1, 2) == "--" or t:lower():sub(1, 4) == "rem "
 end
 
 local list = arg and arg[1] == "--list"
@@ -76,7 +117,7 @@ for _, full in ipairs(files()) do
       n = n + 1
       if not is_comment(line) then
         for found in line:gmatch("%f[%a]%a:[/\\][%w_%./\\%- ]*") do
-          found = found:gsub("\\", "/")
+          found = found:gsub("%s+$", ""):gsub("\\", "/"):gsub("//+", "/")
           -- 單一個字母加冒號多半是別的東西（三元運算、時間），要有一段路徑才算。
           if #found > 4 then
             seen = seen + 1

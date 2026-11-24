@@ -897,7 +897,7 @@ pub(crate) fn extract_session_from_info(
                     &[&n],
                 ) {
                     let _ = std::fs::write(
-                        format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\mnpb_{i:02}.png"),
+                        crate::dump_path(&format!("mnpb_{i:02}.png")),
                         &png,
                     );
                 }

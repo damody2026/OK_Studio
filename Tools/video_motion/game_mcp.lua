@@ -22,7 +22,7 @@ Game.__index = Game
 function M.launch(opts)
   math.randomseed(math.floor(ok.time.time() * 1e6) % 2147483647)
   local root = ok.root
-  local editor = opts.editor or ((os.getenv("OK_ENGINE_ROOT") or "E:/PhysX/UE5.8") .. "/Engine/Binaries/Win64/UnrealEditor.exe")
+  local editor = opts.editor or (ok.engine_root() .. "/Engine/Binaries/Win64/UnrealEditor.exe")
   local out = path.abs(opts.out)
   local mailbox = out .. "/mailbox"
   for _, d in ipairs({ "requests", "responses", "images", "cards" }) do path.mkdir(mailbox .. "/" .. d, true) end

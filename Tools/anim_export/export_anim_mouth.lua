@@ -27,7 +27,7 @@ local json, path, util = ok.json, ok.path, ok.util
 local M = {}
 
 M.GAME = ok.game_root(true, "\\")
-M.OUT = "C:\\portable\\OpenKoikatsu\\Saved\\anim_export"
+M.OUT = ok.root .. "/Saved/anim_export"  -- 專案自己的 Saved/，不是某一台機器的位置
 
 -- ---------------------------------------------------------------------------
 -- base-game animation bundle directories (character motion used by the game)

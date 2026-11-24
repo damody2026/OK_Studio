@@ -81,12 +81,12 @@ mod tests {
     #[test]
     #[ignore]
     fn gpu_rig_walk_speeds() {
-        let dir = std::env::var("OK_PHYS_CARDS").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG".into());
+        let dir = std::env::var("OK_PHYS_CARDS").unwrap_or_else(|_| crate::repo_root().join("Content/CharacterCards/CrowdAPNG").to_string_lossy().into_owned().into());
         let limit: usize = std::env::var("OK_PHYS_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
         let mut cards: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "png") && !p.file_name().unwrap().to_string_lossy().starts_with('.')).collect();
         cards.sort();
-        let clip = std::fs::read("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim").unwrap();
+        let clip = std::fs::read(crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned()).unwrap();
         for card in cards.iter().take(limit) {
             std::env::set_var("OK_RIG_CARD", card);
             let Ok(opened) = std::panic::catch_unwind(|| crate::gpu_rig::tests::open_with_clip_pub()) else { continue };

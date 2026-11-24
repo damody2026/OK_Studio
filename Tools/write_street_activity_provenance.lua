@@ -1,6 +1,8 @@
 package.path='Tools/lua/?.lua;'..package.path
 local json=require('ok.json')
-local base='C:/portable/OpenKoikatsu/output/street-social-city-production/activity-scenes-v1'
+-- 這條產線的輸出放在工作樹底下，不是某一台機器的位置（使用者 2026-11-24：每台電腦都不一樣）。
+local root=require('ok').root
+local base=root..'/output/street-social-city-production/activity-scenes-v1'
 local function read(p)local f=assert(io.open(p,'rb'));local v=json.decode(f:read('*a'));f:close();return v end
 local rows={}
 for id,job in pairs({bear='1b2d400d-7850-4015-b6d8-6544e2bea201',koi='9bdffd4f-bb5b-40d5-8f0b-84c3cc0ccea1'})do

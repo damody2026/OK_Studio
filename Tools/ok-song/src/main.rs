@@ -34,6 +34,20 @@ mod server;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+
+/// Where this machine keeps the model folders ok-song loads: `OK_SONG_MODELS`, else `Build/ok-song` beside this
+/// checkout. The defaults used to be `E:/OkSong/...` and `E:/HeartMuLa/ckpt` — one machine's drive, and on any other
+/// one a folder that is not there (the user, 2026-11-24: 「每台電腦都不一樣」「你應該用相對路徑去找」). Every command
+/// still takes `--models` / `--ckpt` to say it outright.
+fn models_root() -> PathBuf {
+    std::env::var_os("OK_SONG_MODELS").map(PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Build/ok-song"))
+}
+
+/// A model folder under `models_root()`, or what `--<key>` names.
+fn model_dir(opts: &HashMap<String, String>, key: &str, under: &str) -> PathBuf {
+    opts.get(key).map(PathBuf::from).unwrap_or_else(|| models_root().join(under))
+}
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -132,7 +146,7 @@ fn run() -> Result<()> {
         "cancel" => println!("{}", http(port, "POST", &format!("/jobs/{}/cancel", args.opts.get("job").context("--job")?))?),
         "mula-check" => {
             let gpu = native::device(0)?;
-            let ckpt = PathBuf::from(args.opts.get("ckpt").map(String::as_str).unwrap_or("E:/HeartMuLa/ckpt"));
+            let ckpt = model_dir(&args.opts, "ckpt", "HeartMuLa/ckpt");
             let t = std::time::Instant::now();
             let m = native::mula::Mula::load(&gpu, &ckpt, true, 64, 256)?;
             crate::log!("ok-song: HeartMuLa loaded in {:.1} s", t.elapsed().as_secs_f64());
@@ -142,7 +156,7 @@ fn run() -> Result<()> {
         }
         "mula-generate" => {
             let gpu = native::device(0)?;
-            let ckpt = PathBuf::from(args.opts.get("ckpt").map(String::as_str).unwrap_or("E:/HeartMuLa/ckpt"));
+            let ckpt = model_dir(&args.opts, "ckpt", "HeartMuLa/ckpt");
             let opt = |k: &str, d: f64| -> Result<f64> { Ok(args.opts.get(k).map(|v| v.parse()).transpose()?.unwrap_or(d)) };
             let seconds = opt("seconds", 30.0)?;
             let max_frames = (seconds * 1000.0 / native::mula::FRAME_MS as f64) as usize;
@@ -162,7 +176,7 @@ fn run() -> Result<()> {
                 "generate_seconds": gen, "ms_per_frame": gen * 1000.0 / frames.len().max(1) as f64, "prompt_tokens": p.len()}));
         }
         "song-generate" => {
-            let ckpt = PathBuf::from(args.opts.get("ckpt").map(String::as_str).unwrap_or("E:/HeartMuLa/ckpt"));
+            let ckpt = model_dir(&args.opts, "ckpt", "HeartMuLa/ckpt");
             let opt = |k: &str, d: f64| -> Result<f64> { Ok(args.opts.get(k).map(|v| v.parse()).transpose()?.unwrap_or(d)) };
             let lyrics = std::fs::read_to_string(args.opts.get("lyrics").context("--lyrics FILE")?)?;
             // --muq: 512 little-endian f32 (a MuQ-MuLan embedding) for HeartMuLa's reference slot
@@ -180,7 +194,7 @@ fn run() -> Result<()> {
         }
         "codec-check" => {
             let gpu = native::device(0)?;
-            let ckpt = PathBuf::from(args.opts.get("ckpt").map(String::as_str).unwrap_or("E:/HeartMuLa/ckpt"));
+            let ckpt = model_dir(&args.opts, "ckpt", "HeartMuLa/ckpt");
             let t = std::time::Instant::now();
             let codec = native::codec::Codec::load(&gpu, &ckpt.join("HeartCodec-oss"))?;
             crate::log!("ok-song: HeartCodec loaded in {:.1} s", t.elapsed().as_secs_f64());
@@ -194,14 +208,13 @@ fn run() -> Result<()> {
         }
         "demucs-check" => {
             let gpu = native::device(0)?;
-            let models = PathBuf::from(args.opts.get("models").map(String::as_str)
-                .unwrap_or("E:/OkSong/hf-cache/hub/models--adefossez--HTDemucs-ft/snapshots/d74ac89c3a1e874fc78f152555cf4d8533f06cd4"));
+            let models = model_dir(&args.opts, "models", "hf-cache/hub/models--adefossez--HTDemucs-ft/snapshots/d74ac89c3a1e874fc78f152555cf4d8533f06cd4");
             let r = native::demucs::check(&gpu, &models, &PathBuf::from(args.opts.get("ref").context("--ref")?))?;
             println!("{}", serde_json::to_string_pretty(&r)?);
         }
         "seedvc-check" => {
             let gpu = native::device(0)?;
-            let models = PathBuf::from(args.opts.get("models").map(String::as_str).unwrap_or("E:/OkSong/models-st"));
+            let models = model_dir(&args.opts, "models", "models-st");
             let parts = args.opts.get("parts").map(String::as_str).unwrap_or("mel,voc");
             let r = native::seedvc::check(&gpu, &models, &PathBuf::from(args.opts.get("ref").context("--ref")?), parts)?;
             println!("{}", serde_json::to_string_pretty(&r)?);
@@ -213,7 +226,7 @@ fn run() -> Result<()> {
         }
         "convert" => {
             let opt = |k: &str, d: f64| -> Result<f64> { Ok(args.opts.get(k).map(|v| v.parse()).transpose()?.unwrap_or(d)) };
-            let models = PathBuf::from(args.opts.get("models").map(String::as_str).unwrap_or("E:/OkSong/models-rs"));
+            let models = model_dir(&args.opts, "models", "models-rs");
             let o = native::seedvc::ConvertOptions { steps: opt("steps", 30.0)? as usize, cfg_rate: opt("cfg", 0.7)? as f32, seed: opt("seed", 1.0)? as u64,
                                                      vibrato_cents: opt("vibrato", 0.0)? as f32, glide_ms: opt("glide", 0.0)? as f32,
                                                      soft_f0: args.opts.contains_key("soft-f0"), scoop_cents: opt("scoop", 0.0)? as f32,

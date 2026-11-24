@@ -11,7 +11,7 @@ local fail = C.fail
 local M = {}
 
 M.spec = {
-  { "ReferenceStage", "string", default = "D:/OpenKoikatsuCrowd/DevelopmentStage" },
+  { "ReferenceStage", "string", default = (os.getenv("OK_CROWD_STAGE") or (ok.root .. "/Saved/CrowdStage/DevelopmentStage")) },
   { "SelectionFile", "string", default = "" },
   { "GpuShardIndex", "string", default = "" },
   { "SectionLODFile", "string", default = "" },

@@ -15,7 +15,7 @@ local json = ok.json
 local lfs = require("lfs")
 
 local ROOT = ok.root .. "/"
-local game = "D:/KoikatuSunshine"
+local game = ok.game_root(true)  -- 遊戲裝在哪由 OK_GAME_ROOT／讀卡器設定／旁邊探測決定，--game 可覆寫
 local only_manifest = false
 local exe = ROOT .. "Tools/ok-extract/target/release/ok-extract.exe"
 local i = 1

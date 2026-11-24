@@ -152,9 +152,9 @@ mod tests {
     #[test]
     #[ignore = "reads the local base library and cards"]
     fn every_outfit_opens_with_all_states() {
-        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", "E:/OpenKoikatsu/Content/IndependentResources/base_v1"); }
+        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", crate::repo_root().join("Content/IndependentResources/base_v1").to_string_lossy().into_owned()); }
         std::env::set_var("OK_NOCACHE", "1");
-        let dir = std::env::var("OK_WARDROBE_CARDS").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/CharacterCards/StreetHeroines".into());
+        let dir = std::env::var("OK_WARDROBE_CARDS").unwrap_or_else(|_| crate::repo_root().join("Content/CharacterCards/StreetHeroines").to_string_lossy().into_owned().into());
         let mut failed = Vec::new();
         let mut opened = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {

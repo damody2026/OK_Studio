@@ -1068,7 +1068,7 @@ fn dump_body_tex() {
         for (n, b) in texs {
             eprintln!("DIAGBT tex {n} bytes={}", b.len());
             let safe: String = n.chars().map(|c| if c.is_ascii_alphanumeric() || c=='.' || c=='_' {c} else {'_'}).collect();
-            let out = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\br_{safe}");
+            let out = crate::dump_path(&format!("br_{safe}"));
             std::fs::write(&out, &b).ok();
         }
     }
@@ -1902,7 +1902,7 @@ fn overlay_mapped_stains_lids_not_cheeks() {
 #[ignore]
 fn diag_hair_f_118_renderer_enabled() {
     let path = PathBuf::from(
-        r"C:\Users\Damody\AppData\Local\Temp\opencode\hairf50\abdata\chara\deathweasel\acc_bo_hair_f_50.unity3d",
+        crate::dump_path(r"hairf50\abdata\chara\deathweasel\acc_bo_hair_f_50.unity3d"),
     );
     if !path.ok_is_file() {
         eprintln!("skip missing {}", path.display());

@@ -1395,3 +1395,25 @@ pub fn with_clothes_states<R>(states: [u8; 9], f: impl FnOnce() -> R) -> R {
 
 /// `unity::bundle_texture_report` for the CLI (`--bundle-textures`).
 pub fn bundle_texture_report(bytes: Vec<u8>) -> Vec<(String, u32, bool)> { crate::unity::bundle_texture_report(bytes) }
+
+/// Where a diagnostic dump goes: `OK_DUMP_DIR` when set, else this machine's own temp folder under `ok-dump`.
+///
+/// The dumps used to be written to one developer's `C:\Users\<name>\AppData\Local\Temp\opencode`. On anyone else's
+/// machine that folder does not exist, so every dump was silently thrown away by the `let _ = write` around it — and
+/// the path itself is an assumption about where someone's Windows profile lives (the user, 2026-11-24:
+/// 「每台電腦都不一樣」). The folder is created, so the write actually lands.
+pub(crate) fn dump_path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os("OK_DUMP_DIR").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ok-dump"));
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(name)
+}
+
+/// This checkout's root (the folder holding `Content/`, `Tools/`, ...), from where this crate was built.
+///
+/// For tests and tools that need the project's own data. It is the only honest way to name that data from the source:
+/// the absolute path of the checkout differs on every machine (C:/portable/OpenKoikatsu, E:/OpenKoikatsu,
+/// F:/OpenKoikatsu are three of them here), so a path written out is at best wrong for everyone else.
+pub(crate) fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}

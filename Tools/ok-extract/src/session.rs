@@ -7025,7 +7025,7 @@ mod tests {
             let n = m.texture_png.as_ref().map(|b| b.len()).unwrap_or(0);
             eprintln!("mesh {} png={n} shader={}", m.name, m.mat.as_ref().map(|x| x.shader.as_str()).unwrap_or(""));
             if let Some(png) = &m.texture_png {
-                let path = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\hf_{}.png", m.name.replace(['/', '\\', ' '], "_"));
+                let path = crate::dump_path(&format!("hf_{}.png", m.name.replace(['/', '\\', ' '], "_")));
                 let _ = std::fs::write(&path, png);
             }
         }
@@ -7096,7 +7096,7 @@ mod tests {
                 for v in &p.positions {
                     obj.push_str(&format!("v {} {} {}\n", v[0], v[1], v[2]));
                 }
-                let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\our_face.obj", obj);
+                let _ = std::fs::write(crate::dump_path("our_face.obj"), obj);
             }
             if p.role.contains("hair") || ln.contains("hair") || ln.contains("kami") {
                 hair += 1;
@@ -7123,7 +7123,7 @@ mod tests {
         let card = game.join(r"UserData\chara\female\KK_388415.png");
         std::env::set_var("OK_NOCACHE", "1");
         let sess = open(&game, Some(&card), 0).expect("session");
-        let dump = PathBuf::from(r"C:\Users\Damody\AppData\Local\Temp\opencode");
+        let dump = crate::dump_path("");
         for p in &sess.parts {
             let ln = p.name.to_ascii_lowercase();
             if ln.contains("eyeline") || ln.contains("hitomi") {
@@ -7180,7 +7180,7 @@ mod tests {
         let eye = crate::gamefs::read(game.join(r"abdata\chara\mt_eye_00.unity3d")).unwrap();
         if let Some((n, png)) = crate::unity::named_png_from_bytes(eye, &["cw_t_hitomi_030"]) {
             eprintln!("TEX {n} {}", band(&png));
-            let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\src_hitomi_030.png", &png);
+            let _ = std::fs::write(crate::dump_path("src_hitomi_030.png"), &png);
         }
         let upper = PathBuf::from(crate::test_support::game_path(r"\mods\Sideloader Modpack\DEF\[DEF] Upper Eyes v1.0.zipmod"),
         );
@@ -7195,7 +7195,7 @@ mod tests {
         if let Some(bytes) = crate::mods::zipmod_bundle_named(&indo, "chara/indomitable_eyeline_up.unity3d") {
             if let Some((n, png)) = crate::unity::named_png_from_bytes(bytes.clone(), &["indomitable_eyeline_up_1"]) {
                 eprintln!("TEX _1 {n} {}", band(&png));
-                let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\src_indomitable_1.png", &png);
+                let _ = std::fs::write(crate::dump_path("src_indomitable_1.png"), &png);
             } else {
                 eprintln!("TEX _1 missing");
             }
@@ -7206,7 +7206,7 @@ mod tests {
             }
             if let Some((n, png)) = crate::unity::named_png_from_bytes(bytes, &["indomitable_eyeline_up"]) {
                 eprintln!("TEX {n} {}", band(&png));
-                let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\src_indomitable_eyeline.png", &png);
+                let _ = std::fs::write(crate::dump_path("src_indomitable_eyeline.png"), &png);
             }
         }
         let gf = PathBuf::from(crate::test_support::game_path(r"\mods\Sideloader Modpack\GF\[GF] Character Texture Pack v1.7.3.zipmod"),
@@ -7214,7 +7214,7 @@ mod tests {
         if let Some(bytes) = crate::mods::zipmod_bundle_named(&gf, "chara/gf_eyeline_up.unity3d") {
             if let Some((n, png)) = crate::unity::named_png_from_bytes(bytes, &["eri"]) {
                 eprintln!("TEX {n} {}", band(&png));
-                let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\src_eri.png", &png);
+                let _ = std::fs::write(crate::dump_path("src_eri.png"), &png);
             } else {
                 eprintln!("TEX eri missing in gf_eyeline_up");
             }
@@ -7231,7 +7231,7 @@ mod tests {
         if let Some(bytes) = crate::mods::zipmod_bundle_named(&gf, "chara/gf_eye.unity3d") {
             if let Some((n, png)) = crate::unity::named_png_from_bytes(bytes, &["korone_l"]) {
                 eprintln!("TEX {n} {}", band(&png));
-                let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\src_korone_l.png", &png);
+                let _ = std::fs::write(crate::dump_path("src_korone_l.png"), &png);
             }
         }
         let headmod = crate::mods::zipmod_bundle_named(
@@ -7312,7 +7312,7 @@ mod tests {
         ] {
             let bytes = crate::gamefs::read(&bundle).expect("bundle");
             if let Some((name, png)) = crate::unity::named_png_from_bytes(bytes, &[n]) {
-                let out = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\{name}.png");
+                let out = crate::dump_path(&format!("{name}.png"));
                 let _ = std::fs::write(&out, &png);
                 if let Ok(im) = crate::teximg::load_from_memory(&png) {
                     let im = im.to_rgba8();
@@ -7451,9 +7451,9 @@ mod tests {
             &game.join(r"abdata\chara\mt_eye_white_00.unity3d"),
             &["cw_t_sirome_kage_003", "cw_t_sirome_kage_001"],
         ) {
-            let path = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\{n}.png");
+            let path = crate::dump_path(&format!("{n}.png"));
             let _ = std::fs::write(&path, &png);
-            eprintln!("dumped eye white {n} bytes={} -> {path}", png.len());
+            eprintln!("dumped eye white {n} bytes={} -> {}", png.len(), path.display());
         }
         for r in info.resolves.iter().filter(|r| r.category_no == 100 || r.property.to_ascii_lowercase().contains("head")) {
             eprintln!(
@@ -7463,7 +7463,7 @@ mod tests {
         }
         std::env::set_var("OK_FACE_RAW", "1");
         let sess = open(&game, Some(&card), 0).expect("session");
-        let dump = PathBuf::from(r"C:\Users\Damody\AppData\Local\Temp\opencode");
+        let dump = crate::dump_path("");
         for p in &sess.parts {
             let ln = p.name.to_ascii_lowercase();
             if p.role == "head" || ln.contains("face") || ln.contains("hitomi") || ln.contains("eyeline") || ln.contains("mayuge") || ln.contains("nose") {
@@ -7482,7 +7482,7 @@ mod tests {
         for p in &sess.parts {
             if p.name.eq_ignore_ascii_case("cf_Ohitomi_L") {
                 if let Some(png) = &p.png {
-                    let path = r"C:\Users\Damody\AppData\Local\Temp\opencode\baked_hitomi_L.png";
+                    let path = crate::dump_path("baked_hitomi_L.png");
                     let _ = std::fs::write(path, png);
                     if let Ok(im) = crate::teximg::load_from_memory(png) {
                         let im = im.to_rgba8();

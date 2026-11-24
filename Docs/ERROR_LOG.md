@@ -7565,4 +7565,10 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 
 **實測**（2026-11-24，F，7,296 個 zipmod）：兩輪都 pass，**9.3 秒與 9.5 秒**（上限 20）。
 
+**第二輪：開發工具也清掉（同日）**。使用者接著說「盤點這個程式的全部絕對路徑…全部改成相對路徑」「現在清」，所以 `Tools/` 底下也清了，細節在 [絕對路徑盤點](ABSOLUTE_PATHS.md)。最嚴重的一個不是出貨程式而是腳本庫：`Tools/lua/ok/init.lua` 的 `ok.game_root()` 原本是一串寫死的候選（`C:/portable/KoikatuSunshine`、`D:/KoikatuSunshine`、`E:/Koikatu`…），全找不到時 `game_root(true)` 還回第一個不存在的值——所有腳本都靠它找遊戲。現在是 `OK_GAME_ROOT` → 讀卡器自己設的遊戲目錄 → 專案 ini → 這個 checkout 旁邊與同磁碟根目錄下名字帶 `koikat` 的資料夾，每一個都要過 `is_game_root()`；找不到就回空字串或報錯。`ok.engine_root()` 的 `E:/PhysX/UE5.8` 也換成同磁碟探測。另外 `ok-extract`／`ok-song`／`Probe.cs` 的輸出與模型位置改成環境變數加 `CARGO_MANIFEST_DIR`／`ok.root`。
+
+檢查器 [`Tools/check_absolute_paths.lua`](../Tools/check_absolute_paths.lua) 的範圍同時擴到 Rust crate 的 `src/`、專案自己的 Lua 與 `Tools/lua/ok/`，並修了兩個誤判（`"%s:\n"` 這種格式字串被當成路徑、`\\` 轉成 `//` 之後比不到允許清單）。現在是 0 處。
+
+**沒清的**：另一個專案（`StreetSocialCity`）檔名帶 `street_city` 的 46 支產線腳本（約 145 處），照 AGENTS.md 不動它；以及三個工作樹共用的 Unreal 名額檔，它必須是同一個絕對位置，放各自的 `Saved/` 底下就互相看不到了（寫在允許清單裡）。
+
 **下次怎麼避免**：原始碼裡出現任何一個 `C:/`、`D:/` 開頭的路徑就是 bug，連 fallback 與開發用的主控台指令都算——它會跟著包送到每一個玩家手上。要用的東西從設定、從卡片自己的位置、從程式自己的資料夾往外找。

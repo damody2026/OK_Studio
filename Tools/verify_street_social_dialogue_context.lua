@@ -108,7 +108,7 @@ function M.verify(directory)
   for _, relative in ipairs(json.keys(data.source_voice_sha256)) do
     local digest = data.source_voice_sha256[relative]
     assert(sha(path.join(path.parent(path.parent(data_path)), relative)) == digest)
-    local rel = path.rel(path.join("C:/x", relative), "C:/x/ja_ogg")
+    local rel = (relative:gsub("^[/\\]*ja_ogg[/\\]", ""))  -- 去掉前面的 ja_ogg/，剩下的就是語音目錄底下的相對位置
     assert(sha(path.join(original, "voice_extract/audio", rel)) == digest)
   end
   local log = path.read_text(path.join(directory, "game.log"))

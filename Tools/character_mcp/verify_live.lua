@@ -22,7 +22,7 @@ local function write_json(p, v) path.write_text(p, json.encode(v, { ensure_ascii
 local function png_size(data) return string.unpack(">I4I4", data, 17) end
 
 local function main()
-  local engine = (os.getenv("OK_ENGINE_ROOT") or "E:/PhysX/UE5.8") .. "/Engine/Binaries/Win64/UnrealEditor.exe"
+  local engine = ok.engine_root() .. "/Engine/Binaries/Win64/UnrealEditor.exe"
   local args = ok.args.parser("Launch an isolated editor and verify real stdio MCP edits and rendered captures.")
     :opt("--card", { required = true }):opt("--editor", { default = engine }):opt("--output"):opt("--server")
     :parse(arg)

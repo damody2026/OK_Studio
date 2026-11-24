@@ -250,7 +250,7 @@ pub(crate) fn compose_face_texture_legacy(
     );
     if std::env::var("OK_FACE_RAW").is_ok() {
         let _ = std::fs::write(
-            r"C:\Users\Damody\AppData\Local\Temp\opencode\face_raw.png",
+            crate::dump_path("face_raw.png"),
             &base,
         );
     }
@@ -468,7 +468,7 @@ pub(crate) fn compose_face_texture_legacy(
         ) {
             if std::env::var("OK_OVER_DUMP").is_ok() {
                 let _ = std::fs::write(
-                    format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\over_{tag}.png"),
+                    crate::dump_path(&format!("over_{tag}.png")),
                     &over,
                 );
             }
@@ -504,7 +504,7 @@ pub(crate) fn compose_face_texture_legacy(
     if let Some(cheek) = load_card_makeup_png(game_root, vanilla, mod_catalog,
         card, guid_index, 402, card.cheek_id, "CheekTex", head_texs, body_texs) {
         if std::env::var("OK_OVER_DUMP").is_ok() {
-            let _ = std::fs::write(r"C:\Users\Damody\AppData\Local\Temp\opencode\over_cheek.png", &cheek);
+            let _ = std::fs::write(crate::dump_path("over_cheek.png"), &cheek);
         }
         if let Some(blended) = overlay_face_create_cheek(&png, &cheek, card.cheek_color) {
             png = blended;
@@ -538,7 +538,7 @@ pub(crate) fn compose_face_texture_legacy(
         ) {
             if std::env::var("OK_OVER_DUMP").is_ok() {
                 let _ = std::fs::write(
-                    r"C:\Users\Damody\AppData\Local\Temp\opencode\over_lip.png",
+                    crate::dump_path("over_lip.png"),
                     &over,
                 );
             }
