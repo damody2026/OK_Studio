@@ -24,7 +24,85 @@ use rusqlite::{Connection, OpenFlags};
 
 pub const DB_FILE: &str = "mods_index.db";
 /// Bumped when the tables change: an older file is ignored (and reported), never half-read.
-const SCHEMA: i64 = 2;
+pub const SCHEMA: i64 = 2;
+
+/// What state the library's index is in. One judgement for the two callers that need it: the compatibility gate
+/// (`resources.rs`, which turns it into `problems[]`) and the open path itself -- `card_absent_mods` must answer
+/// "undeterminable" rather than count every GUID of the card as missing when the index is not usable. Two separate
+/// judgements would drift apart, and the drift is what the packaged build hit on 2026-11-24 (a schema 1 library under
+/// a build needing schema 2 read as 0 GUIDs, so Illya "lacked 42 mods" and the card opened anyway).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexHealth {
+    /// No `mods_index.db` beside the library.
+    Missing,
+    /// There is a file, but SQLite cannot open or read it (truncated, not a database).
+    Unreadable { detail: String },
+    /// Built by another build of this program.
+    Schema { found: i64, want: i64 },
+    /// Readable and current, but it names no GUID at all: a degenerate index, never "this machine really has no mods".
+    Empty,
+    Ok { guids: i64, overrides: i64, migrations: i64 },
+}
+
+impl IndexHealth {
+    pub fn is_ok(&self) -> bool { matches!(self, IndexHealth::Ok { .. }) }
+}
+
+/// The state of one library's index, read straight from the file (not through the memoized `open`, which drops the
+/// schema it found). Memoized per library path: it is a shared resource's own metadata, read once per process.
+pub fn health_of(lib: &Path) -> IndexHealth {
+    static SEEN: OnceLock<RwLock<Vec<(PathBuf, IndexHealth)>>> = OnceLock::new();
+    let slot = SEEN.get_or_init(|| RwLock::new(Vec::new()));
+    if let Some((_, hit)) = slot.read().unwrap_or_else(|e| e.into_inner()).iter().find(|(p, _)| p == lib) {
+        return hit.clone();
+    }
+    let answer = read_health(lib);
+    let mut slot = slot.write().unwrap_or_else(|e| e.into_inner());
+    slot.retain(|(p, _)| p != lib);
+    slot.push((lib.to_path_buf(), answer.clone()));
+    answer
+}
+
+fn read_health(lib: &Path) -> IndexHealth {
+    let path = lib.join(DB_FILE);
+    if !path.is_file() { return IndexHealth::Missing; }
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = match Connection::open_with_flags(&path, flags) {
+        Ok(conn) => conn,
+        Err(e) => return IndexHealth::Unreadable { detail: e.to_string() },
+    };
+    let schema: i64 = match conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0)) {
+        Ok(v) => v.parse().unwrap_or(0),
+        Err(e) => return IndexHealth::Unreadable { detail: e.to_string() },
+    };
+    if schema != SCHEMA { return IndexHealth::Schema { found: schema, want: SCHEMA }; }
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1) };
+    let guids = count("SELECT count(DISTINCT guid) FROM guid");
+    if guids < 0 { return IndexHealth::Unreadable { detail: "guid table unreadable".into() }; }
+    if guids == 0 { return IndexHealth::Empty; }
+    IndexHealth::Ok {
+        guids,
+        overrides: count("SELECT count(*) FROM override").max(0),
+        migrations: count("SELECT count(*) FROM migration").max(0),
+    }
+}
+
+/// Does `lib`'s index belong to this mods tree? For the compatibility gate, which runs with **no library active**, so
+/// it cannot use `serves` (that asks the active one and would answer false for every library, reporting
+/// `mods_index_foreign` about the very tree the index was built from -- scenario 10a of the plan, the false alarm).
+///
+/// The path the database records answers it without touching the file system. The fallback **lists the tree**, which
+/// an open may never do, so only the CLI and the C ABI call this, and only when a game directory is configured.
+pub fn index_covers(lib: &Path, mods_dir: &Path) -> bool {
+    let Some(db) = open(lib) else { return false };
+    if !db.built_from.is_empty() && db.built_from == tree_key(mods_dir) { return true; }
+    crate::mods::all_zipmods(mods_dir).iter().any(|z| db.knows(&relative(mods_dir, z).to_ascii_lowercase()))
+}
+
+/// The active library's index state ( `Missing` when no library is active).
+pub fn health() -> IndexHealth {
+    match crate::oklib::active_dir() { Some(lib) => health_of(&lib), None => IndexHealth::Missing }
+}
 
 #[derive(Default)]
 pub struct Index {

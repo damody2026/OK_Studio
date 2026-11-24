@@ -1647,6 +1647,23 @@ pub unsafe extern "C" fn ok_library_mod_guids(lib:*const c_char,out:*mut c_char,
     for (guid,version,path) in db.guid_table() { text.push_str(&guid);text.push('\t');text.push_str(&version);text.push('\t');text.push_str(&path);text.push('\n'); }
     if out.is_null()||cap<=0{return text.len()as i32+1;}if cap as usize<=text.len(){return -1;}write_err(out,cap,&text);0
 }
+/// The resource pack / program compatibility gate as JSON (Tools/ok-extract/src/resources.rs §3.2): what the screen
+/// has to say about this installation. `lib` null or empty: the configured base library. The gate itself is applied in
+/// Rust when a library is activated -- this call exists only so the UE side can show *why*. `out` null or `cap<=0`:
+/// the size to allocate (the capacity convention of `ok_library_mod_guids`).
+#[no_mangle]
+pub unsafe extern "C" fn ok_resources_check(lib:*const c_char,out:*mut c_char,cap:i32)->i32 {
+    let lib=match cstr_opt(lib).filter(|l|!l.is_empty()){
+        Some(l)=>std::path::PathBuf::from(l),
+        None=>match crate::oklib::configured_library(){Some(l)=>l,None=>return -1},
+    };
+    let game=installed_game_root();
+    let game=(game.join("mods").is_dir()).then_some(game);
+    let want=(crate::resources::RESOURCES_MIN,crate::resources::RESOURCES_MAX);
+    let Ok(json)=std::panic::catch_unwind(||serde_json::to_string(&crate::resources::check_json(&lib,game.as_deref(),want,false)).unwrap_or_default()) else{return -1;};
+    if json.is_empty(){return -1;}
+    if out.is_null()||cap<=0{return json.len()as i32+1;}if cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_common_animation_pair_clip(root:*const c_char,key:*const c_char,layer:i32,out:*mut c_char,cap:i32)->i32 {
     let (Some(root),Some(key))=(cstr_opt(root),cstr_opt(key)) else{return -1;};

@@ -39,6 +39,11 @@ int32_t ok_card_outfit_gaps(const char* game,const char* card,char* out,int32_t 
 /* The base library's mods index (<lib>/mods_index.db): guid<TAB>version<TAB>path relative to mods/, one per line.
  * out null or capacity 0 returns the size to allocate. The reader builds its installed-mods index from this. */
 int32_t ok_library_mod_guids(const char* library,char* out,int32_t capacity);
+/* The resource pack / program compatibility gate as JSON (src/resources.rs): {"ok":bool,"resources":{...},
+ * "program":{...},"problems":[{"id","level","what","fix","fixable_locally","command"}]}. library null or empty uses
+ * the configured base library. The gate is applied in Rust when a library is activated; this is for the screen.
+ * out null or capacity 0 returns the size to allocate. */
+int32_t ok_resources_check(const char* library,char* out,int32_t capacity);
 int32_t ok_clothing_transition(const char* root,const char* card,int32_t outfit,const uint8_t* previous,int32_t kind,uint8_t* out,char* error,int32_t error_cap);
 /* OK clothes (.okclothes). op 0 import coordinate card a; 1 export outfit of card a; 2 wear okclothes b as outfit of card a. Writes out; summary or error in msg. */
 int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,const char* out,char* msg,int32_t msg_cap);

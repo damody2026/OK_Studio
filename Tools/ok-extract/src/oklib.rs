@@ -24,6 +24,13 @@ use std::sync::{Arc, Mutex, RwLock};
 mod crowd_check;
 
 pub const TOKEN_MAGIC: &[u8; 8] = b"OKLIB001";
+
+/// `oklib.json`'s `version`: the library layout this build writes and reads. The compatibility gate
+/// (`resources.rs`) blocks a library whose marker says something this build does not know, and a test there pins the
+/// value so nobody can change the layout without deciding what it means for an installed resource pack.
+pub const LIBRARY_VERSION: u32 = 2;
+/// Which `oklib.json` versions this build can open. One entry until a version is deliberately kept compatible.
+pub const LIBRARY_VERSIONS_KNOWN: &[u32] = &[2];
 pub type Id = [u8; 16];
 const MODEL_MAGIC: &[u8; 8] = b"OKMODEL2";
 
@@ -274,6 +281,27 @@ fn unchanged_model(path: &Path) -> Arc<Mutex<Model>> {
     model
 }
 
+/// The compatibility gate's selftest (`resources::resources_check(.., selftest)`): take one of the library's models
+/// and ask it for its records. `sources.okidx` carries no version field to compare, so "does the library still answer"
+/// is the only honest check -- a constant can match while the library answers nothing.
+pub(crate) fn selftest_model(lib: &Path) -> Result<String, String> {
+    let models = lib.join("models");
+    let mut found: Option<PathBuf> = None;
+    let subs = std::fs::read_dir(&models).map_err(|e| format!("{}: {e}", models.display()))?;
+    'outer: for sub in subs.flatten() {
+        let sub = sub.path();
+        if !sub.is_dir() { continue; }
+        for file in std::fs::read_dir(&sub).into_iter().flatten().flatten() {
+            let path = file.path();
+            if path.extension().is_some_and(|e| e == "okmodel") { found = Some(path); break 'outer; }
+        }
+    }
+    let path = found.ok_or_else(|| format!("{}: no .okmodel", models.display()))?;
+    let model = load_model(&path, false);
+    if model.entries.is_empty() { return Err(format!("{}: no records", path.display())); }
+    Ok(format!("{}: {} records", path.file_name().unwrap_or_default().to_string_lossy(), model.entries.len()))
+}
+
 /// Scan a model's record headers (values are not read).
 fn load_model(path: &Path, hashes: bool) -> Model {
     let _section = crate::profile::spot("load_model scan");
@@ -427,7 +455,7 @@ impl Store {
         let marker = dir.join("oklib.json");
         if !marker.is_file() {
             if mode == Mode::Replay { return Err(format!("{} is not an OK base library", dir.display())); }
-            std::fs::write(&marker, serde_json::to_vec_pretty(&serde_json::json!({"format":"oklib","version":2})).unwrap())
+            std::fs::write(&marker, serde_json::to_vec_pretty(&serde_json::json!({"format":"oklib","version":LIBRARY_VERSION})).unwrap())
                 .map_err(|e| e.to_string())?;
         }
         Ok(Store {
@@ -884,7 +912,7 @@ mod pack_bytes {
 struct CardPackRef<'a> { version: u32, #[serde(borrow)] index: crate::gamefs::IndexRef<'a>, #[serde(borrow)] records: Vec<PackRecordRef<'a>> }
 #[derive(serde::Deserialize)]
 struct PackRecordRef<'a>(Id, String, #[serde(with = "pack_bytes")] Vec<u8>, &'a [u8]);
-const CARD_PACK_VERSION: u32 = 2;
+pub(crate) const CARD_PACK_VERSION: u32 = 2;
 
 /// Start recording what an original card needs beyond the library (call with the library active and the
 /// zipmod fallback set): gamefs observations into the overlay, Unity query results into `dir`.
@@ -1932,6 +1960,15 @@ pub fn card_absent_mods(game: &Path, card: &Path) -> Result<Vec<String>, String>
     let info = crate::card::parse_card(card)?;
     let wanted: std::collections::HashSet<String> = info.resolves.iter().map(|r| r.mod_id.clone()).filter(|g| !g.is_empty()).collect();
     if wanted.is_empty() { return Ok(Vec::new()); }
+    // An index that is not usable makes this question **undeterminable**, not "everything is missing". Answering it
+    // anyway is what told the user on 2026-11-24 that Illya lacked 42 mods they all had (a schema 1 index under a
+    // build needing schema 2 reads as zero GUIDs). The caller shows the resource-pack notice instead; the prefix is
+    // how it tells this apart from a real failure.
+    let health = crate::modsindex::health_of(&lib);
+    if !health.is_ok() {
+        return Err(format!("OKMODS_UNDETERMINABLE: 無法判定缺哪些 mod，基礎庫的 mod 索引不可用（{health:?}）。\
+            先照資源包版本的提示修好索引，這份清單才有意義。"));
+    }
     let configured = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.is_dir());
     let game = if game.join("mods").is_dir() { game } else { configured.as_deref().unwrap_or(game) };
     // Only ids that are really missing: a legacy id the installation migrates away (`kks.co_bra_00`) and an
@@ -2695,6 +2732,10 @@ pub fn library_card(original: &[u8], payload: &[u8]) -> Result<Vec<u8>, String> 
 
 pub fn activate(dir: &Path, mode: Mode) -> Result<Arc<Store>, String> {
     let _ = unity_asset_binary::oklib_hook::HOOK.set(vendor_hook);
+    // The compatibility gate (`resources.rs`): every caller that opens a card goes through here, so this is where a
+    // resource pack this build cannot read is refused instead of opening a card with parts silently dropped. A
+    // conversion (`Mode::Record`) is not gated -- building or rebuilding the library is the fix itself.
+    if mode == Mode::Replay { crate::resources::gate(dir, None)?; }
     let store = Arc::new(Store::open(dir, mode)?);
     *STORE.write().unwrap() = Some(store.clone());
     ACTIVE.store(true, Ordering::Relaxed);
@@ -3988,6 +4029,33 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
         "mods-index" => {
             // mods-index <lib>: just the tree's two maps, for when mods were installed or removed.
             write_mods_index(game, &lib.ok_or("library directory required")?)?;
+        }
+        "resources-check" => {
+            // resources-check <lib> [--want-min N] [--want-max N] [--selftest] [--quiet]
+            // Exit code 0 compatible (warnings included), 2 something blocks, 1 the command itself failed. The JSON is
+            // stdout, the Chinese summary stderr: launchers print the summary, the packaging self-check reads the JSON.
+            let lib = lib.ok_or("library directory required")?;
+            let flag = |name: &str| args.iter().any(|a| a == name);
+            let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1))
+                .and_then(|v| v.parse::<u32>().ok());
+            let want = crate::resources::wanted(value("--want-min"), value("--want-max"));
+            // The game directory only decides `mods_index_foreign`; an explicit X:/NoGame style root has no mods tree
+            // and is simply not asked about.
+            let game = (game.join("mods").is_dir()).then(|| game.to_path_buf());
+            let json = crate::resources::check_json(&lib, game.as_deref(), want, flag("--selftest"));
+            println!("{}", serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?);
+            if !flag("--quiet") {
+                let problems = crate::resources::check(&lib, game.as_deref(), want, flag("--selftest"));
+                eprint!("{}", crate::resources::summary(&problems));
+            }
+            if json["ok"].as_bool() != Some(true) { std::process::exit(2); }
+        }
+        "resources-stamp" => {
+            // resources-stamp [<lib>] [--program]: the values the packaging scripts copy. They never parse a library
+            // format themselves (§1.2), so this is the only place that knows where those numbers live.
+            let lib = if args.iter().any(|a| a == "--program") { None } else { lib };
+            println!("{}", serde_json::to_string_pretty(&crate::resources::stamp_json(lib.as_deref()))
+                .map_err(|e| e.to_string())?);
         }
         "sources" => {
             // sources <lib>: what the observation index holds, by kind and extension.

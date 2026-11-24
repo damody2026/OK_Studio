@@ -37,6 +37,7 @@ pub mod vertcolor;
 pub mod video_motion;
 mod mods;
 pub mod modsindex;
+pub mod resources;
 mod pose;
 mod gpu_rig;
 mod ordered;
