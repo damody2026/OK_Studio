@@ -3,6 +3,10 @@
 **適用範圍**：只更新程式、不重發資源包時，確保「舊資源配新程式」不會變成**靜默少件**。
 這份只寫方案，**審過才實作**；本輪沒有動任何程式碼。
 
+> 2026-11-24 晚：Rust 那頭的判準已由 e-cardload（`[E組] 開卡片優化`）拍板，§2、§3、§8 已按它的答覆改寫；
+> 原稿與它的差異記在 §7，那裡也留著唯一還沒定的一條（開發樹沒有 `RESOURCES.json` 怎麼算）。
+> 分工：Rust（`resources.rs` 的常數、`resources_check`、CLI、C ABI）由 e-cardload 寫；UE 畫面與打包腳本是我們這邊。
+
 - 這份負責的是**相容性閘**（版本放哪、誰寫誰讀、比哪些檔、不符怎麼擋、怎麼講、怎麼驗）。
 - 分組規則、`--program-only` 打包流程、玩家安裝說明，在 E 樹 `E:\OpenKoikatsu\Docs\PROGRAM_ONLY_UPDATE_PLAN.md`（MOD 框架 session 寫的），這份不重寫那部分，只補它缺的四塊與必要的修正。
 - 相關程式碼：`Tools/ok-extract/src/oklib.rs`、`okstrict.rs`、`modsindex.rs`、`ffi.rs`；`Tools/package_studio_release.lua`、`Tools/package_street_social.lua`、`Tools/original_data_manifest.json`；`Tools/run_card_reader_development.lua`、`Tools/street_stage.lua`；`Source/OpenKoikatsu/OKGalleryWidget.cpp`（`CheckAbsentMods` 是現成的畫面通知樣板）。
@@ -23,7 +27,7 @@
 
 ### 1.1 程式宣告的是「區間」，不是下限
 
-`ok-extract` 裡兩個常數（`src/resources_version.rs`，新檔）：
+`ok-extract` 裡兩個常數（`src/resources.rs`，新檔，常數與檢查都在裡面，diff 一眼看得到；由 e-cardload 維護：改到會讓舊資源配新程式開不了卡或靜默少件的格式，就順手 +1 並在那個檔裡寫一行為什麼）：
 
 ```rust
 /// 這版程式懂的最舊資源包格式。
@@ -42,6 +46,8 @@ pub const RESOURCES_MAX: u32 = 3;
 
 平常兩個常數相等；只有在刻意保留一版相容（例如新程式能同時吃 version 3 與 4 的庫）時 `MAX` 才比 `MIN` 大，而且要在那一版的 commit 裡寫明「為什麼能同時吃」。
 
+第一版的區間要把**今天這兩筆格式改動算進去**：`ae89b2073`（兩張文字表 → `mods_index.db`）與 `717297c3b`（schema 2，加 migration 表）。也就是說今天以前打的完整包，一律是「資源太舊」。
+
 ### 1.2 完整包寫什麼
 
 完整包打包時，`package_street_social.lua` 在資源那一側寫 `Content/IndependentResources/RESOURCES.json`：
@@ -57,15 +63,14 @@ pub const RESOURCES_MAX: u32 = 3;
   "parts": {
     "oklib_version": 2,
     "mods_index_schema": 2,
-    "card_pack_version": 2,
-    "shared_mods_sha256": "2f1c…",
-    "models_gitignore": true,
-    "sources_okidx_version": 1
+    "has_shared_mods": true,
+    "has_models_ignore": true,
+    "has_sources": true
   }
 }
 ```
 
-`version` 是人工整數（§2.1），`parts` 是**從實際檔案讀出來的**，不是手打的：打包時就地讀 `base_v1/oklib.json`、`base_v1/mods_index.db` 的 `meta.schema`、`base_v1/shared_mods.txt` 的 SHA-256、`base_v1/models/.gitignore` 是否存在，`card_pack_version` 與 `sources_okidx_version` 由 `ok-extract --oklib resources-stamp <base_v1>` 印出（打包腳本只轉抄，不自己解析格式）。
+`version` 是人工整數（§2.1），`parts` 是**從實際檔案讀出來的**，不是手打的，而且整串由 `ok-extract --oklib resources-stamp <base_v1>` 印出來給打包腳本轉抄——**打包腳本不自己解析任何庫格式**（它不該知道 `oklib.json` 長什麼樣，也不該自己開 SQLite）。
 
 ### 1.3 程式包寫什麼
 
@@ -94,28 +99,34 @@ pub const RESOURCES_MAX: u32 = 3;
 
 `RESOURCES_MIN/MAX` 與 `RESOURCES.json` 的 `version` 的用途是「我知道這版不相容」的**宣告**，忘記 +1 就是靜默少件回來。所以閘**同時**比下面每一項，任一項不是這版程式認識的值就算不符，**不管 `version` 看起來多漂亮**。
 
-| id | 比什麼 | 現在的值 | 來源 |
+下表是 e-cardload 拍板後的版本（2026-11-24）：
+
+| id | 比什麼 | 等級 | 現在的值 |
 |---|---|---|---|
-| `resources_version` | `RESOURCES.json` 的 `version` 落在 `[MIN, MAX]` | 3 | 人工 |
-| `oklib_version` | `base_v1/oklib.json` 的 `version` ∈ 程式的已知集合 | 2 | `oklib.rs` 寫入／讀回 |
-| `mods_index_schema` | `mods_index.db` 的 `meta.schema` == `modsindex::SCHEMA` | C 樹 1 / E 樹 2 | `modsindex.rs` |
-| `card_pack_version` | `CARD_PACK_VERSION` ∈ 已知集合 | 2 | `oklib.rs` |
-| `shared_mods_sha256` | `shared_mods.txt` 的內容指紋，比對 `RESOURCES.json` 記的那份 | — | 庫檔 |
-| `models_gitignore` | `models/.gitignore` 在不在（在＝庫知道哪些模型不是共用資源） | 在 | `--oklib shared-ignore` |
-| `sources_okidx_version` | `sources.okidx` 自己的版本欄位 | 待 e-cardload 確認有沒有 | `oklib.rs` |
+| `resources_too_old` / `resources_too_new` | `RESOURCES.json` 的 `version` 落在 `[MIN, MAX]` | block | 3 |
+| `no_resources_json` | `RESOURCES.json` 在不在 | block（開發樹例外，§7） | — |
+| `oklib_version` | `base_v1/oklib.json` 的 `version` ∈ 程式的已知集合 | block | 2 |
+| `mods_index_schema` | `mods_index.db` 的 `meta.schema` == `modsindex::SCHEMA` | block | C 樹 1 / E 樹 2 |
+| `mods_index_missing` | `mods_index.db` 在不在 | block | — |
+| `mods_index_foreign` | 玩家設了遊戲目錄，而索引裡**一個 archive 都對不上他的 `mods/`** | **warn** | — |
+| `shared_mods_missing` | `shared_mods.txt` **存在**（不比內容） | block | — |
+| `models_ignore_missing` | `models/.gitignore` **存在** | block | — |
+| `sources_missing` | `sources.okidx` 與 `models/` 目錄**存在** | block | — |
+| `selftest_failed` | 開庫、對一顆已知模型問一個已知查詢，答得出來 | block | — |
 
-兩個待拍板的點（已去問 e-cardload，§7）：
+幾個「不進閘」與「改做法」的決定，理由記下來免得之後又想加回去：
 
-- `sources.okidx` 有沒有可讀的版本欄位；沒有就這項不進閘。
-- `mods_index.db` 的 `meta.mods_dir` 和本機 mods 路徑不同，**我傾向不算不符**：打包版本來就沒有遊戲，`built_from` 不中就走 `view()`，這是正常狀態，拿它當不符會天天誤擋。
-
-`shared_mods_sha256` 的語義要講清楚：它不是「必須和打包時一位元不差」，而是「**庫的檔和 `RESOURCES.json` 記的那份是同一份**」。玩家自己改 `shared_mods.txt`（或某一組重跑了 `shared-ignore`）會讓封卡的共用劃分和庫對不上，正是會靜默少件的那類改動，所以要講出來；但它的嚴重度是「警告級不符」（§3.3），因為本機有遊戲時可以重建。
+- **`sources.okidx` 沒有版本欄位可讀**（只有 `.okmodel` 記錄有 `MODEL_MAGIC`，索引本身是整個重寫的二進位）。所以不假裝比版本，改成 `selftest_failed`：**實際開庫問一個已知查詢**，答得出來才算過。等它的格式真的動了、加上版本欄位，那時才進閘比版本。
+- **`CARD_PACK_VERSION` 不進資源閘**。它是卡片（`okLc`）跟程式的事，不是資源包的事，而且開卡時本來就會直接報「card pack version N (expected M)」。要上畫面是走**開卡錯誤訊息**那條路，不要混進資源包檢查。（它還是會被釘在 §2.2 的常數指紋表裡。）
+- **`shared_mods.txt` 不比內容指紋**。它的內容跟著「這台機器裝了哪些 mod」變，拿它當指紋會為了錯的理由變紅。只檢查**存在**：不存在的話 `okstrict` 不啟用，窄視圖整個失效（開卡 8.9 s → 1.9 s 那筆全賠回去）。
+- **`models/.gitignore` 同理只檢查存在**：不存在會讓庫去替第三方 mod 的模型答題，那是**錯的答案**，比缺件更難查。
+- **`meta.mods_dir` 和本機 mods 路徑不同，不算失敗**，但分兩種：玩家沒設遊戲目錄（打包版只開 OK 卡）＝完全正常，不要報；設了遊戲目錄而索引一個 archive 都對不上＝報 `mods_index_foreign`，**warn**。理由是現在的行為：`serves()` 比 `meta.mods_dir` 不中就退回「列一次樹，看索引認不認得其中任何一個 archive」，都不認得時 `tree_scan_forbidden` 放行，開卡回頭走整棵樹——慢，而且缺件的判斷會變得不準。它不該擋住只開 OK 卡的人，所以是 warn。
 
 ### 2.2 怎麼讓「改了格式卻忘了 +1」被擋下來
 
 三道，都在 `cargo test`，不靠人記得：
 
-1. **格式指紋表（Rust 測試釘死）**：`resources_version.rs` 的測試裡寫一張期望值表——`modsindex::SCHEMA`、`CARD_PACK_VERSION`、`oklib.json` 寫入時的 `version`、`Tools/base_library_shared_mods.txt` 樣板的 SHA-256。任何人改到其中一項，測試就紅，紅的訊息直說：
+1. **格式指紋表（Rust 測試釘死，只釘常數）**：`resources.rs` 的測試裡寫一張期望值表——`modsindex::SCHEMA`、`CARD_PACK_VERSION`、`oklib.json` 寫入時的 `version`、`RESOURCES_MIN/MAX` 自己。任何人改到其中一項，測試就紅，紅的訊息直說：
 
    ```
    資源包格式變了（mods_index_schema 2 -> 3）。
@@ -124,8 +135,9 @@ pub const RESOURCES_MAX: u32 = 3;
    ```
 
    這道不自動判斷相容性——那沒辦法自動判斷——它只保證**沒有人能默默改掉格式**。
+   **不要把 `shared_mods.txt` 樣板的 hash 釘進這張表**（理由同 §2.1：它跟著本機裝了哪些 mod 變，會為了錯的理由變紅）。
 
-2. **產生物自比對（`resources-check --selftest`）**：程式用自己這版的程式碼產生一個最小的庫（空 `mods_index.db`＋`oklib.json`＋`shared_mods.txt`），再對它跑一次 `resources-check`，必須通過。抓的是另一種忘記：改了寫入端沒改讀取端（或反之），常數對了但檔實際上長得不一樣。
+2. **`resources-check --selftest`**：對**現在這個庫**實際跑一次 §2.1 的全部檢查（含那個「開庫、問一個已知查詢」的 selftest），CI 與打包腳本直接用。抓的是另一種忘記：改了寫入端沒改讀取端（或反之），常數對了但庫實際上答不出東西。
 
 3. **打包自檢（§6.2）**：`--program-only` 必須對最近一個完整包跑過 `resources-check` 才算打包成功。這是最後一道，抓的是「測試都綠、但現場那包資源就是配不上」。
 
@@ -138,12 +150,13 @@ pub const RESOURCES_MAX: u32 = 3;
 ### 3.1 CLI
 
 ```powershell
-.\Tools\ok-extract\target\release\ok-extract.exe --oklib resources-check .\Content\IndependentResources\base_v1
+.\Tools\ok-extract\target\release\ok-extract.exe --oklib resources-check .\Content\IndependentResources\base_v1 [--want-min N --want-max N]
 ```
 
-- 退出碼：0 相容；2 不符（有 `problems`）；1 自己壞了（路徑不對、JSON 讀不了）。
+- 退出碼：0 相容（只有 warn 也算 0，但 JSON 裡有 `problems`）；2 有 `block`；1 自己壞了（路徑不對、JSON 讀不了）。
 - stdout 是 JSON（下面那個形狀），stderr 是人看的繁體中文摘要；`--quiet` 只給 JSON。
-- 另外兩個子命令：`resources-stamp`（給打包腳本抄的那些值）、`resources-check --selftest`（§2.2）。
+- `--want-min/--want-max` 覆寫程式自己的區間，給驗收與測試用。
+- 另外：`resources-stamp`（給打包腳本抄的那些值，`--program` 印程式這側的區間）、`resources-check --selftest`（§2.2）。
 
 ### 3.2 JSON
 
@@ -151,10 +164,10 @@ pub const RESOURCES_MAX: u32 = 3;
 {
   "ok": false,
   "resources": { "version": 2, "package": "Studio-20261123-release-b", "made": "2026-11-23T…",
-                 "parts": { "oklib_version": 2, "mods_index_schema": 1, "card_pack_version": 2 } },
+                 "parts": { "oklib_version": 2, "mods_index_schema": 1, "has_shared_mods": true } },
   "program": { "min": 3, "max": 3, "commit": "b8d394043" },
   "problems": [
-    { "id": "mods_index_schema", "severity": "block",
+    { "id": "mods_index_schema", "level": "block",
       "what": "mod 索引是舊格式（schema 1），這版程式要 schema 2。卡片指名的第三方 mod 會查不到，那些部件不會穿上。",
       "fix": "本機有遊戲的話，在安裝資料夾執行下面這行重建索引；沒有遊戲就下載新的完整包。",
       "fixable_locally": true,
@@ -163,23 +176,26 @@ pub const RESOURCES_MAX: u32 = 3;
 }
 ```
 
-`problems[].id` 先定死這一組，之後只增不改：
-`no_resources_json`、`resources_too_old`、`resources_too_new`、`oklib_version`、`mods_index_schema`、`mods_index_missing`、`card_pack_version`、`shared_mods_fingerprint`、`models_gitignore_missing`、`sources_okidx_version`、`library_missing`。
+`problems[].id` 由 e-cardload 定死這一組，之後只增不改（`library_missing` 併進 `sources_missing`／`no_resources_json`，`card_pack_version` 與 `shared_mods_fingerprint` 依 §2.1 不在資源閘裡）：
 
-### 3.3 severity 兩級
+`resources_too_old`、`resources_too_new`、`no_resources_json`、`oklib_version`、`mods_index_schema`、`mods_index_missing`、`mods_index_foreign`、`shared_mods_missing`、`models_ignore_missing`、`sources_missing`、`selftest_failed`。
 
-- `block`：擋開卡。資源太舊／太新、`oklib.json` 版本不認識、`mods_index.db` schema 不對或整個沒有、封卡格式不認識。
-- `warn`：不擋，只在畫面上掛通知。目前只有 `shared_mods_fingerprint` 與 `models_gitignore_missing`。
+每項帶 `what`／`fix`／`fixable_locally`／`command`，文案繁體中文。
 
-`warn` 的存在有風險（它們也可能少件），所以規則寫死：**`warn` 只能用在「程式還是讀得懂全部格式，只是庫的內容被動過」的情況**；任何「程式讀不懂」都是 `block`。新增 `warn` 要在這份文件裡加一行理由。
+### 3.3 level 兩級
+
+- `block`：擋開卡。上面除 `mods_index_foreign` 以外的全部。
+- `warn`：不擋，只在畫面上掛通知。**目前只有 `mods_index_foreign`**（它不該擋住只開 OK 卡的人）。
+
+`warn` 的存在有風險（它也可能讓缺件判斷不準），所以規則寫死：**`warn` 只能用在「程式讀得懂全部格式，而且照常開得了 OK 卡」的情況**；任何「程式讀不懂」或「庫會給出錯的答案」（缺 `shared_mods.txt`、缺 `models/.gitignore`）都是 `block`。新增 `warn` 要在這份文件裡加一行理由。
 
 ### 3.4 C ABI
 
-比照 `FOkSession::AbsentCardMods` 現在的用法，一支回 JSON 字串的函式：
+照 `ok_card_absent_mods` 的 capacity 慣例（不是回 `const char*` 讓呼叫端釋放）：
 
 ```c
-/// 回 §3.2 的 JSON（UTF-8，呼叫端用 ok_free_string 釋放）。lib 為 NULL 時查目前設定的基礎庫。
-const char* ok_resources_check(const char* lib_utf8);
+/// 把 §3.2 的 JSON（UTF-8）寫進 out，最多 cap 位元組；回需要的長度。lib 為 NULL 時查目前設定的基礎庫。
+int ok_resources_check(const char* lib_utf8, char* out, int cap);
 ```
 
 C++ 那側 `FOkSession::ResourcesCheck(FString& OutJson)`，再由 `UOKCharacterController` 與 OK Studio 各自呈現。`activate()` 的擋是 Rust 自己做的，C++ 這支只為了「畫面上要講什麼」。
@@ -192,7 +208,7 @@ C++ 那側 `FOkSession::ResourcesCheck(FString& OutJson)`，再由 `UOKCharacter
 |---|---|
 | 遊戲／讀卡器／Studio 啟動 | **可以**。擋在啟動＝玩家只看到一個關掉的窗，問不出原因 |
 | 進主畫面、看卡片牆、翻設定頁 | **可以**。卡片牆列檔名不需要開庫 |
-| 開卡（原作卡、OK 卡，讀卡器／Studio／MCP／CLI／mod 都算） | **擋**。`oklib::activate()` 回 `Err`，錯誤訊息就是 §3.2 的 `what` + `fix` |
+| 開卡（原作卡、OK 卡，讀卡器／Studio／MCP／CLI／mod 都算） | 有 `block` 就**擋**。`oklib::activate()` 回 `Err`，錯誤訊息就是 §3.2 的 `what` + `fix`；只有 `warn` 時照開 |
 | 開 Studio 場景 | 場景裡有角色就會走開卡，於是被同一條擋下；沒有角色的場景照開 |
 | 轉卡、封卡、重建索引（`--oklib mods-index` 之類） | **不擋**。它們就是修法本身 |
 
@@ -245,12 +261,13 @@ mod 索引是舊格式（schema 1），這版程式要 2。卡片指名的第三
   沒有遊戲就下載新的完整包。
 ```
 
-共用 mod 清單被改過（warn）：
+索引不是這台的遊戲建的（`mods_index_foreign`，warn）：
 
 ```
-基礎庫的共用 mod 清單和這份資源包記的不一樣（shared_mods.txt 被改過，或某一版重新產生過）。
-  卡片還開得起來，但封進卡裡的共用劃分可能和庫對不上，少數部件可能不會穿上。
-  本機有遊戲的話重新產生一次：ok-extract <遊戲> --oklib shared-ignore Content\IndependentResources\base_v1
+mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪些 mod」可能列不準。
+  OK 卡不受影響，照開。
+  要修就重建一次索引：
+  Tools\ok-extract\target\release\ok-extract.exe D:/KoikatuSunshine --oklib mods-index Content\IndependentResources\base_v1
 ```
 
 ## 5. 覆蓋安裝的兩個現場問題
@@ -298,9 +315,9 @@ mod 索引是舊格式（schema 1），這版程式要 2。卡片指名的第三
 
 | 檔 | 改什麼 | 誰 |
 |---|---|---|
-| `Tools/ok-extract/src/resources_version.rs`（新） | `RESOURCES_MIN/MAX`、格式指紋表測試、`parts` 的讀取 | e-cardload（格式的地盤），可代筆由它審 |
+| `Tools/ok-extract/src/resources.rs`（新） | `RESOURCES_MIN/MAX`、`resources_check(lib, min, max) -> JSON`、格式指紋表測試 | **e-cardload**（已接；它手上的開卡優化做完就寫） |
 | `Tools/ok-extract/src/oklib.rs` | `activate()` 擋；`resources-check` / `resources-stamp` / `--selftest` 子命令 | 同上 |
-| `Tools/ok-extract/src/ffi.rs` | `ok_resources_check` | 同上 |
+| `Tools/ok-extract/src/ffi.rs` | `ok_resources_check(lib, out, cap)` | 同上 |
 | `Tools/package_street_social.lua` | 完整包寫 `RESOURCES.json`；`PACKAGE.json` 的 `kind` 與 `requires_resources_min/max`（值從 `resources-stamp` 抄） | MOD 框架 session |
 | `Tools/package_studio_release.lua` | `--program-only` 的新自檢（§6.2） | 同上 |
 | `Tools/prune_stages.lua`（新） | §5.1 的安全清理 | 同上 |
@@ -317,16 +334,23 @@ mod 索引是舊格式（schema 1），這版程式要 2。卡片指名的第三
 - 對 `--resources-from <完整包資料夾>`（預設找最新的 full 包）跑一次 `resources-check`，退出碼必須 0；不通過就打包失敗，訊息說「要先發新的完整包」。
 - 完整包：`RESOURCES.json` 的 `parts` 等於包裡實際檔案讀出來的值（防打包腳本抄錯）。
 
-## 7. 待 e-cardload 拍板
+## 7. e-cardload 的拍板（2026-11-24）與還沒定的那一條
 
-已用訊息問過（它在追另一件事，不打斷它的量測），回覆後更新這份：
+已拍板，§1～§3、§6、§8 都照它改過。和原稿的差別，列出來免得之後有人照舊稿實作：
 
-- A：§2.1 那七項裡哪些該進閘；`sources.okidx` 有沒有可讀的版本欄位。
-- B：`meta.mods_dir` 不同算不算不符（我傾向不算）。
-- C：§3.2 的 JSON 形狀與 `problems[].id` 列表。
-- D：§2.2 第 1 道（格式指紋表釘在測試裡）它接不接受，或偏好 `--selftest`。
+| 原稿 | 拍板後 |
+|---|---|
+| 常數放 `resources_version.rs` | 放 `resources.rs`，常數與檢查同一個檔，由 e-cardload 維護 |
+| 比 `sources.okidx` 的版本欄位 | **它沒有版本欄位**；改成 `selftest_failed`（開庫問一個已知查詢） |
+| `CARD_PACK_VERSION` 進閘 | **不進**資源閘（那是卡片跟程式的事，開卡已經會報錯）；只釘在常數指紋表裡 |
+| `shared_mods.txt` 比內容指紋 | **只比存在**（內容跟著本機裝了哪些 mod 變，比指紋會為了錯的理由變紅） |
+| `models/.gitignore` 存在性 | 不變，另加 `sources.okidx` 與 `models/` 的存在性 |
+| `meta.mods_dir` 不同一律不報 | 玩家**設了**遊戲目錄而索引一個 archive 都對不上 → 報 `mods_index_foreign`（warn） |
+| 欄位叫 `severity` | 叫 `level` |
+| C ABI 回 `const char*` | 照 `ok_card_absent_mods` 的 **capacity 慣例** |
+| 指紋表含 `shared_mods.txt` 樣板 hash | **只釘常數** |
 
-拍板前不實作 Rust 那段。
+**還沒定的一條（我在送出問題之後才看出來，要再問它）**：三組的開發樹庫是本機從遊戲轉的，旁邊**沒有 `RESOURCES.json`**，照字面規則 `no_resources_json` 是 `block`，那就是三組都開不了卡。我提的規則是「庫旁邊沒有 `RESOURCES.json` 時只比子版本、不比人工整數，且 `no_resources_json` 在開發樹不算 block；用庫的上面有沒有 `.git` 與 `Tools/base_library_shared_mods.txt` 分辨開發樹」。這條定錯的代價最大（§9 第一項），所以**實作前要它點頭**。
 
 ## 8. 怎麼驗這個閘真的有效
 
@@ -341,10 +365,14 @@ mod 索引是舊格式（schema 1），這版程式要 2。卡片指名的第三
 | 5 | `mods_index.db` 的 `meta.schema` 改回 1 | 退出碼 2；訊息給出重建指令；開卡被擋（**不是**開了然後少件） |
 | 6 | 刪掉 `mods_index.db` | 退出碼 2；`mods_index_missing`；指令同上 |
 | 7 | `oklib.json` 的 `version` 改成 9 | 退出碼 2；`oklib_version` |
-| 8 | 改一行 `shared_mods.txt` | 退出碼 2、severity `warn`；卡**開得起來**；黃字通知、可收起 |
-| 9 | 情境 5 加上 `OK_RESOURCES_CHECK=off` | 卡開得起來；log 每次開卡都印「相容性閘已關閉」 |
-| 10 | 情境 2 的複本上跑 `--program-only --resources-from <該複本>` | 打包失敗，訊息說要先發新的完整包 |
-| 11 | 把 `modsindex::SCHEMA` 改成 3 但不動 `RESOURCES_MIN/MAX` | `cargo test` 紅，訊息就是 §2.2 那段 |
+| 8 | 刪掉 `shared_mods.txt` | 退出碼 2；`shared_mods_missing`；開卡被擋（不是變慢後少件） |
+| 9 | 刪掉 `models/.gitignore` | 退出碼 2；`models_ignore_missing` |
+| 10 | 設一個**別台機器**的遊戲目錄（索引一個 archive 都對不上） | 退出碼 **0**、level `warn`、`mods_index_foreign`；**OK 卡照開**；黃字通知、可收起 |
+| 11 | 把 `sources.okidx` 改名（selftest 失敗） | 退出碼 2；`sources_missing` 或 `selftest_failed` |
+| 12 | 情境 5 加上 `OK_RESOURCES_CHECK=off` | 卡開得起來；log 每次開卡都印「相容性閘已關閉」 |
+| 13 | 情境 2 的複本上跑 `--program-only --resources-from <該複本>` | 打包失敗，訊息說要先發新的完整包 |
+| 14 | 把 `modsindex::SCHEMA` 改成 3 但不動 `RESOURCES_MIN/MAX` | `cargo test` 紅，訊息就是 §2.2 那段 |
+| 15 | 在**開發樹**（庫旁邊沒有 `RESOURCES.json`）跑一次 | 退出碼 0；讀卡器照常開卡（§7 那條定了才驗） |
 
 情境 5 是整件事的核心：**今天這一條就是靜默少件的實際路徑**，所以它必須從「畫面只說已加载3D」變成「開卡被擋並講清楚」。驗的時候要用一張**指名第三方 mod 的原作卡**（例如伊莉雅那張，它缺 `kiyoubi. illya` 時會少件），不要用只用原作資源的卡——那種卡不問索引，驗不到東西。
 
