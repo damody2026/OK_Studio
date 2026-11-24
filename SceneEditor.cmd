@@ -1,7 +1,9 @@
 @echo off
 setlocal
 set "OK_ALLOW_UNPATCHED_ENGINE=1"
-if "%OK_GAME_ROOT%"=="" set "OK_GAME_ROOT=E:/Koikatu"
+rem No default game folder here: every machine keeps the game somewhere else, so a path written in this file is
+rem one machine's and wrong on every other one. Set OK_GAME_ROOT yourself to point at a game; without it the
+rem studio opens from the base library alone.
 rem OK Studio scene editor on its own: only the studio UI (Tools\run_scene_editor.lua). Drop a scene file on it to open it.
 "%~dp0Tools\lua\lua.exe" "%~dp0Tools\run_scene_editor.lua" -NoBuild %*
 set "taskExitCode=%errorlevel%"

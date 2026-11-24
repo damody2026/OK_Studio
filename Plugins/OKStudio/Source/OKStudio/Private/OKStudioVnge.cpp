@@ -2049,6 +2049,21 @@ bool FOKStudioVngeRuntime::BakeClipToTimeline(int32 ClipIndex, bool bReplaceExis
 	return true;
 }
 
+// The game folder the user named: their own setting first (GameUserSettings.ini, written by 設定 › 遊戲目錄),
+// then the project’s. No drive letter is written here — every machine keeps the game somewhere else and a path
+// from this file would be one of them (the user, 2026-11-24).
+static FString OKStudioConfiguredGameRoot()
+{
+	FString Root;
+	if (GConfig)
+	{
+		GConfig->GetString(TEXT("OKGameRoot"), TEXT("Root"), Root, GGameUserSettingsIni);
+		if (Root.IsEmpty()) GConfig->GetString(TEXT("/Script/KKSideloader.KKGameRoot"), TEXT("Root"), Root, GGameIni);
+		if (Root.IsEmpty()) GConfig->GetString(TEXT("KKGameRoot"), TEXT("Root"), Root, GGameIni);
+	}
+	return Root;
+}
+
 FString FOKStudioVngeRuntime::ResolvePoseLibRoot()
 {
 	TArray<FString> Candidates;
@@ -2059,8 +2074,8 @@ FString FOKStudioVngeRuntime::ResolvePoseLibRoot()
 		if (CfgRoot.IsEmpty()) GConfig->GetString(TEXT("KKGameRoot"), TEXT("Root"), CfgRoot, GGameIni);
 	}
 	if (!CfgRoot.IsEmpty()) Candidates.Add(CfgRoot / TEXT("BepInEx/plugins/Console/Lib/sss"));
-	Candidates.Add(TEXT("E:/Koikatu/BepInEx/plugins/Console/Lib/sss"));
-	Candidates.Add(TEXT("D:/Koikatu/BepInEx/plugins/Console/Lib/sss"));
+	// No drive letters here: those were one machine’s folders and are somebody else’s (or nothing) everywhere
+	// else. Only the folder the user named above (the user, 2026-11-24).
 	for (const FString& C : Candidates)
 	{
 		if (IFileManager::Get().DirectoryExists(*C)) return FPaths::ConvertRelativePathToFull(C);
@@ -2324,8 +2339,12 @@ bool FOKStudioVngeRuntime::PlaySoundSource(int32 SourceIndex, FString& OutError)
 		Candidates.Add(Src.Path);
 		if (!Game->File.IsEmpty()) Candidates.Add(FPaths::GetPath(Game->File) / FPaths::GetCleanFilename(Src.Path));
 		Candidates.Add(FPaths::ProjectDir() / Src.Path);
-		Candidates.Add(FString(TEXT("E:/Koikatu")) / Src.Path);
-		Candidates.Add(FString(TEXT("E:/Koikatu/UserData")) / Src.Path);
+		// The game folder the user named, not a drive letter written here (the user, 2026-11-24).
+		if(const FString ConfiguredRoot=OKStudioConfiguredGameRoot(); !ConfiguredRoot.IsEmpty())
+		{
+			Candidates.Add(ConfiguredRoot / Src.Path);
+			Candidates.Add(ConfiguredRoot / TEXT("UserData") / Src.Path);
+		}
 	}
 	FString Resolved;
 	for (const FString& C : Candidates)

@@ -4,6 +4,7 @@
 #include "HAL/FileManager.h"
 #include "KKLocalMods.h"
 #include "KKModIndex.h"
+#include "KKGameRoot.h"
 #if WITH_DEV_AUTOMATION_TESTS
 namespace
 {
@@ -220,6 +221,58 @@ bool FKKLocalModsTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("rebuilt over the cache"),Reloaded.Build(VersionMods,RebuildError));
     TestTrue(TEXT("rebuild keeps the winner"),Reloaded.Find(Ref.ModID)&&Reloaded.Find(Ref.ModID)->Path.EndsWith(TEXT("c.zipmod")));
     TestEqual(TEXT("rebuild sees the same packages"),Reloaded.Files.Num(),3);
+
+    // The game folder is renamed, and the same card is opened again -- twice. Nothing here may be remembered from the
+    // last open: every machine keeps the game somewhere else and a folder can be renamed between two cards, so where
+    // the card lives is worked out each time (the user, 2026-11-24: 「每台電腦都不一樣」). The earlier tests all kept
+    // one fixed folder from start to end, which is why none of them saw the reader open a card against a folder that
+    // was no longer there.
+    const FString First=Folder/TEXT("game-renamed-1"),Second=Folder/TEXT("game-renamed-2");
+    TestTrue(TEXT("rename the installation"),IFileManager::Get().Move(*First,*Versions));
+    FKKModIndex AfterFirst;FString FirstError;
+    TestTrue(TEXT("index the renamed installation"),AfterFirst.Build(First/TEXT("mods"),FirstError));
+    Index.BuildForCard(First/TEXT("UserData/card.png"),{Ref},&AfterFirst);
+    TestTrue(TEXT("the card is found in the renamed installation"),FPaths::IsSamePath(Index.GameRoot,First));
+    TestEqual(TEXT("its zipmod comes from the renamed installation"),Index.ZipmodPaths.Num(),1);
+    TestTrue(TEXT("and it is the one inside it"),Index.ZipmodPaths[0].StartsWith(First));
+    // The index built for the old name answers nothing about the new one, so the reader rebuilds instead of
+    // reporting the card's zipmods as missing.
+    TestFalse(TEXT("the old index does not cover the renamed folder"),Installed.CoversModsDir(First/TEXT("mods")));
+    {
+        // The settings still name the folder as it was called: gone, so the card's own installation is used and the
+        // stale setting is reported rather than used in silence.
+        const FKKGameRootChoice Choice=KKChooseGameRoot(Versions,Index.GameRoot);
+        TestTrue(TEXT("the folder in the settings is reported missing"),Choice.bConfiguredMissing);
+        TestTrue(TEXT("the card's own installation is taken"),Choice.bFromCard);
+        TestTrue(TEXT("and it is the renamed one"),FPaths::IsSamePath(Choice.Root,First));
+    }
+    TestTrue(TEXT("rename the installation again"),IFileManager::Get().Move(*Second,*First));
+    FKKModIndex AfterSecond;FString SecondError;
+    TestTrue(TEXT("index it again"),AfterSecond.Build(Second/TEXT("mods"),SecondError));
+    Index.BuildForCard(Second/TEXT("UserData/card.png"),{Ref},&AfterSecond);
+    TestTrue(TEXT("the card follows the second rename"),FPaths::IsSamePath(Index.GameRoot,Second));
+    TestEqual(TEXT("its zipmod follows too"),Index.ZipmodPaths.Num(),1);
+    TestTrue(TEXT("and it is inside the new folder"),Index.ZipmodPaths[0].StartsWith(Second));
+    {
+        const FKKGameRootChoice Choice=KKChooseGameRoot(First,Index.GameRoot);
+        TestTrue(TEXT("the previous name is reported missing"),Choice.bConfiguredMissing);
+        TestTrue(TEXT("the card's own installation is taken again"),Choice.bFromCard);
+        TestTrue(TEXT("and it is the one it was renamed to"),FPaths::IsSamePath(Choice.Root,Second));
+    }
+    {
+        // A folder the user named that is really there is kept: nothing is overridden for its own sake.
+        const FKKGameRootChoice Choice=KKChooseGameRoot(Second,Second);
+        TestFalse(TEXT("a real setting is not reported missing"),Choice.bConfiguredMissing);
+        TestFalse(TEXT("and it is not replaced"),Choice.bFromCard);
+        TestTrue(TEXT("it is what opens"),FPaths::IsSamePath(Choice.Root,Second));
+    }
+    {
+        // Nothing set and the card outside any installation: no game, and no path invented for it.
+        const FKKGameRootChoice Choice=KKChooseGameRoot(FString(),FString());
+        TestTrue(TEXT("no game is no path"),Choice.Root.IsEmpty());
+        TestFalse(TEXT("nothing missing to report"),Choice.bConfiguredMissing);
+        TestFalse(TEXT("and nothing came from a card"),Choice.bFromCard);
+    }
     return true;
 }
 #endif

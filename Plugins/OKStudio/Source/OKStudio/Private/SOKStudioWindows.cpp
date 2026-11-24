@@ -2908,7 +2908,16 @@ void SOKStudioPanel::ShowTimelineXmlMenu(const FVector2D& At)
 		Files.Sort();
 		for (const FString& F : Files) FoundXmls.Add({ F, bSingleDefault });
 	};
-	ScanDir(TEXT("E:/Koikatu/BepInEx/plugins/Timeline/Single Files"), true);
+	// The game folder the user named; a drive letter written here is one machine’s (the user, 2026-11-24).
+	{
+		FString ConfiguredRoot;
+		if (GConfig)
+		{
+			GConfig->GetString(TEXT("OKGameRoot"), TEXT("Root"), ConfiguredRoot, GGameUserSettingsIni);
+			if (ConfiguredRoot.IsEmpty()) GConfig->GetString(TEXT("/Script/KKSideloader.KKGameRoot"), TEXT("Root"), ConfiguredRoot, GGameIni);
+		}
+		if (!ConfiguredRoot.IsEmpty()) ScanDir(ConfiguredRoot / TEXT("BepInEx/plugins/Timeline/Single Files"), true);
+	}
 	ScanDir(FPaths::ProjectDir() / TEXT("UserData/Studio/timeline"), false);
 
 	if (!FoundXmls.IsEmpty())

@@ -1988,35 +1988,36 @@ void UOKCharacterController::StartLoad3D(bool bAppearanceGeometryOnly)
 	FString EffectiveGameRoot;
 	if(!bIndependentCards)
 	{
-		if(const UKKGameRoot* Configured=UKKGameRoot::Get())EffectiveGameRoot=Configured->Root;
-		// 「遊戲目錄會隨機」(the user, 2026-11-24): every machine keeps the game somewhere else, and this checkout's
-		// setting named D:/XKoikatuSunshine, which exists nowhere. So the reader does not insist on the folder in the
-		// settings: it asks the card where it lives, and when nothing valid is set it keeps that answer.
-		const bool bConfiguredUsable=!EffectiveGameRoot.IsEmpty()&&FPaths::DirectoryExists(EffectiveGameRoot/TEXT("mods"));
-		const bool bCardsOwnGame=!LocalMods.GameRoot.IsEmpty()&&FPaths::DirectoryExists(LocalMods.GameRoot/TEXT("mods"));
-		if(bCardsOwnGame&&!FPaths::IsSamePath(LocalMods.GameRoot,EffectiveGameRoot))
+		// KKChooseGameRoot decides it, and KKLocalMods.spec covers it (including the game folder being renamed between
+		// two opens). Nothing is remembered from the last card and no path is guessed.
+		const UKKGameRoot* Configured=UKKGameRoot::Get();
+		const FKKGameRootChoice Choice=KKChooseGameRoot(Configured?Configured->Root:FString(),LocalMods.GameRoot);
+		EffectiveGameRoot=Choice.Root;
+		if(Choice.bFromCard)
 		{
-			// A card dragged in from D:/KoikatuSunshine's own UserData/chara/female found 1 of its 19 zipmods and wore
-			// the missing-texture green instead of its clothes (2026-11-24).
-			UE_LOG(LogTemp,Display,TEXT("OK load3d: the card's own game %s is used, not the folder in the settings (%s)"),
-				*LocalMods.GameRoot,EffectiveGameRoot.IsEmpty()?TEXT("<未設定>"):*EffectiveGameRoot);
-			if(!bConfiguredUsable)
+			// A card dragged in from D:/KoikatuSunshine’s own UserData/chara/female while the settings named
+			// D:/XKoikatuSunshine (nowhere) found 1 of its 19 zipmods and wore the missing-texture green (2026-11-24).
+			UE_LOG(LogTemp,Display,TEXT("OK load3d: the card’s own game %s is used, not the folder in the settings (%s)"),
+				*Choice.Root,Configured&&!Configured->Root.IsEmpty()?*Configured->Root:TEXT("<未設定>"));
+			if(Choice.bConfiguredMissing||!Configured||Configured->Root.IsEmpty())
 			{
-				// Nothing usable was set, so this is now the game folder: the next card, from wherever, finds the same
-				// mods/ without the user having to type a path. A folder the user chose themselves is never replaced.
-				ScreenNote(9,8.f,FColor::Cyan,FString::Printf(TEXT("遊戲目錄設成這張卡所在的遊戲：%s"),*LocalMods.GameRoot));
-				UKKGameRoot::SetUserRoot(LocalMods.GameRoot);
+				// Nothing usable was set, so this is the game folder from now on: the next card, from wherever, finds the
+				// same mods/ without the user typing a path. A folder the user chose themselves is never replaced.
+				UKKGameRoot::SetUserRoot(Choice.Root);
 				if(ReaderScreen)ReaderScreen->RefreshGameRootPage();
 			}
-			EffectiveGameRoot=LocalMods.GameRoot;
 		}
-		else if(!EffectiveGameRoot.IsEmpty()&&!bConfiguredUsable)
+		if(Choice.bConfiguredMissing)
 		{
-			// Set, but not there (a folder renamed or moved, a setting carried over from another machine): say so,
-			// because the card still opens -- from the base library and the zipmods beside it -- and its mod clothes
-			// then quietly come out wrong.
-			ScreenNote(9,10.f,FColor::Orange,FString::Printf(TEXT("設定的遊戲目錄找不到 mods/：%s\n這張卡只會用卡片旁邊的 zipmod 與基礎庫，mod 的衣服可能不對。到 設定 › 遊戲目錄 重新指定。"),*EffectiveGameRoot));
-			UE_LOG(LogTemp,Warning,TEXT("OK load3d: the game folder in the settings has no mods/: %s"),*EffectiveGameRoot);
+			// Set, but not there (renamed, moved, or a setting carried over from another machine): say so. The card
+			// still opens -- from the base library and whatever zipmods sit beside it -- so its mod clothes would
+			// otherwise come out wrong in silence.
+			const FString Gone=Configured?Configured->Root:FString();
+			if(Choice.bFromCard)
+				ScreenNote(9,8.f,FColor::Cyan,FString::Printf(TEXT("設定的遊戲目錄不在了（%s），改用這張卡自己所在的遊戲：%s"),*Gone,*Choice.Root));
+			else
+				ScreenNote(9,10.f,FColor::Orange,FString::Printf(TEXT("設定的遊戲目錄找不到 mods/：%s\n這張卡只會用卡片旁邊的 zipmod 與基礎庫，mod 的衣服可能不對。到 設定 › 遊戲目錄 重新指定。"),*Gone));
+			UE_LOG(LogTemp,Warning,TEXT("OK load3d: the game folder in the settings has no mods/: %s"),*Gone);
 		}
 	}
 	PendingPreviewResourceSignature=Entries.IsValidIndex(SelectedIndex)?PortableGallerySignature(Entries[SelectedIndex].Path):FString();
