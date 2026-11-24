@@ -3026,6 +3026,24 @@ fn card_key(card: &Path) -> String { card.file_name().map(|n| n.to_string_lossy(
 ///   record <lib> <card>...  open cards on the installation, record queries
 ///   replay <lib> <card>...  open cards on <lib>/root only, compare with record
 ///   live <card>...          digest of a normal open (no library)
+/// The tree's two maps, carried by the library so that no open ever reads the tree (modsindex.rs): which archive
+/// declares each GUID, which archive replaces each abdata bundle. One walk of the installation, here, replaces the
+/// whole-tree scans the opens used to do -- and the two cache files they kept, which are removed if they are still
+/// lying about. Must run with no library active (see the call in `shared-ignore`).
+fn write_mods_index(game: &Path, lib: &Path) -> Result<(), String> {
+    debug_assert!(active().is_none(), "the index must be built from the installation, not from the library");
+    let mods_dir = if game.file_name().is_some_and(|n| n.eq_ignore_ascii_case("mods")) { game.to_path_buf() } else { game.join("mods") };
+    if !mods_dir.is_dir() {
+        println!("OKLIB MODS INDEX skipped: {} is not a directory (an original card's open needs it: rerun with the game)", mods_dir.display());
+        return Ok(());
+    }
+    let index = crate::modsindex::build(&mods_dir);
+    let (guids, overrides) = crate::modsindex::write(lib, &index)?;
+    for stale in [".ok_tree_guid_index.bin", ".ok_override_index.tsv"] { let _ = std::fs::remove_file(mods_dir.join(stale)); }
+    println!("OKLIB MODS INDEX guids={guids} overrides={overrides} from {}", mods_dir.display());
+    Ok(())
+}
+
 pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("");
     let lib = args.get(1).map(PathBuf::from);
@@ -3845,6 +3863,11 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             let answer_lines: Vec<String> = shared.iter().filter(|l| l.as_str() != "mods/").cloned().collect();
             let whole_tree = shared.len() != answer_lines.len();
             let is_shared = |label: &str| matches(&answer_lines, label);
+            // Before anything of the library is active: `build` reads the installation's archives, and a library
+            // replay in this process answers zip reads from the library's own records instead -- which silently
+            // produced a damaged index (a truncated GUID "youbi. bikke" for "kiyoubi. bikke", and the card's own
+            // "kiyoubi. illya" missing altogether, so the reader reported it as a gap).
+            write_mods_index(game, &lib)?;
             crate::gamefs::activate(crate::gamefs::Mode::Replay, &lib, &lib)?;
             let labels = crate::gamefs::model_labels();
             crate::gamefs::deactivate();
@@ -3915,21 +3938,13 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             // The library carries its list: an OK card's strict open (okstrict.rs) tells shared mods by it, also where
             // the project's Tools folder is not (a packaged game).
             std::fs::copy(&list, lib.join("shared_mods.txt")).map_err(|e| format!("{}: {e}", list.display()))?;
-            // The tree's two maps, so that no open ever reads the tree (modsindex.rs): which archive declares each
-            // GUID, which archive replaces each abdata bundle. This one walk, here, replaces the whole-tree scans
-            // the opens used to do -- and the two cache files they kept (mods/.ok_tree_guid_index.bin,
-            // mods/.ok_override_index.tsv), which are removed if they are still lying about.
-            let mods_dir = if game.file_name().is_some_and(|n| n.eq_ignore_ascii_case("mods")) { game.to_path_buf() } else { game.join("mods") };
-            if mods_dir.is_dir() {
-                let index = crate::modsindex::build(&mods_dir);
-                let (guids, overrides) = crate::modsindex::write(&lib, &index)?;
-                for stale in [".ok_tree_guid_index.bin", ".ok_override_index.tsv"] { let _ = std::fs::remove_file(mods_dir.join(stale)); }
-                println!("OKLIB MODS INDEX guids={guids} overrides={overrides} from {}", mods_dir.display());
-            } else {
-                println!("OKLIB MODS INDEX skipped: {} is not a directory (an original card's open needs it: rerun with the game)", mods_dir.display());
-            }
+            write_mods_index(game, &lib)?;
             println!("OKLIB SHARED kept={kept} ({:.2} GB) excluded={} ({:.2} GB) without_source={unnamed}",
                 kept_bytes as f64 / 1e9, excluded.len(), out_bytes as f64 / 1e9);
+        }
+        "mods-index" => {
+            // mods-index <lib>: just the tree's two maps, for when mods were installed or removed.
+            write_mods_index(game, &lib.ok_or("library directory required")?)?;
         }
         "sources" => {
             // sources <lib>: what the observation index holds, by kind and extension.

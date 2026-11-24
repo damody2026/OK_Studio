@@ -951,3 +951,31 @@ bundle 取走访顺序第一个）。
 **要记住的边界**：`collect_zipmods` 还是会**列**目录（只拿档名，不开档），窄视图要靠它知道自己有哪些 archive；
 这不算「读 mod」。换了游戏目录或装／移除 mod 之后要重跑一次 `shared-ignore`，不然新 mod 的 GUID 会被当成缺口——
 这就是把它放在和 `shared_mods.txt` 同一个命令里的原因。
+
+### 读卡器那条路实测（伊莉雅，39 个 zipmod，2026-11-24）
+
+不是 bench，是使用者点卡那条路：读卡器开 `D:\KoikatuSunshinezz\UserData\chara\female\Fatestay night 伊莉雅斯菲尔·冯·爱因兹贝伦.png`，
+每轮都是新进程（冷开），本机完整基础庫，`OK_PROFILE=1`。
+
+| 轮 | 进程起 → 第一行 LogOkExtract | load3d → 「已加载3D」 | Rust `extract_card_outfit TOTAL` | mod 索引 |
+|---|---:|---:|---:|---:|
+| 1（刚编译完，磁碟最冷） | 9.2 s | 5.16 s | 1594.9 ms | 16 ms |
+| 2 | 6.9 s | 5.91 s | 1787.4 ms | 18 ms |
+| 3 | 7.3 s | 4.73 s | 1487.4 ms | 16 ms |
+| 4 | 6.1 s | 4.70 s | 1495.9 ms | 17 ms |
+
+使用者的现场数字是**第一行 LogOkExtract 9.4 s、「已加载3D」10.6 s**。可以直接对的是第一栏：**9.4 → 6.1～7.3 s**；
+以及索引那一段，**2.8 s 的整棵树冷建变成 16～18 ms 的读档**（`OK reader mod index: 7273 GUID from ... in 16 ms`）。
+最后一栏的「已加载3D」不能和他的 10.6 s 直接比：我这边是从启动读卡器算到自动开卡，含启动与扫卡墙，
+他那次是点下去才算；load3d 本身 4.70～5.91 s（中位数约 4.9 s）。
+
+**正确性**：同一张卡、全部 7 套服装，旧二进位对新二进位 **7/7 逐位元相同**，缺的部件两边都是 9 个，
+新的开卡读 **0** 个 manifest。它现在会多印三行 `OKMODS unanswered guid:`（`kiyoubi. illya`、`kks.co_bra_00`、
+`SAC.innie2`）——那三个 mod **本机根本没装**，整棵树的 manifest 里也没有，旧的路也一样找不到（只是不出声）。
+顺带确认一个看起来很像 bug 的东西不是这一笔造成的：索引里有被截断的 GUID（`youbi. bikke`，来源档名是
+`[kiyoubi] BIKKE_v0_1.zipmod`），那是 `guids_and_versions_from_zipmod` 解析 manifest 时就这样，
+新旧两条路共用同一个函式，所以不影响这次比对；要修是另一件事。
+
+**建索引必须在庫还没 activate 之前**（`oklib::write_mods_index` 的 `debug_assert`）：同一个进程里先 activate 过
+庫的 replay，再去读安装目录的 archive，zip 读取会被庫的纪录接走。另外补了 `--oklib mods-index <lib>`：
+装／移除 mod 之后只重建这两张表，不必重跑整个 `shared-ignore`。
