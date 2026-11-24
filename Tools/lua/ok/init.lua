@@ -59,7 +59,8 @@ package.path = package.path .. ";" .. ok.root .. "/Tools/?.lua"
 -- Unreal Engine root this project builds with (forward slashes, no trailing slash).
 -- Tools/ok_engine.lua prints it for .cmd launchers. Order: OK_ENGINE_ROOT, Tools/engine.local.json {"engine": ...},
 -- then an engine beside this checkout. No path is written in here: every machine keeps the engine somewhere else.
-function ok.engine_root()
+-- nil when none is found. Launchers shipped in a package call this: a package runs its staged game and has no engine.
+function ok.find_engine_root()
   local root = os.getenv("OK_ENGINE_ROOT")
   if not root or root == "" then
     local f = io.open(ok.root .. "/Tools/engine.local.json", "rb")
@@ -75,7 +76,13 @@ function ok.engine_root()
       if probe then probe:close(); root = candidate; break end
     end
   end
-  if not root or root == "" then
+  if not root or root == "" then return nil end
+  return (root:gsub("\\", "/"):gsub("/+$", ""))
+end
+
+function ok.engine_root()
+  local root = ok.find_engine_root()
+  if not root then
     error("找不到 Unreal 引擎：設 OK_ENGINE_ROOT，或在 Tools/engine.local.json 寫 {\"engine\": \"<引擎資料夾>\"}")
   end
   return (root:gsub("\\", "/"):gsub("/+$", ""))

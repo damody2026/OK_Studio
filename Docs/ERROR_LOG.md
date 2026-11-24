@@ -7675,3 +7675,15 @@ F 樹 65551a150 帶進來的），另一個沒有記下名字，就說「再觀�
 
 **改法**：測試結果不是只看 `test result:` 那行的數字，要把 `failures:` 底下的每個名字都讀出來存檔
 （`cargo test ... 2>&1 | Out-File <log>`，再從 log 取名字）。沒有名字就不算量過，不能寫「再觀察」。
+
+## 2026-11-24（mod-integ）打包版在沒裝引擎的電腦上一啟動就報「找不到 Unreal 引擎」
+
+**現象**：`CardReaderDevelopment.cmd`（打包版）在別人電腦上直接停在 `ok.engine_root` 的錯誤，連打包好的遊戲都沒開。
+
+**原因**：`fc2b9dd2a` 拿掉 `ok.engine_root()` 最後那個寫死的 `E:/PhysX/UE5.8`，找不到就 `error`。
+但 `run_card_reader_development.lua`、`run_scene_editor.lua` 先找引擎、才判斷「這是打包版，跑 stage」。
+在本機量不到，是因為打包資料夾在 E:，同磁碟的 `E:/PhysX/UE5.8` 剛好被「同磁碟找引擎」那條找到。
+
+**改法**：新增 `ok.find_engine_root()`（找不到回 nil），打包會帶的兩個啟動器改用它，沒有引擎就走 stage；
+`ok.engine_root()` 仍對開發用的腳本報錯。驗證方式：把 `find_engine_root` 換成回 nil 再 `-DryRun`，兩個都選到 stage。
+**教訓**：打包版的啟動器要在「沒有引擎、沒有專案」的條件下測，不能用開發機的實際環境代替。

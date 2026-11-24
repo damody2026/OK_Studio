@@ -61,7 +61,7 @@ end
 local function main()
   local o = parse(arg)
   local root = ok.root
-  local engine = o.engine and path.abs(o.engine) or ok.engine_root()
+  local engine = o.engine and path.abs(o.engine) or ok.find_engine_root()
   local width = size(o, "windowwidth", 1600, 640, 7680)
   local height = size(o, "windowheight", 900, 480, 4320)
   local scene = o.scene
@@ -75,7 +75,8 @@ local function main()
   -- A package (Tools/package_street_social.lua) has no project or engine: the studio runs in the packaged game
   -- (the newest Saved/StreetSocial/Build/*.stage, OKStudio is in it and /Engine/Maps/Entry is cooked).
   local project = path.join(root, "OpenKoikatsu.uproject")
-  local editor_exe = path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe")
+  -- No engine on this machine (a package on a player's computer): there is no editor, the stage runs.
+  local editor_exe = engine and path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe") or ""
   local stage_exe = (not path.is_file(project) or not path.is_file(editor_exe)) and newest_stage(root) or nil
   if not stage_exe then editor.ensure(root, engine, { build = not o.nobuild and not o.dryrun }) end
 

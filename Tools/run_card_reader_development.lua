@@ -68,13 +68,14 @@ end
 local function main()
   local o = parse(arg)
   local root = ok.root
-  local engine = o.engine and path.abs(o.engine) or ok.engine_root()
+  local engine = o.engine and path.abs(o.engine) or ok.find_engine_root()
   local width = size(o, "windowwidth", 1600, 640, 7680)
   local height = size(o, "windowheight", 1000, 480, 4320)
   local gpu = not o.cpuskin
 
   local project = path.join(root, "OpenKoikatsu.uproject")
-  local editor_exe = path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe")
+  -- No engine on this machine (a package on a player's computer): there is no editor, the stage runs.
+  local editor_exe = engine and path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe") or ""
   local stage_exe, stage_name
   if not path.is_file(project) or not path.is_file(editor_exe) then
     local how
