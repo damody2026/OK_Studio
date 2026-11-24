@@ -4,6 +4,7 @@
 --   Tools\lua\lua.exe Tools\package_studio_release.lua --tag <Name> --cards <OK card folder> --out <new folder>
 --     [--zip] [--max-cards 100] [--profile full] [--engine DIR]
 --     [--skip-build] [--skip-stage] [--skip-modkit --content-from <folder>]
+--   ... --zip-only [--zip-threads 4]   an existing --out: only the self-check, then its zip (no rebuild)
 --
 -- Steps (logs in Saved/StudioRelease/<tag>/, one file per step; a failing step names its log and what is missing):
 --   1. preflight     engine, cargo, the cards folder, a new --out, nobody measuring (unreal_slot.lua may-build)
@@ -20,6 +21,11 @@
 --   7. package       package_street_social.lua --studio --private --cards --mods --readme Docs/OK_STUDIO_MOD_PACKAGE.md
 --                    (the base library goes in as files; the launchers junction the stage's Content to it on first start)
 --   8. self-check    the package: entries, stage exe, tools, mods, panels, paks, maps, the ok-extract.exe search
+--
+-- --zip-only zips a package made earlier without --zip: preflight (the folder with its PACKAGE.json, no zip yet), the
+-- self-check, then <out>.zip of what packaging put there -- the files PACKAGE.json lists, PACKAGE.json and the stage's
+-- stage.json -- so what a test run left in the folder since (reader logs, screenshots, settings) stays out, as if --zip
+-- had been given. --zip-threads caps 7-Zip's threads (-mmt) for a machine someone is measuring on.
 --
 -- All builds use at most 8 threads. Nothing is pushed; the package is private (cards and original data inside).
 local ok = require "ok"
@@ -106,6 +112,8 @@ local function main()
   p:opt("--cards", { required = true })
   p:opt("--out", { required = true })
   p:flag("--zip")
+  p:flag("--zip-only")
+  p:opt("--zip-threads", { default = "8" })
   p:opt("--max-cards", { default = "100" })
   p:opt("--profile", { default = "full" })
   p:opt("--engine", { default = ok.engine_root() })
@@ -132,6 +140,21 @@ local function main()
   local profile = path.join(okmod, "profiles/" .. a.profile .. ".toml")
   say("logs: ", win(logs))
 
+  if not a.zip_threads:match("^%d+$") or tonumber(a.zip_threads) < 1 then fail("--zip-threads takes a whole number >= 1") end
+  local hairdeck = path.abs(a.hairdeck_data)
+  local packed
+
+  if a.zip_only then
+    say("1/8 preflight (--zip-only: the package is there, only the self-check and its zip)")
+    local missing = {}
+    if not path.is_file(path.join(out, "PACKAGE.json")) then missing[#missing + 1] = "a package made earlier at " .. win(out) .. " (its PACKAGE.json)" end
+    if path.exists(out .. ".zip") then missing[#missing + 1] = "no " .. win(out .. ".zip") .. " yet (--zip-only writes it)" end
+    if #missing > 0 then fail("missing:\n  - " .. table.concat(missing, "\n  - ")) end
+    -- How many packages the run made, for the self-check's count (its packages/ folder is in this tag's logs).
+    local made = path.join(work, "packages")
+    if path.is_dir(made) then packed = 0; for _, f in ipairs(list(made)) do if f:match("%.okmod$") then packed = packed + 1 end end end
+  else
+
   -- 1. preflight
   say("1/8 preflight")
   local missing = {}
@@ -144,7 +167,6 @@ local function main()
   if a.zip and path.exists(out .. ".zip") then missing[#missing + 1] = "no " .. win(out .. ".zip") .. " yet (--zip writes it)" end
   if a.skip_modkit and not a.content_from then missing[#missing + 1] = "--content-from <folder> with --skip-modkit (<example>/content/*.pak, <example>/ui/*.dui)" end
   if a.skip_stage and not path.is_dir(stage) then missing[#missing + 1] = "the stage " .. win(stage) .. " for --skip-stage" end
-  local hairdeck = path.abs(a.hairdeck_data)
   for _, rel in ipairs(HAIRDECK_FILES) do
     if not path.exists(path.join(hairdeck, rel)) then missing[#missing + 1] = "HairDeck weights " .. win(path.join(hairdeck, rel)) .. " (--hairdeck-data)" end
   end
@@ -235,7 +257,7 @@ local function main()
   local packages = path.join(work, "packages")
   if path.is_dir(packages) then path.rmtree(packages) end
   local pack_log = run_lua("mods-pack", "Tools/pack_mod_examples.lua", { "--out", win(packages), "--content-from", win(content_from) })
-  local packed = 0
+  packed = 0
   for _, f in ipairs(list(packages)) do if f:match("%.okmod$") then packed = packed + 1 end end
   if packed == 0 then fail("no .okmod made: " .. win(pack_log)) end
   local stage_mods = path.join(stage, "Mods")
@@ -256,6 +278,7 @@ local function main()
   -- No .pdb goes in, the tools' or the game's (user 2026-11-23); the self-check below makes sure.
   if a.zip then pargs[#pargs + 1] = "--zip"; pargs[#pargs + 1] = win(out .. ".zip") end
   run_lua("package", "Tools/package_street_social.lua", pargs)
+  end -- not --zip-only
 
   -- 8. self-check
   say("8/8 self-check")
@@ -356,7 +379,7 @@ local function main()
   local okmods = 0
   for _, f in ipairs(list(path.join(out, "ModPackages"))) do if f:match("%.okmod$") then okmods = okmods + 1 end end
   if installed == 0 then problems[#problems + 1] = "no mod installed in " .. stage_rel .. "/Mods" end
-  if okmods ~= packed then problems[#problems + 1] = ("ModPackages has %d .okmod, %d were made"):format(okmods, packed) end
+  if packed and okmods ~= packed then problems[#problems + 1] = ("ModPackages has %d .okmod, %d were made"):format(okmods, packed) end
   local vr = proc.run({ win(path.join(out, "Tools/ok-mod/target/release/ok-mod-pack.exe")), "verify", win(pkg_mods) },
     { stdout_file = path.join(logs, "selfcheck-verify.log"), merge = true })
   if not vr.ok then problems[#problems + 1] = "ok-mod-pack verify failed on the package: " .. win(path.join(logs, "selfcheck-verify.log")) end
@@ -369,9 +392,32 @@ local function main()
     fail("self-check failed:\n  - " .. table.concat(problems, "\n  - "))
   end
   path.write_text(path.join(logs, "selfcheck.txt"), "ok\n")
+  if a.zip_only then
+    -- What packaging put in the folder: the files PACKAGE.json lists, PACKAGE.json itself and the stage's stage.json
+    -- (written after the list). A zip made with --zip at packaging time holds exactly these (checked on
+    -- Studio-20261124-release-d: 17609 listed + 2 = the zip's 17611); anything a test run added since stays out.
+    local names = {}
+    for _, rel in ipairs(manifest.files or {}) do names[#names + 1] = rel end
+    names[#names + 1] = "PACKAGE.json"
+    names[#names + 1] = stage_rel .. "/stage.json"
+    local absent = {}
+    for _, rel in ipairs(names) do if not path.is_file(path.join(out, rel)) then absent[#absent + 1] = rel end end
+    if #absent > 0 then fail(("%d file(s) PACKAGE.json lists are not in %s, e.g. %s"):format(#absent, win(out), absent[1])) end
+    local listfile = path.join(logs, "zip-files.txt")
+    local wins = {}
+    for i, rel in ipairs(names) do wins[i] = (rel:gsub("/", "\\")) end
+    path.write_text(listfile, table.concat(wins, "\n") .. "\n")
+    local zip = out .. ".zip"
+    local seven = "C:/Program Files/7-Zip/7z.exe"
+    if not path.is_file(seven) then fail("--zip-only needs 7-Zip at " .. win(seven)) end
+    say(("zip %d files -> %s (7-Zip, %s threads)"):format(#names, win(zip), a.zip_threads))
+    -- The same switches package_street_social.lua --zip uses (-tzip -mx=1), the thread count from --zip-threads.
+    run("zip", { win(seven), "a", "-tzip", "-mx=1", "-mmt=" .. a.zip_threads, "-scsUTF-8", win(zip), "@" .. win(listfile) }, { cwd = out })
+    say("Zip: ", win(zip), " (", tostring(path.size and path.size(zip) or "?"), " bytes)")
+  end
   say(("done: %d mods installed, %d packages, stage %s"):format(installed, okmods, stage_tag))
   io.write(win(out), "\n")
-  if a.zip then io.write(win(out .. ".zip"), "\n") end
+  if a.zip or a.zip_only then io.write(win(out .. ".zip"), "\n") end
 end
 
 ok.main(main)
