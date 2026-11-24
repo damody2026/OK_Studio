@@ -7528,3 +7528,15 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 **實測**（2026-11-24，F，同一台、同一個 `D:/KoikatuSunshine/mods`）：拖卡之後視窗全程 `Responding=True`（每 2 秒查一次，45 次都是），索引 `7296 zipmod, 7268 GUID, 0.5 s`（之後存成快取），卡片 4 秒載入完成，進度條上是「載入3D · 讀卡片、組出她的模型」，`root=` 變成 `D:/KoikatuSunshine`。那 0.5 秒是作業系統檔案快取熱的時候量的（量之前剛掃過同一批 manifest），冷開會更久，但讀的量是一樣的 466 MiB。
 
 **下次怎麼避免**：遊戲執行緒上不准掃 `mods/`。要認 zipmod 的身分就讀它的 manifest，不要把整包讀進來。「每選一張卡都重建一次索引」這種事，只要資料量是使用者的安裝決定的，就一定要有快取，而且要能增量。
+
+## 2026-11-24（F）讀卡器裡每個人的上衣都是綠的
+
+**現象**：F 的讀卡器開任何一張原作卡，上衣（`clothes_top`）都是純綠色，裙子、鞋子正常。
+
+**原因**：不是程式 bug——`F:\OpenKoikatsu\Mods\material-hooks` 這個**測試用 mod**（`org.openkoikatsu.test.material-hooks`，原始碼在 [Tools/ok-mod/fixtures/material-hooks](../Tools/ok-mod/fixtures/material-hooks/src/lib.rs)）本來就會在 `material.post_texture` 把 `tint_slot`（預設 `clothes_top`）的貼圖乘上 `tint`（預設綠色 `0.4,1,0.4`）。它被裝進 F 的 `Mods/` 之後就沒拿掉，於是每張卡的上衣都變綠。
+
+**怎麼找到的**：先用 CLI 開同一張卡，烘出來的貼圖是**粉紅格紋**（遊戲 abdata 與基礎庫兩種來源都一樣），也就是 Rust 那邊完全正確；再看第二張卡，一樣是**只有上衣綠、裙子正常**——「只有一個部位、而且是純色」就不像貼圖缺失，是有人在那個 slot 上乘了顏色。對照 `Mods/` 才看到這個 fixture。
+
+**修正**：把 `Mods/material-hooks` 改名成 `Mods/.material-hooks`（mod 探索會跳過 `.` 開頭的資料夾，要用回來改回名字就好）。改完重開讀卡器，Alice 的上衣回到黃色洋裝＋白色長袖，愛莉希雅的旗袍回到粉紅格紋，和 CLI 烘出來的貼圖一致。打包版（`Studio-20261124-release-b`）的 `Mods/` 沒有這個 fixture，只有 19 個正式 mod，所以打包版沒受影響。
+
+**下次怎麼避免**：測試用的 fixture mod 裝進工作樹的 `Mods/` 之後要記得拿掉，尤其是**會改外觀**的那幾個——它會讓之後每一次目視驗收都看到錯的畫面，而且很容易被當成渲染或資源的 bug 去追。看到「只有某一個部位、整片純色」先去翻 `Mods/`。
