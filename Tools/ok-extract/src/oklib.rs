@@ -497,7 +497,11 @@ impl Store {
     fn lookup(&self, id: &Id, query: &str, args: &[u8], gap_if_missing: bool) -> Option<(Vec<u8>, bool)> {
         // An OK card's open reads a model only third-party mods use from its own pack (okstrict.rs): the library's
         // copy is a gap, copied into the card while it is sealed.
-        if self.mode == Mode::Replay && crate::okstrict::active().is_some() && !crate::okstrict::library_model(id) {
+        // `|| !library_answer(query)`: the library may hold this model, and still not be the one to answer THIS query
+        // for this card (okstrict::library_answer). Then the library's answer is discarded here exactly as a
+        // non-shared model's is, and the caller recomputes.
+        if self.mode == Mode::Replay && crate::okstrict::active().is_some()
+            && (!crate::okstrict::library_model(id) || !crate::okstrict::library_answer(query)) {
             if let Some(raw) = self.pack().and_then(|p| p.get_own(id, query, args)) { return Some((raw, true)); }
             let raw = self.get_own(id, query, args)?;
             if crate::okstrict::complete(|a| { a.records.insert((*id, query.to_owned(), args.to_vec()), raw.clone()); }) { return Some((raw, true)); }
@@ -2818,7 +2822,8 @@ pub(crate) fn memo_bytes_visit<A: serde::Serialize + ?Sized, T>(bytes: &[u8], me
     let id = content_id(bytes);
     let arg_bytes = bincode::serialize(args).ok()?;
     // (an OK card's own model: its pack only; one it lacks goes through memo_bytes, okstrict.rs)
-    let own = crate::okstrict::active().is_some() && !crate::okstrict::library_model(&id);
+    let own = crate::okstrict::active().is_some()
+        && (!crate::okstrict::library_model(&id) || !crate::okstrict::library_answer(method));
     let library = if own { None } else { store.get_own_source(&id, method, &arg_bytes) };
     let raw = library.or_else(|| store.pack().and_then(|p| p.get_own_source(&id, method, &arg_bytes)))?;
     let value = visit(&raw)?;

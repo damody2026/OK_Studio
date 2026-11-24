@@ -170,6 +170,28 @@ pub fn shared_mods_visible(key: &str, dir: bool) -> bool {
 /// Under a strict open: the library may serve this model: it holds it, and not as one only third-party mods use.
 pub fn library_model(id: &Id) -> bool { shared().is_some_and(|s| !s.excluded.contains(id) && s.shared_present(id)) }
 
+/// Under a strict open: may the library's **recorded answer** to `query` be reused for this card, given that the
+/// library may serve the model at all (`library_model`)?
+///
+/// The two are not the same question. A record's key is (model, method, args), and some answers also depend on things
+/// the key does not carry -- the clothing states this open requested, the narrowed mods view, what was in view when it
+/// was computed. The library's records were filled by whatever conversion ran there; the card's pack recorded the
+/// answers to **this** card's questions. So an answer of the first kind may be shared, one of the second kind may not,
+/// and a library answer of the second kind fails quietly, because the library does answer -- just a different question
+/// (2026-11-24: C049 outfits 1 and 6 lost o_thihisocks_thigh_R with no gap, Docs/CARD_OPEN_PERF_20261117.md 第九節).
+///
+/// `OK_OWN_ANSWERS` names the queries whose answers must come from the card's own pack: a comma-separated list of
+/// method names, or `*` for every query. It is how the list below was found (flip the shared rule, force all, then
+/// narrow until the dumps come back byte-identical), and it stays as the switch for anyone checking it again.
+pub fn library_answer(query: &str) -> bool {
+    static OWN: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let own = OWN.get_or_init(|| std::env::var("OK_OWN_ANSWERS").unwrap_or_default()
+        .split(',').map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()).collect());
+    if own.iter().any(|s| s == "*") { return false; }
+    let query = query.to_ascii_lowercase();
+    !own.iter().any(|s| query.contains(s.as_str()))
+}
+
 /// The library's shared mods (`shared_mods.txt`) and its models that are not shared resources (`models/.gitignore`, an
 /// old file name: the library is not in version control), both written by `--oklib shared-ignore`.
 struct Shared { lines: Vec<String>, excluded: HashSet<Id>, lib: PathBuf, present: Mutex<HashMap<Id, bool>> }
