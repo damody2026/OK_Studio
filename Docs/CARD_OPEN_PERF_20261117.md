@@ -1062,3 +1062,26 @@ F 组 65551a150 带进来的既有失败，和这笔无关）。两个 UE 目标
 Sideloader 的 GUID 是作者自订字串，7273 个键里有 **1704 个**含空白或 `[a-z0-9._+-]` 以外的字元
 （`0083_apex legend`、`3d scans`、`6607asdg eye`…），所以「看起来怪」不能当成解析坏了的判准。
 `kiyoubi. illya` 同理：它是伊莉雅那张卡自己写的 id，整棵树里没有任何 archive 提到 illya，就是没装。
+
+### 讀卡器那兩秒：已經排除掉的（2026-11-24，還沒定案）
+
+Megumin 同一張卡、同一套 outfit 0、同一個庫：bench 1.17～1.30 s，讀卡器 3.5～4.1 s（閒置後再開也是 3.0 s）。
+差的兩秒集中在 `clothes options`（每個部件 39～184 ms，bench 是 **0.2 ms**）與 `clothes renderer map`（同樣量級）。
+這一輪把候選一個個排掉，**剩下的唯一活口是那兩段裡面沒有被 spot 包住的 bundle 物件讀取**：
+
+| 候選 | 怎麼測 | 結果 |
+|---|---|---|
+| 卡不同／服裝不同 | 那張卡七套服裝都 bench 過 | outfit 0 = 1.31 s，其餘 0.21～0.25 s；沒有一套接近 3 s |
+| 啟動爭用 | 閒置後從 UI 再開同一張兩次 | 3.02／2.99 s，和啟動時那次一樣 |
+| 背景的 clothing warm 搶資源 | `OK_NO_CLOTHING_WARM=1` | 3.66 s vs 3.78 s，沒差 |
+| 機器的檔案快取被 UE 擠掉 | 讀卡器開著閒置時，另一個 bench 行程開同一張卡 | bench **1.48 s**，`view: zip_list_sig` 3.2 ms、`open_zip` 7.8 ms——同一分鐘內，同一棵樹，行程外面很快 |
+| 窄視圖沒生效（整棵樹） | bench 加 `OK_WHOLE_MODS_TREE=1` | 1.17 → 1.69 s（`open_zip` x22037），只值 0.5 s，解釋不了兩秒 |
+| 執行緒不夠 | bench 8/4/2/1 執行緒 | 1.30／1.41／1.67／2.45 s，只解釋一部分 |
+| entry prefetch 沒跑或在等 | 兩邊的 `PROFILE prefetch`、`SPOT prefetch hit (wait)` | 完全一樣（14 groups、8 helpers、0 miss；等待 3.4 vs 4.8 ms） |
+| 拿 bundle bytes 或 parse 變慢 | `SPOT accessory_bundle_bytes`、`SPOT parse_bundle_uncached` | 0.0 ms x8；31 ms x101（件數一樣） |
+| mesh 解碼搬位置了 | 兩邊的 `PROFILE segments` | 都有，讀卡器**還更少**（1059 vs 1541 ms，跨執行緒加總） |
+
+也就是說：**件數一樣、CPU 更少、時間多兩秒**，而且外面的行程同時測是快的。下一步是在
+`unity::clothes_option_groups` 與 `unity::clothes_renderer_map` 裡面加 spot（現在那兩段裡只有進出的 tick，
+中間沒有量測），特別要分出「讀 bundle 物件時的 page fault」——那兩段吃的是 `SourceBytes`，mmap 的頁在 UE 行程裡
+可能沒有住在記憶體裡，而 page fault 既不算 CPU、也不會出現在任何 spot 上，正好符合上面這組症狀。
