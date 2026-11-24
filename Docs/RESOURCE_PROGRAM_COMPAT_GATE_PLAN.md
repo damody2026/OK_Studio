@@ -4,7 +4,8 @@
 這份只寫方案，**審過才實作**；本輪沒有動任何程式碼。
 
 > 2026-11-24 晚：Rust 那頭的判準已由 e-cardload（`[E組] 開卡片優化`）拍板，§2、§3、§8 已按它的答覆改寫；
-> 原稿與它的差異記在 §7，那裡也留著唯一還沒定的一條（開發樹沒有 `RESOURCES.json` 怎麼算）。
+> 原稿與它的差異記在 §7.1；開發樹沒有 `RESOURCES.json` 怎麼算，由協調者裁定在 §7.2（同日），已無待決項。
+> 版本判準的結論在 §2.4，那一段是寫給 `PROGRAM_ONLY_UPDATE_PLAN.md` 直接抄的。
 > 分工：Rust（`resources.rs` 的常數、`resources_check`、CLI、C ABI）由 e-cardload 寫；UE 畫面與打包腳本是我們這邊。
 
 - 這份負責的是**相容性閘**（版本放哪、誰寫誰讀、比哪些檔、不符怎麼擋、怎麼講、怎麼驗）。
@@ -116,7 +117,7 @@ pub const RESOURCES_MAX: u32 = 3;
 | id | 比什麼 | 等級 | 現在的值 |
 |---|---|---|---|
 | `resources_too_old` / `resources_too_new` | `RESOURCES.json` 的 `version` 落在 `[MIN, MAX]` | block | 3 |
-| `no_resources_json` | `RESOURCES.json` 在不在 | block（開發樹例外，§7） | — |
+| `no_resources_json` | `RESOURCES.json` 在不在 | 出貨安裝 block／開發樹 warn（§7.2） | — |
 | `oklib_version` | `base_v1/oklib.json` 的 `version` ∈ 程式的已知集合 | block | 2 |
 | `mods_index_schema` | `mods_index.db` 的 `meta.schema` == `modsindex::SCHEMA` | block | C 樹 1 / E 樹 2 |
 | `mods_index_missing` | `mods_index.db` 在不在 | block | — |
@@ -153,9 +154,19 @@ pub const RESOURCES_MAX: u32 = 3;
 
 3. **打包自檢（§6.2）**：`--program-only` 必須對最近一個完整包跑過 `resources-check` 才算打包成功。這是最後一道，抓的是「測試都綠、但現場那包資源就是配不上」。
 
-### 2.3 一個未決但要記下的選項
+### 2.4 結論（兩層版本，與為什麼不比那兩個 SHA-256）
 
-更強的做法是讓 `RESOURCES.json` 不記人工整數，只記 `parts`，由程式自己判斷每一項認不認識——那樣就完全沒有「忘記 +1」。沒這樣做的原因是：有些不相容**不在上面任何一項裡**（例如模型檔的內部編碼換了，但 `oklib.json` 的 version 沒動），那時人工整數是唯一的表達方式。所以兩者都留，人工整數當逃生門。
+協調者 2026-11-24 裁定，兩份文件要講一樣，所以這一段寫成可以直接抄進 `PROGRAM_ONLY_UPDATE_PLAN.md` 的形狀：
+
+> **版本判準是兩層，兩層都要。**
+>
+> 第一層是 `RESOURCES.json` 的人工整數 `version`，對應程式裡的 `[RESOURCES_MIN, RESOURCES_MAX]` 區間。它是**宣告**：「我知道這版不相容」。它存在的理由是有些不相容不落在任何機器讀得到的子版本上——例如模型檔的內部編碼換了，而 `oklib.json` 的 version 沒動；那時整數是唯一的表達方式。資源落在區間外都算不符，**包括比程式新**（訊息方向是「請更新程式」）。
+>
+> 第二層是機器實際讀出來的子版本，比對程式原始碼裡的常數：`mods_index.db` 的 `meta.schema` 對 `modsindex::SCHEMA`、`oklib.json` 的 `version`、再加幾個必要檔案的存在性與一個「開庫問一個已知查詢」的 selftest。它是**兜底**：忘了把整數 +1 也照樣擋得住。2026-11-24 第一份程式包撞的就是這一層（schema 1 的資源配要 schema 2 的程式，索引讀成 0 個 GUID，原作卡照樣開起來卻假報缺 42 個 mod）。
+>
+> **不比 `shared_mods.txt` 與 `mods_index.db` 的 SHA-256**，雖然 `RESOURCES.json` 會記著它們。記是為了出事時對帳；比會天天假警報：`shared_mods.txt` 的內容跟著「這台裝了哪些 mod」變，`mods_index.db` 重建一次雜湊就變而相容性根本沒變。**假警報比沒有閘更糟，因為使用者會學會忽略它**。這兩個檔只檢查**存在**（缺了會讓庫給出錯的答案，那是 block）。
+
+一句話版本：**整數是宣告，子版本是兜底，雜湊只記不比。**
 
 ## 3. 介面
 
@@ -197,7 +208,7 @@ pub const RESOURCES_MAX: u32 = 3;
 ### 3.3 level 兩級
 
 - `block`：擋開卡。上面除 `mods_index_foreign` 以外的全部。
-- `warn`：不擋，只在畫面上掛通知。**目前只有 `mods_index_foreign`**（它不該擋住只開 OK 卡的人）。
+- `warn`：不擋，只在畫面上掛通知。目前兩個：`mods_index_foreign`（它不該擋住只開 OK 卡的人），以及**開發樹**的 `no_resources_json`（§7.2；在出貨安裝上同一個 id 是 `block`）。
 
 `warn` 的存在有風險（它也可能讓缺件判斷不準），所以規則寫死：**`warn` 只能用在「程式讀得懂全部格式，而且照常開得了 OK 卡」的情況**；任何「程式讀不懂」或「庫會給出錯的答案」（缺 `shared_mods.txt`、缺 `models/.gitignore`）都是 `block`。新增 `warn` 要在這份文件裡加一行理由。
 
@@ -382,11 +393,25 @@ mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪�
 MOD 框架那邊已經定了（不等這份）：分組規則、`--program-only` 流程、`RESOURCES.json` **只記事實**（各資源組大小、`oklib` version、`shared_mods.txt` 與 `mods_index.db` 的 SHA-256）、安裝說明含關哪些 exe 與拆 junction 的步驟。對接上要講清楚兩件：
 
 - **記事實和比事實是兩回事**。`RESOURCES.json` 裡放 `shared_mods.txt` 的 SHA-256 當事實是好的（出問題時對帳用），但**閘不比它**（§2.1：內容跟著本機裝了哪些 mod 變）。`mods_index.db` 的 SHA-256 同理：記著可以，閘比的是 `meta.schema`，不是整個檔的雜湊——重建一次索引雜湊就變，但相容性沒變。
-- **我需要它多記一個欄位**：`version`（人工整數）。理由在 §2.3：有些不相容不落在任何子版本上（模型檔的內部編碼換了而 `oklib.json` 的 version 沒動），那時人工整數是唯一的表達方式。它是「事實」的一種——這包是按哪一版格式打的。如果 MOD 堅持不放，閘就只剩子版本可比，§0 那個案例照樣擋得住，但上面那類改動就擋不住了；這個折讓要明寫在 `PROGRAM_ONLY_UPDATE_PLAN.md` 裡，不要默默少一層。
+- **`version`（人工整數）要記**：協調者 2026-11-24 已裁定要有，並已請 MOD 組寫進 `RESOURCES.json`。理由與兩層的分工見 §2.4（那一段就是寫給 `PROGRAM_ONLY_UPDATE_PLAN.md` 抄的）。
 
-### 7.2 還沒定的一條
+### 7.2 開發樹沒有 `RESOURCES.json`：協調者已定（2026-11-24）
 
-**（我在送出問題之後才看出來，要再問 e-cardload）**：三組的開發樹庫是本機從遊戲轉的，旁邊**沒有 `RESOURCES.json`**，照字面規則 `no_resources_json` 是 `block`，那就是三組都開不了卡。我提的規則是「庫旁邊沒有 `RESOURCES.json` 時只比子版本、不比人工整數，且 `no_resources_json` 在開發樹不算 block；用庫的上面有沒有 `.git` 與 `Tools/base_library_shared_mods.txt` 分辨開發樹」。這條定錯的代價最大（§9 第一項），所以**實作前要它點頭**。
+問題是：三組的開發樹庫是本機從遊戲轉的，旁邊**沒有 `RESOURCES.json`**，照字面規則 `no_resources_json` 是 `block`，那就是三組都開不了卡。我原先提的是「用庫上面有沒有 `.git` 分辨開發樹」，**協調者改成用 `PACKAGE.json` 的 `kind` 判，這個比 `.git` 準**（判的是「這份安裝是不是出貨的」，而不是「這台機器像不像開發機」）：
+
+| 安裝 | 少了 `RESOURCES.json` | 理由 |
+|---|---|---|
+| 有 `PACKAGE.json`，`kind` 是 `program` 或 `full` | **block** | 這是出貨的安裝，少了版本資訊＝包被破壞或裝錯了，不能讓玩家在沒有版本資訊的狀態下靜默開卡 |
+| 沒有 `PACKAGE.json`（開發樹、臨時測試庫） | **warn** | 這不是出貨的資源包，版本檢查跳過；不擋開發 |
+
+warn 的文案要講清楚它是什麼，不要只印一行 skip——否則哪天出貨包少了這個檔也會被當成開發樹：
+
+```
+這個基礎庫不是出貨包（旁邊沒有 RESOURCES.json），資源包版本檢查跳過。
+  子版本檢查照跑（mod 索引 schema、庫的標記版本、必要檔案）。
+```
+
+也就是說，`no_resources_json` 是唯一一個**等級依現場而變**的項目（block／warn），其餘照 §2.1 的表。子版本檢查在兩種現場都照跑——這正是 §2.4 的「兜底那層」。
 
 ## 8. 怎麼驗這個閘真的有效
 
@@ -414,7 +439,8 @@ MOD 框架那邊已經定了（不等這份）：分組規則、`--program-only`
 | 12 | 情境 5 加上 `OK_RESOURCES_CHECK=off` | 卡開得起來；log 每次開卡都印「相容性閘已關閉」 |
 | 13 | 情境 2 的複本上跑 `--program-only --resources-from <該複本>` | 打包失敗，訊息說要先發新的完整包 |
 | 14 | 把 `modsindex::SCHEMA` 改成 3 但不動 `RESOURCES_MIN/MAX` | `cargo test` 紅，訊息就是 §2.2 那段 |
-| 15 | 在**開發樹**（庫旁邊沒有 `RESOURCES.json`）跑一次 | 退出碼 0；讀卡器照常開卡（§7 那條定了才驗） |
+| 15 | 在**開發樹**（沒有 `PACKAGE.json`、庫旁邊沒有 `RESOURCES.json`）跑一次 | 退出碼 0；`no_resources_json` 是 **warn**；讀卡器照常開原作卡與 OK 卡；訊息講「這個基礎庫不是出貨包」 |
+| 16 | 出貨安裝（有 `PACKAGE.json`，`kind` program／full）**刪掉** `RESOURCES.json` | 退出碼 2；同一個 id 是 **block**；訊息講包被破壞或裝錯了 |
 
 情境 5 是整件事的核心：**今天這一條就是靜默少件的實際路徑**，所以它必須從「畫面只說已加载3D」變成「開卡被擋並講清楚」。驗的時候要用一張**指名第三方 mod 的原作卡**（例如伊莉雅那張，它缺 `kiyoubi. illya` 時會少件），不要用只用原作資源的卡——那種卡不問索引，驗不到東西。
 
@@ -422,7 +448,7 @@ MOD 框架那邊已經定了（不等這份）：分組規則、`--program-only`
 
 ## 9. 風險
 
-- **共用程式碼**：`Tools/ok-extract`、`Plugins/`、`Source/` 是 C／E／F 三組共用。`activate()` 多一個 `Err` 路徑會影響三組所有開卡的程式。要求：改動進去前，除了 `cargo check --release` 與 `--no-default-features`，實際建置 `OpenKoikatsu` Win64 Development 與 `OpenKoikatsuEditor` 並確認連結成功。另外三組各自的開發樹**沒有** `RESOURCES.json`（庫是本機從遊戲轉的），所以**開發樹必須照常能開卡**——這是最容易做壞的一點：規則定為「庫旁邊沒有 `RESOURCES.json` 時，只比子版本，不比人工整數，且 `no_resources_json` 在**開發樹**不算 `block`」。怎麼分辨開發樹：庫的上面有 `.git` 與 `Tools/base_library_shared_mods.txt`（打包版沒有 `.git`）。**這一條要和 e-cardload 一起定死**，定錯就是三組都開不了卡。
+- **共用程式碼**：`Tools/ok-extract`、`Plugins/`、`Source/` 是 C／E／F 三組共用。`activate()` 多一個 `Err` 路徑會影響三組所有開卡的程式。要求：改動進去前，除了 `cargo check --release` 與 `--no-default-features`，實際建置 `OpenKoikatsu` Win64 Development 與 `OpenKoikatsuEditor` 並確認連結成功。另外三組各自的開發樹**沒有** `RESOURCES.json`（庫是本機從遊戲轉的），所以**開發樹必須照常能開卡**——這是最容易做壞的一點，規則見 §7.2（沒有 `PACKAGE.json` 就是開發樹，`no_resources_json` 降為 warn；子版本照比）。實作時這條要**先寫測試再寫擋**：三組共用這份程式碼，做壞就是三組同時開不了卡。
 - **誤擋的代價**：閘誤擋等於所有人開不了卡。所以 `block` 的每一項都要能在五秒內用 `resources-check` 的 JSON 看出原因，並且逃生門（`OK_RESOURCES_CHECK=off`）要真的能用。
 - **warn 會被習慣性忽略**：長期掛著黃字就沒人看。`warn` 的清單要保持很短（現在兩項），新增要在這份文件裡寫理由。
 - **`.cmd` 的編碼**：中文一律由 lua／exe 印，`.cmd` 保持純 ASCII。
