@@ -1636,6 +1636,17 @@ pub unsafe extern "C" fn ok_card_outfit_gaps(game:*const c_char,card:*const c_ch
     let Ok(json)=serde_json::to_string(&outfits) else{return -1;};
     if out.is_null()||cap<=0||cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
 }
+/// The base library's mods index as `guid<TAB>version<TAB>path relative to mods/` lines, best archive first per GUID.
+/// The reader's own installed-mods index is built from this: one read of the library's database (modsindex.rs), never
+/// the installation's manifests. `out` null or `cap<=0`: the size to allocate.
+#[no_mangle]
+pub unsafe extern "C" fn ok_library_mod_guids(lib:*const c_char,out:*mut c_char,cap:i32)->i32 {
+    let Some(lib)=cstr_opt(lib) else{return -1;};
+    let Some(db)=crate::modsindex::open(std::path::Path::new(&lib)) else{return -1;};
+    let mut text=String::new();
+    for (guid,version,path) in db.guid_table() { text.push_str(&guid);text.push('\t');text.push_str(&version);text.push('\t');text.push_str(&path);text.push('\n'); }
+    if out.is_null()||cap<=0{return text.len()as i32+1;}if cap as usize<=text.len(){return -1;}write_err(out,cap,&text);0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_common_animation_pair_clip(root:*const c_char,key:*const c_char,layer:i32,out:*mut c_char,cap:i32)->i32 {
     let (Some(root),Some(key))=(cstr_opt(root),cstr_opt(key)) else{return -1;};

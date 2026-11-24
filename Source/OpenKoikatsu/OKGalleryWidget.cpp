@@ -1152,14 +1152,14 @@ static void OKWriteUserCardFolder(const FString* Value)
 
 void OKBackgroundWorkerPriority();
 
-// Which GUID is in which package of one mods/ folder: read from the base library's own index
-// (`<library>/mods_guids.txt`, written with shared_mods.txt by `--oklib shared-ignore`). The card list and each
+// Which GUID is in which package of one mods/ folder: read from the base library's own mods index
+// (`<library>/mods_index.db`, written with shared_mods.txt by `--oklib shared-ignore`). The card list and each
 // card's requirement list read it.
 //
 // It used to be built here, on a worker, by reading the manifest of all 7,296 packages (~466 MiB, ~2.8 s cold) and
-// kept in Saved/mod_index.json. Both are forbidden: an open never reads the whole mods tree and never caches
-// (2026-11-24). The library's index is ~0.7 MB of text and parses in milliseconds, so there is no worker and no
-// progress bar left; the stale cache file is removed if it is still lying about.
+// kept in Saved/mod_index.json: a whole-tree read and a per-installation cache, both forbidden (2026-11-24). The
+// library's database answers in milliseconds, so there is no worker and no progress bar left; the stale cache file is
+// removed if it is still lying about.
 void UOKCharacterController::StartInstalledModIndex(const FString& Mods)
 {
 	if (Mods.IsEmpty() || ModIndexDir == Mods) return;
@@ -1171,7 +1171,7 @@ void UOKCharacterController::StartInstalledModIndex(const FString& Mods)
 	FKKModIndex Index;
 	FString Err;
 	const double Began = FPlatformTime::Seconds();
-	const bool bOk = Index.LoadLibraryGuids(Library, Mods, Err);
+	const bool bOk = Index.LoadGuidRows(FOkSession::LibraryModGuids(Library), Mods, Err);
 	UE_LOG(LogTemp, Display, TEXT("OK reader mod index: %d GUID from %s in %.0f ms%s"),
 		Index.Num(), *Library, (FPlatformTime::Seconds() - Began) * 1000.0, bOk ? TEXT("") : *(TEXT(" / ") + Err));
 	if (!bOk) { ModIndexDir.Reset(); return; }

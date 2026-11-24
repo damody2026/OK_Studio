@@ -373,8 +373,8 @@ fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<S
     let Some(w) = wanted else {
         if crate::tree_answers::unanswered("guids", b"(every guid)") { return HashMap::new(); }
         if crate::modsindex::serves(mods_dir) {
-            let index = crate::modsindex::active().expect("serves() checked it");
-            return index.guids.keys().filter_map(|g| crate::modsindex::guid_archive(mods_dir, g).map(|p| (g.clone(), p))).collect();
+            return crate::modsindex::all_guids().into_iter()
+                .filter_map(|g| crate::modsindex::guid_archive(mods_dir, &g).map(|p| (g, p))).collect();
         }
         if crate::modsindex::tree_scan_forbidden(mods_dir) { crate::modsindex::refuse("guids", "(every guid)"); return HashMap::new(); }
         return crate::okstrict::scanning(|| find_guids_uncached(mods_dir, None));

@@ -289,22 +289,20 @@ FString FKKModIndex::DefaultLibraryDir()
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("IndependentResources/base_v1"));
 }
 
-bool FKKModIndex::LoadLibraryGuids(const FString& LibraryDir, const FString& InModsDir, FString& OutError)
+bool FKKModIndex::LoadGuidRows(const FString& Rows, const FString& InModsDir, FString& OutError)
 {
 	GuidToMod.Reset();
 	Files.Reset();
 	Unreadable.Reset();
 	ModsDir = InModsDir;
-	const FString Path = LibraryDir / TEXT("mods_guids.txt");
-	FString Text;
-	if (!FFileHelper::LoadFileToString(Text, *Path))
+	if (Rows.IsEmpty())
 	{
-		OutError = FString::Printf(TEXT("%s not there: run `ok-extract <game> --oklib shared-ignore %s`"), *Path, *LibraryDir);
+		OutError = TEXT("the base library carries no mods index: run `ok-extract <game> --oklib mods-index <library>`");
 		LastError = OutError;
 		return false;
 	}
 	TArray<FString> Lines;
-	Text.ParseIntoArrayLines(Lines);
+	Rows.ParseIntoArrayLines(Lines);
 	for (const FString& Line : Lines)
 	{
 		if (Line.IsEmpty() || Line.StartsWith(TEXT("#"))) continue;

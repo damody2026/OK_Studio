@@ -269,8 +269,8 @@ local function main()
       stage_rel .. "/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe", stage_rel .. "/Mods/.installed.toml",
       "Tools/ok-mod/examples", "Docs/OK_MOD_AUTHORING.md",
       "Content/IndependentResources/base_v1/sources.okidx", "Content/IndependentResources/base_v1/anims",
-      -- Without these an original card's open has no GUID / override answers and may not walk the mods tree.
-      "Content/IndependentResources/base_v1/mods_guids.txt", "Content/IndependentResources/base_v1/mods_overrides.txt",
+      -- Without this an original card's open has no GUID / override answers and may not walk the mods tree.
+      "Content/IndependentResources/base_v1/mods_index.db",
       "Content/IndependentResources/base_v1/studio/voice", "Content/IndependentResources/RuntimeAnimations" }) do need(rel) end
   -- Every tool: in the package and it starts (any exit code; a missing DLL or a bad image cannot start at all).
   for _, t in ipairs(TOOLS) do

@@ -8,7 +8,7 @@
 // the card sits inside a game installation, that game's mods/.
 //
 // The game's mods/ is read through the installed index (FKKModIndex, read from the base library's own
-// mods_guids.txt: no manifest of the tree is opened and nothing is cached) and only for the GUIDs this card names. Building it here, per selection, read every package in
+// mods_index.db: no manifest of the tree is opened and nothing is cached per card) and only for the GUIDs this card names. Building it here, per selection, read every package in
 // mods/ — 7,296 of them, 111 GiB, on the game thread — so dropping a card from the game's own UserData/chara/female
 // froze the reader for minutes with nothing on screen (the user, 2026-11-24). Without an index (tests, other callers)
 // it still scans, which is what the fixtures exercise.

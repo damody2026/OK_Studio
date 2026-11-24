@@ -191,6 +191,15 @@ FString FOkSession::CardOutfitGaps(const FString& Root,const FString& Card){
  if(ok_card_outfit_gaps(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Card),Bytes.GetData(),Bytes.Num())!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
 }
 
+// The base library's mods index, read from its database. The reader's own GUID index is built from these lines; it
+// never reads the installation's manifests (2026-11-24).
+FString FOkSession::LibraryModGuids(const FString& Library){
+ if(Library.IsEmpty())return FString();
+ const FTCHARToUTF8 Lib(*Library);const int32 Size=ok_library_mod_guids(Lib.Get(),nullptr,0);
+ if(Size<=0||Size>64*1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);
+ if(ok_library_mod_guids(Lib.Get(),Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
+}
+
 FString FOkSession::PairClipForRoot(const FString& Root,const FString& Key,int32 Layer){
  if(Root.IsEmpty())return FString();const int32 Size=ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,nullptr,0);
  if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);

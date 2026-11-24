@@ -917,8 +917,8 @@ key 里），拿庫为别张卡录的答案回答这张卡会**静静地给出�
 .\Tools\ok-extract\target\release\ok-extract.exe D:/KoikatuSunshinezz --oklib shared-ignore .\Content\IndependentResources\base_v1
 ```
 
-它走一次树（本机 2.0 s）写出 `<庫>/mods_guids.txt`（0.7 MB）与 `<庫>/mods_overrides.txt`（2.6 MB），
-并把上表那两个快取档删掉。开卡只读这两个档（`Tools/ok-extract/src/modsindex.rs`），**一个 manifest 都不开**。
+它走一次树（本机 2.0 s）写出 `<庫>/mods_index.db`（SQLite，3.9 MB），并把上表那两个快取档删掉。
+开卡只对这个 DB 做点查询（`Tools/ok-extract/src/modsindex.rs`），**一个 manifest 都不开**。
 庫里答不出来的 GUID 当缺口报（`OKMODS unanswered guid: ...`），**不准退回扫树**：`modsindex::tree_scan_forbidden()`
 在有庫的时候（读卡器、打包版、所有 bench）把整棵树的扫描挡掉，建庫的转换命令没有庫在跑，照旧走树。
 
@@ -945,8 +945,10 @@ bundle 取走访顺序第一个）。
 | KK_091207 | 0.63 s | 0.63 s |
 | Komazoku Megumin (2) | 0.69 s | 0.69 s |
 
-读卡器那边 `StartInstalledModIndex` 现在只读 `mods_guids.txt`（毫秒级），没有工作执行绪、没有进度条、
-不写 `Saved/mod_index.json`（看到旧档就删）。`FKKModIndex::LoadLibraryGuids` 是新的入口，`Build`（走树）只留给测试与其他呼叫者。
+读卡器那边 `StartInstalledModIndex` 现在只读这个 DB（毫秒级），没有工作执行绪、没有进度条、
+不写 `Saved/mod_index.json`（看到旧档就删）。UE 不自己开 SQLite：`FOkSession::LibraryModGuids`
+（FFI `ok_library_mod_guids`）把 `guid<TAB>version<TAB>相对路径` 一次交给 `FKKModIndex::LoadGuidRows`，
+格式只有 Rust 一个主人；`Build`（走树）只留给测试与其他呼叫者。
 
 **要记住的边界**：`collect_zipmods` 还是会**列**目录（只拿档名，不开档），窄视图要靠它知道自己有哪些 archive；
 这不算「读 mod」。换了游戏目录或装／移除 mod 之后要重跑一次 `shared-ignore`，不然新 mod 的 GUID 会被当成缺口——
@@ -979,3 +981,44 @@ bundle 取走访顺序第一个）。
 **建索引必须在庫还没 activate 之前**（`oklib::write_mods_index` 的 `debug_assert`）：同一个进程里先 activate 过
 庫的 replay，再去读安装目录的 archive，zip 读取会被庫的纪录接走。另外补了 `--oklib mods-index <lib>`：
 装／移除 mod 之后只重建这两张表，不必重跑整个 `shared-ignore`。
+
+### 两张文字表变成基础庫里的一个 DB（2026-11-24）
+
+使用者澄清了「不准快取」的边界：**「共用資源的快取是可以接受的」「我不要的是針對每張卡做快取」「本來就要做好 db」**。
+所以禁止的是**每张卡**的快取（开卡答案、衍生贴图、`OK_LIBRARY_CACHE`），而共用基础庫自己带的索引本来就该做成 DB。
+`mods_guids.txt` ＋ `mods_overrides.txt` 因此换成 **`<庫>/mods_index.db`**（SQLite，3.9 MB，schema 1，产生时先写
+`.db.new` 再改名；旧的两个文字档会被删掉）：
+
+| 表 | 列数 | 内容 |
+|---|---:|---|
+| `archive` | 7296 | 安装目录每个 zipmod 的相对路径，**`id` 就是走访顺序**（所以查询一律 `ORDER BY a.id`，候选的先后不另外存） |
+| `guid` | 7296 | `guid`（索引）／`version`／`archive` |
+| `override` | 23752 | `bundle`（索引）／`archive` |
+| `meta` | 6 | schema、列数、建的时间、**`mods_dir`**（是哪一棵树） |
+
+开卡只做**点查询**，整表只在一个地方读：读卡器自己的 GUID 索引。UE 不自己开 SQLite——FFI `ok_library_mod_guids`
+→ `FOkSession::LibraryModGuids` 把 `guid<TAB>version<TAB>相对路径` 一次交给 `FKKModIndex::LoadGuidRows`，
+格式只有 Rust 一个主人（`FKKModIndex::LoadLibraryGuids` 不再存在）。
+
+**量出来的两个陷阱**（都在「这棵树是不是索引说的那棵」上）：
+
+- `serves()` 本来是「视野里有没有任一 archive 被索引认得」，而视野＝**列**整棵树的档名，且它的 memo 键是
+  fallback generation，每张卡都会变。于是连 OK 卡（根本没东西要问索引）每开一张都白列 7296 个档名。
+  现在先比 `meta.mods_dir`（一个字串，不碰档案系统），只有路径不合（搬过的安装、测试的临时树）才退回列树。
+- `guid_archive`／`override_archive` 要按「当前视野」挑候选，同样会列树。现在 `visible()` 在
+  **没有窄视图**（`gamefs::narrow_mods_active()` 为假）且 DB 就是这棵树时回 `None`＝全部可见，完全不列。
+
+**闸门**（同一个庫、同一批卡，`--fresh-dump` 逐位元，对照组是改动前的二进位）：原作卡三张 **21/21 相同**、
+OK 卡六张 **42/42 相同**、开卡读的 manifest **0**、未答覆的只有本机没装的那几个 GUID。
+`cargo test --lib`：548 passed，1 failed（`appearance::properties::plugins::...known_integer_and_string_fields...`，
+F 组 65551a150 带进来的既有失败，和这笔无关）。两个 UE 目标（`OpenKoikatsu`、`OpenKoikatsuEditor` Development）都连结成功。
+
+**读卡器实测**（伊莉雅，同一张卡，冷开）：`OK reader mod index: 7273 GUID ... in 45 ms`（文字档版是 16～18 ms：
+整表查询＋FFI 一趟比 parse 文字稍贵，但对原本的 2.8 s 来说两者都是零头），开卡 `extract_card_outfit TOTAL`
+1525.7 ms，落在文字档版那四轮（1487～1787 ms）的区间里。
+
+**量测注意：incremental release build 本身就值约 4%。** 六张 OK 卡交错三轮（中位数、总和）：
+改动前的二进位 5.30 s、现在的 incremental 建置 5.70 s（+7.6%）、**同一份程式码用 `CARGO_INCREMENTAL=0` 全新建置
+5.49 s（+3.6%，当轮旧二进位自己的散布就有 5%）**。`Cargo.toml` 的 `[profile.release] incremental = true` 是全专案共用的，
+`build-release.cmd`（Unreal 连结的那份）也吃它，所以 A／B 比时间一定要两边同样的建置方式，不然会把 codegen 的漂移
+当成改动的代价。

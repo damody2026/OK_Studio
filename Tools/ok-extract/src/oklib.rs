@@ -3026,10 +3026,10 @@ fn card_key(card: &Path) -> String { card.file_name().map(|n| n.to_string_lossy(
 ///   record <lib> <card>...  open cards on the installation, record queries
 ///   replay <lib> <card>...  open cards on <lib>/root only, compare with record
 ///   live <card>...          digest of a normal open (no library)
-/// The tree's two maps, carried by the library so that no open ever reads the tree (modsindex.rs): which archive
-/// declares each GUID, which archive replaces each abdata bundle. One walk of the installation, here, replaces the
-/// whole-tree scans the opens used to do -- and the two cache files they kept, which are removed if they are still
-/// lying about. Must run with no library active (see the call in `shared-ignore`).
+/// The tree's two maps, carried by the library as a database so that no open ever reads the tree (modsindex.rs):
+/// which archive declares each GUID, which archive replaces each abdata bundle. One walk of the installation, here,
+/// replaces the whole-tree scans the opens used to do -- and the two per-installation cache files they kept, which
+/// are removed if they are still lying about. Must run with no library active (see the call in `shared-ignore`).
 fn write_mods_index(game: &Path, lib: &Path) -> Result<(), String> {
     debug_assert!(active().is_none(), "the index must be built from the installation, not from the library");
     let mods_dir = if game.file_name().is_some_and(|n| n.eq_ignore_ascii_case("mods")) { game.to_path_buf() } else { game.join("mods") };
@@ -3038,9 +3038,10 @@ fn write_mods_index(game: &Path, lib: &Path) -> Result<(), String> {
         return Ok(());
     }
     let index = crate::modsindex::build(&mods_dir);
-    let (guids, overrides) = crate::modsindex::write(lib, &index)?;
+    let (guids, overrides) = crate::modsindex::write(lib, &mods_dir, &index)?;
     for stale in [".ok_tree_guid_index.bin", ".ok_override_index.tsv"] { let _ = std::fs::remove_file(mods_dir.join(stale)); }
-    println!("OKLIB MODS INDEX guids={guids} overrides={overrides} from {}", mods_dir.display());
+    println!("OKLIB MODS INDEX {} guids={guids} overrides={overrides} archives={} from {}",
+        crate::modsindex::DB_FILE, index.archives.len(), mods_dir.display());
     Ok(())
 }
 

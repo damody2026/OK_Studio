@@ -157,6 +157,9 @@ public:
  static FString CommonInteractionPoses();
  // What each outfit of her card asks for and nothing provides, as JSON (outfit_gaps.rs). Slow: not on the game thread.
  static FString CardOutfitGaps(const FString& Root,const FString& Card);
+ // The base library's mods index as guid<TAB>version<TAB>path lines (<library>/mods_index.db): what the reader's own
+ // installed-mods index is built from, instead of the installation's 7,296 manifests.
+ static FString LibraryModGuids(const FString& Library);
  // bAhead: by the thread that opened the session; the next call (not ahead) takes what it made as it is, once.
  bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error,bool bAhead=false);
  bool BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask=0);
