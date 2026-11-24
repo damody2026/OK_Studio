@@ -2186,6 +2186,41 @@ void UOKReaderScreen::BuildCardGrid(UDreamWidget* Page,bool bClothes)
 			if(UOKReaderScreen* Self=WeakSelf.Get())Self->FillCardGrid();
 		});
 	}
+	else
+	{
+		// Where the cards on the wall come from: open that folder, or pick another one. The choice is the user's own
+		// setting (UKKCardWorkspace, as 設定 › 遊戲目錄 saves its paths), so the next start lists the same folder.
+		TWeakObjectPtr<UOKCharacterController> WeakG(G);
+		UDreamWidget* Row=MakePanel(Page,true,6.f);
+		MakeOwnButton(Row,TEXT("開啟人物卡目錄"),[WeakG]()
+		{
+			UOKCharacterController* C=WeakG.Get();if(!C)return;
+			FString Folder=C->ListedCardFolder();
+			if(Folder.IsEmpty()||!FPaths::DirectoryExists(Folder))
+			{
+				C->ScreenNote(9,10.f,FColor::Red,Folder.IsEmpty()
+					?TEXT("還沒有人物卡目錄：按「選擇人物卡目錄」挑一個，或到「設定 › 遊戲目錄」指定原作資料夾。")
+					:FString::Printf(TEXT("人物卡目錄不存在：%s"),*Folder));
+				return;
+			}
+			// ExploreFolder hands the path to ILCreateFromPath, which refuses forward slashes. The log line is the
+			// only evidence available without a person looking at the screen (no check can see an Explorer window).
+			FPaths::MakePlatformFilename(Folder);
+			UE_LOG(LogTemp,Display,TEXT("OK character card folder opened: %s"),*Folder);
+			FPlatformProcess::ExploreFolder(*Folder);
+		});
+		MakeOwnButton(Row,TEXT("選擇人物卡目錄"),[WeakG,WeakSelf]()
+		{
+			UOKCharacterController* C=WeakG.Get();UOKReaderScreen* Self=WeakSelf.Get();if(!C||!Self)return;
+			const FString Picked=Self->PickFolder(TEXT("選擇人物卡目錄"),C->ListedCardFolder());
+			if(Picked.IsEmpty())return;	// cancelled
+			FString Error;
+			if(!C->UseCardDirectory(Picked,Error)){C->ScreenNote(9,10.f,FColor::Red,Error);return;}
+			// ScanAndShow rebuilt the list; the wall is only refilled on its own when the count changed.
+			Self->FillCardGrid();
+			C->ScreenNote(9,6.f,FColor::Green,FString::Printf(TEXT("人物卡目錄：%s"),*C->CurrentCardDirectory));
+		});
+	}
 	if(UOKDreamControl* Search=MakeControl(TEXT("Input"),Page);Search&&Search->Input)
 	{
 		Search->Input->SetText(bClothes?ClothesFilter:CardFilter);
@@ -3154,7 +3189,7 @@ bool OKReaderScreenUnderCursor()
 // For the game MCP (ui_exec) and tests: the screen's own navigation, which has no UMG control to set.
 //   ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | state
 static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
-	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <path|text> [#N] | set <path|text> [#N] = <value> | controls [filter] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | state: the card reader's DreamGUI screen"),
+	TEXT("ok.ReaderScreen tab <0-3> | category <name> | sub <name> | width <px> | press <path|text> [#N] | set <path|text> [#N] = <value> | controls [filter] | card <N> | scroll <0-1> | look | gameroot [folder|default] | library [folder|default] | cardfolder [folder|default] | state: the card reader's DreamGUI screen"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld*,FOutputDevice& Out)
 	{
 		UOKReaderScreen* S=GScreen.Get();
@@ -3257,6 +3292,23 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			UKKGameRoot* Game=UKKGameRoot::Get();
 			Out.Logf(TEXT("%s=%s user=%s"),*Verb,bLibrary?*Game->LocalLibrary:*Game->Root,(bLibrary?UKKGameRoot::HasUserLocalLibrary():UKKGameRoot::HasUserRoot())?TEXT("yes"):TEXT("no"));
 			if(!bLibrary){const FString Mods=Game->Root/TEXT("mods");TArray<FString> Found;if(!Game->Root.IsEmpty()&&FPaths::DirectoryExists(Mods))IFileManager::Get().FindFilesRecursive(Found,*Mods,TEXT("*.zipmod"),true,false);Out.Logf(TEXT("mods=%s zipmods=%d"),FPaths::DirectoryExists(Mods)?TEXT("yes"):TEXT("no"),Found.Num());}
+		}
+		// 人物卡總欄 › 選擇人物卡目錄 without the folder dialog: "cardfolder <folder>" lists that folder's cards from now
+		// on and saves the choice ("default" goes back to the game's own card folders); with no folder it reports.
+		else if(Verb==TEXT("cardfolder"))
+		{
+			UOKCharacterController* G=S->GetController();
+			if(!G){Out.Log(TEXT("cardfolder: no controller"));return;}
+			if(Value==TEXT("default")){G->OnUseGameCards();S->FillCardGrid();}
+			else if(!Value.IsEmpty())
+			{
+				FString Error;
+				Done=G->UseCardDirectory(Value,Error);
+				if(!Done)Out.Logf(TEXT("cardfolder: %s"),*Error);
+				else S->FillCardGrid();
+			}
+			Out.Logf(TEXT("cardfolder=%s listed=%s cards=%d"),G->CurrentCardDirectory.IsEmpty()?TEXT("(game)"):*G->CurrentCardDirectory,
+				*G->ListedCardFolder(),G->Entries.Num());
 		}
 		else if(Verb==TEXT("dump"))
 		{

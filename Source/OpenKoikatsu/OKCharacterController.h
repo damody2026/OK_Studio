@@ -477,6 +477,12 @@ public:
 	UFUNCTION()
 	void OnCardSourceChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 	FString CurrentCardDirectory;
+	/** The folder the card wall is listing now, for File Explorer: the chosen card folder, or the game's own
+	 *  UserData/chara/female when no folder is chosen (empty when there is no game folder either). */
+	FString ListedCardFolder() const;
+	/** Use this folder for the card wall from now on: saved as the user's own setting (GameUserSettings.ini, where
+	 *  設定 › 遊戲目錄 keeps its folders too), then rescanned. False with Error when the folder is not usable. */
+	bool UseCardDirectory(const FString& Directory,FString& Error);
 	bool bCardDirectoryInitialized=false;
 	UPROPERTY()
 	TObjectPtr<UComboBoxString> CardSourceCombo;

@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "Misc/ConfigCacheIni.h"
 #include "OKReaderMods.h"
 #include "KKTextureLifetimeLog.h"
 #include "OKHScene.h"
@@ -1124,10 +1125,40 @@ void UOKCharacterController::ScreenNote(int32 Key, float Seconds, const FColor& 
 	if(GEngine)GEngine->AddOnScreenDebugMessage(Key,Seconds,Color,Text);
 }
 
+// The chosen card folder, kept the way 設定 › 遊戲目錄 keeps its own (GameUserSettings.ini, written at once and
+// writable in a package). An empty value is a choice too -- the game's own card folders -- so "never chosen" is the
+// key being absent, which is what lets the launcher's starting folder (OK_CARD_DIRECTORY_DEFAULT) step aside once the
+// player has picked one. UKKCardWorkspace::SaveConfig alone did not reach the disk in a -game run.
+static const TCHAR* OKCardFolderSection=TEXT("OKGameRoot");
+static const TCHAR* OKCardFolderKey=TEXT("CardDirectory");
+static bool OKReadUserCardFolder(FString& Out)
+{
+	return GConfig&&GConfig->GetString(OKCardFolderSection,OKCardFolderKey,Out,GGameUserSettingsIni);
+}
+static void OKWriteUserCardFolder(const FString* Value)
+{
+	if(!GConfig)return;
+	if(Value)GConfig->SetString(OKCardFolderSection,OKCardFolderKey,**Value,GGameUserSettingsIni);
+	else GConfig->RemoveKey(OKCardFolderSection,OKCardFolderKey,GGameUserSettingsIni);
+	GConfig->Flush(false,GGameUserSettingsIni);
+}
+
 void UOKCharacterController::ScanAndShow()
 {
 	if (bLoadInFlight) return;
-	if(!bCardDirectoryInitialized){const FString EnvFolder=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_CARD_DIRECTORY"));CurrentCardDirectory=EnvFolder.IsEmpty()?GetDefault<UKKCardWorkspace>()->CardDirectory:EnvFolder;bCardDirectoryInitialized=true;if(!CurrentCardDirectory.IsEmpty()&&CardDirectoryInput)CardDirectoryInput->SetText(FText::FromString(CurrentCardDirectory));}
+	// Which folder the wall lists at the first scan: a folder this launch names (OK_CARD_DIRECTORY: -CardDirectory, a
+	// card dropped on the launcher), else the user's own choice (人物卡總欄 › 選擇人物卡目錄), else where the launcher
+	// says to start when they have never chosen one (OK_CARD_DIRECTORY_DEFAULT) -- their choice outlives the default.
+	if(!bCardDirectoryInitialized)
+	{
+		const FString EnvFolder=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_CARD_DIRECTORY"));
+		FString Chosen;const bool bChosen=OKReadUserCardFolder(Chosen);
+		if(!EnvFolder.IsEmpty())CurrentCardDirectory=EnvFolder;
+		else if(bChosen)CurrentCardDirectory=Chosen;	// empty too: the game's own card folders, chosen
+		else{CurrentCardDirectory=GetDefault<UKKCardWorkspace>()->CardDirectory;if(CurrentCardDirectory.IsEmpty())CurrentCardDirectory=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_CARD_DIRECTORY_DEFAULT"));}
+		bCardDirectoryInitialized=true;
+		if(!CurrentCardDirectory.IsEmpty()&&CardDirectoryInput)CardDirectoryInput->SetText(FText::FromString(CurrentCardDirectory));
+	}
 	const FString CardFolderSetting=CurrentCardDirectory;
 	bIndependentCards = !CardFolderSetting.IsEmpty();
 	if(CardSourceCombo)CardSourceCombo->SetSelectedOption(!bIndependentCards?TEXT("KKS 遊戲目錄卡片"):IsStreetHeroineCardDirectory(CardFolderSetting)?TEXT("街頭女主角卡片"):TEXT("APNG 內嵌資源卡片"));
@@ -1193,23 +1224,47 @@ void UOKCharacterController::ScanAndShow()
 void UOKCharacterController::OnOpenCardFolder()
 {
 	if (bLoadInFlight || !CardDirectoryInput) return;
-	FString Directory = CardDirectoryInput->GetText().ToString().TrimStartAndEnd();
-	Directory.RemoveFromStart(TEXT("\"")); Directory.RemoveFromEnd(TEXT("\""));
-	if (Directory.IsEmpty() || !IFileManager::Get().DirectoryExists(*Directory))
-	{
-		if (InspectorText) InspectorText->SetText(FText::FromString(TEXT("請輸入存在的卡片資料夾。")));
-		return;
-	}
-	UKKCardWorkspace* Settings = GetMutableDefault<UKKCardWorkspace>();
-	Settings->CardDirectory = FPaths::ConvertRelativePathToFull(Directory);if(!IsStreetHeroineCardDirectory(Settings->CardDirectory))Settings->ApngCardDirectory=Settings->CardDirectory;CurrentCardDirectory=Settings->CardDirectory;bCardDirectoryInitialized=true; Settings->SaveConfig();
-	CardDirectoryInput->SetText(FText::FromString(Settings->CardDirectory));
-	SetModelLayout(false); ScanAndShow();
+	FString Error;
+	if (!UseCardDirectory(CardDirectoryInput->GetText().ToString(), Error) && InspectorText)
+		InspectorText->SetText(FText::FromString(TEXT("請輸入存在的卡片資料夾。")));
+}
+
+// Where the cards on the wall come from, as a folder a person can open: the chosen one, or the game's own female
+// card folder (ScanAndShow lists male and DefaultData too, but this is the one to show).
+FString UOKCharacterController::ListedCardFolder() const
+{
+	if(!CurrentCardDirectory.IsEmpty())return CurrentCardDirectory;
+	const UKKGameRoot* Root=UKKGameRoot::Get();
+	if(!Root||Root->Root.IsEmpty())return FString();
+	return FPaths::Combine(Root->Root,TEXT("UserData/chara/female"));
+}
+
+// The same save 設定 › 遊戲目錄 does for its own paths: the user's setting in the workspace config (writable in a
+// package), then the list is built again from it. No text field needed, so the reader screen can call it too.
+bool UOKCharacterController::UseCardDirectory(const FString& Directory,FString& Error)
+{
+	if(bLoadInFlight){Error=TEXT("卡片載入中，請稍候再換目錄。");return false;}
+	FString Folder=Directory.TrimStartAndEnd();
+	Folder.RemoveFromStart(TEXT("\""));Folder.RemoveFromEnd(TEXT("\""));
+	if(Folder.IsEmpty()){Error=TEXT("沒有選擇資料夾。");return false;}
+	if(!IFileManager::Get().DirectoryExists(*Folder)){Error=FString::Printf(TEXT("資料夾不存在：%s"),*Folder);return false;}
+	UKKCardWorkspace* Settings=GetMutableDefault<UKKCardWorkspace>();
+	Settings->CardDirectory=FPaths::ConvertRelativePathToFull(Folder);
+	if(!IsStreetHeroineCardDirectory(Settings->CardDirectory))Settings->ApngCardDirectory=Settings->CardDirectory;
+	CurrentCardDirectory=Settings->CardDirectory;bCardDirectoryInitialized=true;
+	Settings->SaveConfig();
+	OKWriteUserCardFolder(&Settings->CardDirectory);
+	if(CardDirectoryInput)CardDirectoryInput->SetText(FText::FromString(Settings->CardDirectory));
+	SetModelLayout(false);ScanAndShow();
+	return true;
 }
 
 void UOKCharacterController::OnUseGameCards()
 {
 	if (bLoadInFlight) return;
 	UKKCardWorkspace* Settings = GetMutableDefault<UKKCardWorkspace>(); if(!CurrentCardDirectory.IsEmpty()&&!IsStreetHeroineCardDirectory(CurrentCardDirectory))Settings->ApngCardDirectory=CurrentCardDirectory; Settings->CardDirectory.Empty(); Settings->SaveConfig();
+	// Empty, not absent: the player chose the game's own card folders, so the launcher's starting folder stays out.
+	OKWriteUserCardFolder(&Settings->CardDirectory);
 	CurrentCardDirectory.Empty();bCardDirectoryInitialized=true;
 	if (CardDirectoryInput) CardDirectoryInput->SetText(FText::FromString(Settings->ApngCardDirectory));
 	SetModelLayout(false); ScanAndShow();

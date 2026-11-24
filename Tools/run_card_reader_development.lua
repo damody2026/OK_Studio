@@ -89,6 +89,10 @@ local function main()
   local card = o.card and path.abs(o.card)
   if card and not path.is_file(card) then error("Card does not exist: " .. card, 0) end
   local cards = o.streetheroines and street or o.carddirectory or (card and path.parent(card))
+  -- Only a folder this launch names is forced on the reader (OK_CARD_DIRECTORY). The fallback below is just where to
+  -- start when the player has never chosen one, so it goes as OK_CARD_DIRECTORY_DEFAULT and their own choice
+  -- (人物卡總欄 › 選擇人物卡目錄, saved in the config) wins over it.
+  local cards_chosen = cards ~= nil
   if cards == nil then
     local prepared = path.join(root, "Content/CharacterCards/CrowdAPNG")
     cards = path.is_dir(prepared) and prepared or (stage_exe and path.is_dir(street) and street) or ""
@@ -204,7 +208,8 @@ local function main()
     OK_FREE_TALK_SETTINGS = path.is_file(settings_file) and (settings_file:gsub("/", "\\")) or false,
     OK_FREE_TALK_PERSONAS = (path.join(root, "Content/IndependentResources/StreetSocialData/free_talk_personas.json"):gsub("/", "\\")),
     OK_TTS_ENDPOINT = tts_endpoint,
-    OK_MIND_DLL = path.is_file(mind_dll) and (mind_dll:gsub("/", "\\")) or false, OK_AUTO_3D = card and "1" or "0", OK_AUTO_CARD = card and path.name(card) or false, OK_CARD_DIRECTORY = cards ~= "" and (cards:gsub("/", "\\")) or false,
+    OK_MIND_DLL = path.is_file(mind_dll) and (mind_dll:gsub("/", "\\")) or false, OK_AUTO_3D = card and "1" or "0", OK_AUTO_CARD = card and path.name(card) or false, OK_CARD_DIRECTORY = cards ~= "" and cards_chosen and (cards:gsub("/", "\\")) or false,
+    OK_CARD_DIRECTORY_DEFAULT = cards ~= "" and not cards_chosen and (cards:gsub("/", "\\")) or false,
     OK_WARM_PRIORITY = false,
     OK_CPU_SKIN = gpu and "0" or "1", OK_GPU_SKIN = gpu and "1" or "0", OK_SKELMESH = gpu and "1" or "0",
     OK_NOPOSE = false, OK_UE_ANIM = false, OK_HEAD_GPUSKIN = false }

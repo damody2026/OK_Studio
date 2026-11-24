@@ -217,6 +217,9 @@ public:
 	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
 	// when shown, shows it and what is found there. bForget: back to the default.
 	void ApplyFolderSetting(bool bLibrary,const FString& Folder,bool bForget);
+	/** The card wall again from the controller's list: after the listed folder changed (the wall is only refilled on
+	 *  its own when the number of cards changed). */
+	void FillCardGrid();
 	// A report from the controller (UOKCharacterController::ScreenNote), shown under the camera bar for Seconds; a report
 	// with the same key replaces the one shown. The engine's own on-screen messages would draw over the left panel.
 	void ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text);
@@ -366,7 +369,6 @@ private:
 	void BuildBreedPage(UDreamWidget* Page);
 	TWeakObjectPtr<UOKDreamControl> BreedLabel;
 	int32 ShownPicturesVersion=-1;
-	void FillCardGrid();
 	// The tiles let go of their pictures and go, decodes still on the way are dropped.
 	void ClearCardTiles();
 	void BuildEyeOverlayPage(UDreamWidget* Page);
