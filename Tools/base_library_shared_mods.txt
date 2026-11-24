@@ -5,6 +5,10 @@
 # 基礎庫的非共用模型清單 models/.gitignore（沿用舊檔名；整個基礎庫已不進版控）與 shared_mods.txt
 # （另外：原作來源、以及任何 zipmod 裡 abdata/list/ 下的 bundle 一律算共用，因為每張卡建項目目錄都會讀）。
 
+# 2026-11-24（使用者的決定）：整棵 mods 樹都算共用資源 —— 這些模型在角色之間本來就是共用的（很多卡用
+# 同一個髮型 mod），按卡各封一份是重複。後果與落地條件見 Docs/CARD_OPEN_PERF_20261117.md 第九節。
+mods/
+
 # uncensor 身體與對所有角色生效的修正
 mods/sideloader modpack - kks_fixes/
 mods/sideloader modpack - kks_uncensorselector/

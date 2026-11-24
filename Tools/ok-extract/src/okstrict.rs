@@ -164,8 +164,8 @@ pub fn shared_list_available() -> bool {
 pub fn shared_mods_visible(key: &str, dir: bool) -> bool {
     shared().is_some_and(|s| if dir {
         let prefix = format!("{key}/");
-        s.lines.iter().any(|l| l.starts_with(&prefix) || (l.ends_with('/') && prefix.starts_with(l.as_str())))
-    } else { s.zip(key) })
+        s.named.iter().any(|l| l.starts_with(&prefix) || (l.ends_with('/') && prefix.starts_with(l.as_str())))
+    } else { s.zip_named(key) })
 }
 /// Under a strict open: the library may serve this model: it holds it, and not as one only third-party mods use.
 pub fn library_model(id: &Id) -> bool { shared().is_some_and(|s| !s.excluded.contains(id) && s.shared_present(id)) }
@@ -194,18 +194,23 @@ pub fn library_answer(query: &str) -> bool {
 
 /// The library's shared mods (`shared_mods.txt`) and its models that are not shared resources (`models/.gitignore`, an
 /// old file name: the library is not in version control), both written by `--oklib shared-ignore`.
-struct Shared { lines: Vec<String>, excluded: HashSet<Id>, lib: PathBuf, present: Mutex<HashMap<Id, bool>> }
+/// (`named`: `lines` without a whole-tree `mods/` line. That line says the library may serve every archive; it does
+/// not say every zipmod belongs in an original card's narrow mods view, which is what `shared_mods_visible` answers --
+/// taking it literally there would put all ~7300 zipmods back in the view and undo 第八節 (8.9 s -> 1.9 s), bugs
+/// included.)
+struct Shared { lines: Vec<String>, named: Vec<String>, excluded: HashSet<Id>, lib: PathBuf, present: Mutex<HashMap<Id, bool>> }
 
 impl Shared {
     fn load(lib: &Path) -> Result<Shared, String> {
         let list = [lib.join("shared_mods.txt"), lib.join("../../../Tools/base_library_shared_mods.txt")].into_iter()
             .find(|p| p.is_file()).ok_or_else(|| format!("{}: no shared_mods.txt (ok-extract --oklib shared-ignore)", lib.display()))?;
-        let lines = std::fs::read_to_string(&list).map_err(|e| format!("{}: {e}", list.display()))?.lines()
+        let lines: Vec<String> = std::fs::read_to_string(&list).map_err(|e| format!("{}: {e}", list.display()))?.lines()
             .map(|l| l.trim().replace('\\', "/").to_ascii_lowercase()).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+        let named: Vec<String> = lines.iter().filter(|l| l.as_str() != "mods/").cloned().collect();
         let ignore = lib.join("models").join(".gitignore");
         let excluded = std::fs::read_to_string(&ignore).map_err(|e| format!("{}: {e}", ignore.display()))?.lines()
             .filter_map(|l| l.trim().rsplit('/').next()?.strip_suffix(".okmodel").and_then(crate::oklib::id_from_hex_pub)).collect();
-        Ok(Shared { lines, excluded, lib: lib.to_owned(), present: Mutex::default() })
+        Ok(Shared { lines, named, excluded, lib: lib.to_owned(), present: Mutex::default() })
     }
     /// The library has model `id` (a model only a card's own zipmod has is not shared, whatever the ignore list).
     fn present(&self, id: &Id) -> bool {
@@ -222,13 +227,17 @@ impl Shared {
         })
     }
     /// A whole archive or file the library serves.
-    fn whole(&self, key: &str) -> bool {
-        self.lines.iter().any(|s| if s.ends_with('/') { key.starts_with(s.as_str()) } else { !s.contains('|') && key == s })
+    fn whole_in(lines: &[String], key: &str) -> bool {
+        lines.iter().any(|s| if s.ends_with('/') { key.starts_with(s.as_str()) } else { !s.contains('|') && key == s })
     }
+    fn zip_in(lines: &[String], key: &str) -> bool {
+        Self::whole_in(lines, key) || lines.iter().any(|s| s.split_once('|').is_some_and(|(zip, _)| zip == key))
+    }
+    fn whole(&self, key: &str) -> bool { Self::whole_in(&self.lines, key) }
     /// An archive whose listing the library serves.
-    fn zip(&self, key: &str) -> bool {
-        self.whole(key) || self.lines.iter().any(|s| s.split_once('|').is_some_and(|(zip, _)| zip == key))
-    }
+    fn zip(&self, key: &str) -> bool { Self::zip_in(&self.lines, key) }
+    /// The same over the named lines only (`named`): an archive a card's view lists because some card may use it.
+    fn zip_named(&self, key: &str) -> bool { Self::zip_in(&self.named, key) }
 }
 
 fn shared() -> Option<Arc<Shared>> {
