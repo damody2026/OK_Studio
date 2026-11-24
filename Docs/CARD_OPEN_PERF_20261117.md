@@ -87,6 +87,12 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 3. **正确性用 `--fresh-dump` 逐位元组比对** session bytes（不是整档雜湊，见 ERROR_LOG I-014）：
    OK 卡 28 个 dump（C001／C006／C049／klara／C050／megumin，含 override 与眼睛贴图）＋原作卡 21 个。
 4. 一切建置与量测**最多 8 执行绪**（`cargo -j 8`、`-MaxParallelActions=8`、`RAYON_NUM_THREADS=8`）。
+4a. **A／B 两边必须同样的建置方式。** `Cargo.toml` 的 `[profile.release] incremental = true` 留着不关
+   （增量重建对三组每天的建置时间有用），代价是 **codegen 自己就会漂约 4%**：六张 OK 卡交错三轮的中位数总和，
+   改动前的二进位 5.30 s、当时那份 incremental 建置 5.70 s、**同一份程式码用 `CARGO_INCREMENTAL=0`
+   全新建置 5.49 s**（2026-11-24，第十节）。所以要嘛两边都 incremental、要嘛两边都全新建，不然量到的是
+   建置方式的差，不是改动的代价。`Tools/ok-extract/build-release.cmd`（Unreal 连结的那份 `ok_extract.lib`）
+   也吃同一个 profile，所以这条对游戏里的时间一样成立。
 5. 会改变输出位元组的改动（例如缩小底图）**不适用**第 3 条，要改成目视＋平均 RGB 绝对差＋贴图记忆体。
 6. **机器吵的时候改用确定性指标**：其他 session 同时在跑时，同一设定的冷开 wall 落在 1.46–2.79 s，
    100 ms 级的差异量不出来。`OK_PROFILE` 现在会印「这次开卡从零做了几件、其中几件是同一件做第二次」
