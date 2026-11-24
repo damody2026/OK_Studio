@@ -497,7 +497,18 @@ local function main()
     table.sort(names)
     local groups = {}
     for _, g in ipairs(names) do groups[#groups + 1] = { g, json.object({ { "files", carried[g].files }, { "bytes", carried[g].bytes } }) } end
+    -- The hand-kept version (raised by whoever changes a resource format incompatibly; the parts below catch a raise that
+    -- was forgotten): ok-extract's RESOURCES_VERSION in src/resources.rs, the one number the program's check compares.
+    -- Until that file is in, version 1 (the formats as of 717297c3b: mods_index.db schema 2).
+    local version, version_from = 1, "interim (Tools/ok-extract/src/resources.rs not in yet)"
+    local rs = path.join(root, "Tools/ok-extract/src/resources.rs")
+    if path.is_file(rs) then
+      local n = path.read_text(rs):match("RESOURCES_VERSION%s*:%s*%a+%d*%s*=%s*(%d+)")
+      if not n then error("Tools/ok-extract/src/resources.rs has no RESOURCES_VERSION constant to write into " .. RESOURCES_FILE, 0) end
+      version, version_from = tonumber(n), "Tools/ok-extract/src/resources.rs RESOURCES_VERSION"
+    end
     path.write_text(path.join(out, RESOURCES_FILE), json.encode(json.object({ { "format", "ok-resources" }, { "schema", 1 },
+      { "version", version }, { "version_from", version_from },
       { "made", os.date("!%Y-%m-%dT%H:%M:%SZ") }, { "package", path.name(out) },
       { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
       { "groups", json.object(groups) }, { "parts", json.object(parts) } }), { indent = 1 }) .. "\n", { newline = "\n" })

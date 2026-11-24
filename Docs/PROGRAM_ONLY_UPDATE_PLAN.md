@@ -11,7 +11,17 @@
   3. 舊 stage 的清理要寫明 junction（安裝說明已寫：先拆 junction 再刪）；
   4. 覆蓋安裝時 `Tools/` 的 exe 可能正在跑（安裝說明已列出要先關哪些）。
 - 在版本檢查定案前，`--program-only` 的自檢用一個實際的檢查代替：用程式包自己的 `ok-extract`，搭配 `--resources-from` 完整包的基礎庫，嚴格開該包最多 10 張 OK 卡（`--oklib strict-check`，新程序、不用快取）。任何一張開不起來就失敗，並要求先發新的完整包。
-- `RESOURCES.json` 只記事實，供之後的檢查比對：
+- **兩層版本（協調者裁決，2026-11-24）**：
+  - `RESOURCES.json` 帶一個人工維護的整數 `version`：格式維護者遇到不相容的改動就 +1，等於宣告「我知道這版不相容」。
+    - 來源只有一處，就是 `Tools/ok-extract/src/resources.rs` 的 `RESOURCES_VERSION`，打包腳本從那裡讀；
+    - 該檔進樹前暫用 1（涵蓋到 `717297c3b` 為止的格式），`version_from` 會註明這個值從哪來。
+  - 機器讀得到的子版本（`oklib.json` 的 version、`mods_index.db` 的 `meta.schema`）用來兜底：忘了 +1 時也擋得住。兩層都要。
+  - `shared_mods.txt` 與 `mods_index.db` 的 SHA-256 **只記不比**。它們會隨「這台裝了哪些 mod」或「重建過一次」而變，拿來擋會天天誤報。誤報比沒有檢查更糟，因為使用者會學會忽略它。這兩個值只留著出事時對帳用。
+  - 缺 `RESOURCES.json` 時：
+    - 開發樹（沒有 `PACKAGE.json`）只發 **warn**，訊息講明「這個基礎庫不是出貨包，版本檢查跳過」；
+    - 出貨安裝（`PACKAGE.json` 的 `kind` 是 `program` 或 `full`）要 **block**，因為這代表包被破壞或裝錯了。
+  - C 組的結論文字轉來後，照抄取代這一段，兩份文件不各講一套。
+- `RESOURCES.json` 另外只記事實，供之後的檢查比對：
   - 帶了哪些資源組、各幾個檔、多大；
   - `oklib.json` 的 version；
   - `shared_mods.txt` 與 `mods_index.db` 的大小和 sha256。
