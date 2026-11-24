@@ -35,6 +35,17 @@
 -- character editing) are the entries (no StreetSocial.cmd, no voice servers, no new player's street settings); the street's own data groups are left out by default (STUDIO_SKIP); --cards go to
 -- Content/CharacterCards/<the folder's name>, the studio's card browser lists them. A street or city map in the paks
 -- stops it.
+--
+-- Program and resources (Docs/PROGRAM_ONLY_UPDATE_PLAN.md, 2026-11-24): a file is a resource when it comes from outside
+-- the code -- every path Tools/original_data_manifest.json lists, the cards (Content/CharacterCards/), the HairDeck
+-- weights (HairDeckData/) and the resources' own record (Content/IndependentResources/RESOURCES.json); everything else
+-- (the stage, Tools, launchers, Config, Docs, ModPackages, Plugins, Licenses, the self-made files under
+-- Content/IndependentResources) is the program.
+--   --program-only       only the program: laid over an installation that has the resources (its new stage is picked
+--                        as the newest); no original data, no cards, and a resource file in the plan stops it
+-- A package with the original data (--private, not --program-only) also gets Content/IndependentResources/RESOURCES.json:
+-- what resources it carries (groups and their sizes, the library's oklib.json version, digests of shared_mods.txt and
+-- mods_index.db), for the program to check its resources against.
 local ok = require "ok"
 local json, path, proc, util = ok.json, ok.path, ok.proc, ok.util
 local player_settings = require "street_player_settings"
@@ -193,6 +204,12 @@ local function package_mods(root, stage, stage_rel, packages, add, counted)
   counted(#ids)
 end
 
+-- Whether a package path is a resource (see the header): the manifest's paths (a set), the cards, HairDeck, RESOURCES.json.
+local RESOURCES_FILE = "Content/IndependentResources/RESOURCES.json"
+local function is_resource(rel, manifest_paths)
+  return manifest_paths[rel] or rel:sub(1, 23) == "Content/CharacterCards/" or rel:sub(1, 13) == "HairDeckData/" or rel == RESOURCES_FILE
+end
+
 local TEXT_EXT = { json = true, txt = true, lua = true, ini = true, cmd = true, bat = true, toml = true, md = true, cfg = true, csv = true, tsv = true, xml = true, yaml = true, yml = true, log = true }
 
 local function main()
@@ -215,7 +232,9 @@ local function main()
   -- --extra <source>=<package path>: a file or a whole folder put into the package as it is (data that is not in git:
   -- the HairDeck weights, a third-party license text; Tools/package_studio_release.lua).
   p:opt("--extra", { multiple = true })
+  p:flag("--program-only")
   local a = p:parse(arg)
+  if a.program_only and a.cards then error("--program-only takes no --cards (cards are resources)", 0) end
   local skip_groups = (a.skip_group and #a.skip_group > 0) and a.skip_group or (a.studio and STUDIO_SKIP or { "h-voices", "studio-scenes" })
   if a.voice and a.voice ~= "cloud" and a.voice ~= "builtin" then error("--voice must be cloud or builtin", 0) end
   local root = ok.root
@@ -313,8 +332,9 @@ local function main()
       else say("Voice server not built, left out: Build/" .. server) end
     end
   end
-  -- Private: the original data (the tester has no game to restore it from).
-  if a.private then
+  -- Private: the original data (the tester has no game to restore it from). Not in a program-only package.
+  local carried = {}
+  if a.private and not a.program_only then
     local skip = {}
     for _, g in ipairs(skip_groups) do skip[g] = true end
     local m = json.decode(path.read_text(path.join(root, "Tools/original_data_manifest.json")))
@@ -323,6 +343,8 @@ local function main()
       if not skip[f.group] then
         local src = path.join(root, f.path)
         if path.is_file(src) then add(src, f.path); have = have + 1; groups[f.group] = (groups[f.group] or 0) + f.bytes
+          carried[f.group] = carried[f.group] or { files = 0, bytes = 0 }
+          carried[f.group].files = carried[f.group].files + 1; carried[f.group].bytes = carried[f.group].bytes + f.bytes
         else missing = missing + 1 end
       end
     end
@@ -366,6 +388,15 @@ local function main()
     say(("Cards: %d heroines from %s"):format(#roster, win(dir)))
   end
   if a.readme then add(path.abs(a.readme), path.name(a.readme)) end
+  -- Program-only: not one resource file goes in (an --extra of the weights, a manifest file that is also tracked...).
+  local manifest_paths = {}
+  for _, f in ipairs(json.decode(path.read_text(path.join(root, "Tools/original_data_manifest.json"))).files) do manifest_paths[f.path] = true end
+  if a.program_only then
+    local found = {}
+    for _, e in ipairs(plan) do if is_resource(e[2], manifest_paths) then found[#found + 1] = e[2] end end
+    if #found > 0 then error(("--program-only: %d resource file(s) in the plan, e.g. %s"):format(#found, found[1]), 0) end
+    say("Program only: no original data, no cards, no HairDeck weights")
+  end
   for _, e in ipairs(plan) do bytes = bytes + (path.size and path.size(e[1]) or 0) end
 
   -- Nothing original in the paks; nothing unaccounted for.
@@ -448,9 +479,34 @@ local function main()
   end
   local listing = json.array({})
   for _, e in ipairs(plan) do listing[#listing + 1] = e[2] end
+  -- The resources' record (a package with the original data): what it carries, read from the files themselves. Which of
+  -- these a program needs, and how it says so, is the compatibility gate's (Docs/PROGRAM_ONLY_UPDATE_PLAN.md).
+  local kind = a.program_only and "program" or (next(carried) and "full" or "no-resources")
+  if kind == "full" then
+    local hash = require "ok.hash"
+    local lib = "Content/IndependentResources/base_v1"
+    local parts = {}
+    local okj, marker = pcall(json.decode, path.read_text(path.join(out, lib, "oklib.json")))
+    if okj and type(marker) == "table" then parts[#parts + 1] = { "oklib_version", marker.version } end
+    for _, f in ipairs({ "shared_mods.txt", "mods_index.db" }) do
+      local file = path.join(out, lib, f)
+      if path.is_file(file) then parts[#parts + 1] = { f, json.object({ { "bytes", path.size(file) }, { "sha256", hash.sha256_file(file) } }) } end
+    end
+    local names = {}
+    for g in pairs(carried) do names[#names + 1] = g end
+    table.sort(names)
+    local groups = {}
+    for _, g in ipairs(names) do groups[#groups + 1] = { g, json.object({ { "files", carried[g].files }, { "bytes", carried[g].bytes } }) } end
+    path.write_text(path.join(out, RESOURCES_FILE), json.encode(json.object({ { "format", "ok-resources" }, { "schema", 1 },
+      { "made", os.date("!%Y-%m-%dT%H:%M:%SZ") }, { "package", path.name(out) },
+      { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
+      { "groups", json.object(groups) }, { "parts", json.object(parts) } }), { indent = 1 }) .. "\n", { newline = "\n" })
+    listing[#listing + 1] = RESOURCES_FILE
+    say("Resources: " .. RESOURCES_FILE .. " (" .. table.concat(names, ", ") .. ")")
+  end
   path.write_text(path.join(out, "PACKAGE.json"), json.encode(json.object({ { "schema", 1 }, { "made", os.date("!%Y-%m-%dT%H:%M:%SZ") },
     { "stage", path.name(stage) }, { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
-    { "mode", a.studio and "studio" or "street" }, { "private", a.private and true or false },
+    { "mode", a.studio and "studio" or "street" }, { "kind", kind }, { "private", a.private and true or false },
     { "skip_groups", json.array(a.private and skip_groups or {}) }, { "maps_in_paks", json.array(report.maps) },
     { "mods", mod_count },
     { "cook", a.studio and "/Engine/Maps/Entry + Template_Default + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua --studio)"

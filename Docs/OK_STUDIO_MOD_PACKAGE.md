@@ -108,3 +108,37 @@
   - SMPL-X 不允許再散布，GVHMR 只限非商業用途。
   - 怎麼取得、放在哪裡（`GVHMR\checkpoints\`，或用環境變數 `OK_GVHMR_MODELS` 指定），見 [VIDEO_WEIGHTS.md](VIDEO_WEIGHTS.md)。
   - 沒放好時，面板會直接說明要自備權重。
+
+## 只更新程式（程式包）
+
+完整包約 36 GB，其中程式只有約 1.4 GB，其餘是資源（從原作轉出的基礎庫、動作、角色卡、頭髮權重）。資源沒有變時，只要下載**程式包**（`Studio-<日期>-program-<x>.zip`，`PACKAGE.json` 的 `kind` 是 `program`），疊在已經裝好的完整包上。哪些算程式、哪些算資源，見 [PROGRAM_ONLY_UPDATE_PLAN.md](PROGRAM_ONLY_UPDATE_PLAN.md) 第 1 節。
+
+### 安裝步驟
+
+1. **先關掉包裡在跑的程式**，否則覆蓋會失敗（檔案被占用）：
+   - 讀卡器與 OK Studio 的遊戲視窗，以及開著它們的主控台視窗；
+   - AI 客戶端（Claude Desktop、Claude Code 等）裡用 `WriteMcpConfig.cmd` 設定的 MCP server：`ok-game-mcp.exe`、`ok-character-mcp.exe`。關掉客戶端，或在它的 MCP 設定裡停用；
+   - 工作管理員裡若還有 `ok-extract.exe`、`ok-hairdeck.exe`、`ok-video.exe`，等它們跑完或結束它們。
+2. 把程式包的 zip **解壓到原本的安裝資料夾**（例如 `E:\OKPackage\Studio-20261124-release-e\`），遇到同名檔一律覆蓋。
+   - 這只會換掉 `Tools\`、啟動檔、`Config\`、`Docs\`、`ModPackages\` 等程式部分，並多出一個新的 `Saved\StreetSocial\Build\<新 stage>.stage\`；
+   - `Content\IndependentResources\base_v1\`、`Content\CharacterCards\`、`HairDeckData\` 不會被動到。
+3. 照常用 `CardReaderDevelopment.cmd`、`OKStudio.cmd` 開。啟動器挑最新的 stage，第一次啟動時會自己把它接到既有的資源。
+
+**自己裝過或換過 mod 的話**：mod 裝在各個 stage 自己的 `Mods\` 裡，新 stage 帶的是程式包預設的那一組。要沿用原本的配置，就用上面「ok-mod-pack 常用指令」對新 stage 再 `profile apply` 一次。
+
+### 舊 stage 要不要刪
+
+不刪也能用，只是每次更新多占約 1.3 GB。要刪的話**不能整個資料夾遞迴刪除**：stage 的 `Windows\OpenKoikatsu\Content\` 底下是指向安裝資料夾 `Content\` 的 junction，遞迴刪除會一路刪進共用的資源。安全的做法：
+
+```powershell
+# <old> 換成要刪的舊 stage 資料夾名稱；先拆 junction（只拆連結，不碰它指向的資料），再刪資料夾
+$old = '.\Saved\StreetSocial\Build\<old>.stage'
+Get-ChildItem "$old\Windows\OpenKoikatsu\Content" -Force | Where-Object { $_.LinkType } | ForEach-Object { $_.Delete() }
+Remove-Item $old -Recurse -Force
+```
+
+刪之前先確認 `Get-ChildItem "$old\Windows\OpenKoikatsu\Content" -Force` 列出的那幾個（`CharacterCards`、`IndependentResources`、`KKPreview`）都已經拆掉。
+
+### 程式和資源對不上時
+
+程式包打包時，已經用它自己的 `ok-extract` 搭配對應完整包的資源，嚴格開過那包裡的 OK 卡（打包自檢）。所以照上面的步驟疊在同一版或更新的完整包上就能用。萬一資源太舊，開卡會失敗，畫面會講缺什麼；這時請下載新的完整包。啟動時自動檢查資源版本的機制還在規劃（[PROGRAM_ONLY_UPDATE_PLAN.md](PROGRAM_ONLY_UPDATE_PLAN.md) 第 2、3 節）。

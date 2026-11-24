@@ -5,6 +5,9 @@
 --     [--zip] [--max-cards 100] [--profile full] [--engine DIR]
 --     [--skip-build] [--skip-stage] [--skip-modkit --content-from <folder>]
 --   ... --zip-only [--zip-threads 4]   an existing --out: only the self-check, then its zip (no rebuild)
+--   ... --program-only [--resources-from <full package>] [--zip]   no --cards: only the program, to lay over an
+--                    installation (Docs/PROGRAM_ONLY_UPDATE_PLAN.md); its self-check has it strict-open a full package's
+--                    OK cards with that package's resources, and its zip is made after that passed
 --
 -- Steps (logs in Saved/StudioRelease/<tag>/, one file per step; a failing step names its log and what is missing):
 --   1. preflight     engine, cargo, the cards folder, a new --out, nobody measuring (unreal_slot.lua may-build)
@@ -109,9 +112,13 @@ local DINOV3_LICENSE = "third_party/dinov3_src/LICENSE.md"
 local function main()
   local p = ok.args.parser("Build, stage and package OK Studio + card reader + OK mods in one run")
   p:opt("--tag", { required = true })
-  p:opt("--cards", { required = true })
+  p:opt("--cards")
   p:opt("--out", { required = true })
   p:flag("--zip")
+  -- Only the program (Docs/PROGRAM_ONLY_UPDATE_PLAN.md): laid over an installation that has the resources. Checked
+  -- against a full package's resources (--resources-from, default the newest full package beside --out).
+  p:flag("--program-only")
+  p:opt("--resources-from")
   p:flag("--zip-only")
   p:opt("--zip-threads", { default = "8" })
   p:opt("--max-cards", { default = "100" })
@@ -134,7 +141,9 @@ local function main()
   local work = logs
   local stage = path.join(root, "Saved/StreetSocial/Build/" .. stage_tag .. ".stage")
   local out = path.abs(a.out):gsub("/+$", "")
-  local cards = path.abs(a.cards)
+  if not a.cards and not a.program_only and not a.zip_only then fail("--cards <OK card folder> is required (a program-only package takes none)") end
+  if a.program_only and a.cards then fail("--program-only takes no --cards: cards are resources") end
+  local cards = a.cards and path.abs(a.cards)
   local okmod = path.join(root, "Tools/ok-mod")
   local pack_tool = path.join(okmod, "target/release/ok-mod-pack.exe")
   local profile = path.join(okmod, "profiles/" .. a.profile .. ".toml")
@@ -143,6 +152,22 @@ local function main()
   if not a.zip_threads:match("^%d+$") or tonumber(a.zip_threads) < 1 then fail("--zip-threads takes a whole number >= 1") end
   local hairdeck = path.abs(a.hairdeck_data)
   local packed
+  -- The full package a program-only one is checked against: --resources-from, else the newest folder beside --out whose
+  -- PACKAGE.json is a full one (or, made before "kind" was written, that carries a base library).
+  local resources_from
+  local function find_resources()
+    if a.resources_from then return path.abs(a.resources_from):gsub("/+$", "") end
+    local best, best_t
+    for _, n in ipairs(list(path.parent(out))) do
+      local dir = path.join(path.parent(out), n)
+      local man = path.join(dir, "PACKAGE.json")
+      if dir ~= out and path.is_file(man) and path.is_dir(path.join(dir, "Content/IndependentResources/base_v1")) then
+        local okj, m = pcall(json.decode, path.read_text(man))
+        if okj and type(m) == "table" and (m.kind == "full" or m.kind == nil) and (not best_t or tostring(m.made) > best_t) then best, best_t = dir, tostring(m.made) end
+      end
+    end
+    return best
+  end
 
   if a.zip_only then
     say("1/8 preflight (--zip-only: the package is there, only the self-check and its zip)")
@@ -160,17 +185,25 @@ local function main()
   local missing = {}
   if not path.is_file(path.join(engine, "Engine/Build/BatchFiles/Build.bat")) then missing[#missing + 1] = "engine Build.bat under " .. win(engine) .. " (--engine)" end
   if not proc.which("cargo") and not path.is_file(path.join(os.getenv("USERPROFILE") or "", ".cargo/bin/cargo.exe")) then missing[#missing + 1] = "cargo (Rust MSVC toolchain)" end
-  if not path.is_dir(cards) or #path.list(cards) == 0 then missing[#missing + 1] = "OK cards in " .. win(cards) .. " (--cards)" end
+  if not a.program_only and (not path.is_dir(cards) or #path.list(cards) == 0) then missing[#missing + 1] = "OK cards in " .. win(cards) .. " (--cards)" end
+  if a.program_only then
+    resources_from = find_resources()
+    if not resources_from or not path.is_dir(path.join(resources_from, "Content/IndependentResources/base_v1")) then
+      missing[#missing + 1] = "a full package to check the program against (--resources-from <folder>; none found beside " .. win(out) .. ")"
+    end
+  end
   if not path.is_file(profile) then missing[#missing + 1] = "mod profile " .. win(profile) .. " (--profile)" end
   if out:sub(1, #root + 1) == root .. "/" then missing[#missing + 1] = "--out outside the repository (" .. win(out) .. ")" end
   if path.exists(out) and #path.list(out) > 0 then missing[#missing + 1] = "a new or empty --out (" .. win(out) .. " has files)" end
   if a.zip and path.exists(out .. ".zip") then missing[#missing + 1] = "no " .. win(out .. ".zip") .. " yet (--zip writes it)" end
   if a.skip_modkit and not a.content_from then missing[#missing + 1] = "--content-from <folder> with --skip-modkit (<example>/content/*.pak, <example>/ui/*.dui)" end
   if a.skip_stage and not path.is_dir(stage) then missing[#missing + 1] = "the stage " .. win(stage) .. " for --skip-stage" end
-  for _, rel in ipairs(HAIRDECK_FILES) do
-    if not path.exists(path.join(hairdeck, rel)) then missing[#missing + 1] = "HairDeck weights " .. win(path.join(hairdeck, rel)) .. " (--hairdeck-data)" end
+  if not a.program_only then
+    for _, rel in ipairs(HAIRDECK_FILES) do
+      if not path.exists(path.join(hairdeck, rel)) then missing[#missing + 1] = "HairDeck weights " .. win(path.join(hairdeck, rel)) .. " (--hairdeck-data)" end
+    end
+    if not path.is_file(path.join(hairdeck, DINOV3_LICENSE)) then missing[#missing + 1] = "the DINOv3 license " .. win(path.join(hairdeck, DINOV3_LICENSE)) .. " (it goes in with the weights)" end
   end
-  if not path.is_file(path.join(hairdeck, DINOV3_LICENSE)) then missing[#missing + 1] = "the DINOv3 license " .. win(path.join(hairdeck, DINOV3_LICENSE)) .. " (it goes in with the weights)" end
   if #missing > 0 then fail("missing:\n  - " .. table.concat(missing, "\n  - ")) end
 
   -- Features the package cannot offer, said here and not first in the UI.
@@ -267,16 +300,25 @@ local function main()
 
   -- 7. package
   say("7/8 package -> ", win(out))
-  local pargs = { "--studio", "--private", "--cards", win(cards), "--max-cards", a.max_cards, "--mods", win(packages),
+  local pargs = { "--studio", "--private", "--mods", win(packages),
     "--readme", "Docs/OK_STUDIO_MOD_PACKAGE.md", "--stage", win(stage), "--out", win(out) }
   local function extra(src, dest) pargs[#pargs + 1] = "--extra"; pargs[#pargs + 1] = win(src) .. "=" .. dest end
-  for _, rel in ipairs(HAIRDECK_FILES) do extra(path.join(hairdeck, rel), "HairDeckData/" .. rel) end
-  extra(path.join(hairdeck, DINOV3_LICENSE), "Licenses/DINOv3-LICENSE.md")
+  if a.program_only then
+    -- No original data, cards or weights (package_street_social.lua --program-only stops on any); the licenses are the
+    -- program's and go in both (the DINOv3 one when this machine has it).
+    pargs[#pargs + 1] = "--program-only"
+    if path.is_file(path.join(hairdeck, DINOV3_LICENSE)) then extra(path.join(hairdeck, DINOV3_LICENSE), "Licenses/DINOv3-LICENSE.md") end
+  else
+    for _, v in ipairs({ "--cards", win(cards), "--max-cards", a.max_cards }) do pargs[#pargs + 1] = v end
+    for _, rel in ipairs(HAIRDECK_FILES) do extra(path.join(hairdeck, rel), "HairDeckData/" .. rel) end
+    extra(path.join(hairdeck, DINOV3_LICENSE), "Licenses/DINOv3-LICENSE.md")
+  end
   extra(path.join(root, "Tools/package_licenses/Apache-2.0.txt"), "Licenses/Apache-2.0.txt")
   extra(path.join(root, "Tools/package_licenses/THIRD_PARTY.md"), "Licenses/THIRD_PARTY.md")
   extra(path.join(root, "Docs/VIDEO_WEIGHTS.md"), "Docs/VIDEO_WEIGHTS.md")
   -- No .pdb goes in, the tools' or the game's (user 2026-11-23); the self-check below makes sure.
-  if a.zip then pargs[#pargs + 1] = "--zip"; pargs[#pargs + 1] = win(out .. ".zip") end
+  -- A program-only zip is made after the self-check passed (it includes the check against the resources), below.
+  if a.zip and not a.program_only then pargs[#pargs + 1] = "--zip"; pargs[#pargs + 1] = win(out .. ".zip") end
   run_lua("package", "Tools/package_street_social.lua", pargs)
   end -- not --zip-only
 
@@ -288,13 +330,33 @@ local function main()
     if not path.exists(path.join(out, rel)) then problems[#problems + 1] = (what or "missing") .. ": " .. rel end
   end
   local stage_rel = "Saved/StreetSocial/Build/" .. stage_tag .. ".stage"
+  local manifest = json.decode(path.read_text(path.join(out, "PACKAGE.json")))
+  -- A program-only package (made now, or zipped now with --zip-only): no resources in it, checked against a full one.
+  local program = a.program_only or manifest.kind == "program"
   for _, rel in ipairs({ "OKStudio.cmd", "CardReaderDevelopment.cmd", "WriteMcpConfig.cmd", "PACKAGE.json", "OK_STUDIO_MOD_PACKAGE.md",
       stage_rel .. "/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe", stage_rel .. "/Mods/.installed.toml",
-      "Tools/ok-mod/examples", "Docs/OK_MOD_AUTHORING.md",
-      "Content/IndependentResources/base_v1/sources.okidx", "Content/IndependentResources/base_v1/anims",
-      -- Without this an original card's open has no GUID / override answers and may not walk the mods tree.
-      "Content/IndependentResources/base_v1/mods_index.db",
-      "Content/IndependentResources/base_v1/studio/voice", "Content/IndependentResources/RuntimeAnimations" }) do need(rel) end
+      "Tools/ok-mod/examples", "Docs/OK_MOD_AUTHORING.md" }) do need(rel) end
+  if not program then
+    for _, rel in ipairs({ "Content/IndependentResources/base_v1/sources.okidx", "Content/IndependentResources/base_v1/anims",
+        -- Without this an original card's open has no GUID / override answers and may not walk the mods tree.
+        "Content/IndependentResources/base_v1/mods_index.db",
+        "Content/IndependentResources/base_v1/studio/voice", "Content/IndependentResources/RuntimeAnimations",
+        -- What the resources carry, for a later program to check them against (package_street_social.lua).
+        "Content/IndependentResources/RESOURCES.json" }) do need(rel) end
+  else
+    -- Not one resource file: they would overwrite the installation's own (Docs/PROGRAM_ONLY_UPDATE_PLAN.md).
+    local resource = {}
+    for _, f in ipairs(json.decode(path.read_text(path.join(root, "Tools/original_data_manifest.json"))).files) do resource[f.path] = true end
+    local found = {}
+    for _, rel in ipairs(manifest.files or {}) do
+      if resource[rel] or rel:sub(1, 23) == "Content/CharacterCards/" or rel:sub(1, 13) == "HairDeckData/" or rel == "Content/IndependentResources/RESOURCES.json" then found[#found + 1] = rel end
+    end
+    for _, dir in ipairs({ "Content/CharacterCards", "HairDeckData", "Content/IndependentResources/base_v1" }) do
+      if path.exists(path.join(out, dir)) then found[#found + 1] = dir .. "/" end
+    end
+    if #found > 0 then problems[#problems + 1] = ("%d resource path(s) in a program-only package, e.g. %s"):format(#found, found[1]) end
+    if manifest.kind ~= "program" then problems[#problems + 1] = "PACKAGE.json kind is " .. tostring(manifest.kind) .. ", not program" end
+  end
   -- Every tool: in the package and it starts (any exit code; a missing DLL or a bad image cannot start at all).
   for _, t in ipairs(TOOLS) do
     local exe = path.join(out, t.exe)
@@ -318,11 +380,13 @@ local function main()
     if fh then fh:close() end
     if body:find("[\128-\255]") then problems[#problems + 1] = "a launcher has non-ASCII text (cmd misreads it under code page 65001): " .. win(f) end
   end
-  for _, rel in ipairs({ "Licenses/THIRD_PARTY.md", "Licenses/DINOv3-LICENSE.md", "Licenses/Apache-2.0.txt", "Docs/VIDEO_WEIGHTS.md" }) do need(rel) end
-  for _, rel in ipairs(HAIRDECK_FILES) do need("HairDeckData/" .. rel, "HairDeck weights missing") end
+  for _, rel in ipairs({ "Licenses/THIRD_PARTY.md", "Licenses/Apache-2.0.txt", "Docs/VIDEO_WEIGHTS.md" }) do need(rel) end
+  if not program then need("Licenses/DINOv3-LICENSE.md") end
+  if not program then for _, rel in ipairs(HAIRDECK_FILES) do need("HairDeckData/" .. rel, "HairDeck weights missing") end end
   -- HairDeck really runs from the package: its own exe, its own weights (HAIRDECK_ROOT cleared, and the weights it
-  -- reports must be the package's), one generate on a packaged card (CPU, about 40 s).
-  do
+  -- reports must be the package's), one generate on a packaged card (CPU, about 40 s). A program-only package has no
+  -- weights (the installation's are used).
+  if not program then
     local exe = path.join(out, "Tools/ok-hairdeck/target/release/ok-hairdeck.exe")
     local card
     for _, f in ipairs(path.rglob(path.join(out, "Content/CharacterCards"), "*.png")) do card = f; break end
@@ -357,7 +421,7 @@ local function main()
     end
     return false
   end
-  if not finds_ok_extract(path.join(out, "Content/IndependentResources/base_v1")) then problems[#problems + 1] = "ok-extract.exe not found up from the base library" end
+  if not program and not finds_ok_extract(path.join(out, "Content/IndependentResources/base_v1")) then problems[#problems + 1] = "ok-extract.exe not found up from the base library" end
   if not finds_ok_extract(path.join(out, stage_rel .. "/Windows/OpenKoikatsu/Binaries/Win64")) then problems[#problems + 1] = "ok-extract.exe not found up from the game executable" end
   -- Mods, packages, panels and paks.
   local pkg_mods = path.join(out, stage_rel .. "/Mods")
@@ -383,7 +447,51 @@ local function main()
   local vr = proc.run({ win(path.join(out, "Tools/ok-mod/target/release/ok-mod-pack.exe")), "verify", win(pkg_mods) },
     { stdout_file = path.join(logs, "selfcheck-verify.log"), merge = true })
   if not vr.ok then problems[#problems + 1] = "ok-mod-pack verify failed on the package: " .. win(path.join(logs, "selfcheck-verify.log")) end
-  local manifest = json.decode(path.read_text(path.join(out, "PACKAGE.json")))
+  -- Program-only: this program opens the resources it will be laid over. Its own ok-extract strict-opens the OK cards of
+  -- a full package with that package's base library (a new process each, no game, no cache: what a player's open needs).
+  -- The resource version gate itself is being planned apart (Docs/PROGRAM_ONLY_UPDATE_PLAN.md); this is the working check.
+  if program then
+    resources_from = resources_from or find_resources()
+    local lib = resources_from and path.join(resources_from, "Content/IndependentResources/base_v1")
+    local exe = path.join(out, "Tools/ok-extract/target/release/ok-extract.exe")
+    if not lib or not path.is_dir(lib) then problems[#problems + 1] = "no full package to check against (--resources-from)"
+    else
+      local cards_dir = path.join(resources_from, "Content/CharacterCards")
+      local tried, failed = 0, {}
+      for _, card in ipairs(path.is_dir(cards_dir) and path.rglob(cards_dir, "*.png") or {}) do
+        if tried >= 10 then break end
+        tried = tried + 1
+        local log = path.join(logs, ("selfcheck-resources-%02d.log"):format(tried))
+        proc.run({ win(exe), "X:/NoGame", "--oklib", "strict-check", win(lib), win(card) },
+          { stdout_file = log, merge = true, env = { OK_NOCACHE = "1", OK_LIBRARY_CACHE = false }, timeout = 300 })
+        local text = path.is_file(log) and path.read_text(log) or ""
+        if not text:find("OKSTRICT ok") then failed[#failed + 1] = path.name(card) .. " (" .. win(log) .. ")" end
+      end
+      say(("  against %s: %d OK card(s) strict-opened, %d failed"):format(win(resources_from), tried, #failed))
+      -- OK cards never ask the mods index, original cards do: an index this program cannot read answers no GUID, and an
+      -- original card opens with every mod "missing" (overlay test 2026-11-24: release-e's schema 1 under a schema 2
+      -- program, Illya 42 mods "absent"). Until ok-extract's own resources check is in, the schema this source tree
+      -- writes (modsindex.rs SCHEMA) against the one the resources carry.
+      local want = path.read_text(path.join(root, "Tools/ok-extract/src/modsindex.rs")):match("const SCHEMA: i64 = (%d+);")
+      local db = path.join(lib, "mods_index.db")
+      if not path.is_file(db) then problems[#problems + 1] = "the full package has no mods index: " .. win(db)
+      else
+        local kit = require "ok.kit"
+        local okq, rows = pcall(kit.sql_rows, win(db), "SELECT value FROM meta WHERE key='schema'", {}, { readonly = true })
+        local have = okq and rows and rows[1] and tostring(rows[1][1]) or "?"
+        say(("  mods index of %s: schema %s, this program needs %s"):format(path.name(resources_from), have, tostring(want)))
+        if have ~= tostring(want) then
+          problems[#problems + 1] = ("the full package's mods index is schema %s, this program needs %s: original cards would find no mod "
+            .. "(a full package must go out first, or the player rebuilds it: ok-extract <game> --oklib mods-index <base_v1>)"):format(have, tostring(want))
+        end
+      end
+      if tried == 0 then problems[#problems + 1] = "no OK card in " .. win(cards_dir) .. " to check the program against" end
+      if #failed > 0 then
+        problems[#problems + 1] = ("this program does not open %d of %d OK card(s) with %s's resources (a full package must go out first): %s")
+          :format(#failed, tried, path.name(resources_from), table.concat(failed, "; "))
+      end
+    end
+  end
   for _, m in ipairs(manifest.maps_in_paks or {}) do
     if not (m:match("Maps/Entry%.umap$") or m:match("Template_Default%.umap$")) then problems[#problems + 1] = "a game map is in the paks: " .. m end
   end
@@ -392,7 +500,7 @@ local function main()
     fail("self-check failed:\n  - " .. table.concat(problems, "\n  - "))
   end
   path.write_text(path.join(logs, "selfcheck.txt"), "ok\n")
-  if a.zip_only then
+  if a.zip_only or (a.program_only and a.zip) then
     -- What packaging put in the folder: the files PACKAGE.json lists, PACKAGE.json itself and the stage's stage.json
     -- (written after the list). A zip made with --zip at packaging time holds exactly these (checked on
     -- Studio-20261124-release-d: 17609 listed + 2 = the zip's 17611); anything a test run added since stays out.
