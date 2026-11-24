@@ -8,20 +8,45 @@ struct KKSIDELOADER_API FKKZipmod
 	FString Guid;
 	FString Path;
 	FString Name;
+	FString Version;
 	bool bInSideloaderModpack = false;
 };
 
+/** One package as the cache remembers it, with what makes the entry stale. */
+struct KKSIDELOADER_API FKKZipmodFile
+{
+	FString Path;
+	int64 Size = 0;
+	int64 ModifiedTicks = 0;
+	/** Why its manifest could not be read; empty when it was read. */
+	FString Error;
+	TArray<FKKZipmod> Mods;
+};
+
+/** Which GUID lives in which package of one mods/ folder.
+ *
+ *  Built from the packages' manifests only (KKZip::ReadManifests), never from their contents, and kept in a cache that
+ *  survives restarts: a second build reads the manifest of a package the cache does not already have at that size and
+ *  modification time. On a real installation (7,296 packages, 111 GiB) a full build reads ~466 MiB and a repeat build
+ *  almost nothing; it still belongs on a worker thread, with a progress bar (Docs/READER_BUSY_PROGRESS.md). */
 class KKSIDELOADER_API FKKModIndex
 {
 public:
-	bool Build(const FString& ModsDir, FString& OutError);
+	/** OnProgress, when bound, is called with (packages done, packages in all) every so often; it must be safe to call
+	 *  from the thread Build runs on. */
+	bool Build(const FString& ModsDir, FString& OutError, TFunction<void(int32, int32)> OnProgress = nullptr);
 	bool LoadCache(const FString& CachePath);
 	bool SaveCache(const FString& CachePath) const;
 	const FKKZipmod* Find(const FString& Guid) const;
 	TArray<FKKResolveInfo> Missing(const TArray<FKKResolveInfo>& Resolves) const;
 	int32 Num() const { return GuidToMod.Num(); }
+	/** Whether this index was built for that mods/ folder, so that "not here" is an answer about it. */
+	bool CoversModsDir(const FString& Mods) const;
 
 	TMap<FString, FKKZipmod> GuidToMod;
+	TArray<FKKZipmodFile> Files;
+	/** Package path to why its manifest could not be read. */
+	TMap<FString, FString> Unreadable;
 	FString ModsDir;
 	FString LastError;
 };

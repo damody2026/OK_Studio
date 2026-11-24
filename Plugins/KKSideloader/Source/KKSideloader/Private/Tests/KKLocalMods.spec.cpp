@@ -3,6 +3,7 @@
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "KKLocalMods.h"
+#include "KKModIndex.h"
 #if WITH_DEV_AUTOMATION_TESTS
 namespace
 {
@@ -192,6 +193,33 @@ bool FKKLocalModsTest::RunTest(const FString& Parameters)
     IFileManager::Get().SetTimeStamp(*(Versions/TEXT("mods/c.zipmod")),FDateTime(2020,1,3));
     Index.BuildForCard(Versions/TEXT("UserData/card.png"));
     TestTrue(TEXT("missing version uses newest timestamp"),Index.ZipmodPaths[0].EndsWith(TEXT("c.zipmod")));
+    // With the installed index, a selection looks up only the GUIDs the card names and reads no package in mods/.
+    // Reading them all here is what froze the reader on a card dragged in from the game's own card folder (2026-11-24).
+    const FString VersionMods=Versions/TEXT("mods");
+    FKKModIndex Installed;FString IndexError;
+    TestTrue(TEXT("index built from manifests"),Installed.Build(VersionMods,IndexError));
+    TestTrue(TEXT("index covers that mods folder"),Installed.CoversModsDir(VersionMods));
+    TestEqual(TEXT("index saw every package"),Installed.Files.Num(),3);
+    TestTrue(TEXT("index picks the same winner"),Installed.Find(Ref.ModID)&&Installed.Find(Ref.ModID)->Path.EndsWith(TEXT("c.zipmod")));
+    Index.BuildForCard(Versions/TEXT("UserData/card.png"),{Ref},&Installed);
+    TestEqual(TEXT("indexed lookup attaches one package"),Index.ZipmodPaths.Num(),1);
+    TestTrue(TEXT("indexed lookup attaches the winner"),Index.ZipmodPaths[0].EndsWith(TEXT("c.zipmod")));
+    TestTrue(TEXT("indexed lookup resolves"),Index.Resolve({Ref})[0].Status==EKKLocalModStatus::Found);
+    Index.BuildForCard(Versions/TEXT("UserData/card.png"),{Missing},&Installed);
+    TestEqual(TEXT("a GUID this card does not name is not attached"),Index.ZipmodPaths.Num(),0);
+    Index.BuildForCard(Versions/TEXT("UserData/card.png"),{Ref},nullptr);
+    TestEqual(TEXT("without an index the folder is still read"),Index.ZipmodPaths.Num(),1);
+    // The cache answers what a build would, and a rebuild over it reads no manifest again.
+    const FString CachePath=Versions/TEXT("mod_index.json");
+    TestTrue(TEXT("cache saved"),Installed.SaveCache(CachePath));
+    FKKModIndex Reloaded;
+    TestTrue(TEXT("cache loaded"),Reloaded.LoadCache(CachePath));
+    TestEqual(TEXT("cache keeps every package"),Reloaded.Files.Num(),3);
+    TestTrue(TEXT("cache keeps the winner"),Reloaded.Find(Ref.ModID)&&Reloaded.Find(Ref.ModID)->Path.EndsWith(TEXT("c.zipmod")));
+    FString RebuildError;
+    TestTrue(TEXT("rebuilt over the cache"),Reloaded.Build(VersionMods,RebuildError));
+    TestTrue(TEXT("rebuild keeps the winner"),Reloaded.Find(Ref.ModID)&&Reloaded.Find(Ref.ModID)->Path.EndsWith(TEXT("c.zipmod")));
+    TestEqual(TEXT("rebuild sees the same packages"),Reloaded.Files.Num(),3);
     return true;
 }
 #endif

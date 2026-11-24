@@ -7510,3 +7510,21 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 **修正**：一個共用的工作清單 `OKBusy`（[Docs/READER_BUSY_PROGRESS.md](READER_BUSY_PROGRESS.md)），長動作呼叫 `Begin`／`FScope`，畫面上一條進度條顯示最新那一筆，**跑超過 0.5 秒才出現**。那兩個卡住遊戲執行緒的搬到背景執行緒。
 
 **下次怎麼避免**：讀卡器新增會花時間的動作時，用 `OKBusy::FScope`，不要再寫一份自己的狀態字；**報不出比例就讓它走 marquee，不要用「經過時間推估」編一個百分比**——那是在騙使用者，而且第一次就會被看穿。工作留在遊戲執行緒上就畫不出會動的條子，加 `Begin` 也沒用，要先把工作搬開。
+
+## 2026-11-24（F）從遊戲自己的卡片資料夾拖一張原作卡進讀卡器，畫面整個凍住
+
+**現象**：使用者把 `D:\KoikatuSunshine\UserData\chara\female` 的原作卡拖進 `CardReaderDevelopment.cmd`，視窗沒回應（`Responding=False`）好幾分鐘，進度條也沒出現，log 連「OK reader drop」那一行都沒有，最後只能把它殺掉。
+
+**原因**：`OpenDroppedCard` 先呼叫 `SelectIndex`（所以還來不及寫那行 log），`SelectIndex` 對原作卡呼叫 `FKKLocalModIndex::BuildForCard`。它會從卡片往上找遊戲安裝，找到之後把那個 `mods/` **整個**列出來、**每一包都讀一次 manifest**——這台機器上是 7,296 包、111 GiB——而且讀法是 `FFileHelper::LoadFileToArray` 整包讀進記憶體（`KKModIndex::ReadZipmodGuid`）；去重還是 O(n²) 的 `FPaths::IsSamePath`（7,296²/2 ≈ 2,660 萬次，每次都在配置字串）。全部在**遊戲執行緒**上，而且**每選一張卡就重來一次**。卡片資料夾在遊戲外面時碰不到這條路，所以平常不會遇到。
+
+**修正**：
+- 新的 `KKZip::ReadManifests`（[KKZipManifest.h](../Plugins/KKSideloader/Source/KKSideloader/Private/KKZipManifest.h)）只讀 ZIP 結尾記錄、中央目錄與 manifest 自己那幾百位元組。同一個 `mods/`：整包讀是 111 GiB，這樣是 466 MiB。
+- `FKKModIndex` 變成**有快取、可增量**的索引（`Saved/mod_index.json` 記下每包的路徑／大小／修改時間），只有新的或改過的包才重讀 manifest；GUID 撞在一起時照 Sideloader 的版本規則挑。
+- `FKKLocalModIndex::BuildForCard(卡, 這張卡要的 GUID, 索引)`：卡片旁邊的 zipmod 照舊整包處理（本來就只有幾個），遊戲 `mods/` 改成**只查這張卡自己指名的 GUID**。去重改用 `TSet`。
+- 索引本身搬到背景執行緒（`UOKCharacterController::StartInstalledModIndex`），掛在進度條上，比例是「讀了幾包／共幾包」。
+
+同一次還修了另一半：拖進來的卡**用它自己那個遊戲安裝開**，不是設定裡寫的那個資料夾。F 的設定寫著 `D:/XKoikatuSunshine`（不存在），卡片在 `D:/KoikatuSunshine` 裡，於是開卡只找到卡片旁邊那 1 個 zipmod（卡片指名 19 個）。衣服預覽的快取簽章也跟著改用這個實際採用的路徑。
+
+**實測**（2026-11-24，F，同一台、同一個 `D:/KoikatuSunshine/mods`）：拖卡之後視窗全程 `Responding=True`（每 2 秒查一次，45 次都是），索引 `7296 zipmod, 7268 GUID, 0.5 s`（之後存成快取），卡片 4 秒載入完成，進度條上是「載入3D · 讀卡片、組出她的模型」，`root=` 變成 `D:/KoikatuSunshine`。那 0.5 秒是作業系統檔案快取熱的時候量的（量之前剛掃過同一批 manifest），冷開會更久，但讀的量是一樣的 466 MiB。
+
+**下次怎麼避免**：遊戲執行緒上不准掃 `mods/`。要認 zipmod 的身分就讀它的 manifest，不要把整包讀進來。「每選一張卡都重建一次索引」這種事，只要資料量是使用者的安裝決定的，就一定要有快取，而且要能增量。
