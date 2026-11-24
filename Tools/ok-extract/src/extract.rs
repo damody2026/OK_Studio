@@ -99,6 +99,7 @@ pub(crate) fn extract_session_from_info(
         lists_stage(game_root, &parsed_card, outfit, out_dir, &mut manifest)?;
     let mod_catalog = &*mod_catalog;
     profile_tick("lists+mods+guids", t);
+    check_preempted()?; // a background warm gives way to the card the user opens
     t = Instant::now();
     // The base bundles' body and head (base_bundles_stage): the same in every open of a view, whatever the outfit or
     // garment states (crate::view_memo); the card's fields it reads are in the key. What it reads was recorded by the
@@ -249,6 +250,7 @@ pub(crate) fn extract_session_from_info(
         }
     }
     profile_tick("shape_body+head", t);
+    check_preempted()?; // a background warm gives way to the card the user opens
     t = Instant::now();
     // ChaControl: InitShapeBody(objBodyBone) then AssignedWeights then AnimPlay(Fmannequin_00).
     if let Some(sk) = body_skel.as_mut() {
@@ -295,6 +297,7 @@ pub(crate) fn extract_session_from_info(
         }
     }
     profile_tick("pose+abm", t);
+    check_preempted()?; // a background warm gives way to the card the user opens
     t = Instant::now();
     let mut t_mark = Instant::now();
     if let Some(b) = body_skel.as_ref() {
@@ -561,6 +564,7 @@ pub(crate) fn extract_session_from_info(
         Vec::new()
     };
     profile_tick("uncensor body", t_mark); t_mark = Instant::now();
+    check_preempted()?; // a background warm gives way to the card the user opens
     if let Some(card) = parsed_card.as_ref() {
         let seed = card.birth_day.wrapping_add(card.personality)
             .wrapping_add((card.voice_pitch * 100.0) as i32);
@@ -627,6 +631,7 @@ pub(crate) fn extract_session_from_info(
             add_draw_liquid_textures(bundle, &mat, mesh, true);
         }
         profile_tick("skin+rig body", t_skin);
+        check_preempted()?; // a background warm gives way to the card the user opens
         let t_body_tex = Instant::now();
         compose_body_texture(
             mesh,
@@ -669,6 +674,7 @@ pub(crate) fn extract_session_from_info(
             }
         }
         profile_tick("compose_body_texture", t_body_tex);
+        check_preempted()?; // a background warm gives way to the card the user opens
         eprintln!(
             "ok-extract: body tex {} bytes name={}",
             mesh.texture_png.as_ref().map(|p| p.len()).unwrap_or(0),
@@ -764,6 +770,7 @@ pub(crate) fn extract_session_from_info(
         crate::mod_forward::post_texture("body", &mesh.name, outfit, &mut mesh.texture_png);
         let (p, tex) = emit_part(out_dir, &mut session_parts, "body", "body", mesh, body_blend, false)?;
         profile_tick("body draw+emit", t_mark); t_mark = Instant::now();
+        check_preempted()?; // a background warm gives way to the card the user opens
         if let Some(part) = session_parts.last_mut() {
             if let Some(ref det) = body_normal_detail_png {
                 if part.source_material.as_ref().is_some_and(|m| crate::is_kkuss_shader(&m.shader) || crate::is_kkuts_shader(&m.shader)) {
@@ -1136,6 +1143,7 @@ pub(crate) fn extract_session_from_info(
                 mesh.texture_png = crate::unity::solid_png(skin_tint, 512, 512);
             }
             profile_tick("compose_face_texture", t_face_tex);
+            check_preempted()?; // a background warm gives way to the card the user opens
             // MaterialEditor applies texture properties to the draw material
             // after CustomTextureControl has built the face MainTex.  The
             // card's face DetailMask can replace the bundle default entirely;
@@ -1185,6 +1193,7 @@ pub(crate) fn extract_session_from_info(
         });
     }
     profile_tick("face overlays+emit", t_mark);
+    check_preempted()?; // a background warm gives way to the card the user opens
     let mut seen_head = std::collections::HashSet::new();
     let t_hdet = Instant::now();
     // An OK Studio eyes pattern whose eye set shows a gag eye (ChaControl.ChangeEyesPtn): that object is built, with
@@ -1461,6 +1470,7 @@ pub(crate) fn extract_session_from_info(
         });
     }
     profile_tick("head_detail meshes", t_hdet);
+    check_preempted()?; // a background warm gives way to the card the user opens
 
     let t_ctx = Instant::now();
     let mut accessory_context=None;
@@ -1511,6 +1521,7 @@ pub(crate) fn extract_session_from_info(
         if hair_and_accessories {
         let t_res = Instant::now();
         for resolve in &card.resolves {
+            check_preempted()?; // a background warm gives way to the card the user opens
             if !is_mesh_category(resolve.category_no) {
                 continue;
             }
@@ -1698,6 +1709,7 @@ pub(crate) fn extract_session_from_info(
         // Hair slots from ChaFileHair.parts even if UAR skipped them.
         let t_hair = Instant::now();
         for (i, &hid) in card.hair_ids.iter().enumerate() {
+            check_preempted()?; // a background warm gives way to the card the user opens
             // Id 0 is a real vanilla hairstyle in every hair category (back hair 0 is the default long hair of many
             // cards); empty slots are "なし" catalog entries, which is_dummy_part skips below.
             let cat = 101 + i as i32;
@@ -1803,6 +1815,7 @@ pub(crate) fn extract_session_from_info(
         // Accessories from ChaFileAccessory.parts (slots with no KKEx entry, e.g. necklaces).
         let t_acc = Instant::now();
         for (slot_i, a) in card.accessory.iter().enumerate() {
+            check_preempted()?; // a background warm gives way to the card the user opens
             // ChaFileAccessory uses category 120 for an empty slot. Zero is
             // also a valid item id in other categories (e.g. stock glasses).
             if a.type_id == 120 || !is_mesh_category(a.type_id) {
@@ -1871,6 +1884,7 @@ pub(crate) fn extract_session_from_info(
         let mut clothes_state_present = [false; 9];
         let mut top_prefab_world = crate::pose::ident();
         for (kind, &cid) in card.clothes_ids.iter().enumerate() {
+            check_preempted()?; // a background warm gives way to the card the user opens
             if kind >= CLOTHES_PROP.len() {
                 break;
             }
@@ -1960,6 +1974,7 @@ pub(crate) fn extract_session_from_info(
                 outfit,
             );
             profile_tick("clothes patterns", t_part);
+            check_preempted()?; // a background warm gives way to the card the user opens
             // ChaControl.CreateClothesTexture + ChangeCustomClothes: up to 3
             // create RTs (MainTex / MainTex02 / MainTex03) assigned to
             // rendNormal01 / rendNormal02 / rendNormal03.
@@ -1993,6 +2008,7 @@ pub(crate) fn extract_session_from_info(
                 );
             }
             profile_tick("clothes bake create", t_part);
+            check_preempted()?; // a background warm gives way to the card the user opens
             let t_part = Instant::now();
             apply_clothes_create_textures(&mut meshes, cmp.as_ref(), &baked);
             profile_tick("clothes apply create", t_part);
@@ -2091,6 +2107,7 @@ pub(crate) fn extract_session_from_info(
             // not an absent-part sentinel. Resolved mod entries below retain
             // their explicit category and take precedence.
             for kind in 0..3usize {
+                check_preempted()?; // a background warm gives way to the card the user opens
                 if manifest.clothes_states[0] == 3 {
                     continue;
                 }
@@ -2241,6 +2258,7 @@ pub(crate) fn extract_session_from_info(
         let t_batch = Instant::now();
         push_batch.flush(&mut parts, &mut session_parts, &mut seen_meshes)?;
         profile_tick("deferred meshes", t_batch);
+        check_preempted()?; // a background warm gives way to the card the user opens
         // ChaControl.DrawClothes disables the bra renderer when the selected
         // top (or its sailor/jacket subparts) sets NotBra. The subpart rules
         // replace the top's value exactly as ChangeClothesTopPartsAsync does.
@@ -2679,6 +2697,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
     let t_body = Instant::now();
     let (mut body_meshes, mut body_skel, mut body_texs) = load_base_bundle(&body_bundle);
     profile_tick("load_base_bundle body", t_body);
+    check_preempted()?; // a background warm gives way to the card the user opens
     // StudioEditor builds the head from the armature prefab `p_cf_head_bone`
     // (in the base bundle) parented under `cf_s_head`, not from the head mesh's
     // own SMR skeleton (KoikatsuCharacterAssembler.cs:237-274). That armature
@@ -3039,6 +3058,7 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     // variants. The game derives state availability and linked clothing from
     // these entries before DrawClothes, including for clothes later hidden.
     profile_tick("lists: guids", t_sub);
+    check_preempted()?; // a background warm gives way to the card the user opens
     let t_sub = Instant::now();
     // The card's own zipmods first, the whole tree only if a lookup misses them (list.rs `ChaListCatalog::deferred`).
     // Merging the catalogues of every archive under mods/ costs about 1.3 s of every original-card open on this
@@ -3065,6 +3085,7 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     };
     let mod_catalog = &*mod_catalog_shared;
     profile_tick("lists: mods catalog", t_sub);
+    check_preempted()?; // a background warm gives way to the card the user opens
     let t_sub = Instant::now();
     let selected_clothes = parsed_card.as_ref().map(|card|
         select_card_clothes(card, outfit, &vanilla, &mod_catalog, &guid_index));

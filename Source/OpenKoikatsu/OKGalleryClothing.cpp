@@ -127,7 +127,7 @@ void UOKCharacterController::WarmClothingPreviews(){
  if(!IsValid(PreviewActor)||ClothingPreviewContext.IsEmpty()||!Entries.IsValidIndex(SelectedIndex))return;
  // Rule discovery reads and validates the source card/catalogue. Queue it
  // behind the same single-worker gate as native preview preparation.
- bClothingRulesPending=true;
+ bClothingRulesPending=true;ClothingWarmNotBefore=FPlatformTime::Seconds()+3.;
 }
 
 void UOKCharacterController::TickClothingPreviews(){
@@ -141,6 +141,7 @@ void UOKCharacterController::TickClothingPreviews(){
  if(bLoadInFlight||bAppearanceBusy||bAppearanceThumbBusy||bPropertyBusy||
     (AppearancePanel&&AppearancePanel->IsVisible())||bAnimationPreparing||PendingAnimationKind>=0||!bModelLayout||InteractionWidget||InteractionScene||PairedPlayback||!IsValid(PreviewActor)||!Entries.IsValidIndex(SelectedIndex))return;
  if(Selected.DeferredPreview)return; // OnCloseAppearance persists before resuming background source reads.
+ if(!ClothingWarmReady&&FPlatformTime::Seconds()<ClothingWarmNotBefore)return; // let the user settle on this card first
  if(PreviewActor->bClothingHidden)return;
  // With OK_PRELOAD_NEIGHBOR the next card in the list is prepared first (OKGalleryNeighbor.cpp).
  if(!ClothingWarmReady&&NeighborPreloadPending())return;

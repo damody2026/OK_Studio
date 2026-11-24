@@ -710,6 +710,9 @@ public:
     bool bClothingWarmInFlight=false;
     TSharedPtr<FOKClothingWarmJob,ESPMode::ThreadSafe> ClothingWarmReady;
     bool bClothingRulesPending=false;
+    // A new background open waits for this: a user flipping through cards opens the next one within seconds, and an
+    // original card open cannot start while a speculative one holds the process-wide source lock.
+    double ClothingWarmNotBefore=0.;
     double LastClothingSwitchMs=0.;
     bool bLastClothingSwitchCached=false;
     void ResetClothingPreviews(const FString& Context=FString());
