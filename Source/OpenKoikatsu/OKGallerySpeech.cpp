@@ -94,10 +94,13 @@ FString UOKCharacterController::DefaultVoiceRoot(){
     // The H voices converted into the base library (ok-extract --oklib h-voices, Tools/original_data.lua); a voice dump beside the game after it.
     if(const FString Library=UKKCardWorkspace::LibraryRoot();!Library.IsEmpty())Candidates.Add(Library/TEXT("h/voice"));
     if(const UKKGameRoot* Game=UKKGameRoot::Get();Game&&!Game->Root.IsEmpty())Candidates.Add(Game->Root/TEXT("voice_extract"));
-    // The developers' game folders, never in a package (-NoGameRoot): there they are someone else's drives.
-    if(!UKKGameRoot::NoGame())Candidates.Append({TEXT("C:/portable/KoikatuSunshine/voice_extract"),TEXT("D:/KoikatuSunshine/voice_extract"),TEXT("E:/KoikatuSunshine/voice_extract")});
+    // Beside the program itself, for a dump kept with this checkout or package.
+    Candidates.Add(FPaths::ProjectSavedDir()/TEXT("voice_extract"));
+    // Everything here is relative to something this machine knows (the library, the folder the user named, this
+    // program's own): no drive letters. "C:/portable/..." and friends were one developer's machine and nobody else's
+    // (the user, 2026-11-24: 「每台電腦都不一樣」「你應該用相對路徑去找」).
     for(const FString& C:Candidates)if(FPaths::FileExists(C/TEXT("h_breath_index.json"))){Found=C;break;}
-    if(Found.IsEmpty())Found=UKKGameRoot::NoGame()?(Candidates.IsEmpty()?FString():Candidates[0]):TEXT("C:/portable/KoikatuSunshine/voice_extract");
+    if(Found.IsEmpty())Found=Candidates.IsEmpty()?FString():Candidates[0];
     UE_LOG(LogTemp,Display,TEXT("Voice root: %s"),*Found);return Found;
 }
 void UOKCharacterController::StartPairBreath() {

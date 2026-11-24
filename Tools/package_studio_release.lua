@@ -113,7 +113,8 @@ local function main()
   p:flag("--skip-stage")
   p:flag("--skip-modkit")
   p:opt("--content-from")
-  p:opt("--hairdeck-data", { default = "F:/HairDeckData" })
+  -- 頭髮牌組的素材不在版控裡，放哪是本機的事（OK_HAIRDECK_DATA，預設工作樹底下的 Saved/）。
+  p:opt("--hairdeck-data", { default = os.getenv("OK_HAIRDECK_DATA") or (ok.root .. "/Saved/HairDeckData") })
 
   local a = p:parse(arg)
   if not a.tag:match("^[%w_%-]+$") then fail("--tag must match ^[A-Za-z0-9_-]+$") end

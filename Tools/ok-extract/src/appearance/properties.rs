@@ -384,7 +384,7 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   let before=blocks_from_card(&card).unwrap();let after=blocks_from_card(&out).unwrap();for(name,bytes)in before{if name!="Custom"{assert_eq!(after[&name],bytes,"{name}");}}
  }
  #[test]fn dress_puts_the_shops_clothes_on_her_without_the_game(){
-  let path="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/alice.png";if !Path::new(path).exists(){return;}
+  let path=crate::repo_root().join("Content/CharacterCards/StreetHeroines/alice.png").to_string_lossy().into_owned();if !Path::new(&path).exists(){return;}
   let card=crate::gamefs::read(path).unwrap();
   let out=dress(&card,&[(0,0,56,Some([0.2,0.4,0.8])),(0,1,0,None),(0,7,11,None),(0,8,11,None),(3,2,8,None)]).unwrap();
   let (got,mine)=(list_paths(&out,0).unwrap(),list_paths(&card,0).unwrap());
@@ -399,7 +399,7 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   assert!(opened.unwrap().parts.iter().any(|p|p.role.starts_with("clothes")),"the new clothes are on her");
  }
  #[test]fn every_heroine_takes_the_dye_even_with_hair_painted_into_its_texture(){
-  let dir="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines";if !Path::new(dir).exists(){return;}
+  let dir=crate::repo_root().join("Content/CharacterCards/StreetHeroines").to_string_lossy().into_owned();if !Path::new(&dir).exists(){return;}
   let green=|p:&[u8]|{let i=crate::teximg::load_from_memory(p).unwrap().into_rgba8();let (mut r,mut g,mut n)=(0u64,0u64,0u64);for p in i.pixels(){if p[3]>128{r+=p[0] as u64;g+=p[1] as u64;n+=1;}}n==0||r==g||g>r};
   // Only the cards: a card folder may hold subdirectories (a KKS/ next to the heroines did this), and read_dir
   // hands those out too — opening one as a card is PermissionDenied (os error 5), not a card-reading failure.
@@ -409,7 +409,7 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
    for i in crate::hair_dye::hair_parts(&s){let p=&s.parts[i];assert!(p.png.as_ref().is_none_or(|p|green(p)),"{path:?} {}",p.name);}}
  }
  #[test]fn dress_takes_off_what_she_wears_as_accessories(){
-  let dir="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines";if !Path::new(dir).exists(){return;}
+  let dir=crate::repo_root().join("Content/CharacterCards/StreetHeroines").to_string_lossy().into_owned();if !Path::new(&dir).exists(){return;}
   let stays=|parent:&str|super::KEEPS.iter().any(|k|parent.starts_with(k));
   for path in fs::read_dir(dir).unwrap().flatten().map(|e|e.path()).filter(|p|p.extension().is_some_and(|e|e=="png")){let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();let mine=list_paths(&card,0).unwrap();let got=list_paths(&dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap(),0).unwrap();
    let at=|l:&[(String,String)],k:&str|l.iter().find(|(p,_)|p==k).map(|(_,v)|v.trim_matches('"').to_string()).unwrap_or_default();
@@ -426,11 +426,11 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
  }
  /// Every piece the street sells opens and shows on every heroine (the base library has it). Run by hand after changing the stock.
  #[test]#[ignore="opens one card for each piece of catalog.json's clothes on each heroine, ten minutes"]fn every_clothes_item_opens(){
-  let catalog:J=serde_json::from_slice(&fs::read("C:/portable/OpenKoikatsu/Content/IndependentResources/StreetSocialData/catalog.json").unwrap()).unwrap();
+  let catalog:J=serde_json::from_slice(&fs::read(crate::repo_root().join("Content/IndependentResources/StreetSocialData/catalog.json").to_string_lossy().into_owned()).unwrap()).unwrap();
   if std::env::var_os("OK_BASE_LIBRARY").is_none(){std::env::set_var("OK_BASE_LIBRARY",Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content/IndependentResources/base_v1"));}
   let roles=["top","bot","bra","shorts","gloves","panst","socks","shoes","shoes"];
   let mut failed=Vec::new();let mut count=0;
-  for card in fs::read_dir("C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines").unwrap().flatten().map(|e|e.path()).filter(|p|p.extension().is_some_and(|e|e=="png")) {
+  for card in fs::read_dir(crate::repo_root().join("Content/CharacterCards/StreetHeroines").to_string_lossy().into_owned()).unwrap().flatten().map(|e|e.path()).filter(|p|p.extension().is_some_and(|e|e=="png")) {
    let bytes=crate::gamefs::read(card.to_str().unwrap()).unwrap();let mut seen=std::collections::BTreeSet::new();
    for item in catalog["items"].as_array().unwrap() {
     if item["category"]!="clothes"{continue;}

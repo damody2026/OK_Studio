@@ -15,7 +15,7 @@ local M = {}
 
 M.spec = {
   { "Tag", "string", mandatory = true, pattern = "^[A-Za-z0-9_-]+$" },
-  { "StageRoot", "string", default = "D:/OpenKoikatsuCrowd/DevelopmentStage" },
+  { "StageRoot", "string", default = (os.getenv("OK_CROWD_STAGE") or (ok.root .. "/Saved/CrowdStage/DevelopmentStage")) },
   { "SelectionFile", "string", default = "" },
   { "SectionLODFile", "string", default = "" },
   { "Workers", "int", default = 8, set = { 8, 16 } },

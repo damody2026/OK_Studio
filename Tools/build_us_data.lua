@@ -36,7 +36,7 @@ local html = require "market_html"
 
 local M = {}
 M.OUT = path.join(ok.root, "Content/IndependentResources/MarketData/us")
-M.RAW_DEFAULT = "C:/Users/Damody/AppData/Local/Temp/claude/C--portable-OpenKoikatsu/4c6d3560-751d-4631-a03d-094df739a76c/scratchpad/market_raw/us"
+M.RAW_DEFAULT = os.getenv("OK_MARKET_RAW") or path.join(ok.root, "Saved/MarketRaw/us")
 local UA = { ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) market-data-research/1.0" }
 local TTT_CSV = "https://www.thetrading.tools/data/csv/{}.csv"
 local TTT_IDENTITY = "https://www.thetrading.tools/data/companies/identity.json"

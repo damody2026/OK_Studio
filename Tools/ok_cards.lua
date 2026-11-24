@@ -33,7 +33,7 @@ local voice = require "ok_card_voice"
 local root = path.parent(path.parent(path.abs(arg[0])))
 local lib = path.join(root, "Content/IndependentResources/base_v1")
 local cmd = arg[1]
-local opts, pos = { exe = path.join(root, "Tools/ok-extract/target/release/ok-extract.exe"), zipmods = "D:/KoikatuSunshine/mods" }, {}
+local opts, pos = { exe = path.join(root, "Tools/ok-extract/target/release/ok-extract.exe"), zipmods = (ok.game_root(true) ~= "" and ok.game_root(true) .. "/mods" or "") }, {}
 local i = 2
 while i <= #arg do
   local a = arg[i]

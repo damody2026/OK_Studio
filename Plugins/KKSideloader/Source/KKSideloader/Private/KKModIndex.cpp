@@ -1,114 +1,14 @@
 #include "KKModIndex.h"
+#include "KKZipManifest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
-#include "zlib.h"
 
 namespace
 {
-	uint16 ReadU16(const uint8* P)
-	{
-		return static_cast<uint16>(P[0] | (P[1] << 8));
-	}
-
-	uint32 ReadU32(const uint8* P)
-	{
-		return static_cast<uint32>(P[0] | (P[1] << 8) | (P[2] << 16) | (P[3] << 24));
-	}
-
-	bool InflateRaw(const uint8* Src, int32 SrcLen, TArray<uint8>& Out, int32 Uncompressed)
-	{
-		Out.SetNumUninitialized(Uncompressed);
-		z_stream Stream;
-		FMemory::Memzero(Stream);
-		Stream.next_in = const_cast<Bytef*>(Src);
-		Stream.avail_in = static_cast<uInt>(SrcLen);
-		Stream.next_out = Out.GetData();
-		Stream.avail_out = static_cast<uInt>(Uncompressed);
-		if (inflateInit2(&Stream, -MAX_WBITS) != Z_OK)
-		{
-			return false;
-		}
-		const int32 Status = inflate(&Stream, Z_FINISH);
-		inflateEnd(&Stream);
-		return Status == Z_STREAM_END;
-	}
-
-	bool ReadZipEntry(
-		const TArray<uint8>& Bytes,
-		int32& Pos,
-		FString& OutName,
-		TArray<uint8>& OutData)
-	{
-		if (Pos + 30 > Bytes.Num())
-		{
-			return false;
-		}
-		const uint32 Sig = ReadU32(Bytes.GetData() + Pos);
-		if (Sig == 0x02014b50 || Sig == 0x06054b50)
-		{
-			return false;
-		}
-		if (Sig != 0x04034b50)
-		{
-			return false;
-		}
-		const uint16 Method = ReadU16(Bytes.GetData() + Pos + 8);
-		const uint32 CompSize = ReadU32(Bytes.GetData() + Pos + 18);
-		const uint32 UncompSize = ReadU32(Bytes.GetData() + Pos + 22);
-		const uint16 NameLen = ReadU16(Bytes.GetData() + Pos + 26);
-		const uint16 ExtraLen = ReadU16(Bytes.GetData() + Pos + 28);
-		const int32 NameAt = Pos + 30;
-		if (NameAt + NameLen + ExtraLen > Bytes.Num())
-		{
-			return false;
-		}
-		FUTF8ToTCHAR NameConv(reinterpret_cast<const ANSICHAR*>(Bytes.GetData() + NameAt), NameLen);
-		OutName = FString(NameConv.Length(), NameConv.Get());
-		const int32 DataAt = NameAt + NameLen + ExtraLen;
-		if (DataAt + static_cast<int32>(CompSize) > Bytes.Num())
-		{
-			return false;
-		}
-		if (Method == 0)
-		{
-			OutData.SetNumUninitialized(UncompSize);
-			FMemory::Memcpy(OutData.GetData(), Bytes.GetData() + DataAt, UncompSize);
-		}
-		else if (Method == 8)
-		{
-			if (!InflateRaw(Bytes.GetData() + DataAt, CompSize, OutData, UncompSize))
-			{
-				Pos = DataAt + CompSize;
-				OutData.Reset();
-				return true;
-			}
-		}
-		else
-		{
-			OutData.Reset();
-		}
-		Pos = DataAt + CompSize;
-		return true;
-	}
-
-	FString ExtractTag(const FString& Xml, const TCHAR* Tag)
-	{
-		const FString Open = FString::Printf(TEXT("<%s>"), Tag);
-		const FString Close = FString::Printf(TEXT("</%s>"), Tag);
-		int32 A = Xml.Find(Open, ESearchCase::IgnoreCase);
-		int32 B = Xml.Find(Close, ESearchCase::IgnoreCase);
-		if (A == INDEX_NONE || B == INDEX_NONE || B <= A)
-		{
-			return FString();
-		}
-		A += Open.Len();
-		return Xml.Mid(A, B - A).TrimStartAndEnd();
-	}
-
 	bool PathInModpack(const FString& Path, const FString& ModsDir)
 	{
 		FString Rel = Path;
@@ -118,59 +18,143 @@ namespace
 		}
 		return Path.Contains(TEXT("Sideloader Modpack"));
 	}
+
+	FString FullLower(const FString& Path)
+	{
+		FString Full = FPaths::ConvertRelativePathToFull(Path);
+		FPaths::NormalizeFilename(Full);
+		return Full.ToLower();
+	}
+
+	// Which package Sideloader would load for a GUID several of them declare. Both building and loading the cache end
+	// here, so a cache answers what a build would.
+	void ComputeWinners(const TArray<FKKZipmodFile>& Files, const FString& ModsDir, TMap<FString, FKKZipmod>& Out)
+	{
+		Out.Reset();
+		TMap<FString, TArray<FKKLocalMod>> Candidates;
+		TMap<FString, int64> Ticks;
+		for (const FKKZipmodFile& File : Files)
+		{
+			Ticks.Add(File.Path, File.ModifiedTicks);
+			for (const FKKZipmod& Mod : File.Mods)
+			{
+				if (Mod.Guid.IsEmpty())
+				{
+					continue;
+				}
+				FKKLocalMod Local;
+				Local.Guid = Mod.Guid;
+				Local.Name = Mod.Name;
+				Local.Version = Mod.Version;
+				Local.Path = Mod.Path;
+				Candidates.FindOrAdd(Mod.Guid).Add(MoveTemp(Local));
+			}
+		}
+		for (const TPair<FString, TArray<FKKLocalMod>>& Group : Candidates)
+		{
+			if (Group.Value.IsEmpty())
+			{
+				continue;
+			}
+			const int32 Pick = KKZip::PickInstalled(Group.Value, [&Ticks](const FKKLocalMod& Mod)
+			{
+				const int64* Found = Ticks.Find(Mod.Path);
+				return Found ? *Found : 0;
+			});
+			const FKKLocalMod& Chosen = Group.Value[Pick];
+			FKKZipmod Mod;
+			Mod.Guid = Chosen.Guid;
+			Mod.Name = Chosen.Name;
+			Mod.Version = Chosen.Version;
+			Mod.Path = Chosen.Path;
+			Mod.bInSideloaderModpack = PathInModpack(Chosen.Path, ModsDir);
+			Out.Add(Group.Key, MoveTemp(Mod));
+		}
+	}
 }
 
 bool ReadZipmodGuid(const FString& ZipPath, FString& OutGuid, FString& OutName)
 {
-	TArray<uint8> Bytes;
-	if (!FFileHelper::LoadFileToArray(Bytes, *ZipPath))
+	TArray<FKKLocalMod> Mods;
+	FString Error;
+	if (!KKZip::ReadManifests(ZipPath, Mods, Error) || Mods.IsEmpty())
 	{
 		return false;
 	}
-	int32 Pos = 0;
-	while (Pos + 30 <= Bytes.Num())
-	{
-		FString Name;
-		TArray<uint8> Data;
-		if (!ReadZipEntry(Bytes, Pos, Name, Data))
-		{
-			break;
-		}
-		if (!Name.EndsWith(TEXT("manifest.xml"), ESearchCase::IgnoreCase) || Data.Num() == 0)
-		{
-			continue;
-		}
-		FUTF8ToTCHAR Conv(reinterpret_cast<const ANSICHAR*>(Data.GetData()), Data.Num());
-		const FString Xml = FString(Conv.Length(), Conv.Get());
-		OutGuid = ExtractTag(Xml, TEXT("guid"));
-		OutName = ExtractTag(Xml, TEXT("name"));
-		return !OutGuid.IsEmpty();
-	}
-	return false;
+	OutGuid = Mods[0].Guid;
+	OutName = Mods[0].Name;
+	return !OutGuid.IsEmpty();
 }
 
-bool FKKModIndex::Build(const FString& InModsDir, FString& OutError)
+bool FKKModIndex::Build(const FString& InModsDir, FString& OutError, TFunction<void(int32, int32)> OnProgress)
 {
-	GuidToMod.Reset();
-	ModsDir = InModsDir;
-	TArray<FString> Files;
-	IFileManager::Get().FindFilesRecursive(Files, *InModsDir, TEXT("*.zipmod"), true, false);
-	for (const FString& Path : Files)
+	// What the cache already knows, when it is about this same folder: reused for every package whose size and
+	// modification time still match, so a repeat build reads no manifest at all.
+	TMap<FString, FKKZipmodFile> Known;
+	if (ModsDir == InModsDir)
 	{
-		FString Guid;
-		FString Name;
-		if (!ReadZipmodGuid(Path, Guid, Name))
+		for (FKKZipmodFile& File : Files)
 		{
-			continue;
+			Known.Add(FullLower(File.Path), MoveTemp(File));
 		}
-		FKKZipmod Mod;
-		Mod.Guid = Guid;
-		Mod.Path = Path;
-		Mod.Name = Name;
-		Mod.bInSideloaderModpack = PathInModpack(Path, InModsDir);
-		GuidToMod.Add(Guid, MoveTemp(Mod));
 	}
-	if (GuidToMod.Num() == 0 && Files.Num() > 0)
+	ModsDir = InModsDir;
+	GuidToMod.Reset();
+	Unreadable.Reset();
+	TArray<FString> Paths;
+	IFileManager::Get().FindFilesRecursive(Paths, *InModsDir, TEXT("*.zipmod"), true, false);
+	Paths.Sort();
+	TArray<FKKZipmodFile> Fresh;
+	Fresh.Reserve(Paths.Num());
+	for (int32 I = 0; I < Paths.Num(); ++I)
+	{
+		FString Full = FPaths::ConvertRelativePathToFull(Paths[I]);
+		FPaths::NormalizeFilename(Full);
+		const FFileStatData Stat = IFileManager::Get().GetStatData(*Full);
+		FKKZipmodFile Entry;
+		Entry.Path = Full;
+		Entry.Size = Stat.bIsValid ? Stat.FileSize : 0;
+		Entry.ModifiedTicks = Stat.bIsValid ? Stat.ModificationTime.GetTicks() : 0;
+		const FKKZipmodFile* Cached = Known.Find(Full.ToLower());
+		if (Cached && Cached->Size == Entry.Size && Cached->ModifiedTicks == Entry.ModifiedTicks)
+		{
+			Entry.Error = Cached->Error;
+			Entry.Mods = Cached->Mods;
+		}
+		else
+		{
+			TArray<FKKLocalMod> Mods;
+			if (!KKZip::ReadManifests(Full, Mods, Entry.Error))
+			{
+				Entry.Mods.Reset();
+			}
+			else
+			{
+				for (const FKKLocalMod& Mod : Mods)
+				{
+					FKKZipmod Zip;
+					Zip.Guid = Mod.Guid;
+					Zip.Name = Mod.Name;
+					Zip.Version = Mod.Version;
+					Zip.Path = Full;
+					Zip.bInSideloaderModpack = PathInModpack(Full, InModsDir);
+					Entry.Mods.Add(MoveTemp(Zip));
+				}
+			}
+		}
+		if (!Entry.Error.IsEmpty())
+		{
+			Unreadable.Add(Entry.Path, Entry.Error);
+		}
+		Fresh.Add(MoveTemp(Entry));
+		if (OnProgress && ((I & 127) == 0 || I + 1 == Paths.Num()))
+		{
+			OnProgress(I + 1, Paths.Num());
+		}
+	}
+	Files = MoveTemp(Fresh);
+	ComputeWinners(Files, InModsDir, GuidToMod);
+	if (GuidToMod.Num() == 0 && Paths.Num() > 0)
 	{
 		OutError = TEXT("scanned zipmods but found no GUIDs");
 		LastError = OutError;
@@ -192,40 +176,114 @@ bool FKKModIndex::LoadCache(const FString& CachePath)
 	{
 		return false;
 	}
-	ModsDir = Root->GetStringField(TEXT("mods_dir"));
-	GuidToMod.Reset();
-	const TSharedPtr<FJsonObject> Guids = Root->GetObjectField(TEXT("guids"));
-	if (!Guids.IsValid())
+	// Only the format that remembers each package's size and modification time can be updated instead of rebuilt; the
+	// older one (GUID to path alone) is treated as absent, and rebuilding it now costs a manifest read per package.
+	const TArray<TSharedPtr<FJsonValue>>* FileList = nullptr;
+	if (!Root->TryGetArrayField(TEXT("files"), FileList) || !FileList)
 	{
 		return false;
 	}
-	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Guids->Values)
+	ModsDir = Root->GetStringField(TEXT("mods_dir"));
+	Files.Reset();
+	GuidToMod.Reset();
+	Unreadable.Reset();
+	for (const TSharedPtr<FJsonValue>& Value : *FileList)
 	{
-		FKKZipmod Mod;
-		Mod.Guid = Pair.Key;
-		if (Pair.Value.IsValid())
+		const TSharedPtr<FJsonObject>* Object = nullptr;
+		if (!Value.IsValid() || !Value->TryGetObject(Object) || !Object)
 		{
-			Mod.Path = Pair.Value->AsString();
+			continue;
 		}
-		GuidToMod.Add(Mod.Guid, MoveTemp(Mod));
+		FKKZipmodFile File;
+		File.Path = (*Object)->GetStringField(TEXT("path"));
+		if (File.Path.IsEmpty())
+		{
+			continue;
+		}
+		(*Object)->TryGetNumberField(TEXT("size"), File.Size);
+		// A tick count (100 ns since year 1) is past what a JSON number keeps exactly, so it is written as text.
+		FString TicksText;
+		if ((*Object)->TryGetStringField(TEXT("ticks"), TicksText))
+		{
+			File.ModifiedTicks = FCString::Atoi64(*TicksText);
+		}
+		(*Object)->TryGetStringField(TEXT("error"), File.Error);
+		const TArray<TSharedPtr<FJsonValue>>* ModList = nullptr;
+		if ((*Object)->TryGetArrayField(TEXT("mods"), ModList) && ModList)
+		{
+			for (const TSharedPtr<FJsonValue>& ModValue : *ModList)
+			{
+				const TSharedPtr<FJsonObject>* ModObject = nullptr;
+				if (!ModValue.IsValid() || !ModValue->TryGetObject(ModObject) || !ModObject)
+				{
+					continue;
+				}
+				FKKZipmod Mod;
+				Mod.Path = File.Path;
+				Mod.Guid = (*ModObject)->GetStringField(TEXT("guid"));
+				(*ModObject)->TryGetStringField(TEXT("name"), Mod.Name);
+				(*ModObject)->TryGetStringField(TEXT("version"), Mod.Version);
+				Mod.bInSideloaderModpack = PathInModpack(File.Path, ModsDir);
+				if (!Mod.Guid.IsEmpty())
+				{
+					File.Mods.Add(MoveTemp(Mod));
+				}
+			}
+		}
+		if (!File.Error.IsEmpty())
+		{
+			Unreadable.Add(File.Path, File.Error);
+		}
+		Files.Add(MoveTemp(File));
 	}
-	return true;
+	ComputeWinners(Files, ModsDir, GuidToMod);
+	return !Files.IsEmpty();
 }
 
 bool FKKModIndex::SaveCache(const FString& CachePath) const
 {
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("mods_dir"), ModsDir);
-	TSharedRef<FJsonObject> Guids = MakeShared<FJsonObject>();
-	for (const TPair<FString, FKKZipmod>& Pair : GuidToMod)
+	TArray<TSharedPtr<FJsonValue>> FileList;
+	FileList.Reserve(Files.Num());
+	for (const FKKZipmodFile& File : Files)
 	{
-		Guids->SetStringField(Pair.Key, Pair.Value.Path);
+		TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+		Object->SetStringField(TEXT("path"), File.Path);
+		Object->SetNumberField(TEXT("size"), double(File.Size));
+		Object->SetStringField(TEXT("ticks"), FString::Printf(TEXT("%lld"), File.ModifiedTicks));
+		if (!File.Error.IsEmpty())
+		{
+			Object->SetStringField(TEXT("error"), File.Error);
+		}
+		TArray<TSharedPtr<FJsonValue>> ModList;
+		for (const FKKZipmod& Mod : File.Mods)
+		{
+			TSharedRef<FJsonObject> ModObject = MakeShared<FJsonObject>();
+			ModObject->SetStringField(TEXT("guid"), Mod.Guid);
+			if (!Mod.Name.IsEmpty())
+			{
+				ModObject->SetStringField(TEXT("name"), Mod.Name);
+			}
+			if (!Mod.Version.IsEmpty())
+			{
+				ModObject->SetStringField(TEXT("version"), Mod.Version);
+			}
+			ModList.Add(MakeShared<FJsonValueObject>(ModObject));
+		}
+		Object->SetArrayField(TEXT("mods"), ModList);
+		FileList.Add(MakeShared<FJsonValueObject>(Object));
 	}
-	Root->SetObjectField(TEXT("guids"), Guids);
+	Root->SetArrayField(TEXT("files"), FileList);
 	FString JsonStr;
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonStr);
 	FJsonSerializer::Serialize(Root, Writer);
 	return FFileHelper::SaveStringToFile(JsonStr, *CachePath);
+}
+
+bool FKKModIndex::CoversModsDir(const FString& Mods) const
+{
+	return !ModsDir.IsEmpty() && !Mods.IsEmpty() && FPaths::IsSamePath(ModsDir, Mods);
 }
 
 const FKKZipmod* FKKModIndex::Find(const FString& Guid) const

@@ -55,3 +55,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "OpenKoikatsu")
 	FString Coordinate() const;
 };
+
+/** Which installation one card opens against. */
+struct KKSIDELOADER_API FKKGameRootChoice
+{
+	/** What to open against; empty means no game (the base library and whatever zipmods sit beside the card). */
+	FString Root;
+	/** The card's own installation was taken instead of the folder in the settings. */
+	bool bFromCard = false;
+	/** A folder is set, but it has no mods/ right now (renamed, moved, or carried over from another machine). */
+	bool bConfiguredMissing = false;
+};
+
+/** The card's own installation when it lives in one that still has a mods/, else the folder the user named.
+ *
+ *  Neither is a path this program picked: one is where the card actually is, the other is what the user typed. There
+ *  is no built-in path and nothing is searched for — every machine keeps the game somewhere else, and a folder can be
+ *  renamed between two opens, so the answer is worked out again for each card (the user, 2026-11-24). */
+KKSIDELOADER_API FKKGameRootChoice KKChooseGameRoot(const FString& Configured, const FString& CardsOwnInstall);

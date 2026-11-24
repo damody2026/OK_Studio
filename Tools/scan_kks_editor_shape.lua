@@ -33,7 +33,9 @@ do
 end
 if o.help then print(USAGE) return end
 
-local source = path.norm(o.source or "D:/XKoikatuSunshine/kks_decomp")
+-- 反編譯出來的原作程式碼放哪是本機的事：-Source 指定，否則找遊戲旁邊的 kks_decomp。
+local default_source = ok.game_root(true) ~= "" and (ok.game_root(true) .. "/kks_decomp") or ""
+local source = path.norm(o.source or default_source)
 local dir = source .. "/Assembly-CSharp/ChaCustom"
 if not path.is_dir(dir) then
   error(("no decompiled editor source at %s\nGive -Source <kks_decomp folder>."):format(dir))

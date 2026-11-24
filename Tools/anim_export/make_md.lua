@@ -9,8 +9,8 @@
 local ok = require "ok"
 local path, util = ok.path, ok.util
 
-local OUT = arg[1] or "C:\\portable\\OpenKoikatsu\\Saved\\anim_export"
-local MD = arg[2] or "C:\\portable\\OpenKoikatsu\\Docs\\ANIMATION_AND_MOUTH.md"
+local OUT = arg[1] or (ok.root .. "/Saved/anim_export")
+local MD = arg[2] or (ok.root .. "/Docs/ANIMATION_AND_MOUTH.md")
 
 local SEP = "\t"
 

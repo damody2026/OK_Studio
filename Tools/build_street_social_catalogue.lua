@@ -2557,9 +2557,9 @@ function M.build_arg_parser()
   p:opt("--transcode", { choices = { "sample", "none", "all" }, default = "sample" })
   p:opt("--translation-text", { default = "", help = "Directory of exact Japanese=Chinese txt files. Default is the game zh-TW Text folder." })
   p:opt("--mode", { choices = { "catalogue", "completion" }, default = "catalogue" })
-  p:opt("--completion-out", { default = "C:\\portable\\OpenKoikatsu\\Saved\\StreetSocial\\CompletionData" })
-  p:opt("--audio-content", { default = "C:\\portable\\OpenKoikatsu\\Content\\IndependentResources\\StreetSocialData" })
-  p:opt("--gesture-manifest", { default = "C:\\portable\\OpenKoikatsu\\Content\\IndependentResources\\RuntimeAnimations\\actions.manifest.json" })
+  p:opt("--completion-out", { default = ok.root .. "/Saved/StreetSocial/CompletionData" })
+  p:opt("--audio-content", { default = ok.root .. "/Content/IndependentResources/StreetSocialData" })
+  p:opt("--gesture-manifest", { default = ok.root .. "/Content/IndependentResources/RuntimeAnimations/actions.manifest.json" })
   return p
 end
 

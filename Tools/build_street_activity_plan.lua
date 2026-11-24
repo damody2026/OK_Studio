@@ -1,6 +1,7 @@
 package.path='Tools/lua/?.lua;'..package.path
 local json=require('ok.json')
-local root='C:/portable/OpenKoikatsu'
+-- 這條產線的輸出放在工作樹底下，不是某一台機器的位置（使用者 2026-11-24：每台電腦都不一樣）。
+local root=require('ok').root
 local base=root..'/output/street-social-city-production'
 local out=base..'/activity-scenes-v1'
 local function read(p)local f=assert(io.open(p,'rb'));local v=json.decode(f:read('*a'));f:close();return v end

@@ -1,6 +1,7 @@
 // Breeding (配種): a child card from two parent cards (ok-extract breed.rs), opened at once and then pictured as she
 // looks. Docs/OK_BREEDING.md.
 #include "OKGalleryWidget.h"
+#include "OKBusyProgress.h"
 #include "KKPreviewActor.h"
 #include "KKCardWorkspace.h"
 #include "KKRustExtract.h"
@@ -64,7 +65,8 @@ void UOKCharacterController::BreedChild(uint64 SeedIn,TFunction<void(bool,const 
 	Self->BreedStatus=FString::Printf(TEXT("配種中（種子 %llu）：%s × %s …（OK 卡要重新封裝，約半分鐘）"),Seed,*Self->BreedParentName(Mother),*Self->BreedParentName(Father));
 	const FString MotherFace=BreedFaceCurrent(Mother)?BreedFacePath(Mother):FString(),FatherFace=BreedFaceCurrent(Father)?BreedFacePath(Father):FString();
 	const FString HairExe=OKHairDeckExe();
-	Async(EAsyncExecution::Thread,[Weak,Mother,Father,Seed,Output,Done,MotherFace,FatherFace,HairExe]()
+	const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("配種"));
+	Async(EAsyncExecution::Thread,[Weak,Mother,Father,Seed,Output,Done,MotherFace,FatherFace,HairExe,Busy]()
 	{
 		FString Summary;
 		const bool Ok=FOkSession::Breed(Mother,Father,Seed,Output,Summary);
@@ -196,11 +198,12 @@ void UOKCharacterController::ExportBredChild(const FString& PathIn,TFunction<voi
 	bBreeding=true;
 	BreedStatus=FString::Printf(TEXT("匯出完整卡：%s …（合併父母的資源並逐套服裝檢查，約半分鐘）"),*BreedParentName(Card));
 	TWeakObjectPtr<UOKCharacterController> Weak(this);
-	Async(EAsyncExecution::Thread,[Weak,Card,Output,Done]()
+	const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("匯出完整卡"));
+	Async(EAsyncExecution::Thread,[Weak,Card,Output,Done,Busy]()
 	{
 		FString Summary;
 		const bool Ok=FOkSession::BreedExport(Card,Output,Summary);
-		AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Done]()
+		AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Done,Busy]()
 		{
 			UE_LOG(LogTemp,Display,TEXT("OK breed export -> %s: %s"),*Output,*Summary);
 			UOKCharacterController* Self=Weak.Get();
@@ -230,11 +233,12 @@ void UOKCharacterController::PictureBredChild(const FString& Output,TFunction<vo
 	{
 		if(!Error.IsEmpty()||Views.Num()<2||Views[1].Num()==0||!FFileHelper::SaveArrayToFile(Views[1],*Picture)){Finish(false,Error.IsEmpty()?TEXT("拍照失敗"):Error);return;}
 		// The card rewritten (tens of MB) off the game thread.
-		Async(EAsyncExecution::Thread,[Weak,Picture,Output,Finish]()
+		const auto Busy=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("寫回孩子的卡面"));
+		Async(EAsyncExecution::Thread,[Weak,Picture,Output,Finish,Busy]()
 		{
 			FString Summary;
 			const bool Ok=FOkSession::BreedPicture(Output,Picture,Output,Summary);
-			AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Finish]()
+			AsyncTask(ENamedThreads::GameThread,[Weak,Output,Ok,Summary,Finish,Busy]()
 			{
 				UE_LOG(LogTemp,Display,TEXT("OK breed picture: %s"),*Summary);
 				// Her face too (her own children's hair), after the card is rewritten so it is newer than the card.

@@ -3012,14 +3012,14 @@ mod tests {
                 if *ot == 2 && *coord == 0 && prop == "maintex" && *slot < 6 {
                     eprintln!("  metex slot={slot} mat={mat} bytes={}", png.len());
                     if saved < 2 {
-                        let path = format!(
-                            r"C:\Users\Damody\AppData\Local\Temp\opencode\me_{}_{}_{}.png",
+                        let path = crate::dump_path(&format!(
+                            "me_{}_{}_{}.png",
                             card.firstname.replace(' ', "_"),
                             slot,
                             saved
-                        );
+                        ));
                         let _ = std::fs::write(&path, png.as_slice());
-                        eprintln!("    wrote {path}");
+                        eprintln!("    wrote {}", path.display());
                         saved += 1;
                     }
                 }
@@ -3176,9 +3176,9 @@ mod tests {
                                 continue;
                             }
                             let mag = bytes.get(..8).map(|b| format!("{b:02X?}")).unwrap_or_default();
-                            let path = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\me_tex_{id}.bin");
+                            let path = crate::dump_path(&format!("me_tex_{id}.bin"));
                             let _ = std::fs::write(&path, bytes);
-                            eprintln!("    tex {id} bytes={} mag={mag} -> {path}", bytes.len());
+                            eprintln!("    tex {id} bytes={} mag={mag} -> {}", bytes.len(), path.display());
                         }
                         continue;
                     } else {

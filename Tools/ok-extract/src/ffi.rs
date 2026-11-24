@@ -3014,7 +3014,7 @@ mod tests {
         let u = OkUnrealBindings { log: None };
         assert_eq!(unsafe { ok_register_bindings(u, rust.as_mut_ptr()) }, 0);
         let rust = unsafe { rust.assume_init() };
-        let game = CString::new("C:/portable/OpenKoikatsu/Saved/no_such_game").unwrap();
+        let game = CString::new("X:/no_such_game").unwrap();  // deliberately nowhere, on no particular machine
         let mut sess: *mut OkSession = ptr::null_mut();
         let mut err = [0u8; 256];
         let rc = unsafe {

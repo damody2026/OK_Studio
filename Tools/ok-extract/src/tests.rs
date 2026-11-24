@@ -1409,7 +1409,7 @@ fn list_bundle() {
             m.texture_name
         );
     }
-    let out = std::path::PathBuf::from(r"C:\Users\Damody\AppData\Local\Temp\opencode\bnd");
+    let out = std::path::PathBuf::from(crate::dump_path("bnd"));
     let _ = std::fs::create_dir_all(&out);
     for (i, (n, b)) in texs.iter().enumerate() {
         let safe = super::sanitize(n);
@@ -2279,7 +2279,7 @@ fn dump_shoe_textures() {
     ] {
         match crate::unity::named_png_from_bytes(bytes.clone(), &[n]) {
             Some((name, png)) => {
-                let out = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\shoe_{n}.png");
+                let out = crate::dump_path(&format!("shoe_{n}.png"));
                 let _ = std::fs::write(&out, &png);
                 let mean = crate::teximg::load_from_memory(&png).ok().map(|i| {
                     let im = i.to_rgba8();
@@ -2319,7 +2319,7 @@ fn dump_pants_textures() {
     ] {
         match crate::unity::named_png_from_bytes(bytes.clone(), &[n]) {
             Some((name, png)) => {
-                let out = format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\pants_{n}.png");
+                let out = crate::dump_path(&format!("pants_{n}.png"));
                 let _ = std::fs::write(&out, &png);
                 let mean = crate::teximg::load_from_memory(&png)
                     .ok()
@@ -2444,7 +2444,7 @@ fn female_folder_face_tex() {
             if let Some(b) = &png {
                 let safe = name.replace(' ', "_");
                 let _ = std::fs::write(
-                    format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\face_{safe}"),
+                    crate::dump_path(&format!("face_{safe}")),
                     b,
                 );
             }
@@ -2460,7 +2460,7 @@ fn female_folder_face_tex() {
         black
     );
     let _ = std::fs::write(
-        r"C:\Users\Damody\AppData\Local\Temp\opencode\female_face_scan.txt",
+        crate::dump_path("female_face_scan.txt"),
         &report,
     );
     eprintln!("{report}");
@@ -4863,7 +4863,7 @@ fn dump_face_maps() {
         match crate::unity::named_png_from_bytes(bytes, &[n]) {
             Some((name, png)) => {
                 let out =
-                    format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\{}.png", n);
+                    crate::dump_path(&format!("{}.png", n));
                 let _ = std::fs::write(&out, &png);
                 eprintln!("DUMP {n} -> {name} {} bytes", png.len());
             }
@@ -4915,9 +4915,7 @@ fn list_vanilla_body() {
 
 #[test]
 fn load_sac_body() {
-    let p = std::path::Path::new(
-        r"C:\Users\Damody\AppData\Local\Temp\opencode\sac\oo_base_sacinnie.unity3d",
-    );
+    let p = crate::dump_path(r"sac\oo_base_sacinnie.unity3d");
     if !p.ok_exists() {
         return;
     }

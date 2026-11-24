@@ -12,7 +12,7 @@ M.spec = {
   { "Mode", "string", default = "Play", set = { "Play", "Benchmark" } },
   { "SelectionFile", "string", default = "" },
   { "SectionLODFile", "string", default = "" },
-  { "StageRoot", "string", default = "D:/OpenKoikatsuCrowd/DevelopmentStage" },
+  { "StageRoot", "string", default = (os.getenv("OK_CROWD_STAGE") or (ok.root .. "/Saved/CrowdStage/DevelopmentStage")) },
   { "FocusResident", "int", default = 44, range = { -1, 99 } },
   { "CameraResident", "int", default = 44, range = { 0, 99 } },
   { "FocusOnlyShadows", "switch" },

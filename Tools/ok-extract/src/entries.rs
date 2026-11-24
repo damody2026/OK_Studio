@@ -845,7 +845,8 @@ mod clothes_option_tests {
     #[test]
     #[ignore]
     fn clothes_option_survey() {
-        let game = PathBuf::from(std::env::var("OK_GAME").unwrap_or_else(|_| "D:/XKoikatuSunshine".into()));
+        // The installation this machine has: OK_GAME (else OK_GAME_ROOT). No default -- a path written here is one machine's.
+        let Some(game) = std::env::var_os("OK_GAME").or_else(|| std::env::var_os("OK_GAME_ROOT")).map(PathBuf::from) else { return };
         let cat = crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
         let mut rows: Vec<_> = cat.by_id.values().filter(|e| (105..=112).contains(&e.category_no) && !e.main_data.is_empty()).collect();
         rows.sort_by_key(|e| (e.category_no, e.id));
@@ -869,7 +870,8 @@ mod clothes_option_tests {
     #[test]
     #[ignore]
     fn clothes_page_kinds() {
-        let game = PathBuf::from(std::env::var("OK_GAME").unwrap_or_else(|_| "D:/XKoikatuSunshine".into()));
+        // The installation this machine has: OK_GAME (else OK_GAME_ROOT). No default -- a path written here is one machine's.
+        let Some(game) = std::env::var_os("OK_GAME").or_else(|| std::env::var_os("OK_GAME_ROOT")).map(PathBuf::from) else { return };
         let data = game.join("KoikatsuSunshine_Data");
         for e in std::fs::read_dir(&data).unwrap().flatten() {
             let name = e.file_name().to_string_lossy().to_string();

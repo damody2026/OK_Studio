@@ -48,7 +48,7 @@ local function operate(engine, candidate, metadata, backup, mode)
 end
 
 local p = ok.args.parser("Apply/restore a reviewed VSM shader patch, refusing unknown engine revisions.")
-p:opt("--engine", { default = os.getenv("OK_ENGINE_ROOT") or "E:/PhysX/UE5.8" })
+p:opt("--engine", { default = ok.engine_root() })
 p:opt("--candidate", { required = true })
 p:opt("--metadata", { required = true })
 p:opt("--backup", { default = "Saved/EnginePatches/VsmQueueReuse/VirtualShadowMapBuildPerPageDrawCommands.original.usf" })

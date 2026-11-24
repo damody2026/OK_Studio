@@ -1,4 +1,5 @@
 #include "OKCardPreviewCapture.h"
+#include "OKBusyProgress.h"
 #include "KKPreviewActor.h"
 #include "KKAnimatedPng.h"
 #include "KKCardReader.h"
@@ -57,6 +58,8 @@ struct FJob : TSharedFromThis<FJob>
     uint64 Frame=0, ObservedFrame=MAX_uint64;
     double Started=FPlatformTime::Seconds();
     FTimerHandle Timer;
+    // On the progress bar while the views are taken (several frames, and cold materials can make it many more).
+    OKBusy::FScope Busy{TEXT("拍人物視圖")};
 
     void Finish(FString Error)
     {
@@ -69,7 +72,8 @@ struct FJob : TSharedFromThis<FJob>
         if(!Error.IsEmpty()||RawViews.IsEmpty()){Complete(MoveTemp(Views),MoveTemp(Error));return;}
         // zlib level 9 (~20% smaller frames than the encoder's default 3) costs ~0.7 s per view: the views are
         // encoded in parallel on workers, and the caller continues on the game thread.
-        Async(EAsyncExecution::ThreadPool,[Raw=MoveTemp(RawViews),Done=MoveTemp(Complete)]() mutable
+        const auto Encoding=MakeShared<OKBusy::FScope,ESPMode::ThreadSafe>(TEXT("編碼人物視圖"));
+        Async(EAsyncExecution::ThreadPool,[Raw=MoveTemp(RawViews),Done=MoveTemp(Complete),Encoding]() mutable
         {
             TArray<TArray<uint8>> Encoded;Encoded.SetNum(Raw.Num());TArray<bool> Ok;Ok.Init(false,Raw.Num());
             ParallelFor(Raw.Num(),[&](int32 I)
@@ -83,7 +87,7 @@ struct FJob : TSharedFromThis<FJob>
                 Encoded[I].Append(Png.GetData(),int32(Png.Num()));Ok[I]=!Encoded[I].IsEmpty();
             });
             FString EncodeError=Ok.Contains(false)?TEXT("無法編碼預覽"):FString();
-            AsyncTask(ENamedThreads::GameThread,[Encoded=MoveTemp(Encoded),EncodeError,Done=MoveTemp(Done)]() mutable{Done(MoveTemp(Encoded),EncodeError);});
+            AsyncTask(ENamedThreads::GameThread,[Encoded=MoveTemp(Encoded),EncodeError,Done=MoveTemp(Done),Encoding]() mutable{Done(MoveTemp(Encoded),EncodeError);});
         });
     }
     void Step()

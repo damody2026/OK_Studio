@@ -63,10 +63,10 @@ mod tests {
     /// The card and clip of OK_RIG_CARD / OK_RIG_CLIP opened as the game does, the clip installed.
     pub(super) fn open_with_clip_pub() -> Box<crate::session::OkSession> { open_with_clip() }
     fn open_with_clip() -> Box<crate::session::OkSession> {
-        let card = std::env::var("OK_RIG_CARD").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png".into());
-        let clip = std::env::var("OK_RIG_CLIP").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim".into());
-        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", "E:/OpenKoikatsu/Content/IndependentResources/v1"); }
-        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", "E:/OpenKoikatsu/Content/IndependentResources/base_v1"); }
+        let card = std::env::var("OK_RIG_CARD").unwrap_or_else(|_| crate::repo_root().join("Content/CharacterCards/CrowdAPNG/C001.png").to_string_lossy().into_owned().into());
+        let clip = std::env::var("OK_RIG_CLIP").unwrap_or_else(|_| crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned().into());
+        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", crate::repo_root().join("Content/IndependentResources/v1").to_string_lossy().into_owned()); }
+        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", crate::repo_root().join("Content/IndependentResources/base_v1").to_string_lossy().into_owned()); }
         let mut s = unsafe {
             let (game, path) = (std::ffi::CString::new("").unwrap(), std::ffi::CString::new(card.clone()).unwrap());
             let mut out: *mut crate::session::OkSession = std::ptr::null_mut();
@@ -88,7 +88,7 @@ mod tests {
     fn gpu_rig_export() {
         let mut s = open_with_clip();
         let s = &mut *s;
-        let clip = std::fs::read(std::env::var("OK_RIG_CLIP").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim".into())).unwrap();
+        let clip = std::fs::read(std::env::var("OK_RIG_CLIP").unwrap_or_else(|_| crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned().into())).unwrap();
         let start = std::time::Instant::now();
         let (rig, loose) = super::export::export_rig(s, &clip).expect("rig");
         let rig_ms = start.elapsed().as_secs_f64() * 1000.;
@@ -181,7 +181,7 @@ mod check_terms {
         let bytes = card.to_animation_bytes().expect("snapshot");
         let mut s = Box::new(crate::session::OkSession::from_animation_bytes(&bytes).expect("reopen"));
         let s = &mut *s;
-        let clip = std::fs::read("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim").unwrap();
+        let clip = std::fs::read(crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned()).unwrap();
         let _ = super::export::export_rig(s, &clip).expect("rig");
         let rig = super::export::FlatRig::from_session(s).unwrap();
         let d = crate::anim::clip_duration(&s.game_root, &s.anim_clip).max(0.1);
@@ -189,7 +189,7 @@ mod check_terms {
         // Other clips the room plays (standing poses that move the fingers), the terms kept.
         let mut worst = vec![0f32; terms.len()];
         for other in ["walk_01", "conversation_wait_00", "conversation_wait_10", "library/lib_0_0_5", "library/lib_17_4_2", "conversation_reserved"] {
-            let bytes = std::fs::read(format!("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/{other}.okanim")).unwrap();
+            let bytes = std::fs::read(crate::repo_root().join(format!("Content/IndependentResources/RuntimeAnimations/{other}.okanim")).to_string_lossy().into_owned()).unwrap();
             let (root, key) = crate::anim::install_shared_clip(&bytes).expect("install");
             s.game_root = root; s.anim_clip = key; s.anim_parameters.clear(); s.anim_scene_mode = 0; s.anim_time = 0.; s.reset_anim_clock(); s.pv_mask = 15;
             let d = crate::anim::clip_duration(&s.game_root, &s.anim_clip).max(0.1);
@@ -232,7 +232,7 @@ mod physics_export {
         let bytes = card.to_animation_bytes().expect("snapshot");
         let mut s = Box::new(crate::session::OkSession::from_animation_bytes(&bytes).expect("reopen"));
         let s = &mut *s;
-        let clip = std::fs::read("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim").unwrap();
+        let clip = std::fs::read(crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned()).unwrap();
         let _ = super::export::export_rig(s, &clip).expect("rig");
         let rig = super::export::FlatRig::from_session(s).unwrap();
         let d = crate::anim::clip_duration(&s.game_root, &s.anim_clip).max(0.1);
@@ -302,11 +302,11 @@ mod composition {
         let cards = std::env::var("OK_RIG_CARDS").unwrap_or_else(|_| "C000,C001,C004".into());
         let clips = ["walk_01", "conversation_wait_00", "conversation_wait_10", "library/lib_0_0_5", "library/lib_17_4_2"];
         for card in cards.split(',') {
-            std::env::set_var("OK_RIG_CARD", format!("E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/{card}.png"));
+            std::env::set_var("OK_RIG_CARD", crate::repo_root().join(format!("Content/CharacterCards/CrowdAPNG/{card}.png")).to_string_lossy().into_owned());
             let mut s = super::tests::open_with_clip_pub();
             let s = &mut *s;
             for clip in clips {
-                let bytes = std::fs::read(format!("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/{clip}.okanim")).unwrap();
+                let bytes = std::fs::read(crate::repo_root().join(format!("Content/IndependentResources/RuntimeAnimations/{clip}.okanim")).to_string_lossy().into_owned()).unwrap();
                 let (root, key) = crate::anim::install_shared_clip(&bytes).expect("install");
                 s.game_root = root; s.anim_clip = key; s.anim_parameters.clear(); s.anim_scene_mode = 0; s.anim_time = 0.; s.reset_anim_clock(); s.pv_mask = 15;
                 let d = crate::anim::clip_duration(&s.game_root, &s.anim_clip).max(0.1);
@@ -349,10 +349,10 @@ mod foot_slip {
     #[ignore]
     fn gpu_rig_foot_slip() {
         let cards = std::env::var("OK_RIG_CARDS").unwrap_or_else(|_| "C000,C001,C003,C004,C005,C006,C007,C008,C009,C010".into());
-        let clip = std::fs::read("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim").unwrap();
+        let clip = std::fs::read(crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned()).unwrap();
         let pct = |v: &mut Vec<f32>, p: f32| -> f32 { if v.is_empty() { return f32::NAN; } v.sort_by(|a, b| a.total_cmp(b)); v[((v.len() - 1) as f32 * p).round() as usize] };
         for card in cards.split(',') {
-            std::env::set_var("OK_RIG_CARD", format!("E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/{card}.png"));
+            std::env::set_var("OK_RIG_CARD", crate::repo_root().join(format!("Content/CharacterCards/CrowdAPNG/{card}.png")).to_string_lossy().into_owned());
             let Ok(opened) = std::panic::catch_unwind(|| super::tests::open_with_clip_pub()) else { println!("{card}: open failed"); continue };
             let mut s = Box::new(crate::session::OkSession::from_animation_bytes(&opened.to_animation_bytes().expect("snapshot")).expect("reopen"));
             let s = &mut *s;
@@ -453,7 +453,7 @@ mod foot_slip {
         let mut everyone: [Vec<f32>; 3] = Default::default();
         for g in keys {
             let (clips, card) = &girls[&g];
-            let path_of = |id: &str| if std::path::Path::new(id).is_file() { id.to_string() } else { format!("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/{id}") };
+            let path_of = |id: &str| if std::path::Path::new(id).is_file() { id.to_string() } else { crate::repo_root().join(format!("Content/IndependentResources/RuntimeAnimations/{id}")).to_string_lossy().into_owned() };
             let frames: Vec<_> = rows[&g].iter().copied().filter(|r| clips.get(r.1).is_some_and(|c| !c.is_empty() && std::path::Path::new(&path_of(c)).is_file())).collect();
             if frames.len() < 30 { continue; }
             std::env::set_var("OK_RIG_CARD", card);
@@ -530,13 +530,13 @@ mod street_hips {
     #[test]
     #[ignore]
     fn gpu_rig_street_hips() {
-        if std::env::var("OK_RIG_CARD").is_err() { std::env::set_var("OK_RIG_CARD", "E:/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne_alter.png"); }
+        if std::env::var("OK_RIG_CARD").is_err() { std::env::set_var("OK_RIG_CARD", crate::repo_root().join("Content/CharacterCards/StreetHeroines/jeanne_alter.png").to_string_lossy().into_owned()); }
         let opened = super::tests::open_with_clip_pub();
         let bytes = opened.to_animation_bytes().expect("snapshot");
         for clip in ["walk_01", "run_female", "conversation_wait_00", "conversation_wait_04", "conversation_wait_10", "library/lib_0_0_1"] {
             let mut s = Box::new(crate::session::OkSession::from_animation_bytes(&bytes).expect("reopen"));
             let s = &mut *s;
-            let data = std::fs::read(format!("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/{clip}.okanim")).unwrap();
+            let data = std::fs::read(crate::repo_root().join(format!("Content/IndependentResources/RuntimeAnimations/{clip}.okanim")).to_string_lossy().into_owned()).unwrap();
             let (root, key) = crate::anim::install_shared_clip(&data).expect("install");
             s.game_root = root; s.anim_clip = key; s.anim_parameters.clear(); s.anim_scene_mode = 0; s.anim_time = 0.; s.reset_anim_clock(); s.pv_mask = 15;
             let d = crate::anim::clip_duration(&s.game_root, &s.anim_clip);
@@ -591,7 +591,7 @@ mod verify_time {
         let opened = super::tests::open_with_clip_pub();
         let mut s = Box::new(crate::session::OkSession::from_animation_bytes(&opened.to_animation_bytes().expect("snapshot")).expect("reopen"));
         let s = &mut *s;
-        let data = std::fs::read(format!("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/{clip}")).unwrap();
+        let data = std::fs::read(crate::repo_root().join(format!("Content/IndependentResources/RuntimeAnimations/{clip}")).to_string_lossy().into_owned()).unwrap();
         let (root, key) = crate::anim::install_shared_clip(&data).expect("install");
         s.game_root = root; s.anim_clip = key; s.anim_parameters.clear(); s.anim_scene_mode = 0; s.anim_time = 0.; s.reset_anim_clock(); s.pv_mask = 15;
         let d = crate::anim::clip_duration(&s.game_root, &s.anim_clip);

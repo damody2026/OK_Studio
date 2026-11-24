@@ -38,6 +38,8 @@ bool OKReaderPicturesShown();	// ok.ReaderPictures (below)
 #include "Controls/DreamTextInput.h"
 #include "Controls/DreamScrollBox.h"
 #include "Controls/DreamSpinBox.h"
+#include "Controls/DreamProgressBar.h"
+#include "OKBusyProgress.h"
 #include "Controls/DreamRadioButton.h"
 #include "Controls/DreamListView.h"
 #include "Controls/DreamTabView.h"
@@ -1731,6 +1733,63 @@ void UOKReaderScreen::ShowNotice(int32 Key,float Seconds,const FColor& Color,con
 	FNote& N=Notes.FindOrAdd(Key);N.Text=Text.TrimEnd();N.Color=Color;N.Until=FPlatformTime::Seconds()+FMath::Max(Seconds,.5f);N.Order=++NoteOrder;
 }
 
+// The progress bar above the notice: whatever action the person started is still running after half a second
+// (OKBusyProgress.h), what step it is on and how far along. Work that cannot say how far along it is gets a sweeping
+// bar rather than a made-up percentage; the elapsed seconds are always real.
+void UOKReaderScreen::TickBusy()
+{
+	if(!Busy)return;
+	OKBusy::FJob Job;
+	const bool bShow=OKBusy::Current(Job)&&Job.Elapsed()>=OKBusy::ShowAfterSeconds;
+	if(!bShow)
+	{
+		if(bBusyShown){bBusyShown=false;ShownBusy.Reset();ShownBusyPercent=-1.f;Busy->SetShown(false);if(Notice)Notice->SetVerticalAnchoredPosition(NoticeTop);}
+		return;
+	}
+	// At most ten times a second: the bar is read, not watched frame by frame, and this builds a string each time.
+	const double Now=FPlatformTime::Seconds();
+	if(bBusyShown&&Now<NextBusyAt)return;
+	NextBusyAt=Now+.1;
+	FString Text=Job.Label;
+	if(!Job.Stage.IsEmpty())Text+=TEXT(" · ")+Job.Stage;
+	if(Job.Done>=0.f)Text=FString::Printf(TEXT("%d%%　%s"),FMath::Clamp(FMath::RoundToInt(Job.Done*100.f),0,100),*Text);
+	Text+=FString::Printf(TEXT("（%.0f 秒）"),Job.Elapsed());
+	if(Text!=ShownBusy)
+	{
+		ShownBusy=Text;
+		if(UDreamText* T=TextOf(BusyText))T->SetText(FText::FromString(Text));
+	}
+	if(BusyBar)
+	{
+		const bool bSweep=Job.Done<0.f;
+		if(BusyBar->GetIsMarquee()!=bSweep)BusyBar->SetIsMarquee(bSweep);
+		const float Percent=bSweep?0.f:FMath::Clamp(Job.Done,0.f,1.f);
+		if(!FMath::IsNearlyEqual(ShownBusyPercent,Percent,1e-3f)){ShownBusyPercent=Percent;BusyBar->SetPercent(Percent);}
+	}
+	if(!bBusyShown)
+	{
+		bBusyShown=true;Busy->SetShown(true);
+		// The notice moves down out of the bar's way; TickNotice sizes it from there.
+		if(Notice)Notice->SetVerticalAnchoredPosition(NoticeTop-(Busy->GetHeight()+8.f));
+	}
+}
+
+// Every action running now, whether or not the bar is up yet: "載入3D 2.4s 0.62 建立顯示 | 配種 11.0s -" ("-" is a
+// step the work cannot put a number on). "-" alone when nothing runs. This is what a script checks instead of a
+// screenshot; the bar itself only shows the newest, and only after half a second.
+FString UOKReaderScreen::BusyState() const
+{
+	const TArray<OKBusy::FJob> Jobs=OKBusy::Running();
+	if(Jobs.IsEmpty())return TEXT("-");
+	TArray<FString> Parts;
+	for(const OKBusy::FJob& J:Jobs)
+	{
+		FString Done=J.Done>=0.f?FString::Printf(TEXT("%.2f"),J.Done):FString(TEXT("-"));
+		Parts.Add(FString::Printf(TEXT("%s %.1fs %s%s"),*J.Label,J.Elapsed(),*Done,J.Stage.IsEmpty()?TEXT(""):*(TEXT(" ")+J.Stage)));
+	}
+	return FString::Join(Parts,TEXT(" | "));
+}
+
 FString UOKReaderScreen::NoticeState() const
 {
 	TArray<const FNote*> Due;for(const auto& P:Notes)Due.Add(&P.Value);
@@ -2644,6 +2703,14 @@ void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 	CheckGameRoot(Root);CheckLocalLibrary(Library);
 }
 
+void UOKReaderScreen::RefreshGameRootPage()
+{
+	const UKKGameRoot* Game=UKKGameRoot::Get();
+	if(!Game)return;
+	if(UOKDreamControl* Field=RootInput.Get())if(Field->Input)Field->Input->SetText(Game->Root);
+	if(RootStatus.IsValid())CheckGameRoot(Game->Root);
+}
+
 // What is in the folder typed so far: counted on a worker (a mods/ folder holds thousands of zipmods), the newest answer
 // shown.
 void UOKReaderScreen::CheckGameRoot(const FString& Root)
@@ -2692,7 +2759,12 @@ void UOKReaderScreen::ApplyFolderSetting(bool bLibrary,const FString& Folder,boo
 	{
 		// A new game folder means a new catalogue: forget the one read from the old folder, or the picker pages keep
 		// answering from it and a root that was just corrected looks as if it changed nothing.
-		if(UOKCharacterController* G=GetController())G->AppearanceCatalogPath.Reset();
+		if(UOKCharacterController* G=GetController())
+		{
+			G->AppearanceCatalogPath.Reset();
+			// And a new mods/ to index (on a worker, with the progress bar): the old folder's GUIDs answer nothing here.
+			if(const UKKGameRoot* R=UKKGameRoot::Get();R&&!R->Root.IsEmpty())G->StartInstalledModIndex(R->Mods());
+		}
 		if(RootStatus.IsValid())CheckGameRoot(Now);
 	}
 }
@@ -3017,6 +3089,8 @@ void UOKReaderScreen::Layout()
 	if(NamePlate)NamePlate->SetHorizontalAnchoredPosition(-(RightWidth+16.f));
 	// The notice spans the 3D view as the camera bar does; its height follows its lines (TickNotice).
 	if(Notice){Notice->SetSizeDelta(FVector2D(-(LeftWidth+RightWidth+32.f),Notice->GetSizeDelta().Y));Notice->SetHorizontalAnchoredPosition((LeftWidth-RightWidth)*.5f);ShownNotice.Reset();}
+	// The progress bar spans the 3D view like the notice, and sits where the notice sits when there is no bar.
+	if(Busy){Busy->SetSizeDelta(FVector2D(-(LeftWidth+RightWidth+32.f),Busy->GetSizeDelta().Y));Busy->SetHorizontalAnchoredPosition((LeftWidth-RightWidth)*.5f);ShownBusy.Reset();}
 }
 
 // The left panel's right edge is a handle: press near it and drag.
@@ -3091,6 +3165,7 @@ void UOKReaderScreen::SyncAll()
 		}
 		MarkCurrentCard();
 	}
+	TickBusy();
 	TickNotice();
 	if(UOKCharacterController* G=Controller.Get())if(auto* T=TextOf(CardName))
 	{
@@ -3325,5 +3400,5 @@ static FAutoConsoleCommand GReaderScreenCommand(TEXT("ok.ReaderScreen"),
 			};
 			Walk(S,0);
 		}
-		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f thumbs=%s notice=%s"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth(),*S->ThumbState(),*S->NoticeState().Replace(TEXT("\n"),TEXT(" | ")));
+		Out.Logf(TEXT("%s tab=%s category=%s left_width=%.0f thumbs=%s busy=%s notice=%s"),Done?TEXT("ok"):TEXT("failed"),*S->CurrentTab(),*S->CurrentCategory(),S->GetLeftWidth(),*S->ThumbState(),*S->BusyState(),*S->NoticeState().Replace(TEXT("\n"),TEXT(" | ")));
 	}));

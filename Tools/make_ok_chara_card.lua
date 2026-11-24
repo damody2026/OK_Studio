@@ -25,7 +25,8 @@ local function blender()
   return b
 end
 local function ok_chara()
-  local candidates = { os.getenv("OK_CHARA") or "", path.join(root, "Tools/ok-extract/target/release/ok-chara.exe"), "E:/cargo-target/ok-chara/release/ok-chara.exe" }
+  local candidates = { os.getenv("OK_CHARA") or "", path.join(root, "Tools/ok-extract/target/release/ok-chara.exe"),
+    os.getenv("CARGO_TARGET_DIR") and path.join(os.getenv("CARGO_TARGET_DIR"), "ok-chara/release/ok-chara.exe") or "" }
   for _, c in ipairs(candidates) do if c ~= "" and path.is_file(c) then return c end end
   error("ok-chara.exe not found: cargo build --release --bin ok-chara (or set OK_CHARA)", 0)
 end

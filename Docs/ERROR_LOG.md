@@ -7500,3 +7500,75 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 **修正**：這四個函式在「穿」的方向改成：服裝卡沒有該外掛資料時，仍然要把角色自己這一套的資料清掉（`material_editor`／`indexed_lists` 另外把只有角色才有的清單也列進要清的範圍）。加了單元測試 `okclothes::tests::wearing_clears_her_overlays_for_that_outfit`。
 
 **下次怎麼避免**：「把 B 的某一套穿到 A 身上」這種合併，每一項 per-coordinate 的資料都要問「B 沒有的時候，A 的要不要留」。預設答案是**不留**——那是跟著舊衣服走的，不是跟著人走的。`let Some(x) = 來源 else { return }` 在合併程式裡幾乎都是 bug。
+
+## 2026-11-24（F）讀卡器的長動作只有文字、有些還卡在遊戲執行緒上
+
+**規則**（使用者 2026-11-24）：讀卡器裡任何超過 0.5 秒的 UI 動作都要顯示進度條。
+
+**之前是什麼樣**：只有「套用服裝卡」會在通知列寫百分比，其他十幾個長動作（載入3D、配種、生成頭髮、準備配對動畫、匯出服裝卡…）各自寫自己的一行狀態字，或什麼都不寫。而「匯出服裝卡」「轉換服裝卡」更糟：它們在**遊戲執行緒**上讀寫幾十 MB 的卡，畫面整個停住，連字都更新不了。
+
+**修正**：一個共用的工作清單 `OKBusy`（[Docs/READER_BUSY_PROGRESS.md](READER_BUSY_PROGRESS.md)），長動作呼叫 `Begin`／`FScope`，畫面上一條進度條顯示最新那一筆，**跑超過 0.5 秒才出現**。那兩個卡住遊戲執行緒的搬到背景執行緒。
+
+**下次怎麼避免**：讀卡器新增會花時間的動作時，用 `OKBusy::FScope`，不要再寫一份自己的狀態字；**報不出比例就讓它走 marquee，不要用「經過時間推估」編一個百分比**——那是在騙使用者，而且第一次就會被看穿。工作留在遊戲執行緒上就畫不出會動的條子，加 `Begin` 也沒用，要先把工作搬開。
+
+## 2026-11-24（F）從遊戲自己的卡片資料夾拖一張原作卡進讀卡器，畫面整個凍住
+
+**現象**：使用者把 `D:\KoikatuSunshine\UserData\chara\female` 的原作卡拖進 `CardReaderDevelopment.cmd`，視窗沒回應（`Responding=False`）好幾分鐘，進度條也沒出現，log 連「OK reader drop」那一行都沒有，最後只能把它殺掉。
+
+**原因**：`OpenDroppedCard` 先呼叫 `SelectIndex`（所以還來不及寫那行 log），`SelectIndex` 對原作卡呼叫 `FKKLocalModIndex::BuildForCard`。它會從卡片往上找遊戲安裝，找到之後把那個 `mods/` **整個**列出來、**每一包都讀一次 manifest**——這台機器上是 7,296 包、111 GiB——而且讀法是 `FFileHelper::LoadFileToArray` 整包讀進記憶體（`KKModIndex::ReadZipmodGuid`）；去重還是 O(n²) 的 `FPaths::IsSamePath`（7,296²/2 ≈ 2,660 萬次，每次都在配置字串）。全部在**遊戲執行緒**上，而且**每選一張卡就重來一次**。卡片資料夾在遊戲外面時碰不到這條路，所以平常不會遇到。
+
+**修正**：
+- 新的 `KKZip::ReadManifests`（[KKZipManifest.h](../Plugins/KKSideloader/Source/KKSideloader/Private/KKZipManifest.h)）只讀 ZIP 結尾記錄、中央目錄與 manifest 自己那幾百位元組。同一個 `mods/`：整包讀是 111 GiB，這樣是 466 MiB。
+- `FKKModIndex` 變成**有快取、可增量**的索引（`Saved/mod_index.json` 記下每包的路徑／大小／修改時間），只有新的或改過的包才重讀 manifest；GUID 撞在一起時照 Sideloader 的版本規則挑。
+- `FKKLocalModIndex::BuildForCard(卡, 這張卡要的 GUID, 索引)`：卡片旁邊的 zipmod 照舊整包處理（本來就只有幾個），遊戲 `mods/` 改成**只查這張卡自己指名的 GUID**。去重改用 `TSet`。
+- 索引本身搬到背景執行緒（`UOKCharacterController::StartInstalledModIndex`），掛在進度條上，比例是「讀了幾包／共幾包」。
+
+同一次還修了另一半：拖進來的卡**用它自己那個遊戲安裝開**，不是設定裡寫的那個資料夾。F 的設定寫著 `D:/XKoikatuSunshine`（不存在），卡片在 `D:/KoikatuSunshine` 裡，於是開卡只找到卡片旁邊那 1 個 zipmod（卡片指名 19 個）。衣服預覽的快取簽章也跟著改用這個實際採用的路徑。
+
+**實測**（2026-11-24，F，同一台、同一個 `D:/KoikatuSunshine/mods`）：拖卡之後視窗全程 `Responding=True`（每 2 秒查一次，45 次都是），索引 `7296 zipmod, 7268 GUID, 0.5 s`（之後存成快取），卡片 4 秒載入完成，進度條上是「載入3D · 讀卡片、組出她的模型」，`root=` 變成 `D:/KoikatuSunshine`。那 0.5 秒是作業系統檔案快取熱的時候量的（量之前剛掃過同一批 manifest），冷開會更久，但讀的量是一樣的 466 MiB。
+
+**下次怎麼避免**：遊戲執行緒上不准掃 `mods/`。要認 zipmod 的身分就讀它的 manifest，不要把整包讀進來。「每選一張卡都重建一次索引」這種事，只要資料量是使用者的安裝決定的，就一定要有快取，而且要能增量。
+
+## 2026-11-24（F）讀卡器裡每個人的上衣都是綠的
+
+**現象**：F 的讀卡器開任何一張原作卡，上衣（`clothes_top`）都是純綠色，裙子、鞋子正常。
+
+**原因**：不是程式 bug——`F:\OpenKoikatsu\Mods\material-hooks` 這個**測試用 mod**（`org.openkoikatsu.test.material-hooks`，原始碼在 [Tools/ok-mod/fixtures/material-hooks](../Tools/ok-mod/fixtures/material-hooks/src/lib.rs)）本來就會在 `material.post_texture` 把 `tint_slot`（預設 `clothes_top`）的貼圖乘上 `tint`（預設綠色 `0.4,1,0.4`）。它被裝進 F 的 `Mods/` 之後就沒拿掉，於是每張卡的上衣都變綠。
+
+**怎麼找到的**：先用 CLI 開同一張卡，烘出來的貼圖是**粉紅格紋**（遊戲 abdata 與基礎庫兩種來源都一樣），也就是 Rust 那邊完全正確；再看第二張卡，一樣是**只有上衣綠、裙子正常**——「只有一個部位、而且是純色」就不像貼圖缺失，是有人在那個 slot 上乘了顏色。對照 `Mods/` 才看到這個 fixture。
+
+**修正**：把 `Mods/material-hooks` 改名成 `Mods/.material-hooks`（mod 探索會跳過 `.` 開頭的資料夾，要用回來改回名字就好）。改完重開讀卡器，Alice 的上衣回到黃色洋裝＋白色長袖，愛莉希雅的旗袍回到粉紅格紋，和 CLI 烘出來的貼圖一致。打包版（`Studio-20261124-release-b`）的 `Mods/` 沒有這個 fixture，只有 19 個正式 mod，所以打包版沒受影響。
+
+**下次怎麼避免**：測試用的 fixture mod 裝進工作樹的 `Mods/` 之後要記得拿掉，尤其是**會改外觀**的那幾個——它會讓之後每一次目視驗收都看到錯的畫面，而且很容易被當成渲染或資源的 bug 去追。看到「只有某一個部位、整片純色」先去翻 `Mods/`。
+
+## 2026-11-24（F）程式裡寫死了「遊戲在哪」
+
+**使用者**：「我這是萬人遊戲，你怎麼能假設大家路徑一樣」「每台電腦都不一樣」「你應該用相對路徑去找」。
+
+**現象**：F 的讀卡器設定指著 `D:/XKoikatuSunshine`（不存在），開卡只找到卡片旁邊 1 個 zipmod（卡片指名 19 個），衣服就不對。而且出貨的預設值本身就是某個人的機器：
+
+| 寫死的地方 | 原本 |
+|---|---|
+| `Config/DefaultGame.ini` | `Root=D:/KoikatuSunshine` ← 每個人的包都帶著這個 |
+| `KKGameRoot.cpp` 建構子 | `Root = "C:/portable/KoikatuSunshine"` |
+| `OKGallerySpeech.cpp` 語音目錄 | 依序試 `C:/`、`D:/`、`E:/KoikatuSunshine/voice_extract`，最後還 fallback 回 `C:/portable/...` |
+| `OKCrowdScene.cpp`、`KKPreviewActor.cpp`（`ok.ShotPreview` 等） | `C:/portable/KoikatuSunshine` 與它底下的一張卡 |
+
+**修正**：一個路徑都不留在程式裡，全部相對於「這台機器知道的東西」去找——
+- 出貨預設是**空的**（ini 與建構子）：沒設就是沒設，讀卡器會講，不是安靜地指著一個不存在的資料夾；
+- 卡片從遊戲資料夾裡拖進來時，用**它自己所在的那個遊戲**（從卡片往上找 `abdata/`＋`UserData/`＋原作執行檔）；本來沒設過遊戲目錄的話，就把它記下來當設定，下次別的卡也找得到；
+- 設定裡有路徑但底下沒有 `mods/`，開卡時在畫面上講清楚（否則卡片照樣開得起來，只是衣服安靜地不對）；
+- 語音目錄只找基礎庫底下、設定的遊戲底下、以及程式自己的 `Saved/` 底下；
+- `ok.ShotPreview`／人群匯入改用設定的遊戲目錄。
+
+**新的測試**（使用者指定）：[`Tools/test_game_root_rename.lua`](../Tools/test_game_root_rename.lua)——把遊戲根目錄改名、開一張卡、再改一次名、再開一次，每次開卡不得超過 20 秒。改名會讓所有以 mods 路徑當 key 的東西失效（讀卡器的 `Saved/mod_index.json`、ok-extract 在遊戲目錄下的 `.ok_cache.sqlite`），所以量到的就是「路徑第一次見到」的重建代價。資料夾被占用（玩家的檔案總管開在裡面）改不動名字時，改用同名的接點指向它，對程式來說一樣是新路徑。
+
+**實測**（2026-11-24，F，7,296 個 zipmod）：兩輪都 pass，**9.3 秒與 9.5 秒**（上限 20）。
+
+**第二輪：開發工具也清掉（同日）**。使用者接著說「盤點這個程式的全部絕對路徑…全部改成相對路徑」「現在清」，所以 `Tools/` 底下也清了，細節在 [絕對路徑盤點](ABSOLUTE_PATHS.md)。最嚴重的一個不是出貨程式而是腳本庫：`Tools/lua/ok/init.lua` 的 `ok.game_root()` 原本是一串寫死的候選（`C:/portable/KoikatuSunshine`、`D:/KoikatuSunshine`、`E:/Koikatu`…），全找不到時 `game_root(true)` 還回第一個不存在的值——所有腳本都靠它找遊戲。現在是 `OK_GAME_ROOT` → 讀卡器自己設的遊戲目錄 → 專案 ini → 這個 checkout 旁邊與同磁碟根目錄下名字帶 `koikat` 的資料夾，每一個都要過 `is_game_root()`；找不到就回空字串或報錯。`ok.engine_root()` 的 `E:/PhysX/UE5.8` 也換成同磁碟探測。另外 `ok-extract`／`ok-song`／`Probe.cs` 的輸出與模型位置改成環境變數加 `CARGO_MANIFEST_DIR`／`ok.root`。
+
+檢查器 [`Tools/check_absolute_paths.lua`](../Tools/check_absolute_paths.lua) 的範圍同時擴到 Rust crate 的 `src/`、專案自己的 Lua 與 `Tools/lua/ok/`，並修了兩個誤判（`"%s:\n"` 這種格式字串被當成路徑、`\\` 轉成 `//` 之後比不到允許清單）。現在是 0 處。
+
+**沒清的**：另一個專案（`StreetSocialCity`）檔名帶 `street_city` 的 46 支產線腳本（約 145 處），照 AGENTS.md 不動它；以及三個工作樹共用的 Unreal 名額檔，它必須是同一個絕對位置，放各自的 `Saved/` 底下就互相看不到了（寫在允許清單裡）。
+
+**下次怎麼避免**：原始碼裡出現任何一個 `C:/`、`D:/` 開頭的路徑就是 bug，連 fallback 與開發用的主控台指令都算——它會跟著包送到每一個玩家手上。要用的東西從設定、從卡片自己的位置、從程式自己的資料夾往外找。

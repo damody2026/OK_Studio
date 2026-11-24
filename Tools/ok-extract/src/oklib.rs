@@ -4096,8 +4096,8 @@ mod ok_card_edit_tests {
     #[ignore = "reads the KKS installation, the base library and converted OK cards"]
     fn edited_ok_card_is_made_again_and_reopens_from_ok_data() {
         let game = &crate::test_support::game_path("");
-        let lib = PathBuf::from("C:/portable/OpenKoikatsu/Content/IndependentResources/base_v1");
-        let cards = Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG");
+        let lib = PathBuf::from(crate::repo_root().join("Content/IndependentResources/base_v1").to_string_lossy().into_owned());
+        let cards = crate::repo_root().join("Content/CharacterCards/CrowdAPNG");
         if !game.is_dir() || !cards.join("C001.png").is_file() { return; }
         let work = std::env::temp_dir().join(format!("ok-card-edit-{}", std::process::id()));
         std::fs::create_dir_all(&work).unwrap();
@@ -4168,9 +4168,9 @@ mod concurrent_open_tests {
     #[ignore]
     fn concurrent_card_opens() {
         std::env::set_var("OK_NOCACHE", "1");
-        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", "E:/OpenKoikatsu/Content/IndependentResources/v1"); }
-        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", "E:/OpenKoikatsu/Content/IndependentResources/base_v1"); }
-        let dir = std::env::var("OK_PHYS_CARDS").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG".into());
+        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", crate::repo_root().join("Content/IndependentResources/v1").to_string_lossy().into_owned()); }
+        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", crate::repo_root().join("Content/IndependentResources/base_v1").to_string_lossy().into_owned()); }
+        let dir = std::env::var("OK_PHYS_CARDS").unwrap_or_else(|_| crate::repo_root().join("Content/CharacterCards/CrowdAPNG").to_string_lossy().into_owned().into());
         let count: usize = std::env::var("OK_OPEN_CARDS").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
         let mut cards: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "png") && !p.file_name().unwrap().to_string_lossy().starts_with('.')).collect();
@@ -4227,11 +4227,11 @@ mod open_timing_tests {
     #[ignore]
     fn crowd_card_open_seconds() {
         std::env::set_var("OK_NOCACHE", "1");
-        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", "E:/OpenKoikatsu/Content/IndependentResources/v1"); }
-        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", "E:/OpenKoikatsu/Content/IndependentResources/base_v1"); }
+        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", crate::repo_root().join("Content/IndependentResources/v1").to_string_lossy().into_owned()); }
+        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", crate::repo_root().join("Content/IndependentResources/base_v1").to_string_lossy().into_owned()); }
         let names = std::env::var("OK_OPEN_NAMES").unwrap_or_else(|_| "C009,C001,C049,C020".into());
         for name in names.split(',') {
-            let card = format!("E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/{name}.png");
+            let card = crate::repo_root().join(format!("Content/CharacterCards/CrowdAPNG/{name}.png")).to_string_lossy().into_owned();
             let start = std::time::Instant::now();
             let (game, path) = (std::ffi::CString::new("").unwrap(), std::ffi::CString::new(card).unwrap());
             let mut out: *mut crate::session::OkSession = std::ptr::null_mut();
@@ -4251,12 +4251,12 @@ mod open_dump_tests {
     #[ignore]
     fn dump_card_opens() {
         std::env::set_var("OK_NOCACHE", "1");
-        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", "E:/OpenKoikatsu/Content/IndependentResources/v1"); }
-        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", "E:/OpenKoikatsu/Content/IndependentResources/base_v1"); }
+        if std::env::var("OK_BUILTIN_RESOURCES").is_err() { std::env::set_var("OK_BUILTIN_RESOURCES", crate::repo_root().join("Content/IndependentResources/v1").to_string_lossy().into_owned()); }
+        if std::env::var("OK_BASE_LIBRARY").is_err() { std::env::set_var("OK_BASE_LIBRARY", crate::repo_root().join("Content/IndependentResources/base_v1").to_string_lossy().into_owned()); }
         let dir = std::path::PathBuf::from(std::env::var("OK_DUMP_DIR").expect("OK_DUMP_DIR"));
         std::fs::create_dir_all(&dir).unwrap();
         for name in std::env::var("OK_OPEN_NAMES").unwrap_or_else(|_| "C009,C001,C049,C020".into()).split(',') {
-            let card = format!("E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/{name}.png");
+            let card = crate::repo_root().join(format!("Content/CharacterCards/CrowdAPNG/{name}.png")).to_string_lossy().into_owned();
             let (game, path) = (std::ffi::CString::new("").unwrap(), std::ffi::CString::new(card).unwrap());
             let mut out: *mut crate::session::OkSession = std::ptr::null_mut();
             let mut err = vec![0i8; 2048];

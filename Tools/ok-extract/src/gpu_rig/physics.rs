@@ -343,12 +343,12 @@ mod stats {
     #[ignore]
     fn gpu_rig_physics_stats() {
         use super::{Parent, Physics};
-        let dir = std::env::var("OK_PHYS_CARDS").unwrap_or_else(|_| "E:/OpenKoikatsu/Content/CharacterCards/CrowdAPNG".into());
+        let dir = std::env::var("OK_PHYS_CARDS").unwrap_or_else(|_| crate::repo_root().join("Content/CharacterCards/CrowdAPNG").to_string_lossy().into_owned().into());
         let limit: usize = std::env::var("OK_PHYS_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
         let mut cards: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "png") && !p.file_name().unwrap().to_string_lossy().starts_with('.')).collect();
         cards.sort();
-        let clip = std::fs::read("E:/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim").unwrap();
+        let clip = std::fs::read(crate::repo_root().join("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").to_string_lossy().into_owned()).unwrap();
         let mut worst_chain = (0usize, String::new());
         let mut worst_serial = (0usize, String::new());
         for card in cards.iter().take(limit) {

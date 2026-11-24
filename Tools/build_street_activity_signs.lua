@@ -1,9 +1,11 @@
 -- Windows font rasterization, no generated Python or PowerShell source files.
+-- 這條產線的輸出放在工作樹底下，不是某一台機器的位置（使用者 2026-11-24：每台電腦都不一樣）。
+local root=require('ok').root
 local code=[====[
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName Microsoft.VisualBasic
-$dir='C:/portable/OpenKoikatsu/output/street-social-city-production/activity-scenes-v1'
+$dir='@OKOUT@'
 $plan=Get-Content ($dir+'/plan.json') -Raw -Encoding UTF8|ConvertFrom-Json
 $rows=@()
 foreach($property in $plan.signs.PSObject.Properties){

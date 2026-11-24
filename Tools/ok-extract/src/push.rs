@@ -273,13 +273,13 @@ impl<'a, 's> PushCtx<'a, 's> {
                     .collect();
                 if let Some(t) = mesh.texture_png.as_deref() {
                     let _ = std::fs::write(
-                        format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\hd_main_{stem}.png"),
+                        crate::dump_path(&format!("hd_main_{stem}.png")),
                         t,
                     );
                 }
                 if let Some(t) = mesh.color_mask_png.as_deref() {
                     let _ = std::fs::write(
-                        format!(r"C:\Users\Damody\AppData\Local\Temp\opencode\hd_mask_{stem}.png"),
+                        crate::dump_path(&format!("hd_mask_{stem}.png")),
                         t,
                     );
                 }

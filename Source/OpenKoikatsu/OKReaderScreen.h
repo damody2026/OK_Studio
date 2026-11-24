@@ -166,6 +166,9 @@ public:
 	UPROPERTY() TObjectPtr<UDreamWidget> PluginHost;
 	UPROPERTY() TObjectPtr<UDreamWidget> Notice;
 	UPROPERTY() TObjectPtr<UDreamWidget> NoticeText;
+	UPROPERTY() TObjectPtr<UDreamWidget> Busy;
+	UPROPERTY() TObjectPtr<UDreamWidget> BusyText;
+	UPROPERTY() TObjectPtr<UDreamProgressBar> BusyBar;
 
 	// Show this screen for the controller, whose UMG tree must already be built.
 	static UOKReaderScreen* Open(UOKCharacterController* Controller);
@@ -220,11 +223,15 @@ public:
 	/** The card wall again from the controller's list: after the listed folder changed (the wall is only refilled on
 	 *  its own when the number of cards changed). */
 	void FillCardGrid();
+	// The game folder was changed from somewhere else (a card that brought its own installation): show what is set now.
+	void RefreshGameRootPage();
 	// A report from the controller (UOKCharacterController::ScreenNote), shown under the camera bar for Seconds; a report
 	// with the same key replaces the one shown. The engine's own on-screen messages would draw over the left panel.
 	void ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text);
 	// The reports shown now, one per line (for the game MCP and tests).
 	FString NoticeState() const;
+	// Every long action running now, for `ok.ReaderScreen` and the game MCP: "載入3D 2.4s 0.62 建立顯示", "-" for none.
+	FString BusyState() const;
 	// The card list's pictures held now, of how many tiles ("12/101"; "-" with no card list shown).
 	FString ThumbState() const;
 	float GetLeftWidth() const { return LeftWidth; }
@@ -301,6 +308,10 @@ private:
 	// The text the notice shows, and whether it is shown (as laid out until the first frame hides it).
 	FString ShownNotice;bool bNoticeShown=true;
 	void TickNotice();
+	// The progress bar for every action over half a second (OKBusyProgress.h). NoticeTop is where the notice sits
+	// with no bar up; with one it moves down below it.
+	FString ShownBusy;bool bBusyShown=true;float ShownBusyPercent=-1.f;float NoticeTop=-76.f;double NextBusyAt=0.;
+	void TickBusy();
 	// The card list's pictures, one per tile (null until it scrolls into view; dropped again far out of it), and which
 	// tiles have a decode on the way. ThumbGeneration discards a decode finishing after the list was rebuilt.
 	UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CardThumbs;

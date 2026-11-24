@@ -384,9 +384,11 @@ mod tests {
 
     /// Against the installed game: p_handR on the right-hand controller's first chest layer moves its fingers.
     #[test]
-    #[ignore = "needs D:/KoikatuSunshine"]
+    #[ignore = "needs an installed game: OK_GAME_ROOT"]
     fn game_hand_plays_its_controller_layer() {
-        let game = Path::new("D:/KoikatuSunshine");
+        // Where the game is differs on every machine, so it is named by the environment, never here.
+        let Some(game) = std::env::var_os("OK_GAME_ROOT").map(std::path::PathBuf::from) else { return };
+        let game = game.as_path();
         let bytes = crate::gamefs::read(&game.join("abdata/h/common/01.unity3d")).unwrap();
         let parsed = crate::unity::parse_bundle_cached(bytes);
         let (meshes, _) = parsed.meshes_for_maindata("p_handR");

@@ -240,6 +240,12 @@ static TAutoConsoleVariable<int32> CVarOkAnimationSourceConversion(
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/PlayerStart.h"
+#include "KKGameRoot.h"
+
+// Where the shot commands look for the original game: the folder the user named (設定 › 遊戲目錄, else
+// DefaultGame.ini). A path written in this file would be one developer’s machine and wrong everywhere else
+// (the user, 2026-11-24). Empty means no game: the card opens from the base library alone.
+static FString OKShotGameRoot(){const UKKGameRoot* Game=UKKGameRoot::Get();return Game?Game->Root:FString();}
 
 // The automated three-view capture must not inherit live orbit input.
 static bool GOkShotCaptureActive = false;
@@ -13784,7 +13790,7 @@ static void ShotPreviewNow()
 	}
 	Actor->bLoadBodyHeadOnly = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHOT_BODY_HEAD_ONLY")) == TEXT("1");
 	FString Err;
-	const FString GameRoot = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHOT_PORTABLE"))==TEXT("1") ? FString() : TEXT("C:/portable/KoikatuSunshine");
+	const FString GameRoot = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHOT_PORTABLE"))==TEXT("1") ? FString() : OKShotGameRoot();
 	GShotCards.Reset();
 	const FString ShotCardsEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHOT_CARDS"));
 	const FString ShotDirEnv = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHOT_DIR"));
@@ -13826,7 +13832,7 @@ static void ShotPreviewNow()
 	{
 		if (CardPath.IsEmpty())
 		{
-			CardPath = TEXT("C:/portable/KoikatuSunshine/UserData/chara/female/KK_091207.png");
+			CardPath = GameRoot.IsEmpty() ? FString() : GameRoot / TEXT("UserData/chara/female/KK_091207.png");
 		}
 		GShotCards.Add(CardPath);
 	}
@@ -14123,8 +14129,8 @@ static void VerifyDemoNow()
 		return;
 	}
 	FString Err;
-	const FString GameRoot = TEXT("C:/portable/KoikatuSunshine");
-	const FString CardPath = TEXT("C:/portable/KoikatuSunshine/UserData/chara/female/KK_091207.png");
+	const FString GameRoot = OKShotGameRoot();
+	const FString CardPath = GameRoot.IsEmpty() ? FString() : GameRoot / TEXT("UserData/chara/female/KK_091207.png");
 	FOkSession::InitBindings();
 	if (!Actor->Session.Open(GameRoot, CardPath, 0, Err) || !Actor->LoadSession(Err))
 	{
