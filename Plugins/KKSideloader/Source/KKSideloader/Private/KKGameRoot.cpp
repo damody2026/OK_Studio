@@ -36,7 +36,11 @@ namespace KKGameRootLocal
 
 UKKGameRoot::UKKGameRoot()
 {
-	Root = TEXT("C:/portable/KoikatuSunshine");
+	// No built-in path. Everyone keeps the game somewhere else, so a path baked in here is one machine's and wrong for
+	// every other one: it points the reader at a folder that is not there, and the cards then quietly open without
+	// their zipmods (the user, 2026-11-24: 「我這是萬人遊戲，你怎麼能假設大家路徑一樣」). Empty until the user says
+	// where it is (設定 › 遊戲目錄), or a card opened from inside an installation says so itself.
+	Root.Empty();
 }
 
 UKKGameRoot* UKKGameRoot::Get()
@@ -138,4 +142,18 @@ FString UKKGameRoot::CharaFemale() const
 FString UKKGameRoot::Coordinate() const
 {
 	return FPaths::Combine(Root, TEXT("UserData"), TEXT("coordinate"));
+}
+
+FKKGameRootChoice KKChooseGameRoot(const FString& Configured, const FString& CardsOwnInstall)
+{
+	auto HasMods=[](const FString& Folder){return !Folder.IsEmpty()&&FPaths::DirectoryExists(FPaths::Combine(Folder,TEXT("mods")));};
+	FKKGameRootChoice Choice;
+	Choice.Root=Configured;
+	Choice.bConfiguredMissing=!Configured.IsEmpty()&&!HasMods(Configured);
+	if(HasMods(CardsOwnInstall)&&!FPaths::IsSamePath(CardsOwnInstall,Configured))
+	{
+		Choice.Root=CardsOwnInstall;
+		Choice.bFromCard=true;
+	}
+	return Choice;
 }

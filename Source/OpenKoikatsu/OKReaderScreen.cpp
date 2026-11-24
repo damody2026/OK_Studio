@@ -2668,6 +2668,14 @@ void UOKReaderScreen::BuildGameRootPage(UDreamWidget* Page)
 	CheckGameRoot(Root);CheckLocalLibrary(Library);
 }
 
+void UOKReaderScreen::RefreshGameRootPage()
+{
+	const UKKGameRoot* Game=UKKGameRoot::Get();
+	if(!Game)return;
+	if(UOKDreamControl* Field=RootInput.Get())if(Field->Input)Field->Input->SetText(Game->Root);
+	if(RootStatus.IsValid())CheckGameRoot(Game->Root);
+}
+
 // What is in the folder typed so far: counted on a worker (a mods/ folder holds thousands of zipmods), the newest answer
 // shown.
 void UOKReaderScreen::CheckGameRoot(const FString& Root)

@@ -1213,6 +1213,7 @@ void AOKCrowdScene::EndPlay(const EEndPlayReason::Type Reason){OKReleaseCrowdInd
 #include "KKImportIndependentCardCommandlet.h"
 #include "KKAnimationImporter.h"
 #include "KKExactSkinning.h"
+#include "KKGameRoot.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
@@ -1234,7 +1235,9 @@ int32 UOKBuildCrowdMapCommandlet::Main(const FString& Params){
  // Keep metadata preflight and actual mesh import in the same native source mode.
  // A preview preflight must never populate baked-head caches for game assets.
  FKKScopedNativeSkinSource NativeSource;
- FString Root=TEXT("C:/portable/KoikatuSunshine"),Destination=TEXT("/Game/Scenes/CrowdRoom"),Error;
+ // The folder the user named (設定 › 遊戲目錄), overridable with -GameRoot=: never a path from this source file,
+ // which would be one machine's and nobody else's.
+ FString Root=UKKGameRoot::Get()?UKKGameRoot::Get()->Root:FString(),Destination=TEXT("/Game/Scenes/CrowdRoom"),Error;
  FParse::Value(*Params,TEXT("GameRoot="),Root);FParse::Value(*Params,TEXT("Destination="),Destination);
  if(!Destination.StartsWith(TEXT("/Game/"))||!FPackageName::IsValidLongPackageName(Destination))return 1;
  TArray<FString> Cards;

@@ -220,6 +220,8 @@ public:
 	// 設定 › 遊戲目錄 from outside the page (ok.ReaderScreen gameroot/library): saved as the page saves it, and the page,
 	// when shown, shows it and what is found there. bForget: back to the default.
 	void ApplyFolderSetting(bool bLibrary,const FString& Folder,bool bForget);
+	// The game folder was changed from somewhere else (a card that brought its own installation): show what is set now.
+	void RefreshGameRootPage();
 	// A report from the controller (UOKCharacterController::ScreenNote), shown under the camera bar for Seconds; a report
 	// with the same key replaces the one shown. The engine's own on-screen messages would draw over the left panel.
 	void ShowNotice(int32 Key,float Seconds,const FColor& Color,const FString& Text);

@@ -7540,3 +7540,29 @@ cwd 是 `E:\OpenKoikatsu`，但启动器 log 写的是
 **修正**：把 `Mods/material-hooks` 改名成 `Mods/.material-hooks`（mod 探索會跳過 `.` 開頭的資料夾，要用回來改回名字就好）。改完重開讀卡器，Alice 的上衣回到黃色洋裝＋白色長袖，愛莉希雅的旗袍回到粉紅格紋，和 CLI 烘出來的貼圖一致。打包版（`Studio-20261124-release-b`）的 `Mods/` 沒有這個 fixture，只有 19 個正式 mod，所以打包版沒受影響。
 
 **下次怎麼避免**：測試用的 fixture mod 裝進工作樹的 `Mods/` 之後要記得拿掉，尤其是**會改外觀**的那幾個——它會讓之後每一次目視驗收都看到錯的畫面，而且很容易被當成渲染或資源的 bug 去追。看到「只有某一個部位、整片純色」先去翻 `Mods/`。
+
+## 2026-11-24（F）程式裡寫死了「遊戲在哪」
+
+**使用者**：「我這是萬人遊戲，你怎麼能假設大家路徑一樣」「每台電腦都不一樣」「你應該用相對路徑去找」。
+
+**現象**：F 的讀卡器設定指著 `D:/XKoikatuSunshine`（不存在），開卡只找到卡片旁邊 1 個 zipmod（卡片指名 19 個），衣服就不對。而且出貨的預設值本身就是某個人的機器：
+
+| 寫死的地方 | 原本 |
+|---|---|
+| `Config/DefaultGame.ini` | `Root=D:/KoikatuSunshine` ← 每個人的包都帶著這個 |
+| `KKGameRoot.cpp` 建構子 | `Root = "C:/portable/KoikatuSunshine"` |
+| `OKGallerySpeech.cpp` 語音目錄 | 依序試 `C:/`、`D:/`、`E:/KoikatuSunshine/voice_extract`，最後還 fallback 回 `C:/portable/...` |
+| `OKCrowdScene.cpp`、`KKPreviewActor.cpp`（`ok.ShotPreview` 等） | `C:/portable/KoikatuSunshine` 與它底下的一張卡 |
+
+**修正**：一個路徑都不留在程式裡，全部相對於「這台機器知道的東西」去找——
+- 出貨預設是**空的**（ini 與建構子）：沒設就是沒設，讀卡器會講，不是安靜地指著一個不存在的資料夾；
+- 卡片從遊戲資料夾裡拖進來時，用**它自己所在的那個遊戲**（從卡片往上找 `abdata/`＋`UserData/`＋原作執行檔）；本來沒設過遊戲目錄的話，就把它記下來當設定，下次別的卡也找得到；
+- 設定裡有路徑但底下沒有 `mods/`，開卡時在畫面上講清楚（否則卡片照樣開得起來，只是衣服安靜地不對）；
+- 語音目錄只找基礎庫底下、設定的遊戲底下、以及程式自己的 `Saved/` 底下；
+- `ok.ShotPreview`／人群匯入改用設定的遊戲目錄。
+
+**新的測試**（使用者指定）：[`Tools/test_game_root_rename.lua`](../Tools/test_game_root_rename.lua)——把遊戲根目錄改名、開一張卡、再改一次名、再開一次，每次開卡不得超過 20 秒。改名會讓所有以 mods 路徑當 key 的東西失效（讀卡器的 `Saved/mod_index.json`、ok-extract 在遊戲目錄下的 `.ok_cache.sqlite`），所以量到的就是「路徑第一次見到」的重建代價。資料夾被占用（玩家的檔案總管開在裡面）改不動名字時，改用同名的接點指向它，對程式來說一樣是新路徑。
+
+**實測**（2026-11-24，F，7,296 個 zipmod）：兩輪都 pass，**9.3 秒與 9.5 秒**（上限 20）。
+
+**下次怎麼避免**：原始碼裡出現任何一個 `C:/`、`D:/` 開頭的路徑就是 bug，連 fallback 與開發用的主控台指令都算——它會跟著包送到每一個玩家手上。要用的東西從設定、從卡片自己的位置、從程式自己的資料夾往外找。
