@@ -1085,3 +1085,40 @@ Megumin 同一張卡、同一套 outfit 0、同一個庫：bench 1.17～1.30 s�
 `unity::clothes_option_groups` 與 `unity::clothes_renderer_map` 裡面加 spot（現在那兩段裡只有進出的 tick，
 中間沒有量測），特別要分出「讀 bundle 物件時的 page fault」——那兩段吃的是 `SourceBytes`，mmap 的頁在 UE 行程裡
 可能沒有住在記憶體裡，而 page fault 既不算 CPU、也不會出現在任何 spot 上，正好符合上面這組症狀。
+
+### 定案：讀卡器那兩秒是「庫不准替非共用 mod 模型答題」，一個 bundle 被重複解析（2026-11-24）
+
+在 `oklib::memo_bytes` 與 `memo_bytes_recorded` 加了三個讀出（`memo: content_id`／`memo: store lookup`／
+`memo: compute (no record)`，另外超過 5 ms 的會印出 `PROFILE memo id`／`PROFILE memo miss` 一行），同一張卡
+（Megumin，outfit 0）量到：
+
+| | bench | 讀卡器 |
+|---|---|---|
+| `memo: content_id` | 0.0 ms x80 | 13.7 ms x80（~3.4 GiB/s，**不是 page fault**） |
+| `memo: store lookup` | 0.1 ms x25 | 0.2 ms x25 |
+| `memo: compute (no record)` | **沒有** | **2764 ms x18** |
+
+所以兩秒不是 I/O、不是並行、不是 mmap，而是**庫答不出來、改去解析安裝目錄裡的真 bundle**。印出來的 miss 一筆筆對得上
+這張卡的 mod 服裝（每一筆都是整顆 bundle 的 Unity 解析）：
+
+| 模型 | 大小 | `clothes_option_groups` | `copy_body_material_targets` |
+|---|---:|---:|---:|
+| mf_fingerlessGlove | 36.9 MiB | 627.6 ms | 631.9 ms |
+| mf_nagasode6b | 19.7 MiB | 315.7 ms | 291.5 ms |
+| mf_supporterLR | 10.6 MiB | 185.2 ms | 181.6 ms |
+| mf_shoes9 | 8.0 MiB | 116.0 ms | 124.2 ms |
+| p_o_bot_skirt05 | 6.8 MiB | 91.3 ms | 76.3 ms |
+| p_o_panst_02 | 2.1 MiB | 53.7 ms | 43.6 ms |
+
+**為什麼只有這兩段。** 走這條路的查詢只有三個（`clothes_option_groups` 8 次、`copy_body_material_targets` 8 次、
+`clothes_blend_shape_defs` 2 次），而它們問的是**第三方 mod 的模型**。那些模型在 `base_v1/models/.gitignore` 裡
+（非共用資源），`okstrict::library_model` 因此不讓庫的紀錄充當答案——這是既有的規定，不是 bug：倉庫只放共用資源，
+mod 衍生的模型本機才有，開卡要讀真正的 zipmod。bench 那條路沒有進入嚴格模式，所以同一個查詢直接吃了庫的紀錄
+（0.2 ms），這也是為什麼 **bench 的 1.17～1.30 s 對一張衣服來自 mod 的卡根本不是可比的數字**（第三節 4b 的第二層原因）。
+
+**可以修的地方**：同一顆 bundle 被解析了**兩次**（兩個查詢各自 `load_bundle_source` ＋ 自己建一份 serialized 視圖，
+看時間幾乎一樣就知道），而這是同一次開卡之內、同一份 bytes。把一次解析讓兩個查詢共用，照這張卡的數字可以省掉
+約 1.3 s（2764 ms 的一半上下）。那不是「按卡快取」，是同一次開卡裡不要把同一件事做兩遍。
+
+**讀出本身的成本**：`profile::spot` 在沒有 `OK_PROFILE` 時只多一個 `OnceLock` 讀取；兩條 `PROFILE` 行有
+`ms >= 5.0 && OK_PROFILE` 兩層門，正常跑一張卡不會印也不會量。

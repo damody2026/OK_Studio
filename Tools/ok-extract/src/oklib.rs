@@ -2842,8 +2842,28 @@ pub(crate) fn memo_bytes_visit<A: serde::Serialize + ?Sized, T>(bytes: &[u8], me
 pub fn memo_bytes<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) -> R
 where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
     if !ACTIVE.load(Ordering::Relaxed) { return f(); }
-    let id = content_id(bytes);
+    let id = identify(bytes, method);
     memo(Some(&id), method, args, f)
+}
+
+/// `content_id` with a read-out of its own (`OK_PROFILE`). It is the one part of a library memo that touches **all**
+/// the bundle's bytes: a recorded model answers by token (no hashing), but a mod's own bundle from the installation
+/// has no token, so every memo over it CRC32s the whole file -- and when those bytes are a mapping, that walk is
+/// where the page faults land. `clothes options` / `clothes renderer map` ask once per clothing part, which is why
+/// they were the two stages the reader spent seconds in while using no CPU (2026-11-24). Off OK_PROFILE this costs
+/// one `OnceLock` read per call (`profile::spot`), nothing else.
+pub(crate) fn identify(bytes: &[u8], method: &str) -> Id {
+    let _spot = crate::profile::spot("memo: content_id");
+    let t = std::time::Instant::now();
+    let id = content_id(bytes);
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    // Per call, when it is slow enough to matter: bytes against time says whether it is the walk or a lock.
+    if ms >= 5.0 && std::env::var_os("OK_PROFILE").is_some() {
+        let mib = bytes.len() as f64 / 1048576.0;
+        let rate = mib / (ms / 1e3).max(1e-9);
+        crate::profile::line(format!("ok-extract: PROFILE memo id {method} {mib:.1} MiB in {ms:.1}ms ({rate:.0} MiB/s)"));
+    }
+    id
 }
 
 /// Optional query on raw bundle bytes: replays stored records when present, computes on real Unity bytes
@@ -2861,18 +2881,33 @@ pub fn memo_bytes_recorded<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) 
 where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
     if !ACTIVE.load(Ordering::Relaxed) { return Some(f()); }
     let Some(store) = active() else { return Some(f()); };
-    let id = content_id(bytes);
+    let id = identify(bytes, method);
     let arg_bytes = bincode::serialize(args).unwrap_or_default();
-    if let Some(raw) = store.get_raw_optional(&id, method, &arg_bytes) {
-        if let Ok(value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
-            if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
-            return Some(value);
+    {
+        let _lookup = crate::profile::spot("memo: store lookup");
+        if let Some(raw) = store.get_raw_optional(&id, method, &arg_bytes) {
+            if let Ok(value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
+                if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
+                return Some(value);
+            }
         }
     }
     if token_id(bytes).is_some() {
         return None;
     }
+    let _compute = crate::profile::spot("memo: compute (no record)");
+    // Which query over which model the library could not answer, and what computing it cost: an open that falls
+    // through to the installation's own bundle pays the whole Unity parse here (the reader's `clothes options` /
+    // `clothes renderer map` seconds, 2026-11-24).
+    let t = std::time::Instant::now();
     let value = f();
+    if std::env::var_os("OK_PROFILE").is_some() {
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        if ms >= 5.0 {
+            crate::profile::line(format!("ok-extract: PROFILE memo miss {method} {} {} {:.1} MiB computed in {ms:.1}ms",
+                hex(&id), describe_args(&arg_bytes), bytes.len() as f64 / 1048576.0));
+        }
+    }
     if store.mode == Mode::Record {
         if let Ok(raw) = crate::unity::with_texture_plans(|| bincode::serialize(&value)) { store.put_raw(&id, method, &arg_bytes, &raw); }
     } else if let Some(card_pack) = store.recording_pack() {
