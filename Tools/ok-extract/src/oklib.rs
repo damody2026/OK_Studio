@@ -1136,17 +1136,17 @@ pub fn mount_card_pack(card: &Path) -> Result<Option<PackMount>, String> {
     // (the pack's identity hashed while it is decompressed)
     let (raw, identity) = rayon::join(|| decode_card_pack_bytes(chunk), || hex(&hash16(chunk)));
     let raw = crate::unity::SourceBytes::from(raw?);
-    if profile { eprintln!("ok-extract: PROFILE pack zstd {} -> {} bytes {:>8.1}ms", chunk.len(), raw.len(), t.elapsed().as_secs_f64() * 1e3); }
+    if profile { crate::profile::line(format!("ok-extract: PROFILE pack zstd {} -> {} bytes {:>8.1}ms", chunk.len(), raw.len(), t.elapsed().as_secs_f64() * 1e3)); }
     let pack: CardPackRef = bincode::deserialize(&raw).map_err(|e| format!("card pack: {e}"))?;
     if pack.version != CARD_PACK_VERSION { return Err(format!("card pack version {} (expected {CARD_PACK_VERSION})", pack.version)); }
-    if profile { eprintln!("ok-extract: PROFILE pack decoded {:>8.1}ms ({} records)", t.elapsed().as_secs_f64() * 1e3, pack.records.len()); }
+    if profile { crate::profile::line(format!("ok-extract: PROFILE pack decoded {:>8.1}ms ({} records)", t.elapsed().as_secs_f64() * 1e3, pack.records.len())); }
     let CardPackRef { index, records, .. } = pack;
     let index = crate::gamefs::pack_index(index, &raw);
     LAST_PACK_MODELS.store(records.iter().map(|r| r.0).collect::<std::collections::BTreeSet<_>>().len() as u64, Ordering::Relaxed);
     let base = raw.as_ptr() as usize;
     let records = records.into_iter().map(|PackRecordRef(id, query, args, value)| ((id, query, args), raw.sub(value.as_ptr() as usize - base, value.len())));
     let pack_store = Arc::new(Store::in_memory(records));
-    if profile { eprintln!("ok-extract: PROFILE pack store in memory {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3); }
+    if profile { crate::profile::line(format!("ok-extract: PROFILE pack store in memory {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3)); }
     // What the pack serves under mods/ (zipmods, their entries, listings): the mods-tree memos only depend on this.
     let mods_view = {
         let in_mods = |k: &String| k.to_ascii_lowercase().replace('\\', "/").contains("mods/");
@@ -3843,7 +3843,10 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
                     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
                     let sources = labels.get(&id).map(Vec::as_slice).unwrap_or(&[]);
                     if sources.is_empty() { unnamed += 1; }
-                    if sources.iter().any(|l| is_shared(l)) { kept += 1; kept_bytes += len; }
+                    // A model no source names stays on the shared side, the same reading as split-local's (it may be
+                    // another checkout's shared model). Until 2026-11-24 this branch excluded it, so the two rules in
+                    // this one command contradicted each other; 39 models were affected.
+                    if sources.is_empty() || sources.iter().any(|l| is_shared(l)) { kept += 1; kept_bytes += len; }
                     else {
                         out_bytes += len;
                         excluded.push(format!("/{}/{name}", shard.file_name().to_string_lossy()));

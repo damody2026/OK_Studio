@@ -356,7 +356,7 @@ pub(crate) fn prefetch_entries(game_root: &Path, items: Vec<(Option<PathBuf>, Li
     }).collect();
     let queue = std::sync::Arc::new(std::sync::Mutex::new(groups.into_iter().collect::<std::collections::VecDeque<_>>()));
     let helpers = queue.lock().unwrap_or_else(|e| e.into_inner()).len().min(PREFETCH_HELPERS);
-    if profile_enabled() { let sizes: Vec<usize> = queue.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|g| g.len()).collect(); eprintln!("ok-extract: PROFILE prefetch {} groups {sizes:?} items, {helpers} helpers", sizes.len()); }
+    if profile_enabled() { let sizes: Vec<usize> = queue.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|g| g.len()).collect(); crate::profile::line(format!("ok-extract: PROFILE prefetch {} groups {sizes:?} items, {helpers} helpers", sizes.len())); }
     for _ in 0..helpers {
         let (game_root, switches, queue) = (game_root.to_path_buf(), switches.clone(), queue.clone());
         let pack = crate::oklib::current_pack_scope();
@@ -373,12 +373,12 @@ pub(crate) fn prefetch_entries(game_root: &Path, items: Vec<(Option<PathBuf>, Li
                     // Only a result made under the same key may stand in for the asking thread's own extraction.
                     let (mine, unlearned) = entry_memo_keys(&game_root, zip.as_deref(), &entry, shake);
                     let same = mine == key || unlearned == key;
-                    if !same && profile_enabled() { eprintln!("ok-extract: PROFILE prefetch key differs\n  asked {key}\n  here  {mine}"); }
+                    if !same && profile_enabled() { crate::profile::line(format!("ok-extract: PROFILE prefetch key differs\n  asked {key}\n  here  {mine}")); }
                     let t_item = std::time::Instant::now();
                     let result = same.then(|| std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                         meshes_for_entry_shake(&game_root, zip.as_deref(), &entry, shake))).ok()).flatten();
                     PREFETCH_WORKER.with(|w| w.set(false));
-                    if profile_enabled() { eprintln!("ok-extract: PROFILE prefetch item {} {} {:.1}ms", entry.main_ab, entry.main_data, t_item.elapsed().as_secs_f64() * 1e3); }
+                    if profile_enabled() { crate::profile::line(format!("ok-extract: PROFILE prefetch item {} {} {:.1}ms", entry.main_ab, entry.main_data, t_item.elapsed().as_secs_f64() * 1e3)); }
                     *slot.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
                     slot.1.notify_all();
                 }

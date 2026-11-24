@@ -265,7 +265,7 @@ pub fn with_library<R>(lib: &Path, f: impl FnOnce() -> Result<R, String>) -> Res
     // one reloaded the index every time and kept the editor busy for tens of minutes.
     let t = std::time::Instant::now();
     oklib::ensure_library(lib)?;
-    if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: PROFILE okmodel ensure_library {:.1}ms", t.elapsed().as_secs_f64() * 1000.0); }
+    if std::env::var_os("OK_PROFILE").is_some() { crate::profile::line(format!("ok-extract: PROFILE okmodel ensure_library {:.1}ms", t.elapsed().as_secs_f64() * 1000.0)); }
     f()
 }
 
@@ -585,16 +585,16 @@ impl ModelView {
                     (renderer_visibility.iter().any(|(node, v)| node == n && *v) || sun_mask(&sun, &h, *n) != 0 || renderers.iter().any(|r| r.0 == *n && r.1 == 3 && r.3))) { meshes.push(m); }
             }
         }
-        if profile { eprintln!("ok-extract: PROFILE okmodel meshes {:.1}ms", t.elapsed().as_secs_f64() * 1000.0); }
+        if profile { crate::profile::line(format!("ok-extract: PROFILE okmodel meshes {:.1}ms", t.elapsed().as_secs_f64() * 1000.0)); }
         if meshes.is_empty() { return Err(format!("prefab {prefab} has no meshes")); }
         // Rendered with the role the game gives the part (shader paths depend on it) and the textures the
         // game builds from the list entry.
         let t = std::time::Instant::now();
         let (role, _, entry) = self.prefab_list_entry(prefab);
-        if profile { eprintln!("ok-extract: PROFILE okmodel list entry {:.1}ms", t.elapsed().as_secs_f64() * 1000.0); }
+        if profile { crate::profile::line(format!("ok-extract: PROFILE okmodel list entry {:.1}ms", t.elapsed().as_secs_f64() * 1000.0)); }
         let t = std::time::Instant::now();
         if let Some(entry) = &entry { crate::preview_list_item(&self.lib, entry, prefab, &mut meshes); }
-        if profile { eprintln!("ok-extract: PROFILE okmodel list item {:.1}ms", t.elapsed().as_secs_f64() * 1000.0); }
+        if profile { crate::profile::line(format!("ok-extract: PROFILE okmodel list item {:.1}ms", t.elapsed().as_secs_f64() * 1000.0)); }
         let t = std::time::Instant::now();
         let mut meshes: Vec<ExtractedMesh> = meshes.iter().map(|m| posed_static_fk_trs(m, fk, &edits.bone_trs)).collect();
         // Rigid meshes (MeshFilter) keep mesh-space vertices: place them at their GameObject in the prefab, through the
@@ -773,7 +773,7 @@ impl ModelView {
         }
         assign_reflection_probes(&mut meshes, &self.parsed.prefab_reflection_probes(prefab), &worlds);
         let parts = crate::preview_session_parts(&self.lib, &role, meshes, entry.as_ref())?;
-        if profile { eprintln!("ok-extract: PROFILE okmodel parts {:.1}ms", t.elapsed().as_secs_f64() * 1000.0); }
+        if profile { crate::profile::line(format!("ok-extract: PROFILE okmodel parts {:.1}ms", t.elapsed().as_secs_f64() * 1000.0)); }
         if parts.is_empty() { return Err(format!("prefab {prefab} has no shown meshes")); }
         Ok(crate::session::preview_session(&parts, &self.lib))
     }

@@ -135,10 +135,10 @@ fn profile_tick(label: &str, start: Instant) {
             .unwrap_or_else(|e| e.into_inner())
             .map(|t0| format!(" @{:.0}ms", t0.elapsed().as_secs_f64() * 1000.0))
             .unwrap_or_default();
-        eprintln!(
+        crate::profile::line(format!(
             "ok-extract: PROFILE {label:<32} {:>8.1}ms{since}",
             start.elapsed().as_secs_f64() * 1000.0
-        );
+        ));
     }
 }
 

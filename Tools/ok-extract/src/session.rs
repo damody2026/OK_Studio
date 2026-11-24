@@ -4905,7 +4905,7 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
         let keyed = crate::oklib::session_cache_enabled() || crate::cardbake::enabled() || crate::memosnap::replay_kinds() != 0;
         let key = if crate::oklib::recording_card_pack() || !keyed { None }
             else { card.and_then(|c| crate::oklib::session_cache_key(game, c, outfit)) };
-        if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: PROFILE open cache key {:>8.1}ms", t_key.elapsed().as_secs_f64() * 1e3); }
+        if std::env::var_os("OK_PROFILE").is_some() { crate::profile::line(format!("ok-extract: PROFILE open cache key {:>8.1}ms", t_key.elapsed().as_secs_f64() * 1e3)); }
         crate::oklib::LAST_FROM_CACHE.store(false, std::sync::atomic::Ordering::Relaxed);
         // A card that carries this open baked in (okBk, OK_CARD_BAKED=1) needs neither its pack nor the cache.
         if crate::cardbake::enabled() {
@@ -4913,7 +4913,7 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
                 let t = std::time::Instant::now();
                 if let Some(sess) = crate::cardbake::load(c, k).and_then(|b| OkSession::from_preview_bytes(&b).ok()) {
                     crate::oklib::LAST_FROM_CACHE.store(true, std::sync::atomic::Ordering::Relaxed);
-                    if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: PROFILE baked open {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3); }
+                    if std::env::var_os("OK_PROFILE").is_some() { crate::profile::line(format!("ok-extract: PROFILE baked open {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3)); }
                     return Ok(sess);
                 }
             }
@@ -4921,7 +4921,7 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
         // An OK card carrying its own resources: mounted over the library while it opens.
         let t = std::time::Instant::now();
         let _pack = match card { Some(c) => crate::oklib::mount_card_pack(c)?, None => None };
-        if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: PROFILE mount card pack {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3); }
+        if std::env::var_os("OK_PROFILE").is_some() { crate::profile::line(format!("ok-extract: PROFILE mount card pack {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3)); }
         // A background warm process (ok-card-warm) already building this entry finishes it sooner than a new build.
         for attempt in 0..2 {
             if let Some(bytes) = key.as_ref().and_then(|k| crate::oklib::session_cache_load(k)) {
@@ -4970,7 +4970,7 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
                 std::thread::spawn(move || { let _claim = claim; if let Ok(bytes) = bincode::serialize(&preview) { crate::oklib::session_cache_store_prepared(&k, &bytes, &inputs); } });
             } else { drop(claim); if let Ok(bytes) = sess.to_preview_bytes() { crate::oklib::session_cache_store(&k, &bytes, &fallback); } }
         }
-        if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: PROFILE open cache store {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3); }
+        if std::env::var_os("OK_PROFILE").is_some() { crate::profile::line(format!("ok-extract: PROFILE open cache store {:>8.1}ms", t.elapsed().as_secs_f64() * 1e3)); }
         return Ok(sess);
     }
     // An original card on the installation is built every time: its SQL session cache never answered an open (the

@@ -50,6 +50,15 @@ pub(crate) fn portable_export()->Scope{
     }
 }
 
+/// Where every OK_PROFILE line goes: stderr **and** the host's log. A windowed Unreal has no console, so
+/// `eprintln!` alone is lost there and an open inside the game cannot be profiled at all (2026-11-24: that is why
+/// the packaged reader's 6.9 s open had no breakdown). Same two ways as okstrict.rs's gap trace. Without a host
+/// (the CLI, tests) `ffi_log` does nothing and this is just the eprintln.
+pub(crate) fn line(text: String) {
+    eprintln!("{text}");
+    crate::ffi::ffi_log(0, &text);
+}
+
 /// OK_PROFILE: total wall time and call count per named hot spot, printed and reset by `dump_spots` (once per
 /// extraction), so nested helpers called from many places show their share without a sampling profiler.
 pub(crate) struct Spot(&'static str,Option<std::time::Instant>);
@@ -65,7 +74,7 @@ pub(crate) fn dump_spots(){
  if !spots_on(){return;}
  let mut spots=std::mem::take(&mut *SPOTS.lock().unwrap_or_else(|e|e.into_inner()));
  spots.sort_by(|a,b|b.1.total_cmp(&a.1));
- for (name,ms,n) in spots{eprintln!("ok-extract: SPOT {name:<32} {ms:>9.1}ms x{n}");}
+ for (name,ms,n) in spots{crate::profile::line(format!("ok-extract: SPOT {name:<32} {ms:>9.1}ms x{n}"));}
 }
 
 /// This thread's switch overrides, to apply on a helper thread doing part of the same extraction.

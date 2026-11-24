@@ -2307,7 +2307,7 @@ pub(crate) fn extract_session_from_info(
     profile_tick("extract_card_outfit TOTAL", t_all);
     if std::env::var_os("OK_PROFILE").is_some() {
         let (total, repeats, rows) = crate::unity::take_work_counts();
-        eprintln!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)");
+        crate::profile::line(format!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)"));
         let ms = crate::unity::take_work_ms();
         // Per repeated row: the work's own time, and the most de-duplicating it could save (CARD_OPEN_PERF 第四节
         // wants this ceiling before anyone widens a memo). Summed over threads, like every other PROFILE time.
@@ -2317,12 +2317,12 @@ pub(crate) fn extract_session_from_info(
                 Some(total) => {
                     let save = total * (*n as f64 - 1.0) / *n as f64;
                     ceiling += save;
-                    eprintln!("ok-extract: PROFILE   {n}x {source} ({total:.0}ms, at most {save:.0}ms savable)");
+                    crate::profile::line(format!("ok-extract: PROFILE   {n}x {source} ({total:.0}ms, at most {save:.0}ms savable)"));
                 }
-                None => eprintln!("ok-extract: PROFILE   {n}x {source}"),
+                None => crate::profile::line(format!("ok-extract: PROFILE   {n}x {source}")),
             }
         }
-        eprintln!("ok-extract: PROFILE repeated work at most {ceiling:.0}ms savable (summed over threads)");
+        crate::profile::line(format!("ok-extract: PROFILE repeated work at most {ceiling:.0}ms savable (summed over threads)"));
         // Where the time inside one item's own path went. Summed over items and threads, so these do not add up to a
         // wall time, and with the helper threads running they count waiting: read them at `RAYON_NUM_THREADS=1`.
         let segments = crate::unity::take_segments();
@@ -2330,14 +2330,14 @@ pub(crate) fn extract_session_from_info(
         let seg_total: f64 = segments.iter().filter(|(n, _, _)| !n.contains('/')).map(|(_, _, ms)| ms).sum();
         for (name, count, ms) in &segments {
             let share = if seg_total > 0.0 { ms / seg_total * 100.0 } else { 0.0 };
-            eprintln!("ok-extract: PROFILE   segment {name} {count}x {ms:.0}ms ({share:.0}%)");
+            crate::profile::line(format!("ok-extract: PROFILE   segment {name} {count}x {ms:.0}ms ({share:.0}%)"));
         }
         if !segments.is_empty() {
-            eprintln!("ok-extract: PROFILE segments {seg_total:.0}ms (summed over threads, not a wall time)");
+            crate::profile::line(format!("ok-extract: PROFILE segments {seg_total:.0}ms (summed over threads, not a wall time)"));
         }
         // With OKLIB_PROFILE too: the inside of the mesh decode, the segment an item's time turned out to be in.
         for (label, secs, n) in crate::oklib::drain_profile().into_iter().take(12) {
-            eprintln!("ok-extract: PROFILE   oklib {label} {n}x {:.0}ms", secs * 1000.0);
+            crate::profile::line(format!("ok-extract: PROFILE   oklib {label} {n}x {:.0}ms", secs * 1000.0));
         }
         // How many of the textures this session carries are **exactly** a decoded payload — nothing flipped,
         // masked, tinted or composed. Only those could be handed to UE as the source's own BC blocks with no
@@ -2356,11 +2356,11 @@ pub(crate) fn extract_session_from_info(
                 }
             }
         }
-        eprintln!("ok-extract: PROFILE passthrough {untouched}/{carried} session textures are an undecoded payload, by source format {formats:?}");
+        crate::profile::line(format!("ok-extract: PROFILE passthrough {untouched}/{carried} session textures are an undecoded payload, by source format {formats:?}"));
         // What `gamefs::read` copied out of the library index and the card's pack: every read hands back an owned
         // Vec, so this is memcpy on top of the work done with the bytes.
         let (read_bytes, read_calls) = crate::unity::take_read_bytes();
-        eprintln!("ok-extract: PROFILE copied out of the sources {:.1} MiB in {read_calls} reads", read_bytes as f64 / (1 << 20) as f64);
+        crate::profile::line(format!("ok-extract: PROFILE copied out of the sources {:.1} MiB in {read_calls} reads", read_bytes as f64 / (1 << 20) as f64));
     }
     for (name, s) in stages.map(crate::appearance::timings::Capture::finish).unwrap_or_default() {
         eprintln!("ok-extract: STAGE {name:28} {:8.1}ms x{} max {:.1}ms", s.total_ms, s.calls, s.max_ms);
