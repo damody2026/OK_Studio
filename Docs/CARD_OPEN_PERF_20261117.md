@@ -93,6 +93,17 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
    全新建置 5.49 s**（2026-11-24，第十节）。所以要嘛两边都 incremental、要嘛两边都全新建，不然量到的是
    建置方式的差，不是改动的代价。`Tools/ok-extract/build-release.cmd`（Unreal 连结的那份 `ok_extract.lib`）
    也吃同一个 profile，所以这条对游戏里的时间一样成立。
+4b. **`ok-card-open-bench` 的数字只代表 bench，不代表读卡器**（第三次踩到同一个教训，2026-11-24）。
+   同一张卡（`Komazoku Megumin (2).png`）、**同一套服装（outfit 0）**、同一个庫、机器空着：
+   bench `--sequence` **1.30 s**，读卡器 **3.0～4.1 s**（启动时第一次开 4.08 s，闲置后再开两次 3.02／2.99 s，
+   所以不是启动争用）。两边 `OK_PROFILE` 的工作件数一样（`segment item decode 16x`），读卡器那边花在解码的
+   CPU 还更少（845～919 ms vs bench 1680 ms，都是跨执行绪加总），时间却多两秒，而且都压在
+   `clothes options`（1446 ms）与 `clothes renderer map`（1485 ms）上——bench 的整个 `clothes` 只有 140 ms。
+   **所以读卡器那条路是在等，不是在多做**，还没定案等的是什么（装了 mod 的服装 bundle 的 I/O，还是 UE 行程里
+   那两段没走到并行）。在定案之前：**基准表上的秒数要标明是 bench 的**，要谈使用者感受到的开卡时间就得量读卡器
+   （`reader_launch` ＋ `OK_PROFILE=1`，取该卡第一笔 `extract_card_outfit TOTAL`；读卡器之后还会在背景把同一张卡
+   再开 2～3 次做 clothing warm，后面那几笔不是同一回事）。
+
 5. 会改变输出位元组的改动（例如缩小底图）**不适用**第 3 条，要改成目视＋平均 RGB 绝对差＋贴图记忆体。
 6. **机器吵的时候改用确定性指标**：其他 session 同时在跑时，同一设定的冷开 wall 落在 1.46–2.79 s，
    100 ms 级的差异量不出来。`OK_PROFILE` 现在会印「这次开卡从零做了几件、其中几件是同一件做第二次」
@@ -682,6 +693,9 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 
 ## 七、标准冷开基准：改到开卡路径之后跑这一条（2026-11-19）
 
+**这条基准量的是 bench，不是读卡器**：同一张卡同一套服装，bench 1.30 s 时读卡器是 3.0 s（第三节 4b），
+所以它的用途是「别让开卡路径悄悄变慢」的回归闸门，不是使用者感受到的开卡时间。要谈后者就得量读卡器。
+
 开卡路径已经接近这个架构的下限（第一、四节：整条串行链全做完也只约 −13%，而且要五到六次同等规模的重构），
 所以这条线现在的价值**不在再榨 2%，而在别让它悄悄变慢**。一行命令：
 
@@ -1028,3 +1042,23 @@ F 组 65551a150 带进来的既有失败，和这笔无关）。两个 UE 目标
 5.49 s（+3.6%，当轮旧二进位自己的散布就有 5%）**。`Cargo.toml` 的 `[profile.release] incremental = true` 是全专案共用的，
 `build-release.cmd`（Unreal 连结的那份）也吃它，所以 A／B 比时间一定要两边同样的建置方式，不然会把 codegen 的漂移
 当成改动的代价。
+
+### unanswered 的分类：什么该问 mods 索引、什么不该（2026-11-24）
+
+打包版 `Release1124e` 的实测把 `OKMODS unanswered` 的噪音暴露出来：伊莉雅那张卡印了八行，其中只有一行是真缺件。
+分三类，判准和证据如下（证据都是直接读 `D:\KoikatuSunshinezz\mods` 里那几个 archive 的 `manifest.xml`）：
+
+| 这个 id 是什么 | 例子 | 怎么判 | 现在怎么报 |
+|---|---|---|---|
+| 安装目录**自己要迁移掉**的旧 id | `kks.co_bra_00`、`kks.co_shoes_35` | 索引新增的 `migration` 表（`guidOld`／`migrationType`，219 列）：`kks.backport.clothes.zipmod` 的 `MigrateAll`、`[KKS]KK_Backport_Compatibilty.zipmod` 的 `StripAll` | `OKMODS migrated guid: ...`，不算缺件 |
+| UncensorSelector 的**部件 id**，不是 zipmod GUID | `SAC.clit`／`SAC.clit2`／`SAC.innie`／`SAC.innie2`／`SAC.roastie2` | 它们只出现在 UncensorSelector 自己的 manifest 里（`<body><guid>`、`<migration><guidUncensor>`），不是任何 archive 的 `<guid>`；用 `uncensor_guid_known`（庫的 `uncensor_v1`，25 个包，memo 过）问 | `OKMODS uncensor part: ...`，不算缺件 |
+| **真的没装** | `kiyoubi. illya` | 索引里没有，整棵树的 manifest 里也搜不到 | `OKMODS unanswered guid: ...`（真缺件） |
+
+伊莉雅那张卡于是从 8 行变成 **1 行**（`kiyoubi. illya`），而且逐位元闸门不动（原作卡 21/21、OK 卡 42/42）——
+分类只改怎么讲，不改怎么解析。`migration` 表走同一次建庫的走访，`--oklib mods-index` 一起产生，schema 升到 2。
+
+**「GUID 被截断」那件不是 bug，是作者自己写的。** `[kiyoubi] BIKKE_v0_1.zipmod` 的 manifest 原文就是
+`<guid>youbi. BIKKE</guid>`（`<author>kiyoubi</author>` 另外一行），所以索引里的 `youbi. bikke` 是忠实的。
+Sideloader 的 GUID 是作者自订字串，7273 个键里有 **1704 个**含空白或 `[a-z0-9._+-]` 以外的字元
+（`0083_apex legend`、`3d scans`、`6607asdg eye`…），所以「看起来怪」不能当成解析坏了的判准。
+`kiyoubi. illya` 同理：它是伊莉雅那张卡自己写的 id，整棵树里没有任何 archive 提到 illya，就是没装。

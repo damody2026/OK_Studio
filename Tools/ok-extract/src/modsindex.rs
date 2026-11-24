@@ -24,7 +24,7 @@ use rusqlite::{Connection, OpenFlags};
 
 pub const DB_FILE: &str = "mods_index.db";
 /// Bumped when the tables change: an older file is ignored (and reported), never half-read.
-const SCHEMA: i64 = 1;
+const SCHEMA: i64 = 2;
 
 #[derive(Default)]
 pub struct Index {
@@ -34,6 +34,10 @@ pub struct Index {
     pub guids: HashMap<String, Vec<(String, String)>>,
     /// lower-case `abdata/...unity3d` -> every archive shipping it, in walk order
     pub overrides: HashMap<String, Vec<String>>,
+    /// `(guidOld, migrationType, archive)`: which legacy ids the installation migrates away, and who says so. Not a
+    /// resolution path (nothing is stripped because of this) -- it is how an open tells "this id is gone by design"
+    /// from "this mod is missing", so a `StripAll`-ed id does not drown the real gaps in `OKMODS unanswered`.
+    pub migrations: Vec<(String, String, String)>,
 }
 
 /// Why every candidate and not the winner: an original card's open does not see the whole installation. It sees its
@@ -49,15 +53,19 @@ pub fn build(mods_dir: &Path) -> Index {
     // `or_insert`, the GUID map by replacing only on a strictly higher rank), so sorting here handed a bundle
     // shipped by two archives to a different one and six original-card outfits came out different.
     let zips = crate::mods::all_zipmods(mods_dir);
-    let rows: Vec<(String, Vec<(String, String)>, Vec<String>)> = zips
+    let rows: Vec<(String, Vec<(String, String)>, Vec<String>, Vec<(String, String)>)> = zips
         .par_iter()
         .map(|zip| {
             let rel = relative(mods_dir, zip);
-            (rel, crate::mods::guids_and_versions_from_zipmod(zip), crate::mods::zipmod_override_keys(zip))
+            (rel, crate::mods::guids_and_versions_from_zipmod(zip), crate::mods::zipmod_override_keys(zip),
+                crate::mods::migrations_from_zipmod(zip))
         })
         .collect();
     let mut index = Index::default();
-    for (rel, guids, overrides) in rows {
+    for (rel, guids, overrides, migrations) in rows {
+        for (old, kind) in migrations {
+            index.migrations.push((old.to_ascii_lowercase(), kind, rel.clone()));
+        }
         for (guid, version) in guids {
             index.guids.entry(guid.to_ascii_lowercase()).or_default().push((rel.clone(), version));
         }
@@ -96,7 +104,9 @@ pub fn write(lib: &Path, mods_dir: &Path, index: &Index) -> Result<(usize, usize
          CREATE TABLE guid(guid TEXT NOT NULL COLLATE NOCASE, version TEXT NOT NULL, archive INTEGER NOT NULL);
          CREATE INDEX guid_lookup ON guid(guid);
          CREATE TABLE override(bundle TEXT NOT NULL COLLATE NOCASE, archive INTEGER NOT NULL);
-         CREATE INDEX override_lookup ON override(bundle);",
+         CREATE INDEX override_lookup ON override(bundle);
+         CREATE TABLE migration(guid_old TEXT NOT NULL COLLATE NOCASE, kind TEXT NOT NULL, archive INTEGER NOT NULL);
+         CREATE INDEX migration_lookup ON migration(guid_old);",
     ).map_err(err)?;
     // `archive.id` IS the walk position, so every query orders candidates by it and no row carries an order of its own.
     let mut ids: HashMap<&str, i64> = HashMap::new();
@@ -130,6 +140,11 @@ pub fn write(lib: &Path, mods_dir: &Path, index: &Index) -> Result<(usize, usize
                     override_rows += 1;
                 }
             }
+            let mut migration = tx.prepare("INSERT INTO migration(guid_old, kind, archive) VALUES(?1, ?2, ?3)").map_err(err)?;
+            for (old, kind, rel) in &index.migrations {
+                let Some(id) = ids.get(rel.as_str()) else { continue };
+                migration.execute(rusqlite::params![old, kind, id]).map_err(err)?;
+            }
             let mut meta = tx.prepare("INSERT INTO meta(key, value) VALUES(?1, ?2)").map_err(err)?;
             for (k, v) in [
                 ("schema", SCHEMA.to_string()),
@@ -138,6 +153,7 @@ pub fn write(lib: &Path, mods_dir: &Path, index: &Index) -> Result<(usize, usize
                 ("mods_dir", tree_key(mods_dir)),
                 ("guid_rows", guid_rows.to_string()),
                 ("override_rows", override_rows.to_string()),
+                ("migration_rows", index.migrations.len().to_string()),
                 ("built_at_unix", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs().to_string()).unwrap_or_default()),
                 ("tool", "ok-extract --oklib shared-ignore / mods-index".to_string()),
@@ -199,6 +215,14 @@ impl Db {
         else { return Vec::new() };
         st.query_map([bundle], |r| r.get::<_, String>(0))
             .map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+    }
+
+    /// `(migrationType, archive)` if some installed archive migrates this legacy id away.
+    fn migration(&self, guid: &str) -> Option<(String, String)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut st = conn.prepare_cached(
+            "SELECT m.kind, a.path FROM migration m JOIN archive a ON a.id = m.archive WHERE m.guid_old = ? ORDER BY a.id LIMIT 1").ok()?;
+        st.query_row([guid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()
     }
 
     /// Does the database name this archive (relative to `mods/`)? One indexed lookup.
@@ -366,5 +390,45 @@ pub fn refuse(what: &str, detail: &str) {
     static SAID: AtomicU64 = AtomicU64::new(0);
     if SAID.fetch_add(1, Ordering::Relaxed) < 20 {
         crate::profile::line(format!("OKMODS unanswered {what}: {detail} (library index; the tree is never walked on an open)"));
+    }
+}
+
+/// What an id the GUID index cannot place actually is. Only `Missing` is a real gap -- a part the card asks for and
+/// nothing provides. The other two used to be printed as gaps too, which drowned the real ones (the packaged
+/// Release1124e run, 2026-11-24: five `SAC.*` plus two `kks.*` lines and one genuinely missing mod).
+pub enum Unplaced {
+    /// Some installed archive declares a migration for this id (`StripAll` of `kks.co_bra_00` by the KKS backport
+    /// package): it is a legacy id the installation drops by design, not a mod to go looking for.
+    Migrated { kind: String, by: String },
+    /// An UncensorSelector body/genital id (`SAC.innie`, `SAC.clit`), which lives in that plugin's own manifests, not
+    /// in a zipmod `<guid>`: the mods index is the wrong place to ask.
+    UncensorPart,
+    Missing,
+}
+
+/// Classify before reporting. `game_root` may be `mods/`'s parent; the uncensor question is answered from the
+/// library's own `uncensor_v1` pack (25 archives, memoized), never by walking the tree.
+pub fn classify(game_root: &Path, guid: &str) -> Unplaced {
+    let key = guid.to_ascii_lowercase();
+    if let Some(db) = active() {
+        if let Some((kind, by)) = db.migration(&key) { return Unplaced::Migrated { kind, by }; }
+    }
+    if crate::mods::uncensor_guid_known(game_root, guid) { return Unplaced::UncensorPart; }
+    Unplaced::Missing
+}
+
+/// Report an id the GUID index could not place, as what it is. Returns whether it is a real gap.
+pub fn report_unplaced(mods_dir: &Path, guid: &str) -> bool {
+    let game_root = mods_dir.parent().unwrap_or(mods_dir);
+    match classify(game_root, guid) {
+        Unplaced::Migrated { kind, by } => {
+            crate::profile::line(format!("OKMODS migrated guid: {guid} ({kind} by {by}; a legacy id, not a missing mod)"));
+            false
+        }
+        Unplaced::UncensorPart => {
+            crate::profile::line(format!("OKMODS uncensor part: {guid} (UncensorSelector id, not a zipmod GUID)"));
+            false
+        }
+        Unplaced::Missing => { refuse("guid", guid); true }
     }
 }

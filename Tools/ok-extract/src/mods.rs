@@ -55,6 +55,27 @@ fn strip_all_manifest_for_game(xml:&str,kk:bool)->Vec<String> {
         .filter_map(|n|n.attribute("guidOld")).map(str::trim).filter(|s|!s.is_empty()).map(str::to_owned).collect()
 }
 
+/// Every migration an archive declares: `(guidOld, migrationType)`. The library's index carries these for the whole
+/// tree, so that an open can tell a legacy id the installation migrates away (`kks.co_bra_00` is `StripAll`-ed by
+/// `[KKS]KK_Backport_Compatibilty.zipmod`) from a mod that is really missing. Not the game filter of
+/// `strip_all_manifest_for_game`: this is for saying what an unresolved id *is*, so both games' entries are listed.
+pub(crate) fn migrations_from_zipmod(path:&Path)->Vec<(String,String)> {
+    let mut out=Vec::new();
+    for xml in zipmod_manifests(path).iter() {
+        let Ok(doc)=roxmltree::Document::parse(xml) else{continue};
+        let root=doc.root_element();
+        if root.tag_name().name()!="manifest" {continue;}
+        for info in root.children().filter(|n|n.has_tag_name("migrationInfo")).flat_map(|n|n.children())
+            .filter(|n|n.has_tag_name("info")) {
+            let (Some(old),Some(kind))=(info.attribute("guidOld"),info.attribute("migrationType")) else{continue};
+            let old=old.trim();
+            if old.is_empty() {continue;}
+            out.push((old.to_owned(),kind.trim().to_owned()));
+        }
+    }
+    out
+}
+
 fn read_manifest(reader:&mut impl Read)->std::io::Result<String> {
     let mut bytes=Vec::new();reader.read_to_end(&mut bytes)?;
     let invalid=||std::io::Error::new(std::io::ErrorKind::InvalidData,"invalid manifest encoding");
@@ -395,7 +416,8 @@ fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<S
         for g in w {
             match crate::modsindex::guid_archive(mods_dir, g) {
                 Some(p) => { out.insert(g.clone(), p); }
-                None => crate::modsindex::refuse("guid", g),
+                // Not placed: say what it is (a migrated legacy id, an UncensorSelector part, or a real gap).
+                None => { crate::modsindex::report_unplaced(mods_dir, g); }
             }
         }
         return out;

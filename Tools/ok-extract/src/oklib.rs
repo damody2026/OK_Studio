@@ -1934,8 +1934,15 @@ pub fn card_absent_mods(game: &Path, card: &Path) -> Result<Vec<String>, String>
     if wanted.is_empty() { return Ok(Vec::new()); }
     let configured = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.is_dir());
     let game = if game.join("mods").is_dir() { game } else { configured.as_deref().unwrap_or(game) };
-    let found = with_zipmods(&lib, game, card, || Ok(crate::mods::find_guids(&lib.join("mods"), Some(&wanted))))?;
-    let mut absent: Vec<String> = wanted.into_iter().filter(|g| !found.contains_key(g)).collect();
+    // Only ids that are really missing: a legacy id the installation migrates away (`kks.co_bra_00`) and an
+    // UncensorSelector part id (`SAC.innie`) are not mods to go looking for, and listing them on the reader's screen
+    // or in the MCP answer would bury the one that matters (`modsindex::classify`, 2026-11-24).
+    let mut absent = with_zipmods(&lib, game, card, || {
+        let found = crate::mods::find_guids(&lib.join("mods"), Some(&wanted));
+        Ok(wanted.iter().filter(|g| !found.contains_key(*g))
+            .filter(|g| matches!(crate::modsindex::classify(game, g), crate::modsindex::Unplaced::Missing))
+            .cloned().collect::<Vec<String>>())
+    })?;
     absent.sort();
     Ok(absent)
 }
