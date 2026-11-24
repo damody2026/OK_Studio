@@ -11,9 +11,21 @@
 - 分組規則、`--program-only` 打包流程、玩家安裝說明，在 E 樹 `E:\OpenKoikatsu\Docs\PROGRAM_ONLY_UPDATE_PLAN.md`（MOD 框架 session 寫的），這份不重寫那部分，只補它缺的四塊與必要的修正。
 - 相關程式碼：`Tools/ok-extract/src/oklib.rs`、`okstrict.rs`、`modsindex.rs`、`ffi.rs`；`Tools/package_studio_release.lua`、`Tools/package_street_social.lua`、`Tools/original_data_manifest.json`；`Tools/run_card_reader_development.lua`、`Tools/street_stage.lua`；`Source/OpenKoikatsu/OKGalleryWidget.cpp`（`CheckAbsentMods` 是現成的畫面通知樣板）。
 
-## 0. 為什麼非做不可：靜默少件的實際路徑
+## 0. 為什麼非做不可：已經發生過一次
 
-不是假想。`modsindex.rs` 現在是這樣：庫的 `mods_index.db` schema 不是這版程式要的，`Db::open` 只寫一行 `OKMODS ... is schema N, this build needs M` 到 profile log，然後**回 `None`**。於是 `available()` 是 false，開卡的 GUID 查詢問不到答案，而打包版沒有遊戲 `mods/` 可走——卡片指名的那件衣服就是沒穿上，畫面上只會說「已加载3D」。
+**2026-11-24，第一份程式包就撞上了。** MOD 框架那邊打出 `E:\OKPackage\Studio-20261124-program-f`（1.5 GB，zip 782,503,378 bytes），疊到 `release-e` 的硬連結複本（`E:\OKPackage\overlay-test-1124f`）實測：
+
+- 程式包本身是對的：新 stage 被挑中、OK 卡正常、原包檔案雜湊沒變。
+- **原作卡出事**：`release-e` 的 `mods_index.db` 是 **schema 1**，新程式（含 `717297c3b`）要 **schema 2**，索引被讀成 **0 個 GUID**。伊莉雅變成「缺 42 個 mod」、KK_019440「缺 18 個」——**而且卡照樣開起來**。
+- 第一版自檢**只驗 OK 卡**，而 OK 卡不經過 mod 索引，所以沒抓到；補了「比對 `--resources-from` 那包 `mods_index.db` 的 `meta.schema` 對原始碼的 `SCHEMA`」才擋住、不產生 zip。那份錯的 zip 已改名 `Studio-20261124-program-f.DO-NOT-USE-needs-schema2-resources.zip`。
+
+這案例把三件事從「假想」變成「已知」，所以它們是這份計畫的硬要求：
+
+1. 驗收**必須 OK 卡與原作卡各測一次**（§8）。只驗 OK 卡會漏掉，兩種卡的資料來源不一樣。
+2. 子版本要用**機器實際讀出來的值**比程式原始碼裡的常數（§2.1）。`meta.schema` 對 `modsindex::SCHEMA` 就是對的形狀；只比一個人工整數會漏。
+3. 要防的樣子是**「照樣開起來但缺 42 個 mod」**，不是崩潰。所以閘在**開卡之前**判，而且「索引退化成 0」和「真的沒裝那些 mod」的畫面訊息必須分開（§4.5）——搞混會讓使用者去找根本不存在的 mod。
+
+底下是同一條路徑在程式碼裡的樣子。`modsindex.rs` 現在是這樣：庫的 `mods_index.db` schema 不是這版程式要的，`Db::open` 只寫一行 `OKMODS ... is schema N, this build needs M` 到 profile log，然後**回 `None`**。於是 `available()` 是 false，開卡的 GUID 查詢問不到答案，而打包版沒有遊戲 `mods/` 可走——卡片指名的那件衣服就是沒穿上，畫面上只會說「已加载3D」。
 
 同一類的還有：`oklib.json` 的 `version`（現在 2）、封卡資源包 `okLc` 的 `CARD_PACK_VERSION`（現在 2）、`shared_mods.txt` 決定庫能服務哪些 archive（E 樹 `7e7e4b7aa` 改過共用／非共用劃分，直接影響封卡帶什麼 bundle）。這些都是**程式產生、程式讀回**的格式，而程式包只有 1.41 GiB、資源包 34.7 GiB，一旦允許分開更新，兩邊版本就會錯開。
 
@@ -270,6 +282,20 @@ mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪�
   Tools\ok-extract\target\release\ok-extract.exe D:/KoikatuSunshine --oklib mods-index Content\IndependentResources\base_v1
 ```
 
+### 4.5 「資源包太舊」和「你少裝這些 mod」不能講成同一件事
+
+這是 §0 那個案例最陰的一面：索引讀成 0 個 GUID 時，`CheckAbsentMods`（`OKGalleryWidget.cpp`）會老老實實回報「缺 42 個 mod」，而那 42 個**使用者一個都不缺**——他會去網路上找根本不存在的問題。所以規則：
+
+| 狀態 | 畫面上講什麼 |
+|---|---|
+| 閘有 `block` 級的索引問題（`mods_index_schema`／`mods_index_missing`） | 只講資源包版本。**完全不要列缺哪些 mod**——那份答案不可信 |
+| 閘過（或只有 `mods_index_foreign`） | 照 `CheckAbsentMods` 現在那樣列缺的 GUID 與補法 |
+| `mods_index_foreign`（warn） | 列缺件，但**加一句「索引不是這個遊戲目錄建的，這份清單可能不準」** |
+
+實作上：`CheckAbsentMods` 開頭先看閘的結果，有 `block` 級索引問題就**不跑**（連 `OKBusy` 都不用掛），直接讓資源包那則通知說話。另外加一道便宜的健全性檢查——索引**可用但 0 個 GUID**（`available()` 為真而 `all_guids()` 是空的）是退化狀態，不是「這台真的沒裝 mod」，要當成 `block` 講「資源包的 mod 索引是空的」，不要讓它變成一張 42 項的假缺件清單。
+
+這一條也是為什麼閘要在開卡**之前**：開完才報的話，使用者已經看到那張假清單了。
+
 ## 5. 覆蓋安裝的兩個現場問題
 
 ### 5.1 舊 `.stage` 的清理
@@ -333,6 +359,7 @@ mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪�
 - `PACKAGE.json` 的 `requires_resources_min/max` 等於 `ok-extract --oklib resources-stamp --program` 印的值（不是 lua 寫死的）。
 - 對 `--resources-from <完整包資料夾>`（預設找最新的 full 包）跑一次 `resources-check`，退出碼必須 0；不通過就打包失敗，訊息說「要先發新的完整包」。
 - 完整包：`RESOURCES.json` 的 `parts` 等於包裡實際檔案讀出來的值（防打包腳本抄錯）。
+- **自檢開卡要 OK 卡與原作卡各一張**（原作卡要指名第三方 mod 的）。§0 那個案例就是第一版自檢只驗 OK 卡而漏掉的；MOD 框架補的「比 `--resources-from` 那包的 `meta.schema` 對原始碼的 `SCHEMA`」是對的方向，`resources-check` 做好之後就由它取代那段臨時比對。
 
 ## 7. e-cardload 的拍板（2026-11-24）與還沒定的那一條
 
@@ -350,14 +377,28 @@ mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪�
 | C ABI 回 `const char*` | 照 `ok_card_absent_mods` 的 **capacity 慣例** |
 | 指紋表含 `shared_mods.txt` 樣板 hash | **只釘常數** |
 
-**還沒定的一條（我在送出問題之後才看出來，要再問它）**：三組的開發樹庫是本機從遊戲轉的，旁邊**沒有 `RESOURCES.json`**，照字面規則 `no_resources_json` 是 `block`，那就是三組都開不了卡。我提的規則是「庫旁邊沒有 `RESOURCES.json` 時只比子版本、不比人工整數，且 `no_resources_json` 在開發樹不算 block；用庫的上面有沒有 `.git` 與 `Tools/base_library_shared_mods.txt` 分辨開發樹」。這條定錯的代價最大（§9 第一項），所以**實作前要它點頭**。
+### 7.1 和 MOD 框架的 `RESOURCES.json` 對接
+
+MOD 框架那邊已經定了（不等這份）：分組規則、`--program-only` 流程、`RESOURCES.json` **只記事實**（各資源組大小、`oklib` version、`shared_mods.txt` 與 `mods_index.db` 的 SHA-256）、安裝說明含關哪些 exe 與拆 junction 的步驟。對接上要講清楚兩件：
+
+- **記事實和比事實是兩回事**。`RESOURCES.json` 裡放 `shared_mods.txt` 的 SHA-256 當事實是好的（出問題時對帳用），但**閘不比它**（§2.1：內容跟著本機裝了哪些 mod 變）。`mods_index.db` 的 SHA-256 同理：記著可以，閘比的是 `meta.schema`，不是整個檔的雜湊——重建一次索引雜湊就變，但相容性沒變。
+- **我需要它多記一個欄位**：`version`（人工整數）。理由在 §2.3：有些不相容不落在任何子版本上（模型檔的內部編碼換了而 `oklib.json` 的 version 沒動），那時人工整數是唯一的表達方式。它是「事實」的一種——這包是按哪一版格式打的。如果 MOD 堅持不放，閘就只剩子版本可比，§0 那個案例照樣擋得住，但上面那類改動就擋不住了；這個折讓要明寫在 `PROGRAM_ONLY_UPDATE_PLAN.md` 裡，不要默默少一層。
+
+### 7.2 還沒定的一條
+
+**（我在送出問題之後才看出來，要再問 e-cardload）**：三組的開發樹庫是本機從遊戲轉的，旁邊**沒有 `RESOURCES.json`**，照字面規則 `no_resources_json` 是 `block`，那就是三組都開不了卡。我提的規則是「庫旁邊沒有 `RESOURCES.json` 時只比子版本、不比人工整數，且 `no_resources_json` 在開發樹不算 block；用庫的上面有沒有 `.git` 與 `Tools/base_library_shared_mods.txt` 分辨開發樹」。這條定錯的代價最大（§9 第一項），所以**實作前要它點頭**。
 
 ## 8. 怎麼驗這個閘真的有效
 
 全部在一個**完整包的複本**上做（不要動本機開發樹的 `base_v1`），每項都要看三件事：擋不擋、訊息對不對、`resources-check` 的退出碼對不對。
 
-| # | 人造情境 | 預期 |
+**每一條 `block` 情境都要 OK 卡與原作卡各測一次。** §0 那個案例就是只驗 OK 卡而漏掉的：OK 卡不經過 mod 索引，照樣開得起來，問題全在原作卡那側。原作卡要用**指名第三方 mod 的**（伊莉雅那張；它在 schema 1 的庫上會假報「缺 42 個 mod」），不要用只用原作資源的卡——那種卡不問索引，驗不到東西。
+
+**現成的素材**：MOD 框架留著 `E:\OKPackage\overlay-test-1124f`（`release-e` 的硬連結複本疊上 `Studio-20261124-program-f`），那就是情境 0 的現場，直接拿來驗，不用自己造。
+
+| # | 情境 | 預期 |
 |---|---|---|
+| **0** | **真實案例**：`overlay-test-1124f`（schema 1 的資源 ＋ 要 schema 2 的程式） | 退出碼 2、`mods_index_schema`；**原作卡開卡被擋**並講「資源包太舊」；**畫面不出現任何「缺 N 個 mod」清單**（§4.5）；OK 卡也一樣被擋（同一個庫） |
 | 1 | 不動任何東西（對照組） | 退出碼 0；讀卡器開原作卡與 OK 卡都正常；畫面沒有通知 |
 | 2 | `RESOURCES.json` 的 `version` 改成 2（比程式舊） | 退出碼 2；啟動器印「資源包太舊」並 `pause`；畫面紅字常駐；開卡被擋 |
 | 3 | `version` 改成 9（比程式新） | 退出碼 2；訊息是「請更新**程式**」（不是叫人更新資源） |
@@ -369,6 +410,7 @@ mod 索引不是這個遊戲目錄建的，開原作卡會慢，而且「缺哪�
 | 9 | 刪掉 `models/.gitignore` | 退出碼 2；`models_ignore_missing` |
 | 10 | 設一個**別台機器**的遊戲目錄（索引一個 archive 都對不上） | 退出碼 **0**、level `warn`、`mods_index_foreign`；**OK 卡照開**；黃字通知、可收起 |
 | 11 | 把 `sources.okidx` 改名（selftest 失敗） | 退出碼 2；`sources_missing` 或 `selftest_failed` |
+| 11b | 索引**可用但 0 個 GUID**（清空 `guid` 表，schema 留 2） | 退出碼 2；講「mod 索引是空的」；**不出現假缺件清單**（§4.5） |
 | 12 | 情境 5 加上 `OK_RESOURCES_CHECK=off` | 卡開得起來；log 每次開卡都印「相容性閘已關閉」 |
 | 13 | 情境 2 的複本上跑 `--program-only --resources-from <該複本>` | 打包失敗，訊息說要先發新的完整包 |
 | 14 | 把 `modsindex::SCHEMA` 改成 3 但不動 `RESOURCES_MIN/MAX` | `cargo test` 紅，訊息就是 §2.2 那段 |
