@@ -1378,3 +1378,105 @@ PROFILE mods tree rewalk \\?\D:\KoikatuSunshinezz\mods available=1 changed=1
 2. **背景线程式的 watch 是异步的 → 会答过期清单。** 第一版让背景线程自己收变更、主执行绪只读计数，
    `sqlcache::inventory` 那条「写完档立刻问」的测试就偶发失败（555/1 → 554/2）。那不只是测试脆弱：
    刚装好的 zipmod 可能在下一次开卡被漏掉。所以最终版改成「event（同步）＋计数」两个一起看。
+
+## 十五、第一张卡那 0.7 秒：同一棵树被 stat 两遍，以及每条执行绪各走一遍（2026-11-25，E 树）
+
+§十四 把「每次开卡重走安装目录」修掉之后，**第一张卡**仍然付着 704 ms 的「建视图身分」
+（`view: zip_list_sig` 510.7 ms ＋ `view: inventory_signature` 194.1 ms，读卡器 editor build、Tohru、
+outfit 0、`OK_LOAD_PROFILE=1 OK_PROFILE=1`）。这一节把它拆成四笔，四笔都量过、都修了，而且
+**没有一笔是「少做该做的事」**：它们做的是同一件事做两遍、或每条执行绪各做一遍。
+
+### 一、`DirEntry::metadata()` 把枚举已经给的东西丢掉（~250 ms／棵）
+
+Windows 的 `FindNextFileW` 连同档名一起给大小、时间与属性，`std::fs::DirEntry::metadata()` 因此
+**不需要再一次系统呼叫**。但 `gamefs::DirEntry` 只留 `path` 与 `dir`，`metadata()` 转去
+`symlink_metadata(path)` —— 每个档一次开档。于是走一棵 7327 个 entry 的树要 stat 7327 次，
+而紧接着 `catalog_sig` 为了算签名**再 stat 一遍那 7296 个 archive**。
+
+一条 PowerShell 就量得出这个比例（同一棵树、三轮）：
+
+| 做法 | 第 1 轮 | 第 2 轮 | 第 3 轮 |
+|---|---:|---:|---:|
+| 只枚举档名 | 79 ms | 104 ms | 50 ms |
+| 枚举＋用枚举带来的大小／时间 | 71 ms | 36 ms | 36 ms |
+| 枚举＋逐档另外 stat（修之前的做法） | 293 ms | 244 ms | 253 ms |
+
+改法两处：`gamefs::read_dir` 把枚举的 metadata 带进 `DirEntry`，`metadata()` 在
+**闸道没有话要说的路径**（没有库，或路径不在库根下）直接回它；`collect_zipmods_walk` 顺手把每个 archive 的
+（大小、秒）带出来，`catalog_sig_stats` 吃这份，不再自己 stat。库根下的路径照旧问闸道（record／replay 的
+记帐要跑）。单元测试 `a_walk_kept_signature_equals_the_stating_one` 钉住「两种算法同值」—— 这个值会进
+`load_mods_catalog` 的快取档名，不能漂。
+
+**量到的**：`D:/KoikatuSunshinezz\mods`（7327 entry）**470 → 37 ms**。
+
+### 二、库的「记录树」第一次被问要 350 ms，而那是在 stat 库里的模型档（~280 ms）
+
+同一笔 `view: zip_list_sig` 里还有第二棵树：库自己记录的 `base_v1\mods`。它不是真目录，所以第一点帮不到它。
+新的读出 `PROFILE view sig recorded ... archives=<n> walk=<a>ms sign=<b>ms` 显示的形状很怪：
+**archives=113（窄视图）却 walk=354.7 ms，而後来 archives=7296 只要 11 ms** —— 所以不是 entry 多，
+是第一次问要付什么一次性的东西。
+
+追下去是 `gamefs::held_zip_names`（列 `mods` 根目录时用来「同一个 archive 不要列两次」）会对
+**全部 7296 个记录 archive** 问 `zip_lacks_models`，而它对每个 archive 的每个模型 entry 呼叫
+`oklib::model_file(dir,id).is_file()` —— 一次到三次 stat，外加 `local_libraries()` 每次都读一次环境变数、
+stat 两个目录。几万次 stat，就是那 280 ms。
+
+改法：`oklib::models_present(dir)` 把 `models/<ab>/*.okmodel` **列一次**（4542 个模型、一次枚举），
+`zip_lacks_models` 问这个集合；`local_libraries` 按库 memo 起来。**只有「问整棵树」这条路吃这份清单**，
+问单张卡自己模型的 `model_file`／`has_model` 一字未动——所以「库里多了一个模型」这件事，除了这条
+本来就已经按 archive memo 一辈子的路，其他地方照旧看档案系统。
+
+**量到的**：`base_v1\mods` 第一次 **354.7 → 69.7 ms**（`view: zip_list_sig` 合计 510.7 → 107.5 ms）。
+
+### 三、一次开卡的来源签名，九条执行绪各算一遍（~220 ms）
+
+`unity::references::inventory_signature` 走 `root/abdata` ＋ `root/mods`（1255 个来源）并逐个问 metadata，
+**每次 28 ms 上下，而一次开卡被问 9 次**（`SPOT view: inventory_signature 194.1ms x9`）——因为那个 epoch 是
+thread_local，九条执行绪各自算一遍同一个答案。
+
+改法：答案改成行程共用，键是（根、挂载的卡包、`gamefs::fallback_generation()`），**新鲜度由两件事保证**：
+真目录带一个目录 watch（§十四 之后 watch 是行程共用且可靠的），答案只在 watch 没看到变动时成立；
+库的记录来源没有目录可监看，但 replay 期间它不会变，会随卡变的是卡包与 zipmod fallback，而那两个在键里。
+**thread_local 的 epoch 一字未动**：一条执行绪还是跟「自己上次看到的」比，因为它在变动时要清的
+（`clear_bundle_cache`、`clear_entry_memo`）是自己那份 thread-local 快取。
+两个现成的测试正好钉住新鲜度（`watched_epoch_skips_walk_until_installed_sources_change`、
+`external_script_epoch_tracks_older_dependency`：写完档立刻问，签名必须变），**两个都过**。
+
+**量到的**：`view: inventory_signature` **194.1 ms x9 → 11.1 ms x1**。
+
+### 四、合计与「闸门看不见这一批」
+
+| 第一张卡（读卡器 editor build、Tohru、outfit 0） | 修之前 | 修之后 |
+|---|---:|---:|
+| `view: zip_list_sig` | 510.7 ms x6 | **107.5 ms x6** |
+| `view: inventory_signature` | 194.1 ms x9 | **11.1 ms x1** |
+| 两者合计（开卡 worker 上的串行时间） | **704 ms** | **119 ms** |
+| `OKGUI_WORKER open_ms` | 2057 ms | 1465／1572 ms（单趟，editor 噪声大） |
+| 第二、三张卡的同两笔 | 原样 | 原样（它们本来就便宜） |
+
+**正确性：逐位元组闸门过了，但它看不见这一批，所以那个「全部相同」不算证据。**
+`ok-card-open-bench --fresh-dump` ＋ `OK_FRESH_STATES=1`，原作卡 126 个 dump、OK 卡 252 个 dump，
+新旧（`OK_TREE_STAT_EAGER=1`）两边**全部逐位元组相同**。但照第三节那条规矩补的**两个阳性对照都没有
+让任何一个位元组变**：
+- `OK_MODELS_PRESENT_CONTROL=1`（清单回「库里一个模型都没有」）→ 126 个 dump 仍然全同。
+- `OK_SIG_CONTROL=1`（所有树／来源签名塌成同一个值，也就是花火 2026-11-12 那个 bug 的形状）→ 仍然全同。
+
+**所以要说清楚这批改动为什么安全，靠的不是那 378 个 dump。** 签名只是 memo 的键，而这个 codebase 里
+每个相关的 memo 键**本来就还带着卡包与 fallback 身分**（`view_memo`、`fallback_generation`），所以签名
+塌掉也不会让一张卡读到另一张卡的东西 —— 这同时解释了对照为什么不动位元组，也说明签名这条路
+**在输出上本来就是中立的**。能看见「跨卡串味」的闸门是另一个：`Tools\ok_convert_order_check.lua`
+（四张卡正反序，而它的基准是「一张卡一个行程」，所以 PASS 等于「行程内重用 == 独立行程」）。
+那一关的结果记在下面。
+
+**真正把关的是次序关卡**，而它自己先坏了（ERROR_LOG 2026-11-25）：`absent=(.*)$` 贪婪吃掉后面的
+`missing=` 栏位，于是空的 absent 读成 `[\tmissing=]`，八项全部误报 FAIL ——
+**而那八项的 digest 与 parts 其实和文件记的基准完全相同**。改成只取那一个栏位之后
+`Tools\ok_convert_order_check.lua` **PASS**：四张卡正序与反序（同一行程依序转）转出来的 OK 卡，
+开起来都和「一张卡一个行程」的基准逐位元组相同，四个 digest 与 parts 也和 `e7b34e6f2` 记的基准一致
+（klara `23a1e5f8…` 37、lan `bdd342cf…` 64、keqing `0f6c9f76…` 34、hu_tao `734a2acc…` 28，全部 `absent=[]`）。
+**这一关才看得见「一张卡看到另一张卡的树」**，所以这批改动的正确性证据是它，不是那 378 个 dump。
+
+**留下的开关**：`OK_TREE_STAT_EAGER=1` —— 大小、时间、模型是否存在、来源签名全部回到修之前的做法
+（逐档 stat、每条执行绪各算一遍）。两个阳性对照的开关做完就拿掉了。
+提交 `5405c178d`（本机，未推送）；完整测试 556 passed / 1 failed（既有的
+`appearance::properties::plugins` 那笔），两个 UE Development 目标都建置成功。
