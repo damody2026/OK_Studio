@@ -7722,3 +7722,28 @@ blend `masked` 且 unlit → 配不上任何家族 → `ApplyPartMaterial` 在 `
 
 **下次怎麼避免**：驗收「配種成功」不能只看 log 的成功行，要看那張臉。這一輪三條毛病裡有兩條 log 都是成功的。
 每個孩子都要截圖，或用 `ok-extract --oklib hair-check` 問一句「她有沒有一片畫得出來的頭髮」。
+
+## 2026-11-25（f-breed-hair）`hair-check` 的頭髮判定太窄，把有頭髮的卡判成光頭
+
+**現象**：前一條剛加的 `--oklib hair-check` 把 `jeanne.png`、`jeanne_alter.png` 判成「she is bald」，她們其實都有
+一頭長髮。
+
+**原因**：判定寫成「role 以 hair 開頭，或飾品且 shader kind 是 1／10」。Jeanne 的 mod 頭髮是 `main_item`（kind 8）
+畫的，不在那兩種裡。這個判定同時被打包自檢用來**挑**自檢的卡，所以它不只誤報，還會讓自檢挑不到卡。
+
+**修正**：抽成 `portable::hairdeck::visible_hair_parts`，用既有的 `non_hair_accessory_parts`（HairDeck 拍臉時用來排除
+兔耳、帽子、髮夾的那條規則）反過來認頭髮，不看 shader。fail 時一併列出可見飾品，下次不必再猜。
+
+**下次怎麼避免**：寫「這張卡有沒有 X」的檢查前，先找專案裡已經在分類同一件事的規則（這裡是 HairDeck 的
+「哪些飾品不是頭髮」），不要另立一套 shader kind 白名單。白名單對自己手上那幾張卡永遠是對的。
+
+## 2026-11-25（f-breed-hair）在別人的量測實例上下了 console 指令
+
+**現象**：使用者說「我遊戲還開著，你可以用 mcp 確認」，我就對 `game_instances` 列出的唯一實例 pid 90528 下了
+`ok.OutlineApprox 1`，想看描邊是不是魚鱗面的來源。那是 e-cardload 的開卡效能量測實例（`unreal_slot status` 看得到
+它持有 slot）。第一次想改回去時命令少帶了 `OK_ROOT`，打到別的埠，失敗訊息看起來像「遊戲關了」，就擱著了。
+
+**修正**：後來發現並改回 `ok.OutlineApprox 0`，同時通知 e-cardload 那段時間的量測可能要重跑。
+
+**下次怎麼避免**：動任何不是自己啟動的遊戲實例之前，先 `unreal_slot status` 看它是誰的；只讀（state、screenshot）
+可以，改設定要先問。還有：`ok-game-mcp` 的每一條命令都要帶 `OK_ROOT`，不然它打的是本樹的埠，失敗訊息會誤導。

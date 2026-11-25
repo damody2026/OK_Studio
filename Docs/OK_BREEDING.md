@@ -187,6 +187,59 @@ OK card HairDeck hair not applied: base has no hair material donor
 
 包的基礎庫 `mods_index.db` 原本是 schema 1（11-24 那版程式寫的），新程式要 schema 2，驗收前用 `ok-extract <遊戲> --oklib mods-index <base_v1>` 重建過（舊檔留在 `mods_index.db.schema1.bak`）。下一個完整包會自己帶新的。
 
+## 頭髮：光頭、大小與鱗片（2026-11-25 晚，F）
+
+使用者在打包版配出來的孩子身上看到的，是三件各自獨立的事。十八張街頭女主角卡兩兩配九對，修之前有一對光頭，修之後九對全過
+（`Tools\lua\lua.exe Tools\breed_hair_sweep.lua -Pairs 9 -Game <遊戲>`）。
+
+### 1. 髮型基因只帶遊戲的頭髮槽，孩子就光頭
+
+`lan × luo_tianyi_2024`：孩子開出來一根頭髮也沒有，`skip dummy hair id=500 cat=101 nohairB`。lan 的頭髮是飾品做的，
+所以她的「髮型」欄位是空的（nohairB）；飾品跟著**基礎那一方的服裝**走，不跟髮型基因走。孩子抽到 lan 的髮型（空），
+飾品又來自另一位（她的頭髮在槽裡，不在飾品裡）——兩邊都沒有。
+
+修法：封完卡**實際開孩子**，沒有任何頭髮部件就把髮型改從另一位拿，重配一次（`breed.rs` `bald_card`，只重試一次；
+兩邊都讓她光頭時維持原來的抽籤）。原本只有「她自己的髮型顯示不出來」(`hairstyle_gaps`) 的檢查，對「髮型本來就是空的」
+這種無效。
+
+「有沒有頭髮」的判定抽成 `portable::hairdeck::visible_hair_parts`：頭髮部件，或**不在** `non_hair_accessory_parts`
+裡的飾品。原本 `hair-check` 只認 shader kind 1／10，把 Jeanne 用 `main_item`（kind 8）畫的 mod 頭髮判成光頭——
+打包自檢會因此誤判，也會挑錯自檢用的卡。
+
+### 2. 頭髮比頭小一圈（HairDeck）
+
+子卡的 HairDeck 頭髮像頂小帽子蓋在頭頂，額頭與後頸露出頭皮。量出來：顱骨半寬 0.0817 m，髮絲只伸到 0.071 m。
+`fit()` 按這顆頭的顱寬縮放，但從父母臉畫出來的髮型本身可能就比這顆頭窄。
+
+修法：`build()` 在 fit 之後加一道覆蓋保證——髮絲伸出的最遠距離不到顱半寬時，整個 fit 繞中心放大到剛好蓋住
+（上限 1.25 倍；本來就夠寬的髮型不動）。那張子卡 0.071 → 0.083 m。report 多 `cover_grow`、`widest_strand`。
+
+### 3. 頭髮表面一片片「魚鱗」
+
+每根髮絲是 4 頂點一圈的扁管。`card_vf` 原本**每一圈都封口**：一片橫向的四邊形卡在髮絲裡，和扁管的正面幾乎共面，
+描邊外殼把它推出表面 → 滿頭橫向黑鱗片。只留頭尾兩個封口後乾淨了，順便省掉五分之一的三角預算
+（每根 `2 + 10(n-1)` → `8(n-1) + 4`）。
+
+### 看一張卡的頭髮怎麼坐在頭上
+
+```powershell
+.\Tools\ok-extract\target\release\ok-extract.exe <遊戲> --oklib hair-check <卡>...
+```
+
+印 `OKHAIRCHECK ok|fail`，每片頭髮的 shader kind、blend、三角數，以及 `fit scale`、`cranium_half_x`、頭與頭髮各自的
+包圍盒和 `width ratio`。「頭髮大小不對」不必靠截圖，看這行就知道。
+
+### 驗收（2026-11-25 晚，F）
+
+- 九對（十八張街頭女主角卡）：修前 1 對光頭，修後 9/9 過。
+- 那張帶 HairDeck 頭髮的子卡在讀卡器裡實拍（F 樹 Editor `-game`）：後腦勺的橫向黑鱗沒有了，瀏海是乾淨的髮絲；
+  頭髮包住整顆頭，不再是蓋在頭頂的小帽子。截圖在 `Saved/BreedHairCheck/`。
+- `cargo check --release`（預設與 `--no-default-features`）、`cargo build --release`、`OpenKoikatsuEditor` 與遊戲
+  `OpenKoikatsu`（Win64 Development）都過。`cargo test --release --lib` 555 passed / 1 failed，那一條是
+  [ERROR_LOG](ERROR_LOG.md) 2026-11-24 記過的既有失敗。
+- F 樹的基礎庫本來沒有 `mods_index.db`（開發庫，mod 直接讀遊戲），讀卡器會整張卡擋下來；這輪用
+  `ok-extract D:/KoikatuSunshinezz --oklib mods-index <base_v1>` 建了（7296 guids）。新 checkout 要開 OK 卡也得先建。
+
 ## 未做
 
 - 資源包裁剪：匯出的完整卡帶所有祖先的整包資源，代數越多越大（第 4 代 145 MB；與服裝卡同一個待辦）。依賴卡不受影響。

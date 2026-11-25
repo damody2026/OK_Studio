@@ -450,7 +450,7 @@ pub fn breed(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path)) -> 
 }
 
 /// A child as reed makes her, with what file::breed_whole needs to change genes.
-pub struct Bred { pub card: Vec<u8>, pub from_father: bool, pub summary: String, custom: Vec<Value>, sources: BTreeMap<String, Option<bool>>, mixed_outfits: Vec<usize> }
+pub struct Bred { pub card: Vec<u8>, pub from_father: bool, pub hair_from_father: bool, pub summary: String, custom: Vec<Value>, sources: BTreeMap<String, Option<bool>>, mixed_outfits: Vec<usize> }
 
 /// `forced` key of an outfit whose clothes stay the base's whole (its mix needed what neither parent's data had).
 fn unmixed_key(outfit: usize) -> String { format!("clothes.outfit{outfit}") }
@@ -551,7 +551,7 @@ fn breed_forced(mother: &[u8], father: &[u8], seed: u64, files: (&Path, &Path), 
     let summary = format!("child {last} {first} (generation {generation}, seed {seed}, outfits from the {} with the top from the {}, bottom from the {}, underwear from the {}, hair from the {}{}{})",
         side(from_father), pick("top"), pick("bottom"), pick("underwear"), side(hair_from_father), if hairdeck { ", HairDeck hair" } else { "" },
         if skirted.is_empty() { String::new() } else { format!(", the bottom worn with her top where her lower body was bare (outfits {skirted:?})") });
-    Ok(Bred { card, from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources, mixed_outfits })
+    Ok(Bred { card, from_father, hair_from_father, summary: summary.replace("  ", " "), custom: mixed, sources: mixer.sources, mixed_outfits })
 }
 
 /// The list entries (category, id) an OK card's strict open lacked, as its error names them ("okLt cat 410 1919").
@@ -801,6 +801,17 @@ pub mod file {
             let bred = breed_forced(&m, &f, seed, (mother, father), &forced, &groups)?;
             match seal(&lib, game, &bred, if bred.from_father { &m } else { &f }, out) {
                 Ok(sealing) => {
+                    // Her hairstyle gene only carries the game's hair slots. A parent whose hair is made of accessories
+                    // has an empty hairstyle, and her accessories go with the base's outfits, not with the gene: a
+                    // child who drew that empty hairstyle from the parent she is not built on came out with no hair at
+                    // all (lan x luo_tianyi_2024, 2026-11-25). Seen on the sealed child, the hairstyle comes from the
+                    // other parent instead; nothing to do when the other one leaves her bald too.
+                    if !groups.contains_key("hair") && bald_card(&lib, game, out) {
+                        groups.insert("hair".to_owned(), !bred.hair_from_father);
+                        eprintln!("ok-extract: breed: the child had no hair (her hairstyle gene came from the {}, whose own hair is not in the hairstyle slots): taking it from the other parent",
+                            if bred.hair_from_father { "father" } else { "mother" });
+                        continue;
+                    }
                     let changed = if forced.is_empty() { String::new() } else { format!("; genes from the other parent (her parents' data could not show them): {}", forced.keys().cloned().collect::<Vec<_>>().join(", ")) };
                     return Ok(format!("{}; {sealing}{changed}", bred.summary));
                 }
@@ -819,6 +830,15 @@ pub mod file {
             }
         }
         unreachable!()
+    }
+
+    /// She opens with no hair at all (`portable::hairdeck::visible_hair_parts`). A card that cannot be opened is not
+    /// called bald: the caller is about to return it, and its own error says more than this would.
+    fn bald_card(lib: &Path, game: &Path, card: &Path) -> bool {
+        match crate::oklib::open_original_card(game, card, 0).unwrap_or_else(|| crate::session::open(lib, Some(card), 0)) {
+            Ok(s) => crate::portable::hairdeck::visible_hair_parts(&s).is_empty(),
+            Err(e) => { eprintln!("ok-extract: breed: the child was not checked for hair ({e})"); false }
+        }
     }
 
     /// The child sealed as an OK card with the other parent's pack and answers, written to `out`.
