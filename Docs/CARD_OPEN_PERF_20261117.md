@@ -1206,3 +1206,113 @@ serialized 走一遍，收同樣三種東西（type 115 的 script 名、type 1 
 
 **换了游戏目录或装／移除 mod 之后**要重跑 `--oklib shared-ignore`（或 `mods-index`），否则新的 uncensor
 mod 不在表里——它会被当成「索引没见过」而由开卡自己读那一个档，所以不会出错，只是那几个档又要开。
+
+## 十二、「读卡变快了，为什么显示没变快」：使用者等的那 2.8 秒的分段（2026-11-25，E 树）
+
+使用者问得对。第十一节省下的 136 ms 是**真的**，但它在使用者感觉的那条时间轴上只占 5%。
+这一节把**打包版**（`E:/OKPackage/Studio-20261124-release-e`，`!WITH_EDITOR`，和使用者看到的一致）与
+**当前 E 树的读卡器**量开，Tohru、outfit 0、`OK_LOAD_PROFILE=1 OK_PROFILE=1`、第二次（暖的）：
+
+| 段 | 打包版（11-24 的 exe） | 当前 E 树（editor build） | 读出 |
+|---|---:|---:|---|
+| `OKGUI_LOAD total_ms`（按下到「已加载3D」） | **2846 ms** | 5099 ms（含 shader 编译，不可比） | — |
+| `OKGUI_WORKER open_ms`（Rust，worker thread） | 1806 ms（**63%**） | 2035 ms | — |
+| 　其中 `extract_session TOTAL`（真的取件、解贴图） | — | **1306 ms** | `PROFILE extract_session TOTAL` |
+| 　其中**不在取件里**的（建窄视图的身分） | — | **~730 ms** | 见下 |
+| `texture_prepare_ms`（Rust 侧的贴图准备） | 331 ms（12%） | 400 ms | — |
+| 游戏执行绪（建部件、动画目录、studio） | **702 ms（25%）** | — | `OKGUI_PROFILE step=*` ＋ 之间的帧 |
+
+**第十一节那笔确实进了读卡器这条路**，而且比 bench 上看起来更值：
+
+| SPOT | 打包版（旧 exe） | 当前 E 树 |
+|---|---:|---:|
+| `with_zipmod_manifests` | 186.7 ms **x113** | **5.1 ms x5** |
+| `open_zip` | 262.2 ms x487 | 59.8 ms x378 |
+
+**所以「显示没有比较快」的原因是算术，不是改错了**：省 0.18～0.25 s 在 2.85 s 上是 6～9%，
+人眼看不出来；而且游戏执行绪那 702 ms 是**按帧排程**的（`OKPrepareCharacter`：每帧 25 ms／最多 8 个部件，
+`OK_PART_BUDGET_MS`／`OK_PART_STEPS`），它不会因为 Rust 变快而缩短。
+
+### 下一个最大的一笔：建窄视图的身分（~730 ms，每次开卡与每次换服装都付）
+
+`open_ms` 2035 减掉 `extract_session` 1306 剩下的 ~730 ms，对得上这两个 SPOT：
+
+| SPOT | 当前 E 树 | 做什么 |
+|---|---:|---|
+| `view: zip_list_sig` | **450.3 ms x6** | `list::zip_list_sig_view`：走完安装目录 `mods/` 并 stat 那 ~7296 个 archive，算一个 u64 当 memo 键 |
+| `view: inventory_signature` | 183.9 ms x9 | 同一类：来源 epoch |
+
+它**不开任何 archive**（所以不违反「开卡不读整棵树」那条的字面），但它**走完整棵树并 stat 每一个档**，
+而且在同一次开卡里被问 6 次、换服装时再付一遍（打包版的后续开卡量到 289 ms x5、261 ms x5）。
+行程外面的 bench 同一棵树只花 **3.2 ms**（§十的表，2026-11-24 那次已经记到这个异常，但当时整条归因到
+严格模式，而严格模式只解释了 `clothes options`／`clothes renderer map` 那两段）。
+
+`mods::watched_tree_zips` 已经是为这件事写的（目录 watch ＋ 树的 memo，变了才重走），而
+`zip_list_sig_view` 第一行就会先问它。它回 `None` 时才走整棵树，条件是
+`!trackable || !watch.available()`（`collect_zipmods_checked`）。**所以要查的是：这台机器的
+`D:/KoikatuSunshinezz/mods` 为什么不 trackable 或 watch 不可用**——查出来就是 ~0.6 s（使用者那 2.85 s 的 21%），
+而且不是快取、不是按卡记东西（watch 一变就重走）。
+
+**另两笔已知但要使用者拍板／另开的**：
+- `png_from_payload` 在打包版第一次开卡是 906.7 ms x182（第二次 121 ms x127，差别是档案快取）——这就是
+  4096² 底图那条，会改变输出位元组。
+- 游戏执行绪 702 ms：`animation_catalog_sources` 88 ms、`animation_lookup` 16.5 ms、`studio` 34 ms，
+  其余是部件按帧建起来的时间。要缩就是调 `OK_PART_BUDGET_MS`／`OK_PART_STEPS`（拿载入中的 UI 反应换），
+  或把动画目录那 140 ms 搬到 worker。
+
+**量法备注**：打包版要用它自己的 `root` 启动（`reader_launch {"root": "<包>"}`），它的 `base_v1`
+带的是**建包那时候的** `mods_index.db`——第十一节那张 `uncensor` 表要在打包前跑一次
+`ok-extract <游戏> --oklib mods-index <庫>` 才会进包。
+
+### 更正：§十二 的「六次 walk」读错了（见 §十三）
+
+§十二 把 `SPOT view: zip_list_sig 450.3 ms x6` 读成「同一次开卡走了六遍安装目录」，**那是错的**。真相是
+**两棵不同的树各算一次**，另外四次本来就免费；安装目录那棵树也**不是**不 trackable。下一节是逐次的读出。
+
+## 十三、那六次问的是两棵树，而安装目录那棵每次开卡重走一次（2026-11-25，E 树）
+
+`SPOT` 只给「这个名字总共花多少、被叫几次」，于是 x6 看起来像六遍同样的工作。加了逐次读出
+（`PROFILE view sig <树> <ms> generation=<n>`，超过 5 ms 才印）之后，一次开卡长这样：
+
+| 第几次 | 树 | 这一次 | 说明 |
+|---|---|---:|---|
+| 1 | `D:/KoikatuSunshinezz\mods`（安装目录，8232 个 archive） | **245.8 ms** | generation=1 |
+| 2 | 同上 | 0.1 ms | 已经有答案 |
+| 3 | `base_v1\mods`（庫的录制树，~7296 个合成项） | **181.5 ms** | generation=3 |
+| 4–6 | 同上 | 0.0 ms | 已经有答案 |
+
+245.8 ＋ 181.5 ＝ 427 ms，正是 `SPOT` 的 427.5 ms。**重复的那四次从来不是成本**，所以
+「把六次并成一次」没有东西可省——它已经是「一棵树问一次」。
+
+**真正的那一笔**：庫那棵树只有第一张卡付（第二次之后 18 ms），而**安装目录那棵每次开卡都重算 215～250 ms**
+（读出里 generation=1、11、16 各一次）。原因读出讲得很直白：
+
+```
+PROFILE mods tree rewalk \\?\D:\KoikatuSunshinezz\mods available=1 changed=1
+```
+
+`mods::watched_tree_zips` 的目录变更通知是**健康的**（`available=1`），但它**每次开卡都报「树变了」**
+（`changed=1`），于是那份走访结果被丢掉、整棵树重走。而那段时间内 `mods` 树里**什么都没有真的改**。
+所以这不是「庫不给答案」，也不是「树不能追踪」（`mods tree not watchable` 一次都没印），是**一个说谎的 watch**。
+
+**试过、量过、退掉的三笔**（别重走）：
+
+| 做了什么 | 想法 | 量到的 |
+|---|---|---|
+| `zip_list_sig` 加一层行程级 memo（键：`fallback_generation` ＋ 挂载的卡包），取代 thread_local 的 `view_memo` | 让 worker thread 也看得到答案，一次开卡只算一次 | **买不到时间**：读卡器 A／B（同一个执行档，`OK_NO_SIG_MEMO=1` 当对照）第二次开卡 239.9 vs 258.5 ms、第三次 214.6 vs 219.8 ms，n=1，在噪声内——因为关掉它也只算一次／棵。逐位元闸门过（原作卡 21/21、OK 卡 42/42）但没有理由留着，已退 |
+| 走访完之后把这一次的通知清掉（`watch.changed()`） | 走访与 stat 自己把 watch 触发了 | 下一次开卡照样 `changed=1`。**不是触发源**，已退 |
+| watch 的过滤器去掉 `FILE_NOTIFY_CHANGE_ATTRIBUTES`／`SECURITY`，只留 NAME／DIR_NAME／SIZE／LAST_WRITE | 这台机器 `fsutil behavior query disablelastaccess` ＝ 2（**last-access 更新是开着的**），读 archive 会改时间戳，而 ATTRIBUTES 可能被当成变更 | 照样 `changed=1`。**也不是触发源**，已退 |
+
+**下一步要做的是找出到底什么设定了那个通知**，而 `FindFirstChangeNotification` 只会说「有变」、不会说「什么变了」。
+要换成 `ReadDirectoryChangesW` 把**变更的档名**读出来，才知道是谁；在那之前不要再猜。
+（顺带：`D:\KoikatuSunshinezz\mods` 里躺着 **26 个 `.ok_list_cache_v2_*.tsv`，约 300 MB** 的旧快取档，
+最新的是 11-24。它们在被监看的树里面，是嫌疑之一，但这一轮里没有任何一个被改过。）
+
+**两个量测上的坑，记下来**：
+
+1. **`eprintln!` 的读出在读卡器里看不到。** `profile::line` 会同时写 stderr 与 UE 的 log callback，而
+   `eprintln!` 只写 stderr——读卡器的游戏行程继承的那个 stderr 没有人留下来。所以 `mods::tree_trace`
+   （`OK_TREE_TRACE=1`，专门用来查「谁在走整棵树」）在**唯一需要它的地方一直是哑的**，我因此一度得出
+   「没有人走整棵树」的错结论。这一轮把 `tree_trace` 与新读出都改走 `profile::line`。
+2. **DLL 被自己上一个还在跑的读卡器锁住时，`Build.bat` 会 Failed，而启动器照旧用旧 binary 跑**，看起来就像
+   「改了没效果」。量之前先确认上一个读卡器已经停掉，并看 `Result: Succeeded`。

@@ -471,17 +471,46 @@ pub(crate) fn watched_tree_zips(mods_dir: &Path) -> Option<Arc<(Vec<PathBuf>, u6
         let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(i) = memo.iter().position(|(r, _, _)| *r == root) {
             let (_, watch, tree) = &mut memo[i];
-            if watch.available() && !watch.changed() { return Some(tree.clone()); }
+            let available = watch.available();
+            let changed = available && watch.changed();
+            if available && !changed { return Some(tree.clone()); }
+            // OK_PROFILE: the tree is walked again (~0.2 s for an installation). A watch that reports a change on
+            // every open makes `zip_list_sig` pay the walk per open instead of per change (2026-11-25).
+            if std::env::var_os("OK_PROFILE").is_some() {
+                crate::profile::line(format!("ok-extract: PROFILE mods tree rewalk {} available={} changed={}",
+                    root.display(), available as u8, changed as u8));
+            }
             memo.remove(i);
         }
     }
     // Watch first: a change during the walk is then reported on the next call.
     let watch = Watch::for_directory(&root);
     let (walk, trackable) = collect_zipmods_checked(mods_dir).ok()?;
-    if !trackable || !watch.available() { return None; }
+    if !trackable || !watch.available() {
+        // OK_PROFILE: why this tree gets a walk per ask instead of one per change. `zip_list_sig` has its own memo
+        // for that case, but a tree that could be watched should be (one walk for the whole process).
+        if std::env::var_os("OK_PROFILE").is_some() {
+            static SAID: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+            let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
+            if !said.contains(&root) {
+                said.push(root.clone());
+                let why = match (trackable, watch.available()) {
+                    (false, false) => "a linked entry under it, and no change notification",
+                    (false, true) => "a linked entry under it",
+                    _ => "no change notification",
+                };
+                crate::profile::line(format!("ok-extract: mods tree not watchable ({why}): {} ({} archives)", root.display(), walk.len()));
+            }
+        }
+        return None;
+    }
     let mut sorted = walk.clone();
     sorted.sort();
     let tree = Arc::new((walk, crate::list::catalog_sig(&sorted)));
+    // Tried and reverted (2026-11-25): draining one notification here (`watch.changed()`), on the theory that the
+    // walk and the signature above -- which read every directory and stat every archive under the watched root --
+    // set it themselves. The card reader still reported `changed=1` on the next open, so that is not the trigger
+    // either; see Docs/CARD_OPEN_PERF_20261117.md §十三.
     let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
     if memo.len() >= 4 { memo.remove(0); }
     memo.push((root, watch, tree.clone()));
@@ -890,7 +919,9 @@ pub(crate) fn tree_trace(what: &str) {
     let key = frames.join("\n");
     static SEEN: std::sync::Mutex<Option<HashMap<String, usize>>> = std::sync::Mutex::new(None);
     let n = { let mut g = SEEN.lock().unwrap_or_else(|e| e.into_inner()); let c = g.get_or_insert_with(HashMap::new).entry(key.clone()).or_insert(0); *c += 1; *c };
-    if [1, 20, 200, 2000].contains(&n) { eprintln!("ok-extract: tree-trace #{n} {what}\n{key}"); }
+    // `profile::line`: the card reader's game process inherits a stderr nobody keeps, so an `eprintln!` here never
+    // reached the Unreal log -- the one place this trace is needed (2026-11-25).
+    if [1, 20, 200, 2000].contains(&n) { crate::profile::line(format!("ok-extract: tree-trace #{n} {what}\n{key}")); }
 }
 pub(crate) fn tree_trace_zip(path: &Path) { tree_trace(&format!("zip {}", path.display())); }
 

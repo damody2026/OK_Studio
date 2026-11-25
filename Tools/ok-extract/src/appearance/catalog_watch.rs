@@ -20,6 +20,11 @@ mod platform {
    let mut watch=Self{handles:Vec::new(),healthy:true};
    for directory in directories {
     let path:Vec<u16>=directory.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Tried and reverted (2026-11-25): narrowing this to FILE_NAME|DIR_NAME|SIZE|LAST_WRITE -- what the signatures
+    // built on this watch are actually made of -- on the theory that ATTRIBUTES (0x4) fires when a read updates a
+    // file's last-access time, which this machine does (`fsutil behavior query disablelastaccess` = 2, ENABLED).
+    // The card reader still reported `changed=1` on every open afterwards, so that is not the trigger; see
+    // Docs/CARD_OPEN_PERF_20261117.md §十三.
     let handle=unsafe{FindFirstChangeNotificationW(path.as_ptr(),1,0x1|0x2|0x4|0x8|0x10|0x100)};
     if handle == -1 {watch.healthy=false;}else{watch.handles.push(handle);}
    }watch

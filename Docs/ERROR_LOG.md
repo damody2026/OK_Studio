@@ -7765,3 +7765,28 @@ cf_face_00_t` ／ `cf_face_00_mc`。兩個 zipmod 都在這台上，看起來像
 
 **下次要注意的**：「找不到」要講清楚是誰沒有——卡片、zipmod、庫、還是這台沒裝遊戲。
 庫是轉出來的，轉完之後 zipmod 換了版本（或當時那包少一顆 bundle），庫就會缺東西而沒有任何人會發現。
+
+## 2026-11-25 把 `SPOT ... x6` 读成「做了六遍同样的事」，据此写了一段错的结论
+
+**现象**：量读卡器开原作卡，`SPOT view: zip_list_sig 450.3 ms x6`。我据此在
+[Docs/CARD_OPEN_PERF_20261117.md](CARD_OPEN_PERF_20261117.md) §十二 写下「同一次开卡走了六遍安装目录的
+8200 个 archive」，并推断「`watched_tree_zips` 回 None，这棵树不能追踪」。两句都是错的。
+
+**原因**：`SPOT` 只记「这个名字总共多少毫秒、被叫几次」，不记每一次各多少、问的是什么。加上逐次读出之后，
+真相是**两棵不同的树各算一次**（安装目录 245.8 ms、庫的录制树 181.5 ms，合 427 ms ＝ SPOT 的总数），
+另外四次本来就免费；而那棵树是 trackable 的，`mods tree not watchable` 一次都没印。
+
+**修正**：`zip_list_sig` 加 `PROFILE view sig <树> <ms> generation=<n>` 的逐次读出，`watched_tree_zips`
+加 `PROFILE mods tree rewalk ... available=? changed=?`；§十二 补了更正指到 §十三。真正的那一笔是
+**安装目录那棵树每次开卡重走 215～250 ms，因为目录变更通知每次都报「变了」而树里什么都没改**，
+原因还没找到（§十三 列了试过并退掉的三笔）。
+
+**下次要注意的**：
+- **`SPOT x N` 不是「N 份一样的工作」**。要据此动手之前，先加逐次读出，把「哪一次、问什么、多少」印出来。
+- **读出用 `profile::line`，不要用 `eprintln!`**。读卡器的游戏行程继承的 stderr 没有人留下来，所以
+  `eprintln!` 的读出在那里是哑的——`mods::tree_trace`（`OK_TREE_TRACE=1`）一直如此，我因此一度得出
+  「没有人走整棵树」的错结论。
+- **量之前先停掉自己上一个读卡器**。DLL 被它锁住时 `Build.bat` 会 Failed，而启动器照旧跑旧 binary，
+  看起来就像「改了没效果」。确认看到 `Result: Succeeded`。
+- **没量到好处的优化不要留**。这一轮的行程级 signature memo 逐位元闸门过了（21/21、42/42），但 A／B
+  买不到时间（239.9 vs 258.5 ms，n=1），所以退掉，只留读出。

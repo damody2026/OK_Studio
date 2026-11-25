@@ -593,7 +593,21 @@ fn load_characustom_dir_uncached(dir: &Path) -> (ChaListCatalog,bool) {
 /// Signature of a mods tree's zipmod list (paths, sizes, times), for per-process memos.
 pub(crate) fn zip_list_sig(mods_dir: &Path) -> u64 {let _spot=crate::profile::spot("view: zip_list_sig");
     // The same in every open of a view (crate::view_memo): several memo keys of each open ask for it.
-    crate::view_memo(format!("zip_list_sig|{}", mods_dir.display()), || zip_list_sig_view(mods_dir))
+    // OK_PROFILE, over 5 ms: which tree this costs, with the fallback generation (one per open). `SPOT view:
+    // zip_list_sig` says only how much six asks cost between them, and that read as "six walks" when it is in fact
+    // two trees -- the installation's `mods/` and the library's recorded one -- worked out once each while the other
+    // four asks are already free. The installation's is worked out again on every open; §十三 of
+    // Docs/CARD_OPEN_PERF_20261117.md has the anatomy and what a per-open memo did and did not buy.
+    // `profile::line`, not `eprintln!`: the card reader's game process inherits a stderr nobody keeps, so an
+    // `eprintln!` read-out is lost in the one place this is needed (2026-11-25).
+    let began = std::time::Instant::now();
+    let sig = crate::view_memo(format!("zip_list_sig|{}", mods_dir.display()), || zip_list_sig_view(mods_dir));
+    let ms = began.elapsed().as_secs_f64() * 1000.;
+    if ms >= 5. && std::env::var_os("OK_PROFILE").is_some() {
+        crate::profile::line(format!("ok-extract: PROFILE view sig {} {ms:.1}ms generation={}",
+            mods_dir.display(), crate::gamefs::fallback_generation()));
+    }
+    sig
 }
 
 fn zip_list_sig_view(mods_dir: &Path) -> u64 {
