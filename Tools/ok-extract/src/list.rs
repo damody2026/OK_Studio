@@ -622,9 +622,18 @@ fn zip_list_sig_view(mods_dir: &Path) -> u64 {
         static MEMO: Mutex<Vec<(std::path::PathBuf, String, u64)>> = Mutex::new(Vec::new());
         let pack = format!("{}\n{}", crate::oklib::mounted_pack_identity(), crate::gamefs::fallback_identity());
         if let Some((_, _, sig)) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, p, _)| d == mods_dir && *p == pack) { return *sig; }
+        // OK_PROFILE: the walk of the recorded tree against the signing of it. The two answer different questions --
+        // "how long does the gateway take to list ~7300 synthesized entries" and "how long to ask it for each one's
+        // size" -- and the first open of a process pays far more than the later ones for the same work (§十五).
+        let began = std::time::Instant::now();
         let mut zips = crate::mods::all_zipmods(mods_dir);
         zips.sort();
+        let walked = began.elapsed();
         let sig = catalog_sig(&zips);
+        if std::env::var_os("OK_PROFILE").is_some() {
+            crate::profile::line(format!("ok-extract: PROFILE view sig recorded {} archives={} walk={:.1}ms sign={:.1}ms",
+                mods_dir.display(), zips.len(), walked.as_secs_f64() * 1000., (began.elapsed() - walked).as_secs_f64() * 1000.));
+        }
         let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
         if memo.len() >= 32 { memo.remove(0); }
         memo.push((mods_dir.to_path_buf(), pack, sig));
@@ -636,21 +645,38 @@ fn zip_list_sig_view(mods_dir: &Path) -> u64 {
 }
 
 pub(crate) fn catalog_sig(zips: &[std::path::PathBuf]) -> u64 {
+    fold_sig(zips.iter().map(|p| (p, None)))
+}
+
+/// The same signature from a walk that kept each archive's size and time, so the tree is not stated a second time
+/// (`mods::ZipStat`). The value is the same as `catalog_sig`'s whenever the two agree about a file, and it is part of
+/// a cache file's name (`load_mods_catalog`), so the arithmetic below stays one function for both.
+pub(crate) fn catalog_sig_stats(zips: &[(std::path::PathBuf, crate::mods::ZipStat)]) -> u64 {
+    let eager = crate::gamefs::eager_tree_stat();
+    fold_sig(zips.iter().map(|(p, stat)| (p, stat.filter(|_| !eager))))
+}
+
+fn fold_sig<'a>(zips: impl Iterator<Item = (&'a std::path::PathBuf, crate::mods::ZipStat)>) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
-    for p in zips {
+    for (p, stat) in zips {
         let s = p.to_string_lossy();
         for b in s.as_bytes() {
             h ^= *b as u64;
             h = h.wrapping_mul(0x100000001b3);
         }
-        if let Ok(m) = crate::gamefs::metadata(p) {
-            h ^= m.len();
+        let stat = stat.or_else(|| {
+            let m = crate::gamefs::metadata(p).ok()?;
+            Some((m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(u64::MAX, |d| d.as_secs())))
+        });
+        if let Some((len, modified)) = stat {
+            h ^= len;
             h = h.wrapping_mul(0x100000001b3);
-            if let Ok(t) = m.modified() {
-                if let Ok(d) = t.duration_since(std::time::UNIX_EPOCH) {
-                    h ^= d.as_secs();
-                    h = h.wrapping_mul(0x100000001b3);
-                }
+            // `u64::MAX` marks "the file is there, its time is not readable": the old arithmetic folded nothing in
+            // that case, and an unreadable time is what it saw as well.
+            if modified != u64::MAX {
+                h ^= modified;
+                h = h.wrapping_mul(0x100000001b3);
             }
         }
     }
@@ -944,6 +970,36 @@ pub fn load_mods_catalog(mods_dir: &Path) -> ChaListCatalog {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// The walk's own size and time give the same signature as stating every archive again, and an archive the walk
+    /// could not stat (a link, or a read that failed) still gets its size and time from the gateway. The value is in
+    /// a cache file's name (`load_mods_catalog`), so the two must not drift apart.
+    #[test]
+    fn a_walk_kept_signature_equals_the_stating_one() {
+        let dir = std::env::temp_dir().join(format!("ok-catalog-sig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths: Vec<PathBuf> = (0..3).map(|i| {
+            let path = dir.join(format!("{i:02}.zipmod"));
+            std::fs::write(&path, vec![b'x'; 10 + i * 7]).unwrap();
+            path
+        }).collect();
+        let kept: Vec<(PathBuf, crate::mods::ZipStat)> = paths.iter().map(|p| {
+            let m = std::fs::metadata(p).unwrap();
+            (p.clone(), Some((m.len(), m.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())))
+        }).collect();
+        let stating = catalog_sig(&paths);
+        assert_eq!(catalog_sig_stats(&kept), stating);
+        let none: Vec<(PathBuf, crate::mods::ZipStat)> = paths.iter().map(|p| (p.clone(), None)).collect();
+        assert_eq!(catalog_sig_stats(&none), stating);
+        // A file the walk saw and the signature cannot: the path still counts, as before.
+        let gone = dir.join("zz.zipmod");
+        let mut with_gone = paths.clone(); with_gone.push(gone.clone());
+        let mut kept_gone = kept.clone(); kept_gone.push((gone, None));
+        assert_eq!(catalog_sig_stats(&kept_gone), catalog_sig(&with_gone));
+        assert_ne!(catalog_sig_stats(&kept_gone), stating);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// OK_FIRSTLOAD=A3: the prewarmed view plus `layer_entries` answers every lookup (get, get_slot's fallbacks) as
     /// the full merge of all archives does (first archive in sorted path order wins), whatever archives the card adds.

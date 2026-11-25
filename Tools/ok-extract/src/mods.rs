@@ -489,7 +489,10 @@ pub(crate) fn watched_tree_zips(mods_dir: &Path) -> Option<Arc<(Vec<PathBuf>, u6
     }
     // Watch first: a change during the walk is then reported on the next call.
     let watch = Watch::for_directory(&root);
-    let (walk, trackable) = collect_zipmods_checked(mods_dir).ok()?;
+    // The stat-keeping walk: a real tree (this function only serves one) goes straight to it, where
+    // `collect_zipmods_checked`'s memo does not apply anyway -- it is for the library's synthesized tree.
+    let (walked, trackable) = collect_zipmods_walk_stat(mods_dir).ok()?;
+    let walk: Vec<PathBuf> = walked.iter().map(|(path, _)| path.clone()).collect();
     if !trackable || !watch.available() {
         // OK_PROFILE: why this tree gets a walk per ask instead of one per change. `zip_list_sig` has its own memo
         // for that case, but a tree that could be watched should be (one walk for the whole process).
@@ -508,9 +511,9 @@ pub(crate) fn watched_tree_zips(mods_dir: &Path) -> Option<Arc<(Vec<PathBuf>, u6
         }
         return None;
     }
-    let mut sorted = walk.clone();
-    sorted.sort();
-    let tree = Arc::new((walk, crate::list::catalog_sig(&sorted)));
+    let mut sorted = walked;
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let tree = Arc::new((walk, crate::list::catalog_sig_stats(&sorted)));
     // Tried and reverted (2026-11-25): draining one notification here (`watch.changed()`), on the theory that the
     // walk and the signature above -- which read every directory and stat every archive under the watched root --
     // set it themselves. It changed nothing, because the false signal came later still: at the moment this worker
@@ -929,11 +932,24 @@ pub(crate) fn tree_trace(what: &str) {
 }
 pub(crate) fn tree_trace_zip(path: &Path) { tree_trace(&format!("zip {}", path.display())); }
 
+/// An archive's size and modification time as the walk was handed them (`catalog_sig` hashes exactly these two).
+/// `None` for a linked entry or one whose metadata the walk could not read: the signature then asks the gateway for
+/// it, as it always did. A tree with a linked entry is not watchable anyway (`watched_tree_zips`).
+pub(crate) type ZipStat = Option<(u64, u64)>;
+
 fn collect_zipmods_walk(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
+    let (walk, trackable) = collect_zipmods_walk_stat(root)?;
+    Ok((walk.into_iter().map(|(path, _)| path).collect(), trackable))
+}
+
+/// The walk, keeping each archive's size and time. The walk already reads every entry's metadata to tell directories
+/// and links apart, so the tree signature does not have to stat all ~7300 of them a second time (§十五 of
+/// Docs/CARD_OPEN_PERF_20261117.md).
+fn collect_zipmods_walk_stat(root: &Path) -> std::io::Result<(Vec<(PathBuf, ZipStat)>,bool)> {
     tree_trace(&format!("walk {}", root.display()));
     let mut out = Vec::new();
     let mut trackable=true;
-    fn rec(dir: &Path, out: &mut Vec<PathBuf>,trackable:&mut bool) -> std::io::Result<()> {
+    fn rec(dir: &Path, out: &mut Vec<(PathBuf, ZipStat)>,trackable:&mut bool) -> std::io::Result<()> {
         for entry in crate::gamefs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -961,7 +977,10 @@ fn collect_zipmods_walk(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
                 .map(|e| e.eq_ignore_ascii_case("zipmod") || e.eq_ignore_ascii_case("zip"))
                 .unwrap_or(false)
             {
-                out.push(path);
+                // A linked entry reports the link, not the archive, so its size and time are left to the gateway.
+                let stat = metadata.as_ref().filter(|_| !linked).and_then(|m| Some((m.len(),
+                    m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs())));
+                out.push((path, stat));
             }
         }
         Ok(())

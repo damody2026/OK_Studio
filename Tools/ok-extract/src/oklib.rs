@@ -231,6 +231,19 @@ pub fn model_path(dir: &Path, id: &Id) -> PathBuf {
 /// folder the user picks); without it `local_v1` beside the library is one when it exists. `--oklib split-local` moves
 /// such models out of the library. Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md.
 pub fn local_libraries(lib: &Path) -> Vec<PathBuf> {
+    // Per library, for the life of the process: `model_file` asks for this on every model it does not find in the
+    // library itself, and the answer costs an environment read and two directory stats (§十五).
+    use std::sync::{Mutex, OnceLock};
+    static MEMO: OnceLock<Mutex<Vec<(PathBuf, Vec<PathBuf>)>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(Default::default);
+    if let Some((_, hit)) = memo.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| d == lib) { return hit.clone(); }
+    let out = local_libraries_uncached(lib);
+    let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+    if !memo.iter().any(|(d, _)| d == lib) { memo.push((lib.to_path_buf(), out.clone())); }
+    out
+}
+
+fn local_libraries_uncached(lib: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::env::var("OK_LOCAL_LIBRARY").ok()
         .map(|v| v.split(';').map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from).collect()).unwrap_or_default();
     if out.is_empty() {
@@ -246,6 +259,37 @@ pub fn model_file(dir: &Path, id: &Id) -> PathBuf {
     let own = model_path(dir, id);
     if own.is_file() || !dir.join("oklib.json").is_file() { return own; }
     local_libraries(dir).iter().map(|l| model_path(l, id)).find(|p| p.is_file()).unwrap_or(own)
+}
+
+/// Which models this checkout holds, from one listing of `models/<ab>/` (and of each local library's), kept for the
+/// life of the process. For the **whole-tree** questions only -- `gamefs::zip_lacks_models`, asked of every model
+/// entry of every one of an installation's ~7300 recorded archives, where `model_file`'s two or three `is_file()`
+/// calls each added up to ~0.35 s on the first card of a process (§十五 of Docs/CARD_OPEN_PERF_20261117.md). Those
+/// answers are already frozen per archive by their own memo, so a listing is no staler than they were; everything
+/// that asks about one card's own models keeps asking the file system (`model_file`, `has_model`).
+pub fn models_present(dir: &Path) -> std::sync::Arc<std::collections::HashSet<Id>> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static PRESENT: OnceLock<Mutex<Vec<(PathBuf, Arc<std::collections::HashSet<Id>>)>>> = OnceLock::new();
+    let memo = PRESENT.get_or_init(Default::default);
+    if let Some((_, hit)) = memo.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| d == dir) { return hit.clone(); }
+    let mut set = std::collections::HashSet::new();
+    let roots = std::iter::once(dir.to_path_buf()).chain(local_libraries(dir));
+    for root in roots {
+        for shard in std::fs::read_dir(root.join("models")).into_iter().flatten().flatten() {
+            if !shard.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+            for model in std::fs::read_dir(shard.path()).into_iter().flatten().flatten() {
+                let name = model.file_name().to_string_lossy().into_owned();
+                let Some(stem) = name.strip_suffix(".okmodel") else { continue };
+                if stem.len() != 32 { continue; }
+                let mut id = [0u8; 16];
+                if (0..16).all(|i| { u8::from_str_radix(&stem[i * 2..i * 2 + 2], 16).map(|b| id[i] = b).is_ok() }) { set.insert(id); }
+            }
+        }
+    }
+    let set = Arc::new(set);
+    let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+    if !memo.iter().any(|(d, _)| d == dir) { memo.push((dir.to_path_buf(), set.clone())); }
+    set
 }
 
 /// Whether the active library (or the pack mounted over it) has model `id` in this checkout. A library records

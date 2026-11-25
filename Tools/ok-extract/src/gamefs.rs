@@ -986,6 +986,15 @@ static WATCHED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize:
 pub fn watch_root(root: Option<&Path>) { *WATCH.write().unwrap() = root.map(normalize); WATCHED.store(0, std::sync::atomic::Ordering::Relaxed); }
 /// Accesses under the watched root since `watch_root`.
 pub fn watched_accesses() -> usize { WATCHED.load(std::sync::atomic::Ordering::Relaxed) }
+/// OK_TREE_STAT_EAGER=1: every question about a file's size, time or presence goes to the file system again, as it did
+/// before 2026-11-25 -- the directory walk re-stats each entry, the tree signature re-stats each archive, the
+/// whole-tree model check asks `model_file` per entry, and one open's source signature is worked out per thread.
+/// The A/B switch of §十五 in Docs/CARD_OPEN_PERF_20261117.md, and the way back if a listing ever answers stale.
+pub fn eager_tree_stat() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("OK_TREE_STAT_EAGER").is_some())
+}
+
 fn note_access(path: &Path) {
     if let Some(root) = WATCH.read().unwrap().as_deref() {
         let n = normalize(path);
@@ -1265,36 +1274,53 @@ pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     std::fs::canonicalize(path)
 }
 
-pub struct DirEntry { path: PathBuf, dir: bool }
+pub struct DirEntry { path: PathBuf, dir: bool, enumerated: Option<std::fs::Metadata> }
 impl DirEntry {
     pub fn path(&self) -> PathBuf { self.path.clone() }
     pub fn file_name(&self) -> std::ffi::OsString { self.path.file_name().unwrap_or_default().to_owned() }
     pub fn file_type(&self) -> io::Result<FileKind> { Ok(FileKind { dir: self.dir }) }
     /// The entry itself, not a link target (as `std::fs::DirEntry::metadata`).
-    pub fn metadata(&self) -> io::Result<Metadata> { symlink_metadata(&self.path) }
+    /// Answered from the enumeration where the gateway has nothing to add to it (no library active, or a path outside
+    /// the library's root): Windows hands the size, times and attributes over with the directory listing, while a
+    /// `symlink_metadata` of each path is one file open each. A walk of an installation's `mods/` stated its ~7300
+    /// entries twice over -- once here, once for the tree signature -- for about 0.25 s each (§十五 of
+    /// Docs/CARD_OPEN_PERF_20261117.md). Inside a library root the record/replay bookkeeping stands, so those paths
+    /// keep asking the gateway.
+    pub fn metadata(&self) -> io::Result<Metadata> {
+        if let Some(m) = self.enumerated.as_ref().filter(|_| !eager_tree_stat()) {
+            if state().and_then(|st| logical(&st, &self.path)).is_none() {
+                note_access(&self.path);
+                return Ok(from_std(m.clone()));
+            }
+        }
+        symlink_metadata(&self.path)
+    }
 }
 
 pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<std::vec::IntoIter<io::Result<DirEntry>>> {
     note_access(path.as_ref());
     let path = path.as_ref();
-    let real = |path: &Path| -> io::Result<Vec<(String, bool)>> {
-        let mut v = Vec::new();
+    // `e.metadata()` of a `std::fs::DirEntry` needs no further syscall on Windows and reports the entry itself, not a
+    // link target -- the same thing `DirEntry::metadata` above answers. `dir` stays on `file_type()`, as before.
+    let real = |path: &Path| -> io::Result<(Vec<(String, bool)>, Vec<Option<std::fs::Metadata>>)> {
+        let (mut names, mut metadata) = (Vec::new(), Vec::new());
         for e in std::fs::read_dir(path)? {
             let e = e?;
-            v.push((e.file_name().to_string_lossy().into_owned(), e.file_type().map(|t| t.is_dir()).unwrap_or(false)));
+            names.push((e.file_name().to_string_lossy().into_owned(), e.file_type().map(|t| t.is_dir()).unwrap_or(false)));
+            metadata.push(e.metadata().ok());
         }
-        Ok(v)
+        Ok((names, metadata))
     };
-    let list = match state().and_then(|st| logical(&st, path).map(|k| (st, k))) {
+    let (list, enumerated) = match state().and_then(|st| logical(&st, path).map(|k| (st, k))) {
         None => real(path)?,
         Some((st, key)) => match st.mode {
             Mode::Record => {
-                let list = real(path);
-                if let Ok(list) = &list {
+                let listed = real(path);
+                if let Ok((list, _)) = &listed {
                     st.index.lock().unwrap().dirs.insert(key, list.clone());
                     st.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
-                list?
+                listed?
             }
             Mode::Replay => {
                 let overlaid = replay_overlay().and_then(|o| o.index.lock().unwrap().dirs.get(&key).cloned());
@@ -1319,14 +1345,18 @@ pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<std::vec::IntoIter<io::Re
                     if let Some(o) = recording_overlay() { o.index.lock().unwrap().dirs.insert(key.clone(), list.clone()); }
                 }
                 // An original card's open: only the archives it needs (NarrowMods).
-                match narrow_mods().filter(|_| is_mods_key(&key)) {
+                // No enumerated metadata: this listing is the library's record, merged and filtered, so it does not
+                // line up with any real directory's entries and those paths answer from the gateway anyway.
+                (match narrow_mods().filter(|_| is_mods_key(&key)) {
                     Some(view) => list.into_iter().filter(|(name, dir)| view.visible(&format!("{key}/{}", name.to_ascii_lowercase()), *dir)).collect(),
                     None => list,
-                }
+                }, Vec::new())
             }
         },
     };
-    Ok(list.into_iter().map(|(name, dir)| Ok(DirEntry { path: path.join(name), dir })).collect::<Vec<_>>().into_iter())
+    Ok(list.into_iter().enumerate()
+        .map(|(i, (name, dir))| Ok(DirEntry { path: path.join(name), dir, enumerated: enumerated.get(i).cloned().flatten() }))
+        .collect::<Vec<_>>().into_iter())
 }
 
 // ---------------------------------------------------------------- zipmods
@@ -1668,12 +1698,20 @@ fn zip_lacks_models(st: &State, key: &str) -> bool {
     let memo_key = format!("{}\n{key}", st.root);
     if let Some(v) = memo.lock().unwrap().get(&memo_key) { return *v; }
     let dir = PathBuf::from(&st.root);
+    // One listing of the library's models, not a `model_file(..).is_file()` per model entry: this question is asked
+    // of every recorded archive (`held_zip_names` asks it of all ~7300 at once) and its answer is memoized below for
+    // the life of the process anyway (§十五 of Docs/CARD_OPEN_PERF_20261117.md).
+    let present = (!eager_tree_stat()).then(|| crate::oklib::models_present(&dir));
+    let held = |id: &crate::oklib::Id| match &present {
+        Some(present) => present.contains(id),
+        None => crate::oklib::model_file(&dir, id).is_file(),
+    };
     let lacks = st.index.lock().unwrap().zips.get(key).is_some_and(|z| {
-        if z.entries.values().any(|e| matches!(e, Entry::Model(id, _) if !crate::oklib::model_file(&dir, id).is_file())) {
+        if z.entries.values().any(|e| matches!(e, Entry::Model(id, _) if !held(id))) {
             return true;
         }
         let has_unity3d = z.names.iter().any(|(n, _, _, is_dir)| !*is_dir && n.to_ascii_lowercase().ends_with(".unity3d"));
-        let has_held_model = z.entries.values().any(|e| matches!(e, Entry::Model(id, _) if crate::oklib::model_file(&dir, id).is_file()));
+        let has_held_model = z.entries.values().any(|e| matches!(e, Entry::Model(id, _) if held(id)));
         has_unity3d && !has_held_model
     });
     memo.lock().unwrap().insert(memo_key, lacks);

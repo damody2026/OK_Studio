@@ -141,7 +141,10 @@ for i, order in ipairs(orders) do
       if l:find("OKCARDS ok", 1, true) and l:find(base_name(card), 1, true) then line = l end
     end
     local digest = type(line) == "string" and line:match("^OKCARDS ok\t.-\t(%S+)\t") or nil
-    local absent = type(line) == "string" and (line:match("absent=(.*)$") or "") or ""
+    -- `absent=` is one tab-separated field of the OKCARDS line, and `missing=` follows it: `(.*)$` swallowed that
+    -- one too, so an empty absent list read as `[\tmissing=]` and every in-process card "differed" from a baseline
+    -- whose digest and parts were in fact identical. The gate FAILed on its own parsing (2026-11-25).
+    local absent = type(line) == "string" and (line:match("absent=([^\t]*)") or "") or ""
     local ok_card = out_dir .. "\\" .. base_name(card)
     local made = io.open(ok_card, "rb")
     if made then made:close() end

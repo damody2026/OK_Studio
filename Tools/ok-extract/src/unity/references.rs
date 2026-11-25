@@ -144,6 +144,50 @@ fn watched_unchanged(root: &Path) -> Option<String> {
 pub(crate) fn clear_cache() {
     CATALOG.with(|c| *c.borrow_mut() = None);
 }
+/// The signature of one open's sources, worked out once for the whole process instead of once per thread. Nine
+/// threads of one open each walked and stated the same ~1250 sources (~28 ms each, 233 ms between them, §十五).
+/// The token is `gamefs::fallback_generation()`, which every open bumps when it sets its narrow mods view: the same
+/// stability token `mods::collect_zipmods_checked` memoizes the recorded tree's walk on, and the one the rest of an
+/// open's memo keys already trust. So this is as fresh as before at every card boundary -- each open still works it
+/// out at least once -- and within one open the view is held still by that generation anyway.
+/// The per-thread epoch below is untouched: a thread still compares the signature with what *it* last saw, because
+/// what it does on a change (`clear_bundle_cache`, `clear_entry_memo`) clears that thread's own caches.
+///
+/// What makes a shared answer safe is per tree. A **real** tree gets a directory watch, process-wide since
+/// 2026-11-25 (§十四), and the answer stands only while that watch has seen nothing: an edit between two loads is
+/// observed exactly as the per-thread watch above observes it. The **library's recorded** sources have no directory
+/// to watch, and they cannot change while a replay is active; what does change with the card is the mounted pack and
+/// the zipmod fallback, which the key holds.
+fn inventory_signature_for_generation(root: &Path) -> String {
+    use std::sync::Mutex;
+    use crate::appearance::catalog_watch::Watch;
+    /// (root, mounted pack, fallback generation, signature, the watch of a real tree)
+    type Shared = (PathBuf, String, u64, String, Option<Watch>);
+    static SHARED: Mutex<Vec<Shared>> = Mutex::new(Vec::new());
+    if crate::gamefs::eager_tree_stat() { return inventory_signature(root); }
+    let pack = crate::oklib::mounted_pack_identity();
+    let generation = crate::gamefs::fallback_generation();
+    {
+        let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = shared.iter().position(|(r, p, g, _, _)| r == root && *p == pack && *g == generation) {
+            let fresh = match &mut shared[i].4 {
+                Some(watch) => watch.available() && !watch.changed(),
+                None => true,
+            };
+            if fresh { return shared[i].3.clone(); }
+            shared.remove(i);
+        }
+    }
+    // The watch first, so a change during the walk is reported to the next ask.
+    let watch = (!crate::gamefs::serves_from_library(root)).then(|| Watch::new(root));
+    let signature = inventory_signature(root);
+    let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    shared.retain(|(r, p, g, _, _)| !(r == root && *p == pack && *g == generation));
+    if shared.len() >= 8 { shared.remove(0); }
+    shared.push((root.to_owned(), pack, generation, signature.clone(), watch));
+    signature
+}
+
 fn inventory_signature(root: &Path) -> String {let _spot=crate::profile::spot("view: inventory_signature");
     use std::hash::{Hash, Hasher};
     // An OK card's strict open lists nothing of the library's trees (okstrict.rs); the library cannot change while
@@ -151,10 +195,12 @@ fn inventory_signature(root: &Path) -> String {let _spot=crate::profile::spot("v
     if crate::okstrict::active().is_some() && crate::gamefs::serves_from_library(root) {
         return format!("ok card:{}", crate::oklib::mounted_pack_identity());
     }
+    let began = std::time::Instant::now();
     let mut paths = Vec::new();
     collect(&root.join("abdata"), &mut paths, false);
     collect(&root.join("mods"), &mut paths, true);
     paths.sort();
+    let walked = began.elapsed();
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     for path in &paths {
         path.hash(&mut hash);
@@ -162,6 +208,11 @@ fn inventory_signature(root: &Path) -> String {let _spot=crate::profile::spot("v
             meta.len().hash(&mut hash);
             meta.modified().ok().hash(&mut hash);
         }
+    }
+    // OK_PROFILE: the listing against the per-path metadata, for the same reason as `view sig recorded` (§十五).
+    if std::env::var_os("OK_PROFILE").is_some() {
+        crate::profile::line(format!("ok-extract: PROFILE inventory sig {} sources={} walk={:.1}ms sign={:.1}ms",
+            root.display(), paths.len(), walked.as_secs_f64() * 1000., (began.elapsed() - walked).as_secs_f64() * 1000.));
     }
     format!("sources={}:hash={:016x}", paths.len(), hash.finish())
 }
@@ -171,7 +222,7 @@ pub(crate) fn begin_load(root: &Path) -> String {
     if let Some(signature) = watched_unchanged(root) {
         return signature;
     }
-    let signature = inventory_signature(root);
+    let signature = inventory_signature_for_generation(root);
     let pack = crate::oklib::mounted_pack_identity();
     let changed = EPOCH.with(|epoch| {
         let changed = epoch
