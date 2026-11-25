@@ -492,6 +492,67 @@ local function main()
       end
     end
   end
+  -- Breeding, end to end, with the package's own ok-extract and the resources it will run on: two of the cards ->
+  -- a child (the reader runs exactly this, `FOkSession::Breed`), the HairDeck hair the step above generated put into
+  -- her, and her open checked for a hair part a cooked game can draw. Both of the 2026-11-25 failures fail here: the
+  -- child of an original card did not seal at all ("okLt guids"), and the child of two OK cards came out bald in the
+  -- package although she was right in the editor (Docs/OK_BREEDING.md).
+  do
+    local res = program and (resources_from or find_resources()) or out
+    local lib = res and path.join(res, "Content/IndependentResources/base_v1")
+    local exe = path.join(out, "Tools/ok-extract/target/release/ok-extract.exe")
+    local cards_dir = res and path.join(res, "Content/CharacterCards")
+    local cards = {}
+    for _, f in ipairs(cards_dir and path.is_dir(cards_dir) and path.rglob(cards_dir, "*.png") or {}) do
+      local size = path.size(f) or 0
+      -- Over 5 MB: an OK card carries her own resources, a plain card or a thumbnail does not.
+      if size > 5 * 1024 * 1024 then cards[#cards + 1] = { f, size } end
+    end
+    table.sort(cards, function(a, b) return a[2] < b[2] end)
+    local work = path.join(logs, "selfcheck-breed")
+    local env = { OK_BASE_LIBRARY = lib and win(lib) or false, RAYON_NUM_THREADS = "8", OK_NOCACHE = "1" }
+    local function step(name, cmd, timeout)
+      local log = path.join(logs, "selfcheck-breed-" .. name .. ".log")
+      local r = proc.run(cmd, { stdout_file = log, merge = true, env = env, timeout = timeout or 900 })
+      return r.ok, path.is_file(log) and path.read_text(log) or "", win(log)
+    end
+    if not lib or not path.is_dir(lib) or not path.is_file(exe) or #cards < 2 then
+      problems[#problems + 1] = "breeding not tried (no base library, no ok-extract, or fewer than two OK cards in " .. win(tostring(cards_dir)) .. ")"
+    else
+      path.mkdir(work, true)
+      -- The parents are cards that have hair themselves: a card whose hairstyle its own data cannot show (crowd_C011
+      -- wears hers as an accessory a mod was to provide) is bald on its own account and says nothing about breeding.
+      local parents = {}
+      for i = 1, math.min(#cards, 6) do
+        if #parents == 2 then break end
+        local card = cards[i][1]
+        local ok, _ = step(("parent-%02d"):format(i), { win(exe), "X:/NoGame", "--oklib", "hair-check", win(card) })
+        if ok then parents[#parents + 1] = card end
+      end
+      if #parents < 2 then problems[#problems + 1] = "breeding not tried (no two cards in " .. win(cards_dir) .. " that open with hair)"
+      else
+        local mother, father = parents[1], parents[2]
+        local child, haired = path.join(work, "child.png"), path.join(work, "child-hairdeck.png")
+        say(("  breeding %s x %s"):format(path.name(mother), path.name(father)))
+        local ok1, _, log1 = step("breed", { win(exe), "X:/NoGame", "--oklib", "breed", win(mother), win(father), "20261125", win(child) })
+        if not ok1 or not path.is_file(child) then
+          problems[#problems + 1] = "breeding failed in the package: " .. log1
+        else
+          -- The hair the HairDeck step generated (a full package only), as the reader's breeding puts it on.
+          local deck = path.join(logs, "selfcheck-hairdeck/cards_seed0.json")
+          local wearer = child
+          if path.is_file(deck) then
+            local ok2, _, log2 = step("hair-put", { win(exe), "X:/NoGame", "--oklib", "hair-put", win(child), win(deck), win(haired), '{"native":true}' })
+            if not ok2 or not path.is_file(haired) then problems[#problems + 1] = "HairDeck hair would not go into the bred child: " .. log2
+            else wearer = haired end
+          end
+          local ok3, text3, log3 = step("hair-check", { win(exe), "X:/NoGame", "--oklib", "hair-check", win(wearer) }, 1800)
+          for line in text3:gmatch("OKHAIRCHECK [^\r\n]*") do say("  " .. line) end
+          if not ok3 then problems[#problems + 1] = "the bred child has no hair a cooked game would draw: " .. log3 end
+        end
+      end
+    end
+  end
   for _, m in ipairs(manifest.maps_in_paks or {}) do
     if not (m:match("Maps/Entry%.umap$") or m:match("Template_Default%.umap$")) then problems[#problems + 1] = "a game map is in the paks: " .. m end
   end

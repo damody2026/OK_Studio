@@ -96,9 +96,28 @@ pub fn unanswered(kind: &str, key: &[u8]) -> bool {
     crate::okstrict::gap(|| {
         let text = String::from_utf8_lossy(key);
         let n = text.split('\n').filter(|s| !s.is_empty()).count();
-        if n > 1 { format!("okLt {kind} ({n}): {}", text.replace('\n', ",")) } else { format!("okLt {kind} {}", text.replace('\n', ",")) }
+        // Which of the names no answer of hers was ever asked about: a set question is answered from the answers that
+        // together cover it (`lookup_covered`), so of twenty guids the one that is new is the whole gap, and the
+        // reader's error named all twenty (2026-11-25, a bred child whose mix asked about a mod neither parent used).
+        if n > 1 {
+            let missing = uncovered(kind, key);
+            let tail = if missing.is_empty() { String::new() } else { format!(", never asked: {}", missing.join(",")) };
+            format!("okLt {kind} ({n}{tail}): {}", text.replace('\n', ","))
+        } else { format!("okLt {kind} {}", text.replace('\n', ",")) }
     });
     true
+}
+
+/// The names of a set question (one a line) that no answer the card carries was asked about.
+pub fn uncovered(kind: &str, key: &[u8]) -> Vec<String> {
+    let Some(table) = table() else { return Vec::new() };
+    let lines = |text: &'_ [u8]| text.split(|b| *b == b'\n').filter(|l| !l.is_empty()).map(<[u8]>::to_vec).collect::<Vec<_>>();
+    let asked: std::collections::HashSet<Vec<u8>> = table.iter().filter(|((k, _), _)| k == kind).flat_map(|((_, q), _)| lines(q)).collect();
+    let mut out: Vec<String> = lines(key).into_iter().filter(|n| !asked.contains(n))
+        .map(|n| String::from_utf8_lossy(&n).into_owned()).collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The card's answer to a question, if it carries one.

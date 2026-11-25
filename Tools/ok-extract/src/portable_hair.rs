@@ -84,8 +84,18 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
     let hair_shadow=|p:&crate::session::SessionPart|p.role=="accessory" && !is_custom(p) && p.source_property.as_ref().is_some_and(|sp|hair_slots.contains(sp))
         && p.source_renderer_names.iter().any(|r|{let r=r.to_ascii_lowercase();r.contains("shadow")||r.contains("kage")});
     // Putting authored hair on again takes the slot of the earlier one (the card's hair parts are hidden by then).
-    let donor=s.parts.iter().position(|p|native_hair(p)).or_else(||if m.layer.is_none(){s.parts.iter().position(|p|is_custom(p)&&p.render_visible)}else{None}).ok_or_else(||format!("base has no hair material donor (parts: {})",
-        s.parts.iter().map(|p|format!("{}:{}:{}:{}",p.role,p.name,p.shader_kind,p.source_material.as_ref().map_or("",|m|m.shader.as_str()))).collect::<Vec<_>>().join(", ")))?;
+    let donor=s.parts.iter().position(|p|native_hair(p)).or_else(||if m.layer.is_none(){s.parts.iter().position(|p|is_custom(p)&&p.render_visible)}else{None});
+    // No hair of her own at all: her head takes the donor's place as a template to clone, and the hair is drawn with
+    // the item shader below (everything the hair needs is written over the clone). A bred child whose hairstyle came
+    // from a parent who wears hers as an accessory has no hair part — accessories go with the clothes, the hairstyle
+    // gene with the hair — and refusing here left her bald in the reader with "base has no hair material donor"
+    // (2026-11-25, 胡桃 × 貞德, Docs/OK_BREEDING.md). Her own hair is the better template when she has one, so this
+    // is the last resort, and the clone is pushed as a new part so the head itself is not eaten.
+    let (donor,from_head)=match donor {
+        Some(d)=>(d,false),
+        None=>(s.parts.iter().position(|p|p.role=="head").ok_or_else(||format!("base has no hair material donor and no head (parts: {})",
+            s.parts.iter().map(|p|format!("{}:{}:{}:{}",p.role,p.name,p.shader_kind,p.source_material.as_ref().map_or("",|m|m.shader.as_str()))).collect::<Vec<_>>().join(", ")))?,true),
+    };
     let self_native=if m.native_self {
         Some(s.parts.iter().find(|p|native_hair(p) && p.render_visible && matches!(p.shader_kind,1|10))
             .or_else(||s.parts.iter().find(|p|native_hair(p) && matches!(p.shader_kind,1|10))).cloned())
@@ -107,6 +117,9 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         let index=match existing {Some(i)=>i,None=>{let clone=s.parts[donor].clone();s.parts.push(clone);s.parts.len()-1}};
         if existing.is_some(){s.parts[index]=s.parts[donor].clone();}
         index
+    } else if from_head {
+        // Her head is only the template; the hair is a part of its own.
+        let clone=s.parts[donor].clone();s.parts.push(clone);s.parts.len()-1
     } else {donor};
     // A hair mesh drawn again under another material of the same accessory: an alpha layer (studio_alpha, main_alpha)
     // or a MaterialEditor copy over it, or the same texture (C070, C084, C088 kept these).
@@ -190,7 +203,14 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         p.blend_shapes.clear();p.morph_idx.clear();p.morph_dxyz.clear();
         p.png=Some(texture.to_vec());p.shader_textures.insert("_MainTex".into(),texture.to_vec());
         p.runtime_textures.insert("_MainTex".into(),[1,0,0,1,1]);p.main_tex_st=[1.,1.,0.,0.];
-        p.alpha_mask=None;p.blend="opaque".into();p.blend_c=CString::new("opaque").unwrap();
+        // The donor's blend stays as it is (`*p=d.clone()` brought it): native hair is `masked`, and a packaged game
+        // draws a Shader Forge/main_hair* part only through the hair family, which it finds by (shader kind 1, blend
+        // `masked`, unlit) -- `OKRuntimeSharedMaterialRecipe`. Pressing the blend to `opaque` here left that part with
+        // no shared parent, and a cooked build drops a part with no parent instead of drawing it: every bred child
+        // came out bald in the package while the editor (which still builds a material graph of its own) looked right
+        // (2026-11-25, Docs/OK_BREEDING.md). The atlas is opaque everywhere it is sampled (alpha 255), so the masked
+        // parent's cutout changes nothing.
+        p.alpha_mask=None;
         if let Some(mat)=p.source_material.as_mut(){mat.render_queue=2000;for key in ["_Color","_Color2","_Color3"]{mat.colors.insert(key.into(),[1.;4]);}}
         p.overcolor=[1.;4];p.overcolor2=[1.;4];
         if let (Some(id),Some(path))=(&m.native_gloss_asset,&m.native_material_card) {
@@ -203,6 +223,15 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         }
     }
     if let Some(rig)=&m.soft_rig {soft::install(p,rig,&head_world)?;}
+    // The hair has to be a material family a cooked game knows, or it is dropped there and only there (she is bald in
+    // a package, right in the editor). The families this function writes: native hair (shader kind 1, `masked` and
+    // unlit), Forge MainItem (8), TripoPBR (0, drawn as a studio item). Loud here beats bald in the package.
+    {
+        let p=&s.parts[slot];
+        if p.shader_kind==1 && !(p.blend=="masked" && p.unlit) {
+            return Err(format!("hair material a cooked game cannot draw: shader kind 1 (Shader Forge/main_hair*) needs blend `masked` and unlit, got blend `{}` unlit={}",p.blend,p.unlit));
+        }
+    }
     s.skin_all();s.skel_export=None;
     Ok(())
 }

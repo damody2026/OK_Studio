@@ -7675,3 +7675,50 @@ F 樹 65551a150 帶進來的），另一個沒有記下名字，就說「再觀�
 
 **改法**：測試結果不是只看 `test result:` 那行的數字，要把 `failures:` 底下的每個名字都讀出來存檔
 （`cargo test ... 2>&1 | Out-File <log>`，再從 log 取名字）。沒有名字就不算量過，不能寫「再觀察」。
+
+## 2026-11-25（f-breed-package）「編輯器裡看起來對」不等於畫得出來：配種子卡在打包版是光頭
+
+**現象**：打包版 `CardReaderDevelopment.cmd` 配出來的孩子，log 一路成功（`HairDeck hair kept in the card (139705 bytes)`），
+顯示出來卻沒有頭髮。開發樹的讀卡器開同一張卡是對的。
+
+**原因**：接上去的 HairDeck 頭髮沿用捐贈部件的原生髮材質（`shader_kind` 1，`Shader Forge/main_hair*`）時，
+`portable_hair.rs` 把 `blend` 壓成 `opaque`。cooked build 只畫找得到共用母材質的部件，而那個家族的條件是
+blend `masked` 且 unlit → 配不上任何家族 → `ApplyPartMaterial` 在 `!WITH_EDITOR` 把整片關掉（`SetRenderInMainPass(false)`）。
+編輯器那條路沒有母材質就臨時建一張材質圖，所以**同一份資料、同一張卡，只有打包版不畫**。
+
+**修正**：不再動捐贈部件的 blend；並在接完頭髮後擋一道（kind 1 而不是 masked／unlit 就報錯），不讓它再悄悄變光頭。
+打包自檢加一段「配一次種並 `--oklib hair-check`」，壞掉會在打包時就失敗。
+
+**下次怎麼避免**：改到部件材質（blend、shader_kind、unlit、shader 名）時，問一句「cooked build 有沒有這個家族的母材質」——
+`OKRuntimeSharedMaterialRecipe` 的條件是硬的，對不上就是整片不畫，而編輯器永遠看不出來。驗收要在包裡看，不是在編輯器裡看。
+
+## 2026-11-25（f-breed-package）庫加了 mods 索引，之後做的每張 OK 卡都少錄一種答案
+
+**現象**：打包版（與開發樹）用原作卡配 OK 卡，封卡每一套服裝都失敗：
+`the OK card has 1 unanswered question(s) ... okLt guids (7): ...`。兩張 OK 卡互配卻沒事。
+
+**原因**：`mods.rs` 的 `find_guids_inner` 原本有兩條路：卡裡的答案、掃整棵 mods 樹（錄答案就在這條）。
+2026-11-24 基礎庫改帶 `mods_index.db` 之後中間多了一條「問庫的索引」，它直接 `return`，**沒有 `record`**。
+錄答案那一次開卡剛好走這條 → 卡裡一列 `guids` 都沒有（`--oklib pack-keys` 看得到）。
+嚴格開卡不准問索引（答案一定要在卡裡），所以那之後做的 OK 卡一拿去封卡就缺答案。
+
+**修正**：索引那條路也錄（共用 `record_guids`）。缺口訊息也補上「七個名字裡哪幾個從來沒被問過」，
+原本七個全印出來，看不出少的是哪一個，查起來慢了很多。
+
+**下次怎麼避免**：在一個「問完要把答案記下來」的函式裡插新的快路徑時，先看那條舊路徑尾巴上有沒有 `record`／寫快取，
+新路徑要照做。這類錯不會讓當下那次開卡失敗，只會讓**之後**用這張卡的人失敗。
+
+## 2026-11-25（f-breed-package）「配種成功」的 log 不代表孩子有頭髮
+
+**現象**：打包版配 `Jeanne V1.11 × heroine_hu_tao`，封卡、載入、`HairDeck hair kept in the card (111418 bytes)` 全部成功，
+畫面上還是光頭。這次沒有任何 `left out` 警告——是另一條路：
+`OK card HairDeck hair not applied: base has no hair material donor`。
+
+**原因**：胡桃的頭髮是飾品做的（`hair-check` 列出 `Hair (accessory, kind 1)`）。飾品跟著衣服那一方，髮型基因跟著
+頭髮那一組，孩子拿了胡桃的髮型編號卻沒有她的飾品 → 一個頭髮部件都沒有 → 接 HairDeck 頭髮找不到可當模板的
+「捐贈部件」，整段放棄。
+
+**修正**：沒有任何頭髮可當模板時，用她的頭複製一份新部件當模板（頭本身不動），用 item shader 畫。
+
+**下次怎麼避免**：驗收「配種成功」不能只看 log 的成功行，要看那張臉。這一輪三條毛病裡有兩條 log 都是成功的。
+每個孩子都要截圖，或用 `ok-extract --oklib hair-check` 問一句「她有沒有一片畫得出來的頭髮」。
