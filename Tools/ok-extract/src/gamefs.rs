@@ -1086,7 +1086,10 @@ pub(crate) fn read_source<P: AsRef<Path>>(path: P) -> io::Result<crate::unity::S
 pub fn installation_source(path: &Path) -> Option<crate::unity::SourceBytes> {
     let st = state()?;
     let key = logical(&st, path)?;
-    let (real, _) = fallback_path(&key, Some(false))?;
+    // `fallback_candidates` serves `mods/...` only ("vanilla data comes only from the library"), so an `abdata/...`
+    // key is taken from the installation root itself; archives still go through the fallback directories.
+    let real = fallback_installation().map(|g| g.join(&key)).filter(|p| p.is_file())
+        .or_else(|| fallback_path(&key, Some(false)).map(|(p, _)| p))?;
     note_access(&real);
     crate::unity::SourceBytes::file(&real).ok()
 }

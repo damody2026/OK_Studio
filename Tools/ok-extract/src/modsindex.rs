@@ -1,6 +1,6 @@
-//! The mods tree's two maps, carried **by the base library** as a database and built once by
-//! `--oklib shared-ignore` (or `--oklib mods-index`): which archive declares each GUID, and which archive replaces
-//! each `abdata/...unity3d`.
+//! The mods tree's maps, carried **by the base library** as a database and built once by
+//! `--oklib shared-ignore` (or `--oklib mods-index`): which archive declares each GUID, which archive replaces
+//! each `abdata/...unity3d`, and which archives declare an UncensorSelector body, penis or balls.
 //!
 //! An open answers both from here with point queries. It never reads the installation's ~7300 manifests or central
 //! directories, and it keeps **no per-card cache** (the user, 2026-11-24: an open must never read every mod, and
@@ -11,8 +11,11 @@
 //!
 //! The database is library data, like `shared_mods.txt`: the same command that regenerates that list regenerates it,
 //! from one walk of the tree at library-build time. A GUID or a bundle it does not name is a **gap** the open reports
-//! (`OKMODS unanswered`), not a reason to walk the tree. It is `<lib>/mods_index.db`, SQLite, three tables:
-//! `archive` (every zipmod of that installation, in walk order), `guid` and `override` (rows pointing at archives).
+//! (`OKMODS unanswered`), not a reason to walk the tree. It is `<lib>/mods_index.db`, SQLite: `archive` (every zipmod
+//! of that installation, in walk order) plus `guid`, `override`, `migration` and `uncensor` (rows pointing at
+//! archives). `uncensor` was added on 2026-11-25 **without bumping the schema**: a database built before it simply
+//! has no such table, the open reads those archives itself as it always did, and every other query keeps working --
+//! a bump would have made every tree's index unusable until it was rebuilt, for a table only one caller needs.
 //! Nothing is loaded whole: a lookup is one indexed query, so the reader's start and an open pay for the GUIDs they
 //! ask about and nothing else.
 
@@ -116,6 +119,11 @@ pub struct Index {
     /// resolution path (nothing is stripped because of this) -- it is how an open tells "this id is gone by design"
     /// from "this mod is missing", so a `StripAll`-ed id does not drown the real gaps in `OKMODS unanswered`.
     pub migrations: Vec<(String, String, String)>,
+    /// `(archive, its UncensorSelector manifests)` for the few archives that declare a body, penis or balls, in walk
+    /// order. The third map an open used to build by reading every archive: `mods::uncensor_sources` opened all ~7300
+    /// of them for these ~25 answers, twice per original card (the installation's tree and the library's recorded
+    /// one), ~1.4 s of CPU and 7300 cold directory touches on a card that needs none of it (2026-11-25).
+    pub uncensor: Vec<(String, Vec<String>)>,
 }
 
 /// Why every candidate and not the winner: an original card's open does not see the whole installation. It sees its
@@ -131,16 +139,18 @@ pub fn build(mods_dir: &Path) -> Index {
     // `or_insert`, the GUID map by replacing only on a strictly higher rank), so sorting here handed a bundle
     // shipped by two archives to a different one and six original-card outfits came out different.
     let zips = crate::mods::all_zipmods(mods_dir);
-    let rows: Vec<(String, Vec<(String, String)>, Vec<String>, Vec<(String, String)>)> = zips
+    type Row = (String, Vec<(String, String)>, Vec<String>, Vec<(String, String)>, Vec<String>);
+    let rows: Vec<Row> = zips
         .par_iter()
         .map(|zip| {
             let rel = relative(mods_dir, zip);
             (rel, crate::mods::guids_and_versions_from_zipmod(zip), crate::mods::zipmod_override_keys(zip),
-                crate::mods::migrations_from_zipmod(zip))
+                crate::mods::migrations_from_zipmod(zip), crate::mods::uncensor_manifest_xmls(zip))
         })
         .collect();
     let mut index = Index::default();
-    for (rel, guids, overrides, migrations) in rows {
+    for (rel, guids, overrides, migrations, uncensor) in rows {
+        if !uncensor.is_empty() { index.uncensor.push((rel.clone(), uncensor)); }
         for (old, kind) in migrations {
             index.migrations.push((old.to_ascii_lowercase(), kind, rel.clone()));
         }
@@ -184,7 +194,9 @@ pub fn write(lib: &Path, mods_dir: &Path, index: &Index) -> Result<(usize, usize
          CREATE TABLE override(bundle TEXT NOT NULL COLLATE NOCASE, archive INTEGER NOT NULL);
          CREATE INDEX override_lookup ON override(bundle);
          CREATE TABLE migration(guid_old TEXT NOT NULL COLLATE NOCASE, kind TEXT NOT NULL, archive INTEGER NOT NULL);
-         CREATE INDEX migration_lookup ON migration(guid_old);",
+         CREATE INDEX migration_lookup ON migration(guid_old);
+         CREATE TABLE uncensor(archive INTEGER NOT NULL, xml TEXT NOT NULL);
+         CREATE INDEX uncensor_lookup ON uncensor(archive);",
     ).map_err(err)?;
     // `archive.id` IS the walk position, so every query orders candidates by it and no row carries an order of its own.
     let mut ids: HashMap<&str, i64> = HashMap::new();
@@ -223,6 +235,11 @@ pub fn write(lib: &Path, mods_dir: &Path, index: &Index) -> Result<(usize, usize
                 let Some(id) = ids.get(rel.as_str()) else { continue };
                 migration.execute(rusqlite::params![old, kind, id]).map_err(err)?;
             }
+            let mut uncensor = tx.prepare("INSERT INTO uncensor(archive, xml) VALUES(?1, ?2)").map_err(err)?;
+            for (rel, xmls) in &index.uncensor {
+                let Some(id) = ids.get(rel.as_str()) else { continue };
+                for xml in xmls { uncensor.execute(rusqlite::params![id, xml]).map_err(err)?; }
+            }
             let mut meta = tx.prepare("INSERT INTO meta(key, value) VALUES(?1, ?2)").map_err(err)?;
             for (k, v) in [
                 ("schema", SCHEMA.to_string()),
@@ -232,6 +249,7 @@ pub fn write(lib: &Path, mods_dir: &Path, index: &Index) -> Result<(usize, usize
                 ("guid_rows", guid_rows.to_string()),
                 ("override_rows", override_rows.to_string()),
                 ("migration_rows", index.migrations.len().to_string()),
+                ("uncensor_archives", index.uncensor.len().to_string()),
                 ("built_at_unix", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs().to_string()).unwrap_or_default()),
                 ("tool", "ok-extract --oklib shared-ignore / mods-index".to_string()),
@@ -301,6 +319,27 @@ impl Db {
         let mut st = conn.prepare_cached(
             "SELECT m.kind, a.path FROM migration m JOIN archive a ON a.id = m.archive WHERE m.guid_old = ? ORDER BY a.id LIMIT 1").ok()?;
         st.query_row([guid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()
+    }
+
+    /// Every archive that declares an UncensorSelector body/penis/balls, with its manifests: archive path (relative
+    /// to `mods/`, lower case) -> the XMLs, in walk order. `None` when this database was built before the table
+    /// existed, which is how an older `mods_index.db` keeps working (the caller reads the archives itself, as before)
+    /// without the schema -- and every other query of it -- being invalidated.
+    fn uncensor_table(&self) -> Option<UncensorIndex> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut st = conn.prepare(
+            "SELECT a.path, u.xml FROM uncensor u JOIN archive a ON a.id = u.archive ORDER BY a.id").ok()?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()?;
+        let mut parts: HashMap<String, Vec<String>> = HashMap::new();
+        for (rel, xml) in rows.filter_map(Result::ok) { parts.entry(rel.to_ascii_lowercase()).or_default().push(xml); }
+        // Which archives the database is about, so that "this one declares nothing" (no row, and it must not be read)
+        // is told from "the database never saw it" (a zipmod beside the card, which is read). Without this an
+        // installation whose mods happen to declare no uncensor part at all would read every archive again.
+        let mut known = std::collections::HashSet::new();
+        let mut st = conn.prepare("SELECT path FROM archive").ok()?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).ok()?;
+        for rel in rows.filter_map(Result::ok) { known.insert(rel.to_ascii_lowercase()); }
+        Some(UncensorIndex { known, parts })
     }
 
     /// Does the database name this archive (relative to `mods/`)? One indexed lookup.
@@ -414,6 +453,53 @@ pub fn override_archive(mods_dir: &Path, bundle: &str) -> Option<PathBuf> {
     let view = visible(mods_dir);
     candidates.into_iter().find(|rel| view.as_ref().is_none_or(|v| v.contains(&rel.to_ascii_lowercase())))
         .map(|rel| mods_dir.join(rel))
+}
+
+/// What the index says about UncensorSelector parts: which archives it is about at all (`known`, relative to `mods/`,
+/// lower case) and, of those, which declare a body/penis/balls with their manifests in walk order (`parts`).
+pub struct UncensorIndex {
+    pub known: std::collections::HashSet<String>,
+    pub parts: HashMap<String, Vec<String>>,
+}
+
+impl UncensorIndex {
+    /// The archive's UncensorSelector manifests, or `None` when the index cannot answer for it (then the caller reads
+    /// that one archive). An empty `Vec` is an answer: this archive declares nothing.
+    pub fn get(&self, rel: &str) -> Option<&[String]> {
+        match self.parts.get(rel) {
+            Some(xmls) => Some(xmls),
+            None => self.known.contains(rel).then_some(&[] as &[String]),
+        }
+    }
+}
+
+/// The UncensorSelector declarations of the archives the active library's index knows, for `mods::uncensor_sources`:
+/// archive path relative to `mods/` (lower case) -> its manifests, in walk order. Read whole, once per process -- it
+/// is about 25 rows, while the question it answers used to open every archive of the tree. `None`: no library active,
+/// a database that does not serve this tree, or one built before the table existed (then the caller reads the
+/// archives itself). An archive the map does not name is **not** "declares nothing": the caller still reads that one
+/// (a zipmod beside the card is in the view and not in the index).
+pub fn uncensor_manifests(mods_dir: &Path) -> Option<Arc<UncensorIndex>> {
+    static SEEN: OnceLock<RwLock<Vec<(PathBuf, Option<Arc<UncensorIndex>>)>>> = OnceLock::new();
+    // An empty value is not "set": a measurement script that exports `OK_NO_UNCENSOR_INDEX=""` for the A side would
+    // otherwise take the fallback on both sides and the gate would compare the old path with itself (it did, on the
+    // first run of 2026-11-25 -- 21/21 and 42/42 "identical" while neither side used the index).
+    if std::env::var_os("OK_NO_UNCENSOR_INDEX").is_some_and(|v| !v.is_empty()) { return None; }
+    let lib = crate::oklib::active_dir()?;
+    if !serves(mods_dir) { return None; }
+    let slot = SEEN.get_or_init(|| RwLock::new(Vec::new()));
+    if let Some((_, hit)) = slot.read().unwrap_or_else(|e| e.into_inner()).iter().find(|(p, _)| *p == lib) {
+        return hit.clone();
+    }
+    let table = active().and_then(|db| db.uncensor_table()).map(Arc::new);
+    if table.is_none() {
+        crate::profile::line(format!("OKMODS {} has no uncensor table: rerun `ok-extract <game> --oklib mods-index {}` \
+            so an open need not read every archive's manifest", lib.display(), lib.display()));
+    }
+    let mut slot = slot.write().unwrap_or_else(|e| e.into_inner());
+    slot.retain(|(p, _)| *p != lib);
+    slot.push((lib, table.clone()));
+    table
 }
 
 /// Every GUID the active library's installation declares, for the one caller that wants them all.

@@ -1246,6 +1246,18 @@ fn with_zipmod_manifests(path: &Path, mut visit: impl FnMut(&str)) {let _spot=cr
     for xml in zipmod_manifests(path).iter() { visit(xml); }
 }
 
+/// The archive's UncensorSelector manifests: the ones declaring a body, penis or balls. One place for the predicate,
+/// because two of them now ask it -- the library build (`modsindex::build`, which records these rows) and the open's
+/// own fallback for an archive the index does not name.
+pub(crate) fn uncensor_manifest_xmls(path: &Path) -> Vec<String> {
+    let mut xmls = Vec::new();
+    with_zipmod_manifests(path, |xml| {
+        let lower = xml.to_ascii_lowercase();
+        if lower.contains("<body>") || lower.contains("<penis>") || lower.contains("<balls>") { xmls.push(xml.to_string()); }
+    });
+    xmls
+}
+
 /// Every manifest.xml inside the zipmod (decoded), in archive order; read once per archive generation.
 fn zipmod_manifests(path: &Path) -> Arc<Vec<String>> {
     crate::gamefs::zip_memo("manifests", path, || {
@@ -1320,6 +1332,35 @@ fn uncensor_sources_in_tree(game_root: &Path) -> (UncensorSources, Arc<Vec<(Path
         if hit.0.iter().map(|s| &s.zipmod).chain(hit.1.iter().map(|s| &s.zipmod)).all(|p| p.ok_is_file()) { return (hit.clone(), manifests.clone()); }
     }
     if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: MEMO miss uncensor_sources key={}", key.replace('\n', " | ")); }
+    // The library's index answers which archives declare a body/penis/balls, so no archive of the tree is opened for
+    // this (the rule of 2026-11-24). The walk still decides order and visibility -- the first archive naming a body
+    // provides it, the last genital wins, and an original card sees only its narrow view -- but it is a listing,
+    // memoized per fallback generation, not ~7300 archive reads. Only an archive the index does not name is read
+    // here, which is a zipmod beside the card. `OK_NO_UNCENSOR_INDEX=1` measures the difference.
+    let mods_dir = game_root.join("mods");
+    if let Some(map) = crate::modsindex::uncensor_manifests(&mods_dir) {
+        let mut seen = HashSet::new();
+        let (mut paths, mut found, mut read) = (Vec::new(), Vec::new(), 0usize);
+        for path in collect_zipmods(&mods_dir).unwrap_or_default() {
+            let rel = path.strip_prefix(&mods_dir).unwrap_or(&path).to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+            let xmls = match map.get(&rel) { Some(xmls) => xmls.to_vec(), None => { read += 1; uncensor_manifest_xmls(&path) } };
+            // Identity dedupe (one `CreateFileW` each) over the few archives that declare parts, not over all ~7300.
+            if xmls.is_empty() || !seen.insert(zipmod_identity(&path)) { continue; }
+            paths.push(path);
+            found.push(xmls);
+        }
+        if std::env::var_os("OK_PROFILE").is_some() {
+            eprintln!("ok-extract: uncensor sources from the library index: {} archive(s) declare parts, {read} read here", paths.len());
+        }
+        let manifests: Vec<(PathBuf, Vec<String>)> = paths.into_iter().zip(found).collect();
+        let out = Arc::new(uncensor_sources_of(&manifests));
+        let manifests = Arc::new(manifests);
+        let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+        memo.retain(|(k, _, _)| *k != key);
+        if memo.len() >= 8 { memo.remove(0); }
+        memo.push((key, out.clone(), manifests.clone()));
+        return (out, manifests);
+    }
     let paths = uncensor_zipmod_paths(game_root);
     // Each archive's UncensorSelector manifests, read at once; an archive the active library records cannot change,
     // so its answer is kept by path, across processes too (oklib::library_scan_load): the first card of a process

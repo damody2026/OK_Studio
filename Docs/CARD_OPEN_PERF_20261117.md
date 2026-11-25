@@ -1150,3 +1150,59 @@ serialized 走一遍，收同樣三種東西（type 115 的 script 名、type 1 
 不是幾百 MiB。UE 行程的 peak working set 兩輪分別是 6870 → 7184 MiB 與 7470 → 7603 MiB（共用那邊各高
 314 與 133 MiB），**比圖本身大一個量級且兩輪不一致，不能歸給這個快取**；真正的差別來源沒有查下去，
 在 7.5 GiB 的行程上這是一般的跑次間變動。要再追就得用同一個 build 跑多次取中位數。
+
+## 十一、原作卡的第三张全树表：UncensorSelector 的声明收进 mods_index.db（2026-11-25，E 树）
+
+第十节把两张表（哪个 archive 宣告哪个 GUID、哪个 archive 覆盖哪个 bundle）收进了庫的 `mods_index.db`，
+**第三张没收**：`mods::uncensor_sources`（哪些 archive 宣告 UncensorSelector 的 body／penis／balls）照旧
+**打开整棵树的每一个 archive 读 manifest**。它在一次原作卡开卡里跑**两遍**——一次问安装目录的树、一次问庫
+自己的录制树（`uncensor_guid_known`，窄视图那个判断要用）。Tohru 冷开（8 执行绪，本机完整庫）量到：
+
+| 读出 | 改前 | 改后 |
+|---|---:|---:|
+| `SPOT with_zipmod_manifests` | 1395 ms **x7296** | 1.4 ms **x5** |
+| `SPOT open_zip` | 1161 ms x7783 | 85.9 ms **x379** |
+| `zipmod_identity`（`CreateFileW`＋`GetFileInformationByHandle`，为了硬连结去重） | x7296 | **x25** |
+| 真正要的答案 | — | **25 个 archive**（AGENTS.md 那张 uncensor 表的 25 包） |
+
+**改法**（和第十节同一个形状）：`mods_index.db` 多一张 `uncensor(archive, xml)`，由同一个命令
+（`--oklib shared-ignore` ／ `mods-index`）在建庫那一趟顺手录；开卡把它整张读出来（25 列，一次查询），
+走访顺序照旧由 `collect_zipmods` 的**列目录**决定（窄视图、第一个 body 胜、最后一个 genital 胜都不变），
+**一个 archive 都不开**。索引没提到的 archive（卡片旁边的 zipmod、庫的录制树里多出来的那 5 个）照旧自己读
+那一个。身分去重只对「真的宣告了部件」的那几个做。读出会印
+`uncensor sources from the library index: N archive(s) declare parts, M read here`。
+
+**schema 没有跟着跳**：旧的 `mods_index.db` 只是没有那张表，`uncensor_manifests` 回 None 并印一行提示重建，
+开卡就照旧自己读，其余查询完全不受影响。跳 schema 会让每棵树的索引在重建前整个不能用（连 GUID 与 override
+都答不出来），为一张只有一个呼叫者的表付这个代价不值得。**「索引知道这个 archive 但它没宣告部件」和「索引
+根本没见过它」要分开**，否则一棵完全没有 uncensor mod 的树会被当成「索引答不出来」而把每个 archive 又读一遍。
+
+**时间**（三张基准卡，冷，`--sequence` ＋ `OK_BENCH_PREWARM=concurrent`，同一个执行档、交错、丢一轮暖机）：
+
+| 卡 | 8 执行绪 旧扫描 | 8 执行绪 索引 | 2 执行绪 旧扫描 | 2 执行绪 索引 |
+|---|---:|---:|---:|---:|
+| Tohru（第一张，付这笔） | 1.283 s | **1.147 s（−10.6%）** | 1.803 s | **1.676 s（−7.0%）** |
+| KK_091207 | 0.567 | 0.564 | 0.956 | 0.954 |
+| Komazoku Megumin (2) | 0.628 | 0.623 | 1.271 | 1.221 |
+| **合计** | 2.478 | **2.334（−5.8%）** | 4.030 | **3.851（−4.4%）** |
+
+8 执行绪 n=8、2 执行绪 n=4，Tohru 那一栏**区间完全不重叠**（旧 1.266–1.293、新 1.141–1.155）。
+
+**读法**：省下的是**每个行程的第一张原作卡**（后面的卡本来就吃行程内的 memo，所以第二、三张不变——这正是
+它该有的形状）。这台机器上是暖磁碟的 −136 ms；真正值钱的是冷磁碟：第十节量过「7296 个 manifest 约 2.8 s」，
+而使用者那笔「伊莉雅第一张卡 9.4 s」就是这一类。**这个数没办法在这台机器上量**（要清掉 Windows 的档案快取），
+所以这里只写暖的那个数字和机制，不要拿 2.8 s 去宣称收益。
+
+**闸门**（同一个执行档，索引路径 vs `OK_NO_UNCENSOR_INDEX=1` 的旧扫描，`--fresh-dump` 逐位元）：
+原作卡三张基准 **21/21 相同**、OK 卡六张全部服装 **42/42 相同**；索引侧
+`with_zipmod_manifests` 一行都没有，旧扫描侧 x7296；OK 卡两侧都没有（**OK 卡从来不问这个问题**，
+所以这是原作卡专属的成本）。
+
+**第一次跑的闸门是空转的，照规矩记下来**：脚本给 A 侧 `OK_NO_UNCENSOR_INDEX=""`，而 shell 的空值
+**仍然是「set」**，`var_os(..).is_some()` 两侧都成立——两边都走旧扫描，「21/21、42/42 相同」什么都没证明。
+看出来的是读出：索引那一侧该印的那一行一个都没有，而 `with_zipmod_manifests x7296` 两侧都在。
+**修法两处都要**：开关改成「空值不算 set」（程式码里，别人也会这样写脚本），脚本改成 A 侧根本不要 export。
+教训同第三节：**闸门要先有「开关真的有效」的证据**，不然它和空转长得一模一样。
+
+**换了游戏目录或装／移除 mod 之后**要重跑 `--oklib shared-ignore`（或 `mods-index`），否则新的 uncensor
+mod 不在表里——它会被当成「索引没见过」而由开卡自己读那一个档，所以不会出错，只是那几个档又要开。
