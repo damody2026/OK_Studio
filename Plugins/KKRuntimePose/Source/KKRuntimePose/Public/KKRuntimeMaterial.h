@@ -75,4 +75,9 @@ KKRUNTIMEPOSE_API FKKRuntimeTextureCacheStats OKRuntimeTextureCacheStats();
 // Plain-data mip preparation; encoded native render textures keep byte-space averaging.
 KKRUNTIMEPOSE_API bool OKBuildRuntimeTextureMips(TArray<uint8> BGRA,int32 Width,int32 Height,
  const FKKRuntimeTextureSettings&,TArray<FKKRuntimeTextureMip>& Out,FString& Error);
+// Which mip code a step takes: the general area box (true, as before 2026-11-25) or the whole-texel fast path a
+// halving step can take. `OK_SLOW_MIPS=1` forces the general one for the whole process; this is for the test that
+// compares the two byte for byte (`Reset` puts the environment back in charge).
+KKRUNTIMEPOSE_API void OKForceSlowRuntimeMips(bool bSlow);
+KKRUNTIMEPOSE_API void OKResetSlowRuntimeMipsOverride();
 struct FKKRuntimeMaterialStats {uint32 Parts=0,Slots=0,Textures=0,Mips=0,SharedInstances=0,UnsupportedParts=0,OpaqueInstances=0,AlphaMaskedInstances=0,AlphaTranslucentInstances=0,ItemInstances=0,HairInstances=0,HairFrontInstances=0,StudioAlphaInstances=0,EyeWhiteInstances=0,EyeInstances=0,KoikanoEyeWhiteInstances=0,KoikanoEyeInstances=0,NoseInstances=0,AdditionalInstances=0;bool SharedParentUsed=false,SourceRasterVerified=false,SourceMeshShadersVerified=false,SourceMeshPixelsVerified=false,SourceMeshRasterPixelsVerified=false;uint64 PixelBytes=0;double PrepareMs=0;};

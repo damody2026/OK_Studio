@@ -44,11 +44,70 @@ struct FTexturePreparationFlight {
 TMap<FString,TSharedPtr<FTexturePreparationFlight,ESPMode::ThreadSafe>> TexturePreparationFlights;
 uint64 TexturePreparationFlightBytes=0;
 TAtomic<uint64> PreparedCacheHits{0},PreparedDecodeJobs{0},PreparedJoinedJobs{0};
+// Where a card's material preparation goes, summed over its lanes (so these three can be larger than the capture's
+// own wall time, as every "summed over threads" number in Docs/CARD_OPEN_PERF_20261117.md 第三节 is): the SHA1 of
+// each texture's encoded bytes, the PNG (or raw) decode, and the mip chain. `OK_LOAD_PROFILE=1` prints them with
+// `OK runtime material capture`, which was the biggest piece of a card reader's `texture_prepare_ms` (312 of 350 ms,
+// 2026-11-25) with no read-out of its own.
+std::atomic<uint64> CaptureHashNs{0},CaptureDecodeNs{0},CaptureMipNs{0},CaptureHashBytes{0},CaptureTexels{0};
+struct FCapturePhase {
+ std::atomic<uint64>& Into;const double Began=FPlatformTime::Seconds();
+ explicit FCapturePhase(std::atomic<uint64>& Into):Into(Into){}
+ ~FCapturePhase(){Into.fetch_add(uint64((FPlatformTime::Seconds()-Began)*1e9),std::memory_order_relaxed);}
+};
 FString PreparedTextureKey(const FString& Hash,const FKKRuntimeTextureSettings& S){return FString::Printf(TEXT("mips-v4:%s:%d:%d:%d:%d:%d"),*Hash,S.Filter,S.WrapU,S.WrapV,int32(S.SRGB),int32(S.EncodedMips));}
 TSharedPtr<const FPreparedTextureCacheEntry,ESPMode::ThreadSafe> FindPreparedTexture(const FString& Key,const uint8* Bytes,int32 Length){FScopeLock Lock(&PreparedTextureCacheLock);const auto Found=PreparedTextureCache.FindRef(Key);return Found&&Found->Encoded.Num()==Length&&!FMemory::Memcmp(Found->Encoded.GetData(),Bytes,Length)?Found:TSharedPtr<const FPreparedTextureCacheEntry,ESPMode::ThreadSafe>{};}
 void StorePreparedTexture(const FString& Key,const uint8* Bytes,int32 Length,const FKKRuntimePreparedTexture& T){auto Entry=MakeShared<FPreparedTextureCacheEntry,ESPMode::ThreadSafe>();Entry->Encoded.Append(Bytes,Length);Entry->Prepared=T;Entry->Bytes=Entry->Encoded.GetAllocatedSize();for(const auto& M:T.Mips)Entry->Bytes+=M.BGRA.GetAllocatedSize();constexpr uint64 Limit=256ull*1024*1024;if(Entry->Bytes>Limit)return;FScopeLock Lock(&PreparedTextureCacheLock);if(PreparedTextureCache.Contains(Key))return;while(PreparedTextureCacheBytes+Entry->Bytes>Limit&&!PreparedTextureCacheOrder.IsEmpty()){const FString Old=PreparedTextureCacheOrder[0];PreparedTextureCacheOrder.RemoveAt(0);if(auto Previous=PreparedTextureCache.FindRef(Old))PreparedTextureCacheBytes-=Previous->Bytes;PreparedTextureCache.Remove(Old);}PreparedTextureCacheBytes+=Entry->Bytes;PreparedTextureCacheOrder.Add(Key);PreparedTextureCache.Add(Key,Entry);}
-FKKRuntimeTextureMip Resize(const FKKRuntimeTextureMip& A,const FKKRuntimeTextureSettings& S,int32 Width,int32 Height){
- static const TArray<double> SRGBToLinear=[](){TArray<double> L;for(int32 I=0;I<256;++I)L.Add(FLinearColor::FromSRGBColor(FColor(I,I,I,255)).R);return L;}();
+const TArray<double>& SRGBToLinearTable(){
+ static const TArray<double> L=[](){TArray<double> T;for(int32 I=0;I<256;++I)T.Add(FLinearColor::FromSRGBColor(FColor(I,I,I,255)).R);return T;}();
+ return L;
+}
+/// OK_SLOW_MIPS=1: every mip step takes the general box below, as before 2026-11-25. The A/B switch and the way back.
+/// The override is the test's (`OKForceSlowRuntimeMips`), so one process can compare the two.
+std::atomic<int32> SlowMipsOverride{-1};
+bool SlowMips(){
+ const int32 Forced=SlowMipsOverride.load(std::memory_order_relaxed);
+ if(Forced>=0)return Forced!=0;
+ static const bool On=[]{return !FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SLOW_MIPS")).IsEmpty();}();
+ return On;
+}
+/// One output pixel's channels, already divided by the box's area, written out. Shared by both paths below so they
+/// cannot drift.
+FORCEINLINE void WriteResizedPixel(uint8* Out,const double Mean[4],bool Decode){
+ if(Decode){
+  // Convert the three independent color channels once. Repeating a full RGB
+  // conversion for each channel produces the same bytes with triple the work.
+  const FColor Color=FLinearColor(Mean[2],Mean[1],Mean[0],1).ToFColorSRGB();
+  Out[0]=Color.B;Out[1]=Color.G;Out[2]=Color.R;
+ }else for(int32 C=0;C<3;++C)Out[C]=uint8(FMath::Clamp(FMath::FloorToInt(Mean[C]*255.+1e-7),0,255));
+ Out[3]=uint8(FMath::Clamp(FMath::FloorToInt(Mean[3]*255.+1e-7),0,255));
+}
+/// A step whose box lands on whole source texels: each axis shrinks by exactly 1 or 2, so every covered texel has
+/// weight 1 and the area is that product. Every step of a mip chain with even dimensions is one of these, and it is
+/// where a card's time goes (a 2048² chain is ~5.6 M output pixels, and the general box spends four double divisions
+/// and eight min/max per pixel to arrive at those same ones and twos). The sums are accumulated in the same order
+/// with the same values, so the bytes are the general box's own -- `OKRuntimeMipsMatchTheReferenceResize` pins that.
+FKKRuntimeTextureMip ResizeAligned(const FKKRuntimeTextureMip& A,int32 Width,int32 Height,int32 KX,int32 KY,bool Decode){
+ const TArray<double>& SRGBToLinear=SRGBToLinearTable();
+ FKKRuntimeTextureMip B;B.Width=Width;B.Height=Height;B.BGRA.SetNumUninitialized(B.Width*B.Height*4);
+ // The area is 1, 2 or 4, so its reciprocal is exact in IEEE754 and `x*(1/Area)` is `x/Area` to the bit -- four
+ // divisions per output pixel were the rest of this loop's time once the weights were gone. Multiplying by a
+ // reciprocal is bit-exact only for these powers of two, which is why the general path below keeps dividing.
+ const double InvArea=1./(double(KX)*double(KY));
+ for(int32 Y=0;Y<Height;++Y)for(int32 X=0;X<Width;++X){
+  double Sum[4]={};
+  for(int32 DY=0;DY<KY;++DY){
+   const uint8* Row=&A.BGRA[(((Y*KY+DY)*A.Width)+X*KX)*4];
+   for(int32 DX=0;DX<KX;++DX){const uint8* P=Row+DX*4;
+    for(int32 C=0;C<4;++C)Sum[C]+=C<3&&Decode?SRGBToLinear[P[C]]:double(P[C])/255.;}
+  }
+  const double Mean[4]={Sum[0]*InvArea,Sum[1]*InvArea,Sum[2]*InvArea,Sum[3]*InvArea};
+  WriteResizedPixel(&B.BGRA[(Y*Width+X)*4],Mean,Decode);
+ }
+ return B;
+}
+FKKRuntimeTextureMip ResizeGeneral(const FKKRuntimeTextureMip& A,const FKKRuntimeTextureSettings& S,int32 Width,int32 Height){
+ const TArray<double>& SRGBToLinear=SRGBToLinearTable();
  FKKRuntimeTextureMip B;B.Width=Width;B.Height=Height;B.BGRA.SetNumUninitialized(B.Width*B.Height*4);
  for(int32 Y=0;Y<B.Height;++Y)for(int32 X=0;X<B.Width;++X){
   // Area box filter covers all texels, including odd dimensions and 1xN.
@@ -58,17 +117,19 @@ FKKRuntimeTextureMip Resize(const FKKRuntimeTextureMip& A,const FKKRuntimeTextur
    const double Weight=(FMath::Min(X1,double(SX+1))-FMath::Max(X0,double(SX)))*(FMath::Min(Y1,double(SY+1))-FMath::Max(Y0,double(SY)));
    for(int32 C=0;C<4;++C){const uint8 V=A.BGRA[(SY*A.Width+SX)*4+C];Sum[C]+=Weight*(C<3&&S.SRGB&&!S.EncodedMips?SRGBToLinear[V]:double(V)/255.);}
   }
-  const int32 Pixel=(Y*B.Width+X)*4;
-  if(S.SRGB&&!S.EncodedMips){
-   // Convert the three independent color channels once. Repeating a full RGB
-   // conversion for each channel produces the same bytes with triple the work.
-   const FColor Color=FLinearColor(Sum[2]/Area,Sum[1]/Area,Sum[0]/Area,1).ToFColorSRGB();
-   B.BGRA[Pixel]=Color.B;B.BGRA[Pixel+1]=Color.G;B.BGRA[Pixel+2]=Color.R;
-  }else for(int32 C=0;C<3;++C)B.BGRA[Pixel+C]=uint8(FMath::Clamp(FMath::FloorToInt(Sum[C]/Area*255.+1e-7),0,255));
-  B.BGRA[Pixel+3]=uint8(FMath::Clamp(FMath::FloorToInt(Sum[3]/Area*255.+1e-7),0,255));
+  const double Mean[4]={Sum[0]/Area,Sum[1]/Area,Sum[2]/Area,Sum[3]/Area};
+  WriteResizedPixel(&B.BGRA[(Y*B.Width+X)*4],Mean,S.SRGB&&!S.EncodedMips);
  }return B;
 }
+FKKRuntimeTextureMip Resize(const FKKRuntimeTextureMip& A,const FKKRuntimeTextureSettings& S,int32 Width,int32 Height){
+ const int32 KX=A.Width==Width?1:(A.Width==Width*2?2:0),KY=A.Height==Height?1:(A.Height==Height*2?2:0);
+ if(KX&&KY&&!SlowMips())return ResizeAligned(A,Width,Height,KX,KY,S.SRGB&&!S.EncodedMips);
+ return ResizeGeneral(A,S,Width,Height);
 }
+}
+
+void OKForceSlowRuntimeMips(bool bSlow){SlowMipsOverride.store(bSlow?1:0,std::memory_order_relaxed);}
+void OKResetSlowRuntimeMipsOverride(){SlowMipsOverride.store(-1,std::memory_order_relaxed);}
 
 bool OKBuildRuntimeTextureMips(TArray<uint8> BGRA,int32 Width,int32 Height,const FKKRuntimeTextureSettings& Settings,TArray<FKKRuntimeTextureMip>& Out,FString& Error){
  if(Width<=0||Height<=0||int64(Width)*Height*4!=BGRA.Num()||uint64(BGRA.Num())>OKRuntimeTextureDecodeLimit){Error=TEXT("Invalid runtime texture source pixels");return false;}
@@ -105,6 +166,7 @@ bool PrepareSharedRuntimeTexture(const FString& Key,const FString& Hash,const ui
   {FScopeLock Lock(&PreparedTextureCacheLock);if(Registered&&TexturePreparationFlights.FindRef(Key)==Flight){TexturePreparationFlightBytes-=Flight->Encoded.GetAllocatedSize();TexturePreparationFlights.Remove(Key);}Flight->Done->Trigger();}
  };
  ++PreparedDecodeJobs;FKKRuntimeTextureMip M;int32 Width=0,Height=0;
+ const double DecodeBegan=FPlatformTime::Seconds();
  // PNG, or ok-extract's raw LZ4 container (OK_RAW_TEXTURES=1).
  if(OKIsRawTexture(Bytes,Length)){if(!OKDecodeRawTexture(Bytes,Length,M.BGRA,Width,Height)){Error=TEXT("Runtime raw texture invalid");return false;}}
  else{
@@ -123,8 +185,11 @@ bool PrepareSharedRuntimeTexture(const FString& Key,const FString& Hash,const ui
  }
  if(uint64(Width)*Height*4>OKRuntimeTextureDecodeLimit){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
  M.Width=Width;M.Height=Height;
+ CaptureTexels.fetch_add(uint64(Width)*uint64(Height),std::memory_order_relaxed);
+ CaptureDecodeNs.fetch_add(uint64((FPlatformTime::Seconds()-DecodeBegan)*1e9),std::memory_order_relaxed);
  auto& T=Flight->Prepared;T.SourceHash=Hash;T.Settings=Settings;T.SourceWidth=Width;T.SourceHeight=Height;
- if(!OKBuildRuntimeTextureMips(MoveTemp(M.BGRA),Width,Height,Settings,T.Mips,Error))return false;
+ {FCapturePhase MipPhase(CaptureMipNs);
+  if(!OKBuildRuntimeTextureMips(MoveTemp(M.BGRA),Width,Height,Settings,T.Mips,Error))return false;}
  T.PixelIdentity=RuntimeTextureIdentity(T);
  StorePreparedTexture(Key,Bytes,Length,T);Flight->Passed=true;Out=T;Error.Reset();return true;
 }
@@ -168,6 +233,7 @@ bool OKDescribeRuntimeMaterialPart(OkSession* Session,int32 NativePart,FKKRuntim
 
 static bool CaptureRuntimeMaterials(OkSession* Session,TConstArrayView<FKKRuntimePalettePart> Parts,FKKRuntimeMaterialData& Out,FString& Error,bool bParallel){
  const double Start=FPlatformTime::Seconds();FKKRuntimeMaterialData D;D.WorkerThread=!IsInGameThread();
+ const uint64 HashNs0=CaptureHashNs.load(),DecodeNs0=CaptureDecodeNs.load(),MipNs0=CaptureMipNs.load(),HashBytes0=CaptureHashBytes.load(),Texels0=CaptureTexels.load();
  const uint64 EncodedBudget=256ull*1024*1024,PixelBudget=512ull*1024*1024;
  // OK_FIRSTLOAD=C5: the card's distinct textures are decoded and mipped in parallel after all parts are read
  // (one at a time on the calling worker was ~1.8 s of a packaged card reader's first load).
@@ -188,7 +254,9 @@ static bool CaptureRuntimeMaterials(OkSession* Session,TConstArrayView<FKKRuntim
    if(Metadata->TryGetObjectField(TEXT("material"),SourceMaterial)&&(*SourceMaterial)->TryGetObjectField(TEXT("tex_wraps"),Wraps)&&(*Wraps)->TryGetNumberField(Property,StaticWrap))S.WrapU=S.WrapV=int32(StaticWrap);
    if(ok_part_texture_settings(Session,Part.NativePart,TCHAR_TO_UTF8(*Property),&Raw)==0){S.Filter=Raw.filter;S.WrapU=Raw.wrap_u;S.WrapV=Raw.wrap_v;S.SRGB=Raw.srgb!=0;S.EncodedMips=Raw.mip_policy==1;}
    if(S.Filter<0||S.Filter>2||S.WrapU<0||S.WrapU>2||S.WrapV<0||S.WrapV>2)return Fail(TEXT("Runtime texture settings unsupported"));
-   const FString Hash=FSHA1::HashBuffer(Bytes,Length).ToString();int32 Index=INDEX_NONE;
+   FString Hash;{FCapturePhase HashPhase(CaptureHashNs);CaptureHashBytes.fetch_add(uint64(Length),std::memory_order_relaxed);
+    Hash=FSHA1::HashBuffer(Bytes,Length).ToString();}
+   int32 Index=INDEX_NONE;
    for(int32 I=0;I<D.Textures.Num();++I)if(D.Textures[I].SourceHash==Hash&&D.Textures[I].Settings==S&&Sources[I].Num()==Length&&!FMemory::Memcmp(Sources[I].GetData(),Bytes,Length)){Index=I;break;}
    if(Index==INDEX_NONE){const uint64 EncodedSize=uint64(DefaultCalculateSlackReserve(Length,1,true))*1;if(D.EncodedBytes+EncodedSize>EncodedBudget)return Fail(TEXT("Runtime encoded textures exceed budget"));
     const FString PreparedKey=PreparedTextureKey(Hash,S);FKKRuntimePreparedTexture T;uint64 Pixels=0;
@@ -226,7 +294,12 @@ static bool CaptureRuntimeMaterials(OkSession* Session,TConstArrayView<FKKRuntim
   for(const auto& Job:Pending){for(const auto& L:D.Textures[Job.Index].Mips)D.PixelBytes+=L.BGRA.GetAllocatedSize();}
   if(D.PixelBytes>PixelBudget)return Fail(TEXT("Runtime prepared texture pixels exceed budget"));
  }
- D.PrepareMs=(FPlatformTime::Seconds()-Start)*1000;Out=MoveTemp(D);Error.Reset();return true;
+ D.PrepareMs=(FPlatformTime::Seconds()-Start)*1000;
+ if(FPlatformMisc::GetEnvironmentVariable(TEXT("OK_LOAD_PROFILE"))==TEXT("1"))
+  UE_LOG(LogTemp,Display,TEXT("OK runtime material phases textures=%d parallel=%d hash_ms=%.1f (%.1f MiB) decode_ms=%.1f (%.1f Mtexel) mips_ms=%.1f (summed over lanes, capture_ms=%.1f)"),
+   D.Textures.Num(),Parallel?1:0,(CaptureHashNs.load()-HashNs0)/1e6,double(CaptureHashBytes.load()-HashBytes0)/1048576.,
+   (CaptureDecodeNs.load()-DecodeNs0)/1e6,double(CaptureTexels.load()-Texels0)/1e6,(CaptureMipNs.load()-MipNs0)/1e6,D.PrepareMs);
+ Out=MoveTemp(D);Error.Reset();return true;
 }
 bool OKCaptureRuntimeMaterials(OkSession* Session,TConstArrayView<FKKRuntimePalettePart> Parts,FKKRuntimeMaterialData& Out,FString& Error){return CaptureRuntimeMaterials(Session,Parts,Out,Error,false);}
 bool OKCaptureRuntimeMaterialsParallel(OkSession* Session,TConstArrayView<FKKRuntimePalettePart> Parts,FKKRuntimeMaterialData& Out,FString& Error){return CaptureRuntimeMaterials(Session,Parts,Out,Error,true);}

@@ -1148,6 +1148,9 @@ pub(crate) fn extract_session_from_info(
             // after CustomTextureControl has built the face MainTex.  The
             // card's face DetailMask can replace the bundle default entirely;
             // leaving the default here puts its green mask edge on the brow.
+            // Sub-timings of `face overlays+emit`, the biggest piece of its own serial work in an original card's
+            // chain (148 ms of 1264, 2026-11-25). Read them at `RAYON_NUM_THREADS=1` (第三节).
+            let _seg_me = crate::unity::segment("face/me masks");
             if let Some(png) = me_texture(Some(&card.me_tex), outfit, "head", None, &mesh, "detailmask") {
                 mesh.detail_mask_png = Some(png.to_vec());
                 mesh.runtime_textures.remove("_DetailMask");
@@ -1161,6 +1164,7 @@ pub(crate) fn extract_session_from_info(
             if let Some(png) = me_texture(Some(&card.me_tex), outfit, "head", None, &mesh, "alphamask") {
                 mesh.alpha_mask_png = Some(png.to_vec());
             }
+            drop(_seg_me);
         } else if let Some(png) = mesh.texture_png.as_ref() {
             if let Some(t) = crate::unity::tint_png(png, skin_tint) {
                 mesh.texture_png = Some(t);
@@ -1170,14 +1174,17 @@ pub(crate) fn extract_session_from_info(
             mesh.texture_png = crate::unity::solid_png(skin_tint, 64, 64);
         }
         if let Some(card)=parsed_card.as_ref() {
-            apply_native_face_overlays(game_root,&vanilla,&mod_catalog,card,outfit,&mut mesh);
+            { let _seg = crate::unity::segment("face/overlays");
+              apply_native_face_overlays(game_root,&vanilla,&mod_catalog,card,outfit,&mut mesh); }
+            let _seg = crate::unity::segment("face/skin draw");
             apply_native_skin_draw_settings(game_root,&mut mesh,card,outfit,false);
         }
         // main_skin clips min(max(r,1-_alpha_a),max(g,1-_alpha_b)) < 0.5 on the face too: a card's _AlphaMask
         // (Material Editor) cuts the scalp that would show through its hair. Disabled channels are whitened as for
         // the body, and the face draws masked like the body.
-        let face_blend = face_alpha_blend(&mut mesh);
+        let face_blend = { let _seg = crate::unity::segment("face/alpha blend"); face_alpha_blend(&mut mesh) };
         crate::mod_forward::post_texture("head", &mesh.name, outfit, &mut mesh.texture_png);
+        let _seg_emit = crate::unity::segment("face/emit");
         let (p, tex) =
             emit_part(out_dir, &mut session_parts, "head", "head", &mesh, face_blend, false)?;
         seen_meshes.insert(mesh.name.to_ascii_lowercase());
