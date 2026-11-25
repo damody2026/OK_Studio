@@ -1303,6 +1303,9 @@ PROFILE mods tree rewalk \\?\D:\KoikatuSunshinezz\mods available=1 changed=1
 | 走访完之后把这一次的通知清掉（`watch.changed()`） | 走访与 stat 自己把 watch 触发了 | 下一次开卡照样 `changed=1`。**不是触发源**，已退 |
 | watch 的过滤器去掉 `FILE_NOTIFY_CHANGE_ATTRIBUTES`／`SECURITY`，只留 NAME／DIR_NAME／SIZE／LAST_WRITE | 这台机器 `fsutil behavior query disablelastaccess` ＝ 2（**last-access 更新是开着的**），读 archive 会改时间戳，而 ATTRIBUTES 可能被当成变更 | 照样 `changed=1`。**也不是触发源**，已退 |
 
+**（答案在 §十四：是发起 watch 的那条执行绪结束时，Windows 取消了它的待办 I/O，而被取消的目录监看会变成已点亮。
+以下是当时写的下一步。）**
+
 **下一步要做的是找出到底什么设定了那个通知**，而 `FindFirstChangeNotification` 只会说「有变」、不会说「什么变了」。
 要换成 `ReadDirectoryChangesW` 把**变更的档名**读出来，才知道是谁；在那之前不要再猜。
 （顺带：`D:\KoikatuSunshinezz\mods` 里躺着 **26 个 `.ok_list_cache_v2_*.tsv`，约 300 MB** 的旧快取档，
@@ -1316,3 +1319,62 @@ PROFILE mods tree rewalk \\?\D:\KoikatuSunshinezz\mods available=1 changed=1
    「没有人走整棵树」的错结论。这一轮把 `tree_trace` 与新读出都改走 `profile::line`。
 2. **DLL 被自己上一个还在跑的读卡器锁住时，`Build.bat` 会 Failed，而启动器照旧用旧 binary 跑**，看起来就像
    「改了没效果」。量之前先确认上一个读卡器已经停掉，并看 `Result: Succeeded`。
+
+## 十四、抄到了：是「发起 watch 的那条执行绪死掉」（2026-11-25）
+
+§十三 停在「不知道什么点亮了那个通知物件」。换成 `ReadDirectoryChangesW` 之后答案出来了，而且**跟树里的档案无关**。
+
+### 证据链
+
+| 做了什么 | 看到什么 |
+|---|---|
+| 一条常驻线程用 `ReadDirectoryChangesW`（同一棵树、同一组过滤器，`OK_WATCH_TRACE=1`）把每笔变更的**档名**印出来 | 两次开卡、`changed=1` 各一次的区间内，**一笔变更记录都没有** |
+| 正对照：在 `D:\KoikatuSunshinezz\mods` 里建一个 tmp 档再删掉 | 立刻印出 `WATCH-TRACE added／modified／removed ...\__ok_watch_probe.tmp` —— 追踪本身是好的 |
+| 另开一条常驻线程，自己也开一个 `FindFirstChangeNotification` 句柄，每 20 ms 轮询（心跳印 `wait=0x102`） | 整轮**一次都没有被点亮**，而 memo 里那个句柄在每次开卡都 `-> 0x0` |
+| 被点亮后立刻 `FindNextChangeNotification` 再 wait | `next=1 -> 0x102`，所以它确实是个正常的通知物件，不是句柄号码被回收 |
+| 改用 overlapped `ReadDirectoryChangesW`，由**开卡的 worker thread** 发起 | 第二次开卡时 `GetOverlappedResult` 失败，错误码 **995 = `ERROR_OPERATION_ABORTED`** |
+
+**原因**：Windows 在一条执行绪结束时会**取消它发起的所有待办 I/O**，而目录变更监看就是一笔待办 I/O；
+取消会让那个通知物件**变成已点亮**。旧的 watch 是在「开这张卡的那个 worker thread」上建立的，那条 worker
+开完卡就结束 → 句柄被点亮 → 下一次开卡把它读成「树变了」→ 整棵安装目录（8232 个 archive）重走并重新 stat，
+215～280 ms，每次开卡都来一遍，而树里什么都没改。
+
+这一句也解释了 §十三 那三笔「试过没效果」为什么都没效果：点亮发生在**开卡结束之后**（worker 退出的那一刻），
+所以走访完清通知没用、改过滤器没用；而我自己轮询的那个句柄之所以从不被点亮，正是因为它那条线程不会死。
+
+### 改了什么
+
+`appearance/catalog_watch.rs` 的 `Watch` 换成以 `ReadDirectoryChangesW` 为准：
+
+- 每棵树一条**常驻线程**持有 handle、event、buffer 与 OVERLAPPED，整个行程只开一次（`tree_watcher`）；
+  I/O 永远挂在那条不会结束的线程上，所以不再有「取消＝点亮」。
+- `changed()` 同时看 **event 与变更计数**：event 是内核在记下变更的那一刻就点亮的，所以「刚装好的 zipmod
+  下一秒开卡」照样看得到（不会因为我们的线程还没被排程而答旧的）。同一笔变更可能被答两次（event 一次、
+  计数一次），代价是多走一次树，不会答到过期清单。
+- 监看不住（树不在、拿不到 handle／event／线程、I/O 断掉）就回 `None`，照旧每次走访 —— 行为与以前一样。
+- `OK_WATCH_TRACE=1` 印出每笔变更的档名、溢出（`ERROR_NOTIFY_ENUM_DIR` 1022）与失败的错误码，另外起一条
+  旧式 `FindFirstChangeNotification` 轮询线程当对照（这一节的证据工具，留着）。
+- `OK_WATCH_LEGACY=1` 是量测用的对照：永远回「变了」，也就是旧 watch 实际上的行为。
+
+### 量到的
+
+| 项目 | 结果 |
+|---|---|
+| 安装目录那棵树的走访 | 一次开卡 1 次 → 整个行程 1 次（`PROFILE mods tree rewalk` 从每次开卡一行变成 0 行；两次重开、`OK_WATCH_TRACE` 下也没有任何变更记录） |
+| 每次开卡省下的工作 | 8232 个 archive 的走访与 stat，215～280 ms CPU |
+| `work from scratch`（冷开基准） | 475 → **474**（少一个单位，就是那次走访）；TOTAL 5.75 → 5.63 s（−2.1%，噪声内） |
+| 读卡器端到端（重开同一张卡，n=10／边，两种顺序交错） | 新 watch 平均 2745 ms、对照 2702 ms —— **差异在噪声内（±150 ms）** |
+| 逐位元闸门 | 原作卡 21/21、OK 卡 42/42 与对照完全相同 |
+
+**所以这不会让画面变快**，要讲清楚：那趟走访跑在 pool thread 上，跟开卡其他阶段并行，本来就大半被盖住。
+留它的理由是 watch 原本**是错的**（它报的变更从未发生），顺带每次开卡少做 8232 次 stat。使用者感受得到的
+时间还是在 §十二 那张表上：`open_ms` ≈ 1.8 s（贴图合成为大头）、贴图准备 ≈ 0.33 s、游戏执行绪 ≈ 0.7 s（逐帧
+配额，不会因为 Rust 变快而变短）。
+
+### 这一轮自己踩的两个坑
+
+1. **`GetLastError()` 要在同一条执行绪上「第一个」读。** 我把它写在 `format!` 里、而前面先跑了
+   `std::env::var_os("OK_WATCH_TRACE")`，错误码被冲掉成 `error 0`，白跑一轮。
+2. **背景线程式的 watch 是异步的 → 会答过期清单。** 第一版让背景线程自己收变更、主执行绪只读计数，
+   `sqlcache::inventory` 那条「写完档立刻问」的测试就偶发失败（555/1 → 554/2）。那不只是测试脆弱：
+   刚装好的 zipmod 可能在下一次开卡被漏掉。所以最终版改成「event（同步）＋计数」两个一起看。

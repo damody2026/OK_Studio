@@ -7790,3 +7790,27 @@ cf_face_00_t` ／ `cf_face_00_mc`。兩個 zipmod 都在這台上，看起來像
   看起来就像「改了没效果」。确认看到 `Result: Succeeded`。
 - **没量到好处的优化不要留**。这一轮的行程级 signature memo 逐位元闸门过了（21/21、42/42），但 A／B
   买不到时间（239.9 vs 258.5 ms，n=1），所以退掉，只留读出。
+
+## 2026-11-25 目录监看建在「开完卡就结束」的 worker thread 上，每次开卡都被误判成「树变了」
+
+**现象**：读卡器每次开原作卡，`mods::watched_tree_zips` 的目录变更通知都报 `available=1 changed=1`，于是整棵
+安装目录（`D:\KoikatuSunshinezz\mods`，8232 个 archive）重走并重新 stat，215～280 ms，而树里什么都没改。
+
+**原因**：**Windows 在执行绪结束时取消它发起的待办 I/O，而被取消的目录监看会变成「已点亮」。**
+watch 是在「开这张卡的那个 worker thread」上用 `FindFirstChangeNotification` 建的，那条 worker 开完卡就结束，
+下一次开卡读到的是那笔取消，不是变更。证据是改用 overlapped `ReadDirectoryChangesW` 后
+`GetOverlappedResult` 回 **995 `ERROR_OPERATION_ABORTED`**；另外同一棵树上一条**常驻线程**的通知句柄
+从头到尾没被点亮过，`ReadDirectoryChangesW` 也一笔变更记录都没给（正对照会印出档名）。
+
+**修正**：`appearance/catalog_watch.rs` 的 watch 改成每棵树一条常驻线程持有 overlapped
+`ReadDirectoryChangesW`（I/O 永不被取消），`changed()` 同时看 event（内核同步点亮）与变更计数。
+细节与量测见 [Docs/CARD_OPEN_PERF_20261117.md](CARD_OPEN_PERF_20261117.md) §十四。
+
+**下次要注意的**：
+- **在 worker thread 上开目录监看（或任何待办 I/O）＝自己给自己制造假信号。** 监看要挂在不会结束的线程上。
+- **`GetLastError()` 必须是失败后同一条执行绪上的第一件事。** 写在 `format!` 里、前面还跑了
+  `std::env::var_os`，错误码会被冲掉成 `error 0`，整轮读出白跑。
+- **把同步的检查换成背景线程的异步通知，会答出过期清单。** 第一版这样写，`sqlcache::inventory` 那条
+  「写完档立刻问」的测试就偶发失败；真实后果是刚装好的 zipmod 下一次开卡被漏掉。
+- **量到的省时不等于使用者感受到的省时**：这趟走访跟开卡其他阶段并行，端到端在噪声内（n=10／边）。
+  留下来的理由是 watch 原本就是错的，不是它变快了。

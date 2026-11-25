@@ -466,6 +466,7 @@ pub(crate) fn watched_tree_zips(mods_dir: &Path) -> Option<Arc<(Vec<PathBuf>, u6
     use std::sync::Mutex;
     use crate::appearance::catalog_watch::Watch;
     let root = mods_dir.canonicalize().ok()?;
+    Watch::trace(&root); // OK_WATCH_TRACE=1 only: names what changes under this tree (`changed=1` per open).
     static MEMO: Mutex<Vec<(PathBuf, Watch, Arc<(Vec<PathBuf>, u64)>)>> = Mutex::new(Vec::new());
     {
         let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
@@ -474,8 +475,11 @@ pub(crate) fn watched_tree_zips(mods_dir: &Path) -> Option<Arc<(Vec<PathBuf>, u6
             let available = watch.available();
             let changed = available && watch.changed();
             if available && !changed { return Some(tree.clone()); }
-            // OK_PROFILE: the tree is walked again (~0.2 s for an installation). A watch that reports a change on
-            // every open makes `zip_list_sig` pay the walk per open instead of per change (2026-11-25).
+            // OK_PROFILE: the tree is walked again (~0.2 s for an installation), so this line should appear once per
+            // real change, never once per open. It did appear per open until 2026-11-25, when the watch was built on
+            // a notification created by the opening worker: Windows cancels a thread's pending I/O when the thread
+            // ends, and a cancelled directory watch comes back signalled (`OK_WATCH_TRACE=1`, and §十四 of
+            // Docs/CARD_OPEN_PERF_20261117.md).
             if std::env::var_os("OK_PROFILE").is_some() {
                 crate::profile::line(format!("ok-extract: PROFILE mods tree rewalk {} available={} changed={}",
                     root.display(), available as u8, changed as u8));
@@ -509,8 +513,8 @@ pub(crate) fn watched_tree_zips(mods_dir: &Path) -> Option<Arc<(Vec<PathBuf>, u6
     let tree = Arc::new((walk, crate::list::catalog_sig(&sorted)));
     // Tried and reverted (2026-11-25): draining one notification here (`watch.changed()`), on the theory that the
     // walk and the signature above -- which read every directory and stat every archive under the watched root --
-    // set it themselves. The card reader still reported `changed=1` on the next open, so that is not the trigger
-    // either; see Docs/CARD_OPEN_PERF_20261117.md §十三.
+    // set it themselves. It changed nothing, because the false signal came later still: at the moment this worker
+    // thread ended (§十四). Nothing to drain here.
     let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
     if memo.len() >= 4 { memo.remove(0); }
     memo.push((root, watch, tree.clone()));
