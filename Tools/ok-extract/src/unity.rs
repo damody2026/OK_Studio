@@ -1216,7 +1216,14 @@ fn copy_body_material_targets_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_n
 /// Optional query: an OK card sealed before this existed records nothing and answers an empty list. Callers must
 /// say so instead of silently drawing the eyes behind the hair (`--oklib answers` / `ok_cards.lua reseal` fix it).
 pub fn foreground_render_queues<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(String, Vec<(i32, i32, i32)>)> {
-    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "foreground_render_queues", prefab_name, || foreground_render_queues_unity(bytes, prefab_name))
+    foreground_render_queues_recorded(bytes, prefab_name).unwrap_or_default()
+}
+/// [`foreground_render_queues`], `None` when the answer is not known rather than empty: these bytes are a library
+/// `.okmodel` token recorded before this query existed, so the Unity bytes to compute it are not here. A caller that
+/// would otherwise draw the eyes behind the hair without a word must tell that from a prefab which genuinely carries
+/// no `SetRenderQueue_Custom` (extract.rs `foreground_queues_of_head`).
+pub fn foreground_render_queues_recorded<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Option<Vec<(String, Vec<(i32, i32, i32)>)>> {
+    crate::oklib::memo_bytes_recorded(bytes.bundle_bytes(), "foreground_render_queues", prefab_name, || foreground_render_queues_unity(bytes, prefab_name))
 }
 fn foreground_render_queues_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(String, Vec<(i32, i32, i32)>)> {
     let Ok(bundle) = load_bundle_source(bytes.to_source(), false) else { return Vec::new() };

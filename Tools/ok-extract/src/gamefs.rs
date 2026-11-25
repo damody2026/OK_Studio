@@ -1078,6 +1078,19 @@ pub(crate) fn read_source<P: AsRef<Path>>(path: P) -> io::Result<crate::unity::S
     read(path).map(crate::unity::SourceBytes::from)
 }
 
+/// The installation's (or the card folder's) own bytes for a path the library serves, bypassing the library's own
+/// record for it. A library model recorded before an optional query existed cannot answer that query -- its Unity
+/// bytes are not in the library at all -- and this is where the real bundle still is while a game is installed.
+/// It costs a real file read of a whole bundle, so a caller asks only when the answer is actually needed
+/// (extract.rs `foreground_queues_of_head`). `None`: no library is active for that path, or no fallback holds it.
+pub fn installation_source(path: &Path) -> Option<crate::unity::SourceBytes> {
+    let st = state()?;
+    let key = logical(&st, path)?;
+    let (real, _) = fallback_path(&key, Some(false))?;
+    note_access(&real);
+    crate::unity::SourceBytes::file(&real).ok()
+}
+
 pub fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
     String::from_utf8(read(path)?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }

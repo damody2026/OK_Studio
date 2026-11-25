@@ -673,7 +673,16 @@ pub(crate) fn load_over_clothes_mask(game_root: &Path, e: &ListEntry, key: &str)
     let found = if ab.is_empty() || ab == "0" { None }
         else { crate::gamefs::read(&game_root.join("abdata").join(&ab)).ok().and_then(|b| exact(&b)) };
     if found.is_none() {
-        eprintln!("ok-extract: {key} {name} not found in {ab} (zip={:?})", e.extra.get("__zip"));
+        // Why, not just "not found": a card's zipmod is served from what the base library converted of it, and an
+        // archive whose mask bundle it never converted has no bytes here at all -- `chara/mt_mask_body_usa.unity3d`
+        // of `[Creamstar] US Military Equipment v3` is in the archive and in the mods index, while converted.tsv
+        // holds only that archive's three mesh bundles, so the mask silently went missing while the same open with
+        // the game installed finds it (2026-11-25). Name which of the two it is.
+        let why = if crate::gamefs::state_active() && crate::gamefs::fallback_installation().is_none() {
+            " -- the base library has no content for that bundle and no game is installed here (convert that archive \
+             again: ok-extract <game> --oklib convert <library> 8 <archive file name>)"
+        } else { "" };
+        eprintln!("ok-extract: {key} {name} not found in {ab}{why} (zip={:?})", e.extra.get("__zip"));
     }
     found
 }

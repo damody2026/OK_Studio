@@ -2514,7 +2514,7 @@ pub(crate) fn extract_session_from_info(
         }
     }
     apply_copy_body_material(&mut session_parts, &copy_body_targets);
-    apply_foreground_eyes(&mut session_parts, &foreground_queues, parsed_card.as_ref());
+    apply_foreground_eyes(&mut session_parts, foreground_queues.as_deref(), parsed_card.as_ref());
     assign_draw_layers(&mut session_parts);
     Ok(crate::session::OkSession {
         pair_third:None,
@@ -2628,8 +2628,9 @@ struct BaseStage {
     head_eyebrow_patterns: std::collections::HashMap<String, (usize, Vec<(i32, i32)>)>,
     head_face_settings: [f32; 12],
     /// `SetRenderQueue_Custom.m_queueDatas` of the head prefab, by GameObject name
-    /// (`crate::unity::foreground_render_queues`): what `foregroundEyes`/`foregroundEyebrow` switch between.
-    foreground_queues: Vec<(String, Vec<(i32, i32, i32)>)>,
+    /// (`foreground_queues_of_head`): what `foregroundEyes`/`foregroundEyebrow` switch between. `None`: the answer
+    /// is not known here (an unrecorded library model and no installation to read the bundle from).
+    foreground_queues: Option<Vec<(String, Vec<(i32, i32, i32)>)>>,
     head_eye_materials: std::collections::HashMap<String, [f32; 14]>,
     head_fbs_sources: std::collections::HashMap<String, String>,
     body_rest: Option<crate::pose::Skeleton>,
@@ -2763,6 +2764,10 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
     // textures + cf_m_face shader can be reproduced.
     let t_head = Instant::now();
     let head_bundle_bytes = crate::gamefs::read_source(&head_bundle).unwrap_or_default();
+    // The bytes the head prefab is read from: the list head's own bundle once one is adopted below, else these.
+    // `foreground_queues_of_head` asks those bytes, not the vanilla bundle's: a mod head's renderers are in the
+    // mod's bundle, and asking the vanilla one answered nothing at all for every card with a head mod (2026-11-25).
+    let mut head_prefab_src = head_bundle_bytes.clone();
     let mut parsed_head = crate::unity::parse_bundle_cached(head_bundle_bytes);
     profile_tick("load_base_bundle head", t_head);
     let t_base_seg = Instant::now();
@@ -2805,11 +2810,6 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
         .map(|e| e.info("MainData"))
         .filter(|s| !s.is_empty() && s != "0")
         .unwrap_or_else(|| "p_cf_head_00".to_string());
-    // `ChaForegroundComponent` flips these on the head prefab's eye/eyebrow renderers; the queue numbers are
-    // serialized in the prefab, so they are read here once per head rather than guessed.
-    let foreground_queues = crate::unity::foreground_render_queues(
-        &crate::gamefs::read_source(&head_bundle).unwrap_or_default(), &head_main);
-    eprintln!("ok-extract: foreground render queues renderers={}", foreground_queues.len());
     let head_shape_asset = face_entry
         .as_ref()
         .map(|e| e.info("ShapeAnime"))
@@ -2848,7 +2848,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
                     );
                     mod_shape_keys = Some(trial);
                 }
-                let parsed = crate::unity::parse_bundle_cached(bytes);
+                let parsed = crate::unity::parse_bundle_cached(bytes.clone());
                 let (ms, _) = parsed.meshes_for_maindata(&head_main);
                 if pick_named(&ms, "cf_O_face").is_some() {
                     eprintln!(
@@ -2865,6 +2865,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
                     }
                     head_texs = texs;
                     parsed_head = parsed;
+                    head_prefab_src = bytes;
                     head_key = match zip {
                         Some(z) => crate::sqlcache::zip_key(z, ab),
                         None => format!("ab:{ab}|v{}", crate::sqlcache::CACHE_VER),
@@ -2875,6 +2876,9 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
             }
         }
     }
+    // `ChaForegroundComponent` flips these on the head prefab's eye/eyebrow renderers; the queue numbers are
+    // serialized in the prefab, so they are read here once per head rather than guessed.
+    let foreground_queues = foreground_queues_of_head(&head_prefab_src, &head_main, &head_bundle, parsed_card.as_ref());
     profile_tick("base: head textures", t_base_seg);
     let t_base_seg = Instant::now();
     let mut head_shape_keys = mod_shape_keys.unwrap_or_else(|| crate::shape::load_head_keys_named(&shape_bundle, &head_shape_asset));
@@ -3231,21 +3235,64 @@ fn note_copy_body_targets(out: &mut Vec<(String, Vec<String>, i32)>, meshes: &[E
     }
 }
 
+/// `SetRenderQueue_Custom.m_queueDatas` of the head prefab, read from the bundle the head itself was built from.
+/// `None` is "not known", not "the prefab has none": the base library serves that bundle as an `.okmodel` token
+/// recorded before this query existed, so its Unity bytes are not here at all. A card that asks for the foreground
+/// eyes then reads the installation's own copy of the bundle -- one real file read, and only for such a card --
+/// rather than quietly drawing the eyes behind the hair. Every library built before 2026-11-25 lacks the query
+/// (`--oklib models` listed no `foreground_render_queues` record), so without this an installed game answered
+/// nothing either.
+fn foreground_queues_of_head(src: &crate::unity::SourceBytes, prefab: &str, bundle: &Path, card: Option<&CardInfo>)
+    -> Option<Vec<(String, Vec<(i32, i32, i32)>)>> {
+    if let Some(found) = crate::unity::foreground_render_queues_recorded(src, prefab) {
+        eprintln!("ok-extract: foreground render queues renderers={}", found.len());
+        return Some(found);
+    }
+    if !card.is_some_and(|c| c.foreground_eyes == 2 || c.foreground_eyebrow == 2) {
+        eprintln!("ok-extract: foreground render queues of {prefab} are not in the library's model for {} \
+            (this card does not ask for them)", bundle.display());
+        return None;
+    }
+    // Once per process per (bundle, prefab): reading the installation's own head bundle is a 42 MiB Unity parse,
+    // and every card with the option on would otherwise pay it again.
+    static READ: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Option<Vec<(String, Vec<(i32, i32, i32)>)>>>>>
+        = std::sync::OnceLock::new();
+    let key = format!("{}|{prefab}", bundle.display());
+    let cache = READ.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) { return hit.clone(); }
+    let found = crate::gamefs::installation_source(bundle).map(|real| {
+        let found = crate::unity::foreground_render_queues(&real, prefab);
+        eprintln!("ok-extract: foreground render queues from the installation's {} renderers={}", bundle.display(), found.len());
+        found
+    });
+    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(key, found.clone());
+    found
+}
+
 /// `ChaControl.SetForegroundEyesAndEyebrow`: the card's `foregroundEyes`/`foregroundEyebrow` are 0 (the player's
 /// own config decides, and a fresh install has both off), 1 (off) or 2 (on). "On" makes
 /// `ChaForegroundComponent.SetForeground` set `SetRenderQueue_Custom.isSetQueue`, which writes the prefab's
 /// `m_queues` into each listed material's render queue instead of `m_queuesBackup`, so the eyes (or the eyebrow)
 /// draw over the hair. Only a card that says 2 changes anything here: 0 and 1 keep what the prefab already gave us.
-/// An OK card sealed before `foreground_render_queues` existed answers an empty list — say so rather than drawing
-/// the eyes behind the hair without a word (`--oklib answers` / `ok_cards.lua reseal` records it).
+/// `queues` is what `foreground_queues_of_head` (or an OK card's own pack) answered: `None` for "not recorded and
+/// not readable here", `Some([])` for a head prefab that genuinely carries no `SetRenderQueue_Custom`. Say which
+/// rather than drawing the eyes behind the hair without a word.
 fn apply_foreground_eyes(parts: &mut [crate::session::SessionPart],
-    queues: &[(String, Vec<(i32, i32, i32)>)], card: Option<&crate::card::CardInfo>) {
+    queues: Option<&[(String, Vec<(i32, i32, i32)>)]>, card: Option<&crate::card::CardInfo>) {
     let Some(card) = card else { return };
     let (eyes, eyebrow) = (card.foreground_eyes == 2, card.foreground_eyebrow == 2);
     if !eyes && !eyebrow { return; }
+    let Some(queues) = queues else {
+        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} requested, but no SetRenderQueue_Custom \
+            answer for this head: the base library's model for its bundle was converted before this query existed \
+            and no installation here holds the bundle to read it from. Convert that bundle again \
+            (ok-extract <game> --oklib convert <library> 8 bo_head_00.unity3d), or open with the game installed. \
+            An OK card sealed before the query needs resealing instead (ok_cards.lua reseal)");
+        return;
+    };
     if queues.is_empty() {
-        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} requested but the head prefab's \
-            SetRenderQueue_Custom data is missing (an OK card sealed before this query: reseal it to apply)");
+        eprintln!("ok-extract: foreground eyes={eyes} eyebrow={eyebrow} requested but this head prefab carries no \
+            SetRenderQueue_Custom component (nothing to switch: the original draws the eyes behind the hair too)");
         return;
     }
     let mut applied = 0;

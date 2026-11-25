@@ -236,6 +236,9 @@ fn convert_source(game: &Path, source: &Source, bytes: &[u8], prefab_hints: &BTr
         if cats.contains(&100) || label.contains("bo_head") || dir.meshes.contains("cf_o_face") {
             let _ = parsed.face_runtime_settings(name);
             let _ = parsed.eye_material_settings(name);
+            // `SetRenderQueue_Custom` of the eye/eyebrow renderers (`foregroundEyes`/`foregroundEyebrow`). Libraries
+            // built before 2026-11-25 hold no record of it, so an open could not answer it for any head.
+            let _ = crate::unity::foreground_render_queues(bytes, name);
             for c in FACE_CONTROLLERS { let _ = parsed.face_control_patterns(name, c); }
         }
     }

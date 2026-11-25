@@ -7712,3 +7712,56 @@ F 樹 65551a150 帶進來的），另一個沒有記下名字，就說「再觀�
   材質旗標要照它宣稱的那個原作 shader 來設**，不能隨手填 opaque：編輯器會自己建每部件材質所以看不出來，
   只有打包版（或任何走共用材質家族的路徑）會整塊不見。
 - 驗這類問題不能只看「卡開起來了」，要 grep `Unsupported shared material family`。
+
+## 2026-11-25 前景眼睛／眉毛從來沒生效過，訊息還叫人去「重封卡」
+
+**現象**：`D:\KKS人物卡\素材包（1）` 的 12 張**原作卡**每張都印
+`foreground eyes=… eyebrow=… requested but the head prefab's SetRenderQueue_Custom data is missing
+(an OK card sealed before this query: reseal it to apply)`。這些是原作卡，根本沒封過卡，叫人 reseal 是誤導；
+而且那個「眼睛／眉毛畫在頭髮前面」的原作選項等於沒套上，畫面上也沒人看得出來。
+
+**原因有兩層**：
+1. 問的是**錯的 bundle**：`base_bundles_stage` 用 `head_bundle`（香草 `chara/bo_head_00.unity3d`）去問
+   `foreground_render_queues`，但這些卡的頭是 mod 頭（`head entry=… ab=chara/head_mod.unity3d`），
+   `SetRenderQueue_Custom` 在 mod 自己的 bundle 裡。
+2. 共用資源庫**沒有這個查詢的紀錄**：`--oklib models` 列出來的查詢只有 `clothes_option_groups`、
+   `prefab_node_materials`、`prefab_node_names`，沒有 `foreground_render_queues`。香草頭 bundle 由庫以
+   `.okmodel` token 供應，`memo_bytes_recorded` 遇到 token 又沒紀錄就回 `None`，而呼叫端把 `None`
+   當成「prefab 沒有這個元件」的空清單，於是**每一張卡**（不只 OK 卡）都走進那句講錯的訊息。
+
+**修正**：
+- 改問頭真正來源的 bundle（`head_prefab_src`：採用 mod 頭時就是那顆 mod bundle）。
+- `foreground_render_queues_recorded` 回 `Option`：`None` 是「不知道」，`Some([])` 才是「prefab 真的沒有」。
+  卡片有要求（值＝2）而庫答不出來時，才去讀安裝目錄自己的 bundle（`gamefs::installation_source`，
+  一次真實檔案讀取，只有這種卡會付）。訊息分成三種情況講，並給重轉那顆 bundle 的指令。
+- `oklib_convert` 的頭 bundle 區段加上這個查詢，以後轉出來的庫就有紀錄。
+
+**驗證**：LOGOS 男娘测试模 ＋ `D:/KoikatuSunshinezz`：`renderers=10`，7 個部件改了 queue
+（`cf_Ohitomi_*`、`cf_O_eyeline*`、`cf_O_mayuge`），以前是 `renderers=0` 什麼都沒做。沒有安裝目錄時改印
+「庫的 model 沒有這個紀錄、這台也沒有遊戲可讀」，不再叫人 reseal。
+
+**下次要注意的**：`memo_bytes_optional`（`unwrap_or_default`）把「庫答不出來」和「答案是空的」混成一樣，
+任何**可選查詢**只要有行為差別，就要用 `memo_bytes_recorded` 的 `Option` 自己分開，訊息也要照著分。
+庫裡沒有某個查詢的紀錄不會有任何警告，加了新查詢要回頭看 `--oklib models` 有沒有它。
+
+## 2026-11-25 遮罩「找不到」其實是共用資源庫沒轉過那顆 bundle；臉部貼圖的「missing PNG」是雜訊
+
+**現象**：同一批卡裡 `LOGOS 男娘测试模` 印 `OverBodyMask military_top_mask not found in
+chara/mt_mask_body_usa.unity3d`，`体形：假小子` 印 `face-create missing PNG chara/head_mod.unity3d
+cf_face_00_t` ／ `cf_face_00_mc`。兩個 zipmod 都在這台上，看起來像解析壞了。
+
+**查清楚的結果**：
+- 遮罩：`--mask-report` 配 `D:/KoikatuSunshinezz` 是 `ok … (found)`，用讀卡器那條路（共用資源庫，
+  沒有安裝目錄）才失敗。`mods_index.db` 的 `override` 表確實記著
+  `abdata/chara/mt_mask_body_usa.unity3d` 在 `[Creamstar] US Military Equipment v3.zipmod` 裡，
+  但庫的 `converted.tsv` 只有那包的三顆網格 bundle（`usa_military_acc_h/acc_leg/co`），**遮罩那顆沒轉過**，
+  所以庫對那個 zip entry 沒有內容可給；沒有遊戲就真的讀不到。這不是程式解析錯，是庫的資料缺一塊。
+- 臉部貼圖：`face_create_source.rs` 的 `source()` 自己印「missing PNG」，但兩個呼叫端本來就有退回香草頭
+  bundle 的 fallback（`cf_face_00_t`／`cf_face_00_mc` 正是 mod 頭不會帶的那兩張），fallback 成功，臉是好的。
+  那兩行純粹是雜訊，卻讓人以為卡壞了。
+
+**修正**：遮罩訊息講出真正的原因（庫沒有那顆 bundle 的內容、這台又沒裝遊戲）並附重轉的指令；
+`source()` 不再自己喊，改由有 fallback 的呼叫端在「連香草頭也沒有」時才報，並區分「目錄說本來就沒有遮罩」。
+
+**下次要注意的**：「找不到」要講清楚是誰沒有——卡片、zipmod、庫、還是這台沒裝遊戲。
+庫是轉出來的，轉完之後 zipmod 換了版本（或當時那包少一顆 bundle），庫就會缺東西而沒有任何人會發現。

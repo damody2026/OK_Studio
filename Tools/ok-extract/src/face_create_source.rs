@@ -14,7 +14,11 @@ impl ImageSource {
 fn source(game: &Path, entry: &ListEntry, ab: &str, name: &str) -> Option<ImageSource> {
     if name.is_empty() || name == "0" || ab.is_empty() || ab == "0" { return None; }
     let name = if super::character_hi_poly() { name.to_string() } else { format!("{name}_low") };
-    let png = super::png_in_runtime_row_order(game, entry, ab, &[&name]).or_else(||{eprintln!("face-create missing PNG {ab} {name}");None})?;
+    // A missing texture here is normal and expected: a mod head's bundle (`chara/head_mod.unity3d`) ships its own
+    // face mesh without `cf_face_00_t`/`_mc`, and the callers below fall back to the vanilla head bundle for exactly
+    // those two. Reporting it from here printed "missing PNG" on every such card while nothing was wrong
+    // (D:\KKS人物卡\素材包（1）, 2026-11-25), so whoever has the fallback reports it when that fails too.
+    let png = super::png_in_runtime_row_order(game, entry, ab, &[&name])?;
     let sampling = super::named_texture_sampling(game, entry, ab, &[&name]).or_else(||{eprintln!("face-create missing sampler {ab} {name}");None})?;
     let gpu=if super::sideloader_png(entry.extra.get("__zip").map(String::as_str),game,ab,&[&name]).is_some() {
         crate::face_create_gpu::png_texture(&png,sampling)?
@@ -45,7 +49,8 @@ pub(crate) fn compose(game: &Path, vanilla: &ChaListCatalog, mods: &ChaListCatal
                     sampling:TextureSampling::default(),gpu:crate::clothes_gpu::Texture::white()}
     } else {
         source(game,&entry,&main_ab,&main_name)
-            .or_else(|| (main_name == "cf_face_00_t").then(|| source(game, &entry, "chara/bo_head_00.unity3d", &main_name)).flatten())?
+            .or_else(|| (main_name == "cf_face_00_t").then(|| source(game, &entry, "chara/bo_head_00.unity3d", &main_name)).flatten())
+            .or_else(|| { eprintln!("ok-extract: face create main texture {main_name} is in neither {main_ab} nor the vanilla head bundle"); None })?
     };
     // Hooks.OverlayBlitImpl creates a temporary sRGB RT only for underlays.
     // Linear source bytes must first undergo that Blit before its overlay.
@@ -60,8 +65,15 @@ pub(crate) fn compose(game: &Path, vanilla: &ChaListCatalog, mods: &ChaListCatal
             format:29,mips:1,sampling:main.sampling,aniso:0,bias:0.};
     }
     let mask_name = entry.info("ColorMaskTex");
-    let mask = source(game, &entry, &entry_ab(&entry, "ColorMaskAB"), &mask_name)
-        .or_else(|| (mask_name == "cf_face_00_mc").then(|| source(game, &entry, "chara/bo_head_00.unity3d", &mask_name)).flatten());
+    let mask_ab = entry_ab(&entry, "ColorMaskAB");
+    let mask = source(game, &entry, &mask_ab, &mask_name)
+        .or_else(|| (mask_name == "cf_face_00_mc").then(|| source(game, &entry, "chara/bo_head_00.unity3d", &mask_name)).flatten())
+        .or_else(|| {
+            // An empty name or AB is the catalog saying "no colour mask"; a named one that nothing holds is not.
+            let asked = ![mask_name.as_str(), mask_ab.as_str()].iter().any(|s| s.is_empty() || *s == "0");
+            if asked { eprintln!("ok-extract: face create colour mask {mask_name} is in neither {mask_ab} nor the vanilla head bundle"); }
+            None
+        });
     let ab="chara/mm_base.unity3d";
     // Sideloader overrides individual assets. A partial mm_base replacement
     // containing only clothes assets cannot hide the vanilla face material.
