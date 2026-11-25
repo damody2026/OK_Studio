@@ -1480,3 +1480,85 @@ thread_local，九条执行绪各自算一遍同一个答案。
 （逐档 stat、每条执行绪各算一遍）。两个阳性对照的开关做完就拿掉了。
 提交 `5405c178d`（本机，未推送）；完整测试 556 passed / 1 failed（既有的
 `appearance::properties::plugins` 那笔），两个 UE Development 目标都建置成功。
+
+## 十六、UE 那半边：使用者等的 2.85 秒里有 1.03 秒不在 Rust（2026-11-25，E 树）
+
+§十二 把使用者等的时间分成三块：`open_ms` 1806（63%）、`texture_prepare_ms` 331（12%）、
+游戏执行绪 702（25%）。前一节把 `open_ms` 的第一张卡砍掉 590 ms，这一节是后两块 ——
+**而这两块到这天为止没有任何人量过里面是什么**。
+
+### 量法：一次启动一个样本，读读卡器自己的读出，不要用墙钟
+
+`reader_call {"action":"load"}` 的重开**不印** `OKGUI_WORKER`／`OKGUI_LOAD`（只有 GUI 那条开卡会印），
+而且它有时候根本没有重开（`busy`／已经载入）。先用「重开六次取墙钟中位数」量，六次之间差 1.5 秒，
+**400 ms 以下的差别全被埋掉**，还踩了一个「cmd 把逗号当参数分隔符、于是两个边量到的是 MCP 回错误的速度」
+（ERROR_LOG 2026-11-25）。改成**每个边各启动一次，读它印出来的
+`open_ms`／`texture_prepare_ms`／`OK runtime material capture ms`／`extract_session TOTAL`／`OKGUI_LOAD total_ms`
+与「建部件用掉几帧」**，各边交错、每轮一个样本。
+**editor build 的 `total_ms` 含 shader 编译，所以只有分段之间可比**，绝对值不能拿去跟打包版对。
+
+### 一、`texture_prepare_ms` 的九成是 `PrepareRuntimeMaterials`，不是贴图预取
+
+读卡器的 `PrecacheTextureJobs` 在预设的 `OK_FIRSTLOAD=C6` 下**整个跳过**
+（`OK texture precache inputs=0 ... skipped=cooked`）。那 330 ms 几乎全是
+`FOkSession::PrepareRuntimeMaterials` → `OKCaptureRuntimeMaterialsParallel`，而它一直没有自己的读出。
+新增 `OK runtime material phases textures=.. hash_ms=.. decode_ms=.. (.. Mtexel) mips_ms=..`
+（`OK_LOAD_PROFILE=1`，跨 lane 加总）之后，Tohru 的一次开卡是：
+
+| 这一步在做什么 | 跨 lane 加总 | 读法 |
+|---|---:|---|
+| 每张贴图 encoded bytes 的 SHA1 | **11.5 ms**／31.0 MiB | 不值得换掉（本来以为它是大头） |
+| PNG 解码 | **688 ms**／**88.6 Mtexel** | 104 张贴图解出 354 MB 的 RGBA |
+| 建完整 mip 链（double 精度 area box） | **878 ms** | 比解码还贵，而且是纯 CPU |
+| 这一步的墙钟 | 281 ms | 约 4.7 倍并行 |
+
+### 二、mip 链的对半那一步不必走一般的 area box（−48%，逐位元组相同）
+
+一般那条对每个输出像素算四个 double 除法、对每个源 texel 算两个 min 两个 max 一个乘法，
+只为算出「权重 1、面积 4」——而**尺寸是偶数的 mip 链每一步都是这样**。对半那条直接用整颗 texel；
+面积是 1／2／4，倒数在 IEEE754 里是精确的，所以最后那四个除法也换成乘倒数。
+**累加顺序与数值都没变，位元组是一般那条自己的**；奇数尺寸、1xN 与其他缩放比照旧走一般那条
+（那里乘倒数就不精确，所以它继续除）。
+
+| | `mips_ms`（跨 lane 加总） | 材质准备（墙钟） | `texture_prepare_ms` |
+|---|---:|---:|---:|
+| 修之前（`OK_SLOW_MIPS=1`） | 878 | 281～290 | 318～327 |
+| 只去掉权重与除法 | 505 | 232～243 | 267～279 |
+| 再乘倒数（现在） | **452** | **220～231** | **259～267** |
+
+闸门：新测试 `OpenKoikatsu.RuntimeMaterial.MipsMatchTheReferenceResize` 拿八种尺寸
+（含 37x11、1x9、16x1、5x5、2x2、1x1）× sRGB × EncodedMips **逐位元组**比对两条路的每一层 mip，PASS；
+**阳性对照**（让快路径的第一个 channel `^= 1`）FAIL，所以闸门不是空转，对照做完立刻拿掉。
+`Plugins/KKRuntimePose` 是 C／E／F 共用的，街头群众与 OK Studio 的道具走同一个 `Resize`，一起受益。
+提交 `579be3c67`，关闭开关 `OK_SLOW_MIPS=1`。
+
+### 三、阶段之间的贴图编码不是杠杆：LZ4 raw 净负 78 ms，连「完全不编码」也不更好
+
+`OK_RAW_TEXTURES=1`（阶段之间写 LZ4 容器而不是 PNG）确实把 UE 那边的解码打掉八成
+（`decode_ms` 跨 lane 加总 **696 → 139**，材质准备墙钟 229 → 146），但开卡那边加倍付回去：
+
+| 边（交错六轮取中位数） | `open_ms` | 其中 `extract_session` | `texture_prepare_ms` | open＋prep |
+|---|---:|---:|---:|---:|
+| 预设（PNG，fast deflate） | 1441 | 1131 | 267 | **1708** |
+| `OK_RAW_TEXTURES=1`（LZ4 容器） | 1604 | 1277 | 182 | **1786** |
+
+六轮的符号全一致（open 每轮都 +47～281，prep 每轮都 −74～91），所以 **+78 ms 的净负不是噪声**。
+这和 11-18 在 bench 上量到的 −1.7%（噪声）不矛盾，而是补上了 bench 看不到的两半：
+**bench 不付 UE 那边的 PNG 解码，也不付「raw 的中间贴图比 PNG 大好几倍」在开卡那个窗口里的带宽**。
+
+为了确认「PNG 这趟来回」是不是底，另外做了一个**只量上限**的模式（`OK_RAW_TEXTURES=2`，
+把列直接摆进容器，连 LZ4 都不做）：`texture_prepare_ms` **271／284，和 PNG 的 265 一样**，
+而 `open_ms` 多了 0.8 秒。也就是说**把编码整个拿掉并不比 LZ4 好**——这一步不是算术受限，是**带宽受限**
+（和第二节那四笔零收益同一个原因）。量完就把这个诊断模式撤掉了（它不是能出货的东西：
+一张卡的解码贴图是 88.6 Mtexel ≈ 354 MB）。
+
+剩下的那条路是**连编码都不要**：session 把解好的像素留着，C ABI 的贴图视图除了 `png`／`png_len`
+再给 `rgba`／`stride`，UE 直接读。它能同时省掉两边，但代价是**那 354 MB 要一直留在 session 里**
+（UE 自己的 `PreparedTextureCache` 已经 256 MB）。为了 85 ms 的墙钟不值得，这个方向到此为止。
+
+### 四、顺带两个诊断
+
+- **`RAYON_NUM_THREADS=1`**：`extract_session` 1093 → 2741～3816 ms，约 **2.4 倍**。
+  所以读卡器那条开卡路确实在并行（之前用墙钟量出来的「只有 1.15 倍」是噪声）。
+- **`face overlays+emit`**（原作卡那条串列链里最大的一笔，1264 ms 里的 148）拆出了五个 segment
+  （`face/me masks`／`face/overlays`／`face/skin draw`／`face/alpha blend`／`face/emit`），还没动它。
