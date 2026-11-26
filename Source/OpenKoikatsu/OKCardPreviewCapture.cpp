@@ -34,9 +34,22 @@
 
 namespace OKCardPreviewCapture
 {
-// Face-mesh widths across a HairDeck reference view: in its reference images the face is about a third of the crop (the
-// face mesh is about twice as wide as the face that shows).
-static constexpr double HairRefWidth=1.5;
+// Face-mesh widths across a HairDeck reference view. 1.5 until 2026-11-26: about 21 cm, which cut her hair off at the
+// chin and made HairDeck draw a short cap (the user: "這頭髮也少太多了"). Five face widths takes in her whole upper
+// body (the user), so the longest hair is in the picture whatever she wears.
+static constexpr double HairRefWidth=5.0;
+// How the HairDeck reference picture is framed (Docs/HAIRDECK.md): 0 the old face-centred 1.5 face widths, 1 (the
+// default) her face and all of her hair grown 4% -- HairDeck's own framing, 2 that box but at least five face widths,
+// hanging below her face -- her whole upper body. Measured on lan x luo_tianyi_2024 seed 7001, same seed throughout:
+// 0 gave a short bob (91 strands, the ends 0.18 below the crown), 1 the knee-length braids both parents have (111,
+// 0.73), 2 hair that flew off her head and lay on the floor (100, 1.13, reaching 0.79 behind her) -- at five face
+// widths her face is an eighth of the picture and the model reads her sleeves and legs as hair.
+static TAutoConsoleVariable<int32> CVarHairRefFraming(TEXT("ok.HairRefFraming"),1,
+    TEXT("HairDeck reference framing: 0 face x1.5, 1 face+hair box, 2 upper body (five face widths)."));
+// Degrees the reference camera goes round her, 0 facing her: 180 is the back of her head, 135 three-quarters behind.
+// HairDeck is trained on front views, so this is for trying whether the back of a long hairstyle tells it more.
+static TAutoConsoleVariable<float> CVarHairRefYaw(TEXT("ok.HairRefYaw"),0.f,
+    TEXT("Degrees round her for the HairDeck reference view (0 front, 180 back)."));
 struct FJob : TSharedFromThis<FJob>
 {
     TWeakObjectPtr<AKKPreviewActor> Actor;
@@ -51,10 +64,15 @@ struct FJob : TSharedFromThis<FJob>
     int32 View=0, Waits=0;
     // Body-only (OK card): views 1..3 are captured and View starts at 1.
     bool BodyOnly=false;
-    // HairDeck reference (breeding): view 0 only, the face mesh's bounds (no hair or ears) centred, HairRefWidth face
-    // widths across, framed like HairDeck's reference images (head and shoulders).
+    // HairDeck reference (breeding): view 0 only, her face and all of her hair in the crop, as HairDeck's own
+    // preprocessing frames it (SAM 3 over hair + face, grown 8%).
     bool HairRef=false;
     FBox FaceMesh{ForceInit};
+    // Her hair, to frame the HairDeck reference by. Until 2026-11-26 the crop was HairRefWidth face widths wide, which
+    // is about 21 cm: long hair hung far outside it, HairDeck never saw it, and the hair it drew for a bred child was
+    // a short cap ("這頭髮也少太多了", the user). Her hair is the parts a cooked game draws as hair, which is what the
+    // non-hair accessories list leaves (`portable::hairdeck::visible_hair_parts` draws the same line).
+    FBox Hair{ForceInit};
     uint64 Frame=0, ObservedFrame=MAX_uint64;
     double Started=FPlatformTime::Seconds();
     FTimerHandle Timer;
@@ -116,9 +134,29 @@ struct FJob : TSharedFromThis<FJob>
         if(RawViews.IsEmpty() && Waits<90) return;
         if(HairRef)
         {
-            const FVector Look=FaceMesh.GetCenter();
-            C->SetWorldLocationAndRotation(Look+FVector(0,1,0)*500,FVector(0,-1,0).Rotation());
-            C->OrthoWidth=FaceMesh.GetSize().X*HairRefWidth;
+            // Her face and all of her hair, grown 8% -- HairDeck's own framing. A square: both the reference and a
+            // mixed second image have to be head-centred squares for the same DINOv3 token to land on the same part
+            // of the head. Her hair reaching her waist makes a tall crop; the face stays in the middle of it, so the
+            // model sees the whole hairstyle instead of a crop that cut it off at the chin.
+            // The target is 768 x 1024 and the crop box breeding passes (0,143,768,911) is its middle square, so the
+            // square the model sees is OrthoWidth across and OrthoWidth tall: both sides of the crop fit in it.
+            const int32 Mode=CVarHairRefFraming.GetValueOnGameThread();
+            FBox Crop=FaceMesh;if(Mode>0&&Hair.IsValid)Crop+=Hair;
+            if(Mode>0)Crop=Crop.ExpandBy(Crop.GetSize().GetMax()*.04);
+            const FVector Size=Crop.GetSize();
+            const double Faces=FMath::Max(FaceMesh.GetSize().X,FaceMesh.GetSize().Z);
+            const double Side=Mode==0?FaceMesh.GetSize().X*1.5
+                : Mode==1?FMath::Max(Size.X,Size.Z)
+                : FMath::Max3(Size.X,Size.Z,Faces*HairRefWidth);
+            // Mode 2: her face sits in the upper part of the square, as it does in a character picture -- the square
+            // hangs below her face unless her hair already pulls the crop lower.
+            FVector Look=Mode==0?FaceMesh.GetCenter():Crop.GetCenter();
+            if(Mode==2){Look.X=FaceMesh.GetCenter().X;Look.Z=FMath::Min(FaceMesh.GetCenter().Z-Side*.3,Crop.GetCenter().Z);}
+            const FVector Axis=FVector(0,1,0).RotateAngleAxis(CVarHairRefYaw.GetValueOnGameThread(),FVector(0,0,1));
+            C->SetWorldLocationAndRotation(Look+Axis*500,(-Axis).Rotation());
+            C->OrthoWidth=Side;
+            UE_LOG(LogTemp,Display,TEXT("OK HairDeck reference: mode %d yaw %.0f, face+hair %.1f x %.1f cm (face %.1f, hair %s), square %.1f cm at z %.1f"),
+                Mode,CVarHairRefYaw.GetValueOnGameThread(),Size.X,Size.Z,FaceMesh.GetSize().X,Hair.IsValid?TEXT("yes"):TEXT("none"),Side,Look.Z);
             C->CaptureScene();Frame=GFrameCounter;Pending=true;
             return;
         }
@@ -162,20 +200,30 @@ static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly,bool 
     Actor->EnsurePrivateGpuQueryGeometry();
     TSet<FName> FaceMeshes;
     for(const auto& P:Actor->Parts) if(P.bFaceSphereNormals) FaceMeshes.Add(*FString::Printf(TEXT("Skel_%d"),P.SessionIndex));
+    // Her hair: hair parts, and accessories that are not among the accessories that are not hair.
+    TSet<FName> HairMeshes;TSet<int32> HairParts;
+    if(bHairRef)
+    {
+        const TSet<int32> NotHair(Actor->Session.NonHairAccessories());
+        for(const auto& P:Actor->Parts)
+            if(P.Role.StartsWith(TEXT("hair"))||(P.Role==TEXT("accessory")&&!NotHair.Contains(P.SessionIndex)))
+            {HairParts.Add(P.SessionIndex);HairMeshes.Add(*FString::Printf(TEXT("Skel_%d"),P.SessionIndex));}
+    }
     TArray<FVector> Points;
     for(UPoseableMeshComponent* Mesh:Actor->SkelFollowers) if(IsValid(Mesh)&&Mesh->IsVisible()&&Mesh->GetMeshObject())
     {
         TArray<FFinalSkinVertex> Vertices;Mesh->GetCPUSkinnedVertices(Vertices,0);
+        const bool bHair=HairMeshes.Contains(Mesh->GetFName());
         for(const auto& V:Vertices)
         {
             const FVector P=Mesh->GetComponentTransform().TransformPosition(FVector(V.Position));
-            Points.Add(P);Job->Body+=P;if(FaceMeshes.Contains(Mesh->GetFName()))Job->Face+=P;
+            Points.Add(P);Job->Body+=P;if(FaceMeshes.Contains(Mesh->GetFName()))Job->Face+=P;if(bHair)Job->Hair+=P;
         }
     }
     for(const auto& Part:Actor->Parts) if(IsValid(Part.Comp)&&Part.Comp->IsVisible())
         for(int32 S=0;S<Part.Comp->GetNumSections();++S) if(auto* Section=Part.Comp->GetProcMeshSection(S);Section&&Section->bSectionVisible)
             for(const auto& V:Section->ProcVertexBuffer)
-            {const FVector P=Part.Comp->GetRenderMatrix().TransformPosition(V.Position);Points.Add(P);Job->Body+=P;if(Part.bFaceSphereNormals)Job->Face+=P;}
+            {const FVector P=Part.Comp->GetRenderMatrix().TransformPosition(V.Position);Points.Add(P);Job->Body+=P;if(Part.bFaceSphereNormals)Job->Face+=P;if(HairParts.Contains(Part.SessionIndex))Job->Hair+=P;}
     if(!Job->Body.IsValid){Job->Finish(TEXT("角色沒有可擷取的模型"));return;}
     if(!Job->Face.IsValid)
     {

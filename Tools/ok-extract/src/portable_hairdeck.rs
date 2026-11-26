@@ -96,12 +96,18 @@ fn card_vf(rows: &[[f64; 8]], triangle: bool) -> Option<(Vec<V3>, Vec<[u32; 3]>)
         v.push(sub(p[i], mul(nn, w / 2.0)));
         v.push(sub(p[i], mul(t2, th / down)));
     }
+    // Only the two ends are capped. A cap on every ring (what this built until 2026-11-25) is a crosswise quad inside
+    // the strand, all but coplanar with its flat sides: the outline shell pushes each one out through the surface, and
+    // the hair came out covered in dark crosswise scales ("鱼鳞面", the user). It also cost a fifth of the triangle
+    // budget for faces nothing can see.
     let mut f: Vec<[u32; 3]> = vec![[0, 2, 1], [0, 3, 2]];
     for i in 1..n as u32 {
         let l = 4 * i;
         f.extend([[l, l - 4, l + 1], [l + 1, l - 3, l + 2], [l + 2, l - 2, l + 3], [l + 3, l - 1, l], [l - 3, l + 1, l - 4],
-            [l - 4, l, l - 1], [l - 1, l + 3, l - 2], [l - 2, l + 2, l - 3], [l, l + 1, l + 2], [l, l + 2, l + 3]]);
+            [l - 4, l, l - 1], [l - 1, l + 3, l - 2], [l - 2, l + 2, l - 3]]);
     }
+    let e = 4 * (n as u32 - 1);
+    f.extend([[e, e + 1, e + 2], [e, e + 2, e + 3]]);
     Some((v, f))
 }
 
@@ -189,8 +195,21 @@ pub(super) fn build(s: &OkSession, cards_json: &[u8], chains_json: Option<&[u8]>
         rows.push((r, c.shape == "triangle", colors));
     }
     if rows.is_empty() { return Err("the cards file has no card with 3 or more points".into()); }
-    // Triangle budget of the authored hair (portable_hair::validate): 2 + 10 (n - 1) per card.
-    let tris = |rows: &[(Vec<[f64; 8]>, bool, Vec<[f64; 3]>)]| rows.iter().map(|r| 2 + 10 * (r.0.len() - 1)).sum::<usize>();
+    // The hair has to cover the skull it is put on. A style drawn from a pair of faces (a bred child's) can come out
+    // narrower than this head, and then it sits on the crown like a small cap with bare scalp around it ("配種的頭髮
+    // 大小錯誤", the user, 2026-11-25). Where the strands reach less far out than the cranium, the whole fit grows
+    // around its centre until they cover it, by at most a quarter: a style that is wide enough already is untouched.
+    let (fit, fit_report) = {
+        let half = fit_report["cranium_half_x"].as_f64().unwrap_or(0.0);
+        let widest = rows.iter().flat_map(|r| r.0.iter()).map(|p| (fit.apply([p[0], p[1], p[2]])[0] - fit.to[0]).abs()).fold(0.0f64, f64::max);
+        let grow = if widest > 1e-6 && half > 0.0 { (half * 1.02 / widest).clamp(1.0, 1.25) } else { 1.0 };
+        let mut report = fit_report;
+        report["cover_grow"] = serde_json::json!(grow);
+        report["widest_strand"] = serde_json::json!(widest);
+        (Fit { scale: fit.scale * grow, from: fit.from, to: fit.to }, report)
+    };
+    // Triangle budget of the authored hair (portable_hair::validate): 8 (n - 1) + 4 per card (sides, two end caps).
+    let tris = |rows: &[(Vec<[f64; 8]>, bool, Vec<[f64; 3]>)]| rows.iter().map(|r| 8 * (r.0.len() - 1) + 4).sum::<usize>();
     let mut cap = rows.iter().map(|r| r.0.len()).max().unwrap();
     while tris(&rows) > 49_000 && cap > 3 {
         cap -= 1;
@@ -503,6 +522,16 @@ fn card_hair_slots(s: &OkSession) -> Vec<String> {
     out
 }
 
+/// The parts of her that are hair: a hair part, or an accessory that is not one of the accessories that are not hair
+/// (`non_hair_accessory_parts`). Empty means bald. Hair made of accessories counts whatever shader draws it (Jeanne's
+/// is a `main_item`), so this is the test for "she has hair" -- a bred child's, above all (Docs/OK_BREEDING.md).
+pub fn visible_hair_parts(s: &OkSession) -> Vec<usize> {
+    let not_hair = non_hair_accessory_parts(s);
+    s.parts.iter().enumerate()
+        .filter(|(i, p)| p.render_visible && (p.role.starts_with("hair") || (p.role == "accessory" && !not_hair.contains(i))))
+        .map(|(i, _)| i).collect()
+}
+
 /// Session parts that are accessories but not her hair (bunny ears, hats, pins and ribbons): what a picture of her
 /// face for HairDeck leaves out, else HairDeck draws them as hair (the user, 2026-11-22). A slot is hair when one of its
 /// renderers is (a hair shader, or "hair" / "kami" in its mesh or renderer name), or it is a hair-category (121)
@@ -735,6 +764,22 @@ pub fn inherit(child: &[u8], hair_parent: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod card_tests {
     use super::*;
+    /// A cap on every ring is a crosswise quad inside the strand that the outline shell pushes out through the
+    /// surface: the hair came out covered in dark crosswise scales (2026-11-25, Docs/OK_BREEDING.md).
+    #[test]
+    fn a_strand_is_capped_at_its_ends_only() {
+        let n = 5;
+        let rows: Vec<[f64; 8]> = (0..n).map(|i| [0.0, i as f64 * 0.01, 0.0, 0.01, 0.005, 0.0, 0.0, 1.0]).collect();
+        let (v, f) = card_vf(&rows, false).expect("a strand of 5 points");
+        assert_eq!(v.len(), 4 * n);
+        assert_eq!(f.len(), 8 * (n - 1) + 4, "sides plus two end caps");
+        for t in &f {
+            let ring: Vec<u32> = t.iter().map(|x| x / 4).collect();
+            if ring[0] == ring[1] && ring[1] == ring[2] {
+                assert!(ring[0] == 0 || ring[0] as usize == n - 1, "ring {} inside the strand is capped", ring[0]);
+            }
+        }
+    }
     #[test]
     fn colours_move_with_the_card() {
         let cards = serde_json::json!([{"seq": [[0.0]], "colors": [[0.5, 0.2, 0.9], [0.1, 0.0, 1.0]]}]);

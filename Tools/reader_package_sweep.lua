@@ -227,7 +227,12 @@ for i, name in ipairs(cards) do
       -- New failure lines in the reader's log while this card loaded.
       local t = log_text(); local fresh = t:sub(seen + 1); seen = #t
       local logbad = {}
+      -- "Unsupported shared material family" is a failure of the **program**, not of the card: a cooked game draws
+      -- only parts that find a shared parent and silently drops the rest, so a card that is right in the editor comes
+      -- out missing that part here and nothing else says so (2026-11-25: every bred child was bald in the package,
+      -- Docs/OK_BREEDING.md). Unlike a part the card never carried, this one is in the card and is not drawn.
       for _, needle in ipairs({ "Missing shader", "Default Material", "Fatal error",
+        "Unsupported shared material family",
         "Attempting to load a BulkData object that cannot be loaded from disk" }) do
         local n = 0; for _ in fresh:gmatch(needle:gsub("%p", "%%%0")) do n = n + 1 end
         if n > 0 then logbad[#logbad + 1] = ("%s x%d"):format(needle, n) end
@@ -283,9 +288,9 @@ for line in t:gmatch("[^\r\n]+") do
   end
 end
 local function count(needle) local n = 0; for _ in t:gmatch(needle:gsub("%p", "%%%0")) do n = n + 1 end; return n end
-emit(("SUMMARY cards=%d fail=%d check=%d game_root_lines=%d lacks=%d open_failed=%d missing_shader=%d default_material=%d fatal=%d log=%s")
+emit(("SUMMARY cards=%d fail=%d check=%d game_root_lines=%d lacks=%d open_failed=%d missing_shader=%d no_material_family=%d default_material=%d fatal=%d log=%s")
   :format(#cards, fails, checks, game_lines, count("the OK card lacks"), count("OK load3d result ok=0"),
-    count("Missing shader"), count("Default Material"), count("Fatal error"), tostring(log)))
+    count("Missing shader"), count("Unsupported shared material family"), count("Default Material"), count("Fatal error"), tostring(log)))
 
 -- Stopped through the MCP too (`reader_stop`), which waits until the process is really gone.
 if alive(pid) then

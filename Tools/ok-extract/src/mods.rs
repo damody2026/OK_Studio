@@ -420,6 +420,12 @@ fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<S
                 None => { crate::modsindex::report_unplaced(mods_dir, g); }
             }
         }
+        // Recorded like the tree scan's answer. A strict open never asks the library's index (`unanswered` above
+        // comes first): the card has to carry the answer. Since the library gained the index (2026-11-24) this
+        // branch answered the recording open and wrote nothing down, so every OK card made after it had no `guids`
+        // row at all, and sealing anything built from one (a bred child of an original card) failed with
+        // "okLt guids (7)" (2026-11-25, Docs/OK_BREEDING.md).
+        record_guids(&out, &question);
         return out;
     }
     if crate::modsindex::tree_scan_forbidden(mods_dir) {
@@ -427,11 +433,16 @@ fn find_guids_inner(mods_dir: &Path, wanted: Option<&std::collections::HashSet<S
         return HashMap::new();
     }
     let found = crate::okstrict::scanning(|| find_guids_wanted(mods_dir, w, &names));
-    if crate::tree_answers::recording() {
-        let rows: Option<Vec<(String, String)>> = found.iter().map(|(g, p)| crate::tree_answers::relative(p).map(|z| (g.clone(), z))).collect();
-        if let Some(mut rows) = rows { rows.sort(); crate::tree_answers::record("guids", question.as_bytes(), &rows); }
-    }
+    record_guids(&found, &question);
     found
+}
+
+/// The answer to one `guids` question written into the card being recorded (nothing when not recording, or when an
+/// archive lies outside the mods folder and cannot be named relative to it).
+fn record_guids(found: &HashMap<String, PathBuf>, question: &str) {
+    if !crate::tree_answers::recording() { return; }
+    let rows: Option<Vec<(String, String)>> = found.iter().map(|(g, p)| crate::tree_answers::relative(p).map(|z| (g.clone(), z))).collect();
+    if let Some(mut rows) = rows { rows.sort(); crate::tree_answers::record("guids", question.as_bytes(), &rows); }
 }
 
 fn find_guids_wanted(mods_dir: &Path, w: &std::collections::HashSet<String>, names: &[&String]) -> HashMap<String, PathBuf> {

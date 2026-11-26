@@ -3761,6 +3761,75 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             let summary = crate::breed::file::breed_into_with(None, game, &mother, &father, seed, &out, depend)?;
             println!("OKBREED {summary} -> {}", out.display());
         }
+        "hair-put" => {
+            // hair-put <card> <cards_seed*.json|-> <out card>: HairDeck hair kept in the card (`okHk`), as the
+            // reader's 頭髮 › HairDeck page and breeding do it (`FOkSession::CardHairDeck`); `-` takes it back off.
+            let card = PathBuf::from(args.get(1).ok_or("card required")?);
+            let cards = args.get(2).map(String::as_str).ok_or("hair cards json required (or `-`)")?;
+            let out = PathBuf::from(args.get(3).ok_or("output required")?);
+            let opts = match args.get(4) { Some(o) => serde_json::from_str(o).map_err(|e: serde_json::Error| e.to_string())?, None => Default::default() };
+            let summary = crate::portable::hairdeck::put_into_card(&card, (cards != "-").then(|| Path::new(cards)), &opts, &out)?;
+            println!("OKHAIRPUT {summary} -> {}", out.display());
+        }
+        "hair-check" => {
+            // hair-check <card>...: open each card as the reader does (her own HairDeck hair, `okHk`, put on) and
+            // require a visible hair part a cooked game can draw. A bred child whose hair the package dropped looked
+            // right in the editor and was bald in the package (2026-11-25, Docs/OK_BREEDING.md), so this is the step
+            // that has to fail when breeding breaks: the packaging self-check breeds two of the package's own cards
+            // and runs it on the child.
+            let mut failed = 0;
+            for name in &args[1..] {
+                let card = PathBuf::from(name);
+                let result = (|| -> Result<String, String> {
+                    let bytes = std::fs::read(&card).map_err(|e| e.to_string())?;
+                    // An OK card opens from the library alone; an original card from the game and its zipmods.
+                    let mut s = match open_original_card(game, &card, 0) {
+                        Some(r) => r?,
+                        None => crate::session::open(&configured_library().ok_or("OK base library not configured")?, Some(&card), 0)?,
+                    };
+                    let deck = crate::portable::hairdeck::apply_card(&mut s, &card, &bytes)?;
+                    // Her hair is a hair part, or an accessory that is not one of the accessories that are not hair
+                    // (`non_hair_accessory_parts`: the same rule the HairDeck picture goes by, so a mod hair drawn
+                    // with an item shader counts -- Jeanne's is, and the narrower "shader kind 1 or 10" test called
+                    // her bald).
+                    let hair: Vec<&crate::session::SessionPart> = crate::portable::hairdeck::visible_hair_parts(&s)
+                        .into_iter().map(|i| &s.parts[i]).collect();
+                    if hair.is_empty() {
+                        let seen: Vec<String> = s.parts.iter().filter(|p| p.render_visible && p.role == "accessory")
+                            .map(|p| format!("{} (kind {})", p.name, p.shader_kind)).collect();
+                        return Err(format!("no visible hair part (she is bald); visible accessories: {}",
+                            if seen.is_empty() { "none".into() } else { seen.join(", ") }));
+                    }
+                    if deck.is_some() && !hair.iter().any(|p| p.name.starts_with("Tripo_")) {
+                        return Err("her card carries HairDeck hair (okHk) but no part of it is visible".into());
+                    }
+                    let text = hair.iter().map(|p| format!("{} ({}, kind {}, {}{}, {} tris)", p.name, p.role, p.shader_kind, p.blend, if p.unlit { ", unlit" } else { "" }, p.indices.len() / 3))
+                        .collect::<Vec<_>>().join("; ");
+                    // How the hair sits on this head, so "the hair is the wrong size" can be read off a card instead of
+                    // a screenshot: the fit the hair was placed with, and the hair's extent against the head's.
+                    let span = |ps: &[[f32; 3]]| ps.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(mut a, mut b), p| {
+                        for i in 0..3 { a[i] = a[i].min(p[i]); b[i] = b[i].max(p[i]); } (a, b) });
+                    let mut extra = String::new();
+                    if let Some(fit) = deck.as_ref().and_then(|d| d.get("fit")) {
+                        extra += &format!("; fit scale={:.4} cranium_half_x={:.4}", fit["scale"].as_f64().unwrap_or(0.0), fit["cranium_half_x"].as_f64().unwrap_or(0.0));
+                    }
+                    if let (Some(head), Some(deck_part)) = (s.parts.iter().find(|p| p.role == "head" && !p.positions.is_empty()),
+                        s.parts.iter().find(|p| p.render_visible && p.name.starts_with("Tripo_") && !p.positions.is_empty())) {
+                        let (ha, hb) = span(&head.positions);
+                        let (da, db) = span(&deck_part.positions);
+                        extra += &format!("; head x[{:.3},{:.3}] y[{:.3},{:.3}] z[{:.3},{:.3}]; hair x[{:.3},{:.3}] y[{:.3},{:.3}] z[{:.3},{:.3}]; width ratio {:.3}",
+                            ha[0], hb[0], ha[1], hb[1], ha[2], hb[2], da[0], db[0], da[1], db[1], da[2], db[2],
+                            (db[0] - da[0]) / (hb[0] - ha[0]).max(1e-6));
+                    }
+                    Ok(text + &extra)
+                })();
+                match result {
+                    Ok(text) => println!("OKHAIRCHECK ok\t{}\t{text}", card.display()),
+                    Err(e) => { failed += 1; println!("OKHAIRCHECK fail\t{}\t{e}", card.display()); }
+                }
+            }
+            if failed > 0 { return Err(format!("{failed} card(s) have no hair a cooked game would draw")); }
+        }
         "breed-export" => {
             // breed-export <child card> <out card>: a child that depends on her parents written as a whole card.
             let card = PathBuf::from(args.get(1).ok_or("child card required")?);

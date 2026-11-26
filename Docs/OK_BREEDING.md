@@ -110,6 +110,153 @@ MCP（`reader_call`）：`{"action":"action","command":"breed_parent","role":"mo
 
 `breed_family_tree.lua --views <檔>`：一行「卡片路徑<TAB>正面<TAB>側面<TAB>斜側面」，截圖裁掉左右空白與右下角名牌（`CROP` 1180×1730），`--panel-height`（預設 1000）是每格在圖上的高度，字、線、間距照比例放大。圖約 13000 像素寬。圖：`Saved/OKBreed/family_tree_views.png`（清單 `Saved/OKBreed/family_views.txt`，截圖在 `Saved/OKBreed/views/`）。
 
+## 打包版（2026-11-25，F）
+
+使用者：「打包出來的 `CardReaderDevelopment.cmd` 要能正確配種成功」。在 `E:\OKPackage\Studio-20261124-release-e` 實際開讀卡器配了一次，抓到兩條只在打包版（或只在新庫）才出事的毛病。
+
+### 1. 子卡光頭：接上去的原生材質頭髮被壓成 `opaque`，cooked build 整片不畫
+
+**現象**：包裡配 `heroine_keqing × heroine_megumin`（兩張 OK 卡）成功生出孩子，log 寫著 `HairDeck hair mixed from both (father 59%)`、`HairDeck hair kept in the card (139705 bytes)`，但她一顯示就是光頭。log：
+
+```
+Part 18 (Tripo_Golden_Hair_25356) left out: Unsupported shared material family:
+  part Tripo_Golden_Hair_25356 (hair_back, shader Shader Forge/main_hair_front)
+```
+
+**原因**：`portable_hair.rs` 的「沿用捐贈部件的原生髮材質」那一段複製了捐贈部件（`shader_kind` 1，`Shader Forge/main_hair*`）之後，把 `blend` 壓成 `opaque`。而 cooked build 只畫找得到共用母材質的部件：`OKRuntimeSharedMaterialRecipe`（[`KKRuntimeSharedMaterial.cpp`](../Plugins/KKRuntimePose/Source/KKRuntimePose/Private/KKRuntimeSharedMaterial.cpp)）認 `shader_kind == 1` 的條件是 **blend `masked` 且 unlit**，`opaque` 對不上任何家族 → 沒有母材質 → `ApplyPartMaterial` 在 `!WITH_EDITOR` 直接 `SetRenderInMainPass(false)`，整片頭髮不畫。編輯器（開發樹的讀卡器）走的是另一條：沒有母材質就臨時建一張材質圖，所以同一張卡在開發樹看起來是對的。**「開發樹能跑、打包版光頭」就是這個差。**
+
+**修正**：那一段不再動 `blend`（`*p = d.clone()` 本來就帶著捐贈部件的 `masked`／unlit）。HairDeck 的色彩圖集每個取樣到的像素 alpha 都是 255，masked 的裁切不改變任何像素。同一段結尾加了一道攔截：`shader_kind == 1` 而 blend 不是 `masked`／不是 unlit 就直接報錯，不讓它再悄悄變成光頭。
+
+舊卡不用重做：頭髮是開卡時才接上去的，程式修好，既有的子卡再開就有頭髮。
+
+### 2. 原作卡配 OK 卡封不了卡：庫有了 mods 索引之後，新做的 OK 卡沒錄 `guids` 答案
+
+**現象**：`Jeanne V1.11.png`（原作卡）× `heroine_megumin.png`（OK 卡）→ 封卡失敗，每一套服裝都是
+
+```
+the OK card has 1 unanswered question(s) its open needs: okLt guids (7): Jeanne_Cetol,com.DeathWeasel...
+```
+
+**原因**：OK 卡的嚴格開卡不准問庫的 mods 索引（`tree_answers::unanswered` 排在索引前面），答案一定要在卡裡。而 `mods.rs` 的 `find_guids_inner` 只在「掃整棵 mods 樹」那條路上 `record` 答案；自 2026-11-24 基礎庫帶了 `mods_index.db`（`modsindex::serves`）之後，錄答案那一次開卡從索引拿到答案就 `return` 了，**什麼都沒寫進卡**。於是那之後做的每一張 OK 卡都沒有 `guids` 那一列（`--oklib pack-keys` 看得到：一列都沒有），拿它去封卡（配種把原作卡臨時轉成的 OK 卡就是這種）就失敗。
+
+**修正**：索引那條路也 `record`（兩條路共用 `record_guids`）。另外 `tree_answers::unanswered` 的缺口訊息現在會寫出**七個 guid 裡哪幾個從來沒被問過**（`never asked: ...`）——原本七個全印出來，看不出少的是哪一個。
+
+修正後 `Jeanne V1.11 × heroine_megumin` 種子 77 一次封卡成功（`added zips=10 model records=2`）。
+
+### 3. 髮型來自「頭髮是飾品做的」那一位：孩子一根頭髮也沒有，HairDeck 也接不上去
+
+**現象**：包裡 `Jeanne V1.11`（原作卡）× `heroine_hu_tao`（OK 卡）→ 封卡、生出、載入都成功，`HairDeck hair kept in the card (111418 bytes)`，顯示出來還是光頭。log：
+
+```
+OK card HairDeck hair not applied: base has no hair material donor
+  (parts: body:o_body_a:5:Koikano/main_skin, head:cf_... )
+```
+
+**原因**：胡桃的頭髮是**飾品**做的（`hair-check` 列出 `Hair (accessory, kind 1)`、`hair_0 (accessory, kind 1)`）。飾品跟著衣服那一方（這裡是母親貞德），髮型基因跟著「頭髮」那一組；孩子拿了胡桃的髮型編號、卻沒有胡桃的飾品，貞德自己的髮型又被蓋掉，於是孩子一個頭髮部件都沒有。接 HairDeck 頭髮要有一個「捐贈部件」當模板，沒有就整段放棄 → 連生成好的頭髮也沒戴上。
+
+**修正**：沒有任何頭髮可當模板時，拿她的**頭**當模板複製一份新部件（頭本身不動），用 item shader 畫（`shader_kind` 8，cooked build 認得）。先前那張光頭的子卡不用重配，重開就有頭髮（`OKHAIRCHECK ok ... Tripo_Golden_Hair_19022 (hair_back, kind 8, opaque, unlit)`）。
+
+髮型基因本身仍然照舊（「用飾品做的頭髮跟著衣服那一方」還在「未做」裡）：這一條只保證她不會光頭。
+
+### 打包自檢裡的配種檢查
+
+`Tools/package_studio_release.lua` 的自檢多一段（完整包與 `--program-only` 都跑）：用**包自己的** `ok-extract.exe` 與包的基礎庫，拿包裡最小的兩張 OK 卡配一個孩子 → 把前一步 HairDeck 自檢生出的頭髮裝進她（`--oklib hair-put ... {"native":true}`）→ `--oklib hair-check` 開孩子與兩位父母，要求每人都有一片畫得出來的頭髮。上面兩條都會讓它失敗：第 2 條在配種那一步，第 1 條在 `hair-check`（接頭髮時就報錯）。
+
+新的兩個命令（讀卡器與自檢共用同一段程式）：
+
+```powershell
+.\Tools\ok-extract\target\release\ok-extract.exe X:/NoGame --oklib hair-put <卡> <cards_seed*.json|-> <輸出卡> [OPTS]
+.\Tools\ok-extract\target\release\ok-extract.exe X:/NoGame --oklib hair-check <卡>...
+```
+
+`hair-check` 印 `OKHAIRCHECK ok|fail <卡> <說明>`，fail 的回傳碼非 0。
+
+2026-11-25 晚改成**配三對**（挑四張自己有頭髮的卡，(1,2)、(3,4)、(1,4)），因為孩子會不會光頭看的是這一對：
+髮型基因只帶遊戲的頭髮槽，頭髮是飾品做的那一位髮型欄位是空的。HairDeck 頭髮只裝進第一個孩子（那一步測的是
+頭髮的材質，和配對無關）。`card_vf` 只在頭尾封口另有單元測試
+（`portable_hairdeck.rs` `a_strand_is_capped_at_its_ends_only`），魚鱗面回來的話它會先失敗。
+
+### 打包版的驗收（2026-11-25，F）
+
+程式包 `Tools\lua\lua.exe Tools\package_studio_release.lua --tag BreedFix1125g --program-only --resources-from E:\OKPackage\Studio-20261124-release-e --out E:\OKPackage\Studio-20261125-program-f-breed2`（自檢全過，含新的配種那段：`breeding kks_KK_402071.png x crowd_C011.png` → 孩子 `OKHAIRCHECK ok`），疊到 `Studio-20261124-release-e` 上，用包的 `CardReaderDevelopment.cmd` 照玩家的操作（設為母親／父親、配種）配了五次，每次都生出、載入、拍照成功，log 裡 `left out` / `Unsupported shared material family` / `no hair material donor` 都是 0，**五個孩子都有頭髮**（讀卡器截圖看過）：
+
+| 父母 | 種子 | 孩子 | 結果 |
+|---|---|---|---|
+| heroine_keqing × heroine_megumin（OK × OK） | 42 | Komazoku 刻min | 修正前同一張是光頭，修正後有頭髮 |
+| Jeanne V1.11（原作卡）× heroine_hu_tao（OK） | 77 | 胡nne | 修正前封不了卡／接著光頭，修正後都好 |
+| heroine_jeanne × heroine_raiden_shogun（OK × OK） | 303 | Jeagun | 好 |
+| heroine_klara × heroine_alice（OK × OK） | 909 | Alice | 好 |
+| heroine_keqing × heroine_megumin（OK × OK） | 55 | re 刻min | 好 |
+
+建置：`cargo check --release`（預設與 `--no-default-features`）、`cargo build --release`、打包的第 3 步 `OpenKoikatsuEditor Win64 Development` 與第 4 步遊戲 `OpenKoikatsu` Development 都過。`cargo test --release --lib` 的既有失敗見 [ERROR_LOG](ERROR_LOG.md) 2026-11-24 那條。
+
+包的基礎庫 `mods_index.db` 原本是 schema 1（11-24 那版程式寫的），新程式要 schema 2，驗收前用 `ok-extract <遊戲> --oklib mods-index <base_v1>` 重建過（舊檔留在 `mods_index.db.schema1.bak`）。下一個完整包會自己帶新的。
+
+## 頭髮：光頭、大小與鱗片（2026-11-25 晚，F）
+
+使用者在打包版配出來的孩子身上看到的，是三件各自獨立的事。十八張街頭女主角卡兩兩配九對，修之前有一對光頭，修之後九對全過
+（`Tools\lua\lua.exe Tools\breed_hair_sweep.lua -Pairs 9 -Game <遊戲>`）。
+
+### 1. 髮型基因只帶遊戲的頭髮槽，孩子就光頭
+
+`lan × luo_tianyi_2024`：孩子開出來一根頭髮也沒有，`skip dummy hair id=500 cat=101 nohairB`。lan 的頭髮是飾品做的，
+所以她的「髮型」欄位是空的（nohairB）；飾品跟著**基礎那一方的服裝**走，不跟髮型基因走。孩子抽到 lan 的髮型（空），
+飾品又來自另一位（她的頭髮在槽裡，不在飾品裡）——兩邊都沒有。
+
+修法：封完卡**實際開孩子**，沒有任何頭髮部件就把髮型改從另一位拿，重配一次（`breed.rs` `bald_card`，只重試一次；
+兩邊都讓她光頭時維持原來的抽籤）。原本只有「她自己的髮型顯示不出來」(`hairstyle_gaps`) 的檢查，對「髮型本來就是空的」
+這種無效。
+
+「有沒有頭髮」的判定抽成 `portable::hairdeck::visible_hair_parts`：頭髮部件，或**不在** `non_hair_accessory_parts`
+裡的飾品。原本 `hair-check` 只認 shader kind 1／10，把 Jeanne 用 `main_item`（kind 8）畫的 mod 頭髮判成光頭——
+打包自檢會因此誤判，也會挑錯自檢用的卡。
+
+### 2. 頭髮比頭小一圈（HairDeck）
+
+子卡的 HairDeck 頭髮像頂小帽子蓋在頭頂，額頭與後頸露出頭皮。量出來：顱骨半寬 0.0817 m，髮絲只伸到 0.071 m。
+`fit()` 按這顆頭的顱寬縮放，但從父母臉畫出來的髮型本身可能就比這顆頭窄。
+
+修法：`build()` 在 fit 之後加一道覆蓋保證——髮絲伸出的最遠距離不到顱半寬時，整個 fit 繞中心放大到剛好蓋住
+（上限 1.25 倍；本來就夠寬的髮型不動）。那張子卡 0.071 → 0.083 m。report 多 `cover_grow`、`widest_strand`。
+
+### 3. 頭髮表面一片片「魚鱗」
+
+每根髮絲是 4 頂點一圈的扁管。`card_vf` 原本**每一圈都封口**：一片橫向的四邊形卡在髮絲裡，和扁管的正面幾乎共面，
+描邊外殼把它推出表面 → 滿頭橫向黑鱗片。只留頭尾兩個封口後乾淨了，順便省掉五分之一的三角預算
+（每根 `2 + 10(n-1)` → `8(n-1) + 4`）。
+
+### 看一張卡的頭髮怎麼坐在頭上
+
+```powershell
+.\Tools\ok-extract\target\release\ok-extract.exe <遊戲> --oklib hair-check <卡>...
+```
+
+印 `OKHAIRCHECK ok|fail`，每片頭髮的 shader kind、blend、三角數，以及 `fit scale`、`cranium_half_x`、頭與頭髮各自的
+包圍盒和 `width ratio`。「頭髮大小不對」不必靠截圖，看這行就知道。
+
+### 驗收（2026-11-25 晚，F）
+
+- 九對（十八張街頭女主角卡）：修前 1 對光頭，修後 9/9 過。
+- 那張帶 HairDeck 頭髮的子卡在讀卡器裡實拍（F 樹 Editor `-game`）：後腦勺的橫向黑鱗沒有了，瀏海是乾淨的髮絲；
+  頭髮包住整顆頭，不再是蓋在頭頂的小帽子。截圖在 `Saved/BreedHairCheck/`。
+- `cargo check --release`（預設與 `--no-default-features`）、`cargo build --release`、`OpenKoikatsuEditor` 與遊戲
+  `OpenKoikatsu`（Win64 Development）都過。`cargo test --release --lib` 555 passed / 1 failed，那一條是
+  [ERROR_LOG](ERROR_LOG.md) 2026-11-24 記過的既有失敗。
+- F 樹的基礎庫本來沒有 `mods_index.db`（開發庫，mod 直接讀遊戲），讀卡器會整張卡擋下來；這輪用
+  `ok-extract D:/KoikatuSunshinezz --oklib mods-index <base_v1>` 建了（7296 guids）。新 checkout 要開 OK 卡也得先建。
+
+### 驗收（2026-11-26 上午，F，打包版）
+
+- 程式包 `BreedHair1126b`（`--program-only --resources-from Studio-20261124-release-e`，輸出
+  `E:\OKPackage\Studio-20261126-breedhair-f2`）打完，第 8/8 步自檢的三對配種全過：child-1／2／3 的
+  `OKHAIRCHECK ok` 都列得出頭髮（kind 1、8、10 三種 shader 家族都有）。
+- 打包版讀卡器實跑一次配種：heroine_alice × crowd_C011（seed 20261126）。log 印
+  `OK HairDeck reference: mode 1 yaw 0, face+hair 45.7 x 76.5 cm (face 24.0, hair yes)` —— 取景修正的預設值在
+  包裡也生效，參考圖拍得到整個髮型。子卡 `hair-check` 過（Tripo 金髮 24668 tris），側面實拍頭髮長及胸前，
+  沒有光頭頂、沒有鱗片。截圖在 `F:\OpenKoikatsu\Saved\BreedPkgShots\`。
+- 只有程式包開不了任何卡：基礎庫 `base_v1`、`Content/KKPreview`（陰影 ramp）與卡片都在完整包那邊。
+  疊到完整包上才是玩家實際的樣子；這輪測試是用 junction 把這三樣接進程式包，測完拆掉。
+
 ## 未做
 
 - 資源包裁剪：匯出的完整卡帶所有祖先的整包資源，代數越多越大（第 4 代 145 MB；與服裝卡同一個待辦）。依賴卡不受影響。
