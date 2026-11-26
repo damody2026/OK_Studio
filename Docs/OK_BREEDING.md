@@ -245,6 +245,18 @@ OK card HairDeck hair not applied: base has no hair material donor
 - F 樹的基礎庫本來沒有 `mods_index.db`（開發庫，mod 直接讀遊戲），讀卡器會整張卡擋下來；這輪用
   `ok-extract D:/KoikatuSunshinezz --oklib mods-index <base_v1>` 建了（7296 guids）。新 checkout 要開 OK 卡也得先建。
 
+### 驗收（2026-11-26 上午，F，打包版）
+
+- 程式包 `BreedHair1126b`（`--program-only --resources-from Studio-20261124-release-e`，輸出
+  `E:\OKPackage\Studio-20261126-breedhair-f2`）打完，第 8/8 步自檢的三對配種全過：child-1／2／3 的
+  `OKHAIRCHECK ok` 都列得出頭髮（kind 1、8、10 三種 shader 家族都有）。
+- 打包版讀卡器實跑一次配種：heroine_alice × crowd_C011（seed 20261126）。log 印
+  `OK HairDeck reference: mode 1 yaw 0, face+hair 45.7 x 76.5 cm (face 24.0, hair yes)` —— 取景修正的預設值在
+  包裡也生效，參考圖拍得到整個髮型。子卡 `hair-check` 過（Tripo 金髮 24668 tris），側面實拍頭髮長及胸前，
+  沒有光頭頂、沒有鱗片。截圖在 `F:\OpenKoikatsu\Saved\BreedPkgShots\`。
+- 只有程式包開不了任何卡：基礎庫 `base_v1`、`Content/KKPreview`（陰影 ramp）與卡片都在完整包那邊。
+  疊到完整包上才是玩家實際的樣子；這輪測試是用 junction 把這三樣接進程式包，測完拆掉。
+
 ## 未做
 
 - 資源包裁剪：匯出的完整卡帶所有祖先的整包資源，代數越多越大（第 4 代 145 MB；與服裝卡同一個待辦）。依賴卡不受影響。
