@@ -171,6 +171,11 @@ OK card HairDeck hair not applied: base has no hair material donor
 
 `hair-check` 印 `OKHAIRCHECK ok|fail <卡> <說明>`，fail 的回傳碼非 0。
 
+2026-11-25 晚改成**配三對**（挑四張自己有頭髮的卡，(1,2)、(3,4)、(1,4)），因為孩子會不會光頭看的是這一對：
+髮型基因只帶遊戲的頭髮槽，頭髮是飾品做的那一位髮型欄位是空的。HairDeck 頭髮只裝進第一個孩子（那一步測的是
+頭髮的材質，和配對無關）。`card_vf` 只在頭尾封口另有單元測試
+（`portable_hairdeck.rs` `a_strand_is_capped_at_its_ends_only`），魚鱗面回來的話它會先失敗。
+
 ### 打包版的驗收（2026-11-25，F）
 
 程式包 `Tools\lua\lua.exe Tools\package_studio_release.lua --tag BreedFix1125g --program-only --resources-from E:\OKPackage\Studio-20261124-release-e --out E:\OKPackage\Studio-20261125-program-f-breed2`（自檢全過，含新的配種那段：`breeding kks_KK_402071.png x crowd_C011.png` → 孩子 `OKHAIRCHECK ok`），疊到 `Studio-20261124-release-e` 上，用包的 `CardReaderDevelopment.cmd` 照玩家的操作（設為母親／父親、配種）配了五次，每次都生出、載入、拍照成功，log 裡 `left out` / `Unsupported shared material family` / `no hair material donor` 都是 0，**五個孩子都有頭髮**（讀卡器截圖看過）：

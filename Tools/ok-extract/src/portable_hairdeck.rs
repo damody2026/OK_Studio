@@ -764,6 +764,22 @@ pub fn inherit(child: &[u8], hair_parent: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod card_tests {
     use super::*;
+    /// A cap on every ring is a crosswise quad inside the strand that the outline shell pushes out through the
+    /// surface: the hair came out covered in dark crosswise scales (2026-11-25, Docs/OK_BREEDING.md).
+    #[test]
+    fn a_strand_is_capped_at_its_ends_only() {
+        let n = 5;
+        let rows: Vec<[f64; 8]> = (0..n).map(|i| [0.0, i as f64 * 0.01, 0.0, 0.01, 0.005, 0.0, 0.0, 1.0]).collect();
+        let (v, f) = card_vf(&rows, false).expect("a strand of 5 points");
+        assert_eq!(v.len(), 4 * n);
+        assert_eq!(f.len(), 8 * (n - 1) + 4, "sides plus two end caps");
+        for t in &f {
+            let ring: Vec<u32> = t.iter().map(|x| x / 4).collect();
+            if ring[0] == ring[1] && ring[1] == ring[2] {
+                assert!(ring[0] == 0 || ring[0] as usize == n - 1, "ring {} inside the strand is capped", ring[0]);
+            }
+        }
+    }
     #[test]
     fn colours_move_with_the_card() {
         let cards = serde_json::json!([{"seq": [[0.0]], "colors": [[0.5, 0.2, 0.9], [0.1, 0.0, 1.0]]}]);

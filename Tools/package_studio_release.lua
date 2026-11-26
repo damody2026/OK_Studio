@@ -523,32 +523,41 @@ local function main()
       -- The parents are cards that have hair themselves: a card whose hairstyle its own data cannot show (crowd_C011
       -- wears hers as an accessory a mod was to provide) is bald on its own account and says nothing about breeding.
       local parents = {}
-      for i = 1, math.min(#cards, 6) do
-        if #parents == 2 then break end
+      for i = 1, math.min(#cards, 10) do
+        if #parents == 4 then break end
         local card = cards[i][1]
         local ok, _ = step(("parent-%02d"):format(i), { win(exe), "X:/NoGame", "--oklib", "hair-check", win(card) })
         if ok then parents[#parents + 1] = card end
       end
       if #parents < 2 then problems[#problems + 1] = "breeding not tried (no two cards in " .. win(cards_dir) .. " that open with hair)"
       else
-        local mother, father = parents[1], parents[2]
-        local child, haired = path.join(work, "child.png"), path.join(work, "child-hairdeck.png")
-        say(("  breeding %s x %s"):format(path.name(mother), path.name(father)))
-        local ok1, _, log1 = step("breed", { win(exe), "X:/NoGame", "--oklib", "breed", win(mother), win(father), "20261125", win(child) })
-        if not ok1 or not path.is_file(child) then
-          problems[#problems + 1] = "breeding failed in the package: " .. log1
-        else
-          -- The hair the HairDeck step generated (a full package only), as the reader's breeding puts it on.
-          local deck = path.join(logs, "selfcheck-hairdeck/cards_seed0.json")
-          local wearer = child
-          if path.is_file(deck) then
-            local ok2, _, log2 = step("hair-put", { win(exe), "X:/NoGame", "--oklib", "hair-put", win(child), win(deck), win(haired), '{"native":true}' })
-            if not ok2 or not path.is_file(haired) then problems[#problems + 1] = "HairDeck hair would not go into the bred child: " .. log2
-            else wearer = haired end
+        -- More than one pair: whether a child comes out bald depends on the pair (her hairstyle gene carries only the
+        -- game's hair slots, so a parent whose hair is accessories has an empty one -- Docs/OK_BREEDING.md). The
+        -- HairDeck hair goes on the first child only; that step is about the hair's material, not about the pair.
+        local pairs_to_try = { { 1, 2 } }
+        if #parents >= 4 then pairs_to_try[#pairs_to_try + 1] = { 3, 4 }; pairs_to_try[#pairs_to_try + 1] = { 1, 4 }
+        elseif #parents == 3 then pairs_to_try[#pairs_to_try + 1] = { 2, 3 } end
+        for n, pick in ipairs(pairs_to_try) do
+          local mother, father = parents[pick[1]], parents[pick[2]]
+          local child = path.join(work, ("child-%d.png"):format(n))
+          local haired = path.join(work, ("child-%d-hairdeck.png"):format(n))
+          say(("  breeding %s x %s"):format(path.name(mother), path.name(father)))
+          local ok1, _, log1 = step(("breed-%d"):format(n), { win(exe), "X:/NoGame", "--oklib", "breed", win(mother), win(father), ("2026112%d"):format(n), win(child) }, 1800)
+          if not ok1 or not path.is_file(child) then
+            problems[#problems + 1] = "breeding failed in the package: " .. log1
+          else
+            -- The hair the HairDeck step generated (a full package only), as the reader's breeding puts it on.
+            local deck = path.join(logs, "selfcheck-hairdeck/cards_seed0.json")
+            local wearer = child
+            if n == 1 and path.is_file(deck) then
+              local ok2, _, log2 = step("hair-put", { win(exe), "X:/NoGame", "--oklib", "hair-put", win(child), win(deck), win(haired), '{"native":true}' })
+              if not ok2 or not path.is_file(haired) then problems[#problems + 1] = "HairDeck hair would not go into the bred child: " .. log2
+              else wearer = haired end
+            end
+            local ok3, text3, log3 = step(("hair-check-%d"):format(n), { win(exe), "X:/NoGame", "--oklib", "hair-check", win(wearer) }, 1800)
+            for line in text3:gmatch("OKHAIRCHECK [^\r\n]*") do say("  " .. line) end
+            if not ok3 then problems[#problems + 1] = "a bred child has no hair a cooked game would draw: " .. log3 end
           end
-          local ok3, text3, log3 = step("hair-check", { win(exe), "X:/NoGame", "--oklib", "hair-check", win(wearer) }, 1800)
-          for line in text3:gmatch("OKHAIRCHECK [^\r\n]*") do say("  " .. line) end
-          if not ok3 then problems[#problems + 1] = "the bred child has no hair a cooked game would draw: " .. log3 end
         end
       end
     end
