@@ -2260,10 +2260,14 @@ void UOKCharacterController::TickPreviewPreparation()
  // cheap or cached. Spend a bounded amount of this frame, then yield to Slate.
  // A single mesh build is indivisible, so this is a soft time budget. 25 ms keeps
  // the UI near 25 fps while a 50-part card no longer pays ~50 frames of overhead.
- // OK_PART_BUDGET_MS / OK_PART_STEPS (load-speed experiments; defaults 25 ms, 8 parts): a larger budget builds the
- // hidden character in fewer frames, at the cost of a less responsive UI while it loads.
+ // OK_PART_BUDGET_MS / OK_PART_STEPS (defaults 100 ms, 32 parts): a larger budget builds the hidden character in
+ // fewer frames, at the cost of a less responsive UI while it loads -- and while it loads there is nothing to be
+ // responsive to but the progress bar. 25 ms and 8 parts spent 21-28 frames on a 51-part card, each with a whole
+ // frame's overhead on top of the part work; 100 ms and 32 take 8 (200 ms and 64 take 5-6, for no further gain).
+ // Measured in the reader, four arms interleaved, `OKGUI_LOAD total_ms` medians: 25/8 4493-4609 ms,
+ // 100/32 4264-4283, 200/64 4167-4226 (2026-11-25, §十六 of Docs/CARD_OPEN_PERF_20261117.md).
  auto EnvInt=[](const TCHAR* Name,int32 Default){const int32 V=FCString::Atoi(*FPlatformMisc::GetEnvironmentVariable(Name));return V>0?V:Default;};
- static const int32 BudgetMs=EnvInt(TEXT("OK_PART_BUDGET_MS"),25),Steps=EnvInt(TEXT("OK_PART_STEPS"),8);
+ static const int32 BudgetMs=EnvInt(TEXT("OK_PART_BUDGET_MS"),100),Steps=EnvInt(TEXT("OK_PART_STEPS"),32);
  const double Deadline=FPlatformTime::Seconds()+BudgetMs/1000.;
  bool Ok=true;
  for(int32 Step=0;Step<Steps;++Step){

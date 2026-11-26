@@ -3,7 +3,7 @@
 -- (Tools/street_stage.lua), on the cooked /Engine/Maps/Templates/Template_Default, with StreetHeroines as the default cards.
 --
 --   Tools\lua\lua.exe Tools\run_card_reader_development.lua [CARD.png] [-CardDirectory DIR | -StreetHeroines] [-WindowWidth N]
---     [-WindowHeight N] [-CpuSkin] [-Engine ROOT] [-NoBuild] [-DryRun] [-- UNREAL_ARGS...]
+--     [-WindowHeight N] [-CpuSkin] [-Engine ROOT] [-NoBuild] [-DryRun] [-Stage NAME|newest] [-- UNREAL_ARGS...]
 -- Option names are case-insensitive and may also be written --card-directory, ... ; -Name:value works too.
 -- CARD.png (or a card dropped on CardReaderDevelopment.cmd): that card opens in 3D at once, its folder is the card wall.
 -- Packaged games built before the OKCardListView fix show an empty card wall (its row class was set only in the
@@ -22,7 +22,7 @@ local player_settings = require "street_player_settings"
 local street_stage = require "street_stage"
 
 local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true, legacyreader = true, parallelrdg = true, watch = true }
-local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true, physics = true }
+local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true, physics = true, stage = true }
 
 -- -Physics <模式>（或環境變數 OK_READER_PHYSICS，選項優先：reader_launch 的 env 傳得進來）：讀卡器的
 -- 頭髮／衣物／配件物理解算器，**預設是原始 Verlet**（使用者 2026-11-18）。「原始 Verlet」就是選單裡那一項：
@@ -77,11 +77,18 @@ local function main()
   -- No engine on this machine (a package on a player's computer): there is no editor, the stage runs.
   local editor_exe = engine and path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe") or ""
   local stage_exe, stage_name
-  if not path.is_file(project) or not path.is_file(editor_exe) then
+  -- -Stage <名稱|newest>：在這個 checkout 裡也跑打包版（量使用者真的會走的路徑用的；編輯器版的遊戲執行緒
+  -- 多了每部件的 shader 編譯與漸進式材質，`#if !WITH_EDITOR`，所以帧預算那類改動在編輯器裡量不到，
+  -- Docs/ERROR_LOG.md 2026-11-25）。沒有這個選項時行為不變：有編輯器就跑編輯器。
+  if o.stage or not path.is_file(project) or not path.is_file(editor_exe) then
     local how
-    stage_exe, _, stage_name, how = street_stage.newest(root, nil, "any")
+    if o.stage and o.stage:lower() ~= "newest" then
+      stage_exe, _, stage_name, how = street_stage.named(root, o.stage, "any")
+    else
+      stage_exe, _, stage_name, how = street_stage.newest(root, nil, "any")
+    end
     if not stage_exe then error("No editor and no usable stage in " .. street_stage.dir(root), 0) end
-    io.write(("Stage: %s (newest; %s)\n"):format(stage_name, how))
+    io.write(("Stage: %s (%s; %s)\n"):format(stage_name, o.stage and o.stage:lower() ~= "newest" and "named" or "newest", how))
   end
 
   -- The prepared APNG library by default (a package: its street heroines); an explicit directory (even "") wins.
